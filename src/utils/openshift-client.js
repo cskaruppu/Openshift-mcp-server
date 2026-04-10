@@ -3,25 +3,12 @@
  * Uses the native fetch API (Node 18+) to talk to the cluster API server.
  */
 
+import { readFile } from "node:fs/promises";
+
 const OPENSHIFT_API_URL =
   process.env.OPENSHIFT_API_URL ||
   `https://${process.env.KUBERNETES_SERVICE_HOST}:${process.env.KUBERNETES_SERVICE_PORT}`;
 
-function getToken() {
-  // Prefer explicit token env var; fall back to in-cluster service account token
-  if (process.env.OPENSHIFT_TOKEN) return process.env.OPENSHIFT_TOKEN;
-  try {
-    const { readFileSync } = await import("node:fs");
-    return readFileSync(
-      "/var/run/secrets/kubernetes.io/serviceaccount/token",
-      "utf8"
-    ).trim();
-  } catch {
-    return null;
-  }
-}
-
-// We read the token lazily so the file read only happens inside async helpers.
 let _cachedToken = null;
 async function token() {
   if (_cachedToken) return _cachedToken;
@@ -30,9 +17,8 @@ async function token() {
     return _cachedToken;
   }
   try {
-    const fs = await import("node:fs/promises");
     _cachedToken = (
-      await fs.readFile(
+      await readFile(
         "/var/run/secrets/kubernetes.io/serviceaccount/token",
         "utf8"
       )
