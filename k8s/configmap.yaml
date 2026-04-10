@@ -5,6 +5,7 @@ metadata:
   namespace: openshift-mcp
 data:
   MCP_TRANSPORT: "sse"
+  MCP_SERVER_PORT: "3000"
   LOG_LEVEL: "info"
   EMERGENCY_AUTO_FIX: "false"
   NODE_TLS_REJECT_UNAUTHORIZED: "0"

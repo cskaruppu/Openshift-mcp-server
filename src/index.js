@@ -61,7 +61,7 @@ async function startStdio() {
 // Each client GET /sse opens a session; messages arrive via POST /message.
 // ---------------------------------------------------------------------------
 async function startSSE() {
-  const PORT = parseInt(process.env.MCP_SERVER_PORT || "3000", 10);
+  const PORT = parseInt(process.env.MCP_SERVER_PORT, 10) || 3000;
 
   // Track active transports so each SSE session gets its own MCP server
   // instance (the SDK ties one transport to one server).
