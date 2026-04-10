@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-server-config
+  namespace: openshift-mcp
+data:
+  MCP_TRANSPORT: "stdio"
+  LOG_LEVEL: "info"
+  EMERGENCY_AUTO_FIX: "false"
+  NODE_TLS_REJECT_UNAUTHORIZED: "0"

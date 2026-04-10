@@ -1,0 +1,19 @@
+{
+  "name": "openshift-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP Server for OpenShift Container Platform with ACM, Ansible, and ServiceNow integration",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test tests/",
+    "build:dashboard": "echo 'Dashboard is static HTML - no build needed'",
+    "lint": "echo 'Add eslint if needed'"
+  },
+  "keywords": ["mcp", "openshift", "kubernetes", "servicenow", "ansible"],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^3.24.4"
+  }
+}
