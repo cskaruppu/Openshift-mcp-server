@@ -46,12 +46,14 @@ spec:
             capabilities:
               drop: ["ALL"]
           readinessProbe:
-            exec:
-              command: ["node", "-e", "process.exit(0)"]
+            httpGet:
+              path: /readyz
+              port: 3000
             initialDelaySeconds: 5
-            periodSeconds: 30
+            periodSeconds: 10
           livenessProbe:
-            exec:
-              command: ["node", "-e", "process.exit(0)"]
+            httpGet:
+              path: /healthz
+              port: 3000
             initialDelaySeconds: 10
-            periodSeconds: 60
+            periodSeconds: 30

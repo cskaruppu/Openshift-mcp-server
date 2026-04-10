@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-server
+  namespace: openshift-mcp
+spec:
+  selector:
+    app.kubernetes.io/name: openshift-mcp-server
+  ports:
+    - port: 3000
+      targetPort: 3000
+      name: mcp
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: mcp-server
+  namespace: openshift-mcp
+spec:
+  to:
+    kind: Service
+    name: mcp-server
+  port:
+    targetPort: mcp
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
