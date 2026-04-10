@@ -350,107 +350,176 @@ function builtInAnalysis(userMessage, ctx) {
   const parts = [];
 
   if (ctx.clusterVersion) {
-    parts.push(`**Cluster:** OpenShift ${ctx.clusterVersion} (${ctx.channel || "unknown channel"})`);
+    parts.push(`### Cluster Overview`);
+    parts.push(`**OpenShift** ${ctx.clusterVersion} (${ctx.channel || "unknown channel"})`);
   }
 
   if (ctx.nodes) {
     const ready = ctx.nodes.filter((n) => n.ready).length;
     const total = ctx.nodes.length;
-    parts.push(`\n**Nodes:** ${ready}/${total} Ready`);
-    ctx.nodes.forEach((n) => {
-      const status = n.ready ? "Ready" : "**NotReady**";
-      parts.push(`  - ${n.name} (${n.roles.join(", ")}) — ${status} — CPU: ${n.cpu}, Mem: ${n.memory}`);
-    });
     const notReady = ctx.nodes.filter((n) => !n.ready);
+    parts.push(`\n### Node Status`);
+    parts.push(`@@SUMMARY|green:${ready} Ready${notReady.length > 0 ? `|red:${notReady.length} NotReady` : ""}@@`);
+    ctx.nodes.forEach((n) => {
+      const status = n.ready ? "[OK]" : "[CRITICAL]";
+      parts.push(`  - ${status} **${n.name}** (${n.roles.join(", ")}) — CPU: ${n.cpu}, Mem: ${n.memory}`);
+    });
     if (notReady.length > 0) {
-      parts.push(`\n**Action needed:** ${notReady.length} node(s) are NotReady. Check with: \`oc describe node ${notReady[0].name}\``);
+      parts.push(`\n[CRITICAL] **${notReady.length} node(s) are NotReady.** Investigate immediately:`);
+      parts.push(`\`\`\`oc describe node ${notReady[0].name}\noc get node ${notReady[0].name} -o yaml\`\`\``);
     }
   }
 
   if (ctx.problemPods && ctx.problemPods.length > 0) {
-    parts.push(`\n**Problem Pods:** ${ctx.problemPods.length} found`);
-    ctx.problemPods.forEach((p) => {
-      const issues = p.containers.map((c) => `${c.name}: ${c.state} (${c.restarts} restarts)`).join(", ");
-      parts.push(`  - **${p.name}** in \`${p.namespace}\` — ${issues}`);
-    });
-    // Suggest fixes
+    // Group by issue type
     const crashPods = ctx.problemPods.filter((p) => p.containers.some((c) => c.state === "CrashLoopBackOff"));
-    if (crashPods.length > 0) {
-      parts.push(`\n**Suggested fix for CrashLoopBackOff:**`);
-      parts.push(`  1. Check logs: \`oc logs ${crashPods[0].name} -n ${crashPods[0].namespace} --previous\``);
-      parts.push(`  2. Check events: \`oc describe pod ${crashPods[0].name} -n ${crashPods[0].namespace}\``);
-      parts.push(`  3. Restart: \`oc delete pod ${crashPods[0].name} -n ${crashPods[0].namespace}\``);
-    }
     const oomPods = ctx.problemPods.filter((p) => p.containers.some((c) => c.state === "OOMKilled"));
-    if (oomPods.length > 0) {
-      parts.push(`\n**Suggested fix for OOMKilled:**`);
-      parts.push(`  1. Increase memory limit in the deployment spec`);
-      parts.push(`  2. Check for memory leaks in the application`);
-      parts.push(`  3. Use MCP tool: \`scale_deployment\` or \`emergency_fix\``);
+    const imgPods = ctx.problemPods.filter((p) => p.containers.some((c) => c.state === "ImagePullBackOff" || c.state === "ErrImagePull"));
+    const otherPods = ctx.problemPods.filter((p) =>
+      !crashPods.includes(p) && !oomPods.includes(p) && !imgPods.includes(p)
+    );
+
+    parts.push(`\n### Failed Pods — ${ctx.problemPods.length} Issues Found`);
+    parts.push(`@@SUMMARY|red:${crashPods.length} CrashLoop|amber:${oomPods.length} OOMKilled|red:${imgPods.length} ImagePull@@`);
+
+    // CrashLoopBackOff pods
+    if (crashPods.length > 0) {
+      parts.push(`\n[CRITICAL] **CrashLoopBackOff** (${crashPods.length} pods)`);
+      crashPods.forEach((p) => {
+        const detail = p.containers.map((c) => `${c.name}: ${c.state} — ${c.restarts} restarts`).join(", ");
+        parts.push(`@@POD_ISSUE|${p.name}|${p.namespace}|${detail}@@`);
+      });
+      parts.push(`\n**Fix — Check logs and restart:**`);
+      parts.push(`\`\`\`# Check logs of the crashing container\noc logs ${crashPods[0].name} -n ${crashPods[0].namespace} --previous\n\n# Describe the pod to see events\noc describe pod ${crashPods[0].name} -n ${crashPods[0].namespace}\n\n# Delete and let the controller recreate it\noc delete pod ${crashPods[0].name} -n ${crashPods[0].namespace}\`\`\``);
     }
-  } else if (lower.match(/pod|issue|problem/)) {
-    parts.push(`\n**Pods:** No issues detected.`);
+
+    // OOMKilled pods
+    if (oomPods.length > 0) {
+      parts.push(`\n[WARNING] **OOMKilled** (${oomPods.length} pods)`);
+      oomPods.forEach((p) => {
+        const detail = p.containers.map((c) => `${c.name}: ${c.state} — ${c.restarts} restarts`).join(", ");
+        parts.push(`@@POD_ISSUE|${p.name}|${p.namespace}|${detail}@@`);
+      });
+      parts.push(`\n**Fix — Increase memory limits:**`);
+      parts.push(`\`\`\`# Check current resource limits\noc get pod ${oomPods[0].name} -n ${oomPods[0].namespace} -o jsonpath='{.spec.containers[*].resources}'\n\n# Patch deployment to increase memory\noc set resources deployment/<deployment-name> -n ${oomPods[0].namespace} --limits=memory=512Mi --requests=memory=256Mi\`\`\``);
+    }
+
+    // ImagePullBackOff pods
+    if (imgPods.length > 0) {
+      parts.push(`\n[CRITICAL] **ImagePullBackOff / ErrImagePull** (${imgPods.length} pods)`);
+      imgPods.forEach((p) => {
+        const detail = p.containers.map((c) => `${c.name}: ${c.state}`).join(", ");
+        parts.push(`@@POD_ISSUE|${p.name}|${p.namespace}|${detail}@@`);
+      });
+      parts.push(`\n**Fix — Verify image and pull secret:**`);
+      parts.push(`\`\`\`# Check the image reference\noc get pod ${imgPods[0].name} -n ${imgPods[0].namespace} -o jsonpath='{.spec.containers[*].image}'\n\n# Check pull secrets\noc get pod ${imgPods[0].name} -n ${imgPods[0].namespace} -o jsonpath='{.spec.imagePullSecrets}'\n\n# Verify the image exists\noc describe pod ${imgPods[0].name} -n ${imgPods[0].namespace} | grep -A5 Events\`\`\``);
+    }
+
+    // Other issue pods
+    if (otherPods.length > 0) {
+      parts.push(`\n[WARNING] **Other Issues** (${otherPods.length} pods)`);
+      otherPods.forEach((p) => {
+        const detail = p.containers.map((c) => `${c.name}: ${c.state} — ${c.restarts} restarts`).join(", ");
+        parts.push(`@@POD_ISSUE|${p.name}|${p.namespace}|${detail}@@`);
+      });
+      parts.push(`\n**Diagnose:**`);
+      parts.push(`\`\`\`oc describe pod ${otherPods[0].name} -n ${otherPods[0].namespace}\noc logs ${otherPods[0].name} -n ${otherPods[0].namespace}\`\`\``);
+    }
+  } else if (lower.match(/pod|issue|problem|fail|error/)) {
+    parts.push(`\n### Pod Status`);
+    parts.push(`[OK] **No pod issues detected.** All pods are running normally.`);
   }
 
   if (ctx.totalPods) {
-    parts.push(`\n**Total Pods:** ${ctx.totalPods}`);
+    parts.push(`\n### Pod Summary`);
+    parts.push(`**Total:** ${ctx.totalPods} pods`);
     if (ctx.podsByPhase) {
-      parts.push(`  Phases: ${Object.entries(ctx.podsByPhase).map(([k, v]) => `${k}: ${v}`).join(", ")}`);
+      const entries = Object.entries(ctx.podsByPhase);
+      const running = ctx.podsByPhase["Running"] || 0;
+      const failed = (ctx.podsByPhase["Failed"] || 0) + (ctx.podsByPhase["Unknown"] || 0);
+      const pending = ctx.podsByPhase["Pending"] || 0;
+      parts.push(`@@SUMMARY|green:${running} Running${failed > 0 ? `|red:${failed} Failed` : ""}${pending > 0 ? `|amber:${pending} Pending` : ""}@@`);
     }
   }
 
   if (ctx.namespaces) {
-    parts.push(`\n**User Namespaces:** ${ctx.namespaces.length}`);
+    parts.push(`\n### User Namespaces (${ctx.namespaces.length})`);
     ctx.namespaces.forEach((ns) => {
-      parts.push(`  - ${ns.name} (${ns.status})`);
+      const icon = ns.status === "Active" ? "[OK]" : "[WARNING]";
+      parts.push(`  - ${icon} **${ns.name}** — ${ns.status}`);
     });
   }
 
   if (ctx.namespacePods) {
-    parts.push(`\n**Pods in \`${ctx.targetNamespace}\`:** ${ctx.namespacePods.length}`);
+    parts.push(`\n### Pods in \`${ctx.targetNamespace}\` (${ctx.namespacePods.length})`);
     ctx.namespacePods.forEach((p) => {
+      const isOk = p.phase === "Running" && p.restarts < 5;
+      const icon = isOk ? "[OK]" : p.phase === "Failed" ? "[CRITICAL]" : p.restarts >= 5 ? "[WARNING]" : "[OK]";
       const containerInfo = p.containers.map((c) => c.state).join(", ");
-      parts.push(`  - ${p.name} — ${p.phase} — restarts: ${p.restarts} — [${containerInfo}]`);
+      if (!isOk) {
+        parts.push(`@@POD_ISSUE|${p.name}|${ctx.targetNamespace}|Phase: ${p.phase} — Restarts: ${p.restarts} — [${containerInfo}]@@`);
+      } else {
+        parts.push(`  - ${icon} **${p.name}** — ${p.phase} — restarts: ${p.restarts}`);
+      }
     });
   }
 
   if (ctx.namespaceDeployments) {
-    parts.push(`\n**Deployments in \`${ctx.targetNamespace}\`:**`);
+    parts.push(`\n### Deployments in \`${ctx.targetNamespace}\``);
     ctx.namespaceDeployments.forEach((d) => {
-      const health = d.ready === d.replicas ? "healthy" : "**degraded**";
-      parts.push(`  - ${d.name} — ${d.ready}/${d.replicas} ready — ${health}`);
+      const isHealthy = d.ready === d.replicas;
+      const icon = isHealthy ? "[OK]" : "[CRITICAL]";
+      parts.push(`  - ${icon} **${d.name}** — ${d.ready}/${d.replicas} ready`);
     });
+    const unhealthy = ctx.namespaceDeployments.filter((d) => d.ready !== d.replicas);
+    if (unhealthy.length > 0) {
+      parts.push(`\n**Fix — Scale or rollout:**`);
+      parts.push(`\`\`\`# Restart the deployment\noc rollout restart deployment/${unhealthy[0].name} -n ${ctx.targetNamespace}\n\n# Check rollout status\noc rollout status deployment/${unhealthy[0].name} -n ${ctx.targetNamespace}\`\`\``);
+    }
   }
 
   if (ctx.warningEvents && ctx.warningEvents.length > 0) {
-    parts.push(`\n**Recent Warning Events:**`);
+    parts.push(`\n### Recent Warning Events`);
     ctx.warningEvents.slice(0, 10).forEach((e) => {
-      parts.push(`  - [${e.reason}] ${e.object} in \`${e.namespace}\`: ${e.message?.substring(0, 100)}${e.count > 1 ? ` (x${e.count})` : ""}`);
+      const severity = (e.reason === "BackOff" || e.reason === "Failed" || e.reason === "OOMKilling")
+        ? "[CRITICAL]" : "[WARNING]";
+      parts.push(`  - ${severity} **${e.reason}** — ${e.object} in \`${e.namespace}\`: ${e.message?.substring(0, 100)}${e.count > 1 ? ` (x${e.count})` : ""}`);
     });
   }
 
   if (ctx.operators) {
     const degraded = ctx.operators.filter((o) => o.degraded === "True");
+    parts.push(`\n### Cluster Operators`);
     if (degraded.length > 0) {
-      parts.push(`\n**Degraded Operators:** ${degraded.length}`);
-      degraded.forEach((o) => parts.push(`  - ${o.name}`));
+      parts.push(`[CRITICAL] **${degraded.length} degraded operator(s):**`);
+      degraded.forEach((o) => parts.push(`@@POD_ISSUE|${o.name}|cluster-operator|Status: Degraded@@`));
+      parts.push(`\n**Diagnose operator:**`);
+      parts.push(`\`\`\`oc describe clusteroperator ${degraded[0].name}\noc get clusteroperator ${degraded[0].name} -o yaml\`\`\``);
     } else {
-      parts.push(`\n**Operators:** All ${ctx.operators.length} healthy`);
+      parts.push(`[OK] All **${ctx.operators.length}** operators are available and healthy.`);
     }
   }
 
   if (ctx.services) {
-    parts.push(`\n**Services in \`${ctx.targetNamespace}\`:**`);
-    ctx.services.forEach((s) => parts.push(`  - ${s.name} (${s.type}) — ${s.clusterIP} — ${(s.ports || []).join(", ")}`));
+    parts.push(`\n### Services in \`${ctx.targetNamespace}\``);
+    ctx.services.forEach((s) => parts.push(`  - **${s.name}** (${s.type}) — ${s.clusterIP} — ${(s.ports || []).join(", ")}`));
   }
 
   if (ctx.routes) {
-    parts.push(`\n**Routes in \`${ctx.targetNamespace}\`:**`);
-    ctx.routes.forEach((r) => parts.push(`  - ${r.name} — https://${r.host} -> ${r.service}`));
+    parts.push(`\n### Routes in \`${ctx.targetNamespace}\``);
+    ctx.routes.forEach((r) => parts.push(`  - **${r.name}** — https://${r.host} -> ${r.service}`));
   }
 
-  if (parts.length === 0 || (parts.length === 1 && parts[0].includes("Cluster:"))) {
-    parts.push(`\nI can help you explore your cluster. Try asking:\n- "Show me all nodes and their status"\n- "Are there any pod issues?"\n- "List namespaces"\n- "Show pods in namespace <name>"\n- "What deployments are running?"\n- "Show warning events"\n- "Check cluster health and operators"`);
+  if (parts.length === 0 || (parts.length === 1 && parts[0].includes("Cluster"))) {
+    parts.push(`### Welcome to MCP AI Assistant`);
+    parts.push(`\nI can help you explore your cluster. Try asking:`);
+    parts.push(`  - "Show me all nodes and their status"`);
+    parts.push(`  - "Are there any pod issues?"`);
+    parts.push(`  - "List namespaces"`);
+    parts.push(`  - "Show pods in namespace <name>"`);
+    parts.push(`  - "What deployments are running?"`);
+    parts.push(`  - "Show warning events"`);
+    parts.push(`  - "Check cluster health and operators"`);
   }
 
   return parts.join("\n");

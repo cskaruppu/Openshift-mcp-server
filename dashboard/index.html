@@ -41,13 +41,40 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;padding:10px 12px;color:var(--text2);font-weight:500;border-bottom:1px solid var(--border);font-size:12px;text-transform:uppercase;letter-spacing:.3px}
 td{padding:10px 12px;border-bottom:1px solid var(--border)}
 tr:hover td{background:#ffffff06}
-.chat-panel{background:var(--card);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;height:520px}
+.chat-panel{background:var(--card);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;height:620px}
 .chat-header{padding:16px 20px;border-bottom:1px solid var(--border);font-weight:600;display:flex;align-items:center;gap:8px}
 .chat-messages{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:12px}
-.msg{max-width:85%;padding:10px 14px;border-radius:12px;font-size:13px;line-height:1.5}
+.msg{max-width:90%;padding:12px 16px;border-radius:12px;font-size:13px;line-height:1.6}
 .msg.user{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:4px}
-.msg.ai{align-self:flex-start;background:#2a2d3a;border-bottom-left-radius:4px}
+.msg.ai{align-self:flex-start;background:#2a2d3a;border-bottom-left-radius:4px;max-width:95%}
 .msg .tool-tag{display:inline-block;background:#3b82f633;color:var(--accent2);padding:1px 6px;border-radius:4px;font-size:11px;margin-top:4px}
+/* Chat rich formatting */
+.msg .chat-heading{font-size:14px;font-weight:700;margin:10px 0 6px;padding-bottom:4px;border-bottom:1px solid #3a3d4a;color:#fff}
+.msg .chat-heading:first-child{margin-top:0}
+.msg .chat-section{margin:8px 0}
+.msg .status-crit{color:#ef4444;font-weight:700}
+.msg .status-warn{color:#f59e0b;font-weight:600}
+.msg .status-ok{color:#22c55e;font-weight:600}
+.msg .pod-issue{background:#1a0a0a;border:1px solid #ef444455;border-left:3px solid #ef4444;border-radius:6px;padding:8px 12px;margin:6px 0;font-size:12px}
+.msg .pod-issue .pod-name{font-weight:700;color:#ef4444;font-size:13px}
+.msg .pod-issue .pod-ns{color:var(--text2);font-size:11px}
+.msg .pod-issue .pod-detail{color:#fca5a5;margin-top:3px}
+.msg .fix-box{background:#0d1117;border:1px solid #30363d;border-radius:8px;margin:8px 0;overflow:hidden}
+.msg .fix-box .fix-header{display:flex;justify-content:space-between;align-items:center;padding:6px 12px;background:#161b22;border-bottom:1px solid #30363d;font-size:11px;color:var(--text2)}
+.msg .fix-box .fix-header .fix-label{font-weight:600;color:var(--accent2)}
+.msg .fix-box .fix-copy{background:none;border:1px solid #30363d;color:var(--text2);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:10px}
+.msg .fix-box .fix-copy:hover{color:#fff;border-color:#58a6ff}
+.msg .fix-box pre{margin:0;padding:10px 12px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:12px;color:#e6edf3;white-space:pre-wrap;word-break:break-all;line-height:1.5}
+.msg .summary-bar{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0;padding:8px 12px;background:#161b22;border-radius:6px;font-size:12px}
+.msg .summary-item{display:flex;align-items:center;gap:4px}
+.msg .summary-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.msg .summary-dot.red{background:#ef4444}
+.msg .summary-dot.amber{background:#f59e0b}
+.msg .summary-dot.green{background:#22c55e}
+.msg code{background:#0f1117;padding:1px 5px;border-radius:3px;font-family:'SF Mono','Cascadia Code',monospace;font-size:12px}
+.msg .chat-list{margin:4px 0 4px 8px}
+.msg .chat-list-item{padding:2px 0;display:flex;align-items:flex-start;gap:6px}
+.msg .chat-list-item::before{content:'\2022';color:var(--text2);flex-shrink:0;margin-top:0}
 .chat-input{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border)}
 .chat-input input{flex:1;background:#0f1117;border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;outline:none}
 .chat-input input:focus{border-color:var(--accent)}
@@ -522,15 +549,69 @@ setInterval(refreshAll, REFRESH_INTERVAL);
 // ---------------------------------------------------------------------------
 // Chat — sends user message to /api/chat which queries the cluster + LLM
 // ---------------------------------------------------------------------------
-// Simple markdown-to-HTML converter for LLM responses
+// Rich markdown-to-HTML converter for chat responses
 function md(text) {
-  return text
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code style="background:#0f1117;padding:1px 4px;border-radius:3px">$1</code>')
-    .replace(/^  - /gm, '&nbsp;&nbsp;\u2022 ')
-    .replace(/^- /gm, '\u2022 ')
-    .replace(/\n/g, '<br>');
+  // Escape HTML first
+  let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  // Fenced code blocks: ```command``` -> styled fix box with copy button
+  html = html.replace(/```([\s\S]*?)```/g, function(match, code) {
+    const trimmed = code.trim();
+    const id = 'cmd-' + Math.random().toString(36).substr(2, 6);
+    return '<div class="fix-box">' +
+      '<div class="fix-header"><span class="fix-label">Command / Fix</span>' +
+      '<button class="fix-copy" onclick="copyCmd(\'' + id + '\')">Copy</button></div>' +
+      '<pre id="' + id + '">' + trimmed + '</pre></div>';
+  });
+
+  // Status markers: [CRITICAL], [WARNING], [OK], [INFO]
+  html = html.replace(/\[CRITICAL\]/g, '<span class="status-crit">[CRITICAL]</span>');
+  html = html.replace(/\[WARNING\]/g, '<span class="status-warn">[WARNING]</span>');
+  html = html.replace(/\[OK\]/g, '<span class="status-ok">[OK]</span>');
+  html = html.replace(/\[INFO\]/g, '<span style="color:var(--accent2);font-weight:600">[INFO]</span>');
+
+  // Section headings: ### Heading
+  html = html.replace(/^### (.+)$/gm, '<div class="chat-heading">$1</div>');
+  html = html.replace(/^## (.+)$/gm, '<div class="chat-heading">$1</div>');
+
+  // Pod issue cards: @@POD_ISSUE|name|namespace|detail@@
+  html = html.replace(/@@POD_ISSUE\|([^|]*)\|([^|]*)\|([^@]*)@@/g,
+    '<div class="pod-issue"><span class="pod-name">$1</span> <span class="pod-ns">($2)</span><div class="pod-detail">$3</div></div>');
+
+  // Summary bar: @@SUMMARY|red:N|amber:N|green:N@@
+  html = html.replace(/@@SUMMARY\|([^@]*)@@/g, function(match, items) {
+    const parts = items.split('|').map(item => {
+      const [colorLabel, val] = item.split(':');
+      const color = colorLabel === 'red' ? 'red' : colorLabel === 'amber' ? 'amber' : 'green';
+      const label = color === 'red' ? 'Critical' : color === 'amber' ? 'Warning' : 'Healthy';
+      return '<span class="summary-item"><span class="summary-dot ' + color + '"></span>' + val + ' ' + label + '</span>';
+    });
+    return '<div class="summary-bar">' + parts.join('') + '</div>';
+  });
+
+  // Bold
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Numbered lists:   1. item
+  html = html.replace(/^  (\d+)\. (.+)$/gm, '<div class="chat-list-item" style="margin-left:12px"><span style="color:var(--accent2);font-weight:600;flex-shrink:0">$1.</span> $2</div>');
+  // Bullet lists
+  html = html.replace(/^  - /gm, '<div class="chat-list-item"><span></span>');
+  html = html.replace(/^- /gm, '<div class="chat-list-item"><span></span>');
+  // Line breaks
+  html = html.replace(/\n/g, '<br>');
+
+  return html;
+}
+
+// Copy command from fix box
+function copyCmd(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent).then(() => {
+    const btn = el.parentElement.querySelector('.fix-copy');
+    if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 2000); }
+  });
 }
 
 async function sendMessage() {
