@@ -367,21 +367,33 @@ function builtInAnalysis(userMessage, ctx) {
   const filter = ctx.queryFilter; // Specific issue type the user asked about
 
   // -------------------------------------------------------------------------
-  // Helper: render a group of pods with issue cards + fix commands
+  // Helper: render a single pod issue card + its fix commands
   // -------------------------------------------------------------------------
-  function renderPodGroup(label, severity, pods, fixTitle, fixCmds) {
+  function renderPodWithFix(p, fixType) {
+    const detail = p.containers
+      .map((c) => `${c.name}: ${c.state}${c.restarts ? ` (${c.restarts} restarts)` : ""}`)
+      .join(", ");
+    parts.push(`@@POD_ISSUE|${p.name}|${p.namespace}|${detail}@@`);
+
+    // Generate fix commands specific to THIS pod
+    const n = p.name;
+    const ns = p.namespace;
+    if (fixType === "CrashLoopBackOff") {
+      parts.push("```" + `# Fix: ${n}\noc logs ${n} -n ${ns} --previous\noc describe pod ${n} -n ${ns}\noc delete pod ${n} -n ${ns}` + "```");
+    } else if (fixType === "ImagePullBackOff") {
+      parts.push("```" + `# Fix: ${n}\noc get pod ${n} -n ${ns} -o jsonpath='{.spec.containers[*].image}'\noc get pod ${n} -n ${ns} -o jsonpath='{.spec.imagePullSecrets}'\noc describe pod ${n} -n ${ns} | grep -A5 Events` + "```");
+    } else if (fixType === "OOMKilled") {
+      parts.push("```" + `# Fix: ${n}\noc get pod ${n} -n ${ns} -o jsonpath='{.spec.containers[*].resources}'\noc set resources deployment/$(oc get pod ${n} -n ${ns} -o jsonpath='{.metadata.ownerReferences[0].name}') -n ${ns} --limits=memory=512Mi --requests=memory=256Mi` + "```");
+    } else {
+      parts.push("```" + `# Diagnose: ${n}\noc describe pod ${n} -n ${ns}\noc logs ${n} -n ${ns}` + "```");
+    }
+  }
+
+  // Helper: render a group heading then each pod with its own fix
+  function renderPodGroup(label, severity, pods, fixType) {
     if (pods.length === 0) return;
     parts.push(`\n${severity} **${label}** (${pods.length} pod${pods.length > 1 ? "s" : ""})`);
-    pods.forEach((p) => {
-      const detail = p.containers
-        .map((c) => `${c.name}: ${c.state}${c.restarts ? ` (${c.restarts} restarts)` : ""}`)
-        .join(", ");
-      parts.push(`@@POD_ISSUE|${p.name}|${p.namespace}|${detail}@@`);
-    });
-    if (fixTitle && fixCmds) {
-      parts.push(`\n**${fixTitle}**`);
-      parts.push("```" + fixCmds + "```");
-    }
+    pods.forEach((p) => renderPodWithFix(p, fixType));
   }
 
   // -------------------------------------------------------------------------
@@ -418,25 +430,13 @@ function builtInAnalysis(userMessage, ctx) {
       parts.push(`@@SUMMARY|red:${matched.length} ${filter}@@`);
 
       if (filter === "CrashLoopBackOff") {
-        renderPodGroup("CrashLoopBackOff", "[CRITICAL]", matched,
-          "Fix — Check logs and restart:",
-          `# Check logs of the crashing container\noc logs ${matched[0].name} -n ${matched[0].namespace} --previous\n\n# Describe pod events\noc describe pod ${matched[0].name} -n ${matched[0].namespace}\n\n# Delete pod to let controller recreate\noc delete pod ${matched[0].name} -n ${matched[0].namespace}`
-        );
+        renderPodGroup("CrashLoopBackOff", "[CRITICAL]", matched, "CrashLoopBackOff");
       } else if (filter === "ImagePullBackOff") {
-        renderPodGroup("ImagePullBackOff / ErrImagePull", "[CRITICAL]", matched,
-          "Fix — Verify image and pull secret:",
-          `# Check image reference\noc get pod ${matched[0].name} -n ${matched[0].namespace} -o jsonpath='{.spec.containers[*].image}'\n\n# Check pull secrets\noc get pod ${matched[0].name} -n ${matched[0].namespace} -o jsonpath='{.spec.imagePullSecrets}'\n\n# Check events for pull errors\noc describe pod ${matched[0].name} -n ${matched[0].namespace} | grep -A5 Events`
-        );
+        renderPodGroup("ImagePullBackOff / ErrImagePull", "[CRITICAL]", matched, "ImagePullBackOff");
       } else if (filter === "OOMKilled") {
-        renderPodGroup("OOMKilled", "[CRITICAL]", matched,
-          "Fix — Increase memory limits:",
-          `# Check current resource limits\noc get pod ${matched[0].name} -n ${matched[0].namespace} -o jsonpath='{.spec.containers[*].resources}'\n\n# Increase memory on the deployment\noc set resources deployment/<deployment-name> -n ${matched[0].namespace} --limits=memory=512Mi --requests=memory=256Mi`
-        );
+        renderPodGroup("OOMKilled", "[CRITICAL]", matched, "OOMKilled");
       } else {
-        renderPodGroup(filter, "[WARNING]", matched,
-          "Diagnose:",
-          `oc describe pod ${matched[0].name} -n ${matched[0].namespace}\noc logs ${matched[0].name} -n ${matched[0].namespace}`
-        );
+        renderPodGroup(filter, "[WARNING]", matched, "other");
       }
     }
     return parts.join("\n");
@@ -483,22 +483,10 @@ function builtInAnalysis(userMessage, ctx) {
     if (otherPods.length > 0) summaryParts.push(`amber:${otherPods.length} Other`);
     if (summaryParts.length > 0) parts.push(`@@SUMMARY|${summaryParts.join("|")}@@`);
 
-    renderPodGroup("CrashLoopBackOff", "[CRITICAL]", crashPods,
-      crashPods.length > 0 ? "Fix — Check logs and restart:" : null,
-      crashPods.length > 0 ? `# Check logs\noc logs ${crashPods[0].name} -n ${crashPods[0].namespace} --previous\n\n# Describe pod\noc describe pod ${crashPods[0].name} -n ${crashPods[0].namespace}\n\n# Delete to recreate\noc delete pod ${crashPods[0].name} -n ${crashPods[0].namespace}` : null
-    );
-    renderPodGroup("OOMKilled", "[WARNING]", oomPods,
-      oomPods.length > 0 ? "Fix — Increase memory limits:" : null,
-      oomPods.length > 0 ? `# Check limits\noc get pod ${oomPods[0].name} -n ${oomPods[0].namespace} -o jsonpath='{.spec.containers[*].resources}'\n\n# Increase memory\noc set resources deployment/<name> -n ${oomPods[0].namespace} --limits=memory=512Mi` : null
-    );
-    renderPodGroup("ImagePullBackOff", "[CRITICAL]", imgPods,
-      imgPods.length > 0 ? "Fix — Verify image and pull secret:" : null,
-      imgPods.length > 0 ? `# Check image\noc get pod ${imgPods[0].name} -n ${imgPods[0].namespace} -o jsonpath='{.spec.containers[*].image}'\n\n# Check pull secrets\noc get pod ${imgPods[0].name} -n ${imgPods[0].namespace} -o jsonpath='{.spec.imagePullSecrets}'` : null
-    );
-    renderPodGroup("Other Issues", "[WARNING]", otherPods,
-      otherPods.length > 0 ? "Diagnose:" : null,
-      otherPods.length > 0 ? `oc describe pod ${otherPods[0].name} -n ${otherPods[0].namespace}\noc logs ${otherPods[0].name} -n ${otherPods[0].namespace}` : null
-    );
+    renderPodGroup("CrashLoopBackOff", "[CRITICAL]", crashPods, "CrashLoopBackOff");
+    renderPodGroup("OOMKilled", "[WARNING]", oomPods, "OOMKilled");
+    renderPodGroup("ImagePullBackOff", "[CRITICAL]", imgPods, "ImagePullBackOff");
+    renderPodGroup("Other Issues", "[WARNING]", otherPods, "other");
   } else if (lower.match(/pod|issue|problem|fail|error/)) {
     parts.push(`\n### Pod Status`);
     parts.push(`[OK] **No pod issues detected.** All pods are running normally.`);
