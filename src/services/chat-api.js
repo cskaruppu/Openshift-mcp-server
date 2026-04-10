@@ -270,19 +270,24 @@ Always be concise but thorough. Use markdown formatting.`;
 // ---------------------------------------------------------------------------
 // Call external LLM
 // ---------------------------------------------------------------------------
-async function callLLM(userMessage, clusterContext) {
+async function callLLM(userMessage, clusterContext, opts = {}) {
+  const provider = opts.provider || LLM_PROVIDER;
+  const apiUrl = opts.apiUrl || LLM_API_URL;
+  const apiKey = opts.apiKey || LLM_API_KEY;
+  const model = opts.model || LLM_MODEL;
+
   const contextStr = JSON.stringify(clusterContext, null, 2);
   const userContent = `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;
 
-  if (LLM_PROVIDER === "openai") {
-    const resp = await fetch(`${LLM_API_URL}/v1/chat/completions`, {
+  if (provider === "openai") {
+    const resp = await fetch(`${apiUrl || "https://api.openai.com"}/v1/chat/completions`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LLM_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: LLM_MODEL,
+        model: model || "gpt-4",
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userContent },
@@ -292,34 +297,36 @@ async function callLLM(userMessage, clusterContext) {
       }),
     });
     const data = await resp.json();
+    if (data.error) return `LLM Error: ${data.error.message || JSON.stringify(data.error)}`;
     return data.choices?.[0]?.message?.content || "No response from LLM.";
   }
 
-  if (LLM_PROVIDER === "anthropic") {
-    const resp = await fetch(`${LLM_API_URL || "https://api.anthropic.com"}/v1/messages`, {
+  if (provider === "anthropic") {
+    const resp = await fetch(`${apiUrl || "https://api.anthropic.com"}/v1/messages`, {
       method: "POST",
       headers: {
-        "x-api-key": LLM_API_KEY,
+        "x-api-key": apiKey,
         "Content-Type": "application/json",
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: LLM_MODEL || "claude-sonnet-4-20250514",
+        model: model || "claude-sonnet-4-20250514",
         system: SYSTEM_PROMPT,
         messages: [{ role: "user", content: userContent }],
         max_tokens: 2000,
       }),
     });
     const data = await resp.json();
+    if (data.error) return `LLM Error: ${data.error.message || JSON.stringify(data.error)}`;
     return data.content?.[0]?.text || "No response from LLM.";
   }
 
-  if (LLM_PROVIDER === "ollama") {
-    const resp = await fetch(`${LLM_API_URL}/api/chat`, {
+  if (provider === "ollama") {
+    const resp = await fetch(`${apiUrl || "http://localhost:11434"}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: LLM_MODEL || "llama3",
+        model: model || "llama3",
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userContent },
@@ -462,16 +469,25 @@ export async function handleChatAPI(req, res) {
       return;
     }
 
+    // Override LLM settings from request (for UI provider selector)
+    const llmOpts = {};
+    if (body.provider) llmOpts.provider = body.provider;
+    if (body.apiKey) llmOpts.apiKey = body.apiKey;
+    if (body.apiUrl) llmOpts.apiUrl = body.apiUrl;
+    if (body.model) llmOpts.model = body.model;
+
+    const activeProvider = llmOpts.provider || LLM_PROVIDER;
+
     // 1. Gather cluster context
     const context = await gatherClusterContext(userMessage);
 
     // 2. Call LLM (or built-in analysis)
-    const reply = await callLLM(userMessage, context);
+    const reply = await callLLM(userMessage, context, llmOpts);
 
     // 3. Return response
     json(res, 200, {
       reply,
-      provider: LLM_PROVIDER,
+      provider: activeProvider,
       contextKeys: Object.keys(context),
     });
   } catch (err) {

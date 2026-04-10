@@ -124,9 +124,34 @@ tr:hover td{background:#ffffff06}
         AI Assistant
       </div>
       <div class="chat-panel">
-        <div class="chat-header">
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="#e04040"><circle cx="10" cy="10" r="8"/></svg>
-          MCP AI Chat
+        <div class="chat-header" style="justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:8px">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="#e04040"><circle cx="10" cy="10" r="8"/></svg>
+            MCP AI Chat
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <select id="llm-provider" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer" onchange="onProviderChange()">
+              <option value="none">Built-in Analysis</option>
+              <option value="openai">OpenAI (GPT)</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+              <option value="ollama">Ollama (Local)</option>
+            </select>
+            <button class="icon-btn" style="padding:4px 8px;font-size:11px" onclick="toggleLLMConfig()">&#x2699;</button>
+          </div>
+        </div>
+        <!-- LLM Config Panel (hidden by default) -->
+        <div id="llm-config" style="display:none;padding:10px 16px;border-bottom:1px solid var(--border);background:#0f1117;font-size:12px">
+          <div style="display:flex;gap:8px;margin-bottom:6px">
+            <input type="text" id="llm-api-key" placeholder="API Key (stored in browser only)" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:4px;padding:6px 8px;color:var(--text);font-size:12px" type="password">
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:6px">
+            <input type="text" id="llm-api-url" placeholder="API URL (optional)" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:4px;padding:6px 8px;color:var(--text);font-size:12px">
+            <input type="text" id="llm-model" placeholder="Model (e.g. gpt-4)" style="width:160px;background:var(--card);border:1px solid var(--border);border-radius:4px;padding:6px 8px;color:var(--text);font-size:12px">
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="color:var(--text2)">Settings saved in browser localStorage</span>
+            <button class="icon-btn" style="padding:3px 10px;font-size:11px" onclick="saveLLMConfig()">Save</button>
+          </div>
         </div>
         <div class="chat-messages" id="chat-messages">
           <div class="msg ai">
@@ -138,7 +163,7 @@ tr:hover td{background:#ffffff06}
             &#x2022; Emergency fixes with notifications<br>
             &#x2022; Multi-cluster management via ACM<br>
             <br>
-            Type a question or click Refresh to load live cluster data.
+            Select an LLM provider above or use built-in analysis. Type a question to start.
           </div>
         </div>
         <div class="chat-input">
@@ -522,10 +547,23 @@ async function sendMessage() {
   messages.scrollTop = messages.scrollHeight;
 
   try {
+    // Include LLM provider settings from UI
+    const chatBody = { message: text };
+    const selProvider = document.getElementById('llm-provider').value;
+    if (selProvider && selProvider !== 'none') {
+      chatBody.provider = selProvider;
+      const ak = document.getElementById('llm-api-key').value.trim();
+      const au = document.getElementById('llm-api-url').value.trim();
+      const ml = document.getElementById('llm-model').value.trim();
+      if (ak) chatBody.apiKey = ak;
+      if (au) chatBody.apiUrl = au;
+      if (ml) chatBody.model = ml;
+    }
+
     const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify(chatBody),
     });
     const data = await resp.json();
 
@@ -563,6 +601,72 @@ function showEmergency(type) {
   title.textContent = 'Emergency: ' + (names[type] || type);
   form.style.display = 'block';
 }
+
+// ---------------------------------------------------------------------------
+// LLM Provider Selector
+// ---------------------------------------------------------------------------
+function toggleLLMConfig() {
+  const panel = document.getElementById('llm-config');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+function onProviderChange() {
+  const provider = document.getElementById('llm-provider').value;
+  const modelInput = document.getElementById('llm-model');
+  const urlInput = document.getElementById('llm-api-url');
+  const keyInput = document.getElementById('llm-api-key');
+
+  // Set sensible defaults per provider
+  const defaults = {
+    none:      { model: '',                   url: '',                         keyPlaceholder: 'API Key (not needed)' },
+    openai:    { model: 'gpt-4',              url: 'https://api.openai.com',   keyPlaceholder: 'OpenAI API Key (sk-...)' },
+    anthropic: { model: 'claude-sonnet-4-20250514', url: 'https://api.anthropic.com', keyPlaceholder: 'Anthropic API Key (sk-ant-...)' },
+    ollama:    { model: 'llama3',             url: 'http://ollama:11434',      keyPlaceholder: 'API Key (not needed for Ollama)' },
+  };
+
+  const d = defaults[provider] || defaults.none;
+  if (!modelInput.value || modelInput.value === modelInput.dataset.autoSet) {
+    modelInput.value = d.model;
+    modelInput.dataset.autoSet = d.model;
+  }
+  if (!urlInput.value || urlInput.value === urlInput.dataset.autoSet) {
+    urlInput.value = d.url;
+    urlInput.dataset.autoSet = d.url;
+  }
+  keyInput.placeholder = d.keyPlaceholder;
+
+  // Auto-show config panel for external providers
+  if (provider !== 'none') {
+    document.getElementById('llm-config').style.display = 'block';
+  }
+
+  // Save provider selection immediately
+  saveLLMConfig();
+}
+
+function saveLLMConfig() {
+  const config = {
+    provider: document.getElementById('llm-provider').value,
+    apiKey:   document.getElementById('llm-api-key').value,
+    apiUrl:   document.getElementById('llm-api-url').value,
+    model:    document.getElementById('llm-model').value,
+  };
+  localStorage.setItem('mcp-llm-config', JSON.stringify(config));
+}
+
+function loadLLMConfig() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('mcp-llm-config'));
+    if (!saved) return;
+    if (saved.provider) document.getElementById('llm-provider').value = saved.provider;
+    if (saved.apiKey)   document.getElementById('llm-api-key').value = saved.apiKey;
+    if (saved.apiUrl)   document.getElementById('llm-api-url').value = saved.apiUrl;
+    if (saved.model)    document.getElementById('llm-model').value = saved.model;
+  } catch (e) { /* ignore parse errors */ }
+}
+
+// Load saved LLM settings on page init
+loadLLMConfig();
 </script>
 
 </body>
