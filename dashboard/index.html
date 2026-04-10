@@ -495,9 +495,20 @@ refreshAll();
 setInterval(refreshAll, REFRESH_INTERVAL);
 
 // ---------------------------------------------------------------------------
-// Chat (simulation — uses live data context)
+// Chat — sends user message to /api/chat which queries the cluster + LLM
 // ---------------------------------------------------------------------------
-function sendMessage() {
+// Simple markdown-to-HTML converter for LLM responses
+function md(text) {
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code style="background:#0f1117;padding:1px 4px;border-radius:3px">$1</code>')
+    .replace(/^  - /gm, '&nbsp;&nbsp;\u2022 ')
+    .replace(/^- /gm, '\u2022 ')
+    .replace(/\n/g, '<br>');
+}
+
+async function sendMessage() {
   const input = document.getElementById('chat-input');
   const text = input.value.trim();
   if (!text) return;
@@ -505,64 +516,41 @@ function sendMessage() {
   messages.innerHTML += '<div class="msg user">' + esc(text) + '</div>';
   input.value = '';
 
-  messages.innerHTML += '<div class="msg ai" style="color:var(--text2)">Thinking...</div>';
+  // Show thinking indicator
+  const thinkingId = 'thinking-' + Date.now();
+  messages.innerHTML += '<div class="msg ai" id="' + thinkingId + '" style="color:var(--text2)"><span class="dot" style="display:inline-block;width:6px;height:6px;margin-right:6px"></span>Analyzing cluster data...</div>';
   messages.scrollTop = messages.scrollHeight;
 
-  // Simulate calling MCP tools based on keywords
-  setTimeout(async () => {
-    const last = messages.querySelector('.msg.ai:last-child');
-    const lower = text.toLowerCase();
-    let response = '';
-    let tools = [];
+  try {
+    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text }),
+    });
+    const data = await resp.json();
 
-    try {
-      if (lower.includes('node')) {
-        const nodes = await apiFetch('/api/nodes');
-        const ready = nodes.filter(n => n.ready).length;
-        response = `There are <strong>${nodes.length}</strong> nodes in the cluster.<br>` +
-          `<strong>${ready}</strong> Ready, <strong>${nodes.length - ready}</strong> NotReady.<br><br>` +
-          nodes.map(n => `\u2022 <strong>${esc(n.name)}</strong> — ${n.roles.join(',')} — ${n.ready ? '<span style="color:var(--ok)">Ready</span>' : '<span style="color:var(--crit)">NotReady</span>'} — ${n.pods} pods`).join('<br>');
-        tools = ['list_nodes'];
-      } else if (lower.includes('pod') || lower.includes('issue') || lower.includes('problem')) {
-        const issues = await apiFetch('/api/pods/issues');
-        if (issues.length === 0) {
-          response = 'No pod issues detected across the cluster.';
-        } else {
-          response = `Found <strong>${issues.length}</strong> pods with issues:<br><br>` +
-            issues.slice(0, 5).map((p, i) => `${i + 1}. <strong>${esc(p.name)}</strong> in ${esc(p.namespace)}<br>&nbsp;&nbsp;&nbsp;${p.issues.map(i2 => esc(i2.reason)).join(', ')}`).join('<br>');
-        }
-        tools = ['diagnose_pod_issues', 'list_pods'];
-      } else if (lower.includes('cluster') || lower.includes('health') || lower.includes('status')) {
-        const s = await apiFetch('/api/cluster/summary');
-        response = `Cluster is running <strong>OpenShift ${esc(s.cluster.version)}</strong> on channel ${esc(s.cluster.channel)}.<br><br>` +
-          `\u2022 Health: <strong>${s.cluster.health}</strong><br>` +
-          `\u2022 Nodes: ${s.nodes.ready}/${s.nodes.total} ready (${s.nodes.totalCPU} CPU, ${s.nodes.totalMemGi}Gi RAM)<br>` +
-          `\u2022 Namespaces: ${s.namespaces.total} (${s.namespaces.user} user)<br>` +
-          `\u2022 Operators: ${s.operators.healthy}/${s.operators.total} healthy` +
-          (s.operators.degraded > 0 ? ` — degraded: ${s.operators.degradedNames.join(', ')}` : '');
-        tools = ['get_cluster_info', 'cluster_health_check'];
-      } else if (lower.includes('namespace')) {
-        const ns = await apiFetch('/api/namespaces');
-        response = `There are <strong>${ns.length}</strong> user namespaces:<br><br>` +
-          ns.slice(0, 10).map(n => `\u2022 <strong>${esc(n.name)}</strong> — ${n.status}`).join('<br>') +
-          (ns.length > 10 ? `<br>... and ${ns.length - 10} more` : '');
-        tools = ['list_namespaces'];
-      } else {
-        response = 'I can help with that! Try asking about:<br><br>' +
-          '\u2022 "cluster health" — overall cluster status<br>' +
-          '\u2022 "show nodes" — node details and status<br>' +
-          '\u2022 "pod issues" — pods with problems<br>' +
-          '\u2022 "namespaces" — project listing<br>';
-        tools = [];
-      }
-    } catch (err) {
-      response = 'Error querying cluster: ' + esc(err.message);
+    const thinkingEl = document.getElementById(thinkingId);
+    if (thinkingEl) {
+      const providerTag = data.provider && data.provider !== 'none'
+        ? '<span class="tool-tag">' + data.provider + '</span> '
+        : '';
+      const contextTags = (data.contextKeys || [])
+        .filter(k => !['clusterVersion','channel'].includes(k))
+        .map(k => '<span class="tool-tag">' + k + '</span>')
+        .join(' ');
+
+      thinkingEl.style.color = '';
+      thinkingEl.innerHTML = md(data.reply || data.error || 'No response') +
+        (providerTag || contextTags ? '<br><br>' + providerTag + contextTags : '');
     }
-
-    last.innerHTML = response +
-      (tools.length > 0 ? '<br>' + tools.map(t => '<span class="tool-tag">' + t + '</span>').join(' ') : '');
-    messages.scrollTop = messages.scrollHeight;
-  }, 300);
+  } catch (err) {
+    const thinkingEl = document.getElementById(thinkingId);
+    if (thinkingEl) {
+      thinkingEl.innerHTML = 'Error: ' + esc(err.message);
+      thinkingEl.style.color = 'var(--crit)';
+    }
+  }
+  messages.scrollTop = messages.scrollHeight;
 }
 
 // ---------------------------------------------------------------------------

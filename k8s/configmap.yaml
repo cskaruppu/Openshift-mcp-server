@@ -9,3 +9,7 @@ data:
   LOG_LEVEL: "info"
   EMERGENCY_AUTO_FIX: "false"
   NODE_TLS_REJECT_UNAUTHORIZED: "0"
+  # LLM Provider: "openai", "anthropic", "ollama", or "none" (built-in analysis)
+  LLM_PROVIDER: "none"
+  # LLM_API_URL: "https://api.openai.com"    # or Ollama URL, etc.
+  # LLM_MODEL: "gpt-4"                       # or claude-sonnet-4-20250514, llama3, etc.

@@ -22,7 +22,9 @@ import { registerAnsibleTools } from "./tools/ansible.js";
 import { registerEmergencyTools } from "./tools/emergency.js";
 import { registerACMTools } from "./tools/acm.js";
 import { registerDashboardTools } from "./tools/dashboard.js";
+import { registerWorkloadTools } from "./tools/workloads.js";
 import { handleDashboardAPI } from "./services/dashboard-api.js";
+import { handleChatAPI } from "./services/chat-api.js";
 
 function createMcpServer() {
   const server = new McpServer({
@@ -43,6 +45,7 @@ function createMcpServer() {
   registerEmergencyTools(server);
   registerACMTools(server);
   registerDashboardTools(server);
+  registerWorkloadTools(server);
 
   return server;
 }
@@ -86,6 +89,12 @@ async function startSSE() {
     if (url.pathname === "/healthz" || url.pathname === "/readyz") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+
+    // LLM Chat API — /api/chat (POST)
+    if (req.method === "POST" && url.pathname === "/api/chat") {
+      await handleChatAPI(req, res);
       return;
     }
 
