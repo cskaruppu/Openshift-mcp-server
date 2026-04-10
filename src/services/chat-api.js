@@ -90,17 +90,21 @@ async function gatherClusterContext(userMessage) {
           const phase = p.status?.phase || "Unknown";
           context.podsByPhase[phase] = (context.podsByPhase[phase] || 0) + 1;
         });
-        // Find problem pods
+        // Find problem pods — only truly broken ones, not healthy pods with historical restarts
         context.problemPods = allPods
           .filter((p) => {
             if (p.status?.phase === "Failed" || p.status?.phase === "Unknown") return true;
+            // Only flag pods where a container is currently NOT running
             return (p.status?.containerStatuses || []).some(
               (c) =>
                 c.state?.waiting?.reason === "CrashLoopBackOff" ||
                 c.state?.waiting?.reason === "ImagePullBackOff" ||
                 c.state?.waiting?.reason === "ErrImagePull" ||
-                c.lastState?.terminated?.reason === "OOMKilled" ||
-                c.restartCount > 10
+                c.state?.waiting?.reason === "CreateContainerConfigError" ||
+                c.state?.waiting?.reason === "RunContainerError" ||
+                c.state?.terminated?.reason === "OOMKilled" ||
+                c.state?.terminated?.reason === "Error" ||
+                (!c.ready && !c.state?.running)
             );
           })
           .slice(0, 20)
@@ -109,13 +113,16 @@ async function gatherClusterContext(userMessage) {
             namespace: p.metadata.namespace,
             phase: p.status?.phase,
             node: p.spec?.nodeName,
-            containers: (p.status?.containerStatuses || []).map((c) => ({
-              name: c.name,
-              ready: c.ready,
-              restarts: c.restartCount,
-              state: c.state?.waiting?.reason || c.state?.terminated?.reason || (c.state?.running ? "Running" : "Unknown"),
-            })),
-          }));
+            containers: (p.status?.containerStatuses || [])
+              .filter((c) => !c.ready || !c.state?.running)
+              .map((c) => ({
+                name: c.name,
+                ready: c.ready,
+                restarts: c.restartCount,
+                state: c.state?.waiting?.reason || c.state?.terminated?.reason || (c.state?.running ? "Running" : "Unknown"),
+              })),
+          }))
+          .filter((p) => p.containers.length > 0);
       }).catch(() => {})
     );
   }
