@@ -22,6 +22,7 @@ import { registerAnsibleTools } from "./tools/ansible.js";
 import { registerEmergencyTools } from "./tools/emergency.js";
 import { registerACMTools } from "./tools/acm.js";
 import { registerDashboardTools } from "./tools/dashboard.js";
+import { handleDashboardAPI } from "./services/dashboard-api.js";
 
 function createMcpServer() {
   const server = new McpServer({
@@ -85,6 +86,12 @@ async function startSSE() {
     if (url.pathname === "/healthz" || url.pathname === "/readyz") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+
+    // Dashboard REST API — /api/...
+    if (url.pathname.startsWith("/api/")) {
+      await handleDashboardAPI(url.pathname, req, res);
       return;
     }
 

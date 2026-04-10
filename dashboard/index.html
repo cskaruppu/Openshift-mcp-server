@@ -15,6 +15,7 @@ body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--
 .header h1 span{color:var(--accent)}
 .header .status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2)}
 .header .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);animation:pulse 2s infinite}
+.header .dot.err{background:var(--crit);animation:none}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 .container{max-width:1440px;margin:0 auto;padding:24px}
 .grid{display:grid;gap:20px}
@@ -54,16 +55,6 @@ tr:hover td{background:#ffffff06}
 .chat-input button:hover{opacity:.9}
 .progress-bar{height:4px;background:var(--border);border-radius:2px;overflow:hidden;margin-top:8px}
 .progress-fill{height:100%;border-radius:2px;transition:width .5s}
-.timeline{position:relative;padding-left:20px}
-.timeline::before{content:'';position:absolute;left:6px;top:0;bottom:0;width:2px;background:var(--border)}
-.timeline-item{position:relative;padding:8px 0 8px 16px;font-size:13px}
-.timeline-item::before{content:'';position:absolute;left:-1px;top:14px;width:10px;height:10px;border-radius:50%;border:2px solid var(--border);background:var(--card)}
-.timeline-item.active::before{border-color:var(--accent);background:var(--accent)}
-.timeline-item .time{color:var(--text2);font-size:11px}
-.nav-tabs{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:-1px}
-.nav-tab{padding:8px 16px;font-size:13px;color:var(--text2);cursor:pointer;border-bottom:2px solid transparent;transition:all .2s}
-.nav-tab:hover{color:var(--text)}
-.nav-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
 .workflow-step{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px}
 .workflow-step .step-num{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}
 .workflow-step .step-num.done{background:var(--ok);color:#fff}
@@ -71,6 +62,9 @@ tr:hover td{background:#ffffff06}
 .workflow-step .step-num.pending{background:var(--border);color:var(--text2)}
 .icon-btn{background:none;border:1px solid var(--border);border-radius:8px;padding:6px 12px;color:var(--text2);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px;transition:all .2s}
 .icon-btn:hover{border-color:var(--accent);color:var(--accent)}
+.loading{color:var(--text2);font-size:13px;padding:12px;text-align:center}
+.empty-row td{color:var(--text2);text-align:center;padding:20px}
+.last-updated{font-size:11px;color:var(--text2);margin-left:auto}
 @media(max-width:1200px){.grid-4{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:768px){.grid-4,.grid-3,.grid-2{grid-template-columns:1fr}.header{flex-direction:column;gap:12px}}
 </style>
@@ -83,10 +77,14 @@ tr:hover td{background:#ffffff06}
     <h1>OpenShift <span>MCP AI Assistant</span></h1>
   </div>
   <div class="status">
-    <div class="dot"></div>
-    MCP Server Connected &nbsp;|&nbsp; Cluster: <strong>&nbsp;production-ocp</strong>
+    <div class="dot" id="conn-dot"></div>
+    <span id="conn-label">Connecting...</span>
     &nbsp;|&nbsp;
-    <button class="icon-btn" onclick="refreshDashboard()">&#x21bb; Refresh</button>
+    <span id="cluster-name">Cluster: loading...</span>
+    &nbsp;|&nbsp;
+    <span class="last-updated" id="last-updated"></span>
+    &nbsp;
+    <button class="icon-btn" onclick="refreshAll()">&#x21bb; Refresh</button>
   </div>
 </div>
 
@@ -96,23 +94,23 @@ tr:hover td{background:#ffffff06}
   <div class="grid grid-4" style="margin-bottom:8px">
     <div class="card">
       <h3>Cluster Health</h3>
-      <div class="metric ok" id="m-health">Healthy</div>
-      <div class="metric-label">OpenShift v4.15.2 &bull; stable-4.15</div>
+      <div class="metric" id="m-health">--</div>
+      <div class="metric-label" id="m-health-label">Loading...</div>
     </div>
     <div class="card">
       <h3>Nodes</h3>
-      <div class="metric" id="m-nodes">6 / 6</div>
-      <div class="metric-label">Ready &bull; 48 CPU &bull; 192 Gi Memory</div>
+      <div class="metric" id="m-nodes">--</div>
+      <div class="metric-label" id="m-nodes-label">Loading...</div>
     </div>
     <div class="card">
       <h3>Namespaces</h3>
-      <div class="metric" id="m-ns">24</div>
-      <div class="metric-label">12 user projects &bull; 12 system</div>
+      <div class="metric" id="m-ns">--</div>
+      <div class="metric-label" id="m-ns-label">Loading...</div>
     </div>
     <div class="card">
       <h3>Cluster Operators</h3>
-      <div class="metric ok" id="m-ops">34 / 34</div>
-      <div class="metric-label">All operators available</div>
+      <div class="metric" id="m-ops">--</div>
+      <div class="metric-label" id="m-ops-label">Loading...</div>
     </div>
   </div>
 
@@ -140,31 +138,7 @@ tr:hover td{background:#ffffff06}
             &#x2022; Emergency fixes with notifications<br>
             &#x2022; Multi-cluster management via ACM<br>
             <br>
-            What would you like to know?
-          </div>
-          <div class="msg user">Show me pods with issues in the production namespace</div>
-          <div class="msg ai">
-            I found 2 pods with issues in <strong>production</strong>:
-            <br><br>
-            1. <strong>api-gateway-7f8d5</strong> — CrashLoopBackOff (12 restarts)
-            <br>&nbsp;&nbsp;&nbsp;Suggested fix: Check logs, verify env config
-            <br>
-            2. <strong>cache-redis-0</strong> — OOMKilled
-            <br>&nbsp;&nbsp;&nbsp;Suggested fix: Increase memory limits from 256Mi to 512Mi
-            <br><br>
-            <span class="tool-tag">diagnose_pod_issues</span> <span class="tool-tag">list_pods</span>
-          </div>
-          <div class="msg user">Fix the Redis pod — raise a change request first</div>
-          <div class="msg ai">
-            I've created a change request in ServiceNow:
-            <br><br>
-            &#x2022; <strong>CHG0012847</strong> — Increase Redis memory limit in production
-            <br>&#x2022; Status: <span class="badge badge-warn">Awaiting Approval</span>
-            <br>&#x2022; Priority: Moderate | Risk: Low
-            <br><br>
-            I'll execute the fix once approved. Use <code>check_approval_status</code> to monitor.
-            <br>
-            <span class="tool-tag">create_change_request</span>
+            Type a question or click Refresh to load live cluster data.
           </div>
         </div>
         <div class="chat-input">
@@ -184,36 +158,27 @@ tr:hover td{background:#ffffff06}
         <table>
           <thead><tr><th>Node</th><th>Role</th><th>Status</th><th>CPU</th><th>Memory</th><th>Pods</th></tr></thead>
           <tbody id="node-table">
-            <tr><td>master-0</td><td>control-plane</td><td><span class="badge badge-ok">Ready</span></td><td>8</td><td>32Gi</td><td>42</td></tr>
-            <tr><td>master-1</td><td>control-plane</td><td><span class="badge badge-ok">Ready</span></td><td>8</td><td>32Gi</td><td>39</td></tr>
-            <tr><td>master-2</td><td>control-plane</td><td><span class="badge badge-ok">Ready</span></td><td>8</td><td>32Gi</td><td>41</td></tr>
-            <tr><td>worker-0</td><td>worker</td><td><span class="badge badge-ok">Ready</span></td><td>8</td><td>32Gi</td><td>28</td></tr>
-            <tr><td>worker-1</td><td>worker</td><td><span class="badge badge-ok">Ready</span></td><td>8</td><td>32Gi</td><td>31</td></tr>
-            <tr><td>worker-2</td><td>worker</td><td><span class="badge badge-warn">NotReady</span></td><td>8</td><td>32Gi</td><td>0</td></tr>
+            <tr><td colspan="6" class="loading">Loading nodes...</td></tr>
           </tbody>
         </table>
       </div>
 
       <div class="section-title" style="margin-top:24px">
         <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
-        Active Alerts
+        Active Alerts <span id="alert-count" style="font-size:12px;color:var(--text2);font-weight:400"></span>
       </div>
       <div class="card" style="padding:0;overflow:hidden">
         <table>
           <thead><tr><th>Severity</th><th>Resource</th><th>Issue</th><th>Since</th></tr></thead>
-          <tbody>
-            <tr><td><span class="badge badge-crit">Critical</span></td><td>pod/api-gateway-7f8d5</td><td>CrashLoopBackOff — 12 restarts</td><td>15m ago</td></tr>
-            <tr><td><span class="badge badge-crit">Critical</span></td><td>node/worker-2</td><td>NotReady — disk pressure</td><td>8m ago</td></tr>
-            <tr><td><span class="badge badge-warn">Warning</span></td><td>pod/cache-redis-0</td><td>OOMKilled — memory limit exceeded</td><td>32m ago</td></tr>
-            <tr><td><span class="badge badge-warn">Warning</span></td><td>ns/production</td><td>Resource quota 92% used (CPU)</td><td>1h ago</td></tr>
-            <tr><td><span class="badge badge-info">Info</span></td><td>cluster</td><td>Update available: 4.15.3</td><td>2h ago</td></tr>
+          <tbody id="alert-table">
+            <tr><td colspan="4" class="loading">Loading alerts...</td></tr>
           </tbody>
         </table>
       </div>
     </div>
   </div>
 
-  <!-- Bottom Section: ITSM Workflow + Multi-Cluster -->
+  <!-- Bottom Section: ITSM + Pods with Issues + ACM -->
   <div class="grid grid-3" style="margin-top:8px">
 
     <!-- ITSM Workflow -->
@@ -229,7 +194,7 @@ tr:hover td{background:#ffffff06}
       </div>
       <div class="workflow-step">
         <div class="step-num active">3</div>
-        <div><strong>Awaiting Approval</strong><br><span style="font-size:12px;color:var(--text2)">CHG0012847 — pending manager approval</span></div>
+        <div><strong>Awaiting Approval</strong><br><span style="font-size:12px;color:var(--text2)">Change request pending manager approval</span></div>
       </div>
       <div class="workflow-step">
         <div class="step-num pending">4</div>
@@ -237,77 +202,23 @@ tr:hover td{background:#ffffff06}
       </div>
       <div class="workflow-step">
         <div class="step-num pending">5</div>
-        <div><strong>Verify & Close</strong><br><span style="font-size:12px;color:var(--text2)">Confirm resolution, close ITSM ticket</span></div>
+        <div><strong>Verify &amp; Close</strong><br><span style="font-size:12px;color:var(--text2)">Confirm resolution, close ITSM ticket</span></div>
       </div>
     </div>
 
-    <!-- Recent ITSM Tickets -->
+    <!-- Pods with Issues (LIVE) -->
     <div class="card">
-      <h3>Recent ITSM Tickets</h3>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <div style="padding:10px;background:#0f1117;border-radius:8px;font-size:13px">
-          <div style="display:flex;justify-content:space-between"><strong>CHG0012847</strong><span class="badge badge-warn">Pending</span></div>
-          <div style="color:var(--text2);margin-top:4px">Increase Redis memory limit in production</div>
-          <div style="color:var(--text2);font-size:11px;margin-top:2px">Created 32m ago &bull; Normal change</div>
-        </div>
-        <div style="padding:10px;background:#0f1117;border-radius:8px;font-size:13px">
-          <div style="display:flex;justify-content:space-between"><strong>INC0098341</strong><span class="badge badge-ok">Resolved</span></div>
-          <div style="color:var(--text2);margin-top:4px">API Gateway crash in production namespace</div>
-          <div style="color:var(--text2);font-size:11px;margin-top:2px">Resolved 2h ago &bull; Auto-remediated</div>
-        </div>
-        <div style="padding:10px;background:#0f1117;border-radius:8px;font-size:13px">
-          <div style="display:flex;justify-content:space-between"><strong>CHG0012830</strong><span class="badge badge-ok">Closed</span></div>
-          <div style="color:var(--text2);margin-top:4px">Scale frontend deployment to 5 replicas</div>
-          <div style="color:var(--text2);font-size:11px;margin-top:2px">Closed 1d ago &bull; Emergency change</div>
-        </div>
-        <div style="padding:10px;background:#0f1117;border-radius:8px;font-size:13px">
-          <div style="display:flex;justify-content:space-between"><strong>INC0098290</strong><span class="badge badge-crit">Open</span></div>
-          <div style="color:var(--text2);margin-top:4px">Worker node disk pressure alert</div>
-          <div style="color:var(--text2);font-size:11px;margin-top:2px">Created 8m ago &bull; Investigating</div>
-        </div>
+      <h3>Pods with Issues (Live)</h3>
+      <div id="pod-issues" style="display:flex;flex-direction:column;gap:10px">
+        <div class="loading">Loading...</div>
       </div>
     </div>
 
     <!-- Multi-Cluster (ACM) -->
     <div class="card">
       <h3>Multi-Cluster Management (ACM)</h3>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <div style="padding:10px;background:#0f1117;border-radius:8px;font-size:13px">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <strong>production-ocp</strong>
-            <span class="badge badge-ok">Available</span>
-          </div>
-          <div style="color:var(--text2);margin-top:4px">Hub Cluster &bull; v4.15.2 &bull; 6 nodes</div>
-          <div class="progress-bar"><div class="progress-fill" style="width:68%;background:var(--ok)"></div></div>
-          <div style="color:var(--text2);font-size:11px;margin-top:2px">Resource utilization: 68%</div>
-        </div>
-        <div style="padding:10px;background:#0f1117;border-radius:8px;font-size:13px">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <strong>staging-ocp</strong>
-            <span class="badge badge-ok">Available</span>
-          </div>
-          <div style="color:var(--text2);margin-top:4px">Managed &bull; v4.15.1 &bull; 3 nodes</div>
-          <div class="progress-bar"><div class="progress-fill" style="width:42%;background:var(--ok)"></div></div>
-          <div style="color:var(--text2);font-size:11px;margin-top:2px">Resource utilization: 42%</div>
-        </div>
-        <div style="padding:10px;background:#0f1117;border-radius:8px;font-size:13px">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <strong>dev-ocp</strong>
-            <span class="badge badge-warn">Degraded</span>
-          </div>
-          <div style="color:var(--text2);margin-top:4px">Managed &bull; v4.14.8 &bull; 3 nodes</div>
-          <div class="progress-bar"><div class="progress-fill" style="width:85%;background:var(--warn)"></div></div>
-          <div style="color:var(--text2);font-size:11px;margin-top:2px">Resource utilization: 85%</div>
-        </div>
-        <div style="padding:10px;background:#0f1117;border-radius:8px;font-size:13px">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <strong>edge-site-01</strong>
-            <span class="badge badge-ok">Available</span>
-          </div>
-          <div style="color:var(--text2);margin-top:4px">Managed &bull; v4.15.2 &bull; 1 node (SNO)</div>
-          <div class="progress-bar"><div class="progress-fill" style="width:31%;background:var(--ok)"></div></div>
-          <div style="color:var(--text2);font-size:11px;margin-top:2px">Resource utilization: 31%</div>
-        </div>
+      <div id="acm-clusters" style="display:flex;flex-direction:column;gap:10px">
+        <div class="loading">Loading...</div>
       </div>
     </div>
   </div>
@@ -363,53 +274,306 @@ tr:hover td{background:#ffffff06}
 </div>
 
 <script>
-const sampleResponses = {
-  'cluster': 'Cluster is running OpenShift v4.15.2 on the stable-4.15 channel. Platform: AWS. 6 nodes total (3 control-plane, 3 workers). 1 worker node (worker-2) is currently NotReady due to disk pressure.',
-  'node': 'There are 6 nodes in the cluster:\n- 3 control-plane nodes (all Ready)\n- 3 worker nodes (2 Ready, 1 NotReady)\n\nworker-2 has disk pressure. Consider draining and investigating disk usage.',
-  'pod': 'Found 2 problematic pods:\n1. api-gateway-7f8d5 (CrashLoopBackOff)\n2. cache-redis-0 (OOMKilled)\n\nUse diagnose_pod_issues for detailed analysis.',
-  'fix': 'To fix this issue, I will:\n1. Create a ServiceNow change request\n2. Wait for approval\n3. Execute the remediation via Ansible\n\nShall I proceed?',
-  'emergency': 'Emergency fix initiated:\n1. Emergency change CHG0012850 created in ServiceNow\n2. Fix applied immediately\n3. Notification sent to ops team\n\nMonitoring for recovery...',
-  'default': 'I can help with that! Let me query the cluster for the information you need. Use commands like "show nodes", "diagnose pods in [namespace]", "cluster health", or "fix [issue]".'
-};
+// ---------------------------------------------------------------------------
+// Configuration — the dashboard fetches from the MCP server's REST API
+// ---------------------------------------------------------------------------
+// When served from the same cluster, use the MCP server's internal service.
+// Override with a <meta> tag or set window.MCP_API_URL before this script.
+const MCP_API = window.MCP_API_URL || '/api';
 
+// Auto-refresh interval (ms)
+const REFRESH_INTERVAL = 30000;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function timeAgo(dateStr) {
+  if (!dateStr) return '';
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  return Math.floor(hrs / 24) + 'd ago';
+}
+
+function formatMem(memStr) {
+  if (!memStr) return '0';
+  if (memStr.endsWith('Ki')) return Math.round(parseInt(memStr) / 1048576) + 'Gi';
+  if (memStr.endsWith('Mi')) return Math.round(parseInt(memStr) / 1024) + 'Gi';
+  if (memStr.endsWith('Gi')) return memStr;
+  return memStr;
+}
+
+async function apiFetch(path) {
+  const res = await fetch(MCP_API.replace(/\/api$/, '') + path);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+function setConnected(ok, label) {
+  const dot = document.getElementById('conn-dot');
+  const lbl = document.getElementById('conn-label');
+  dot.className = ok ? 'dot' : 'dot err';
+  lbl.textContent = label || (ok ? 'MCP Server Connected' : 'Connection Error');
+}
+
+// ---------------------------------------------------------------------------
+// Data loaders
+// ---------------------------------------------------------------------------
+async function loadSummary() {
+  try {
+    const d = await apiFetch('/api/cluster/summary');
+    setConnected(true);
+
+    // Health
+    const el = document.getElementById('m-health');
+    el.textContent = d.cluster.health.charAt(0).toUpperCase() + d.cluster.health.slice(1);
+    el.className = 'metric ' + (d.cluster.health === 'healthy' ? 'ok' : d.cluster.health === 'warning' ? 'warn' : 'crit');
+    document.getElementById('m-health-label').textContent =
+      'OpenShift ' + d.cluster.version + ' \u2022 ' + d.cluster.channel;
+
+    // Nodes
+    document.getElementById('m-nodes').textContent = d.nodes.ready + ' / ' + d.nodes.total;
+    document.getElementById('m-nodes').className = 'metric ' + (d.nodes.ready === d.nodes.total ? 'ok' : 'warn');
+    document.getElementById('m-nodes-label').textContent =
+      'Ready \u2022 ' + d.nodes.totalCPU + ' CPU \u2022 ' + d.nodes.totalMemGi + ' Gi Memory';
+
+    // Namespaces
+    document.getElementById('m-ns').textContent = d.namespaces.total;
+    document.getElementById('m-ns-label').textContent =
+      d.namespaces.user + ' user projects \u2022 ' + d.namespaces.system + ' system';
+
+    // Operators
+    const opsEl = document.getElementById('m-ops');
+    opsEl.textContent = d.operators.healthy + ' / ' + d.operators.total;
+    opsEl.className = 'metric ' + (d.operators.degraded === 0 ? 'ok' : 'crit');
+    document.getElementById('m-ops-label').textContent =
+      d.operators.degraded === 0
+        ? 'All operators available'
+        : d.operators.degraded + ' degraded: ' + d.operators.degradedNames.join(', ');
+
+    // Cluster name in header
+    document.getElementById('cluster-name').innerHTML =
+      'Cluster: <strong>' + esc(d.cluster.version) + '</strong>';
+
+  } catch (err) {
+    setConnected(false, 'Error: ' + err.message);
+    console.error('loadSummary:', err);
+  }
+}
+
+async function loadNodes() {
+  const tbody = document.getElementById('node-table');
+  try {
+    const nodes = await apiFetch('/api/nodes');
+    if (nodes.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-row">No nodes found</td></tr>';
+      return;
+    }
+    tbody.innerHTML = nodes.map(n => `
+      <tr>
+        <td>${esc(n.name)}</td>
+        <td>${n.roles.join(', ') || 'worker'}</td>
+        <td><span class="badge ${n.ready ? 'badge-ok' : 'badge-crit'}">${n.ready ? 'Ready' : 'NotReady'}</span></td>
+        <td>${esc(n.cpu)}</td>
+        <td>${formatMem(n.memory)}</td>
+        <td>${n.pods}</td>
+      </tr>
+    `).join('');
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="6" class="loading">Error loading nodes: ' + esc(err.message) + '</td></tr>';
+  }
+}
+
+async function loadAlerts() {
+  const tbody = document.getElementById('alert-table');
+  const countEl = document.getElementById('alert-count');
+  try {
+    const alerts = await apiFetch('/api/alerts');
+    countEl.textContent = alerts.length > 0 ? '(' + alerts.length + ')' : '';
+    if (alerts.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="color:var(--ok);text-align:center;padding:20px">No active warnings</td></tr>';
+      return;
+    }
+    tbody.innerHTML = alerts.slice(0, 15).map(a => {
+      const badgeClass = a.severity === 'critical' ? 'badge-crit' : 'badge-warn';
+      const label = a.severity.charAt(0).toUpperCase() + a.severity.slice(1);
+      return `
+        <tr>
+          <td><span class="badge ${badgeClass}">${label}</span></td>
+          <td>${esc(a.resource)}${a.namespace ? ' <span style="color:var(--text2)">(' + esc(a.namespace) + ')</span>' : ''}</td>
+          <td>${esc(a.reason)} — ${esc((a.message || '').substring(0, 80))}${a.count > 1 ? ' <span style="color:var(--text2)">(x' + a.count + ')</span>' : ''}</td>
+          <td>${timeAgo(a.lastSeen)}</td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="4" class="loading">Error loading alerts: ' + esc(err.message) + '</td></tr>';
+  }
+}
+
+async function loadPodIssues() {
+  const container = document.getElementById('pod-issues');
+  try {
+    const pods = await apiFetch('/api/pods/issues');
+    if (pods.length === 0) {
+      container.innerHTML = '<div style="color:var(--ok);font-size:13px;padding:8px">No pod issues detected</div>';
+      return;
+    }
+    container.innerHTML = pods.slice(0, 8).map(p => `
+      <div style="padding:10px;background:#0f1117;border-radius:8px;font-size:13px">
+        <div style="display:flex;justify-content:space-between">
+          <strong>${esc(p.name)}</strong>
+          <span class="badge badge-crit">${esc(p.phase || 'Issue')}</span>
+        </div>
+        <div style="color:var(--text2);margin-top:4px">Namespace: ${esc(p.namespace)}</div>
+        ${p.issues.map(i => `
+          <div style="color:var(--crit);font-size:12px;margin-top:2px">
+            ${esc(i.container)}: ${esc(i.reason)}${i.restarts > 0 ? ' (' + i.restarts + ' restarts)' : ''}
+          </div>
+        `).join('')}
+      </div>
+    `).join('');
+  } catch (err) {
+    container.innerHTML = '<div class="loading">Error: ' + esc(err.message) + '</div>';
+  }
+}
+
+async function loadACMClusters() {
+  const container = document.getElementById('acm-clusters');
+  try {
+    const clusters = await apiFetch('/api/acm/clusters');
+    if (clusters.length === 0) {
+      container.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:8px">ACM not detected or no managed clusters</div>';
+      return;
+    }
+    container.innerHTML = clusters.map(c => {
+      const badgeClass = c.available ? 'badge-ok' : 'badge-warn';
+      const label = c.available ? 'Available' : 'Unavailable';
+      return `
+        <div style="padding:10px;background:#0f1117;border-radius:8px;font-size:13px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <strong>${esc(c.name)}</strong>
+            <span class="badge ${badgeClass}">${label}</span>
+          </div>
+          <div style="color:var(--text2);margin-top:4px">
+            ${c.kubernetesVersion ? 'v' + esc(c.kubernetesVersion) : 'Version unknown'}
+            ${c.capacity ? ' \u2022 CPU: ' + esc(c.capacity.cpu || '?') + ' \u2022 Mem: ' + formatMem(c.capacity.memory) : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    container.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:8px">ACM not available or not installed</div>';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Refresh all
+// ---------------------------------------------------------------------------
+async function refreshAll() {
+  document.getElementById('last-updated').textContent = 'Refreshing...';
+  await Promise.all([
+    loadSummary(),
+    loadNodes(),
+    loadAlerts(),
+    loadPodIssues(),
+    loadACMClusters(),
+  ]);
+  document.getElementById('last-updated').textContent =
+    'Updated: ' + new Date().toLocaleTimeString();
+}
+
+// Initial load
+refreshAll();
+
+// Auto-refresh
+setInterval(refreshAll, REFRESH_INTERVAL);
+
+// ---------------------------------------------------------------------------
+// Chat (simulation — uses live data context)
+// ---------------------------------------------------------------------------
 function sendMessage() {
   const input = document.getElementById('chat-input');
   const text = input.value.trim();
   if (!text) return;
   const messages = document.getElementById('chat-messages');
-  messages.innerHTML += `<div class="msg user">${escapeHtml(text)}</div>`;
+  messages.innerHTML += '<div class="msg user">' + esc(text) + '</div>';
   input.value = '';
-  const lower = text.toLowerCase();
-  let response = sampleResponses.default;
-  if (lower.includes('cluster')) response = sampleResponses.cluster;
-  else if (lower.includes('node')) response = sampleResponses.node;
-  else if (lower.includes('pod') || lower.includes('namespace')) response = sampleResponses.pod;
-  else if (lower.includes('fix') || lower.includes('change') || lower.includes('ticket')) response = sampleResponses.fix;
-  else if (lower.includes('emergency')) response = sampleResponses.emergency;
-  setTimeout(() => {
-    messages.innerHTML += `<div class="msg ai">${response.replace(/\n/g,'<br>')}<br><span class="tool-tag">MCP Tool Called</span></div>`;
-    messages.scrollTop = messages.scrollHeight;
-  }, 500);
+
+  messages.innerHTML += '<div class="msg ai" style="color:var(--text2)">Thinking...</div>';
   messages.scrollTop = messages.scrollHeight;
+
+  // Simulate calling MCP tools based on keywords
+  setTimeout(async () => {
+    const last = messages.querySelector('.msg.ai:last-child');
+    const lower = text.toLowerCase();
+    let response = '';
+    let tools = [];
+
+    try {
+      if (lower.includes('node')) {
+        const nodes = await apiFetch('/api/nodes');
+        const ready = nodes.filter(n => n.ready).length;
+        response = `There are <strong>${nodes.length}</strong> nodes in the cluster.<br>` +
+          `<strong>${ready}</strong> Ready, <strong>${nodes.length - ready}</strong> NotReady.<br><br>` +
+          nodes.map(n => `\u2022 <strong>${esc(n.name)}</strong> — ${n.roles.join(',')} — ${n.ready ? '<span style="color:var(--ok)">Ready</span>' : '<span style="color:var(--crit)">NotReady</span>'} — ${n.pods} pods`).join('<br>');
+        tools = ['list_nodes'];
+      } else if (lower.includes('pod') || lower.includes('issue') || lower.includes('problem')) {
+        const issues = await apiFetch('/api/pods/issues');
+        if (issues.length === 0) {
+          response = 'No pod issues detected across the cluster.';
+        } else {
+          response = `Found <strong>${issues.length}</strong> pods with issues:<br><br>` +
+            issues.slice(0, 5).map((p, i) => `${i + 1}. <strong>${esc(p.name)}</strong> in ${esc(p.namespace)}<br>&nbsp;&nbsp;&nbsp;${p.issues.map(i2 => esc(i2.reason)).join(', ')}`).join('<br>');
+        }
+        tools = ['diagnose_pod_issues', 'list_pods'];
+      } else if (lower.includes('cluster') || lower.includes('health') || lower.includes('status')) {
+        const s = await apiFetch('/api/cluster/summary');
+        response = `Cluster is running <strong>OpenShift ${esc(s.cluster.version)}</strong> on channel ${esc(s.cluster.channel)}.<br><br>` +
+          `\u2022 Health: <strong>${s.cluster.health}</strong><br>` +
+          `\u2022 Nodes: ${s.nodes.ready}/${s.nodes.total} ready (${s.nodes.totalCPU} CPU, ${s.nodes.totalMemGi}Gi RAM)<br>` +
+          `\u2022 Namespaces: ${s.namespaces.total} (${s.namespaces.user} user)<br>` +
+          `\u2022 Operators: ${s.operators.healthy}/${s.operators.total} healthy` +
+          (s.operators.degraded > 0 ? ` — degraded: ${s.operators.degradedNames.join(', ')}` : '');
+        tools = ['get_cluster_info', 'cluster_health_check'];
+      } else if (lower.includes('namespace')) {
+        const ns = await apiFetch('/api/namespaces');
+        response = `There are <strong>${ns.length}</strong> user namespaces:<br><br>` +
+          ns.slice(0, 10).map(n => `\u2022 <strong>${esc(n.name)}</strong> — ${n.status}`).join('<br>') +
+          (ns.length > 10 ? `<br>... and ${ns.length - 10} more` : '');
+        tools = ['list_namespaces'];
+      } else {
+        response = 'I can help with that! Try asking about:<br><br>' +
+          '\u2022 "cluster health" — overall cluster status<br>' +
+          '\u2022 "show nodes" — node details and status<br>' +
+          '\u2022 "pod issues" — pods with problems<br>' +
+          '\u2022 "namespaces" — project listing<br>';
+        tools = [];
+      }
+    } catch (err) {
+      response = 'Error querying cluster: ' + esc(err.message);
+    }
+
+    last.innerHTML = response +
+      (tools.length > 0 ? '<br>' + tools.map(t => '<span class="tool-tag">' + t + '</span>').join(' ') : '');
+    messages.scrollTop = messages.scrollHeight;
+  }, 300);
 }
 
+// ---------------------------------------------------------------------------
+// Emergency form
+// ---------------------------------------------------------------------------
 function showEmergency(type) {
   const form = document.getElementById('emergency-form');
   const title = document.getElementById('emergency-title');
   const names = {restart_pod:'Restart Pod',scale_deployment:'Scale Deployment',cordon_node:'Cordon Node',drain_node:'Drain Node',rollback_deployment:'Rollback Deployment'};
   title.textContent = 'Emergency: ' + (names[type] || type);
   form.style.display = 'block';
-}
-
-function refreshDashboard() {
-  document.querySelector('.dot').style.background = '#f59e0b';
-  setTimeout(() => { document.querySelector('.dot').style.background = '#22c55e'; }, 1000);
-}
-
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
 }
 </script>
 
