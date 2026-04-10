@@ -75,6 +75,15 @@ tr:hover td{background:#ffffff06}
 .msg .chat-list{margin:4px 0 4px 8px}
 .msg .chat-list-item{padding:2px 0;display:flex;align-items:flex-start;gap:6px}
 .msg .chat-list-item::before{content:'\2022';color:var(--text2);flex-shrink:0;margin-top:0}
+.msg .apply-btn{display:inline-block;background:#e04040;color:#fff;border:none;border-radius:6px;padding:6px 16px;font-size:12px;font-weight:600;cursor:pointer;margin:6px 4px 6px 0;transition:all .2s}
+.msg .apply-btn:hover{background:#c03030;transform:translateY(-1px)}
+.msg .apply-btn:disabled{background:#555;cursor:not-allowed;transform:none}
+.msg .apply-btn.success{background:var(--ok)}
+.msg .apply-btn.failed{background:var(--crit)}
+.msg .apply-result{font-size:11px;padding:4px 8px;margin:2px 0 6px;border-radius:4px;display:inline-block}
+.msg .apply-result.ok{background:#22c55e22;color:var(--ok)}
+.msg .apply-result.err{background:#ef444422;color:var(--crit)}
+.msg .analysis-text{font-size:12px;color:var(--text2);padding:4px 12px;margin:2px 0;border-left:2px solid var(--accent2);line-height:1.5}
 .chat-input{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border)}
 .chat-input input{flex:1;background:#0f1117;border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;outline:none}
 .chat-input input:focus{border-color:var(--accent)}
@@ -589,6 +598,14 @@ function md(text) {
     return '\n<div class="summary-bar">' + parts.join('') + '</div>\n';
   });
 
+  // Apply button: @@APPLY_BTN|action|name|namespace|label@@
+  html = html.replace(/@@APPLY_BTN\|([^|]*)\|([^|]*)\|([^|]*)\|([^@]*)@@/g, function(m, action, name, ns, label) {
+    const eid = 'apply-' + Math.random().toString(36).substr(2, 6);
+    return '\n<div><button class="apply-btn" id="' + eid + '" onclick="applyFix(\'' + eid + '\',\'' +
+      action + '\',\'' + name + '\',\'' + ns + '\')">' + label +
+      '</button><span id="' + eid + '-result"></span></div>\n';
+  });
+
   // Bold
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   // Inline code
@@ -616,6 +633,45 @@ function copyCmd(id) {
     const btn = el.parentElement.querySelector('.fix-copy');
     if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 2000); }
   });
+}
+
+// Apply fix directly on the cluster via /api/execute
+async function applyFix(btnId, action, name, ns) {
+  const btn = document.getElementById(btnId);
+  const resultEl = document.getElementById(btnId + '-result');
+  if (!btn) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Applying...';
+  btn.className = 'apply-btn';
+  if (resultEl) resultEl.innerHTML = '';
+
+  try {
+    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: action, pod: name, namespace: ns, deployment: name }),
+    });
+    const data = await resp.json();
+
+    if (data.success) {
+      btn.textContent = 'Applied!';
+      btn.className = 'apply-btn success';
+      if (resultEl) resultEl.innerHTML = '<span class="apply-result ok">' + esc(data.message) + '</span>';
+      // Refresh dashboard data after fix
+      setTimeout(refreshAll, 3000);
+    } else {
+      btn.textContent = 'Failed';
+      btn.className = 'apply-btn failed';
+      if (resultEl) resultEl.innerHTML = '<span class="apply-result err">' + esc(data.error) + '</span>';
+      setTimeout(() => { btn.disabled = false; btn.textContent = 'Retry'; btn.className = 'apply-btn'; }, 5000);
+    }
+  } catch (err) {
+    btn.textContent = 'Error';
+    btn.className = 'apply-btn failed';
+    if (resultEl) resultEl.innerHTML = '<span class="apply-result err">' + esc(err.message) + '</span>';
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Retry'; btn.className = 'apply-btn'; }, 5000);
+  }
 }
 
 async function sendMessage() {

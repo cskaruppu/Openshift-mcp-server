@@ -17,7 +17,7 @@
  *   - "none"       — Built-in rule-based analysis (no external LLM)
  */
 
-import { ocpGet } from "../utils/openshift-client.js";
+import { ocpGet, ocpDelete, ocpPatch } from "../utils/openshift-client.js";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -122,6 +122,16 @@ async function gatherClusterContext(userMessage) {
             namespace: p.metadata.namespace,
             phase: p.status?.phase,
             node: p.spec?.nodeName,
+            images: (p.spec?.containers || []).map((c) => c.image),
+            resourceLimits: (p.spec?.containers || []).map((c) => ({
+              name: c.name,
+              memLimit: c.resources?.limits?.memory,
+              memRequest: c.resources?.requests?.memory,
+              cpuLimit: c.resources?.limits?.cpu,
+            })),
+            ownerKind: p.metadata?.ownerReferences?.[0]?.kind,
+            ownerName: p.metadata?.ownerReferences?.[0]?.name,
+            events: [], // populated in secondary pass
             containers: (p.status?.containerStatuses || [])
               .filter((c) => !c.ready || !c.state?.running)
               .map((c) => ({
@@ -129,6 +139,8 @@ async function gatherClusterContext(userMessage) {
                 ready: c.ready,
                 restarts: c.restartCount,
                 state: c.state?.waiting?.reason || c.state?.terminated?.reason || (c.state?.running ? "Running" : "Unknown"),
+                exitCode: c.state?.terminated?.exitCode ?? c.lastState?.terminated?.exitCode,
+                lastReason: c.lastState?.terminated?.reason,
               })),
           }))
           .filter((p) => p.containers.length > 0);
@@ -259,6 +271,35 @@ async function gatherClusterContext(userMessage) {
   }
 
   await Promise.all(tasks);
+
+  // Secondary pass: fetch events for problem pods to understand root causes
+  if (context.problemPods && context.problemPods.length > 0) {
+    const problemNs = [...new Set(context.problemPods.map((p) => p.namespace))];
+    await Promise.all(
+      problemNs.map((ns) =>
+        ocpGet(`/api/v1/namespaces/${ns}/events`)
+          .then((d) => {
+            (d.items || [])
+              .filter((e) => e.involvedObject.kind === "Pod" && e.type === "Warning")
+              .sort((a, b) => new Date(b.lastTimestamp || 0) - new Date(a.lastTimestamp || 0))
+              .forEach((evt) => {
+                const pod = context.problemPods.find(
+                  (p) => p.name === evt.involvedObject.name && p.namespace === ns
+                );
+                if (pod && pod.events.length < 5) {
+                  pod.events.push({
+                    reason: evt.reason,
+                    message: evt.message,
+                    count: evt.count,
+                  });
+                }
+              });
+          })
+          .catch(() => {})
+      )
+    );
+  }
+
   return context;
 }
 
@@ -367,7 +408,57 @@ function builtInAnalysis(userMessage, ctx) {
   const filter = ctx.queryFilter; // Specific issue type the user asked about
 
   // -------------------------------------------------------------------------
-  // Helper: render a single pod issue card + its fix commands
+  // Root cause analysis — explain WHY the pod is failing
+  // -------------------------------------------------------------------------
+  function analyzeRootCause(p) {
+    const c0 = p.containers[0];
+    const state = c0?.state;
+    const events = p.events || [];
+    const lines = [];
+
+    if (state === "ImagePullBackOff" || state === "ErrImagePull") {
+      lines.push(`**Image:** \`${p.images?.[0] || "unknown"}\``);
+      const pullEvt = events.find((e) => e.reason === "Failed" && e.message?.toLowerCase().includes("pull"));
+      if (pullEvt) {
+        lines.push(`**Error:** ${pullEvt.message.substring(0, 200)}`);
+      } else {
+        lines.push("**Cause:** Image cannot be pulled — check image name, tag, registry auth, or network connectivity.");
+      }
+      lines.push("**Likely fix:** Correct the image reference in the deployment, or create/update the imagePullSecret.");
+    } else if (state === "CrashLoopBackOff") {
+      lines.push(`**Restarts:** ${c0.restarts} times`);
+      if (c0.exitCode !== undefined && c0.exitCode !== null) {
+        const exitMsg = c0.exitCode === 1 ? "application error" : c0.exitCode === 137 ? "killed (OOM or signal)" : c0.exitCode === 139 ? "segfault" : c0.exitCode === 143 ? "terminated gracefully" : `exit code ${c0.exitCode}`;
+        lines.push(`**Last exit:** ${exitMsg} (code ${c0.exitCode})`);
+      }
+      if (c0.lastReason) lines.push(`**Last termination:** ${c0.lastReason}`);
+      const backoffEvt = events.find((e) => e.reason === "BackOff");
+      if (backoffEvt) lines.push(`**Event:** ${backoffEvt.message?.substring(0, 150)}`);
+      lines.push("**Likely fix:** Check container logs for the crash reason, fix app code/config, then restart.");
+    } else if (state === "OOMKilled") {
+      const lim = p.resourceLimits?.[0];
+      if (lim?.memLimit) {
+        lines.push(`**Memory limit:** ${lim.memLimit}${lim.memRequest ? ` (request: ${lim.memRequest})` : ""}`);
+      }
+      lines.push("**Cause:** Container exceeded its memory limit and was killed by the kernel.");
+      lines.push("**Likely fix:** Increase memory limits or investigate memory leaks in the application.");
+    } else if (state === "CreateContainerConfigError") {
+      const cfgEvt = events.find((e) => e.reason === "Failed" && e.message?.includes("configmap"));
+      const secEvt = events.find((e) => e.reason === "Failed" && e.message?.includes("secret"));
+      if (cfgEvt) lines.push(`**Error:** Missing ConfigMap — ${cfgEvt.message.substring(0, 150)}`);
+      else if (secEvt) lines.push(`**Error:** Missing Secret — ${secEvt.message.substring(0, 150)}`);
+      else lines.push("**Cause:** Container config error — a referenced ConfigMap, Secret, or volume may not exist.");
+    } else {
+      if (events.length > 0) {
+        lines.push(`**Event:** ${events[0].message?.substring(0, 200)}`);
+      }
+      lines.push(`**State:** ${state}`);
+    }
+    return lines.join("\n");
+  }
+
+  // -------------------------------------------------------------------------
+  // Render a single pod: issue card + analysis + fix commands + apply button
   // -------------------------------------------------------------------------
   function renderPodWithFix(p, fixType) {
     const detail = p.containers
@@ -375,17 +466,25 @@ function builtInAnalysis(userMessage, ctx) {
       .join(", ");
     parts.push(`@@POD_ISSUE|${p.name}|${p.namespace}|${detail}@@`);
 
-    // Generate fix commands specific to THIS pod
+    // Root cause analysis
+    const analysis = analyzeRootCause(p);
+    if (analysis) parts.push(analysis);
+
+    // Fix commands + Apply button specific to THIS pod
     const n = p.name;
     const ns = p.namespace;
     if (fixType === "CrashLoopBackOff") {
       parts.push("```" + `# Fix: ${n}\noc logs ${n} -n ${ns} --previous\noc describe pod ${n} -n ${ns}\noc delete pod ${n} -n ${ns}` + "```");
+      parts.push(`@@APPLY_BTN|delete_pod|${n}|${ns}|Restart Pod@@`);
     } else if (fixType === "ImagePullBackOff") {
-      parts.push("```" + `# Fix: ${n}\noc get pod ${n} -n ${ns} -o jsonpath='{.spec.containers[*].image}'\noc get pod ${n} -n ${ns} -o jsonpath='{.spec.imagePullSecrets}'\noc describe pod ${n} -n ${ns} | grep -A5 Events` + "```");
+      parts.push("```" + `# Fix: ${n}\noc get pod ${n} -n ${ns} -o jsonpath='{.spec.containers[*].image}'\noc describe pod ${n} -n ${ns} | grep -A10 Events` + "```");
+      parts.push(`@@APPLY_BTN|delete_pod|${n}|${ns}|Restart Pod@@`);
     } else if (fixType === "OOMKilled") {
-      parts.push("```" + `# Fix: ${n}\noc get pod ${n} -n ${ns} -o jsonpath='{.spec.containers[*].resources}'\noc set resources deployment/$(oc get pod ${n} -n ${ns} -o jsonpath='{.metadata.ownerReferences[0].name}') -n ${ns} --limits=memory=512Mi --requests=memory=256Mi` + "```");
+      parts.push("```" + `# Fix: ${n}\noc get pod ${n} -n ${ns} -o jsonpath='{.spec.containers[*].resources}'` + "```");
+      parts.push(`@@APPLY_BTN|delete_pod|${n}|${ns}|Restart Pod@@`);
     } else {
       parts.push("```" + `# Diagnose: ${n}\noc describe pod ${n} -n ${ns}\noc logs ${n} -n ${ns}` + "```");
+      parts.push(`@@APPLY_BTN|delete_pod|${n}|${ns}|Restart Pod@@`);
     }
   }
 
@@ -626,5 +725,73 @@ export async function handleChatAPI(req, res) {
   } catch (err) {
     console.error("Chat API error:", err);
     json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/execute — apply fixes directly on the cluster
+// Supports: delete_pod, restart_deployment, scale_deployment
+// ---------------------------------------------------------------------------
+export async function handleExecuteAPI(req, res) {
+  try {
+    const body = await readBody(req);
+    const { action, pod, namespace, deployment, replicas } = body;
+
+    if (!action || !namespace) {
+      return json(res, 400, { success: false, error: "Missing action or namespace" });
+    }
+
+    console.log(`Execute API: action=${action} pod=${pod} ns=${namespace} dep=${deployment}`);
+
+    if (action === "delete_pod") {
+      if (!pod) return json(res, 400, { success: false, error: "Missing pod name" });
+      await ocpDelete(`/api/v1/namespaces/${namespace}/pods/${pod}`);
+      return json(res, 200, {
+        success: true,
+        message: `Pod '${pod}' deleted in '${namespace}'. The owning controller will recreate it.`,
+      });
+    }
+
+    if (action === "restart_deployment") {
+      const dep = deployment || pod;
+      if (!dep) return json(res, 400, { success: false, error: "Missing deployment name" });
+      await ocpPatch(
+        `/apis/apps/v1/namespaces/${namespace}/deployments/${dep}`,
+        {
+          spec: {
+            template: {
+              metadata: {
+                annotations: {
+                  "kubectl.kubernetes.io/restartedAt": new Date().toISOString(),
+                },
+              },
+            },
+          },
+        }
+      );
+      return json(res, 200, {
+        success: true,
+        message: `Deployment '${dep}' restarted in '${namespace}'. New pods will be rolled out.`,
+      });
+    }
+
+    if (action === "scale_deployment") {
+      const dep = deployment || pod;
+      const rep = parseInt(replicas, 10);
+      if (!dep || isNaN(rep)) return json(res, 400, { success: false, error: "Missing deployment or replicas" });
+      await ocpPatch(
+        `/apis/apps/v1/namespaces/${namespace}/deployments/${dep}`,
+        { spec: { replicas: rep } }
+      );
+      return json(res, 200, {
+        success: true,
+        message: `Deployment '${dep}' scaled to ${rep} replicas in '${namespace}'.`,
+      });
+    }
+
+    json(res, 400, { success: false, error: `Unknown action: ${action}` });
+  } catch (err) {
+    console.error("Execute API error:", err);
+    json(res, 500, { success: false, error: err.message });
   }
 }

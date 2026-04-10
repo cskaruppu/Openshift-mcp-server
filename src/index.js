@@ -24,7 +24,7 @@ import { registerACMTools } from "./tools/acm.js";
 import { registerDashboardTools } from "./tools/dashboard.js";
 import { registerWorkloadTools } from "./tools/workloads.js";
 import { handleDashboardAPI } from "./services/dashboard-api.js";
-import { handleChatAPI } from "./services/chat-api.js";
+import { handleChatAPI, handleExecuteAPI } from "./services/chat-api.js";
 
 function createMcpServer() {
   const server = new McpServer({
@@ -95,6 +95,12 @@ async function startSSE() {
     // LLM Chat API — /api/chat (POST)
     if (req.method === "POST" && url.pathname === "/api/chat") {
       await handleChatAPI(req, res);
+      return;
+    }
+
+    // Execute fix API — /api/execute (POST)
+    if (req.method === "POST" && url.pathname === "/api/execute") {
+      await handleExecuteAPI(req, res);
       return;
     }
 
