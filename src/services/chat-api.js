@@ -68,6 +68,24 @@ async function gatherClusterContext(userMessage) {
   else if (lower.match(/config.?error|createcontainer/)) context.queryFilter = "CreateContainerConfigError";
   else if (lower.match(/\bnot.?ready|notready/)) context.queryFilter = "NotReady";
 
+  // Detect specific namespace early — check multiple patterns
+  // "in trident namespace", "under trident namespace", "namespace trident",
+  // "ns trident", "trident namespace", "in trident", "under trident"
+  // Extract namespace name — try multiple patterns in priority order
+  // "in/under/from/for trident namespace", "in namespace trident", "trident namespace", "namespace trident"
+  const nsMatch = lower.match(
+    /(?:in|under|from|for|of)\s+(?:namespace|ns|project)?\s*["']?([a-z0-9][-a-z0-9]*)["']?(?:\s+namespace)?/
+  ) || lower.match(
+    /\b([a-z0-9][-a-z0-9]+)\s+(?:namespace|ns|project)\b/
+  ) || lower.match(
+    /(?:namespace|ns|project)\s+["']?([a-z0-9][-a-z0-9]+)["']?/
+  );
+
+  // If a specific namespace is mentioned, that takes priority
+  if (nsMatch) {
+    context.intents.push("namespace_specific");
+  }
+
   // Intent: pod count / pod summary (how many pods, count, running, completed, etc.)
   if (lower.match(/how many.*pod|count.*pod|pod.*count|number.*pod|pod.*number|pod.*running|running.*pod|pod.*complet|complet.*pod|pod.*succeed|succeed.*pod|pod.*status|status.*pod|pod.*summary|summary.*pod|total.*pod|pod.*total|list.*pod.*status/)) {
     context.intents.push("pod_summary");
@@ -93,8 +111,8 @@ async function gatherClusterContext(userMessage) {
     context.intents.push("cluster_health");
   }
 
-  // Intent: namespaces
-  if (lower.match(/namespace|project|\bns\b/)) {
+  // Intent: namespaces (list all namespaces)
+  if (lower.match(/list.*namespace|all.*namespace|show.*namespace|namespace.*list/) && !nsMatch) {
     context.intents.push("namespaces");
   }
 
@@ -125,7 +143,6 @@ async function gatherClusterContext(userMessage) {
 
   // Intent: diagnose / troubleshoot
   if (lower.match(/diagnos|troubleshoot|debug|investig|analyz|analyse|check/)) {
-    // If they say "diagnose" without specifying what, check for cluster_health
     if (!context.intents.includes("pod_issues") && !context.intents.includes("nodes")) {
       context.intents.push("cluster_health");
     }
@@ -223,7 +240,7 @@ async function gatherClusterContext(userMessage) {
     );
   }
 
-  // Namespaces
+  // Namespaces (list all)
   if (context.intents.includes("namespaces")) {
     tasks.push(
       ocpGet("/api/v1/namespaces").then((d) => {
@@ -240,7 +257,6 @@ async function gatherClusterContext(userMessage) {
   }
 
   // Specific namespace pods/deployments
-  const nsMatch = lower.match(/(?:in|namespace|ns)\s+["']?([a-z0-9-]+)["']?/);
   if (nsMatch) {
     const ns = nsMatch[1];
     tasks.push(
@@ -323,7 +339,7 @@ async function gatherClusterContext(userMessage) {
     );
   }
 
-  // Services, routes
+  // Services, routes (need a specific namespace)
   if (context.intents.includes("services") && nsMatch) {
     const ns = nsMatch[1];
     tasks.push(
@@ -620,6 +636,95 @@ function builtInAnalysis(userMessage, ctx) {
   // -------------------------------------------------------------------------
   const intents = ctx.intents || [];
 
+  // --- NAMESPACE-SPECIFIC: always takes priority when user mentions a namespace ---
+  if (intents.includes("namespace_specific") && ctx.namespacePods) {
+    const ns = ctx.targetNamespace;
+    const allNsPods = ctx.namespacePods;
+    const phaseCount = {};
+    allNsPods.forEach((p) => { phaseCount[p.phase] = (phaseCount[p.phase] || 0) + 1; });
+    const running = phaseCount["Running"] || 0;
+    const succeeded = phaseCount["Succeeded"] || 0;
+    const failed = phaseCount["Failed"] || 0;
+    const pending = phaseCount["Pending"] || 0;
+
+    // If user is asking about counts/summary in this namespace
+    if (intents.includes("pod_summary")) {
+      parts.push(`### Pods in \`${ns}\``);
+      parts.push(`**Total:** ${allNsPods.length} pods`);
+      const summaryParts = [`green:${running} Running`];
+      if (succeeded > 0) summaryParts.push(`green:${succeeded} Completed`);
+      if (failed > 0) summaryParts.push(`red:${failed} Failed`);
+      if (pending > 0) summaryParts.push(`amber:${pending} Pending`);
+      parts.push(`@@SUMMARY|${summaryParts.join("|")}@@`);
+      parts.push(`  - **Running:** ${running}`);
+      parts.push(`  - **Completed/Succeeded:** ${succeeded}`);
+      if (failed > 0) parts.push(`  - **Failed:** ${failed}`);
+      if (pending > 0) parts.push(`  - **Pending:** ${pending}`);
+      Object.entries(phaseCount).forEach(([phase, count]) => {
+        if (!["Running", "Succeeded", "Failed", "Pending"].includes(phase)) {
+          parts.push(`  - **${phase}:** ${count}`);
+        }
+      });
+      // Show issue pods briefly
+      const issuePods = allNsPods.filter((p) => p.phase !== "Running" && p.phase !== "Succeeded" && p.restarts >= 5);
+      if (issuePods.length > 0) {
+        parts.push(`\n**${issuePods.length} pod(s) may need attention:**`);
+        issuePods.forEach((p) => {
+          const containerInfo = p.containers.map((c) => c.state).join(", ");
+          parts.push(`  - **${p.name}** — ${p.phase} — [${containerInfo}]`);
+        });
+      }
+      return parts.join("\n");
+    }
+
+    // If user is asking about pod issues in this namespace
+    if (intents.includes("pod_issues")) {
+      const issuePods = allNsPods.filter((p) =>
+        p.phase === "Failed" || p.phase === "Unknown" ||
+        p.containers.some((c) => c.state !== "Running" && c.state !== "Completed")
+      );
+      parts.push(`### Pod Issues in \`${ns}\``);
+      if (issuePods.length === 0) {
+        parts.push(`[OK] **No pod issues in \`${ns}\`.** All ${allNsPods.length} pods are healthy.`);
+      } else {
+        parts.push(`**${issuePods.length}** pod(s) with issues out of ${allNsPods.length} total:`);
+        issuePods.forEach((p) => {
+          const containerInfo = p.containers.map((c) => c.state).join(", ");
+          parts.push(`@@POD_ISSUE|${p.name}|${ns}|Phase: ${p.phase} — Restarts: ${p.restarts} — [${containerInfo}]@@`);
+        });
+      }
+      return parts.join("\n");
+    }
+
+    // Default: show general namespace overview
+    parts.push(`### Pods in \`${ns}\` (${allNsPods.length})`);
+    const summaryParts = [`green:${running} Running`];
+    if (succeeded > 0) summaryParts.push(`green:${succeeded} Completed`);
+    if (failed > 0) summaryParts.push(`red:${failed} Failed`);
+    if (pending > 0) summaryParts.push(`amber:${pending} Pending`);
+    parts.push(`@@SUMMARY|${summaryParts.join("|")}@@`);
+
+    allNsPods.forEach((p) => {
+      const isOk = p.phase === "Running" && p.restarts < 5;
+      if (!isOk) {
+        const containerInfo = p.containers.map((c) => c.state).join(", ");
+        parts.push(`@@POD_ISSUE|${p.name}|${ns}|Phase: ${p.phase} — Restarts: ${p.restarts} — [${containerInfo}]@@`);
+      } else {
+        parts.push(`  - [OK] **${p.name}** — ${p.phase} — restarts: ${p.restarts}`);
+      }
+    });
+
+    if (ctx.namespaceDeployments && ctx.namespaceDeployments.length > 0) {
+      parts.push(`\n### Deployments in \`${ns}\``);
+      ctx.namespaceDeployments.forEach((d) => {
+        const icon = d.ready === d.replicas ? "[OK]" : "[CRITICAL]";
+        parts.push(`  - ${icon} **${d.name}** — ${d.ready}/${d.replicas} ready`);
+      });
+    }
+
+    return parts.join("\n");
+  }
+
   // --- Pod Summary (how many running, completed, etc.) ---
   if (intents.includes("pod_summary") && !filter) {
     parts.push(`### Pod Summary`);
@@ -762,36 +867,7 @@ function builtInAnalysis(userMessage, ctx) {
     return parts.join("\n");
   }
 
-  // --- Namespace-specific pods ---
-  if (ctx.namespacePods) {
-    parts.push(`### Pods in \`${ctx.targetNamespace}\` (${ctx.namespacePods.length})`);
-    ctx.namespacePods.forEach((p) => {
-      const isOk = p.phase === "Running" && p.restarts < 5;
-      if (!isOk) {
-        const containerInfo = p.containers.map((c) => c.state).join(", ");
-        parts.push(`@@POD_ISSUE|${p.name}|${ctx.targetNamespace}|Phase: ${p.phase} — Restarts: ${p.restarts} — [${containerInfo}]@@`);
-      } else {
-        parts.push(`  - [OK] **${p.name}** — ${p.phase} — restarts: ${p.restarts}`);
-      }
-    });
-  }
-
-  if (ctx.namespaceDeployments) {
-    parts.push(`\n### Deployments in \`${ctx.targetNamespace}\``);
-    ctx.namespaceDeployments.forEach((d) => {
-      const icon = d.ready === d.replicas ? "[OK]" : "[CRITICAL]";
-      parts.push(`  - ${icon} **${d.name}** — ${d.ready}/${d.replicas} ready`);
-    });
-    const unhealthy = ctx.namespaceDeployments.filter((d) => d.ready !== d.replicas);
-    if (unhealthy.length > 0) {
-      parts.push(`\n**Fix — Rollout restart:**`);
-      parts.push("```" + `oc rollout restart deployment/${unhealthy[0].name} -n ${ctx.targetNamespace}\noc rollout status deployment/${unhealthy[0].name} -n ${ctx.targetNamespace}` + "```");
-    }
-  }
-
-  if (ctx.namespacePods || ctx.namespaceDeployments) {
-    return parts.join("\n");
-  }
+  // (namespace-specific queries are handled above by namespace_specific intent)
 
   // --- Deployments ---
   if (intents.includes("deployments") && ctx.deployments) {
