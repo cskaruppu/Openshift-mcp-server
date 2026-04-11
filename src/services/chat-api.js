@@ -55,25 +55,100 @@ async function gatherClusterContext(userMessage) {
   const context = {};
   const tasks = [];
 
-  // Always get summary
+  // -------------------------------------------------------------------------
+  // Intent detection — understand WHAT the user is asking about
+  // -------------------------------------------------------------------------
+  context.intents = [];
+
+  // Specific issue type filters
+  context.queryFilter = null;
+  if (lower.match(/crash\s*loop|crashloop|crash.?back|crashlook|cras.*loop/)) context.queryFilter = "CrashLoopBackOff";
+  else if (lower.match(/image\s*pull|imagepull|errimagepull|image.?pull.?back|pull.?back/)) context.queryFilter = "ImagePullBackOff";
+  else if (lower.match(/oom|out.?of.?memory|oomkill/)) context.queryFilter = "OOMKilled";
+  else if (lower.match(/config.?error|createcontainer/)) context.queryFilter = "CreateContainerConfigError";
+  else if (lower.match(/\bnot.?ready|notready/)) context.queryFilter = "NotReady";
+
+  // Intent: pod count / pod summary (how many pods, count, running, completed, etc.)
+  if (lower.match(/how many.*pod|count.*pod|pod.*count|number.*pod|pod.*number|pod.*running|running.*pod|pod.*complet|complet.*pod|pod.*succeed|succeed.*pod|pod.*status|status.*pod|pod.*summary|summary.*pod|total.*pod|pod.*total|list.*pod.*status/)) {
+    context.intents.push("pod_summary");
+  }
+
+  // Intent: pod issues / failed / problems
+  if (lower.match(/pod.*issue|pod.*problem|pod.*fail|pod.*error|fail.*pod|issue.*pod|problem.*pod|what.*wrong/)) {
+    context.intents.push("pod_issues");
+  }
+
+  // Intent: specific issue type (from queryFilter)
+  if (context.queryFilter) {
+    context.intents.push("pod_issues");
+  }
+
+  // Intent: nodes
+  if (lower.match(/\bnode\b|worker|master|control.?plane/)) {
+    context.intents.push("nodes");
+  }
+
+  // Intent: cluster health / overview
+  if (lower.match(/cluster.*health|health.*cluster|cluster.*overview|overview|cluster.*status/)) {
+    context.intents.push("cluster_health");
+  }
+
+  // Intent: namespaces
+  if (lower.match(/namespace|project|\bns\b/)) {
+    context.intents.push("namespaces");
+  }
+
+  // Intent: deployments
+  if (lower.match(/deploy|scale|replica|rollout|redeploy/)) {
+    context.intents.push("deployments");
+  }
+
+  // Intent: events / alerts
+  if (lower.match(/event|alert|warn/)) {
+    context.intents.push("events");
+  }
+
+  // Intent: operators
+  if (lower.match(/operator|degrad/)) {
+    context.intents.push("operators");
+  }
+
+  // Intent: services / routes
+  if (lower.match(/service|route|endpoint|ingress|url/)) {
+    context.intents.push("services");
+  }
+
+  // Intent: restart
+  if (lower.match(/restart/)) {
+    context.intents.push("pod_issues");
+  }
+
+  // Intent: diagnose / troubleshoot
+  if (lower.match(/diagnos|troubleshoot|debug|investig|analyz|analyse|check/)) {
+    // If they say "diagnose" without specifying what, check for cluster_health
+    if (!context.intents.includes("pod_issues") && !context.intents.includes("nodes")) {
+      context.intents.push("cluster_health");
+    }
+  }
+
+  // If no intent detected, default to a help response
+  if (context.intents.length === 0) {
+    context.intents.push("help");
+  }
+
+  // -------------------------------------------------------------------------
+  // Fetch ONLY the data needed for detected intents
+  // -------------------------------------------------------------------------
+
+  // Always get cluster version (it's lightweight)
   tasks.push(
     ocpGet("/apis/config.openshift.io/v1/clusterversions/version")
       .then((d) => { context.clusterVersion = d.status?.desired?.version; context.channel = d.spec?.channel; })
       .catch(() => {})
   );
 
-  // Detect what specific issue type the user is asking about
-  context.queryFilter = null;
-  if (lower.match(/crash\s*loop|crashloop|crash.?back|crashlook|cras.*loop/)) context.queryFilter = "CrashLoopBackOff";
-  else if (lower.match(/image\s*pull|imagepull|errimagepull|image.?pull.?back|pull.?back/)) context.queryFilter = "ImagePullBackOff";
-  else if (lower.match(/oom|out.?of.?memory|oomkill/)) context.queryFilter = "OOMKilled";
-  else if (lower.match(/\bpending\b/)) context.queryFilter = "Pending";
-  else if (lower.match(/\bfail(?:ed)?\b/)) context.queryFilter = "Failed";
-  else if (lower.match(/not.?ready|notready/)) context.queryFilter = "NotReady";
-  else if (lower.match(/config.?error|createcontainer/)) context.queryFilter = "CreateContainerConfigError";
-
-  // Nodes
-  if (lower.match(/node|cluster|health|overview|status|capacity|resource/)) {
+  // Nodes — only if intent is nodes or cluster_health
+  if (context.intents.includes("nodes") || context.intents.includes("cluster_health")) {
     tasks.push(
       ocpGet("/api/v1/nodes").then((d) => {
         context.nodes = (d.items || []).map((n) => ({
@@ -89,8 +164,8 @@ async function gatherClusterContext(userMessage) {
     );
   }
 
-  // Pods
-  if (lower.match(/pod|crash|oom|restart|issue|problem|error|fail|diagnos|image.?pull|pending|not.?ready/)) {
+  // Pods — fetch when asking about pods (summary, issues, or specific filter)
+  if (context.intents.includes("pod_summary") || context.intents.includes("pod_issues") || context.intents.includes("cluster_health")) {
     tasks.push(
       ocpGet("/api/v1/pods").then((d) => {
         const allPods = d.items || [];
@@ -100,11 +175,10 @@ async function gatherClusterContext(userMessage) {
           const phase = p.status?.phase || "Unknown";
           context.podsByPhase[phase] = (context.podsByPhase[phase] || 0) + 1;
         });
-        // Find problem pods — only truly broken ones, not healthy pods with historical restarts
+        // Find problem pods — only truly broken ones
         context.problemPods = allPods
           .filter((p) => {
             if (p.status?.phase === "Failed" || p.status?.phase === "Unknown") return true;
-            // Only flag pods where a container is currently NOT running
             return (p.status?.containerStatuses || []).some(
               (c) =>
                 c.state?.waiting?.reason === "CrashLoopBackOff" ||
@@ -132,7 +206,7 @@ async function gatherClusterContext(userMessage) {
             })),
             ownerKind: p.metadata?.ownerReferences?.[0]?.kind,
             ownerName: p.metadata?.ownerReferences?.[0]?.name,
-            events: [], // populated in secondary pass
+            events: [],
             containers: (p.status?.containerStatuses || [])
               .filter((c) => !c.ready || !c.state?.running)
               .map((c) => ({
@@ -150,7 +224,7 @@ async function gatherClusterContext(userMessage) {
   }
 
   // Namespaces
-  if (lower.match(/namespace|project|ns /)) {
+  if (context.intents.includes("namespaces")) {
     tasks.push(
       ocpGet("/api/v1/namespaces").then((d) => {
         context.namespaces = (d.items || [])
@@ -198,7 +272,7 @@ async function gatherClusterContext(userMessage) {
   }
 
   // Deployments
-  if (lower.match(/deploy|scale|replica|rollout|redeploy|restart/)) {
+  if (context.intents.includes("deployments")) {
     tasks.push(
       ocpGet("/apis/apps/v1/deployments").then((d) => {
         context.deployments = (d.items || []).slice(0, 30).map((dep) => ({
@@ -213,7 +287,7 @@ async function gatherClusterContext(userMessage) {
   }
 
   // Events (warnings)
-  if (lower.match(/event|alert|warn|issue|problem|error|what.*wrong/)) {
+  if (context.intents.includes("events") || context.intents.includes("cluster_health")) {
     tasks.push(
       ocpGet("/api/v1/events").then((d) => {
         context.warningEvents = (d.items || [])
@@ -233,7 +307,7 @@ async function gatherClusterContext(userMessage) {
   }
 
   // Operators
-  if (lower.match(/operator|degrad|cluster.*health/)) {
+  if (context.intents.includes("operators") || context.intents.includes("cluster_health")) {
     tasks.push(
       ocpGet("/apis/config.openshift.io/v1/clusteroperators").then((d) => {
         context.operators = (d.items || []).map((op) => {
@@ -250,25 +324,23 @@ async function gatherClusterContext(userMessage) {
   }
 
   // Services, routes
-  if (lower.match(/service|route|endpoint|ingress|url/)) {
-    const ns = nsMatch?.[1];
-    if (ns) {
-      tasks.push(
-        ocpGet(`/api/v1/namespaces/${ns}/services`).then((d) => {
-          context.services = (d.items || []).map((s) => ({
-            name: s.metadata.name, type: s.spec?.type, clusterIP: s.spec?.clusterIP,
-            ports: s.spec?.ports?.map((p) => `${p.port}/${p.protocol}`),
-          }));
-        }).catch(() => {})
-      );
-      tasks.push(
-        ocpGet(`/apis/route.openshift.io/v1/namespaces/${ns}/routes`).then((d) => {
-          context.routes = (d.items || []).map((r) => ({
-            name: r.metadata.name, host: r.spec?.host, service: r.spec?.to?.name,
-          }));
-        }).catch(() => {})
-      );
-    }
+  if (context.intents.includes("services") && nsMatch) {
+    const ns = nsMatch[1];
+    tasks.push(
+      ocpGet(`/api/v1/namespaces/${ns}/services`).then((d) => {
+        context.services = (d.items || []).map((s) => ({
+          name: s.metadata.name, type: s.spec?.type, clusterIP: s.spec?.clusterIP,
+          ports: s.spec?.ports?.map((p) => `${p.port}/${p.protocol}`),
+        }));
+      }).catch(() => {})
+    );
+    tasks.push(
+      ocpGet(`/apis/route.openshift.io/v1/namespaces/${ns}/routes`).then((d) => {
+        context.routes = (d.items || []).map((r) => ({
+          name: r.metadata.name, host: r.spec?.host, service: r.spec?.to?.name,
+        }));
+      }).catch(() => {})
+    );
   }
 
   await Promise.all(tasks);
@@ -544,18 +616,87 @@ function builtInAnalysis(userMessage, ctx) {
   }
 
   // -------------------------------------------------------------------------
-  // GENERAL QUERY: show relevant sections based on keywords
+  // INTENT-DRIVEN RESPONSE — only show what the user asked for
   // -------------------------------------------------------------------------
+  const intents = ctx.intents || [];
 
-  if (ctx.clusterVersion) {
-    parts.push(`### Cluster Overview`);
-    parts.push(`**OpenShift** ${ctx.clusterVersion} (${ctx.channel || "unknown channel"})`);
+  // --- Pod Summary (how many running, completed, etc.) ---
+  if (intents.includes("pod_summary") && !filter) {
+    parts.push(`### Pod Summary`);
+    if (ctx.totalPods) {
+      parts.push(`**Total pods:** ${ctx.totalPods}`);
+      if (ctx.podsByPhase) {
+        const running = ctx.podsByPhase["Running"] || 0;
+        const succeeded = ctx.podsByPhase["Succeeded"] || 0;
+        const failed = (ctx.podsByPhase["Failed"] || 0) + (ctx.podsByPhase["Unknown"] || 0);
+        const pending = ctx.podsByPhase["Pending"] || 0;
+        const summaryParts = [`green:${running} Running`];
+        if (succeeded > 0) summaryParts.push(`green:${succeeded} Completed`);
+        if (failed > 0) summaryParts.push(`red:${failed} Failed`);
+        if (pending > 0) summaryParts.push(`amber:${pending} Pending`);
+        parts.push(`@@SUMMARY|${summaryParts.join("|")}@@`);
+        parts.push(`  - **Running:** ${running}`);
+        parts.push(`  - **Completed/Succeeded:** ${succeeded}`);
+        if (failed > 0) parts.push(`  - **Failed:** ${failed}`);
+        if (pending > 0) parts.push(`  - **Pending:** ${pending}`);
+        // Show any other phases
+        Object.entries(ctx.podsByPhase).forEach(([phase, count]) => {
+          if (!["Running", "Succeeded", "Failed", "Unknown", "Pending"].includes(phase)) {
+            parts.push(`  - **${phase}:** ${count}`);
+          }
+        });
+      }
+    } else {
+      parts.push(`Unable to fetch pod data.`);
+    }
+
+    // Only mention issues briefly if there are any, don't list them all
+    if (ctx.problemPods && ctx.problemPods.length > 0) {
+      const states = {};
+      ctx.problemPods.forEach((p) => p.containers.forEach((c) => { states[c.state] = (states[c.state] || 0) + 1; }));
+      parts.push(`\n**${ctx.problemPods.length} pod(s) with issues:**`);
+      Object.entries(states).forEach(([state, count]) => {
+        parts.push(`  - ${count} ${state}`);
+      });
+      parts.push(`\nAsk about a specific issue type for details (e.g. "show CrashLoopBackOff pods").`);
+    }
+    return parts.join("\n");
   }
 
-  if (ctx.nodes) {
+  // --- Pod Issues (when user asks about failed/problem pods without a specific filter) ---
+  if (intents.includes("pod_issues") && !filter) {
+    if (ctx.problemPods && ctx.problemPods.length > 0) {
+      const crashPods = ctx.problemPods.filter((p) => p.containers.some((c) => c.state === "CrashLoopBackOff"));
+      const oomPods = ctx.problemPods.filter((p) => p.containers.some((c) => c.state === "OOMKilled"));
+      const imgPods = ctx.problemPods.filter((p) => p.containers.some((c) => c.state === "ImagePullBackOff" || c.state === "ErrImagePull"));
+      const otherPods = ctx.problemPods.filter((p) =>
+        !crashPods.includes(p) && !oomPods.includes(p) && !imgPods.includes(p)
+      );
+
+      parts.push(`### Failed Pods — ${ctx.problemPods.length} Issues Found`);
+      const summaryParts = [];
+      if (crashPods.length > 0) summaryParts.push(`red:${crashPods.length} CrashLoop`);
+      if (oomPods.length > 0)   summaryParts.push(`amber:${oomPods.length} OOMKilled`);
+      if (imgPods.length > 0)   summaryParts.push(`red:${imgPods.length} ImagePull`);
+      if (otherPods.length > 0) summaryParts.push(`amber:${otherPods.length} Other`);
+      if (summaryParts.length > 0) parts.push(`@@SUMMARY|${summaryParts.join("|")}@@`);
+
+      renderPodGroup("CrashLoopBackOff", "[CRITICAL]", crashPods, "CrashLoopBackOff");
+      renderPodGroup("OOMKilled", "[WARNING]", oomPods, "OOMKilled");
+      renderPodGroup("ImagePullBackOff", "[CRITICAL]", imgPods, "ImagePullBackOff");
+      renderPodGroup("Other Issues", "[WARNING]", otherPods, "other");
+    } else {
+      parts.push(`### Pod Status`);
+      parts.push(`[OK] **No pod issues detected.** All pods are running normally.`);
+    }
+    return parts.join("\n");
+  }
+
+  // --- Nodes ---
+  if (intents.includes("nodes") && !intents.includes("cluster_health") && ctx.nodes) {
     const ready = ctx.nodes.filter((n) => n.ready).length;
     const notReady = ctx.nodes.filter((n) => !n.ready);
-    parts.push(`\n### Node Status`);
+    parts.push(`### Node Status`);
     parts.push(`@@SUMMARY|green:${ready} Ready${notReady.length > 0 ? `|red:${notReady.length} NotReady` : ""}@@`);
     ctx.nodes.forEach((n) => {
       const status = n.ready ? "[OK]" : "[CRITICAL]";
@@ -565,60 +706,65 @@ function builtInAnalysis(userMessage, ctx) {
       parts.push(`\n[CRITICAL] **${notReady.length} node(s) are NotReady:**`);
       parts.push("```" + `oc describe node ${notReady[0].name}\noc get node ${notReady[0].name} -o yaml` + "```");
     }
+    return parts.join("\n");
   }
 
-  if (ctx.problemPods && ctx.problemPods.length > 0) {
-    // Group by issue type
-    const crashPods = ctx.problemPods.filter((p) => p.containers.some((c) => c.state === "CrashLoopBackOff"));
-    const oomPods = ctx.problemPods.filter((p) => p.containers.some((c) => c.state === "OOMKilled"));
-    const imgPods = ctx.problemPods.filter((p) => p.containers.some((c) => c.state === "ImagePullBackOff" || c.state === "ErrImagePull"));
-    const otherPods = ctx.problemPods.filter((p) =>
-      !crashPods.includes(p) && !oomPods.includes(p) && !imgPods.includes(p)
-    );
-
-    parts.push(`\n### Failed Pods — ${ctx.problemPods.length} Issues Found`);
-    const summaryParts = [];
-    if (crashPods.length > 0) summaryParts.push(`red:${crashPods.length} CrashLoop`);
-    if (oomPods.length > 0)   summaryParts.push(`amber:${oomPods.length} OOMKilled`);
-    if (imgPods.length > 0)   summaryParts.push(`red:${imgPods.length} ImagePull`);
-    if (otherPods.length > 0) summaryParts.push(`amber:${otherPods.length} Other`);
-    if (summaryParts.length > 0) parts.push(`@@SUMMARY|${summaryParts.join("|")}@@`);
-
-    renderPodGroup("CrashLoopBackOff", "[CRITICAL]", crashPods, "CrashLoopBackOff");
-    renderPodGroup("OOMKilled", "[WARNING]", oomPods, "OOMKilled");
-    renderPodGroup("ImagePullBackOff", "[CRITICAL]", imgPods, "ImagePullBackOff");
-    renderPodGroup("Other Issues", "[WARNING]", otherPods, "other");
-  } else if (lower.match(/pod|issue|problem|fail|error/)) {
-    parts.push(`\n### Pod Status`);
-    parts.push(`[OK] **No pod issues detected.** All pods are running normally.`);
-  }
-
-  if (ctx.totalPods && !lower.match(/crash|oom|image|fail|error|issue|problem/)) {
-    parts.push(`\n### Pod Summary`);
-    parts.push(`**Total:** ${ctx.totalPods} pods`);
-    if (ctx.podsByPhase) {
-      const running = ctx.podsByPhase["Running"] || 0;
-      const failed = (ctx.podsByPhase["Failed"] || 0) + (ctx.podsByPhase["Unknown"] || 0);
-      const pending = ctx.podsByPhase["Pending"] || 0;
-      const succeeded = ctx.podsByPhase["Succeeded"] || 0;
-      const summaryParts = [`green:${running} Running`];
-      if (succeeded > 0) summaryParts.push(`green:${succeeded} Succeeded`);
-      if (failed > 0) summaryParts.push(`red:${failed} Failed`);
-      if (pending > 0) summaryParts.push(`amber:${pending} Pending`);
-      parts.push(`@@SUMMARY|${summaryParts.join("|")}@@`);
+  // --- Cluster Health / Overview ---
+  if (intents.includes("cluster_health")) {
+    if (ctx.clusterVersion) {
+      parts.push(`### Cluster Overview`);
+      parts.push(`**OpenShift** ${ctx.clusterVersion} (${ctx.channel || "unknown channel"})`);
     }
+
+    if (ctx.nodes) {
+      const ready = ctx.nodes.filter((n) => n.ready).length;
+      const notReady = ctx.nodes.filter((n) => !n.ready);
+      parts.push(`\n### Node Status`);
+      parts.push(`@@SUMMARY|green:${ready} Ready${notReady.length > 0 ? `|red:${notReady.length} NotReady` : ""}@@`);
+      ctx.nodes.forEach((n) => {
+        const status = n.ready ? "[OK]" : "[CRITICAL]";
+        parts.push(`  - ${status} **${n.name}** (${n.roles.join(", ")}) — CPU: ${n.cpu}, Mem: ${n.memory}`);
+      });
+    }
+
+    if (ctx.operators) {
+      const degraded = ctx.operators.filter((o) => o.degraded === "True");
+      parts.push(`\n### Cluster Operators`);
+      if (degraded.length > 0) {
+        parts.push(`[CRITICAL] **${degraded.length} degraded operator(s):**`);
+        degraded.forEach((o) => parts.push(`@@POD_ISSUE|${o.name}|cluster-operator|Status: Degraded@@`));
+      } else {
+        parts.push(`[OK] All **${ctx.operators.length}** operators are available and healthy.`);
+      }
+    }
+
+    if (ctx.problemPods && ctx.problemPods.length > 0) {
+      const states = {};
+      ctx.problemPods.forEach((p) => p.containers.forEach((c) => { states[c.state] = (states[c.state] || 0) + 1; }));
+      parts.push(`\n### Pod Issues — ${ctx.problemPods.length} problem pods`);
+      Object.entries(states).forEach(([state, count]) => {
+        parts.push(`  - **${state}:** ${count}`);
+      });
+    } else {
+      parts.push(`\n[OK] No pod issues detected.`);
+    }
+
+    return parts.join("\n");
   }
 
-  if (ctx.namespaces) {
-    parts.push(`\n### User Namespaces (${ctx.namespaces.length})`);
+  // --- Namespaces ---
+  if (intents.includes("namespaces") && ctx.namespaces) {
+    parts.push(`### User Namespaces (${ctx.namespaces.length})`);
     ctx.namespaces.forEach((ns) => {
       const icon = ns.status === "Active" ? "[OK]" : "[WARNING]";
       parts.push(`  - ${icon} **${ns.name}** — ${ns.status}`);
     });
+    return parts.join("\n");
   }
 
+  // --- Namespace-specific pods ---
   if (ctx.namespacePods) {
-    parts.push(`\n### Pods in \`${ctx.targetNamespace}\` (${ctx.namespacePods.length})`);
+    parts.push(`### Pods in \`${ctx.targetNamespace}\` (${ctx.namespacePods.length})`);
     ctx.namespacePods.forEach((p) => {
       const isOk = p.phase === "Running" && p.restarts < 5;
       if (!isOk) {
@@ -643,18 +789,35 @@ function builtInAnalysis(userMessage, ctx) {
     }
   }
 
-  if (ctx.warningEvents && ctx.warningEvents.length > 0) {
-    parts.push(`\n### Recent Warning Events`);
+  if (ctx.namespacePods || ctx.namespaceDeployments) {
+    return parts.join("\n");
+  }
+
+  // --- Deployments ---
+  if (intents.includes("deployments") && ctx.deployments) {
+    parts.push(`### Deployments (${ctx.deployments.length})`);
+    ctx.deployments.forEach((d) => {
+      const icon = d.ready === d.replicas ? "[OK]" : "[CRITICAL]";
+      parts.push(`  - ${icon} **${d.name}** (${d.namespace}) — ${d.ready}/${d.replicas} ready`);
+    });
+    return parts.join("\n");
+  }
+
+  // --- Events ---
+  if (intents.includes("events") && ctx.warningEvents && ctx.warningEvents.length > 0) {
+    parts.push(`### Recent Warning Events`);
     ctx.warningEvents.slice(0, 10).forEach((e) => {
       const severity = (e.reason === "BackOff" || e.reason === "Failed" || e.reason === "OOMKilling")
         ? "[CRITICAL]" : "[WARNING]";
       parts.push(`  - ${severity} **${e.reason}** — ${e.object} in \`${e.namespace}\`: ${e.message?.substring(0, 100)}${e.count > 1 ? ` (x${e.count})` : ""}`);
     });
+    return parts.join("\n");
   }
 
-  if (ctx.operators) {
+  // --- Operators ---
+  if (intents.includes("operators") && ctx.operators) {
     const degraded = ctx.operators.filter((o) => o.degraded === "True");
-    parts.push(`\n### Cluster Operators`);
+    parts.push(`### Cluster Operators`);
     if (degraded.length > 0) {
       parts.push(`[CRITICAL] **${degraded.length} degraded operator(s):**`);
       degraded.forEach((o) => parts.push(`@@POD_ISSUE|${o.name}|cluster-operator|Status: Degraded@@`));
@@ -663,29 +826,34 @@ function builtInAnalysis(userMessage, ctx) {
     } else {
       parts.push(`[OK] All **${ctx.operators.length}** operators are available and healthy.`);
     }
+    return parts.join("\n");
   }
 
+  // --- Services / Routes ---
   if (ctx.services) {
-    parts.push(`\n### Services in \`${ctx.targetNamespace}\``);
+    parts.push(`### Services in \`${ctx.targetNamespace}\``);
     ctx.services.forEach((s) => parts.push(`  - **${s.name}** (${s.type}) — ${s.clusterIP} — ${(s.ports || []).join(", ")}`));
   }
-
   if (ctx.routes) {
     parts.push(`\n### Routes in \`${ctx.targetNamespace}\``);
     ctx.routes.forEach((r) => parts.push(`  - **${r.name}** — https://${r.host} -> ${r.service}`));
   }
-
-  if (parts.length === 0 || (parts.length === 1 && parts[0].includes("Cluster"))) {
-    parts.push(`### Welcome to MCP AI Assistant`);
-    parts.push(`\nI can help you explore your cluster. Try asking:`);
-    parts.push(`  - "Show me CrashLoopBackOff pods"`);
-    parts.push(`  - "Show me ImagePullBackOff pods"`);
-    parts.push(`  - "Show me OOMKilled pods"`);
-    parts.push(`  - "List all pod issues"`);
-    parts.push(`  - "Show pods in namespace my-app"`);
-    parts.push(`  - "Show warning events"`);
-    parts.push(`  - "Check cluster health"`);
+  if (ctx.services || ctx.routes) {
+    return parts.join("\n");
   }
+
+  // --- Fallback: help ---
+  parts.push(`### MCP AI Assistant`);
+  parts.push(`\nI can help you explore your cluster. Try asking:`);
+  parts.push(`  - "How many pods are running?"`);
+  parts.push(`  - "Show CrashLoopBackOff pods"`);
+  parts.push(`  - "Show ImagePullBackOff pods"`);
+  parts.push(`  - "List all pod issues"`);
+  parts.push(`  - "Show pods in namespace my-app"`);
+  parts.push(`  - "List nodes and their status"`);
+  parts.push(`  - "Check cluster health"`);
+  parts.push(`  - "Show warning events"`);
+  parts.push(`  - "Show cluster operators"`);
 
   return parts.join("\n");
 }
