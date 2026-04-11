@@ -17,7 +17,7 @@
  *   - "none"       — Built-in rule-based analysis (no external LLM)
  */
 
-import { ocpGet, ocpDelete, ocpPatch } from "../utils/openshift-client.js";
+import { ocpGet, ocpDelete, ocpPatch, ocpPost, ocpFetch } from "../utils/openshift-client.js";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -26,6 +26,62 @@ const LLM_PROVIDER = process.env.LLM_PROVIDER || "none";
 const LLM_API_URL = process.env.LLM_API_URL || "http://localhost:11434";
 const LLM_API_KEY = process.env.LLM_API_KEY || "";
 const LLM_MODEL = process.env.LLM_MODEL || "gpt-4";
+
+// ---------------------------------------------------------------------------
+// Resource API mapping — maps resource types to K8s/OCP API paths
+// ---------------------------------------------------------------------------
+const RESOURCE_MAP = {
+  pod:                   { api: "/api/v1", resource: "pods", namespaced: true },
+  pods:                  { api: "/api/v1", resource: "pods", namespaced: true },
+  deployment:            { api: "/apis/apps/v1", resource: "deployments", namespaced: true },
+  deployments:           { api: "/apis/apps/v1", resource: "deployments", namespaced: true },
+  deploy:                { api: "/apis/apps/v1", resource: "deployments", namespaced: true },
+  service:               { api: "/api/v1", resource: "services", namespaced: true },
+  services:              { api: "/api/v1", resource: "services", namespaced: true },
+  svc:                   { api: "/api/v1", resource: "services", namespaced: true },
+  configmap:             { api: "/api/v1", resource: "configmaps", namespaced: true },
+  configmaps:            { api: "/api/v1", resource: "configmaps", namespaced: true },
+  cm:                    { api: "/api/v1", resource: "configmaps", namespaced: true },
+  secret:                { api: "/api/v1", resource: "secrets", namespaced: true },
+  secrets:               { api: "/api/v1", resource: "secrets", namespaced: true },
+  serviceaccount:        { api: "/api/v1", resource: "serviceaccounts", namespaced: true },
+  serviceaccounts:       { api: "/api/v1", resource: "serviceaccounts", namespaced: true },
+  sa:                    { api: "/api/v1", resource: "serviceaccounts", namespaced: true },
+  event:                 { api: "/api/v1", resource: "events", namespaced: true },
+  events:                { api: "/api/v1", resource: "events", namespaced: true },
+  statefulset:           { api: "/apis/apps/v1", resource: "statefulsets", namespaced: true },
+  statefulsets:          { api: "/apis/apps/v1", resource: "statefulsets", namespaced: true },
+  sts:                   { api: "/apis/apps/v1", resource: "statefulsets", namespaced: true },
+  daemonset:             { api: "/apis/apps/v1", resource: "daemonsets", namespaced: true },
+  daemonsets:            { api: "/apis/apps/v1", resource: "daemonsets", namespaced: true },
+  ds:                    { api: "/apis/apps/v1", resource: "daemonsets", namespaced: true },
+  replicaset:            { api: "/apis/apps/v1", resource: "replicasets", namespaced: true },
+  replicasets:           { api: "/apis/apps/v1", resource: "replicasets", namespaced: true },
+  rs:                    { api: "/apis/apps/v1", resource: "replicasets", namespaced: true },
+  job:                   { api: "/apis/batch/v1", resource: "jobs", namespaced: true },
+  jobs:                  { api: "/apis/batch/v1", resource: "jobs", namespaced: true },
+  cronjob:               { api: "/apis/batch/v1", resource: "cronjobs", namespaced: true },
+  cronjobs:              { api: "/apis/batch/v1", resource: "cronjobs", namespaced: true },
+  pvc:                   { api: "/api/v1", resource: "persistentvolumeclaims", namespaced: true },
+  pvcs:                  { api: "/api/v1", resource: "persistentvolumeclaims", namespaced: true },
+  persistentvolumeclaim: { api: "/api/v1", resource: "persistentvolumeclaims", namespaced: true },
+  ingress:               { api: "/apis/networking.k8s.io/v1", resource: "ingresses", namespaced: true },
+  ingresses:             { api: "/apis/networking.k8s.io/v1", resource: "ingresses", namespaced: true },
+  route:                 { api: "/apis/route.openshift.io/v1", resource: "routes", namespaced: true },
+  routes:                { api: "/apis/route.openshift.io/v1", resource: "routes", namespaced: true },
+  node:                  { api: "/api/v1", resource: "nodes", namespaced: false },
+  nodes:                 { api: "/api/v1", resource: "nodes", namespaced: false },
+  namespace:             { api: "/api/v1", resource: "namespaces", namespaced: false },
+  namespaces:            { api: "/api/v1", resource: "namespaces", namespaced: false },
+  ns:                    { api: "/api/v1", resource: "namespaces", namespaced: false },
+  project:               { api: "/apis/project.openshift.io/v1", resource: "projects", namespaced: false },
+  projects:              { api: "/apis/project.openshift.io/v1", resource: "projects", namespaced: false },
+  pv:                    { api: "/api/v1", resource: "persistentvolumes", namespaced: false },
+  pvs:                   { api: "/api/v1", resource: "persistentvolumes", namespaced: false },
+  persistentvolume:      { api: "/api/v1", resource: "persistentvolumes", namespaced: false },
+  clusteroperator:       { api: "/apis/config.openshift.io/v1", resource: "clusteroperators", namespaced: false },
+  clusteroperators:      { api: "/apis/config.openshift.io/v1", resource: "clusteroperators", namespaced: false },
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -45,6 +101,534 @@ function readBody(req) {
 function json(res, status, data) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
+}
+
+/** Fetch pod logs (plain text, not JSON) */
+async function fetchPodLogs(namespace, podName, tailLines = 80) {
+  const { readFile } = await import("node:fs/promises");
+  let tk = process.env.OPENSHIFT_TOKEN || "";
+  if (!tk) {
+    try { tk = (await readFile("/var/run/secrets/kubernetes.io/serviceaccount/token", "utf8")).trim(); } catch {}
+  }
+  const apiUrl = process.env.OPENSHIFT_API_URL ||
+    `https://${process.env.KUBERNETES_SERVICE_HOST}:${process.env.KUBERNETES_SERVICE_PORT}`;
+  const resp = await fetch(
+    `${apiUrl}/api/v1/namespaces/${namespace}/pods/${podName}/log?tailLines=${tailLines}`,
+    { headers: { Authorization: `Bearer ${tk}`, Accept: "text/plain" } }
+  );
+  if (!resp.ok) {
+    const body = await resp.text();
+    throw new Error(`${resp.status}: ${body}`);
+  }
+  return resp.text();
+}
+
+// ---------------------------------------------------------------------------
+// Command parser — extract operation, resource, name, namespace from message
+// ---------------------------------------------------------------------------
+function parseCommand(message) {
+  const lower = message.toLowerCase().trim();
+
+  // Extract namespace
+  const nsMatch = lower.match(
+    /(?:in|under|from|for|of)\s+(?:namespace|ns|project)?\s*["']?([a-z0-9][-a-z0-9]*)["']?(?:\s+namespace)?/
+  ) || lower.match(
+    /\b([a-z0-9][-a-z0-9]+)\s+(?:namespace|ns|project)\b/
+  ) || lower.match(
+    /(?:namespace|ns|project)\s+["']?([a-z0-9][-a-z0-9]+)["']?/
+  ) || lower.match(
+    /-n\s+["']?([a-z0-9][-a-z0-9]*)["']?/
+  );
+  const namespace = nsMatch?.[1] || null;
+
+  // Detect operation
+  let operation = null;
+  if (lower.match(/\blogs?\b|show.*logs?|get.*logs?|view.*logs?|logs?\s+(for|of|from)/)) {
+    operation = "logs";
+  } else if (lower.match(/\btop\b|metrics?|resource.*usage|cpu.*usage|memory.*usage|consumption/)) {
+    operation = "top";
+  } else if (lower.match(/\bdelete\b|\bremove\b|\bkill\b/)) {
+    operation = "delete";
+  } else if (lower.match(/\bdescribe\b|\bdetail|get\s+\w+\s+[a-z0-9]|\binfo\b|explain\s/)) {
+    operation = "get";
+  } else if (lower.match(/\bexec\b|\bexecute\b|run.*command\s+in/)) {
+    operation = "exec";
+  } else if (lower.match(/\brun\b.*\bimage\b|create.*pod\b|start.*container/)) {
+    operation = "run";
+  } else if (lower.match(/\bcreate\b|\bapply\b/)) {
+    operation = "create";
+  }
+  // "list" and "show" are handled by the intent system for simple cases
+
+  // Detect resource type from message
+  let resourceType = null;
+  const resPatterns = [
+    [/\bpods?\b/, "pod"], [/\bdeployments?\b|\bdeploy\b/, "deployment"],
+    [/\bservices?\b|\bsvc\b/, "service"], [/\broutes?\b/, "route"],
+    [/\bconfigmaps?\b|\bcm\b/, "configmap"], [/\bsecrets?\b/, "secret"],
+    [/\bnodes?\b/, "node"], [/\bnamespaces?\b|\bns\b/, "namespace"],
+    [/\bprojects?\b/, "project"], [/\bevents?\b/, "event"],
+    [/\bstatefulsets?\b|\bsts\b/, "statefulset"], [/\bdaemonsets?\b|\bds\b/, "daemonset"],
+    [/\breplicasets?\b|\brs\b/, "replicaset"], [/\bjobs?\b/, "job"],
+    [/\bcronjobs?\b/, "cronjob"], [/\bpvcs?\b|\bpersistentvolumeclaims?\b/, "pvc"],
+    [/\bpvs?\b|\bpersistentvolumes?\b/, "pv"], [/\bingress(es)?\b/, "ingress"],
+    [/\bserviceaccounts?\b|\bsa\b/, "serviceaccount"],
+    [/\bclusteroperators?\b|\bco\b/, "clusteroperator"],
+  ];
+  for (const [pat, type] of resPatterns) {
+    if (pat.test(lower)) { resourceType = type; break; }
+  }
+
+  // Extract resource name — look for name after resource type or after operation
+  let resourceName = null;
+  if (operation && resourceType) {
+    // "delete pod my-pod-name" or "get deployment nginx"
+    const namePatterns = [
+      new RegExp(`${resourceType}s?\\s+["']?([a-z0-9][-a-z0-9.]*)["']?`),
+      new RegExp(`(delete|remove|describe|get|logs?|top)\\s+${resourceType}s?\\s+["']?([a-z0-9][-a-z0-9.]*)["']?`),
+    ];
+    for (const pat of namePatterns) {
+      const m = lower.match(pat);
+      if (m) {
+        resourceName = m[m.length - 1]; // last capture group
+        // Don't treat the namespace, resource type, or common words as names
+        if (["in", "from", "under", "all", "the", "my", "for", "with", namespace].includes(resourceName)) {
+          resourceName = null;
+        }
+        if (resourceName) break;
+      }
+    }
+    // "show logs for my-pod-name" — name after "for/of/from"
+    if (!resourceName && operation === "logs") {
+      const logNameMatch = lower.match(/logs?\s+(?:for|of|from)\s+["']?([a-z0-9][-a-z0-9.]*)["']?/);
+      if (logNameMatch) resourceName = logNameMatch[1];
+    }
+  }
+
+  // For logs without explicit "pod" keyword, infer pod
+  if (operation === "logs" && !resourceType) resourceType = "pod";
+  if (operation === "top" && !resourceType) resourceType = "pod";
+
+  return { operation, resourceType, resourceName, namespace };
+}
+
+// ---------------------------------------------------------------------------
+// Direct command handler — handles specific CRUD/operations without LLM
+// Returns null if the message isn't a recognized direct command
+// ---------------------------------------------------------------------------
+async function handleDirectCommand(message) {
+  const cmd = parseCommand(message);
+  const lower = message.toLowerCase().trim();
+
+  // Only handle when we have a clear operation + resource combination
+  if (!cmd.operation || !cmd.resourceType) return null;
+
+  const resInfo = RESOURCE_MAP[cmd.resourceType];
+  if (!resInfo) return null;
+
+  const parts = [];
+
+  // -----------------------------------------------------------------------
+  // LOGS — show pod logs
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "logs" && cmd.resourceType === "pod") {
+    if (!cmd.resourceName || !cmd.namespace) {
+      parts.push(`### Pod Logs`);
+      parts.push(`[WARNING] Please specify both pod name and namespace.`);
+      parts.push(`\n**Example:** "show logs for my-pod in namespace my-ns"`);
+      return parts.join("\n");
+    }
+    try {
+      // Pod logs return plain text, not JSON — use raw fetch
+      const logText = await fetchPodLogs(cmd.namespace, cmd.resourceName, 80);
+      parts.push(`### Logs: \`${cmd.resourceName}\` in \`${cmd.namespace}\``);
+      parts.push(`Last 80 lines:`);
+      parts.push("```" + logText.substring(0, 4000) + "```");
+      if (logText.length > 4000) parts.push(`\n[WARNING] Logs truncated. Use \`oc logs ${cmd.resourceName} -n ${cmd.namespace}\` for full output.`);
+    } catch (err) {
+      parts.push(`### Pod Logs Error`);
+      parts.push(`[CRITICAL] Failed to get logs for \`${cmd.resourceName}\` in \`${cmd.namespace}\``);
+      parts.push(`**Error:** ${err.message}`);
+      parts.push("```" + `oc logs ${cmd.resourceName} -n ${cmd.namespace}` + "```");
+    }
+    return parts.join("\n");
+  }
+
+  // -----------------------------------------------------------------------
+  // TOP — pod resource usage metrics
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "top") {
+    try {
+      let path = "/apis/metrics.k8s.io/v1beta1";
+      if (cmd.resourceType === "node") {
+        path += "/nodes";
+      } else if (cmd.namespace && cmd.resourceName) {
+        path += `/namespaces/${cmd.namespace}/pods/${cmd.resourceName}`;
+      } else if (cmd.namespace) {
+        path += `/namespaces/${cmd.namespace}/pods`;
+      } else {
+        path += "/pods";
+      }
+      const data = await ocpGet(path);
+      const items = data.items || (data.metadata ? [data] : []);
+      if (items.length === 0) {
+        parts.push(`### Resource Usage`);
+        parts.push(`No metrics data available. Ensure metrics-server is installed.`);
+        return parts.join("\n");
+      }
+
+      if (cmd.resourceType === "node") {
+        parts.push(`### Node Resource Usage`);
+        items.forEach((n) => {
+          const cpu = n.usage?.cpu || "?";
+          const mem = n.usage?.memory || "?";
+          parts.push(`  - **${n.metadata.name}** — CPU: ${cpu}, Memory: ${mem}`);
+        });
+      } else {
+        const label = cmd.namespace ? `in \`${cmd.namespace}\`` : "(all namespaces)";
+        parts.push(`### Pod Resource Usage ${label}`);
+        items.slice(0, 30).forEach((p) => {
+          const containers = (p.containers || []).map((c) =>
+            `${c.name}: CPU ${c.usage?.cpu || "?"}, Mem ${c.usage?.memory || "?"}`
+          ).join(" | ");
+          parts.push(`  - **${p.metadata.name}** (${p.metadata.namespace}) — ${containers}`);
+        });
+        if (items.length > 30) parts.push(`\n... and ${items.length - 30} more pods`);
+      }
+    } catch (err) {
+      parts.push(`### Metrics Error`);
+      parts.push(`[WARNING] ${err.message}`);
+      parts.push(`\nMetrics server may not be installed. Install with:`);
+      parts.push("```" + `oc apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml` + "```");
+    }
+    return parts.join("\n");
+  }
+
+  // -----------------------------------------------------------------------
+  // DELETE — delete a resource
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "delete") {
+    if (!cmd.resourceName) {
+      parts.push(`### Delete ${cmd.resourceType}`);
+      parts.push(`[WARNING] Please specify the resource name to delete.`);
+      parts.push(`\n**Example:** "delete pod my-pod in namespace my-ns"`);
+      return parts.join("\n");
+    }
+    if (resInfo.namespaced && !cmd.namespace) {
+      parts.push(`### Delete ${cmd.resourceType}`);
+      parts.push(`[WARNING] Please specify the namespace.`);
+      parts.push(`\n**Example:** "delete ${cmd.resourceType} ${cmd.resourceName} in namespace my-ns"`);
+      return parts.join("\n");
+    }
+    const path = resInfo.namespaced
+      ? `${resInfo.api}/namespaces/${cmd.namespace}/${resInfo.resource}/${cmd.resourceName}`
+      : `${resInfo.api}/${resInfo.resource}/${cmd.resourceName}`;
+    try {
+      await ocpDelete(path);
+      parts.push(`### Deleted: \`${cmd.resourceName}\``);
+      parts.push(`[OK] **${cmd.resourceType}** \`${cmd.resourceName}\`${cmd.namespace ? ` in \`${cmd.namespace}\`` : ""} has been deleted.`);
+      if (cmd.resourceType === "pod") {
+        parts.push(`\nIf the pod is managed by a Deployment/ReplicaSet, a new one will be created automatically.`);
+      }
+    } catch (err) {
+      parts.push(`### Delete Failed`);
+      parts.push(`[CRITICAL] Failed to delete ${cmd.resourceType} \`${cmd.resourceName}\``);
+      parts.push(`**Error:** ${err.message}`);
+    }
+    return parts.join("\n");
+  }
+
+  // -----------------------------------------------------------------------
+  // GET / DESCRIBE — get details of a specific resource
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "get" && cmd.resourceName) {
+    if (resInfo.namespaced && !cmd.namespace) {
+      parts.push(`### Get ${cmd.resourceType}`);
+      parts.push(`[WARNING] Please specify the namespace.`);
+      parts.push(`\n**Example:** "describe ${cmd.resourceType} ${cmd.resourceName} in namespace my-ns"`);
+      return parts.join("\n");
+    }
+    const path = resInfo.namespaced
+      ? `${resInfo.api}/namespaces/${cmd.namespace}/${resInfo.resource}/${cmd.resourceName}`
+      : `${resInfo.api}/${resInfo.resource}/${cmd.resourceName}`;
+    try {
+      const data = await ocpGet(path);
+      parts.push(`### ${cmd.resourceType}: \`${cmd.resourceName}\`${cmd.namespace ? ` in \`${cmd.namespace}\`` : ""}`);
+
+      // Resource-specific formatting
+      if (cmd.resourceType === "pod") {
+        const phase = data.status?.phase || "Unknown";
+        const node = data.spec?.nodeName || "unassigned";
+        const startTime = data.status?.startTime || "unknown";
+        const icon = phase === "Running" ? "[OK]" : phase === "Succeeded" ? "[OK]" : "[CRITICAL]";
+        parts.push(`${icon} **Phase:** ${phase}`);
+        parts.push(`**Node:** ${node}`);
+        parts.push(`**Started:** ${startTime}`);
+        parts.push(`**IP:** ${data.status?.podIP || "none"}`);
+        parts.push(`\n**Containers:**`);
+        (data.status?.containerStatuses || []).forEach((c) => {
+          const state = Object.keys(c.state || {})[0] || "unknown";
+          const stateDetail = c.state?.[state]?.reason || state;
+          const icon2 = c.ready ? "[OK]" : "[CRITICAL]";
+          parts.push(`  - ${icon2} **${c.name}** — ${stateDetail} — restarts: ${c.restartCount} — ready: ${c.ready}`);
+          parts.push(`    Image: \`${c.image}\``);
+        });
+        if (data.spec?.containers) {
+          parts.push(`\n**Resource Requests/Limits:**`);
+          data.spec.containers.forEach((c) => {
+            const req = c.resources?.requests || {};
+            const lim = c.resources?.limits || {};
+            parts.push(`  - **${c.name}** — CPU: ${req.cpu || "none"}/${lim.cpu || "none"}, Mem: ${req.memory || "none"}/${lim.memory || "none"}`);
+          });
+        }
+      } else if (cmd.resourceType === "deployment") {
+        const desired = data.spec?.replicas ?? 0;
+        const ready = data.status?.readyReplicas ?? 0;
+        const available = data.status?.availableReplicas ?? 0;
+        const icon = ready === desired ? "[OK]" : "[CRITICAL]";
+        parts.push(`${icon} **Replicas:** ${ready}/${desired} ready, ${available} available`);
+        parts.push(`**Strategy:** ${data.spec?.strategy?.type || "RollingUpdate"}`);
+        const img = data.spec?.template?.spec?.containers?.[0]?.image;
+        if (img) parts.push(`**Image:** \`${img}\``);
+        const conds = data.status?.conditions || [];
+        conds.forEach((c) => {
+          const ci = c.status === "True" ? "[OK]" : "[WARNING]";
+          parts.push(`  - ${ci} ${c.type}: ${c.message || c.reason || ""}`);
+        });
+      } else if (cmd.resourceType === "service") {
+        parts.push(`**Type:** ${data.spec?.type}`);
+        parts.push(`**ClusterIP:** ${data.spec?.clusterIP}`);
+        parts.push(`**Ports:**`);
+        (data.spec?.ports || []).forEach((p) => {
+          parts.push(`  - ${p.name || "unnamed"}: ${p.port}/${p.protocol}${p.targetPort ? ` -> ${p.targetPort}` : ""}`);
+        });
+        if (data.spec?.selector) {
+          parts.push(`**Selector:** ${Object.entries(data.spec.selector).map(([k,v]) => `${k}=${v}`).join(", ")}`);
+        }
+      } else if (cmd.resourceType === "node") {
+        const conds = (data.status?.conditions || []).reduce((a, c) => { a[c.type] = c.status; return a; }, {});
+        const ready = conds.Ready === "True";
+        const icon = ready ? "[OK]" : "[CRITICAL]";
+        parts.push(`${icon} **Status:** ${ready ? "Ready" : "NotReady"}`);
+        const roles = Object.keys(data.metadata?.labels || {}).filter(l => l.startsWith("node-role.kubernetes.io/")).map(l => l.split("/")[1]);
+        parts.push(`**Roles:** ${roles.join(", ") || "worker"}`);
+        parts.push(`**OS:** ${data.status?.nodeInfo?.osImage || "?"}`);
+        parts.push(`**Kubelet:** ${data.status?.nodeInfo?.kubeletVersion || "?"}`);
+        parts.push(`**CPU:** ${data.status?.capacity?.cpu || "?"}`);
+        parts.push(`**Memory:** ${data.status?.capacity?.memory || "?"}`);
+        parts.push(`**Pods:** ${data.status?.capacity?.pods || "?"} capacity`);
+      } else {
+        // Generic resource — show key metadata
+        parts.push(`**Kind:** ${data.kind}`);
+        parts.push(`**Created:** ${data.metadata?.creationTimestamp || "unknown"}`);
+        if (data.metadata?.labels) {
+          const labels = Object.entries(data.metadata.labels).slice(0, 10).map(([k,v]) => `${k}=${v}`).join(", ");
+          parts.push(`**Labels:** ${labels}`);
+        }
+        // Show spec summary for known types
+        if (data.spec) {
+          const specStr = JSON.stringify(data.spec, null, 2);
+          if (specStr.length < 2000) {
+            parts.push(`\n**Spec:**`);
+            parts.push("```" + specStr + "```");
+          }
+        }
+      }
+    } catch (err) {
+      parts.push(`### Error`);
+      parts.push(`[CRITICAL] Failed to get ${cmd.resourceType} \`${cmd.resourceName}\`: ${err.message}`);
+    }
+    return parts.join("\n");
+  }
+
+  // -----------------------------------------------------------------------
+  // EXEC — not supported in chat (requires WebSocket/TTY)
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "exec") {
+    parts.push(`### Exec`);
+    parts.push(`[WARNING] Interactive exec is not supported in the chat UI.`);
+    parts.push(`\nUse the CLI instead:`);
+    parts.push("```" + `oc exec -it ${cmd.resourceName || "<pod-name>"} -n ${cmd.namespace || "<namespace>"} -- /bin/sh` + "```");
+    return parts.join("\n");
+  }
+
+  // -----------------------------------------------------------------------
+  // RUN — create a pod from an image
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "run") {
+    const imageMatch = lower.match(/image\s+["']?([a-z0-9./:-]+)["']?/);
+    const image = imageMatch?.[1];
+    if (!image) {
+      parts.push(`### Run Pod`);
+      parts.push(`[WARNING] Please specify the container image.`);
+      parts.push(`\n**Example:** "run pod my-test image nginx:latest in namespace default"`);
+      return parts.join("\n");
+    }
+    const podName = cmd.resourceName || `run-${Date.now().toString(36)}`;
+    const ns = cmd.namespace || "default";
+    try {
+      await ocpPost(`/api/v1/namespaces/${ns}/pods`, {
+        apiVersion: "v1",
+        kind: "Pod",
+        metadata: { name: podName, namespace: ns },
+        spec: {
+          containers: [{ name: "main", image }],
+          restartPolicy: "Never",
+        },
+      });
+      parts.push(`### Pod Created`);
+      parts.push(`[OK] Pod \`${podName}\` created in \`${ns}\` with image \`${image}\``);
+      parts.push(`\n**Check status:**`);
+      parts.push("```" + `oc get pod ${podName} -n ${ns}\noc logs ${podName} -n ${ns}` + "```");
+    } catch (err) {
+      parts.push(`### Run Failed`);
+      parts.push(`[CRITICAL] Failed to create pod: ${err.message}`);
+    }
+    return parts.join("\n");
+  }
+
+  return null; // Not a recognized direct command
+}
+
+// ---------------------------------------------------------------------------
+// List resources — handles "list/show X" queries
+// ---------------------------------------------------------------------------
+async function handleListCommand(message) {
+  const lower = message.toLowerCase().trim();
+  const cmd = parseCommand(message);
+
+  // Must have a resource type and look like a list request
+  if (!cmd.resourceType) return null;
+  if (!lower.match(/\blist\b|\bshow\b|\bget\b|\ball\b|\bhow many\b|\bcount\b/)) return null;
+  // Don't intercept when the user is asking about issues/problems (let intent system handle)
+  if (lower.match(/issue|problem|fail|error|crash|oom|diagnos|health|what.*wrong/)) return null;
+
+  const resInfo = RESOURCE_MAP[cmd.resourceType];
+  if (!resInfo) return null;
+
+  // Special handling for projects
+  if (cmd.resourceType === "project") {
+    try {
+      const data = await ocpGet("/apis/project.openshift.io/v1/projects");
+      const items = data.items || [];
+      const parts = [`### OpenShift Projects (${items.length})`];
+      items.forEach((p) => {
+        const displayName = p.metadata?.annotations?.["openshift.io/display-name"] || "";
+        const status = p.status?.phase || "Active";
+        const icon = status === "Active" ? "[OK]" : "[WARNING]";
+        parts.push(`  - ${icon} **${p.metadata.name}**${displayName ? ` (${displayName})` : ""} — ${status}`);
+      });
+      return parts.join("\n");
+    } catch (err) {
+      return `### Projects\n[CRITICAL] ${err.message}`;
+    }
+  }
+
+  // Special handling for events — show with severity
+  if (cmd.resourceType === "event") {
+    try {
+      const path = cmd.namespace
+        ? `/api/v1/namespaces/${cmd.namespace}/events`
+        : "/api/v1/events";
+      const data = await ocpGet(path);
+      const items = (data.items || [])
+        .sort((a, b) => new Date(b.lastTimestamp || 0) - new Date(a.lastTimestamp || 0))
+        .slice(0, 25);
+      const label = cmd.namespace ? `in \`${cmd.namespace}\`` : "(all namespaces)";
+      const parts = [`### Events ${label} (showing ${items.length})`];
+      items.forEach((e) => {
+        const icon = e.type === "Warning" ? "[WARNING]" : "[OK]";
+        const age = e.lastTimestamp ? ` — ${new Date(e.lastTimestamp).toLocaleString()}` : "";
+        parts.push(`  - ${icon} **${e.reason}** — ${e.involvedObject.kind}/${e.involvedObject.name} in \`${e.metadata.namespace}\`: ${(e.message || "").substring(0, 120)}${e.count > 1 ? ` (x${e.count})` : ""}${age}`);
+      });
+      return parts.join("\n");
+    } catch (err) {
+      return `### Events\n[CRITICAL] ${err.message}`;
+    }
+  }
+
+  // Generic list for any resource
+  try {
+    const path = (resInfo.namespaced && cmd.namespace)
+      ? `${resInfo.api}/namespaces/${cmd.namespace}/${resInfo.resource}`
+      : `${resInfo.api}/${resInfo.resource}`;
+    const data = await ocpGet(path);
+    const items = data.items || [];
+    const label = cmd.namespace ? `in \`${cmd.namespace}\`` : "(all namespaces)";
+    const parts = [`### ${resInfo.resource} ${label} (${items.length})`];
+
+    if (items.length === 0) {
+      parts.push(`No ${resInfo.resource} found ${label}.`);
+      return parts.join("\n");
+    }
+
+    // Resource-specific formatting
+    if (cmd.resourceType === "pod" || cmd.resourceType === "pods") {
+      items.slice(0, 40).forEach((p) => {
+        const phase = p.status?.phase || "Unknown";
+        const restarts = (p.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0);
+        const icon = phase === "Running" ? "[OK]" : phase === "Succeeded" ? "[OK]" : "[CRITICAL]";
+        const ns = p.metadata.namespace;
+        parts.push(`  - ${icon} **${p.metadata.name}** (${ns}) — ${phase}${restarts > 0 ? ` — restarts: ${restarts}` : ""}`);
+      });
+    } else if (["deployment", "deployments", "deploy"].includes(cmd.resourceType)) {
+      items.slice(0, 30).forEach((d) => {
+        const ready = d.status?.readyReplicas ?? 0;
+        const desired = d.spec?.replicas ?? 0;
+        const icon = ready === desired ? "[OK]" : "[CRITICAL]";
+        parts.push(`  - ${icon} **${d.metadata.name}** (${d.metadata.namespace}) — ${ready}/${desired} ready`);
+      });
+    } else if (["service", "services", "svc"].includes(cmd.resourceType)) {
+      items.slice(0, 30).forEach((s) => {
+        const ports = (s.spec?.ports || []).map((p) => `${p.port}/${p.protocol}`).join(", ");
+        parts.push(`  - **${s.metadata.name}** (${s.metadata.namespace}) — ${s.spec?.type} — ${s.spec?.clusterIP} — ${ports}`);
+      });
+    } else if (["node", "nodes"].includes(cmd.resourceType)) {
+      items.forEach((n) => {
+        const ready = (n.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True");
+        const roles = Object.keys(n.metadata?.labels || {}).filter(l => l.startsWith("node-role.kubernetes.io/")).map(l => l.split("/")[1]);
+        const icon = ready ? "[OK]" : "[CRITICAL]";
+        parts.push(`  - ${icon} **${n.metadata.name}** (${roles.join(", ") || "worker"}) — CPU: ${n.status?.capacity?.cpu}, Mem: ${n.status?.capacity?.memory}`);
+      });
+    } else if (["namespace", "namespaces", "ns"].includes(cmd.resourceType)) {
+      items.forEach((ns) => {
+        const icon = ns.status?.phase === "Active" ? "[OK]" : "[WARNING]";
+        parts.push(`  - ${icon} **${ns.metadata.name}** — ${ns.status?.phase}`);
+      });
+    } else if (["route", "routes"].includes(cmd.resourceType)) {
+      items.slice(0, 30).forEach((r) => {
+        parts.push(`  - **${r.metadata.name}** (${r.metadata.namespace}) — host: ${r.spec?.host || "?"} -> ${r.spec?.to?.name || "?"}`);
+      });
+    } else if (["configmap", "configmaps", "cm"].includes(cmd.resourceType)) {
+      items.slice(0, 30).forEach((c) => {
+        const keys = Object.keys(c.data || {}).length;
+        parts.push(`  - **${c.metadata.name}** (${c.metadata.namespace}) — ${keys} key(s)`);
+      });
+    } else if (["secret", "secrets"].includes(cmd.resourceType)) {
+      items.slice(0, 30).forEach((s) => {
+        const keys = Object.keys(s.data || {}).length;
+        parts.push(`  - **${s.metadata.name}** (${s.metadata.namespace}) — type: ${s.type} — ${keys} key(s)`);
+      });
+    } else if (["pvc", "pvcs", "persistentvolumeclaim"].includes(cmd.resourceType)) {
+      items.slice(0, 30).forEach((p) => {
+        const icon = p.status?.phase === "Bound" ? "[OK]" : "[WARNING]";
+        parts.push(`  - ${icon} **${p.metadata.name}** (${p.metadata.namespace}) — ${p.status?.phase} — ${p.spec?.resources?.requests?.storage || "?"} — ${p.spec?.storageClassName || "default"}`);
+      });
+    } else {
+      // Generic format
+      items.slice(0, 30).forEach((item) => {
+        const ns = item.metadata?.namespace ? ` (${item.metadata.namespace})` : "";
+        parts.push(`  - **${item.metadata?.name}**${ns}`);
+      });
+    }
+
+    if (items.length > 40) {
+      parts.push(`\n... showing first 40 of ${items.length} total`);
+    }
+    return parts.join("\n");
+  } catch (err) {
+    return `### ${resInfo.resource}\n[CRITICAL] ${err.message}`;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -920,16 +1504,26 @@ function builtInAnalysis(userMessage, ctx) {
 
   // --- Fallback: help ---
   parts.push(`### MCP AI Assistant`);
-  parts.push(`\nI can help you explore your cluster. Try asking:`);
+  parts.push(`\nI can perform operations on your OpenShift cluster. Try asking:`);
+  parts.push(`\n**Pods:**`);
+  parts.push(`  - "List pods in namespace trident"`);
+  parts.push(`  - "Describe pod my-pod in namespace default"`);
+  parts.push(`  - "Show logs for my-pod in namespace default"`);
+  parts.push(`  - "Top pods in namespace monitoring" (resource usage)`);
+  parts.push(`  - "Delete pod crashed-pod in namespace default"`);
+  parts.push(`  - "Run pod test-pod image nginx:latest in namespace default"`);
+  parts.push(`  - "Show CrashLoopBackOff pods" / "Show pod issues"`);
+  parts.push(`\n**Resources:**`);
+  parts.push(`  - "List deployments in namespace my-app"`);
+  parts.push(`  - "List services in namespace default"`);
+  parts.push(`  - "List configmaps in namespace trident"`);
+  parts.push(`  - "List routes in namespace openshift-console"`);
+  parts.push(`  - "List events in namespace my-app"`);
+  parts.push(`  - "List pvcs" / "List secrets in namespace X"`);
+  parts.push(`\n**Cluster:**`);
+  parts.push(`  - "List nodes" / "List namespaces" / "List projects"`);
+  parts.push(`  - "Check cluster health" / "Show cluster operators"`);
   parts.push(`  - "How many pods are running?"`);
-  parts.push(`  - "Show CrashLoopBackOff pods"`);
-  parts.push(`  - "Show ImagePullBackOff pods"`);
-  parts.push(`  - "List all pod issues"`);
-  parts.push(`  - "Show pods in namespace my-app"`);
-  parts.push(`  - "List nodes and their status"`);
-  parts.push(`  - "Check cluster health"`);
-  parts.push(`  - "Show warning events"`);
-  parts.push(`  - "Show cluster operators"`);
 
   return parts.join("\n");
 }
@@ -956,7 +1550,28 @@ export async function handleChatAPI(req, res) {
 
     const activeProvider = llmOpts.provider || LLM_PROVIDER;
 
-    // 1. Gather cluster context
+    // Try direct command handler first (for specific CRUD operations)
+    // This handles: logs, top, delete, get/describe, run, exec
+    const directResult = await handleDirectCommand(userMessage);
+    if (directResult) {
+      return json(res, 200, {
+        reply: directResult,
+        provider: activeProvider === "none" ? "built-in" : activeProvider,
+        contextKeys: ["directCommand"],
+      });
+    }
+
+    // Try list command handler (for "list/show X" queries)
+    const listResult = await handleListCommand(userMessage);
+    if (listResult) {
+      return json(res, 200, {
+        reply: listResult,
+        provider: activeProvider === "none" ? "built-in" : activeProvider,
+        contextKeys: ["listCommand"],
+      });
+    }
+
+    // 1. Gather cluster context for analysis queries
     const context = await gatherClusterContext(userMessage);
 
     // 2. Call LLM (or built-in analysis)
