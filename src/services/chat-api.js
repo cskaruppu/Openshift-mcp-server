@@ -64,12 +64,13 @@ async function gatherClusterContext(userMessage) {
 
   // Detect what specific issue type the user is asking about
   context.queryFilter = null;
-  if (lower.match(/crashloop|crash.?loop|crash.?back/)) context.queryFilter = "CrashLoopBackOff";
-  else if (lower.match(/imagepull|image.?pull|errimagepull/)) context.queryFilter = "ImagePullBackOff";
+  if (lower.match(/crash\s*loop|crashloop|crash.?back|crashlook|cras.*loop/)) context.queryFilter = "CrashLoopBackOff";
+  else if (lower.match(/image\s*pull|imagepull|errimagepull|image.?pull.?back|pull.?back/)) context.queryFilter = "ImagePullBackOff";
   else if (lower.match(/oom|out.?of.?memory|oomkill/)) context.queryFilter = "OOMKilled";
-  else if (lower.match(/pending/)) context.queryFilter = "Pending";
-  else if (lower.match(/fail|failed/)) context.queryFilter = "Failed";
+  else if (lower.match(/\bpending\b/)) context.queryFilter = "Pending";
+  else if (lower.match(/\bfail(?:ed)?\b/)) context.queryFilter = "Failed";
   else if (lower.match(/not.?ready|notready/)) context.queryFilter = "NotReady";
+  else if (lower.match(/config.?error|createcontainer/)) context.queryFilter = "CreateContainerConfigError";
 
   // Nodes
   if (lower.match(/node|cluster|health|overview|status|capacity|resource/)) {
@@ -500,12 +501,13 @@ function builtInAnalysis(userMessage, ctx) {
   // -------------------------------------------------------------------------
   if (filter && ctx.problemPods) {
     const filterMap = {
-      CrashLoopBackOff: (p) => p.containers.some((c) => c.state === "CrashLoopBackOff"),
-      ImagePullBackOff: (p) => p.containers.some((c) => c.state === "ImagePullBackOff" || c.state === "ErrImagePull"),
-      OOMKilled:        (p) => p.containers.some((c) => c.state === "OOMKilled"),
-      Failed:           (p) => p.phase === "Failed",
-      Pending:          (p) => p.phase === "Pending",
-      NotReady:         (p) => p.containers.some((c) => !c.ready),
+      CrashLoopBackOff:          (p) => p.containers.some((c) => c.state === "CrashLoopBackOff"),
+      ImagePullBackOff:          (p) => p.containers.some((c) => c.state === "ImagePullBackOff" || c.state === "ErrImagePull"),
+      OOMKilled:                 (p) => p.containers.some((c) => c.state === "OOMKilled"),
+      CreateContainerConfigError:(p) => p.containers.some((c) => c.state === "CreateContainerConfigError"),
+      Failed:                    (p) => p.phase === "Failed",
+      Pending:                   (p) => p.phase === "Pending",
+      NotReady:                  (p) => p.containers.some((c) => !c.ready),
     };
     const matchFn = filterMap[filter] || (() => false);
     const matched = ctx.problemPods.filter(matchFn);
