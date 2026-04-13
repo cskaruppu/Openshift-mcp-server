@@ -49,6 +49,17 @@ spec:
           args:
             - "--protected-mode"
             - "no"
+            # Cache-only mode: disable all on-disk persistence. This avoids
+            # MISCONF errors when the container's data dir isn't writable
+            # (OpenShift runs pods as a random UID with read-only rootfs).
+            - "--save"
+            - ""
+            - "--appendonly"
+            - "no"
+            - "--stop-writes-on-bgsave-error"
+            - "no"
+            - "--dir"
+            - "/tmp"
             - "--maxmemory"
             - "128mb"
             - "--maxmemory-policy"
