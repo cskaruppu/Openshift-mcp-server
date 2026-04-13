@@ -25,6 +25,35 @@ import {
   logExecutedAction as histLogExecutedAction,
   isHistoryEnabled,
 } from "./chat-history.js";
+import { parse as nluParse, describeParse } from "./nlu.js";
+import { getMemory, updateMemory, memoryPatchFromParse } from "./conversation-memory.js";
+
+// Map an NLU intent to the legacy "operation" string used by the response
+// handlers below, plus a few normalizations.
+function nluToCommand(p) {
+  // Map intent → operation.
+  let operation = null;
+  if (p.intent === "list" || p.intent === "get") operation = p.intent;
+  else if (p.intent === "logs") operation = "logs";
+  else if (p.intent === "top") operation = "top";
+  else if (p.intent === "delete") operation = "delete";
+  else if (p.intent === "exec") operation = "exec";
+  else if (p.intent === "run") operation = "run";
+  else if (p.intent === "create") operation = "create";
+  else if (p.intent === "update") operation = "update";
+  return {
+    operation,
+    resourceType: p.resource,
+    resourceName: p.name,
+    namespace: p.namespace,
+    filter: p.filter,
+    allNs: p.allNs,
+    scope: p.scope,
+    options: p.options,
+    confidence: p.confidence,
+    intent: p.intent,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Cache config — TTL in seconds for cached chat replies / cluster context
@@ -36,6 +65,79 @@ function cacheKeyForChat(message, provider) {
   // Normalize whitespace + lowercase so trivial variants share the cache.
   const norm = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
   return `chat:${provider || "none"}:${norm}`;
+}
+
+/**
+ * Check if a pod matches an issue-type filter. Looks at container statuses
+ * because phase==Running can still hide CrashLoopBackOff in waiting reason.
+ */
+function podMatchesFilter(pod, filter) {
+  const cs = (pod.status?.containerStatuses || [])
+    .concat(pod.status?.initContainerStatuses || []);
+  const reasons = cs.flatMap((c) => [
+    c.state?.waiting?.reason,
+    c.state?.terminated?.reason,
+    c.lastState?.terminated?.reason,
+  ]).filter(Boolean);
+  const phase = pod.status?.phase;
+  switch (filter) {
+    case "CrashLoopBackOff":
+      return reasons.includes("CrashLoopBackOff");
+    case "ImagePullBackOff":
+      return reasons.includes("ImagePullBackOff") || reasons.includes("ErrImagePull");
+    case "OOMKilled":
+      return reasons.includes("OOMKilled");
+    case "CreateContainerConfigError":
+      return reasons.includes("CreateContainerConfigError");
+    case "Pending":
+      return phase === "Pending";
+    case "Evicted":
+      return pod.status?.reason === "Evicted";
+    case "Failed":
+      return phase !== "Running" && phase !== "Succeeded";
+    default:
+      return true;
+  }
+}
+
+/**
+ * Curated help/cheat-sheet shown when the user asks "help" or "what can you do".
+ */
+function buildHelpMessage() {
+  return [
+    "### OpenShift MCP AI Assistant — what I can do",
+    "",
+    "I understand natural-language questions about your cluster and run them as live API calls. No external LLM required for any of the items below.",
+    "",
+    "**Pods**",
+    "  - `list pods in trident namespace` / `pods in all namespaces`",
+    "  - `how many pods are running in default?`",
+    "  - `show crashloopbackoff pods` / `imagepullbackoff` / `oomkilled`",
+    "  - `describe pod <name> in <ns>`",
+    "  - `logs <pod> in <ns>` / `logs <pod> tail 200`",
+    "  - `top pods in <ns>`",
+    "  - `delete pod <name> in <ns>`",
+    "  - `exec <pod> in <ns> -- ls /tmp`",
+    "  - `run image: nginx:latest in <ns>`",
+    "",
+    "**Generic resources** (deployments, services, configmaps, secrets, routes, statefulsets, daemonsets, jobs, cronjobs, pvcs, ingresses, hpa, ...)",
+    "  - `list deployments in <ns>` / `describe deployment <name> in <ns>`",
+    "  - `delete <kind> <name> in <ns>`",
+    "  - `scale deployment <name> to 5 in <ns>`",
+    "",
+    "**Cluster scoped**",
+    "  - `list nodes` / `list namespaces` / `list projects`",
+    "  - `list clusteroperators` / `list pvs`",
+    "  - `is the cluster healthy?`",
+    "",
+    "**Events**",
+    "  - `show events` / `events in <ns>` / `warning events`",
+    "",
+    "**Follow-ups** — I remember the last resource you mentioned",
+    "  - `delete it` / `show its logs` / `same in production namespace`",
+    "",
+    "Type any of the above naturally — punctuation, casing, and word order don't matter.",
+  ].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -145,7 +247,10 @@ async function fetchPodLogs(namespace, podName, tailLines = 80) {
 // ---------------------------------------------------------------------------
 // Command parser — extract operation, resource, name, namespace from message
 // ---------------------------------------------------------------------------
-function parseCommand(message) {
+function parseCommand(message, memory) {
+  return nluToCommand(nluParse(message, memory));
+}
+function _legacyParseCommand_unused(message) {
   const lower = message.toLowerCase().trim();
 
   // Words that look like namespaces but are actually resource types — never
@@ -261,12 +366,14 @@ function parseCommand(message) {
 // Direct command handler — handles specific CRUD/operations without LLM
 // Returns null if the message isn't a recognized direct command
 // ---------------------------------------------------------------------------
-async function handleDirectCommand(message) {
-  const cmd = parseCommand(message);
+async function handleDirectCommand(message, preParsed) {
+  const cmd = preParsed || parseCommand(message);
   const lower = message.toLowerCase().trim();
 
-  // Only handle when we have a clear operation + resource combination
+  // Only handle the *specific* CRUD verbs here. List/get queries are
+  // routed through handleListCommand so they share one code path.
   if (!cmd.operation || !cmd.resourceType) return null;
+  if (cmd.operation === "list" || cmd.operation === "get") return null;
 
   const resInfo = RESOURCE_MAP[cmd.resourceType];
   if (!resInfo) return null;
@@ -538,15 +645,18 @@ async function handleDirectCommand(message) {
 // ---------------------------------------------------------------------------
 // List resources — handles "list/show X" queries
 // ---------------------------------------------------------------------------
-async function handleListCommand(message) {
+async function handleListCommand(message, preParsed) {
   const lower = message.toLowerCase().trim();
-  const cmd = parseCommand(message);
+  const cmd = preParsed || parseCommand(message);
 
-  // Must have a resource type and look like a list request
+  // Must have a resource type and a list/get-style intent.
   if (!cmd.resourceType) return null;
-  if (!lower.match(/\blist\b|\bshow\b|\bget\b|\ball\b|\bhow many\b|\bcount\b/)) return null;
-  // Don't intercept when the user is asking about issues/problems (let intent system handle)
-  if (lower.match(/issue|problem|fail|error|crash|oom|diagnos|health|what.*wrong/)) return null;
+  if (!["list", "get"].includes(cmd.operation)) return null;
+  // Issue/health questions go through the intent-driven analysis path
+  // (gatherClusterContext) — but only when there's no explicit list verb,
+  // so "list crashloopbackoff pods" still returns a focused list.
+  if (cmd.filter && !["list", "get"].includes(cmd.operation)) return null;
+  if (!cmd.filter && lower.match(/\bhealth\b|\bdiagnos|\bwhat.*wrong\b|\boverview\b/)) return null;
 
   const resInfo = RESOURCE_MAP[cmd.resourceType];
   if (!resInfo) return null;
@@ -598,12 +708,27 @@ async function handleListCommand(message) {
       ? `${resInfo.api}/namespaces/${cmd.namespace}/${resInfo.resource}`
       : `${resInfo.api}/${resInfo.resource}`;
     const data = await ocpGet(path);
-    const items = data.items || [];
+    let items = data.items || [];
+
+    // Filter by issue type when one was extracted from the query.
+    if (cmd.filter && (cmd.resourceType === "pod" || cmd.resourceType === "pods")) {
+      items = items.filter((p) => podMatchesFilter(p, cmd.filter));
+    } else if (cmd.filter === "Failed" && (cmd.resourceType === "pod" || cmd.resourceType === "pods")) {
+      items = items.filter((p) => p.status?.phase !== "Running" && p.status?.phase !== "Succeeded");
+    }
+
     const label = cmd.namespace ? `in \`${cmd.namespace}\`` : "(all namespaces)";
-    const parts = [`### ${resInfo.resource} ${label} (${items.length})`];
+    const filterLabel = cmd.filter ? ` matching **${cmd.filter}**` : "";
+
+    // ---- Count-scope: user asked "how many", return a single line ----
+    if (cmd.scope === "count") {
+      return `**${items.length}** ${resInfo.resource}${filterLabel} ${label}.`;
+    }
+
+    const parts = [`### ${resInfo.resource}${filterLabel} ${label} (${items.length})`];
 
     if (items.length === 0) {
-      parts.push(`No ${resInfo.resource} found ${label}.`);
+      parts.push(`No ${resInfo.resource}${filterLabel} found ${label}.`);
       return parts.join("\n");
     }
 
@@ -1603,6 +1728,13 @@ export async function handleChatAPI(req, res) {
 
     activeProvider = llmOpts.provider || LLM_PROVIDER;
 
+    // ---- NLU: parse the message once, with conversation memory for
+    // follow-up resolution ("show its logs", "delete it", "same in prod").
+    const memory = await getMemory(conversationId);
+    const parsed = nluParse(userMessage, memory);
+    intentsForLog = [parsed.intent, parsed.resource, parsed.scope]
+      .filter(Boolean);
+
     // Persist user message (best effort, no-op if DB not configured)
     if (conversationId) {
       histAddMessage(conversationId, {
@@ -1613,11 +1745,9 @@ export async function handleChatAPI(req, res) {
     }
 
     // ---- Redis cache lookup ----
-    // Only cache "read-only" style requests. Mutating ops (delete/scale/...)
-    // bypass the cache so they always hit the live cluster.
-    const isMutating = /\b(delete|del|remove|rm|scale|restart|exec|run)\b/i.test(
-      userMessage
-    );
+    // Mutating intents (delete / update / exec / run) always bypass the
+    // cache so they hit the live cluster.
+    const isMutating = ["delete", "update", "exec", "run", "create"].includes(parsed.intent);
     const cacheKey = cacheKeyForChat(userMessage, activeProvider);
 
     if (!isMutating) {
@@ -1648,15 +1778,31 @@ export async function handleChatAPI(req, res) {
       }
     }
 
+    // Adapt the parsed NLU result to the legacy command shape used by the
+    // direct/list handlers below.
+    const cmd = nluToCommand(parsed);
+
+    // Help intent gets a curated cheat-sheet, no cluster call.
+    if (parsed.intent === "help") {
+      const reply = buildHelpMessage();
+      const provider = "built-in";
+      const payload = { reply, provider, contextKeys: ["help"] };
+      cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
+      if (conversationId) {
+        histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+      }
+      return json(res, 200, { ...payload, cached: false, conversationId });
+    }
+
     // Try direct command handler first (for specific CRUD operations)
-    // This handles: logs, top, delete, get/describe, run, exec
-    const directResult = await handleDirectCommand(userMessage);
+    // This handles: logs, top, delete, run, exec, update
+    const directResult = await handleDirectCommand(userMessage, cmd);
     if (directResult) {
       const provider = activeProvider === "none" ? "built-in" : activeProvider;
       const payload = {
         reply: directResult,
         provider,
-        contextKeys: ["directCommand"],
+        contextKeys: ["directCommand", parsed.intent, parsed.resource].filter(Boolean),
       };
       if (!isMutating) {
         cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
@@ -1668,18 +1814,19 @@ export async function handleChatAPI(req, res) {
           provider,
         }).catch(() => {});
       }
-      intentsForLog = ["directCommand"];
+      // Update conversation memory so follow-ups can resolve "it" / "its".
+      updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
       return json(res, 200, { ...payload, cached: false, conversationId });
     }
 
-    // Try list command handler (for "list/show X" queries)
-    const listResult = await handleListCommand(userMessage);
+    // Try list command handler (for "list/show/get X" queries)
+    const listResult = await handleListCommand(userMessage, cmd);
     if (listResult) {
       const provider = activeProvider === "none" ? "built-in" : activeProvider;
       const payload = {
         reply: listResult,
         provider,
-        contextKeys: ["listCommand"],
+        contextKeys: ["listCommand", parsed.resource, parsed.scope].filter(Boolean),
       };
       cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
       if (conversationId) {
@@ -1689,7 +1836,7 @@ export async function handleChatAPI(req, res) {
           provider,
         }).catch(() => {});
       }
-      intentsForLog = ["listCommand"];
+      updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
       return json(res, 200, { ...payload, cached: false, conversationId });
     }
 
