@@ -13,3 +13,7 @@ data:
   LLM_PROVIDER: "none"
   # LLM_API_URL: "https://api.openai.com"    # or Ollama URL, etc.
   # LLM_MODEL: "gpt-4"                       # or claude-sonnet-4-20250514, llama3, etc.
+  # ---- Cache & DB (optional — falls back to stateless if unset) ----
+  REDIS_URL: "redis://mcp-redis.openshift-mcp.svc.cluster.local:6379"
+  CHAT_CACHE_TTL: "60"
+  CONTEXT_CACHE_TTL: "30"

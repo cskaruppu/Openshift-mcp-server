@@ -25,6 +25,16 @@ import { registerDashboardTools } from "./tools/dashboard.js";
 import { registerWorkloadTools } from "./tools/workloads.js";
 import { handleDashboardAPI } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI } from "./services/chat-api.js";
+import {
+  listChats,
+  getChat,
+  createChat,
+  deleteChat,
+  updateTitle,
+  isHistoryEnabled,
+} from "./services/chat-history.js";
+import { initDb } from "./utils/db.js";
+import { initCache, isEnabled as cacheReady } from "./utils/cache.js";
 
 function createMcpServer() {
   const server = new McpServer({
@@ -64,8 +74,93 @@ async function startStdio() {
 // SSE transport — for running inside a Kubernetes pod
 // Each client GET /sse opens a session; messages arrive via POST /message.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// /api/chats — persistent chat history backed by PostgreSQL.
+// Returns 503 if the DB is not configured; the dashboard then falls back to
+// browser localStorage.
+// ---------------------------------------------------------------------------
+function sendJson(res, status, body) {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(body));
+}
+
+async function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      const raw = Buffer.concat(chunks).toString();
+      if (!raw) return resolve({});
+      try { resolve(JSON.parse(raw)); }
+      catch (e) { reject(e); }
+    });
+    req.on("error", reject);
+  });
+}
+
+async function handleChatHistoryAPI(url, req, res) {
+  if (!(await isHistoryEnabled())) {
+    return sendJson(res, 503, {
+      error: "Chat history is not enabled. Set DATABASE_URL to persist conversations.",
+      enabled: false,
+    });
+  }
+
+  // /api/chats
+  if (url.pathname === "/api/chats") {
+    if (req.method === "GET") {
+      const limit = parseInt(url.searchParams.get("limit") || "100", 10);
+      const chats = await listChats(limit);
+      return sendJson(res, 200, { chats });
+    }
+    if (req.method === "POST") {
+      try {
+        const body = await readJsonBody(req);
+        const chat = await createChat({ id: body.id, title: body.title });
+        return sendJson(res, 201, chat);
+      } catch (err) {
+        return sendJson(res, 400, { error: err.message });
+      }
+    }
+    return sendJson(res, 405, { error: "Method not allowed" });
+  }
+
+  // /api/chats/:id
+  const m = url.pathname.match(/^\/api\/chats\/([^/]+)$/);
+  if (m) {
+    const id = decodeURIComponent(m[1]);
+    if (req.method === "GET") {
+      const chat = await getChat(id);
+      if (!chat) return sendJson(res, 404, { error: "Not found" });
+      return sendJson(res, 200, chat);
+    }
+    if (req.method === "DELETE") {
+      const ok = await deleteChat(id);
+      return sendJson(res, ok ? 200 : 404, { success: ok });
+    }
+    if (req.method === "PATCH") {
+      try {
+        const body = await readJsonBody(req);
+        if (body.title) {
+          const ok = await updateTitle(id, body.title);
+          return sendJson(res, ok ? 200 : 404, { success: ok });
+        }
+        return sendJson(res, 400, { error: "No fields to update" });
+      } catch (err) {
+        return sendJson(res, 400, { error: err.message });
+      }
+    }
+    return sendJson(res, 405, { error: "Method not allowed" });
+  }
+
+  return sendJson(res, 404, { error: "Not found" });
+}
+
 async function startSSE() {
   const PORT = parseInt(process.env.MCP_SERVER_PORT, 10) || 3000;
+
+  // Initialize optional persistence layers (graceful fallback if not configured)
+  await Promise.all([initDb(), initCache()]);
 
   // Track active transports so each SSE session gets its own MCP server
   // instance (the SDK ties one transport to one server).
@@ -88,7 +183,13 @@ async function startSSE() {
     // Health check endpoint for K8s probes
     if (url.pathname === "/healthz" || url.pathname === "/readyz") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok" }));
+      res.end(
+        JSON.stringify({
+          status: "ok",
+          db: await isHistoryEnabled(),
+          cache: await cacheReady(),
+        })
+      );
       return;
     }
 
@@ -101,6 +202,12 @@ async function startSSE() {
     // Execute fix API — /api/execute (POST)
     if (req.method === "POST" && url.pathname === "/api/execute") {
       await handleExecuteAPI(req, res);
+      return;
+    }
+
+    // Persistent chat history — /api/chats (DB-backed if Postgres configured)
+    if (url.pathname === "/api/chats" || url.pathname.startsWith("/api/chats/")) {
+      await handleChatHistoryAPI(url, req, res);
       return;
     }
 

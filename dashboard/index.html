@@ -977,8 +977,12 @@ function showView(view) {
     // Sync LLM settings from dashboard panel to full chat
     syncLLMToFull();
     loadFullLLMConfig();
-    renderChatHistory();
-    scrollConversation();
+    // Detect server-backed history then render
+    detectHistoryBackend().then(() => {
+      renderChatHistory();
+      renderConversation();
+      scrollConversation();
+    });
   } else {
     dashView.style.display = 'block';
     chatView.style.display = 'none';
@@ -986,19 +990,59 @@ function showView(view) {
 }
 
 // ---------------------------------------------------------------------------
-// Chat History — localStorage persistence
+// Chat History — server-backed (PostgreSQL via /api/chats) with graceful
+// fallback to browser localStorage when the DB is not configured.
 // ---------------------------------------------------------------------------
 // Structure: { chats: [{ id, title, messages: [{ role, text, provider?, html? }], updatedAt }], activeId }
-function loadChatHistory() {
+let _historyRemote = null; // null = unknown, true = server-backed, false = localStorage
+let _historyCache = { chats: [], activeId: null };
+
+function chatApiBase() { return MCP_API.replace(/\/api$/, ''); }
+
+async function detectHistoryBackend() {
+  if (_historyRemote !== null) return _historyRemote;
+  try {
+    const resp = await fetch(chatApiBase() + '/api/chats');
+    if (resp.ok) {
+      _historyRemote = true;
+      const data = await resp.json();
+      _historyCache.chats = (data.chats || []).map(c => ({
+        id: c.id,
+        title: c.title,
+        messages: [], // lazy-loaded on select
+        messageCount: c.messageCount || 0,
+        updatedAt: c.updatedAt,
+        loaded: false,
+      }));
+      // Restore last active id from localStorage if present
+      const lastActive = localStorage.getItem('mcp-active-chat');
+      if (lastActive && _historyCache.chats.find(c => c.id === lastActive)) {
+        _historyCache.activeId = lastActive;
+      }
+      return true;
+    }
+  } catch (e) {}
+  _historyRemote = false;
+  // Fall back to localStorage
   try {
     const saved = JSON.parse(localStorage.getItem('mcp-chat-history'));
-    if (saved && saved.chats) return saved;
+    if (saved && saved.chats) _historyCache = saved;
   } catch (e) {}
-  return { chats: [], activeId: null };
+  return false;
+}
+
+function loadChatHistory() {
+  // Synchronous accessor used by render*; data is kept fresh by async ops.
+  return _historyCache;
 }
 
 function saveChatHistory(history) {
-  localStorage.setItem('mcp-chat-history', JSON.stringify(history));
+  _historyCache = history;
+  if (!_historyRemote) {
+    localStorage.setItem('mcp-chat-history', JSON.stringify(history));
+  } else if (history.activeId) {
+    localStorage.setItem('mcp-active-chat', history.activeId);
+  }
 }
 
 function getActiveChat() {
@@ -1007,33 +1051,82 @@ function getActiveChat() {
   return history.chats.find(c => c.id === history.activeId) || null;
 }
 
-function newChat() {
+async function newChat() {
+  await detectHistoryBackend();
   const history = loadChatHistory();
   const id = 'chat-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-  const chat = { id, title: 'New conversation', messages: [], updatedAt: new Date().toISOString() };
+  const chat = {
+    id,
+    title: 'New conversation',
+    messages: [],
+    messageCount: 0,
+    updatedAt: new Date().toISOString(),
+    loaded: true,
+  };
   history.chats.unshift(chat);
   history.activeId = id;
   saveChatHistory(history);
+
+  if (_historyRemote) {
+    fetch(chatApiBase() + '/api/chats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, title: chat.title }),
+    }).catch(() => {});
+  }
+
   renderChatHistory();
   renderConversation();
 }
 
-function selectChat(id) {
+async function selectChat(id) {
+  await detectHistoryBackend();
   const history = loadChatHistory();
   history.activeId = id;
   saveChatHistory(history);
+
+  // Lazy-load messages from the server if needed
+  if (_historyRemote) {
+    const chat = history.chats.find(c => c.id === id);
+    if (chat && !chat.loaded) {
+      try {
+        const resp = await fetch(chatApiBase() + '/api/chats/' + encodeURIComponent(id));
+        if (resp.ok) {
+          const full = await resp.json();
+          chat.title = full.title || chat.title;
+          chat.messages = (full.messages || []).map(m => ({
+            role: m.role === 'assistant' ? 'ai' : m.role,
+            text: m.content,
+            html: m.html || (m.role !== 'user' ? md(m.content || '') : null),
+            provider: m.provider,
+          }));
+          chat.messageCount = chat.messages.length;
+          chat.loaded = true;
+        }
+      } catch (e) {}
+    }
+  }
+
   renderChatHistory();
   renderConversation();
 }
 
-function deleteChat(id, ev) {
+async function deleteChat(id, ev) {
   if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  await detectHistoryBackend();
   const history = loadChatHistory();
   history.chats = history.chats.filter(c => c.id !== id);
   if (history.activeId === id) {
     history.activeId = history.chats.length > 0 ? history.chats[0].id : null;
   }
   saveChatHistory(history);
+
+  if (_historyRemote) {
+    fetch(chatApiBase() + '/api/chats/' + encodeURIComponent(id), {
+      method: 'DELETE',
+    }).catch(() => {});
+  }
+
   renderChatHistory();
   renderConversation();
 }
@@ -1050,9 +1143,10 @@ function renderChatHistory() {
   list.innerHTML = history.chats.map(c => {
     const active = c.id === history.activeId ? ' active' : '';
     const time = c.updatedAt ? timeAgo(c.updatedAt) : '';
+    const count = (c.messages && c.messages.length) || c.messageCount || 0;
     return '<div class="history-item' + active + '" onclick="selectChat(\'' + c.id + '\')">' +
       '<div class="history-title">' + esc(c.title) + '</div>' +
-      '<div class="history-meta">' + c.messages.length + ' messages' + (time ? ' \u00b7 ' + time : '') + '</div>' +
+      '<div class="history-meta">' + count + ' messages' + (time ? ' \u00b7 ' + time : '') + '</div>' +
       '<button class="history-delete" onclick="deleteChat(\'' + c.id + '\', event)" title="Delete">&times;</button>' +
       '</div>';
   }).join('');
@@ -1120,10 +1214,12 @@ async function sendFullChat(text) {
   const msg = text || (input ? input.value.trim() : '');
   if (!msg) return;
 
+  await detectHistoryBackend();
+
   // Ensure there's an active chat
   let history = loadChatHistory();
   if (!history.activeId) {
-    newChat();
+    await newChat();
     history = loadChatHistory();
   }
 
@@ -1157,7 +1253,7 @@ async function sendFullChat(text) {
 
   try {
     // Build request body with LLM settings
-    const chatBody = { message: msg };
+    const chatBody = { message: msg, conversationId: history.activeId };
     const provider = document.getElementById('full-llm-provider').value;
     if (provider && provider !== 'none') {
       chatBody.provider = provider;

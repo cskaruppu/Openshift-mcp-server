@@ -1,0 +1,107 @@
+# PostgreSQL — persistent storage for chat history, query log,
+# and executed actions for the OpenShift MCP Server.
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mcp-postgres
+  namespace: openshift-mcp
+type: Opaque
+stringData:
+  POSTGRES_DB: mcp
+  POSTGRES_USER: mcp
+  POSTGRES_PASSWORD: changeme-mcp-postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-postgres
+  namespace: openshift-mcp
+  labels:
+    app.kubernetes.io/name: mcp-postgres
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: mcp-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mcp-postgres
+  namespace: openshift-mcp
+  labels:
+    app.kubernetes.io/name: mcp-postgres
+spec:
+  serviceName: mcp-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mcp-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mcp-postgres
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: registry.redhat.io/rhel9/postgresql-16:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRESQL_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-postgres
+                  key: POSTGRES_DB
+            - name: POSTGRESQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-postgres
+                  key: POSTGRES_USER
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-postgres
+                  key: POSTGRES_PASSWORD
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "mcp", "-d", "mcp"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "mcp", "-d", "mcp"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgsql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

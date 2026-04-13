@@ -33,6 +33,30 @@ spec:
                 name: mcp-server-config
             - secretRef:
                 name: mcp-server-secrets
+          env:
+            # Build DATABASE_URL from the Postgres secret. Optional — if the
+            # mcp-postgres secret is not present, omit this block to run in
+            # stateless mode.
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-postgres
+                  key: POSTGRES_USER
+                  optional: true
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-postgres
+                  key: POSTGRES_PASSWORD
+                  optional: true
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-postgres
+                  key: POSTGRES_DB
+                  optional: true
+            - name: DATABASE_URL
+              value: "postgres://$(PGUSER):$(PGPASSWORD)@mcp-postgres.openshift-mcp.svc.cluster.local:5432/$(PGDATABASE)"
           resources:
             requests:
               cpu: 100m

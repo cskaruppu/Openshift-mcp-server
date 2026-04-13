@@ -18,6 +18,25 @@
  */
 
 import { ocpGet, ocpDelete, ocpPatch, ocpPost, ocpFetch } from "../utils/openshift-client.js";
+import { cacheGet, cacheSet, isEnabled as cacheEnabled } from "../utils/cache.js";
+import {
+  addMessage as histAddMessage,
+  logQuery as histLogQuery,
+  logExecutedAction as histLogExecutedAction,
+  isHistoryEnabled,
+} from "./chat-history.js";
+
+// ---------------------------------------------------------------------------
+// Cache config — TTL in seconds for cached chat replies / cluster context
+// ---------------------------------------------------------------------------
+const CHAT_CACHE_TTL = parseInt(process.env.CHAT_CACHE_TTL || "60", 10);
+const CONTEXT_CACHE_TTL = parseInt(process.env.CONTEXT_CACHE_TTL || "30", 10);
+
+function cacheKeyForChat(message, provider) {
+  // Normalize whitespace + lowercase so trivial variants share the cache.
+  const norm = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
+  return `chat:${provider || "none"}:${norm}`;
+}
 
 // ---------------------------------------------------------------------------
 // Config
@@ -1532,9 +1551,17 @@ function builtInAnalysis(userMessage, ctx) {
 // POST /api/chat handler
 // ---------------------------------------------------------------------------
 export async function handleChatAPI(req, res) {
+  const startedAt = Date.now();
+  let conversationId = null;
+  let userMessage = null;
+  let intentsForLog = null;
+  let cacheHit = false;
+  let activeProvider = LLM_PROVIDER;
+
   try {
     const body = await readBody(req);
-    const userMessage = body.message;
+    userMessage = body.message;
+    conversationId = body.conversationId || body.chatId || null;
 
     if (!userMessage) {
       json(res, 400, { error: "Missing 'message' field" });
@@ -1548,44 +1575,137 @@ export async function handleChatAPI(req, res) {
     if (body.apiUrl) llmOpts.apiUrl = body.apiUrl;
     if (body.model) llmOpts.model = body.model;
 
-    const activeProvider = llmOpts.provider || LLM_PROVIDER;
+    activeProvider = llmOpts.provider || LLM_PROVIDER;
+
+    // Persist user message (best effort, no-op if DB not configured)
+    if (conversationId) {
+      histAddMessage(conversationId, {
+        role: "user",
+        content: userMessage,
+        provider: activeProvider,
+      }).catch(() => {});
+    }
+
+    // ---- Redis cache lookup ----
+    // Only cache "read-only" style requests. Mutating ops (delete/scale/...)
+    // bypass the cache so they always hit the live cluster.
+    const isMutating = /\b(delete|del|remove|rm|scale|restart|exec|run)\b/i.test(
+      userMessage
+    );
+    const cacheKey = cacheKeyForChat(userMessage, activeProvider);
+
+    if (!isMutating) {
+      const cached = await cacheGet(cacheKey);
+      if (cached && cached.reply) {
+        cacheHit = true;
+        if (conversationId) {
+          histAddMessage(conversationId, {
+            role: "assistant",
+            content: cached.reply,
+            provider: cached.provider,
+          }).catch(() => {});
+        }
+        histLogQuery({
+          conversationId,
+          query: userMessage,
+          intents: cached.contextKeys || null,
+          cacheHit: true,
+          durationMs: Date.now() - startedAt,
+        }).catch(() => {});
+        return json(res, 200, {
+          reply: cached.reply,
+          provider: cached.provider,
+          contextKeys: cached.contextKeys || [],
+          cached: true,
+          conversationId,
+        });
+      }
+    }
 
     // Try direct command handler first (for specific CRUD operations)
     // This handles: logs, top, delete, get/describe, run, exec
     const directResult = await handleDirectCommand(userMessage);
     if (directResult) {
-      return json(res, 200, {
+      const provider = activeProvider === "none" ? "built-in" : activeProvider;
+      const payload = {
         reply: directResult,
-        provider: activeProvider === "none" ? "built-in" : activeProvider,
+        provider,
         contextKeys: ["directCommand"],
-      });
+      };
+      if (!isMutating) {
+        cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
+      }
+      if (conversationId) {
+        histAddMessage(conversationId, {
+          role: "assistant",
+          content: directResult,
+          provider,
+        }).catch(() => {});
+      }
+      intentsForLog = ["directCommand"];
+      return json(res, 200, { ...payload, cached: false, conversationId });
     }
 
     // Try list command handler (for "list/show X" queries)
     const listResult = await handleListCommand(userMessage);
     if (listResult) {
-      return json(res, 200, {
+      const provider = activeProvider === "none" ? "built-in" : activeProvider;
+      const payload = {
         reply: listResult,
-        provider: activeProvider === "none" ? "built-in" : activeProvider,
+        provider,
         contextKeys: ["listCommand"],
-      });
+      };
+      cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
+      if (conversationId) {
+        histAddMessage(conversationId, {
+          role: "assistant",
+          content: listResult,
+          provider,
+        }).catch(() => {});
+      }
+      intentsForLog = ["listCommand"];
+      return json(res, 200, { ...payload, cached: false, conversationId });
     }
 
-    // 1. Gather cluster context for analysis queries
-    const context = await gatherClusterContext(userMessage);
+    // 1. Gather cluster context for analysis queries (cached separately)
+    const ctxKey = `ctx:${cacheKeyForChat(userMessage, "ctx")}`;
+    let context = await cacheGet(ctxKey);
+    if (!context) {
+      context = await gatherClusterContext(userMessage);
+      cacheSet(ctxKey, context, CONTEXT_CACHE_TTL).catch(() => {});
+    }
+    intentsForLog = Array.isArray(context?.intents) ? context.intents : Object.keys(context || {});
 
     // 2. Call LLM (or built-in analysis)
     const reply = await callLLM(userMessage, context, llmOpts);
 
-    // 3. Return response
-    json(res, 200, {
+    const payload = {
       reply,
       provider: activeProvider,
-      contextKeys: Object.keys(context),
-    });
+      contextKeys: Object.keys(context || {}),
+    };
+    cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
+    if (conversationId) {
+      histAddMessage(conversationId, {
+        role: "assistant",
+        content: reply,
+        provider: activeProvider,
+      }).catch(() => {});
+    }
+
+    // 3. Return response
+    json(res, 200, { ...payload, cached: false, conversationId });
   } catch (err) {
     console.error("Chat API error:", err);
     json(res, 500, { error: err.message });
+  } finally {
+    histLogQuery({
+      conversationId,
+      query: userMessage,
+      intents: intentsForLog,
+      cacheHit,
+      durationMs: Date.now() - startedAt,
+    }).catch(() => {});
   }
 }
 
@@ -1594,9 +1714,14 @@ export async function handleChatAPI(req, res) {
 // Supports: delete_pod, restart_deployment, scale_deployment
 // ---------------------------------------------------------------------------
 export async function handleExecuteAPI(req, res) {
+  let action, pod, namespace, deployment, conversationId;
+  let success = false;
+  let resultPayload = null;
   try {
     const body = await readBody(req);
-    const { action, pod, namespace, deployment, replicas } = body;
+    ({ action, pod, namespace, deployment } = body);
+    const { replicas } = body;
+    conversationId = body.conversationId || body.chatId || null;
 
     if (!action || !namespace) {
       return json(res, 400, { success: false, error: "Missing action or namespace" });
@@ -1607,9 +1732,11 @@ export async function handleExecuteAPI(req, res) {
     if (action === "delete_pod") {
       if (!pod) return json(res, 400, { success: false, error: "Missing pod name" });
       await ocpDelete(`/api/v1/namespaces/${namespace}/pods/${pod}`);
+      success = true;
+      resultPayload = { message: `Pod '${pod}' deleted in '${namespace}'. The owning controller will recreate it.` };
       return json(res, 200, {
         success: true,
-        message: `Pod '${pod}' deleted in '${namespace}'. The owning controller will recreate it.`,
+        message: resultPayload.message,
       });
     }
 
@@ -1630,10 +1757,9 @@ export async function handleExecuteAPI(req, res) {
           },
         }
       );
-      return json(res, 200, {
-        success: true,
-        message: `Deployment '${dep}' restarted in '${namespace}'. New pods will be rolled out.`,
-      });
+      success = true;
+      resultPayload = { message: `Deployment '${dep}' restarted in '${namespace}'. New pods will be rolled out.` };
+      return json(res, 200, { success: true, message: resultPayload.message });
     }
 
     if (action === "scale_deployment") {
@@ -1644,15 +1770,26 @@ export async function handleExecuteAPI(req, res) {
         `/apis/apps/v1/namespaces/${namespace}/deployments/${dep}`,
         { spec: { replicas: rep } }
       );
-      return json(res, 200, {
-        success: true,
-        message: `Deployment '${dep}' scaled to ${rep} replicas in '${namespace}'.`,
-      });
+      success = true;
+      resultPayload = { message: `Deployment '${dep}' scaled to ${rep} replicas in '${namespace}'.` };
+      return json(res, 200, { success: true, message: resultPayload.message });
     }
 
     json(res, 400, { success: false, error: `Unknown action: ${action}` });
   } catch (err) {
     console.error("Execute API error:", err);
+    resultPayload = { error: err.message };
     json(res, 500, { success: false, error: err.message });
+  } finally {
+    if (action) {
+      histLogExecutedAction({
+        conversationId,
+        action,
+        target: pod || deployment || null,
+        namespace,
+        success,
+        result: resultPayload,
+      }).catch(() => {});
+    }
   }
 }

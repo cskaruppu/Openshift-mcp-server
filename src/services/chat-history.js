@@ -1,0 +1,206 @@
+/**
+ * Chat history service — DB-backed persistence for conversations.
+ *
+ * Falls back gracefully to "disabled" when PostgreSQL is not configured;
+ * the dashboard then keeps using browser localStorage.
+ */
+
+import { query, isEnabled as dbEnabled } from "../utils/db.js";
+
+function newId() {
+  return (
+    Date.now().toString(36) +
+    Math.random().toString(36).slice(2, 10)
+  );
+}
+
+/** True if persistent chat history is available. */
+export async function isHistoryEnabled() {
+  return dbEnabled();
+}
+
+/** List conversations, newest first. */
+export async function listChats(limit = 100) {
+  const r = await query(
+    `SELECT c.id,
+            c.title,
+            c.created_at,
+            c.updated_at,
+            (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count
+       FROM conversations c
+      ORDER BY c.updated_at DESC
+      LIMIT $1`,
+    [limit]
+  );
+  if (!r) return [];
+  return r.rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    messageCount: Number(row.message_count) || 0,
+  }));
+}
+
+/** Get a single conversation with its messages. */
+export async function getChat(id) {
+  const conv = await query(
+    `SELECT id, title, created_at, updated_at FROM conversations WHERE id = $1`,
+    [id]
+  );
+  if (!conv || conv.rowCount === 0) return null;
+
+  const msgs = await query(
+    `SELECT id, role, content, html, provider, created_at
+       FROM messages WHERE conversation_id = $1 ORDER BY id ASC`,
+    [id]
+  );
+
+  const c = conv.rows[0];
+  return {
+    id: c.id,
+    title: c.title,
+    createdAt: c.created_at,
+    updatedAt: c.updated_at,
+    messages: (msgs?.rows || []).map((m) => ({
+      id: Number(m.id),
+      role: m.role,
+      content: m.content,
+      html: m.html,
+      provider: m.provider,
+      createdAt: m.created_at,
+    })),
+  };
+}
+
+/** Create a new conversation. */
+export async function createChat({ id, title } = {}) {
+  const cid = id || newId();
+  const t = title || "New chat";
+  const r = await query(
+    `INSERT INTO conversations (id, title) VALUES ($1, $2)
+     ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, updated_at = NOW()
+     RETURNING id, title, created_at, updated_at`,
+    [cid, t]
+  );
+  if (!r || r.rowCount === 0) return null;
+  const row = r.rows[0];
+  return {
+    id: row.id,
+    title: row.title,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    messages: [],
+  };
+}
+
+/** Append a message to a conversation, creating the conversation if needed. */
+export async function addMessage(conversationId, { role, content, html, provider }) {
+  if (!conversationId) return null;
+
+  // Make sure the conversation exists.
+  await query(
+    `INSERT INTO conversations (id, title) VALUES ($1, $2)
+     ON CONFLICT (id) DO NOTHING`,
+    [conversationId, role === "user" ? truncateTitle(content) : "New chat"]
+  );
+
+  const r = await query(
+    `INSERT INTO messages (conversation_id, role, content, html, provider)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, created_at`,
+    [conversationId, role, content || "", html || null, provider || null]
+  );
+  if (!r) return null;
+
+  // Auto-set title from first user message
+  if (role === "user") {
+    await query(
+      `UPDATE conversations
+          SET title = CASE
+                        WHEN title = 'New chat' OR title IS NULL OR title = ''
+                        THEN $2
+                        ELSE title
+                      END,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [conversationId, truncateTitle(content)]
+    );
+  } else {
+    await query(
+      `UPDATE conversations SET updated_at = NOW() WHERE id = $1`,
+      [conversationId]
+    );
+  }
+
+  return {
+    id: Number(r.rows[0].id),
+    createdAt: r.rows[0].created_at,
+  };
+}
+
+/** Update conversation title. */
+export async function updateTitle(id, title) {
+  const r = await query(
+    `UPDATE conversations SET title = $2, updated_at = NOW() WHERE id = $1
+     RETURNING id, title`,
+    [id, truncateTitle(title)]
+  );
+  return r && r.rowCount > 0;
+}
+
+/** Delete a conversation and its messages. */
+export async function deleteChat(id) {
+  const r = await query(`DELETE FROM conversations WHERE id = $1`, [id]);
+  return r && r.rowCount > 0;
+}
+
+/** Insert a row into query_log. Best-effort, never throws. */
+export async function logQuery({
+  conversationId,
+  query: q,
+  intents,
+  cacheHit,
+  durationMs,
+}) {
+  await query(
+    `INSERT INTO query_log (conversation_id, query, intents, cache_hit, duration_ms)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      conversationId || null,
+      q || "",
+      Array.isArray(intents) ? intents : null,
+      Boolean(cacheHit),
+      Number.isFinite(durationMs) ? Math.round(durationMs) : null,
+    ]
+  );
+}
+
+/** Insert a row into executed_actions. */
+export async function logExecutedAction({
+  conversationId,
+  action,
+  target,
+  namespace,
+  success,
+  result,
+}) {
+  await query(
+    `INSERT INTO executed_actions (conversation_id, action, target, namespace, success, result)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [
+      conversationId || null,
+      action || "",
+      target || null,
+      namespace || null,
+      success == null ? null : Boolean(success),
+      result == null ? null : JSON.stringify(result),
+    ]
+  );
+}
+
+function truncateTitle(s) {
+  if (!s) return "New chat";
+  const t = String(s).replace(/\s+/g, " ").trim();
+  return t.length > 80 ? t.slice(0, 77) + "..." : t || "New chat";
+}
