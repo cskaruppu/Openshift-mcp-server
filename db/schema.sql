@@ -43,3 +43,27 @@ CREATE TABLE IF NOT EXISTS executed_actions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_executed_actions_created ON executed_actions(created_at DESC);
+
+-- Pending actions — approval workflow for mutating operations.
+-- Lifecycle: pending_confirmation -> awaiting_approval -> approved -> executed
+--                                   \                  \           \
+--                                    -> cancelled       -> rejected  -> failed
+CREATE TABLE IF NOT EXISTS pending_actions (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT,
+  action TEXT NOT NULL,          -- 'restart' | 'delete' | 'scale'
+  resource_type TEXT NOT NULL,   -- 'pod' | 'deployment' | 'daemonset' | 'statefulset' | ...
+  resource_name TEXT NOT NULL,
+  namespace TEXT,
+  options JSONB,                 -- e.g. { replicas: 5 } for scale
+  status TEXT NOT NULL DEFAULT 'pending_confirmation',
+  servicenow_cr_number TEXT,
+  servicenow_sys_id TEXT,
+  requested_by TEXT,
+  summary TEXT,
+  result JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pending_actions_conv ON pending_actions(conversation_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pending_actions_status ON pending_actions(status, updated_at DESC);

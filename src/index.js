@@ -26,6 +26,15 @@ import { registerWorkloadTools } from "./tools/workloads.js";
 import { handleDashboardAPI } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI } from "./services/chat-api.js";
 import {
+  listActions,
+  getAction,
+  confirmAction,
+  cancelAction,
+  executeAction,
+  refreshFromServiceNow,
+  isServiceNowEnabled,
+} from "./services/action-workflow.js";
+import {
   listChats,
   getChat,
   createChat,
@@ -156,6 +165,71 @@ async function handleChatHistoryAPI(url, req, res) {
   return sendJson(res, 404, { error: "Not found" });
 }
 
+// ---------------------------------------------------------------------------
+// /api/actions — approval workflow for mutating operations.
+// The chat handler queues pending actions; this API exposes them so the
+// dashboard can list / confirm / cancel / execute.
+// ---------------------------------------------------------------------------
+async function handleActionsAPI(url, req, res) {
+  // GET /api/actions?conversationId=...
+  if (url.pathname === "/api/actions" && req.method === "GET") {
+    const conversationId = url.searchParams.get("conversationId") || null;
+    const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+    const actions = await listActions(conversationId, limit);
+    return sendJson(res, 200, {
+      actions,
+      serviceNowEnabled: isServiceNowEnabled(),
+    });
+  }
+
+  // /api/actions/:id[/<op>]
+  const m = url.pathname.match(/^\/api\/actions\/([^/]+)(?:\/([a-z]+))?$/);
+  if (m) {
+    const id = decodeURIComponent(m[1]);
+    const op = m[2] || null;
+
+    if (!op && req.method === "GET") {
+      const act = await getAction(id);
+      if (!act) return sendJson(res, 404, { error: "Not found" });
+      return sendJson(res, 200, { action: act });
+    }
+
+    if (op === "confirm" && req.method === "POST") {
+      const r = await confirmAction(id);
+      if (r.error) return sendJson(res, 400, r);
+      // If auto-approved (SNOW disabled), execute right away so the user gets
+      // a single round-trip confirm -> executed.
+      if (r.action?.status === "approved") {
+        const exec = await executeAction(id);
+        return sendJson(res, 200, exec);
+      }
+      return sendJson(res, 200, r);
+    }
+
+    if (op === "cancel" && req.method === "POST") {
+      const r = await cancelAction(id);
+      if (r.error) return sendJson(res, 400, r);
+      return sendJson(res, 200, r);
+    }
+
+    if (op === "execute" && req.method === "POST") {
+      const r = await executeAction(id);
+      if (r.error) return sendJson(res, 400, r);
+      return sendJson(res, 200, r);
+    }
+
+    if (op === "refresh" && req.method === "POST") {
+      const r = await refreshFromServiceNow(id);
+      if (r.error) return sendJson(res, 400, r);
+      return sendJson(res, 200, r);
+    }
+
+    return sendJson(res, 405, { error: "Method not allowed" });
+  }
+
+  return sendJson(res, 404, { error: "Not found" });
+}
+
 async function startSSE() {
   const PORT = parseInt(process.env.MCP_SERVER_PORT, 10) || 3000;
 
@@ -208,6 +282,12 @@ async function startSSE() {
     // Persistent chat history — /api/chats (DB-backed if Postgres configured)
     if (url.pathname === "/api/chats" || url.pathname.startsWith("/api/chats/")) {
       await handleChatHistoryAPI(url, req, res);
+      return;
+    }
+
+    // Action approval workflow — /api/actions
+    if (url.pathname === "/api/actions" || url.pathname.startsWith("/api/actions/")) {
+      await handleActionsAPI(url, req, res);
       return;
     }
 

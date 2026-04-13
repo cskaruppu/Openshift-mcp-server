@@ -27,6 +27,16 @@ import {
 } from "./chat-history.js";
 import { parse as nluParse, describeParse } from "./nlu.js";
 import { getMemory, updateMemory, memoryPatchFromParse } from "./conversation-memory.js";
+import {
+  actionFromParse,
+  createPendingAction,
+  confirmAction,
+  cancelAction,
+  executeAction,
+  getAction,
+  renderPendingMessage,
+  isServiceNowEnabled,
+} from "./action-workflow.js";
 
 // Map an NLU intent to the legacy "operation" string used by the response
 // handlers below, plus a few normalizations.
@@ -1792,6 +1802,96 @@ export async function handleChatAPI(req, res) {
         histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
       }
       return json(res, 200, { ...payload, cached: false, conversationId });
+    }
+
+    // ---- Text-based approval shortcuts: "confirm <id>" / "cancel <id>" ----
+    const approvalCmd = userMessage
+      .trim()
+      .match(/^(confirm|approve|cancel|reject)\s+(act_[a-z0-9]+)\s*$/i);
+    if (approvalCmd) {
+      const verb = approvalCmd[1].toLowerCase();
+      const actId = approvalCmd[2];
+      let reply;
+      if (verb === "confirm" || verb === "approve") {
+        const r = await confirmAction(actId);
+        if (r.error) {
+          reply = `### Action error\n[CRITICAL] ${r.error}`;
+        } else {
+          reply = `### Action confirmed\n**${r.action.summary}** — status: \`${r.action.status}\`` +
+            (r.action.servicenowCrNumber ? `\nServiceNow CR: **${r.action.servicenowCrNumber}**` : "");
+          if (r.action.status === "approved") {
+            const exec = await executeAction(actId);
+            if (exec.action?.status === "executed") {
+              reply += `\n\n[OK] ${exec.action.result?.message || "Executed."}`;
+            } else if (exec.error) {
+              reply += `\n\n[CRITICAL] Execute failed: ${exec.error}`;
+            }
+          }
+        }
+      } else {
+        const r = await cancelAction(actId);
+        reply = r.error
+          ? `### Action error\n[CRITICAL] ${r.error}`
+          : `### Action cancelled\n${r.action.summary}`;
+      }
+      const provider = "built-in";
+      const payload = { reply, provider, contextKeys: ["actionWorkflow", verb] };
+      if (conversationId) {
+        histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+      }
+      return json(res, 200, { ...payload, cached: false, conversationId });
+    }
+
+    // ---- Approval gate: mutating intents are queued as pending_actions ----
+    const actionIntent = actionFromParse(parsed);
+    if (actionIntent) {
+      // Require a namespace for namespaced resources — prompt the user
+      // rather than silently queueing a half-specified action.
+      if (!actionIntent.namespace) {
+        const reply = [
+          `### ${actionIntent.action} ${actionIntent.resourceType}`,
+          `[WARNING] Please specify the namespace.`,
+          ``,
+          `**Example:** \`${actionIntent.action} ${actionIntent.resourceType} ${actionIntent.resourceName} in namespace my-ns\``,
+        ].join("\n");
+        if (conversationId) {
+          histAddMessage(conversationId, { role: "assistant", content: reply, provider: "built-in" }).catch(() => {});
+        }
+        return json(res, 200, {
+          reply,
+          provider: "built-in",
+          contextKeys: ["actionWorkflow", "missingNamespace"],
+          cached: false,
+          conversationId,
+        });
+      }
+      try {
+        const act = await createPendingAction({
+          conversationId,
+          action: actionIntent.action,
+          resourceType: actionIntent.resourceType,
+          resourceName: actionIntent.resourceName,
+          namespace: actionIntent.namespace,
+          options: actionIntent.options,
+          requestedBy: "dashboard-user",
+        });
+        const reply = renderPendingMessage(act);
+        const provider = "built-in";
+        const payload = {
+          reply,
+          provider,
+          contextKeys: ["actionWorkflow", "pending"],
+          pendingAction: act,
+        };
+        if (conversationId) {
+          histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+        }
+        updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
+        return json(res, 200, { ...payload, cached: false, conversationId });
+      } catch (err) {
+        console.error("[chat-api] action workflow error:", err);
+        // Fall through to default handlers on error so the user still gets a reply.
+      }
     }
 
     // Try direct command handler first (for specific CRUD operations)

@@ -111,6 +111,31 @@ tr:hover td{background:#ffffff06}
 /* Full-page chat layout */
 .chat-fullpage{display:flex;height:calc(100vh - 65px);background:var(--bg)}
 .chat-sidebar{width:260px;background:#12141c;border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.actions-panel{width:320px;background:#12141c;border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
+.actions-header{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:space-between}
+.actions-header .snow-badge{font-size:10px;padding:2px 6px;border-radius:4px;font-weight:500}
+.actions-header .snow-on{background:#0f3b1f;color:#8aeca2}
+.actions-header .snow-off{background:#3a2a0f;color:#ecca8a}
+.actions-list{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:10px}
+.actions-empty{color:var(--text2);font-size:12px;text-align:center;padding:20px 10px;font-style:italic}
+.action-card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.action-card.pending{border-left:3px solid var(--accent)}
+.action-card.awaiting{border-left:3px solid #eca95f}
+.action-card.approved{border-left:3px solid #5fb3ec}
+.action-card.executed{border-left:3px solid #5fec8a}
+.action-card.failed,.action-card.rejected{border-left:3px solid #ec5f5f}
+.action-card.cancelled{border-left:3px solid #6c7280;opacity:.7}
+.action-card .ac-summary{font-size:13px;font-weight:500;line-height:1.3}
+.action-card .ac-meta{font-size:11px;color:var(--text2);display:flex;gap:8px;flex-wrap:wrap}
+.action-card .ac-status{font-size:10px;text-transform:uppercase;letter-spacing:.5px;padding:2px 6px;border-radius:3px;background:#1c1f2c;color:var(--text2);display:inline-block;align-self:flex-start}
+.action-card .ac-cr{font-size:11px;color:#8ab4ec}
+.action-card .ac-result{font-size:11px;color:var(--text2);background:#0f1117;padding:6px 8px;border-radius:4px;word-break:break-word}
+.action-card .ac-btns{display:flex;gap:6px}
+.action-card .ac-btns button{flex:1;padding:6px 10px;font-size:11px;font-weight:600;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer}
+.action-card .ac-btns button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.action-card .ac-btns button.primary:hover{opacity:.9}
+.action-card .ac-btns button:disabled{opacity:.5;cursor:not-allowed}
+@media(max-width:1100px){.actions-panel{display:none}}
 .sidebar-header{padding:16px;border-bottom:1px solid var(--border)}
 .new-chat-btn{width:100%;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer}
 .new-chat-btn:hover{opacity:.9}
@@ -481,6 +506,19 @@ tr:hover td{background:#ffffff06}
           <input type="text" class="chat-input-full" id="full-chat-input" placeholder="Ask about your OpenShift cluster..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendFullChat()}">
           <button class="chat-send-btn" id="full-chat-send" onclick="sendFullChat()">Send</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Actions panel — confirmation workflow for mutating operations -->
+  <div class="actions-panel" id="actions-panel">
+    <div class="actions-header">
+      <span>Actions</span>
+      <span id="snow-badge" class="snow-badge snow-off">ServiceNow: off</span>
+    </div>
+    <div class="actions-list" id="actions-list">
+      <div class="actions-empty">
+        No pending actions. Ask to restart, delete or scale a workload and it will appear here for confirmation.
       </div>
     </div>
   </div>
@@ -1292,6 +1330,11 @@ async function sendFullChat(text) {
     // Remove thinking indicator and re-render
     renderConversation();
 
+    // If the backend queued a pending action, refresh the panel immediately.
+    if (/<!--action:/.test(replyText) || data.pendingAction) {
+      refreshActionsPanel();
+    }
+
   } catch (err) {
     // Save error as AI message
     history = loadChatHistory();
@@ -1390,6 +1433,173 @@ function loadFullLLMConfig() {
     if (saved.model)    document.getElementById('full-llm-model').value = saved.model;
   } catch (e) {}
 }
+
+// ---------------------------------------------------------------------------
+// Actions panel — approval workflow for mutating operations.
+// The chat API returns a <!--action:ID--> marker when it queues a pending
+// mutating action; we poll /api/actions to render cards with Confirm/Cancel.
+// ---------------------------------------------------------------------------
+let _actionsPollTimer = null;
+let _actionsBackendEnabled = true;
+
+async function fetchActions() {
+  if (!_actionsBackendEnabled) return { actions: [] };
+  try {
+    const history = loadChatHistory();
+    const cid = history.activeId || '';
+    const qs = cid ? ('?conversationId=' + encodeURIComponent(cid)) : '';
+    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/actions' + qs);
+    if (!resp.ok) {
+      if (resp.status === 404) _actionsBackendEnabled = false;
+      return { actions: [] };
+    }
+    return await resp.json();
+  } catch (e) {
+    return { actions: [] };
+  }
+}
+
+function statusLabel(s) {
+  return {
+    pending_confirmation: 'Awaiting your OK',
+    awaiting_approval:    'Awaiting ServiceNow',
+    approved:             'Approved — ready',
+    executed:             'Executed',
+    failed:               'Failed',
+    cancelled:            'Cancelled',
+    rejected:             'Rejected',
+  }[s] || s;
+}
+
+function renderActionsPanel(data) {
+  const list = document.getElementById('actions-list');
+  const badge = document.getElementById('snow-badge');
+  if (!list) return;
+  if (badge) {
+    if (data && data.serviceNowEnabled) {
+      badge.textContent = 'ServiceNow: on';
+      badge.className = 'snow-badge snow-on';
+    } else {
+      badge.textContent = 'ServiceNow: off';
+      badge.className = 'snow-badge snow-off';
+    }
+  }
+
+  const actions = (data && data.actions) || [];
+  // Hide terminal states after a short grace so the list stays focused.
+  const visible = actions.filter(a => a.status !== 'cancelled' || (Date.now() - new Date(a.updatedAt).getTime()) < 60000);
+
+  if (visible.length === 0) {
+    list.innerHTML = '<div class="actions-empty">No pending actions. Ask to restart, delete or scale a workload and it will appear here for confirmation.</div>';
+    return;
+  }
+  list.innerHTML = visible.map(renderActionCard).join('');
+}
+
+function renderActionCard(a) {
+  const status = a.status || 'pending_confirmation';
+  const summary = esc(a.summary || `${a.action} ${a.resourceType} ${a.resourceName}`);
+  const meta = [
+    a.resourceType && `<span>${esc(a.resourceType)}</span>`,
+    a.namespace && `<span>ns: ${esc(a.namespace)}</span>`,
+    a.options && a.options.replicas != null && `<span>replicas: ${esc(String(a.options.replicas))}</span>`,
+  ].filter(Boolean).join('');
+
+  let buttons = '';
+  if (status === 'pending_confirmation') {
+    buttons =
+      `<div class="ac-btns">` +
+      `<button class="primary" onclick="confirmActionUI('${esc(a.id)}')">Confirm</button>` +
+      `<button onclick="cancelActionUI('${esc(a.id)}')">Cancel</button>` +
+      `</div>`;
+  } else if (status === 'awaiting_approval') {
+    buttons =
+      `<div class="ac-btns">` +
+      `<button onclick="refreshActionUI('${esc(a.id)}')">Check CR</button>` +
+      `<button onclick="cancelActionUI('${esc(a.id)}')">Cancel</button>` +
+      `</div>`;
+  } else if (status === 'approved') {
+    buttons =
+      `<div class="ac-btns">` +
+      `<button class="primary" onclick="executeActionUI('${esc(a.id)}')">Execute now</button>` +
+      `</div>`;
+  }
+
+  const cr = a.servicenowCrNumber
+    ? `<div class="ac-cr">ServiceNow CR: ${esc(a.servicenowCrNumber)}</div>`
+    : '';
+  const result = a.result && (a.result.message || a.result.error)
+    ? `<div class="ac-result">${esc(a.result.message || a.result.error)}</div>`
+    : '';
+
+  const cardClass = ({
+    pending_confirmation: 'pending',
+    awaiting_approval: 'awaiting',
+    approved: 'approved',
+    executed: 'executed',
+    failed: 'failed',
+    rejected: 'rejected',
+    cancelled: 'cancelled',
+  })[status] || 'pending';
+
+  return (
+    `<div class="action-card ${cardClass}" data-id="${esc(a.id)}">` +
+      `<div class="ac-summary">${summary}</div>` +
+      (meta ? `<div class="ac-meta">${meta}</div>` : '') +
+      `<div class="ac-status">${esc(statusLabel(status))}</div>` +
+      cr +
+      result +
+      buttons +
+    `</div>`
+  );
+}
+
+async function confirmActionUI(id) {
+  await fetch(MCP_API.replace(/\/api$/, '') + '/api/actions/' + encodeURIComponent(id) + '/confirm', { method: 'POST' });
+  refreshActionsPanel();
+}
+async function cancelActionUI(id) {
+  await fetch(MCP_API.replace(/\/api$/, '') + '/api/actions/' + encodeURIComponent(id) + '/cancel', { method: 'POST' });
+  refreshActionsPanel();
+}
+async function executeActionUI(id) {
+  await fetch(MCP_API.replace(/\/api$/, '') + '/api/actions/' + encodeURIComponent(id) + '/execute', { method: 'POST' });
+  refreshActionsPanel();
+}
+async function refreshActionUI(id) {
+  await fetch(MCP_API.replace(/\/api$/, '') + '/api/actions/' + encodeURIComponent(id) + '/refresh', { method: 'POST' });
+  refreshActionsPanel();
+}
+
+async function refreshActionsPanel() {
+  const data = await fetchActions();
+  renderActionsPanel(data);
+}
+
+function startActionsPolling() {
+  stopActionsPolling();
+  refreshActionsPanel();
+  _actionsPollTimer = setInterval(refreshActionsPanel, 5000);
+}
+function stopActionsPolling() {
+  if (_actionsPollTimer) { clearInterval(_actionsPollTimer); _actionsPollTimer = null; }
+}
+
+// Kick off polling whenever the chat view is open. showView() is defined
+// earlier; we hook it by overriding after the script loads.
+(function() {
+  const prev = window.showView;
+  if (typeof prev === 'function') {
+    window.showView = function(v) {
+      prev(v);
+      if (v === 'chat') startActionsPolling();
+      else stopActionsPolling();
+    };
+  }
+  // If the chat view is already visible at load time, start polling now.
+  const cv = document.getElementById('view-chat');
+  if (cv && cv.style.display !== 'none') startActionsPolling();
+})();
 </script>
 
 </body>

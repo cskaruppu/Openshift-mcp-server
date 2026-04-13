@@ -107,6 +107,26 @@ CREATE TABLE IF NOT EXISTS executed_actions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_executed_actions_created ON executed_actions(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS pending_actions (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT,
+  action TEXT NOT NULL,
+  resource_type TEXT NOT NULL,
+  resource_name TEXT NOT NULL,
+  namespace TEXT,
+  options JSONB,
+  status TEXT NOT NULL DEFAULT 'pending_confirmation',
+  servicenow_cr_number TEXT,
+  servicenow_sys_id TEXT,
+  requested_by TEXT,
+  summary TEXT,
+  result JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pending_actions_conv ON pending_actions(conversation_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pending_actions_status ON pending_actions(status, updated_at DESC);
 `;
 
 async function ensureSchema() {
