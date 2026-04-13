@@ -148,17 +148,43 @@ async function fetchPodLogs(namespace, podName, tailLines = 80) {
 function parseCommand(message) {
   const lower = message.toLowerCase().trim();
 
-  // Extract namespace
-  const nsMatch = lower.match(
-    /(?:in|under|from|for|of)\s+(?:namespace|ns|project)?\s*["']?([a-z0-9][-a-z0-9]*)["']?(?:\s+namespace)?/
-  ) || lower.match(
-    /\b([a-z0-9][-a-z0-9]+)\s+(?:namespace|ns|project)\b/
-  ) || lower.match(
-    /(?:namespace|ns|project)\s+["']?([a-z0-9][-a-z0-9]+)["']?/
-  ) || lower.match(
-    /-n\s+["']?([a-z0-9][-a-z0-9]*)["']?/
-  );
-  const namespace = nsMatch?.[1] || null;
+  // Words that look like namespaces but are actually resource types — never
+  // accept these as namespace names. Built from RESOURCE_MAP keys plus a few
+  // common verbs/qualifiers.
+  const RESOURCE_WORDS = new Set([
+    ...Object.keys(RESOURCE_MAP),
+    "running", "pending", "failed", "completed", "all", "any", "the",
+    "issue", "issues", "error", "errors", "status", "summary", "info",
+    "details", "list", "show", "get", "describe", "logs", "log", "top",
+    "metrics", "delete", "remove", "kill", "create", "apply", "exec",
+    "run", "image", "container", "containers",
+  ]);
+  function isValidNs(s) {
+    if (!s) return false;
+    if (RESOURCE_WORDS.has(s)) return false;
+    return true;
+  }
+
+  // Extract namespace — try the most explicit patterns first so that a
+  // generic "in/of/under X" never wins over "namespace X".
+  let namespace = null;
+  const nsCandidates = [
+    // "namespace trident", "ns trident", "project trident"
+    lower.match(/(?:namespace|ns|project)\s+["']?([a-z0-9][-a-z0-9]*)["']?/),
+    // "trident namespace", "trident ns", "trident project"
+    lower.match(/\b([a-z0-9][-a-z0-9]+)\s+(?:namespace|ns|project)\b/),
+    // "-n trident"
+    lower.match(/-n\s+["']?([a-z0-9][-a-z0-9]*)["']?/),
+    // "in/under/from/on namespace? X" — prepositional, weakest signal.
+    // Drop "of" and "for" entirely because they collide with phrases like
+    // "list of pods" / "metrics for nodes".
+    lower.match(
+      /(?:\bin|\bunder|\bfrom|\bon)\s+(?:the\s+)?(?:namespace|ns|project\s+)?["']?([a-z0-9][-a-z0-9]*)["']?(?:\s+namespace|\s+ns|\s+project)?/
+    ),
+  ];
+  for (const m of nsCandidates) {
+    if (m && isValidNs(m[1])) { namespace = m[1]; break; }
+  }
 
   // Detect operation
   let operation = null;
