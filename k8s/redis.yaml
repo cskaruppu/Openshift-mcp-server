@@ -45,7 +45,10 @@ spec:
           ports:
             - containerPort: 6379
               name: redis
+          command: ["redis-server"]
           args:
+            - "--protected-mode"
+            - "no"
             - "--maxmemory"
             - "128mb"
             - "--maxmemory-policy"
