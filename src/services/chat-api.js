@@ -956,21 +956,36 @@ async function gatherClusterContext(userMessage) {
           const phase = p.status?.phase || "Unknown";
           context.podsByPhase[phase] = (context.podsByPhase[phase] || 0) + 1;
         });
-        // Find problem pods — only truly broken ones
+        // Find problem pods — only truly broken ones. Explicitly exclude
+        // Succeeded Job pods (phase=Succeeded, terminated.reason=Completed,
+        // exitCode=0) which are a normal terminal state, not a problem.
         context.problemPods = allPods
           .filter((p) => {
-            if (p.status?.phase === "Failed" || p.status?.phase === "Unknown") return true;
-            return (p.status?.containerStatuses || []).some(
-              (c) =>
-                c.state?.waiting?.reason === "CrashLoopBackOff" ||
-                c.state?.waiting?.reason === "ImagePullBackOff" ||
-                c.state?.waiting?.reason === "ErrImagePull" ||
-                c.state?.waiting?.reason === "CreateContainerConfigError" ||
-                c.state?.waiting?.reason === "RunContainerError" ||
-                c.state?.terminated?.reason === "OOMKilled" ||
-                c.state?.terminated?.reason === "Error" ||
-                (!c.ready && !c.state?.running)
-            );
+            const phase = p.status?.phase;
+            if (phase === "Succeeded") return false;
+            if (phase === "Failed" || phase === "Unknown") return true;
+            return (p.status?.containerStatuses || []).some((c) => {
+              const waitingReason = c.state?.waiting?.reason;
+              const terminatedReason = c.state?.terminated?.reason;
+              const terminatedExit = c.state?.terminated?.exitCode;
+              if (
+                waitingReason === "CrashLoopBackOff" ||
+                waitingReason === "ImagePullBackOff" ||
+                waitingReason === "ErrImagePull" ||
+                waitingReason === "CreateContainerConfigError" ||
+                waitingReason === "RunContainerError" ||
+                terminatedReason === "OOMKilled"
+              ) return true;
+              // Terminated with non-zero exit — real failure.
+              if (terminatedReason === "Error" && terminatedExit && terminatedExit !== 0) return true;
+              // Catch-all: not ready, not running, and not a clean Completed.
+              if (c.ready || c.state?.running) return false;
+              if (terminatedReason === "Completed" && (terminatedExit ?? 0) === 0) return false;
+              // Containers that are just starting (no state yet) shouldn't
+              // count as problems — ignore until they get a waiting state.
+              if (!c.state || Object.keys(c.state).length === 0) return false;
+              return true;
+            });
           })
           .slice(0, 20)
           .map((p) => ({
@@ -989,7 +1004,13 @@ async function gatherClusterContext(userMessage) {
             ownerName: p.metadata?.ownerReferences?.[0]?.name,
             events: [],
             containers: (p.status?.containerStatuses || [])
-              .filter((c) => !c.ready || !c.state?.running)
+              .filter((c) => {
+                if (c.ready || c.state?.running) return false;
+                const tr = c.state?.terminated?.reason;
+                const te = c.state?.terminated?.exitCode;
+                if (tr === "Completed" && (te ?? 0) === 0) return false;
+                return true;
+              })
               .map((c) => ({
                 name: c.name,
                 ready: c.ready,
