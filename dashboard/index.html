@@ -1575,6 +1575,14 @@ function appendAssistantMessage(text, provider) {
 }
 
 async function postAction(id, op) {
+  // Show an immediate "in progress" hint on the card; execute can take up
+  // to a few minutes while we wait for the rollout to stabilise.
+  const card = document.querySelector('.action-card[data-id="' + id + '"]');
+  if (card && (op === 'execute' || op === 'confirm')) {
+    const status = card.querySelector('.ac-status');
+    if (status) status.textContent = op === 'execute' ? 'Executing — waiting for rollout' : 'Confirming...';
+    card.querySelectorAll('.ac-btns button').forEach(b => { b.disabled = true; });
+  }
   try {
     const resp = await fetch(
       MCP_API.replace(/\/api$/, '') + '/api/actions/' + encodeURIComponent(id) + '/' + op,

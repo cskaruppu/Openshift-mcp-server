@@ -434,8 +434,17 @@ export async function executeAction(id) {
     result = { error: err.message };
   }
 
-  // Give the controller a moment to spin up new pods before we list them.
+  // For restart / scale, wait until the rollout has actually stabilised:
+  // old pods fully terminated, new pods Running + Ready, observedGeneration
+  // caught up. Only then is it safe to report a final state to ServiceNow.
   if (success && (act.action === "restart" || act.action === "scale")) {
+    try {
+      await waitForRolloutStable(act);
+    } catch (err) {
+      console.warn("[action-workflow] rollout wait timed out:", err.message);
+    }
+  } else if (success && act.action === "delete" && act.resourceType !== "pod") {
+    // Brief pause for the controller to start the cascade.
     await sleep(1500);
   }
 
@@ -492,6 +501,114 @@ function sleep(ms) {
 }
 
 // ---------------------------------------------------------------------------
+// Rollout-stable polling — wait until the workload has reached a clean state.
+// ---------------------------------------------------------------------------
+const ROLLOUT_TIMEOUT_MS = parseInt(process.env.ACTION_ROLLOUT_TIMEOUT_MS || "180000", 10);
+const ROLLOUT_POLL_MS = parseInt(process.env.ACTION_ROLLOUT_POLL_MS || "3000", 10);
+
+/**
+ * Poll the parent workload (Deployment / DaemonSet / StatefulSet) until the
+ * rollout is fully stable:
+ *   - status.observedGeneration >= metadata.generation
+ *   - all desired replicas updated, ready, available
+ *   - no terminating pods remain (deletionTimestamp == null)
+ *   - all pods belonging to the current selector are Running + Ready
+ * Throws if it doesn't stabilise within ROLLOUT_TIMEOUT_MS.
+ */
+async function waitForRolloutStable(act) {
+  if (!["deployment", "daemonset", "statefulset"].includes(act.resourceType)) return;
+  const ns = act.namespace;
+  if (!ns) return;
+  const info = RESOURCE_API[act.resourceType];
+  const path = `${info.api}/namespaces/${ns}/${info.plural}/${act.resourceName}`;
+  const deadline = Date.now() + ROLLOUT_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    let parent;
+    try {
+      parent = await ocpGet(path);
+    } catch {
+      await sleep(ROLLOUT_POLL_MS);
+      continue;
+    }
+
+    const gen = parent?.metadata?.generation;
+    const observed = parent?.status?.observedGeneration;
+    const generationCaughtUp = observed != null && gen != null && observed >= gen;
+
+    let workloadReady = false;
+    if (act.resourceType === "daemonset") {
+      const desired = parent?.status?.desiredNumberScheduled ?? 0;
+      const updated = parent?.status?.updatedNumberScheduled ?? 0;
+      const ready = parent?.status?.numberReady ?? 0;
+      const available = parent?.status?.numberAvailable ?? 0;
+      const misscheduled = parent?.status?.numberMisscheduled ?? 0;
+      workloadReady =
+        desired > 0 &&
+        updated === desired &&
+        ready === desired &&
+        available === desired &&
+        misscheduled === 0;
+    } else {
+      const desired = parent?.spec?.replicas ?? 0;
+      const updated = parent?.status?.updatedReplicas ?? 0;
+      const ready = parent?.status?.readyReplicas ?? 0;
+      const available = parent?.status?.availableReplicas ?? 0;
+      // For a 0-replica scale, "stable" means status replicas also 0.
+      if (desired === 0) {
+        const total = parent?.status?.replicas ?? 0;
+        workloadReady = total === 0;
+      } else {
+        workloadReady =
+          updated === desired &&
+          ready === desired &&
+          available === desired;
+      }
+    }
+
+    // Independently verify there are no terminating pods and that every
+    // matching pod is Running+Ready. The status fields above can lie
+    // briefly during a rolling update, so this double-check matters.
+    let podsClean = true;
+    let terminatingCount = 0;
+    if (workloadReady && generationCaughtUp) {
+      const selector = parent?.spec?.selector?.matchLabels || {};
+      const labelSelector = Object.entries(selector).map(([k, v]) => `${k}=${v}`).join(",");
+      if (labelSelector) {
+        try {
+          const list = await ocpGet(
+            `/api/v1/namespaces/${ns}/pods?labelSelector=${encodeURIComponent(labelSelector)}`
+          );
+          const pods = list?.items || [];
+          for (const p of pods) {
+            if (p?.metadata?.deletionTimestamp) {
+              podsClean = false;
+              terminatingCount++;
+              continue;
+            }
+            const phase = p?.status?.phase;
+            const allReady = (p?.status?.containerStatuses || []).length > 0 &&
+              (p.status.containerStatuses || []).every((c) => c.ready);
+            if (phase !== "Running" || !allReady) {
+              podsClean = false;
+            }
+          }
+        } catch {
+          podsClean = false;
+        }
+      }
+    }
+
+    if (generationCaughtUp && workloadReady && podsClean) {
+      return; // stable
+    }
+
+    await sleep(ROLLOUT_POLL_MS);
+  }
+  throw new Error(`rollout did not stabilise within ${ROLLOUT_TIMEOUT_MS}ms`);
+}
+
+// ---------------------------------------------------------------------------
 // Post-action context — what changed on the cluster
 // ---------------------------------------------------------------------------
 async function gatherPostActionContext(act) {
@@ -519,21 +636,37 @@ async function gatherPostActionContext(act) {
         : parent?.status?.readyReplicas;
 
     let pods = [];
+    let terminating = 0;
     if (labelSelector) {
       const list = await ocpGet(
         `/api/v1/namespaces/${ns}/pods?labelSelector=${encodeURIComponent(labelSelector)}`
       );
-      pods = (list?.items || []).map((p) => ({
+      const all = list?.items || [];
+      // Exclude pods that are still terminating from the "current pods" view
+      // — by the time we get here the rollout-stable poll has already
+      // confirmed they're gone, but we recheck defensively.
+      const live = all.filter((p) => !p?.metadata?.deletionTimestamp);
+      terminating = all.length - live.length;
+      pods = live.map((p) => ({
         name: p.metadata?.name,
         phase: p.status?.phase,
-        ready: (p.status?.containerStatuses || []).every((c) => c.ready),
+        ready: (p.status?.containerStatuses || []).length > 0 &&
+          (p.status?.containerStatuses || []).every((c) => c.ready),
         node: p.spec?.nodeName,
         startTime: p.status?.startTime,
         restartCount: (p.status?.containerStatuses || [])
           .reduce((s, c) => s + (c.restartCount || 0), 0),
       }));
     }
-    return { kind: act.resourceType, name: act.resourceName, namespace: ns, desired, ready, pods };
+    return {
+      kind: act.resourceType,
+      name: act.resourceName,
+      namespace: ns,
+      desired,
+      ready,
+      terminating,
+      pods,
+    };
   }
 
   if (act.resourceType === "pod") {
@@ -571,8 +704,10 @@ async function closeServiceNowCR(act, success, result) {
       lines.push(`Resource deleted.`);
     } else if (ctx.pods) {
       lines.push(``);
-      lines.push(`Replicas: ${ctx.ready ?? "?"}/${ctx.desired ?? "?"}`);
-      lines.push(`Pods (${ctx.pods.length}):`);
+      lines.push(`Rollout stable: yes`);
+      lines.push(`Replicas: ${ctx.ready ?? "?"}/${ctx.desired ?? "?"} ready`);
+      lines.push(`Old pods terminated: ${ctx.terminating === 0 ? "yes" : `no (${ctx.terminating} still terminating)`}`);
+      lines.push(`Active pods (${ctx.pods.length}):`);
       ctx.pods.slice(0, 20).forEach((p) => {
         lines.push(
           `  - ${p.name}  phase=${p.phase}  ready=${p.ready}  node=${p.node || "?"}  restarts=${p.restartCount || 0}`
@@ -632,7 +767,8 @@ function renderExecutionResult(act, success, result) {
   const ctx = result?.postContext;
   if (ctx && ctx.pods && ctx.pods.length > 0) {
     parts.push("");
-    parts.push(`**Pods after action** — ${ctx.ready ?? "?"}/${ctx.desired ?? "?"} ready:`);
+    parts.push(`**Rollout stable** — ${ctx.ready ?? "?"}/${ctx.desired ?? "?"} ready, old pods fully terminated.`);
+    parts.push(`**Active pods:**`);
     ctx.pods.slice(0, 15).forEach((p) => {
       const icon = p.ready && p.phase === "Running" ? "[OK]" : "[WARNING]";
       parts.push(`  - ${icon} \`${p.name}\` — ${p.phase} on \`${p.node || "?"}\` (restarts: ${p.restartCount || 0})`);
