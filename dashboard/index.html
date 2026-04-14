@@ -1554,22 +1554,44 @@ function renderActionCard(a) {
   );
 }
 
-async function confirmActionUI(id) {
-  await fetch(MCP_API.replace(/\/api$/, '') + '/api/actions/' + encodeURIComponent(id) + '/confirm', { method: 'POST' });
-  refreshActionsPanel();
+// Append a server-generated assistant message into the open conversation
+// so the user sees execution results inline in the chat, not just the side
+// panel. Persists to localStorage / DB-backed history alike.
+function appendAssistantMessage(text, provider) {
+  if (!text) return;
+  const history = loadChatHistory();
+  const chat = history.chats.find(c => c.id === history.activeId);
+  if (!chat) return;
+  chat.messages.push({
+    role: 'ai',
+    text: text,
+    html: md(text),
+    provider: provider || 'built-in',
+  });
+  chat.updatedAt = new Date().toISOString();
+  saveChatHistory(history);
+  renderConversation();
+  renderChatHistory();
 }
-async function cancelActionUI(id) {
-  await fetch(MCP_API.replace(/\/api$/, '') + '/api/actions/' + encodeURIComponent(id) + '/cancel', { method: 'POST' });
-  refreshActionsPanel();
+
+async function postAction(id, op) {
+  try {
+    const resp = await fetch(
+      MCP_API.replace(/\/api$/, '') + '/api/actions/' + encodeURIComponent(id) + '/' + op,
+      { method: 'POST' }
+    );
+    const data = await resp.json().catch(() => ({}));
+    if (data && data.followUp) appendAssistantMessage(data.followUp, 'built-in');
+    return data;
+  } finally {
+    refreshActionsPanel();
+  }
 }
-async function executeActionUI(id) {
-  await fetch(MCP_API.replace(/\/api$/, '') + '/api/actions/' + encodeURIComponent(id) + '/execute', { method: 'POST' });
-  refreshActionsPanel();
-}
-async function refreshActionUI(id) {
-  await fetch(MCP_API.replace(/\/api$/, '') + '/api/actions/' + encodeURIComponent(id) + '/refresh', { method: 'POST' });
-  refreshActionsPanel();
-}
+
+async function confirmActionUI(id) { return postAction(id, 'confirm'); }
+async function cancelActionUI(id)  { return postAction(id, 'cancel'); }
+async function executeActionUI(id) { return postAction(id, 'execute'); }
+async function refreshActionUI(id) { return postAction(id, 'refresh'); }
 
 async function refreshActionsPanel() {
   const data = await fetchActions();

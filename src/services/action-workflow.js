@@ -20,8 +20,11 @@
 
 import { query, isEnabled as dbEnabled } from "../utils/db.js";
 import { ocpGet, ocpPatch, ocpDelete } from "../utils/openshift-client.js";
-import { createChangeRequest, getRecord } from "../utils/servicenow-client.js";
-import { logExecutedAction as histLogExecutedAction } from "./chat-history.js";
+import { createChangeRequest, getRecord, updateRecord } from "../utils/servicenow-client.js";
+import {
+  logExecutedAction as histLogExecutedAction,
+  addMessage as histAddMessage,
+} from "./chat-history.js";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -404,7 +407,9 @@ export async function refreshFromServiceNow(id) {
 
 /**
  * Execute an approved action against the cluster. Updates status to
- * executed / failed and records the outcome to the executed_actions log.
+ * executed / failed, gathers post-action context (e.g. new pod list for a
+ * restart), closes the related ServiceNow CR with work_notes, and appends
+ * a follow-up assistant message to the chat conversation.
  */
 export async function executeAction(id) {
   let act = await getAction(id);
@@ -429,10 +434,34 @@ export async function executeAction(id) {
     result = { error: err.message };
   }
 
+  // Give the controller a moment to spin up new pods before we list them.
+  if (success && (act.action === "restart" || act.action === "scale")) {
+    await sleep(1500);
+  }
+
+  // Collect post-action context (pod list, replica count, etc.)
+  let postContext = null;
+  if (success) {
+    try { postContext = await gatherPostActionContext(act); }
+    catch (err) {
+      console.warn("[action-workflow] post-context gather failed:", err.message);
+    }
+  }
+
+  const fullResult = postContext ? { ...result, postContext } : result;
   const updated = await store("update", id, {
     status: success ? "executed" : "failed",
-    result,
+    result: fullResult,
   });
+
+  // Update + close the ServiceNow CR with the outcome (best effort).
+  if (act.servicenowSysId && SNOW_ENABLED) {
+    try {
+      await closeServiceNowCR(act, success, fullResult);
+    } catch (err) {
+      console.warn("[action-workflow] ServiceNow close failed:", err.message);
+    }
+  }
 
   // Best-effort log to executed_actions for the audit trail.
   histLogExecutedAction({
@@ -441,10 +470,183 @@ export async function executeAction(id) {
     target: act.resourceName,
     namespace: act.namespace,
     success,
-    result,
+    result: fullResult,
   }).catch(() => {});
 
-  return { action: updated };
+  // Append a follow-up assistant message to the chat so the user sees the
+  // outcome in the conversation, not just in the side panel.
+  const followUp = renderExecutionResult(updated || act, success, fullResult);
+  if (act.conversationId) {
+    histAddMessage(act.conversationId, {
+      role: "assistant",
+      content: followUp,
+      provider: "built-in",
+    }).catch(() => {});
+  }
+
+  return { action: updated, followUp };
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// ---------------------------------------------------------------------------
+// Post-action context — what changed on the cluster
+// ---------------------------------------------------------------------------
+async function gatherPostActionContext(act) {
+  const ns = act.namespace;
+  if (!ns) return null;
+
+  // For workloads with a pod template: fetch the parent, then list pods
+  // matching its selector.
+  if (["deployment", "daemonset", "statefulset", "replicaset"].includes(act.resourceType)) {
+    if (act.action === "delete") {
+      // Parent is gone; nothing left to inspect.
+      return { kind: act.resourceType, name: act.resourceName, deleted: true };
+    }
+    const info = RESOURCE_API[act.resourceType];
+    const parent = await ocpGet(`${info.api}/namespaces/${ns}/${info.plural}/${act.resourceName}`);
+    const selector = parent?.spec?.selector?.matchLabels || {};
+    const labelSelector = Object.entries(selector).map(([k, v]) => `${k}=${v}`).join(",");
+    const desired =
+      act.resourceType === "daemonset"
+        ? parent?.status?.desiredNumberScheduled
+        : parent?.spec?.replicas;
+    const ready =
+      act.resourceType === "daemonset"
+        ? parent?.status?.numberReady
+        : parent?.status?.readyReplicas;
+
+    let pods = [];
+    if (labelSelector) {
+      const list = await ocpGet(
+        `/api/v1/namespaces/${ns}/pods?labelSelector=${encodeURIComponent(labelSelector)}`
+      );
+      pods = (list?.items || []).map((p) => ({
+        name: p.metadata?.name,
+        phase: p.status?.phase,
+        ready: (p.status?.containerStatuses || []).every((c) => c.ready),
+        node: p.spec?.nodeName,
+        startTime: p.status?.startTime,
+        restartCount: (p.status?.containerStatuses || [])
+          .reduce((s, c) => s + (c.restartCount || 0), 0),
+      }));
+    }
+    return { kind: act.resourceType, name: act.resourceName, namespace: ns, desired, ready, pods };
+  }
+
+  if (act.resourceType === "pod") {
+    if (act.action === "delete") {
+      return { kind: "pod", name: act.resourceName, deleted: true };
+    }
+    const p = await ocpGet(`/api/v1/namespaces/${ns}/pods/${act.resourceName}`);
+    return {
+      kind: "pod",
+      name: p?.metadata?.name,
+      namespace: ns,
+      phase: p?.status?.phase,
+      node: p?.spec?.nodeName,
+      startTime: p?.status?.startTime,
+    };
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// ServiceNow close-out
+// ---------------------------------------------------------------------------
+async function closeServiceNowCR(act, success, result) {
+  const lines = [];
+  lines.push(`Action: ${act.action} ${act.resourceType}/${act.resourceName}`);
+  lines.push(`Namespace: ${act.namespace || "(cluster)"}`);
+  lines.push(`Outcome: ${success ? "SUCCESS" : "FAILED"}`);
+  if (result?.message) lines.push(`Message: ${result.message}`);
+  if (result?.error) lines.push(`Error: ${result.error}`);
+
+  const ctx = result?.postContext;
+  if (ctx) {
+    if (ctx.deleted) {
+      lines.push(`Resource deleted.`);
+    } else if (ctx.pods) {
+      lines.push(``);
+      lines.push(`Replicas: ${ctx.ready ?? "?"}/${ctx.desired ?? "?"}`);
+      lines.push(`Pods (${ctx.pods.length}):`);
+      ctx.pods.slice(0, 20).forEach((p) => {
+        lines.push(
+          `  - ${p.name}  phase=${p.phase}  ready=${p.ready}  node=${p.node || "?"}  restarts=${p.restartCount || 0}`
+        );
+      });
+      if (ctx.pods.length > 20) lines.push(`  ... and ${ctx.pods.length - 20} more`);
+    } else if (ctx.phase) {
+      lines.push(`Pod phase: ${ctx.phase} on ${ctx.node || "?"}`);
+    }
+  }
+
+  const workNotes = lines.join("\n");
+  const closeNotes = success
+    ? `Automated execution completed by OpenShift MCP. ${result?.message || ""}`.trim()
+    : `Automated execution failed: ${result?.error || "unknown error"}`;
+
+  // 1. Append work notes describing what happened on the cluster.
+  await updateRecord("change_request", act.servicenowSysId, {
+    work_notes: workNotes,
+  });
+
+  // 2. Move the CR to Review then Closed and set close fields.
+  // ServiceNow change states: -1=Implement, 0=Review, 3=Closed, 4=Cancelled.
+  await updateRecord("change_request", act.servicenowSysId, {
+    state: "0",
+    work_notes: "Implementation complete; moving to review.",
+  });
+  await updateRecord("change_request", act.servicenowSysId, {
+    state: "3",
+    close_code: success ? "successful" : "unsuccessful",
+    close_notes: closeNotes,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Follow-up message rendering
+// ---------------------------------------------------------------------------
+function renderExecutionResult(act, success, result) {
+  const parts = [];
+  parts.push(success ? `### [OK] ${act.summary}` : `### [FAILED] ${act.summary}`);
+  parts.push("");
+  if (success) {
+    parts.push(result?.message || `Action executed successfully.`);
+  } else {
+    parts.push(`**Error:** ${result?.error || "unknown error"}`);
+  }
+
+  if (act.servicenowCrNumber) {
+    parts.push("");
+    parts.push(
+      success
+        ? `ServiceNow CR **${act.servicenowCrNumber}** has been updated with execution details and closed (\`successful\`).`
+        : `ServiceNow CR **${act.servicenowCrNumber}** has been updated with the failure and closed (\`unsuccessful\`).`
+    );
+  }
+
+  const ctx = result?.postContext;
+  if (ctx && ctx.pods && ctx.pods.length > 0) {
+    parts.push("");
+    parts.push(`**Pods after action** — ${ctx.ready ?? "?"}/${ctx.desired ?? "?"} ready:`);
+    ctx.pods.slice(0, 15).forEach((p) => {
+      const icon = p.ready && p.phase === "Running" ? "[OK]" : "[WARNING]";
+      parts.push(`  - ${icon} \`${p.name}\` — ${p.phase} on \`${p.node || "?"}\` (restarts: ${p.restartCount || 0})`);
+    });
+    if (ctx.pods.length > 15) parts.push(`  ... and ${ctx.pods.length - 15} more`);
+  } else if (ctx && ctx.deleted) {
+    parts.push("");
+    parts.push(`Resource has been removed from the cluster.`);
+  } else if (ctx && ctx.phase) {
+    parts.push("");
+    parts.push(`Pod **${ctx.name}** is now \`${ctx.phase}\` on node \`${ctx.node || "?"}\`.`);
+  }
+
+  return parts.join("\n");
 }
 
 // ---------------------------------------------------------------------------

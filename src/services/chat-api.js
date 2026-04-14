@@ -1821,7 +1821,9 @@ export async function handleChatAPI(req, res) {
             (r.action.servicenowCrNumber ? `\nServiceNow CR: **${r.action.servicenowCrNumber}**` : "");
           if (r.action.status === "approved") {
             const exec = await executeAction(actId);
-            if (exec.action?.status === "executed") {
+            if (exec.followUp) {
+              reply += `\n\n${exec.followUp}`;
+            } else if (exec.action?.status === "executed") {
               reply += `\n\n[OK] ${exec.action.result?.message || "Executed."}`;
             } else if (exec.error) {
               reply += `\n\n[CRITICAL] Execute failed: ${exec.error}`;
