@@ -242,9 +242,11 @@ async function startSSE() {
   await Promise.all([initDb(), initCache()]);
 
   // Start background scheduled tasks (health checks, etc.)
-  startHealthCheckTask().catch((err) =>
-    console.warn("[startup] health-check scheduler failed:", err.message)
-  );
+  try {
+    startHealthCheckTask();
+  } catch (err) {
+    console.warn("[startup] health-check scheduler failed:", err.message);
+  }
 
   // Track active transports so each SSE session gets its own MCP server
   // instance (the SDK ties one transport to one server).
