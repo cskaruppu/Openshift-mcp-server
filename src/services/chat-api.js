@@ -17,7 +17,15 @@
  *   - "none"       — Built-in rule-based analysis (no external LLM)
  */
 
-import { ocpGet, ocpDelete, ocpPatch, ocpPost, ocpFetch } from "../utils/openshift-client.js";
+import {
+  ocpGet,
+  ocpDelete,
+  ocpPatch,
+  ocpPost,
+  ocpFetch,
+  runWithTrace,
+  renderTraceMarkdown,
+} from "../utils/openshift-client.js";
 import { cacheGet, cacheSet, isEnabled as cacheEnabled } from "../utils/cache.js";
 import {
   addMessage as histAddMessage,
@@ -37,6 +45,14 @@ import {
   renderPendingMessage,
   isServiceNowEnabled,
 } from "./action-workflow.js";
+import { callLLM, callLLMStream, llmEnabled } from "./llm.js";
+import { runAgent } from "./agent-loop.js";
+import { maybeEnhance as nluEnhanceWithLLM } from "./nlu-llm.js";
+import { summarizeIfNeeded } from "./summarizer.js";
+import { suggestPlaybook, renderPlaybookMarkdown } from "./playbooks.js";
+import { findResource } from "./resource-index.js";
+import { incCounter, observeHistogram } from "./metrics.js";
+import { enforce as enforceRateLimit } from "./rate-limit.js";
 
 // Map an NLU intent to the legacy "operation" string used by the response
 // handlers below, plus a few normalizations.
@@ -1172,9 +1188,86 @@ async function gatherClusterContext(userMessage) {
           .catch(() => {})
       )
     );
+
+    // Correlate pod state + events + node conditions into likelyCause entries
+    context.correlations = correlateRootCauses(context);
   }
 
   return context;
+}
+
+// ---------------------------------------------------------------------------
+// Root-cause correlator — joins pod state, events, owners, node conditions
+// into ranked "likely cause" entries. The built-in analyzer uses these to
+// render the "Likely cause" block; the agent loop can also read them.
+// ---------------------------------------------------------------------------
+function correlateRootCauses(ctx) {
+  const out = [];
+  for (const pod of ctx.problemPods || []) {
+    const states = pod.containers.map((c) => c.state).filter(Boolean);
+    let cause = null;
+    let evidence = [];
+    if (states.includes("CrashLoopBackOff")) {
+      cause = "CrashLoopBackOff";
+      const c = pod.containers.find((x) => x.state === "CrashLoopBackOff");
+      if (c?.exitCode != null) evidence.push(`exitCode=${c.exitCode}`);
+      if (c?.lastReason) evidence.push(`lastReason=${c.lastReason}`);
+      const ev = (pod.events || []).find((e) => /BackOff|Failed/.test(e.reason));
+      if (ev) evidence.push(`event: ${(ev.message || "").slice(0, 120)}`);
+    } else if (states.includes("ImagePullBackOff") || states.includes("ErrImagePull")) {
+      cause = "ImagePullBackOff";
+      if (pod.images?.[0]) evidence.push(`image=${pod.images[0]}`);
+      const ev = (pod.events || []).find((e) => /pull|image/i.test(e.message || ""));
+      if (ev) evidence.push(`event: ${(ev.message || "").slice(0, 120)}`);
+    } else if (states.includes("OOMKilled")) {
+      cause = "OOMKilled";
+      const lim = pod.resourceLimits?.[0];
+      if (lim?.memLimit) evidence.push(`memLimit=${lim.memLimit}`);
+      if (lim?.memRequest) evidence.push(`memRequest=${lim.memRequest}`);
+    } else if (states.includes("CreateContainerConfigError")) {
+      cause = "CreateContainerConfigError";
+      const ev = (pod.events || []).find((e) => /configmap|secret/i.test(e.message || ""));
+      if (ev) evidence.push((ev.message || "").slice(0, 160));
+    } else if (pod.phase === "Pending") {
+      cause = "Pending";
+      const ev = (pod.events || []).find((e) => /Failed|FailedScheduling|Insufficient/.test(e.reason));
+      if (ev) evidence.push(`event: ${(ev.message || "").slice(0, 140)}`);
+      // Check node conditions
+      const nodeIssues = (ctx.nodes || [])
+        .filter((n) => !n.ready)
+        .map((n) => n.name);
+      if (nodeIssues.length > 0) evidence.push(`notReadyNodes=${nodeIssues.join(",")}`);
+    } else if (pod.phase === "Failed") {
+      cause = "Failed";
+      if (pod.events?.[0]) evidence.push((pod.events[0].message || "").slice(0, 140));
+    } else {
+      cause = "Unknown";
+      evidence.push(`state=${states.join("|")}`);
+    }
+    out.push({
+      pod: pod.name,
+      namespace: pod.namespace,
+      likelyCause: cause,
+      evidence,
+      ownerKind: pod.ownerKind,
+      ownerName: pod.ownerName,
+      node: pod.node,
+    });
+  }
+  return out;
+}
+
+/** Render the correlations block as markdown. */
+function renderCorrelationsMarkdown(correlations) {
+  if (!correlations || correlations.length === 0) return "";
+  const lines = [`\n### Root cause correlations`];
+  for (const c of correlations.slice(0, 10)) {
+    lines.push(
+      `  - **${c.pod}** (${c.namespace}) — **${c.likelyCause}**` +
+        (c.evidence?.length ? `\n    - ${c.evidence.join("\n    - ")}` : "")
+    );
+  }
+  return lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1199,78 +1292,31 @@ When listing resources:
 Always be concise but thorough. Use markdown formatting.`;
 
 // ---------------------------------------------------------------------------
-// Call external LLM
+// Call external LLM — thin wrapper around the centralized llm.js module
+// that keeps the built-in analysis fallback when no provider is configured.
 // ---------------------------------------------------------------------------
-async function callLLM(userMessage, clusterContext, opts = {}) {
+async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
   const provider = opts.provider || LLM_PROVIDER;
-  const apiUrl = opts.apiUrl || LLM_API_URL;
-  const apiKey = opts.apiKey || LLM_API_KEY;
-  const model = opts.model || LLM_MODEL;
-
+  if (!provider || provider === "none") {
+    return builtInAnalysis(userMessage, clusterContext);
+  }
   const contextStr = JSON.stringify(clusterContext, null, 2);
   const userContent = `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;
-
-  if (provider === "openai") {
-    const resp = await fetch(`${apiUrl || "https://api.openai.com"}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: model || "gpt-4",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userContent },
-        ],
-        max_tokens: 2000,
-        temperature: 0.3,
-      }),
+  try {
+    const r = await callLLM({
+      messages: [{ role: "user", content: userContent }],
+      system: SYSTEM_PROMPT,
+      maxTokens: 2000,
+      temperature: 0.3,
+      provider: opts.provider,
+      apiUrl: opts.apiUrl,
+      apiKey: opts.apiKey,
+      model: opts.model,
     });
-    const data = await resp.json();
-    if (data.error) return `LLM Error: ${data.error.message || JSON.stringify(data.error)}`;
-    return data.choices?.[0]?.message?.content || "No response from LLM.";
+    return r.text || builtInAnalysis(userMessage, clusterContext);
+  } catch (err) {
+    return `LLM Error: ${err.message}\n\n---\n\n${builtInAnalysis(userMessage, clusterContext)}`;
   }
-
-  if (provider === "anthropic") {
-    const resp = await fetch(`${apiUrl || "https://api.anthropic.com"}/v1/messages`, {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "Content-Type": "application/json",
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: model || "claude-sonnet-4-20250514",
-        system: SYSTEM_PROMPT,
-        messages: [{ role: "user", content: userContent }],
-        max_tokens: 2000,
-      }),
-    });
-    const data = await resp.json();
-    if (data.error) return `LLM Error: ${data.error.message || JSON.stringify(data.error)}`;
-    return data.content?.[0]?.text || "No response from LLM.";
-  }
-
-  if (provider === "ollama") {
-    const resp = await fetch(`${apiUrl || "http://localhost:11434"}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: model || "llama3",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userContent },
-        ],
-        stream: false,
-      }),
-    });
-    const data = await resp.json();
-    return data.message?.content || "No response from Ollama.";
-  }
-
-  // Fallback: built-in analysis (no external LLM)
-  return builtInAnalysis(userMessage, clusterContext);
 }
 
 // ---------------------------------------------------------------------------
@@ -1730,6 +1776,123 @@ function builtInAnalysis(userMessage, ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// Slash command fast-path — returns { reply, contextKeys } or null
+// ---------------------------------------------------------------------------
+async function maybeHandleSlashCommand(userMessage, conversationId) {
+  const text = String(userMessage || "").trim();
+  if (!text.startsWith("/")) return null;
+  const [cmdRaw, ...rest] = text.slice(1).split(/\s+/);
+  const cmd = cmdRaw.toLowerCase();
+  const arg = rest.join(" ").trim();
+
+  if (cmd === "help") {
+    return { reply: buildHelpMessage(), contextKeys: ["slash", "help"] };
+  }
+  if (cmd === "health") {
+    try {
+      const { getLatestHealthReport, runHealthCheckNow } = await import("./scheduler.js");
+      const latest = (await getLatestHealthReport()) || (await runHealthCheckNow());
+      const r = latest?.report || latest || {};
+      const lines = [
+        "### Cluster health",
+        `  - Nodes ready: ${r.nodesReady ?? "?"} / ${r.nodesTotal ?? "?"}`,
+        `  - Problem pods: ${r.problemPods ?? "?"}`,
+        `  - Degraded operators: ${r.degradedOperators ?? "?"}`,
+        `  - Checked at: ${r.checkedAt || new Date().toISOString()}`,
+      ];
+      return { reply: lines.join("\n"), contextKeys: ["slash", "health"] };
+    } catch (e) {
+      return { reply: `[ERROR] Health report unavailable: ${e.message}`, contextKeys: ["slash", "health"] };
+    }
+  }
+  if (cmd === "audit") {
+    try {
+      const { query: dbq } = await import("../utils/db.js");
+      const n = Math.min(parseInt(arg, 10) || 10, 50);
+      const r = await dbq(
+        "SELECT action, target, namespace, success, created_at FROM executed_actions ORDER BY id DESC LIMIT $1",
+        [n]
+      );
+      const rows = r?.rows || [];
+      if (rows.length === 0) return { reply: "### Audit trail\nNo executed actions recorded.", contextKeys: ["slash", "audit"] };
+      const lines = ["### Audit trail (last " + rows.length + ")"];
+      for (const row of rows) {
+        const icon = row.success ? "[OK]" : "[FAIL]";
+        lines.push(`  - ${icon} **${row.action}** ${row.target || ""} ${row.namespace ? `(${row.namespace})` : ""} — ${row.created_at}`);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "audit"] };
+    } catch (e) {
+      return { reply: `[ERROR] Audit trail unavailable: ${e.message}`, contextKeys: ["slash", "audit"] };
+    }
+  }
+  if (cmd === "advisor" || cmd === "cost") {
+    try {
+      const { analyzeEfficiency } = await import("./cost-advisor.js");
+      const report = await analyzeEfficiency();
+      const lines = ["### Cost / efficiency advisor"];
+      lines.push(`  - Over-provisioned: ${report.overProvisioned?.length || 0}`);
+      lines.push(`  - Under-provisioned: ${report.underProvisioned?.length || 0}`);
+      lines.push(`  - Missing limits: ${report.noLimits?.length || 0}`);
+      const top = (report.overProvisioned || []).slice(0, 5);
+      if (top.length) {
+        lines.push("\n**Top over-provisioned workloads:**");
+        for (const w of top) {
+          lines.push(`  - \`${w.namespace}/${w.name}\` — ${w.reason || ""}`);
+        }
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "advisor"] };
+    } catch (e) {
+      return { reply: `[ERROR] Advisor unavailable: ${e.message}`, contextKeys: ["slash", "advisor"] };
+    }
+  }
+  if (cmd === "alerts") {
+    try {
+      const { listFiringAlerts } = await import("./alertmanager.js");
+      const alerts = await listFiringAlerts();
+      if (!alerts || alerts.length === 0) return { reply: "### Alerts\n[OK] No firing alerts.", contextKeys: ["slash", "alerts"] };
+      const lines = [`### Firing alerts (${alerts.length})`];
+      for (const a of alerts.slice(0, 20)) {
+        const name = a.labels?.alertname || "unknown";
+        const sev = a.labels?.severity || "info";
+        lines.push(`  - **${name}** (${sev}) — ${a.annotations?.summary || a.annotations?.description || ""}`);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "alerts"] };
+    } catch (e) {
+      return { reply: `[ERROR] Alertmanager unreachable: ${e.message}`, contextKeys: ["slash", "alerts"] };
+    }
+  }
+  if (cmd === "metrics") {
+    const { renderMetrics } = await import("./metrics.js");
+    return { reply: "```\n" + renderMetrics().slice(0, 3000) + "\n```", contextKeys: ["slash", "metrics"] };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// SSE helper — writes Server-Sent Events to the response stream
+// ---------------------------------------------------------------------------
+function sseStart(res) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.write(": ping\n\n");
+}
+function sseSend(res, obj) {
+  try {
+    res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  } catch {}
+}
+function sseEnd(res) {
+  try {
+    res.write("data: [DONE]\n\n");
+    res.end();
+  } catch {}
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/chat handler
 // ---------------------------------------------------------------------------
 export async function handleChatAPI(req, res) {
@@ -1740,6 +1903,13 @@ export async function handleChatAPI(req, res) {
   let cacheHit = false;
   let activeProvider = LLM_PROVIDER;
 
+  // Rate limit (token bucket per-IP; returns true if limited)
+  if (enforceRateLimit(req, res)) {
+    incCounter("mcp_chat_requests_total", { status: "rate_limited" });
+    return;
+  }
+  incCounter("mcp_chat_requests_total", { status: "accepted" });
+
   try {
     const body = await readBody(req);
     userMessage = body.message;
@@ -1749,6 +1919,30 @@ export async function handleChatAPI(req, res) {
       json(res, 400, { error: "Missing 'message' field" });
       return;
     }
+
+    // Slash commands — fast-path for dashboard shortcuts
+    const slashReply = await maybeHandleSlashCommand(userMessage, conversationId);
+    if (slashReply) {
+      if (conversationId) {
+        histAddMessage(conversationId, {
+          role: "assistant",
+          content: slashReply.reply,
+          provider: "built-in",
+        }).catch(() => {});
+      }
+      return json(res, 200, {
+        reply: slashReply.reply,
+        provider: "built-in",
+        contextKeys: slashReply.contextKeys || ["slash"],
+        cached: false,
+        conversationId,
+      });
+    }
+
+    // Streaming path (SSE) — detected by Accept header or body.stream=true
+    const wantsStream =
+      body.stream === true ||
+      (req.headers.accept || "").includes("text/event-stream");
 
     // Override LLM settings from request (for UI provider selector)
     const llmOpts = {};
@@ -1963,22 +2157,113 @@ export async function handleChatAPI(req, res) {
       return json(res, 200, { ...payload, cached: false, conversationId });
     }
 
-    // 1. Gather cluster context for analysis queries (cached separately)
-    const ctxKey = `ctx:${cacheKeyForChat(userMessage, "ctx")}`;
-    let context = await cacheGet(ctxKey);
-    if (!context) {
-      context = await gatherClusterContext(userMessage);
-      cacheSet(ctxKey, context, CONTEXT_CACHE_TTL).catch(() => {});
+    // ---- Streaming SSE path ----
+    if (wantsStream && llmEnabled(llmOpts)) {
+      sseStart(res);
+      try {
+        const { result: sseTraced, trace: sseTrace } = await runWithTrace(async () => {
+          let context = await gatherClusterContext(userMessage);
+          const contextStr = JSON.stringify(context, null, 2);
+          const userContent = `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;
+          let fullText = "";
+          await callLLMStream({
+            messages: [{ role: "user", content: userContent }],
+            system: SYSTEM_PROMPT,
+            maxTokens: 2000,
+            temperature: 0.3,
+            ...llmOpts,
+            onDelta: (chunk) => {
+              fullText += chunk;
+              sseSend(res, { delta: chunk });
+            },
+          });
+          return { context, fullText };
+        });
+        const { context, fullText } = sseTraced;
+        // Append extra blocks as final events
+        const correlationsBlock = renderCorrelationsMarkdown(context?.correlations || []);
+        if (correlationsBlock) sseSend(res, { delta: "\n" + correlationsBlock });
+        const topCause = context?.correlations?.[0];
+        if (topCause?.likelyCause) {
+          const pb = suggestPlaybook(topCause.likelyCause, { pod: topCause.pod, namespace: topCause.namespace });
+          if (pb) sseSend(res, { delta: "\n" + renderPlaybookMarkdown(pb) });
+        }
+        const traceMd = renderTraceMarkdown(sseTrace);
+        if (traceMd) sseSend(res, { delta: "\n" + traceMd });
+        sseSend(res, { done: true, provider: activeProvider, conversationId });
+        sseEnd(res);
+        if (conversationId) {
+          histAddMessage(conversationId, { role: "assistant", content: sseTraced.fullText, provider: activeProvider }).catch(() => {});
+        }
+        observeHistogram("mcp_chat_latency_seconds", { provider: activeProvider }, (Date.now() - startedAt) / 1000);
+      } catch (sseErr) {
+        sseSend(res, { error: sseErr.message });
+        sseEnd(res);
+      }
+      return;
     }
+
+    // 1. Gather cluster context + call LLM inside a trace scope so that every
+    //    ocpFetch made during this request is captured for explainability.
+    const { result: traced, trace } = await runWithTrace(async () => {
+      const ctxKey = `ctx:${cacheKeyForChat(userMessage, "ctx")}`;
+      let context = await cacheGet(ctxKey);
+      if (!context) {
+        context = await gatherClusterContext(userMessage);
+        cacheSet(ctxKey, context, CONTEXT_CACHE_TTL).catch(() => {});
+      }
+
+      // Optional: route "diagnose" / "why" / "what's wrong" queries through
+      // the agent loop when an LLM is configured.
+      const wantsDiagnose =
+        llmEnabled(llmOpts) &&
+        /\b(diagnose|root\s*cause|why\s+is|what'?s\s+wrong|troubleshoot)\b/i.test(userMessage);
+      let replyText;
+      if (wantsDiagnose) {
+        try {
+          const agentRes = await runAgent({
+            userMessage,
+            contextHint: {
+              problemPods: (context.problemPods || []).slice(0, 5),
+              correlations: context.correlations || [],
+            },
+            llmOpts,
+          });
+          replyText = agentRes?.text || (await callLLMWithContext(userMessage, context, llmOpts));
+        } catch (e) {
+          console.warn("[chat-api] agent loop failed, falling back:", e.message);
+          replyText = await callLLMWithContext(userMessage, context, llmOpts);
+        }
+      } else {
+        replyText = await callLLMWithContext(userMessage, context, llmOpts);
+      }
+      return { context, replyText };
+    });
+    let { context, replyText: reply } = traced;
     intentsForLog = Array.isArray(context?.intents) ? context.intents : Object.keys(context || {});
 
-    // 2. Call LLM (or built-in analysis)
-    const reply = await callLLM(userMessage, context, llmOpts);
+    // Append root-cause correlations + playbook + trace for explainability.
+    const correlationsBlock = renderCorrelationsMarkdown(context?.correlations || []);
+    if (correlationsBlock) reply += "\n" + correlationsBlock;
+
+    const topCause = context?.correlations?.[0];
+    if (topCause?.likelyCause) {
+      const pb = suggestPlaybook(topCause.likelyCause, {
+        pod: topCause.pod,
+        namespace: topCause.namespace,
+      });
+      if (pb) reply += "\n" + renderPlaybookMarkdown(pb);
+    }
+
+    const traceMd = renderTraceMarkdown(trace);
+    if (traceMd) reply += "\n" + traceMd;
 
     const payload = {
       reply,
       provider: activeProvider,
       contextKeys: Object.keys(context || {}),
+      correlations: context?.correlations || [],
+      trace: trace.slice(0, 20),
     };
     cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
     if (conversationId) {
@@ -1988,6 +2273,8 @@ export async function handleChatAPI(req, res) {
         provider: activeProvider,
       }).catch(() => {});
     }
+
+    observeHistogram("mcp_chat_latency_seconds", { provider: activeProvider }, (Date.now() - startedAt) / 1000);
 
     // 3. Return response
     json(res, 200, { ...payload, cached: false, conversationId });

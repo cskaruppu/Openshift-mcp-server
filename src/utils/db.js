@@ -127,6 +127,30 @@ CREATE TABLE IF NOT EXISTS pending_actions (
 );
 CREATE INDEX IF NOT EXISTS idx_pending_actions_conv ON pending_actions(conversation_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pending_actions_status ON pending_actions(status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS health_reports (
+  id BIGSERIAL PRIMARY KEY,
+  report JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_health_reports_created ON health_reports(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS message_feedback (
+  id BIGSERIAL PRIMARY KEY,
+  conversation_id TEXT,
+  message_id TEXT,
+  rating SMALLINT NOT NULL,
+  comment TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_message_feedback_conv ON message_feedback(conversation_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS alert_suppressions (
+  fingerprint TEXT PRIMARY KEY,
+  suppressed_until TIMESTAMPTZ NOT NULL,
+  reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 `;
 
 async function ensureSchema() {

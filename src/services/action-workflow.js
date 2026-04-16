@@ -19,7 +19,7 @@
  */
 
 import { query, isEnabled as dbEnabled } from "../utils/db.js";
-import { ocpGet, ocpPatch, ocpDelete } from "../utils/openshift-client.js";
+import { ocpGet, ocpPatch, ocpDelete, ocpFetch, canI } from "../utils/openshift-client.js";
 import { createChangeRequest, getRecord, updateRecord } from "../utils/servicenow-client.js";
 import {
   logExecutedAction as histLogExecutedAction,
@@ -282,6 +282,30 @@ export async function createPendingAction({
   if (!ALLOWED.has(key)) {
     throw new Error(`Action not allowed: ${key}`);
   }
+
+  // ---- RBAC preflight via SelfSubjectAccessReview ----
+  const verb = action === "scale" || action === "restart" ? "patch" : "delete";
+  const apiInfo = RESOURCE_API[resourceType];
+  const group = apiInfo?.api?.startsWith("/apis/") ? apiInfo.api.split("/")[2] : "";
+  const rbac = await canI({
+    verb,
+    group,
+    resource: apiInfo?.plural || `${resourceType}s`,
+    namespace: namespace || "",
+    name: resourceName,
+  });
+  if (!rbac.allowed) {
+    throw new Error(`RBAC denied: cannot ${verb} ${resourceType}/${resourceName} in ${namespace || "(cluster)"} (${rbac.reason || "forbidden"})`);
+  }
+
+  // ---- Dry-run preview ----
+  let preview = null;
+  try {
+    preview = await computeDryRunPreview({ action, resourceType, resourceName, namespace, options });
+  } catch (err) {
+    preview = { note: `preview unavailable: ${err.message}` };
+  }
+
   const now = new Date().toISOString();
   const act = {
     id: newId(),
@@ -290,7 +314,7 @@ export async function createPendingAction({
     resourceType,
     resourceName,
     namespace: namespace || null,
-    options: options || {},
+    options: { ...(options || {}), preview },
     status: "pending_confirmation",
     requestedBy: requestedBy || "dashboard-user",
     summary: null,
@@ -300,6 +324,94 @@ export async function createPendingAction({
   };
   act.summary = humanSummary(act);
   return store("insert", act);
+}
+
+/**
+ * Compute a dry-run preview of what this action would do. Uses the API
+ * server's dryRun=All for PATCH-based mutations (restart, scale) so it does
+ * not modify cluster state. Delete operations return a summary of what
+ * would be removed.
+ */
+async function computeDryRunPreview({ action, resourceType, resourceName, namespace, options }) {
+  const info = RESOURCE_API[resourceType];
+  if (!info) return null;
+  const base = `${info.api}/namespaces/${namespace}/${info.plural}/${resourceName}`;
+
+  if (action === "delete") {
+    let current = null;
+    try {
+      current = await ocpGet(base);
+    } catch {}
+    return {
+      kind: "delete",
+      resource: `${resourceType}/${resourceName}`,
+      namespace,
+      currentGeneration: current?.metadata?.generation || null,
+      currentReplicas: current?.spec?.replicas ?? null,
+      owners: current?.metadata?.ownerReferences?.map((o) => `${o.kind}/${o.name}`) || [],
+    };
+  }
+
+  if (action === "restart") {
+    // Strategic-merge patch with dryRun=All returns the full object as it
+    // would be after mutation, without persisting.
+    const patch = {
+      spec: {
+        template: {
+          metadata: {
+            annotations: {
+              "kubectl.kubernetes.io/restartedAt": new Date().toISOString(),
+            },
+          },
+        },
+      },
+    };
+    try {
+      const r = await ocpFetch(`${base}?dryRun=All`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/strategic-merge-patch+json" },
+        body: JSON.stringify(patch),
+      });
+      return {
+        kind: "restart",
+        resource: `${resourceType}/${resourceName}`,
+        namespace,
+        newGeneration: r?.metadata?.generation || null,
+        note: "Rolling restart via kubectl.kubernetes.io/restartedAt annotation.",
+      };
+    } catch (err) {
+      return { kind: "restart", note: `preview-failed: ${err.message}` };
+    }
+  }
+
+  if (action === "scale") {
+    const replicas = Number(options?.replicas);
+    let current = null;
+    try {
+      current = await ocpGet(base);
+    } catch {}
+    const currentReplicas = current?.spec?.replicas ?? null;
+    const patch = { spec: { replicas } };
+    try {
+      await ocpFetch(`${base}?dryRun=All`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/strategic-merge-patch+json" },
+        body: JSON.stringify(patch),
+      });
+      return {
+        kind: "scale",
+        resource: `${resourceType}/${resourceName}`,
+        namespace,
+        from: currentReplicas,
+        to: replicas,
+        delta: replicas - (currentReplicas ?? 0),
+      };
+    } catch (err) {
+      return { kind: "scale", note: `preview-failed: ${err.message}` };
+    }
+  }
+
+  return null;
 }
 
 export async function getAction(id) {
@@ -860,7 +972,7 @@ export function renderPendingMessage(act) {
   const snowLine = SNOW_ENABLED
     ? "I will open a ServiceNow Change Request once you confirm. The action runs only after the CR is approved."
     : "ServiceNow is not configured in this environment, so the action will run immediately after you confirm.";
-  return [
+  const parts = [
     `### Confirm action`,
     ``,
     `You asked me to **${act.summary}**.`,
@@ -868,11 +980,23 @@ export function renderPendingMessage(act) {
     `This is a mutating operation on the cluster, so I won't run it without your explicit OK.`,
     ``,
     snowLine,
-    ``,
-    `Use the **Actions** panel on the right to Confirm or Cancel, or reply here with \`confirm ${act.id}\` / \`cancel ${act.id}\`.`,
-    ``,
-    `<!--action:${act.id}-->`,
-  ].join("\n");
+  ];
+
+  // Include the dry-run preview so the user sees exactly what will happen.
+  const preview = act.options?.preview;
+  if (preview) {
+    parts.push(``);
+    parts.push(`**Dry-run preview:**`);
+    parts.push("```json");
+    parts.push(JSON.stringify(preview, null, 2));
+    parts.push("```");
+  }
+
+  parts.push(``);
+  parts.push(`Use the **Actions** panel on the right to Confirm or Cancel, or reply here with \`confirm ${act.id}\` / \`cancel ${act.id}\`.`);
+  parts.push(``);
+  parts.push(`<!--action:${act.id}-->`);
+  return parts.join("\n");
 }
 
 export function isWorkflowEnabled() {

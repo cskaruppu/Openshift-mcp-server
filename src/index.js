@@ -42,8 +42,13 @@ import {
   updateTitle,
   isHistoryEnabled,
 } from "./services/chat-history.js";
-import { initDb } from "./utils/db.js";
+import { initDb, query as dbQuery } from "./utils/db.js";
 import { initCache, isEnabled as cacheReady } from "./utils/cache.js";
+import { handleMetricsRequest } from "./services/metrics.js";
+import { enforce as enforceRateLimit } from "./services/rate-limit.js";
+import { startHealthCheckTask, getLatestHealthReport } from "./services/scheduler.js";
+import { listFiringAlerts } from "./services/alertmanager.js";
+import { analyzeEfficiency } from "./services/cost-advisor.js";
 
 function createMcpServer() {
   const server = new McpServer({
@@ -236,6 +241,11 @@ async function startSSE() {
   // Initialize optional persistence layers (graceful fallback if not configured)
   await Promise.all([initDb(), initCache()]);
 
+  // Start background scheduled tasks (health checks, etc.)
+  startHealthCheckTask().catch((err) =>
+    console.warn("[startup] health-check scheduler failed:", err.message)
+  );
+
   // Track active transports so each SSE session gets its own MCP server
   // instance (the SDK ties one transport to one server).
   const sessions = new Map();
@@ -273,8 +283,9 @@ async function startSSE() {
       return;
     }
 
-    // Execute fix API — /api/execute (POST)
+    // Execute fix API — /api/execute (POST) — rate-limited
     if (req.method === "POST" && url.pathname === "/api/execute") {
+      if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.2 })) return;
       await handleExecuteAPI(req, res);
       return;
     }
@@ -289,6 +300,79 @@ async function startSSE() {
     if (url.pathname === "/api/actions" || url.pathname.startsWith("/api/actions/")) {
       await handleActionsAPI(url, req, res);
       return;
+    }
+
+    // Prometheus metrics endpoint
+    if (req.method === "GET" && url.pathname === "/metrics") {
+      handleMetricsRequest(res);
+      return;
+    }
+
+    // POST /api/feedback — thumbs up/down on assistant messages
+    if (req.method === "POST" && url.pathname === "/api/feedback") {
+      try {
+        const body = await readJsonBody(req);
+        const { conversationId, messageId, rating, comment } = body;
+        if (rating == null) return sendJson(res, 400, { error: "Missing rating" });
+        const r = await dbQuery(
+          "INSERT INTO message_feedback (conversation_id, message_id, rating, comment) VALUES ($1, $2, $3, $4) RETURNING id",
+          [conversationId || null, messageId || null, rating, comment || null]
+        );
+        return sendJson(res, 201, { id: r?.rows?.[0]?.id || null });
+      } catch (err) {
+        return sendJson(res, 500, { error: err.message });
+      }
+    }
+
+    // GET /api/audit — executed + pending actions log
+    if (req.method === "GET" && url.pathname === "/api/audit") {
+      try {
+        const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10), 200);
+        const executed = await dbQuery(
+          "SELECT id, action, target, namespace, success, created_at FROM executed_actions ORDER BY id DESC LIMIT $1",
+          [limit]
+        );
+        const pending = await dbQuery(
+          "SELECT id, action, resource_type, resource_name, namespace, status, created_at FROM pending_actions ORDER BY created_at DESC LIMIT $1",
+          [limit]
+        );
+        return sendJson(res, 200, {
+          executed: executed?.rows || [],
+          pending: pending?.rows || [],
+        });
+      } catch (err) {
+        return sendJson(res, 500, { error: err.message });
+      }
+    }
+
+    // GET /api/health-report — latest scheduled health check
+    if (req.method === "GET" && url.pathname === "/api/health-report") {
+      try {
+        const report = await getLatestHealthReport();
+        return sendJson(res, 200, { report: report || null });
+      } catch (err) {
+        return sendJson(res, 500, { error: err.message });
+      }
+    }
+
+    // GET /api/alerts — firing alerts from Alertmanager
+    if (req.method === "GET" && url.pathname === "/api/alerts") {
+      try {
+        const alerts = await listFiringAlerts();
+        return sendJson(res, 200, { alerts: alerts || [] });
+      } catch (err) {
+        return sendJson(res, 200, { alerts: [], error: err.message });
+      }
+    }
+
+    // GET /api/advisor — cost/efficiency analysis
+    if (req.method === "GET" && url.pathname === "/api/advisor") {
+      try {
+        const report = await analyzeEfficiency();
+        return sendJson(res, 200, report);
+      } catch (err) {
+        return sendJson(res, 500, { error: err.message });
+      }
     }
 
     // Dashboard REST API — /api/...

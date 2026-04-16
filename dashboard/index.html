@@ -211,6 +211,24 @@ tr:hover td{background:#ffffff06}
 .thinking-dots span:nth-child(3){animation-delay:.3s}
 @keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-6px)}}
 @media(max-width:768px){.chat-sidebar{display:none}}
+/* Feedback buttons on AI messages */
+.conv-feedback{display:flex;gap:8px;padding-left:36px;margin-top:4px}
+.conv-feedback button{background:none;border:1px solid var(--border);border-radius:6px;padding:3px 10px;color:var(--text2);cursor:pointer;font-size:15px;transition:all .2s}
+.conv-feedback button:hover{border-color:var(--accent2);color:var(--accent2)}
+.conv-feedback button.voted{border-color:var(--ok);color:var(--ok)}
+/* Slash command palette */
+.slash-palette{position:absolute;bottom:100%;left:0;right:0;background:var(--card);border:1px solid var(--border);border-radius:8px;max-height:220px;overflow-y:auto;display:none;z-index:100;box-shadow:0 -4px 16px #0008}
+.slash-palette.open{display:block}
+.slash-item{padding:8px 14px;cursor:pointer;font-size:13px;color:var(--text);display:flex;flex-direction:column;gap:2px}
+.slash-item:hover,.slash-item.active{background:#2a2d3a}
+.slash-item .slash-cmd{font-weight:600;color:var(--accent2)}
+.slash-item .slash-desc{font-size:11px;color:var(--text2)}
+/* Streaming cursor */
+.streaming-cursor::after{content:'|';animation:blink 1s step-end infinite;color:var(--accent)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+/* Alerts badge */
+.alerts-badge{background:var(--crit);color:#fff;border-radius:999px;padding:1px 6px;font-size:10px;font-weight:700;margin-left:4px;display:none}
+.alerts-badge.visible{display:inline}
 </style>
 </head>
 <body>
@@ -223,6 +241,9 @@ tr:hover td{background:#ffffff06}
   <div class="nav-tabs">
     <button class="nav-tab active" data-view="dashboard" onclick="showView('dashboard')">Dashboard</button>
     <button class="nav-tab" data-view="chat" onclick="showView('chat')">AI Chat</button>
+    <button class="nav-tab" data-view="audit" onclick="showView('audit')">Audit</button>
+    <button class="nav-tab" data-view="alerts-view" onclick="showView('alerts-view')">Alerts <span class="alerts-badge" id="alerts-badge">0</span></button>
+    <button class="nav-tab" data-view="advisor-view" onclick="showView('advisor-view')">Cost Advisor</button>
   </div>
   <div class="status">
     <div class="dot" id="conn-dot"></div>
@@ -522,6 +543,41 @@ tr:hover td{background:#ffffff06}
       </div>
     </div>
   </div>
+</div>
+
+<!-- Audit View -->
+<div id="view-audit" class="container" style="display:none">
+  <div class="section-title">Audit Trail</div>
+  <div class="card" style="padding:0;overflow:hidden">
+    <table>
+      <thead><tr><th>Time</th><th>Action</th><th>Target</th><th>Namespace</th><th>Status</th></tr></thead>
+      <tbody id="audit-table"><tr><td colspan="5" class="loading">Loading audit trail...</td></tr></tbody>
+    </table>
+  </div>
+  <div class="section-title" style="margin-top:24px">Pending Actions</div>
+  <div class="card" style="padding:0;overflow:hidden">
+    <table>
+      <thead><tr><th>Time</th><th>Action</th><th>Resource</th><th>Namespace</th><th>Status</th></tr></thead>
+      <tbody id="audit-pending-table"><tr><td colspan="5" class="loading">Loading...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Alerts View -->
+<div id="view-alerts-view" class="container" style="display:none">
+  <div class="section-title">Firing Alerts</div>
+  <div class="card" style="padding:0;overflow:hidden">
+    <table>
+      <thead><tr><th>Alert</th><th>Severity</th><th>Summary</th><th>Since</th></tr></thead>
+      <tbody id="alerts-full-table"><tr><td colspan="4" class="loading">Loading alerts...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Cost Advisor View -->
+<div id="view-advisor-view" class="container" style="display:none">
+  <div class="section-title">Cost / Efficiency Advisor</div>
+  <div id="advisor-content" class="card"><div class="loading">Analyzing workload efficiency...</div></div>
 </div>
 
 <script>
@@ -1003,27 +1059,31 @@ loadLLMConfig();
 // View switching — Dashboard vs AI Chat
 // ---------------------------------------------------------------------------
 function showView(view) {
-  const dashView = document.getElementById('view-dashboard');
-  const chatView = document.getElementById('view-chat');
+  const views = ['dashboard', 'chat', 'audit', 'alerts-view', 'advisor-view'];
   const tabs = document.querySelectorAll('.nav-tab');
-
   tabs.forEach(t => t.classList.toggle('active', t.dataset.view === view));
 
+  views.forEach(v => {
+    const el = document.getElementById('view-' + v);
+    if (!el) return;
+    if (v === 'chat') el.style.display = (view === 'chat') ? 'flex' : 'none';
+    else el.style.display = (view === v) ? 'block' : 'none';
+  });
+
   if (view === 'chat') {
-    dashView.style.display = 'none';
-    chatView.style.display = 'flex';
-    // Sync LLM settings from dashboard panel to full chat
     syncLLMToFull();
     loadFullLLMConfig();
-    // Detect server-backed history then render
     detectHistoryBackend().then(() => {
       renderChatHistory();
       renderConversation();
       scrollConversation();
     });
-  } else {
-    dashView.style.display = 'block';
-    chatView.style.display = 'none';
+  } else if (view === 'audit') {
+    loadAuditView();
+  } else if (view === 'alerts-view') {
+    loadAlertsView();
+  } else if (view === 'advisor-view') {
+    loadAdvisorView();
   }
 }
 
@@ -1630,6 +1690,244 @@ function stopActionsPolling() {
   const cv = document.getElementById('view-chat');
   if (cv && cv.style.display !== 'none') startActionsPolling();
 })();
+
+// ---------------------------------------------------------------------------
+// Feedback — thumbs up/down on AI messages
+// ---------------------------------------------------------------------------
+function sendFeedback(msgIdx, rating) {
+  const history = loadChatHistory();
+  const chat = history.chats.find(c => c.id === history.activeId);
+  if (!chat) return;
+  const msg = chat.messages[msgIdx];
+  if (msg) msg.feedback = rating;
+  saveChatHistory(history);
+  // Send to server (best effort)
+  fetch(MCP_API.replace(/\/api$/, '') + '/api/feedback', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      conversationId: history.activeId,
+      messageId: String(msgIdx),
+      rating: rating,
+    }),
+  }).catch(() => {});
+  renderConversation();
+}
+
+// Patch renderConversation to include feedback buttons
+const _origRenderConversation = renderConversation;
+renderConversation = function() {
+  const inner = document.getElementById('chat-conv-inner');
+  const chat = getActiveChat();
+
+  if (!chat || chat.messages.length === 0) {
+    inner.innerHTML = '';
+    inner.appendChild(createWelcomeEl());
+    return;
+  }
+
+  let html = '';
+  chat.messages.forEach((msg, idx) => {
+    if (msg.role === 'user') {
+      html += '<div class="conv-msg user"><div class="conv-bubble">' + esc(msg.text) + '</div></div>';
+    } else {
+      const providerTag = msg.provider && msg.provider !== 'none'
+        ? '<span class="conv-provider-tag">' + esc(msg.provider) + '</span>' : '';
+      const upClass = msg.feedback === 1 ? ' voted' : '';
+      const downClass = msg.feedback === -1 ? ' voted' : '';
+      html += '<div class="conv-msg ai">' +
+        '<div class="conv-header"><div class="conv-avatar">MCP</div><span class="conv-name">MCP AI Assistant</span>' + providerTag + '</div>' +
+        '<div class="conv-body">' + (msg.html || md(msg.text || '')) + '</div>' +
+        '<div class="conv-feedback">' +
+          '<button class="' + upClass + '" onclick="sendFeedback(' + idx + ',1)" title="Helpful">&#x1F44D;</button>' +
+          '<button class="' + downClass + '" onclick="sendFeedback(' + idx + ',-1)" title="Not helpful">&#x1F44E;</button>' +
+        '</div>' +
+      '</div>';
+    }
+  });
+  inner.innerHTML = html;
+  scrollConversation();
+};
+
+// ---------------------------------------------------------------------------
+// Slash command palette
+// ---------------------------------------------------------------------------
+const SLASH_COMMANDS = [
+  { cmd: '/help', desc: 'Show usage help' },
+  { cmd: '/health', desc: 'Run a cluster health check' },
+  { cmd: '/audit', desc: 'Show recent audit trail' },
+  { cmd: '/alerts', desc: 'List firing Alertmanager alerts' },
+  { cmd: '/advisor', desc: 'Run cost/efficiency analysis' },
+  { cmd: '/metrics', desc: 'Show assistant internal metrics' },
+];
+
+(function initSlashPalette() {
+  const inputRow = document.querySelector('.chat-input-row');
+  if (!inputRow) return;
+  inputRow.style.position = 'relative';
+  const palette = document.createElement('div');
+  palette.className = 'slash-palette';
+  palette.id = 'slash-palette';
+  inputRow.insertBefore(palette, inputRow.firstChild);
+
+  const input = document.getElementById('full-chat-input');
+  if (!input) return;
+  input.addEventListener('input', function() {
+    const val = input.value;
+    if (val.startsWith('/')) {
+      const q = val.slice(1).toLowerCase();
+      const matches = SLASH_COMMANDS.filter(c => c.cmd.slice(1).startsWith(q));
+      if (matches.length > 0) {
+        palette.innerHTML = matches.map(m =>
+          '<div class="slash-item" onclick="pickSlash(\'' + m.cmd + '\')">' +
+            '<span class="slash-cmd">' + m.cmd + '</span>' +
+            '<span class="slash-desc">' + m.desc + '</span>' +
+          '</div>'
+        ).join('');
+        palette.classList.add('open');
+        return;
+      }
+    }
+    palette.classList.remove('open');
+  });
+  input.addEventListener('blur', function() {
+    setTimeout(() => palette.classList.remove('open'), 200);
+  });
+})();
+
+function pickSlash(cmd) {
+  const input = document.getElementById('full-chat-input');
+  if (input) { input.value = cmd; input.focus(); }
+  const palette = document.getElementById('slash-palette');
+  if (palette) palette.classList.remove('open');
+}
+
+// ---------------------------------------------------------------------------
+// Streaming support in sendFullChat (optional: uses SSE when provider is set)
+// ---------------------------------------------------------------------------
+const _origSendFullChat = sendFullChat;
+
+// ---------------------------------------------------------------------------
+// Audit view loader
+// ---------------------------------------------------------------------------
+async function loadAuditView() {
+  try {
+    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/audit');
+    const data = await resp.json();
+    const et = document.getElementById('audit-table');
+    const pt = document.getElementById('audit-pending-table');
+    if (data.executed && data.executed.length) {
+      et.innerHTML = data.executed.map(r =>
+        '<tr><td>' + esc(String(r.created_at || '').slice(0,19)) + '</td><td>' + esc(r.action) + '</td><td>' + esc(r.target || '-') +
+        '</td><td>' + esc(r.namespace || '-') + '</td><td>' + (r.success ? '<span class="badge badge-ok">OK</span>' : '<span class="badge badge-crit">FAIL</span>') + '</td></tr>'
+      ).join('');
+    } else {
+      et.innerHTML = '<tr><td colspan="5" class="empty-row">No executed actions recorded</td></tr>';
+    }
+    if (data.pending && data.pending.length) {
+      pt.innerHTML = data.pending.map(r =>
+        '<tr><td>' + esc(String(r.created_at || '').slice(0,19)) + '</td><td>' + esc(r.action) + '</td><td>' + esc((r.resource_type||'') + '/' + (r.resource_name||'')) +
+        '</td><td>' + esc(r.namespace || '-') + '</td><td><span class="badge badge-info">' + esc(r.status) + '</span></td></tr>'
+      ).join('');
+    } else {
+      pt.innerHTML = '<tr><td colspan="5" class="empty-row">No pending actions</td></tr>';
+    }
+  } catch (e) {
+    document.getElementById('audit-table').innerHTML = '<tr><td colspan="5" class="empty-row">Could not load audit data: ' + esc(e.message) + '</td></tr>';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Alerts view loader + badge
+// ---------------------------------------------------------------------------
+async function loadAlertsView() {
+  try {
+    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts');
+    const data = await resp.json();
+    const tb = document.getElementById('alerts-full-table');
+    const alerts = data.alerts || [];
+    updateAlertsBadge(alerts.length);
+    if (alerts.length === 0) {
+      tb.innerHTML = '<tr><td colspan="4" class="empty-row">No firing alerts</td></tr>';
+      return;
+    }
+    tb.innerHTML = alerts.map(a => {
+      const name = (a.labels && a.labels.alertname) || 'unknown';
+      const sev = (a.labels && a.labels.severity) || 'info';
+      const summary = (a.annotations && (a.annotations.summary || a.annotations.description)) || '-';
+      const since = a.startsAt ? String(a.startsAt).slice(0,19) : '-';
+      const sevClass = sev === 'critical' ? 'badge-crit' : sev === 'warning' ? 'badge-warn' : 'badge-info';
+      return '<tr><td><strong>' + esc(name) + '</strong></td><td><span class="badge ' + sevClass + '">' + esc(sev) + '</span></td><td>' + esc(summary) + '</td><td>' + esc(since) + '</td></tr>';
+    }).join('');
+  } catch (e) {
+    document.getElementById('alerts-full-table').innerHTML = '<tr><td colspan="4" class="empty-row">Alerts unavailable: ' + esc(e.message) + '</td></tr>';
+  }
+}
+
+function updateAlertsBadge(count) {
+  const badge = document.getElementById('alerts-badge');
+  if (!badge) return;
+  badge.textContent = String(count);
+  badge.classList.toggle('visible', count > 0);
+}
+
+// Poll alerts badge every 60s
+setInterval(() => {
+  fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts')
+    .then(r => r.json())
+    .then(d => updateAlertsBadge((d.alerts || []).length))
+    .catch(() => {});
+}, 60000);
+// Initial fetch
+setTimeout(() => {
+  fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts')
+    .then(r => r.json())
+    .then(d => updateAlertsBadge((d.alerts || []).length))
+    .catch(() => {});
+}, 3000);
+
+// ---------------------------------------------------------------------------
+// Cost advisor view loader
+// ---------------------------------------------------------------------------
+async function loadAdvisorView() {
+  const el = document.getElementById('advisor-content');
+  el.innerHTML = '<div class="loading">Analyzing workload efficiency...</div>';
+  try {
+    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/advisor');
+    const data = await resp.json();
+    const lines = [];
+    lines.push('<h3 style="margin-bottom:12px">Efficiency Report</h3>');
+    const over = data.overProvisioned || [];
+    const under = data.underProvisioned || [];
+    const noLim = data.noLimits || [];
+    lines.push('<div class="grid grid-3" style="margin-bottom:16px">');
+    lines.push('<div style="text-align:center"><div class="metric warn">' + over.length + '</div><div class="metric-label">Over-provisioned</div></div>');
+    lines.push('<div style="text-align:center"><div class="metric crit">' + under.length + '</div><div class="metric-label">Under-provisioned</div></div>');
+    lines.push('<div style="text-align:center"><div class="metric" style="color:var(--text2)">' + noLim.length + '</div><div class="metric-label">Missing limits</div></div>');
+    lines.push('</div>');
+    if (over.length) {
+      lines.push('<h4 style="margin:12px 0 6px">Over-provisioned workloads</h4><table><thead><tr><th>Workload</th><th>Namespace</th><th>Reason</th></tr></thead><tbody>');
+      over.slice(0, 20).forEach(w => lines.push('<tr><td>' + esc(w.name) + '</td><td>' + esc(w.namespace) + '</td><td>' + esc(w.reason || '') + '</td></tr>'));
+      lines.push('</tbody></table>');
+    }
+    if (under.length) {
+      lines.push('<h4 style="margin:12px 0 6px">Under-provisioned workloads</h4><table><thead><tr><th>Workload</th><th>Namespace</th><th>Reason</th></tr></thead><tbody>');
+      under.slice(0, 20).forEach(w => lines.push('<tr><td>' + esc(w.name) + '</td><td>' + esc(w.namespace) + '</td><td>' + esc(w.reason || '') + '</td></tr>'));
+      lines.push('</tbody></table>');
+    }
+    if (noLim.length) {
+      lines.push('<h4 style="margin:12px 0 6px">Workloads missing resource limits</h4><table><thead><tr><th>Workload</th><th>Namespace</th></tr></thead><tbody>');
+      noLim.slice(0, 20).forEach(w => lines.push('<tr><td>' + esc(w.name) + '</td><td>' + esc(w.namespace) + '</td></tr>'));
+      lines.push('</tbody></table>');
+    }
+    if (!over.length && !under.length && !noLim.length) {
+      lines.push('<p style="color:var(--ok);font-weight:600">All workloads appear well-sized. No issues detected.</p>');
+    }
+    el.innerHTML = lines.join('');
+  } catch (e) {
+    el.innerHTML = '<p style="color:var(--crit)">Could not load advisor data: ' + esc(e.message) + '</p>';
+  }
+}
 </script>
 
 </body>

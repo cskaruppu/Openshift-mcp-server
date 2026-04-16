@@ -1,0 +1,344 @@
+/**
+ * Centralized LLM client.
+ *
+ * Supports three providers — openai, anthropic, ollama — plus a "none" mode
+ * for built-in analysis. Exposes three flavors of call:
+ *
+ *   callLLM({messages, tools}) → {text, toolCalls}
+ *   callLLMStream({messages, onDelta, onToolCall}) → {text, toolCalls}
+ *   classifyJSON({prompt, schemaHint}) → parsed object | null
+ *
+ * Any provider can be selected per-request by passing an `opts` object so the
+ * dashboard's provider dropdown still works.
+ */
+
+const DEFAULT_PROVIDER = process.env.LLM_PROVIDER || "none";
+const DEFAULT_API_URL = process.env.LLM_API_URL || "http://localhost:11434";
+const DEFAULT_API_KEY = process.env.LLM_API_KEY || "";
+const DEFAULT_MODEL = process.env.LLM_MODEL || "gpt-4";
+
+export function llmEnabled(opts = {}) {
+  const p = opts.provider || DEFAULT_PROVIDER;
+  return p && p !== "none";
+}
+
+function resolveOpts(opts = {}) {
+  return {
+    provider: opts.provider || DEFAULT_PROVIDER,
+    apiUrl: opts.apiUrl || DEFAULT_API_URL,
+    apiKey: opts.apiKey || DEFAULT_API_KEY,
+    model: opts.model || DEFAULT_MODEL,
+    maxTokens: opts.maxTokens || 2000,
+    temperature: opts.temperature ?? 0.3,
+    system: opts.system || null,
+    tools: opts.tools || null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Non-streaming call — returns { text, toolCalls }
+// ---------------------------------------------------------------------------
+export async function callLLM({ messages, ...opts }) {
+  const o = resolveOpts(opts);
+  if (o.provider === "openai") return callOpenAI(messages, o, false);
+  if (o.provider === "anthropic") return callAnthropic(messages, o, false);
+  if (o.provider === "ollama") return callOllama(messages, o, false);
+  return { text: "", toolCalls: [] };
+}
+
+// ---------------------------------------------------------------------------
+// Streaming call — invokes `onDelta(text)` for each token chunk and
+// `onToolCall(tc)` for tool-use blocks. Returns final aggregated result.
+// ---------------------------------------------------------------------------
+export async function callLLMStream({ messages, onDelta, onToolCall, ...opts }) {
+  const o = resolveOpts(opts);
+  const hooks = { onDelta, onToolCall };
+  if (o.provider === "openai") return callOpenAI(messages, o, true, hooks);
+  if (o.provider === "anthropic") return callAnthropic(messages, o, true, hooks);
+  if (o.provider === "ollama") return callOllama(messages, o, true, hooks);
+  return { text: "", toolCalls: [] };
+}
+
+// ---------------------------------------------------------------------------
+// JSON classification helper — used by NLU→LLM fallback.
+// Returns the parsed object, or null if unable to parse.
+// ---------------------------------------------------------------------------
+export async function classifyJSON({ prompt, system, ...opts }) {
+  try {
+    const r = await callLLM({
+      messages: [{ role: "user", content: prompt }],
+      system: system || "Respond ONLY with a JSON object. No prose.",
+      temperature: 0,
+      maxTokens: 400,
+      ...opts,
+    });
+    const text = (r.text || "").trim();
+    // Strip ```json fences if present
+    const unfenced = text.replace(/^```(?:json)?\s*|\s*```$/g, "");
+    const start = unfenced.indexOf("{");
+    const end = unfenced.lastIndexOf("}");
+    if (start < 0 || end < 0) return null;
+    return JSON.parse(unfenced.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+// ===========================================================================
+// OpenAI (OpenAI + Azure + any OpenAI-compatible endpoint)
+// ===========================================================================
+async function callOpenAI(messages, o, stream, hooks = {}) {
+  const url = `${o.apiUrl.replace(/\/$/, "") || "https://api.openai.com"}/v1/chat/completions`;
+  const body = {
+    model: o.model,
+    messages: o.system
+      ? [{ role: "system", content: o.system }, ...messages]
+      : messages,
+    max_tokens: o.maxTokens,
+    temperature: o.temperature,
+    stream: !!stream,
+  };
+  if (o.tools && o.tools.length) {
+    body.tools = o.tools.map((t) => ({
+      type: "function",
+      function: { name: t.name, description: t.description, parameters: t.input_schema },
+    }));
+  }
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${o.apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`OpenAI ${resp.status}: ${err.substring(0, 500)}`);
+  }
+  if (!stream) {
+    const data = await resp.json();
+    const choice = data.choices?.[0];
+    const text = choice?.message?.content || "";
+    const toolCalls = (choice?.message?.tool_calls || []).map((tc) => ({
+      id: tc.id,
+      name: tc.function?.name,
+      arguments: safeJSON(tc.function?.arguments),
+    }));
+    return { text, toolCalls, raw: data };
+  }
+  // Streaming — parse SSE lines
+  let text = "";
+  const toolCalls = [];
+  await readSSE(resp.body, (evt) => {
+    if (evt === "[DONE]") return;
+    let chunk;
+    try { chunk = JSON.parse(evt); } catch { return; }
+    const delta = chunk.choices?.[0]?.delta;
+    if (!delta) return;
+    if (delta.content) {
+      text += delta.content;
+      hooks.onDelta?.(delta.content);
+    }
+    if (delta.tool_calls) {
+      for (const tc of delta.tool_calls) {
+        const idx = tc.index ?? 0;
+        if (!toolCalls[idx]) toolCalls[idx] = { id: tc.id, name: "", arguments: "" };
+        if (tc.id) toolCalls[idx].id = tc.id;
+        if (tc.function?.name) toolCalls[idx].name += tc.function.name;
+        if (tc.function?.arguments) toolCalls[idx].arguments += tc.function.arguments;
+      }
+    }
+  });
+  const parsedCalls = toolCalls.filter(Boolean).map((tc) => ({
+    id: tc.id,
+    name: tc.name,
+    arguments: safeJSON(tc.arguments),
+  }));
+  for (const tc of parsedCalls) hooks.onToolCall?.(tc);
+  return { text, toolCalls: parsedCalls };
+}
+
+// ===========================================================================
+// Anthropic Claude
+// ===========================================================================
+async function callAnthropic(messages, o, stream, hooks = {}) {
+  const url = `${o.apiUrl.replace(/\/$/, "") || "https://api.anthropic.com"}/v1/messages`;
+  // Anthropic expects system separate and only user/assistant messages
+  const amsgs = messages.filter((m) => m.role === "user" || m.role === "assistant");
+  const body = {
+    model: o.model && o.model !== "gpt-4" ? o.model : "claude-sonnet-4-20250514",
+    system: o.system || undefined,
+    messages: amsgs,
+    max_tokens: o.maxTokens,
+    temperature: o.temperature,
+    stream: !!stream,
+  };
+  if (o.tools && o.tools.length) {
+    body.tools = o.tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      input_schema: t.input_schema,
+    }));
+  }
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      "x-api-key": o.apiKey,
+      "Content-Type": "application/json",
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Anthropic ${resp.status}: ${err.substring(0, 500)}`);
+  }
+  if (!stream) {
+    const data = await resp.json();
+    let text = "";
+    const toolCalls = [];
+    for (const block of data.content || []) {
+      if (block.type === "text") text += block.text;
+      if (block.type === "tool_use") {
+        toolCalls.push({ id: block.id, name: block.name, arguments: block.input });
+      }
+    }
+    return { text, toolCalls, raw: data };
+  }
+  // Streaming
+  let text = "";
+  const toolCalls = [];
+  let currentTool = null;
+  let currentToolJson = "";
+  await readSSE(resp.body, (evt) => {
+    let chunk;
+    try { chunk = JSON.parse(evt); } catch { return; }
+    if (chunk.type === "content_block_start" && chunk.content_block?.type === "tool_use") {
+      currentTool = { id: chunk.content_block.id, name: chunk.content_block.name, arguments: null };
+      currentToolJson = "";
+    }
+    if (chunk.type === "content_block_delta") {
+      if (chunk.delta?.type === "text_delta") {
+        text += chunk.delta.text;
+        hooks.onDelta?.(chunk.delta.text);
+      }
+      if (chunk.delta?.type === "input_json_delta") {
+        currentToolJson += chunk.delta.partial_json || "";
+      }
+    }
+    if (chunk.type === "content_block_stop" && currentTool) {
+      currentTool.arguments = safeJSON(currentToolJson);
+      toolCalls.push(currentTool);
+      hooks.onToolCall?.(currentTool);
+      currentTool = null;
+    }
+  });
+  return { text, toolCalls };
+}
+
+// ===========================================================================
+// Ollama (local)
+// ===========================================================================
+async function callOllama(messages, o, stream, hooks = {}) {
+  const url = `${o.apiUrl.replace(/\/$/, "") || "http://localhost:11434"}/api/chat`;
+  const body = {
+    model: o.model && o.model !== "gpt-4" ? o.model : "llama3",
+    messages: o.system
+      ? [{ role: "system", content: o.system }, ...messages]
+      : messages,
+    stream: !!stream,
+    options: { temperature: o.temperature },
+  };
+  if (o.tools && o.tools.length) {
+    body.tools = o.tools.map((t) => ({
+      type: "function",
+      function: { name: t.name, description: t.description, parameters: t.input_schema },
+    }));
+  }
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Ollama ${resp.status}: ${err.substring(0, 500)}`);
+  }
+  if (!stream) {
+    const data = await resp.json();
+    const text = data.message?.content || "";
+    const toolCalls = (data.message?.tool_calls || []).map((tc) => ({
+      id: tc.id || `ollama-${Math.random().toString(36).slice(2, 8)}`,
+      name: tc.function?.name,
+      arguments: tc.function?.arguments,
+    }));
+    return { text, toolCalls, raw: data };
+  }
+  // Streaming — Ollama emits NDJSON
+  let text = "";
+  const toolCalls = [];
+  await readNDJSON(resp.body, (chunk) => {
+    if (chunk.message?.content) {
+      text += chunk.message.content;
+      hooks.onDelta?.(chunk.message.content);
+    }
+    if (chunk.message?.tool_calls) {
+      for (const tc of chunk.message.tool_calls) {
+        toolCalls.push({
+          id: tc.id || `ollama-${Math.random().toString(36).slice(2, 8)}`,
+          name: tc.function?.name,
+          arguments: tc.function?.arguments,
+        });
+        hooks.onToolCall?.(toolCalls[toolCalls.length - 1]);
+      }
+    }
+  });
+  return { text, toolCalls };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function safeJSON(s) {
+  if (typeof s !== "string") return s;
+  try { return JSON.parse(s); } catch { return s; }
+}
+
+async function readSSE(body, onEvent) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf("\n\n")) !== -1) {
+      const block = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const lines = block.split("\n");
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const payload = line.slice(6).trim();
+          if (payload) onEvent(payload);
+        }
+      }
+    }
+  }
+}
+
+async function readNDJSON(body, onChunk) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf("\n")) !== -1) {
+      const line = buf.slice(0, idx).trim();
+      buf = buf.slice(idx + 1);
+      if (!line) continue;
+      try { onChunk(JSON.parse(line)); } catch {}
+    }
+  }
+}
