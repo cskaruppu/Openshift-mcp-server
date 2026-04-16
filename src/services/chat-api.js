@@ -2107,7 +2107,22 @@ export async function handleChatAPI(req, res) {
         return json(res, 200, { ...payload, cached: false, conversationId });
       } catch (err) {
         console.error("[chat-api] action workflow error:", err);
-        // Fall through to default handlers on error so the user still gets a reply.
+        // Resource not found / RBAC denied — return a clear error to the user
+        // instead of falling through to the generic analysis path.
+        if (/Resource not found|RBAC denied/i.test(err.message)) {
+          const reply = `### Cannot ${actionIntent.action} ${actionIntent.resourceType}\n\n[WARNING] ${err.message}`;
+          if (conversationId) {
+            histAddMessage(conversationId, { role: "assistant", content: reply, provider: "built-in" }).catch(() => {});
+          }
+          return json(res, 200, {
+            reply,
+            provider: "built-in",
+            contextKeys: ["actionWorkflow", "validationError"],
+            cached: false,
+            conversationId,
+          });
+        }
+        // Other errors — fall through to default handlers so the user still gets a reply.
       }
     }
 

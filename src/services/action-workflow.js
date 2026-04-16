@@ -298,6 +298,37 @@ export async function createPendingAction({
     throw new Error(`RBAC denied: cannot ${verb} ${resourceType}/${resourceName} in ${namespace || "(cluster)"} (${rbac.reason || "forbidden"})`);
   }
 
+  // ---- Resource existence check ----
+  // Verify the target resource actually exists on the cluster before queuing
+  // the action. Without this, users can queue deletes/restarts for non-existent
+  // resources and only discover the error at execution time.
+  const resApiInfo = RESOURCE_API[resourceType];
+  if (resApiInfo && namespace && resourceName) {
+    const lookupPath = `${resApiInfo.api}/namespaces/${namespace}/${resApiInfo.plural}/${resourceName}`;
+    try {
+      const existing = await ocpGet(lookupPath);
+      if (!existing || existing.code === 404 || existing.status === "Failure") {
+        throw new Error(
+          `Resource not found: ${resourceType} '${resourceName}' does not exist in namespace '${namespace}'. ` +
+          `Please check the name and namespace.`
+        );
+      }
+    } catch (err) {
+      // If it's our own "not found" error, re-throw it
+      if (err.message.startsWith("Resource not found:")) throw err;
+      // A 404 from the API server
+      if (err.statusCode === 404 || /not found|404/i.test(err.message)) {
+        throw new Error(
+          `Resource not found: ${resourceType} '${resourceName}' does not exist in namespace '${namespace}'. ` +
+          `Please check the name and namespace.`
+        );
+      }
+      // Other errors (network, auth) — log but don't block; the dry-run or
+      // execution will catch it.
+      console.warn(`[action-workflow] existence check failed for ${resourceType}/${resourceName}: ${err.message}`);
+    }
+  }
+
   // ---- Dry-run preview ----
   let preview = null;
   try {
