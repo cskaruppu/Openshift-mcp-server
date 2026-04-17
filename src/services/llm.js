@@ -16,10 +16,16 @@ const DEFAULT_PROVIDER = process.env.LLM_PROVIDER || "none";
 const DEFAULT_API_URL = process.env.LLM_API_URL || "http://localhost:11434";
 const DEFAULT_API_KEY = process.env.LLM_API_KEY || "";
 const DEFAULT_MODEL = process.env.LLM_MODEL || "gpt-4";
+const DEFAULT_AZURE_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || "";
+const DEFAULT_AZURE_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || "2024-08-01-preview";
 
 export function llmEnabled(opts = {}) {
   const p = opts.provider || DEFAULT_PROVIDER;
   return p && p !== "none";
+}
+
+export function getSupportedProviders() {
+  return ["openai", "azure", "anthropic", "ollama", "none"];
 }
 
 function resolveOpts(opts = {}) {
@@ -32,6 +38,8 @@ function resolveOpts(opts = {}) {
     temperature: opts.temperature ?? 0.3,
     system: opts.system || null,
     tools: opts.tools || null,
+    azureDeployment: opts.azureDeployment || DEFAULT_AZURE_DEPLOYMENT,
+    azureApiVersion: opts.azureApiVersion || DEFAULT_AZURE_API_VERSION,
   };
 }
 
@@ -40,6 +48,7 @@ function resolveOpts(opts = {}) {
 // ---------------------------------------------------------------------------
 export async function callLLM({ messages, ...opts }) {
   const o = resolveOpts(opts);
+  if (o.provider === "azure") return callAzureOpenAI(messages, o, false);
   if (o.provider === "openai") return callOpenAI(messages, o, false);
   if (o.provider === "anthropic") return callAnthropic(messages, o, false);
   if (o.provider === "ollama") return callOllama(messages, o, false);
@@ -53,6 +62,7 @@ export async function callLLM({ messages, ...opts }) {
 export async function callLLMStream({ messages, onDelta, onToolCall, ...opts }) {
   const o = resolveOpts(opts);
   const hooks = { onDelta, onToolCall };
+  if (o.provider === "azure") return callAzureOpenAI(messages, o, true, hooks);
   if (o.provider === "openai") return callOpenAI(messages, o, true, hooks);
   if (o.provider === "anthropic") return callAnthropic(messages, o, true, hooks);
   if (o.provider === "ollama") return callOllama(messages, o, true, hooks);
@@ -125,6 +135,81 @@ async function callOpenAI(messages, o, stream, hooks = {}) {
     return { text, toolCalls, raw: data };
   }
   // Streaming — parse SSE lines
+  let text = "";
+  const toolCalls = [];
+  await readSSE(resp.body, (evt) => {
+    if (evt === "[DONE]") return;
+    let chunk;
+    try { chunk = JSON.parse(evt); } catch { return; }
+    const delta = chunk.choices?.[0]?.delta;
+    if (!delta) return;
+    if (delta.content) {
+      text += delta.content;
+      hooks.onDelta?.(delta.content);
+    }
+    if (delta.tool_calls) {
+      for (const tc of delta.tool_calls) {
+        const idx = tc.index ?? 0;
+        if (!toolCalls[idx]) toolCalls[idx] = { id: tc.id, name: "", arguments: "" };
+        if (tc.id) toolCalls[idx].id = tc.id;
+        if (tc.function?.name) toolCalls[idx].name += tc.function.name;
+        if (tc.function?.arguments) toolCalls[idx].arguments += tc.function.arguments;
+      }
+    }
+  });
+  const parsedCalls = toolCalls.filter(Boolean).map((tc) => ({
+    id: tc.id,
+    name: tc.name,
+    arguments: safeJSON(tc.arguments),
+  }));
+  for (const tc of parsedCalls) hooks.onToolCall?.(tc);
+  return { text, toolCalls: parsedCalls };
+}
+
+// ===========================================================================
+// Azure OpenAI
+// ===========================================================================
+async function callAzureOpenAI(messages, o, stream, hooks = {}) {
+  const baseUrl = (o.apiUrl || "").replace(/\/$/, "");
+  const deployment = o.azureDeployment || o.model || "gpt-4";
+  const apiVersion = o.azureApiVersion || "2024-08-01-preview";
+  const url = `${baseUrl}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`;
+
+  const body = {
+    messages: o.system
+      ? [{ role: "system", content: o.system }, ...messages]
+      : messages,
+    max_tokens: o.maxTokens,
+    temperature: o.temperature,
+    stream: !!stream,
+  };
+  if (o.tools && o.tools.length) {
+    body.tools = o.tools.map((t) => ({
+      type: "function",
+      function: { name: t.name, description: t.description, parameters: t.input_schema },
+    }));
+  }
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "api-key": o.apiKey, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Azure OpenAI ${resp.status}: ${err.substring(0, 500)}`);
+  }
+  if (!stream) {
+    const data = await resp.json();
+    const choice = data.choices?.[0];
+    const text = choice?.message?.content || "";
+    const toolCalls = (choice?.message?.tool_calls || []).map((tc) => ({
+      id: tc.id,
+      name: tc.function?.name,
+      arguments: safeJSON(tc.function?.arguments),
+    }));
+    return { text, toolCalls, raw: data };
+  }
+  // Streaming — Azure uses same SSE format as OpenAI
   let text = "";
   const toolCalls = [];
   await readSSE(resp.body, (evt) => {

@@ -57,7 +57,6 @@ import { handleMetricsRequest } from "./services/metrics.js";
 import { enforce as enforceRateLimit } from "./services/rate-limit.js";
 import { startHealthCheckTask, getLatestHealthReport } from "./services/scheduler.js";
 import { listFiringAlerts } from "./services/alertmanager.js";
-import { analyzeEfficiency } from "./services/cost-advisor.js";
 import { initSafety, getSafetyMode } from "./services/safety.js";
 import { redactIfEnabled } from "./services/redaction.js";
 import { loadKubeconfig, registerMultiClusterTools } from "./services/multi-cluster.js";
@@ -392,16 +391,6 @@ async function startSSE() {
         return sendJson(res, 200, { alerts: alerts || [] });
       } catch (err) {
         return sendJson(res, 200, { alerts: [], error: err.message });
-      }
-    }
-
-    // GET /api/advisor — cost/efficiency analysis
-    if (req.method === "GET" && url.pathname === "/api/advisor") {
-      try {
-        const report = await analyzeEfficiency();
-        return sendJson(res, 200, report);
-      } catch (err) {
-        return sendJson(res, 500, { error: err.message });
       }
     }
 

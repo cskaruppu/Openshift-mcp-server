@@ -243,7 +243,7 @@ tr:hover td{background:#ffffff06}
     <button class="nav-tab" data-view="chat" onclick="showView('chat')">AI Chat</button>
     <button class="nav-tab" data-view="audit" onclick="showView('audit')">Audit</button>
     <button class="nav-tab" data-view="alerts-view" onclick="showView('alerts-view')">Alerts <span class="alerts-badge" id="alerts-badge">0</span></button>
-    <button class="nav-tab" data-view="advisor-view" onclick="showView('advisor-view')">Cost Advisor</button>
+    <!-- Cost Advisor removed (not in use) -->
   </div>
   <div class="status">
     <div class="dot" id="conn-dot"></div>
@@ -303,6 +303,7 @@ tr:hover td{background:#ffffff06}
             <select id="llm-provider" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer" onchange="onProviderChange()">
               <option value="none">Built-in Analysis</option>
               <option value="openai">OpenAI (GPT)</option>
+              <option value="azure">Azure OpenAI</option>
               <option value="anthropic">Anthropic (Claude)</option>
               <option value="ollama">Ollama (Local)</option>
             </select>
@@ -1059,7 +1060,7 @@ loadLLMConfig();
 // View switching — Dashboard vs AI Chat
 // ---------------------------------------------------------------------------
 function showView(view) {
-  const views = ['dashboard', 'chat', 'audit', 'alerts-view', 'advisor-view'];
+  const views = ['dashboard', 'chat', 'audit', 'alerts-view'];
   const tabs = document.querySelectorAll('.nav-tab');
   tabs.forEach(t => t.classList.toggle('active', t.dataset.view === view));
 
@@ -1082,8 +1083,6 @@ function showView(view) {
     loadAuditView();
   } else if (view === 'alerts-view') {
     loadAlertsView();
-  } else if (view === 'advisor-view') {
-    loadAdvisorView();
   }
 }
 
@@ -1757,7 +1756,6 @@ const SLASH_COMMANDS = [
   { cmd: '/health', desc: 'Run a cluster health check' },
   { cmd: '/audit', desc: 'Show recent audit trail' },
   { cmd: '/alerts', desc: 'List firing Alertmanager alerts' },
-  { cmd: '/advisor', desc: 'Run cost/efficiency analysis' },
   { cmd: '/metrics', desc: 'Show assistant internal metrics' },
 ];
 

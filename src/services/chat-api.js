@@ -1825,26 +1825,6 @@ async function maybeHandleSlashCommand(userMessage, conversationId) {
       return { reply: `[ERROR] Audit trail unavailable: ${e.message}`, contextKeys: ["slash", "audit"] };
     }
   }
-  if (cmd === "advisor" || cmd === "cost") {
-    try {
-      const { analyzeEfficiency } = await import("./cost-advisor.js");
-      const report = await analyzeEfficiency();
-      const lines = ["### Cost / efficiency advisor"];
-      lines.push(`  - Over-provisioned: ${report.overProvisioned?.length || 0}`);
-      lines.push(`  - Under-provisioned: ${report.underProvisioned?.length || 0}`);
-      lines.push(`  - Missing limits: ${report.noLimits?.length || 0}`);
-      const top = (report.overProvisioned || []).slice(0, 5);
-      if (top.length) {
-        lines.push("\n**Top over-provisioned workloads:**");
-        for (const w of top) {
-          lines.push(`  - \`${w.namespace}/${w.name}\` — ${w.reason || ""}`);
-        }
-      }
-      return { reply: lines.join("\n"), contextKeys: ["slash", "advisor"] };
-    } catch (e) {
-      return { reply: `[ERROR] Advisor unavailable: ${e.message}`, contextKeys: ["slash", "advisor"] };
-    }
-  }
   if (cmd === "alerts") {
     try {
       const { listFiringAlerts } = await import("./alertmanager.js");
