@@ -23,6 +23,12 @@ import { registerEmergencyTools } from "./tools/emergency.js";
 import { registerACMTools } from "./tools/acm.js";
 import { registerDashboardTools } from "./tools/dashboard.js";
 import { registerWorkloadTools } from "./tools/workloads.js";
+import { registerHelmTools } from "./tools/helm.js";
+import { registerTektonTools } from "./tools/tekton.js";
+import { registerKubeVirtTools } from "./tools/kubevirt.js";
+import { registerNetworkTools } from "./tools/network.js";
+import { registerGenericTools } from "./tools/generic.js";
+import { registerMustGatherTools } from "./tools/mustgather.js";
 import { handleDashboardAPI } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI } from "./services/chat-api.js";
 import {
@@ -49,6 +55,10 @@ import { enforce as enforceRateLimit } from "./services/rate-limit.js";
 import { startHealthCheckTask, getLatestHealthReport } from "./services/scheduler.js";
 import { listFiringAlerts } from "./services/alertmanager.js";
 import { analyzeEfficiency } from "./services/cost-advisor.js";
+import { initSafety, getSafetyMode } from "./services/safety.js";
+import { redactIfEnabled } from "./services/redaction.js";
+import { loadKubeconfig, registerMultiClusterTools } from "./services/multi-cluster.js";
+import { loadConfig } from "./utils/config.js";
 
 function createMcpServer() {
   const server = new McpServer({
@@ -70,6 +80,13 @@ function createMcpServer() {
   registerACMTools(server);
   registerDashboardTools(server);
   registerWorkloadTools(server);
+  registerHelmTools(server);
+  registerTektonTools(server);
+  registerKubeVirtTools(server);
+  registerNetworkTools(server);
+  registerGenericTools(server);
+  registerMustGatherTools(server);
+  registerMultiClusterTools(server);
 
   return server;
 }
@@ -238,6 +255,11 @@ async function handleActionsAPI(url, req, res) {
 async function startSSE() {
   const PORT = parseInt(process.env.MCP_SERVER_PORT, 10) || 3000;
 
+  // Load configuration, safety flags, and multi-cluster context
+  try { loadConfig(); } catch (e) { console.warn("[startup] config load:", e.message); }
+  initSafety();
+  try { await loadKubeconfig(); } catch (e) { console.warn("[startup] kubeconfig:", e.message); }
+
   // Initialize optional persistence layers (graceful fallback if not configured)
   await Promise.all([initDb(), initCache()]);
 
@@ -377,6 +399,16 @@ async function startSSE() {
       }
     }
 
+    // GET /stats — server runtime stats
+    if (req.method === "GET" && url.pathname === "/stats") {
+      return sendJson(res, 200, {
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        sessions: sessions.size,
+        safetyMode: getSafetyMode(),
+      });
+    }
+
     // Dashboard REST API — /api/...
     if (url.pathname.startsWith("/api/")) {
       await handleDashboardAPI(url.pathname, req, res);
@@ -420,6 +452,14 @@ async function startSSE() {
     console.error(`  SSE endpoint:     GET  /sse`);
     console.error(`  Message endpoint: POST /message?sessionId=<id>`);
     console.error(`  Health check:     GET  /healthz`);
+    console.error(`  Stats:            GET  /stats`);
+  });
+
+  // Reload config on SIGHUP (e.g. after ConfigMap update)
+  process.on("SIGHUP", () => {
+    console.error("[SIGHUP] Reloading configuration...");
+    try { loadConfig(); } catch (e) { console.error("[SIGHUP] config reload failed:", e.message); }
+    initSafety();
   });
 }
 
