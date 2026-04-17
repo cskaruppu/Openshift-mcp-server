@@ -52,6 +52,8 @@ const ALLOWED = new Set([
   "delete:statefulset",
   "delete:job",
   "delete:replicaset",
+  "delete:namespace",
+  "delete:project",
   "scale:deployment",
   "scale:statefulset",
 ]);
@@ -303,8 +305,10 @@ export async function createPendingAction({
   // the action. Without this, users can queue deletes/restarts for non-existent
   // resources and only discover the error at execution time.
   const resApiInfo = RESOURCE_API[resourceType];
-  if (resApiInfo && namespace && resourceName) {
-    const lookupPath = `${resApiInfo.api}/namespaces/${namespace}/${resApiInfo.plural}/${resourceName}`;
+  if (resApiInfo && resourceName && (namespace || resApiInfo.clusterScoped)) {
+    const lookupPath = resApiInfo.clusterScoped
+      ? `${resApiInfo.api}/${resApiInfo.plural}/${resourceName}`
+      : `${resApiInfo.api}/namespaces/${namespace}/${resApiInfo.plural}/${resourceName}`;
     try {
       const existing = await ocpGet(lookupPath);
       if (!existing || existing.code === 404 || existing.status === "Failure") {
@@ -366,7 +370,9 @@ export async function createPendingAction({
 async function computeDryRunPreview({ action, resourceType, resourceName, namespace, options }) {
   const info = RESOURCE_API[resourceType];
   if (!info) return null;
-  const base = `${info.api}/namespaces/${namespace}/${info.plural}/${resourceName}`;
+  const base = info.clusterScoped
+    ? `${info.api}/${info.plural}/${resourceName}`
+    : `${info.api}/namespaces/${namespace}/${info.plural}/${resourceName}`;
 
   if (action === "delete") {
     let current = null;
@@ -938,11 +944,16 @@ const RESOURCE_API = {
   replicaset:  { api: "/apis/apps/v1", plural: "replicasets" },
   job:         { api: "/apis/batch/v1", plural: "jobs" },
   pod:         { api: "/api/v1", plural: "pods" },
+  namespace:   { api: "/api/v1", plural: "namespaces", clusterScoped: true },
+  project:     { api: "/apis/project.openshift.io/v1", plural: "projects", clusterScoped: true },
 };
 
 function pathFor(resourceType, namespace, name) {
   const info = RESOURCE_API[resourceType];
   if (!info) throw new Error(`unsupported resource: ${resourceType}`);
+  if (info.clusterScoped) {
+    return `${info.api}/${info.plural}/${name}`;
+  }
   if (!namespace) throw new Error(`namespace is required for ${resourceType}`);
   return `${info.api}/namespaces/${namespace}/${info.plural}/${name}`;
 }

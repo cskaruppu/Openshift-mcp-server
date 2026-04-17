@@ -289,13 +289,17 @@ export function parse(message, memory = {}) {
 
     // If this token is also a namespace-marker word AND surrounded by a
     // valid DNS label, skip it — it's being used as a marker, not a
-    // resource type.
+    // resource type. EXCEPT when the intent is mutating (delete/create) —
+    // "delete namespace X" means resource=namespace, name=X.
     if (NS_KEYWORDS.has(t)) {
-      const prev = tokens[i - 1];
-      const next = tokens[i + 1];
-      const prevLooksLikeNs = prev && isDnsLabel(prev) && !isNoise(prev);
-      const nextLooksLikeNs = next && isDnsLabel(next) && !isNoise(next);
-      if (prevLooksLikeNs || nextLooksLikeNs) continue;
+      const isMutating = intent === "delete" || intent === "create" || intent === "update";
+      if (!isMutating) {
+        const prev = tokens[i - 1];
+        const next = tokens[i + 1];
+        const prevLooksLikeNs = prev && isDnsLabel(prev) && !isNoise(prev);
+        const nextLooksLikeNs = next && isDnsLabel(next) && !isNoise(next);
+        if (prevLooksLikeNs || nextLooksLikeNs) continue;
+      }
     }
 
     resource = canon;
@@ -325,9 +329,12 @@ export function parse(message, memory = {}) {
   }
 
   // 3b. "namespace X" / "ns X" / "project X"
+  // Skip if the NS_KEYWORD token was already consumed as the resource type
+  // (e.g. "delete namespace X" — resource=namespace, name=X, NOT namespace=X).
   if (!namespace) {
     for (let i = 0; i < tokens.length - 1; i++) {
       if (NS_KEYWORDS.has(tokens[i])) {
+        if (i === resourceTokenIdx) continue;
         const next = tokens[i + 1];
         if (isDnsLabel(next) && !isNoise(next)) { namespace = next; break; }
       }
@@ -338,6 +345,7 @@ export function parse(message, memory = {}) {
   if (!namespace) {
     for (let i = 1; i < tokens.length; i++) {
       if (NS_KEYWORDS.has(tokens[i])) {
+        if (i === resourceTokenIdx) continue;
         const prev = tokens[i - 1];
         if (isDnsLabel(prev) && !isNoise(prev)) { namespace = prev; break; }
       }

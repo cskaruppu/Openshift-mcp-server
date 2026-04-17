@@ -2064,7 +2064,9 @@ export async function handleChatAPI(req, res) {
     if (actionIntent) {
       // Require a namespace for namespaced resources — prompt the user
       // rather than silently queueing a half-specified action.
-      if (!actionIntent.namespace) {
+      // Cluster-scoped resources (namespace, project) don't need a namespace.
+      const clusterScopedTypes = new Set(["namespace", "project"]);
+      if (!actionIntent.namespace && !clusterScopedTypes.has(actionIntent.resourceType)) {
         const reply = [
           `### ${actionIntent.action} ${actionIntent.resourceType}`,
           `[WARNING] Please specify the namespace.`,
