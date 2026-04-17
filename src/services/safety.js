@@ -12,6 +12,8 @@
 
 let _readOnly = false;
 let _disableDestructive = false;
+let _deniedResources = [];
+let _disabledTools = new Set();
 
 // ---------------------------------------------------------------------------
 // Destructive operations registry
@@ -67,14 +69,22 @@ function isDestructiveCombo(operation, resourceType) {
  * @param {boolean} [opts.disableDestructive=false]   Block destructive operations only.
  */
 export function initSafety(opts = {}) {
-  _readOnly = Boolean(opts.readOnly);
-  _disableDestructive = Boolean(opts.disableDestructive);
+  _readOnly = Boolean(opts.readOnly ?? (process.env.MCP_READ_ONLY === "true"));
+  _disableDestructive = Boolean(opts.disableDestructive ?? (process.env.MCP_DISABLE_DESTRUCTIVE === "true"));
+  _deniedResources = opts.deniedResources || [];
+  _disabledTools = new Set(opts.disabledTools || []);
 
   if (_readOnly) {
     console.log("[safety] read-only mode enabled — all write operations are blocked");
   }
   if (_disableDestructive) {
     console.log("[safety] disable-destructive mode enabled — destructive operations are blocked");
+  }
+  if (_deniedResources.length > 0) {
+    console.log(`[safety] denied resources: ${_deniedResources.map(r => `${r.group || ""}/${r.version}/${r.resource || "*"}`).join(", ")}`);
+  }
+  if (_disabledTools.size > 0) {
+    console.log(`[safety] disabled tools: ${[..._disabledTools].join(", ")}`);
   }
 }
 
@@ -135,4 +145,35 @@ export function checkSafety(operation, resourceType = "*") {
   }
 
   return { allowed: true };
+}
+
+export function isResourceDenied(group, version, resource) {
+  for (const denied of _deniedResources) {
+    const gMatch = !denied.group || denied.group === group || denied.group === "*";
+    const vMatch = !denied.version || denied.version === version || denied.version === "*";
+    const rMatch = !denied.resource || denied.resource === resource || denied.resource === "*";
+    if (gMatch && vMatch && rMatch) return true;
+  }
+  return false;
+}
+
+export function isToolDisabled(toolName) {
+  return _disabledTools.has(toolName);
+}
+
+export function getSafetyMode() {
+  return {
+    readOnly: _readOnly,
+    disableDestructive: _disableDestructive,
+    deniedResources: _deniedResources.length,
+    disabledTools: [..._disabledTools],
+  };
+}
+
+export function getDeniedResources() {
+  return [..._deniedResources];
+}
+
+export function getDisabledTools() {
+  return [..._disabledTools];
 }

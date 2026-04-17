@@ -29,6 +29,9 @@ import { registerKubeVirtTools } from "./tools/kubevirt.js";
 import { registerNetworkTools } from "./tools/network.js";
 import { registerGenericTools } from "./tools/generic.js";
 import { registerMustGatherTools } from "./tools/mustgather.js";
+import { registerMetricsTopTools } from "./tools/metrics-top.js";
+import { registerPrometheusTools } from "./tools/prometheus-query.js";
+import { registerOSSMTools } from "./tools/ossm.js";
 import { handleDashboardAPI } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI } from "./services/chat-api.js";
 import {
@@ -87,6 +90,9 @@ function createMcpServer() {
   registerGenericTools(server);
   registerMustGatherTools(server);
   registerMultiClusterTools(server);
+  registerMetricsTopTools(server);
+  registerPrometheusTools(server);
+  registerOSSMTools(server);
 
   return server;
 }

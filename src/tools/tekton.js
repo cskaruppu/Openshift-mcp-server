@@ -407,6 +407,163 @@ export function registerTektonTools(server) {
     }
   );
 
+  // ---------- Restart PipelineRun ----------
+  server.tool(
+    "tekton_pipelinerun_restart",
+    "Restart a Tekton PipelineRun with the same spec (creates a new run)",
+    {
+      name: z.string().describe("Name of the PipelineRun to restart"),
+      namespace: z.string().describe("Namespace of the PipelineRun"),
+    },
+    async ({ name, namespace }) => {
+      try {
+        const original = await ocpGet(
+          `/apis/tekton.dev/v1/namespaces/${namespace}/pipelineruns/${name}`
+        );
+
+        const newName = `${name.replace(/-retry-\d+$/, "")}-retry-${Date.now()}`;
+        const newRun = {
+          apiVersion: "tekton.dev/v1",
+          kind: "PipelineRun",
+          metadata: {
+            name: newName,
+            namespace,
+            labels: { ...(original.metadata.labels || {}), "tekton.dev/restarted-from": name },
+          },
+          spec: { ...original.spec },
+        };
+        delete newRun.spec.status;
+
+        const result = await ocpPost(
+          `/apis/tekton.dev/v1/namespaces/${namespace}/pipelineruns`,
+          newRun
+        );
+
+        return {
+          content: [{
+            type: "text",
+            text: `## PipelineRun Restarted\n\n` +
+              `| Field | Value |\n| --- | --- |\n` +
+              `| **Original** | \`${name}\` |\n` +
+              `| **New Run** | \`${result.metadata.name}\` |\n` +
+              `| **Namespace** | ${namespace} |\n\n` +
+              `Use \`tekton_get_pipelinerun\` with name \`${result.metadata.name}\` to track progress.`,
+          }],
+        };
+      } catch (err) {
+        if (isTektonMissing(err)) {
+          return { content: [{ type: "text", text: TEKTON_NOT_INSTALLED_MSG }], isError: true };
+        }
+        return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+      }
+    }
+  );
+
+  // ---------- Start Task ----------
+  server.tool(
+    "tekton_start_task",
+    "Start a Tekton Task by creating a TaskRun",
+    {
+      name: z.string().describe("Name of the Task to run"),
+      namespace: z.string().describe("Namespace where the task lives"),
+      params: z
+        .record(z.string())
+        .optional()
+        .describe("Task parameters as key-value pairs"),
+      serviceAccount: z.string().optional().describe("Service account name"),
+    },
+    async ({ name, namespace, params, serviceAccount }) => {
+      try {
+        const taskRunName = `${name}-run-${Date.now()}`;
+        const taskRun = {
+          apiVersion: "tekton.dev/v1",
+          kind: "TaskRun",
+          metadata: { name: taskRunName, namespace },
+          spec: {
+            taskRef: { name },
+            ...(serviceAccount ? { serviceAccountName: serviceAccount } : {}),
+          },
+        };
+        if (params && Object.keys(params).length > 0) {
+          taskRun.spec.params = Object.entries(params).map(([k, v]) => ({ name: k, value: v }));
+        }
+
+        const result = await ocpPost(
+          `/apis/tekton.dev/v1/namespaces/${namespace}/taskruns`,
+          taskRun
+        );
+
+        return {
+          content: [{
+            type: "text",
+            text: `## TaskRun Started\n\n` +
+              `| Field | Value |\n| --- | --- |\n` +
+              `| **Name** | \`${result.metadata.name}\` |\n` +
+              `| **Task** | ${name} |\n` +
+              `| **Namespace** | ${namespace} |\n\n` +
+              `Use \`tekton_get_taskrun_logs\` to view logs.`,
+          }],
+        };
+      } catch (err) {
+        if (isTektonMissing(err)) {
+          return { content: [{ type: "text", text: TEKTON_NOT_INSTALLED_MSG }], isError: true };
+        }
+        return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+      }
+    }
+  );
+
+  // ---------- Restart TaskRun ----------
+  server.tool(
+    "tekton_taskrun_restart",
+    "Restart a Tekton TaskRun with the same spec (creates a new run)",
+    {
+      name: z.string().describe("Name of the TaskRun to restart"),
+      namespace: z.string().describe("Namespace of the TaskRun"),
+    },
+    async ({ name, namespace }) => {
+      try {
+        const original = await ocpGet(
+          `/apis/tekton.dev/v1/namespaces/${namespace}/taskruns/${name}`
+        );
+
+        const newName = `${name.replace(/-retry-\d+$/, "")}-retry-${Date.now()}`;
+        const newRun = {
+          apiVersion: "tekton.dev/v1",
+          kind: "TaskRun",
+          metadata: {
+            name: newName,
+            namespace,
+            labels: { ...(original.metadata.labels || {}), "tekton.dev/restarted-from": name },
+          },
+          spec: { ...original.spec },
+        };
+        delete newRun.spec.status;
+
+        const result = await ocpPost(
+          `/apis/tekton.dev/v1/namespaces/${namespace}/taskruns`,
+          newRun
+        );
+
+        return {
+          content: [{
+            type: "text",
+            text: `## TaskRun Restarted\n\n` +
+              `| Field | Value |\n| --- | --- |\n` +
+              `| **Original** | \`${name}\` |\n` +
+              `| **New Run** | \`${result.metadata.name}\` |\n` +
+              `| **Namespace** | ${namespace} |\n`,
+          }],
+        };
+      } catch (err) {
+        if (isTektonMissing(err)) {
+          return { content: [{ type: "text", text: TEKTON_NOT_INSTALLED_MSG }], isError: true };
+        }
+        return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+      }
+    }
+  );
+
   // ---------- Get TaskRun Logs ----------
   server.tool(
     "tekton_get_taskrun_logs",

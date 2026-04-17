@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { ocpGet, ocpDelete } from "../utils/openshift-client.js";
+import { ocpGet, ocpDelete, ocpPost, ocpFetch } from "../utils/openshift-client.js";
+import { execFile } from "node:child_process";
 
 export function registerPodTools(server) {
   // ---------- List Pods ----------
@@ -211,6 +212,98 @@ export function registerPodTools(server) {
     }
   );
 
+  // ---------- Pod Exec ----------
+  server.tool(
+    "pods_exec",
+    "Execute a command in a running Kubernetes Pod container",
+    {
+      namespace: z.string().describe("Namespace of the pod"),
+      name: z.string().describe("Pod name"),
+      command: z.array(z.string()).describe('Command and arguments, e.g. ["ls", "-la", "/tmp"]'),
+      container: z.string().optional().describe("Container name (required for multi-container pods)"),
+    },
+    async ({ namespace, name, command, container }) => {
+      try {
+        const cli = await findCli();
+        if (!cli) {
+          return {
+            content: [{
+              type: "text",
+              text: "Pod exec requires `oc` or `kubectl` CLI on the server. Neither was found in PATH.\n\n" +
+                "**Equivalent command:**\n```\n" +
+                `oc exec ${name} -n ${namespace}${container ? ` -c ${container}` : ""} -- ${command.join(" ")}\n\`\`\``,
+            }],
+            isError: true,
+          };
+        }
+
+        const args = ["exec", name, "-n", namespace];
+        if (container) args.push("-c", container);
+        args.push("--");
+        args.push(...command);
+
+        const result = await execCommand(cli, args);
+        const lines = [`### Exec: \`${command.join(" ")}\` in \`${name}\`\n`];
+        if (result.stdout) lines.push("**stdout:**\n```\n" + result.stdout.slice(0, 10000) + "\n```");
+        if (result.stderr) lines.push("**stderr:**\n```\n" + result.stderr.slice(0, 5000) + "\n```");
+        if (result.exitCode !== 0) lines.push(`\n**Exit code:** ${result.exitCode}`);
+
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+      }
+    }
+  );
+
+  // ---------- Pod Run ----------
+  server.tool(
+    "pods_run",
+    "Run a new Kubernetes Pod from a container image (like `oc run`)",
+    {
+      name: z.string().optional().describe("Pod name (generated if omitted)"),
+      image: z.string().describe("Container image to run, e.g. 'nginx:latest'"),
+      namespace: z.string().optional().describe("Target namespace (uses default if omitted)"),
+      port: z.number().optional().describe("TCP port to expose on the container"),
+      command: z.array(z.string()).optional().describe("Override entrypoint command"),
+    },
+    async ({ name: podName, image, namespace, port, command }) => {
+      try {
+        const generatedName = podName || `run-${Date.now().toString(36)}`;
+        const ns = namespace || "default";
+        const pod = {
+          apiVersion: "v1",
+          kind: "Pod",
+          metadata: { name: generatedName, namespace: ns, labels: { run: generatedName } },
+          spec: {
+            containers: [{
+              name: generatedName,
+              image,
+              ...(port ? { ports: [{ containerPort: port }] } : {}),
+              ...(command ? { command } : {}),
+            }],
+            restartPolicy: "Never",
+          },
+        };
+
+        const result = await ocpPost(`/api/v1/namespaces/${ns}/pods`, pod);
+        return {
+          content: [{
+            type: "text",
+            text: `### Pod Created\n\n` +
+              `| Field | Value |\n|---|---|\n` +
+              `| **Name** | \`${result.metadata.name}\` |\n` +
+              `| **Namespace** | ${result.metadata.namespace} |\n` +
+              `| **Image** | ${image} |\n` +
+              `| **Status** | ${result.status?.phase || "Pending"} |\n\n` +
+              `Use \`get_pod_details\` or \`get_pod_logs\` to monitor the pod.`,
+          }],
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+      }
+    }
+  );
+
   // ---------- Delete Pod (for restart) ----------
   server.tool(
     "delete_pod",
@@ -249,4 +342,27 @@ export function registerPodTools(server) {
       }
     }
   );
+}
+
+// -- Helpers for pod exec --
+
+async function findCli() {
+  for (const cmd of ["oc", "kubectl"]) {
+    try {
+      await execCommand("which", [cmd]);
+      return cmd;
+    } catch { /* not found */ }
+  }
+  return null;
+}
+
+function execCommand(cmd, args, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const proc = execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err && err.killed) {
+        return reject(new Error(`Command timed out after ${timeoutMs}ms`));
+      }
+      resolve({ stdout: stdout || "", stderr: stderr || "", exitCode: err ? err.code || 1 : 0 });
+    });
+  });
 }

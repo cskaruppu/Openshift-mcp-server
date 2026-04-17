@@ -277,6 +277,67 @@ export function registerGenericTools(server) {
     }
   );
 
+  // ---------- generic_scale ----------
+  server.tool(
+    "generic_scale",
+    "Get or update the scale of any scalable Kubernetes resource (Deployment, StatefulSet, ReplicaSet, etc.)",
+    {
+      apiVersion: z.string().describe('API version, e.g. "apps/v1"'),
+      kind: z.string().describe('Resource kind, e.g. "Deployment", "StatefulSet"'),
+      name: z.string().describe("Name of the resource"),
+      namespace: z.string().optional().describe("Namespace"),
+      scale: z.number().optional().describe("Desired replica count (omit to just read current scale)"),
+    },
+    async ({ apiVersion, kind, name, namespace, scale }) => {
+      try {
+        const base = apiBasePath(apiVersion);
+        const plural = pluralizeKind(kind);
+        const scalePath = namespace
+          ? `${base}/namespaces/${namespace}/${plural}/${name}/scale`
+          : `${base}/${plural}/${name}/scale`;
+
+        if (scale === undefined || scale === null) {
+          const data = await ocpGet(scalePath);
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                kind: `${kind}/Scale`,
+                name,
+                namespace: namespace || "(cluster-scoped)",
+                currentReplicas: data.status?.replicas ?? 0,
+                desiredReplicas: data.spec?.replicas ?? 0,
+              }, null, 2),
+            }],
+          };
+        }
+
+        const currentScale = await ocpGet(scalePath);
+        currentScale.spec.replicas = scale;
+        const data = await ocpFetch(scalePath, {
+          method: "PUT",
+          body: JSON.stringify(currentScale),
+        });
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              action: "scaled",
+              kind,
+              name,
+              namespace: namespace || "(cluster-scoped)",
+              previousReplicas: currentScale.status?.replicas ?? "unknown",
+              newReplicas: scale,
+            }, null, 2),
+          }],
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+      }
+    }
+  );
+
   // ---------- generic_apply ----------
   server.tool(
     "generic_apply",
