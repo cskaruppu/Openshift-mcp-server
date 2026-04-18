@@ -2258,6 +2258,375 @@ async function maybeHandleSlashCommand(userMessage, conversationId) {
     const { renderMetrics } = await import("./metrics.js");
     return { reply: "```\n" + renderMetrics().slice(0, 3000) + "\n```", contextKeys: ["slash", "metrics"] };
   }
+
+  // --- Security audit ---
+  if (cmd === "security") {
+    try {
+      const ns = arg || undefined;
+      const pods = await ocpGet("/api/v1/pods");
+      const items = (pods.items || []).filter(
+        (p) => !p.metadata.namespace?.startsWith("openshift-") && !p.metadata.namespace?.startsWith("kube-")
+      ).filter((p) => !ns || p.metadata.namespace === ns);
+      let privileged = 0, runAsRoot = 0, noLimits = 0, latestTag = 0, hostNet = 0;
+      for (const p of items) {
+        if (p.spec?.hostNetwork) hostNet++;
+        for (const c of (p.spec?.containers || [])) {
+          const sc = c.securityContext || {};
+          if (sc.privileged) privileged++;
+          if (sc.runAsUser === 0 || (!sc.runAsNonRoot && !p.spec?.securityContext?.runAsNonRoot)) runAsRoot++;
+          if (!c.resources?.limits?.cpu && !c.resources?.limits?.memory) noLimits++;
+          const img = c.image || "";
+          if (img.endsWith(":latest") || !img.includes(":")) latestTag++;
+        }
+      }
+      const nsList = [...new Set(items.map((p) => p.metadata.namespace))];
+      let uncoveredNs = [];
+      for (const n of nsList) {
+        try {
+          const np = await ocpGet(`/apis/networking.k8s.io/v1/namespaces/${n}/networkpolicies`);
+          if (!np.items || np.items.length === 0) uncoveredNs.push(n);
+        } catch { uncoveredNs.push(n); }
+      }
+      let score = 100;
+      if (privileged > 0) score -= Math.min(25, privileged * 5);
+      if (runAsRoot > 0) score -= Math.min(15, runAsRoot * 2);
+      if (noLimits > 0) score -= Math.min(15, Math.ceil(noLimits / 2));
+      if (latestTag > 0) score -= Math.min(10, latestTag);
+      if (hostNet > 0) score -= Math.min(10, hostNet * 3);
+      if (uncoveredNs.length > 0) score -= Math.min(15, uncoveredNs.length * 3);
+      score = Math.max(0, Math.round(score));
+      const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
+
+      const lines = [
+        `### Security & Compliance Audit`,
+        ``,
+        `@@SCORE|${score}|Security Posture@@`,
+        `@@GRADE|${grade}|Compliance Grade@@`,
+        ``,
+        `**Scanned:** ${items.length} pods across ${nsList.length} namespaces`,
+        ``,
+        `### Findings`,
+        ``,
+      ];
+      if (privileged > 0) lines.push(`  - [CRITICAL] **${privileged}** privileged container(s)`);
+      if (hostNet > 0) lines.push(`  - [CRITICAL] **${hostNet}** pod(s) using hostNetwork`);
+      if (runAsRoot > 0) lines.push(`  - [WARNING] **${runAsRoot}** container(s) may run as root`);
+      if (noLimits > 0) lines.push(`  - [WARNING] **${noLimits}** container(s) without resource limits`);
+      if (latestTag > 0) lines.push(`  - [WARNING] **${latestTag}** image(s) using :latest or untagged`);
+      if (uncoveredNs.length > 0) {
+        lines.push(`  - [WARNING] **${uncoveredNs.length}** namespace(s) without NetworkPolicy: ${uncoveredNs.slice(0, 8).join(", ")}${uncoveredNs.length > 8 ? "..." : ""}`);
+      }
+      if (score >= 90) lines.push(`\n[OK] Security posture is strong.`);
+      else if (score >= 70) lines.push(`\n[INFO] Some improvements recommended.`);
+      else lines.push(`\n[CRITICAL] Significant security risks detected. Review findings above.`);
+
+      return { reply: lines.join("\n"), contextKeys: ["slash", "security"] };
+    } catch (e) {
+      return { reply: `[ERROR] Security audit failed: ${e.message}`, contextKeys: ["slash", "security"] };
+    }
+  }
+
+  // --- GitOps status ---
+  if (cmd === "gitops") {
+    try {
+      const gitopsNs = arg || "openshift-gitops";
+      const data = await ocpGet(`/apis/argoproj.io/v1alpha1/namespaces/${gitopsNs}/applications`);
+      const apps = data.items || [];
+      if (apps.length === 0) {
+        return { reply: "### GitOps Applications\n[INFO] No ArgoCD applications found in namespace `" + gitopsNs + "`.", contextKeys: ["slash", "gitops"] };
+      }
+      const synced = apps.filter((a) => a.status?.sync?.status === "Synced").length;
+      const outOfSync = apps.filter((a) => a.status?.sync?.status === "OutOfSync").length;
+      const healthy = apps.filter((a) => a.status?.health?.status === "Healthy").length;
+      const degraded = apps.filter((a) => a.status?.health?.status === "Degraded").length;
+
+      const lines = [
+        `### GitOps Applications (${apps.length})`,
+        ``,
+        `@@SUMMARY|green:${synced} Synced|amber:${outOfSync} OutOfSync|red:${degraded} Degraded@@`,
+        ``,
+        `| Application | Sync | Health | Repository |`,
+        `|---|---|---|---|`,
+      ];
+      for (const a of apps.slice(0, 25)) {
+        const name = a.metadata.name;
+        const sync = a.status?.sync?.status || "Unknown";
+        const health = a.status?.health?.status || "Unknown";
+        const repo = a.spec?.source?.repoURL || a.spec?.sources?.[0]?.repoURL || "-";
+        const syncTag = sync === "Synced" ? "[OK]" : "[WARNING]";
+        const healthTag = health === "Healthy" ? "[OK]" : health === "Degraded" ? "[CRITICAL]" : "[INFO]";
+        lines.push(`| ${name} | ${syncTag} ${sync} | ${healthTag} ${health} | ${repo} |`);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "gitops"] };
+    } catch {
+      return { reply: "### GitOps Applications\n[INFO] ArgoCD / OpenShift GitOps not detected or not accessible.", contextKeys: ["slash", "gitops"] };
+    }
+  }
+
+  // --- DR / Backups ---
+  if (cmd === "dr" || cmd === "backups") {
+    const veleroNs = arg || "openshift-adp";
+    try {
+      const [backups, schedules, locations] = await Promise.all([
+        ocpGet(`/apis/velero.io/v1/namespaces/${veleroNs}/backups`).catch(() => ({ items: [] })),
+        ocpGet(`/apis/velero.io/v1/namespaces/${veleroNs}/schedules`).catch(() => ({ items: [] })),
+        ocpGet(`/apis/velero.io/v1/namespaces/${veleroNs}/backupstoragelocations`).catch(() => ({ items: [] })),
+      ]);
+      const bkpItems = backups.items || [];
+      const completed = bkpItems.filter((b) => b.status?.phase === "Completed");
+      const failed = bkpItems.filter((b) => ["Failed", "PartiallyFailed"].includes(b.status?.phase));
+      const schItems = schedules.items || [];
+      const locItems = locations.items || [];
+      const availLocs = locItems.filter((l) => l.status?.phase === "Available");
+
+      completed.sort((a, b) => (b.status?.completionTimestamp || "").localeCompare(a.status?.completionTimestamp || ""));
+      const lastGood = completed[0];
+      let lastAge = null;
+      if (lastGood?.status?.completionTimestamp) {
+        lastAge = Math.floor((Date.now() - new Date(lastGood.status.completionTimestamp).getTime()) / 86400000);
+      }
+
+      let score = 100;
+      if (locItems.length === 0) score -= 30;
+      else if (availLocs.length === 0) score -= 25;
+      if (schItems.length === 0) score -= 25;
+      else if (schItems.every((s) => s.spec?.paused)) score -= 20;
+      if (completed.length === 0) score -= 25;
+      else if (lastAge != null && lastAge > 7) score -= 15;
+      if (failed.length > 0) score -= Math.min(15, failed.length * 5);
+      score = Math.max(0, Math.round(score));
+      const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
+
+      const lines = [
+        `### Disaster Recovery Assessment`,
+        ``,
+        `@@SCORE|${score}|DR Readiness@@`,
+        `@@GRADE|${grade}|DR Grade@@`,
+        ``,
+        `| Metric | Value |`,
+        `|---|---|`,
+        `| Total backups | ${bkpItems.length} |`,
+        `| Completed | ${completed.length} |`,
+        `| Failed | ${failed.length} |`,
+        `| Schedules | ${schItems.length} (${schItems.filter((s) => !s.spec?.paused).length} active) |`,
+        `| Storage locations | ${locItems.length} (${availLocs.length} available) |`,
+        `| Last successful backup | ${lastGood ? lastGood.metadata.name + (lastAge != null ? ` (${lastAge}d ago)` : "") : "None"} |`,
+        ``,
+      ];
+      if (score >= 90) lines.push(`[OK] DR posture is strong.`);
+      else if (score >= 70) lines.push(`[WARNING] DR posture needs improvement.`);
+      else lines.push(`[CRITICAL] DR readiness is low — review backups and schedules.`);
+
+      return { reply: lines.join("\n"), contextKeys: ["slash", "dr"] };
+    } catch {
+      return { reply: "### Disaster Recovery\n[WARNING] Velero / OADP not installed. Install the OADP operator for backup and disaster recovery.", contextKeys: ["slash", "dr"] };
+    }
+  }
+
+  // --- Recommendations ---
+  if (cmd === "recommendations") {
+    try {
+      const [pods, metrics, nodes] = await Promise.all([
+        ocpGet("/api/v1/pods"),
+        ocpGet("/apis/metrics.k8s.io/v1beta1/pods").catch(() => ({ items: [] })),
+        ocpGet("/api/v1/nodes"),
+      ]);
+      const pCpu = (s) => { if (!s) return 0; if (typeof s === "number") return s; if (s.endsWith("n")) return parseInt(s)/1e9; if (s.endsWith("u")) return parseInt(s)/1e6; if (s.endsWith("m")) return parseInt(s)/1e3; return parseFloat(s)||0; };
+      const pMem = (s) => { if (!s) return 0; if (typeof s === "number") return s; if (s.endsWith("Ki")) return parseInt(s)*1024; if (s.endsWith("Mi")) return parseInt(s)*1048576; if (s.endsWith("Gi")) return parseInt(s)*1073741824; return parseInt(s)||0; };
+
+      const userPods = (pods.items || []).filter((p) => p.status?.phase === "Running" && !p.metadata.namespace?.startsWith("openshift-") && !p.metadata.namespace?.startsWith("kube-"));
+      const metricsMap = {};
+      for (const m of (metrics.items || [])) {
+        let cpu = 0, mem = 0;
+        for (const c of (m.containers || [])) { cpu += pCpu(c.usage?.cpu); mem += pMem(c.usage?.memory); }
+        metricsMap[`${m.metadata.namespace}/${m.metadata.name}`] = { cpu, mem };
+      }
+
+      let over = 0, under = 0, noLim = 0;
+      const overList = [], underList = [];
+      for (const p of userPods) {
+        const key = `${p.metadata.namespace}/${p.metadata.name}`;
+        const usage = metricsMap[key];
+        let reqCpu = 0, haslim = false;
+        for (const c of (p.spec?.containers || [])) {
+          reqCpu += pCpu(c.resources?.requests?.cpu);
+          if (c.resources?.limits?.cpu || c.resources?.limits?.memory) haslim = true;
+        }
+        if (!haslim) { noLim++; continue; }
+        if (!usage) continue;
+        if (reqCpu > 0 && usage.cpu < reqCpu * 0.1 && reqCpu >= 0.1) {
+          over++;
+          overList.push(`${p.metadata.namespace}/${p.metadata.name}`);
+        }
+        if (reqCpu > 0 && usage.cpu > reqCpu * 1.5) {
+          under++;
+          underList.push(`${p.metadata.namespace}/${p.metadata.name}`);
+        }
+      }
+
+      const nodeItems = nodes.items || [];
+      let totalAllocCpu = 0, totalAllocMem = 0, totalReqCpu = 0, totalReqMem = 0;
+      for (const n of nodeItems) { totalAllocCpu += pCpu(n.status?.allocatable?.cpu); totalAllocMem += pMem(n.status?.allocatable?.memory); }
+      for (const p of (pods.items || []).filter((p) => p.status?.phase === "Running")) {
+        for (const c of (p.spec?.containers || [])) { totalReqCpu += pCpu(c.resources?.requests?.cpu); totalReqMem += pMem(c.resources?.requests?.memory); }
+      }
+      const cpuH = totalAllocCpu > 0 ? Math.round(((totalAllocCpu - totalReqCpu) / totalAllocCpu) * 100) : 0;
+      const memH = totalAllocMem > 0 ? Math.round(((totalAllocMem - totalReqMem) / totalAllocMem) * 100) : 0;
+
+      const restartPods = (pods.items || []).filter((p) => (p.status?.containerStatuses || []).some((c) => c.restartCount > 5));
+
+      const lines = [
+        `### Cluster Optimization Report`,
+        ``,
+        `@@SUMMARY|amber:${over} Over-provisioned|red:${under} Under-provisioned|green:${userPods.length - over - under - noLim} Well-sized@@`,
+        ``,
+        `| Metric | Value |`,
+        `|---|---|`,
+        `| User pods analyzed | ${userPods.length} |`,
+        `| Over-provisioned | ${over} |`,
+        `| Under-provisioned | ${under} |`,
+        `| Missing resource limits | ${noLim} |`,
+        `| CPU headroom | ${cpuH}% |`,
+        `| Memory headroom | ${memH}% |`,
+        `| Pods with high restarts | ${restartPods.length} |`,
+        ``,
+      ];
+      if (over > 0) {
+        lines.push(`### Over-provisioned (top 5)`);
+        for (const n of overList.slice(0, 5)) lines.push(`  - ${n}`);
+        lines.push(``);
+      }
+      if (under > 0) {
+        lines.push(`### Under-provisioned (top 5)`);
+        for (const n of underList.slice(0, 5)) lines.push(`  - ${n}`);
+        lines.push(``);
+      }
+      if (cpuH < 15) lines.push(`[CRITICAL] CPU headroom is very low (${cpuH}%) — consider adding nodes.`);
+      else if (cpuH < 30) lines.push(`[WARNING] CPU headroom is getting tight (${cpuH}%).`);
+      if (memH < 15) lines.push(`[CRITICAL] Memory headroom is very low (${memH}%) — risk of OOM.`);
+      else if (memH < 30) lines.push(`[WARNING] Memory headroom is getting tight (${memH}%).`);
+      if (cpuH >= 30 && memH >= 30 && over === 0 && under === 0) lines.push(`[OK] Cluster resources are well-balanced.`);
+
+      return { reply: lines.join("\n"), contextKeys: ["slash", "recommendations"] };
+    } catch (e) {
+      return { reply: `[ERROR] Optimization report failed: ${e.message}`, contextKeys: ["slash", "recommendations"] };
+    }
+  }
+
+  // --- Quick resource listing shortcuts ---
+  if (cmd === "pods") {
+    const ns = arg || null;
+    try {
+      const path = ns ? `/api/v1/namespaces/${ns}/pods` : "/api/v1/pods";
+      const data = await ocpGet(path);
+      const items = (data.items || []).filter((p) => !ns ? (!p.metadata.namespace.startsWith("openshift-") && !p.metadata.namespace.startsWith("kube-")) : true);
+      const running = items.filter((p) => p.status?.phase === "Running").length;
+      const failed = items.filter((p) => ["Failed", "Unknown"].includes(p.status?.phase)).length;
+      const pending = items.filter((p) => p.status?.phase === "Pending").length;
+      const lines = [
+        `### Pod Summary${ns ? ` (${ns})` : ""}`,
+        ``,
+        `@@SUMMARY|green:${running} Running|amber:${pending} Pending|red:${failed} Failed@@`,
+        ``,
+        `**Total:** ${items.length} pods`,
+      ];
+      return { reply: lines.join("\n"), contextKeys: ["slash", "pods"] };
+    } catch (e) {
+      return { reply: `[ERROR] ${e.message}`, contextKeys: ["slash", "pods"] };
+    }
+  }
+
+  if (cmd === "nodes") {
+    try {
+      const data = await ocpGet("/api/v1/nodes");
+      const items = data.items || [];
+      const lines = [`### Nodes (${items.length})`, ``, `| Node | Roles | Status | CPU | Memory |`, `|---|---|---|---|---|`];
+      for (const n of items) {
+        const roles = Object.keys(n.metadata.labels || {}).filter((l) => l.startsWith("node-role.kubernetes.io/")).map((l) => l.split("/")[1]).join(", ") || "worker";
+        const ready = (n.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True");
+        lines.push(`| ${n.metadata.name} | ${roles} | ${ready ? "[OK] Ready" : "[CRITICAL] NotReady"} | ${n.status?.capacity?.cpu || "?"} | ${n.status?.capacity?.memory || "?"} |`);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "nodes"] };
+    } catch (e) {
+      return { reply: `[ERROR] ${e.message}`, contextKeys: ["slash", "nodes"] };
+    }
+  }
+
+  if (cmd === "deployments") {
+    const ns = arg || null;
+    try {
+      const path = ns ? `/apis/apps/v1/namespaces/${ns}/deployments` : "/apis/apps/v1/deployments";
+      const data = await ocpGet(path);
+      const items = (data.items || []).filter((d) => !ns ? (!d.metadata.namespace.startsWith("openshift-") && !d.metadata.namespace.startsWith("kube-")) : true);
+      const lines = [`### Deployments${ns ? ` (${ns})` : ""} — ${items.length}`, ``, `| Name | Namespace | Ready | Available |`, `|---|---|---|---|`];
+      for (const d of items.slice(0, 30)) {
+        const ready = `${d.status?.readyReplicas || 0}/${d.spec?.replicas || 0}`;
+        const avail = d.status?.availableReplicas || 0;
+        lines.push(`| ${d.metadata.name} | ${d.metadata.namespace} | ${ready} | ${avail} |`);
+      }
+      if (items.length > 30) lines.push(`\n*...and ${items.length - 30} more*`);
+      return { reply: lines.join("\n"), contextKeys: ["slash", "deployments"] };
+    } catch (e) {
+      return { reply: `[ERROR] ${e.message}`, contextKeys: ["slash", "deployments"] };
+    }
+  }
+
+  if (cmd === "events") {
+    const ns = arg || null;
+    try {
+      const path = ns ? `/api/v1/namespaces/${ns}/events` : "/api/v1/events";
+      const data = await ocpGet(path);
+      const items = (data.items || []).filter((e) => e.type === "Warning").sort((a, b) => new Date(b.lastTimestamp || b.metadata.creationTimestamp) - new Date(a.lastTimestamp || a.metadata.creationTimestamp)).slice(0, 20);
+      if (items.length === 0) return { reply: `### Events${ns ? ` (${ns})` : ""}\n[OK] No warning events.`, contextKeys: ["slash", "events"] };
+      const lines = [`### Warning Events${ns ? ` (${ns})` : ""} — ${items.length}`, ``];
+      for (const e of items) {
+        const kind = e.involvedObject?.kind || "?";
+        const name = e.involvedObject?.name || "?";
+        lines.push(`  - **${e.reason}** ${kind}/${name}${e.metadata.namespace ? ` (${e.metadata.namespace})` : ""} — ${(e.message || "").slice(0, 100)}${e.count > 1 ? ` (x${e.count})` : ""}`);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "events"] };
+    } catch (e) {
+      return { reply: `[ERROR] ${e.message}`, contextKeys: ["slash", "events"] };
+    }
+  }
+
+  if (cmd === "pipelines") {
+    const ns = arg || null;
+    try {
+      const path = ns ? `/apis/tekton.dev/v1/namespaces/${ns}/pipelines` : "/apis/tekton.dev/v1/pipelines";
+      const data = await ocpGet(path);
+      const items = data.items || [];
+      if (items.length === 0) return { reply: `### Tekton Pipelines${ns ? ` (${ns})` : ""}\n[INFO] No pipelines found.`, contextKeys: ["slash", "pipelines"] };
+      const lines = [`### Tekton Pipelines${ns ? ` (${ns})` : ""} — ${items.length}`, ``, `| Pipeline | Namespace | Tasks |`, `|---|---|---|`];
+      for (const p of items.slice(0, 30)) {
+        lines.push(`| ${p.metadata.name} | ${p.metadata.namespace} | ${p.spec?.tasks?.length || 0} |`);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "pipelines"] };
+    } catch {
+      return { reply: "### Tekton Pipelines\n[INFO] Tekton not installed or not accessible.", contextKeys: ["slash", "pipelines"] };
+    }
+  }
+
+  if (cmd === "vms") {
+    const ns = arg || null;
+    try {
+      const path = ns ? `/apis/kubevirt.io/v1/namespaces/${ns}/virtualmachines` : "/apis/kubevirt.io/v1/virtualmachines";
+      const data = await ocpGet(path);
+      const items = data.items || [];
+      if (items.length === 0) return { reply: `### Virtual Machines${ns ? ` (${ns})` : ""}\n[INFO] No VMs found.`, contextKeys: ["slash", "vms"] };
+      const lines = [`### Virtual Machines${ns ? ` (${ns})` : ""} — ${items.length}`, ``, `| VM | Namespace | Running | CPU | Memory |`, `|---|---|---|---|---|`];
+      for (const v of items.slice(0, 30)) {
+        const running = v.status?.ready ? "[OK] Yes" : "[WARNING] No";
+        const cpu = v.spec?.template?.spec?.domain?.cpu?.cores || "?";
+        const mem = v.spec?.template?.spec?.domain?.resources?.requests?.memory || "?";
+        lines.push(`| ${v.metadata.name} | ${v.metadata.namespace} | ${running} | ${cpu} | ${mem} |`);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "vms"] };
+    } catch {
+      return { reply: "### Virtual Machines\n[INFO] KubeVirt not installed or not accessible.", contextKeys: ["slash", "vms"] };
+    }
+  }
+
   return null;
 }
 
