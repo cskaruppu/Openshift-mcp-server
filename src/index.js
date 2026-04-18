@@ -32,6 +32,11 @@ import { registerMustGatherTools } from "./tools/mustgather.js";
 import { registerMetricsTopTools } from "./tools/metrics-top.js";
 import { registerPrometheusTools } from "./tools/prometheus-query.js";
 import { registerOSSMTools } from "./tools/ossm.js";
+import { registerGitOpsTools } from "./tools/gitops.js";
+import { registerSecurityTools } from "./tools/security.js";
+import { registerRecommendationTools } from "./tools/recommendations.js";
+import { registerNotificationTools } from "./tools/notifications.js";
+import { registerVeleroTools } from "./tools/velero.js";
 import { handleDashboardAPI } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI } from "./services/chat-api.js";
 import {
@@ -92,6 +97,11 @@ function createMcpServer() {
   registerMetricsTopTools(server);
   registerPrometheusTools(server);
   registerOSSMTools(server);
+  registerGitOpsTools(server);
+  registerSecurityTools(server);
+  registerRecommendationTools(server);
+  registerNotificationTools(server);
+  registerVeleroTools(server);
 
   return server;
 }
