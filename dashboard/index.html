@@ -229,6 +229,65 @@ tr:hover td{background:#ffffff06}
 /* Alerts badge */
 .alerts-badge{background:var(--crit);color:#fff;border-radius:999px;padding:1px 6px;font-size:10px;font-weight:700;margin-left:4px;display:none}
 .alerts-badge.visible{display:inline}
+/* Light theme */
+.light-theme{--bg:#f5f5f7;--card:#ffffff;--border:#e0e0e6;--text:#1a1a2e;--text2:#6b6b80;--accent:#e04040;--accent2:#2563eb;--accent3:#059669;--warn:#d97706;--crit:#dc2626;--ok:#16a34a}
+.light-theme .header{background:linear-gradient(135deg,#ffffff 0%,#f8e8e8 100%)}
+.light-theme .msg.ai,.light-theme .conv-body code{background:#eeeef2}
+.light-theme .fix-box,.light-theme .fix-box pre{background:#f6f8fa;color:#1a1a2e}
+.light-theme .fix-box .fix-header{background:#ebedf0;border-color:#d0d7de}
+.light-theme .history-item:hover,.light-theme .slash-item:hover,.light-theme .slash-item.active{background:#eeeef2}
+.light-theme .history-item.active{background:#dde0e8;color:var(--text)}
+.light-theme .chat-sidebar,.light-theme .actions-panel{background:#eef0f4}
+.light-theme .chat-input-full{background:var(--card)}
+.light-theme .pod-issue{background:#fff0f0;border-color:#dc262655}
+.light-theme .summary-bar{background:#f0f2f6}
+.light-theme .conv-body .chat-heading{color:var(--text);border-color:#d0d0da}
+/* Theme toggle */
+.theme-toggle{background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--text2);cursor:pointer;font-size:14px;transition:all .2s;display:flex;align-items:center;gap:4px}
+.theme-toggle:hover{border-color:var(--accent);color:var(--text)}
+/* Sidebar search */
+.sidebar-search{padding:8px 12px}
+.sidebar-search input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:7px 10px 7px 30px;color:var(--text);font-size:12px;outline:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='%23a1a1aa' viewBox='0 0 24 24'%3E%3Cpath d='M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:8px center}
+.sidebar-search input:focus{border-color:var(--accent2)}
+/* Score gauge card */
+.score-gauge{display:inline-flex;align-items:center;gap:10px;background:#161b22;border:1px solid var(--border);border-radius:10px;padding:10px 16px;margin:6px 0;min-width:200px}
+.score-ring{position:relative;width:52px;height:52px;flex-shrink:0}
+.score-ring svg{transform:rotate(-90deg)}
+.score-ring .ring-bg{fill:none;stroke:#2a2d3a;stroke-width:5}
+.score-ring .ring-fg{fill:none;stroke-width:5;stroke-linecap:round;transition:stroke-dashoffset .6s ease}
+.score-val{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700}
+.score-label{font-size:12px;color:var(--text2)}
+.score-title{font-weight:600;font-size:13px}
+/* Grade badge */
+.grade-badge{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:8px;font-size:18px;font-weight:800;margin:4px 6px 4px 0}
+.grade-A{background:#16a34a33;color:#22c55e;border:2px solid #22c55e}
+.grade-B{background:#3b82f633;color:#60a5fa;border:2px solid #60a5fa}
+.grade-C{background:#f59e0b33;color:#fbbf24;border:2px solid #fbbf24}
+.grade-D{background:#f9731633;color:#fb923c;border:2px solid #fb923c}
+.grade-F{background:#ef444433;color:#f87171;border:2px solid #f87171}
+/* Markdown tables */
+.md-table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0;background:#0d1117;border-radius:8px;overflow:hidden}
+.md-table th{background:#161b22;padding:6px 10px;text-align:left;font-weight:600;color:var(--text);font-size:11px;text-transform:uppercase;letter-spacing:.3px;border-bottom:1px solid #30363d}
+.md-table td{padding:6px 10px;border-bottom:1px solid #21262d;color:var(--text)}
+.md-table tr:last-child td{border-bottom:none}
+.md-table tr:hover td{background:#1c2028}
+.light-theme .md-table,.light-theme .score-gauge{background:#f6f8fa;border-color:#d0d7de}
+.light-theme .md-table th{background:#ebedf0;color:var(--text);border-color:#d0d7de}
+.light-theme .md-table td{border-color:#e0e0e6}
+.light-theme .md-table tr:hover td{background:#eef0f4}
+/* Keyboard shortcut hints */
+.kbd-overlay{position:fixed;inset:0;background:#000a;z-index:999;display:none;align-items:center;justify-content:center}
+.kbd-overlay.open{display:flex}
+.kbd-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px 32px;min-width:340px;box-shadow:0 8px 32px #0004}
+.kbd-card h3{margin-bottom:16px;font-size:16px;color:var(--text)}
+.kbd-row{display:flex;justify-content:space-between;padding:6px 0;font-size:13px;color:var(--text)}
+.kbd-key{background:#0f1117;border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:12px;font-family:'SF Mono',monospace;color:var(--text2)}
+.kbd-card .close-btn{position:absolute;top:12px;right:16px;background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer}
+/* Export button */
+.export-btn{background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--text2);cursor:pointer;font-size:11px;transition:all .2s}
+.export-btn:hover{border-color:var(--accent2);color:var(--accent2)}
+/* Streaming text */
+.streaming-text .conv-body::after{content:'|';animation:blink 1s step-end infinite;color:var(--accent)}
 </style>
 </head>
 <body>
@@ -254,6 +313,24 @@ tr:hover td{background:#ffffff06}
     <span class="last-updated" id="last-updated"></span>
     &nbsp;
     <button class="icon-btn" onclick="refreshAll()">&#x21bb; Refresh</button>
+    <button class="theme-toggle" onclick="toggleTheme()" id="theme-toggle" title="Toggle light/dark theme">&#x263E;</button>
+    <button class="icon-btn" onclick="toggleKbdOverlay()" title="Keyboard shortcuts (Ctrl+/)">&#x2328;</button>
+  </div>
+</div>
+
+<!-- Keyboard shortcuts overlay -->
+<div class="kbd-overlay" id="kbd-overlay" onclick="if(event.target===this)toggleKbdOverlay()">
+  <div class="kbd-card" style="position:relative">
+    <button class="close-btn" onclick="toggleKbdOverlay()">&times;</button>
+    <h3>Keyboard Shortcuts</h3>
+    <div class="kbd-row"><span>New conversation</span><span class="kbd-key">Ctrl + N</span></div>
+    <div class="kbd-row"><span>Command palette</span><span class="kbd-key">Ctrl + K</span></div>
+    <div class="kbd-row"><span>Search conversations</span><span class="kbd-key">Ctrl + F</span></div>
+    <div class="kbd-row"><span>Show shortcuts</span><span class="kbd-key">Ctrl + /</span></div>
+    <div class="kbd-row"><span>Send message</span><span class="kbd-key">Enter</span></div>
+    <div class="kbd-row"><span>Close overlay / Clear input</span><span class="kbd-key">Escape</span></div>
+    <div class="kbd-row"><span>Switch to Dashboard</span><span class="kbd-key">Ctrl + 1</span></div>
+    <div class="kbd-row"><span>Switch to AI Chat</span><span class="kbd-key">Ctrl + 2</span></div>
   </div>
 </div>
 
@@ -475,7 +552,13 @@ tr:hover td{background:#ffffff06}
   <!-- Sidebar: conversation history -->
   <div class="chat-sidebar">
     <div class="sidebar-header">
-      <button class="new-chat-btn" onclick="newChat()">+ New Chat</button>
+      <div style="display:flex;gap:6px">
+        <button class="new-chat-btn" onclick="newChat()" style="flex:1">+ New Chat</button>
+        <button class="export-btn" onclick="exportConversation()" title="Export conversation">&#x2B73; Export</button>
+      </div>
+    </div>
+    <div class="sidebar-search">
+      <input type="text" id="chat-search" placeholder="Search conversations..." oninput="filterChatHistory()">
     </div>
     <div class="chat-history-list" id="chat-history-list">
       <!-- populated by JS -->
@@ -826,6 +909,24 @@ function md(text) {
   html = html.replace(/\[OK\]/g, '<span class="status-ok">[OK]</span>');
   html = html.replace(/\[INFO\]/g, '<span style="color:var(--accent2);font-weight:600">[INFO]</span>');
 
+  // Markdown tables: | col | col |
+  html = html.replace(/((?:^\|.+\|[ \t]*$\n?){2,})/gm, function(block) {
+    const rows = block.trim().split('\n').filter(r => r.trim());
+    if (rows.length < 2) return block;
+    const parse = r => r.replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+    const hdr = parse(rows[0]);
+    // Check if row[1] is a separator (|---|---|)
+    const isSep = /^\|[\s:|-]+\|$/.test(rows[1].trim());
+    const dataStart = isSep ? 2 : 1;
+    let t = '<table class="md-table"><thead><tr>' + hdr.map(h => '<th>' + h + '</th>').join('') + '</tr></thead><tbody>';
+    for (let i = dataStart; i < rows.length; i++) {
+      const cells = parse(rows[i]);
+      t += '<tr>' + cells.map(c => '<td>' + c + '</td>').join('') + '</tr>';
+    }
+    t += '</tbody></table>';
+    return '\n' + t + '\n';
+  });
+
   // Section headings: ### Heading
   html = html.replace(/^### (.+)$/gm, '\n<div class="chat-heading">$1</div>\n');
   html = html.replace(/^## (.+)$/gm, '\n<div class="chat-heading">$1</div>\n');
@@ -851,6 +952,28 @@ function md(text) {
     return '\n<div><button class="apply-btn" id="' + eid + '" onclick="applyFix(\'' + eid + '\',\'' +
       action + '\',\'' + name + '\',\'' + ns + '\')">' + label +
       '</button><span id="' + eid + '-result"></span></div>\n';
+  });
+
+  // Score gauge: @@SCORE|value|label@@  (0-100)
+  html = html.replace(/@@SCORE\|(\d+)\|([^@]*)@@/g, function(m, val, label) {
+    const v = Math.max(0, Math.min(100, parseInt(val)));
+    const circ = 2 * Math.PI * 22;
+    const offset = circ - (v / 100) * circ;
+    const color = v >= 80 ? '#22c55e' : v >= 60 ? '#f59e0b' : '#ef4444';
+    return '<div class="score-gauge">' +
+      '<div class="score-ring"><svg width="52" height="52" viewBox="0 0 52 52">' +
+      '<circle class="ring-bg" cx="26" cy="26" r="22"/>' +
+      '<circle class="ring-fg" cx="26" cy="26" r="22" stroke="' + color + '" stroke-dasharray="' + circ.toFixed(1) + '" stroke-dashoffset="' + offset.toFixed(1) + '"/>' +
+      '</svg><div class="score-val" style="color:' + color + '">' + v + '</div></div>' +
+      '<div><div class="score-title">' + label + '</div>' +
+      '<div class="score-label">Score: ' + v + ' / 100</div></div></div>';
+  });
+
+  // Grade badge: @@GRADE|A|label@@
+  html = html.replace(/@@GRADE\|([A-F])\|([^@]*)@@/g, function(m, grade, label) {
+    return '<span style="display:inline-flex;align-items:center;gap:6px;margin:4px 0">' +
+      '<span class="grade-badge grade-' + grade + '">' + grade + '</span>' +
+      '<span style="font-weight:600;font-size:13px">' + label + '</span></span>';
   });
 
   // Bold
@@ -1757,6 +1880,17 @@ const SLASH_COMMANDS = [
   { cmd: '/audit', desc: 'Show recent audit trail' },
   { cmd: '/alerts', desc: 'List firing Alertmanager alerts' },
   { cmd: '/metrics', desc: 'Show assistant internal metrics' },
+  { cmd: '/security', desc: 'Run security & compliance audit' },
+  { cmd: '/gitops', desc: 'List ArgoCD/GitOps applications' },
+  { cmd: '/recommendations', desc: 'Get cluster optimization recommendations' },
+  { cmd: '/backups', desc: 'List Velero/OADP backup status' },
+  { cmd: '/dr', desc: 'Assess disaster recovery readiness' },
+  { cmd: '/pods', desc: 'Show pod summary across cluster' },
+  { cmd: '/nodes', desc: 'List cluster nodes with status' },
+  { cmd: '/deployments', desc: 'List deployments across namespaces' },
+  { cmd: '/events', desc: 'Show recent cluster events' },
+  { cmd: '/pipelines', desc: 'List Tekton pipelines' },
+  { cmd: '/vms', desc: 'List KubeVirt virtual machines' },
 ];
 
 (function initSlashPalette() {
@@ -1883,6 +2017,249 @@ setTimeout(() => {
     .then(d => updateAlertsBadge((d.alerts || []).length))
     .catch(() => {});
 }, 3000);
+
+// ---------------------------------------------------------------------------
+// SSE Streaming — progressive text rendering for chat responses
+// ---------------------------------------------------------------------------
+async function sendFullChatStreaming(text) {
+  const input = document.getElementById('full-chat-input');
+  const sendBtn = document.getElementById('full-chat-send');
+  const msg = text || (input ? input.value.trim() : '');
+  if (!msg) return;
+
+  await detectHistoryBackend();
+  let history = loadChatHistory();
+  if (!history.activeId) { await newChat(); history = loadChatHistory(); }
+  const chat = history.chats.find(c => c.id === history.activeId);
+  if (!chat) return;
+
+  chat.messages.push({ role: 'user', text: msg });
+  if (chat.messages.filter(m => m.role === 'user').length === 1) {
+    chat.title = msg.length > 50 ? msg.substring(0, 50) + '...' : msg;
+  }
+  chat.updatedAt = new Date().toISOString();
+  saveChatHistory(history);
+  if (input) input.value = '';
+  renderConversation();
+  renderChatHistory();
+
+  const inner = document.getElementById('chat-conv-inner');
+  const streamDiv = document.createElement('div');
+  streamDiv.className = 'conv-msg ai streaming-text';
+  streamDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">MCP</div><span class="conv-name">MCP AI Assistant</span></div>' +
+    '<div class="conv-body" id="stream-body"><div class="thinking-dots"><span></span><span></span><span></span></div> Analyzing...</div>';
+  inner.appendChild(streamDiv);
+  scrollConversation();
+  if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '...'; }
+
+  const chatBody = { message: msg, conversationId: history.activeId, stream: true };
+  const provider = document.getElementById('full-llm-provider').value;
+  if (provider && provider !== 'none') {
+    chatBody.provider = provider;
+    const ak = document.getElementById('full-llm-api-key').value.trim();
+    const au = document.getElementById('full-llm-api-url').value.trim();
+    const ml = document.getElementById('full-llm-model').value.trim();
+    if (ak) chatBody.apiKey = ak;
+    if (au) chatBody.apiUrl = au;
+    if (ml) chatBody.model = ml;
+  }
+
+  let fullText = '';
+  let streamProvider = provider || 'none';
+  try {
+    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+      body: JSON.stringify(chatBody),
+    });
+
+    if (!resp.ok || !resp.headers.get('content-type')?.includes('text/event-stream')) {
+      // Fallback to non-streaming
+      const data = resp.ok ? await resp.json() : { error: 'Server error: ' + resp.status };
+      fullText = data.reply || data.error || 'No response';
+      streamProvider = data.provider || streamProvider;
+    } else {
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      const body = document.getElementById('stream-body');
+      let buf = '';
+      let firstChunk = true;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (payload === '[DONE]') continue;
+          try {
+            const evt = JSON.parse(payload);
+            if (evt.delta) {
+              if (firstChunk) { body.innerHTML = ''; firstChunk = false; }
+              fullText += evt.delta;
+              body.innerHTML = md(fullText);
+              scrollConversation();
+            }
+            if (evt.done) {
+              streamProvider = evt.provider || streamProvider;
+            }
+            if (evt.error) {
+              fullText += '\n\nError: ' + evt.error;
+            }
+          } catch (e) {}
+        }
+      }
+      if (!fullText) fullText = 'No response received.';
+    }
+  } catch (err) {
+    fullText = 'Error: ' + err.message;
+  }
+
+  streamDiv.classList.remove('streaming-text');
+  history = loadChatHistory();
+  const activeChat = history.chats.find(c => c.id === history.activeId);
+  if (activeChat) {
+    activeChat.messages.push({ role: 'ai', text: fullText, html: md(fullText), provider: streamProvider });
+    activeChat.updatedAt = new Date().toISOString();
+    saveChatHistory(history);
+  }
+  renderConversation();
+  if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = 'Send'; }
+  renderChatHistory();
+  if (/<!--action:/.test(fullText)) refreshActionsPanel();
+}
+
+// Replace sendFullChat with streaming version
+sendFullChat = sendFullChatStreaming;
+
+// ---------------------------------------------------------------------------
+// Conversation search filter
+// ---------------------------------------------------------------------------
+function filterChatHistory() {
+  const q = (document.getElementById('chat-search')?.value || '').toLowerCase();
+  const items = document.querySelectorAll('#chat-history-list .history-item');
+  items.forEach(item => {
+    const title = (item.querySelector('.history-title')?.textContent || '').toLowerCase();
+    item.style.display = title.includes(q) ? '' : 'none';
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Theme toggle — light / dark
+// ---------------------------------------------------------------------------
+function toggleTheme() {
+  const isLight = document.body.classList.toggle('light-theme');
+  localStorage.setItem('mcp-theme', isLight ? 'light' : 'dark');
+  document.getElementById('theme-toggle').innerHTML = isLight ? '&#x2600;' : '&#x263E;';
+}
+(function initTheme() {
+  const saved = localStorage.getItem('mcp-theme');
+  if (saved === 'light') {
+    document.body.classList.add('light-theme');
+    const btn = document.getElementById('theme-toggle');
+    if (btn) btn.innerHTML = '&#x2600;';
+  }
+})();
+
+// ---------------------------------------------------------------------------
+// Keyboard shortcuts overlay
+// ---------------------------------------------------------------------------
+function toggleKbdOverlay() {
+  document.getElementById('kbd-overlay').classList.toggle('open');
+}
+
+document.addEventListener('keydown', function(e) {
+  const isInput = ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName);
+  const ctrl = e.ctrlKey || e.metaKey;
+
+  // Ctrl+/ — toggle keyboard shortcuts
+  if (ctrl && e.key === '/') { e.preventDefault(); toggleKbdOverlay(); return; }
+
+  // Escape — close overlay, clear input, close palette
+  if (e.key === 'Escape') {
+    const overlay = document.getElementById('kbd-overlay');
+    if (overlay.classList.contains('open')) { overlay.classList.remove('open'); return; }
+    const palette = document.getElementById('slash-palette');
+    if (palette?.classList.contains('open')) { palette.classList.remove('open'); return; }
+    const chatInput = document.getElementById('full-chat-input');
+    if (chatInput && chatInput.value) { chatInput.value = ''; return; }
+    return;
+  }
+
+  if (isInput && !ctrl) return;
+
+  // Ctrl+N — new chat
+  if (ctrl && e.key === 'n') {
+    e.preventDefault();
+    const cv = document.getElementById('view-chat');
+    if (cv?.style.display === 'none') showView('chat');
+    newChat();
+    setTimeout(() => document.getElementById('full-chat-input')?.focus(), 100);
+    return;
+  }
+
+  // Ctrl+K — focus chat input (command palette feel)
+  if (ctrl && e.key === 'k') {
+    e.preventDefault();
+    const cv = document.getElementById('view-chat');
+    if (cv?.style.display === 'none') showView('chat');
+    const inp = document.getElementById('full-chat-input');
+    if (inp) { inp.value = '/'; inp.focus(); inp.dispatchEvent(new Event('input')); }
+    return;
+  }
+
+  // Ctrl+F — focus search in chat sidebar
+  if (ctrl && e.key === 'f') {
+    const cv = document.getElementById('view-chat');
+    if (cv?.style.display !== 'none') {
+      e.preventDefault();
+      document.getElementById('chat-search')?.focus();
+      return;
+    }
+  }
+
+  // Ctrl+1 / Ctrl+2 — switch views
+  if (ctrl && e.key === '1') { e.preventDefault(); showView('dashboard'); return; }
+  if (ctrl && e.key === '2') { e.preventDefault(); showView('chat'); return; }
+});
+
+// ---------------------------------------------------------------------------
+// Export conversation as markdown or JSON
+// ---------------------------------------------------------------------------
+function exportConversation(format) {
+  const chat = getActiveChat();
+  if (!chat || chat.messages.length === 0) { alert('No conversation to export.'); return; }
+
+  const fmt = format || 'markdown';
+  let content, filename, mime;
+
+  if (fmt === 'json') {
+    content = JSON.stringify({ title: chat.title, exportedAt: new Date().toISOString(), messages: chat.messages.map(m => ({ role: m.role, text: m.text, provider: m.provider })) }, null, 2);
+    filename = (chat.title || 'conversation').replace(/[^a-z0-9]/gi, '_').slice(0, 40) + '.json';
+    mime = 'application/json';
+  } else {
+    const lines = ['# ' + (chat.title || 'Conversation'), '', 'Exported: ' + new Date().toISOString(), ''];
+    for (const m of chat.messages) {
+      if (m.role === 'user') {
+        lines.push('## User', '', m.text, '');
+      } else {
+        lines.push('## MCP AI Assistant' + (m.provider ? ' (' + m.provider + ')' : ''), '', m.text, '');
+      }
+    }
+    content = lines.join('\n');
+    filename = (chat.title || 'conversation').replace(/[^a-z0-9]/gi, '_').slice(0, 40) + '.md';
+    mime = 'text/markdown';
+  }
+
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
 
 // ---------------------------------------------------------------------------
 // Cost advisor view loader
