@@ -5,7 +5,8 @@
  *
  *   {
  *     intent:      'list' | 'get' | 'delete' | 'logs' | 'top' | 'exec'
- *                  | 'run'  | 'create' | 'update' | 'help' | 'unknown',
+ *                  | 'run'  | 'create' | 'update' | 'start' | 'stop'
+ *                  | 'upgrade' | 'help' | 'unknown',
  *     resource:    'pod' | 'deployment' | 'service' | ... | null,
  *     name:        string | null,
  *     namespace:   string | null,
@@ -51,6 +52,16 @@ export const RESOURCE_ALIASES = {
   storageclass:      ["storageclass", "storageclasses", "sc"],
   networkpolicy:     ["networkpolicy", "networkpolicies", "netpol"],
   hpa:               ["hpa", "horizontalpodautoscaler", "horizontalpodautoscalers"],
+  virtualmachine:    ["virtualmachine", "virtualmachines", "vm", "vms"],
+  virtualmachineinstance: ["virtualmachineinstance", "virtualmachineinstances", "vmi", "vmis"],
+  pipeline:          ["pipeline", "pipelines"],
+  pipelinerun:       ["pipelinerun", "pipelineruns"],
+  task:              ["task", "tasks"],
+  taskrun:           ["taskrun", "taskruns"],
+  helmrelease:       ["helmrelease", "helmreleases", "helm"],
+  clusterversion:    ["clusterversion", "clusterversions"],
+  machine:           ["machine", "machines"],
+  machineset:        ["machineset", "machinesets"],
 };
 
 // Build a flat token → canonical map for O(1) lookup.
@@ -128,6 +139,10 @@ const VERB_TABLE = {
   // help
   help: { intent: "help", weight: 100 },
   commands: { intent: "help", weight: 80 },
+  start:    { intent: "start",   weight: 85 },
+  stop:     { intent: "stop",    weight: 85 },
+  upgrade:  { intent: "upgrade", weight: 85 },
+  migrate:  { intent: "update",  weight: 80 },
 };
 
 // Backwards-compatible flat lookup for callers that just want the intent.
@@ -162,6 +177,7 @@ const STOP_WORDS = new Set([
   "logs", "log", "tail", "top", "metrics", "usage", "exec", "execute",
   "shell", "run", "launch", "create", "apply", "make", "update", "patch",
   "edit", "modify", "change", "set", "scale", "restart", "help", "info",
+  "start", "stop", "upgrade", "migrate",
   "use", "using", "via", "with", "without",
 ]);
 
@@ -226,6 +242,28 @@ function isNoise(token) {
 }
 
 // ---------------------------------------------------------------------------
+// Compound term normalization — merge multi-word resource types into single
+// tokens before the tokenizer splits them (e.g. "virtual machine" → "virtualmachine").
+// ---------------------------------------------------------------------------
+const COMPOUND_TERMS = [
+  [/\bvirtual\s+machine\s+instances?\b/gi, "virtualmachineinstance"],
+  [/\bvirtual\s+machines?\b/gi, "virtualmachine"],
+  [/\bpipeline\s+runs?\b/gi, "pipelinerun"],
+  [/\btask\s+runs?\b/gi, "taskrun"],
+  [/\bhelm\s+releases?\b/gi, "helmrelease"],
+  [/\bcluster\s+versions?\b/gi, "clusterversion"],
+  [/\bmachine\s+sets?\b/gi, "machineset"],
+];
+
+function normalizeCompounds(text) {
+  let result = text;
+  for (const [re, replacement] of COMPOUND_TERMS) {
+    result = result.replace(re, replacement);
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Main parse function
 // ---------------------------------------------------------------------------
 
@@ -239,8 +277,9 @@ function isNoise(token) {
  */
 export function parse(message, memory = {}) {
   const raw = String(message || "");
-  const tokens = tokenize(raw);
-  const lower = raw.toLowerCase();
+  const normalized = normalizeCompounds(raw);
+  const tokens = tokenize(normalized);
+  const lower = normalized.toLowerCase();
 
   if (tokens.length === 0) {
     return makeResult({ intent: "unknown", raw, confidence: 0 });
@@ -315,6 +354,7 @@ export function parse(message, memory = {}) {
   // Default resource for some intents.
   if (!resource) {
     if (intent === "logs" || intent === "top" || intent === "exec") resource = "pod";
+    if (intent === "upgrade" && /\b(cluster|openshift|ocp)\b/.test(lower)) resource = "clusterversion";
   }
 
   // ---- 3. Namespace extraction ----

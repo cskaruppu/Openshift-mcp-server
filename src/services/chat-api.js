@@ -67,6 +67,9 @@ function nluToCommand(p) {
   else if (p.intent === "run") operation = "run";
   else if (p.intent === "create") operation = "create";
   else if (p.intent === "update") operation = "update";
+  else if (p.intent === "start") operation = "start";
+  else if (p.intent === "stop") operation = "stop";
+  else if (p.intent === "upgrade") operation = "upgrade";
   return {
     operation,
     resourceType: p.resource,
@@ -151,10 +154,23 @@ function buildHelpMessage() {
     "  - `delete <kind> <name> in <ns>`",
     "  - `scale deployment <name> to 5 in <ns>`",
     "",
+    "**KubeVirt — Virtual Machines**",
+    "  - `list vms in <ns>` / `list virtual machines`",
+    "  - `describe vm <name> in <ns>`",
+    "  - `start vm <name> in <ns>` / `stop vm <name> in <ns>`",
+    "  - `list vmis in <ns>` (running VM instances)",
+    "",
+    "**Tekton — Pipelines & Tasks**",
+    "  - `list pipelines in <ns>` / `list pipelineruns in <ns>`",
+    "  - `list tasks in <ns>` / `list taskruns in <ns>`",
+    "  - `describe pipeline <name> in <ns>`",
+    "  - `start pipeline <name> in <ns>`",
+    "",
     "**Cluster scoped**",
     "  - `list nodes` / `list namespaces` / `list projects`",
-    "  - `list clusteroperators` / `list pvs`",
+    "  - `list clusteroperators` / `list pvs` / `list machines`",
     "  - `is the cluster healthy?`",
+    "  - `upgrade cluster` / `show cluster version`",
     "",
     "**Events**",
     "  - `show events` / `events in <ns>` / `warning events`",
@@ -228,6 +244,29 @@ const RESOURCE_MAP = {
   persistentvolume:      { api: "/api/v1", resource: "persistentvolumes", namespaced: false },
   clusteroperator:       { api: "/apis/config.openshift.io/v1", resource: "clusteroperators", namespaced: false },
   clusteroperators:      { api: "/apis/config.openshift.io/v1", resource: "clusteroperators", namespaced: false },
+  virtualmachine:        { api: "/apis/kubevirt.io/v1", resource: "virtualmachines", namespaced: true },
+  virtualmachines:       { api: "/apis/kubevirt.io/v1", resource: "virtualmachines", namespaced: true },
+  vm:                    { api: "/apis/kubevirt.io/v1", resource: "virtualmachines", namespaced: true },
+  vms:                   { api: "/apis/kubevirt.io/v1", resource: "virtualmachines", namespaced: true },
+  virtualmachineinstance:  { api: "/apis/kubevirt.io/v1", resource: "virtualmachineinstances", namespaced: true },
+  virtualmachineinstances: { api: "/apis/kubevirt.io/v1", resource: "virtualmachineinstances", namespaced: true },
+  vmi:                   { api: "/apis/kubevirt.io/v1", resource: "virtualmachineinstances", namespaced: true },
+  vmis:                  { api: "/apis/kubevirt.io/v1", resource: "virtualmachineinstances", namespaced: true },
+  pipeline:              { api: "/apis/tekton.dev/v1", resource: "pipelines", namespaced: true },
+  pipelines:             { api: "/apis/tekton.dev/v1", resource: "pipelines", namespaced: true },
+  pipelinerun:           { api: "/apis/tekton.dev/v1", resource: "pipelineruns", namespaced: true },
+  pipelineruns:          { api: "/apis/tekton.dev/v1", resource: "pipelineruns", namespaced: true },
+  task:                  { api: "/apis/tekton.dev/v1", resource: "tasks", namespaced: true },
+  tasks:                 { api: "/apis/tekton.dev/v1", resource: "tasks", namespaced: true },
+  taskrun:               { api: "/apis/tekton.dev/v1", resource: "taskruns", namespaced: true },
+  taskruns:              { api: "/apis/tekton.dev/v1", resource: "taskruns", namespaced: true },
+  clusterversion:        { api: "/apis/config.openshift.io/v1", resource: "clusterversions", namespaced: false },
+  clusterversions:       { api: "/apis/config.openshift.io/v1", resource: "clusterversions", namespaced: false },
+  machine:               { api: "/apis/machine.openshift.io/v1beta1", resource: "machines", namespaced: true },
+  machines:              { api: "/apis/machine.openshift.io/v1beta1", resource: "machines", namespaced: true },
+  machineset:            { api: "/apis/machine.openshift.io/v1beta1", resource: "machinesets", namespaced: true },
+  machinesets:           { api: "/apis/machine.openshift.io/v1beta1", resource: "machinesets", namespaced: true },
+  helmrelease:           { api: "/apis/helm.openshift.io/v1beta1", resource: "helmchartrepositories", namespaced: false },
 };
 
 // ---------------------------------------------------------------------------
@@ -665,6 +704,138 @@ async function handleDirectCommand(message, preParsed) {
     return parts.join("\n");
   }
 
+  // -----------------------------------------------------------------------
+  // START — start a VM (KubeVirt) or pipeline (Tekton)
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "start") {
+    if (cmd.resourceType === "virtualmachine" || cmd.resourceType === "vm") {
+      if (!cmd.resourceName || !cmd.namespace) {
+        parts.push(`### Start VM`);
+        parts.push(`[WARNING] Please specify both VM name and namespace.`);
+        parts.push(`\n**Example:** "start vm my-vm in namespace my-ns"`);
+        return parts.join("\n");
+      }
+      try {
+        await ocpPatch(
+          `/apis/kubevirt.io/v1/namespaces/${cmd.namespace}/virtualmachines/${cmd.resourceName}`,
+          { spec: { running: true } }
+        );
+        parts.push(`### VM Started`);
+        parts.push(`[OK] Virtual machine \`${cmd.resourceName}\` started in \`${cmd.namespace}\`.`);
+        parts.push(`\n**Check status:**`);
+        parts.push("```" + `oc get vmi ${cmd.resourceName} -n ${cmd.namespace}` + "```");
+      } catch (err) {
+        parts.push(`### Start VM Failed`);
+        parts.push(`[CRITICAL] Failed to start VM \`${cmd.resourceName}\`: ${err.message}`);
+      }
+      return parts.join("\n");
+    }
+    if (cmd.resourceType === "pipeline") {
+      if (!cmd.resourceName || !cmd.namespace) {
+        parts.push(`### Start Pipeline`);
+        parts.push(`[WARNING] Please specify both pipeline name and namespace.`);
+        parts.push(`\n**Example:** "start pipeline build-and-deploy in namespace cicd"`);
+        return parts.join("\n");
+      }
+      try {
+        const pipelineRun = {
+          apiVersion: "tekton.dev/v1",
+          kind: "PipelineRun",
+          metadata: {
+            generateName: `${cmd.resourceName}-run-`,
+            namespace: cmd.namespace,
+          },
+          spec: {
+            pipelineRef: { name: cmd.resourceName },
+          },
+        };
+        const result = await ocpPost(
+          `/apis/tekton.dev/v1/namespaces/${cmd.namespace}/pipelineruns`,
+          pipelineRun
+        );
+        const prName = result?.metadata?.name || `${cmd.resourceName}-run-*`;
+        parts.push(`### Pipeline Started`);
+        parts.push(`[OK] PipelineRun \`${prName}\` created in \`${cmd.namespace}\` from pipeline \`${cmd.resourceName}\`.`);
+        parts.push(`\n**Check status:**`);
+        parts.push("```" + `oc get pipelinerun ${prName} -n ${cmd.namespace}\ntkn pipelinerun logs ${prName} -n ${cmd.namespace}` + "```");
+      } catch (err) {
+        parts.push(`### Start Pipeline Failed`);
+        parts.push(`[CRITICAL] Failed to start pipeline \`${cmd.resourceName}\`: ${err.message}`);
+      }
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // STOP — stop a VM (KubeVirt)
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "stop") {
+    if (cmd.resourceType === "virtualmachine" || cmd.resourceType === "vm") {
+      if (!cmd.resourceName || !cmd.namespace) {
+        parts.push(`### Stop VM`);
+        parts.push(`[WARNING] Please specify both VM name and namespace.`);
+        parts.push(`\n**Example:** "stop vm my-vm in namespace my-ns"`);
+        return parts.join("\n");
+      }
+      try {
+        await ocpPatch(
+          `/apis/kubevirt.io/v1/namespaces/${cmd.namespace}/virtualmachines/${cmd.resourceName}`,
+          { spec: { running: false } }
+        );
+        parts.push(`### VM Stopped`);
+        parts.push(`[OK] Virtual machine \`${cmd.resourceName}\` stopped in \`${cmd.namespace}\`.`);
+      } catch (err) {
+        parts.push(`### Stop VM Failed`);
+        parts.push(`[CRITICAL] Failed to stop VM \`${cmd.resourceName}\`: ${err.message}`);
+      }
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // UPGRADE — show cluster version and available updates
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "upgrade") {
+    if (cmd.resourceType === "clusterversion") {
+      try {
+        const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+        const currentVersion = cv.status?.desired?.version || "unknown";
+        const channel = cv.spec?.channel || "unknown";
+        const conditions = cv.status?.conditions || [];
+        const available = conditions.find(c => c.type === "Available");
+        const progressing = conditions.find(c => c.type === "Progressing");
+        const updates = cv.status?.availableUpdates || [];
+
+        parts.push(`### Cluster Version & Upgrade Status`);
+        parts.push(`**Current version:** ${currentVersion}`);
+        parts.push(`**Channel:** ${channel}`);
+        if (available) {
+          const icon = available.status === "True" ? "[OK]" : "[CRITICAL]";
+          parts.push(`${icon} **Available:** ${available.message || available.reason || available.status}`);
+        }
+        if (progressing) {
+          const icon = progressing.status === "True" ? "[WARNING]" : "[OK]";
+          parts.push(`${icon} **Progressing:** ${progressing.message || progressing.reason || progressing.status}`);
+        }
+
+        if (updates.length > 0) {
+          parts.push(`\n**Available updates (${updates.length}):**`);
+          updates.slice(0, 10).forEach(u => {
+            parts.push(`  - **${u.version}**${u.image ? ` — \`${u.image.substring(0, 80)}...\`` : ""}`);
+          });
+          parts.push(`\n**To upgrade:**`);
+          parts.push("```" + `oc adm upgrade --to=${updates[0].version}` + "```");
+        } else {
+          parts.push(`\n[OK] Cluster is up to date. No upgrades available in channel \`${channel}\`.`);
+        }
+      } catch (err) {
+        parts.push(`### Cluster Upgrade Error`);
+        parts.push(`[CRITICAL] Failed to check cluster version: ${err.message}`);
+      }
+      return parts.join("\n");
+    }
+  }
+
   return null; // Not a recognized direct command
 }
 
@@ -810,6 +981,74 @@ async function handleListCommand(message, preParsed) {
         const icon = p.status?.phase === "Bound" ? "[OK]" : "[WARNING]";
         parts.push(`  - ${icon} **${p.metadata.name}** (${p.metadata.namespace}) — ${p.status?.phase} — ${p.spec?.resources?.requests?.storage || "?"} — ${p.spec?.storageClassName || "default"}`);
       });
+    } else if (["virtualmachine", "vm", "vms", "virtualmachines"].includes(cmd.resourceType)) {
+      items.slice(0, 30).forEach((v) => {
+        const ready = v.status?.ready;
+        const printable = v.status?.printableStatus || (ready ? "Running" : "Stopped");
+        const icon = ready ? "[OK]" : "[WARNING]";
+        const cpu = v.spec?.template?.spec?.domain?.cpu?.cores || "?";
+        const mem = v.spec?.template?.spec?.domain?.resources?.requests?.memory || "?";
+        parts.push(`  - ${icon} **${v.metadata.name}** (${v.metadata.namespace}) — ${printable} — CPU: ${cpu}, Mem: ${mem}`);
+      });
+    } else if (["virtualmachineinstance", "vmi", "vmis"].includes(cmd.resourceType)) {
+      items.slice(0, 30).forEach((v) => {
+        const phase = v.status?.phase || "Unknown";
+        const icon = phase === "Running" ? "[OK]" : "[WARNING]";
+        const node = v.status?.nodeName || "unassigned";
+        const ip = (v.status?.interfaces || [])[0]?.ipAddress || "none";
+        parts.push(`  - ${icon} **${v.metadata.name}** (${v.metadata.namespace}) — ${phase} — Node: ${node} — IP: ${ip}`);
+      });
+    } else if (["pipeline", "pipelines"].includes(cmd.resourceType)) {
+      items.slice(0, 30).forEach((p) => {
+        const taskCount = p.spec?.tasks?.length || 0;
+        parts.push(`  - **${p.metadata.name}** (${p.metadata.namespace}) — ${taskCount} task(s)`);
+      });
+    } else if (["pipelinerun", "pipelineruns"].includes(cmd.resourceType)) {
+      items.slice(0, 30).forEach((p) => {
+        const succeeded = (p.status?.conditions || []).find(c => c.type === "Succeeded");
+        const status = succeeded ? (succeeded.status === "True" ? "Succeeded" : succeeded.status === "False" ? "Failed" : "Running") : "Pending";
+        const icon = status === "Succeeded" ? "[OK]" : status === "Failed" ? "[CRITICAL]" : "[WARNING]";
+        const pipeline = p.spec?.pipelineRef?.name || "inline";
+        const start = p.status?.startTime ? new Date(p.status.startTime).toLocaleString() : "?";
+        parts.push(`  - ${icon} **${p.metadata.name}** (${p.metadata.namespace}) — ${status} — pipeline: ${pipeline} — started: ${start}`);
+      });
+    } else if (["task", "tasks"].includes(cmd.resourceType)) {
+      items.slice(0, 30).forEach((t) => {
+        const stepCount = t.spec?.steps?.length || 0;
+        parts.push(`  - **${t.metadata.name}** (${t.metadata.namespace}) — ${stepCount} step(s)`);
+      });
+    } else if (["taskrun", "taskruns"].includes(cmd.resourceType)) {
+      items.slice(0, 30).forEach((t) => {
+        const succeeded = (t.status?.conditions || []).find(c => c.type === "Succeeded");
+        const status = succeeded ? (succeeded.status === "True" ? "Succeeded" : succeeded.status === "False" ? "Failed" : "Running") : "Pending";
+        const icon = status === "Succeeded" ? "[OK]" : status === "Failed" ? "[CRITICAL]" : "[WARNING]";
+        const taskName = t.spec?.taskRef?.name || "inline";
+        parts.push(`  - ${icon} **${t.metadata.name}** (${t.metadata.namespace}) — ${status} — task: ${taskName}`);
+      });
+    } else if (["clusterversion", "clusterversions"].includes(cmd.resourceType)) {
+      items.forEach((cv) => {
+        const version = cv.status?.desired?.version || "?";
+        const channel = cv.spec?.channel || "?";
+        const updates = cv.status?.availableUpdates?.length || 0;
+        const progressing = (cv.status?.conditions || []).find(c => c.type === "Progressing");
+        const icon = progressing?.status === "True" ? "[WARNING]" : "[OK]";
+        parts.push(`  - ${icon} **${cv.metadata.name}** — v${version} — channel: ${channel} — ${updates} update(s) available`);
+      });
+    } else if (["machine", "machines"].includes(cmd.resourceType)) {
+      items.slice(0, 30).forEach((m) => {
+        const phase = m.status?.phase || "Unknown";
+        const icon = phase === "Running" ? "[OK]" : "[WARNING]";
+        const nodeRef = m.status?.nodeRef?.name || "unassigned";
+        const instanceType = m.spec?.providerSpec?.value?.instanceType || m.spec?.providerSpec?.value?.vmSize || "?";
+        parts.push(`  - ${icon} **${m.metadata.name}** (${m.metadata.namespace}) — ${phase} — node: ${nodeRef} — type: ${instanceType}`);
+      });
+    } else if (["machineset", "machinesets"].includes(cmd.resourceType)) {
+      items.slice(0, 30).forEach((ms) => {
+        const desired = ms.spec?.replicas ?? 0;
+        const ready = ms.status?.readyReplicas ?? 0;
+        const icon = ready === desired ? "[OK]" : "[WARNING]";
+        parts.push(`  - ${icon} **${ms.metadata.name}** (${ms.metadata.namespace}) — ${ready}/${desired} ready`);
+      });
     } else {
       // Generic format
       items.slice(0, 30).forEach((item) => {
@@ -914,6 +1153,26 @@ async function gatherClusterContext(userMessage) {
   // Intent: services / routes
   if (lower.match(/service|route|endpoint|ingress|url/)) {
     context.intents.push("services");
+  }
+
+  // Intent: virtual machines (KubeVirt)
+  if (lower.match(/\bvms?\b|\bvirtual\s*machines?\b|\bvmi\b|\bkubevirt/)) {
+    context.intents.push("virtualmachines");
+  }
+
+  // Intent: pipelines / tekton
+  if (lower.match(/\bpipeline|\btekton|\btaskrun|\bpipelinerun/)) {
+    context.intents.push("pipelines");
+  }
+
+  // Intent: cluster upgrade / version
+  if (lower.match(/\bupgrade|\bcluster\s*version|\bclusterversion/)) {
+    context.intents.push("cluster_upgrade");
+  }
+
+  // Intent: machines / machinesets
+  if (lower.match(/\bmachineset|\bmachine\b/) && !lower.match(/virtual/)) {
+    context.intents.push("machines");
   }
 
   // Intent: restart
@@ -1136,6 +1395,90 @@ async function gatherClusterContext(userMessage) {
             progressing: conds.Progressing,
           };
         });
+      }).catch(() => {})
+    );
+  }
+
+  // Virtual machines (KubeVirt)
+  if (context.intents.includes("virtualmachines")) {
+    const vmNs = nsMatch ? nsMatch[1] : null;
+    const vmPath = vmNs
+      ? `/apis/kubevirt.io/v1/namespaces/${vmNs}/virtualmachines`
+      : "/apis/kubevirt.io/v1/virtualmachines";
+    tasks.push(
+      ocpGet(vmPath).then((d) => {
+        context.virtualmachines = (d.items || []).map((v) => ({
+          name: v.metadata.name,
+          namespace: v.metadata.namespace,
+          ready: v.status?.ready,
+          status: v.status?.printableStatus || (v.status?.ready ? "Running" : "Stopped"),
+          cpu: v.spec?.template?.spec?.domain?.cpu?.cores,
+          memory: v.spec?.template?.spec?.domain?.resources?.requests?.memory,
+        }));
+      }).catch(() => {})
+    );
+  }
+
+  // Pipelines (Tekton)
+  if (context.intents.includes("pipelines")) {
+    const plNs = nsMatch ? nsMatch[1] : null;
+    const plPath = plNs
+      ? `/apis/tekton.dev/v1/namespaces/${plNs}/pipelines`
+      : "/apis/tekton.dev/v1/pipelines";
+    tasks.push(
+      ocpGet(plPath).then((d) => {
+        context.pipelines = (d.items || []).map((p) => ({
+          name: p.metadata.name,
+          namespace: p.metadata.namespace,
+          tasks: p.spec?.tasks?.length || 0,
+        }));
+      }).catch(() => {})
+    );
+    const prPath = plNs
+      ? `/apis/tekton.dev/v1/namespaces/${plNs}/pipelineruns`
+      : "/apis/tekton.dev/v1/pipelineruns";
+    tasks.push(
+      ocpGet(prPath).then((d) => {
+        context.pipelineruns = (d.items || []).slice(0, 20).map((p) => {
+          const cond = (p.status?.conditions || []).find(c => c.type === "Succeeded");
+          return {
+            name: p.metadata.name,
+            namespace: p.metadata.namespace,
+            pipeline: p.spec?.pipelineRef?.name,
+            status: cond ? (cond.status === "True" ? "Succeeded" : cond.status === "False" ? "Failed" : "Running") : "Pending",
+            startTime: p.status?.startTime,
+          };
+        });
+      }).catch(() => {})
+    );
+  }
+
+  // Cluster upgrade
+  if (context.intents.includes("cluster_upgrade")) {
+    tasks.push(
+      ocpGet("/apis/config.openshift.io/v1/clusterversions/version").then((cv) => {
+        context.clusterUpgrade = {
+          currentVersion: cv.status?.desired?.version,
+          channel: cv.spec?.channel,
+          availableUpdates: (cv.status?.availableUpdates || []).map(u => u.version),
+          conditions: (cv.status?.conditions || []).map(c => ({
+            type: c.type, status: c.status, message: c.message,
+          })),
+        };
+      }).catch(() => {})
+    );
+  }
+
+  // Machines / MachinesSets
+  if (context.intents.includes("machines")) {
+    tasks.push(
+      ocpGet("/apis/machine.openshift.io/v1beta1/machines").then((d) => {
+        context.machines = (d.items || []).map((m) => ({
+          name: m.metadata.name,
+          namespace: m.metadata.namespace,
+          phase: m.status?.phase,
+          node: m.status?.nodeRef?.name,
+        }));
       }).catch(() => {})
     );
   }
@@ -1749,6 +2092,68 @@ function builtInAnalysis(userMessage, ctx) {
     return parts.join("\n");
   }
 
+  // --- Virtual Machines ---
+  if (intents.includes("virtualmachines") && ctx.virtualmachines) {
+    parts.push(`### Virtual Machines (${ctx.virtualmachines.length})`);
+    if (ctx.virtualmachines.length === 0) {
+      parts.push(`No virtual machines found. Ensure KubeVirt is installed.`);
+    } else {
+      ctx.virtualmachines.forEach((v) => {
+        const icon = v.ready ? "[OK]" : "[WARNING]";
+        parts.push(`  - ${icon} **${v.name}** (${v.namespace}) — ${v.status} — CPU: ${v.cpu || "?"}, Mem: ${v.memory || "?"}`);
+      });
+    }
+    return parts.join("\n");
+  }
+
+  // --- Pipelines / Tekton ---
+  if (intents.includes("pipelines") && (ctx.pipelines || ctx.pipelineruns)) {
+    if (ctx.pipelines) {
+      parts.push(`### Pipelines (${ctx.pipelines.length})`);
+      ctx.pipelines.forEach((p) => {
+        parts.push(`  - **${p.name}** (${p.namespace}) — ${p.tasks} task(s)`);
+      });
+    }
+    if (ctx.pipelineruns && ctx.pipelineruns.length > 0) {
+      parts.push(`\n### Recent PipelineRuns (${ctx.pipelineruns.length})`);
+      ctx.pipelineruns.forEach((p) => {
+        const icon = p.status === "Succeeded" ? "[OK]" : p.status === "Failed" ? "[CRITICAL]" : "[WARNING]";
+        parts.push(`  - ${icon} **${p.name}** (${p.namespace}) — ${p.status} — pipeline: ${p.pipeline || "inline"}`);
+      });
+    }
+    return parts.join("\n");
+  }
+
+  // --- Cluster Upgrade ---
+  if (intents.includes("cluster_upgrade") && ctx.clusterUpgrade) {
+    const cu = ctx.clusterUpgrade;
+    parts.push(`### Cluster Upgrade Status`);
+    parts.push(`**Current version:** ${cu.currentVersion || "?"}`);
+    parts.push(`**Channel:** ${cu.channel || "?"}`);
+    cu.conditions?.forEach((c) => {
+      const icon = c.type === "Available" && c.status === "True" ? "[OK]" :
+                   c.type === "Progressing" && c.status === "True" ? "[WARNING]" : "[OK]";
+      parts.push(`  - ${icon} **${c.type}:** ${c.message || c.status}`);
+    });
+    if (cu.availableUpdates?.length > 0) {
+      parts.push(`\n**Available updates:** ${cu.availableUpdates.join(", ")}`);
+      parts.push("```" + `oc adm upgrade --to=${cu.availableUpdates[0]}` + "```");
+    } else {
+      parts.push(`\n[OK] Cluster is up to date.`);
+    }
+    return parts.join("\n");
+  }
+
+  // --- Machines ---
+  if (intents.includes("machines") && ctx.machines) {
+    parts.push(`### Machines (${ctx.machines.length})`);
+    ctx.machines.forEach((m) => {
+      const icon = m.phase === "Running" ? "[OK]" : "[WARNING]";
+      parts.push(`  - ${icon} **${m.name}** (${m.namespace}) — ${m.phase || "?"} — node: ${m.node || "unassigned"}`);
+    });
+    return parts.join("\n");
+  }
+
   // --- Fallback: help ---
   parts.push(`### MCP AI Assistant`);
   parts.push(`\nI can perform operations on your OpenShift cluster. Try asking:`);
@@ -1767,9 +2172,17 @@ function builtInAnalysis(userMessage, ctx) {
   parts.push(`  - "List routes in namespace openshift-console"`);
   parts.push(`  - "List events in namespace my-app"`);
   parts.push(`  - "List pvcs" / "List secrets in namespace X"`);
+  parts.push(`\n**Virtual Machines (KubeVirt):**`);
+  parts.push(`  - "List VMs in namespace my-ns"`);
+  parts.push(`  - "Start VM my-vm in namespace my-ns" / "Stop VM my-vm in namespace my-ns"`);
+  parts.push(`\n**Pipelines (Tekton):**`);
+  parts.push(`  - "List pipelines in namespace cicd"`);
+  parts.push(`  - "List pipelineruns in namespace cicd"`);
+  parts.push(`  - "Start pipeline build-app in namespace cicd"`);
   parts.push(`\n**Cluster:**`);
   parts.push(`  - "List nodes" / "List namespaces" / "List projects"`);
   parts.push(`  - "Check cluster health" / "Show cluster operators"`);
+  parts.push(`  - "Upgrade cluster" / "Show cluster version"`);
   parts.push(`  - "How many pods are running?"`);
 
   return parts.join("\n");
@@ -1952,7 +2365,7 @@ export async function handleChatAPI(req, res) {
     // ---- Redis cache lookup ----
     // Mutating intents (delete / update / exec / run) always bypass the
     // cache so they hit the live cluster.
-    const isMutating = ["delete", "update", "exec", "run", "create"].includes(parsed.intent);
+    const isMutating = ["delete", "update", "exec", "run", "create", "start", "stop", "upgrade"].includes(parsed.intent);
     const cacheKey = cacheKeyForChat(userMessage, activeProvider);
 
     if (!isMutating) {
