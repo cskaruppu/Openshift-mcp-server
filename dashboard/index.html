@@ -361,67 +361,91 @@ tr:hover td{background:#ffffff06}
     </div>
   </div>
 
-  <!-- Main Content: 2 columns -->
-  <div class="grid grid-2">
+  <!-- Hidden LLM config (used by full chat view, kept in DOM for JS compat) -->
+  <div style="display:none">
+    <select id="llm-provider"><option value="none">Built-in Analysis</option><option value="openai">OpenAI (GPT)</option><option value="azure">Azure OpenAI</option><option value="anthropic">Anthropic (Claude)</option><option value="ollama">Ollama (Local)</option></select>
+    <div id="llm-config"><input type="text" id="llm-api-key"><input type="text" id="llm-api-url"><input type="text" id="llm-model"></div>
+  </div>
 
-    <!-- Left: AI Chat Panel -->
-    <div>
-      <div class="section-title">
-        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a8 8 0 100 16 8 8 0 000-16zm1 11H9v-2h2v2zm0-4H9V5h2v4z"/></svg>
-        AI Assistant
-      </div>
-      <div class="chat-panel">
-        <div class="chat-header" style="justify-content:space-between">
-          <div style="display:flex;align-items:center;gap:8px">
-            <svg width="16" height="16" viewBox="0 0 20 20" fill="#e04040"><circle cx="10" cy="10" r="8"/></svg>
-            MCP AI Chat
-          </div>
-          <div style="display:flex;align-items:center;gap:6px">
-            <select id="llm-provider" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer" onchange="onProviderChange()">
-              <option value="none">Built-in Analysis</option>
-              <option value="openai">OpenAI (GPT)</option>
-              <option value="azure">Azure OpenAI</option>
-              <option value="anthropic">Anthropic (Claude)</option>
-              <option value="ollama">Ollama (Local)</option>
-            </select>
-            <button class="icon-btn" style="padding:4px 8px;font-size:11px" onclick="toggleLLMConfig()">&#x2699;</button>
-          </div>
+  <!-- Command Center: 2x2 grid -->
+  <div class="grid grid-2" style="margin-bottom:8px">
+
+    <!-- Security Posture -->
+    <div class="card" id="widget-security">
+      <h3>&#x1F6E1; Security Posture</h3>
+      <div style="display:flex;align-items:center;gap:20px;margin-bottom:12px">
+        <div style="position:relative;width:80px;height:80px;flex-shrink:0">
+          <svg width="80" height="80" viewBox="0 0 80 80"><circle cx="40" cy="40" r="34" fill="none" stroke="var(--border)" stroke-width="8"/><circle id="sec-ring" cx="40" cy="40" r="34" fill="none" stroke="var(--ok)" stroke-width="8" stroke-linecap="round" stroke-dasharray="213.6" stroke-dashoffset="213.6" style="transform:rotate(-90deg);transform-origin:center;transition:stroke-dashoffset .8s ease,stroke .3s"/></svg>
+          <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800" id="sec-score">--</div>
         </div>
-        <!-- LLM Config Panel (hidden by default) -->
-        <div id="llm-config" style="display:none;padding:10px 16px;border-bottom:1px solid var(--border);background:#0f1117;font-size:12px">
-          <div style="display:flex;gap:8px;margin-bottom:6px">
-            <input type="text" id="llm-api-key" placeholder="API Key (stored in browser only)" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:4px;padding:6px 8px;color:var(--text);font-size:12px" type="password">
+        <div style="flex:1">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <span id="sec-grade" style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:6px;font-size:16px;font-weight:800;background:#22c55e33;color:#22c55e;border:2px solid #22c55e">?</span>
+            <span style="font-weight:600;font-size:14px" id="sec-grade-label">Compliance Grade</span>
           </div>
-          <div style="display:flex;gap:8px;margin-bottom:6px">
-            <input type="text" id="llm-api-url" placeholder="API URL (optional)" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:4px;padding:6px 8px;color:var(--text);font-size:12px">
-            <input type="text" id="llm-model" placeholder="Model (e.g. gpt-4)" style="width:160px;background:var(--card);border:1px solid var(--border);border-radius:4px;padding:6px 8px;color:var(--text);font-size:12px">
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span style="color:var(--text2)">Settings saved in browser localStorage</span>
-            <button class="icon-btn" style="padding:3px 10px;font-size:11px" onclick="saveLLMConfig()">Save</button>
-          </div>
-        </div>
-        <div class="chat-messages" id="chat-messages">
-          <div class="msg ai">
-            Hello! I'm your OpenShift MCP AI Assistant. I can help you with:
-            <br><br>
-            &#x2022; Cluster, node, pod, and namespace information<br>
-            &#x2022; Diagnosing issues and suggesting fixes<br>
-            &#x2022; Raising ServiceNow tickets for approvals<br>
-            &#x2022; Emergency fixes with notifications<br>
-            &#x2022; Multi-cluster management via ACM<br>
-            <br>
-            Select an LLM provider above or use built-in analysis. Type a question to start.
-          </div>
-        </div>
-        <div class="chat-input">
-          <input type="text" id="chat-input" placeholder="Ask about your cluster..." onkeydown="if(event.key==='Enter')sendMessage()">
-          <button onclick="sendMessage()">Send</button>
+          <div style="font-size:12px;color:var(--text2)" id="sec-meta">Scanning...</div>
         </div>
       </div>
+      <div id="sec-findings" style="display:flex;flex-direction:column;gap:4px;font-size:12px"></div>
+      <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="showView('chat');setTimeout(()=>{document.getElementById('full-chat-input').value='/security';sendFullChat('/security')},200)">View Full Security Audit &#x2192;</button></div>
     </div>
 
-    <!-- Right: Cluster Overview -->
+    <!-- GitOps Sync Status -->
+    <div class="card" id="widget-gitops">
+      <h3>&#x1F500; GitOps Sync Status</h3>
+      <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap" id="gitops-metrics">
+        <div style="text-align:center;flex:1;min-width:60px"><div class="metric ok" style="font-size:28px" id="gitops-synced">--</div><div class="metric-label">Synced</div></div>
+        <div style="text-align:center;flex:1;min-width:60px"><div class="metric warn" style="font-size:28px" id="gitops-outofsync">--</div><div class="metric-label">Out of Sync</div></div>
+        <div style="text-align:center;flex:1;min-width:60px"><div class="metric crit" style="font-size:28px" id="gitops-degraded">--</div><div class="metric-label">Degraded</div></div>
+        <div style="text-align:center;flex:1;min-width:60px"><div class="metric" style="font-size:28px;color:var(--text2)" id="gitops-total">--</div><div class="metric-label">Total</div></div>
+      </div>
+      <div id="gitops-apps" style="display:flex;flex-direction:column;gap:4px;font-size:12px;max-height:120px;overflow-y:auto"></div>
+      <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="showView('chat');setTimeout(()=>{document.getElementById('full-chat-input').value='/gitops';sendFullChat('/gitops')},200)">View All Applications &#x2192;</button></div>
+    </div>
+
+    <!-- DR Readiness -->
+    <div class="card" id="widget-dr">
+      <h3>&#x1F4BE; DR Readiness</h3>
+      <div style="display:flex;align-items:center;gap:20px;margin-bottom:12px">
+        <div style="position:relative;width:80px;height:80px;flex-shrink:0">
+          <svg width="80" height="80" viewBox="0 0 80 80"><circle cx="40" cy="40" r="34" fill="none" stroke="var(--border)" stroke-width="8"/><circle id="dr-ring" cx="40" cy="40" r="34" fill="none" stroke="var(--ok)" stroke-width="8" stroke-linecap="round" stroke-dasharray="213.6" stroke-dashoffset="213.6" style="transform:rotate(-90deg);transform-origin:center;transition:stroke-dashoffset .8s ease,stroke .3s"/></svg>
+          <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800" id="dr-score">--</div>
+        </div>
+        <div style="flex:1">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <span id="dr-grade" style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:6px;font-size:16px;font-weight:800;background:#22c55e33;color:#22c55e;border:2px solid #22c55e">?</span>
+            <span style="font-weight:600;font-size:14px">DR Grade</span>
+          </div>
+          <div style="font-size:12px;color:var(--text2)" id="dr-meta">Loading...</div>
+        </div>
+      </div>
+      <div id="dr-details" style="display:flex;flex-direction:column;gap:4px;font-size:12px"></div>
+      <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="showView('chat');setTimeout(()=>{document.getElementById('full-chat-input').value='/dr';sendFullChat('/dr')},200)">Full DR Assessment &#x2192;</button></div>
+    </div>
+
+    <!-- Resource Optimization -->
+    <div class="card" id="widget-optimization">
+      <h3>&#x2699; Resource Optimization</h3>
+      <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+        <div style="text-align:center;flex:1;min-width:60px"><div class="metric warn" style="font-size:28px" id="opt-over">--</div><div class="metric-label">Over-provisioned</div></div>
+        <div style="text-align:center;flex:1;min-width:60px"><div class="metric crit" style="font-size:28px" id="opt-under">--</div><div class="metric-label">Under-provisioned</div></div>
+        <div style="text-align:center;flex:1;min-width:60px"><div class="metric" style="font-size:28px;color:var(--text2)" id="opt-nolimits">--</div><div class="metric-label">No Limits</div></div>
+      </div>
+      <div style="margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>CPU Headroom</span><span id="opt-cpu-pct">--%</span></div>
+        <div class="progress-bar"><div class="progress-fill" id="opt-cpu-bar" style="width:0%;background:var(--ok)"></div></div>
+      </div>
+      <div style="margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>Memory Headroom</span><span id="opt-mem-pct">--%</span></div>
+        <div class="progress-bar"><div class="progress-fill" id="opt-mem-bar" style="width:0%;background:var(--ok)"></div></div>
+      </div>
+      <div id="opt-problems" style="display:flex;flex-direction:column;gap:3px;font-size:11px;max-height:80px;overflow-y:auto"></div>
+      <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="showView('chat');setTimeout(()=>{document.getElementById('full-chat-input').value='/recommendations';sendFullChat('/recommendations')},200)">Full Optimization Report &#x2192;</button></div>
+    </div>
+  </div>
+
+  <!-- Middle section: Node Overview + Active Alerts -->
+  <div class="grid grid-2">
     <div>
       <div class="section-title">
         <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm0 5a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V9zm0 5a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1v-2z"/></svg>
@@ -454,29 +478,13 @@ tr:hover td{background:#ffffff06}
   <!-- Bottom Section: ITSM + Pods with Issues + ACM -->
   <div class="grid grid-3" style="margin-top:8px">
 
-    <!-- ITSM Workflow -->
+    <!-- AI Activity Feed -->
     <div class="card">
-      <h3>ITSM Remediation Workflow</h3>
-      <div class="workflow-step">
-        <div class="step-num done">1</div>
-        <div><strong>Issue Detected</strong><br><span style="font-size:12px;color:var(--text2)">MCP diagnoses pod/node issue</span></div>
+      <h3>&#x1F4AC; AI Insights Feed</h3>
+      <div id="ai-activity-feed" style="display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto">
+        <div class="loading">Gathering insights...</div>
       </div>
-      <div class="workflow-step">
-        <div class="step-num done">2</div>
-        <div><strong>ServiceNow Ticket Created</strong><br><span style="font-size:12px;color:var(--text2)">Incident or Change Request raised</span></div>
-      </div>
-      <div class="workflow-step">
-        <div class="step-num active">3</div>
-        <div><strong>Awaiting Approval</strong><br><span style="font-size:12px;color:var(--text2)">Change request pending manager approval</span></div>
-      </div>
-      <div class="workflow-step">
-        <div class="step-num pending">4</div>
-        <div><strong>Execute Fix</strong><br><span style="font-size:12px;color:var(--text2)">Ansible playbook or direct API action</span></div>
-      </div>
-      <div class="workflow-step">
-        <div class="step-num pending">5</div>
-        <div><strong>Verify &amp; Close</strong><br><span style="font-size:12px;color:var(--text2)">Confirm resolution, close ITSM ticket</span></div>
-      </div>
+      <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="showView('chat')">Open AI Chat &#x2192;</button></div>
     </div>
 
     <!-- Pods with Issues (LIVE) -->
@@ -864,6 +872,155 @@ async function loadACMClusters() {
 }
 
 // ---------------------------------------------------------------------------
+// Command Center widgets — Security, GitOps, DR, Optimization, AI Feed
+// ---------------------------------------------------------------------------
+function scoreColor(v) { return v >= 80 ? 'var(--ok)' : v >= 60 ? 'var(--warn)' : 'var(--crit)'; }
+function gradeStyle(g) {
+  const m = { A:'#22c55e', B:'#60a5fa', C:'#fbbf24', D:'#fb923c', F:'#f87171' };
+  const c = m[g] || 'var(--text2)';
+  return `background:${c}33;color:${c};border:2px solid ${c}`;
+}
+function sevIcon(s) { return s === 'critical' ? '&#x1F534;' : s === 'high' ? '&#x1F7E0;' : s === 'warning' ? '&#x1F7E1;' : '&#x1F535;'; }
+
+async function loadSecurityWidget() {
+  try {
+    const d = await apiFetch('/api/dashboard/security');
+    const circ = 2 * Math.PI * 34;
+    const offset = circ - (d.score / 100) * circ;
+    const color = scoreColor(d.score);
+    document.getElementById('sec-ring').setAttribute('stroke-dashoffset', offset.toFixed(1));
+    document.getElementById('sec-ring').setAttribute('stroke', color);
+    document.getElementById('sec-score').textContent = d.score;
+    document.getElementById('sec-score').style.color = color;
+    const g = document.getElementById('sec-grade');
+    g.textContent = d.grade;
+    g.style.cssText = gradeStyle(d.grade);
+    document.getElementById('sec-meta').textContent = d.podCount + ' pods scanned across ' + d.namespaceCount + ' namespaces';
+    document.getElementById('sec-findings').innerHTML = (d.findings || []).map(f =>
+      '<div style="display:flex;align-items:center;gap:6px">' + sevIcon(f.severity) + ' <span>' + esc(f.msg) + '</span></div>'
+    ).join('');
+  } catch (e) {
+    document.getElementById('sec-meta').textContent = 'Error: ' + e.message;
+  }
+}
+
+async function loadGitOpsWidget() {
+  try {
+    const d = await apiFetch('/api/dashboard/gitops');
+    document.getElementById('gitops-synced').textContent = d.synced;
+    document.getElementById('gitops-outofsync').textContent = d.outOfSync;
+    document.getElementById('gitops-degraded').textContent = d.degraded;
+    document.getElementById('gitops-total').textContent = d.total;
+    if (d.unavailable || d.total === 0) {
+      document.getElementById('gitops-apps').innerHTML = '<div style="color:var(--text2);text-align:center;padding:8px">ArgoCD / OpenShift GitOps not detected</div>';
+      return;
+    }
+    document.getElementById('gitops-apps').innerHTML = (d.apps || []).map(a => {
+      const syncBadge = a.sync === 'Synced' ? 'badge-ok' : 'badge-warn';
+      const healthBadge = a.health === 'Healthy' ? 'badge-ok' : a.health === 'Degraded' ? 'badge-crit' : 'badge-info';
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:var(--bg);border-radius:4px">' +
+        '<span style="font-weight:500">' + esc(a.name) + '</span>' +
+        '<span><span class="badge ' + syncBadge + '">' + esc(a.sync) + '</span> <span class="badge ' + healthBadge + '">' + esc(a.health) + '</span></span></div>';
+    }).join('');
+  } catch (e) {
+    document.getElementById('gitops-apps').innerHTML = '<div style="color:var(--text2);text-align:center;padding:8px">GitOps data unavailable</div>';
+  }
+}
+
+async function loadDRWidget() {
+  try {
+    const d = await apiFetch('/api/dashboard/dr');
+    const circ = 2 * Math.PI * 34;
+    const offset = circ - (d.score / 100) * circ;
+    const color = scoreColor(d.score);
+    document.getElementById('dr-ring').setAttribute('stroke-dashoffset', offset.toFixed(1));
+    document.getElementById('dr-ring').setAttribute('stroke', color);
+    document.getElementById('dr-score').textContent = d.score;
+    document.getElementById('dr-score').style.color = color;
+    const g = document.getElementById('dr-grade');
+    g.textContent = d.grade;
+    g.style.cssText = gradeStyle(d.grade);
+    if (!d.installed) {
+      document.getElementById('dr-meta').textContent = 'Velero / OADP not installed';
+      document.getElementById('dr-details').innerHTML = '<div style="color:var(--text2)">Install OADP operator for backup &amp; DR</div>';
+      return;
+    }
+    document.getElementById('dr-meta').textContent = d.backups + ' backups \u2022 ' + d.schedules + ' schedules \u2022 ' + d.storageLocations + ' storage locations';
+    const details = [];
+    details.push('<div style="display:flex;justify-content:space-between"><span>Completed backups</span><strong>' + d.completed + '</strong></div>');
+    details.push('<div style="display:flex;justify-content:space-between"><span>Failed backups</span><strong style="color:' + (d.failed > 0 ? 'var(--crit)' : 'var(--text)') + '">' + d.failed + '</strong></div>');
+    details.push('<div style="display:flex;justify-content:space-between"><span>Active schedules</span><strong>' + d.activeSchedules + ' / ' + d.schedules + '</strong></div>');
+    details.push('<div style="display:flex;justify-content:space-between"><span>Last backup age</span><strong>' + (d.lastBackupAge != null ? d.lastBackupAge + ' day(s)' : 'Never') + '</strong></div>');
+    document.getElementById('dr-details').innerHTML = details.join('');
+  } catch (e) {
+    document.getElementById('dr-meta').textContent = 'Error: ' + e.message;
+  }
+}
+
+async function loadOptimizationWidget() {
+  try {
+    const d = await apiFetch('/api/dashboard/optimization');
+    document.getElementById('opt-over').textContent = d.overProvisioned;
+    document.getElementById('opt-under').textContent = d.underProvisioned;
+    document.getElementById('opt-nolimits').textContent = d.noLimits;
+    const cpuH = Math.max(0, Math.min(100, d.cpuHeadroom));
+    const memH = Math.max(0, Math.min(100, d.memHeadroom));
+    document.getElementById('opt-cpu-pct').textContent = cpuH + '%';
+    document.getElementById('opt-cpu-bar').style.width = cpuH + '%';
+    document.getElementById('opt-cpu-bar').style.background = cpuH > 30 ? 'var(--ok)' : cpuH > 15 ? 'var(--warn)' : 'var(--crit)';
+    document.getElementById('opt-mem-pct').textContent = memH + '%';
+    document.getElementById('opt-mem-bar').style.width = memH + '%';
+    document.getElementById('opt-mem-bar').style.background = memH > 30 ? 'var(--ok)' : memH > 15 ? 'var(--warn)' : 'var(--crit)';
+    document.getElementById('opt-problems').innerHTML = (d.topProblems || []).map(p =>
+      '<div style="display:flex;gap:4px;align-items:baseline"><span class="badge ' + (p.type === 'over' ? 'badge-warn' : 'badge-crit') + '">' + (p.type === 'over' ? 'OVER' : 'UNDER') + '</span>' +
+      '<span style="color:var(--text2)">' + esc(p.ns) + '/</span>' + esc(p.name) + '</div>'
+    ).join('');
+  } catch (e) {
+    document.getElementById('opt-over').textContent = '?';
+    document.getElementById('opt-under').textContent = '?';
+  }
+}
+
+async function loadAIActivityFeed() {
+  const feed = document.getElementById('ai-activity-feed');
+  const items = [];
+  try {
+    const [secData, drData, optData, podData] = await Promise.all([
+      apiFetch('/api/dashboard/security').catch(() => null),
+      apiFetch('/api/dashboard/dr').catch(() => null),
+      apiFetch('/api/dashboard/optimization').catch(() => null),
+      apiFetch('/api/pods/issues').catch(() => []),
+    ]);
+    const ts = new Date().toLocaleTimeString();
+    if (secData) {
+      items.push({ icon: '&#x1F6E1;', text: 'Security score: <strong>' + secData.grade + '</strong> (' + secData.score + '/100)', color: scoreColor(secData.score), time: ts });
+      if (secData.findings?.length) items.push({ icon: '&#x26A0;', text: esc(secData.findings[0].msg), color: 'var(--warn)', time: ts });
+    }
+    if (drData) {
+      items.push({ icon: '&#x1F4BE;', text: 'DR readiness: <strong>' + drData.grade + '</strong> (' + drData.score + '/100)' + (drData.lastBackupAge != null ? ' \u2022 Last backup: ' + drData.lastBackupAge + 'd ago' : ''), color: scoreColor(drData.score), time: ts });
+    }
+    if (optData) {
+      if (optData.overProvisioned > 0) items.push({ icon: '&#x1F4C9;', text: optData.overProvisioned + ' over-provisioned workload(s) — potential cost savings', color: 'var(--warn)', time: ts });
+      if (optData.underProvisioned > 0) items.push({ icon: '&#x1F4C8;', text: optData.underProvisioned + ' under-provisioned workload(s) — risk of throttling', color: 'var(--crit)', time: ts });
+      items.push({ icon: '&#x1F4CA;', text: 'Cluster headroom: CPU ' + optData.cpuHeadroom + '% \u2022 Memory ' + optData.memHeadroom + '%', color: optData.cpuHeadroom < 20 || optData.memHeadroom < 20 ? 'var(--warn)' : 'var(--ok)', time: ts });
+    }
+    if (Array.isArray(podData) && podData.length > 0) {
+      items.push({ icon: '&#x1F534;', text: podData.length + ' pod(s) with issues detected', color: 'var(--crit)', time: ts });
+    } else {
+      items.push({ icon: '&#x2705;', text: 'No pod issues detected', color: 'var(--ok)', time: ts });
+    }
+  } catch { items.push({ icon: '&#x2139;', text: 'Could not gather insights', color: 'var(--text2)', time: '' }); }
+  if (items.length === 0) { feed.innerHTML = '<div style="color:var(--text2);text-align:center;padding:16px">No insights available</div>'; return; }
+  feed.innerHTML = items.map(i =>
+    '<div style="display:flex;align-items:flex-start;gap:8px;padding:6px 8px;background:var(--bg);border-radius:6px;border-left:3px solid ' + i.color + '">' +
+    '<span style="flex-shrink:0;font-size:14px">' + i.icon + '</span>' +
+    '<div style="flex:1;line-height:1.4"><span>' + i.text + '</span>' +
+    (i.time ? '<div style="font-size:10px;color:var(--text2);margin-top:2px">' + i.time + '</div>' : '') +
+    '</div></div>'
+  ).join('');
+}
+
+// ---------------------------------------------------------------------------
 // Refresh all
 // ---------------------------------------------------------------------------
 async function refreshAll() {
@@ -874,6 +1031,11 @@ async function refreshAll() {
     loadAlerts(),
     loadPodIssues(),
     loadACMClusters(),
+    loadSecurityWidget(),
+    loadGitOpsWidget(),
+    loadDRWidget(),
+    loadOptimizationWidget(),
+    loadAIActivityFeed(),
   ]);
   document.getElementById('last-updated').textContent =
     'Updated: ' + new Date().toLocaleTimeString();

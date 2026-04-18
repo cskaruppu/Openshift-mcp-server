@@ -10,6 +10,25 @@ function json(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
+function parseCpu(s) {
+  if (!s) return 0;
+  if (typeof s === "number") return s;
+  if (s.endsWith("n")) return parseInt(s) / 1e9;
+  if (s.endsWith("u")) return parseInt(s) / 1e6;
+  if (s.endsWith("m")) return parseInt(s) / 1e3;
+  return parseFloat(s) || 0;
+}
+
+function parseMem(s) {
+  if (!s) return 0;
+  if (typeof s === "number") return s;
+  if (s.endsWith("Ki")) return parseInt(s) * 1024;
+  if (s.endsWith("Mi")) return parseInt(s) * 1024 * 1024;
+  if (s.endsWith("Gi")) return parseInt(s) * 1024 * 1024 * 1024;
+  if (s.endsWith("Ti")) return parseInt(s) * 1024 * 1024 * 1024 * 1024;
+  return parseInt(s) || 0;
+}
+
 export async function handleDashboardAPI(pathname, req, res) {
   try {
     switch (pathname) {
@@ -258,6 +277,196 @@ export async function handleDashboardAPI(pathname, req, res) {
           json(res, 200, clusters);
         } catch {
           json(res, 200, []);
+        }
+        break;
+      }
+
+      // ---- Security posture widget ----
+      case "/api/dashboard/security": {
+        const findings = [];
+        let score = 100;
+        try {
+          const pods = await ocpGet("/api/v1/pods");
+          const items = (pods.items || []).filter(
+            (p) => !p.metadata.namespace?.startsWith("openshift-") && !p.metadata.namespace?.startsWith("kube-")
+          );
+          let privileged = 0;
+          let runAsRoot = 0;
+          let noLimits = 0;
+          let latestTag = 0;
+          for (const p of items) {
+            for (const c of (p.spec?.containers || [])) {
+              const sc = c.securityContext || {};
+              if (sc.privileged) privileged++;
+              if (sc.runAsUser === 0 || (!sc.runAsNonRoot && !p.spec?.securityContext?.runAsNonRoot)) runAsRoot++;
+              if (!c.resources?.limits?.cpu && !c.resources?.limits?.memory) noLimits++;
+              const img = c.image || "";
+              if (img.endsWith(":latest") || !img.includes(":")) latestTag++;
+            }
+          }
+          if (privileged > 0) { score -= Math.min(25, privileged * 5); findings.push({ severity: "critical", msg: `${privileged} privileged container(s)` }); }
+          if (runAsRoot > 0) { score -= Math.min(15, runAsRoot * 2); findings.push({ severity: "high", msg: `${runAsRoot} container(s) may run as root` }); }
+          if (noLimits > 0) { score -= Math.min(15, Math.ceil(noLimits / 2)); findings.push({ severity: "warning", msg: `${noLimits} container(s) without resource limits` }); }
+          if (latestTag > 0) { score -= Math.min(10, latestTag); findings.push({ severity: "warning", msg: `${latestTag} image(s) using :latest or untagged` }); }
+
+          const nsList = items.map((p) => p.metadata.namespace).filter((v, i, a) => a.indexOf(v) === i);
+          let uncovered = 0;
+          for (const ns of nsList) {
+            try {
+              const np = await ocpGet(`/apis/networking.k8s.io/v1/namespaces/${ns}/networkpolicies`);
+              if (!np.items || np.items.length === 0) uncovered++;
+            } catch { uncovered++; }
+          }
+          if (uncovered > 0) { score -= Math.min(15, uncovered * 3); findings.push({ severity: "high", msg: `${uncovered} namespace(s) without NetworkPolicy` }); }
+
+          score = Math.max(0, Math.round(score));
+          const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
+          json(res, 200, { score, grade, findings: findings.slice(0, 5), podCount: items.length, namespaceCount: nsList.length });
+        } catch (err) {
+          json(res, 200, { score: 0, grade: "?", findings: [{ severity: "info", msg: "Could not compute: " + err.message }], podCount: 0, namespaceCount: 0 });
+        }
+        break;
+      }
+
+      // ---- GitOps sync status widget ----
+      case "/api/dashboard/gitops": {
+        try {
+          const ns = "openshift-gitops";
+          const data = await ocpGet(`/apis/argoproj.io/v1alpha1/namespaces/${ns}/applications`);
+          const apps = (data.items || []).map((a) => ({
+            name: a.metadata.name,
+            sync: a.status?.sync?.status || "Unknown",
+            health: a.status?.health?.status || "Unknown",
+            repo: a.spec?.source?.repoURL || a.spec?.sources?.[0]?.repoURL || "",
+          }));
+          const synced = apps.filter((a) => a.sync === "Synced").length;
+          const outOfSync = apps.filter((a) => a.sync === "OutOfSync").length;
+          const degraded = apps.filter((a) => a.health === "Degraded").length;
+          const healthy = apps.filter((a) => a.health === "Healthy").length;
+          json(res, 200, { total: apps.length, synced, outOfSync, degraded, healthy, apps: apps.slice(0, 10) });
+        } catch {
+          json(res, 200, { total: 0, synced: 0, outOfSync: 0, degraded: 0, healthy: 0, apps: [], unavailable: true });
+        }
+        break;
+      }
+
+      // ---- DR readiness widget ----
+      case "/api/dashboard/dr": {
+        const veleroNs = "openshift-adp";
+        try {
+          const [backups, schedules, locations] = await Promise.all([
+            ocpGet(`/apis/velero.io/v1/namespaces/${veleroNs}/backups`).catch(() => ({ items: [] })),
+            ocpGet(`/apis/velero.io/v1/namespaces/${veleroNs}/schedules`).catch(() => ({ items: [] })),
+            ocpGet(`/apis/velero.io/v1/namespaces/${veleroNs}/backupstoragelocations`).catch(() => ({ items: [] })),
+          ]);
+          const bkpItems = backups.items || [];
+          const completed = bkpItems.filter((b) => b.status?.phase === "Completed");
+          const failed = bkpItems.filter((b) => ["Failed", "PartiallyFailed"].includes(b.status?.phase));
+          const schItems = schedules.items || [];
+          const activeSchedules = schItems.filter((s) => !s.spec?.paused);
+          const locItems = locations.items || [];
+          const availLocs = locItems.filter((l) => l.status?.phase === "Available");
+
+          completed.sort((a, b) => (b.status?.completionTimestamp || "").localeCompare(a.status?.completionTimestamp || ""));
+          const lastGood = completed[0];
+          let lastBackupAge = null;
+          if (lastGood?.status?.completionTimestamp) {
+            lastBackupAge = Math.floor((Date.now() - new Date(lastGood.status.completionTimestamp).getTime()) / 86400000);
+          }
+
+          let score = 100;
+          if (locItems.length === 0) score -= 30;
+          else if (availLocs.length === 0) score -= 25;
+          if (schItems.length === 0) score -= 25;
+          else if (activeSchedules.length === 0) score -= 20;
+          if (completed.length === 0) score -= 25;
+          else if (lastBackupAge != null && lastBackupAge > 7) score -= 15;
+          if (failed.length > 0) score -= Math.min(15, failed.length * 5);
+          score = Math.max(0, Math.round(score));
+          const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
+
+          json(res, 200, {
+            installed: true, score, grade,
+            backups: bkpItems.length, completed: completed.length, failed: failed.length,
+            schedules: schItems.length, activeSchedules: activeSchedules.length,
+            storageLocations: locItems.length, availableLocations: availLocs.length,
+            lastBackup: lastGood?.metadata?.name || null, lastBackupAge,
+          });
+        } catch {
+          json(res, 200, { installed: false, score: 0, grade: "?", backups: 0, completed: 0, failed: 0, schedules: 0, activeSchedules: 0, storageLocations: 0, availableLocations: 0, lastBackup: null, lastBackupAge: null });
+        }
+        break;
+      }
+
+      // ---- Resource optimization widget ----
+      case "/api/dashboard/optimization": {
+        try {
+          const [pods, metricsData, nodes] = await Promise.all([
+            ocpGet("/api/v1/pods"),
+            ocpGet("/apis/metrics.k8s.io/v1beta1/pods").catch(() => ({ items: [] })),
+            ocpGet("/api/v1/nodes"),
+          ]);
+          const podItems = (pods.items || []).filter(
+            (p) => p.status?.phase === "Running" && !p.metadata.namespace?.startsWith("openshift-") && !p.metadata.namespace?.startsWith("kube-")
+          );
+
+          const metricsMap = {};
+          for (const m of (metricsData.items || [])) {
+            const key = `${m.metadata.namespace}/${m.metadata.name}`;
+            let cpu = 0, mem = 0;
+            for (const c of (m.containers || [])) {
+              cpu += parseCpu(c.usage?.cpu);
+              mem += parseMem(c.usage?.memory);
+            }
+            metricsMap[key] = { cpu, mem };
+          }
+
+          let overProvisioned = 0, underProvisioned = 0, noLimits = 0;
+          const topProblems = [];
+          for (const p of podItems) {
+            const key = `${p.metadata.namespace}/${p.metadata.name}`;
+            const usage = metricsMap[key];
+            let reqCpu = 0, reqMem = 0, haslim = false;
+            for (const c of (p.spec?.containers || [])) {
+              reqCpu += parseCpu(c.resources?.requests?.cpu);
+              reqMem += parseMem(c.resources?.requests?.memory);
+              if (c.resources?.limits?.cpu || c.resources?.limits?.memory) haslim = true;
+            }
+            if (!haslim) { noLimits++; continue; }
+            if (!usage) continue;
+            if (reqCpu > 0 && usage.cpu < reqCpu * 0.1 && reqCpu >= 0.1) {
+              overProvisioned++;
+              topProblems.push({ name: p.metadata.name, ns: p.metadata.namespace, type: "over", detail: `CPU: using ${(usage.cpu * 1000).toFixed(0)}m, requested ${(reqCpu * 1000).toFixed(0)}m` });
+            }
+            if (reqCpu > 0 && usage.cpu > reqCpu * 1.5) {
+              underProvisioned++;
+              topProblems.push({ name: p.metadata.name, ns: p.metadata.namespace, type: "under", detail: `CPU: using ${(usage.cpu * 1000).toFixed(0)}m, requested ${(reqCpu * 1000).toFixed(0)}m` });
+            }
+          }
+
+          const nodeItems = nodes.items || [];
+          let totalAllocCpu = 0, totalAllocMem = 0, totalReqCpu = 0, totalReqMem = 0;
+          for (const n of nodeItems) {
+            totalAllocCpu += parseCpu(n.status?.allocatable?.cpu);
+            totalAllocMem += parseMem(n.status?.allocatable?.memory);
+          }
+          for (const p of (pods.items || []).filter((p) => p.status?.phase === "Running")) {
+            for (const c of (p.spec?.containers || [])) {
+              totalReqCpu += parseCpu(c.resources?.requests?.cpu);
+              totalReqMem += parseMem(c.resources?.requests?.memory);
+            }
+          }
+          const cpuHeadroom = totalAllocCpu > 0 ? Math.round(((totalAllocCpu - totalReqCpu) / totalAllocCpu) * 100) : 0;
+          const memHeadroom = totalAllocMem > 0 ? Math.round(((totalAllocMem - totalReqMem) / totalAllocMem) * 100) : 0;
+
+          json(res, 200, {
+            overProvisioned, underProvisioned, noLimits,
+            cpuHeadroom, memHeadroom,
+            totalPods: podItems.length,
+            topProblems: topProblems.slice(0, 5),
+          });
+        } catch (err) {
+          json(res, 200, { overProvisioned: 0, underProvisioned: 0, noLimits: 0, cpuHeadroom: 0, memHeadroom: 0, totalPods: 0, topProblems: [], error: err.message });
         }
         break;
       }
