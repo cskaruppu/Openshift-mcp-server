@@ -290,38 +290,69 @@ export async function handleDashboardAPI(pathname, req, res) {
           const items = (pods.items || []).filter(
             (p) => !p.metadata.namespace?.startsWith("openshift-") && !p.metadata.namespace?.startsWith("kube-")
           );
-          let privileged = 0;
-          let runAsRoot = 0;
-          let noLimits = 0;
-          let latestTag = 0;
+          const privilegedList = [];
+          const runAsRootList = [];
+          const noLimitsList = [];
+          const latestTagList = [];
+          const hostNetList = [];
           for (const p of items) {
+            const pName = p.metadata.name;
+            const pNs = p.metadata.namespace;
+            if (p.spec?.hostNetwork) hostNetList.push({ namespace: pNs, pod: pName });
             for (const c of (p.spec?.containers || [])) {
               const sc = c.securityContext || {};
-              if (sc.privileged) privileged++;
-              if (sc.runAsUser === 0 || (!sc.runAsNonRoot && !p.spec?.securityContext?.runAsNonRoot)) runAsRoot++;
-              if (!c.resources?.limits?.cpu && !c.resources?.limits?.memory) noLimits++;
+              const entry = { namespace: pNs, pod: pName, container: c.name };
+              if (sc.privileged) privilegedList.push(entry);
+              if (sc.runAsUser === 0 || (!sc.runAsNonRoot && !p.spec?.securityContext?.runAsNonRoot)) runAsRootList.push(entry);
+              if (!c.resources?.limits?.cpu && !c.resources?.limits?.memory) noLimitsList.push(entry);
               const img = c.image || "";
-              if (img.endsWith(":latest") || !img.includes(":")) latestTag++;
+              if (img.endsWith(":latest") || !img.includes(":")) latestTagList.push({ ...entry, image: img });
             }
           }
-          if (privileged > 0) { score -= Math.min(25, privileged * 5); findings.push({ severity: "critical", msg: `${privileged} privileged container(s)` }); }
-          if (runAsRoot > 0) { score -= Math.min(15, runAsRoot * 2); findings.push({ severity: "high", msg: `${runAsRoot} container(s) may run as root` }); }
-          if (noLimits > 0) { score -= Math.min(15, Math.ceil(noLimits / 2)); findings.push({ severity: "warning", msg: `${noLimits} container(s) without resource limits` }); }
-          if (latestTag > 0) { score -= Math.min(10, latestTag); findings.push({ severity: "warning", msg: `${latestTag} image(s) using :latest or untagged` }); }
+          if (privilegedList.length > 0) {
+            score -= Math.min(25, privilegedList.length * 5);
+            findings.push({ severity: "critical", msg: `${privilegedList.length} privileged container(s)`, affected: privilegedList.slice(0, 5),
+              fix: "Set securityContext.privileged: false and drop all capabilities" });
+          }
+          if (hostNetList.length > 0) {
+            score -= Math.min(10, hostNetList.length * 3);
+            findings.push({ severity: "critical", msg: `${hostNetList.length} pod(s) using hostNetwork`, affected: hostNetList.slice(0, 5),
+              fix: "Remove hostNetwork: true and use Services/Routes instead" });
+          }
+          if (runAsRootList.length > 0) {
+            score -= Math.min(15, runAsRootList.length * 2);
+            findings.push({ severity: "high", msg: `${runAsRootList.length} container(s) may run as root`, affected: runAsRootList.slice(0, 5),
+              fix: "Set runAsNonRoot: true and specify runAsUser: 1000" });
+          }
+          if (noLimitsList.length > 0) {
+            score -= Math.min(15, Math.ceil(noLimitsList.length / 2));
+            findings.push({ severity: "warning", msg: `${noLimitsList.length} container(s) without resource limits`, affected: noLimitsList.slice(0, 5),
+              fix: "Add resources.limits.cpu and resources.limits.memory to each container" });
+          }
+          if (latestTagList.length > 0) {
+            score -= Math.min(10, latestTagList.length);
+            findings.push({ severity: "warning", msg: `${latestTagList.length} image(s) using :latest or untagged`, affected: latestTagList.slice(0, 5),
+              fix: "Pin images to specific tags or SHA digests" });
+          }
 
           const nsList = items.map((p) => p.metadata.namespace).filter((v, i, a) => a.indexOf(v) === i);
-          let uncovered = 0;
+          const uncoveredNsList = [];
           for (const ns of nsList) {
             try {
               const np = await ocpGet(`/apis/networking.k8s.io/v1/namespaces/${ns}/networkpolicies`);
-              if (!np.items || np.items.length === 0) uncovered++;
-            } catch { uncovered++; }
+              if (!np.items || np.items.length === 0) uncoveredNsList.push(ns);
+            } catch { uncoveredNsList.push(ns); }
           }
-          if (uncovered > 0) { score -= Math.min(15, uncovered * 3); findings.push({ severity: "high", msg: `${uncovered} namespace(s) without NetworkPolicy` }); }
+          if (uncoveredNsList.length > 0) {
+            score -= Math.min(15, uncoveredNsList.length * 3);
+            findings.push({ severity: "high", msg: `${uncoveredNsList.length} namespace(s) without NetworkPolicy`,
+              affected: uncoveredNsList.slice(0, 5).map((n) => ({ namespace: n })),
+              fix: "Apply a default-deny NetworkPolicy to each namespace" });
+          }
 
           score = Math.max(0, Math.round(score));
           const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
-          json(res, 200, { score, grade, findings: findings.slice(0, 5), podCount: items.length, namespaceCount: nsList.length });
+          json(res, 200, { score, grade, findings, podCount: items.length, namespaceCount: nsList.length });
         } catch (err) {
           json(res, 200, { score: 0, grade: "?", findings: [{ severity: "info", msg: "Could not compute: " + err.message }], podCount: 0, namespaceCount: 0 });
         }
