@@ -896,29 +896,9 @@ async function loadSecurityWidget() {
     g.textContent = d.grade;
     g.style.cssText = gradeStyle(d.grade);
     document.getElementById('sec-meta').textContent = d.podCount + ' pods scanned across ' + d.namespaceCount + ' namespaces';
-    document.getElementById('sec-findings').innerHTML = (d.findings || []).map(f => {
-      let html = '<div style="margin-bottom:10px;border-left:3px solid ' +
-        (f.severity === 'critical' ? '#ef4444' : f.severity === 'high' ? '#f97316' : '#eab308') +
-        ';padding:6px 10px;background:var(--bg);border-radius:0 6px 6px 0">';
-      html += '<div style="display:flex;align-items:center;gap:6px;font-weight:600">' + sevIcon(f.severity) + ' ' + esc(f.msg) + '</div>';
-      if (f.affected && f.affected.length > 0) {
-        html += '<div style="margin-top:4px;font-size:12px;color:var(--text2)">';
-        html += '<strong>Affected:</strong> ';
-        html += f.affected.map(a =>
-          a.container ? '<code>' + esc(a.namespace) + '/' + esc(a.pod) + '/' + esc(a.container) + '</code>' :
-          a.pod ? '<code>' + esc(a.namespace) + '/' + esc(a.pod) + '</code>' :
-          '<code>' + esc(a.namespace) + '</code>'
-        ).join(', ');
-        if (f.affected.length >= 5) html += ' …';
-        html += '</div>';
-      }
-      if (f.fix) {
-        html += '<div style="margin-top:4px;font-size:12px;color:var(--primary);font-style:italic">';
-        html += '💡 ' + esc(f.fix) + '</div>';
-      }
-      html += '</div>';
-      return html;
-    }).join('');
+    document.getElementById('sec-findings').innerHTML = (d.findings || []).map(f =>
+      '<div style="display:flex;align-items:center;gap:6px">' + sevIcon(f.severity) + ' <span>' + esc(f.msg) + '</span></div>'
+    ).join('');
   } catch (e) {
     document.getElementById('sec-meta').textContent = 'Error: ' + e.message;
   }

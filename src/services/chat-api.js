@@ -2493,33 +2493,93 @@ async function maybeHandleSlashCommand(userMessage, conversationId) {
       const data = await ocpGet(`/apis/argoproj.io/v1alpha1/namespaces/${gitopsNs}/applications`);
       const apps = data.items || [];
       if (apps.length === 0) {
-        return { reply: "### GitOps Applications\n[INFO] No ArgoCD applications found in namespace `" + gitopsNs + "`.", contextKeys: ["slash", "gitops"] };
+        return { reply: "### GitOps Applications\n[INFO] No ArgoCD applications found in namespace `" + gitopsNs + "`.\n\n**Remediation:**\n  1. Install the OpenShift GitOps Operator from OperatorHub\n  2. Create an ArgoCD instance: `oc apply -f argocd.yaml -n " + gitopsNs + "`\n  3. Add applications: `argocd app create <name> --repo <url> --path <path> --dest-server https://kubernetes.default.svc`", contextKeys: ["slash", "gitops"] };
       }
       const synced = apps.filter((a) => a.status?.sync?.status === "Synced").length;
       const outOfSync = apps.filter((a) => a.status?.sync?.status === "OutOfSync").length;
       const healthy = apps.filter((a) => a.status?.health?.status === "Healthy").length;
       const degraded = apps.filter((a) => a.status?.health?.status === "Degraded").length;
+      const unknown = apps.filter((a) => !["Synced", "OutOfSync"].includes(a.status?.sync?.status || "")).length;
 
       const lines = [
-        `### GitOps Applications (${apps.length})`,
+        `### GitOps Sync & Health Report`,
         ``,
         `@@SUMMARY|green:${synced} Synced|amber:${outOfSync} OutOfSync|red:${degraded} Degraded@@`,
         ``,
-        `| Application | Sync | Health | Repository |`,
-        `|---|---|---|---|`,
+        `| Application | Sync | Health | Target Revision | Repository |`,
+        `|---|---|---|---|---|`,
       ];
       for (const a of apps.slice(0, 25)) {
         const name = a.metadata.name;
         const sync = a.status?.sync?.status || "Unknown";
         const health = a.status?.health?.status || "Unknown";
         const repo = a.spec?.source?.repoURL || a.spec?.sources?.[0]?.repoURL || "-";
+        const rev = a.spec?.source?.targetRevision || a.spec?.sources?.[0]?.targetRevision || "HEAD";
         const syncTag = sync === "Synced" ? "[OK]" : "[WARNING]";
         const healthTag = health === "Healthy" ? "[OK]" : health === "Degraded" ? "[CRITICAL]" : "[INFO]";
-        lines.push(`| ${name} | ${syncTag} ${sync} | ${healthTag} ${health} | ${repo} |`);
+        lines.push(`| ${name} | ${syncTag} ${sync} | ${healthTag} ${health} | ${rev} | ${repo} |`);
       }
+
+      // Out-of-sync details
+      const oosApps = apps.filter((a) => a.status?.sync?.status === "OutOfSync");
+      if (oosApps.length > 0) {
+        lines.push(``);
+        lines.push(`---`);
+        lines.push(`### [WARNING] ${oosApps.length} Application(s) Out of Sync`);
+        lines.push(``);
+        for (const a of oosApps.slice(0, 10)) {
+          const name = a.metadata.name;
+          const revision = a.status?.sync?.revision || "unknown";
+          lines.push(`  - **${name}** — live revision: \`${revision.slice(0, 8)}\``);
+        }
+        lines.push(``);
+        lines.push(`**Why it matters:** Out-of-sync apps have drifted from Git — the live cluster no longer matches your declared state.`);
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. Review diffs: \`argocd app diff <app-name>\``);
+        lines.push(`  2. Sync manually: \`argocd app sync <app-name>\` or click Sync in ArgoCD UI`);
+        lines.push(`  3. Enable auto-sync to prevent drift: \`argocd app set <app-name> --sync-policy automated\``);
+        lines.push(`  4. If intentional, annotate: \`argocd app set <app-name> --sync-option Prune=false\``);
+        lines.push(``);
+      }
+
+      // Degraded app details
+      const degApps = apps.filter((a) => a.status?.health?.status === "Degraded");
+      if (degApps.length > 0) {
+        lines.push(`---`);
+        lines.push(`### [CRITICAL] ${degApps.length} Application(s) Degraded`);
+        lines.push(``);
+        for (const a of degApps.slice(0, 10)) {
+          const name = a.metadata.name;
+          const msg = a.status?.conditions?.find((c) => c.type === "SyncError")?.message || "Check application resources";
+          lines.push(`  - **${name}** — ${msg.slice(0, 120)}`);
+        }
+        lines.push(``);
+        lines.push(`**Why it matters:** Degraded apps have resources in a failed state — services may be down or misconfigured.`);
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. Check app status: \`argocd app get <app-name>\``);
+        lines.push(`  2. View resource events: \`oc describe <resource-type> <resource-name> -n <ns>\``);
+        lines.push(`  3. Check pod logs for crashes: \`oc logs <pod-name> -n <ns>\``);
+        lines.push(`  4. Force re-sync: \`argocd app sync <app-name> --force\``);
+        lines.push(``);
+      }
+
+      // Summary
+      lines.push(`---`);
+      if (outOfSync === 0 && degraded === 0) {
+        lines.push(`@@SUMMARY@@\n**All ${apps.length} applications are synced and healthy.** GitOps posture is excellent.\n@@/SUMMARY@@`);
+      } else {
+        lines.push(`@@SUMMARY@@`);
+        lines.push(`**${synced}/${apps.length} applications are in sync.** Action needed:`);
+        if (outOfSync > 0) lines.push(`  - Sync ${outOfSync} out-of-sync app(s)`);
+        if (degraded > 0) lines.push(`  - Investigate ${degraded} degraded app(s)`);
+        lines.push(`@@/SUMMARY@@`);
+      }
+
       return { reply: lines.join("\n"), contextKeys: ["slash", "gitops"] };
     } catch {
-      return { reply: "### GitOps Applications\n[INFO] ArgoCD / OpenShift GitOps not detected or not accessible.", contextKeys: ["slash", "gitops"] };
+      return { reply: "### GitOps Applications\n[INFO] ArgoCD / OpenShift GitOps not detected or not accessible.\n\n**Remediation:**\n  1. Install the OpenShift GitOps Operator: `oc apply -f gitops-subscription.yaml`\n  2. Wait for operator to be ready: `oc get csv -n openshift-operators`\n  3. Create an ArgoCD instance in namespace `openshift-gitops`", contextKeys: ["slash", "gitops"] };
     }
   }
 
@@ -2535,9 +2595,11 @@ async function maybeHandleSlashCommand(userMessage, conversationId) {
       const bkpItems = backups.items || [];
       const completed = bkpItems.filter((b) => b.status?.phase === "Completed");
       const failed = bkpItems.filter((b) => ["Failed", "PartiallyFailed"].includes(b.status?.phase));
+      const inProgress = bkpItems.filter((b) => b.status?.phase === "InProgress");
       const schItems = schedules.items || [];
       const locItems = locations.items || [];
       const availLocs = locItems.filter((l) => l.status?.phase === "Available");
+      const unavailLocs = locItems.filter((l) => l.status?.phase !== "Available");
 
       completed.sort((a, b) => (b.status?.completionTimestamp || "").localeCompare(a.status?.completionTimestamp || ""));
       const lastGood = completed[0];
@@ -2568,18 +2630,133 @@ async function maybeHandleSlashCommand(userMessage, conversationId) {
         `| Total backups | ${bkpItems.length} |`,
         `| Completed | ${completed.length} |`,
         `| Failed | ${failed.length} |`,
+        `| In progress | ${inProgress.length} |`,
         `| Schedules | ${schItems.length} (${schItems.filter((s) => !s.spec?.paused).length} active) |`,
         `| Storage locations | ${locItems.length} (${availLocs.length} available) |`,
         `| Last successful backup | ${lastGood ? lastGood.metadata.name + (lastAge != null ? ` (${lastAge}d ago)` : "") : "None"} |`,
         ``,
       ];
-      if (score >= 90) lines.push(`[OK] DR posture is strong.`);
-      else if (score >= 70) lines.push(`[WARNING] DR posture needs improvement.`);
-      else lines.push(`[CRITICAL] DR readiness is low — review backups and schedules.`);
+
+      // Failed backups detail
+      if (failed.length > 0) {
+        lines.push(`---`);
+        lines.push(`### [CRITICAL] ${failed.length} Failed Backup(s)`);
+        lines.push(``);
+        lines.push(`| Backup Name | Phase | Started | Errors |`);
+        lines.push(`|---|---|---|---|`);
+        for (const b of failed.slice(0, 10)) {
+          const started = b.status?.startTimestamp ? new Date(b.status.startTimestamp).toLocaleString() : "-";
+          const errs = b.status?.errors || 0;
+          lines.push(`| ${b.metadata.name} | ${b.status?.phase} | ${started} | ${errs} |`);
+        }
+        lines.push(``);
+        lines.push(`**Why it matters:** Failed backups mean your data is not protected — you cannot restore from a failed backup.`);
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. Check backup logs: \`velero backup logs <backup-name> -n ${veleroNs}\``);
+        lines.push(`  2. Verify storage location is accessible: \`velero backup-location get -n ${veleroNs}\``);
+        lines.push(`  3. Check for resource errors: \`velero backup describe <backup-name> --details -n ${veleroNs}\``);
+        lines.push(`  4. Common fixes: update cloud credentials, increase timeout, exclude problematic resources`);
+        lines.push(``);
+      }
+
+      // Unavailable storage locations
+      if (unavailLocs.length > 0) {
+        lines.push(`---`);
+        lines.push(`### [WARNING] ${unavailLocs.length} Unavailable Storage Location(s)`);
+        lines.push(``);
+        lines.push(`| Location | Phase | Provider |`);
+        lines.push(`|---|---|---|`);
+        for (const l of unavailLocs) {
+          lines.push(`| ${l.metadata.name} | ${l.status?.phase || "Unknown"} | ${l.spec?.provider || "-"} |`);
+        }
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. Verify cloud credentials: \`oc get secret cloud-credentials -n ${veleroNs} -o yaml\``);
+        lines.push(`  2. Check bucket accessibility from the cluster network`);
+        lines.push(`  3. Restart Velero: \`oc rollout restart deployment/velero -n ${veleroNs}\``);
+        lines.push(``);
+      }
+
+      // Paused schedules
+      const pausedSch = schItems.filter((s) => s.spec?.paused);
+      if (pausedSch.length > 0) {
+        lines.push(`---`);
+        lines.push(`### [WARNING] ${pausedSch.length} Paused Schedule(s)`);
+        lines.push(``);
+        for (const s of pausedSch) {
+          lines.push(`  - **${s.metadata.name}** — cron: \`${s.spec?.schedule || "?"}\``);
+        }
+        lines.push(``);
+        lines.push(`**Remediation:** Unpause: \`velero schedule set <schedule-name> --paused=false -n ${veleroNs}\``);
+        lines.push(``);
+      }
+
+      // No schedules
+      if (schItems.length === 0) {
+        lines.push(`---`);
+        lines.push(`### [WARNING] No Backup Schedules Configured`);
+        lines.push(``);
+        lines.push(`**Why it matters:** Without scheduled backups, you rely on manual backups which are easily forgotten.`);
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. Create a daily schedule:`);
+        lines.push("     ```");
+        lines.push(`     velero schedule create daily-backup --schedule="0 2 * * *" --ttl 168h -n ${veleroNs}`);
+        lines.push("     ```");
+        lines.push(`  2. For namespace-specific backups: add \`--include-namespaces <ns1>,<ns2>\``);
+        lines.push(``);
+      }
+
+      // Stale backups
+      if (lastAge != null && lastAge > 7) {
+        lines.push(`---`);
+        lines.push(`### [WARNING] Last Successful Backup is ${lastAge} Day(s) Old`);
+        lines.push(``);
+        lines.push(`**Why it matters:** Stale backups mean a restore would lose ${lastAge} days of data.`);
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. Trigger an immediate backup: \`velero backup create manual-$(date +%Y%m%d) -n ${veleroNs}\``);
+        lines.push(`  2. Verify schedules are running: \`velero schedule get -n ${veleroNs}\``);
+        lines.push(``);
+      }
+
+      // Recent backups table
+      if (completed.length > 0) {
+        lines.push(`---`);
+        lines.push(`### Recent Successful Backups`);
+        lines.push(``);
+        lines.push(`| Backup | Completed | Items Backed Up | TTL |`);
+        lines.push(`|---|---|---|---|`);
+        for (const b of completed.slice(0, 5)) {
+          const ts = b.status?.completionTimestamp ? new Date(b.status.completionTimestamp).toLocaleString() : "-";
+          const itemCount = b.status?.progress?.itemsBackedUp || "?";
+          const ttl = b.spec?.ttl || "default";
+          lines.push(`| ${b.metadata.name} | ${ts} | ${itemCount} | ${ttl} |`);
+        }
+        lines.push(``);
+      }
+
+      // Summary
+      lines.push(`---`);
+      if (score >= 90) {
+        lines.push(`@@SUMMARY@@\n**DR posture is strong.** Backups are current, schedules are active, and storage is healthy.\n@@/SUMMARY@@`);
+      } else if (score >= 70) {
+        lines.push(`@@SUMMARY@@\n**DR posture needs improvement.** Review the warnings above and address the highest-priority items first.\n@@/SUMMARY@@`);
+      } else {
+        lines.push(`@@SUMMARY@@`);
+        lines.push(`**DR readiness is critically low.** Prioritize:`);
+        if (locItems.length === 0) lines.push(`  1. Configure a backup storage location`);
+        else if (availLocs.length === 0) lines.push(`  1. Fix unavailable storage locations`);
+        if (schItems.length === 0) lines.push(`  2. Create backup schedules`);
+        if (failed.length > 0) lines.push(`  3. Investigate ${failed.length} failed backup(s)`);
+        if (completed.length === 0) lines.push(`  4. Run a successful backup immediately`);
+        lines.push(`@@/SUMMARY@@`);
+      }
 
       return { reply: lines.join("\n"), contextKeys: ["slash", "dr"] };
     } catch {
-      return { reply: "### Disaster Recovery\n[WARNING] Velero / OADP not installed. Install the OADP operator for backup and disaster recovery.", contextKeys: ["slash", "dr"] };
+      return { reply: "### Disaster Recovery\n[WARNING] Velero / OADP not installed or not accessible.\n\n**Remediation:**\n  1. Install the OADP Operator from OperatorHub\n  2. Create a DataProtectionApplication CR:\n     ```\n     oc create -f dpa.yaml -n openshift-adp\n     ```\n  3. Configure a BackupStorageLocation with your cloud credentials\n  4. Create your first backup: `velero backup create initial-backup -n openshift-adp`", contextKeys: ["slash", "dr"] };
     }
   }
 
@@ -2593,6 +2770,8 @@ async function maybeHandleSlashCommand(userMessage, conversationId) {
       ]);
       const pCpu = (s) => { if (!s) return 0; if (typeof s === "number") return s; if (s.endsWith("n")) return parseInt(s)/1e9; if (s.endsWith("u")) return parseInt(s)/1e6; if (s.endsWith("m")) return parseInt(s)/1e3; return parseFloat(s)||0; };
       const pMem = (s) => { if (!s) return 0; if (typeof s === "number") return s; if (s.endsWith("Ki")) return parseInt(s)*1024; if (s.endsWith("Mi")) return parseInt(s)*1048576; if (s.endsWith("Gi")) return parseInt(s)*1073741824; return parseInt(s)||0; };
+      const fmtCpu = (v) => v < 0.01 ? Math.round(v * 1000) + "m" : v.toFixed(2);
+      const fmtMem = (v) => v > 1073741824 ? (v / 1073741824).toFixed(1) + "Gi" : (v / 1048576).toFixed(0) + "Mi";
 
       const userPods = (pods.items || []).filter((p) => p.status?.phase === "Running" && !p.metadata.namespace?.startsWith("openshift-") && !p.metadata.namespace?.startsWith("kube-"));
       const metricsMap = {};
@@ -2603,24 +2782,25 @@ async function maybeHandleSlashCommand(userMessage, conversationId) {
       }
 
       let over = 0, under = 0, noLim = 0;
-      const overList = [], underList = [];
+      const overList = [], underList = [], noLimList = [];
       for (const p of userPods) {
         const key = `${p.metadata.namespace}/${p.metadata.name}`;
         const usage = metricsMap[key];
-        let reqCpu = 0, haslim = false;
+        let reqCpu = 0, reqMem = 0, haslim = false;
         for (const c of (p.spec?.containers || [])) {
           reqCpu += pCpu(c.resources?.requests?.cpu);
+          reqMem += pMem(c.resources?.requests?.memory);
           if (c.resources?.limits?.cpu || c.resources?.limits?.memory) haslim = true;
         }
-        if (!haslim) { noLim++; continue; }
+        if (!haslim) { noLim++; noLimList.push({ ns: p.metadata.namespace, pod: p.metadata.name }); continue; }
         if (!usage) continue;
         if (reqCpu > 0 && usage.cpu < reqCpu * 0.1 && reqCpu >= 0.1) {
           over++;
-          overList.push(`${p.metadata.namespace}/${p.metadata.name}`);
+          overList.push({ ns: p.metadata.namespace, pod: p.metadata.name, reqCpu, usageCpu: usage.cpu, reqMem, usageMem: usage.mem });
         }
         if (reqCpu > 0 && usage.cpu > reqCpu * 1.5) {
           under++;
-          underList.push(`${p.metadata.namespace}/${p.metadata.name}`);
+          underList.push({ ns: p.metadata.namespace, pod: p.metadata.name, reqCpu, usageCpu: usage.cpu, reqMem, usageMem: usage.mem });
         }
       }
 
@@ -2633,7 +2813,9 @@ async function maybeHandleSlashCommand(userMessage, conversationId) {
       const cpuH = totalAllocCpu > 0 ? Math.round(((totalAllocCpu - totalReqCpu) / totalAllocCpu) * 100) : 0;
       const memH = totalAllocMem > 0 ? Math.round(((totalAllocMem - totalReqMem) / totalAllocMem) * 100) : 0;
 
-      const restartPods = (pods.items || []).filter((p) => (p.status?.containerStatuses || []).some((c) => c.restartCount > 5));
+      const restartPods = (pods.items || []).filter((p) => (p.status?.containerStatuses || []).some((c) => c.restartCount > 5))
+        .map((p) => ({ ns: p.metadata.namespace, pod: p.metadata.name, restarts: Math.max(...(p.status?.containerStatuses || []).map((c) => c.restartCount || 0)) }))
+        .sort((a, b) => b.restarts - a.restarts);
 
       const lines = [
         `### Cluster Optimization Report`,
@@ -2646,26 +2828,129 @@ async function maybeHandleSlashCommand(userMessage, conversationId) {
         `| Over-provisioned | ${over} |`,
         `| Under-provisioned | ${under} |`,
         `| Missing resource limits | ${noLim} |`,
-        `| CPU headroom | ${cpuH}% |`,
-        `| Memory headroom | ${memH}% |`,
+        `| CPU headroom | ${cpuH}% (${fmtCpu(totalAllocCpu - totalReqCpu)} free of ${fmtCpu(totalAllocCpu)}) |`,
+        `| Memory headroom | ${memH}% (${fmtMem(totalAllocMem - totalReqMem)} free of ${fmtMem(totalAllocMem)}) |`,
         `| Pods with high restarts | ${restartPods.length} |`,
         ``,
       ];
-      if (over > 0) {
-        lines.push(`### Over-provisioned (top 5)`);
-        for (const n of overList.slice(0, 5)) lines.push(`  - ${n}`);
+
+      // Over-provisioned detail
+      if (overList.length > 0) {
+        lines.push(`---`);
+        lines.push(`### [WARNING] ${over} Over-Provisioned Pod(s)`);
+        lines.push(``);
+        lines.push(`These pods are using less than 10% of their requested CPU — you are paying for unused resources.`);
+        lines.push(``);
+        lines.push(`| Namespace | Pod | CPU Request | CPU Usage | Utilization |`);
+        lines.push(`|---|---|---|---|---|`);
+        for (const o of overList.slice(0, 10)) {
+          const util = o.reqCpu > 0 ? Math.round((o.usageCpu / o.reqCpu) * 100) : 0;
+          lines.push(`| ${o.ns} | ${o.pod} | ${fmtCpu(o.reqCpu)} | ${fmtCpu(o.usageCpu)} | ${util}% |`);
+        }
+        if (overList.length > 10) lines.push(`| … | *${overList.length - 10} more* | | | |`);
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. Right-size CPU requests to match actual usage (add 20% buffer)`);
+        lines.push(`  2. Use VPA (Vertical Pod Autoscaler) for automatic right-sizing:`);
+        lines.push(`     \`oc apply -f vpa.yaml\` with \`updateMode: Auto\``);
+        lines.push(`  3. For batch workloads, consider switching to Jobs instead of long-running pods`);
         lines.push(``);
       }
-      if (under > 0) {
-        lines.push(`### Under-provisioned (top 5)`);
-        for (const n of underList.slice(0, 5)) lines.push(`  - ${n}`);
+
+      // Under-provisioned detail
+      if (underList.length > 0) {
+        lines.push(`---`);
+        lines.push(`### [CRITICAL] ${under} Under-Provisioned Pod(s)`);
+        lines.push(``);
+        lines.push(`These pods are using more than 150% of their CPU request — they may be throttled or evicted.`);
+        lines.push(``);
+        lines.push(`| Namespace | Pod | CPU Request | CPU Usage | Utilization |`);
+        lines.push(`|---|---|---|---|---|`);
+        for (const u of underList.slice(0, 10)) {
+          const util = u.reqCpu > 0 ? Math.round((u.usageCpu / u.reqCpu) * 100) : 0;
+          lines.push(`| ${u.ns} | ${u.pod} | ${fmtCpu(u.reqCpu)} | ${fmtCpu(u.usageCpu)} | ${util}% |`);
+        }
+        if (underList.length > 10) lines.push(`| … | *${underList.length - 10} more* | | | |`);
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. Increase CPU requests to at least match current usage`);
+        lines.push(`  2. Set up HPA (Horizontal Pod Autoscaler) for scaling:`);
+        lines.push(`     \`oc autoscale deployment/<name> --min=2 --max=10 --cpu-percent=70\``);
+        lines.push(`  3. Check if CPU limits are causing throttling — consider increasing or removing limits`);
         lines.push(``);
       }
-      if (cpuH < 15) lines.push(`[CRITICAL] CPU headroom is very low (${cpuH}%) — consider adding nodes.`);
-      else if (cpuH < 30) lines.push(`[WARNING] CPU headroom is getting tight (${cpuH}%).`);
-      if (memH < 15) lines.push(`[CRITICAL] Memory headroom is very low (${memH}%) — risk of OOM.`);
-      else if (memH < 30) lines.push(`[WARNING] Memory headroom is getting tight (${memH}%).`);
-      if (cpuH >= 30 && memH >= 30 && over === 0 && under === 0) lines.push(`[OK] Cluster resources are well-balanced.`);
+
+      // No limits detail
+      if (noLimList.length > 0) {
+        lines.push(`---`);
+        lines.push(`### [WARNING] ${noLim} Pod(s) Without Resource Limits`);
+        lines.push(``);
+        lines.push(`| Namespace | Pod |`);
+        lines.push(`|---|---|`);
+        for (const n of noLimList.slice(0, 10)) {
+          lines.push(`| ${n.ns} | ${n.pod} |`);
+        }
+        if (noLimList.length > 10) lines.push(`| … | *${noLimList.length - 10} more* |`);
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. Add resource limits and requests to all containers`);
+        lines.push(`  2. Apply a LimitRange for namespace defaults:`);
+        lines.push(`     \`oc create limitrange default --default-cpu=500m --default-memory=256Mi -n <ns>\``);
+        lines.push(``);
+      }
+
+      // High restart pods
+      if (restartPods.length > 0) {
+        lines.push(`---`);
+        lines.push(`### [WARNING] ${restartPods.length} Pod(s) With Excessive Restarts`);
+        lines.push(``);
+        lines.push(`| Namespace | Pod | Restarts |`);
+        lines.push(`|---|---|---|`);
+        for (const r of restartPods.slice(0, 10)) {
+          lines.push(`| ${r.ns} | ${r.pod} | ${r.restarts} |`);
+        }
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. Check logs: \`oc logs <pod-name> -n <ns> --previous\``);
+        lines.push(`  2. Check events: \`oc describe pod <pod-name> -n <ns>\``);
+        lines.push(`  3. Common causes: OOMKilled (increase memory limits), CrashLoopBackOff (fix application code/config)`);
+        lines.push(``);
+      }
+
+      // Cluster capacity warnings
+      if (cpuH < 15 || memH < 15) {
+        lines.push(`---`);
+        lines.push(`### [CRITICAL] Cluster Capacity Warning`);
+        lines.push(``);
+        if (cpuH < 15) lines.push(`  - CPU headroom is very low at **${cpuH}%** — only ${fmtCpu(totalAllocCpu - totalReqCpu)} cores free`);
+        if (memH < 15) lines.push(`  - Memory headroom is very low at **${memH}%** — only ${fmtMem(totalAllocMem - totalReqMem)} free`);
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. Right-size over-provisioned workloads to free up resources`);
+        lines.push(`  2. Add worker nodes: \`oc get machinesets -n openshift-machine-api\` then scale up`);
+        lines.push(`  3. Enable cluster autoscaler for automatic node scaling`);
+        lines.push(``);
+      } else if (cpuH < 30 || memH < 30) {
+        lines.push(`---`);
+        if (cpuH < 30) lines.push(`[WARNING] CPU headroom is getting tight at ${cpuH}%.`);
+        if (memH < 30) lines.push(`[WARNING] Memory headroom is getting tight at ${memH}%.`);
+        lines.push(``);
+      }
+
+      // Summary
+      lines.push(`---`);
+      if (cpuH >= 30 && memH >= 30 && over === 0 && under === 0 && noLim === 0 && restartPods.length === 0) {
+        lines.push(`@@SUMMARY@@\n**Cluster resources are well-balanced.** No optimization needed at this time.\n@@/SUMMARY@@`);
+      } else {
+        lines.push(`@@SUMMARY@@`);
+        lines.push(`**Optimization opportunities identified:**`);
+        if (over > 0) lines.push(`  - Right-size ${over} over-provisioned pod(s) to reclaim wasted CPU/memory`);
+        if (under > 0) lines.push(`  - Increase resources for ${under} under-provisioned pod(s) to prevent throttling`);
+        if (noLim > 0) lines.push(`  - Add resource limits to ${noLim} pod(s)`);
+        if (restartPods.length > 0) lines.push(`  - Investigate ${restartPods.length} pod(s) with excessive restarts`);
+        if (cpuH < 30) lines.push(`  - Plan capacity expansion — CPU headroom is ${cpuH}%`);
+        lines.push(`@@/SUMMARY@@`);
+      }
 
       return { reply: lines.join("\n"), contextKeys: ["slash", "recommendations"] };
     } catch (e) {
@@ -2683,13 +2968,102 @@ async function maybeHandleSlashCommand(userMessage, conversationId) {
       const running = items.filter((p) => p.status?.phase === "Running").length;
       const failed = items.filter((p) => ["Failed", "Unknown"].includes(p.status?.phase)).length;
       const pending = items.filter((p) => p.status?.phase === "Pending").length;
+      const succeeded = items.filter((p) => p.status?.phase === "Succeeded").length;
+
       const lines = [
         `### Pod Summary${ns ? ` (${ns})` : ""}`,
         ``,
         `@@SUMMARY|green:${running} Running|amber:${pending} Pending|red:${failed} Failed@@`,
         ``,
         `**Total:** ${items.length} pods`,
+        ``,
       ];
+
+      // Problem pods: CrashLoop, high restarts, ImagePull errors
+      const crashLoop = items.filter((p) => (p.status?.containerStatuses || []).some((c) => c.state?.waiting?.reason === "CrashLoopBackOff"));
+      const imgPull = items.filter((p) => (p.status?.containerStatuses || []).some((c) => ["ImagePullBackOff", "ErrImagePull"].includes(c.state?.waiting?.reason)));
+      const highRestart = items.filter((p) => (p.status?.containerStatuses || []).some((c) => c.restartCount > 5))
+        .sort((a, b) => Math.max(...(b.status?.containerStatuses || []).map((c) => c.restartCount || 0)) - Math.max(...(a.status?.containerStatuses || []).map((c) => c.restartCount || 0)));
+
+      if (crashLoop.length > 0) {
+        lines.push(`---`);
+        lines.push(`### [CRITICAL] ${crashLoop.length} Pod(s) in CrashLoopBackOff`);
+        lines.push(``);
+        lines.push(`| Namespace | Pod | Container | Restarts |`);
+        lines.push(`|---|---|---|---|`);
+        for (const p of crashLoop.slice(0, 10)) {
+          const cs = (p.status?.containerStatuses || []).filter((c) => c.state?.waiting?.reason === "CrashLoopBackOff");
+          for (const c of cs) {
+            lines.push(`| ${p.metadata.namespace} | ${p.metadata.name} | ${c.name} | ${c.restartCount} |`);
+          }
+        }
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. Check logs: \`oc logs <pod> -c <container> -n <ns> --previous\``);
+        lines.push(`  2. Check events: \`oc describe pod <pod> -n <ns>\``);
+        lines.push(`  3. Common causes: missing config/secrets, wrong command, OOMKilled, startup probe failure`);
+        lines.push(``);
+      }
+
+      if (imgPull.length > 0) {
+        lines.push(`---`);
+        lines.push(`### [CRITICAL] ${imgPull.length} Pod(s) With Image Pull Errors`);
+        lines.push(``);
+        lines.push(`| Namespace | Pod | Image |`);
+        lines.push(`|---|---|---|`);
+        for (const p of imgPull.slice(0, 10)) {
+          const cs = (p.status?.containerStatuses || []).filter((c) => ["ImagePullBackOff", "ErrImagePull"].includes(c.state?.waiting?.reason));
+          for (const c of cs) {
+            lines.push(`| ${p.metadata.namespace} | ${p.metadata.name} | \`${c.image}\` |`);
+          }
+        }
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. Verify the image exists: \`podman pull <image>\``);
+        lines.push(`  2. Check pull secret: \`oc get secret -n <ns> | grep pull\``);
+        lines.push(`  3. For private registries: \`oc create secret docker-registry <name> --docker-server=<url> --docker-username=<user> --docker-password=<pw>\``);
+        lines.push(``);
+      }
+
+      if (pending.length > 0) {
+        const pendingPods = items.filter((p) => p.status?.phase === "Pending");
+        lines.push(`---`);
+        lines.push(`### [WARNING] ${pending} Pending Pod(s)`);
+        lines.push(``);
+        lines.push(`| Namespace | Pod | Reason |`);
+        lines.push(`|---|---|---|`);
+        for (const p of pendingPods.slice(0, 10)) {
+          const cond = (p.status?.conditions || []).find((c) => c.status === "False");
+          const reason = cond?.reason || (p.status?.containerStatuses || []).find((c) => c.state?.waiting)?.state?.waiting?.reason || "Scheduling";
+          lines.push(`| ${p.metadata.namespace} | ${p.metadata.name} | ${reason} |`);
+        }
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. Check events: \`oc describe pod <pod> -n <ns>\``);
+        lines.push(`  2. Common causes: insufficient resources, node selectors, taints/tolerations, PVC binding`);
+        lines.push(`  3. Check cluster capacity: \`oc adm top nodes\``);
+        lines.push(``);
+      }
+
+      if (highRestart.length > 0 && crashLoop.length === 0) {
+        lines.push(`---`);
+        lines.push(`### [WARNING] ${highRestart.length} Pod(s) With High Restarts`);
+        lines.push(``);
+        lines.push(`| Namespace | Pod | Max Restarts |`);
+        lines.push(`|---|---|---|`);
+        for (const p of highRestart.slice(0, 10)) {
+          const maxR = Math.max(...(p.status?.containerStatuses || []).map((c) => c.restartCount || 0));
+          lines.push(`| ${p.metadata.namespace} | ${p.metadata.name} | ${maxR} |`);
+        }
+        lines.push(``);
+        lines.push(`**Remediation:** Check logs with \`--previous\` flag to see why containers are restarting.`);
+        lines.push(``);
+      }
+
+      if (crashLoop.length === 0 && imgPull.length === 0 && pending === 0 && highRestart.length === 0) {
+        lines.push(`[OK] All pods are healthy — no issues detected.`);
+      }
+
       return { reply: lines.join("\n"), contextKeys: ["slash", "pods"] };
     } catch (e) {
       return { reply: `[ERROR] ${e.message}`, contextKeys: ["slash", "pods"] };
@@ -2698,14 +3072,84 @@ async function maybeHandleSlashCommand(userMessage, conversationId) {
 
   if (cmd === "nodes") {
     try {
-      const data = await ocpGet("/api/v1/nodes");
-      const items = data.items || [];
-      const lines = [`### Nodes (${items.length})`, ``, `| Node | Roles | Status | CPU | Memory |`, `|---|---|---|---|---|`];
+      const [nodeData, nodeMetrics] = await Promise.all([
+        ocpGet("/api/v1/nodes"),
+        ocpGet("/apis/metrics.k8s.io/v1beta1/nodes").catch(() => ({ items: [] })),
+      ]);
+      const items = nodeData.items || [];
+      const metricsMap = {};
+      for (const m of (nodeMetrics.items || [])) {
+        metricsMap[m.metadata.name] = m.usage || {};
+      }
+
+      const pCpu = (s) => { if (!s) return 0; if (typeof s === "number") return s; if (s.endsWith("n")) return parseInt(s)/1e9; if (s.endsWith("u")) return parseInt(s)/1e6; if (s.endsWith("m")) return parseInt(s)/1e3; return parseFloat(s)||0; };
+      const pMem = (s) => { if (!s) return 0; if (typeof s === "number") return s; if (s.endsWith("Ki")) return parseInt(s)*1024; if (s.endsWith("Mi")) return parseInt(s)*1048576; if (s.endsWith("Gi")) return parseInt(s)*1073741824; return parseInt(s)||0; };
+      const fmtMem = (v) => v > 1073741824 ? (v / 1073741824).toFixed(1) + "Gi" : (v / 1048576).toFixed(0) + "Mi";
+
+      const readyCount = items.filter((n) => (n.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True")).length;
+      const notReady = items.filter((n) => !(n.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True"));
+
+      const lines = [
+        `### Cluster Nodes (${items.length})`,
+        ``,
+        `@@SUMMARY|green:${readyCount} Ready|red:${notReady.length} NotReady@@`,
+        ``,
+        `| Node | Roles | Status | CPU (capacity) | Memory (capacity) | CPU Usage | Memory Usage |`,
+        `|---|---|---|---|---|---|---|`,
+      ];
       for (const n of items) {
         const roles = Object.keys(n.metadata.labels || {}).filter((l) => l.startsWith("node-role.kubernetes.io/")).map((l) => l.split("/")[1]).join(", ") || "worker";
         const ready = (n.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True");
-        lines.push(`| ${n.metadata.name} | ${roles} | ${ready ? "[OK] Ready" : "[CRITICAL] NotReady"} | ${n.status?.capacity?.cpu || "?"} | ${n.status?.capacity?.memory || "?"} |`);
+        const usage = metricsMap[n.metadata.name];
+        const cpuCap = n.status?.capacity?.cpu || "?";
+        const memCap = n.status?.capacity?.memory || "?";
+        let cpuUse = "-", memUse = "-";
+        if (usage) {
+          const cpuPct = pCpu(cpuCap) > 0 ? Math.round((pCpu(usage.cpu) / pCpu(cpuCap)) * 100) : 0;
+          const memPct = pMem(memCap) > 0 ? Math.round((pMem(usage.memory) / pMem(memCap)) * 100) : 0;
+          cpuUse = `${cpuPct}%`;
+          memUse = `${memPct}%`;
+        }
+        lines.push(`| ${n.metadata.name} | ${roles} | ${ready ? "[OK] Ready" : "[CRITICAL] NotReady"} | ${cpuCap} | ${fmtMem(pMem(memCap))} | ${cpuUse} | ${memUse} |`);
       }
+
+      if (notReady.length > 0) {
+        lines.push(``);
+        lines.push(`---`);
+        lines.push(`### [CRITICAL] ${notReady.length} Node(s) Not Ready`);
+        lines.push(``);
+        for (const n of notReady) {
+          const conds = (n.status?.conditions || []).filter((c) => c.status === "True" && c.type !== "Ready");
+          const reasons = conds.map((c) => `${c.type}: ${c.message || c.reason || ""}`).join("; ") || "Unknown";
+          lines.push(`  - **${n.metadata.name}** — ${reasons.slice(0, 150)}`);
+        }
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. Check node conditions: \`oc describe node <node-name>\``);
+        lines.push(`  2. Check kubelet: \`oc debug node/<node-name> -- chroot /host systemctl status kubelet\``);
+        lines.push(`  3. Check disk/memory pressure in node conditions above`);
+        lines.push(`  4. If unrecoverable, cordon and drain: \`oc adm cordon <node> && oc adm drain <node> --ignore-daemonsets\``);
+        lines.push(``);
+      }
+
+      // Node pressure warnings
+      const pressure = items.filter((n) => (n.status?.conditions || []).some((c) => ["MemoryPressure", "DiskPressure", "PIDPressure"].includes(c.type) && c.status === "True"));
+      if (pressure.length > 0) {
+        lines.push(`---`);
+        lines.push(`### [WARNING] ${pressure.length} Node(s) Under Pressure`);
+        lines.push(``);
+        for (const n of pressure) {
+          const prConds = (n.status?.conditions || []).filter((c) => ["MemoryPressure", "DiskPressure", "PIDPressure"].includes(c.type) && c.status === "True");
+          lines.push(`  - **${n.metadata.name}** — ${prConds.map((c) => c.type).join(", ")}`);
+        }
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  - MemoryPressure: evict non-critical pods, add nodes, or increase node memory`);
+        lines.push(`  - DiskPressure: clean up images/containers: \`oc debug node/<node> -- chroot /host crictl rmi --prune\``);
+        lines.push(`  - PIDPressure: check for PID-leaking workloads, increase pid.max`);
+        lines.push(``);
+      }
+
       return { reply: lines.join("\n"), contextKeys: ["slash", "nodes"] };
     } catch (e) {
       return { reply: `[ERROR] ${e.message}`, contextKeys: ["slash", "nodes"] };
@@ -2718,13 +3162,50 @@ async function maybeHandleSlashCommand(userMessage, conversationId) {
       const path = ns ? `/apis/apps/v1/namespaces/${ns}/deployments` : "/apis/apps/v1/deployments";
       const data = await ocpGet(path);
       const items = (data.items || []).filter((d) => !ns ? (!d.metadata.namespace.startsWith("openshift-") && !d.metadata.namespace.startsWith("kube-")) : true);
-      const lines = [`### Deployments${ns ? ` (${ns})` : ""} — ${items.length}`, ``, `| Name | Namespace | Ready | Available |`, `|---|---|---|---|`];
+
+      const healthy = items.filter((d) => (d.status?.readyReplicas || 0) === (d.spec?.replicas || 0) && (d.spec?.replicas || 0) > 0);
+      const degraded = items.filter((d) => (d.status?.readyReplicas || 0) < (d.spec?.replicas || 0) && (d.spec?.replicas || 0) > 0);
+      const zeroScale = items.filter((d) => (d.spec?.replicas || 0) === 0);
+
+      const lines = [
+        `### Deployments${ns ? ` (${ns})` : ""} — ${items.length}`,
+        ``,
+        `@@SUMMARY|green:${healthy.length} Healthy|red:${degraded.length} Degraded|amber:${zeroScale.length} Scaled to 0@@`,
+        ``,
+        `| Name | Namespace | Ready | Available | Image |`,
+        `|---|---|---|---|---|`,
+      ];
       for (const d of items.slice(0, 30)) {
         const ready = `${d.status?.readyReplicas || 0}/${d.spec?.replicas || 0}`;
         const avail = d.status?.availableReplicas || 0;
-        lines.push(`| ${d.metadata.name} | ${d.metadata.namespace} | ${ready} | ${avail} |`);
+        const img = d.spec?.template?.spec?.containers?.[0]?.image || "-";
+        const shortImg = img.length > 50 ? "…" + img.slice(-45) : img;
+        const isDegraded = (d.status?.readyReplicas || 0) < (d.spec?.replicas || 0) && (d.spec?.replicas || 0) > 0;
+        lines.push(`| ${isDegraded ? "**" + d.metadata.name + "**" : d.metadata.name} | ${d.metadata.namespace} | ${isDegraded ? "[WARNING] " : ""}${ready} | ${avail} | \`${shortImg}\` |`);
       }
       if (items.length > 30) lines.push(`\n*...and ${items.length - 30} more*`);
+
+      if (degraded.length > 0) {
+        lines.push(``);
+        lines.push(`---`);
+        lines.push(`### [WARNING] ${degraded.length} Degraded Deployment(s)`);
+        lines.push(``);
+        for (const d of degraded.slice(0, 10)) {
+          const readyR = d.status?.readyReplicas || 0;
+          const desired = d.spec?.replicas || 0;
+          const conds = (d.status?.conditions || []).filter((c) => c.status === "False");
+          const reason = conds.length > 0 ? conds[0].reason + ": " + (conds[0].message || "").slice(0, 80) : "Pods not ready";
+          lines.push(`  - **${d.metadata.namespace}/${d.metadata.name}** — ${readyR}/${desired} ready — ${reason}`);
+        }
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. Check pod status: \`oc get pods -l app=<deployment-name> -n <ns>\``);
+        lines.push(`  2. Check events: \`oc describe deployment <name> -n <ns>\``);
+        lines.push(`  3. Rollback if a recent change caused it: \`oc rollout undo deployment/<name> -n <ns>\``);
+        lines.push(`  4. Scale issues: \`oc scale deployment/<name> --replicas=<N> -n <ns>\``);
+        lines.push(``);
+      }
+
       return { reply: lines.join("\n"), contextKeys: ["slash", "deployments"] };
     } catch (e) {
       return { reply: `[ERROR] ${e.message}`, contextKeys: ["slash", "deployments"] };
@@ -2736,14 +3217,69 @@ async function maybeHandleSlashCommand(userMessage, conversationId) {
     try {
       const path = ns ? `/api/v1/namespaces/${ns}/events` : "/api/v1/events";
       const data = await ocpGet(path);
-      const items = (data.items || []).filter((e) => e.type === "Warning").sort((a, b) => new Date(b.lastTimestamp || b.metadata.creationTimestamp) - new Date(a.lastTimestamp || a.metadata.creationTimestamp)).slice(0, 20);
-      if (items.length === 0) return { reply: `### Events${ns ? ` (${ns})` : ""}\n[OK] No warning events.`, contextKeys: ["slash", "events"] };
-      const lines = [`### Warning Events${ns ? ` (${ns})` : ""} — ${items.length}`, ``];
-      for (const e of items) {
-        const kind = e.involvedObject?.kind || "?";
-        const name = e.involvedObject?.name || "?";
-        lines.push(`  - **${e.reason}** ${kind}/${name}${e.metadata.namespace ? ` (${e.metadata.namespace})` : ""} — ${(e.message || "").slice(0, 100)}${e.count > 1 ? ` (x${e.count})` : ""}`);
+      const warnings = (data.items || []).filter((e) => e.type === "Warning")
+        .filter((e) => !ns ? (!e.metadata.namespace?.startsWith("openshift-") && !e.metadata.namespace?.startsWith("kube-")) : true)
+        .sort((a, b) => new Date(b.lastTimestamp || b.metadata.creationTimestamp) - new Date(a.lastTimestamp || a.metadata.creationTimestamp));
+
+      if (warnings.length === 0) return { reply: `### Events${ns ? ` (${ns})` : ""}\n[OK] No warning events found. Your cluster is running clean.`, contextKeys: ["slash", "events"] };
+
+      // Group by reason
+      const byReason = {};
+      for (const e of warnings) {
+        const r = e.reason || "Unknown";
+        if (!byReason[r]) byReason[r] = [];
+        byReason[r].push(e);
       }
+
+      const lines = [
+        `### Warning Events${ns ? ` (${ns})` : ""}`,
+        ``,
+        `**${warnings.length} warning event(s)** grouped by reason:`,
+        ``,
+      ];
+
+      const reasonEntries = Object.entries(byReason).sort((a, b) => b[1].length - a[1].length);
+
+      for (const [reason, events] of reasonEntries.slice(0, 8)) {
+        lines.push(`---`);
+        lines.push(`### ${reason} (${events.length} occurrence${events.length > 1 ? "s" : ""})`);
+        lines.push(``);
+        lines.push(`| Namespace | Resource | Message | Count |`);
+        lines.push(`|---|---|---|---|`);
+        for (const e of events.slice(0, 5)) {
+          const kind = e.involvedObject?.kind || "?";
+          const name = e.involvedObject?.name || "?";
+          const msg = (e.message || "").slice(0, 80).replace(/\|/g, "/");
+          lines.push(`| ${e.metadata.namespace || "-"} | ${kind}/${name} | ${msg} | ${e.count || 1} |`);
+        }
+        if (events.length > 5) lines.push(`| … | *${events.length - 5} more* | | |`);
+        lines.push(``);
+
+        // Contextual remediation per reason
+        const r = reason.toLowerCase();
+        if (r.includes("backoff") || r.includes("crashloop")) {
+          lines.push(`**Remediation:** Check container logs: \`oc logs <pod> -n <ns> --previous\` — look for application errors, missing configs, or OOMKilled.`);
+        } else if (r.includes("imagepull") || r.includes("errimagepull")) {
+          lines.push(`**Remediation:** Verify image exists and pull secret is configured: \`oc get secret -n <ns> | grep pull\``);
+        } else if (r.includes("failedschedul")) {
+          lines.push(`**Remediation:** Check node resources (\`oc adm top nodes\`), node selectors, taints/tolerations, and PVC availability.`);
+        } else if (r.includes("unhealthy") || r.includes("probe")) {
+          lines.push(`**Remediation:** Review liveness/readiness probe configuration — increase \`initialDelaySeconds\` or \`timeoutSeconds\` if the app starts slowly.`);
+        } else if (r.includes("evict")) {
+          lines.push(`**Remediation:** Node is under resource pressure. Check disk/memory usage: \`oc debug node/<node-name> -- df -h\``);
+        } else if (r.includes("oom") || r.includes("killed")) {
+          lines.push(`**Remediation:** Increase container memory limits in the deployment spec. Current limits are too low for the workload.`);
+        } else if (r.includes("failedcreate") || r.includes("failedmount")) {
+          lines.push(`**Remediation:** Check PVC/ConfigMap/Secret references exist: \`oc describe pod <pod> -n <ns>\``);
+        }
+        lines.push(``);
+      }
+
+      if (reasonEntries.length > 8) {
+        lines.push(`*...and ${reasonEntries.length - 8} more event reason(s)*`);
+        lines.push(``);
+      }
+
       return { reply: lines.join("\n"), contextKeys: ["slash", "events"] };
     } catch (e) {
       return { reply: `[ERROR] ${e.message}`, contextKeys: ["slash", "events"] };
@@ -2753,37 +3289,148 @@ async function maybeHandleSlashCommand(userMessage, conversationId) {
   if (cmd === "pipelines") {
     const ns = arg || null;
     try {
-      const path = ns ? `/apis/tekton.dev/v1/namespaces/${ns}/pipelines` : "/apis/tekton.dev/v1/pipelines";
-      const data = await ocpGet(path);
-      const items = data.items || [];
-      if (items.length === 0) return { reply: `### Tekton Pipelines${ns ? ` (${ns})` : ""}\n[INFO] No pipelines found.`, contextKeys: ["slash", "pipelines"] };
-      const lines = [`### Tekton Pipelines${ns ? ` (${ns})` : ""} — ${items.length}`, ``, `| Pipeline | Namespace | Tasks |`, `|---|---|---|`];
+      const pipePath = ns ? `/apis/tekton.dev/v1/namespaces/${ns}/pipelines` : "/apis/tekton.dev/v1/pipelines";
+      const runPath = ns ? `/apis/tekton.dev/v1/namespaces/${ns}/pipelineruns` : "/apis/tekton.dev/v1/pipelineruns";
+      const [pipeData, runData] = await Promise.all([
+        ocpGet(pipePath),
+        ocpGet(runPath).catch(() => ({ items: [] })),
+      ]);
+      const items = pipeData.items || [];
+      const runs = (runData.items || []).sort((a, b) => (b.status?.startTime || "").localeCompare(a.status?.startTime || ""));
+
+      if (items.length === 0) return { reply: `### Tekton Pipelines${ns ? ` (${ns})` : ""}\n[INFO] No pipelines found.\n\n**Getting started:**\n  1. Create a pipeline: \`oc apply -f pipeline.yaml -n <ns>\`\n  2. Run it: \`tkn pipeline start <name> -n <ns>\``, contextKeys: ["slash", "pipelines"] };
+
+      const lines = [
+        `### Tekton Pipelines${ns ? ` (${ns})` : ""} — ${items.length}`,
+        ``,
+        `| Pipeline | Namespace | Tasks | Last Run | Status |`,
+        `|---|---|---|---|---|`,
+      ];
       for (const p of items.slice(0, 30)) {
-        lines.push(`| ${p.metadata.name} | ${p.metadata.namespace} | ${p.spec?.tasks?.length || 0} |`);
+        const lastRun = runs.find((r) => r.spec?.pipelineRef?.name === p.metadata.name && r.metadata.namespace === p.metadata.namespace);
+        const lastStatus = lastRun ? (lastRun.status?.conditions?.[0]?.reason || lastRun.status?.conditions?.[0]?.status || "?") : "Never";
+        const statusTag = lastStatus === "Succeeded" ? "[OK]" : lastStatus === "Failed" ? "[CRITICAL]" : lastStatus === "Running" ? "[INFO]" : "";
+        lines.push(`| ${p.metadata.name} | ${p.metadata.namespace} | ${p.spec?.tasks?.length || 0} | ${lastRun ? new Date(lastRun.status?.startTime || lastRun.metadata.creationTimestamp).toLocaleString() : "-"} | ${statusTag} ${lastStatus} |`);
       }
+
+      // Failed runs
+      const failedRuns = runs.filter((r) => r.status?.conditions?.[0]?.reason === "Failed");
+      if (failedRuns.length > 0) {
+        lines.push(``);
+        lines.push(`---`);
+        lines.push(`### [WARNING] ${failedRuns.length} Failed PipelineRun(s)`);
+        lines.push(``);
+        lines.push(`| PipelineRun | Pipeline | Namespace | Started | Error |`);
+        lines.push(`|---|---|---|---|---|`);
+        for (const r of failedRuns.slice(0, 10)) {
+          const pipeName = r.spec?.pipelineRef?.name || "-";
+          const started = r.status?.startTime ? new Date(r.status.startTime).toLocaleString() : "-";
+          const errMsg = (r.status?.conditions?.[0]?.message || "").slice(0, 60).replace(/\|/g, "/");
+          lines.push(`| ${r.metadata.name} | ${pipeName} | ${r.metadata.namespace} | ${started} | ${errMsg} |`);
+        }
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. View run details: \`tkn pipelinerun describe <run-name> -n <ns>\``);
+        lines.push(`  2. Check task logs: \`tkn pipelinerun logs <run-name> -n <ns>\``);
+        lines.push(`  3. Common causes: Git clone auth failure, image build errors, test failures`);
+        lines.push(`  4. Re-run: \`tkn pipeline start <pipeline-name> -n <ns> --use-param-defaults\``);
+        lines.push(``);
+      }
+
+      // Running pipelines
+      const runningRuns = runs.filter((r) => r.status?.conditions?.[0]?.reason === "Running");
+      if (runningRuns.length > 0) {
+        lines.push(`---`);
+        lines.push(`### [INFO] ${runningRuns.length} Currently Running`);
+        lines.push(``);
+        for (const r of runningRuns.slice(0, 5)) {
+          lines.push(`  - **${r.metadata.name}** (${r.spec?.pipelineRef?.name || "?"}) in \`${r.metadata.namespace}\` — started ${r.status?.startTime ? new Date(r.status.startTime).toLocaleString() : "?"}`);
+        }
+        lines.push(``);
+      }
+
       return { reply: lines.join("\n"), contextKeys: ["slash", "pipelines"] };
     } catch {
-      return { reply: "### Tekton Pipelines\n[INFO] Tekton not installed or not accessible.", contextKeys: ["slash", "pipelines"] };
+      return { reply: "### Tekton Pipelines\n[INFO] Tekton not installed or not accessible.\n\n**To install:**\n  1. Install the OpenShift Pipelines Operator from OperatorHub\n  2. Verify: `oc get pods -n openshift-pipelines`", contextKeys: ["slash", "pipelines"] };
     }
   }
 
   if (cmd === "vms") {
     const ns = arg || null;
     try {
-      const path = ns ? `/apis/kubevirt.io/v1/namespaces/${ns}/virtualmachines` : "/apis/kubevirt.io/v1/virtualmachines";
-      const data = await ocpGet(path);
-      const items = data.items || [];
-      if (items.length === 0) return { reply: `### Virtual Machines${ns ? ` (${ns})` : ""}\n[INFO] No VMs found.`, contextKeys: ["slash", "vms"] };
-      const lines = [`### Virtual Machines${ns ? ` (${ns})` : ""} — ${items.length}`, ``, `| VM | Namespace | Running | CPU | Memory |`, `|---|---|---|---|---|`];
+      const vmPath = ns ? `/apis/kubevirt.io/v1/namespaces/${ns}/virtualmachines` : "/apis/kubevirt.io/v1/virtualmachines";
+      const vmiPath = ns ? `/apis/kubevirt.io/v1/namespaces/${ns}/virtualmachineinstances` : "/apis/kubevirt.io/v1/virtualmachineinstances";
+      const [vmData, vmiData] = await Promise.all([
+        ocpGet(vmPath),
+        ocpGet(vmiPath).catch(() => ({ items: [] })),
+      ]);
+      const items = vmData.items || [];
+      const vmis = vmiData.items || [];
+      const vmiMap = {};
+      for (const v of vmis) { vmiMap[`${v.metadata.namespace}/${v.metadata.name}`] = v; }
+
+      if (items.length === 0) return { reply: `### Virtual Machines${ns ? ` (${ns})` : ""}\n[INFO] No VMs found.\n\n**Getting started:**\n  1. Create a VM from template: \`oc process <template> | oc apply -f -\`\n  2. Or use the OpenShift Console > Virtualization > Create VM`, contextKeys: ["slash", "vms"] };
+
+      const runningVMs = items.filter((v) => v.status?.ready);
+      const stoppedVMs = items.filter((v) => !v.status?.ready && !v.spec?.running);
+      const failedVMs = items.filter((v) => v.spec?.running && !v.status?.ready);
+
+      const lines = [
+        `### Virtual Machines${ns ? ` (${ns})` : ""} — ${items.length}`,
+        ``,
+        `@@SUMMARY|green:${runningVMs.length} Running|amber:${stoppedVMs.length} Stopped|red:${failedVMs.length} Failed@@`,
+        ``,
+        `| VM | Namespace | Status | CPU | Memory | OS | IP |`,
+        `|---|---|---|---|---|---|---|`,
+      ];
       for (const v of items.slice(0, 30)) {
-        const running = v.status?.ready ? "[OK] Yes" : "[WARNING] No";
+        const running = v.status?.ready;
+        const statusTag = running ? "[OK] Running" : v.spec?.running ? "[CRITICAL] Not Ready" : "[INFO] Stopped";
         const cpu = v.spec?.template?.spec?.domain?.cpu?.cores || "?";
         const mem = v.spec?.template?.spec?.domain?.resources?.requests?.memory || "?";
-        lines.push(`| ${v.metadata.name} | ${v.metadata.namespace} | ${running} | ${cpu} | ${mem} |`);
+        const vmiKey = `${v.metadata.namespace}/${v.metadata.name}`;
+        const vmi = vmiMap[vmiKey];
+        const os = v.metadata.labels?.["vm.kubevirt.io/os"] || v.spec?.template?.metadata?.labels?.["vm.kubevirt.io/os"] || "-";
+        const ip = vmi?.status?.interfaces?.[0]?.ipAddress || "-";
+        lines.push(`| ${v.metadata.name} | ${v.metadata.namespace} | ${statusTag} | ${cpu} | ${mem} | ${os} | ${ip} |`);
       }
+
+      if (failedVMs.length > 0) {
+        lines.push(``);
+        lines.push(`---`);
+        lines.push(`### [CRITICAL] ${failedVMs.length} VM(s) Expected Running But Not Ready`);
+        lines.push(``);
+        for (const v of failedVMs.slice(0, 10)) {
+          const vmiKey = `${v.metadata.namespace}/${v.metadata.name}`;
+          const vmi = vmiMap[vmiKey];
+          const conds = vmi?.status?.conditions || v.status?.conditions || [];
+          const errCond = conds.find((c) => c.status === "False");
+          const reason = errCond ? `${errCond.type}: ${errCond.message || errCond.reason || ""}`.slice(0, 100) : "Check VMI status";
+          lines.push(`  - **${v.metadata.namespace}/${v.metadata.name}** — ${reason}`);
+        }
+        lines.push(``);
+        lines.push(`**Remediation:**`);
+        lines.push(`  1. Check VMI status: \`oc get vmi <vm-name> -n <ns> -o yaml\``);
+        lines.push(`  2. Check virt-launcher pod: \`oc logs virt-launcher-<vm-name>-xxxxx -n <ns>\``);
+        lines.push(`  3. Restart VM: \`virtctl restart <vm-name> -n <ns>\``);
+        lines.push(`  4. Common causes: insufficient node resources, storage issues, network config`);
+        lines.push(``);
+      }
+
+      if (stoppedVMs.length > 0) {
+        lines.push(`---`);
+        lines.push(`### [INFO] ${stoppedVMs.length} Stopped VM(s)`);
+        lines.push(``);
+        for (const v of stoppedVMs.slice(0, 5)) {
+          lines.push(`  - **${v.metadata.namespace}/${v.metadata.name}** — Start with: \`virtctl start ${v.metadata.name} -n ${v.metadata.namespace}\``);
+        }
+        if (stoppedVMs.length > 5) lines.push(`  - *...and ${stoppedVMs.length - 5} more*`);
+        lines.push(``);
+      }
+
       return { reply: lines.join("\n"), contextKeys: ["slash", "vms"] };
     } catch {
-      return { reply: "### Virtual Machines\n[INFO] KubeVirt not installed or not accessible.", contextKeys: ["slash", "vms"] };
+      return { reply: "### Virtual Machines\n[INFO] KubeVirt / OpenShift Virtualization not installed or not accessible.\n\n**To install:**\n  1. Install the OpenShift Virtualization Operator from OperatorHub\n  2. Create a HyperConverged CR: `oc apply -f hyperconverged.yaml`\n  3. Verify: `oc get pods -n openshift-cnv`", contextKeys: ["slash", "vms"] };
     }
   }
 
