@@ -2232,6 +2232,10 @@ async function testProvider(provider) {
       apiUrl: document.getElementById('pc-' + provider + '-apiurl').value,
       model: document.getElementById('pc-' + provider + '-model').value,
     };
+    if (provider === 'azure') {
+      cfg.deployment = document.getElementById('pc-azure-deployment').value;
+      cfg.apiVersion = document.getElementById('pc-azure-apiversion').value;
+    }
     const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/settings/llm/test', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cfg),

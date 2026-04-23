@@ -7,7 +7,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { ocpGet } from "../utils/openshift-client.js";
 import { callLLM } from "./llm.js";
 
-const LLM_SETTINGS_PATH = "/tmp/mcp-llm-settings.json";
+const LLM_SETTINGS_PATH = process.env.LLM_SETTINGS_PATH || "/data/mcp-llm-settings.json";
 
 const DEFAULT_LLM_SETTINGS = {
   providers: {
@@ -99,7 +99,7 @@ export async function handleLLMSettingsPost(req, res) {
 export async function handleLLMSettingsTest(req, res) {
   try {
     const body = await readJsonBody(req);
-    const { provider, apiKey, apiUrl, model } = body;
+    const { provider, apiKey, apiUrl, model, deployment, apiVersion } = body;
 
     if (!provider || provider === "none") {
       return json(res, 400, { error: "No provider specified" });
@@ -109,7 +109,7 @@ export async function handleLLMSettingsTest(req, res) {
     }
 
     const startMs = Date.now();
-    const result = await callLLM({
+    const llmOpts = {
       messages: [{ role: "user", content: "Hello. Respond with just: OK" }],
       provider,
       apiKey,
@@ -117,7 +117,12 @@ export async function handleLLMSettingsTest(req, res) {
       model,
       maxTokens: 50,
       temperature: 0,
-    });
+    };
+    if (provider === "azure") {
+      llmOpts.azureDeployment = deployment || model;
+      llmOpts.azureApiVersion = apiVersion || "2024-08-01-preview";
+    }
+    const result = await callLLM(llmOpts);
     const durationMs = Date.now() - startMs;
 
     return json(res, 200, {

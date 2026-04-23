@@ -38,8 +38,8 @@ function resolveOpts(opts = {}) {
     temperature: opts.temperature ?? 0.3,
     system: opts.system || null,
     tools: opts.tools || null,
-    azureDeployment: opts.azureDeployment || DEFAULT_AZURE_DEPLOYMENT,
-    azureApiVersion: opts.azureApiVersion || DEFAULT_AZURE_API_VERSION,
+    azureDeployment: opts.azureDeployment || opts.deployment || DEFAULT_AZURE_DEPLOYMENT,
+    azureApiVersion: opts.azureApiVersion || opts.apiVersion || DEFAULT_AZURE_API_VERSION,
   };
 }
 
