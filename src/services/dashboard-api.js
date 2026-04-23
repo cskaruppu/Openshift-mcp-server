@@ -3,11 +3,136 @@
  * These endpoints query the OpenShift API and return JSON.
  */
 
+import { readFile, writeFile } from "node:fs/promises";
 import { ocpGet } from "../utils/openshift-client.js";
+import { callLLM } from "./llm.js";
+
+const LLM_SETTINGS_PATH = "/tmp/mcp-llm-settings.json";
+
+const DEFAULT_LLM_SETTINGS = {
+  providers: {
+    openai: { apiKey: "", apiUrl: "https://api.openai.com", model: "gpt-4", enabled: false },
+    anthropic: { apiKey: "", apiUrl: "https://api.anthropic.com", model: "claude-sonnet-4-20250514", enabled: false },
+    azure: { apiKey: "", apiUrl: "", model: "gpt-4", deployment: "", apiVersion: "2024-08-01-preview", enabled: false },
+    ollama: { apiKey: "", apiUrl: "http://ollama:11434", model: "llama3", enabled: false },
+  },
+  defaults: {
+    provider: "none",
+    temperature: 0.3,
+    maxTokens: 2000,
+    systemPrompt: "",
+  },
+  fallbackChain: ["anthropic", "openai", "ollama", "none"],
+};
+
+// Providers that require an API key
+const PROVIDERS_REQUIRING_KEY = new Set(["openai", "anthropic", "azure"]);
 
 function json(res, status, data) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
+}
+
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      const raw = Buffer.concat(chunks).toString();
+      if (!raw) return resolve({});
+      try { resolve(JSON.parse(raw)); }
+      catch (e) { reject(e); }
+    });
+    req.on("error", reject);
+  });
+}
+
+/**
+ * GET /api/settings/llm — read LLM settings from disk or return defaults
+ */
+export async function handleLLMSettingsGet(req, res) {
+  try {
+    const raw = await readFile(LLM_SETTINGS_PATH, "utf8");
+    const settings = JSON.parse(raw);
+    return json(res, 200, settings);
+  } catch {
+    return json(res, 200, DEFAULT_LLM_SETTINGS);
+  }
+}
+
+/**
+ * POST /api/settings/llm — save LLM settings to disk
+ */
+export async function handleLLMSettingsPost(req, res) {
+  try {
+    const body = await readJsonBody(req);
+
+    // Validate: don't store empty apiKey for providers that need one
+    const providers = body.providers || {};
+    const errors = [];
+    for (const [name, cfg] of Object.entries(providers)) {
+      if (cfg.enabled && PROVIDERS_REQUIRING_KEY.has(name) && !cfg.apiKey) {
+        errors.push(`Provider "${name}" is enabled but has no apiKey`);
+      }
+    }
+    if (errors.length > 0) {
+      return json(res, 400, { error: "Validation failed", details: errors });
+    }
+
+    // Merge with defaults to ensure schema integrity
+    const settings = {
+      providers: { ...DEFAULT_LLM_SETTINGS.providers, ...providers },
+      defaults: { ...DEFAULT_LLM_SETTINGS.defaults, ...(body.defaults || {}) },
+      fallbackChain: body.fallbackChain || DEFAULT_LLM_SETTINGS.fallbackChain,
+    };
+
+    await writeFile(LLM_SETTINGS_PATH, JSON.stringify(settings, null, 2), "utf8");
+    return json(res, 200, { success: true, settings });
+  } catch (err) {
+    return json(res, 500, { error: err.message });
+  }
+}
+
+/**
+ * POST /api/settings/llm/test — test a provider connection
+ */
+export async function handleLLMSettingsTest(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const { provider, apiKey, apiUrl, model } = body;
+
+    if (!provider || provider === "none") {
+      return json(res, 400, { error: "No provider specified" });
+    }
+    if (PROVIDERS_REQUIRING_KEY.has(provider) && !apiKey) {
+      return json(res, 400, { error: `API key required for provider "${provider}"` });
+    }
+
+    const startMs = Date.now();
+    const result = await callLLM({
+      messages: [{ role: "user", content: "Hello. Respond with just: OK" }],
+      provider,
+      apiKey,
+      apiUrl,
+      model,
+      maxTokens: 50,
+      temperature: 0,
+    });
+    const durationMs = Date.now() - startMs;
+
+    return json(res, 200, {
+      success: true,
+      provider,
+      model,
+      reply: (result.text || "").substring(0, 200),
+      durationMs,
+    });
+  } catch (err) {
+    return json(res, 200, {
+      success: false,
+      error: err.message,
+    });
+  }
 }
 
 function parseCpu(s) {

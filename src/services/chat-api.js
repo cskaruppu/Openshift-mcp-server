@@ -1638,6 +1638,18 @@ Always be concise but thorough. Use markdown formatting.`;
 // Call external LLM — thin wrapper around the centralized llm.js module
 // that keeps the built-in analysis fallback when no provider is configured.
 // ---------------------------------------------------------------------------
+/**
+ * Convert a conversation history array [{role: "user"|"ai", text}, ...] into
+ * the messages format expected by the LLM, limited to the last N entries.
+ */
+function historyToMessages(history, limit = 10) {
+  if (!Array.isArray(history) || history.length === 0) return [];
+  return history.slice(-limit).map((h) => ({
+    role: h.role === "ai" ? "assistant" : "user",
+    content: h.text || "",
+  }));
+}
+
 async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
   const provider = opts.provider || LLM_PROVIDER;
   if (!provider || provider === "none") {
@@ -1645,9 +1657,17 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
   }
   const contextStr = JSON.stringify(clusterContext, null, 2);
   const userContent = `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;
+
+  // Build messages array, optionally including conversation history
+  const priorMessages = historyToMessages(opts.history);
+  const messages = [
+    ...priorMessages,
+    { role: "user", content: userContent },
+  ];
+
   try {
     const r = await callLLM({
-      messages: [{ role: "user", content: userContent }],
+      messages,
       system: SYSTEM_PROMPT,
       maxTokens: 2000,
       temperature: 0.3,
@@ -3520,6 +3540,12 @@ export async function handleChatAPI(req, res) {
     if (body.apiUrl) llmOpts.apiUrl = body.apiUrl;
     if (body.model) llmOpts.model = body.model;
 
+    // Conversation history — only include when an LLM provider is active
+    const requestedProvider = body.provider || LLM_PROVIDER;
+    if (Array.isArray(body.history) && requestedProvider && requestedProvider !== "none") {
+      llmOpts.history = body.history;
+    }
+
     activeProvider = llmOpts.provider || LLM_PROVIDER;
 
     // ---- NLU: parse the message once, with conversation memory for
@@ -3751,9 +3777,10 @@ export async function handleChatAPI(req, res) {
           let context = await gatherClusterContext(userMessage);
           const contextStr = JSON.stringify(context, null, 2);
           const userContent = `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;
+          const priorMessages = historyToMessages(llmOpts.history);
           let fullText = "";
           await callLLMStream({
-            messages: [{ role: "user", content: userContent }],
+            messages: [...priorMessages, { role: "user", content: userContent }],
             system: SYSTEM_PROMPT,
             maxTokens: 2000,
             temperature: 0.3,
@@ -3875,6 +3902,511 @@ export async function handleChatAPI(req, res) {
       cacheHit,
       durationMs: Date.now() - startedAt,
     }).catch(() => {});
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/chat/compare — Multi-LLM comparison
+// Sends the same message to 2-3 providers in parallel and returns all results.
+// ---------------------------------------------------------------------------
+export async function handleChatCompareAPI(req, res) {
+  const startedAt = Date.now();
+  try {
+    const body = await readBody(req);
+    const { message, providers, conversationId } = body;
+
+    if (!message) return json(res, 400, { error: "Missing 'message' field" });
+    if (!Array.isArray(providers) || providers.length < 1 || providers.length > 3) {
+      return json(res, 400, { error: "Provide 1-3 providers in the 'providers' array" });
+    }
+
+    // Gather cluster context once, shared across all providers
+    const context = await gatherClusterContext(message);
+    const contextStr = JSON.stringify(context, null, 2);
+    const userContent = `${message}\n\n--- Live Cluster Data ---\n${contextStr}`;
+
+    // Send to all providers in parallel
+    const promises = providers.map(async (prov) => {
+      const provStart = Date.now();
+      try {
+        const r = await callLLM({
+          messages: [{ role: "user", content: userContent }],
+          system: SYSTEM_PROMPT,
+          maxTokens: 2000,
+          temperature: 0.3,
+          provider: prov.provider,
+          apiKey: prov.apiKey,
+          apiUrl: prov.apiUrl,
+          model: prov.model,
+        });
+        const reply = r.text || "";
+        return {
+          provider: prov.provider,
+          model: prov.model,
+          reply,
+          durationMs: Date.now() - provStart,
+          tokenEstimate: Math.ceil(reply.length / 4),
+        };
+      } catch (err) {
+        return {
+          provider: prov.provider,
+          model: prov.model,
+          reply: "",
+          durationMs: Date.now() - provStart,
+          tokenEstimate: 0,
+          error: err.message,
+        };
+      }
+    });
+
+    const settled = await Promise.allSettled(promises);
+    const results = settled.map((s) =>
+      s.status === "fulfilled"
+        ? s.value
+        : { provider: "unknown", model: "", reply: "", durationMs: 0, tokenEstimate: 0, error: s.reason?.message || "Unknown error" }
+    );
+
+    return json(res, 200, {
+      results,
+      conversationId: conversationId || null,
+    });
+  } catch (err) {
+    console.error("[chat-compare] error:", err);
+    return json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/chat/investigate — Deep Investigation mode using agent loop
+// ---------------------------------------------------------------------------
+export async function handleChatInvestigateAPI(req, res) {
+  const startedAt = Date.now();
+  try {
+    const body = await readBody(req);
+    const { message, provider, apiKey, apiUrl, model, conversationId, history } = body;
+
+    if (!message) return json(res, 400, { error: "Missing 'message' field" });
+
+    const llmOpts = {};
+    if (provider) llmOpts.provider = provider;
+    if (apiKey) llmOpts.apiKey = apiKey;
+    if (apiUrl) llmOpts.apiUrl = apiUrl;
+    if (model) llmOpts.model = model;
+
+    // Build context hint from cluster
+    let contextHint = null;
+    try {
+      const ctx = await gatherClusterContext(message);
+      contextHint = {
+        problemPods: (ctx.problemPods || []).slice(0, 5),
+        correlations: ctx.correlations || [],
+      };
+    } catch (e) {
+      console.warn("[chat-investigate] context gathering failed:", e.message);
+    }
+
+    // Build initial user message with history prepended for the agent loop
+    let userMsg = message;
+    if (Array.isArray(history) && history.length > 0) {
+      const historyContext = history.slice(-10).map((h) =>
+        `${h.role === "ai" ? "Assistant" : "User"}: ${h.text}`
+      ).join("\n");
+      userMsg = `Previous conversation:\n${historyContext}\n\nCurrent question: ${message}`;
+    }
+
+    const stepsCollected = [];
+    const agentResult = await runAgent({
+      userMessage: userMsg,
+      contextHint,
+      llmOpts,
+      onStep: (stepInfo) => stepsCollected.push(stepInfo),
+    });
+
+    const toolsUsed = [...new Set(
+      (agentResult.toolCalls || []).map((tc) => tc.name).filter(Boolean)
+    )];
+
+    // Gather context keys from the context hint
+    const contextKeys = contextHint ? Object.keys(contextHint) : [];
+
+    return json(res, 200, {
+      reply: agentResult.text || "",
+      provider: provider || LLM_PROVIDER,
+      steps: stepsCollected,
+      toolsUsed,
+      durationMs: Date.now() - startedAt,
+      contextKeys,
+      conversationId: conversationId || null,
+    });
+  } catch (err) {
+    console.error("[chat-investigate] error:", err);
+    return json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/chat/runbook — AI Runbooks
+// Pre-defined investigation workflows combining cluster API calls + LLM analysis
+// ---------------------------------------------------------------------------
+const RUNBOOK_DEFINITIONS = {
+  "crashloop-diagnosis": {
+    name: "CrashLoop Diagnosis",
+    description: "Fetch CrashLoopBackOff pods, get logs, get events, analyze",
+    steps: [
+      { name: "fetch-crashloop-pods", description: "Find all CrashLoopBackOff pods" },
+      { name: "fetch-pod-logs", description: "Get logs from affected pods" },
+      { name: "fetch-events", description: "Get warning events" },
+      { name: "analyze", description: "LLM analysis of findings" },
+    ],
+  },
+  "security-hardening": {
+    name: "Security Hardening",
+    description: "Security assessment with per-namespace breakdown",
+    steps: [
+      { name: "scan-pods", description: "Scan pods for security issues" },
+      { name: "check-network-policies", description: "Check NetworkPolicy coverage" },
+      { name: "analyze", description: "Security analysis and recommendations" },
+    ],
+  },
+  "pre-upgrade-check": {
+    name: "Pre-Upgrade Check",
+    description: "Check cluster version, operators, node health, pending updates, certificate expiry",
+    steps: [
+      { name: "cluster-version", description: "Check cluster version and update availability" },
+      { name: "operators", description: "Check operator status" },
+      { name: "node-health", description: "Verify node health" },
+      { name: "certificates", description: "Check certificate expiry" },
+      { name: "analyze", description: "Upgrade readiness analysis" },
+    ],
+  },
+  "capacity-planning": {
+    name: "Capacity Planning",
+    description: "Node metrics, resource usage, growth projection",
+    steps: [
+      { name: "node-resources", description: "Gather node resource allocation" },
+      { name: "pod-metrics", description: "Gather pod resource usage" },
+      { name: "analyze", description: "Capacity analysis and projections" },
+    ],
+  },
+  "network-troubleshoot": {
+    name: "Network Troubleshoot",
+    description: "Check NetworkPolicies, Services, Routes, DNS",
+    steps: [
+      { name: "network-policies", description: "List NetworkPolicies" },
+      { name: "services", description: "Check Services" },
+      { name: "routes", description: "Check Routes" },
+      { name: "analyze", description: "Network analysis" },
+    ],
+  },
+};
+
+async function executeRunbook(runbookId, namespace, llmOpts) {
+  const def = RUNBOOK_DEFINITIONS[runbookId];
+  if (!def) throw new Error(`Unknown runbook: ${runbookId}`);
+
+  const steps = [];
+
+  if (runbookId === "crashloop-diagnosis") {
+    // Step 1: Fetch CrashLoopBackOff pods
+    let clbPods = [];
+    try {
+      const nsPath = namespace ? `/api/v1/namespaces/${namespace}/pods` : "/api/v1/pods";
+      const pods = await ocpGet(nsPath);
+      clbPods = (pods.items || []).filter((p) =>
+        (p.status?.containerStatuses || []).some(
+          (c) => c.state?.waiting?.reason === "CrashLoopBackOff"
+        )
+      );
+      steps.push({ name: "fetch-crashloop-pods", status: "completed", data: { count: clbPods.length, pods: clbPods.slice(0, 10).map((p) => `${p.metadata.namespace}/${p.metadata.name}`) } });
+    } catch (err) {
+      steps.push({ name: "fetch-crashloop-pods", status: "error", data: { error: err.message } });
+    }
+
+    // Step 2: Fetch logs from affected pods (first 3)
+    const logsData = [];
+    for (const pod of clbPods.slice(0, 3)) {
+      try {
+        const logs = await fetchPodLogs(pod.metadata.namespace, pod.metadata.name, 40);
+        logsData.push({ pod: pod.metadata.name, ns: pod.metadata.namespace, logs: logs.substring(0, 2000) });
+      } catch (err) {
+        logsData.push({ pod: pod.metadata.name, ns: pod.metadata.namespace, error: err.message });
+      }
+    }
+    steps.push({ name: "fetch-pod-logs", status: "completed", data: logsData });
+
+    // Step 3: Fetch warning events
+    let events = [];
+    try {
+      const nsPath = namespace ? `/api/v1/namespaces/${namespace}/events` : "/api/v1/events";
+      const evtData = await ocpGet(nsPath);
+      events = (evtData.items || []).filter((e) => e.type === "Warning").slice(0, 20);
+      steps.push({ name: "fetch-events", status: "completed", data: { count: events.length } });
+    } catch (err) {
+      steps.push({ name: "fetch-events", status: "error", data: { error: err.message } });
+    }
+
+    // Step 4: LLM analysis
+    const analysisPrompt = `Analyze these CrashLoopBackOff findings and provide diagnosis:\n\nAffected pods: ${JSON.stringify(steps[0].data)}\n\nPod logs: ${JSON.stringify(logsData).slice(0, 3000)}\n\nWarning events: ${JSON.stringify(events.slice(0, 10)).slice(0, 2000)}`;
+    steps.push(await runAnalysisStep(analysisPrompt, llmOpts));
+
+  } else if (runbookId === "security-hardening") {
+    // Step 1: Scan pods for security issues
+    try {
+      const pods = await ocpGet(namespace ? `/api/v1/namespaces/${namespace}/pods` : "/api/v1/pods");
+      const items = (pods.items || []).filter((p) =>
+        !p.metadata.namespace?.startsWith("openshift-") && !p.metadata.namespace?.startsWith("kube-")
+      );
+      let privileged = 0, runAsRoot = 0, noLimits = 0, latestTag = 0;
+      for (const p of items) {
+        for (const c of (p.spec?.containers || [])) {
+          if (c.securityContext?.privileged) privileged++;
+          if (!c.securityContext?.runAsNonRoot && !p.spec?.securityContext?.runAsNonRoot) runAsRoot++;
+          if (!c.resources?.limits?.cpu && !c.resources?.limits?.memory) noLimits++;
+          const img = c.image || "";
+          if (img.endsWith(":latest") || !img.includes(":")) latestTag++;
+        }
+      }
+      steps.push({ name: "scan-pods", status: "completed", data: { totalPods: items.length, privileged, runAsRoot, noLimits, latestTag } });
+    } catch (err) {
+      steps.push({ name: "scan-pods", status: "error", data: { error: err.message } });
+    }
+
+    // Step 2: Check NetworkPolicy coverage
+    try {
+      const nsList = namespace
+        ? [{ metadata: { name: namespace } }]
+        : ((await ocpGet("/api/v1/namespaces")).items || []).filter((ns) =>
+            !ns.metadata.name.startsWith("openshift-") && !ns.metadata.name.startsWith("kube-")
+          );
+      let covered = 0, uncovered = 0;
+      for (const ns of nsList.slice(0, 20)) {
+        try {
+          const np = await ocpGet(`/apis/networking.k8s.io/v1/namespaces/${ns.metadata.name}/networkpolicies`);
+          if (np.items && np.items.length > 0) covered++;
+          else uncovered++;
+        } catch { uncovered++; }
+      }
+      steps.push({ name: "check-network-policies", status: "completed", data: { covered, uncovered } });
+    } catch (err) {
+      steps.push({ name: "check-network-policies", status: "error", data: { error: err.message } });
+    }
+
+    // Step 3: LLM analysis
+    const analysisPrompt = `Provide a security hardening analysis for this OpenShift cluster:\n\n${JSON.stringify(steps).slice(0, 4000)}`;
+    steps.push(await runAnalysisStep(analysisPrompt, llmOpts));
+
+  } else if (runbookId === "pre-upgrade-check") {
+    // Step 1: Cluster version
+    try {
+      const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+      steps.push({ name: "cluster-version", status: "completed", data: {
+        version: cv.status?.desired?.version,
+        channel: cv.spec?.channel,
+        availableUpdates: (cv.status?.availableUpdates || []).length,
+        conditions: (cv.status?.conditions || []).map((c) => ({ type: c.type, status: c.status, message: c.message?.substring(0, 100) })),
+      }});
+    } catch (err) {
+      steps.push({ name: "cluster-version", status: "error", data: { error: err.message } });
+    }
+
+    // Step 2: Operators
+    try {
+      const ops = await ocpGet("/apis/config.openshift.io/v1/clusteroperators");
+      const items = ops.items || [];
+      const degraded = items.filter((o) =>
+        (o.status?.conditions || []).some((c) => c.type === "Degraded" && c.status === "True")
+      );
+      steps.push({ name: "operators", status: "completed", data: {
+        total: items.length,
+        degraded: degraded.length,
+        degradedNames: degraded.map((o) => o.metadata.name),
+      }});
+    } catch (err) {
+      steps.push({ name: "operators", status: "error", data: { error: err.message } });
+    }
+
+    // Step 3: Node health
+    try {
+      const nodes = await ocpGet("/api/v1/nodes");
+      const items = nodes.items || [];
+      const ready = items.filter((n) =>
+        (n.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True")
+      );
+      steps.push({ name: "node-health", status: "completed", data: {
+        total: items.length,
+        ready: ready.length,
+        notReady: items.length - ready.length,
+      }});
+    } catch (err) {
+      steps.push({ name: "node-health", status: "error", data: { error: err.message } });
+    }
+
+    // Step 4: Certificate expiry (check kube-apiserver certs)
+    try {
+      const secrets = await ocpGet("/api/v1/namespaces/openshift-kube-apiserver/secrets");
+      const certSecrets = (secrets.items || []).filter((s) =>
+        s.type === "kubernetes.io/tls" || s.metadata.name.includes("cert")
+      );
+      steps.push({ name: "certificates", status: "completed", data: { certCount: certSecrets.length } });
+    } catch (err) {
+      steps.push({ name: "certificates", status: "completed", data: { certCount: 0, note: "Could not access certificate secrets" } });
+    }
+
+    // Step 5: LLM analysis
+    const analysisPrompt = `Analyze this OpenShift cluster pre-upgrade readiness:\n\n${JSON.stringify(steps).slice(0, 4000)}`;
+    steps.push(await runAnalysisStep(analysisPrompt, llmOpts));
+
+  } else if (runbookId === "capacity-planning") {
+    // Step 1: Node resources
+    try {
+      const nodes = await ocpGet("/api/v1/nodes");
+      const items = nodes.items || [];
+      let totalCpu = 0, totalMemBytes = 0;
+      for (const n of items) {
+        totalCpu += parseInt(n.status?.capacity?.cpu || "0", 10);
+        const mem = n.status?.capacity?.memory || "0";
+        if (mem.endsWith("Ki")) totalMemBytes += parseInt(mem) * 1024;
+        else if (mem.endsWith("Mi")) totalMemBytes += parseInt(mem) * 1024 * 1024;
+        else if (mem.endsWith("Gi")) totalMemBytes += parseInt(mem) * 1024 * 1024 * 1024;
+      }
+      steps.push({ name: "node-resources", status: "completed", data: {
+        nodeCount: items.length,
+        totalCpu,
+        totalMemGi: Math.round(totalMemBytes / (1024 * 1024 * 1024)),
+      }});
+    } catch (err) {
+      steps.push({ name: "node-resources", status: "error", data: { error: err.message } });
+    }
+
+    // Step 2: Pod metrics
+    try {
+      const metrics = await ocpGet("/apis/metrics.k8s.io/v1beta1/pods");
+      const items = metrics.items || [];
+      steps.push({ name: "pod-metrics", status: "completed", data: { totalPods: items.length } });
+    } catch (err) {
+      steps.push({ name: "pod-metrics", status: "completed", data: { totalPods: 0, note: "Metrics server unavailable" } });
+    }
+
+    // Step 3: LLM analysis
+    const analysisPrompt = `Provide capacity planning analysis and growth projections:\n\n${JSON.stringify(steps).slice(0, 4000)}`;
+    steps.push(await runAnalysisStep(analysisPrompt, llmOpts));
+
+  } else if (runbookId === "network-troubleshoot") {
+    const ns = namespace;
+
+    // Step 1: Network Policies
+    try {
+      const path = ns
+        ? `/apis/networking.k8s.io/v1/namespaces/${ns}/networkpolicies`
+        : "/apis/networking.k8s.io/v1/networkpolicies";
+      const np = await ocpGet(path);
+      steps.push({ name: "network-policies", status: "completed", data: {
+        count: (np.items || []).length,
+        policies: (np.items || []).slice(0, 10).map((p) => ({
+          name: p.metadata.name,
+          namespace: p.metadata.namespace,
+        })),
+      }});
+    } catch (err) {
+      steps.push({ name: "network-policies", status: "error", data: { error: err.message } });
+    }
+
+    // Step 2: Services
+    try {
+      const path = ns ? `/api/v1/namespaces/${ns}/services` : "/api/v1/services";
+      const svc = await ocpGet(path);
+      const items = (svc.items || []).filter((s) =>
+        !s.metadata.namespace?.startsWith("openshift-") && !s.metadata.namespace?.startsWith("kube-")
+      );
+      steps.push({ name: "services", status: "completed", data: { count: items.length } });
+    } catch (err) {
+      steps.push({ name: "services", status: "error", data: { error: err.message } });
+    }
+
+    // Step 3: Routes
+    try {
+      const path = ns
+        ? `/apis/route.openshift.io/v1/namespaces/${ns}/routes`
+        : "/apis/route.openshift.io/v1/routes";
+      const routes = await ocpGet(path);
+      const items = (routes.items || []).filter((r) =>
+        !r.metadata.namespace?.startsWith("openshift-") && !r.metadata.namespace?.startsWith("kube-")
+      );
+      steps.push({ name: "routes", status: "completed", data: {
+        count: items.length,
+        routes: items.slice(0, 10).map((r) => ({
+          name: r.metadata.name,
+          namespace: r.metadata.namespace,
+          host: r.spec?.host,
+        })),
+      }});
+    } catch (err) {
+      steps.push({ name: "routes", status: "error", data: { error: err.message } });
+    }
+
+    // Step 4: LLM analysis
+    const analysisPrompt = `Analyze network configuration and troubleshoot potential issues:\n\n${JSON.stringify(steps).slice(0, 4000)}`;
+    steps.push(await runAnalysisStep(analysisPrompt, llmOpts));
+  }
+
+  return steps;
+}
+
+async function runAnalysisStep(prompt, llmOpts) {
+  const provider = llmOpts?.provider || LLM_PROVIDER;
+  if (!provider || provider === "none") {
+    return { name: "analyze", status: "completed", data: { analysis: "No LLM provider configured. Raw data is available in the steps above." } };
+  }
+  try {
+    const r = await callLLM({
+      messages: [{ role: "user", content: prompt }],
+      system: "You are an OpenShift SRE assistant. Analyze the provided data and give a clear, actionable summary.",
+      maxTokens: 2000,
+      temperature: 0.3,
+      ...llmOpts,
+    });
+    return { name: "analyze", status: "completed", data: { analysis: r.text || "" } };
+  } catch (err) {
+    return { name: "analyze", status: "error", data: { error: err.message } };
+  }
+}
+
+export async function handleChatRunbookAPI(req, res) {
+  const startedAt = Date.now();
+  try {
+    const body = await readBody(req);
+    const { runbook, namespace, provider, apiKey, apiUrl, model, conversationId } = body;
+
+    if (!runbook) return json(res, 400, { error: "Missing 'runbook' field" });
+    if (!RUNBOOK_DEFINITIONS[runbook]) {
+      return json(res, 400, {
+        error: `Unknown runbook: ${runbook}`,
+        available: Object.keys(RUNBOOK_DEFINITIONS),
+      });
+    }
+
+    const llmOpts = {};
+    if (provider) llmOpts.provider = provider;
+    if (apiKey) llmOpts.apiKey = apiKey;
+    if (apiUrl) llmOpts.apiUrl = apiUrl;
+    if (model) llmOpts.model = model;
+
+    const steps = await executeRunbook(runbook, namespace || null, llmOpts);
+
+    // Build reply from the analysis step
+    const analysisStep = steps.find((s) => s.name === "analyze");
+    const reply = analysisStep?.data?.analysis || `Runbook "${runbook}" completed. See steps for raw data.`;
+
+    return json(res, 200, {
+      reply,
+      runbook,
+      steps,
+      durationMs: Date.now() - startedAt,
+      conversationId: conversationId || null,
+    });
+  } catch (err) {
+    console.error("[chat-runbook] error:", err);
+    return json(res, 500, { error: err.message });
   }
 }
 

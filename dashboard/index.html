@@ -288,6 +288,102 @@ tr:hover td{background:#ffffff06}
 .export-btn:hover{border-color:var(--accent2);color:var(--accent2)}
 /* Streaming text */
 .streaming-text .conv-body::after{content:'|';animation:blink 1s step-end infinite;color:var(--accent)}
+/* Settings view */
+.settings-container{max-width:960px;margin:0 auto;padding:24px}
+.settings-section{margin-bottom:28px}
+.settings-section h3{font-size:15px;font-weight:600;margin-bottom:14px;color:var(--text)}
+.provider-cards{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+@media(max-width:768px){.provider-cards{grid-template-columns:1fr}}
+.provider-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:18px;transition:border-color .2s}
+.provider-card:hover{border-color:#3a3d4a}
+.provider-card .pc-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.provider-card .pc-title{font-size:14px;font-weight:600;color:var(--text)}
+.provider-card .pc-toggle{position:relative;width:40px;height:22px;cursor:pointer}
+.provider-card .pc-toggle input{opacity:0;width:0;height:0}
+.provider-card .pc-toggle .slider{position:absolute;inset:0;background:var(--border);border-radius:11px;transition:.3s}
+.provider-card .pc-toggle .slider::before{content:'';position:absolute;width:16px;height:16px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s}
+.provider-card .pc-toggle input:checked+.slider{background:var(--ok)}
+.provider-card .pc-toggle input:checked+.slider::before{transform:translateX(18px)}
+.provider-card .pc-field{margin-bottom:10px}
+.provider-card .pc-field label{display:block;font-size:11px;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:.3px}
+.provider-card .pc-field input,.provider-card .pc-field textarea{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none;font-family:inherit}
+.provider-card .pc-field input:focus,.provider-card .pc-field textarea:focus{border-color:var(--accent2)}
+.provider-card .pc-test{display:flex;align-items:center;gap:8px;margin-top:8px}
+.provider-card .pc-test button{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:5px 12px;color:var(--text2);cursor:pointer;font-size:11px;transition:all .2s}
+.provider-card .pc-test button:hover{border-color:var(--accent2);color:var(--accent2)}
+.provider-card .pc-test .test-status{font-size:12px}
+.settings-row{display:flex;gap:16px;align-items:flex-start;margin-bottom:12px;flex-wrap:wrap}
+.settings-row .settings-field{flex:1;min-width:200px}
+.settings-row .settings-field label{display:block;font-size:11px;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:.3px}
+.settings-row .settings-field input,.settings-row .settings-field select,.settings-row .settings-field textarea{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none;font-family:inherit}
+.settings-row .settings-field input:focus,.settings-row .settings-field select:focus,.settings-row .settings-field textarea:focus{border-color:var(--accent2)}
+.settings-row .settings-field input[type=range]{padding:4px 0}
+.fallback-chain{display:flex;flex-direction:column;gap:6px}
+.fallback-item{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:13px;cursor:grab}
+.fallback-item:active{cursor:grabbing}
+.fallback-item .fb-num{width:22px;height:22px;border-radius:50%;background:var(--accent2);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
+.fallback-item .fb-name{flex:1}
+.settings-save-bar{display:flex;gap:12px;align-items:center;padding-top:16px;border-top:1px solid var(--border);margin-top:24px}
+.settings-save-bar button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 28px;font-weight:600;cursor:pointer;font-size:14px}
+.settings-save-bar button:hover{opacity:.9}
+.settings-save-bar .save-status{font-size:12px;color:var(--text2)}
+/* Chat mode toggles */
+.chat-mode-toggles{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.mode-toggle{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--text2);cursor:pointer;font-size:11px;font-weight:500;transition:all .2s;display:flex;align-items:center;gap:4px}
+.mode-toggle:hover{border-color:var(--accent2);color:var(--text)}
+.mode-toggle.active{background:var(--accent2);color:#fff;border-color:var(--accent2)}
+.mode-toggle.active:hover{opacity:.9}
+/* Runbooks dropdown */
+.runbook-dropdown{position:relative;display:inline-block}
+.runbook-dropdown .runbook-menu{position:absolute;bottom:100%;left:0;background:var(--card);border:1px solid var(--border);border-radius:8px;min-width:220px;display:none;z-index:100;box-shadow:0 -4px 16px #0008;margin-bottom:4px}
+.runbook-dropdown .runbook-menu.open{display:block}
+.runbook-menu-item{padding:9px 14px;cursor:pointer;font-size:12px;color:var(--text);transition:background .15s}
+.runbook-menu-item:hover{background:#2a2d3a}
+.runbook-menu-item:first-child{border-radius:8px 8px 0 0}
+.runbook-menu-item:last-child{border-radius:0 0 8px 8px}
+/* Compare cards */
+.compare-container{display:flex;gap:14px;flex-wrap:wrap;width:100%;margin:8px 0}
+.compare-card{flex:1;min-width:250px;background:var(--bg);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.compare-card .cc-header{padding:8px 12px;background:#161b22;border-bottom:1px solid var(--border);font-size:12px;font-weight:600;color:var(--accent2)}
+.compare-card .cc-body{padding:10px 12px;font-size:13px;line-height:1.6;max-height:300px;overflow-y:auto}
+.compare-card .cc-footer{padding:6px 12px;border-top:1px solid var(--border);font-size:11px;color:var(--text2);display:flex;justify-content:space-between;align-items:center}
+.compare-card .cc-footer button{background:var(--accent);color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px}
+.compare-card .cc-footer button:hover{opacity:.9}
+/* Investigation steps */
+.investigation-steps{margin:8px 0;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.investigation-steps .inv-header{padding:8px 12px;background:#161b22;border-bottom:1px solid var(--border);font-size:12px;font-weight:600;color:var(--text);cursor:pointer;display:flex;align-items:center;gap:6px}
+.investigation-steps .inv-header .inv-arrow{transition:transform .2s;font-size:10px}
+.investigation-steps .inv-header .inv-arrow.open{transform:rotate(90deg)}
+.investigation-steps .inv-body{display:none;padding:8px 12px}
+.investigation-steps .inv-body.open{display:block}
+.inv-step{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px}
+.inv-step:last-child{border-bottom:none}
+.inv-step .inv-icon{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0}
+.inv-step .inv-icon.done{background:var(--ok);color:#fff}
+.inv-step .inv-icon.running{background:var(--accent2);color:#fff;animation:pulse 1.5s infinite}
+.inv-step .inv-icon.failed{background:var(--crit);color:#fff}
+.inv-step .inv-duration{color:var(--text2);font-size:11px;margin-left:auto}
+/* Explainability panel */
+.explain-panel{padding-left:36px;margin-top:6px}
+.explain-toggle{background:none;border:1px solid var(--border);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:10px;color:var(--text2);transition:all .2s}
+.explain-toggle:hover{border-color:var(--accent2);color:var(--accent2)}
+.explain-body{display:none;margin-top:6px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--text2);line-height:1.6}
+.explain-body.open{display:block}
+.explain-body .explain-row{display:flex;gap:8px;padding:2px 0}
+.explain-body .explain-label{color:var(--text2);min-width:100px;font-weight:500}
+.explain-body .explain-val{color:var(--text)}
+.explain-body .explain-context{margin-top:6px;padding-top:6px;border-top:1px solid var(--border)}
+.explain-body .explain-context summary{cursor:pointer;font-weight:500;color:var(--text)}
+.explain-body .explain-context .ctx-list{margin-top:4px;padding-left:12px}
+/* Runbook progress */
+.runbook-progress{width:100%;margin:8px 0}
+.runbook-step{display:flex;align-items:center;gap:10px;padding:8px 12px;border-left:2px solid var(--border);margin-left:10px;font-size:12px}
+.runbook-step.done{border-left-color:var(--ok)}
+.runbook-step.running{border-left-color:var(--accent2)}
+.runbook-step.failed{border-left-color:var(--crit)}
+.runbook-step .rs-icon{font-size:14px;flex-shrink:0}
+.runbook-step .rs-name{flex:1;font-weight:500}
+.runbook-step .rs-dur{color:var(--text2);font-size:11px}
 </style>
 </head>
 <body>
@@ -302,7 +398,7 @@ tr:hover td{background:#ffffff06}
     <button class="nav-tab" data-view="chat" onclick="showView('chat')">AI Chat</button>
     <button class="nav-tab" data-view="audit" onclick="showView('audit')">Audit</button>
     <button class="nav-tab" data-view="alerts-view" onclick="showView('alerts-view')">Alerts <span class="alerts-badge" id="alerts-badge">0</span></button>
-    <!-- Cost Advisor removed (not in use) -->
+    <button class="nav-tab" data-view="settings" onclick="showView('settings')">Settings</button>
   </div>
   <div class="status">
     <div class="dot" id="conn-dot"></div>
@@ -331,6 +427,9 @@ tr:hover td{background:#ffffff06}
     <div class="kbd-row"><span>Close overlay / Clear input</span><span class="kbd-key">Escape</span></div>
     <div class="kbd-row"><span>Switch to Dashboard</span><span class="kbd-key">Ctrl + 1</span></div>
     <div class="kbd-row"><span>Switch to AI Chat</span><span class="kbd-key">Ctrl + 2</span></div>
+    <div class="kbd-row"><span>Switch to Audit</span><span class="kbd-key">Ctrl + 3</span></div>
+    <div class="kbd-row"><span>Switch to Alerts</span><span class="kbd-key">Ctrl + 4</span></div>
+    <div class="kbd-row"><span>Switch to Settings</span><span class="kbd-key">Ctrl + 5</span></div>
   </div>
 </div>
 
@@ -603,16 +702,30 @@ tr:hover td{background:#ffffff06}
         <div class="chat-controls-row">
           <select id="full-llm-provider" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer" onchange="onFullProviderChange()">
             <option value="none">Built-in Analysis</option>
-            <option value="openai">OpenAI (GPT)</option>
-            <option value="anthropic">Anthropic (Claude)</option>
-            <option value="ollama">Ollama (Local)</option>
           </select>
-          <button class="icon-btn" style="padding:3px 8px;font-size:11px" onclick="toggleFullLLMConfig()">&#x2699; Settings</button>
-          <div id="full-llm-config" style="display:none;margin-left:8px;gap:4px;align-items:center">
-            <input type="text" id="full-llm-api-key" placeholder="API Key" style="background:var(--card);border:1px solid var(--border);border-radius:4px;padding:4px 8px;color:var(--text);font-size:12px;width:180px">
-            <input type="text" id="full-llm-api-url" placeholder="API URL" style="background:var(--card);border:1px solid var(--border);border-radius:4px;padding:4px 8px;color:var(--text);font-size:12px;width:160px;margin-left:4px">
-            <input type="text" id="full-llm-model" placeholder="Model" style="background:var(--card);border:1px solid var(--border);border-radius:4px;padding:4px 8px;color:var(--text);font-size:12px;width:120px;margin-left:4px">
-            <button class="icon-btn" style="padding:3px 8px;font-size:11px;margin-left:4px" onclick="saveFullLLMConfig()">Save</button>
+          <select id="full-llm-model-select" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;max-width:180px" onchange="onFullModelChange()">
+            <option value="">Default Model</option>
+          </select>
+          <div class="chat-mode-toggles">
+            <button class="mode-toggle" id="toggle-investigate" onclick="toggleChatMode('investigate')" title="Deep investigation with multi-step analysis">&#x1F50D; Deep Investigate</button>
+            <button class="mode-toggle" id="toggle-compare" onclick="toggleChatMode('compare')" title="Compare responses from all enabled providers side-by-side">&#x2194; Compare</button>
+            <div class="runbook-dropdown">
+              <button class="mode-toggle" id="runbook-btn" onclick="toggleRunbookMenu()">&#x1F4CB; Runbooks &#x25BE;</button>
+              <div class="runbook-menu" id="runbook-menu">
+                <div class="runbook-menu-item" onclick="executeRunbook('crashloop-diagnosis')">&#x1F534; Diagnose CrashLoop</div>
+                <div class="runbook-menu-item" onclick="executeRunbook('security-hardening')">&#x1F6E1; Security Hardening</div>
+                <div class="runbook-menu-item" onclick="executeRunbook('pre-upgrade-check')">&#x2B06; Pre-Upgrade Check</div>
+                <div class="runbook-menu-item" onclick="executeRunbook('capacity-planning')">&#x1F4CA; Capacity Planning</div>
+                <div class="runbook-menu-item" onclick="executeRunbook('network-troubleshoot')">&#x1F310; Network Troubleshoot</div>
+              </div>
+            </div>
+            <button class="mode-toggle" onclick="showView('settings')" title="Configure LLM providers in Settings">&#x2699; Configure in Settings</button>
+          </div>
+          <!-- Hidden fields for backward compat -->
+          <div style="display:none">
+            <input type="text" id="full-llm-api-key">
+            <input type="text" id="full-llm-api-url">
+            <input type="text" id="full-llm-model">
           </div>
         </div>
         <div class="chat-input-row">
@@ -663,6 +776,125 @@ tr:hover td{background:#ffffff06}
       <thead><tr><th>Alert</th><th>Severity</th><th>Summary</th><th>Since</th></tr></thead>
       <tbody id="alerts-full-table"><tr><td colspan="4" class="loading">Loading alerts...</td></tr></tbody>
     </table>
+  </div>
+</div>
+
+<!-- Settings View -->
+<div id="view-settings" class="container" style="display:none">
+  <div class="settings-container">
+    <div class="section-title">LLM Provider Settings</div>
+
+    <!-- Default Provider -->
+    <div class="settings-section">
+      <div class="settings-row">
+        <div class="settings-field" style="max-width:300px">
+          <label>Default Provider</label>
+          <select id="settings-default-provider" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none">
+            <option value="none">Built-in Analysis</option>
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic (Claude)</option>
+            <option value="azure">Azure OpenAI</option>
+            <option value="ollama">Ollama (Local)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Provider Cards -->
+    <div class="settings-section">
+      <h3>Provider Configuration</h3>
+      <div class="provider-cards">
+
+        <!-- OpenAI -->
+        <div class="provider-card" id="pc-openai">
+          <div class="pc-header">
+            <span class="pc-title">OpenAI</span>
+            <label class="pc-toggle"><input type="checkbox" id="pc-openai-enabled" onchange="onProviderToggle('openai')"><span class="slider"></span></label>
+          </div>
+          <div class="pc-field"><label>API Key</label><input type="password" id="pc-openai-apikey" placeholder="sk-..."></div>
+          <div class="pc-field"><label>API URL</label><input type="text" id="pc-openai-apiurl" placeholder="https://api.openai.com" value="https://api.openai.com"></div>
+          <div class="pc-field"><label>Model</label><input type="text" id="pc-openai-model" placeholder="gpt-4" value="gpt-4"></div>
+          <div class="pc-test"><button onclick="testProvider('openai')">Test Connection</button><span class="test-status" id="pc-openai-status"></span></div>
+        </div>
+
+        <!-- Anthropic -->
+        <div class="provider-card" id="pc-anthropic">
+          <div class="pc-header">
+            <span class="pc-title">Anthropic (Claude)</span>
+            <label class="pc-toggle"><input type="checkbox" id="pc-anthropic-enabled" onchange="onProviderToggle('anthropic')"><span class="slider"></span></label>
+          </div>
+          <div class="pc-field"><label>API Key</label><input type="password" id="pc-anthropic-apikey" placeholder="sk-ant-..."></div>
+          <div class="pc-field"><label>API URL</label><input type="text" id="pc-anthropic-apiurl" placeholder="https://api.anthropic.com" value="https://api.anthropic.com"></div>
+          <div class="pc-field"><label>Model</label><input type="text" id="pc-anthropic-model" placeholder="claude-sonnet-4-20250514" value="claude-sonnet-4-20250514"></div>
+          <div class="pc-test"><button onclick="testProvider('anthropic')">Test Connection</button><span class="test-status" id="pc-anthropic-status"></span></div>
+        </div>
+
+        <!-- Azure OpenAI -->
+        <div class="provider-card" id="pc-azure">
+          <div class="pc-header">
+            <span class="pc-title">Azure OpenAI</span>
+            <label class="pc-toggle"><input type="checkbox" id="pc-azure-enabled" onchange="onProviderToggle('azure')"><span class="slider"></span></label>
+          </div>
+          <div class="pc-field"><label>API Key</label><input type="password" id="pc-azure-apikey" placeholder="Azure API Key"></div>
+          <div class="pc-field"><label>API URL</label><input type="text" id="pc-azure-apiurl" placeholder="https://your-resource.openai.azure.com"></div>
+          <div class="pc-field"><label>Model</label><input type="text" id="pc-azure-model" placeholder="gpt-4" value="gpt-4"></div>
+          <div class="pc-field"><label>Deployment Name</label><input type="text" id="pc-azure-deployment" placeholder="my-gpt4-deployment"></div>
+          <div class="pc-field"><label>API Version</label><input type="text" id="pc-azure-apiversion" placeholder="2024-02-01" value="2024-02-01"></div>
+          <div class="pc-test"><button onclick="testProvider('azure')">Test Connection</button><span class="test-status" id="pc-azure-status"></span></div>
+        </div>
+
+        <!-- Ollama -->
+        <div class="provider-card" id="pc-ollama">
+          <div class="pc-header">
+            <span class="pc-title">Ollama (Local)</span>
+            <label class="pc-toggle"><input type="checkbox" id="pc-ollama-enabled" onchange="onProviderToggle('ollama')"><span class="slider"></span></label>
+          </div>
+          <div class="pc-field"><label>API Key</label><input type="password" id="pc-ollama-apikey" placeholder="Not required for Ollama"></div>
+          <div class="pc-field"><label>API URL</label><input type="text" id="pc-ollama-apiurl" placeholder="http://ollama:11434" value="http://ollama:11434"></div>
+          <div class="pc-field"><label>Model</label><input type="text" id="pc-ollama-model" placeholder="llama3" value="llama3"></div>
+          <div class="pc-test"><button onclick="testProvider('ollama')">Test Connection</button><span class="test-status" id="pc-ollama-status"></span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Advanced Settings -->
+    <div class="settings-section">
+      <h3>Advanced Settings</h3>
+      <div class="settings-row">
+        <div class="settings-field" style="max-width:250px">
+          <label>Temperature: <span id="settings-temp-val">0.3</span></label>
+          <input type="range" id="settings-temperature" min="0" max="1" step="0.1" value="0.3" oninput="document.getElementById('settings-temp-val').textContent=this.value">
+        </div>
+        <div class="settings-field" style="max-width:200px">
+          <label>Max Tokens</label>
+          <input type="number" id="settings-max-tokens" value="2000" min="100" max="32000">
+        </div>
+      </div>
+      <div class="settings-row">
+        <div class="settings-field">
+          <label>Custom System Prompt</label>
+          <textarea id="settings-system-prompt" rows="4" placeholder="Optional custom system prompt for the AI assistant..."></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- Fallback Chain -->
+    <div class="settings-section">
+      <h3>Provider Fallback Chain</h3>
+      <p style="font-size:12px;color:var(--text2);margin-bottom:10px">Drag to reorder. If the primary provider fails, the next enabled provider in the chain is tried.</p>
+      <div class="fallback-chain" id="fallback-chain">
+        <div class="fallback-item" data-provider="openai" draggable="true"><span class="fb-num">1</span><span class="fb-name">OpenAI</span></div>
+        <div class="fallback-item" data-provider="anthropic" draggable="true"><span class="fb-num">2</span><span class="fb-name">Anthropic (Claude)</span></div>
+        <div class="fallback-item" data-provider="azure" draggable="true"><span class="fb-num">3</span><span class="fb-name">Azure OpenAI</span></div>
+        <div class="fallback-item" data-provider="ollama" draggable="true"><span class="fb-num">4</span><span class="fb-name">Ollama (Local)</span></div>
+      </div>
+    </div>
+
+    <!-- Save bar -->
+    <div class="settings-save-bar">
+      <button onclick="saveSettings()">Save Settings</button>
+      <span class="save-status" id="settings-save-status"></span>
+    </div>
   </div>
 </div>
 
@@ -1345,7 +1577,7 @@ loadLLMConfig();
 // View switching — Dashboard vs AI Chat
 // ---------------------------------------------------------------------------
 function showView(view) {
-  const views = ['dashboard', 'chat', 'audit', 'alerts-view'];
+  const views = ['dashboard', 'chat', 'audit', 'alerts-view', 'settings'];
   const tabs = document.querySelectorAll('.nav-tab');
   tabs.forEach(t => t.classList.toggle('active', t.dataset.view === view));
 
@@ -1359,6 +1591,7 @@ function showView(view) {
   if (view === 'chat') {
     syncLLMToFull();
     loadFullLLMConfig();
+    loadEnabledProviders();
     detectHistoryBackend().then(() => {
       renderChatHistory();
       renderConversation();
@@ -1368,6 +1601,8 @@ function showView(view) {
     loadAuditView();
   } else if (view === 'alerts-view') {
     loadAlertsView();
+  } else if (view === 'settings') {
+    loadSettings();
   }
 }
 
@@ -1590,6 +1825,78 @@ function scrollConversation() {
 // ---------------------------------------------------------------------------
 // Full Chat — send messages with history
 // ---------------------------------------------------------------------------
+let _chatMode = 'normal'; // 'normal' | 'investigate' | 'compare'
+
+function toggleChatMode(mode) {
+  if (_chatMode === mode) { _chatMode = 'normal'; }
+  else { _chatMode = mode; }
+  document.getElementById('toggle-investigate').classList.toggle('active', _chatMode === 'investigate');
+  document.getElementById('toggle-compare').classList.toggle('active', _chatMode === 'compare');
+}
+
+function toggleRunbookMenu() {
+  const menu = document.getElementById('runbook-menu');
+  menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+}
+document.addEventListener('click', function(e) {
+  const menu = document.getElementById('runbook-menu');
+  if (menu && !e.target.closest('.runbook-dropdown')) menu.style.display = 'none';
+});
+
+function getProviderConfig() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('mcp-llm-settings'));
+    if (saved) return saved;
+  } catch {}
+  return null;
+}
+
+function getActiveProviderOpts() {
+  const provider = document.getElementById('full-llm-provider').value;
+  if (!provider || provider === 'none') return { provider: 'none' };
+  const settings = getProviderConfig();
+  if (settings && settings.providers && settings.providers[provider]) {
+    const cfg = settings.providers[provider];
+    return { provider, apiKey: cfg.apiKey, apiUrl: cfg.apiUrl, model: cfg.model };
+  }
+  return { provider };
+}
+
+function getChatHistory(maxMessages) {
+  const history = loadChatHistory();
+  const chat = history.chats.find(c => c.id === history.activeId);
+  if (!chat || !chat.messages) return [];
+  return chat.messages.slice(-(maxMessages || 10)).map(m => ({
+    role: m.role === 'ai' ? 'assistant' : 'user',
+    text: m.text
+  }));
+}
+
+function renderExplainability(data) {
+  const id = 'explain-' + Math.random().toString(36).substr(2, 6);
+  let html = '<div class="explain-panel">';
+  html += '<button class="explain-toggle" onclick="var b=document.getElementById(\'' + id + '\');b.style.display=b.style.display===\'block\'?\'none\':\'block\'">Details &#x25BE;</button>';
+  html += '<div class="explain-body" id="' + id + '">';
+  if (data.provider) html += '<div><strong>Provider:</strong> ' + esc(data.provider) + (data.model ? ' / ' + esc(data.model) : '') + '</div>';
+  if (data.durationMs) html += '<div><strong>Duration:</strong> ' + data.durationMs + 'ms</div>';
+  if (data.tokenEstimate) html += '<div><strong>Tokens (est):</strong> ~' + data.tokenEstimate + '</div>';
+  if (data.cached) html += '<div><strong>Cache:</strong> Hit</div>';
+  if (data.fallback) html += '<div><strong>Fallback:</strong> Yes (primary provider failed)</div>';
+  if (data.contextKeys && data.contextKeys.length) html += '<div><strong>Context:</strong> ' + data.contextKeys.join(', ') + '</div>';
+  if (data.steps && data.steps.length) {
+    html += '<div style="margin-top:6px"><strong>Investigation Steps:</strong></div><ol style="margin:4px 0 0 16px;font-size:11px">';
+    data.steps.forEach(function(s) { html += '<li>' + esc(typeof s === 'string' ? s : s.name || JSON.stringify(s)) + '</li>'; });
+    html += '</ol>';
+  }
+  if (data.trace && data.trace.length) {
+    html += '<div style="margin-top:6px"><strong>API Trace:</strong></div><ul style="margin:4px 0 0 16px;font-size:11px">';
+    data.trace.slice(0, 10).forEach(function(t) { html += '<li>' + esc(typeof t === 'string' ? t : t.url || JSON.stringify(t)) + '</li>'; });
+    html += '</ul>';
+  }
+  html += '</div></div>';
+  return html;
+}
+
 async function sendFullChat(text) {
   const input = document.getElementById('full-chat-input');
   const sendBtn = document.getElementById('full-chat-send');
@@ -1598,19 +1905,16 @@ async function sendFullChat(text) {
 
   await detectHistoryBackend();
 
-  // Ensure there's an active chat
   let history = loadChatHistory();
   if (!history.activeId) {
     await newChat();
     history = loadChatHistory();
   }
 
-  // Add user message
   const chat = history.chats.find(c => c.id === history.activeId);
   if (!chat) return;
 
   chat.messages.push({ role: 'user', text: msg });
-  // Auto-title from first user message
   if (chat.messages.filter(m => m.role === 'user').length === 1) {
     chat.title = msg.length > 50 ? msg.substring(0, 50) + '...' : msg;
   }
@@ -1621,75 +1925,59 @@ async function sendFullChat(text) {
   renderConversation();
   renderChatHistory();
 
-  // Show thinking indicator
   const inner = document.getElementById('chat-conv-inner');
   const thinkingDiv = document.createElement('div');
   thinkingDiv.className = 'conv-msg ai';
   thinkingDiv.id = 'full-thinking';
+  const thinkLabel = _chatMode === 'investigate' ? 'Deep investigation in progress...' :
+                     _chatMode === 'compare' ? 'Querying multiple providers...' : 'Analyzing cluster data...';
   thinkingDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">MCP</div><span class="conv-name">MCP AI Assistant</span></div>' +
-    '<div class="conv-body" style="color:var(--text2)"><div class="thinking-dots"><span></span><span></span><span></span></div> Analyzing cluster data...</div>';
+    '<div class="conv-body" style="color:var(--text2)"><div class="thinking-dots"><span></span><span></span><span></span></div> ' + thinkLabel + '</div>';
   inner.appendChild(thinkingDiv);
   scrollConversation();
 
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '...'; }
 
+  const startMs = Date.now();
+
   try {
-    // Build request body with LLM settings
-    const chatBody = { message: msg, conversationId: history.activeId };
-    const provider = document.getElementById('full-llm-provider').value;
-    if (provider && provider !== 'none') {
-      chatBody.provider = provider;
-      const ak = document.getElementById('full-llm-api-key').value.trim();
-      const au = document.getElementById('full-llm-api-url').value.trim();
-      const ml = document.getElementById('full-llm-model').value.trim();
-      if (ak) chatBody.apiKey = ak;
-      if (au) chatBody.apiUrl = au;
-      if (ml) chatBody.model = ml;
-    }
+    const providerOpts = getActiveProviderOpts();
+    const chatHistory = getChatHistory(10);
 
-    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(chatBody),
-    });
-    const data = await resp.json();
-
-    const replyText = data.reply || data.error || 'No response';
-    const replyHtml = md(replyText);
-
-    // Save AI response to history
-    history = loadChatHistory();
-    const activeChat = history.chats.find(c => c.id === history.activeId);
-    if (activeChat) {
-      activeChat.messages.push({
-        role: 'ai',
-        text: replyText,
-        html: replyHtml,
-        provider: data.provider || provider || 'none',
+    if (_chatMode === 'compare') {
+      await sendCompareChat(msg, history, chatHistory);
+    } else if (_chatMode === 'investigate') {
+      await sendInvestigateChat(msg, history, providerOpts, chatHistory);
+    } else {
+      // Normal chat with conversation history
+      const chatBody = { message: msg, conversationId: history.activeId, history: chatHistory, ...providerOpts };
+      const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(chatBody),
       });
-      activeChat.updatedAt = new Date().toISOString();
-      saveChatHistory(history);
+      const data = await resp.json();
+      data.durationMs = Date.now() - startMs;
+      data.tokenEstimate = Math.ceil((data.reply || '').length / 4);
+
+      const replyText = data.reply || data.error || 'No response';
+      const replyHtml = md(replyText) + renderExplainability(data);
+
+      history = loadChatHistory();
+      const activeChat = history.chats.find(c => c.id === history.activeId);
+      if (activeChat) {
+        activeChat.messages.push({ role: 'ai', text: replyText, html: replyHtml, provider: data.provider || providerOpts.provider || 'none' });
+        activeChat.updatedAt = new Date().toISOString();
+        saveChatHistory(history);
+      }
+      renderConversation();
+      if (/<!--action:/.test(replyText) || data.pendingAction) refreshActionsPanel();
     }
-
-    // Remove thinking indicator and re-render
-    renderConversation();
-
-    // If the backend queued a pending action, refresh the panel immediately.
-    if (/<!--action:/.test(replyText) || data.pendingAction) {
-      refreshActionsPanel();
-    }
-
   } catch (err) {
-    // Save error as AI message
     history = loadChatHistory();
     const activeChat = history.chats.find(c => c.id === history.activeId);
     if (activeChat) {
-      activeChat.messages.push({
-        role: 'ai',
-        text: 'Error: ' + err.message,
-        html: '<span style="color:var(--crit)">Error: ' + esc(err.message) + '</span>',
-        provider: 'error',
-      });
+      activeChat.messages.push({ role: 'ai', text: 'Error: ' + err.message, html: '<span style="color:var(--crit)">Error: ' + esc(err.message) + '</span>', provider: 'error' });
       activeChat.updatedAt = new Date().toISOString();
       saveChatHistory(history);
     }
@@ -1700,83 +1988,301 @@ async function sendFullChat(text) {
   renderChatHistory();
 }
 
-// ---------------------------------------------------------------------------
-// Full Chat — LLM provider settings (synced with dashboard panel)
-// ---------------------------------------------------------------------------
-function syncLLMToFull() {
-  const dp = document.getElementById('llm-provider');
-  const fp = document.getElementById('full-llm-provider');
-  if (dp && fp) fp.value = dp.value;
+async function sendCompareChat(msg, history, chatHistory) {
+  const settings = getProviderConfig();
+  const providers = [];
+  if (settings && settings.providers) {
+    Object.entries(settings.providers).forEach(function(entry) {
+      if (entry[1].enabled && entry[1].apiKey) {
+        providers.push({ provider: entry[0], apiKey: entry[1].apiKey, apiUrl: entry[1].apiUrl, model: entry[1].model });
+      }
+    });
+  }
+  if (providers.length === 0) {
+    providers.push(getActiveProviderOpts());
+  }
 
-  const fields = ['api-key', 'api-url', 'model'];
-  fields.forEach(f => {
-    const src = document.getElementById('llm-' + f);
-    const dst = document.getElementById('full-llm-' + f);
-    if (src && dst && src.value) dst.value = src.value;
+  const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat/compare', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: msg, providers: providers, conversationId: history.activeId, history: chatHistory }),
   });
+  const data = await resp.json();
+  const results = data.results || [];
+
+  let replyHtml = '<div class="compare-container">';
+  let replyText = '### Multi-Provider Comparison\n\n';
+  results.forEach(function(r) {
+    const provLabel = (r.provider || 'unknown').toUpperCase() + (r.model ? ' (' + r.model + ')' : '');
+    const body = r.error ? '<span style="color:var(--crit)">' + esc(r.error) + '</span>' : md(r.reply || 'No response');
+    const footer = r.durationMs ? r.durationMs + 'ms' : '';
+    const tokens = r.tokenEstimate ? ' | ~' + r.tokenEstimate + ' tokens' : '';
+    replyHtml += '<div class="compare-card"><div class="cc-header">' + esc(provLabel) + '</div><div class="cc-body">' + body + '</div><div class="cc-footer"><span>' + esc(footer + tokens) + '</span></div></div>';
+    replyText += '**' + provLabel + ':**\n' + (r.reply || r.error || '') + '\n\n---\n\n';
+  });
+  replyHtml += '</div>';
+
+  history = loadChatHistory();
+  const activeChat = history.chats.find(c => c.id === history.activeId);
+  if (activeChat) {
+    activeChat.messages.push({ role: 'ai', text: replyText, html: replyHtml, provider: 'compare' });
+    activeChat.updatedAt = new Date().toISOString();
+    saveChatHistory(history);
+  }
+  renderConversation();
 }
 
-function onFullProviderChange() {
-  const provider = document.getElementById('full-llm-provider').value;
-  const modelInput = document.getElementById('full-llm-model');
-  const urlInput = document.getElementById('full-llm-api-url');
-  const keyInput = document.getElementById('full-llm-api-key');
+async function sendInvestigateChat(msg, history, providerOpts, chatHistory) {
+  const startMs = Date.now();
+  const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat/investigate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: msg, conversationId: history.activeId, history: chatHistory, ...providerOpts }),
+  });
+  const data = await resp.json();
+  data.durationMs = data.durationMs || (Date.now() - startMs);
+  data.tokenEstimate = Math.ceil((data.reply || '').length / 4);
 
-  const defaults = {
-    none:      { model: '',                   url: '',                         keyPlaceholder: 'API Key (not needed)' },
-    openai:    { model: 'gpt-4',              url: 'https://api.openai.com',   keyPlaceholder: 'OpenAI API Key (sk-...)' },
-    anthropic: { model: 'claude-sonnet-4-20250514', url: 'https://api.anthropic.com', keyPlaceholder: 'Anthropic API Key (sk-ant-...)' },
-    ollama:    { model: 'llama3',             url: 'http://ollama:11434',      keyPlaceholder: 'API Key (not needed for Ollama)' },
+  const replyText = data.reply || data.error || 'No response';
+  const replyHtml = md(replyText) + renderExplainability(data);
+
+  history = loadChatHistory();
+  const activeChat = history.chats.find(c => c.id === history.activeId);
+  if (activeChat) {
+    activeChat.messages.push({ role: 'ai', text: replyText, html: replyHtml, provider: data.provider || 'investigate' });
+    activeChat.updatedAt = new Date().toISOString();
+    saveChatHistory(history);
+  }
+  renderConversation();
+}
+
+async function executeRunbook(runbookId) {
+  document.getElementById('runbook-menu').style.display = 'none';
+  const settings = getProviderConfig();
+  const providerOpts = getActiveProviderOpts();
+
+  await detectHistoryBackend();
+  let history = loadChatHistory();
+  if (!history.activeId) { await newChat(); history = loadChatHistory(); }
+  const chat = history.chats.find(c => c.id === history.activeId);
+  if (!chat) return;
+
+  const labels = {
+    'crashloop-diagnosis': 'Diagnose CrashLoop',
+    'security-hardening': 'Security Hardening Audit',
+    'pre-upgrade-check': 'Pre-Upgrade Health Check',
+    'capacity-planning': 'Capacity Planning Report',
+    'network-troubleshoot': 'Network Troubleshoot'
   };
+  const label = labels[runbookId] || runbookId;
 
-  const d = defaults[provider] || defaults.none;
-  if (!modelInput.value || modelInput.value === modelInput.dataset.autoSet) {
-    modelInput.value = d.model;
-    modelInput.dataset.autoSet = d.model;
-  }
-  if (!urlInput.value || urlInput.value === urlInput.dataset.autoSet) {
-    urlInput.value = d.url;
-    urlInput.dataset.autoSet = d.url;
-  }
-  keyInput.placeholder = d.keyPlaceholder;
+  chat.messages.push({ role: 'user', text: 'Run runbook: ' + label });
+  if (chat.messages.filter(m => m.role === 'user').length === 1) chat.title = label;
+  chat.updatedAt = new Date().toISOString();
+  saveChatHistory(history);
+  renderConversation();
+  renderChatHistory();
 
-  if (provider !== 'none') {
-    document.getElementById('full-llm-config').style.display = 'flex';
-  }
+  const inner = document.getElementById('chat-conv-inner');
+  const thinkDiv = document.createElement('div');
+  thinkDiv.className = 'conv-msg ai';
+  thinkDiv.id = 'full-thinking';
+  thinkDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">MCP</div><span class="conv-name">MCP AI Assistant</span></div>' +
+    '<div class="conv-body"><div class="runbook-progress"><div class="runbook-progress-title">Running: ' + esc(label) + '</div>' +
+    '<div class="thinking-dots"><span></span><span></span><span></span></div> Executing steps...</div></div>';
+  inner.appendChild(thinkDiv);
+  scrollConversation();
 
-  saveFullLLMConfig();
-}
-
-function toggleFullLLMConfig() {
-  const panel = document.getElementById('full-llm-config');
-  panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
-}
-
-function saveFullLLMConfig() {
-  const config = {
-    provider: document.getElementById('full-llm-provider').value,
-    apiKey:   document.getElementById('full-llm-api-key').value,
-    apiUrl:   document.getElementById('full-llm-api-url').value,
-    model:    document.getElementById('full-llm-model').value,
-  };
-  localStorage.setItem('mcp-llm-config', JSON.stringify(config));
-  // Sync back to dashboard panel
-  document.getElementById('llm-provider').value = config.provider;
-  document.getElementById('llm-api-key').value = config.apiKey;
-  document.getElementById('llm-api-url').value = config.apiUrl;
-  document.getElementById('llm-model').value = config.model;
-}
-
-function loadFullLLMConfig() {
   try {
-    const saved = JSON.parse(localStorage.getItem('mcp-llm-config'));
-    if (!saved) return;
-    if (saved.provider) document.getElementById('full-llm-provider').value = saved.provider;
-    if (saved.apiKey)   document.getElementById('full-llm-api-key').value = saved.apiKey;
-    if (saved.apiUrl)   document.getElementById('full-llm-api-url').value = saved.apiUrl;
-    if (saved.model)    document.getElementById('full-llm-model').value = saved.model;
-  } catch (e) {}
+    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat/runbook', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ runbook: runbookId, conversationId: history.activeId, ...providerOpts }),
+    });
+    const data = await resp.json();
+    const replyText = data.reply || data.error || 'Runbook completed';
+
+    let stepsHtml = '';
+    if (data.steps && data.steps.length) {
+      stepsHtml = '<div class="runbook-steps">';
+      data.steps.forEach(function(s) {
+        const icon = s.status === 'done' ? '<span style="color:var(--ok)">&#x2714;</span>' : s.status === 'failed' ? '<span style="color:var(--crit)">&#x2718;</span>' : '<span style="color:var(--warn)">&#x25CF;</span>';
+        stepsHtml += '<div class="runbook-step">' + icon + ' ' + esc(s.name) + (s.durationMs ? ' <span style="color:var(--text2);font-size:11px">(' + s.durationMs + 'ms)</span>' : '') + '</div>';
+      });
+      stepsHtml += '</div>';
+    }
+
+    const replyHtml = stepsHtml + md(replyText) + renderExplainability(data);
+
+    history = loadChatHistory();
+    const activeChat = history.chats.find(c => c.id === history.activeId);
+    if (activeChat) {
+      activeChat.messages.push({ role: 'ai', text: replyText, html: replyHtml, provider: data.provider || 'runbook' });
+      activeChat.updatedAt = new Date().toISOString();
+      saveChatHistory(history);
+    }
+    renderConversation();
+  } catch (err) {
+    history = loadChatHistory();
+    const activeChat = history.chats.find(c => c.id === history.activeId);
+    if (activeChat) {
+      activeChat.messages.push({ role: 'ai', text: 'Runbook error: ' + err.message, html: '<span style="color:var(--crit)">Runbook error: ' + esc(err.message) + '</span>', provider: 'error' });
+      activeChat.updatedAt = new Date().toISOString();
+      saveChatHistory(history);
+    }
+    renderConversation();
+  }
 }
+
+// ---------------------------------------------------------------------------
+// Settings page — LLM provider configuration
+// ---------------------------------------------------------------------------
+async function loadSettings() {
+  try {
+    const resp = await apiFetch('/api/settings/llm');
+    localStorage.setItem('mcp-llm-settings', JSON.stringify(resp));
+    const provs = resp.providers || {};
+    ['openai', 'anthropic', 'azure', 'ollama'].forEach(function(p) {
+      const cfg = provs[p] || {};
+      const enEl = document.getElementById('pc-' + p + '-enabled');
+      const keyEl = document.getElementById('pc-' + p + '-apikey');
+      const urlEl = document.getElementById('pc-' + p + '-apiurl');
+      const modelEl = document.getElementById('pc-' + p + '-model');
+      if (enEl) enEl.checked = !!cfg.enabled;
+      if (keyEl) keyEl.value = cfg.apiKey || '';
+      if (urlEl) urlEl.value = cfg.apiUrl || '';
+      if (modelEl) modelEl.value = cfg.model || '';
+      if (p === 'azure') {
+        const depEl = document.getElementById('pc-azure-deployment');
+        const verEl = document.getElementById('pc-azure-apiversion');
+        if (depEl) depEl.value = cfg.deployment || '';
+        if (verEl) verEl.value = cfg.apiVersion || '2024-08-01-preview';
+      }
+    });
+    const defs = resp.defaults || {};
+    const defProv = document.getElementById('settings-default-provider');
+    if (defProv) defProv.value = defs.provider || 'none';
+    const tempEl = document.getElementById('settings-temperature');
+    if (tempEl) { tempEl.value = defs.temperature || 0.3; updateTempLabel(); }
+    const tokEl = document.getElementById('settings-max-tokens');
+    if (tokEl) tokEl.value = defs.maxTokens || 2000;
+    const sysEl = document.getElementById('settings-system-prompt');
+    if (sysEl) sysEl.value = defs.systemPrompt || '';
+    loadEnabledProviders();
+  } catch (e) {
+    console.warn('Failed to load settings:', e);
+  }
+}
+
+async function saveSettings() {
+  const statusEl = document.getElementById('settings-save-status');
+  statusEl.textContent = 'Saving...';
+  try {
+    const settings = {
+      providers: {},
+      defaults: {
+        provider: document.getElementById('settings-default-provider').value,
+        temperature: parseFloat(document.getElementById('settings-temperature').value) || 0.3,
+        maxTokens: parseInt(document.getElementById('settings-max-tokens').value) || 2000,
+        systemPrompt: document.getElementById('settings-system-prompt').value,
+      },
+      fallbackChain: ['anthropic', 'openai', 'ollama', 'none'],
+    };
+    ['openai', 'anthropic', 'azure', 'ollama'].forEach(function(p) {
+      settings.providers[p] = {
+        enabled: document.getElementById('pc-' + p + '-enabled').checked,
+        apiKey: document.getElementById('pc-' + p + '-apikey').value,
+        apiUrl: document.getElementById('pc-' + p + '-apiurl').value,
+        model: document.getElementById('pc-' + p + '-model').value,
+      };
+      if (p === 'azure') {
+        settings.providers.azure.deployment = document.getElementById('pc-azure-deployment').value;
+        settings.providers.azure.apiVersion = document.getElementById('pc-azure-apiversion').value;
+      }
+    });
+    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/settings/llm', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      statusEl.textContent = 'Error: ' + data.error + (data.details ? ' — ' + data.details.join(', ') : '');
+      statusEl.style.color = 'var(--crit)';
+    } else {
+      statusEl.textContent = 'Saved successfully';
+      statusEl.style.color = 'var(--ok)';
+      localStorage.setItem('mcp-llm-settings', JSON.stringify(data.settings || settings));
+      loadEnabledProviders();
+    }
+    setTimeout(function() { statusEl.textContent = ''; }, 4000);
+  } catch (e) {
+    statusEl.textContent = 'Error: ' + e.message;
+    statusEl.style.color = 'var(--crit)';
+  }
+}
+
+async function testProvider(provider) {
+  const statusEl = document.getElementById('pc-' + provider + '-status');
+  statusEl.textContent = 'Testing...';
+  statusEl.style.color = 'var(--text2)';
+  try {
+    const cfg = {
+      provider: provider,
+      apiKey: document.getElementById('pc-' + provider + '-apikey').value,
+      apiUrl: document.getElementById('pc-' + provider + '-apiurl').value,
+      model: document.getElementById('pc-' + provider + '-model').value,
+    };
+    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/settings/llm/test', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    });
+    const data = await resp.json();
+    if (data.success) {
+      statusEl.innerHTML = '<span style="color:var(--ok)">&#x2714; Connected</span> <span style="color:var(--text2);font-size:11px">(' + data.durationMs + 'ms)</span>';
+    } else {
+      statusEl.innerHTML = '<span style="color:var(--crit)">&#x2718; Failed: ' + esc(data.error || 'Unknown error') + '</span>';
+    }
+  } catch (e) {
+    statusEl.innerHTML = '<span style="color:var(--crit)">&#x2718; ' + esc(e.message) + '</span>';
+  }
+}
+
+function updateTempLabel() {
+  const el = document.getElementById('settings-temp-val');
+  const val = document.getElementById('settings-temperature');
+  if (el && val) el.textContent = val.value;
+}
+function onProviderToggle(p) {}
+
+function loadEnabledProviders() {
+  const sel = document.getElementById('full-llm-provider');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="none">Built-in Analysis</option>';
+  try {
+    const settings = JSON.parse(localStorage.getItem('mcp-llm-settings'));
+    if (settings && settings.providers) {
+      const labels = { openai: 'OpenAI (GPT)', anthropic: 'Anthropic (Claude)', azure: 'Azure OpenAI', ollama: 'Ollama (Local)' };
+      Object.entries(settings.providers).forEach(function(entry) {
+        if (entry[1].enabled) {
+          const opt = document.createElement('option');
+          opt.value = entry[0];
+          opt.textContent = labels[entry[0]] || entry[0];
+          sel.appendChild(opt);
+        }
+      });
+    }
+  } catch {}
+  sel.value = current || 'none';
+  if (!sel.value) sel.value = 'none';
+}
+
+// Compat shims for old code paths
+function syncLLMToFull() { loadEnabledProviders(); }
+function loadFullLLMConfig() { loadEnabledProviders(); }
+function onFullProviderChange() {}
+function toggleFullLLMConfig() { showView('settings'); }
+function saveFullLLMConfig() {}
 
 // ---------------------------------------------------------------------------
 // Actions panel — approval workflow for mutating operations.
@@ -2383,9 +2889,12 @@ document.addEventListener('keydown', function(e) {
     }
   }
 
-  // Ctrl+1 / Ctrl+2 — switch views
+  // Ctrl+1..5 — switch views
   if (ctrl && e.key === '1') { e.preventDefault(); showView('dashboard'); return; }
   if (ctrl && e.key === '2') { e.preventDefault(); showView('chat'); return; }
+  if (ctrl && e.key === '3') { e.preventDefault(); showView('audit'); return; }
+  if (ctrl && e.key === '4') { e.preventDefault(); showView('alerts-view'); return; }
+  if (ctrl && e.key === '5') { e.preventDefault(); showView('settings'); return; }
 });
 
 // ---------------------------------------------------------------------------

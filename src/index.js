@@ -37,8 +37,8 @@ import { registerSecurityTools } from "./tools/security.js";
 import { registerRecommendationTools } from "./tools/recommendations.js";
 import { registerNotificationTools } from "./tools/notifications.js";
 import { registerVeleroTools } from "./tools/velero.js";
-import { handleDashboardAPI } from "./services/dashboard-api.js";
-import { handleChatAPI, handleExecuteAPI } from "./services/chat-api.js";
+import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest } from "./services/dashboard-api.js";
+import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI } from "./services/chat-api.js";
 import {
   listActions,
   getAction,
@@ -316,9 +316,41 @@ async function startSSE() {
       return;
     }
 
+    // LLM Settings API
+    if (url.pathname === "/api/settings/llm" && req.method === "GET") {
+      await handleLLMSettingsGet(req, res);
+      return;
+    }
+    if (url.pathname === "/api/settings/llm" && req.method === "POST") {
+      await handleLLMSettingsPost(req, res);
+      return;
+    }
+    if (url.pathname === "/api/settings/llm/test" && req.method === "POST") {
+      await handleLLMSettingsTest(req, res);
+      return;
+    }
+
     // LLM Chat API — /api/chat (POST)
     if (req.method === "POST" && url.pathname === "/api/chat") {
       await handleChatAPI(req, res);
+      return;
+    }
+
+    // Multi-LLM comparison — /api/chat/compare (POST)
+    if (req.method === "POST" && url.pathname === "/api/chat/compare") {
+      await handleChatCompareAPI(req, res);
+      return;
+    }
+
+    // Deep investigation — /api/chat/investigate (POST)
+    if (req.method === "POST" && url.pathname === "/api/chat/investigate") {
+      await handleChatInvestigateAPI(req, res);
+      return;
+    }
+
+    // AI Runbooks — /api/chat/runbook (POST)
+    if (req.method === "POST" && url.pathname === "/api/chat/runbook") {
+      await handleChatRunbookAPI(req, res);
       return;
     }
 

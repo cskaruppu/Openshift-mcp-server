@@ -380,6 +380,93 @@ async function callOllama(messages, o, stream, hooks = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Fallback chain — tries providers in order until one succeeds
+// ---------------------------------------------------------------------------
+const LLM_SETTINGS_PATH = "/tmp/mcp-llm-settings.json";
+
+async function loadFallbackChain() {
+  try {
+    const { readFile } = await import("node:fs/promises");
+    const raw = await readFile(LLM_SETTINGS_PATH, "utf8");
+    const settings = JSON.parse(raw);
+    return settings.fallbackChain || null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadProviderSettings() {
+  try {
+    const { readFile } = await import("node:fs/promises");
+    const raw = await readFile(LLM_SETTINGS_PATH, "utf8");
+    const settings = JSON.parse(raw);
+    return settings.providers || {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Call LLM with automatic fallback through a chain of providers.
+ *
+ * Tries the primary provider first, then falls back through the configured
+ * chain (from /tmp/mcp-llm-settings.json) on network/auth/rate-limit errors.
+ *
+ * @param {object} opts - Same opts as callLLM, plus `messages`
+ * @returns {{ text, toolCalls, provider: string, fallback: boolean }}
+ */
+export async function callLLMWithFallback({ messages, ...opts }) {
+  const o = resolveOpts(opts);
+  const chain = await loadFallbackChain() || [o.provider, "none"];
+  const providerSettings = await loadProviderSettings();
+
+  // Ensure primary provider is first
+  const orderedChain = [o.provider, ...chain.filter((p) => p !== o.provider)];
+  // Deduplicate
+  const seen = new Set();
+  const uniqueChain = orderedChain.filter((p) => {
+    if (seen.has(p)) return false;
+    seen.add(p);
+    return true;
+  });
+
+  let lastError = null;
+  for (let i = 0; i < uniqueChain.length; i++) {
+    const provider = uniqueChain[i];
+    if (provider === "none") {
+      return { text: "", toolCalls: [], provider: "none", fallback: i > 0 };
+    }
+
+    // Build opts for this provider from saved settings or request opts
+    const pSettings = providerSettings[provider] || {};
+    const callOpts = {
+      ...opts,
+      provider,
+      apiKey: i === 0 ? (opts.apiKey || pSettings.apiKey || "") : (pSettings.apiKey || ""),
+      apiUrl: i === 0 ? (opts.apiUrl || pSettings.apiUrl || "") : (pSettings.apiUrl || ""),
+      model: i === 0 ? (opts.model || pSettings.model || "") : (pSettings.model || ""),
+    };
+
+    try {
+      console.error(`[llm-fallback] Trying provider: ${provider}${i > 0 ? " (fallback)" : ""}`);
+      const result = await callLLM({ messages, ...callOpts });
+      return { ...result, provider, fallback: i > 0 };
+    } catch (err) {
+      lastError = err;
+      console.error(`[llm-fallback] Provider ${provider} failed: ${err.message}`);
+      // Only fallback on network, auth, or rate-limit errors
+      const status = err.message?.match(/\b(401|403|429|500|502|503|504|ECONNREFUSED|ENOTFOUND|ETIMEDOUT)\b/);
+      if (!status && i === 0) {
+        // Not a fallback-worthy error on primary — rethrow
+        throw err;
+      }
+    }
+  }
+
+  throw lastError || new Error("All LLM providers in fallback chain failed");
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 function safeJSON(s) {
