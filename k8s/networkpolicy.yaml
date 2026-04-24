@@ -1,0 +1,103 @@
+# Egress network policy for the MCP server pod.
+# Allows DNS resolution (CoreDNS) and outbound HTTPS to external LLM APIs
+# (Azure OpenAI, OpenAI, Anthropic, etc.).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-server-egress
+  namespace: openshift-mcp
+  labels:
+    app.kubernetes.io/name: openshift-mcp-server
+    app.kubernetes.io/component: network
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openshift-mcp-server
+  policyTypes:
+    - Egress
+  egress:
+    # DNS — UDP and TCP port 53 to any target (CoreDNS runs in openshift-dns)
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # HTTPS — external LLM APIs (Azure OpenAI, OpenAI, Anthropic)
+    - ports:
+        - protocol: TCP
+          port: 443
+    # HTTP — Ollama and other local/internal services
+    - ports:
+        - protocol: TCP
+          port: 11434
+    # Postgres
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mcp-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mcp-redis
+      ports:
+        - protocol: TCP
+          port: 6379
+---
+# Egress for the dashboard pod — allows DNS and calls to mcp-server service.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-dashboard-egress
+  namespace: openshift-mcp
+  labels:
+    app.kubernetes.io/name: mcp-dashboard
+    app.kubernetes.io/component: network
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mcp-dashboard
+  policyTypes:
+    - Egress
+  egress:
+    # DNS
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # mcp-server API (port 3000)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openshift-mcp-server
+      ports:
+        - protocol: TCP
+          port: 3000
+---
+# Ingress — allow dashboard to reach mcp-server, and allow OpenShift router
+# to reach both the dashboard and the server.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-ingress
+  namespace: openshift-mcp
+  labels:
+    app.kubernetes.io/name: openshift-mcp-server
+    app.kubernetes.io/component: network
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow traffic from OpenShift router (Ingress controller namespace)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+    # Allow intra-namespace traffic (dashboard → server, server → postgres/redis)
+    - from:
+        - podSelector: {}
