@@ -14,15 +14,21 @@ metadata:
   name: mcp-dashboard-nginx
   namespace: openshift-mcp
 data:
-  default.conf: |
+  default.conf.template: |
     server {
         listen 8080;
         server_name _;
         root /usr/share/nginx/html;
         index index.html;
 
+        # Resolve upstream at request time, not startup.
+        # NGINX_RESOLVER is injected via envsubst from the pod env var.
+        # Find your cluster DNS IP: oc get svc dns-default -n openshift-dns -o jsonpath='{.spec.clusterIP}'
+        resolver ${NGINX_RESOLVER} valid=30s ipv6=off;
+
         location /api/ {
-            proxy_pass http://mcp-server.openshift-mcp.svc.cluster.local:3000;
+            set $backend "http://mcp-server.openshift-mcp.svc.cluster.local:3000";
+            proxy_pass $backend;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_connect_timeout 10s;
@@ -64,12 +70,17 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+          env:
+            # Cluster DNS ClusterIP — find with:
+            #   oc get svc dns-default -n openshift-dns -o jsonpath='{.spec.clusterIP}'
+            - name: NGINX_RESOLVER
+              value: "172.30.0.10"
           volumeMounts:
             - name: dashboard-html
               mountPath: /usr/share/nginx/html
               readOnly: true
-            - name: nginx-conf
-              mountPath: /etc/nginx/conf.d
+            - name: nginx-templates
+              mountPath: /etc/nginx/templates
               readOnly: true
           resources:
             requests:
@@ -87,7 +98,7 @@ spec:
         - name: dashboard-html
           configMap:
             name: mcp-dashboard
-        - name: nginx-conf
+        - name: nginx-templates
           configMap:
             name: mcp-dashboard-nginx
 ---
