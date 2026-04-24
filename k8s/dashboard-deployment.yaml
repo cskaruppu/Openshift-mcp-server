@@ -11,14 +11,8 @@ data:
         root /usr/share/nginx/html;
         index index.html;
 
-        # Resolve upstream at request time, not startup.
-        # NGINX_RESOLVER is injected via envsubst from the pod env var.
-        # Find your cluster DNS IP: oc get svc dns-default -n openshift-dns -o jsonpath='{.spec.clusterIP}'
-        resolver ${NGINX_RESOLVER} valid=30s ipv6=off;
-
         location /api/ {
-            set $backend "http://mcp-server.openshift-mcp.svc.cluster.local:3000";
-            proxy_pass $backend;
+            proxy_pass http://${MCP_BACKEND};
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_connect_timeout 10s;
@@ -61,10 +55,11 @@ spec:
             - containerPort: 8080
               name: http
           env:
-            # Cluster DNS ClusterIP — find with:
-            #   oc get svc dns-default -n openshift-dns -o jsonpath='{.spec.clusterIP}'
-            - name: NGINX_RESOLVER
-              value: "172.30.0.10"
+            # MCP server backend address. Use the Service ClusterIP to
+            # bypass DNS when pod DNS resolution is unavailable.
+            # Find ClusterIP: oc get svc mcp-server -n openshift-mcp -o jsonpath='{.spec.clusterIP}'
+            - name: MCP_BACKEND
+              value: "MCP_SERVER_CLUSTER_IP:3000"
           volumeMounts:
             - name: dashboard-html
               mountPath: /usr/share/nginx/html

@@ -26,22 +26,28 @@ echo "--- Applying Postgres and Redis..."
 oc apply -f "$K8S_DIR/postgres.yaml"
 oc apply -f "$K8S_DIR/redis.yaml"
 
-# 4. MCP server
+# 4. MCP server — deploy service first so we can get the ClusterIP
 echo "--- Applying MCP server deployment and service..."
-oc apply -f "$K8S_DIR/deployment.yaml"
 oc apply -f "$K8S_DIR/service.yaml"
+oc apply -f "$K8S_DIR/deployment.yaml"
 
-# 5. Dashboard — load HTML from file, not from the YAML placeholder
+# 5. Get the mcp-server Service ClusterIP (bypasses pod DNS issues)
+echo "--- Resolving mcp-server ClusterIP..."
+MCP_CLUSTER_IP=$(oc get svc mcp-server -n "$NS" -o jsonpath='{.spec.clusterIP}')
+echo "    mcp-server ClusterIP: $MCP_CLUSTER_IP"
+
+# 6. Patch the dashboard deployment with the real ClusterIP
+echo "--- Patching dashboard backend to ${MCP_CLUSTER_IP}:3000..."
+sed "s/MCP_SERVER_CLUSTER_IP/${MCP_CLUSTER_IP}/g" "$K8S_DIR/dashboard-deployment.yaml" | oc apply -f -
+
+# 7. Dashboard — load HTML from file
 echo "--- Loading dashboard HTML into ConfigMap..."
 oc create configmap mcp-dashboard \
   --from-file=index.html="$SCRIPT_DIR/dashboard/index.html" \
   -n "$NS" \
   --dry-run=client -o yaml | oc apply -f -
 
-echo "--- Applying dashboard deployment, service, route..."
-oc apply -f "$K8S_DIR/dashboard-deployment.yaml"
-
-# 6. Restart to pick up latest config
+# 8. Restart to pick up latest config
 echo "--- Rolling out deployments..."
 oc rollout restart deployment/mcp-server -n "$NS"
 oc rollout restart deployment/mcp-dashboard -n "$NS"
