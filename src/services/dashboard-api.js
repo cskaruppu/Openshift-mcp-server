@@ -97,9 +97,11 @@ export async function handleLLMSettingsPost(req, res) {
  * POST /api/settings/llm/test — test a provider connection
  */
 export async function handleLLMSettingsTest(req, res) {
+  let provider = "unknown";
   try {
     const body = await readJsonBody(req);
-    const { provider, apiKey, apiUrl, model, deployment, apiVersion } = body;
+    ({ provider } = body);
+    const { apiKey, apiUrl, model, deployment, apiVersion } = body;
 
     if (!provider || provider === "none") {
       return json(res, 400, { error: "No provider specified" });

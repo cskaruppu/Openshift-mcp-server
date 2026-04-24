@@ -292,6 +292,7 @@ async function startSSE() {
   const sessions = new Map();
 
   const httpServer = createServer(async (req, res) => {
+   try {
     // CORS headers for browser-based clients
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -508,6 +509,13 @@ async function startSSE() {
     // Fallback
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Not found" }));
+   } catch (err) {
+    console.error(`[server] Unhandled error on ${req.method} ${req.url}:`, err.message);
+    if (!res.headersSent) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+   }
   });
 
   httpServer.listen(PORT, "0.0.0.0", () => {
