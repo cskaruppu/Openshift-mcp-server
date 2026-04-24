@@ -114,11 +114,18 @@ async function callOpenAI(messages, o, stream, hooks = {}) {
       function: { name: t.name, description: t.description, parameters: t.input_schema },
     }));
   }
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${o.apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${o.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (fetchErr) {
+    const cause = fetchErr.cause || {};
+    const detail = cause.code || cause.message || fetchErr.message;
+    throw new Error(`OpenAI network error: ${detail}`);
+  }
   if (!resp.ok) {
     const err = await resp.text();
     throw new Error(`OpenAI ${resp.status}: ${err.substring(0, 500)}`);
@@ -189,11 +196,18 @@ async function callAzureOpenAI(messages, o, stream, hooks = {}) {
       function: { name: t.name, description: t.description, parameters: t.input_schema },
     }));
   }
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "api-key": o.apiKey, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: "POST",
+      headers: { "api-key": o.apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (fetchErr) {
+    const cause = fetchErr.cause || {};
+    const detail = cause.code || cause.message || fetchErr.message;
+    throw new Error(`Azure OpenAI network error: ${detail} (URL: ${baseUrl})`);
+  }
   if (!resp.ok) {
     const err = await resp.text();
     throw new Error(`Azure OpenAI ${resp.status}: ${err.substring(0, 500)}`);
@@ -263,15 +277,22 @@ async function callAnthropic(messages, o, stream, hooks = {}) {
       input_schema: t.input_schema,
     }));
   }
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-      "x-api-key": o.apiKey,
-      "Content-Type": "application/json",
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify(body),
-  });
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "x-api-key": o.apiKey,
+        "Content-Type": "application/json",
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (fetchErr) {
+    const cause = fetchErr.cause || {};
+    const detail = cause.code || cause.message || fetchErr.message;
+    throw new Error(`Anthropic network error: ${detail}`);
+  }
   if (!resp.ok) {
     const err = await resp.text();
     throw new Error(`Anthropic ${resp.status}: ${err.substring(0, 500)}`);
@@ -338,11 +359,18 @@ async function callOllama(messages, o, stream, hooks = {}) {
       function: { name: t.name, description: t.description, parameters: t.input_schema },
     }));
   }
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (fetchErr) {
+    const cause = fetchErr.cause || {};
+    const detail = cause.code || cause.message || fetchErr.message;
+    throw new Error(`Ollama network error: ${detail}`);
+  }
   if (!resp.ok) {
     const err = await resp.text();
     throw new Error(`Ollama ${resp.status}: ${err.substring(0, 500)}`);
@@ -382,7 +410,7 @@ async function callOllama(messages, o, stream, hooks = {}) {
 // ---------------------------------------------------------------------------
 // Fallback chain — tries providers in order until one succeeds
 // ---------------------------------------------------------------------------
-const LLM_SETTINGS_PATH = "/tmp/mcp-llm-settings.json";
+const LLM_SETTINGS_PATH = process.env.LLM_SETTINGS_PATH || "/data/mcp-llm-settings.json";
 
 async function loadFallbackChain() {
   try {

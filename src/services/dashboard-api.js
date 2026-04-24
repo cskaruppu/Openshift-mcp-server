@@ -133,9 +133,11 @@ export async function handleLLMSettingsTest(req, res) {
       durationMs,
     });
   } catch (err) {
+    const cause = err.cause ? ` (${err.cause.code || err.cause.message || err.cause})` : "";
+    console.error(`[llm-test] ${provider} failed: ${err.message}${cause}`);
     return json(res, 200, {
       success: false,
-      error: err.message,
+      error: `${err.message}${cause}`,
     });
   }
 }
