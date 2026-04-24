@@ -126,9 +126,14 @@ async function callOpenAI(messages, o, stream, hooks = {}) {
     const detail = cause.code || cause.message || fetchErr.message;
     throw new Error(`OpenAI network error: ${detail}`);
   }
+  const contentType = resp.headers.get("content-type") || "";
   if (!resp.ok) {
     const err = await resp.text();
     throw new Error(`OpenAI ${resp.status}: ${err.substring(0, 500)}`);
+  }
+  if (!stream && !contentType.includes("application/json") && !contentType.includes("text/event-stream")) {
+    const body = await resp.text();
+    throw new Error(`OpenAI returned non-JSON (${contentType}). Response: ${body.substring(0, 300)}`);
   }
   if (!stream) {
     const data = await resp.json();
@@ -208,9 +213,14 @@ async function callAzureOpenAI(messages, o, stream, hooks = {}) {
     const detail = cause.code || cause.message || fetchErr.message;
     throw new Error(`Azure OpenAI network error: ${detail} (URL: ${baseUrl})`);
   }
+  const contentType = resp.headers.get("content-type") || "";
   if (!resp.ok) {
     const err = await resp.text();
-    throw new Error(`Azure OpenAI ${resp.status}: ${err.substring(0, 500)}`);
+    throw new Error(`Azure OpenAI ${resp.status}: ${err.substring(0, 500)} (URL: ${url})`);
+  }
+  if (!stream && !contentType.includes("application/json") && !contentType.includes("text/event-stream")) {
+    const body = await resp.text();
+    throw new Error(`Azure OpenAI returned non-JSON (${contentType}). A proxy may be intercepting requests. Response: ${body.substring(0, 300)} (URL: ${url})`);
   }
   if (!stream) {
     const data = await resp.json();

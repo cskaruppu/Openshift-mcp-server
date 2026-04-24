@@ -34,6 +34,8 @@ spec:
             - secretRef:
                 name: mcp-server-secrets
           env:
+            - name: NODE_EXTRA_CA_CERTS
+              value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
             # Build DATABASE_URL from the Postgres secret. Optional — if the
             # mcp-postgres secret is not present, omit this block to run in
             # stateless mode.
