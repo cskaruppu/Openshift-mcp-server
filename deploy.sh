@@ -62,9 +62,9 @@ oc apply -f "$K8S_DIR/secret.yaml"
 oc apply -f "$K8S_DIR/configmap.yaml"
 oc apply -f "$K8S_DIR/networkpolicy.yaml"
 
-# 2. Data stores
+# 2. Data stores (ignore StatefulSet immutable field errors for existing deployments)
 echo "[3/6] Deploying PostgreSQL and Redis..."
-oc apply -f "$K8S_DIR/postgres.yaml"
+oc apply -f "$K8S_DIR/postgres.yaml" 2>&1 | grep -v "is invalid" || true
 oc apply -f "$K8S_DIR/redis.yaml"
 
 # 3. MCP Server (serves both API and dashboard)
