@@ -1,62 +1,38 @@
-# Allow all egress from MCP server pods.
-# The mcp-server needs to reach the Kubernetes API (port 6443),
-# external LLM APIs (443), DNS (53), Postgres (5432), Redis (6379),
-# and Ollama (11434). Rather than enumerate every port and risk
-# breaking connectivity, allow all egress.
+# NetworkPolicy — controls ingress/egress for all pods in the namespace.
+#
+# Egress: allow-all so the MCP server can reach the Kubernetes API (port 6443),
+# external LLM APIs (port 443), DNS (port 53), and internal services.
+#
+# Ingress: OpenShift router + intra-namespace traffic only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: mcp-server-egress
+  name: mcp-allow-egress
   namespace: openshift-mcp
   labels:
-    app.kubernetes.io/name: openshift-mcp-server
-    app.kubernetes.io/component: network
+    app.kubernetes.io/part-of: mcp-ai-assistant
 spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: openshift-mcp-server
+  podSelector: {}
   policyTypes:
     - Egress
   egress:
     - {}
 ---
-# Allow all egress from dashboard pods (DNS + mcp-server backend).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: mcp-dashboard-egress
+  name: mcp-allow-ingress
   namespace: openshift-mcp
   labels:
-    app.kubernetes.io/name: mcp-dashboard
-    app.kubernetes.io/component: network
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: mcp-dashboard
-  policyTypes:
-    - Egress
-  egress:
-    - {}
----
-# Ingress — allow OpenShift router and intra-namespace traffic.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: mcp-ingress
-  namespace: openshift-mcp
-  labels:
-    app.kubernetes.io/name: openshift-mcp-server
-    app.kubernetes.io/component: network
+    app.kubernetes.io/part-of: mcp-ai-assistant
 spec:
   podSelector: {}
   policyTypes:
     - Ingress
   ingress:
-    # Allow traffic from OpenShift router (Ingress controller namespace)
     - from:
         - namespaceSelector:
             matchLabels:
               network.openshift.io/policy-group: ingress
-    # Allow intra-namespace traffic (dashboard → server, server → postgres/redis)
     - from:
         - podSelector: {}

@@ -6,6 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/name: openshift-mcp-server
     app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: mcp-ai-assistant
 spec:
   replicas: 1
   selector:
@@ -27,7 +28,7 @@ spec:
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
-              name: mcp
+              name: http
           envFrom:
             - configMapRef:
                 name: mcp-server-config
@@ -36,15 +37,6 @@ spec:
           env:
             - name: NODE_EXTRA_CA_CERTS
               value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
-            # HTTPS proxy for external LLM API calls (Azure, OpenAI, Anthropic).
-            # Required when pod network cannot reach external endpoints directly.
-            # Example: "http://squid.openshift-mcp.svc:3128"
-            # Leave empty or remove if pods have direct internet access.
-            - name: HTTPS_PROXY
-              value: ""
-            # Build DATABASE_URL from the Postgres secret. Optional — if the
-            # mcp-postgres secret is not present, omit this block to run in
-            # stateless mode.
             - name: PGUSER
               valueFrom:
                 secretKeyRef:
