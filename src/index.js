@@ -7,6 +7,8 @@
  */
 
 import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
+import { resolve, extname } from "node:path";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -477,6 +479,30 @@ async function startSSE() {
       }
       await session.transport.handlePostMessage(req, res);
       return;
+    }
+
+    // Serve dashboard HTML — fallback for any non-API, non-MCP route
+    if (req.method === "GET") {
+      const DASHBOARD_DIR = process.env.DASHBOARD_DIR || resolve(process.cwd(), "dashboard");
+      const MIME = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon" };
+      const filePath = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\//, "");
+      try {
+        const full = resolve(DASHBOARD_DIR, filePath);
+        if (!full.startsWith(DASHBOARD_DIR)) throw new Error("forbidden");
+        const data = await readFile(full);
+        const ct = MIME[extname(full)] || "application/octet-stream";
+        res.writeHead(200, { "Content-Type": ct });
+        res.end(data);
+        return;
+      } catch {
+        // Not a static file — try index.html for SPA-style routing
+        try {
+          const data = await readFile(resolve(DASHBOARD_DIR, "index.html"));
+          res.writeHead(200, { "Content-Type": "text/html" });
+          res.end(data);
+          return;
+        } catch { /* fall through to 404 */ }
+      }
     }
 
     // Fallback

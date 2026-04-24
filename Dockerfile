@@ -9,6 +9,7 @@ RUN addgroup -g 1001 -S appgroup && adduser -u 1001 -S appuser -G appgroup
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/src ./src
+COPY dashboard/ dashboard/
 COPY package.json .
 USER 1001
 ENV NODE_ENV=production
