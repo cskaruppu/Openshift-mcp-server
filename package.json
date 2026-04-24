@@ -11,12 +11,19 @@
     "build:dashboard": "echo 'Dashboard is static HTML - no build needed'",
     "lint": "echo 'Add eslint if needed'"
   },
-  "keywords": ["mcp", "openshift", "kubernetes", "servicenow", "ansible"],
+  "keywords": [
+    "mcp",
+    "openshift",
+    "kubernetes",
+    "servicenow",
+    "ansible"
+  ],
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "ioredis": "^5.4.1",
     "pg": "^8.13.1",
+    "undici": "^8.1.0",
     "zod": "^3.24.4"
   }
 }

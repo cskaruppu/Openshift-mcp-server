@@ -12,12 +12,28 @@
  * dashboard's provider dropdown still works.
  */
 
+import { ProxyAgent, fetch as undiciFetch } from "undici";
+
 const DEFAULT_PROVIDER = process.env.LLM_PROVIDER || "none";
 const DEFAULT_API_URL = process.env.LLM_API_URL || "http://localhost:11434";
 const DEFAULT_API_KEY = process.env.LLM_API_KEY || "";
 const DEFAULT_MODEL = process.env.LLM_MODEL || "gpt-4";
 const DEFAULT_AZURE_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || "";
 const DEFAULT_AZURE_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || "2024-08-01-preview";
+
+const HTTPS_PROXY = process.env.HTTPS_PROXY || process.env.HTTP_PROXY
+  || process.env.https_proxy || process.env.http_proxy || "";
+
+if (HTTPS_PROXY) {
+  console.error(`[llm] Using proxy for external LLM calls: ${HTTPS_PROXY}`);
+}
+
+function llmFetch(url, opts) {
+  if (HTTPS_PROXY) {
+    return undiciFetch(url, { ...opts, dispatcher: new ProxyAgent(HTTPS_PROXY) });
+  }
+  return fetch(url, opts);
+}
 
 export function llmEnabled(opts = {}) {
   const p = opts.provider || DEFAULT_PROVIDER;
@@ -116,7 +132,7 @@ async function callOpenAI(messages, o, stream, hooks = {}) {
   }
   let resp;
   try {
-    resp = await fetch(url, {
+    resp = await llmFetch(url, {
       method: "POST",
       headers: { Authorization: `Bearer ${o.apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -203,7 +219,7 @@ async function callAzureOpenAI(messages, o, stream, hooks = {}) {
   }
   let resp;
   try {
-    resp = await fetch(url, {
+    resp = await llmFetch(url, {
       method: "POST",
       headers: { "api-key": o.apiKey, "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -289,7 +305,7 @@ async function callAnthropic(messages, o, stream, hooks = {}) {
   }
   let resp;
   try {
-    resp = await fetch(url, {
+    resp = await llmFetch(url, {
       method: "POST",
       headers: {
         "x-api-key": o.apiKey,
@@ -371,7 +387,7 @@ async function callOllama(messages, o, stream, hooks = {}) {
   }
   let resp;
   try {
-    resp = await fetch(url, {
+    resp = await llmFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
