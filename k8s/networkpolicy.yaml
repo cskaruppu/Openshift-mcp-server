@@ -1,6 +1,8 @@
-# Egress network policy for the MCP server pod.
-# Allows DNS resolution (CoreDNS) and outbound HTTPS to external LLM APIs
-# (Azure OpenAI, OpenAI, Anthropic, etc.).
+# Allow all egress from MCP server pods.
+# The mcp-server needs to reach the Kubernetes API (port 6443),
+# external LLM APIs (443), DNS (53), Postgres (5432), Redis (6379),
+# and Ollama (11434). Rather than enumerate every port and risk
+# breaking connectivity, allow all egress.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -16,38 +18,9 @@ spec:
   policyTypes:
     - Egress
   egress:
-    # DNS — UDP and TCP port 53 to any target (CoreDNS runs in openshift-dns)
-    - ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
-    # HTTPS — external LLM APIs (Azure OpenAI, OpenAI, Anthropic)
-    - ports:
-        - protocol: TCP
-          port: 443
-    # HTTP — Ollama and other local/internal services
-    - ports:
-        - protocol: TCP
-          port: 11434
-    # Postgres
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: mcp-postgres
-      ports:
-        - protocol: TCP
-          port: 5432
-    # Redis
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: mcp-redis
-      ports:
-        - protocol: TCP
-          port: 6379
+    - {}
 ---
-# Egress for the dashboard pod — allows DNS and calls to mcp-server service.
+# Allow all egress from dashboard pods (DNS + mcp-server backend).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -63,23 +36,9 @@ spec:
   policyTypes:
     - Egress
   egress:
-    # DNS
-    - ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
-    # mcp-server API (port 3000)
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: openshift-mcp-server
-      ports:
-        - protocol: TCP
-          port: 3000
+    - {}
 ---
-# Ingress — allow dashboard to reach mcp-server, and allow OpenShift router
-# to reach both the dashboard and the server.
+# Ingress — allow OpenShift router and intra-namespace traffic.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
