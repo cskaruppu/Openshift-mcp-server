@@ -261,8 +261,35 @@ tr:hover td{background:#ffffff06}
 .refresh-bar{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2)}
 .refresh-bar button{font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text);cursor:pointer}
 .refresh-bar button:hover{background:var(--border)}
+/* Alert trends chart */
+.trends-chart{display:flex;align-items:flex-end;gap:2px;height:64px;padding:12px 16px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:16px}
+.trends-chart .bar-group{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;min-width:0}
+.trends-chart .bar{width:100%;border-radius:2px 2px 0 0;min-height:1px;transition:height .3s}
+.trends-chart .bar.crit{background:var(--crit)}
+.trends-chart .bar.warn{background:var(--warn)}
+.trends-chart .bar-label{font-size:8px;color:var(--text2);margin-top:2px;white-space:nowrap}
+.trends-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.trends-header .title{font-size:13px;font-weight:600;color:var(--text)}
+.trends-header .legend{display:flex;gap:10px;font-size:11px;color:var(--text2)}
+.trends-header .legend span{display:flex;align-items:center;gap:4px}
+.trends-header .legend .dot{width:8px;height:8px;border-radius:2px}
+/* Silence modal */
+.silence-modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:200}
+.silence-modal .modal-box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;width:400px;max-width:90vw}
+.silence-modal .modal-box h3{margin:0 0 16px;font-size:16px}
+.silence-modal .modal-box label{font-size:12px;color:var(--text2);display:block;margin-bottom:4px}
+.silence-modal .modal-box select,.silence-modal .modal-box input{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:13px;margin-bottom:12px;box-sizing:border-box}
+.silence-modal .modal-actions{display:flex;gap:8px;justify-content:flex-end}
+.silence-modal .modal-actions button{padding:6px 16px;border-radius:6px;font-size:13px;cursor:pointer;border:1px solid var(--border)}
+.silence-modal .modal-actions .btn-primary{background:var(--accent2);color:#fff;border-color:var(--accent2)}
+.silence-modal .modal-actions .btn-cancel{background:transparent;color:var(--text)}
+.alert-row.silenced{opacity:.5}
+.alert-row.silenced .alert-title::after{content:" (silenced)";font-size:11px;font-weight:400;color:var(--text2)}
+/* Notification config */
+.notif-section{margin-top:24px;padding-top:20px;border-top:1px solid var(--border)}
+.notif-section h3{margin:0 0 12px}
 .light-theme .alert-row:hover{background:#f0f0f5}
-.light-theme .severity-bar{background:#fafafa}
+.light-theme .severity-bar,.light-theme .trends-chart{background:#fafafa}
 /* Light theme */
 .light-theme{--bg:#f5f5f7;--card:#ffffff;--border:#e0e0e6;--text:#1a1a2e;--text2:#6b6b80;--accent:#e04040;--accent2:#2563eb;--accent3:#059669;--warn:#d97706;--crit:#dc2626;--ok:#16a34a}
 .light-theme .header{background:linear-gradient(135deg,#ffffff 0%,#f8e8e8 100%)}
@@ -816,6 +843,17 @@ tr:hover td{background:#ffffff06}
     <div class="severity-stat" style="margin-left:auto"><span class="severity-dot ok"></span> Total: <span id="sev-total-count">0</span></div>
   </div>
 
+  <!-- Alert trends (24h) -->
+  <div>
+    <div class="trends-header">
+      <span class="title">Alert Trend (24h)</span>
+      <span class="legend"><span><span class="dot" style="background:var(--crit)"></span> Critical</span><span><span class="dot" style="background:var(--warn)"></span> Warning</span></span>
+    </div>
+    <div class="trends-chart" id="alerts-trends-chart">
+      <div style="width:100%;text-align:center;font-size:11px;color:var(--text2)">Loading trend data...</div>
+    </div>
+  </div>
+
   <!-- Filters toolbar -->
   <div class="alerts-toolbar">
     <select id="alert-filter-severity" onchange="renderAlertsView()">
@@ -833,6 +871,9 @@ tr:hover td{background:#ffffff06}
       <option value="all">All Namespaces</option>
     </select>
     <input type="text" id="alert-search" placeholder="Search alerts..." oninput="renderAlertsView()">
+    <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text2);cursor:pointer;white-space:nowrap">
+      <input type="checkbox" id="alert-show-silenced" onchange="renderAlertsView()"> Show silenced
+    </label>
   </div>
 
   <!-- Alerts list -->
@@ -949,6 +990,45 @@ tr:hover td{background:#ffffff06}
         <div class="fallback-item" data-provider="anthropic" draggable="true"><span class="fb-num">2</span><span class="fb-name">Anthropic (Claude)</span></div>
         <div class="fallback-item" data-provider="azure" draggable="true"><span class="fb-num">3</span><span class="fb-name">Azure OpenAI</span></div>
         <div class="fallback-item" data-provider="ollama" draggable="true"><span class="fb-num">4</span><span class="fb-name">Ollama (Local)</span></div>
+      </div>
+    </div>
+
+    <!-- Notification Config -->
+    <div class="settings-section notif-section">
+      <h3>Alert Notifications</h3>
+      <p style="font-size:12px;color:var(--text2);margin-bottom:12px">Send critical alerts to Slack or Microsoft Teams via webhook.</p>
+      <div class="settings-row">
+        <div class="settings-field">
+          <label>Webhook URL</label>
+          <input type="text" id="notif-webhook-url" placeholder="https://hooks.slack.com/services/... or Teams webhook URL">
+        </div>
+      </div>
+      <div class="settings-row">
+        <div class="settings-field" style="max-width:250px">
+          <label>Channel (optional)</label>
+          <input type="text" id="notif-channel" placeholder="#alerts">
+        </div>
+        <div class="settings-field" style="max-width:200px">
+          <label>Enabled</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin-top:4px">
+            <input type="checkbox" id="notif-enabled"> Send notifications
+          </label>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div class="settings-field">
+          <label>Notify on severities</label>
+          <div style="display:flex;gap:12px;margin-top:4px">
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" id="notif-sev-critical" checked> Critical</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" id="notif-sev-warning"> Warning</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" id="notif-sev-info"> Info</label>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="icon-btn" style="font-size:12px" onclick="saveNotificationSettings()">Save Notification Settings</button>
+        <button class="icon-btn" style="font-size:12px;background:transparent;border:1px solid var(--border);color:var(--text)" onclick="testNotificationWebhook()">Test Webhook</button>
+        <span id="notif-save-status" style="font-size:12px;margin-left:8px;line-height:32px"></span>
       </div>
     </div>
 
@@ -1087,7 +1167,7 @@ async function loadAlerts() {
   const countEl = document.getElementById('alert-count');
   try {
     const data = await apiFetch('/api/alerts');
-    const alerts = data.alerts || [];
+    const alerts = (data.alerts || []).filter(a => !a.silenced);
     const summary = data.summary || {};
     updateAlertsBadge(alerts.length);
     countEl.textContent = alerts.length > 0 ? '(' + alerts.length + ')' : '';
@@ -2246,6 +2326,7 @@ async function loadSettings() {
     const sysEl = document.getElementById('settings-system-prompt');
     if (sysEl) sysEl.value = defs.systemPrompt || '';
     loadEnabledProviders();
+    loadNotificationSettings();
   } catch (e) {
     console.warn('Failed to load settings:', e);
   }
@@ -2727,12 +2808,16 @@ let _alertsTimer = null;
 
 async function loadAlertsView() {
   try {
-    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts');
-    const data = await resp.json();
-    _alertsData = data.alerts || [];
-    const summary = data.summary || { critical: 0, warning: 0, info: 0 };
+    const [alertsResp] = await Promise.all([
+      fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts').then(r => r.json()),
+      loadSilences(),
+      loadAlertsTrends(),
+    ]);
+    _alertsData = alertsResp.alerts || [];
+    const summary = alertsResp.summary || { critical: 0, warning: 0, info: 0 };
 
-    updateAlertsBadge(_alertsData.length);
+    const nonSilenced = _alertsData.filter(a => !a.silenced);
+    updateAlertsBadge(nonSilenced.length);
 
     document.getElementById('sev-crit-count').textContent = summary.critical;
     document.getElementById('sev-warn-count').textContent = summary.warning;
@@ -2760,8 +2845,10 @@ function renderAlertsView() {
   const srcFilter = document.getElementById('alert-filter-source').value;
   const nsFilter = document.getElementById('alert-filter-namespace').value;
   const search = (document.getElementById('alert-search').value || '').toLowerCase();
+  const showSilenced = document.getElementById('alert-show-silenced').checked;
 
   let filtered = _alertsData.filter(a => {
+    if (!showSilenced && a.silenced) return false;
     if (sevFilter !== 'all' && a.severity !== sevFilter) return false;
     if (srcFilter !== 'all' && a.source !== srcFilter) return false;
     if (nsFilter !== 'all' && a.namespace !== nsFilter) return false;
@@ -2787,7 +2874,8 @@ function renderAlertsView() {
     const label = a.severity.charAt(0).toUpperCase() + a.severity.slice(1);
     const srcLabel = a.source === 'alertmanager' ? 'Prometheus' : 'K8s Event';
     const duration = a.since ? timeAgo(a.since) : '';
-    return '<div class="alert-row">' +
+    const isSilenced = !!a.silenced;
+    return '<div class="alert-row' + (isSilenced ? ' silenced' : '') + '">' +
       '<div class="sev-indicator ' + esc(a.severity) + '"></div>' +
       '<div class="alert-body">' +
         '<div class="alert-title">' + esc(a.name) + '</div>' +
@@ -2803,6 +2891,9 @@ function renderAlertsView() {
       '</div>' +
       '<div class="alert-actions">' +
         '<button data-investigate="' + i + '">Investigate</button>' +
+        (isSilenced
+          ? '<button data-unsilence="' + i + '" style="color:var(--ok)">Unsilence</button>'
+          : '<button data-silence="' + i + '">Silence</button>') +
       '</div>' +
     '</div>';
   }).join('');
@@ -2811,6 +2902,18 @@ function renderAlertsView() {
     btn.addEventListener('click', () => {
       const a = filtered[parseInt(btn.dataset.investigate)];
       if (a) investigateAlert(a.name, a.namespace, a.resource);
+    });
+  });
+  container.querySelectorAll('[data-silence]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const a = filtered[parseInt(btn.dataset.silence)];
+      if (a) showSilenceModal(a.name, a.namespace);
+    });
+  });
+  container.querySelectorAll('[data-unsilence]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const a = filtered[parseInt(btn.dataset.unsilence)];
+      if (a) unsilenceAlert(a.name, a.namespace);
     });
   });
 }
@@ -2851,16 +2954,194 @@ function resetAlertsCountdown() {
 setInterval(() => {
   fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts')
     .then(r => r.json())
-    .then(d => updateAlertsBadge((d.alerts || []).length))
+    .then(d => updateAlertsBadge((d.alerts || []).filter(a => !a.silenced).length))
     .catch(() => {});
 }, 60000);
 // Initial fetch
 setTimeout(() => {
   fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts')
     .then(r => r.json())
-    .then(d => updateAlertsBadge((d.alerts || []).length))
+    .then(d => updateAlertsBadge((d.alerts || []).filter(a => !a.silenced).length))
     .catch(() => {});
 }, 3000);
+
+// ---------------------------------------------------------------------------
+// Alert Trends — 24h bar chart
+// ---------------------------------------------------------------------------
+async function loadAlertsTrends() {
+  const chart = document.getElementById('alerts-trends-chart');
+  try {
+    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/history');
+    const data = await resp.json();
+    const buckets = data.buckets || [];
+    if (buckets.length === 0) {
+      chart.innerHTML = '<div style="width:100%;text-align:center;font-size:11px;color:var(--text2)">No trend data</div>';
+      return;
+    }
+    const maxVal = Math.max(1, ...buckets.map(b => b.critical + b.warning));
+    chart.innerHTML = buckets.map((b, i) => {
+      const critH = Math.round((b.critical / maxVal) * 48);
+      const warnH = Math.round((b.warning / maxVal) * 48);
+      const showLabel = (i % 3 === 0);
+      return '<div class="bar-group">' +
+        '<div class="bar crit" style="height:' + critH + 'px" title="' + b.critical + ' critical"></div>' +
+        '<div class="bar warn" style="height:' + warnH + 'px" title="' + b.warning + ' warning"></div>' +
+        (showLabel ? '<span class="bar-label">' + esc(b.hour) + '</span>' : '') +
+      '</div>';
+    }).join('');
+  } catch {
+    chart.innerHTML = '<div style="width:100%;text-align:center;font-size:11px;color:var(--text2)">Trend data unavailable</div>';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Silence / Acknowledge alerts
+// ---------------------------------------------------------------------------
+let _silencedSet = new Set();
+
+async function loadSilences() {
+  try {
+    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/silences');
+    const data = await resp.json();
+    _silencedSet = new Set((data.silences || []).map(s => s.name + '|' + s.namespace));
+  } catch { /* ignore */ }
+}
+
+function showSilenceModal(name, namespace) {
+  const existing = document.getElementById('silence-modal');
+  if (existing) existing.remove();
+  const modal = document.createElement('div');
+  modal.id = 'silence-modal';
+  modal.className = 'silence-modal';
+  modal.innerHTML = '<div class="modal-box">' +
+    '<h3>Silence Alert</h3>' +
+    '<label>Alert</label>' +
+    '<input type="text" value="' + esc(name) + '" readonly style="opacity:.7">' +
+    (namespace ? '<label>Namespace</label><input type="text" value="' + esc(namespace) + '" readonly style="opacity:.7">' : '') +
+    '<label>Duration</label>' +
+    '<select id="silence-duration">' +
+      '<option value="15">15 minutes</option>' +
+      '<option value="30">30 minutes</option>' +
+      '<option value="60" selected>1 hour</option>' +
+      '<option value="120">2 hours</option>' +
+      '<option value="240">4 hours</option>' +
+      '<option value="480">8 hours</option>' +
+      '<option value="1440">24 hours</option>' +
+    '</select>' +
+    '<div class="modal-actions">' +
+      '<button class="btn-cancel" id="silence-cancel">Cancel</button>' +
+      '<button class="btn-primary" id="silence-confirm">Silence</button>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(modal);
+  modal.querySelector('#silence-cancel').addEventListener('click', () => modal.remove());
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+  modal.querySelector('#silence-confirm').addEventListener('click', async () => {
+    const duration = parseInt(document.getElementById('silence-duration').value);
+    try {
+      await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/silence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, namespace: namespace || '', duration }),
+      });
+      _silencedSet.add(name + '|' + (namespace || ''));
+      modal.remove();
+      loadAlertsView();
+    } catch (err) {
+      alert('Failed to silence: ' + err.message);
+    }
+  });
+}
+
+async function unsilenceAlert(name, namespace) {
+  try {
+    await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/silence', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, namespace: namespace || '' }),
+    });
+    _silencedSet.delete(name + '|' + (namespace || ''));
+    loadAlertsView();
+  } catch (err) {
+    alert('Failed to unsilence: ' + err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Notification config (Settings tab)
+// ---------------------------------------------------------------------------
+async function loadNotificationSettings() {
+  try {
+    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/settings/notifications');
+    const cfg = await resp.json();
+    document.getElementById('notif-webhook-url').value = cfg.webhookUrl || '';
+    document.getElementById('notif-channel').value = cfg.channel || '';
+    document.getElementById('notif-enabled').checked = !!cfg.enabled;
+    const sevs = cfg.severities || ['critical'];
+    document.getElementById('notif-sev-critical').checked = sevs.includes('critical');
+    document.getElementById('notif-sev-warning').checked = sevs.includes('warning');
+    document.getElementById('notif-sev-info').checked = sevs.includes('info');
+  } catch { /* defaults are fine */ }
+}
+
+async function saveNotificationSettings() {
+  const status = document.getElementById('notif-save-status');
+  const severities = [];
+  if (document.getElementById('notif-sev-critical').checked) severities.push('critical');
+  if (document.getElementById('notif-sev-warning').checked) severities.push('warning');
+  if (document.getElementById('notif-sev-info').checked) severities.push('info');
+  const cfg = {
+    webhookUrl: document.getElementById('notif-webhook-url').value.trim(),
+    channel: document.getElementById('notif-channel').value.trim(),
+    enabled: document.getElementById('notif-enabled').checked,
+    severities,
+  };
+  try {
+    status.textContent = 'Saving...';
+    status.style.color = 'var(--text2)';
+    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/settings/notifications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      status.textContent = 'Saved';
+      status.style.color = 'var(--ok)';
+    } else {
+      status.textContent = data.error || 'Save failed';
+      status.style.color = 'var(--crit)';
+    }
+  } catch (err) {
+    status.textContent = err.message;
+    status.style.color = 'var(--crit)';
+  }
+  setTimeout(() => { status.textContent = ''; }, 4000);
+}
+
+async function testNotificationWebhook() {
+  const status = document.getElementById('notif-save-status');
+  try {
+    status.textContent = 'Testing...';
+    status.style.color = 'var(--text2)';
+    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/settings/notifications/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      status.textContent = 'Test sent!';
+      status.style.color = 'var(--ok)';
+    } else {
+      status.textContent = data.error || 'Test failed';
+      status.style.color = 'var(--crit)';
+    }
+  } catch (err) {
+    status.textContent = err.message;
+    status.style.color = 'var(--crit)';
+  }
+  setTimeout(() => { status.textContent = ''; }, 4000);
+}
 
 // ---------------------------------------------------------------------------
 // SSE Streaming — progressive text rendering for chat responses

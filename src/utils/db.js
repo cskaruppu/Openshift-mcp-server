@@ -151,6 +151,14 @@ CREATE TABLE IF NOT EXISTS alert_suppressions (
   reason TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS silenced_alerts (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  namespace TEXT NOT NULL DEFAULT '',
+  silenced_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL
+);
 `;
 
 async function ensureSchema() {

@@ -7,7 +7,7 @@
  */
 
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { resolve, extname } from "node:path";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -69,6 +69,8 @@ import { redactIfEnabled } from "./services/redaction.js";
 import { loadKubeconfig, registerMultiClusterTools } from "./services/multi-cluster.js";
 import { loadConfig } from "./utils/config.js";
 import { ocpGet } from "./utils/openshift-client.js";
+
+const silencedAlerts = new Map();
 
 function createMcpServer() {
   const server = new McpServer({
@@ -281,6 +283,18 @@ async function startSSE() {
   // Initialize optional persistence layers (graceful fallback if not configured)
   await Promise.all([initDb(), initCache()]);
 
+  // Restore silenced alerts from DB
+  try {
+    const rows = await dbQuery("SELECT name, namespace, silenced_at, expires_at FROM silenced_alerts WHERE expires_at > NOW()");
+    for (const r of (rows?.rows || [])) {
+      silencedAlerts.set(`${r.name}|${r.namespace}`, {
+        name: r.name, namespace: r.namespace,
+        silencedAt: r.silenced_at, expiresAt: r.expires_at,
+      });
+    }
+    if (silencedAlerts.size > 0) console.log(`[startup] restored ${silencedAlerts.size} silenced alerts`);
+  } catch { /* DB optional */ }
+
   // Start background scheduled tasks (health checks, etc.)
   try {
     startHealthCheckTask();
@@ -487,12 +501,150 @@ async function startSSE() {
         const sevOrder = { critical: 0, warning: 1, info: 2 };
         unified.sort((a, b) => (sevOrder[a.severity] ?? 2) - (sevOrder[b.severity] ?? 2) || new Date(b.since) - new Date(a.since));
 
+        // Mark silenced alerts
+        const now = Date.now();
+        for (const a of unified) {
+          const key = `${a.name}|${a.namespace}`;
+          const silence = silencedAlerts.get(key);
+          if (silence && new Date(silence.expiresAt).getTime() > now) {
+            a.silenced = true;
+            a.silenceExpiresAt = silence.expiresAt;
+          }
+        }
+
         const summary = { critical: 0, warning: 0, info: 0 };
-        for (const a of unified) summary[a.severity] = (summary[a.severity] || 0) + 1;
+        for (const a of unified) {
+          if (!a.silenced) summary[a.severity] = (summary[a.severity] || 0) + 1;
+        }
 
         return sendJson(res, 200, { alerts: unified, summary });
       } catch (err) {
         return sendJson(res, 200, { alerts: [], summary: { critical: 0, warning: 0, info: 0 }, error: err.message });
+      }
+    }
+
+    // POST /api/alerts/silence — silence an alert (stored in-memory + optionally DB)
+    if (req.method === "POST" && url.pathname === "/api/alerts/silence") {
+      try {
+        const body = await readJsonBody(req);
+        const { name, namespace, duration } = body;
+        if (!name) return sendJson(res, 400, { error: "Missing alert name" });
+        const durationMs = (duration || 60) * 60 * 1000;
+        const entry = { name, namespace: namespace || "", silencedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + durationMs).toISOString(), duration: duration || 60 };
+        silencedAlerts.set(`${name}|${namespace || ""}`, entry);
+        try {
+          await dbQuery("INSERT INTO silenced_alerts (name, namespace, silenced_at, expires_at) VALUES ($1, $2, $3, $4)", [name, namespace || "", entry.silencedAt, entry.expiresAt]);
+        } catch { /* DB optional */ }
+        return sendJson(res, 200, { ok: true, silence: entry });
+      } catch (err) {
+        return sendJson(res, 500, { error: err.message });
+      }
+    }
+
+    // DELETE /api/alerts/silence — unsilence an alert
+    if (req.method === "DELETE" && url.pathname === "/api/alerts/silence") {
+      try {
+        const body = await readJsonBody(req);
+        const { name, namespace } = body;
+        silencedAlerts.delete(`${name}|${namespace || ""}`);
+        try {
+          await dbQuery("DELETE FROM silenced_alerts WHERE name = $1 AND namespace = $2", [name, namespace || ""]);
+        } catch { /* DB optional */ }
+        return sendJson(res, 200, { ok: true });
+      } catch (err) {
+        return sendJson(res, 500, { error: err.message });
+      }
+    }
+
+    // GET /api/alerts/silences — list active silences
+    if (req.method === "GET" && url.pathname === "/api/alerts/silences") {
+      const now = Date.now();
+      const active = [];
+      for (const [key, s] of silencedAlerts) {
+        if (new Date(s.expiresAt).getTime() > now) active.push(s);
+        else silencedAlerts.delete(key);
+      }
+      return sendJson(res, 200, { silences: active });
+    }
+
+    // GET /api/alerts/history — alert count trend over last 24h (hourly buckets)
+    if (req.method === "GET" && url.pathname === "/api/alerts/history") {
+      try {
+        const now = Date.now();
+        const buckets = [];
+        for (let i = 23; i >= 0; i--) {
+          buckets.push({ hour: new Date(now - i * 3600000).toISOString().slice(11, 13) + ":00", critical: 0, warning: 0, info: 0 });
+        }
+        const events = await ocpGet("/api/v1/events").catch(() => ({ items: [] }));
+        for (const e of (events.items || [])) {
+          if (e.type !== "Warning") continue;
+          const ts = new Date(e.lastTimestamp || e.metadata.creationTimestamp).getTime();
+          const age = now - ts;
+          if (age > 24 * 3600000 || age < 0) continue;
+          const bucketIdx = 23 - Math.floor(age / 3600000);
+          if (bucketIdx < 0 || bucketIdx > 23) continue;
+          const reason = (e.reason || "").toLowerCase();
+          const sev = (reason.includes("backoff") || reason.includes("oomkill") || reason.includes("failed") || reason.includes("unhealthy")) ? "critical" : "warning";
+          buckets[bucketIdx][sev] += (e.count || 1);
+        }
+        return sendJson(res, 200, { buckets });
+      } catch (err) {
+        return sendJson(res, 200, { buckets: [], error: err.message });
+      }
+    }
+
+    // GET/POST /api/settings/notifications — notification webhook config
+    if (url.pathname === "/api/settings/notifications") {
+      const NOTIF_PATH = process.env.NOTIF_SETTINGS_PATH || "/data/mcp-notification-settings.json";
+      if (req.method === "GET") {
+        try {
+          const raw = await readFile(NOTIF_PATH, "utf8");
+          return sendJson(res, 200, JSON.parse(raw));
+        } catch {
+          return sendJson(res, 200, { webhookUrl: "", channel: "", enabled: false, severities: ["critical"] });
+        }
+      }
+      if (req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+          const cfg = {
+            webhookUrl: body.webhookUrl || "",
+            channel: body.channel || "",
+            enabled: !!body.enabled,
+            severities: Array.isArray(body.severities) ? body.severities : ["critical"],
+          };
+          await writeFile(NOTIF_PATH, JSON.stringify(cfg, null, 2));
+          return sendJson(res, 200, { ok: true, config: cfg });
+        } catch (err) {
+          return sendJson(res, 500, { error: err.message });
+        }
+      }
+    }
+
+    // POST /api/settings/notifications/test — test webhook delivery
+    if (req.method === "POST" && url.pathname === "/api/settings/notifications/test") {
+      try {
+        const NOTIF_PATH = process.env.NOTIF_SETTINGS_PATH || "/data/mcp-notification-settings.json";
+        let cfg;
+        try {
+          cfg = JSON.parse(await readFile(NOTIF_PATH, "utf8"));
+        } catch {
+          return sendJson(res, 400, { error: "No notification settings configured" });
+        }
+        if (!cfg.webhookUrl) return sendJson(res, 400, { error: "No webhook URL configured" });
+        const payload = {
+          text: "OpenShift MCP Alert Test: This is a test notification from your MCP AI Assistant.",
+          channel: cfg.channel || undefined,
+        };
+        const resp = await fetch(cfg.webhookUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!resp.ok) return sendJson(res, 502, { error: `Webhook returned ${resp.status}` });
+        return sendJson(res, 200, { ok: true });
+      } catch (err) {
+        return sendJson(res, 500, { error: err.message });
       }
     }
 
