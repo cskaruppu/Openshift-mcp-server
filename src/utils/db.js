@@ -159,6 +159,8 @@ CREATE TABLE IF NOT EXISTS silenced_alerts (
   silenced_at TIMESTAMPTZ NOT NULL,
   expires_at TIMESTAMPTZ NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_silenced_alerts_lookup ON silenced_alerts (name, namespace);
+CREATE INDEX IF NOT EXISTS idx_silenced_alerts_expiry ON silenced_alerts (expires_at);
 `;
 
 async function ensureSchema() {

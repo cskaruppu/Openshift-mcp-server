@@ -123,7 +123,7 @@ export function registerACMTools(server) {
             p.status?.compliant || "unknown",
           clusterStatus: p.status?.status?.map((s) => ({
             cluster: s.clustername,
-            compliant: s.clusternamespace,
+            compliant: s.compliant || "unknown",
           })),
         }));
 

@@ -62,7 +62,7 @@ export function registerEmergencyTools(server) {
             step: "itsm_ticket",
             status: "failed",
             error: snowErr.message,
-            note: "Proceeding with emergency fix despite ITSM failure",
+            note: "ITSM ticket creation failed — fix still executed per emergency override policy. Review required.",
           });
         }
 

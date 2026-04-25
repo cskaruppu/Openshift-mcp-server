@@ -135,10 +135,20 @@ function sendJson(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+const MAX_BODY_BYTES = 2 * 1024 * 1024; // 2 MB
+
 async function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on("data", (c) => chunks.push(c));
+    let size = 0;
+    req.on("data", (c) => {
+      size += c.length;
+      if (size > MAX_BODY_BYTES) {
+        req.destroy();
+        return reject(new Error("Request body too large"));
+      }
+      chunks.push(c);
+    });
     req.on("end", () => {
       const raw = Buffer.concat(chunks).toString();
       if (!raw) return resolve({});

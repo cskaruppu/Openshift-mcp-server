@@ -40,9 +40,10 @@ export function registerRecommendationTools(server) {
     },
     async ({ namespace }) => {
       try {
+        let metricsAvailable = true;
         const [pods, metricsResp] = await Promise.all([
           ocpGet(`/api/v1/namespaces/${namespace}/pods`),
-          ocpGet(`/apis/metrics.k8s.io/v1beta1/namespaces/${namespace}/pods`).catch(() => ({ items: [] })),
+          ocpGet(`/apis/metrics.k8s.io/v1beta1/namespaces/${namespace}/pods`).catch(() => { metricsAvailable = false; return { items: [] }; }),
         ]);
 
         const metricsByPod = {};
@@ -51,6 +52,7 @@ export function registerRecommendationTools(server) {
         }
 
         const findings = [];
+        if (!metricsAvailable) findings.push("⚠ Metrics API (metrics.k8s.io) is unavailable — resource usage data cannot be assessed. Install metrics-server or check Prometheus adapter.");
         let totalSavedCpu = 0, totalSavedMem = 0;
 
         for (const pod of (pods.items || []).filter(p => p.status?.phase === "Running")) {

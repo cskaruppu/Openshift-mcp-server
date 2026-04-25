@@ -15,7 +15,9 @@ export function registerSecurityTools(server) {
         const bindings = [];
 
         const crbs = await ocpGet("/apis/rbac.authorization.k8s.io/v1/clusterrolebindings");
-        for (const crb of (crbs.items || []).slice(0, 200)) {
+        const crbItems = crbs.items || [];
+        const crbTruncated = crbItems.length > 500;
+        for (const crb of crbItems.slice(0, 500)) {
           for (const subj of crb.subjects || []) {
             bindings.push({
               scope: "ClusterRoleBinding",
@@ -70,8 +72,9 @@ export function registerSecurityTools(server) {
         }
 
         const header = `RBAC Audit${namespace ? ` (namespace: ${namespace})` : " (cluster-wide)"}${resource ? ` — resource: ${resource}` : ""}`;
+        const truncNote = crbTruncated ? `\n⚠ Showing first 500 of ${crbItems.length} ClusterRoleBindings. Results may be incomplete.` : "";
         const text = results.length > 0
-          ? `${header}\n${results.length} matching binding(s):\n\n${results.slice(0, 50).join("\n\n")}`
+          ? `${header}\n${results.length} matching binding(s):${truncNote}\n\n${results.slice(0, 50).join("\n\n")}`
           : `${header}\nNo matching RBAC bindings found.`;
         return { content: [{ type: "text", text }] };
       } catch (err) {

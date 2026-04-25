@@ -115,6 +115,9 @@ export function renderTraceMarkdown(trace) {
 // Auth
 // ---------------------------------------------------------------------------
 let _cachedToken = null;
+
+function clearCachedToken() { _cachedToken = null; }
+
 async function token() {
   if (_cachedToken) return _cachedToken;
   if (process.env.OPENSHIFT_TOKEN) {
@@ -137,29 +140,43 @@ async function token() {
 /**
  * Make an authenticated request to the OpenShift / K8s API.
  */
+const OCP_FETCH_TIMEOUT_MS = parseInt(process.env.OCP_FETCH_TIMEOUT_MS || "15000", 10);
+
 export async function ocpFetch(path, options = {}) {
   const tk = await token();
   const url = `${OPENSHIFT_API_URL}${path}`;
   const method = (options.method || "GET").toUpperCase();
   const startedAt = Date.now();
   const acceptsText = options.headers && options.headers.Accept === "text/plain";
-  const resp = await fetch(url, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${tk}`,
-      Accept: acceptsText ? "text/plain" : "application/json",
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || OCP_FETCH_TIMEOUT_MS);
+  let resp;
+  try {
+    resp = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${tk}`,
+        Accept: acceptsText ? "text/plain" : "application/json",
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
   const durationMs = Date.now() - startedAt;
   const trace = getTrace();
   if (trace) {
     trace.push({ method, path, status: resp.status, durationMs });
   }
+  if (resp.status === 401 && !options._retried) {
+    clearCachedToken();
+    return ocpFetch(path, { ...options, _retried: true });
+  }
   if (!resp.ok) {
-    const body = await resp.text();
-    throw new Error(`OCP API ${resp.status}: ${body}`);
+    const body = await resp.text().catch(() => "");
+    throw new Error(`OCP API ${resp.status}: ${body.slice(0, 500)}`);
   }
   if (acceptsText) return resp.text();
   return resp.json();
