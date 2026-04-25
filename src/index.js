@@ -68,6 +68,7 @@ import { initSafety, getSafetyMode } from "./services/safety.js";
 import { redactIfEnabled } from "./services/redaction.js";
 import { loadKubeconfig, registerMultiClusterTools } from "./services/multi-cluster.js";
 import { loadConfig } from "./utils/config.js";
+import { ocpGet } from "./utils/openshift-client.js";
 
 function createMcpServer() {
   const server = new McpServer({
@@ -429,13 +430,69 @@ async function startSSE() {
       }
     }
 
-    // GET /api/alerts — firing alerts from Alertmanager
+    // GET /api/alerts — unified: Alertmanager + K8s warning events
     if (req.method === "GET" && url.pathname === "/api/alerts") {
       try {
-        const alerts = await listFiringAlerts();
-        return sendJson(res, 200, { alerts: alerts || [] });
+        const [promAlerts, eventsResp] = await Promise.allSettled([
+          listFiringAlerts(),
+          ocpGet("/api/v1/events"),
+        ]);
+
+        const unified = [];
+
+        // Alertmanager (Prometheus) alerts
+        const amAlerts = promAlerts.status === "fulfilled" ? promAlerts.value || [] : [];
+        for (const a of amAlerts) {
+          unified.push({
+            source: "alertmanager",
+            name: a.name,
+            severity: a.severity || "warning",
+            namespace: a.namespace || "",
+            resource: a.pod ? `pod/${a.pod}` : "",
+            summary: a.summary || a.description || "",
+            since: a.startsAt || "",
+            count: 1,
+            labels: a.labels || {},
+          });
+        }
+
+        // Kubernetes warning events
+        const evItems = eventsResp.status === "fulfilled" ? (eventsResp.value?.items || []) : [];
+        const warnings = evItems
+          .filter((e) => e.type === "Warning")
+          .sort((a, b) =>
+            new Date(b.lastTimestamp || b.metadata.creationTimestamp) -
+            new Date(a.lastTimestamp || a.metadata.creationTimestamp)
+          )
+          .slice(0, 50);
+        for (const e of warnings) {
+          const reason = (e.reason || "").toLowerCase();
+          let severity = "warning";
+          if (reason.includes("backoff") || reason.includes("oomkill") || reason.includes("failed") || reason.includes("unhealthy"))
+            severity = "critical";
+          unified.push({
+            source: "events",
+            name: e.reason || "Event",
+            severity,
+            namespace: e.metadata.namespace || "",
+            resource: `${(e.involvedObject.kind || "").toLowerCase()}/${e.involvedObject.name}`,
+            summary: (e.message || "").substring(0, 200),
+            since: e.lastTimestamp || e.metadata.creationTimestamp,
+            count: e.count || 1,
+            labels: {},
+          });
+        }
+
+        // Sort by severity (critical first), then by time
+        const sevOrder = { critical: 0, warning: 1, info: 2 };
+        unified.sort((a, b) => (sevOrder[a.severity] ?? 2) - (sevOrder[b.severity] ?? 2) || new Date(b.since) - new Date(a.since));
+
+        const summary = { critical: 0, warning: 0, info: 0 };
+        for (const a of unified) summary[a.severity] = (summary[a.severity] || 0) + 1;
+
+        return sendJson(res, 200, { alerts: unified, summary });
       } catch (err) {
-        return sendJson(res, 200, { alerts: [], error: err.message });
+        return sendJson(res, 200, { alerts: [], summary: { critical: 0, warning: 0, info: 0 }, error: err.message });
       }
     }
 

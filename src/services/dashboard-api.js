@@ -284,44 +284,6 @@ export async function handleDashboardAPI(pathname, req, res) {
         break;
       }
 
-      // ---- Warning events (alerts) ----
-      case "/api/alerts": {
-        const events = await ocpGet("/api/v1/events");
-        const warnings = (events.items || [])
-          .filter((e) => e.type === "Warning")
-          .sort(
-            (a, b) =>
-              new Date(b.lastTimestamp || b.metadata.creationTimestamp) -
-              new Date(a.lastTimestamp || a.metadata.creationTimestamp)
-          )
-          .slice(0, 30);
-
-        const alerts = warnings.map((e) => {
-          let severity = "warning";
-          const reason = (e.reason || "").toLowerCase();
-          if (
-            reason.includes("backoff") ||
-            reason.includes("oomkill") ||
-            reason.includes("failed") ||
-            reason.includes("unhealthy")
-          )
-            severity = "critical";
-
-          return {
-            severity,
-            resource: `${(e.involvedObject.kind || "").toLowerCase()}/${e.involvedObject.name}`,
-            namespace: e.metadata.namespace,
-            reason: e.reason,
-            message: e.message,
-            count: e.count,
-            lastSeen: e.lastTimestamp || e.metadata.creationTimestamp,
-          };
-        });
-
-        json(res, 200, alerts);
-        break;
-      }
-
       // ---- Pods with issues ----
       case "/api/pods/issues": {
         const pods = await ocpGet("/api/v1/pods");

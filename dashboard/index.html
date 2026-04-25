@@ -229,6 +229,40 @@ tr:hover td{background:#ffffff06}
 /* Alerts badge */
 .alerts-badge{background:var(--crit);color:#fff;border-radius:999px;padding:1px 6px;font-size:10px;font-weight:700;margin-left:4px;display:none}
 .alerts-badge.visible{display:inline}
+/* Alerts view */
+.alerts-toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.alerts-toolbar select,.alerts-toolbar input{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px}
+.alerts-toolbar input{flex:1;min-width:160px}
+.severity-bar{display:flex;gap:10px;padding:12px 16px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:16px}
+.severity-stat{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600}
+.severity-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.severity-dot.crit{background:var(--crit)}
+.severity-dot.warn{background:var(--warn)}
+.severity-dot.info{background:var(--accent2)}
+.severity-dot.ok{background:var(--ok)}
+.alert-healthy{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:48px 24px;color:var(--ok)}
+.alert-healthy svg{width:48px;height:48px}
+.alert-healthy .title{font-size:18px;font-weight:700}
+.alert-healthy .subtitle{font-size:13px;color:var(--text2)}
+.alert-row{display:flex;align-items:flex-start;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);transition:background .15s}
+.alert-row:last-child{border-bottom:none}
+.alert-row:hover{background:#ffffff08}
+.alert-row .sev-indicator{width:4px;min-height:36px;border-radius:2px;flex-shrink:0}
+.alert-row .sev-indicator.critical{background:var(--crit)}
+.alert-row .sev-indicator.warning{background:var(--warn)}
+.alert-row .sev-indicator.info{background:var(--accent2)}
+.alert-row .alert-body{flex:1;min-width:0}
+.alert-row .alert-title{font-weight:600;font-size:13px;margin-bottom:2px}
+.alert-row .alert-meta{font-size:11px;color:var(--text2);display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.alert-row .alert-summary{font-size:12px;color:var(--text2);margin-top:4px;line-height:1.4}
+.alert-row .alert-actions{flex-shrink:0;display:flex;gap:6px;align-items:flex-start}
+.alert-row .alert-actions button{font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--accent2);cursor:pointer;white-space:nowrap}
+.alert-row .alert-actions button:hover{background:var(--accent2);color:#fff}
+.refresh-bar{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2)}
+.refresh-bar button{font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text);cursor:pointer}
+.refresh-bar button:hover{background:var(--border)}
+.light-theme .alert-row:hover{background:#f0f0f5}
+.light-theme .severity-bar{background:#fafafa}
 /* Light theme */
 .light-theme{--bg:#f5f5f7;--card:#ffffff;--border:#e0e0e6;--text:#1a1a2e;--text2:#6b6b80;--accent:#e04040;--accent2:#2563eb;--accent3:#059669;--warn:#d97706;--crit:#dc2626;--ok:#16a34a}
 .light-theme .header{background:linear-gradient(135deg,#ffffff 0%,#f8e8e8 100%)}
@@ -562,14 +596,10 @@ tr:hover td{background:#ffffff06}
       <div class="section-title" style="margin-top:24px">
         <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
         Active Alerts <span id="alert-count" style="font-size:12px;color:var(--text2);font-weight:400"></span>
+        <span style="margin-left:auto;cursor:pointer;font-size:12px;color:var(--accent2)" onclick="showView('alerts-view')">View All &#8594;</span>
       </div>
-      <div class="card" style="padding:0;overflow:hidden">
-        <table>
-          <thead><tr><th>Severity</th><th>Resource</th><th>Issue</th><th>Since</th></tr></thead>
-          <tbody id="alert-table">
-            <tr><td colspan="4" class="loading">Loading alerts...</td></tr>
-          </tbody>
-        </table>
+      <div id="alert-widget" class="card" style="padding:0;overflow:hidden">
+        <div style="padding:16px;text-align:center;color:var(--text2);font-size:13px">Loading alerts...</div>
       </div>
     </div>
   </div>
@@ -770,12 +800,44 @@ tr:hover td{background:#ffffff06}
 
 <!-- Alerts View -->
 <div id="view-alerts-view" class="container" style="display:none">
-  <div class="section-title">Firing Alerts</div>
-  <div class="card" style="padding:0;overflow:hidden">
-    <table>
-      <thead><tr><th>Alert</th><th>Severity</th><th>Summary</th><th>Since</th></tr></thead>
-      <tbody id="alerts-full-table"><tr><td colspan="4" class="loading">Loading alerts...</td></tr></tbody>
-    </table>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <div class="section-title" style="margin:0">Alerts &amp; Events</div>
+    <div class="refresh-bar">
+      <span id="alerts-countdown"></span>
+      <button onclick="loadAlertsView()">Refresh Now</button>
+    </div>
+  </div>
+
+  <!-- Severity summary bar -->
+  <div class="severity-bar" id="alerts-severity-bar">
+    <div class="severity-stat"><span class="severity-dot crit"></span> <span id="sev-crit-count">0</span> Critical</div>
+    <div class="severity-stat"><span class="severity-dot warn"></span> <span id="sev-warn-count">0</span> Warning</div>
+    <div class="severity-stat"><span class="severity-dot info"></span> <span id="sev-info-count">0</span> Info</div>
+    <div class="severity-stat" style="margin-left:auto"><span class="severity-dot ok"></span> Total: <span id="sev-total-count">0</span></div>
+  </div>
+
+  <!-- Filters toolbar -->
+  <div class="alerts-toolbar">
+    <select id="alert-filter-severity" onchange="renderAlertsView()">
+      <option value="all">All Severities</option>
+      <option value="critical">Critical</option>
+      <option value="warning">Warning</option>
+      <option value="info">Info</option>
+    </select>
+    <select id="alert-filter-source" onchange="renderAlertsView()">
+      <option value="all">All Sources</option>
+      <option value="alertmanager">Alertmanager</option>
+      <option value="events">K8s Events</option>
+    </select>
+    <select id="alert-filter-namespace" onchange="renderAlertsView()">
+      <option value="all">All Namespaces</option>
+    </select>
+    <input type="text" id="alert-search" placeholder="Search alerts..." oninput="renderAlertsView()">
+  </div>
+
+  <!-- Alerts list -->
+  <div class="card" style="padding:0;overflow:hidden" id="alerts-list-card">
+    <div style="padding:24px;text-align:center;color:var(--text2);font-size:13px">Loading alerts...</div>
   </div>
 </div>
 
@@ -1021,29 +1083,44 @@ async function loadNodes() {
 }
 
 async function loadAlerts() {
-  const tbody = document.getElementById('alert-table');
+  const widget = document.getElementById('alert-widget');
   const countEl = document.getElementById('alert-count');
   try {
-    const alerts = await apiFetch('/api/alerts');
+    const data = await apiFetch('/api/alerts');
+    const alerts = data.alerts || [];
+    const summary = data.summary || {};
+    updateAlertsBadge(alerts.length);
     countEl.textContent = alerts.length > 0 ? '(' + alerts.length + ')' : '';
     if (alerts.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" style="color:var(--ok);text-align:center;padding:20px">No active warnings</td></tr>';
+      widget.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:24px;color:var(--ok)"><svg viewBox="0 0 20 20" fill="currentColor" style="width:20px;height:20px"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg><span style="font-weight:600">All clear</span><span style="color:var(--text2);font-size:12px">No active alerts or warnings</span></div>';
       return;
     }
-    tbody.innerHTML = alerts.slice(0, 15).map(a => {
-      const badgeClass = a.severity === 'critical' ? 'badge-crit' : 'badge-warn';
+    const critCount = summary.critical || 0;
+    const warnCount = summary.warning || 0;
+    let html = '<div style="display:flex;gap:12px;padding:10px 16px;border-bottom:1px solid var(--border);font-size:12px">';
+    if (critCount > 0) html += '<span style="color:var(--crit);font-weight:600">' + critCount + ' Critical</span>';
+    if (warnCount > 0) html += '<span style="color:var(--warn);font-weight:600">' + warnCount + ' Warning</span>';
+    html += '</div>';
+    html += alerts.slice(0, 8).map(a => {
+      const badgeClass = a.severity === 'critical' ? 'badge-crit' : a.severity === 'warning' ? 'badge-warn' : 'badge-info';
       const label = a.severity.charAt(0).toUpperCase() + a.severity.slice(1);
-      return `
-        <tr>
-          <td><span class="badge ${badgeClass}">${label}</span></td>
-          <td>${esc(a.resource)}${a.namespace ? ' <span style="color:var(--text2)">(' + esc(a.namespace) + ')</span>' : ''}</td>
-          <td>${esc(a.reason)} — ${esc((a.message || '').substring(0, 80))}${a.count > 1 ? ' <span style="color:var(--text2)">(x' + a.count + ')</span>' : ''}</td>
-          <td>${timeAgo(a.lastSeen)}</td>
-        </tr>
-      `;
+      return '<div class="alert-row" style="padding:8px 16px">' +
+        '<div class="sev-indicator ' + esc(a.severity) + '"></div>' +
+        '<div class="alert-body">' +
+          '<div class="alert-title">' + esc(a.name) + '</div>' +
+          '<div class="alert-meta">' +
+            '<span class="badge ' + badgeClass + '">' + esc(label) + '</span>' +
+            (a.resource ? '<span>' + esc(a.resource) + '</span>' : '') +
+            (a.namespace ? '<span>' + esc(a.namespace) + '</span>' : '') +
+            '<span>' + timeAgo(a.since) + '</span>' +
+            (a.count > 1 ? '<span>x' + a.count + '</span>' : '') +
+          '</div>' +
+          (a.summary ? '<div class="alert-summary">' + esc(a.summary.substring(0, 100)) + '</div>' : '') +
+        '</div></div>';
     }).join('');
+    widget.innerHTML = html;
   } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="4" class="loading">Error loading alerts: ' + esc(err.message) + '</td></tr>';
+    widget.innerHTML = '<div style="padding:16px;color:var(--crit);font-size:13px">Error loading alerts: ' + esc(err.message) + '</div>';
   }
 }
 
@@ -2642,30 +2719,112 @@ async function loadAuditView() {
 }
 
 // ---------------------------------------------------------------------------
-// Alerts view loader + badge
+// Alerts view — unified loader, filters, auto-refresh
 // ---------------------------------------------------------------------------
+let _alertsData = [];
+let _alertsCountdown = 30;
+let _alertsTimer = null;
+
 async function loadAlertsView() {
   try {
     const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts');
     const data = await resp.json();
-    const tb = document.getElementById('alerts-full-table');
-    const alerts = data.alerts || [];
-    updateAlertsBadge(alerts.length);
-    if (alerts.length === 0) {
-      tb.innerHTML = '<tr><td colspan="4" class="empty-row">No firing alerts</td></tr>';
-      return;
-    }
-    tb.innerHTML = alerts.map(a => {
-      const name = (a.labels && a.labels.alertname) || 'unknown';
-      const sev = (a.labels && a.labels.severity) || 'info';
-      const summary = (a.annotations && (a.annotations.summary || a.annotations.description)) || '-';
-      const since = a.startsAt ? String(a.startsAt).slice(0,19) : '-';
-      const sevClass = sev === 'critical' ? 'badge-crit' : sev === 'warning' ? 'badge-warn' : 'badge-info';
-      return '<tr><td><strong>' + esc(name) + '</strong></td><td><span class="badge ' + sevClass + '">' + esc(sev) + '</span></td><td>' + esc(summary) + '</td><td>' + esc(since) + '</td></tr>';
-    }).join('');
+    _alertsData = data.alerts || [];
+    const summary = data.summary || { critical: 0, warning: 0, info: 0 };
+
+    updateAlertsBadge(_alertsData.length);
+
+    document.getElementById('sev-crit-count').textContent = summary.critical;
+    document.getElementById('sev-warn-count').textContent = summary.warning;
+    document.getElementById('sev-info-count').textContent = summary.info;
+    document.getElementById('sev-total-count').textContent = _alertsData.length;
+
+    // Populate namespace filter
+    const nsSet = new Set(_alertsData.map(a => a.namespace).filter(Boolean));
+    const nsSel = document.getElementById('alert-filter-namespace');
+    const curNs = nsSel.value;
+    nsSel.innerHTML = '<option value="all">All Namespaces</option>' +
+      [...nsSet].sort().map(ns => '<option value="' + esc(ns) + '">' + esc(ns) + '</option>').join('');
+    nsSel.value = nsSet.has(curNs) ? curNs : 'all';
+
+    renderAlertsView();
+    resetAlertsCountdown();
   } catch (e) {
-    document.getElementById('alerts-full-table').innerHTML = '<tr><td colspan="4" class="empty-row">Alerts unavailable: ' + esc(e.message) + '</td></tr>';
+    document.getElementById('alerts-list-card').innerHTML = '<div style="padding:24px;text-align:center;color:var(--crit)">Alerts unavailable: ' + esc(e.message) + '</div>';
   }
+}
+
+function renderAlertsView() {
+  const container = document.getElementById('alerts-list-card');
+  const sevFilter = document.getElementById('alert-filter-severity').value;
+  const srcFilter = document.getElementById('alert-filter-source').value;
+  const nsFilter = document.getElementById('alert-filter-namespace').value;
+  const search = (document.getElementById('alert-search').value || '').toLowerCase();
+
+  let filtered = _alertsData.filter(a => {
+    if (sevFilter !== 'all' && a.severity !== sevFilter) return false;
+    if (srcFilter !== 'all' && a.source !== srcFilter) return false;
+    if (nsFilter !== 'all' && a.namespace !== nsFilter) return false;
+    if (search && !(a.name + ' ' + a.resource + ' ' + a.summary + ' ' + a.namespace).toLowerCase().includes(search)) return false;
+    return true;
+  });
+
+  if (filtered.length === 0 && _alertsData.length === 0) {
+    container.innerHTML = '<div class="alert-healthy">' +
+      '<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>' +
+      '<div class="title">All Systems Healthy</div>' +
+      '<div class="subtitle">No active alerts or warning events detected across the cluster</div></div>';
+    return;
+  }
+
+  if (filtered.length === 0) {
+    container.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text2);font-size:13px">No alerts match the current filters</div>';
+    return;
+  }
+
+  container.innerHTML = filtered.map((a, i) => {
+    const badgeClass = a.severity === 'critical' ? 'badge-crit' : a.severity === 'warning' ? 'badge-warn' : 'badge-info';
+    const label = a.severity.charAt(0).toUpperCase() + a.severity.slice(1);
+    const srcLabel = a.source === 'alertmanager' ? 'Prometheus' : 'K8s Event';
+    const duration = a.since ? timeAgo(a.since) : '';
+    return '<div class="alert-row">' +
+      '<div class="sev-indicator ' + esc(a.severity) + '"></div>' +
+      '<div class="alert-body">' +
+        '<div class="alert-title">' + esc(a.name) + '</div>' +
+        '<div class="alert-meta">' +
+          '<span class="badge ' + badgeClass + '">' + esc(label) + '</span>' +
+          '<span style="background:var(--border);padding:1px 6px;border-radius:4px;font-size:10px">' + esc(srcLabel) + '</span>' +
+          (a.resource ? '<span>' + esc(a.resource) + '</span>' : '') +
+          (a.namespace ? '<span>' + esc(a.namespace) + '</span>' : '') +
+          (duration ? '<span>' + esc(duration) + '</span>' : '') +
+          (a.count > 1 ? '<span>x' + a.count + '</span>' : '') +
+        '</div>' +
+        (a.summary ? '<div class="alert-summary">' + esc(a.summary) + '</div>' : '') +
+      '</div>' +
+      '<div class="alert-actions">' +
+        '<button data-investigate="' + i + '">Investigate</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  container.querySelectorAll('[data-investigate]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const a = filtered[parseInt(btn.dataset.investigate)];
+      if (a) investigateAlert(a.name, a.namespace, a.resource);
+    });
+  });
+}
+
+function investigateAlert(name, namespace, resource) {
+  const prompt = 'Investigate alert "' + name + '"' +
+    (namespace ? ' in namespace ' + namespace : '') +
+    (resource ? ' affecting ' + resource : '') +
+    '. What is the root cause and recommended fix?';
+  showView('chat');
+  setTimeout(() => {
+    const input = document.getElementById('full-chat-input');
+    if (input) { input.value = prompt; sendFullChat(prompt); }
+  }, 200);
 }
 
 function updateAlertsBadge(count) {
@@ -2673,6 +2832,19 @@ function updateAlertsBadge(count) {
   if (!badge) return;
   badge.textContent = String(count);
   badge.classList.toggle('visible', count > 0);
+}
+
+function resetAlertsCountdown() {
+  _alertsCountdown = 30;
+  if (_alertsTimer) clearInterval(_alertsTimer);
+  _alertsTimer = setInterval(() => {
+    _alertsCountdown--;
+    const el = document.getElementById('alerts-countdown');
+    if (el) el.textContent = 'Auto-refresh in ' + _alertsCountdown + 's';
+    if (_alertsCountdown <= 0) {
+      loadAlertsView();
+    }
+  }, 1000);
 }
 
 // Poll alerts badge every 60s
