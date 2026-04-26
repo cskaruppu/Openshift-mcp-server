@@ -9,6 +9,8 @@ data:
   LOG_LEVEL: "info"
   EMERGENCY_AUTO_FIX: "false"
   NODE_TLS_REJECT_UNAUTHORIZED: "0"
+  # Authentication: "none" (default), "token" (set MCP_API_TOKEN in secrets), "oauth" (OpenShift SSO)
+  AUTH_MODE: "none"
   # LLM Provider: "openai", "anthropic", "ollama", or "none" (built-in analysis)
   LLM_PROVIDER: "none"
   # LLM_API_URL: "https://api.openai.com"    # or Ollama URL, etc.
