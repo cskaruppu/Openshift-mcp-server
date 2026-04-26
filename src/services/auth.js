@@ -12,8 +12,9 @@ import { randomBytes, createHash } from "node:crypto";
 import { cacheGet, cacheSet } from "../utils/cache.js";
 
 const SESSION_TTL = parseInt(process.env.SESSION_TTL || "28800", 10); // 8 hours
-const AUTH_MODE = process.env.AUTH_MODE || "token"; // "token" | "oauth" | "none"
 const API_TOKEN = process.env.MCP_API_TOKEN || "";
+// Default to "none" when no token is configured — prevents lockout
+const AUTH_MODE = process.env.AUTH_MODE || (API_TOKEN ? "token" : "none");
 const OAUTH_CLIENT_ID = process.env.OAUTH_CLIENT_ID || "openshift-mcp";
 const OAUTH_CLIENT_SECRET = process.env.OAUTH_CLIENT_SECRET || "";
 const OAUTH_REDIRECT_URI = process.env.OAUTH_REDIRECT_URI || "";
