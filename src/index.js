@@ -39,6 +39,15 @@ import { registerSecurityTools } from "./tools/security.js";
 import { registerRecommendationTools } from "./tools/recommendations.js";
 import { registerNotificationTools } from "./tools/notifications.js";
 import { registerVeleroTools } from "./tools/velero.js";
+import { registerComplianceTools } from "./tools/compliance.js";
+import { registerDriftTools } from "./tools/drift.js";
+import { registerImpactTools } from "./tools/impact.js";
+import { registerOperatorDiagTools } from "./tools/operator-diag.js";
+import { registerPolicyGenTools } from "./tools/policy-gen.js";
+import { registerSCCAdvisorTools } from "./tools/scc-advisor.js";
+import { registerTimelineTools } from "./tools/timeline.js";
+import { registerUpgradeAdvisorTools } from "./tools/upgrade-advisor.js";
+import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode } from "./services/auth.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI } from "./services/chat-api.js";
 import {
@@ -107,6 +116,14 @@ function createMcpServer() {
   registerRecommendationTools(server);
   registerNotificationTools(server);
   registerVeleroTools(server);
+  registerComplianceTools(server);
+  registerDriftTools(server);
+  registerImpactTools(server);
+  registerOperatorDiagTools(server);
+  registerPolicyGenTools(server);
+  registerSCCAdvisorTools(server);
+  registerTimelineTools(server);
+  registerUpgradeAdvisorTools(server);
 
   return server;
 }
@@ -321,7 +338,7 @@ async function startSSE() {
     // CORS headers for browser-based clients
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -330,6 +347,22 @@ async function startSSE() {
     }
 
     const url = new URL(req.url, `http://localhost:${PORT}`);
+
+    // Auth routes (login, callback, logout, status)
+    if (url.pathname.startsWith("/api/auth/")) {
+      const handled = registerAuthRoutes(req, res, url);
+      if (handled) return;
+      // POST /api/auth/token — needs body parsing
+      if (req.method === "POST" && url.pathname === "/api/auth/token") {
+        const body = await readJsonBody(req);
+        await handleTokenLogin(body, res);
+        return;
+      }
+    }
+
+    // Auth middleware — protect non-public routes
+    const authOk = await authMiddleware(req, res, url);
+    if (!authOk) return;
 
     // Health check endpoint for K8s probes
     if (url.pathname === "/healthz" || url.pathname === "/readyz") {
