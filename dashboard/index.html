@@ -445,6 +445,83 @@ tr:hover td{background:#ffffff06}
 .runbook-step .rs-icon{font-size:14px;flex-shrink:0}
 .runbook-step .rs-name{flex:1;font-weight:500}
 .runbook-step .rs-dur{color:var(--text2);font-size:11px}
+/* Settings slide-out panel */
+.settings-gear{background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--text2);cursor:pointer;font-size:16px;transition:all .3s;display:flex;align-items:center;gap:4px;position:relative}
+.settings-gear:hover{border-color:var(--accent);color:var(--accent)}
+.settings-gear:hover svg{transform:rotate(90deg)}
+.settings-gear svg{width:18px;height:18px;transition:transform .3s}
+.settings-slideout{position:fixed;top:0;right:-520px;width:500px;height:100vh;background:var(--card);border-left:1px solid var(--border);z-index:300;transition:right .3s ease;box-shadow:-8px 0 32px #000a;display:flex;flex-direction:column}
+.settings-slideout.open{right:0}
+.settings-slideout-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)}
+.settings-slideout-header h3{font-size:16px;font-weight:600;margin:0}
+.settings-slideout-close{background:none;border:none;color:var(--text2);font-size:22px;cursor:pointer;padding:0 4px}
+.settings-slideout-close:hover{color:var(--text)}
+.settings-slideout-body{flex:1;overflow-y:auto;padding:20px}
+.settings-slideout-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:299;display:none}
+.settings-slideout-overlay.open{display:block}
+/* Persona selector */
+.persona-cards{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:20px}
+.persona-card{background:var(--bg);border:2px solid var(--border);border-radius:10px;padding:12px;cursor:pointer;transition:all .2s;text-align:center}
+.persona-card:hover{border-color:var(--accent2)}
+.persona-card.active{border-color:var(--accent);background:#e0404010}
+.persona-icon{font-size:24px;margin-bottom:4px}
+.persona-name{font-size:12px;font-weight:600;color:var(--text)}
+.persona-desc{font-size:10px;color:var(--text2);margin-top:2px}
+/* Safety guardrails */
+.guardrail-list{display:flex;flex-direction:column;gap:6px;margin-bottom:20px}
+.guardrail-item{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:12px}
+.guardrail-item .gi-label{display:flex;align-items:center;gap:8px;color:var(--text)}
+.guardrail-item .gi-icon{font-size:14px;width:20px;text-align:center}
+.guardrail-toggle{position:relative;width:36px;height:20px;cursor:pointer;flex-shrink:0}
+.guardrail-toggle input{opacity:0;width:0;height:0;position:absolute}
+.guardrail-toggle .gt-slider{position:absolute;inset:0;background:var(--border);border-radius:10px;transition:.3s}
+.guardrail-toggle .gt-slider::before{content:'';position:absolute;width:14px;height:14px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s}
+.guardrail-toggle input:checked+.gt-slider{background:var(--ok)}
+.guardrail-toggle input:checked+.gt-slider::before{transform:translateX(16px)}
+/* Cluster context widget */
+.cluster-ctx{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:20px}
+.cluster-ctx .ctx-row{display:flex;justify-content:space-between;font-size:11px;padding:3px 0;color:var(--text2)}
+.cluster-ctx .ctx-row .ctx-val{color:var(--text);font-weight:500}
+.cluster-ctx .ctx-title{font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.cluster-ctx .ctx-dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+/* Section divider in slideout */
+.so-section{margin-bottom:20px}
+.so-section-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.so-section-title::after{content:'';flex:1;height:1px;background:var(--border)}
+/* Voice input button */
+.voice-btn{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;cursor:pointer;color:var(--text2);font-size:16px;transition:all .2s;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.voice-btn:hover{border-color:var(--accent);color:var(--accent)}
+.voice-btn.recording{background:#e0404020;border-color:var(--accent);color:var(--accent);animation:pulse 1.5s infinite}
+/* Pinboard */
+.pinboard-panel{width:280px;background:#12141c;border-left:1px solid var(--border);display:none;flex-direction:column;flex-shrink:0;overflow:hidden}
+.pinboard-panel.visible{display:flex}
+.pinboard-header{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:space-between}
+.pinboard-list{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.pinboard-empty{color:var(--text2);font-size:12px;text-align:center;padding:20px 10px;font-style:italic}
+.pin-card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:12px;position:relative}
+.pin-card .pin-text{color:var(--text);line-height:1.4;max-height:60px;overflow:hidden}
+.pin-card .pin-time{font-size:10px;color:var(--text2);margin-top:4px}
+.pin-card .pin-remove{position:absolute;top:6px;right:8px;background:none;border:none;color:var(--text2);cursor:pointer;font-size:14px;opacity:0;transition:opacity .2s}
+.pin-card:hover .pin-remove{opacity:1}
+.pin-card .pin-remove:hover{color:var(--crit)}
+.pin-btn{background:none;border:none;color:var(--text2);cursor:pointer;font-size:12px;padding:2px 6px;border-radius:4px;transition:all .2s}
+.pin-btn:hover{color:var(--accent);background:#e0404015}
+/* Smart suggestions bar */
+.smart-suggestions{display:flex;gap:6px;margin-bottom:8px;overflow-x:auto;padding-bottom:4px;flex-wrap:nowrap}
+.smart-suggestion{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:5px 12px;color:var(--text2);cursor:pointer;font-size:11px;white-space:nowrap;transition:all .2s;display:flex;align-items:center;gap:4px;flex-shrink:0}
+.smart-suggestion:hover{border-color:var(--accent2);color:var(--accent2);background:#3b82f610}
+.smart-suggestion .ss-icon{font-size:12px}
+/* Confidence meter */
+.confidence-meter{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;margin-left:8px}
+.confidence-meter .cm-bar{width:40px;height:4px;background:var(--border);border-radius:2px;overflow:hidden}
+.confidence-meter .cm-fill{height:100%;border-radius:2px;transition:width .5s}
+.confidence-high .cm-fill{background:var(--ok);width:90%}
+.confidence-med .cm-fill{background:var(--warn);width:60%}
+.confidence-low .cm-fill{background:var(--crit);width:30%}
+/* Quick actions floating bar */
+.quick-actions-bar{display:flex;gap:6px;align-items:center;margin-right:auto}
+.quick-action{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:3px 8px;color:var(--text2);cursor:pointer;font-size:11px;transition:all .2s;display:flex;align-items:center;gap:3px}
+.quick-action:hover{border-color:var(--accent2);color:var(--text)}
 </style>
 </head>
 <body>
@@ -459,7 +536,6 @@ tr:hover td{background:#ffffff06}
     <button class="nav-tab" data-view="chat" onclick="showView('chat')">AI Chat</button>
     <button class="nav-tab" data-view="audit" onclick="showView('audit')">Audit</button>
     <button class="nav-tab" data-view="alerts-view" onclick="showView('alerts-view')">Alerts <span class="alerts-badge" id="alerts-badge">0</span></button>
-    <button class="nav-tab" data-view="settings" onclick="showView('settings')">Settings</button>
   </div>
   <div class="status">
     <div class="dot" id="conn-dot"></div>
@@ -472,6 +548,112 @@ tr:hover td{background:#ffffff06}
     <button class="icon-btn" onclick="refreshAll()">&#x21bb; Refresh</button>
     <button class="theme-toggle" onclick="toggleTheme()" id="theme-toggle" title="Toggle light/dark theme">&#x263E;</button>
     <button class="icon-btn" onclick="toggleKbdOverlay()" title="Keyboard shortcuts (Ctrl+/)">&#x2328;</button>
+    <button class="settings-gear" onclick="toggleSettingsPanel()" title="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+    </button>
+  </div>
+</div>
+
+<!-- Settings slide-out panel -->
+<div class="settings-slideout-overlay" id="settings-overlay" onclick="toggleSettingsPanel()"></div>
+<div class="settings-slideout" id="settings-slideout">
+  <div class="settings-slideout-header">
+    <h3>Settings</h3>
+    <button class="settings-slideout-close" onclick="toggleSettingsPanel()">&times;</button>
+  </div>
+  <div class="settings-slideout-body">
+
+    <!-- Cluster Context Widget -->
+    <div class="so-section">
+      <div class="so-section-title">Cluster Context</div>
+      <div class="cluster-ctx" id="cluster-ctx-widget">
+        <div class="ctx-title"><span class="ctx-dot" id="ctx-dot"></span> <span id="ctx-cluster-name">Loading...</span></div>
+        <div class="ctx-row"><span>Version</span><span class="ctx-val" id="ctx-version">--</span></div>
+        <div class="ctx-row"><span>Nodes</span><span class="ctx-val" id="ctx-nodes">--</span></div>
+        <div class="ctx-row"><span>Namespaces</span><span class="ctx-val" id="ctx-ns">--</span></div>
+        <div class="ctx-row"><span>Health</span><span class="ctx-val" id="ctx-health">--</span></div>
+        <div class="ctx-row"><span>Auth Mode</span><span class="ctx-val" id="ctx-auth">none</span></div>
+      </div>
+    </div>
+
+    <!-- AI Persona Selector -->
+    <div class="so-section">
+      <div class="so-section-title">AI Persona</div>
+      <div class="persona-cards" id="persona-cards">
+        <div class="persona-card active" data-persona="sre" onclick="selectPersona('sre')">
+          <div class="persona-icon">&#x1F6E0;</div>
+          <div class="persona-name">SRE</div>
+          <div class="persona-desc">Reliability, incidents, SLOs</div>
+        </div>
+        <div class="persona-card" data-persona="security" onclick="selectPersona('security')">
+          <div class="persona-icon">&#x1F6E1;</div>
+          <div class="persona-name">Security</div>
+          <div class="persona-desc">Compliance, CVEs, policies</div>
+        </div>
+        <div class="persona-card" data-persona="developer" onclick="selectPersona('developer')">
+          <div class="persona-icon">&#x1F4BB;</div>
+          <div class="persona-name">Developer</div>
+          <div class="persona-desc">Apps, builds, routes, logs</div>
+        </div>
+        <div class="persona-card" data-persona="platform" onclick="selectPersona('platform')">
+          <div class="persona-icon">&#x2601;</div>
+          <div class="persona-name">Platform Admin</div>
+          <div class="persona-desc">Capacity, upgrades, multi-cluster</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI Safety Guardrails -->
+    <div class="so-section">
+      <div class="so-section-title">AI Safety Guardrails</div>
+      <div class="guardrail-list">
+        <div class="guardrail-item">
+          <div class="gi-label"><span class="gi-icon">&#x1F50D;</span> Read-only queries</div>
+          <label class="guardrail-toggle"><input type="checkbox" id="guard-read" checked onchange="saveGuardrails()"><span class="gt-slider"></span></label>
+        </div>
+        <div class="guardrail-item">
+          <div class="gi-label"><span class="gi-icon">&#x2696;</span> Allow scaling operations</div>
+          <label class="guardrail-toggle"><input type="checkbox" id="guard-scale" checked onchange="saveGuardrails()"><span class="gt-slider"></span></label>
+        </div>
+        <div class="guardrail-item">
+          <div class="gi-label"><span class="gi-icon">&#x267B;</span> Allow pod restart/delete</div>
+          <label class="guardrail-toggle"><input type="checkbox" id="guard-restart" checked onchange="saveGuardrails()"><span class="gt-slider"></span></label>
+        </div>
+        <div class="guardrail-item">
+          <div class="gi-label"><span class="gi-icon">&#x1F6A7;</span> Allow node drain/cordon</div>
+          <label class="guardrail-toggle"><input type="checkbox" id="guard-node" onchange="saveGuardrails()"><span class="gt-slider"></span></label>
+        </div>
+        <div class="guardrail-item">
+          <div class="gi-label"><span class="gi-icon">&#x1F5D1;</span> Allow resource deletion</div>
+          <label class="guardrail-toggle"><input type="checkbox" id="guard-delete" onchange="saveGuardrails()"><span class="gt-slider"></span></label>
+        </div>
+        <div class="guardrail-item">
+          <div class="gi-label"><span class="gi-icon">&#x26A0;</span> Require impact analysis</div>
+          <label class="guardrail-toggle"><input type="checkbox" id="guard-impact" checked onchange="saveGuardrails()"><span class="gt-slider"></span></label>
+        </div>
+      </div>
+    </div>
+
+    <!-- LLM Provider Quick Config -->
+    <div class="so-section">
+      <div class="so-section-title">LLM Providers</div>
+      <button class="nav-tab" style="width:100%;margin-bottom:10px" onclick="showView('settings');toggleSettingsPanel()">Open Full LLM Settings</button>
+      <div id="so-provider-status" style="font-size:12px;color:var(--text2)">Loading provider status...</div>
+    </div>
+
+    <!-- Appearance -->
+    <div class="so-section">
+      <div class="so-section-title">Appearance</div>
+      <div class="guardrail-item">
+        <div class="gi-label"><span class="gi-icon">&#x263E;</span> Dark theme</div>
+        <label class="guardrail-toggle"><input type="checkbox" id="so-theme-toggle" onchange="toggleTheme()"><span class="gt-slider"></span></label>
+      </div>
+      <div class="guardrail-item" style="margin-top:6px">
+        <div class="gi-label"><span class="gi-icon">&#x1F514;</span> Auto-refresh (30s)</div>
+        <label class="guardrail-toggle"><input type="checkbox" id="so-autorefresh" checked onchange="toggleAutoRefresh()"><span class="gt-slider"></span></label>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -490,7 +672,7 @@ tr:hover td{background:#ffffff06}
     <div class="kbd-row"><span>Switch to AI Chat</span><span class="kbd-key">Ctrl + 2</span></div>
     <div class="kbd-row"><span>Switch to Audit</span><span class="kbd-key">Ctrl + 3</span></div>
     <div class="kbd-row"><span>Switch to Alerts</span><span class="kbd-key">Ctrl + 4</span></div>
-    <div class="kbd-row"><span>Switch to Settings</span><span class="kbd-key">Ctrl + 5</span></div>
+    <div class="kbd-row"><span>Open Settings panel</span><span class="kbd-key">Ctrl + ,</span></div>
   </div>
 </div>
 
@@ -738,16 +920,19 @@ tr:hover td{background:#ffffff06}
         <div class="chat-welcome" id="chat-welcome">
           <svg width="48" height="48" viewBox="0 0 36 36" fill="none"><circle cx="18" cy="18" r="17" stroke="#e04040" stroke-width="2"/><path d="M12 18l4 4 8-8" stroke="#e04040" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <h2>OpenShift MCP AI Assistant</h2>
-          <p>List, inspect, diagnose, and manage your OpenShift cluster resources — pods, deployments, services, events, and more.</p>
+          <p>Your AI-powered cluster companion. Ask questions, diagnose issues, run what-if analysis, or generate policies using natural language.</p>
+          <div style="font-size:11px;color:var(--text2);margin-bottom:16px">Type <kbd style="background:var(--card);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:10px">/</kbd> for slash commands &bull; Click the mic for voice input &bull; Pin important findings</div>
           <div class="welcome-suggestions">
             <button onclick="sendFullChat('Show me all pods with issues')">Pod issues</button>
-            <button onclick="sendFullChat('List projects')">List projects</button>
             <button onclick="sendFullChat('Check cluster health')">Cluster health</button>
-            <button onclick="sendFullChat('List nodes')">List nodes</button>
-            <button onclick="sendFullChat('List events')">Events</button>
-            <button onclick="sendFullChat('How many pods are running?')">Pod summary</button>
+            <button onclick="sendFullChat('/security')">Security audit</button>
+            <button onclick="sendFullChat('What if I scale nginx to 10 replicas?')">What-if analysis</button>
+            <button onclick="sendFullChat('Explain the SCC assigned to pod X')">Explain SCC</button>
+            <button onclick="sendFullChat('Compare drift between cluster1 and cluster2')">Cluster drift</button>
+            <button onclick="sendFullChat('Generate NetworkPolicy to block egress for namespace test')">Generate policy</button>
+            <button onclick="sendFullChat('Show incident timeline for namespace production')">Incident timeline</button>
+            <button onclick="sendFullChat('Check upgrade readiness for 4.15')">Upgrade advisor</button>
             <button onclick="sendFullChat('Show CrashLoopBackOff pods')">CrashLoopBackOff</button>
-            <button onclick="sendFullChat('List deployments')">Deployments</button>
           </div>
         </div>
       </div>
@@ -785,8 +970,10 @@ tr:hover td{background:#ffffff06}
             <input type="text" id="full-llm-model">
           </div>
         </div>
+        <div class="smart-suggestions" id="smart-suggestions"></div>
         <div class="chat-input-row">
-          <input type="text" class="chat-input-full" id="full-chat-input" placeholder="Ask about your OpenShift cluster..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendFullChat()}">
+          <input type="text" class="chat-input-full" id="full-chat-input" placeholder="Ask about your cluster, type / for commands, or use voice..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendFullChat()}">
+          <button class="voice-btn" id="voice-btn" onclick="toggleVoiceInput()" title="Voice input (speech-to-text)">&#x1F3A4;</button>
           <button class="chat-send-btn" id="full-chat-send" onclick="sendFullChat()">Send</button>
         </div>
       </div>
@@ -797,12 +984,26 @@ tr:hover td{background:#ffffff06}
   <div class="actions-panel" id="actions-panel">
     <div class="actions-header">
       <span>Actions</span>
-      <span id="snow-badge" class="snow-badge snow-off">ServiceNow: off</span>
+      <div style="display:flex;align-items:center;gap:6px">
+        <button class="icon-btn" style="font-size:11px;padding:3px 8px" onclick="togglePinboard()" title="Toggle pinboard">&#x1F4CC; Pins</button>
+        <span id="snow-badge" class="snow-badge snow-off">ServiceNow: off</span>
+      </div>
     </div>
     <div class="actions-list" id="actions-list">
       <div class="actions-empty">
         No pending actions. Ask to restart, delete or scale a workload and it will appear here for confirmation.
       </div>
+    </div>
+  </div>
+
+  <!-- Pinboard panel -->
+  <div class="pinboard-panel" id="pinboard-panel">
+    <div class="pinboard-header">
+      <span>&#x1F4CC; Pinned Findings</span>
+      <button class="settings-slideout-close" onclick="togglePinboard()" style="font-size:16px">&times;</button>
+    </div>
+    <div class="pinboard-list" id="pinboard-list">
+      <div class="pinboard-empty">Pin important AI responses to save them here for reference.</div>
     </div>
   </div>
 </div>
@@ -1754,6 +1955,7 @@ function showView(view) {
       renderConversation();
       scrollConversation();
     });
+    loadSmartSuggestions();
   } else if (view === 'audit') {
     loadAuditView();
   } else if (view === 'alerts-view') {
@@ -2705,22 +2907,33 @@ renderConversation = function() {
 // Slash command palette
 // ---------------------------------------------------------------------------
 const SLASH_COMMANDS = [
-  { cmd: '/help', desc: 'Show usage help' },
-  { cmd: '/health', desc: 'Run a cluster health check' },
-  { cmd: '/audit', desc: 'Show recent audit trail' },
-  { cmd: '/alerts', desc: 'List firing Alertmanager alerts' },
-  { cmd: '/metrics', desc: 'Show assistant internal metrics' },
-  { cmd: '/security', desc: 'Run security & compliance audit' },
-  { cmd: '/gitops', desc: 'List ArgoCD/GitOps applications' },
-  { cmd: '/recommendations', desc: 'Get cluster optimization recommendations' },
-  { cmd: '/backups', desc: 'List Velero/OADP backup status' },
-  { cmd: '/dr', desc: 'Assess disaster recovery readiness' },
-  { cmd: '/pods', desc: 'Show pod summary across cluster' },
-  { cmd: '/nodes', desc: 'List cluster nodes with status' },
-  { cmd: '/deployments', desc: 'List deployments across namespaces' },
-  { cmd: '/events', desc: 'Show recent cluster events' },
-  { cmd: '/pipelines', desc: 'List Tekton pipelines' },
-  { cmd: '/vms', desc: 'List KubeVirt virtual machines' },
+  { cmd: '/help', desc: 'Show usage help', category: 'general' },
+  { cmd: '/health', desc: 'Run a cluster health check', category: 'cluster' },
+  { cmd: '/audit', desc: 'Show recent audit trail', category: 'general' },
+  { cmd: '/alerts', desc: 'List firing Alertmanager alerts', category: 'cluster' },
+  { cmd: '/security', desc: 'Run security & compliance audit', category: 'security' },
+  { cmd: '/gitops', desc: 'List ArgoCD/GitOps applications', category: 'cluster' },
+  { cmd: '/recommendations', desc: 'Get cluster optimization recommendations', category: 'cluster' },
+  { cmd: '/backups', desc: 'List Velero/OADP backup status', category: 'cluster' },
+  { cmd: '/dr', desc: 'Assess disaster recovery readiness', category: 'cluster' },
+  { cmd: '/pods', desc: 'Show pod summary across cluster', category: 'cluster' },
+  { cmd: '/nodes', desc: 'List cluster nodes with status', category: 'cluster' },
+  { cmd: '/deployments', desc: 'List deployments across namespaces', category: 'cluster' },
+  { cmd: '/events', desc: 'Show recent cluster events', category: 'cluster' },
+  { cmd: '/pipelines', desc: 'List Tekton pipelines', category: 'cluster' },
+  { cmd: '/vms', desc: 'List KubeVirt virtual machines', category: 'cluster' },
+  { cmd: '/what-if', desc: 'Predict impact of a change before applying (e.g., /what-if scale nginx to 10)', category: 'unique' },
+  { cmd: '/explain-scc', desc: 'Explain which SCC is assigned to a pod and why', category: 'security' },
+  { cmd: '/scc-audit', desc: 'Audit all pods for over-privileged SCC assignments', category: 'security' },
+  { cmd: '/compliance', desc: 'Run CIS Benchmark / NIST 800-190 compliance check', category: 'security' },
+  { cmd: '/drift', desc: 'Detect configuration drift between two ACM clusters', category: 'unique' },
+  { cmd: '/upgrade-check', desc: 'Check cluster upgrade readiness and available paths', category: 'unique' },
+  { cmd: '/cert-check', desc: 'Check for expiring or expired TLS certificates', category: 'security' },
+  { cmd: '/operator-health', desc: 'Diagnose OLM operator issues (CSV, subscriptions)', category: 'cluster' },
+  { cmd: '/timeline', desc: 'Build incident timeline correlating events, deploys, alerts', category: 'unique' },
+  { cmd: '/generate-policy', desc: 'Generate K8s/OCP policy from natural language description', category: 'unique' },
+  { cmd: '/cost', desc: 'Analyze workload cost efficiency and right-sizing', category: 'cluster' },
+  { cmd: '/topology', desc: 'Show service dependency map for a namespace', category: 'unique' },
 ];
 
 (function initSlashPalette() {
@@ -2740,12 +2953,18 @@ const SLASH_COMMANDS = [
       const q = val.slice(1).toLowerCase();
       const matches = SLASH_COMMANDS.filter(c => c.cmd.slice(1).startsWith(q));
       if (matches.length > 0) {
-        palette.innerHTML = matches.map(m =>
-          '<div class="slash-item" onclick="pickSlash(\'' + m.cmd + '\')">' +
-            '<span class="slash-cmd">' + m.cmd + '</span>' +
+        const catIcons = { unique: '&#x2728;', security: '&#x1F6E1;', cluster: '&#x2699;', general: '&#x2139;' };
+        const catColors = { unique: 'var(--accent)', security: '#f59e0b', cluster: 'var(--accent2)', general: 'var(--text2)' };
+        palette.innerHTML = matches.map(m => {
+          const icon = catIcons[m.category] || '';
+          const color = catColors[m.category] || 'var(--text2)';
+          return '<div class="slash-item" onclick="pickSlash(\'' + m.cmd + '\')">' +
+            '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:12px;color:' + color + '">' + icon + '</span><span class="slash-cmd">' + m.cmd + '</span>' +
+            (m.category === 'unique' ? '<span style="font-size:9px;background:var(--accent);color:#fff;padding:1px 5px;border-radius:3px;font-weight:600">UNIQUE</span>' : '') +
+            '</div>' +
             '<span class="slash-desc">' + m.desc + '</span>' +
-          '</div>'
-        ).join('');
+          '</div>';
+        }).join('');
         palette.classList.add('open');
         return;
       }
@@ -3351,7 +3570,7 @@ document.addEventListener('keydown', function(e) {
   if (ctrl && e.key === '2') { e.preventDefault(); showView('chat'); return; }
   if (ctrl && e.key === '3') { e.preventDefault(); showView('audit'); return; }
   if (ctrl && e.key === '4') { e.preventDefault(); showView('alerts-view'); return; }
-  if (ctrl && e.key === '5') { e.preventDefault(); showView('settings'); return; }
+  if (ctrl && e.key === '5') { e.preventDefault(); toggleSettingsPanel(); return; }
 });
 
 // ---------------------------------------------------------------------------
@@ -3431,6 +3650,369 @@ async function loadAdvisorView() {
     el.innerHTML = '<p style="color:var(--crit)">Could not load advisor data: ' + esc(e.message) + '</p>';
   }
 }
+
+// ---------------------------------------------------------------------------
+// Settings slide-out panel
+// ---------------------------------------------------------------------------
+function toggleSettingsPanel() {
+  const panel = document.getElementById('settings-slideout');
+  const overlay = document.getElementById('settings-overlay');
+  const isOpen = panel.classList.toggle('open');
+  overlay.classList.toggle('open', isOpen);
+  if (isOpen) {
+    updateClusterCtxWidget();
+    updateProviderStatus();
+    loadGuardrails();
+    loadPersona();
+    const themeToggle = document.getElementById('so-theme-toggle');
+    if (themeToggle) themeToggle.checked = !document.body.classList.contains('light-theme');
+  }
+}
+
+function updateClusterCtxWidget() {
+  try {
+    const healthEl = document.getElementById('m-health');
+    const nodesEl = document.getElementById('m-nodes');
+    const nsEl = document.getElementById('m-ns');
+    const clusterEl = document.getElementById('cluster-name');
+    document.getElementById('ctx-cluster-name').textContent = clusterEl?.textContent?.replace('Cluster: ', '') || 'Unknown';
+    document.getElementById('ctx-version').textContent = document.getElementById('m-health-label')?.textContent || '--';
+    document.getElementById('ctx-nodes').textContent = nodesEl?.textContent || '--';
+    document.getElementById('ctx-ns').textContent = nsEl?.textContent || '--';
+    document.getElementById('ctx-health').textContent = healthEl?.textContent || '--';
+    const dot = document.getElementById('ctx-dot');
+    if (healthEl?.classList.contains('ok')) dot.style.background = 'var(--ok)';
+    else if (healthEl?.classList.contains('warn')) dot.style.background = 'var(--warn)';
+    else dot.style.background = 'var(--crit)';
+  } catch (e) {}
+}
+
+function updateProviderStatus() {
+  const el = document.getElementById('so-provider-status');
+  try {
+    const settings = JSON.parse(localStorage.getItem('mcp-llm-settings'));
+    if (!settings || !settings.providers) {
+      el.innerHTML = '<div style="color:var(--text2)">No LLM providers configured. <a href="#" onclick="showView(\'settings\');toggleSettingsPanel();return false" style="color:var(--accent2)">Configure now</a></div>';
+      return;
+    }
+    const labels = { openai: 'OpenAI', anthropic: 'Anthropic', azure: 'Azure', ollama: 'Ollama' };
+    let html = '';
+    for (const [p, cfg] of Object.entries(settings.providers)) {
+      const enabled = cfg.enabled;
+      const color = enabled ? 'var(--ok)' : 'var(--text2)';
+      const dot = enabled ? '&#x25CF;' : '&#x25CB;';
+      html += '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px"><span style="color:' + color + '">' + dot + '</span><span>' + (labels[p] || p) + '</span>' + (enabled ? '<span style="color:var(--ok);font-size:10px">Active</span>' : '') + '</div>';
+    }
+    el.innerHTML = html;
+  } catch (e) {
+    el.textContent = 'Could not load provider status';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AI Persona profiles
+// ---------------------------------------------------------------------------
+const PERSONA_PROMPTS = {
+  sre: 'Focus on reliability, uptime, SLOs, incident response, and operational stability. Prioritize alerting, monitoring, and service health. Emphasize runbooks and automated remediation.',
+  security: 'Focus on security posture, compliance (CIS, NIST), CVE scanning, SCC policies, RBAC audits, and network policies. Flag any privilege escalation risks and recommend least-privilege configurations.',
+  developer: 'Focus on application deployment, build configs, routes, services, logs, and debugging. Explain in developer-friendly terms. Emphasize CI/CD pipelines, GitOps, and app lifecycle.',
+  platform: 'Focus on cluster capacity planning, node management, upgrades, multi-cluster management via ACM, operator lifecycle, and infrastructure scaling. Provide cost-efficiency recommendations.',
+};
+
+function selectPersona(persona) {
+  document.querySelectorAll('.persona-card').forEach(c => c.classList.toggle('active', c.dataset.persona === persona));
+  localStorage.setItem('mcp-persona', persona);
+  const sysPromptEl = document.getElementById('settings-system-prompt');
+  if (sysPromptEl && !sysPromptEl.value) {
+    sysPromptEl.value = PERSONA_PROMPTS[persona] || '';
+  }
+  loadSmartSuggestions();
+}
+
+function loadPersona() {
+  const saved = localStorage.getItem('mcp-persona') || 'sre';
+  document.querySelectorAll('.persona-card').forEach(c => c.classList.toggle('active', c.dataset.persona === saved));
+}
+
+function getActivePersona() {
+  return localStorage.getItem('mcp-persona') || 'sre';
+}
+
+// ---------------------------------------------------------------------------
+// AI Safety Guardrails
+// ---------------------------------------------------------------------------
+function saveGuardrails() {
+  const guardrails = {
+    read: document.getElementById('guard-read')?.checked ?? true,
+    scale: document.getElementById('guard-scale')?.checked ?? true,
+    restart: document.getElementById('guard-restart')?.checked ?? true,
+    node: document.getElementById('guard-node')?.checked ?? false,
+    delete: document.getElementById('guard-delete')?.checked ?? false,
+    impact: document.getElementById('guard-impact')?.checked ?? true,
+  };
+  localStorage.setItem('mcp-guardrails', JSON.stringify(guardrails));
+}
+
+function loadGuardrails() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('mcp-guardrails'));
+    if (!saved) return;
+    Object.entries(saved).forEach(([k, v]) => {
+      const el = document.getElementById('guard-' + k);
+      if (el) el.checked = v;
+    });
+  } catch (e) {}
+}
+
+function getGuardrails() {
+  try { return JSON.parse(localStorage.getItem('mcp-guardrails')) || {}; } catch { return {}; }
+}
+
+// ---------------------------------------------------------------------------
+// Auto-refresh toggle
+// ---------------------------------------------------------------------------
+let _autoRefreshInterval = null;
+function toggleAutoRefresh() {
+  const enabled = document.getElementById('so-autorefresh')?.checked;
+  if (_autoRefreshInterval) { clearInterval(_autoRefreshInterval); _autoRefreshInterval = null; }
+  if (enabled) { _autoRefreshInterval = setInterval(refreshAll, REFRESH_INTERVAL); }
+}
+
+// ---------------------------------------------------------------------------
+// Voice Input — Web Speech API
+// ---------------------------------------------------------------------------
+let _voiceRecognition = null;
+let _voiceActive = false;
+
+function toggleVoiceInput() {
+  const btn = document.getElementById('voice-btn');
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    btn.title = 'Speech recognition not supported in this browser';
+    btn.style.opacity = '0.3';
+    return;
+  }
+
+  if (_voiceActive && _voiceRecognition) {
+    _voiceRecognition.stop();
+    _voiceActive = false;
+    btn.classList.remove('recording');
+    return;
+  }
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  _voiceRecognition = new SpeechRecognition();
+  _voiceRecognition.continuous = false;
+  _voiceRecognition.interimResults = true;
+  _voiceRecognition.lang = 'en-US';
+
+  const input = document.getElementById('full-chat-input');
+  _voiceRecognition.onstart = function() {
+    _voiceActive = true;
+    btn.classList.add('recording');
+    input.placeholder = 'Listening... speak now';
+  };
+  _voiceRecognition.onresult = function(e) {
+    let transcript = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      transcript += e.results[i][0].transcript;
+    }
+    input.value = transcript;
+  };
+  _voiceRecognition.onend = function() {
+    _voiceActive = false;
+    btn.classList.remove('recording');
+    input.placeholder = 'Ask about your cluster, type / for commands, or use voice...';
+    if (input.value.trim()) input.focus();
+  };
+  _voiceRecognition.onerror = function(e) {
+    _voiceActive = false;
+    btn.classList.remove('recording');
+    input.placeholder = 'Voice error: ' + e.error;
+    setTimeout(function() { input.placeholder = 'Ask about your cluster, type / for commands, or use voice...'; }, 3000);
+  };
+  _voiceRecognition.start();
+}
+
+// ---------------------------------------------------------------------------
+// Pinboard — pin/unpin AI findings
+// ---------------------------------------------------------------------------
+let _pinnedItems = [];
+
+function initPinboard() {
+  try {
+    _pinnedItems = JSON.parse(localStorage.getItem('mcp-pinboard')) || [];
+  } catch { _pinnedItems = []; }
+  renderPinboard();
+}
+
+function togglePinboard() {
+  const panel = document.getElementById('pinboard-panel');
+  const actions = document.getElementById('actions-panel');
+  if (panel.classList.contains('visible')) {
+    panel.classList.remove('visible');
+    actions.style.display = '';
+  } else {
+    panel.classList.add('visible');
+    actions.style.display = 'none';
+    renderPinboard();
+  }
+}
+
+function pinFinding(text) {
+  const item = {
+    id: 'pin-' + Date.now(),
+    text: text.substring(0, 300),
+    time: new Date().toISOString(),
+  };
+  _pinnedItems.unshift(item);
+  if (_pinnedItems.length > 50) _pinnedItems = _pinnedItems.slice(0, 50);
+  localStorage.setItem('mcp-pinboard', JSON.stringify(_pinnedItems));
+  renderPinboard();
+}
+
+function unpinFinding(id) {
+  _pinnedItems = _pinnedItems.filter(p => p.id !== id);
+  localStorage.setItem('mcp-pinboard', JSON.stringify(_pinnedItems));
+  renderPinboard();
+}
+
+function renderPinboard() {
+  const list = document.getElementById('pinboard-list');
+  if (!list) return;
+  if (_pinnedItems.length === 0) {
+    list.innerHTML = '<div class="pinboard-empty">Pin important AI responses to save them here for reference.</div>';
+    return;
+  }
+  list.innerHTML = _pinnedItems.map(p =>
+    '<div class="pin-card">' +
+      '<div class="pin-text">' + esc(p.text) + '</div>' +
+      '<div class="pin-time">' + timeAgo(p.time) + '</div>' +
+      '<button class="pin-remove" onclick="unpinFinding(\'' + p.id + '\')">&times;</button>' +
+    '</div>'
+  ).join('');
+}
+
+initPinboard();
+
+// ---------------------------------------------------------------------------
+// Smart Context-Aware Suggestions
+// ---------------------------------------------------------------------------
+const PERSONA_SUGGESTIONS = {
+  sre: [
+    { icon: '&#x1F534;', text: 'Show pod issues', query: 'Show me all pods with issues' },
+    { icon: '&#x1F4CA;', text: 'Check SLO health', query: 'Check cluster health and SLO status' },
+    { icon: '&#x26A0;', text: 'Firing alerts', query: '/alerts' },
+    { icon: '&#x1F4C8;', text: 'Node capacity', query: 'Show node CPU and memory utilization' },
+    { icon: '&#x1F50D;', text: 'Incident timeline', query: '/timeline' },
+    { icon: '&#x2699;', text: 'Operator health', query: '/operator-health' },
+  ],
+  security: [
+    { icon: '&#x1F6E1;', text: 'Security audit', query: '/security' },
+    { icon: '&#x1F512;', text: 'SCC audit', query: '/scc-audit' },
+    { icon: '&#x2696;', text: 'Compliance check', query: '/compliance' },
+    { icon: '&#x1F4DC;', text: 'Generate policy', query: '/generate-policy' },
+    { icon: '&#x1F4CB;', text: 'Cert expiry', query: '/cert-check' },
+    { icon: '&#x1F50D;', text: 'Over-privileged pods', query: 'Find pods using privileged SCC' },
+  ],
+  developer: [
+    { icon: '&#x1F4E6;', text: 'My deployments', query: 'List deployments' },
+    { icon: '&#x1F534;', text: 'Pod issues', query: 'Show pods with issues' },
+    { icon: '&#x1F527;', text: 'Build status', query: 'Show recent builds' },
+    { icon: '&#x1F310;', text: 'Routes & services', query: 'List routes' },
+    { icon: '&#x1F4C3;', text: 'Recent events', query: '/events' },
+    { icon: '&#x1F69A;', text: 'Pipelines', query: '/pipelines' },
+  ],
+  platform: [
+    { icon: '&#x2B06;', text: 'Upgrade readiness', query: '/upgrade-check' },
+    { icon: '&#x1F4CA;', text: 'Capacity planning', query: 'Show cluster capacity and resource usage' },
+    { icon: '&#x1F504;', text: 'Cluster drift', query: '/drift' },
+    { icon: '&#x2699;', text: 'Operator health', query: '/operator-health' },
+    { icon: '&#x1F4B0;', text: 'Cost analysis', query: '/cost' },
+    { icon: '&#x1F5A5;', text: 'Node status', query: '/nodes' },
+  ],
+};
+
+async function loadSmartSuggestions() {
+  const container = document.getElementById('smart-suggestions');
+  if (!container) return;
+  const persona = getActivePersona();
+  const suggestions = PERSONA_SUGGESTIONS[persona] || PERSONA_SUGGESTIONS.sre;
+
+  const alertCount = parseInt(document.getElementById('alerts-badge')?.textContent || '0');
+  const dynamic = [];
+  if (alertCount > 0) {
+    dynamic.push({ icon: '&#x1F6A8;', text: alertCount + ' active alerts', query: '/alerts' });
+  }
+
+  const all = [...dynamic, ...suggestions].slice(0, 7);
+  container.innerHTML = all.map(s =>
+    '<button class="smart-suggestion" onclick="sendFullChat(\'' + s.query.replace(/'/g, "\\'") + '\')">' +
+      '<span class="ss-icon">' + s.icon + '</span>' + s.text +
+    '</button>'
+  ).join('');
+}
+
+// ---------------------------------------------------------------------------
+// AI Confidence Meter — appended to AI responses
+// ---------------------------------------------------------------------------
+function getConfidenceHTML(text) {
+  let score = 'high';
+  const lower = (text || '').toLowerCase();
+  if (lower.includes('not sure') || lower.includes('may not') || lower.includes('unable to determine') || lower.includes('could not') || lower.includes('error') || lower.includes('failed to')) {
+    score = 'low';
+  } else if (lower.includes('might') || lower.includes('possibly') || lower.includes('appears to') || lower.includes('likely') || lower.includes('unclear')) {
+    score = 'med';
+  }
+  const labels = { high: 'High confidence', med: 'Medium confidence', low: 'Low confidence' };
+  const colors = { high: 'var(--ok)', med: 'var(--warn)', low: 'var(--crit)' };
+  return '<span class="confidence-meter confidence-' + score + '" title="AI confidence level">' +
+    '<span style="color:' + colors[score] + '">' + labels[score] + '</span>' +
+    '<span class="cm-bar"><span class="cm-fill"></span></span></span>';
+}
+
+// ---------------------------------------------------------------------------
+// Patch renderConversation to add pin buttons and confidence meter
+// ---------------------------------------------------------------------------
+const _origRenderConversation = typeof renderConversation === 'function' ? renderConversation : null;
+
+if (_origRenderConversation) {
+  const _patchedRender = function() {
+    _origRenderConversation();
+    // Add pin buttons and confidence meters to AI messages
+    setTimeout(function() {
+      document.querySelectorAll('.conv-msg.ai').forEach(function(msg) {
+        if (msg.querySelector('.pin-btn')) return;
+        const header = msg.querySelector('.conv-header');
+        if (!header) return;
+        const body = msg.querySelector('.conv-body');
+        const text = body?.textContent || '';
+        // Add confidence meter
+        const provTag = header.querySelector('.conv-provider-tag');
+        if (provTag && !header.querySelector('.confidence-meter')) {
+          provTag.insertAdjacentHTML('afterend', getConfidenceHTML(text));
+        }
+        // Add pin button
+        const pinBtn = document.createElement('button');
+        pinBtn.className = 'pin-btn';
+        pinBtn.innerHTML = '&#x1F4CC;';
+        pinBtn.title = 'Pin this finding';
+        pinBtn.onclick = function() { pinFinding(text.substring(0, 300)); pinBtn.innerHTML = '&#x2705;'; setTimeout(function() { pinBtn.innerHTML = '&#x1F4CC;'; }, 1500); };
+        header.appendChild(pinBtn);
+      });
+    }, 100);
+  };
+  renderConversation = _patchedRender;
+}
+
+// ---------------------------------------------------------------------------
+// Keyboard shortcut for settings panel (Ctrl+,)
+// ---------------------------------------------------------------------------
+document.addEventListener('keydown', function(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+    e.preventDefault();
+    toggleSettingsPanel();
+  }
+});
 </script>
 
 </body>
