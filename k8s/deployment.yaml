@@ -22,6 +22,14 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      dnsConfig:
+        options:
+          - name: timeout
+            value: "5"
+          - name: attempts
+            value: "5"
+          - name: ndots
+            value: "2"
       containers:
         - name: mcp-server
           image: quay.io/your-org/openshift-mcp-server:latest

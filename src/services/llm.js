@@ -28,11 +28,28 @@ if (HTTPS_PROXY) {
   console.error(`[llm] Using proxy for external LLM calls: ${HTTPS_PROXY}`);
 }
 
-function llmFetch(url, opts) {
-  if (HTTPS_PROXY) {
-    return undiciFetch(url, { ...opts, dispatcher: new ProxyAgent(HTTPS_PROXY) });
+const DNS_RETRY_CODES = new Set(["EAI_AGAIN", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND"]);
+const MAX_RETRIES = 3;
+
+async function llmFetch(url, opts) {
+  const doFetch = HTTPS_PROXY
+    ? () => undiciFetch(url, { ...opts, dispatcher: new ProxyAgent(HTTPS_PROXY) })
+    : () => fetch(url, opts);
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await doFetch();
+    } catch (err) {
+      const code = err.cause?.code || err.code || "";
+      if (attempt < MAX_RETRIES && DNS_RETRY_CODES.has(code)) {
+        const delay = 1000 * (attempt + 1);
+        console.error(`[llm] DNS/network error (${code}), retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
   }
-  return fetch(url, opts);
 }
 
 export function llmEnabled(opts = {}) {
