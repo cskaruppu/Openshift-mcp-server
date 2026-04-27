@@ -408,6 +408,24 @@ async function startSSE() {
         diag.k8sApiReachable = false;
         diag.k8sApiError = e.message;
       }
+      // External DNS resolution check
+      diag.externalDns = { tested: false };
+      try {
+        const { resolve4 } = await import("node:dns/promises");
+        const host = url.searchParams.get("dnsTest") || "documentquery.openai.azure.com";
+        diag.externalDns.host = host;
+        const start = Date.now();
+        const addrs = await resolve4(host);
+        diag.externalDns.resolved = true;
+        diag.externalDns.addresses = addrs;
+        diag.externalDns.latencyMs = Date.now() - start;
+        diag.externalDns.tested = true;
+      } catch (dnsErr) {
+        diag.externalDns.resolved = false;
+        diag.externalDns.error = dnsErr.code || dnsErr.message;
+        diag.externalDns.tested = true;
+      }
+      diag.proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || "(not set)";
       sendJson(res, 200, diag);
       return;
     }
