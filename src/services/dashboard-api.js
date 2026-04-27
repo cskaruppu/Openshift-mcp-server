@@ -122,7 +122,7 @@ export async function handleLLMSettingsTest(req, res) {
     };
     if (provider === "azure") {
       llmOpts.azureDeployment = deployment || model;
-      llmOpts.azureApiVersion = apiVersion || "2024-08-01-preview";
+      llmOpts.azureApiVersion = apiVersion || "2024-12-01-preview";
     }
     const result = await callLLM(llmOpts);
     const durationMs = Date.now() - startMs;

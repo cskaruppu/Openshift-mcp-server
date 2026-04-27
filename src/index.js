@@ -426,6 +426,25 @@ async function startSSE() {
         diag.externalDns.tested = true;
       }
       diag.proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || "(not set)";
+      // TCP+TLS connectivity test to Azure endpoint
+      diag.externalHttps = { tested: false };
+      const testHost = url.searchParams.get("dnsTest") || "documentquery.openai.azure.com";
+      try {
+        const { connect } = await import("node:tls");
+        await new Promise((resolve, reject) => {
+          const start = Date.now();
+          const sock = connect(443, testHost, { servername: testHost, rejectUnauthorized: false, timeout: 8000 }, () => {
+            diag.externalHttps = { tested: true, connected: true, latencyMs: Date.now() - start, host: testHost, tlsVersion: sock.getProtocol?.() || "unknown" };
+            sock.end();
+            resolve();
+          });
+          sock.on("error", (e) => { diag.externalHttps = { tested: true, connected: false, host: testHost, error: e.code || e.message }; resolve(); });
+          sock.on("timeout", () => { diag.externalHttps = { tested: true, connected: false, host: testHost, error: "TIMEOUT (8s)" }; sock.destroy(); resolve(); });
+        });
+      } catch (tlsErr) {
+        diag.externalHttps = { tested: true, connected: false, host: testHost, error: tlsErr.code || tlsErr.message };
+      }
+      diag.nodeTlsRejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED || "(not set)";
       sendJson(res, 200, diag);
       return;
     }
