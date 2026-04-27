@@ -78,15 +78,26 @@ import { redactIfEnabled } from "./services/redaction.js";
 import { loadKubeconfig, registerMultiClusterTools } from "./services/multi-cluster.js";
 import { loadConfig } from "./utils/config.js";
 import { ocpGet } from "./utils/openshift-client.js";
+import {
+  connectServer as hubConnect,
+  disconnectServer as hubDisconnect,
+  reconnectServer as hubReconnect,
+  listServers as hubListServers,
+  getAllTools as hubGetAllTools,
+  getToolCount as hubGetToolCount,
+  loadAndReconnect as hubLoadAndReconnect,
+  callTool as hubCallTool,
+} from "./services/mcp-hub.js";
+import { runOrchestrator } from "./services/mcp-orchestrator.js";
 
 const silencedAlerts = new Map();
 
 function createMcpServer() {
   const server = new McpServer({
-    name: "openshift-mcp-server",
+    name: "tcs-cloudnexus-ai",
     version: "1.0.0",
     description:
-      "MCP Server for OpenShift Container Platform — cluster insights, diagnostics, ITSM integration, and automated remediation.",
+      "TCS CloudNexus AI — OpenShift Intelligence Platform with MCP Hub, multi-server orchestration, diagnostics, ITSM integration, and automated remediation.",
   });
 
   // Register all tool groups
@@ -310,6 +321,14 @@ async function startSSE() {
   // Initialize optional persistence layers (graceful fallback if not configured)
   await Promise.all([initDb(), initCache()]);
 
+  // Initialize MCP Hub — load saved server configs and auto-reconnect
+  try {
+    await hubLoadAndReconnect();
+    console.log(`[startup] MCP Hub initialized — ${hubGetToolCount()} tools available`);
+  } catch (err) {
+    console.warn("[startup] MCP Hub init:", err.message);
+  }
+
   // Restore silenced alerts from DB
   try {
     const rows = await dbQuery("SELECT name, namespace, silenced_at, expires_at FROM silenced_alerts WHERE expires_at > NOW()");
@@ -466,6 +485,100 @@ async function startSSE() {
       diag.nodeTlsRejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED || "(not set)";
       sendJson(res, 200, diag);
       return;
+    }
+
+    // -----------------------------------------------------------------------
+    // MCP Hub API — manage external MCP server connections
+    // -----------------------------------------------------------------------
+    if (url.pathname === "/api/hub/servers" && req.method === "GET") {
+      return sendJson(res, 200, { servers: hubListServers() });
+    }
+    if (url.pathname === "/api/hub/servers" && req.method === "POST") {
+      try {
+        const body = await readJsonBody(req);
+        const result = await hubConnect(body);
+        return sendJson(res, 201, { server: result });
+      } catch (err) {
+        return sendJson(res, 400, { error: err.message });
+      }
+    }
+    if (url.pathname === "/api/hub/tools" && req.method === "GET") {
+      const tools = hubGetAllTools();
+      return sendJson(res, 200, { tools, count: tools.length });
+    }
+    // /api/hub/servers/:id/disconnect
+    {
+      const hubM = url.pathname.match(/^\/api\/hub\/servers\/([^/]+)\/disconnect$/);
+      if (hubM && req.method === "POST") {
+        try {
+          const result = await hubDisconnect(decodeURIComponent(hubM[1]));
+          return sendJson(res, 200, result);
+        } catch (err) {
+          return sendJson(res, 400, { error: err.message });
+        }
+      }
+    }
+    // /api/hub/servers/:id/reconnect
+    {
+      const hubM = url.pathname.match(/^\/api\/hub\/servers\/([^/]+)\/reconnect$/);
+      if (hubM && req.method === "POST") {
+        try {
+          const result = await hubReconnect(decodeURIComponent(hubM[1]));
+          return sendJson(res, 200, { server: result });
+        } catch (err) {
+          return sendJson(res, 400, { error: err.message });
+        }
+      }
+    }
+    // DELETE /api/hub/servers/:id
+    {
+      const hubM = url.pathname.match(/^\/api\/hub\/servers\/([^/]+)$/);
+      if (hubM && req.method === "DELETE") {
+        try {
+          const result = await hubDisconnect(decodeURIComponent(hubM[1]));
+          return sendJson(res, 200, result);
+        } catch (err) {
+          return sendJson(res, 400, { error: err.message });
+        }
+      }
+    }
+    // POST /api/hub/tools/call — call any tool through the hub
+    if (url.pathname === "/api/hub/tools/call" && req.method === "POST") {
+      try {
+        const body = await readJsonBody(req);
+        const { tool, arguments: args } = body;
+        if (!tool) return sendJson(res, 400, { error: "Missing tool name" });
+        const result = await hubCallTool(tool, args || {});
+        return sendJson(res, 200, result);
+      } catch (err) {
+        return sendJson(res, 500, { error: err.message });
+      }
+    }
+    // POST /api/hub/orchestrate — run the full orchestrator (LLM + tool calls)
+    if (url.pathname === "/api/hub/orchestrate" && req.method === "POST") {
+      try {
+        const body = await readJsonBody(req);
+        const { message, llmOpts, serverFilter, conversationHistory } = body;
+        if (!message) return sendJson(res, 400, { error: "Missing message" });
+        const result = await runOrchestrator({
+          userMessage: message,
+          llmOpts: llmOpts || {},
+          serverFilter: serverFilter || null,
+          conversationHistory: conversationHistory || null,
+        });
+        return sendJson(res, 200, result);
+      } catch (err) {
+        return sendJson(res, 500, { error: err.message });
+      }
+    }
+    // GET /api/hub/status — hub summary
+    if (url.pathname === "/api/hub/status" && req.method === "GET") {
+      const servers = hubListServers();
+      return sendJson(res, 200, {
+        totalServers: servers.length,
+        totalTools: hubGetToolCount(),
+        servers: servers.map((s) => ({ id: s.id, name: s.name, status: s.status, toolCount: s.toolCount })),
+      });
     }
 
     // LLM Settings API
@@ -862,11 +975,14 @@ async function startSSE() {
   });
 
   httpServer.listen(PORT, "0.0.0.0", () => {
-    console.error(`OpenShift MCP Server running on SSE — http://0.0.0.0:${PORT}`);
-    console.error(`  SSE endpoint:     GET  /sse`);
-    console.error(`  Message endpoint: POST /message?sessionId=<id>`);
+    console.error(`TCS CloudNexus AI — OpenShift Intelligence Platform`);
+    console.error(`  Server running on http://0.0.0.0:${PORT}`);
+    console.error(`  MCP SSE:          GET  /sse`);
+    console.error(`  MCP Message:      POST /message?sessionId=<id>`);
+    console.error(`  MCP Hub:          GET  /api/hub/servers`);
+    console.error(`  Hub Tools:        GET  /api/hub/tools`);
+    console.error(`  Orchestrator:     POST /api/hub/orchestrate`);
     console.error(`  Health check:     GET  /healthz`);
-    console.error(`  Stats:            GET  /stats`);
   });
 
   // Reload config on SIGHUP (e.g. after ConfigMap update)

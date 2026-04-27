@@ -18,6 +18,7 @@
 
 import { callLLM, callLLMStream } from "./llm.js";
 import { TOOLS, dispatchTool } from "./tools-registry.js";
+import { getAllTools as hubGetAllTools, callTool as hubCallTool, getConnectionCount } from "./mcp-hub.js";
 
 const MAX_STEPS = parseInt(process.env.AGENT_MAX_STEPS || "6", 10);
 const MAX_TOOLS_PER_STEP = parseInt(process.env.AGENT_MAX_TOOLS_PER_STEP || "4", 10);
@@ -58,6 +59,20 @@ export async function runAgent({
   const steps = [];
   const allToolCalls = [];
 
+  // Use hub tools when external MCP servers are connected
+  const useHub = getConnectionCount() > 0;
+  const activeTools = useHub
+    ? hubGetAllTools().map((t) => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.input_schema,
+      }))
+    : TOOLS;
+
+  const dispatch = useHub
+    ? (name, args) => hubCallTool(name, args)
+    : dispatchTool;
+
   // Seed with optional pre-gathered context so the model doesn't re-fetch.
   let userContent = userMessage;
   if (contextHint) {
@@ -73,7 +88,7 @@ export async function runAgent({
     const res = await fn({
       messages,
       system: SYSTEM_PROMPT,
-      tools: TOOLS,
+      tools: activeTools,
       maxTokens: 2000,
       temperature: 0.2,
       onDelta,
@@ -105,7 +120,7 @@ export async function runAgent({
     const toRun = toolCalls.slice(0, MAX_TOOLS_PER_STEP);
     const results = await Promise.all(
       toRun.map((tc) =>
-        dispatchTool(tc.name, tc.arguments).then((r) => ({ tc, r }))
+        dispatch(tc.name, tc.arguments).then((r) => ({ tc, r }))
       )
     );
 

@@ -47,6 +47,8 @@ import {
 } from "./action-workflow.js";
 import { callLLM, callLLMStream, llmEnabled } from "./llm.js";
 import { runAgent } from "./agent-loop.js";
+import { runOrchestrator } from "./mcp-orchestrator.js";
+import { getConnectionCount } from "./mcp-hub.js";
 import { maybeEnhance as nluEnhanceWithLLM } from "./nlu-llm.js";
 import { summarizeIfNeeded } from "./summarizer.js";
 import { suggestPlaybook, renderPlaybookMarkdown } from "./playbooks.js";
@@ -4147,12 +4149,20 @@ export async function handleChatInvestigateAPI(req, res) {
     }
 
     const stepsCollected = [];
-    const agentResult = await runAgent({
-      userMessage: userMsg,
-      contextHint,
-      llmOpts,
-      onStep: (stepInfo) => stepsCollected.push(stepInfo),
-    });
+    const useOrchestrator = getConnectionCount() > 0;
+    const agentResult = useOrchestrator
+      ? await runOrchestrator({
+          userMessage: userMsg,
+          contextHint,
+          llmOpts,
+          onStep: (stepInfo) => stepsCollected.push(stepInfo),
+        })
+      : await runAgent({
+          userMessage: userMsg,
+          contextHint,
+          llmOpts,
+          onStep: (stepInfo) => stepsCollected.push(stepInfo),
+        });
 
     const toolsUsed = [...new Set(
       (agentResult.toolCalls || []).map((tc) => tc.name).filter(Boolean)

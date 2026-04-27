@@ -1,7 +1,7 @@
 {
   "name": "openshift-mcp-server",
   "version": "1.0.0",
-  "description": "MCP Server for OpenShift Container Platform with ACM, Ansible, and ServiceNow integration",
+  "description": "TCS CloudNexus AI — OpenShift Intelligence Platform with MCP Hub, multi-server orchestration, and enterprise integrations",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
