@@ -1675,6 +1675,8 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
       apiUrl: opts.apiUrl,
       apiKey: opts.apiKey,
       model: opts.model,
+      azureDeployment: opts.azureDeployment,
+      azureApiVersion: opts.azureApiVersion,
     });
     return r.text || builtInAnalysis(userMessage, clusterContext);
   } catch (err) {
@@ -3539,6 +3541,8 @@ export async function handleChatAPI(req, res) {
     if (body.apiKey) llmOpts.apiKey = body.apiKey;
     if (body.apiUrl) llmOpts.apiUrl = body.apiUrl;
     if (body.model) llmOpts.model = body.model;
+    if (body.azureDeployment) llmOpts.azureDeployment = body.azureDeployment;
+    if (body.azureApiVersion) llmOpts.azureApiVersion = body.azureApiVersion;
 
     // Conversation history — only include when an LLM provider is active
     const requestedProvider = body.provider || LLM_PROVIDER;
@@ -3938,6 +3942,8 @@ export async function handleChatCompareAPI(req, res) {
           apiKey: prov.apiKey,
           apiUrl: prov.apiUrl,
           model: prov.model,
+          azureDeployment: prov.azureDeployment,
+          azureApiVersion: prov.azureApiVersion,
         });
         const reply = r.text || "";
         return {

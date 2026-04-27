@@ -1143,7 +1143,7 @@ tr:hover td{background:#ffffff06}
           <div class="pc-field"><label>API URL</label><input type="text" id="pc-azure-apiurl" placeholder="https://your-resource.openai.azure.com"></div>
           <div class="pc-field"><label>Model</label><input type="text" id="pc-azure-model" placeholder="gpt-4" value="gpt-4"></div>
           <div class="pc-field"><label>Deployment Name</label><input type="text" id="pc-azure-deployment" placeholder="my-gpt4-deployment"></div>
-          <div class="pc-field"><label>API Version</label><input type="text" id="pc-azure-apiversion" placeholder="2024-02-01" value="2024-02-01"></div>
+          <div class="pc-field"><label>API Version</label><input type="text" id="pc-azure-apiversion" placeholder="2024-12-01-preview" value="2024-12-01-preview"></div>
           <div class="pc-test"><button onclick="testProvider('azure')">Test Connection</button><span class="test-status" id="pc-azure-status"></span></div>
         </div>
 
@@ -2260,7 +2260,12 @@ function getActiveProviderOpts() {
   const settings = getProviderConfig();
   if (settings && settings.providers && settings.providers[provider]) {
     const cfg = settings.providers[provider];
-    return { provider, apiKey: cfg.apiKey, apiUrl: cfg.apiUrl, model: cfg.model };
+    const opts = { provider, apiKey: cfg.apiKey, apiUrl: cfg.apiUrl, model: cfg.model };
+    if (provider === 'azure') {
+      if (cfg.deployment) opts.azureDeployment = cfg.deployment;
+      if (cfg.apiVersion) opts.azureApiVersion = cfg.apiVersion;
+    }
+    return opts;
   }
   return { provider };
 }
@@ -2559,7 +2564,7 @@ async function loadSettings() {
         const depEl = document.getElementById('pc-azure-deployment');
         const verEl = document.getElementById('pc-azure-apiversion');
         if (depEl) depEl.value = cfg.deployment || '';
-        if (verEl) verEl.value = cfg.apiVersion || '2024-08-01-preview';
+        if (verEl) verEl.value = cfg.apiVersion || '2024-12-01-preview';
       }
     });
     const defs = resp.defaults || {};
@@ -3443,16 +3448,9 @@ async function sendFullChatStreaming(text) {
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '...'; }
 
   const chatBody = { message: msg, conversationId: history.activeId, stream: true };
-  const provider = document.getElementById('full-llm-provider').value;
-  if (provider && provider !== 'none') {
-    chatBody.provider = provider;
-    const ak = document.getElementById('full-llm-api-key').value.trim();
-    const au = document.getElementById('full-llm-api-url').value.trim();
-    const ml = document.getElementById('full-llm-model').value.trim();
-    if (ak) chatBody.apiKey = ak;
-    if (au) chatBody.apiUrl = au;
-    if (ml) chatBody.model = ml;
-  }
+  const providerOpts = getActiveProviderOpts();
+  Object.assign(chatBody, providerOpts);
+  const provider = providerOpts.provider || 'none';
 
   let fullText = '';
   let streamProvider = provider || 'none';
