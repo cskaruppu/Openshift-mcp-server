@@ -144,6 +144,7 @@ export async function handleLLMSettingsTest(req, res) {
       llmOpts.azureDeployment = deployment || model;
       llmOpts.azureApiVersion = apiVersion || "2024-12-01-preview";
     }
+    llmOpts.maxRetries = 1;
     const result = await callLLM(llmOpts);
     const durationMs = Date.now() - startMs;
 

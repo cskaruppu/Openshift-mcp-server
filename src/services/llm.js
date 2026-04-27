@@ -41,15 +41,15 @@ const llmDispatcher = HTTPS_PROXY
 const DNS_RETRY_CODES = new Set(["EAI_AGAIN", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "ECONNREFUSED", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"]);
 const MAX_RETRIES = 5;
 
-async function llmFetch(url, opts) {
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+async function llmFetch(url, opts, retries = MAX_RETRIES) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       return await undiciFetch(url, { ...opts, dispatcher: llmDispatcher });
     } catch (err) {
       const code = err.cause?.code || err.code || "";
-      if (attempt < MAX_RETRIES && DNS_RETRY_CODES.has(code)) {
+      if (attempt < retries && DNS_RETRY_CODES.has(code)) {
         const delay = Math.min(2000 * Math.pow(2, attempt) + Math.random() * 1000, 15000);
-        console.error(`[llm] Network error (${code}), retry ${attempt + 1}/${MAX_RETRIES} in ${Math.round(delay)}ms`);
+        console.error(`[llm] Network error (${code}), retry ${attempt + 1}/${retries} in ${Math.round(delay)}ms`);
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }
@@ -79,6 +79,7 @@ function resolveOpts(opts = {}) {
     tools: opts.tools || null,
     azureDeployment: opts.azureDeployment || opts.deployment || DEFAULT_AZURE_DEPLOYMENT,
     azureApiVersion: opts.azureApiVersion || opts.apiVersion || DEFAULT_AZURE_API_VERSION,
+    maxRetries: opts.maxRetries ?? MAX_RETRIES,
   };
 }
 
@@ -159,7 +160,7 @@ async function callOpenAI(messages, o, stream, hooks = {}) {
       method: "POST",
       headers: { Authorization: `Bearer ${o.apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    });
+    }, o.maxRetries);
   } catch (fetchErr) {
     const cause = fetchErr.cause || {};
     const detail = cause.code || cause.message || fetchErr.message;
@@ -246,7 +247,7 @@ async function callAzureOpenAI(messages, o, stream, hooks = {}) {
       method: "POST",
       headers: { "api-key": o.apiKey, "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    });
+    }, o.maxRetries);
   } catch (fetchErr) {
     const cause = fetchErr.cause || {};
     const detail = cause.code || cause.message || fetchErr.message;
@@ -336,7 +337,7 @@ async function callAnthropic(messages, o, stream, hooks = {}) {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify(body),
-    });
+    }, o.maxRetries);
   } catch (fetchErr) {
     const cause = fetchErr.cause || {};
     const detail = cause.code || cause.message || fetchErr.message;
@@ -414,7 +415,7 @@ async function callOllama(messages, o, stream, hooks = {}) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    });
+    }, o.maxRetries);
   } catch (fetchErr) {
     const cause = fetchErr.cause || {};
     const detail = cause.code || cause.message || fetchErr.message;

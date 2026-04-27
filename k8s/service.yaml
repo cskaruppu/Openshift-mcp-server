@@ -22,6 +22,8 @@ metadata:
   labels:
     app.kubernetes.io/name: openshift-mcp-server
     app.kubernetes.io/part-of: mcp-ai-assistant
+  annotations:
+    haproxy.router.openshift.io/timeout: 120s
 spec:
   to:
     kind: Service

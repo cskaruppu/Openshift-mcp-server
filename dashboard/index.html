@@ -2678,7 +2678,14 @@ async function testProvider(provider) {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cfg),
     });
-    const data = await resp.json();
+    var data;
+    var ct = resp.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      var body = await resp.text();
+      data = { success: false, error: 'Server returned non-JSON (HTTP ' + resp.status + '). The route may have timed out — retry in a moment.' };
+    } else {
+      data = await resp.json();
+    }
     if (data.success) {
       statusEl.innerHTML = '<span style="color:var(--ok)">&#x2714; Connected</span> <span style="color:var(--text2);font-size:11px">(' + data.durationMs + 'ms)</span>';
     } else {
