@@ -3,16 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OpenShift MCP AI Assistant Dashboard</title>
+<title>TCS CloudNexus AI - OpenShift Intelligence Platform</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--accent:#e04040;--accent2:#3b82f6;--accent3:#10b981;--text:#e4e4e7;--text2:#a1a1aa;--warn:#f59e0b;--crit:#ef4444;--ok:#22c55e}
 body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
-.header{background:linear-gradient(135deg,#1a1d27 0%,#2a1520 100%);border-bottom:1px solid var(--border);padding:16px 32px;display:flex;align-items:center;justify-content:space-between}
-.header .logo{display:flex;align-items:center;gap:12px}
-.header .logo svg{width:36px;height:36px}
+.header{background:linear-gradient(135deg,#0a0e1a 0%,#1a1040 40%,#2a1520 100%);border-bottom:2px solid transparent;border-image:linear-gradient(90deg,#e04040,#3b82f6,#10b981) 1;padding:16px 32px;display:flex;align-items:center;justify-content:space-between}
+.header .logo{display:flex;align-items:center;gap:14px}
+.header .logo svg{width:40px;height:40px}
+.header .brand{display:flex;flex-direction:column;line-height:1.2}
+.header .brand-name{font-size:22px;font-weight:700;letter-spacing:0.5px}
+.header .brand-name .tcs{color:#3b82f6}
+.header .brand-name .cn{color:#e04040}
+.header .brand-name .ai{color:#10b981}
+.header .brand-sub{font-size:11px;color:var(--text2);letter-spacing:1.5px;text-transform:uppercase;font-weight:400}
 .header h1{font-size:20px;font-weight:600}
 .header h1 span{color:var(--accent)}
+.app-footer{background:linear-gradient(135deg,#0a0e1a 0%,#1a1040 100%);border-top:1px solid var(--border);padding:12px 32px;display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--text2)}
+.app-footer .footer-left{display:flex;align-items:center;gap:6px}
+.app-footer .footer-left .ft-dot{width:6px;height:6px;border-radius:50%;background:var(--accent3)}
+.app-footer .footer-right{letter-spacing:0.3px}
 .header .status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2)}
 .header .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);animation:pulse 2s infinite}
 .header .dot.err{background:var(--crit);animation:none}
@@ -292,7 +302,8 @@ tr:hover td{background:#ffffff06}
 .light-theme .severity-bar,.light-theme .trends-chart{background:#fafafa}
 /* Light theme */
 .light-theme{--bg:#f5f5f7;--card:#ffffff;--border:#e0e0e6;--text:#1a1a2e;--text2:#6b6b80;--accent:#e04040;--accent2:#2563eb;--accent3:#059669;--warn:#d97706;--crit:#dc2626;--ok:#16a34a}
-.light-theme .header{background:linear-gradient(135deg,#ffffff 0%,#f8e8e8 100%)}
+.light-theme .header{background:linear-gradient(135deg,#f8f9fc 0%,#eee8f8 40%,#f8e8e8 100%);border-image:linear-gradient(90deg,#e04040,#3b82f6,#10b981) 1}
+.light-theme .app-footer{background:linear-gradient(135deg,#f8f9fc 0%,#eee8f8 100%);border-top:1px solid #e0e0e0;color:#666}
 .light-theme .msg.ai,.light-theme .conv-body code{background:#eeeef2}
 .light-theme .fix-box,.light-theme .fix-box pre{background:#f6f8fa;color:#1a1a2e}
 .light-theme .fix-box .fix-header{background:#ebedf0;border-color:#d0d7de}
@@ -528,8 +539,17 @@ tr:hover td{background:#ffffff06}
 
 <div class="header">
   <div class="logo">
-    <svg viewBox="0 0 36 36" fill="none"><circle cx="18" cy="18" r="17" stroke="#e04040" stroke-width="2"/><path d="M12 18l4 4 8-8" stroke="#e04040" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <h1>OpenShift <span>MCP AI Assistant</span></h1>
+    <svg viewBox="0 0 40 40" fill="none">
+      <defs><linearGradient id="lg1" x1="0" y1="0" x2="40" y2="40"><stop offset="0%" stop-color="#3b82f6"/><stop offset="50%" stop-color="#e04040"/><stop offset="100%" stop-color="#10b981"/></linearGradient></defs>
+      <circle cx="20" cy="20" r="18" stroke="url(#lg1)" stroke-width="2.5"/>
+      <path d="M12 20c0-4.4 3.6-8 8-8m0 16c4.4 0 8-3.6 8-8" stroke="#3b82f6" stroke-width="2" stroke-linecap="round"/>
+      <path d="M20 12c4.4 0 8 3.6 8 8m-16 0c0 4.4 3.6 8 8 8" stroke="#e04040" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="20" cy="20" r="3" fill="#10b981"/>
+    </svg>
+    <div class="brand">
+      <span class="brand-name"><span class="tcs">TCS</span> <span class="cn">CloudNexus</span> <span class="ai">AI</span></span>
+      <span class="brand-sub">OpenShift Intelligence Platform</span>
+    </div>
   </div>
   <div class="nav-tabs">
     <button class="nav-tab active" data-view="dashboard" onclick="showView('dashboard')">Dashboard</button>
@@ -887,11 +907,16 @@ tr:hover td{background:#ffffff06}
     </div>
   </div>
 
-  <div style="text-align:center;color:var(--text2);font-size:12px;margin-top:32px;padding-bottom:16px">
-    OpenShift MCP AI Assistant &bull; Model Context Protocol Server &bull; Built with OpenShift + ACM + Ansible + ServiceNow
   </div>
-</div>
 </div><!-- /view-dashboard -->
+
+<div class="app-footer">
+  <div class="footer-left">
+    <span class="ft-dot"></span>
+    TCS CloudNexus AI &bull; OpenShift Intelligence Platform &bull; Powered by MCP + Azure OpenAI + ACM + Ansible + ServiceNow
+  </div>
+  <div class="footer-right">&copy; 2026 Tata Consultancy Services. All Rights Reserved.</div>
+</div>
 
 <!-- Full-page AI Chat View (hidden by default) -->
 <div id="view-chat" class="chat-fullpage" style="display:none">
@@ -919,7 +944,7 @@ tr:hover td{background:#ffffff06}
         <!-- Welcome screen (shown when no messages) -->
         <div class="chat-welcome" id="chat-welcome">
           <svg width="48" height="48" viewBox="0 0 36 36" fill="none"><circle cx="18" cy="18" r="17" stroke="#e04040" stroke-width="2"/><path d="M12 18l4 4 8-8" stroke="#e04040" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <h2>OpenShift MCP AI Assistant</h2>
+          <h2>TCS CloudNexus AI</h2>
           <p>Your AI-powered cluster companion. Ask questions, diagnose issues, run what-if analysis, or generate policies using natural language.</p>
           <div style="font-size:11px;color:var(--text2);margin-bottom:16px">Type <kbd style="background:var(--card);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:10px">/</kbd> for slash commands &bull; Click the mic for voice input &bull; Pin important findings</div>
           <div class="welcome-suggestions">
@@ -1304,7 +1329,7 @@ function setConnected(ok, label) {
   const dot = document.getElementById('conn-dot');
   const lbl = document.getElementById('conn-label');
   dot.className = ok ? 'dot' : 'dot err';
-  lbl.textContent = label || (ok ? 'MCP Server Connected' : 'Connection Error');
+  lbl.textContent = label || (ok ? 'CloudNexus Connected' : 'Connection Error');
   // Show diagnostic banner on error
   let banner = document.getElementById('diag-banner');
   if (!ok && !banner) {
@@ -1312,7 +1337,7 @@ function setConnected(ok, label) {
     banner.id = 'diag-banner';
     banner.style.cssText = 'background:#2a1010;border:1px solid var(--crit);border-radius:8px;padding:12px 16px;margin:12px auto;max-width:1440px;font-size:13px;color:#fca5a5;display:flex;align-items:center;gap:12px';
     banner.innerHTML = '<span style="font-size:18px;flex-shrink:0">&#x26A0;</span>' +
-      '<div><strong style="color:var(--crit)">Dashboard cannot connect to MCP Server API</strong>' +
+      '<div><strong style="color:var(--crit)">Dashboard cannot connect to CloudNexus API</strong>' +
       '<div style="margin-top:4px;color:var(--text2)">Error: ' + esc(label || 'Unknown') + '</div>' +
       '<div style="margin-top:6px"><button onclick="runDiagnostics()" style="background:var(--accent2);color:#fff;border:none;border-radius:6px;padding:4px 14px;cursor:pointer;font-size:12px">Run Diagnostics</button>' +
       ' <span id="diag-result" style="font-size:11px;color:var(--text2);margin-left:8px"></span></div></div>' +
@@ -2192,7 +2217,7 @@ function renderConversation() {
       const providerTag = msg.provider && msg.provider !== 'none'
         ? '<span class="conv-provider-tag">' + esc(msg.provider) + '</span>' : '';
       html += '<div class="conv-msg ai">' +
-        '<div class="conv-header"><div class="conv-avatar">MCP</div><span class="conv-name">MCP AI Assistant</span>' + providerTag + '</div>' +
+        '<div class="conv-header"><div class="conv-avatar">TCS</div><span class="conv-name">TCS CloudNexus AI</span>' + providerTag + '</div>' +
         '<div class="conv-body">' + (msg.html || md(msg.text || '')) + '</div></div>';
     }
   }
@@ -2205,7 +2230,7 @@ function createWelcomeEl() {
   div.className = 'chat-welcome';
   div.id = 'chat-welcome';
   div.innerHTML = '<svg width="48" height="48" viewBox="0 0 36 36" fill="none"><circle cx="18" cy="18" r="17" stroke="#e04040" stroke-width="2"/><path d="M12 18l4 4 8-8" stroke="#e04040" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
-    '<h2>OpenShift MCP AI Assistant</h2>' +
+    '<h2>TCS CloudNexus AI</h2>' +
     '<p>List, inspect, diagnose, and manage your OpenShift cluster resources — pods, deployments, services, events, and more.</p>' +
     '<div class="welcome-suggestions">' +
     '<button onclick="sendFullChat(\'Show me all pods with issues\')">Pod issues</button>' +
@@ -2339,7 +2364,7 @@ async function sendFullChat(text) {
   thinkingDiv.id = 'full-thinking';
   const thinkLabel = _chatMode === 'investigate' ? 'Deep investigation in progress...' :
                      _chatMode === 'compare' ? 'Querying multiple providers...' : 'Analyzing cluster data...';
-  thinkingDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">MCP</div><span class="conv-name">MCP AI Assistant</span></div>' +
+  thinkingDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">TCS</div><span class="conv-name">TCS CloudNexus AI</span></div>' +
     '<div class="conv-body" style="color:var(--text2)"><div class="thinking-dots"><span></span><span></span><span></span></div> ' + thinkLabel + '</div>';
   inner.appendChild(thinkingDiv);
   scrollConversation();
@@ -2495,7 +2520,7 @@ async function executeRunbook(runbookId) {
   const thinkDiv = document.createElement('div');
   thinkDiv.className = 'conv-msg ai';
   thinkDiv.id = 'full-thinking';
-  thinkDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">MCP</div><span class="conv-name">MCP AI Assistant</span></div>' +
+  thinkDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">TCS</div><span class="conv-name">TCS CloudNexus AI</span></div>' +
     '<div class="conv-body"><div class="runbook-progress"><div class="runbook-progress-title">Running: ' + esc(label) + '</div>' +
     '<div class="thinking-dots"><span></span><span></span><span></span></div> Executing steps...</div></div>';
   inner.appendChild(thinkDiv);
@@ -2976,7 +3001,7 @@ renderConversation = function() {
       const upClass = msg.feedback === 1 ? ' voted' : '';
       const downClass = msg.feedback === -1 ? ' voted' : '';
       html += '<div class="conv-msg ai">' +
-        '<div class="conv-header"><div class="conv-avatar">MCP</div><span class="conv-name">MCP AI Assistant</span>' + providerTag + confidenceTag + '</div>' +
+        '<div class="conv-header"><div class="conv-avatar">TCS</div><span class="conv-name">TCS CloudNexus AI</span>' + providerTag + confidenceTag + '</div>' +
         '<div class="conv-body">' + (msg.html || md(msg.text || '')) + '</div>' +
         '<div class="conv-feedback">' +
           '<button class="' + upClass + '" onclick="sendFeedback(' + idx + ',1)" title="Helpful">&#x1F44D;</button>' +
@@ -3477,7 +3502,7 @@ async function sendFullChatStreaming(text) {
   const inner = document.getElementById('chat-conv-inner');
   const streamDiv = document.createElement('div');
   streamDiv.className = 'conv-msg ai streaming-text';
-  streamDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">MCP</div><span class="conv-name">MCP AI Assistant</span></div>' +
+  streamDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">TCS</div><span class="conv-name">TCS CloudNexus AI</span></div>' +
     '<div class="conv-body" id="stream-body"><div class="thinking-dots"><span></span><span></span><span></span></div> Analyzing...</div>';
   inner.appendChild(streamDiv);
   scrollConversation();
@@ -3673,7 +3698,7 @@ function exportConversation(format) {
       if (m.role === 'user') {
         lines.push('## User', '', m.text, '');
       } else {
-        lines.push('## MCP AI Assistant' + (m.provider ? ' (' + m.provider + ')' : ''), '', m.text, '');
+        lines.push('## TCS CloudNexus AI' + (m.provider ? ' (' + m.provider + ')' : ''), '', m.text, '');
       }
     }
     content = lines.join('\n');
