@@ -3957,13 +3957,32 @@ export async function handleChatAPI(req, res) {
         cacheSet(ctxKey, context, CONTEXT_CACHE_TTL).catch(() => {});
       }
 
-      // Optional: route "diagnose" / "why" / "what's wrong" queries through
-      // the agent loop when an LLM is configured.
+      // Route through orchestrator when external MCP servers are connected,
+      // or through agent loop for diagnose-type queries.
+      const hubActive = getConnectionCount() > 0;
       const wantsDiagnose =
         llmEnabled(llmOpts) &&
         /\b(diagnose|root\s*cause|why\s+is|what'?s\s+wrong|troubleshoot)\b/i.test(userMessage);
       let replyText;
-      if (wantsDiagnose) {
+      let toolsUsed = [];
+
+      if (hubActive && llmEnabled(llmOpts)) {
+        try {
+          const orchRes = await runOrchestrator({
+            userMessage,
+            contextHint: {
+              problemPods: (context.problemPods || []).slice(0, 5),
+              correlations: context.correlations || [],
+            },
+            llmOpts,
+          });
+          replyText = orchRes?.text || "";
+          toolsUsed = (orchRes?.toolCalls || []).map((tc) => tc.name);
+        } catch (e) {
+          console.warn("[chat-api] orchestrator failed, falling back:", e.message);
+          replyText = await callLLMWithContext(userMessage, context, llmOpts);
+        }
+      } else if (wantsDiagnose) {
         try {
           const agentRes = await runAgent({
             userMessage,
@@ -3974,6 +3993,7 @@ export async function handleChatAPI(req, res) {
             llmOpts,
           });
           replyText = agentRes?.text || (await callLLMWithContext(userMessage, context, llmOpts));
+          toolsUsed = (agentRes?.toolCalls || []).map((tc) => tc.name);
         } catch (e) {
           console.warn("[chat-api] agent loop failed, falling back:", e.message);
           replyText = await callLLMWithContext(userMessage, context, llmOpts);
@@ -3981,9 +4001,9 @@ export async function handleChatAPI(req, res) {
       } else {
         replyText = await callLLMWithContext(userMessage, context, llmOpts);
       }
-      return { context, replyText };
+      return { context, replyText, toolsUsed };
     });
-    let { context, replyText: reply } = traced;
+    let { context, replyText: reply, toolsUsed = [] } = traced;
     intentsForLog = Array.isArray(context?.intents) ? context.intents : Object.keys(context || {});
 
     // Append root-cause correlations + playbook + trace for explainability.
@@ -4008,6 +4028,7 @@ export async function handleChatAPI(req, res) {
       contextKeys: Object.keys(context || {}),
       correlations: context?.correlations || [],
       trace: trace.slice(0, 20),
+      toolsUsed: toolsUsed || [],
     };
     cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
     if (conversationId) {

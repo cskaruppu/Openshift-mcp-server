@@ -979,6 +979,7 @@ tr:hover td{background:#ffffff06}
                 <div class="runbook-menu-item" onclick="executeRunbook('network-troubleshoot')">&#x1F310; Network Troubleshoot</div>
               </div>
             </div>
+            <button class="mode-toggle" onclick="showView('hub')" title="MCP Hub — connect external tool servers" id="chat-hub-btn">&#x1F50C; MCP Hub <span id="chat-hub-count" style="background:var(--accent);color:#fff;border-radius:8px;padding:0 5px;font-size:9px;margin-left:2px"></span></button>
             <button class="mode-toggle" onclick="showView('settings')" title="Configure LLM providers in Settings">&#x2699; Configure in Settings</button>
           </div>
           <!-- Hidden fields for backward compat -->
@@ -1309,6 +1310,107 @@ tr:hover td{background:#ffffff06}
       <textarea id="hub-add-env" rows="2" placeholder="GITHUB_TOKEN=ghp_xxx&#10;ANOTHER_VAR=value" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:11px;font-family:monospace;outline:none;resize:vertical"></textarea>
     </div>
     <div id="hub-add-status" style="margin-top:8px;font-size:12px;color:var(--text2)"></div>
+  </div>
+
+  <!-- MCP Server Marketplace -->
+  <div class="card" style="margin-bottom:20px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+      <span style="font-weight:600;font-size:14px">MCP Server Marketplace</span>
+      <span style="font-size:11px;color:var(--text2)">One-click install popular MCP servers</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px" id="hub-marketplace">
+      <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:border-color .2s" onclick="hubInstallTemplate('github')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:20px">&#x1F4BB;</span>
+          <span style="font-weight:600;font-size:13px">GitHub</span>
+        </div>
+        <div style="font-size:11px;color:var(--text2)">Issues, PRs, code search, repos — GITHUB_TOKEN required</div>
+      </div>
+      <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:border-color .2s" onclick="hubInstallTemplate('filesystem')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:20px">&#x1F4C1;</span>
+          <span style="font-weight:600;font-size:13px">Filesystem</span>
+        </div>
+        <div style="font-size:11px;color:var(--text2)">Read, write, search files on the server filesystem</div>
+      </div>
+      <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:border-color .2s" onclick="hubInstallTemplate('postgres')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:20px">&#x1F5C4;</span>
+          <span style="font-weight:600;font-size:13px">PostgreSQL</span>
+        </div>
+        <div style="font-size:11px;color:var(--text2)">Query databases, inspect schemas, run SQL</div>
+      </div>
+      <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:border-color .2s" onclick="hubInstallTemplate('slack')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:20px">&#x1F4AC;</span>
+          <span style="font-weight:600;font-size:13px">Slack</span>
+        </div>
+        <div style="font-size:11px;color:var(--text2)">Send messages, read channels, manage Slack workspace</div>
+      </div>
+      <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:border-color .2s" onclick="hubInstallTemplate('brave-search')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:20px">&#x1F50D;</span>
+          <span style="font-weight:600;font-size:13px">Brave Search</span>
+        </div>
+        <div style="font-size:11px;color:var(--text2)">Web search via Brave — BRAVE_API_KEY required</div>
+      </div>
+      <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:border-color .2s" onclick="hubInstallTemplate('puppeteer')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:20px">&#x1F310;</span>
+          <span style="font-weight:600;font-size:13px">Puppeteer</span>
+        </div>
+        <div style="font-size:11px;color:var(--text2)">Browser automation, screenshots, web scraping</div>
+      </div>
+      <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:border-color .2s" onclick="hubInstallTemplate('memory')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:20px">&#x1F9E0;</span>
+          <span style="font-weight:600;font-size:13px">Memory</span>
+        </div>
+        <div style="font-size:11px;color:var(--text2)">Persistent knowledge graph memory for AI context</div>
+      </div>
+      <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:border-color .2s" onclick="hubInstallTemplate('custom-sse')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:20px">&#x2795;</span>
+          <span style="font-weight:600;font-size:13px">Custom SSE Server</span>
+        </div>
+        <div style="font-size:11px;color:var(--text2)">Connect any remote MCP server via SSE URL</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LLM Provider Quick Switch -->
+  <div class="card" style="margin-bottom:20px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+      <span style="font-weight:600;font-size:14px">AI Brain (LLM Provider)</span>
+      <span style="font-size:11px;color:var(--text2)">Select which LLM drives the tool orchestration</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px" id="hub-llm-cards">
+      <div class="card hub-llm-card" data-provider="azure" onclick="hubSelectLLM('azure')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s">
+        <div style="font-weight:600;font-size:13px;color:#0078d4">Azure OpenAI</div>
+        <div style="font-size:10px;color:var(--text2);margin-top:2px">GPT-4o, GPT-4 Turbo</div>
+        <div style="font-size:10px;margin-top:4px" id="hub-llm-status-azure"></div>
+      </div>
+      <div class="card hub-llm-card" data-provider="openai" onclick="hubSelectLLM('openai')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s">
+        <div style="font-weight:600;font-size:13px;color:#10a37f">OpenAI</div>
+        <div style="font-size:10px;color:var(--text2);margin-top:2px">GPT-4o, o1, o3</div>
+        <div style="font-size:10px;margin-top:4px" id="hub-llm-status-openai"></div>
+      </div>
+      <div class="card hub-llm-card" data-provider="anthropic" onclick="hubSelectLLM('anthropic')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s">
+        <div style="font-weight:600;font-size:13px;color:#d97706">Anthropic</div>
+        <div style="font-size:10px;color:var(--text2);margin-top:2px">Claude Opus, Sonnet</div>
+        <div style="font-size:10px;margin-top:4px" id="hub-llm-status-anthropic"></div>
+      </div>
+      <div class="card hub-llm-card" data-provider="ollama" onclick="hubSelectLLM('ollama')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s">
+        <div style="font-weight:600;font-size:13px;color:#888">Ollama (Local)</div>
+        <div style="font-size:10px;color:var(--text2);margin-top:2px">Llama, Mistral, CodeGemma</div>
+        <div style="font-size:10px;margin-top:4px" id="hub-llm-status-ollama"></div>
+      </div>
+      <div class="card hub-llm-card" data-provider="none" onclick="hubSelectLLM('none')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s">
+        <div style="font-weight:600;font-size:13px;color:var(--text2)">Built-in</div>
+        <div style="font-size:10px;color:var(--text2);margin-top:2px">No LLM — rule-based analysis</div>
+        <div style="font-size:10px;margin-top:4px" id="hub-llm-status-none"></div>
+      </div>
+    </div>
   </div>
 
   <!-- Connected Servers -->
@@ -2299,8 +2401,17 @@ function renderConversation() {
     } else {
       const providerTag = msg.provider && msg.provider !== 'none'
         ? '<span class="conv-provider-tag">' + esc(msg.provider) + '</span>' : '';
+      var toolsBlock = '';
+      if (msg.toolsUsed && msg.toolsUsed.length) {
+        toolsBlock = '<div style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:4px;align-items:center">' +
+          '<span style="font-size:10px;color:var(--text2);margin-right:4px">&#x1F527; Tools:</span>' +
+          msg.toolsUsed.map(function(t) {
+            return '<code style="background:#6366f11a;color:#818cf8;padding:2px 6px;border-radius:4px;font-size:10px">' + esc(t) + '</code>';
+          }).join('') + '</div>';
+      }
       html += '<div class="conv-msg ai">' +
         '<div class="conv-header"><div class="conv-avatar">TCS</div><span class="conv-name">TCS CloudNexus AI</span>' + providerTag + '</div>' +
+        toolsBlock +
         '<div class="conv-body">' + (msg.html || md(msg.text || '')) + '</div></div>';
     }
   }
@@ -2404,6 +2515,11 @@ function renderExplainability(data) {
     data.steps.forEach(function(s) { html += '<li>' + esc(typeof s === 'string' ? s : s.name || JSON.stringify(s)) + '</li>'; });
     html += '</ol>';
   }
+  if (data.toolsUsed && data.toolsUsed.length) {
+    html += '<div style="margin-top:6px"><strong>MCP Tools Used:</strong></div><div style="margin:4px 0 0 4px;display:flex;flex-wrap:wrap;gap:4px">';
+    data.toolsUsed.forEach(function(t) { html += '<code style="background:#6366f11a;color:#6366f1;padding:2px 6px;border-radius:4px;font-size:10px">' + esc(t) + '</code>'; });
+    html += '</div>';
+  }
   if (data.trace && data.trace.length) {
     html += '<div style="margin-top:6px"><strong>API Trace:</strong></div><ul style="margin:4px 0 0 16px;font-size:11px">';
     data.trace.slice(0, 10).forEach(function(t) { html += '<li>' + esc(typeof t === 'string' ? t : t.url || JSON.stringify(t)) + '</li>'; });
@@ -2482,7 +2598,7 @@ async function sendFullChat(text) {
       history = loadChatHistory();
       const activeChat = history.chats.find(c => c.id === history.activeId);
       if (activeChat) {
-        activeChat.messages.push({ role: 'ai', text: replyText, html: replyHtml, provider: data.provider || providerOpts.provider || 'none' });
+        activeChat.messages.push({ role: 'ai', text: replyText, html: replyHtml, provider: data.provider || providerOpts.provider || 'none', toolsUsed: data.toolsUsed || [] });
         activeChat.updatedAt = new Date().toISOString();
         saveChatHistory(history);
       }
@@ -4381,6 +4497,128 @@ async function runHubOrchestrator() {
     resultEl.textContent = e.message;
   }
 }
+
+// ---------------------------------------------------------------------------
+// MCP Server Marketplace Templates
+// ---------------------------------------------------------------------------
+var MCP_TEMPLATES = {
+  'github': { name: 'GitHub', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'], envHint: 'GITHUB_TOKEN' },
+  'filesystem': { name: 'Filesystem', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/data'], envHint: '' },
+  'postgres': { name: 'PostgreSQL', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-postgres'], envHint: 'POSTGRES_URL' },
+  'slack': { name: 'Slack', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-slack'], envHint: 'SLACK_BOT_TOKEN' },
+  'brave-search': { name: 'Brave Search', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-brave-search'], envHint: 'BRAVE_API_KEY' },
+  'puppeteer': { name: 'Puppeteer', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-puppeteer'], envHint: '' },
+  'memory': { name: 'Memory', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-memory'], envHint: '' },
+  'custom-sse': { name: 'Custom SSE', type: 'sse', url: '', envHint: '' },
+};
+
+function hubInstallTemplate(templateId) {
+  var tmpl = MCP_TEMPLATES[templateId];
+  if (!tmpl) return;
+
+  if (templateId === 'custom-sse') {
+    document.getElementById('hub-add-name').value = '';
+    document.getElementById('hub-add-type').value = 'sse';
+    hubTransportChanged();
+    document.getElementById('hub-add-url').focus();
+    return;
+  }
+
+  if (tmpl.envHint) {
+    var envVal = prompt('Enter ' + tmpl.envHint + ' (required for ' + tmpl.name + '):', '');
+    if (envVal === null) return;
+    if (!envVal.trim()) { alert(tmpl.envHint + ' is required'); return; }
+
+    var statusEl = document.getElementById('hub-add-status');
+    statusEl.innerHTML = '<span style="color:var(--accent)">Installing ' + tmpl.name + '...</span>';
+    var config = { name: tmpl.name, type: tmpl.type, command: tmpl.command, args: tmpl.args, env: {} };
+    config.env[tmpl.envHint] = envVal.trim();
+    fetch(MCP_API + '/hub/servers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.error) { statusEl.innerHTML = '<span style="color:#ef4444">' + esc(data.error) + '</span>'; }
+        else { statusEl.innerHTML = '<span style="color:#22c55e">' + tmpl.name + ' installed! ' + (data.server?.toolCount || 0) + ' tools</span>'; loadHubView(); }
+      })
+      .catch(function(e) { statusEl.innerHTML = '<span style="color:#ef4444">Error: ' + esc(e.message) + '</span>'; });
+  } else {
+    var statusEl = document.getElementById('hub-add-status');
+    statusEl.innerHTML = '<span style="color:var(--accent)">Installing ' + tmpl.name + '...</span>';
+    var config = { name: tmpl.name, type: tmpl.type, command: tmpl.command, args: tmpl.args };
+    fetch(MCP_API + '/hub/servers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.error) { statusEl.innerHTML = '<span style="color:#ef4444">' + esc(data.error) + '</span>'; }
+        else { statusEl.innerHTML = '<span style="color:#22c55e">' + tmpl.name + ' installed! ' + (data.server?.toolCount || 0) + ' tools</span>'; loadHubView(); }
+      })
+      .catch(function(e) { statusEl.innerHTML = '<span style="color:#ef4444">Error: ' + esc(e.message) + '</span>'; });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Hub LLM Provider Selector
+// ---------------------------------------------------------------------------
+function hubSelectLLM(provider) {
+  var sel = document.getElementById('settings-default-provider');
+  if (sel) sel.value = provider;
+  document.querySelectorAll('.hub-llm-card').forEach(function(card) {
+    var p = card.dataset.provider;
+    card.style.borderColor = (p === provider) ? 'var(--accent)' : 'var(--border)';
+    card.style.background = (p === provider) ? 'var(--accent)11' : '';
+  });
+  saveSettings();
+}
+
+function hubHighlightActiveLLM() {
+  try {
+    var settings = getProviderConfig();
+    var active = settings?.defaultProvider || 'none';
+    document.querySelectorAll('.hub-llm-card').forEach(function(card) {
+      var p = card.dataset.provider;
+      card.style.borderColor = (p === active) ? 'var(--accent)' : 'var(--border)';
+      card.style.background = (p === active) ? 'var(--accent)11' : '';
+      var statusEl = document.getElementById('hub-llm-status-' + p);
+      if (statusEl) {
+        if (p === active) statusEl.innerHTML = '<span style="color:var(--accent)">&#x2714; Active</span>';
+        else if (settings?.providers?.[p]?.apiKey) statusEl.innerHTML = '<span style="color:var(--text2)">Configured</span>';
+        else statusEl.innerHTML = '';
+      }
+    });
+  } catch(e) {}
+}
+
+var _origLoadHubView = loadHubView;
+loadHubView = async function() {
+  await _origLoadHubView();
+  hubHighlightActiveLLM();
+  updateChatHubBadge();
+};
+
+function updateChatHubBadge() {
+  var badge = document.getElementById('chat-hub-count');
+  if (!badge) return;
+  var extCount = _hubServers.filter(function(s) { return s.id !== 'builtin'; }).length;
+  badge.textContent = extCount > 0 ? extCount : '';
+  var btn = document.getElementById('chat-hub-btn');
+  if (btn) btn.style.borderColor = extCount > 0 ? 'var(--accent)' : '';
+}
+
+// Auto-refresh hub badge on chat view
+(function() {
+  var origShowView = window.showView;
+  var hubBadgeLoaded = false;
+  var patchedShowView = function(v) {
+    origShowView(v);
+    if (v === 'chat' && !hubBadgeLoaded) {
+      hubBadgeLoaded = true;
+      fetch(MCP_API + '/hub/status').then(function(r) { return r.json(); }).then(function(d) {
+        var badge = document.getElementById('chat-hub-count');
+        var ext = (d.totalServers || 1) - 1;
+        if (badge) badge.textContent = ext > 0 ? ext : '';
+      }).catch(function() {});
+    }
+  };
+  window.showView = patchedShowView;
+})();
 
 // ---------------------------------------------------------------------------
 // Keyboard shortcut for settings panel (Ctrl+,)
