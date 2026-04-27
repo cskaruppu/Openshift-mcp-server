@@ -19,8 +19,8 @@ data:
   REDIS_URL: "redis://mcp-redis.openshift-mcp.svc.cluster.local:6379"
   CHAT_CACHE_TTL: "60"
   CONTEXT_CACHE_TTL: "30"
-  # ---- HTTP Proxy (required if cluster egress goes through a proxy) ----
-  # Uncomment and set if your network team provides a proxy URL:
-  # HTTPS_PROXY: "http://proxy.caaslab.local:8080"
-  # HTTP_PROXY: "http://proxy.caaslab.local:8080"
-  # NO_PROXY: ".svc,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12"
+  # ---- HTTP Proxy (route LLM calls through a machine with stable Azure access) ----
+  # Set to your ansiblejenkins or proxy host. Pod → proxy → Azure.
+  # HTTPS_PROXY: "http://<ansiblejenkins-ip>:8888"
+  # HTTP_PROXY: "http://<ansiblejenkins-ip>:8888"
+  # NO_PROXY: ".svc,.svc.cluster.local,172.30.0.0/16,10.0.0.0/8,localhost"

@@ -38,8 +38,8 @@ const llmDispatcher = HTTPS_PROXY
       pipelining: 0,
     });
 
-const DNS_RETRY_CODES = new Set(["EAI_AGAIN", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"]);
-const MAX_RETRIES = 3;
+const DNS_RETRY_CODES = new Set(["EAI_AGAIN", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "ECONNREFUSED", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"]);
+const MAX_RETRIES = 5;
 
 async function llmFetch(url, opts) {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -48,8 +48,8 @@ async function llmFetch(url, opts) {
     } catch (err) {
       const code = err.cause?.code || err.code || "";
       if (attempt < MAX_RETRIES && DNS_RETRY_CODES.has(code)) {
-        const delay = 1000 * (attempt + 1);
-        console.error(`[llm] Network error (${code}), retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`);
+        const delay = Math.min(2000 * Math.pow(2, attempt) + Math.random() * 1000, 15000);
+        console.error(`[llm] Network error (${code}), retry ${attempt + 1}/${MAX_RETRIES} in ${Math.round(delay)}ms`);
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }
