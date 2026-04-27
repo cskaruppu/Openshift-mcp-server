@@ -1069,7 +1069,7 @@ async function handleListCommand(message, preParsed) {
 // ---------------------------------------------------------------------------
 // Gather cluster context based on user query
 // ---------------------------------------------------------------------------
-async function gatherClusterContext(userMessage) {
+async function gatherClusterContext(userMessage, nluParsed = null) {
   const lower = userMessage.toLowerCase();
   const context = {};
   const tasks = [];
@@ -1087,11 +1087,24 @@ async function gatherClusterContext(userMessage) {
   else if (lower.match(/config.?error|createcontainer/)) context.queryFilter = "CreateContainerConfigError";
   else if (lower.match(/\bnot.?ready|notready/)) context.queryFilter = "NotReady";
 
-  // Detect specific pod name (e.g., "checkout-568449499f-ktmwm")
+  // Detect specific pod name — from NLU parse (which resolves pronouns
+  // like "it", "its" from conversation memory) or regex fallback
   const podNameMatch = userMessage.match(/\b([a-z][-a-z0-9]*(?:-[a-z0-9]{4,10}){1,2})\b/i);
-  if (podNameMatch) {
+  if (nluParsed?.name && nluParsed?.resource === "pod") {
+    context.targetPodName = nluParsed.name;
+    context.intents.push("specific_pod");
+  } else if (nluParsed?.name) {
+    context.targetResourceName = nluParsed.name;
+    context.targetResourceType = nluParsed.resource;
+    if (nluParsed.resource === "deployment") context.intents.push("deployments");
+  }
+  if (!context.targetPodName && podNameMatch) {
     context.targetPodName = podNameMatch[1];
     context.intents.push("specific_pod");
+  }
+  // Use NLU-resolved namespace (which includes pronoun resolution from memory)
+  if (nluParsed?.namespace) {
+    context.targetNamespaceFromMemory = nluParsed.namespace;
   }
 
   // Detect specific namespace early — check multiple patterns
@@ -1732,11 +1745,18 @@ IMPORTANT: You are given REAL-TIME cluster data as JSON context. This is NOT hyp
 - For operator issues, check ClusterOperator status conditions
 - For upgrade issues, reference MachineConfigPool status and ClusterVersion
 
+## Conversation continuity:
+- You receive conversation history. Use it to understand follow-up questions.
+- If the user says "show its logs", "restart it", "what namespace is it in", "explain more", "fix it" — refer to the pod/deployment/resource from the previous messages.
+- When cluster data mentions a targetPod or targetPodName, that's the specific resource the user is asking about — focus your analysis there.
+- Maintain context across the conversation like a human SRE colleague would.
+
 ## Response style:
 - Be specific to THIS cluster's data — never give generic advice when you have real data
 - Start with a clear diagnosis, then provide remediation steps
 - Use markdown formatting with headers, code blocks, and tables
-- Keep responses focused and actionable`;
+- Keep responses focused and actionable
+- When the user asks a follow-up about a previously discussed resource, don't re-list all resources — focus on the specific one from context`;
 
 // ---------------------------------------------------------------------------
 // Call external LLM — thin wrapper around the centralized llm.js module
@@ -3882,7 +3902,7 @@ export async function handleChatAPI(req, res) {
       sseStart(res);
       try {
         const { result: sseTraced, trace: sseTrace } = await runWithTrace(async () => {
-          let context = await gatherClusterContext(userMessage);
+          let context = await gatherClusterContext(userMessage, parsed);
           const contextStr = JSON.stringify(context, null, 2);
           const userContent = `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;
           const priorMessages = historyToMessages(llmOpts.history);
@@ -3916,6 +3936,7 @@ export async function handleChatAPI(req, res) {
         if (conversationId) {
           histAddMessage(conversationId, { role: "assistant", content: sseTraced.fullText, provider: activeProvider }).catch(() => {});
         }
+        updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
         observeHistogram("mcp_chat_latency_seconds", { provider: activeProvider }, (Date.now() - startedAt) / 1000);
       } catch (sseErr) {
         sseSend(res, { error: sseErr.message });
@@ -3930,7 +3951,7 @@ export async function handleChatAPI(req, res) {
       const ctxKey = `ctx:${cacheKeyForChat(userMessage, "ctx")}`;
       let context = await cacheGet(ctxKey);
       if (!context) {
-        context = await gatherClusterContext(userMessage);
+        context = await gatherClusterContext(userMessage, parsed);
         cacheSet(ctxKey, context, CONTEXT_CACHE_TTL).catch(() => {});
       }
 
@@ -3994,6 +4015,7 @@ export async function handleChatAPI(req, res) {
         provider: activeProvider,
       }).catch(() => {});
     }
+    updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
 
     observeHistogram("mcp_chat_latency_seconds", { provider: activeProvider }, (Date.now() - startedAt) / 1000);
 
