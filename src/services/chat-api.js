@@ -1087,6 +1087,13 @@ async function gatherClusterContext(userMessage) {
   else if (lower.match(/config.?error|createcontainer/)) context.queryFilter = "CreateContainerConfigError";
   else if (lower.match(/\bnot.?ready|notready/)) context.queryFilter = "NotReady";
 
+  // Detect specific pod name (e.g., "checkout-568449499f-ktmwm")
+  const podNameMatch = userMessage.match(/\b([a-z][-a-z0-9]*(?:-[a-z0-9]{4,10}){1,2})\b/i);
+  if (podNameMatch) {
+    context.targetPodName = podNameMatch[1];
+    context.intents.push("specific_pod");
+  }
+
   // Detect specific namespace early — check multiple patterns
   // "in trident namespace", "under trident namespace", "namespace trident",
   // "ns trident", "trident namespace", "in trident", "under trident"
@@ -1296,6 +1303,82 @@ async function gatherClusterContext(userMessage) {
               })),
           }))
           .filter((p) => p.containers.length > 0);
+      }).catch(() => {})
+    );
+  }
+
+  // Specific pod — fetch full details, events, and metrics for a named pod
+  if (context.intents.includes("specific_pod") && context.targetPodName) {
+    const podName = context.targetPodName;
+    tasks.push(
+      ocpGet("/api/v1/pods").then((d) => {
+        const pod = (d.items || []).find((p) => p.metadata.name === podName);
+        if (pod) {
+          const ns = pod.metadata.namespace;
+          context.targetPod = {
+            name: pod.metadata.name,
+            namespace: ns,
+            phase: pod.status?.phase,
+            node: pod.spec?.nodeName,
+            ownerKind: pod.metadata?.ownerReferences?.[0]?.kind,
+            ownerName: pod.metadata?.ownerReferences?.[0]?.name,
+            startTime: pod.status?.startTime,
+            images: (pod.spec?.containers || []).map((c) => c.image),
+            resourceLimits: (pod.spec?.containers || []).map((c) => ({
+              name: c.name,
+              memRequest: c.resources?.requests?.memory,
+              memLimit: c.resources?.limits?.memory,
+              cpuRequest: c.resources?.requests?.cpu,
+              cpuLimit: c.resources?.limits?.cpu,
+            })),
+            containers: (pod.status?.containerStatuses || []).map((c) => ({
+              name: c.name,
+              ready: c.ready,
+              started: c.started,
+              restarts: c.restartCount,
+              state: c.state?.waiting?.reason || c.state?.terminated?.reason || (c.state?.running ? "Running" : "Unknown"),
+              exitCode: c.state?.terminated?.exitCode,
+              signal: c.state?.terminated?.signal,
+              lastState: c.lastState?.terminated ? {
+                reason: c.lastState.terminated.reason,
+                exitCode: c.lastState.terminated.exitCode,
+                signal: c.lastState.terminated.signal,
+                finishedAt: c.lastState.terminated.finishedAt,
+              } : null,
+            })),
+            conditions: (pod.status?.conditions || []).map((c) => ({
+              type: c.type, status: c.status, reason: c.reason, message: c.message,
+            })),
+          };
+          // Fetch events for this pod
+          return ocpGet(`/api/v1/namespaces/${ns}/events?fieldSelector=involvedObject.name=${podName}`).then((ev) => {
+            context.targetPodEvents = (ev.items || [])
+              .sort((a, b) => new Date(b.lastTimestamp || 0) - new Date(a.lastTimestamp || 0))
+              .slice(0, 20)
+              .map((e) => ({
+                type: e.type,
+                reason: e.reason,
+                message: e.message,
+                count: e.count,
+                lastSeen: e.lastTimestamp,
+              }));
+          }).catch(() => {});
+        }
+      }).catch(() => {})
+    );
+    // Also fetch metrics for this pod if available
+    tasks.push(
+      ocpGet("/apis/metrics.k8s.io/v1beta1/pods").then((d) => {
+        const m = (d.items || []).find((p) => p.metadata.name === podName);
+        if (m) {
+          context.targetPodMetrics = {
+            name: m.metadata.name,
+            namespace: m.metadata.namespace,
+            containers: (m.containers || []).map((c) => ({
+              name: c.name, cpu: c.usage?.cpu, memory: c.usage?.memory,
+            })),
+          };
+        }
       }).catch(() => {})
     );
   }
@@ -1616,23 +1699,44 @@ function renderCorrelationsMarkdown(correlations) {
 // ---------------------------------------------------------------------------
 // LLM System Prompt
 // ---------------------------------------------------------------------------
-const SYSTEM_PROMPT = `You are an OpenShift Cluster AI Assistant. You help users understand their OpenShift cluster status, diagnose issues, and recommend fixes.
+const SYSTEM_PROMPT = `You are an expert OpenShift/Kubernetes SRE AI Assistant embedded in an MCP (Model Context Protocol) server that has LIVE access to the user's cluster.
 
-You have access to live cluster data provided as JSON context. Use this data to give accurate, specific answers.
+IMPORTANT: You are given REAL-TIME cluster data as JSON context. This is NOT hypothetical — it is live data from the user's actual cluster. Always analyze this data specifically and reference actual pod names, namespaces, events, and metrics from the context.
 
-When diagnosing issues:
-- Identify the root cause from events, pod status, and container states
-- Provide specific fix commands (oc commands or YAML patches)
-- Explain the impact and risk of the fix
-- For critical issues, mention the emergency_fix MCP tool
-- For changes that need approval, mention the ServiceNow change request flow
+## Your capabilities:
+- You have read access to pods, deployments, nodes, events, routes, operators, VMs, and more
+- You can see container resource limits, restart counts, OOMKill history, and events
+- You can see node capacity, pod scheduling, and cluster version
+- The user can execute remediation via MCP tools (emergency_fix, restart_pod, scale_deployment)
 
-When listing resources:
-- Format data clearly with tables or bullet points
-- Highlight any unhealthy or unusual items
-- Include relevant details like restart counts, status, and resource usage
+## When diagnosing issues (OOMKilled, CrashLoopBackOff, etc.):
+1. **Identify the specific pod/container** from the context data — use the exact name
+2. **Analyze root cause** using events, container states, exit codes, restart counts, and resource limits
+3. **For OOMKilled**: Compare memory limits vs requests, check if limits are too low, identify the container consuming excessive memory, and suggest appropriate limits based on the workload
+4. **For CrashLoopBackOff**: Check exit codes, last terminated reason, and pod events
+5. **Provide specific oc commands** to fix the issue (e.g., \`oc set resources\`, \`oc rollout restart\`, \`oc adm top pod\`)
+6. **Include YAML patches** when config changes are needed
+7. **Assess blast radius** — will the fix affect other services?
+8. **Mention the ServiceNow change request flow** for production changes
 
-Always be concise but thorough. Use markdown formatting.`;
+## When listing resources:
+- Use markdown tables for structured data
+- Highlight unhealthy items with warning indicators
+- Include restart counts, age, resource usage, and owner references
+- Group by namespace when showing cross-namespace data
+
+## OpenShift-specific knowledge:
+- Use \`oc\` commands (not \`kubectl\`) in all examples
+- Reference OpenShift concepts: Routes, DeploymentConfigs, BuildConfigs, ImageStreams, SCCs, Projects
+- For SCC issues, suggest \`oc adm policy\` commands
+- For operator issues, check ClusterOperator status conditions
+- For upgrade issues, reference MachineConfigPool status and ClusterVersion
+
+## Response style:
+- Be specific to THIS cluster's data — never give generic advice when you have real data
+- Start with a clear diagnosis, then provide remediation steps
+- Use markdown formatting with headers, code blocks, and tables
+- Keep responses focused and actionable`;
 
 // ---------------------------------------------------------------------------
 // Call external LLM — thin wrapper around the centralized llm.js module
