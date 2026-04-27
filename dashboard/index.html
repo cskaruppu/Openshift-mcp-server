@@ -557,6 +557,7 @@ tr:hover td{background:#ffffff06}
     <button class="nav-tab" data-view="audit" onclick="showView('audit')">Audit</button>
     <button class="nav-tab" data-view="alerts-view" onclick="showView('alerts-view')">Alerts <span class="alerts-badge" id="alerts-badge">0</span></button>
     <button class="nav-tab" data-view="hub" onclick="showView('hub')">MCP Hub</button>
+    <button class="nav-tab" data-view="intelligence" onclick="showView('intelligence')">AI Intelligence <span class="alerts-badge" id="intel-badge" style="background:#6366f1">0</span></button>
   </div>
   <div class="status">
     <div class="dot" id="conn-dot"></div>
@@ -1449,6 +1450,83 @@ tr:hover td{background:#ffffff06}
   </div>
 </div>
 
+<!-- AI Intelligence View -->
+<div id="view-intelligence" class="container" style="display:none">
+  <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
+    <div>
+      <div class="section-title" style="margin:0">AI Intelligence</div>
+      <div style="font-size:12px;color:var(--text2);margin-top:4px">Proactive monitoring, predictions, knowledge base, and automation</div>
+    </div>
+    <div style="margin-left:auto;display:flex;gap:8px">
+      <div id="intel-monitor-status" style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 14px;font-size:12px"></div>
+    </div>
+  </div>
+
+  <!-- Summary Cards -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+    <div class="card" style="text-align:center;border-top:3px solid #ef4444">
+      <div style="font-size:24px;font-weight:700" id="intel-critical">0</div>
+      <div style="font-size:11px;color:var(--text2)">Critical Issues</div>
+    </div>
+    <div class="card" style="text-align:center;border-top:3px solid #f59e0b">
+      <div style="font-size:24px;font-weight:700" id="intel-warnings">0</div>
+      <div style="font-size:11px;color:var(--text2)">Warnings</div>
+    </div>
+    <div class="card" style="text-align:center;border-top:3px solid #6366f1">
+      <div style="font-size:24px;font-weight:700" id="intel-predictions">0</div>
+      <div style="font-size:11px;color:var(--text2)">Predictions</div>
+    </div>
+    <div class="card" style="text-align:center;border-top:3px solid #22c55e">
+      <div style="font-size:24px;font-weight:700" id="intel-kb-count">0</div>
+      <div style="font-size:11px;color:var(--text2)">KB Entries</div>
+    </div>
+  </div>
+
+  <!-- Proactive Insights -->
+  <div class="card" style="margin-bottom:16px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <span style="font-weight:600;font-size:14px">Proactive Insights</span>
+      <span style="font-size:11px;color:var(--text2)">AI-detected issues — no query needed</span>
+      <button onclick="loadIntelligenceView()" style="margin-left:auto;background:none;border:1px solid var(--border);border-radius:4px;padding:4px 10px;color:var(--text);cursor:pointer;font-size:11px">Refresh</button>
+    </div>
+    <div id="intel-insights-list" style="max-height:350px;overflow-y:auto"></div>
+  </div>
+
+  <!-- Predictions -->
+  <div class="card" style="margin-bottom:16px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <span style="font-weight:600;font-size:14px">Predictive Intelligence</span>
+      <span style="font-size:11px;color:var(--text2)">Forecasted issues based on trend analysis</span>
+      <button onclick="runPredictions()" style="margin-left:auto;background:none;border:1px solid var(--border);border-radius:4px;padding:4px 10px;color:var(--text);cursor:pointer;font-size:11px">Analyze Now</button>
+    </div>
+    <div id="intel-predictions-list"></div>
+  </div>
+
+  <!-- Automation Rules -->
+  <div class="card" style="margin-bottom:16px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <span style="font-weight:600;font-size:14px">Automation Rules</span>
+      <span style="font-size:11px;color:var(--text2)">Natural language triggers — "When X happens, do Y"</span>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <input type="text" id="intel-rule-input" placeholder='e.g. "When a pod OOMKills in production, create ServiceNow incident and notify Slack"' style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:12px;outline:none" onkeydown="if(event.key==='Enter')createAutomationRule()">
+      <button onclick="createAutomationRule()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 16px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap">Create Rule</button>
+    </div>
+    <div id="intel-rule-status" style="font-size:12px;margin-bottom:8px"></div>
+    <div id="intel-rules-list"></div>
+  </div>
+
+  <!-- Knowledge Base -->
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <span style="font-weight:600;font-size:14px">Knowledge Base</span>
+      <span style="font-size:11px;color:var(--text2)">Learned resolutions from past incidents</span>
+      <span style="margin-left:auto;font-size:11px;color:var(--text2)" id="intel-kb-stats"></span>
+    </div>
+    <div id="intel-kb-list" style="max-height:300px;overflow-y:auto"></div>
+  </div>
+</div>
+
 <!-- Cost Advisor View -->
 <div id="view-advisor-view" class="container" style="display:none">
   <div class="section-title">Cost / Efficiency Advisor</div>
@@ -2187,7 +2265,7 @@ loadLLMConfig();
 // View switching — Dashboard vs AI Chat
 // ---------------------------------------------------------------------------
 function showView(view) {
-  const views = ['dashboard', 'chat', 'audit', 'alerts-view', 'settings', 'hub'];
+  const views = ['dashboard', 'chat', 'audit', 'alerts-view', 'settings', 'hub', 'intelligence'];
   const tabs = document.querySelectorAll('.nav-tab');
   tabs.forEach(t => t.classList.toggle('active', t.dataset.view === view));
 
@@ -2216,6 +2294,8 @@ function showView(view) {
     loadSettings();
   } else if (view === 'hub') {
     loadHubView();
+  } else if (view === 'intelligence') {
+    loadIntelligenceView();
   }
 }
 
@@ -4497,6 +4577,205 @@ async function runHubOrchestrator() {
     resultEl.textContent = e.message;
   }
 }
+
+// ---------------------------------------------------------------------------
+// AI Intelligence View
+// ---------------------------------------------------------------------------
+async function loadIntelligenceView() {
+  try {
+    var resp = await fetch(MCP_API + '/intelligence/dashboard');
+    var data = await resp.json();
+
+    document.getElementById('intel-critical').textContent = data.proactive?.critical || 0;
+    document.getElementById('intel-warnings').textContent = data.proactive?.warning || 0;
+    document.getElementById('intel-predictions').textContent = (data.predictions || []).length;
+    document.getElementById('intel-kb-count').textContent = data.knowledgeBase?.totalEntries || 0;
+
+    var badge = document.getElementById('intel-badge');
+    var total = (data.proactive?.critical || 0) + (data.predictions || []).length;
+    if (badge) badge.textContent = total;
+
+    var monEl = document.getElementById('intel-monitor-status');
+    monEl.innerHTML = data.monitoring
+      ? '<span style="color:#22c55e">&#x2714; Monitor Active</span> &bull; ' + (data.proactive?.total || 0) + ' insights'
+      : '<span style="color:var(--text2)">Monitor Inactive</span>';
+
+    renderIntelInsights(data.insights || []);
+    renderIntelPredictions(data.predictions || []);
+    renderIntelKBStats(data.knowledgeBase || {});
+    loadAutomationRules();
+    loadKBEntries();
+  } catch (e) {
+    console.error('Intelligence load error:', e);
+  }
+}
+
+function renderIntelInsights(insights) {
+  var el = document.getElementById('intel-insights-list');
+  if (!insights.length) { el.innerHTML = '<div style="text-align:center;color:var(--text2);padding:20px;font-size:12px">No active issues detected. The AI is watching your cluster.</div>'; return; }
+  el.innerHTML = insights.map(function(i) {
+    var sevColor = i.severity >= 80 ? '#ef4444' : i.severity >= 50 ? '#f59e0b' : '#6366f1';
+    var sevLabel = i.severity >= 80 ? 'CRITICAL' : i.severity >= 50 ? 'WARNING' : 'INFO';
+    return '<div style="display:flex;gap:10px;padding:10px;border-bottom:1px solid var(--border);align-items:flex-start">' +
+      '<span style="background:' + sevColor + '22;color:' + sevColor + ';font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;white-space:nowrap">' + sevLabel + '</span>' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-weight:600;font-size:12px">' + esc(i.title) + '</div>' +
+        '<div style="font-size:11px;color:var(--text2);margin-top:2px">' + esc(i.detail || '') + '</div>' +
+        '<div style="font-size:11px;color:var(--accent);margin-top:4px">' + esc(i.recommendation || '') + '</div>' +
+        (i.aiAnalysis ? '<div style="font-size:11px;background:var(--bg);padding:6px;border-radius:4px;margin-top:4px">' + md(i.aiAnalysis) + '</div>' : '') +
+      '</div>' +
+      '<div style="display:flex;gap:4px;flex-shrink:0">' +
+        '<button onclick="analyzeInsightAI(\'' + esc(i.id) + '\')" style="background:none;border:1px solid var(--border);border-radius:4px;padding:2px 8px;color:var(--accent);cursor:pointer;font-size:10px" title="Get AI analysis">AI</button>' +
+        '<button onclick="dismissInsightUI(\'' + esc(i.id) + '\')" style="background:none;border:1px solid var(--border);border-radius:4px;padding:2px 8px;color:var(--text2);cursor:pointer;font-size:10px">&times;</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function renderIntelPredictions(predictions) {
+  var el = document.getElementById('intel-predictions-list');
+  if (!predictions.length) { el.innerHTML = '<div style="text-align:center;color:var(--text2);padding:20px;font-size:12px">No predictions yet. Trends are being collected.</div>'; return; }
+  el.innerHTML = predictions.map(function(p) {
+    var sevColor = p.severity === 'critical' ? '#ef4444' : '#f59e0b';
+    var conf = Math.round((p.confidence || 0) * 100);
+    return '<div style="display:flex;gap:10px;padding:10px;border-bottom:1px solid var(--border)">' +
+      '<span style="color:' + sevColor + ';font-size:16px">&#x1F52E;</span>' +
+      '<div style="flex:1">' +
+        '<div style="font-weight:600;font-size:12px">' + esc(p.title) + '</div>' +
+        '<div style="font-size:11px;color:var(--text2);margin-top:2px">' + esc(p.prediction || p.detail) + '</div>' +
+        '<div style="font-size:10px;color:var(--text2);margin-top:4px">Confidence: <span style="color:' + (conf > 70 ? '#ef4444' : '#f59e0b') + '">' + conf + '%</span></div>' +
+      '</div></div>';
+  }).join('');
+}
+
+function renderIntelKBStats(stats) {
+  var el = document.getElementById('intel-kb-stats');
+  if (el) el.textContent = (stats.totalEntries || 0) + ' entries, avg effectiveness: ' + (stats.avgEffectiveness || 0);
+}
+
+async function loadAutomationRules() {
+  try {
+    var resp = await fetch(MCP_API + '/intelligence/rules');
+    var data = await resp.json();
+    var el = document.getElementById('intel-rules-list');
+    var rules = data.rules || [];
+    if (!rules.length) { el.innerHTML = '<div style="text-align:center;color:var(--text2);padding:12px;font-size:12px">No automation rules configured yet.</div>'; return; }
+    el.innerHTML = rules.map(function(r) {
+      return '<div style="display:flex;gap:10px;padding:8px;border-bottom:1px solid var(--border);align-items:center">' +
+        '<label style="cursor:pointer"><input type="checkbox" ' + (r.enabled ? 'checked' : '') + ' onchange="toggleAutomationRule(' + r.id + ', this.checked)"></label>' +
+        '<div style="flex:1">' +
+          '<div style="font-size:12px;font-weight:500;' + (r.enabled ? '' : 'opacity:.5') + '">' + esc(r.name) + '</div>' +
+          '<div style="font-size:10px;color:var(--text2)">' +
+            'Triggers: ' + (r.conditionTypes || []).join(', ') +
+            (r.namespaceFilter ? ' | NS: ' + r.namespaceFilter : '') +
+            ' | Actions: ' + (r.actions || []).map(function(a) { return a.type; }).join(', ') +
+            ' | Runs: ' + (r.executions || 0) +
+          '</div>' +
+        '</div>' +
+        '<button onclick="deleteAutomationRule(' + r.id + ')" style="background:none;border:1px solid #ef444433;border-radius:4px;padding:2px 8px;color:#ef4444;cursor:pointer;font-size:10px">&times;</button>' +
+      '</div>';
+    }).join('');
+  } catch(e) { console.error('Rules load error:', e); }
+}
+
+async function loadKBEntries() {
+  try {
+    var resp = await fetch(MCP_API + '/intelligence/kb');
+    var data = await resp.json();
+    var el = document.getElementById('intel-kb-list');
+    var entries = data.entries || [];
+    if (!entries.length) { el.innerHTML = '<div style="text-align:center;color:var(--text2);padding:12px;font-size:12px">Knowledge base is empty. Resolutions will be recorded as the AI solves issues.</div>'; return; }
+    el.innerHTML = entries.slice(0, 20).map(function(e) {
+      return '<div style="padding:8px;border-bottom:1px solid var(--border)">' +
+        '<div style="display:flex;gap:6px;align-items:center">' +
+          '<code style="background:#6366f11a;color:#6366f1;padding:1px 6px;border-radius:4px;font-size:10px">' + esc(e.type || 'unknown') + '</code>' +
+          '<span style="font-size:12px;font-weight:500">' + esc((e.symptoms || '').substring(0, 80)) + '</span>' +
+          '<span style="margin-left:auto;font-size:10px;color:var(--text2)">eff: ' + (e.effectiveness || 0) + '</span>' +
+        '</div>' +
+        '<div style="font-size:11px;color:var(--accent);margin-top:4px">' + esc((e.resolution || '').substring(0, 150)) + '</div>' +
+      '</div>';
+    }).join('');
+  } catch(e) { console.error('KB load error:', e); }
+}
+
+async function analyzeInsightAI(id) {
+  var opts = getActiveProviderOpts();
+  try {
+    var resp = await fetch(MCP_API + '/intelligence/insights/analyze', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id, llmOpts: opts }),
+    });
+    var data = await resp.json();
+    if (data.analysis) alert('AI Analysis:\n\n' + data.analysis);
+    else alert('Could not analyze: ' + (data.error || 'unknown'));
+    loadIntelligenceView();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function dismissInsightUI(id) {
+  await fetch(MCP_API + '/intelligence/insights/dismiss', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id }),
+  });
+  loadIntelligenceView();
+}
+
+async function createAutomationRule() {
+  var input = document.getElementById('intel-rule-input');
+  var desc = input.value.trim();
+  if (!desc) return;
+
+  var statusEl = document.getElementById('intel-rule-status');
+  statusEl.innerHTML = '<span style="color:var(--accent)">Creating rule...</span>';
+
+  try {
+    var resp = await fetch(MCP_API + '/intelligence/rules', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description: desc }),
+    });
+    var data = await resp.json();
+    if (data.error) { statusEl.innerHTML = '<span style="color:#ef4444">' + esc(data.error) + '</span>'; return; }
+    var parsed = data.parsed || {};
+    statusEl.innerHTML = '<span style="color:#22c55e">Rule created! Triggers: ' + (parsed.conditions || []).join(', ') + ' | Actions: ' + (parsed.actions || []).map(function(a) { return a.type; }).join(', ') + '</span>';
+    input.value = '';
+    loadAutomationRules();
+  } catch(e) { statusEl.innerHTML = '<span style="color:#ef4444">Error: ' + esc(e.message) + '</span>'; }
+}
+
+async function toggleAutomationRule(id, enabled) {
+  await fetch(MCP_API + '/intelligence/rules/' + id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: enabled }),
+  });
+}
+
+async function deleteAutomationRule(id) {
+  if (!confirm('Delete this automation rule?')) return;
+  await fetch(MCP_API + '/intelligence/rules/' + id, { method: 'DELETE' });
+  loadAutomationRules();
+}
+
+async function runPredictions() {
+  try {
+    var resp = await fetch(MCP_API + '/intelligence/predictions/run', { method: 'POST' });
+    var data = await resp.json();
+    renderIntelPredictions(data.predictions || []);
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// Auto-refresh intelligence badge
+(function() {
+  setInterval(function() {
+    fetch(MCP_API + '/intelligence/insights').then(function(r) { return r.json(); }).then(function(d) {
+      var badge = document.getElementById('intel-badge');
+      var critical = (d.summary?.critical || 0);
+      if (badge) {
+        badge.textContent = critical + (d.summary?.warning || 0);
+        badge.style.background = critical > 0 ? '#ef4444' : '#6366f1';
+      }
+    }).catch(function() {});
+  }, 60000);
+})();
 
 // ---------------------------------------------------------------------------
 // MCP Server Marketplace Templates

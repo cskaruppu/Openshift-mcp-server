@@ -49,6 +49,7 @@ import { callLLM, callLLMStream, llmEnabled } from "./llm.js";
 import { runAgent } from "./agent-loop.js";
 import { runOrchestrator } from "./mcp-orchestrator.js";
 import { getConnectionCount } from "./mcp-hub.js";
+import { findSimilar as kbFindSimilar, buildKBContext, recordResolution } from "./knowledge-base.js";
 import { maybeEnhance as nluEnhanceWithLLM } from "./nlu-llm.js";
 import { summarizeIfNeeded } from "./summarizer.js";
 import { suggestPlaybook, renderPlaybookMarkdown } from "./playbooks.js";
@@ -3968,8 +3969,20 @@ export async function handleChatAPI(req, res) {
 
       if (hubActive && llmEnabled(llmOpts)) {
         try {
+          // Enrich with knowledge base matches
+          let kbContext = "";
+          try {
+            const kbMatches = kbFindSimilar({
+              type: parsed?.resource || "",
+              symptoms: userMessage,
+              namespace: parsed?.namespace || "",
+              limit: 3,
+            });
+            kbContext = buildKBContext(kbMatches);
+          } catch { /* KB optional */ }
+
           const orchRes = await runOrchestrator({
-            userMessage,
+            userMessage: userMessage + kbContext,
             contextHint: {
               problemPods: (context.problemPods || []).slice(0, 5),
               correlations: context.correlations || [],

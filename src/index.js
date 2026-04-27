@@ -89,6 +89,37 @@ import {
   callTool as hubCallTool,
 } from "./services/mcp-hub.js";
 import { runOrchestrator } from "./services/mcp-orchestrator.js";
+import {
+  startProactiveMonitor,
+  getInsights,
+  getInsightsSummary,
+  dismissInsight,
+  analyzeInsight,
+  isMonitorRunning,
+} from "./services/proactive-agent.js";
+import {
+  initKnowledgeBase,
+  recordResolution,
+  findSimilar as kbFindSimilar,
+  rateResolution,
+  getStats as kbGetStats,
+  getAllEntries as kbGetAll,
+  buildKBContext,
+} from "./services/knowledge-base.js";
+import {
+  initAutomationRules,
+  createRule,
+  listRules,
+  toggleRule,
+  deleteRule,
+  evaluateRules,
+  executeRuleActions,
+} from "./services/automation-rules.js";
+import {
+  runPredictiveAnalysis,
+  getPredictions,
+  getTrends,
+} from "./services/predictive-intel.js";
 
 const silencedAlerts = new Map();
 
@@ -327,6 +358,16 @@ async function startSSE() {
     console.log(`[startup] MCP Hub initialized — ${hubGetToolCount()} tools available`);
   } catch (err) {
     console.warn("[startup] MCP Hub init:", err.message);
+  }
+
+  // Initialize AI Intelligence features
+  try {
+    await initKnowledgeBase();
+    await initAutomationRules();
+    startProactiveMonitor();
+    console.log("[startup] AI Intelligence: proactive monitor, knowledge base, automation rules — active");
+  } catch (err) {
+    console.warn("[startup] AI Intelligence init:", err.message);
   }
 
   // Restore silenced alerts from DB
@@ -578,6 +619,97 @@ async function startSSE() {
         totalServers: servers.length,
         totalTools: hubGetToolCount(),
         servers: servers.map((s) => ({ id: s.id, name: s.name, status: s.status, toolCount: s.toolCount })),
+      });
+    }
+
+    // -----------------------------------------------------------------------
+    // AI Intelligence APIs — Proactive Monitor, Knowledge Base, Automation, Predictions
+    // -----------------------------------------------------------------------
+
+    // Proactive AI insights
+    if (url.pathname === "/api/intelligence/insights" && req.method === "GET") {
+      return sendJson(res, 200, { insights: getInsights(), summary: getInsightsSummary(), monitoring: isMonitorRunning() });
+    }
+    if (url.pathname === "/api/intelligence/insights/dismiss" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      dismissInsight(body.id);
+      return sendJson(res, 200, { ok: true });
+    }
+    if (url.pathname === "/api/intelligence/insights/analyze" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const result = await analyzeInsight(body.id, body.llmOpts || {});
+      return sendJson(res, 200, result || { error: "Not found" });
+    }
+
+    // Knowledge Base
+    if (url.pathname === "/api/intelligence/kb" && req.method === "GET") {
+      return sendJson(res, 200, { entries: kbGetAll(50), stats: kbGetStats() });
+    }
+    if (url.pathname === "/api/intelligence/kb/search" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const matches = kbFindSimilar(body);
+      return sendJson(res, 200, { matches, context: buildKBContext(matches) });
+    }
+    if (url.pathname === "/api/intelligence/kb/record" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const entry = await recordResolution(body);
+      return sendJson(res, 201, { entry });
+    }
+    if (url.pathname === "/api/intelligence/kb/rate" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      await rateResolution(body.id, body.delta || 1);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // Automation Rules
+    if (url.pathname === "/api/intelligence/rules" && req.method === "GET") {
+      return sendJson(res, 200, { rules: listRules() });
+    }
+    if (url.pathname === "/api/intelligence/rules" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      if (!body.description) return sendJson(res, 400, { error: "Missing rule description" });
+      const result = await createRule(body.description, body.name);
+      if (result.error) return sendJson(res, 400, result);
+      return sendJson(res, 201, result);
+    }
+    {
+      const ruleM = url.pathname.match(/^\/api\/intelligence\/rules\/(\d+)$/);
+      if (ruleM && req.method === "DELETE") {
+        await deleteRule(parseInt(ruleM[1]));
+        return sendJson(res, 200, { ok: true });
+      }
+      if (ruleM && req.method === "PATCH") {
+        const body = await readJsonBody(req);
+        if (body.enabled !== undefined) await toggleRule(parseInt(ruleM[1]), body.enabled);
+        return sendJson(res, 200, { ok: true });
+      }
+    }
+    if (url.pathname === "/api/intelligence/rules/evaluate" && req.method === "POST") {
+      const insights = getInsights();
+      const triggered = evaluateRules(insights);
+      const results = await executeRuleActions(triggered);
+      return sendJson(res, 200, { triggered: triggered.length, results });
+    }
+
+    // Predictive Intelligence
+    if (url.pathname === "/api/intelligence/predictions" && req.method === "GET") {
+      return sendJson(res, 200, { predictions: getPredictions(), trends: getTrends() });
+    }
+    if (url.pathname === "/api/intelligence/predictions/run" && req.method === "POST") {
+      const predictions = await runPredictiveAnalysis();
+      return sendJson(res, 200, { predictions, trends: getTrends() });
+    }
+
+    // Combined intelligence dashboard
+    if (url.pathname === "/api/intelligence/dashboard" && req.method === "GET") {
+      const [predictions] = await Promise.allSettled([runPredictiveAnalysis()]);
+      return sendJson(res, 200, {
+        proactive: getInsightsSummary(),
+        insights: getInsights().slice(0, 10),
+        predictions: predictions.status === "fulfilled" ? predictions.value : [],
+        knowledgeBase: kbGetStats(),
+        automationRules: listRules().length,
+        monitoring: isMonitorRunning(),
       });
     }
 
