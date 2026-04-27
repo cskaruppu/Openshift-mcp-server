@@ -377,6 +377,41 @@ async function startSSE() {
       return;
     }
 
+    // Diagnostic endpoint — checks K8s API connectivity, token, auth mode
+    if (req.method === "GET" && url.pathname === "/api/diag") {
+      const diag = {
+        authMode: getAuthMode(),
+        k8sHost: process.env.KUBERNETES_SERVICE_HOST || "(not set)",
+        k8sPort: process.env.KUBERNETES_SERVICE_PORT || "(not set)",
+        openshiftApiUrl: process.env.OPENSHIFT_API_URL || `https://${process.env.KUBERNETES_SERVICE_HOST || "?"}:${process.env.KUBERNETES_SERVICE_PORT || "?"}`,
+        tokenAvailable: false,
+        k8sApiReachable: false,
+        k8sApiError: null,
+        k8sApiLatencyMs: null,
+        nodeCount: null,
+        db: await isHistoryEnabled(),
+        cache: await cacheReady(),
+      };
+      try {
+        const { readFile: rf } = await import("node:fs/promises");
+        const tk = await rf("/var/run/secrets/kubernetes.io/serviceaccount/token", "utf8").catch(() => null);
+        diag.tokenAvailable = !!tk;
+        if (!tk && process.env.OPENSHIFT_TOKEN) diag.tokenAvailable = true;
+      } catch { diag.tokenAvailable = false; }
+      try {
+        const start = Date.now();
+        const resp = await ocpGet("/api/v1/nodes");
+        diag.k8sApiLatencyMs = Date.now() - start;
+        diag.k8sApiReachable = true;
+        diag.nodeCount = (resp.items || []).length;
+      } catch (e) {
+        diag.k8sApiReachable = false;
+        diag.k8sApiError = e.message;
+      }
+      sendJson(res, 200, diag);
+      return;
+    }
+
     // LLM Settings API
     if (url.pathname === "/api/settings/llm" && req.method === "GET") {
       await handleLLMSettingsGet(req, res);

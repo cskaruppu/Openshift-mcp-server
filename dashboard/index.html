@@ -1282,10 +1282,22 @@ function formatMem(memStr) {
   return memStr;
 }
 
-async function apiFetch(path) {
-  const res = await fetch(MCP_API.replace(/\/api$/, '') + path);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.json();
+async function apiFetch(path, timeoutMs) {
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), timeoutMs || 12000);
+  try {
+    const res = await fetch(MCP_API.replace(/\/api$/, '') + path, { signal: controller.signal });
+    clearTimeout(tid);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`${res.status} ${res.statusText}${body ? ': ' + body.substring(0, 200) : ''}`);
+    }
+    return res.json();
+  } catch (e) {
+    clearTimeout(tid);
+    if (e.name === 'AbortError') throw new Error('Request timed out — K8s API may be unreachable from the server pod');
+    throw e;
+  }
 }
 
 function setConnected(ok, label) {
@@ -1293,6 +1305,38 @@ function setConnected(ok, label) {
   const lbl = document.getElementById('conn-label');
   dot.className = ok ? 'dot' : 'dot err';
   lbl.textContent = label || (ok ? 'MCP Server Connected' : 'Connection Error');
+  // Show diagnostic banner on error
+  let banner = document.getElementById('diag-banner');
+  if (!ok && !banner) {
+    banner = document.createElement('div');
+    banner.id = 'diag-banner';
+    banner.style.cssText = 'background:#2a1010;border:1px solid var(--crit);border-radius:8px;padding:12px 16px;margin:12px auto;max-width:1440px;font-size:13px;color:#fca5a5;display:flex;align-items:center;gap:12px';
+    banner.innerHTML = '<span style="font-size:18px;flex-shrink:0">&#x26A0;</span>' +
+      '<div><strong style="color:var(--crit)">Dashboard cannot connect to MCP Server API</strong>' +
+      '<div style="margin-top:4px;color:var(--text2)">Error: ' + esc(label || 'Unknown') + '</div>' +
+      '<div style="margin-top:6px"><button onclick="runDiagnostics()" style="background:var(--accent2);color:#fff;border:none;border-radius:6px;padding:4px 14px;cursor:pointer;font-size:12px">Run Diagnostics</button>' +
+      ' <span id="diag-result" style="font-size:11px;color:var(--text2);margin-left:8px"></span></div></div>' +
+      '<button onclick="this.parentElement.remove()" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:18px;margin-left:auto">&times;</button>';
+    const container = document.querySelector('.container');
+    if (container) container.insertBefore(banner, container.firstChild);
+  } else if (ok && banner) {
+    banner.remove();
+  }
+}
+
+async function runDiagnostics() {
+  const el = document.getElementById('diag-result');
+  if (el) el.textContent = 'Running diagnostics...';
+  try {
+    const d = await apiFetch('/api/diag', 8000);
+    let msg = 'Auth: ' + d.authMode + ' | Token: ' + (d.tokenAvailable ? 'yes' : 'NO') +
+      ' | K8s API: ' + (d.k8sApiReachable ? 'reachable (' + d.k8sApiLatencyMs + 'ms, ' + d.nodeCount + ' nodes)' : 'UNREACHABLE — ' + (d.k8sApiError || 'unknown')) +
+      ' | Host: ' + d.k8sHost + ':' + d.k8sPort;
+    if (el) { el.textContent = msg; el.style.color = d.k8sApiReachable ? 'var(--ok)' : 'var(--crit)'; }
+    if (d.k8sApiReachable) { setConnected(true); refreshAll(); }
+  } catch (e) {
+    if (el) { el.textContent = 'Diag failed: ' + e.message + ' — check pod logs with: oc logs deployment/mcp-server -n openshift-mcp'; el.style.color = 'var(--crit)'; }
+  }
 }
 
 // ---------------------------------------------------------------------------

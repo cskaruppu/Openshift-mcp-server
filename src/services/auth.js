@@ -25,6 +25,7 @@ const sessions = new Map();
 const PUBLIC_PATHS = new Set([
   "/healthz", "/readyz", "/metrics", "/sse", "/message",
   "/api/auth/login", "/api/auth/callback", "/api/auth/status",
+  "/api/diag",
 ]);
 
 function isPublicPath(pathname) {
