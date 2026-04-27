@@ -2931,14 +2931,16 @@ renderConversation = function() {
     } else {
       const providerTag = msg.provider && msg.provider !== 'none'
         ? '<span class="conv-provider-tag">' + esc(msg.provider) + '</span>' : '';
+      const confidenceTag = getConfidenceHTML(msg.text || '');
       const upClass = msg.feedback === 1 ? ' voted' : '';
       const downClass = msg.feedback === -1 ? ' voted' : '';
       html += '<div class="conv-msg ai">' +
-        '<div class="conv-header"><div class="conv-avatar">MCP</div><span class="conv-name">MCP AI Assistant</span>' + providerTag + '</div>' +
+        '<div class="conv-header"><div class="conv-avatar">MCP</div><span class="conv-name">MCP AI Assistant</span>' + providerTag + confidenceTag + '</div>' +
         '<div class="conv-body">' + (msg.html || md(msg.text || '')) + '</div>' +
         '<div class="conv-feedback">' +
           '<button class="' + upClass + '" onclick="sendFeedback(' + idx + ',1)" title="Helpful">&#x1F44D;</button>' +
           '<button class="' + downClass + '" onclick="sendFeedback(' + idx + ',-1)" title="Not helpful">&#x1F44E;</button>' +
+          '<button class="pin-btn" onclick="pinFinding(getActiveChat().messages[' + idx + '].text.substring(0,300));this.innerHTML=\'&#x2705;\';setTimeout(()=>this.innerHTML=\'&#x1F4CC;\',1500)" title="Pin this finding">&#x1F4CC;</button>' +
         '</div>' +
       '</div>';
     }
@@ -4014,39 +4016,7 @@ function getConfidenceHTML(text) {
     '<span class="cm-bar"><span class="cm-fill"></span></span></span>';
 }
 
-// ---------------------------------------------------------------------------
-// Patch renderConversation to add pin buttons and confidence meter
-// ---------------------------------------------------------------------------
-const _origRenderConversation = typeof renderConversation === 'function' ? renderConversation : null;
-
-if (_origRenderConversation) {
-  const _patchedRender = function() {
-    _origRenderConversation();
-    // Add pin buttons and confidence meters to AI messages
-    setTimeout(function() {
-      document.querySelectorAll('.conv-msg.ai').forEach(function(msg) {
-        if (msg.querySelector('.pin-btn')) return;
-        const header = msg.querySelector('.conv-header');
-        if (!header) return;
-        const body = msg.querySelector('.conv-body');
-        const text = body?.textContent || '';
-        // Add confidence meter
-        const provTag = header.querySelector('.conv-provider-tag');
-        if (provTag && !header.querySelector('.confidence-meter')) {
-          provTag.insertAdjacentHTML('afterend', getConfidenceHTML(text));
-        }
-        // Add pin button
-        const pinBtn = document.createElement('button');
-        pinBtn.className = 'pin-btn';
-        pinBtn.innerHTML = '&#x1F4CC;';
-        pinBtn.title = 'Pin this finding';
-        pinBtn.onclick = function() { pinFinding(text.substring(0, 300)); pinBtn.innerHTML = '&#x2705;'; setTimeout(function() { pinBtn.innerHTML = '&#x1F4CC;'; }, 1500); };
-        header.appendChild(pinBtn);
-      });
-    }, 100);
-  };
-  renderConversation = _patchedRender;
-}
+// Pin buttons and confidence meter are integrated into renderConversation above
 
 // ---------------------------------------------------------------------------
 // Keyboard shortcut for settings panel (Ctrl+,)
