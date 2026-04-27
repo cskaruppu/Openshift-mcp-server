@@ -12,7 +12,7 @@
  * dashboard's provider dropdown still works.
  */
 
-import { ProxyAgent, fetch as undiciFetch } from "undici";
+import { Agent, ProxyAgent, fetch as undiciFetch } from "undici";
 
 const DEFAULT_PROVIDER = process.env.LLM_PROVIDER || "none";
 const DEFAULT_API_URL = process.env.LLM_API_URL || "http://localhost:11434";
@@ -28,22 +28,28 @@ if (HTTPS_PROXY) {
   console.error(`[llm] Using proxy for external LLM calls: ${HTTPS_PROXY}`);
 }
 
-const DNS_RETRY_CODES = new Set(["EAI_AGAIN", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND"]);
+const llmDispatcher = HTTPS_PROXY
+  ? new ProxyAgent({ uri: HTTPS_PROXY, requestTls: { rejectUnauthorized: false } })
+  : new Agent({
+      connect: { rejectUnauthorized: false, timeout: 30_000 },
+      bodyTimeout: 60_000,
+      headersTimeout: 30_000,
+      keepAliveTimeout: 10_000,
+      pipelining: 0,
+    });
+
+const DNS_RETRY_CODES = new Set(["EAI_AGAIN", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"]);
 const MAX_RETRIES = 3;
 
 async function llmFetch(url, opts) {
-  const doFetch = HTTPS_PROXY
-    ? () => undiciFetch(url, { ...opts, dispatcher: new ProxyAgent(HTTPS_PROXY) })
-    : () => fetch(url, opts);
-
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      return await doFetch();
+      return await undiciFetch(url, { ...opts, dispatcher: llmDispatcher });
     } catch (err) {
       const code = err.cause?.code || err.code || "";
       if (attempt < MAX_RETRIES && DNS_RETRY_CODES.has(code)) {
         const delay = 1000 * (attempt + 1);
-        console.error(`[llm] DNS/network error (${code}), retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`);
+        console.error(`[llm] Network error (${code}), retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`);
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }

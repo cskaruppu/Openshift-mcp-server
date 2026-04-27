@@ -431,18 +431,37 @@ async function startSSE() {
       const testHost = url.searchParams.get("dnsTest") || "documentquery.openai.azure.com";
       try {
         const { connect } = await import("node:tls");
-        await new Promise((resolve, reject) => {
+        await new Promise((resolve) => {
           const start = Date.now();
+          let connected = false;
           const sock = connect(443, testHost, { servername: testHost, rejectUnauthorized: false, timeout: 8000 }, () => {
+            connected = true;
             diag.externalHttps = { tested: true, connected: true, latencyMs: Date.now() - start, host: testHost, tlsVersion: sock.getProtocol?.() || "unknown" };
             sock.end();
             resolve();
           });
-          sock.on("error", (e) => { diag.externalHttps = { tested: true, connected: false, host: testHost, error: e.code || e.message }; resolve(); });
-          sock.on("timeout", () => { diag.externalHttps = { tested: true, connected: false, host: testHost, error: "TIMEOUT (8s)" }; sock.destroy(); resolve(); });
+          sock.on("error", (e) => { if (!connected) { diag.externalHttps = { tested: true, connected: false, host: testHost, error: e.code || e.message }; resolve(); } });
+          sock.on("timeout", () => { if (!connected) { diag.externalHttps = { tested: true, connected: false, host: testHost, error: "TIMEOUT (8s)" }; sock.destroy(); resolve(); } });
         });
       } catch (tlsErr) {
         diag.externalHttps = { tested: true, connected: false, host: testHost, error: tlsErr.code || tlsErr.message };
+      }
+      // Actual HTTP request test
+      diag.externalHttp = { tested: false };
+      try {
+        const https = await import("node:https");
+        const httpResult = await new Promise((resolve) => {
+          const start = Date.now();
+          const req = https.get(`https://${testHost}/`, { rejectUnauthorized: false, timeout: 10000 }, (res) => {
+            resolve({ tested: true, connected: true, statusCode: res.statusCode, latencyMs: Date.now() - start, host: testHost });
+            res.resume();
+          });
+          req.on("error", (e) => resolve({ tested: true, connected: false, host: testHost, error: e.code || e.message }));
+          req.on("timeout", () => { req.destroy(); resolve({ tested: true, connected: false, host: testHost, error: "TIMEOUT (10s)" }); });
+        });
+        diag.externalHttp = httpResult;
+      } catch (httpErr) {
+        diag.externalHttp = { tested: true, connected: false, host: testHost, error: httpErr.code || httpErr.message };
       }
       diag.nodeTlsRejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED || "(not set)";
       sendJson(res, 200, diag);
