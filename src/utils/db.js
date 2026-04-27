@@ -161,6 +161,12 @@ CREATE TABLE IF NOT EXISTS silenced_alerts (
 );
 CREATE INDEX IF NOT EXISTS idx_silenced_alerts_lookup ON silenced_alerts (name, namespace);
 CREATE INDEX IF NOT EXISTS idx_silenced_alerts_expiry ON silenced_alerts (expires_at);
+
+CREATE TABLE IF NOT EXISTS kv_store (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 `;
 
 async function ensureSchema() {

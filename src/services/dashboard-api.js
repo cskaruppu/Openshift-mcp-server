@@ -6,14 +6,16 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { ocpGet } from "../utils/openshift-client.js";
 import { callLLM } from "./llm.js";
+import { query as dbQuery, isEnabled as dbEnabled } from "../utils/db.js";
 
 const LLM_SETTINGS_PATH = process.env.LLM_SETTINGS_PATH || "/data/mcp-llm-settings.json";
+const SETTINGS_DB_KEY = "llm_settings";
 
 const DEFAULT_LLM_SETTINGS = {
   providers: {
     openai: { apiKey: "", apiUrl: "https://api.openai.com", model: "gpt-4", enabled: false },
     anthropic: { apiKey: "", apiUrl: "https://api.anthropic.com", model: "claude-sonnet-4-20250514", enabled: false },
-    azure: { apiKey: "", apiUrl: "", model: "gpt-4", deployment: "", apiVersion: "2024-08-01-preview", enabled: false },
+    azure: { apiKey: "", apiUrl: "", model: "gpt-4", deployment: "", apiVersion: "2024-12-01-preview", enabled: false },
     ollama: { apiKey: "", apiUrl: "http://ollama:11434", model: "llama3", enabled: false },
   },
   defaults: {
@@ -47,27 +49,45 @@ function readJsonBody(req) {
   });
 }
 
-/**
- * GET /api/settings/llm — read LLM settings from disk or return defaults
- */
-export async function handleLLMSettingsGet(req, res) {
-  try {
-    const raw = await readFile(LLM_SETTINGS_PATH, "utf8");
-    const settings = JSON.parse(raw);
-    return json(res, 200, settings);
-  } catch {
-    return json(res, 200, DEFAULT_LLM_SETTINGS);
-  }
+async function loadSettingsFromDB() {
+  if (!await dbEnabled()) return null;
+  const result = await dbQuery("SELECT value FROM kv_store WHERE key = $1", [SETTINGS_DB_KEY]);
+  if (result?.rows?.length) return result.rows[0].value;
+  return null;
+}
+
+async function saveSettingsToDB(settings) {
+  if (!await dbEnabled()) return false;
+  const result = await dbQuery(
+    `INSERT INTO kv_store (key, value, updated_at) VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+    [SETTINGS_DB_KEY, JSON.stringify(settings)]
+  );
+  return result !== null;
 }
 
 /**
- * POST /api/settings/llm — save LLM settings to disk
+ * GET /api/settings/llm — read LLM settings from DB → file → defaults
+ */
+export async function handleLLMSettingsGet(req, res) {
+  try {
+    const fromDB = await loadSettingsFromDB();
+    if (fromDB) return json(res, 200, fromDB);
+  } catch { /* fall through */ }
+  try {
+    const raw = await readFile(LLM_SETTINGS_PATH, "utf8");
+    return json(res, 200, JSON.parse(raw));
+  } catch { /* fall through */ }
+  return json(res, 200, DEFAULT_LLM_SETTINGS);
+}
+
+/**
+ * POST /api/settings/llm — save LLM settings to DB + file
  */
 export async function handleLLMSettingsPost(req, res) {
   try {
     const body = await readJsonBody(req);
 
-    // Validate: don't store empty apiKey for providers that need one
     const providers = body.providers || {};
     const errors = [];
     for (const [name, cfg] of Object.entries(providers)) {
@@ -79,15 +99,15 @@ export async function handleLLMSettingsPost(req, res) {
       return json(res, 400, { error: "Validation failed", details: errors });
     }
 
-    // Merge with defaults to ensure schema integrity
     const settings = {
       providers: { ...DEFAULT_LLM_SETTINGS.providers, ...providers },
       defaults: { ...DEFAULT_LLM_SETTINGS.defaults, ...(body.defaults || {}) },
       fallbackChain: body.fallbackChain || DEFAULT_LLM_SETTINGS.fallbackChain,
     };
 
-    await writeFile(LLM_SETTINGS_PATH, JSON.stringify(settings, null, 2), "utf8");
-    return json(res, 200, { success: true, settings });
+    const savedToDB = await saveSettingsToDB(settings);
+    await writeFile(LLM_SETTINGS_PATH, JSON.stringify(settings, null, 2), "utf8").catch(() => {});
+    return json(res, 200, { success: true, settings, storage: savedToDB ? "database" : "file" });
   } catch (err) {
     return json(res, 500, { error: err.message });
   }

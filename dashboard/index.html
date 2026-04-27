@@ -2545,41 +2545,69 @@ async function executeRunbook(runbookId) {
 // ---------------------------------------------------------------------------
 // Settings page — LLM provider configuration
 // ---------------------------------------------------------------------------
+function applySettingsToUI(resp) {
+  const provs = resp.providers || {};
+  ['openai', 'anthropic', 'azure', 'ollama'].forEach(function(p) {
+    const cfg = provs[p] || {};
+    const enEl = document.getElementById('pc-' + p + '-enabled');
+    const keyEl = document.getElementById('pc-' + p + '-apikey');
+    const urlEl = document.getElementById('pc-' + p + '-apiurl');
+    const modelEl = document.getElementById('pc-' + p + '-model');
+    if (enEl) enEl.checked = !!cfg.enabled;
+    if (keyEl) keyEl.value = cfg.apiKey || '';
+    if (urlEl) urlEl.value = cfg.apiUrl || '';
+    if (modelEl) modelEl.value = cfg.model || '';
+    if (p === 'azure') {
+      const depEl = document.getElementById('pc-azure-deployment');
+      const verEl = document.getElementById('pc-azure-apiversion');
+      if (depEl) depEl.value = cfg.deployment || '';
+      if (verEl) verEl.value = cfg.apiVersion || '2024-12-01-preview';
+    }
+  });
+  const defs = resp.defaults || {};
+  const defProv = document.getElementById('settings-default-provider');
+  if (defProv) defProv.value = defs.provider || 'none';
+  const tempEl = document.getElementById('settings-temperature');
+  if (tempEl) { tempEl.value = defs.temperature || 0.3; updateTempLabel(); }
+  const tokEl = document.getElementById('settings-max-tokens');
+  if (tokEl) tokEl.value = defs.maxTokens || 2000;
+  const sysEl = document.getElementById('settings-system-prompt');
+  if (sysEl) sysEl.value = defs.systemPrompt || '';
+  loadEnabledProviders();
+}
+
+function hasAnyProviderConfigured(settings) {
+  const provs = settings.providers || {};
+  return Object.values(provs).some(function(c) { return c.enabled || c.apiKey; });
+}
+
 async function loadSettings() {
   try {
     const resp = await apiFetch('/api/settings/llm');
-    localStorage.setItem('mcp-llm-settings', JSON.stringify(resp));
-    const provs = resp.providers || {};
-    ['openai', 'anthropic', 'azure', 'ollama'].forEach(function(p) {
-      const cfg = provs[p] || {};
-      const enEl = document.getElementById('pc-' + p + '-enabled');
-      const keyEl = document.getElementById('pc-' + p + '-apikey');
-      const urlEl = document.getElementById('pc-' + p + '-apiurl');
-      const modelEl = document.getElementById('pc-' + p + '-model');
-      if (enEl) enEl.checked = !!cfg.enabled;
-      if (keyEl) keyEl.value = cfg.apiKey || '';
-      if (urlEl) urlEl.value = cfg.apiUrl || '';
-      if (modelEl) modelEl.value = cfg.model || '';
-      if (p === 'azure') {
-        const depEl = document.getElementById('pc-azure-deployment');
-        const verEl = document.getElementById('pc-azure-apiversion');
-        if (depEl) depEl.value = cfg.deployment || '';
-        if (verEl) verEl.value = cfg.apiVersion || '2024-12-01-preview';
+    if (hasAnyProviderConfigured(resp)) {
+      localStorage.setItem('mcp-llm-settings', JSON.stringify(resp));
+      applySettingsToUI(resp);
+    } else {
+      var local = null;
+      try { local = JSON.parse(localStorage.getItem('mcp-llm-settings')); } catch(e) {}
+      if (local && hasAnyProviderConfigured(local)) {
+        applySettingsToUI(local);
+        fetch(MCP_API.replace(/\/api$/, '') + '/api/settings/llm', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(local),
+        }).catch(function() {});
+      } else {
+        applySettingsToUI(resp);
       }
-    });
-    const defs = resp.defaults || {};
-    const defProv = document.getElementById('settings-default-provider');
-    if (defProv) defProv.value = defs.provider || 'none';
-    const tempEl = document.getElementById('settings-temperature');
-    if (tempEl) { tempEl.value = defs.temperature || 0.3; updateTempLabel(); }
-    const tokEl = document.getElementById('settings-max-tokens');
-    if (tokEl) tokEl.value = defs.maxTokens || 2000;
-    const sysEl = document.getElementById('settings-system-prompt');
-    if (sysEl) sysEl.value = defs.systemPrompt || '';
-    loadEnabledProviders();
+    }
     loadNotificationSettings();
   } catch (e) {
-    console.warn('Failed to load settings:', e);
+    console.warn('Failed to load settings from server, using localStorage:', e);
+    try {
+      var cached = JSON.parse(localStorage.getItem('mcp-llm-settings'));
+      if (cached) applySettingsToUI(cached);
+    } catch(e2) {}
+    loadNotificationSettings();
   }
 }
 
@@ -2618,7 +2646,8 @@ async function saveSettings() {
       statusEl.textContent = 'Error: ' + data.error + (data.details ? ' — ' + data.details.join(', ') : '');
       statusEl.style.color = 'var(--crit)';
     } else {
-      statusEl.textContent = 'Saved successfully';
+      var where = data.storage === 'database' ? ' (database)' : ' (server)';
+      statusEl.textContent = 'Saved successfully' + where;
       statusEl.style.color = 'var(--ok)';
       localStorage.setItem('mcp-llm-settings', JSON.stringify(data.settings || settings));
       loadEnabledProviders();
