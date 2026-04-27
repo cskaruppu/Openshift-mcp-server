@@ -96,6 +96,7 @@ spec:
             periodSeconds: 30
       volumes:
         - name: data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: mcp-server-data
         - name: tmp
           emptyDir: {}
