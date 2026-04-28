@@ -556,7 +556,7 @@ tr:hover td{background:#ffffff06}
     <button class="nav-tab" data-view="chat" onclick="showView('chat')">AI Chat</button>
     <button class="nav-tab" data-view="audit" onclick="showView('audit')">Audit</button>
     <button class="nav-tab" data-view="alerts-view" onclick="showView('alerts-view')">Alerts <span class="alerts-badge" id="alerts-badge">0</span></button>
-    <button class="nav-tab" data-view="hub" onclick="showView('hub')">MCP Hub</button>
+    <button class="nav-tab" data-view="hub" onclick="showView('hub')">AI Hub</button>
     <button class="nav-tab" data-view="intelligence" onclick="showView('intelligence')">AI Intelligence <span class="alerts-badge" id="intel-badge" style="background:#6366f1">0</span></button>
   </div>
   <div class="status">
@@ -980,7 +980,7 @@ tr:hover td{background:#ffffff06}
                 <div class="runbook-menu-item" onclick="executeRunbook('network-troubleshoot')">&#x1F310; Network Troubleshoot</div>
               </div>
             </div>
-            <button class="mode-toggle" onclick="showView('hub')" title="MCP Hub — connect external tool servers" id="chat-hub-btn">&#x1F50C; MCP Hub <span id="chat-hub-count" style="background:var(--accent);color:#fff;border-radius:8px;padding:0 5px;font-size:9px;margin-left:2px"></span></button>
+            <button class="mode-toggle" onclick="showView('hub')" title="AI Hub — Kubernetes cluster intelligence" id="chat-hub-btn">&#x1F50C; AI Hub <span id="chat-hub-count" style="background:var(--accent);color:#fff;border-radius:8px;padding:0 5px;font-size:9px;margin-left:2px"></span></button>
             <button class="mode-toggle" onclick="showView('settings')" title="Configure LLM providers in Settings">&#x2699; Configure in Settings</button>
           </div>
           <!-- Hidden fields for backward compat -->
@@ -1261,186 +1261,164 @@ tr:hover td{background:#ffffff06}
   </div>
 </div>
 
-<!-- MCP Hub View -->
+<!-- AI Hub View -->
 <div id="view-hub" class="container" style="display:none">
-  <!-- Hub Header -->
-  <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
+  <!-- Hub Header with gradient accent -->
+  <div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;padding:16px 20px;background:linear-gradient(135deg,#0f172a,#1e293b);border-radius:12px;border:1px solid #334155">
     <div>
-      <div class="section-title" style="margin:0">MCP Hub</div>
-      <div style="font-size:12px;color:var(--text2);margin-top:4px">Connect external MCP servers, browse tools, orchestrate across sources</div>
+      <div style="font-size:20px;font-weight:700;color:#f8fafc;letter-spacing:-.5px">AI Hub</div>
+      <div style="font-size:12px;color:#94a3b8;margin-top:4px">Centralized Kubernetes Intelligence — Connect, Monitor, and Manage All Clusters</div>
     </div>
-    <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-      <div class="hub-stat" id="hub-stat-servers" style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 14px;font-size:12px"><span style="color:var(--text2)">Servers:</span> <strong id="hub-count-servers">1</strong></div>
-      <div class="hub-stat" id="hub-stat-tools" style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 14px;font-size:12px"><span style="color:var(--text2)">Total Tools:</span> <strong id="hub-count-tools">0</strong></div>
-    </div>
-  </div>
-
-  <!-- Add Server -->
-  <div class="card" style="margin-bottom:20px">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
-      <span style="font-weight:600;font-size:14px">Connect MCP Server</span>
-      <span style="font-size:11px;color:var(--text2)">Add external tools from any MCP-compatible server</span>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 140px 1fr auto;gap:10px;align-items:end">
-      <div>
-        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Server Name</label>
-        <input type="text" id="hub-add-name" placeholder="e.g. GitHub, Filesystem, Slack" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none">
+    <div style="margin-left:auto;display:flex;gap:10px;align-items:center">
+      <div style="background:#22c55e22;border:1px solid #22c55e44;border-radius:8px;padding:8px 16px;text-align:center">
+        <div style="font-size:18px;font-weight:700;color:#22c55e" id="hub-count-clusters">1</div>
+        <div style="font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px">Clusters</div>
       </div>
-      <div>
-        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Transport</label>
-        <select id="hub-add-type" onchange="hubTransportChanged()" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none">
-          <option value="stdio">stdio (npx / local)</option>
-          <option value="sse">SSE (remote URL)</option>
-          <option value="streamable-http">Streamable HTTP</option>
-        </select>
+      <div style="background:#6366f122;border:1px solid #6366f144;border-radius:8px;padding:8px 16px;text-align:center">
+        <div style="font-size:18px;font-weight:700;color:#818cf8" id="hub-count-tools">0</div>
+        <div style="font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px">Tools</div>
       </div>
-      <div id="hub-add-stdio-fields">
-        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Command (e.g. npx -y @modelcontextprotocol/server-github)</label>
-        <input type="text" id="hub-add-command" placeholder="npx -y @modelcontextprotocol/server-github" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none">
-      </div>
-      <div id="hub-add-url-fields" style="display:none">
-        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Server URL</label>
-        <input type="text" id="hub-add-url" placeholder="http://localhost:8080/sse" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none">
-      </div>
-      <div>
-        <button onclick="hubAddServer()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 18px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap">Connect</button>
-      </div>
-    </div>
-    <div id="hub-add-env-section" style="margin-top:10px">
-      <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Environment Variables <span style="opacity:.5">(KEY=VALUE, one per line)</span></label>
-      <textarea id="hub-add-env" rows="2" placeholder="GITHUB_TOKEN=ghp_xxx&#10;ANOTHER_VAR=value" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:11px;font-family:monospace;outline:none;resize:vertical"></textarea>
-    </div>
-    <div id="hub-add-status" style="margin-top:8px;font-size:12px;color:var(--text2)"></div>
-  </div>
-
-  <!-- MCP Server Marketplace -->
-  <div class="card" style="margin-bottom:20px">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
-      <span style="font-weight:600;font-size:14px">MCP Server Marketplace</span>
-      <span style="font-size:11px;color:var(--text2)">One-click install popular MCP servers</span>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px" id="hub-marketplace">
-      <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:border-color .2s" onclick="hubInstallTemplate('github')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-          <span style="font-size:20px">&#x1F4BB;</span>
-          <span style="font-weight:600;font-size:13px">GitHub</span>
-        </div>
-        <div style="font-size:11px;color:var(--text2)">Issues, PRs, code search, repos — GITHUB_TOKEN required</div>
-      </div>
-      <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:border-color .2s" onclick="hubInstallTemplate('filesystem')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-          <span style="font-size:20px">&#x1F4C1;</span>
-          <span style="font-weight:600;font-size:13px">Filesystem</span>
-        </div>
-        <div style="font-size:11px;color:var(--text2)">Read, write, search files on the server filesystem</div>
-      </div>
-      <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:border-color .2s" onclick="hubInstallTemplate('postgres')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-          <span style="font-size:20px">&#x1F5C4;</span>
-          <span style="font-weight:600;font-size:13px">PostgreSQL</span>
-        </div>
-        <div style="font-size:11px;color:var(--text2)">Query databases, inspect schemas, run SQL</div>
-      </div>
-      <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:border-color .2s" onclick="hubInstallTemplate('slack')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-          <span style="font-size:20px">&#x1F4AC;</span>
-          <span style="font-weight:600;font-size:13px">Slack</span>
-        </div>
-        <div style="font-size:11px;color:var(--text2)">Send messages, read channels, manage Slack workspace</div>
-      </div>
-      <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:border-color .2s" onclick="hubInstallTemplate('brave-search')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-          <span style="font-size:20px">&#x1F50D;</span>
-          <span style="font-weight:600;font-size:13px">Brave Search</span>
-        </div>
-        <div style="font-size:11px;color:var(--text2)">Web search via Brave — BRAVE_API_KEY required</div>
-      </div>
-      <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:border-color .2s" onclick="hubInstallTemplate('puppeteer')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-          <span style="font-size:20px">&#x1F310;</span>
-          <span style="font-weight:600;font-size:13px">Puppeteer</span>
-        </div>
-        <div style="font-size:11px;color:var(--text2)">Browser automation, screenshots, web scraping</div>
-      </div>
-      <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:border-color .2s" onclick="hubInstallTemplate('memory')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-          <span style="font-size:20px">&#x1F9E0;</span>
-          <span style="font-weight:600;font-size:13px">Memory</span>
-        </div>
-        <div style="font-size:11px;color:var(--text2)">Persistent knowledge graph memory for AI context</div>
-      </div>
-      <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:border-color .2s" onclick="hubInstallTemplate('custom-sse')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-          <span style="font-size:20px">&#x2795;</span>
-          <span style="font-weight:600;font-size:13px">Custom SSE Server</span>
-        </div>
-        <div style="font-size:11px;color:var(--text2)">Connect any remote MCP server via SSE URL</div>
+      <div style="background:#f59e0b22;border:1px solid #f59e0b44;border-radius:8px;padding:8px 16px;text-align:center">
+        <div style="font-size:18px;font-weight:700;color:#fbbf24" id="hub-count-llm">0</div>
+        <div style="font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px">LLM Active</div>
       </div>
     </div>
   </div>
 
-  <!-- LLM Provider Quick Switch -->
-  <div class="card" style="margin-bottom:20px">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
-      <span style="font-weight:600;font-size:14px">AI Brain (LLM Provider)</span>
-      <span style="font-size:11px;color:var(--text2)">Select which LLM drives the tool orchestration</span>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px" id="hub-llm-cards">
-      <div class="card hub-llm-card" data-provider="azure" onclick="hubSelectLLM('azure')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s">
-        <div style="font-weight:600;font-size:13px;color:#0078d4">Azure OpenAI</div>
-        <div style="font-size:10px;color:var(--text2);margin-top:2px">GPT-4o, GPT-4 Turbo</div>
-        <div style="font-size:10px;margin-top:4px" id="hub-llm-status-azure"></div>
-      </div>
-      <div class="card hub-llm-card" data-provider="openai" onclick="hubSelectLLM('openai')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s">
-        <div style="font-weight:600;font-size:13px;color:#10a37f">OpenAI</div>
-        <div style="font-size:10px;color:var(--text2);margin-top:2px">GPT-4o, o1, o3</div>
-        <div style="font-size:10px;margin-top:4px" id="hub-llm-status-openai"></div>
-      </div>
-      <div class="card hub-llm-card" data-provider="anthropic" onclick="hubSelectLLM('anthropic')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s">
-        <div style="font-weight:600;font-size:13px;color:#d97706">Anthropic</div>
-        <div style="font-size:10px;color:var(--text2);margin-top:2px">Claude Opus, Sonnet</div>
-        <div style="font-size:10px;margin-top:4px" id="hub-llm-status-anthropic"></div>
-      </div>
-      <div class="card hub-llm-card" data-provider="ollama" onclick="hubSelectLLM('ollama')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s">
-        <div style="font-weight:600;font-size:13px;color:#888">Ollama (Local)</div>
-        <div style="font-size:10px;color:var(--text2);margin-top:2px">Llama, Mistral, CodeGemma</div>
-        <div style="font-size:10px;margin-top:4px" id="hub-llm-status-ollama"></div>
-      </div>
-      <div class="card hub-llm-card" data-provider="none" onclick="hubSelectLLM('none')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s">
-        <div style="font-weight:600;font-size:13px;color:var(--text2)">Built-in</div>
-        <div style="font-size:10px;color:var(--text2);margin-top:2px">No LLM — rule-based analysis</div>
-        <div style="font-size:10px;margin-top:4px" id="hub-llm-status-none"></div>
-      </div>
-    </div>
+  <!-- Connected Kubernetes Clusters -->
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+    <div class="section-title" style="font-size:15px;margin:0">Kubernetes Clusters</div>
+    <span style="font-size:11px;color:var(--text2)">Connected platforms with CloudNexus agent</span>
   </div>
-
-  <!-- Connected Servers -->
-  <div class="section-title" style="font-size:14px;margin-bottom:12px">Connected Servers</div>
   <div id="hub-servers-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;margin-bottom:24px">
-    <div class="card" style="opacity:.5;text-align:center;padding:30px">Loading servers...</div>
+    <div class="card" style="opacity:.5;text-align:center;padding:30px">Loading clusters...</div>
   </div>
 
-  <!-- Tool Browser -->
+  <!-- Add Kubernetes Cluster -->
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+    <div class="section-title" style="font-size:15px;margin:0">Add Kubernetes Cluster</div>
+    <span style="font-size:11px;color:var(--text2)">Deploy CloudNexus agent and connect</span>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:24px">
+    <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:all .2s;text-align:center;padding:18px" onclick="hubAddCluster('openshift')" onmouseover="this.style.borderColor='#e04040';this.style.background='#e0404008'" onmouseout="this.style.borderColor='var(--border)';this.style.background=''">
+      <div style="font-size:28px;margin-bottom:6px">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="#e04040"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+      </div>
+      <div style="font-weight:700;font-size:13px;color:#e04040">OpenShift</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:4px">Red Hat OpenShift 4.x</div>
+    </div>
+    <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:all .2s;text-align:center;padding:18px" onclick="hubAddCluster('rancher')" onmouseover="this.style.borderColor='#0075a8';this.style.background='#0075a808'" onmouseout="this.style.borderColor='var(--border)';this.style.background=''">
+      <div style="font-size:28px;margin-bottom:6px">&#x1F42E;</div>
+      <div style="font-weight:700;font-size:13px;color:#0075a8">Rancher</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:4px">SUSE Rancher / RKE2</div>
+    </div>
+    <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:all .2s;text-align:center;padding:18px" onclick="hubAddCluster('eks')" onmouseover="this.style.borderColor='#ff9900';this.style.background='#ff990008'" onmouseout="this.style.borderColor='var(--border)';this.style.background=''">
+      <div style="font-size:28px;margin-bottom:6px">&#x2601;</div>
+      <div style="font-weight:700;font-size:13px;color:#ff9900">Amazon EKS</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:4px">AWS Elastic Kubernetes</div>
+    </div>
+    <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:all .2s;text-align:center;padding:18px" onclick="hubAddCluster('aks')" onmouseover="this.style.borderColor='#0078d4';this.style.background='#0078d408'" onmouseout="this.style.borderColor='var(--border)';this.style.background=''">
+      <div style="font-size:28px;margin-bottom:6px">&#x26C5;</div>
+      <div style="font-weight:700;font-size:13px;color:#0078d4">Azure AKS</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:4px">Azure Kubernetes Service</div>
+    </div>
+    <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:all .2s;text-align:center;padding:18px" onclick="hubAddCluster('gke')" onmouseover="this.style.borderColor='#4285f4';this.style.background='#4285f408'" onmouseout="this.style.borderColor='var(--border)';this.style.background=''">
+      <div style="font-size:28px;margin-bottom:6px">&#x1F310;</div>
+      <div style="font-weight:700;font-size:13px;color:#4285f4">Google GKE</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:4px">Google Kubernetes Engine</div>
+    </div>
+    <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:all .2s;text-align:center;padding:18px" onclick="hubAddCluster('k8s')" onmouseover="this.style.borderColor='#326ce5';this.style.background='#326ce508'" onmouseout="this.style.borderColor='var(--border)';this.style.background=''">
+      <div style="font-size:28px;margin-bottom:6px">&#x2699;</div>
+      <div style="font-weight:700;font-size:13px;color:#326ce5">Vanilla K8s</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:4px">kubeadm / k3s / microk8s</div>
+    </div>
+  </div>
+
+  <!-- Agent Install Dialog (hidden by default) -->
+  <div id="hub-cluster-dialog" style="display:none;margin-bottom:24px" class="card">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+      <span style="font-weight:600;font-size:14px" id="hub-cluster-dialog-title">Connect Cluster</span>
+      <button onclick="document.getElementById('hub-cluster-dialog').style.display='none'" style="margin-left:auto;background:none;border:none;color:var(--text2);cursor:pointer;font-size:16px">&times;</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+      <div>
+        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Cluster Name</label>
+        <input type="text" id="hub-cluster-name" placeholder="e.g. production-ocp, staging-eks" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">API Server URL</label>
+        <input type="text" id="hub-cluster-url" placeholder="https://api.cluster.example.com:6443" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none">
+      </div>
+    </div>
+    <div style="margin-bottom:14px">
+      <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Bearer Token / Kubeconfig</label>
+      <textarea id="hub-cluster-token" rows="3" placeholder="Paste bearer token or kubeconfig YAML..." style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:11px;font-family:monospace;outline:none;resize:vertical"></textarea>
+    </div>
+    <div style="margin-bottom:14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px">
+      <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:8px">Deploy CloudNexus Agent on this cluster:</div>
+      <code id="hub-agent-install-cmd" style="display:block;font-size:11px;color:var(--accent);word-break:break-all;line-height:1.6"></code>
+      <button onclick="navigator.clipboard.writeText(document.getElementById('hub-agent-install-cmd').textContent)" style="margin-top:8px;background:none;border:1px solid var(--border);border-radius:4px;padding:4px 10px;color:var(--text);cursor:pointer;font-size:10px">Copy Command</button>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button onclick="hubConnectCluster()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;font-size:12px;font-weight:600">Connect Cluster</button>
+      <span id="hub-cluster-status" style="font-size:12px;color:var(--text2)"></span>
+    </div>
+  </div>
+
+  <!-- AI Brain (LLM Provider) -->
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+    <div class="section-title" style="font-size:15px;margin:0">AI Brain</div>
+    <span style="font-size:11px;color:var(--text2)">Select which LLM powers the intelligence engine</span>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:10px;margin-bottom:24px" id="hub-llm-cards">
+    <div class="card hub-llm-card" data-provider="azure" onclick="hubSelectLLM('azure')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;text-align:center;padding:14px">
+      <div style="font-weight:700;font-size:14px;color:#0078d4">Azure OpenAI</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:4px">GPT-4o / GPT-4 Turbo</div>
+      <div style="font-size:10px;margin-top:6px" id="hub-llm-status-azure"></div>
+    </div>
+    <div class="card hub-llm-card" data-provider="openai" onclick="hubSelectLLM('openai')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;text-align:center;padding:14px">
+      <div style="font-weight:700;font-size:14px;color:#10a37f">OpenAI</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:4px">GPT-4o / o1 / o3</div>
+      <div style="font-size:10px;margin-top:6px" id="hub-llm-status-openai"></div>
+    </div>
+    <div class="card hub-llm-card" data-provider="anthropic" onclick="hubSelectLLM('anthropic')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;text-align:center;padding:14px">
+      <div style="font-weight:700;font-size:14px;color:#d97706">Anthropic</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:4px">Claude Opus / Sonnet</div>
+      <div style="font-size:10px;margin-top:6px" id="hub-llm-status-anthropic"></div>
+    </div>
+    <div class="card hub-llm-card" data-provider="ollama" onclick="hubSelectLLM('ollama')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;text-align:center;padding:14px">
+      <div style="font-weight:700;font-size:14px;color:#888">Ollama</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:4px">Llama / Mistral / Local</div>
+      <div style="font-size:10px;margin-top:6px" id="hub-llm-status-ollama"></div>
+    </div>
+    <div class="card hub-llm-card" data-provider="none" onclick="hubSelectLLM('none')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;text-align:center;padding:14px">
+      <div style="font-weight:700;font-size:14px;color:var(--text2)">Built-in</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:4px">Rule-based / No LLM</div>
+      <div style="font-size:10px;margin-top:6px" id="hub-llm-status-none"></div>
+    </div>
+  </div>
+
+  <!-- Capability Tools Browser -->
   <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
-    <div class="section-title" style="font-size:14px;margin:0">Tool Browser</div>
-    <input type="text" id="hub-tool-search" oninput="filterHubTools()" placeholder="Search tools..." style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 12px;color:var(--text);font-size:12px;outline:none;width:260px">
+    <div class="section-title" style="font-size:15px;margin:0">Capabilities</div>
+    <input type="text" id="hub-tool-search" oninput="filterHubTools()" placeholder="Search capabilities..." style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 12px;color:var(--text);font-size:12px;outline:none;width:260px">
     <select id="hub-tool-server-filter" onchange="filterHubTools()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:12px;outline:none">
-      <option value="all">All Servers</option>
+      <option value="all">All Clusters</option>
     </select>
     <span id="hub-tool-count" style="font-size:11px;color:var(--text2);margin-left:auto"></span>
   </div>
-  <div id="hub-tools-list" style="max-height:500px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:var(--card)">
-    <div style="padding:20px;text-align:center;color:var(--text2);font-size:12px">Loading tools...</div>
+  <div id="hub-tools-list" style="max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:var(--card)">
+    <div style="padding:20px;text-align:center;color:var(--text2);font-size:12px">Loading capabilities...</div>
   </div>
 
   <!-- Orchestrator -->
-  <div class="card" style="margin-top:24px">
+  <div class="card" style="margin-top:24px;border:1px solid #6366f133;background:linear-gradient(135deg,var(--card),#6366f108)">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
-      <span style="font-weight:600;font-size:14px">Orchestrator</span>
-      <span style="font-size:11px;color:var(--text2)">Ask a question — the AI will use tools from all connected servers</span>
+      <span style="font-weight:600;font-size:14px">Cross-Cluster AI Query</span>
+      <span style="font-size:11px;color:var(--text2)">Ask anything — AI orchestrates across all connected clusters</span>
     </div>
     <div style="display:flex;gap:8px">
-      <input type="text" id="hub-orchestrator-input" placeholder="e.g. Why is my pod crashing? Check logs and events..." style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 14px;color:var(--text);font-size:13px;outline:none" onkeydown="if(event.key==='Enter')runHubOrchestrator()">
+      <input type="text" id="hub-orchestrator-input" placeholder="e.g. Compare pod health across all clusters, find OOMKilled pods everywhere..." style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 14px;color:var(--text);font-size:13px;outline:none" onkeydown="if(event.key==='Enter')runHubOrchestrator()">
       <button onclick="runHubOrchestrator()" style="background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border:none;border-radius:6px;padding:10px 24px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap">Run</button>
     </div>
     <div id="hub-orchestrator-output" style="margin-top:14px;display:none">
@@ -2596,7 +2574,7 @@ function renderExplainability(data) {
     html += '</ol>';
   }
   if (data.toolsUsed && data.toolsUsed.length) {
-    html += '<div style="margin-top:6px"><strong>MCP Tools Used:</strong></div><div style="margin:4px 0 0 4px;display:flex;flex-wrap:wrap;gap:4px">';
+    html += '<div style="margin-top:6px"><strong>AI Tools Used:</strong></div><div style="margin:4px 0 0 4px;display:flex;flex-wrap:wrap;gap:4px">';
     data.toolsUsed.forEach(function(t) { html += '<code style="background:#6366f11a;color:#6366f1;padding:2px 6px;border-radius:4px;font-size:10px">' + esc(t) + '</code>'; });
     html += '</div>';
   }
@@ -4358,18 +4336,64 @@ function getConfidenceHTML(text) {
 // Pin buttons and confidence meter are integrated into renderConversation above
 
 // ---------------------------------------------------------------------------
-// MCP Hub
+// AI Hub — Kubernetes Cluster Intelligence
 // ---------------------------------------------------------------------------
 var _hubTools = [];
 var _hubServers = [];
 
-function hubTransportChanged() {
-  var t = document.getElementById('hub-add-type').value;
-  var stdio = document.getElementById('hub-add-stdio-fields');
-  var urlF = document.getElementById('hub-add-url-fields');
-  var envS = document.getElementById('hub-add-env-section');
-  if (t === 'stdio') { stdio.style.display = ''; urlF.style.display = 'none'; envS.style.display = ''; }
-  else { stdio.style.display = 'none'; urlF.style.display = ''; envS.style.display = 'none'; }
+var K8S_PLATFORMS = {
+  openshift: { name: 'OpenShift', color: '#e04040', icon: '⬢', version: '4.x' },
+  rancher:   { name: 'Rancher',   color: '#0075a8', icon: '🐮', version: 'RKE2' },
+  eks:       { name: 'Amazon EKS', color: '#ff9900', icon: '☁', version: 'EKS' },
+  aks:       { name: 'Azure AKS', color: '#0078d4', icon: '⛅', version: 'AKS' },
+  gke:       { name: 'Google GKE', color: '#4285f4', icon: '🌐', version: 'GKE' },
+  k8s:       { name: 'Vanilla K8s', color: '#326ce5', icon: '⚙', version: 'K8s' },
+};
+
+function hubAddCluster(platform) {
+  var info = K8S_PLATFORMS[platform] || K8S_PLATFORMS['k8s'];
+  var dialog = document.getElementById('hub-cluster-dialog');
+  dialog.style.display = '';
+  dialog.dataset.platform = platform;
+  document.getElementById('hub-cluster-dialog-title').innerHTML =
+    '<span style="color:' + info.color + '">' + info.icon + '</span> Connect ' + info.name + ' Cluster';
+  document.getElementById('hub-cluster-name').value = '';
+  document.getElementById('hub-cluster-url').value = '';
+  document.getElementById('hub-cluster-token').value = '';
+  document.getElementById('hub-cluster-status').textContent = '';
+  var cmd = 'kubectl apply -f https://cloudnexus.tcs.com/agent/' + platform + '/install.yaml';
+  document.getElementById('hub-agent-install-cmd').textContent = cmd;
+  document.getElementById('hub-cluster-name').focus();
+}
+
+async function hubConnectCluster() {
+  var dialog = document.getElementById('hub-cluster-dialog');
+  var platform = dialog.dataset.platform || 'k8s';
+  var name = document.getElementById('hub-cluster-name').value.trim();
+  var url = document.getElementById('hub-cluster-url').value.trim();
+  var token = document.getElementById('hub-cluster-token').value.trim();
+  var statusEl = document.getElementById('hub-cluster-status');
+
+  if (!name) { statusEl.innerHTML = '<span style="color:#ef4444">Please enter a cluster name</span>'; return; }
+  if (!url) { statusEl.innerHTML = '<span style="color:#ef4444">Please enter the API server URL</span>'; return; }
+
+  statusEl.innerHTML = '<span style="color:var(--accent)">Connecting to cluster...</span>';
+  try {
+    var config = { name: name, type: 'sse', url: url, platform: platform };
+    if (token) config.token = token;
+    var resp = await fetch(MCP_API + '/hub/servers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    var data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to connect');
+    statusEl.innerHTML = '<span style="color:#22c55e">✔ Connected! ' + (data.server?.toolCount || 0) + ' capabilities discovered</span>';
+    dialog.style.display = 'none';
+    loadHubView();
+  } catch (e) {
+    statusEl.innerHTML = '<span style="color:#ef4444">Error: ' + esc(e.message) + '</span>';
+  }
 }
 
 async function loadHubView() {
@@ -4380,8 +4404,10 @@ async function loadHubView() {
     ]);
     _hubServers = sRes.servers || [];
     _hubTools = tRes.tools || [];
-    document.getElementById('hub-count-servers').textContent = _hubServers.length;
-    document.getElementById('hub-count-tools').textContent = _hubTools.length;
+    var clustersEl = document.getElementById('hub-count-clusters');
+    var toolsEl = document.getElementById('hub-count-tools');
+    if (clustersEl) clustersEl.textContent = _hubServers.length;
+    if (toolsEl) toolsEl.textContent = _hubTools.length;
     renderHubServers();
     renderHubTools();
     populateHubToolFilter();
@@ -4392,24 +4418,33 @@ async function loadHubView() {
 
 function renderHubServers() {
   var el = document.getElementById('hub-servers-list');
-  if (!_hubServers.length) { el.innerHTML = '<div class="card" style="opacity:.5;text-align:center;padding:30px">No servers connected</div>'; return; }
+  if (!_hubServers.length) { el.innerHTML = '<div class="card" style="opacity:.5;text-align:center;padding:30px">No clusters connected yet. Add a Kubernetes cluster above.</div>'; return; }
   el.innerHTML = _hubServers.map(function(s) {
     var statusColor = s.status === 'connected' ? '#22c55e' : '#ef4444';
-    var statusIcon = s.status === 'connected' ? '&#x2714;' : '&#x2716;';
-    var typeLabel = s.type === 'local' ? 'Built-in' : s.type.toUpperCase();
+    var statusLabel = s.status === 'connected' ? 'Online' : 'Offline';
     var isBuiltin = s.id === 'builtin';
-    return '<div class="card" style="position:relative;border-left:3px solid ' + statusColor + '">' +
+    var platform = s.platform || (isBuiltin ? 'openshift' : 'k8s');
+    var pInfo = K8S_PLATFORMS[platform] || K8S_PLATFORMS['k8s'];
+    return '<div class="card" style="position:relative;border-left:3px solid ' + pInfo.color + ';border-top:1px solid ' + pInfo.color + '33">' +
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">' +
-        '<span style="color:' + statusColor + ';font-size:14px">' + statusIcon + '</span>' +
-        '<span style="font-weight:600;font-size:13px">' + esc(s.name) + '</span>' +
-        '<span style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--text2)">' + typeLabel + '</span>' +
-        '<span style="margin-left:auto;font-size:11px;color:var(--text2)">' + s.toolCount + ' tools</span>' +
+        '<span style="font-size:18px">' + pInfo.icon + '</span>' +
+        '<div style="flex:1">' +
+          '<div style="font-weight:700;font-size:13px;color:' + pInfo.color + '">' + esc(s.name) + '</div>' +
+          '<div style="font-size:10px;color:var(--text2)">' + pInfo.name + '</div>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:4px">' +
+          '<span style="width:6px;height:6px;border-radius:50%;background:' + statusColor + ';display:inline-block"></span>' +
+          '<span style="font-size:10px;color:' + statusColor + '">' + statusLabel + '</span>' +
+        '</div>' +
       '</div>' +
-      (s.url ? '<div style="font-size:11px;color:var(--text2);margin-bottom:6px;word-break:break-all">' + esc(s.url) + '</div>' : '') +
-      (s.command ? '<div style="font-size:11px;color:var(--text2);margin-bottom:6px;font-family:monospace">' + esc(s.command) + '</div>' : '') +
-      '<div style="font-size:10px;color:var(--text2);margin-bottom:8px">Tools: ' +
-        (s.tools || []).slice(0, 6).map(function(t) { return '<code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:10px">' + esc(t.name) + '</code>'; }).join(' ') +
-        (s.toolCount > 6 ? ' <span style="opacity:.5">+' + (s.toolCount - 6) + ' more</span>' : '') +
+      (s.url ? '<div style="font-size:10px;color:var(--text2);margin-bottom:6px;word-break:break-all;font-family:monospace">' + esc(s.url) + '</div>' : '') +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">' +
+        '<span style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--text2)">' + s.toolCount + ' capabilities</span>' +
+        (isBuiltin ? '<span style="background:#22c55e11;border:1px solid #22c55e33;border-radius:4px;padding:2px 8px;font-size:10px;color:#22c55e">Primary</span>' : '') +
+      '</div>' +
+      '<div style="font-size:10px;color:var(--text2);margin-bottom:8px">' +
+        (s.tools || []).slice(0, 5).map(function(t) { return '<code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:9px">' + esc(t.name) + '</code>'; }).join(' ') +
+        (s.toolCount > 5 ? ' <span style="opacity:.5">+' + (s.toolCount - 5) + ' more</span>' : '') +
       '</div>' +
       (!isBuiltin ? '<div style="display:flex;gap:6px">' +
         '<button onclick="hubReconnectServer(\'' + esc(s.id) + '\')" style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 10px;color:var(--text);cursor:pointer;font-size:11px">Reconnect</button>' +
@@ -4472,48 +4507,8 @@ function populateHubToolFilter() {
   sel.innerHTML = opts;
 }
 
-async function hubAddServer() {
-  var statusEl = document.getElementById('hub-add-status');
-  var name = document.getElementById('hub-add-name').value.trim();
-  var type = document.getElementById('hub-add-type').value;
-  if (!name) { statusEl.innerHTML = '<span style="color:#ef4444">Please enter a server name</span>'; return; }
-
-  var config = { name: name, type: type };
-  if (type === 'stdio') {
-    var cmdRaw = document.getElementById('hub-add-command').value.trim();
-    if (!cmdRaw) { statusEl.innerHTML = '<span style="color:#ef4444">Please enter a command</span>'; return; }
-    var parts = cmdRaw.split(/\s+/);
-    config.command = parts[0];
-    config.args = parts.slice(1);
-    var envRaw = document.getElementById('hub-add-env').value.trim();
-    if (envRaw) {
-      config.env = {};
-      envRaw.split('\n').forEach(function(line) {
-        var eq = line.indexOf('=');
-        if (eq > 0) config.env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
-      });
-    }
-  } else {
-    var url = document.getElementById('hub-add-url').value.trim();
-    if (!url) { statusEl.innerHTML = '<span style="color:#ef4444">Please enter a server URL</span>'; return; }
-    config.url = url;
-  }
-
-  statusEl.innerHTML = '<span style="color:var(--accent)">Connecting...</span>';
-  try {
-    var resp = await fetch(MCP_API + '/hub/servers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
-    var data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Failed to connect');
-    statusEl.innerHTML = '<span style="color:#22c55e">Connected! ' + (data.server?.toolCount || 0) + ' tools discovered</span>';
-    document.getElementById('hub-add-name').value = '';
-    document.getElementById('hub-add-command').value = '';
-    document.getElementById('hub-add-url').value = '';
-    document.getElementById('hub-add-env').value = '';
-    loadHubView();
-  } catch (e) {
-    statusEl.innerHTML = '<span style="color:#ef4444">Error: ' + esc(e.message) + '</span>';
-  }
-}
+// hubAddServer kept as alias for backwards compatibility
+async function hubAddServer() { hubAddCluster('k8s'); }
 
 async function hubDisconnectServer(id) {
   if (!confirm('Remove server "' + id + '"?')) return;
@@ -4777,61 +4772,7 @@ async function runPredictions() {
   }, 60000);
 })();
 
-// ---------------------------------------------------------------------------
-// MCP Server Marketplace Templates
-// ---------------------------------------------------------------------------
-var MCP_TEMPLATES = {
-  'github': { name: 'GitHub', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'], envHint: 'GITHUB_TOKEN' },
-  'filesystem': { name: 'Filesystem', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/data'], envHint: '' },
-  'postgres': { name: 'PostgreSQL', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-postgres'], envHint: 'POSTGRES_URL' },
-  'slack': { name: 'Slack', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-slack'], envHint: 'SLACK_BOT_TOKEN' },
-  'brave-search': { name: 'Brave Search', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-brave-search'], envHint: 'BRAVE_API_KEY' },
-  'puppeteer': { name: 'Puppeteer', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-puppeteer'], envHint: '' },
-  'memory': { name: 'Memory', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-memory'], envHint: '' },
-  'custom-sse': { name: 'Custom SSE', type: 'sse', url: '', envHint: '' },
-};
-
-function hubInstallTemplate(templateId) {
-  var tmpl = MCP_TEMPLATES[templateId];
-  if (!tmpl) return;
-
-  if (templateId === 'custom-sse') {
-    document.getElementById('hub-add-name').value = '';
-    document.getElementById('hub-add-type').value = 'sse';
-    hubTransportChanged();
-    document.getElementById('hub-add-url').focus();
-    return;
-  }
-
-  if (tmpl.envHint) {
-    var envVal = prompt('Enter ' + tmpl.envHint + ' (required for ' + tmpl.name + '):', '');
-    if (envVal === null) return;
-    if (!envVal.trim()) { alert(tmpl.envHint + ' is required'); return; }
-
-    var statusEl = document.getElementById('hub-add-status');
-    statusEl.innerHTML = '<span style="color:var(--accent)">Installing ' + tmpl.name + '...</span>';
-    var config = { name: tmpl.name, type: tmpl.type, command: tmpl.command, args: tmpl.args, env: {} };
-    config.env[tmpl.envHint] = envVal.trim();
-    fetch(MCP_API + '/hub/servers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.error) { statusEl.innerHTML = '<span style="color:#ef4444">' + esc(data.error) + '</span>'; }
-        else { statusEl.innerHTML = '<span style="color:#22c55e">' + tmpl.name + ' installed! ' + (data.server?.toolCount || 0) + ' tools</span>'; loadHubView(); }
-      })
-      .catch(function(e) { statusEl.innerHTML = '<span style="color:#ef4444">Error: ' + esc(e.message) + '</span>'; });
-  } else {
-    var statusEl = document.getElementById('hub-add-status');
-    statusEl.innerHTML = '<span style="color:var(--accent)">Installing ' + tmpl.name + '...</span>';
-    var config = { name: tmpl.name, type: tmpl.type, command: tmpl.command, args: tmpl.args };
-    fetch(MCP_API + '/hub/servers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.error) { statusEl.innerHTML = '<span style="color:#ef4444">' + esc(data.error) + '</span>'; }
-        else { statusEl.innerHTML = '<span style="color:#22c55e">' + tmpl.name + ' installed! ' + (data.server?.toolCount || 0) + ' tools</span>'; loadHubView(); }
-      })
-      .catch(function(e) { statusEl.innerHTML = '<span style="color:#ef4444">Error: ' + esc(e.message) + '</span>'; });
-  }
-}
+// (Marketplace templates removed — AI Hub is Kubernetes-focused)
 
 // ---------------------------------------------------------------------------
 // Hub LLM Provider Selector
@@ -4875,10 +4816,17 @@ loadHubView = async function() {
 function updateChatHubBadge() {
   var badge = document.getElementById('chat-hub-count');
   if (!badge) return;
-  var extCount = _hubServers.filter(function(s) { return s.id !== 'builtin'; }).length;
-  badge.textContent = extCount > 0 ? extCount : '';
+  var clusterCount = _hubServers.length;
+  badge.textContent = clusterCount > 0 ? clusterCount : '';
   var btn = document.getElementById('chat-hub-btn');
-  if (btn) btn.style.borderColor = extCount > 0 ? 'var(--accent)' : '';
+  if (btn) btn.style.borderColor = clusterCount > 0 ? 'var(--accent)' : '';
+  var llmEl = document.getElementById('hub-count-llm');
+  if (llmEl) {
+    try {
+      var cfg = getProviderConfig();
+      llmEl.textContent = (cfg?.defaultProvider && cfg.defaultProvider !== 'none') ? '1' : '0';
+    } catch(e) { llmEl.textContent = '0'; }
+  }
 }
 
 // Auto-refresh hub badge on chat view
@@ -4913,7 +4861,7 @@ document.addEventListener('keydown', function(e) {
 <div class="app-footer">
   <div class="footer-left">
     <span class="ft-dot"></span>
-    TCS CloudNexus AI &bull; OpenShift Intelligence Platform &bull; Powered by MCP + Azure OpenAI + ACM + Ansible + ServiceNow
+    TCS CloudNexus AI &bull; Kubernetes Intelligence Platform &bull; Powered by AI Hub + Multi-LLM + ACM + Ansible + ServiceNow
   </div>
   <div class="footer-right">&copy; 2026 Tata Consultancy Services. All Rights Reserved.</div>
 </div>
