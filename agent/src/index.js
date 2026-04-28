@@ -1,0 +1,168 @@
+/**
+ * TCS CloudNexus AI — Kubernetes Cluster Agent
+ *
+ * Lightweight agent that runs inside a target Kubernetes cluster,
+ * scans for health/issues, and reports back to the CloudNexus AI Hub.
+ *
+ * Environment variables:
+ *   HUB_SERVER_URL      - CloudNexus hub URL (default: http://localhost:3000)
+ *   CLUSTER_NAME         - Name of this cluster (default: unknown)
+ *   CLUSTER_PLATFORM     - openshift | rancher | eks | aks | gke | k8s
+ *   SCAN_INTERVAL        - Seconds between scans (default: 60)
+ *   LOG_LEVEL            - info | debug | error (default: info)
+ *   PORT                 - Health endpoint port (default: 8080)
+ */
+
+import { createServer } from "node:http";
+import { scanCluster, clearTokenCache } from "./scanner.js";
+import { registerWithHub, sendReport, getReporterStatus } from "./reporter.js";
+
+const PORT = parseInt(process.env.PORT || "8080", 10);
+const SCAN_INTERVAL = parseInt(process.env.SCAN_INTERVAL || "60", 10) * 1000;
+const PLATFORM = process.env.CLUSTER_PLATFORM || "k8s";
+const CLUSTER_NAME = process.env.CLUSTER_NAME || "unknown";
+const LOG_LEVEL = process.env.LOG_LEVEL || "info";
+
+let _lastScan = null;
+let _lastScanTime = null;
+let _scanCount = 0;
+let _errorCount = 0;
+let _ready = false;
+let _timer = null;
+
+function log(level, ...args) {
+  if (level === "debug" && LOG_LEVEL !== "debug") return;
+  const ts = new Date().toISOString();
+  console.log(`${ts} [${level.toUpperCase()}]`, ...args);
+}
+
+async function runScan() {
+  const start = Date.now();
+  try {
+    log("info", `Scanning cluster "${CLUSTER_NAME}" (${PLATFORM})...`);
+    _lastScan = await scanCluster(PLATFORM);
+    _lastScanTime = new Date().toISOString();
+    _scanCount++;
+    const elapsed = Date.now() - start;
+    const issues = _lastScan.pods?.issues?.length || 0;
+    log("info", `Scan complete in ${elapsed}ms — ${_lastScan.nodes.total} nodes, ${_lastScan.pods.total} pods, ${issues} issues, ${_lastScan.events.warnings} warnings`);
+
+    await sendReport(_lastScan);
+  } catch (err) {
+    _errorCount++;
+    log("error", `Scan failed: ${err.message}`);
+    clearTokenCache();
+  }
+}
+
+function buildStatusResponse() {
+  const reporter = getReporterStatus();
+  return {
+    agent: "cloudnexus-agent",
+    version: "1.0.0",
+    cluster: CLUSTER_NAME,
+    platform: PLATFORM,
+    uptime: Math.floor(process.uptime()),
+    scanCount: _scanCount,
+    errorCount: _errorCount,
+    lastScanTime: _lastScanTime,
+    hub: reporter,
+    summary: _lastScan
+      ? {
+          nodes: `${_lastScan.nodes.ready}/${_lastScan.nodes.total} ready`,
+          pods: `${_lastScan.pods.running} running, ${_lastScan.pods.failed} failed, ${_lastScan.pods.pending} pending`,
+          issues: _lastScan.pods.issues.length,
+          warnings: _lastScan.events.warnings,
+          namespaces: _lastScan.namespaces,
+          openshiftVersion: _lastScan.openshiftVersion || undefined,
+        }
+      : null,
+  };
+}
+
+const server = createServer((req, res) => {
+  const url = new URL(req.url, `http://localhost:${PORT}`);
+
+  if (url.pathname === "/healthz") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "ok", uptime: Math.floor(process.uptime()) }));
+    return;
+  }
+
+  if (url.pathname === "/readyz") {
+    if (_ready) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "ready", scanCount: _scanCount }));
+    } else {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "not ready" }));
+    }
+    return;
+  }
+
+  if (url.pathname === "/status") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(buildStatusResponse(), null, 2));
+    return;
+  }
+
+  if (url.pathname === "/scan" && req.method === "GET") {
+    if (_lastScan) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ scan: _lastScan, scannedAt: _lastScanTime }));
+    } else {
+      res.writeHead(204);
+      res.end();
+    }
+    return;
+  }
+
+  if (url.pathname === "/scan" && req.method === "POST") {
+    runScan().then(() => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ triggered: true, scanCount: _scanCount }));
+    });
+    return;
+  }
+
+  res.writeHead(404, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: "Not found" }));
+});
+
+async function start() {
+  log("info", "===========================================");
+  log("info", "  TCS CloudNexus AI — Cluster Agent v1.0.0");
+  log("info", "===========================================");
+  log("info", `Cluster:   ${CLUSTER_NAME}`);
+  log("info", `Platform:  ${PLATFORM}`);
+  log("info", `Scan interval: ${SCAN_INTERVAL / 1000}s`);
+  log("info", `Hub URL:   ${process.env.HUB_SERVER_URL || "(not set)"}`);
+
+  await registerWithHub();
+
+  await runScan();
+  _ready = true;
+
+  _timer = setInterval(runScan, SCAN_INTERVAL);
+
+  server.listen(PORT, "0.0.0.0", () => {
+    log("info", `Health endpoints on :${PORT} — /healthz /readyz /status /scan`);
+  });
+}
+
+process.on("SIGTERM", () => {
+  log("info", "SIGTERM received, shutting down...");
+  clearInterval(_timer);
+  server.close(() => process.exit(0));
+});
+
+process.on("SIGINT", () => {
+  log("info", "SIGINT received, shutting down...");
+  clearInterval(_timer);
+  server.close(() => process.exit(0));
+});
+
+start().catch((err) => {
+  log("error", `Fatal: ${err.message}`);
+  process.exit(1);
+});

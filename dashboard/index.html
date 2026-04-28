@@ -4478,7 +4478,7 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   yaml += '      serviceAccountName: cloudnexus-agent\n';
   yaml += '      containers:\n';
   yaml += '        - name: agent\n';
-  yaml += '          image: registry.tcs.com/cloudnexus/agent:latest\n';
+  yaml += '          image: quay.io/cskaruppu/cloudnexus-agent:latest\n';
   yaml += '          envFrom:\n';
   yaml += '            - configMapRef:\n';
   yaml += '                name: cloudnexus-agent-config\n';
@@ -4585,17 +4585,25 @@ function hubChatWithCluster(clusterId, clusterName) {
   }
 }
 
+var _remoteAgents = {};
+
 async function loadHubView() {
   try {
-    var [sRes, tRes] = await Promise.all([
+    var [sRes, tRes, aRes] = await Promise.all([
       fetch(MCP_API + '/hub/servers').then(r => r.json()),
       fetch(MCP_API + '/hub/tools').then(r => r.json()),
+      fetch(MCP_API + '/agent/status').then(r => r.json()).catch(function() { return { agents: [] }; }),
     ]);
     _hubServers = sRes.servers || [];
     _hubTools = tRes.tools || [];
+    _remoteAgents = {};
+    (aRes.agents || []).forEach(function(a) { _remoteAgents[a.clusterName] = a; });
     var clustersEl = document.getElementById('hub-count-clusters');
     var toolsEl = document.getElementById('hub-count-tools');
-    if (clustersEl) clustersEl.textContent = _hubServers.length;
+    var totalClusters = _hubServers.length + Object.keys(_remoteAgents).length;
+    var uniqueNames = new Set(_hubServers.map(function(s) { return s.name; }));
+    Object.keys(_remoteAgents).forEach(function(n) { uniqueNames.add(n); });
+    if (clustersEl) clustersEl.textContent = uniqueNames.size;
     if (toolsEl) toolsEl.textContent = _hubTools.length;
     renderHubServers();
     renderHubTools();
@@ -4655,6 +4663,40 @@ function renderHubServers() {
       '</div>' +
     '</div>';
   }).join('');
+
+  // Append remote agent-only clusters (not already in hub servers)
+  var hubNames = new Set(_hubServers.map(function(s) { return s.name; }));
+  for (var agentName in _remoteAgents) {
+    if (hubNames.has(agentName)) continue;
+    var a = _remoteAgents[agentName];
+    var ap = K8S_PLATFORMS[a.platform] || K8S_PLATFORMS['k8s'];
+    var aColor = a.status === 'live' ? '#22c55e' : a.status === 'stale' ? '#f59e0b' : '#6366f1';
+    var aLabel = a.status === 'live' ? 'Live' : a.status === 'stale' ? 'Stale' : 'Registered';
+    var aPulse = a.status === 'live' ? 'animation:pulse 2s infinite' : '';
+    el.innerHTML += '<div class="card" style="position:relative;border-left:3px solid ' + ap.color + ';border-top:1px solid ' + ap.color + '22;overflow:hidden">' +
+      '<div style="position:absolute;top:0;right:0;width:60px;height:60px;background:radial-gradient(circle at top right,' + ap.color + '10,transparent);pointer-events:none"></div>' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">' +
+        '<div style="width:36px;height:36px;border-radius:8px;background:' + ap.color + '15;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">' + ap.icon + '</div>' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-weight:700;font-size:14px;color:' + ap.color + '">' + esc(a.clusterName) + '</div>' +
+          '<div style="font-size:10px;color:var(--text2)">' + ap.name + ' &bull; Remote Agent</div>' +
+        '</div>' +
+        '<div style="background:' + aColor + '15;border:1px solid ' + aColor + '33;border-radius:6px;padding:4px 10px;display:flex;align-items:center;gap:4px;flex-shrink:0">' +
+          '<span style="width:7px;height:7px;border-radius:50%;background:' + aColor + ';display:inline-block;' + aPulse + '"></span>' +
+          '<span style="font-size:10px;font-weight:600;color:' + aColor + '">' + aLabel + '</span>' +
+        '</div>' +
+      '</div>' +
+      (a.summary ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
+        '<span style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--text2)">Nodes: ' + a.summary.nodes + '</span>' +
+        '<span style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--text2)">Pods: ' + a.summary.pods + '</span>' +
+        (a.summary.issues > 0 ? '<span style="background:#ef444415;border:1px solid #ef444433;border-radius:4px;padding:2px 8px;font-size:10px;color:#ef4444">' + a.summary.issues + ' issues</span>' : '') +
+        (a.summary.warnings > 0 ? '<span style="background:#f59e0b15;border:1px solid #f59e0b33;border-radius:4px;padding:2px 8px;font-size:10px;color:#f59e0b">' + a.summary.warnings + ' warnings</span>' : '') +
+      '</div>' : '') +
+      '<div style="display:flex;gap:6px;border-top:1px solid var(--border);padding-top:10px">' +
+        '<button onclick="hubChatWithCluster(\'agent-' + esc(a.clusterName) + '\',\'' + esc(a.clusterName) + '\')" style="background:linear-gradient(135deg,' + ap.color + ',' + ap.color + 'cc);color:#fff;border:none;border-radius:5px;padding:5px 14px;cursor:pointer;font-size:11px;font-weight:600;display:flex;align-items:center;gap:4px">&#x1F4AC; AI Chat</button>' +
+      '</div>' +
+    '</div>';
+  }
 }
 
 function renderHubTools() {

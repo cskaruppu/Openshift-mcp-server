@@ -189,6 +189,8 @@ async function startStdio() {
 // Returns 503 if the DB is not configured; the dashboard then falls back to
 // browser localStorage.
 // ---------------------------------------------------------------------------
+const _connectedAgents = new Map();
+
 function sendJson(res, status, body) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
@@ -710,6 +712,71 @@ async function startSSE() {
         knowledgeBase: kbGetStats(),
         automationRules: listRules().length,
         monitoring: isMonitorRunning(),
+      });
+    }
+
+    // -----------------------------------------------------------------------
+    // Agent API — receives reports from remote CloudNexus agents on clusters
+    // -----------------------------------------------------------------------
+    if (url.pathname === "/api/agent/register" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const { clusterName, platform, agentVersion, capabilities } = body;
+      if (!clusterName) return sendJson(res, 400, { error: "clusterName required" });
+      _connectedAgents.set(clusterName, {
+        clusterName, platform, agentVersion, capabilities,
+        registeredAt: new Date().toISOString(),
+        lastReport: null, status: "registered",
+      });
+      console.error(`[agent] Registered: ${clusterName} (${platform}) agent v${agentVersion}`);
+      return sendJson(res, 200, { ok: true, message: `Agent "${clusterName}" registered` });
+    }
+
+    if (url.pathname === "/api/agent/report" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const { clusterName, platform, report } = body;
+      if (!clusterName || !report) return sendJson(res, 400, { error: "clusterName and report required" });
+      const agent = _connectedAgents.get(clusterName) || { clusterName, platform };
+      agent.lastReport = report;
+      agent.lastReportTime = new Date().toISOString();
+      agent.status = "live";
+      _connectedAgents.set(clusterName, agent);
+      const issues = report.pods?.issues?.length || 0;
+      if (issues > 0) {
+        console.error(`[agent] ${clusterName}: ${issues} issues detected`);
+      }
+      return sendJson(res, 200, { ok: true, received: clusterName });
+    }
+
+    if (url.pathname === "/api/agent/status" && req.method === "GET") {
+      const agents = [];
+      for (const [, agent] of _connectedAgents) {
+        const elapsed = agent.lastReportTime
+          ? (Date.now() - new Date(agent.lastReportTime).getTime()) / 1000
+          : null;
+        agents.push({
+          ...agent,
+          status: elapsed !== null && elapsed < 300 ? "live" : elapsed !== null ? "stale" : "registered",
+          lastReport: undefined,
+          summary: agent.lastReport ? {
+            nodes: `${agent.lastReport.nodes?.ready || 0}/${agent.lastReport.nodes?.total || 0}`,
+            pods: agent.lastReport.pods?.total || 0,
+            issues: agent.lastReport.pods?.issues?.length || 0,
+            warnings: agent.lastReport.events?.warnings || 0,
+          } : null,
+        });
+      }
+      return sendJson(res, 200, { agents });
+    }
+
+    if (url.pathname.startsWith("/api/agent/scan/") && req.method === "GET") {
+      const name = decodeURIComponent(url.pathname.split("/api/agent/scan/")[1]);
+      const agent = _connectedAgents.get(name);
+      if (!agent) return sendJson(res, 404, { error: "Agent not found" });
+      return sendJson(res, 200, {
+        clusterName: agent.clusterName,
+        platform: agent.platform,
+        lastReportTime: agent.lastReportTime,
+        report: agent.lastReport,
       });
     }
 
