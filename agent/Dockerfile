@@ -22,6 +22,7 @@ USER 1001
 
 ENV NODE_ENV=production
 ENV PORT=8080
+ENV NODE_EXTRA_CA_CERTS=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
 
 EXPOSE 8080
 

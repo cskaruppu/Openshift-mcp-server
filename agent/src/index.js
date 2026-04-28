@@ -11,11 +11,21 @@
  *   SCAN_INTERVAL        - Seconds between scans (default: 60)
  *   LOG_LEVEL            - info | debug | error (default: info)
  *   PORT                 - Health endpoint port (default: 8080)
+ *   NODE_EXTRA_CA_CERTS  - Path to CA bundle for TLS (auto-set if not provided)
  */
 
 import { createServer } from "node:http";
+import { existsSync } from "node:fs";
 import { scanCluster, clearTokenCache } from "./scanner.js";
 import { registerWithHub, sendReport, getReporterStatus } from "./reporter.js";
+
+// Auto-configure TLS CA from in-cluster service account if not already set
+if (!process.env.NODE_EXTRA_CA_CERTS) {
+  const saCA = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
+  if (existsSync(saCA)) {
+    process.env.NODE_EXTRA_CA_CERTS = saCA;
+  }
+}
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
 const SCAN_INTERVAL = parseInt(process.env.SCAN_INTERVAL || "60", 10) * 1000;

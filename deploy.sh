@@ -27,7 +27,7 @@ set -euo pipefail
 
 NS="${1:-openshift-mcp}"
 BUILD=false
-IMAGE="quay.io/your-org/openshift-mcp-server:latest"
+IMAGE="quay.io/karuppucs/openshift-mcp-server:latest"
 
 for arg in "$@"; do
   case "$arg" in

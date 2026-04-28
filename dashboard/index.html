@@ -4712,6 +4712,9 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('        - name: agent');
   lines.push('          image: quay.io/karuppucs/cloudnexus-agent:latest');
   lines.push('          imagePullPolicy: Always');
+  lines.push('          env:');
+  lines.push('            - name: NODE_EXTRA_CA_CERTS');
+  lines.push('              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt');
   lines.push('          envFrom:');
   lines.push('            - configMapRef:');
   lines.push('                name: cloudnexus-agent-config');

@@ -32,7 +32,7 @@ spec:
             value: "2"
       containers:
         - name: mcp-server
-          image: quay.io/your-org/openshift-mcp-server:latest
+          image: quay.io/karuppucs/openshift-mcp-server:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
