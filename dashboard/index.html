@@ -27,6 +27,8 @@ body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--
 .header .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);animation:pulse 2s infinite}
 .header .dot.err{background:var(--crit);animation:none}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes hub-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+.hub-spin{display:inline-block;animation:hub-spin 1s linear infinite}
 .container{max-width:1440px;margin:0 auto;padding:24px}
 .grid{display:grid;gap:20px}
 .grid-4{grid-template-columns:repeat(4,1fr)}
@@ -1264,23 +1266,25 @@ tr:hover td{background:#ffffff06}
 <!-- AI Hub View -->
 <div id="view-hub" class="container" style="display:none">
   <!-- Hub Header with gradient accent -->
-  <div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;padding:16px 20px;background:linear-gradient(135deg,#0f172a,#1e293b);border-radius:12px;border:1px solid #334155">
+  <div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;padding:20px 24px;background:linear-gradient(135deg,#0f172a 0%,#1e1b4b 50%,#1e293b 100%);border-radius:14px;border:1px solid #334155;position:relative;overflow:hidden">
+    <div style="position:absolute;top:-20px;right:-20px;width:120px;height:120px;background:radial-gradient(circle,#6366f115,transparent);border-radius:50%"></div>
+    <div style="position:absolute;bottom:-30px;left:40%;width:180px;height:80px;background:radial-gradient(ellipse,#e0404010,transparent);border-radius:50%"></div>
     <div>
-      <div style="font-size:20px;font-weight:700;color:#f8fafc;letter-spacing:-.5px">AI Hub</div>
-      <div style="font-size:12px;color:#94a3b8;margin-top:4px">Centralized Kubernetes Intelligence — Connect, Monitor, and Manage All Clusters</div>
+      <div style="font-size:22px;font-weight:800;color:#f8fafc;letter-spacing:-.5px">AI Hub</div>
+      <div style="font-size:12px;color:#94a3b8;margin-top:4px">Centralized Kubernetes Intelligence &mdash; Connect, Monitor, and Manage All Clusters</div>
     </div>
-    <div style="margin-left:auto;display:flex;gap:10px;align-items:center">
-      <div style="background:#22c55e22;border:1px solid #22c55e44;border-radius:8px;padding:8px 16px;text-align:center">
-        <div style="font-size:18px;font-weight:700;color:#22c55e" id="hub-count-clusters">1</div>
-        <div style="font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px">Clusters</div>
+    <div style="margin-left:auto;display:flex;gap:10px;align-items:center;z-index:1">
+      <div style="background:#22c55e15;border:1px solid #22c55e33;border-radius:10px;padding:10px 18px;text-align:center;backdrop-filter:blur(4px)">
+        <div style="font-size:22px;font-weight:800;color:#22c55e" id="hub-count-clusters">1</div>
+        <div style="font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-top:2px">Clusters</div>
       </div>
-      <div style="background:#6366f122;border:1px solid #6366f144;border-radius:8px;padding:8px 16px;text-align:center">
-        <div style="font-size:18px;font-weight:700;color:#818cf8" id="hub-count-tools">0</div>
-        <div style="font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px">Tools</div>
+      <div style="background:#6366f115;border:1px solid #6366f133;border-radius:10px;padding:10px 18px;text-align:center;backdrop-filter:blur(4px)">
+        <div style="font-size:22px;font-weight:800;color:#818cf8" id="hub-count-tools">0</div>
+        <div style="font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-top:2px">Capabilities</div>
       </div>
-      <div style="background:#f59e0b22;border:1px solid #f59e0b44;border-radius:8px;padding:8px 16px;text-align:center">
-        <div style="font-size:18px;font-weight:700;color:#fbbf24" id="hub-count-llm">0</div>
-        <div style="font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px">LLM Active</div>
+      <div style="background:#f59e0b15;border:1px solid #f59e0b33;border-radius:10px;padding:10px 18px;text-align:center;backdrop-filter:blur(4px)">
+        <div style="font-size:22px;font-weight:800;color:#fbbf24" id="hub-count-llm">0</div>
+        <div style="font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-top:2px">LLM Active</div>
       </div>
     </div>
   </div>
@@ -1290,16 +1294,16 @@ tr:hover td{background:#ffffff06}
     <div class="section-title" style="font-size:15px;margin:0">Kubernetes Clusters</div>
     <span style="font-size:11px;color:var(--text2)">Connected platforms with CloudNexus agent</span>
   </div>
-  <div id="hub-servers-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;margin-bottom:24px">
+  <div id="hub-servers-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(370px,1fr));gap:14px;margin-bottom:28px">
     <div class="card" style="opacity:.5;text-align:center;padding:30px">Loading clusters...</div>
   </div>
 
   <!-- Add Kubernetes Cluster -->
   <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
     <div class="section-title" style="font-size:15px;margin:0">Add Kubernetes Cluster</div>
-    <span style="font-size:11px;color:var(--text2)">Deploy CloudNexus agent and connect</span>
+    <span style="font-size:11px;color:var(--text2)">Select platform to generate agent YAML and connect</span>
   </div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:24px">
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:24px">
     <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:all .2s;text-align:center;padding:18px" onclick="hubAddCluster('openshift')" onmouseover="this.style.borderColor='#e04040';this.style.background='#e0404008'" onmouseout="this.style.borderColor='var(--border)';this.style.background=''">
       <div style="font-size:28px;margin-bottom:6px">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="#e04040"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
@@ -1336,11 +1340,17 @@ tr:hover td{background:#ffffff06}
 
   <!-- Agent Install Dialog (hidden by default) -->
   <div id="hub-cluster-dialog" style="display:none;margin-bottom:24px" class="card">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
-      <span style="font-weight:600;font-size:14px" id="hub-cluster-dialog-title">Connect Cluster</span>
-      <button onclick="document.getElementById('hub-cluster-dialog').style.display='none'" style="margin-left:auto;background:none;border:none;color:var(--text2);cursor:pointer;font-size:16px">&times;</button>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+      <span style="font-weight:700;font-size:15px" id="hub-cluster-dialog-title">Connect Cluster</span>
+      <button onclick="document.getElementById('hub-cluster-dialog').style.display='none'" style="margin-left:auto;background:none;border:none;color:var(--text2);cursor:pointer;font-size:18px">&times;</button>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+
+    <!-- Step 1: Cluster Details -->
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:12px">
+      <span style="background:var(--accent);color:#fff;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0">1</span>
+      <span style="font-size:12px;font-weight:600;color:var(--text)">Cluster Connection Details</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;margin-left:26px">
       <div>
         <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Cluster Name</label>
         <input type="text" id="hub-cluster-name" placeholder="e.g. production-ocp, staging-eks" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none">
@@ -1350,17 +1360,32 @@ tr:hover td{background:#ffffff06}
         <input type="text" id="hub-cluster-url" placeholder="https://api.cluster.example.com:6443" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none">
       </div>
     </div>
-    <div style="margin-bottom:14px">
+    <div style="margin-bottom:16px;margin-left:26px">
       <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Bearer Token / Kubeconfig</label>
       <textarea id="hub-cluster-token" rows="3" placeholder="Paste bearer token or kubeconfig YAML..." style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:11px;font-family:monospace;outline:none;resize:vertical"></textarea>
     </div>
-    <div style="margin-bottom:14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px">
-      <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:8px">Deploy CloudNexus Agent on this cluster:</div>
-      <code id="hub-agent-install-cmd" style="display:block;font-size:11px;color:var(--accent);word-break:break-all;line-height:1.6"></code>
-      <button onclick="navigator.clipboard.writeText(document.getElementById('hub-agent-install-cmd').textContent)" style="margin-top:8px;background:none;border:1px solid var(--border);border-radius:4px;padding:4px 10px;color:var(--text);cursor:pointer;font-size:10px">Copy Command</button>
+
+    <!-- Step 2: Agent YAML -->
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:12px">
+      <span style="background:var(--accent2);color:#fff;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0">2</span>
+      <span style="font-size:12px;font-weight:600;color:var(--text)">Deploy CloudNexus Agent</span>
+      <span style="font-size:10px;color:var(--text2);margin-left:4px">Apply this YAML to your target cluster</span>
     </div>
-    <div style="display:flex;gap:8px;align-items:center">
-      <button onclick="hubConnectCluster()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;font-size:12px;font-weight:600">Connect Cluster</button>
+    <div style="margin-left:26px;margin-bottom:16px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:#161b22;border-bottom:1px solid #30363d">
+        <span style="font-size:11px;font-weight:600;color:#58a6ff" id="hub-yaml-filename">cloudnexus-agent.yaml</span>
+        <button onclick="navigator.clipboard.writeText(document.getElementById('hub-agent-yaml').textContent).then(function(){this.textContent='Copied!'}.bind(this))" style="background:none;border:1px solid #30363d;color:#8b949e;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px">Copy YAML</button>
+      </div>
+      <pre id="hub-agent-yaml" style="margin:0;padding:14px 16px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:11px;color:#c9d1d9;white-space:pre;overflow-x:auto;max-height:340px;overflow-y:auto;line-height:1.5;tab-size:2"></pre>
+    </div>
+
+    <!-- Step 3: Connect -->
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:12px">
+      <span style="background:var(--accent3);color:#fff;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0">3</span>
+      <span style="font-size:12px;font-weight:600;color:var(--text)">Verify &amp; Connect</span>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-left:26px">
+      <button onclick="hubConnectCluster()" style="background:linear-gradient(135deg,var(--accent),#c03030);color:#fff;border:none;border-radius:8px;padding:10px 28px;cursor:pointer;font-size:13px;font-weight:700;letter-spacing:.3px;transition:transform .15s" onmouseover="this.style.transform='translateY(-1px)'" onmouseout="this.style.transform=''">Connect Cluster</button>
       <span id="hub-cluster-status" style="font-size:12px;color:var(--text2)"></span>
     </div>
   </div>
@@ -1415,7 +1440,7 @@ tr:hover td{background:#ffffff06}
   <div class="card" style="margin-top:24px;border:1px solid #6366f133;background:linear-gradient(135deg,var(--card),#6366f108)">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
       <span style="font-weight:600;font-size:14px">Cross-Cluster AI Query</span>
-      <span style="font-size:11px;color:var(--text2)">Ask anything — AI orchestrates across all connected clusters</span>
+      <span style="font-size:11px;color:var(--text2)">Ask anything &mdash; AI orchestrates across all connected clusters</span>
     </div>
     <div style="display:flex;gap:8px">
       <input type="text" id="hub-orchestrator-input" placeholder="e.g. Compare pod health across all clusters, find OOMKilled pods everywhere..." style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 14px;color:var(--text);font-size:13px;outline:none" onkeydown="if(event.key==='Enter')runHubOrchestrator()">
@@ -4342,13 +4367,158 @@ var _hubTools = [];
 var _hubServers = [];
 
 var K8S_PLATFORMS = {
-  openshift: { name: 'OpenShift', color: '#e04040', icon: '⬢', version: '4.x' },
-  rancher:   { name: 'Rancher',   color: '#0075a8', icon: '🐮', version: 'RKE2' },
-  eks:       { name: 'Amazon EKS', color: '#ff9900', icon: '☁', version: 'EKS' },
-  aks:       { name: 'Azure AKS', color: '#0078d4', icon: '⛅', version: 'AKS' },
-  gke:       { name: 'Google GKE', color: '#4285f4', icon: '🌐', version: 'GKE' },
-  k8s:       { name: 'Vanilla K8s', color: '#326ce5', icon: '⚙', version: 'K8s' },
+  openshift: { name: 'OpenShift', color: '#e04040', icon: '⬢', version: '4.x', ns: 'openshift-cloudnexus', cli: 'oc' },
+  rancher:   { name: 'Rancher',   color: '#0075a8', icon: '🐮', version: 'RKE2', ns: 'cloudnexus-system', cli: 'kubectl' },
+  eks:       { name: 'Amazon EKS', color: '#ff9900', icon: '☁', version: 'EKS', ns: 'cloudnexus-system', cli: 'kubectl' },
+  aks:       { name: 'Azure AKS', color: '#0078d4', icon: '⛅', version: 'AKS', ns: 'cloudnexus-system', cli: 'kubectl' },
+  gke:       { name: 'Google GKE', color: '#4285f4', icon: '🌐', version: 'GKE', ns: 'cloudnexus-system', cli: 'kubectl' },
+  k8s:       { name: 'Vanilla K8s', color: '#326ce5', icon: '⚙', version: 'K8s', ns: 'cloudnexus-system', cli: 'kubectl' },
 };
+
+function generateAgentYAML(platform, clusterName, apiUrl) {
+  var p = K8S_PLATFORMS[platform] || K8S_PLATFORMS['k8s'];
+  var ns = p.ns;
+  var safeName = (clusterName || 'my-cluster').replace(/[^a-z0-9-]/gi, '-').toLowerCase();
+  var serverUrl = location.origin;
+  var yaml = '';
+  yaml += '# CloudNexus AI Agent — ' + p.name + '\n';
+  yaml += '# Cluster: ' + (clusterName || safeName) + '\n';
+  yaml += '# Generated: ' + new Date().toISOString().split('T')[0] + '\n';
+  yaml += '---\n';
+  yaml += 'apiVersion: v1\n';
+  yaml += 'kind: Namespace\n';
+  yaml += 'metadata:\n';
+  yaml += '  name: ' + ns + '\n';
+  yaml += '  labels:\n';
+  yaml += '    app.kubernetes.io/part-of: cloudnexus-ai\n';
+  yaml += '    app.kubernetes.io/managed-by: cloudnexus-hub\n';
+  yaml += '---\n';
+  yaml += 'apiVersion: v1\n';
+  yaml += 'kind: ServiceAccount\n';
+  yaml += 'metadata:\n';
+  yaml += '  name: cloudnexus-agent\n';
+  yaml += '  namespace: ' + ns + '\n';
+  yaml += '---\n';
+  yaml += 'apiVersion: rbac.authorization.k8s.io/v1\n';
+  yaml += 'kind: ClusterRole\n';
+  yaml += 'metadata:\n';
+  yaml += '  name: cloudnexus-agent-role\n';
+  yaml += 'rules:\n';
+  yaml += '  - apiGroups: [""]\n';
+  yaml += '    resources: [pods, services, nodes, events, namespaces,\n';
+  yaml += '                configmaps, persistentvolumeclaims]\n';
+  yaml += '    verbs: [get, list, watch]\n';
+  yaml += '  - apiGroups: [apps]\n';
+  yaml += '    resources: [deployments, statefulsets, daemonsets, replicasets]\n';
+  yaml += '    verbs: [get, list, watch]\n';
+  yaml += '  - apiGroups: [batch]\n';
+  yaml += '    resources: [jobs, cronjobs]\n';
+  yaml += '    verbs: [get, list, watch]\n';
+  yaml += '  - apiGroups: [networking.k8s.io]\n';
+  yaml += '    resources: [ingresses, networkpolicies]\n';
+  yaml += '    verbs: [get, list, watch]\n';
+  yaml += '  - apiGroups: [metrics.k8s.io]\n';
+  yaml += '    resources: [pods, nodes]\n';
+  yaml += '    verbs: [get, list]\n';
+  if (platform === 'openshift') {
+    yaml += '  - apiGroups: [route.openshift.io]\n';
+    yaml += '    resources: [routes]\n';
+    yaml += '    verbs: [get, list, watch]\n';
+    yaml += '  - apiGroups: [apps.openshift.io]\n';
+    yaml += '    resources: [deploymentconfigs]\n';
+    yaml += '    verbs: [get, list, watch]\n';
+    yaml += '  - apiGroups: [project.openshift.io]\n';
+    yaml += '    resources: [projects]\n';
+    yaml += '    verbs: [get, list]\n';
+  }
+  yaml += '---\n';
+  yaml += 'apiVersion: rbac.authorization.k8s.io/v1\n';
+  yaml += 'kind: ClusterRoleBinding\n';
+  yaml += 'metadata:\n';
+  yaml += '  name: cloudnexus-agent-binding\n';
+  yaml += 'roleRef:\n';
+  yaml += '  apiGroup: rbac.authorization.k8s.io\n';
+  yaml += '  kind: ClusterRole\n';
+  yaml += '  name: cloudnexus-agent-role\n';
+  yaml += 'subjects:\n';
+  yaml += '  - kind: ServiceAccount\n';
+  yaml += '    name: cloudnexus-agent\n';
+  yaml += '    namespace: ' + ns + '\n';
+  yaml += '---\n';
+  yaml += 'apiVersion: v1\n';
+  yaml += 'kind: ConfigMap\n';
+  yaml += 'metadata:\n';
+  yaml += '  name: cloudnexus-agent-config\n';
+  yaml += '  namespace: ' + ns + '\n';
+  yaml += 'data:\n';
+  yaml += '  HUB_SERVER_URL: "' + serverUrl + '"\n';
+  yaml += '  CLUSTER_NAME: "' + safeName + '"\n';
+  yaml += '  CLUSTER_PLATFORM: "' + platform + '"\n';
+  yaml += '  SCAN_INTERVAL: "60"\n';
+  yaml += '  LOG_LEVEL: "info"\n';
+  yaml += '---\n';
+  yaml += 'apiVersion: apps/v1\n';
+  yaml += 'kind: Deployment\n';
+  yaml += 'metadata:\n';
+  yaml += '  name: cloudnexus-agent\n';
+  yaml += '  namespace: ' + ns + '\n';
+  yaml += '  labels:\n';
+  yaml += '    app: cloudnexus-agent\n';
+  yaml += '    app.kubernetes.io/part-of: cloudnexus-ai\n';
+  yaml += 'spec:\n';
+  yaml += '  replicas: 1\n';
+  yaml += '  selector:\n';
+  yaml += '    matchLabels:\n';
+  yaml += '      app: cloudnexus-agent\n';
+  yaml += '  template:\n';
+  yaml += '    metadata:\n';
+  yaml += '      labels:\n';
+  yaml += '        app: cloudnexus-agent\n';
+  yaml += '    spec:\n';
+  yaml += '      serviceAccountName: cloudnexus-agent\n';
+  yaml += '      containers:\n';
+  yaml += '        - name: agent\n';
+  yaml += '          image: registry.tcs.com/cloudnexus/agent:latest\n';
+  yaml += '          envFrom:\n';
+  yaml += '            - configMapRef:\n';
+  yaml += '                name: cloudnexus-agent-config\n';
+  yaml += '          ports:\n';
+  yaml += '            - containerPort: 8080\n';
+  yaml += '              name: http\n';
+  yaml += '          resources:\n';
+  yaml += '            requests:\n';
+  yaml += '              cpu: 100m\n';
+  yaml += '              memory: 128Mi\n';
+  yaml += '            limits:\n';
+  yaml += '              cpu: 500m\n';
+  yaml += '              memory: 256Mi\n';
+  yaml += '          livenessProbe:\n';
+  yaml += '            httpGet:\n';
+  yaml += '              path: /healthz\n';
+  yaml += '              port: 8080\n';
+  yaml += '            initialDelaySeconds: 10\n';
+  yaml += '            periodSeconds: 30\n';
+  yaml += '          readinessProbe:\n';
+  yaml += '            httpGet:\n';
+  yaml += '              path: /readyz\n';
+  yaml += '              port: 8080\n';
+  yaml += '            initialDelaySeconds: 5\n';
+  yaml += '            periodSeconds: 10\n';
+  yaml += '---\n';
+  yaml += 'apiVersion: v1\n';
+  yaml += 'kind: Service\n';
+  yaml += 'metadata:\n';
+  yaml += '  name: cloudnexus-agent\n';
+  yaml += '  namespace: ' + ns + '\n';
+  yaml += 'spec:\n';
+  yaml += '  selector:\n';
+  yaml += '    app: cloudnexus-agent\n';
+  yaml += '  ports:\n';
+  yaml += '    - port: 8080\n';
+  yaml += '      targetPort: 8080\n';
+  yaml += '      name: http\n';
+  return yaml;
+}
 
 function hubAddCluster(platform) {
   var info = K8S_PLATFORMS[platform] || K8S_PLATFORMS['k8s'];
@@ -4361,9 +4531,19 @@ function hubAddCluster(platform) {
   document.getElementById('hub-cluster-url').value = '';
   document.getElementById('hub-cluster-token').value = '';
   document.getElementById('hub-cluster-status').textContent = '';
-  var cmd = 'kubectl apply -f https://cloudnexus.tcs.com/agent/' + platform + '/install.yaml';
-  document.getElementById('hub-agent-install-cmd').textContent = cmd;
-  document.getElementById('hub-cluster-name').focus();
+  document.getElementById('hub-yaml-filename').textContent = 'cloudnexus-agent-' + platform + '.yaml';
+  var yaml = generateAgentYAML(platform, '', '');
+  document.getElementById('hub-agent-yaml').textContent = yaml;
+
+  var nameInput = document.getElementById('hub-cluster-name');
+  var urlInput = document.getElementById('hub-cluster-url');
+  var updateYaml = function() {
+    var y = generateAgentYAML(platform, nameInput.value.trim(), urlInput.value.trim());
+    document.getElementById('hub-agent-yaml').textContent = y;
+  };
+  nameInput.oninput = updateYaml;
+  urlInput.oninput = updateYaml;
+  nameInput.focus();
 }
 
 async function hubConnectCluster() {
@@ -4377,7 +4557,7 @@ async function hubConnectCluster() {
   if (!name) { statusEl.innerHTML = '<span style="color:#ef4444">Please enter a cluster name</span>'; return; }
   if (!url) { statusEl.innerHTML = '<span style="color:#ef4444">Please enter the API server URL</span>'; return; }
 
-  statusEl.innerHTML = '<span style="color:var(--accent)">Connecting to cluster...</span>';
+  statusEl.innerHTML = '<span style="color:var(--warn)"><span class="hub-spin">&#x21BB;</span> Connecting to cluster...</span>';
   try {
     var config = { name: name, type: 'sse', url: url, platform: platform };
     if (token) config.token = token;
@@ -4388,11 +4568,20 @@ async function hubConnectCluster() {
     });
     var data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Failed to connect');
-    statusEl.innerHTML = '<span style="color:#22c55e">✔ Connected! ' + (data.server?.toolCount || 0) + ' capabilities discovered</span>';
-    dialog.style.display = 'none';
+    statusEl.innerHTML = '<span style="color:#22c55e">&#x2714; Connected! ' + (data.server?.toolCount || 0) + ' capabilities discovered</span>';
+    setTimeout(function() { dialog.style.display = 'none'; }, 1500);
     loadHubView();
   } catch (e) {
-    statusEl.innerHTML = '<span style="color:#ef4444">Error: ' + esc(e.message) + '</span>';
+    statusEl.innerHTML = '<span style="color:#ef4444">&#x2716; Error: ' + esc(e.message) + '</span>';
+  }
+}
+
+function hubChatWithCluster(clusterId, clusterName) {
+  showView('chat');
+  var input = document.getElementById('chat-input') || document.querySelector('.chat-input input');
+  if (input) {
+    input.value = 'Analyze cluster "' + clusterName + '" — show me overall health, any critical pods, resource usage, and recent warning events.';
+    input.focus();
   }
 }
 
@@ -4418,38 +4607,52 @@ async function loadHubView() {
 
 function renderHubServers() {
   var el = document.getElementById('hub-servers-list');
-  if (!_hubServers.length) { el.innerHTML = '<div class="card" style="opacity:.5;text-align:center;padding:30px">No clusters connected yet. Add a Kubernetes cluster above.</div>'; return; }
+  if (!_hubServers.length) { el.innerHTML = '<div class="card" style="opacity:.5;text-align:center;padding:30px">No clusters connected yet. Select a platform below to get started.</div>'; return; }
   el.innerHTML = _hubServers.map(function(s) {
-    var statusColor = s.status === 'connected' ? '#22c55e' : '#ef4444';
-    var statusLabel = s.status === 'connected' ? 'Online' : 'Offline';
     var isBuiltin = s.id === 'builtin';
     var platform = s.platform || (isBuiltin ? 'openshift' : 'k8s');
     var pInfo = K8S_PLATFORMS[platform] || K8S_PLATFORMS['k8s'];
-    return '<div class="card" style="position:relative;border-left:3px solid ' + pInfo.color + ';border-top:1px solid ' + pInfo.color + '33">' +
-      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">' +
-        '<span style="font-size:18px">' + pInfo.icon + '</span>' +
-        '<div style="flex:1">' +
-          '<div style="font-weight:700;font-size:13px;color:' + pInfo.color + '">' + esc(s.name) + '</div>' +
-          '<div style="font-size:10px;color:var(--text2)">' + pInfo.name + '</div>' +
+
+    var statusColor, statusLabel, statusIcon, statusBg, statusPulse;
+    if (s.status === 'connected') {
+      statusColor = '#22c55e'; statusLabel = 'Live'; statusIcon = '&#x2714;';
+      statusBg = '#22c55e15'; statusPulse = 'animation:pulse 2s infinite';
+    } else if (s.status === 'connecting') {
+      statusColor = '#f59e0b'; statusLabel = 'Connecting'; statusIcon = '&#x21BB;';
+      statusBg = '#f59e0b15'; statusPulse = 'animation:pulse 1s infinite';
+    } else {
+      statusColor = '#ef4444'; statusLabel = 'Failed'; statusIcon = '&#x2716;';
+      statusBg = '#ef444415'; statusPulse = '';
+    }
+
+    return '<div class="card" style="position:relative;border-left:3px solid ' + pInfo.color + ';border-top:1px solid ' + pInfo.color + '22;overflow:hidden">' +
+      '<div style="position:absolute;top:0;right:0;width:60px;height:60px;background:radial-gradient(circle at top right,' + pInfo.color + '10,transparent);pointer-events:none"></div>' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">' +
+        '<div style="width:36px;height:36px;border-radius:8px;background:' + pInfo.color + '15;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">' + pInfo.icon + '</div>' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-weight:700;font-size:14px;color:' + pInfo.color + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(s.name) + '</div>' +
+          '<div style="font-size:10px;color:var(--text2)">' + pInfo.name + ' ' + pInfo.version + '</div>' +
         '</div>' +
-        '<div style="display:flex;align-items:center;gap:4px">' +
-          '<span style="width:6px;height:6px;border-radius:50%;background:' + statusColor + ';display:inline-block"></span>' +
-          '<span style="font-size:10px;color:' + statusColor + '">' + statusLabel + '</span>' +
+        '<div style="background:' + statusBg + ';border:1px solid ' + statusColor + '33;border-radius:6px;padding:4px 10px;display:flex;align-items:center;gap:4px;flex-shrink:0">' +
+          '<span style="width:7px;height:7px;border-radius:50%;background:' + statusColor + ';display:inline-block;' + statusPulse + '"></span>' +
+          '<span style="font-size:10px;font-weight:600;color:' + statusColor + '">' + statusLabel + '</span>' +
         '</div>' +
       '</div>' +
-      (s.url ? '<div style="font-size:10px;color:var(--text2);margin-bottom:6px;word-break:break-all;font-family:monospace">' + esc(s.url) + '</div>' : '') +
-      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">' +
+      (s.url ? '<div style="font-size:10px;color:var(--text2);margin-bottom:8px;word-break:break-all;font-family:monospace;background:var(--bg);padding:4px 8px;border-radius:4px">' + esc(s.url) + '</div>' : '') +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
         '<span style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--text2)">' + s.toolCount + ' capabilities</span>' +
         (isBuiltin ? '<span style="background:#22c55e11;border:1px solid #22c55e33;border-radius:4px;padding:2px 8px;font-size:10px;color:#22c55e">Primary</span>' : '') +
+        '<span style="background:' + pInfo.color + '11;border:1px solid ' + pInfo.color + '33;border-radius:4px;padding:2px 8px;font-size:10px;color:' + pInfo.color + '">' + platform.toUpperCase() + '</span>' +
       '</div>' +
-      '<div style="font-size:10px;color:var(--text2);margin-bottom:8px">' +
+      '<div style="font-size:10px;color:var(--text2);margin-bottom:10px">' +
         (s.tools || []).slice(0, 5).map(function(t) { return '<code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:9px">' + esc(t.name) + '</code>'; }).join(' ') +
         (s.toolCount > 5 ? ' <span style="opacity:.5">+' + (s.toolCount - 5) + ' more</span>' : '') +
       '</div>' +
-      (!isBuiltin ? '<div style="display:flex;gap:6px">' +
-        '<button onclick="hubReconnectServer(\'' + esc(s.id) + '\')" style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 10px;color:var(--text);cursor:pointer;font-size:11px">Reconnect</button>' +
-        '<button onclick="hubDisconnectServer(\'' + esc(s.id) + '\')" style="background:#ef44441a;border:1px solid #ef444433;border-radius:4px;padding:4px 10px;color:#ef4444;cursor:pointer;font-size:11px">Remove</button>' +
-      '</div>' : '') +
+      '<div style="display:flex;gap:6px;border-top:1px solid var(--border);padding-top:10px">' +
+        '<button onclick="hubChatWithCluster(\'' + esc(s.id) + '\',\'' + esc(s.name) + '\')" style="background:linear-gradient(135deg,' + pInfo.color + ',' + pInfo.color + 'cc);color:#fff;border:none;border-radius:5px;padding:5px 14px;cursor:pointer;font-size:11px;font-weight:600;display:flex;align-items:center;gap:4px" title="Open AI Chat for this cluster">&#x1F4AC; AI Chat</button>' +
+        '<button onclick="hubReconnectServer(\'' + esc(s.id) + '\')" style="background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:5px 10px;color:var(--text);cursor:pointer;font-size:11px" title="Reconnect">&#x21BB; Reconnect</button>' +
+        (!isBuiltin ? '<button onclick="hubDisconnectServer(\'' + esc(s.id) + '\')" style="background:#ef44441a;border:1px solid #ef444433;border-radius:5px;padding:5px 10px;color:#ef4444;cursor:pointer;font-size:11px;margin-left:auto" title="Remove cluster">&#x2716; Remove</button>' : '') +
+      '</div>' +
     '</div>';
   }).join('');
 }
