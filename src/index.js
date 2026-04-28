@@ -716,6 +716,87 @@ async function startSSE() {
     }
 
     // -----------------------------------------------------------------------
+    // Cluster Registration — add K8s clusters via dashboard (direct API)
+    // -----------------------------------------------------------------------
+    if (url.pathname === "/api/hub/clusters" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const { name, platform, apiUrl, token } = body;
+      if (!name) return sendJson(res, 400, { error: "Cluster name is required" });
+      if (!apiUrl) return sendJson(res, 400, { error: "API server URL is required" });
+
+      let testResult = null;
+      try {
+        const testResp = await fetch(`${apiUrl}/api/v1/namespaces?limit=1`, {
+          headers: {
+            Authorization: token ? `Bearer ${token}` : undefined,
+            Accept: "application/json",
+          },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (testResp.ok) {
+          const data = await testResp.json();
+          testResult = { ok: true, namespaces: (data.items || []).length };
+        } else {
+          const errText = await testResp.text().catch(() => "");
+          testResult = { ok: false, status: testResp.status, message: errText.slice(0, 200) };
+        }
+      } catch (err) {
+        testResult = { ok: false, message: err.message };
+      }
+
+      _connectedAgents.set(name, {
+        clusterName: name,
+        platform: platform || "k8s",
+        apiUrl,
+        hasToken: !!token,
+        registeredAt: new Date().toISOString(),
+        lastReport: null,
+        lastReportTime: null,
+        status: testResult?.ok ? "live" : "registered",
+        connectionTest: testResult,
+        source: "dashboard",
+      });
+
+      console.error(`[hub] Cluster registered: ${name} (${platform}) — test: ${testResult?.ok ? "OK" : "failed"}`);
+      return sendJson(res, 200, {
+        ok: true,
+        cluster: { name, platform, status: testResult?.ok ? "live" : "registered" },
+        connectionTest: testResult,
+      });
+    }
+
+    if (url.pathname === "/api/hub/clusters" && req.method === "GET") {
+      const clusters = [];
+      for (const [, agent] of _connectedAgents) {
+        const elapsed = agent.lastReportTime
+          ? (Date.now() - new Date(agent.lastReportTime).getTime()) / 1000
+          : null;
+        clusters.push({
+          name: agent.clusterName,
+          platform: agent.platform,
+          apiUrl: agent.apiUrl,
+          status: elapsed !== null && elapsed < 300 ? "live" : agent.status || "registered",
+          registeredAt: agent.registeredAt,
+          lastReportTime: agent.lastReportTime,
+          source: agent.source || "agent",
+          summary: agent.lastReport ? {
+            nodes: `${agent.lastReport.nodes?.ready || 0}/${agent.lastReport.nodes?.total || 0}`,
+            pods: agent.lastReport.pods?.total || 0,
+            issues: agent.lastReport.pods?.issues?.length || 0,
+            warnings: agent.lastReport.events?.warnings || 0,
+          } : null,
+        });
+      }
+      return sendJson(res, 200, { clusters });
+    }
+
+    if (url.pathname.startsWith("/api/hub/clusters/") && req.method === "DELETE") {
+      const name = decodeURIComponent(url.pathname.split("/api/hub/clusters/")[1]);
+      _connectedAgents.delete(name);
+      return sendJson(res, 200, { ok: true, deleted: name });
+    }
+
+    // -----------------------------------------------------------------------
     // Agent API — receives reports from remote CloudNexus agents on clusters
     // -----------------------------------------------------------------------
     if (url.pathname === "/api/agent/register" && req.method === "POST") {

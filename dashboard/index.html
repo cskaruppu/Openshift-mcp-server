@@ -4867,26 +4867,31 @@ async function hubConnectCluster() {
   var dialog = document.getElementById('hub-cluster-dialog');
   var platform = dialog.dataset.platform || 'k8s';
   var name = document.getElementById('hub-cluster-name').value.trim();
-  var url = document.getElementById('hub-cluster-url').value.trim();
+  var apiUrl = document.getElementById('hub-cluster-url').value.trim();
   var token = document.getElementById('hub-cluster-token').value.trim();
   var statusEl = document.getElementById('hub-cluster-status');
 
   if (!name) { statusEl.innerHTML = '<span style="color:#ef4444">Please enter a cluster name</span>'; return; }
-  if (!url) { statusEl.innerHTML = '<span style="color:#ef4444">Please enter the API server URL</span>'; return; }
+  if (!apiUrl) { statusEl.innerHTML = '<span style="color:#ef4444">Please enter the API server URL</span>'; return; }
 
-  statusEl.innerHTML = '<span style="color:var(--warn)"><span class="hub-spin">&#x21BB;</span> Connecting to cluster...</span>';
+  statusEl.innerHTML = '<span style="color:var(--warn)"><span class="hub-spin">&#x21BB;</span> Testing connection to cluster API...</span>';
   try {
-    var config = { name: name, type: 'sse', url: url, platform: platform };
-    if (token) config.token = token;
-    var resp = await fetch(MCP_API + '/hub/servers', {
+    var resp = await fetch(MCP_API + '/hub/clusters', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(config),
+      body: JSON.stringify({ name: name, platform: platform, apiUrl: apiUrl, token: token }),
     });
     var data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Failed to connect');
-    statusEl.innerHTML = '<span style="color:#22c55e">&#x2714; Connected! ' + (data.server?.toolCount || 0) + ' capabilities discovered</span>';
-    setTimeout(function() { dialog.style.display = 'none'; }, 1500);
+    if (!resp.ok) throw new Error(data.error || 'Failed to register cluster');
+
+    var test = data.connectionTest;
+    if (test && test.ok) {
+      statusEl.innerHTML = '<span style="color:#22c55e">&#x2714; Cluster connected! API reachable. Deploy the agent YAML above to enable continuous monitoring.</span>';
+    } else {
+      var reason = test ? (test.message || 'status ' + test.status) : 'unknown';
+      statusEl.innerHTML = '<span style="color:#f59e0b">&#x26A0; Cluster registered but API test failed: ' + esc(reason) + '. Deploy the agent YAML — it will connect using in-cluster credentials.</span>';
+    }
+    setTimeout(function() { dialog.style.display = 'none'; }, 3000);
     loadHubView();
   } catch (e) {
     statusEl.innerHTML = '<span style="color:#ef4444">&#x2716; Error: ' + esc(e.message) + '</span>';
@@ -4906,18 +4911,17 @@ var _remoteAgents = {};
 
 async function loadHubView() {
   try {
-    var [sRes, tRes, aRes] = await Promise.all([
+    var [sRes, tRes, cRes] = await Promise.all([
       fetch(MCP_API + '/hub/servers').then(r => r.json()),
       fetch(MCP_API + '/hub/tools').then(r => r.json()),
-      fetch(MCP_API + '/agent/status').then(r => r.json()).catch(function() { return { agents: [] }; }),
+      fetch(MCP_API + '/hub/clusters').then(r => r.json()).catch(function() { return { clusters: [] }; }),
     ]);
     _hubServers = sRes.servers || [];
     _hubTools = tRes.tools || [];
     _remoteAgents = {};
-    (aRes.agents || []).forEach(function(a) { _remoteAgents[a.clusterName] = a; });
+    (cRes.clusters || []).forEach(function(c) { _remoteAgents[c.name] = c; });
     var clustersEl = document.getElementById('hub-count-clusters');
     var toolsEl = document.getElementById('hub-count-tools');
-    var totalClusters = _hubServers.length + Object.keys(_remoteAgents).length;
     var uniqueNames = new Set(_hubServers.map(function(s) { return s.name; }));
     Object.keys(_remoteAgents).forEach(function(n) { uniqueNames.add(n); });
     if (clustersEl) clustersEl.textContent = uniqueNames.size;
