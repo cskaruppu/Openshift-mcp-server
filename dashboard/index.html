@@ -4478,7 +4478,7 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   yaml += '      serviceAccountName: cloudnexus-agent\n';
   yaml += '      containers:\n';
   yaml += '        - name: agent\n';
-  yaml += '          image: quay.io/cskaruppu/cloudnexus-agent:latest\n';
+  yaml += '          image: quay.io/karuppucs/cloudnexus-agent:latest\n';
   yaml += '          envFrom:\n';
   yaml += '            - configMapRef:\n';
   yaml += '                name: cloudnexus-agent-config\n';

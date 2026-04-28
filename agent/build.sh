@@ -8,7 +8,7 @@
 #
 set -euo pipefail
 
-REGISTRY="quay.io/cskaruppu"
+REGISTRY="quay.io/karuppucs"
 IMAGE_NAME="cloudnexus-agent"
 TAG="${1:-latest}"
 FULL_IMAGE="${REGISTRY}/${IMAGE_NAME}"
