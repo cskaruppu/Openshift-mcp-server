@@ -415,6 +415,17 @@ tr:hover td{background:#ffffff06}
 .runbook-menu-item:hover{background:#2a2d3a}
 .runbook-menu-item:first-child{border-radius:8px 8px 0 0}
 .runbook-menu-item:last-child{border-radius:0 0 8px 8px}
+/* Kebab menu for cluster cards */
+.kebab-menu{position:relative;display:inline-block}
+.kebab-btn{background:none;border:1px solid transparent;border-radius:6px;padding:4px 6px;cursor:pointer;color:var(--text2);font-size:16px;line-height:1;transition:all .15s;display:flex;align-items:center;justify-content:center}
+.kebab-btn:hover{background:var(--bg);border-color:var(--border);color:var(--text)}
+.kebab-dropdown{position:absolute;top:100%;right:0;background:var(--card);border:1px solid var(--border);border-radius:8px;min-width:170px;display:none;z-index:200;box-shadow:0 4px 20px #0006;margin-top:4px;overflow:hidden}
+.kebab-dropdown.open{display:block}
+.kebab-item{display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:pointer;font-size:12px;color:var(--text);transition:background .15s;border:none;background:none;width:100%;text-align:left}
+.kebab-item:hover{background:var(--bg)}
+.kebab-item.danger{color:#ef4444}
+.kebab-item.danger:hover{background:#ef44440d}
+.kebab-sep{height:1px;background:var(--border);margin:2px 0}
 /* Compare cards */
 .compare-container{display:flex;gap:14px;flex-wrap:wrap;width:100%;margin:8px 0}
 .compare-card{flex:1;min-width:250px;background:var(--bg);border:1px solid var(--border);border-radius:8px;overflow:hidden}
@@ -4898,11 +4909,81 @@ async function hubConnectCluster() {
   }
 }
 
-function hubChatWithCluster(clusterId, clusterName) {
+var _activeChatCluster = null;
+
+function hubChatWithCluster(clusterId, clusterName, platform) {
+  _activeChatCluster = { id: clusterId, name: clusterName, platform: platform || 'openshift' };
   showView('chat');
+
+  var pInfo = K8S_PLATFORMS[platform] || K8S_PLATFORMS['openshift'];
+  var welcomeEl = document.getElementById('chat-welcome');
+  if (welcomeEl) {
+    var platformSuggestions = {
+      openshift: [
+        { label: 'Pod health', query: 'Show all pods with issues in cluster "' + clusterName + '"' },
+        { label: 'Node status', query: 'List nodes and their status for cluster "' + clusterName + '"' },
+        { label: 'Operator health', query: 'Show ClusterOperator status for "' + clusterName + '"' },
+        { label: 'CrashLoopBackOff', query: 'Find CrashLoopBackOff pods in cluster "' + clusterName + '"' },
+        { label: 'Routes & services', query: 'List routes and services in cluster "' + clusterName + '"' },
+        { label: 'Events & warnings', query: 'Show recent warning events in cluster "' + clusterName + '"' },
+      ],
+      rancher: [
+        { label: 'Pod health', query: 'Show all pods with issues in cluster "' + clusterName + '"' },
+        { label: 'Node status', query: 'List nodes for cluster "' + clusterName + '"' },
+        { label: 'Fleet bundles', query: 'Show Fleet bundle status for cluster "' + clusterName + '"' },
+        { label: 'Workloads', query: 'List deployments in cluster "' + clusterName + '"' },
+        { label: 'Ingress status', query: 'List ingresses in cluster "' + clusterName + '"' },
+        { label: 'Events & warnings', query: 'Show recent warning events in cluster "' + clusterName + '"' },
+      ],
+      eks: [
+        { label: 'Pod health', query: 'Show all pods with issues in cluster "' + clusterName + '"' },
+        { label: 'Node groups', query: 'List nodes and instance types for cluster "' + clusterName + '"' },
+        { label: 'Deployments', query: 'List deployments in cluster "' + clusterName + '"' },
+        { label: 'Load balancers', query: 'Show services with LoadBalancer type in cluster "' + clusterName + '"' },
+        { label: 'CrashLoopBackOff', query: 'Find CrashLoopBackOff pods in cluster "' + clusterName + '"' },
+        { label: 'Events & warnings', query: 'Show recent warning events in cluster "' + clusterName + '"' },
+      ],
+      aks: [
+        { label: 'Pod health', query: 'Show all pods with issues in cluster "' + clusterName + '"' },
+        { label: 'Node pools', query: 'List nodes for cluster "' + clusterName + '"' },
+        { label: 'Deployments', query: 'List deployments in cluster "' + clusterName + '"' },
+        { label: 'Services', query: 'List services in cluster "' + clusterName + '"' },
+        { label: 'CrashLoopBackOff', query: 'Find CrashLoopBackOff pods in cluster "' + clusterName + '"' },
+        { label: 'Events & warnings', query: 'Show recent warning events in cluster "' + clusterName + '"' },
+      ],
+      gke: [
+        { label: 'Pod health', query: 'Show all pods with issues in cluster "' + clusterName + '"' },
+        { label: 'Node pools', query: 'List nodes for cluster "' + clusterName + '"' },
+        { label: 'Workloads', query: 'List deployments in cluster "' + clusterName + '"' },
+        { label: 'Services', query: 'List services in cluster "' + clusterName + '"' },
+        { label: 'CrashLoopBackOff', query: 'Find CrashLoopBackOff pods in cluster "' + clusterName + '"' },
+        { label: 'Events & warnings', query: 'Show recent warning events in cluster "' + clusterName + '"' },
+      ],
+      k8s: [
+        { label: 'Pod health', query: 'Show all pods with issues in cluster "' + clusterName + '"' },
+        { label: 'Node status', query: 'List nodes for cluster "' + clusterName + '"' },
+        { label: 'Deployments', query: 'List deployments in cluster "' + clusterName + '"' },
+        { label: 'Services', query: 'List services in cluster "' + clusterName + '"' },
+        { label: 'CrashLoopBackOff', query: 'Find CrashLoopBackOff pods in cluster "' + clusterName + '"' },
+        { label: 'Events & warnings', query: 'Show recent warning events in cluster "' + clusterName + '"' },
+      ],
+    };
+    var suggestions = platformSuggestions[platform] || platformSuggestions['openshift'];
+    welcomeEl.innerHTML =
+      '<div style="width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,' + pInfo.color + ',' + pInfo.color + 'cc);display:flex;align-items:center;justify-content:center;font-size:28px;color:#fff;margin-bottom:4px">' + pInfo.icon + '</div>' +
+      '<h2 style="color:' + pInfo.color + '">Welcome to ' + esc(clusterName) + '</h2>' +
+      '<p style="font-size:13px;max-width:480px">' + pInfo.name + ' cluster &mdash; Ask questions, diagnose issues, or run analysis using AI-powered insights.</p>' +
+      '<div class="welcome-suggestions" style="max-width:560px">' +
+        suggestions.map(function(s) {
+          return '<button onclick="sendFullChat(\'' + s.query.replace(/'/g, "\\'") + '\')" style="border-left:3px solid ' + pInfo.color + '">' + esc(s.label) + '</button>';
+        }).join('') +
+      '</div>' +
+      '<div style="font-size:10px;color:var(--text2);margin-top:16px;opacity:.6">Powered by TCS CloudNexus AI &bull; ' + pInfo.name + ' intelligence</div>';
+  }
   var input = document.getElementById('chat-input') || document.querySelector('.chat-input input');
   if (input) {
-    input.value = 'Analyze cluster "' + clusterName + '" — show me overall health, any critical pods, resource usage, and recent warning events.';
+    input.placeholder = 'Ask about ' + clusterName + '...';
+    input.value = '';
     input.focus();
   }
 }
@@ -4934,24 +5015,243 @@ async function loadHubView() {
   }
 }
 
+function buildKebabMenu(clusterId, clusterName, platform, isBuiltin, source) {
+  var menuId = 'kebab-' + clusterId.replace(/[^a-zA-Z0-9]/g, '_');
+  return '<div class="kebab-menu">' +
+    '<button class="kebab-btn" onclick="toggleKebab(event,\'' + menuId + '\')" title="More options">&#x22EE;</button>' +
+    '<div class="kebab-dropdown" id="' + menuId + '">' +
+      '<button class="kebab-item" onclick="hubCheckStatus(\'' + esc(clusterName) + '\',\'' + esc(source) + '\');closeAllKebabs()">&#x1F4CA; Status Check</button>' +
+      '<button class="kebab-item" onclick="hubEditCluster(\'' + esc(clusterName) + '\',\'' + esc(platform) + '\',\'' + esc(source) + '\');closeAllKebabs()">&#x270F; Edit Cluster</button>' +
+      '<button class="kebab-item" onclick="hubReconnectCluster(\'' + esc(clusterName) + '\',\'' + esc(source) + '\');closeAllKebabs()">&#x21BB; Reconnect</button>' +
+      (isBuiltin ? '' : '<div class="kebab-sep"></div><button class="kebab-item danger" onclick="hubDeleteCluster(\'' + esc(clusterName) + '\',\'' + esc(source) + '\');closeAllKebabs()">&#x1F5D1; Delete Cluster</button>') +
+    '</div></div>';
+}
+
+function toggleKebab(e, menuId) {
+  e.stopPropagation();
+  var menu = document.getElementById(menuId);
+  var wasOpen = menu.classList.contains('open');
+  closeAllKebabs();
+  if (!wasOpen) menu.classList.add('open');
+}
+
+function closeAllKebabs() {
+  document.querySelectorAll('.kebab-dropdown.open').forEach(function(m) { m.classList.remove('open'); });
+}
+
+document.addEventListener('click', closeAllKebabs);
+
+async function hubCheckStatus(clusterName, source) {
+  var statusDialog = document.createElement('div');
+  statusDialog.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#000a;display:flex;align-items:center;justify-content:center';
+  var a = _remoteAgents[clusterName];
+  var s = _hubServers.find(function(sv) { return sv.name === clusterName; });
+  var info = a || s || {};
+  var pInfo = K8S_PLATFORMS[info.platform || 'k8s'] || K8S_PLATFORMS['k8s'];
+  var statusColor = (info.status === 'connected' || info.status === 'live') ? '#22c55e' : info.status === 'registered' ? '#6366f1' : '#ef4444';
+  var statusLabel = (info.status === 'connected' || info.status === 'live') ? 'Live' : info.status === 'registered' ? 'Registered' : info.status || 'Unknown';
+  statusDialog.innerHTML =
+    '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:420px;max-height:80vh;overflow-y:auto;padding:24px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">' +
+        '<div style="display:flex;align-items:center;gap:10px"><span style="font-size:22px">' + pInfo.icon + '</span><span style="font-size:16px;font-weight:700;color:' + pInfo.color + '">' + esc(clusterName) + '</span></div>' +
+        '<button onclick="this.closest(\'div[style*=fixed]\').remove()" style="background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer">&times;</button>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">' +
+        '<div style="background:var(--bg);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--text2);margin-bottom:4px">Status</div><div style="font-size:14px;font-weight:600;color:' + statusColor + '">' + statusLabel + '</div></div>' +
+        '<div style="background:var(--bg);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--text2);margin-bottom:4px">Platform</div><div style="font-size:14px;font-weight:600">' + pInfo.name + '</div></div>' +
+        '<div style="background:var(--bg);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--text2);margin-bottom:4px">Source</div><div style="font-size:14px;font-weight:600">' + (source || info.source || 'hub') + '</div></div>' +
+        '<div style="background:var(--bg);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--text2);margin-bottom:4px">Registered</div><div style="font-size:12px;font-weight:500">' + (info.registeredAt ? new Date(info.registeredAt).toLocaleString() : 'Built-in') + '</div></div>' +
+      '</div>' +
+      (info.summary ? '<div style="border-top:1px solid var(--border);padding-top:12px"><div style="font-size:11px;font-weight:600;margin-bottom:8px;color:var(--text2)">Cluster Metrics</div><div style="display:flex;gap:8px;flex-wrap:wrap">' +
+        (info.summary.nodes ? '<span style="background:#22c55e11;border:1px solid #22c55e33;border-radius:6px;padding:4px 10px;font-size:11px;color:#22c55e">Nodes: ' + info.summary.nodes + '</span>' : '') +
+        (info.summary.pods != null ? '<span style="background:' + pInfo.color + '11;border:1px solid ' + pInfo.color + '33;border-radius:6px;padding:4px 10px;font-size:11px;color:' + pInfo.color + '">Pods: ' + info.summary.pods + '</span>' : '') +
+        (info.summary.issues > 0 ? '<span style="background:#ef444415;border:1px solid #ef444433;border-radius:6px;padding:4px 10px;font-size:11px;color:#ef4444">' + info.summary.issues + ' issues</span>' : '') +
+        (info.summary.warnings > 0 ? '<span style="background:#f59e0b15;border:1px solid #f59e0b33;border-radius:6px;padding:4px 10px;font-size:11px;color:#f59e0b">' + info.summary.warnings + ' warnings</span>' : '') +
+      '</div></div>' : '') +
+      (info.apiUrl ? '<div style="margin-top:12px;font-size:10px;color:var(--text2);word-break:break-all;font-family:monospace;background:var(--bg);padding:6px 10px;border-radius:6px">API: ' + esc(info.apiUrl) + '</div>' : '') +
+    '</div>';
+  document.body.appendChild(statusDialog);
+  statusDialog.addEventListener('click', function(e) { if (e.target === statusDialog) statusDialog.remove(); });
+}
+
+function hubEditCluster(clusterName, platform, source) {
+  var a = _remoteAgents[clusterName];
+  var s = _hubServers.find(function(sv) { return sv.name === clusterName; });
+  var info = a || s || {};
+
+  var editDialog = document.createElement('div');
+  editDialog.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#000a;display:flex;align-items:center;justify-content:center';
+  var pInfo = K8S_PLATFORMS[platform] || K8S_PLATFORMS['k8s'];
+  editDialog.innerHTML =
+    '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:450px;padding:24px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">' +
+        '<div style="font-size:16px;font-weight:700;color:' + pInfo.color + '"><span style="font-size:20px">' + pInfo.icon + '</span> Edit ' + esc(clusterName) + '</div>' +
+        '<button onclick="this.closest(\'div[style*=fixed]\').remove()" style="background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer">&times;</button>' +
+      '</div>' +
+      '<div style="margin-bottom:14px"><label style="font-size:11px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">Cluster Name</label>' +
+        '<input id="edit-cluster-name" value="' + esc(clusterName) + '" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box"></div>' +
+      '<div style="margin-bottom:14px"><label style="font-size:11px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">API Server URL</label>' +
+        '<input id="edit-cluster-url" value="' + esc(info.apiUrl || info.url || '') + '" placeholder="https://api.cluster.example.com:6443" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box"></div>' +
+      '<div style="margin-bottom:14px"><label style="font-size:11px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">Platform</label>' +
+        '<select id="edit-cluster-platform" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">' +
+          Object.keys(K8S_PLATFORMS).map(function(k) { return '<option value="' + k + '"' + (k === platform ? ' selected' : '') + '>' + K8S_PLATFORMS[k].icon + ' ' + K8S_PLATFORMS[k].name + '</option>'; }).join('') +
+        '</select></div>' +
+      '<div id="edit-cluster-status" style="font-size:12px;margin-bottom:14px"></div>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+        '<button onclick="this.closest(\'div[style*=fixed]\').remove()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 16px;color:var(--text);cursor:pointer;font-size:12px">Cancel</button>' +
+        '<button onclick="hubSaveEditCluster(\'' + esc(clusterName) + '\',\'' + esc(source) + '\')" style="background:' + pInfo.color + ';border:none;border-radius:6px;padding:8px 20px;color:#fff;cursor:pointer;font-size:12px;font-weight:600">Save Changes</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(editDialog);
+  editDialog.addEventListener('click', function(e) { if (e.target === editDialog) editDialog.remove(); });
+}
+
+async function hubSaveEditCluster(oldName, source) {
+  var newName = document.getElementById('edit-cluster-name').value.trim();
+  var newUrl = document.getElementById('edit-cluster-url').value.trim();
+  var newPlatform = document.getElementById('edit-cluster-platform').value;
+  var statusEl = document.getElementById('edit-cluster-status');
+  if (!newName) { statusEl.innerHTML = '<span style="color:#ef4444">Cluster name required</span>'; return; }
+  try {
+    if (oldName !== newName || source === 'dashboard') {
+      await fetch(MCP_API + '/hub/clusters/' + encodeURIComponent(oldName), { method: 'DELETE' });
+    }
+    var resp = await fetch(MCP_API + '/hub/clusters', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newName, platform: newPlatform, apiUrl: newUrl, token: '' }),
+    });
+    if (!resp.ok) throw new Error('Save failed');
+    document.querySelector('div[style*="fixed"][style*="inset"]').remove();
+    loadHubView();
+  } catch (e) {
+    statusEl.innerHTML = '<span style="color:#ef4444">' + esc(e.message) + '</span>';
+  }
+}
+
+async function hubDeleteCluster(clusterName, source) {
+  if (!confirm('Delete cluster "' + clusterName + '"? This will remove it from the AI Hub.')) return;
+  try {
+    if (source === 'dashboard' || source === 'agent') {
+      await fetch(MCP_API + '/hub/clusters/' + encodeURIComponent(clusterName), { method: 'DELETE' });
+    }
+    var s = _hubServers.find(function(sv) { return sv.name === clusterName; });
+    if (s) {
+      await fetch(MCP_API + '/hub/servers/' + encodeURIComponent(s.id), { method: 'DELETE' });
+    }
+    loadHubView();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function hubReconnectCluster(clusterName, source) {
+  var s = _hubServers.find(function(sv) { return sv.name === clusterName; });
+  if (s) {
+    try { await fetch(MCP_API + '/hub/servers/' + encodeURIComponent(s.id) + '/reconnect', { method: 'POST' }); } catch(e) {}
+  }
+  var a = _remoteAgents[clusterName];
+  if (a && a.apiUrl) {
+    try {
+      await fetch(MCP_API + '/hub/clusters', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: clusterName, platform: a.platform || 'k8s', apiUrl: a.apiUrl, token: '' }),
+      });
+    } catch(e) {}
+  }
+  loadHubView();
+}
+
 function renderHubServers() {
   var el = document.getElementById('hub-servers-list');
-  if (!_hubServers.length) { el.innerHTML = '<div class="card" style="opacity:.5;text-align:center;padding:30px">No clusters connected yet. Select a platform below to get started.</div>'; return; }
-  el.innerHTML = _hubServers.map(function(s) {
+
+  var allClusters = [];
+  var seenNames = new Set();
+
+  _hubServers.forEach(function(s) {
     var isBuiltin = s.id === 'builtin';
     var platform = s.platform || (isBuiltin ? 'openshift' : 'k8s');
-    var pInfo = K8S_PLATFORMS[platform] || K8S_PLATFORMS['k8s'];
+    var agent = _remoteAgents[s.name];
+    allClusters.push({
+      id: s.id,
+      name: s.name,
+      platform: platform,
+      isBuiltin: isBuiltin,
+      status: agent ? (agent.status === 'live' ? 'live' : agent.status) : s.status === 'connected' ? 'live' : s.status,
+      toolCount: s.toolCount,
+      tools: s.tools,
+      url: s.url,
+      apiUrl: agent ? agent.apiUrl : s.url,
+      summary: agent ? agent.summary : null,
+      source: agent ? agent.source : 'hub',
+      registeredAt: agent ? agent.registeredAt : null,
+      lastReportTime: agent ? agent.lastReportTime : null,
+    });
+    seenNames.add(s.name);
+  });
 
-    var statusColor, statusLabel, statusIcon, statusBg, statusPulse;
-    if (s.status === 'connected') {
-      statusColor = '#22c55e'; statusLabel = 'Live'; statusIcon = '&#x2714;';
-      statusBg = '#22c55e15'; statusPulse = 'animation:pulse 2s infinite';
-    } else if (s.status === 'connecting') {
-      statusColor = '#f59e0b'; statusLabel = 'Connecting'; statusIcon = '&#x21BB;';
-      statusBg = '#f59e0b15'; statusPulse = 'animation:pulse 1s infinite';
+  for (var agentName in _remoteAgents) {
+    if (seenNames.has(agentName)) continue;
+    var a = _remoteAgents[agentName];
+    allClusters.push({
+      id: 'agent-' + a.name,
+      name: a.name,
+      platform: a.platform || 'k8s',
+      isBuiltin: false,
+      status: a.status || 'registered',
+      toolCount: 0,
+      tools: [],
+      url: null,
+      apiUrl: a.apiUrl,
+      summary: a.summary,
+      source: a.source || 'agent',
+      registeredAt: a.registeredAt,
+      lastReportTime: a.lastReportTime,
+    });
+  }
+
+  if (!allClusters.length) {
+    el.innerHTML = '<div class="card" style="opacity:.5;text-align:center;padding:30px">No clusters connected yet. Select a platform below to get started.</div>';
+    return;
+  }
+
+  el.innerHTML = allClusters.map(function(c) {
+    var pInfo = K8S_PLATFORMS[c.platform] || K8S_PLATFORMS['k8s'];
+    var statusColor, statusLabel, statusPulse;
+    if (c.status === 'live' || c.status === 'connected') {
+      statusColor = '#22c55e'; statusLabel = 'Live'; statusPulse = 'animation:pulse 2s infinite';
+    } else if (c.status === 'connecting' || c.status === 'registered') {
+      statusColor = c.status === 'connecting' ? '#f59e0b' : '#6366f1';
+      statusLabel = c.status === 'connecting' ? 'Connecting' : 'Registered';
+      statusPulse = c.status === 'connecting' ? 'animation:pulse 1s infinite' : '';
+    } else if (c.status === 'stale') {
+      statusColor = '#f59e0b'; statusLabel = 'Stale'; statusPulse = '';
     } else {
-      statusColor = '#ef4444'; statusLabel = 'Failed'; statusIcon = '&#x2716;';
-      statusBg = '#ef444415'; statusPulse = '';
+      statusColor = '#ef4444'; statusLabel = 'Failed'; statusPulse = '';
+    }
+
+    var summaryHtml = '';
+    if (c.summary) {
+      summaryHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
+        (c.summary.nodes ? '<span style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--text2)">Nodes: ' + c.summary.nodes + '</span>' : '') +
+        (c.summary.pods != null ? '<span style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--text2)">Pods: ' + c.summary.pods + '</span>' : '') +
+        (c.summary.issues > 0 ? '<span style="background:#ef444415;border:1px solid #ef444433;border-radius:4px;padding:2px 8px;font-size:10px;color:#ef4444">' + c.summary.issues + ' issues</span>' : '') +
+        (c.summary.warnings > 0 ? '<span style="background:#f59e0b15;border:1px solid #f59e0b33;border-radius:4px;padding:2px 8px;font-size:10px;color:#f59e0b">' + c.summary.warnings + ' warnings</span>' : '') +
+      '</div>';
+    }
+
+    var toolsHtml = '';
+    if (c.toolCount > 0) {
+      toolsHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
+        '<span style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--text2)">' + c.toolCount + ' capabilities</span>' +
+        (c.isBuiltin ? '<span style="background:#22c55e11;border:1px solid #22c55e33;border-radius:4px;padding:2px 8px;font-size:10px;color:#22c55e">Primary</span>' : '') +
+        '<span style="background:' + pInfo.color + '11;border:1px solid ' + pInfo.color + '33;border-radius:4px;padding:2px 8px;font-size:10px;color:' + pInfo.color + '">' + c.platform.toUpperCase() + '</span>' +
+      '</div>';
+    } else {
+      toolsHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
+        '<span style="background:' + pInfo.color + '11;border:1px solid ' + pInfo.color + '33;border-radius:4px;padding:2px 8px;font-size:10px;color:' + pInfo.color + '">' + c.platform.toUpperCase() + '</span>' +
+        (c.source === 'agent' ? '<span style="background:#6366f111;border:1px solid #6366f133;border-radius:4px;padding:2px 8px;font-size:10px;color:#6366f1">Agent</span>' : '') +
+        (c.source === 'dashboard' ? '<span style="background:#f59e0b11;border:1px solid #f59e0b33;border-radius:4px;padding:2px 8px;font-size:10px;color:#f59e0b">Manual</span>' : '') +
+      '</div>';
     }
 
     return '<div class="card" style="position:relative;border-left:3px solid ' + pInfo.color + ';border-top:1px solid ' + pInfo.color + '22;overflow:hidden">' +
@@ -4959,65 +5259,28 @@ function renderHubServers() {
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">' +
         '<div style="width:36px;height:36px;border-radius:8px;background:' + pInfo.color + '15;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">' + pInfo.icon + '</div>' +
         '<div style="flex:1;min-width:0">' +
-          '<div style="font-weight:700;font-size:14px;color:' + pInfo.color + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(s.name) + '</div>' +
-          '<div style="font-size:10px;color:var(--text2)">' + pInfo.name + ' ' + pInfo.version + '</div>' +
+          '<div style="font-weight:700;font-size:14px;color:' + pInfo.color + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(c.name) + '</div>' +
+          '<div style="font-size:10px;color:var(--text2)">' + pInfo.name + ' ' + pInfo.version + (c.source === 'agent' ? ' &bull; Remote Agent' : '') + '</div>' +
         '</div>' +
-        '<div style="background:' + statusBg + ';border:1px solid ' + statusColor + '33;border-radius:6px;padding:4px 10px;display:flex;align-items:center;gap:4px;flex-shrink:0">' +
-          '<span style="width:7px;height:7px;border-radius:50%;background:' + statusColor + ';display:inline-block;' + statusPulse + '"></span>' +
-          '<span style="font-size:10px;font-weight:600;color:' + statusColor + '">' + statusLabel + '</span>' +
+        '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0">' +
+          '<div style="background:' + statusColor + '15;border:1px solid ' + statusColor + '33;border-radius:6px;padding:4px 10px;display:flex;align-items:center;gap:4px">' +
+            '<span style="width:7px;height:7px;border-radius:50%;background:' + statusColor + ';display:inline-block;' + statusPulse + '"></span>' +
+            '<span style="font-size:10px;font-weight:600;color:' + statusColor + '">' + statusLabel + '</span>' +
+          '</div>' +
+          buildKebabMenu(c.id, c.name, c.platform, c.isBuiltin, c.source) +
         '</div>' +
       '</div>' +
-      (s.url ? '<div style="font-size:10px;color:var(--text2);margin-bottom:8px;word-break:break-all;font-family:monospace;background:var(--bg);padding:4px 8px;border-radius:4px">' + esc(s.url) + '</div>' : '') +
-      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
-        '<span style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--text2)">' + s.toolCount + ' capabilities</span>' +
-        (isBuiltin ? '<span style="background:#22c55e11;border:1px solid #22c55e33;border-radius:4px;padding:2px 8px;font-size:10px;color:#22c55e">Primary</span>' : '') +
-        '<span style="background:' + pInfo.color + '11;border:1px solid ' + pInfo.color + '33;border-radius:4px;padding:2px 8px;font-size:10px;color:' + pInfo.color + '">' + platform.toUpperCase() + '</span>' +
-      '</div>' +
-      '<div style="font-size:10px;color:var(--text2);margin-bottom:10px">' +
-        (s.tools || []).slice(0, 5).map(function(t) { return '<code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:9px">' + esc(t.name) + '</code>'; }).join(' ') +
-        (s.toolCount > 5 ? ' <span style="opacity:.5">+' + (s.toolCount - 5) + ' more</span>' : '') +
-      '</div>' +
+      toolsHtml +
+      summaryHtml +
+      (c.toolCount > 0 ? '<div style="font-size:10px;color:var(--text2);margin-bottom:10px">' +
+        (c.tools || []).slice(0, 5).map(function(t) { return '<code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:9px">' + esc(t.name) + '</code>'; }).join(' ') +
+        (c.toolCount > 5 ? ' <span style="opacity:.5">+' + (c.toolCount - 5) + ' more</span>' : '') +
+      '</div>' : '') +
       '<div style="display:flex;gap:6px;border-top:1px solid var(--border);padding-top:10px">' +
-        '<button onclick="hubChatWithCluster(\'' + esc(s.id) + '\',\'' + esc(s.name) + '\')" style="background:linear-gradient(135deg,' + pInfo.color + ',' + pInfo.color + 'cc);color:#fff;border:none;border-radius:5px;padding:5px 14px;cursor:pointer;font-size:11px;font-weight:600;display:flex;align-items:center;gap:4px" title="Open AI Chat for this cluster">&#x1F4AC; AI Chat</button>' +
-        '<button onclick="hubReconnectServer(\'' + esc(s.id) + '\')" style="background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:5px 10px;color:var(--text);cursor:pointer;font-size:11px" title="Reconnect">&#x21BB; Reconnect</button>' +
-        (!isBuiltin ? '<button onclick="hubDisconnectServer(\'' + esc(s.id) + '\')" style="background:#ef44441a;border:1px solid #ef444433;border-radius:5px;padding:5px 10px;color:#ef4444;cursor:pointer;font-size:11px;margin-left:auto" title="Remove cluster">&#x2716; Remove</button>' : '') +
+        '<button onclick="hubChatWithCluster(\'' + esc(c.id) + '\',\'' + esc(c.name) + '\',\'' + esc(c.platform) + '\')" style="background:linear-gradient(135deg,' + pInfo.color + ',' + pInfo.color + 'cc);color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px;transition:opacity .15s" onmouseover="this.style.opacity=\'0.9\'" onmouseout="this.style.opacity=\'1\'" title="Open AI Chat for this cluster">&#x1F4AC; AI Chat</button>' +
       '</div>' +
     '</div>';
   }).join('');
-
-  // Append remote agent-only clusters (not already in hub servers)
-  var hubNames = new Set(_hubServers.map(function(s) { return s.name; }));
-  for (var agentName in _remoteAgents) {
-    if (hubNames.has(agentName)) continue;
-    var a = _remoteAgents[agentName];
-    var ap = K8S_PLATFORMS[a.platform] || K8S_PLATFORMS['k8s'];
-    var aColor = a.status === 'live' ? '#22c55e' : a.status === 'stale' ? '#f59e0b' : '#6366f1';
-    var aLabel = a.status === 'live' ? 'Live' : a.status === 'stale' ? 'Stale' : 'Registered';
-    var aPulse = a.status === 'live' ? 'animation:pulse 2s infinite' : '';
-    el.innerHTML += '<div class="card" style="position:relative;border-left:3px solid ' + ap.color + ';border-top:1px solid ' + ap.color + '22;overflow:hidden">' +
-      '<div style="position:absolute;top:0;right:0;width:60px;height:60px;background:radial-gradient(circle at top right,' + ap.color + '10,transparent);pointer-events:none"></div>' +
-      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">' +
-        '<div style="width:36px;height:36px;border-radius:8px;background:' + ap.color + '15;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">' + ap.icon + '</div>' +
-        '<div style="flex:1;min-width:0">' +
-          '<div style="font-weight:700;font-size:14px;color:' + ap.color + '">' + esc(a.clusterName) + '</div>' +
-          '<div style="font-size:10px;color:var(--text2)">' + ap.name + ' &bull; Remote Agent</div>' +
-        '</div>' +
-        '<div style="background:' + aColor + '15;border:1px solid ' + aColor + '33;border-radius:6px;padding:4px 10px;display:flex;align-items:center;gap:4px;flex-shrink:0">' +
-          '<span style="width:7px;height:7px;border-radius:50%;background:' + aColor + ';display:inline-block;' + aPulse + '"></span>' +
-          '<span style="font-size:10px;font-weight:600;color:' + aColor + '">' + aLabel + '</span>' +
-        '</div>' +
-      '</div>' +
-      (a.summary ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
-        '<span style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--text2)">Nodes: ' + a.summary.nodes + '</span>' +
-        '<span style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--text2)">Pods: ' + a.summary.pods + '</span>' +
-        (a.summary.issues > 0 ? '<span style="background:#ef444415;border:1px solid #ef444433;border-radius:4px;padding:2px 8px;font-size:10px;color:#ef4444">' + a.summary.issues + ' issues</span>' : '') +
-        (a.summary.warnings > 0 ? '<span style="background:#f59e0b15;border:1px solid #f59e0b33;border-radius:4px;padding:2px 8px;font-size:10px;color:#f59e0b">' + a.summary.warnings + ' warnings</span>' : '') +
-      '</div>' : '') +
-      '<div style="display:flex;gap:6px;border-top:1px solid var(--border);padding-top:10px">' +
-        '<button onclick="hubChatWithCluster(\'agent-' + esc(a.clusterName) + '\',\'' + esc(a.clusterName) + '\')" style="background:linear-gradient(135deg,' + ap.color + ',' + ap.color + 'cc);color:#fff;border:none;border-radius:5px;padding:5px 14px;cursor:pointer;font-size:11px;font-weight:600;display:flex;align-items:center;gap:4px">&#x1F4AC; AI Chat</button>' +
-      '</div>' +
-    '</div>';
-  }
 }
 
 function renderHubTools() {
@@ -5073,23 +5336,7 @@ function populateHubToolFilter() {
   sel.innerHTML = opts;
 }
 
-// hubAddServer kept as alias for backwards compatibility
 async function hubAddServer() { hubAddCluster('k8s'); }
-
-async function hubDisconnectServer(id) {
-  if (!confirm('Remove server "' + id + '"?')) return;
-  try {
-    await fetch(MCP_API + '/hub/servers/' + encodeURIComponent(id), { method: 'DELETE' });
-    loadHubView();
-  } catch (e) { alert('Error: ' + e.message); }
-}
-
-async function hubReconnectServer(id) {
-  try {
-    await fetch(MCP_API + '/hub/servers/' + encodeURIComponent(id) + '/reconnect', { method: 'POST' });
-    loadHubView();
-  } catch (e) { alert('Error: ' + e.message); }
-}
 
 async function testHubTool(toolName) {
   var args = prompt('Arguments (JSON):', '{}');
