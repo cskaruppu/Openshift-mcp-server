@@ -1128,9 +1128,11 @@ tr:hover td{background:#ffffff06}
           <label>Default Provider</label>
           <select id="settings-default-provider" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none">
             <option value="none">Built-in Analysis</option>
-            <option value="openai">OpenAI</option>
             <option value="anthropic">Anthropic (Claude)</option>
+            <option value="openai">OpenAI</option>
             <option value="azure">Azure OpenAI</option>
+            <option value="google">Google Gemini</option>
+            <option value="bedrock">AWS Bedrock</option>
             <option value="ollama">Ollama (Local)</option>
           </select>
         </div>
@@ -1180,6 +1182,30 @@ tr:hover td{background:#ffffff06}
           <div class="pc-test"><button onclick="testProvider('azure')">Test Connection</button><span class="test-status" id="pc-azure-status"></span></div>
         </div>
 
+        <!-- Google Gemini -->
+        <div class="provider-card" id="pc-google">
+          <div class="pc-header">
+            <span class="pc-title">Google Gemini</span>
+            <label class="pc-toggle"><input type="checkbox" id="pc-google-enabled" onchange="onProviderToggle('google')"><span class="slider"></span></label>
+          </div>
+          <div class="pc-field"><label>API Key</label><input type="password" id="pc-google-apikey" placeholder="AIza..."></div>
+          <div class="pc-field"><label>API URL</label><input type="text" id="pc-google-apiurl" placeholder="https://generativelanguage.googleapis.com" value="https://generativelanguage.googleapis.com"></div>
+          <div class="pc-field"><label>Model</label><input type="text" id="pc-google-model" placeholder="gemini-2.5-pro" value="gemini-2.5-pro"></div>
+          <div class="pc-test"><button onclick="testProvider('google')">Test Connection</button><span class="test-status" id="pc-google-status"></span></div>
+        </div>
+
+        <!-- AWS Bedrock -->
+        <div class="provider-card" id="pc-bedrock">
+          <div class="pc-header">
+            <span class="pc-title">AWS Bedrock</span>
+            <label class="pc-toggle"><input type="checkbox" id="pc-bedrock-enabled" onchange="onProviderToggle('bedrock')"><span class="slider"></span></label>
+          </div>
+          <div class="pc-field"><label>API Key (Access Key)</label><input type="password" id="pc-bedrock-apikey" placeholder="AKIA..."></div>
+          <div class="pc-field"><label>API URL</label><input type="text" id="pc-bedrock-apiurl" placeholder="https://bedrock-runtime.us-east-1.amazonaws.com" value="https://bedrock-runtime.us-east-1.amazonaws.com"></div>
+          <div class="pc-field"><label>Model</label><input type="text" id="pc-bedrock-model" placeholder="anthropic.claude-v2" value="anthropic.claude-v2"></div>
+          <div class="pc-test"><button onclick="testProvider('bedrock')">Test Connection</button><span class="test-status" id="pc-bedrock-status"></span></div>
+        </div>
+
         <!-- Ollama -->
         <div class="provider-card" id="pc-ollama">
           <div class="pc-header">
@@ -1220,10 +1246,12 @@ tr:hover td{background:#ffffff06}
       <h3>Provider Fallback Chain</h3>
       <p style="font-size:12px;color:var(--text2);margin-bottom:10px">Drag to reorder. If the primary provider fails, the next enabled provider in the chain is tried.</p>
       <div class="fallback-chain" id="fallback-chain">
-        <div class="fallback-item" data-provider="openai" draggable="true"><span class="fb-num">1</span><span class="fb-name">OpenAI</span></div>
-        <div class="fallback-item" data-provider="anthropic" draggable="true"><span class="fb-num">2</span><span class="fb-name">Anthropic (Claude)</span></div>
+        <div class="fallback-item" data-provider="anthropic" draggable="true"><span class="fb-num">1</span><span class="fb-name">Anthropic (Claude)</span></div>
+        <div class="fallback-item" data-provider="openai" draggable="true"><span class="fb-num">2</span><span class="fb-name">OpenAI</span></div>
         <div class="fallback-item" data-provider="azure" draggable="true"><span class="fb-num">3</span><span class="fb-name">Azure OpenAI</span></div>
-        <div class="fallback-item" data-provider="ollama" draggable="true"><span class="fb-num">4</span><span class="fb-name">Ollama (Local)</span></div>
+        <div class="fallback-item" data-provider="google" draggable="true"><span class="fb-num">4</span><span class="fb-name">Google Gemini</span></div>
+        <div class="fallback-item" data-provider="bedrock" draggable="true"><span class="fb-num">5</span><span class="fb-name">AWS Bedrock</span></div>
+        <div class="fallback-item" data-provider="ollama" draggable="true"><span class="fb-num">6</span><span class="fb-name">Ollama (Local)</span></div>
       </div>
     </div>
 
@@ -1282,7 +1310,7 @@ tr:hover td{background:#ffffff06}
     <div style="position:absolute;bottom:-30px;left:40%;width:180px;height:80px;background:radial-gradient(ellipse,#e0404010,transparent);border-radius:50%"></div>
     <div>
       <div style="font-size:22px;font-weight:800;color:#f8fafc;letter-spacing:-.5px">AI Hub</div>
-      <div style="font-size:12px;color:#94a3b8;margin-top:4px">Centralized Kubernetes Intelligence &mdash; Connect, Monitor, and Manage All Clusters</div>
+      <div style="font-size:12px;color:#94a3b8;margin-top:4px">Connect any LLM + any Kubernetes cluster &mdash; Multi-cloud AI intelligence via MCP protocol</div>
     </div>
     <div style="margin-left:auto;display:flex;gap:10px;align-items:center;z-index:1">
       <div style="background:#22c55e15;border:1px solid #22c55e33;border-radius:10px;padding:10px 18px;text-align:center;backdrop-filter:blur(4px)">
@@ -1295,7 +1323,7 @@ tr:hover td{background:#ffffff06}
       </div>
       <div style="background:#f59e0b15;border:1px solid #f59e0b33;border-radius:10px;padding:10px 18px;text-align:center;backdrop-filter:blur(4px)">
         <div style="font-size:22px;font-weight:800;color:#fbbf24" id="hub-count-llm">0</div>
-        <div style="font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-top:2px">LLM Active</div>
+        <div style="font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-top:2px">LLMs</div>
       </div>
     </div>
   </div>
@@ -1401,36 +1429,182 @@ tr:hover td{background:#ffffff06}
     </div>
   </div>
 
-  <!-- AI Brain (LLM Provider) -->
+  <!-- Architecture Diagram — How It Works -->
+  <div class="card" style="margin-bottom:24px;border:1px solid #334155;background:linear-gradient(135deg,#0f172a,#1a1a2e);overflow:hidden;position:relative">
+    <div style="position:absolute;top:-40px;right:-40px;width:200px;height:200px;background:radial-gradient(circle,#6366f108,transparent);border-radius:50%"></div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+      <span style="font-size:14px;font-weight:700;color:#f8fafc">How It Works</span>
+      <span style="font-size:10px;color:#64748b;background:#1e293b;border:1px solid #334155;border-radius:4px;padding:2px 8px">Like Claude Desktop &mdash; but for Kubernetes</span>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:center;gap:0;padding:8px 0;flex-wrap:wrap">
+      <!-- LLM Providers Column -->
+      <div style="display:flex;flex-direction:column;gap:6px;align-items:center;min-width:140px">
+        <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#64748b;font-weight:600;margin-bottom:4px">LLM Providers</div>
+        <div style="background:#0078d415;border:1px solid #0078d433;border-radius:8px;padding:6px 14px;font-size:11px;color:#60a5fa;display:flex;align-items:center;gap:6px"><span style="font-size:14px">&#x2601;</span> Azure OpenAI</div>
+        <div style="background:#d9770615;border:1px solid #d9770633;border-radius:8px;padding:6px 14px;font-size:11px;color:#fbbf24;display:flex;align-items:center;gap:6px"><span style="font-size:14px">&#x2728;</span> Claude Opus</div>
+        <div style="background:#10a37f15;border:1px solid #10a37f33;border-radius:8px;padding:6px 14px;font-size:11px;color:#34d399;display:flex;align-items:center;gap:6px"><span style="font-size:14px">&#x1F916;</span> OpenAI GPT</div>
+        <div style="background:#88888815;border:1px solid #88888833;border-radius:8px;padding:6px 14px;font-size:11px;color:#94a3b8;display:flex;align-items:center;gap:6px"><span style="font-size:14px">&#x1F4BB;</span> Ollama Local</div>
+      </div>
+      <!-- Arrow -->
+      <div style="display:flex;flex-direction:column;align-items:center;padding:0 14px">
+        <div style="font-size:9px;color:#475569;margin-bottom:4px">AI Chat</div>
+        <div style="width:50px;height:2px;background:linear-gradient(90deg,#6366f1,#e04040);position:relative">
+          <span style="position:absolute;right:-6px;top:-4px;color:#e04040;font-size:10px">&#x25B6;</span>
+        </div>
+        <div style="width:50px;height:2px;background:linear-gradient(90deg,#e04040,#6366f1);position:relative;margin-top:6px">
+          <span style="position:absolute;left:-6px;top:-4px;color:#6366f1;font-size:10px">&#x25C0;</span>
+        </div>
+        <div style="font-size:9px;color:#475569;margin-top:4px">Response</div>
+      </div>
+      <!-- MCP Hub Center -->
+      <div style="background:linear-gradient(135deg,#e04040,#c03030);border-radius:14px;padding:16px 20px;text-align:center;min-width:160px;box-shadow:0 4px 20px #e0404030;position:relative">
+        <div style="position:absolute;top:-1px;left:50%;transform:translateX(-50%);background:#fbbf24;color:#0f172a;font-size:8px;font-weight:700;padding:2px 10px;border-radius:0 0 6px 6px;letter-spacing:.5px">MCP PROTOCOL</div>
+        <div style="font-size:16px;font-weight:800;color:#fff;margin-top:8px">CloudNexus AI</div>
+        <div style="font-size:10px;color:#fca5a5;margin-top:4px">Intelligence Hub</div>
+        <div style="display:flex;gap:4px;justify-content:center;margin-top:8px">
+          <span style="background:#ffffff20;border-radius:4px;padding:2px 6px;font-size:8px;color:#fff">MCP Server</span>
+          <span style="background:#ffffff20;border-radius:4px;padding:2px 6px;font-size:8px;color:#fff">K8s Tools</span>
+        </div>
+      </div>
+      <!-- Arrow -->
+      <div style="display:flex;flex-direction:column;align-items:center;padding:0 14px">
+        <div style="font-size:9px;color:#475569;margin-bottom:4px">Query</div>
+        <div style="width:50px;height:2px;background:linear-gradient(90deg,#e04040,#22c55e);position:relative">
+          <span style="position:absolute;right:-6px;top:-4px;color:#22c55e;font-size:10px">&#x25B6;</span>
+        </div>
+        <div style="width:50px;height:2px;background:linear-gradient(90deg,#22c55e,#e04040);position:relative;margin-top:6px">
+          <span style="position:absolute;left:-6px;top:-4px;color:#e04040;font-size:10px">&#x25C0;</span>
+        </div>
+        <div style="font-size:9px;color:#475569;margin-top:4px">Data</div>
+      </div>
+      <!-- K8s Clusters Column -->
+      <div style="display:flex;flex-direction:column;gap:6px;align-items:center;min-width:140px">
+        <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#64748b;font-weight:600;margin-bottom:4px">K8s Clusters</div>
+        <div style="background:#e0404015;border:1px solid #e0404033;border-radius:8px;padding:6px 14px;font-size:11px;color:#f87171;display:flex;align-items:center;gap:6px"><span style="font-size:14px">&#x2B22;</span> OpenShift</div>
+        <div style="background:#ff990015;border:1px solid #ff990033;border-radius:8px;padding:6px 14px;font-size:11px;color:#fbbf24;display:flex;align-items:center;gap:6px"><span style="font-size:14px">&#x2601;</span> Amazon EKS</div>
+        <div style="background:#0078d415;border:1px solid #0078d433;border-radius:8px;padding:6px 14px;font-size:11px;color:#60a5fa;display:flex;align-items:center;gap:6px"><span style="font-size:14px">&#x26C5;</span> Azure AKS</div>
+        <div style="background:#326ce515;border:1px solid #326ce533;border-radius:8px;padding:6px 14px;font-size:11px;color:#818cf8;display:flex;align-items:center;gap:6px"><span style="font-size:14px">&#x2699;</span> Vanilla K8s</div>
+      </div>
+    </div>
+    <div style="text-align:center;font-size:10px;color:#475569;margin-top:8px;font-style:italic">You choose the LLM &bull; Connect any cluster &bull; AI queries flow through MCP tools &bull; Multi-cloud, multi-LLM, one platform</div>
+  </div>
+
+  <!-- AI Brain (LLM Providers) -->
   <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
     <div class="section-title" style="font-size:15px;margin:0">AI Brain</div>
-    <span style="font-size:11px;color:var(--text2)">Select which LLM powers the intelligence engine</span>
+    <span style="font-size:11px;color:var(--text2)">Connect LLM providers &mdash; like adding AI servers in Claude Desktop</span>
+    <span style="font-size:10px;color:var(--text2);margin-left:auto;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:3px 8px" id="hub-llm-configured-count">0 configured</span>
   </div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:10px;margin-bottom:24px" id="hub-llm-cards">
-    <div class="card hub-llm-card" data-provider="azure" onclick="hubSelectLLM('azure')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;text-align:center;padding:14px">
-      <div style="font-weight:700;font-size:14px;color:#0078d4">Azure OpenAI</div>
-      <div style="font-size:10px;color:var(--text2);margin-top:4px">GPT-4o / GPT-4 Turbo</div>
-      <div style="font-size:10px;margin-top:6px" id="hub-llm-status-azure"></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:24px" id="hub-llm-cards">
+    <div class="card hub-llm-card" data-provider="anthropic" onclick="hubSelectLLM('anthropic')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;padding:16px;position:relative;overflow:hidden">
+      <div style="position:absolute;top:0;right:0;width:50px;height:50px;background:radial-gradient(circle at top right,#d9770610,transparent);pointer-events:none"></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <div style="width:36px;height:36px;border-radius:8px;background:#d9770615;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">&#x2728;</div>
+        <div>
+          <div style="font-weight:700;font-size:14px;color:#d97706">Anthropic</div>
+          <div style="font-size:10px;color:var(--text2)">Claude Opus 4 / Sonnet 4</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">200K context</span>
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Tool use</span>
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Thinking</span>
+      </div>
+      <div style="font-size:10px;margin-top:4px" id="hub-llm-status-anthropic"></div>
     </div>
-    <div class="card hub-llm-card" data-provider="openai" onclick="hubSelectLLM('openai')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;text-align:center;padding:14px">
-      <div style="font-weight:700;font-size:14px;color:#10a37f">OpenAI</div>
-      <div style="font-size:10px;color:var(--text2);margin-top:4px">GPT-4o / o1 / o3</div>
-      <div style="font-size:10px;margin-top:6px" id="hub-llm-status-openai"></div>
+    <div class="card hub-llm-card" data-provider="azure" onclick="hubSelectLLM('azure')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;padding:16px;position:relative;overflow:hidden">
+      <div style="position:absolute;top:0;right:0;width:50px;height:50px;background:radial-gradient(circle at top right,#0078d410,transparent);pointer-events:none"></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <div style="width:36px;height:36px;border-radius:8px;background:#0078d415;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">&#x2601;</div>
+        <div>
+          <div style="font-weight:700;font-size:14px;color:#0078d4">Azure OpenAI</div>
+          <div style="font-size:10px;color:var(--text2)">GPT-4o / GPT-4 Turbo</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Enterprise</span>
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">RBAC</span>
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Private</span>
+      </div>
+      <div style="font-size:10px;margin-top:4px" id="hub-llm-status-azure"></div>
     </div>
-    <div class="card hub-llm-card" data-provider="anthropic" onclick="hubSelectLLM('anthropic')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;text-align:center;padding:14px">
-      <div style="font-weight:700;font-size:14px;color:#d97706">Anthropic</div>
-      <div style="font-size:10px;color:var(--text2);margin-top:4px">Claude Opus / Sonnet</div>
-      <div style="font-size:10px;margin-top:6px" id="hub-llm-status-anthropic"></div>
+    <div class="card hub-llm-card" data-provider="openai" onclick="hubSelectLLM('openai')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;padding:16px;position:relative;overflow:hidden">
+      <div style="position:absolute;top:0;right:0;width:50px;height:50px;background:radial-gradient(circle at top right,#10a37f10,transparent);pointer-events:none"></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <div style="width:36px;height:36px;border-radius:8px;background:#10a37f15;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">&#x1F916;</div>
+        <div>
+          <div style="font-weight:700;font-size:14px;color:#10a37f">OpenAI</div>
+          <div style="font-size:10px;color:var(--text2)">GPT-4o / o1 / o3-mini</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">128K context</span>
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Functions</span>
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Vision</span>
+      </div>
+      <div style="font-size:10px;margin-top:4px" id="hub-llm-status-openai"></div>
     </div>
-    <div class="card hub-llm-card" data-provider="ollama" onclick="hubSelectLLM('ollama')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;text-align:center;padding:14px">
-      <div style="font-weight:700;font-size:14px;color:#888">Ollama</div>
-      <div style="font-size:10px;color:var(--text2);margin-top:4px">Llama / Mistral / Local</div>
-      <div style="font-size:10px;margin-top:6px" id="hub-llm-status-ollama"></div>
+    <div class="card hub-llm-card" data-provider="google" onclick="hubSelectLLM('google')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;padding:16px;position:relative;overflow:hidden">
+      <div style="position:absolute;top:0;right:0;width:50px;height:50px;background:radial-gradient(circle at top right,#4285f410,transparent);pointer-events:none"></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <div style="width:36px;height:36px;border-radius:8px;background:#4285f415;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">&#x1F48E;</div>
+        <div>
+          <div style="font-weight:700;font-size:14px;color:#4285f4">Google Gemini</div>
+          <div style="font-size:10px;color:var(--text2)">Gemini 2.5 Pro / Flash</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">1M context</span>
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Multimodal</span>
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Grounding</span>
+      </div>
+      <div style="font-size:10px;margin-top:4px" id="hub-llm-status-google"></div>
     </div>
-    <div class="card hub-llm-card" data-provider="none" onclick="hubSelectLLM('none')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;text-align:center;padding:14px">
-      <div style="font-weight:700;font-size:14px;color:var(--text2)">Built-in</div>
-      <div style="font-size:10px;color:var(--text2);margin-top:4px">Rule-based / No LLM</div>
-      <div style="font-size:10px;margin-top:6px" id="hub-llm-status-none"></div>
+    <div class="card hub-llm-card" data-provider="bedrock" onclick="hubSelectLLM('bedrock')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;padding:16px;position:relative;overflow:hidden">
+      <div style="position:absolute;top:0;right:0;width:50px;height:50px;background:radial-gradient(circle at top right,#ff990010,transparent);pointer-events:none"></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <div style="width:36px;height:36px;border-radius:8px;background:#ff990015;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">&#x1F310;</div>
+        <div>
+          <div style="font-weight:700;font-size:14px;color:#ff9900">AWS Bedrock</div>
+          <div style="font-size:10px;color:var(--text2)">Claude / Titan / Llama</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">IAM Auth</span>
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">VPC</span>
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Multi-model</span>
+      </div>
+      <div style="font-size:10px;margin-top:4px" id="hub-llm-status-bedrock"></div>
+    </div>
+    <div class="card hub-llm-card" data-provider="ollama" onclick="hubSelectLLM('ollama')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;padding:16px;position:relative;overflow:hidden">
+      <div style="position:absolute;top:0;right:0;width:50px;height:50px;background:radial-gradient(circle at top right,#88888810,transparent);pointer-events:none"></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <div style="width:36px;height:36px;border-radius:8px;background:#88888815;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">&#x1F4BB;</div>
+        <div>
+          <div style="font-weight:700;font-size:14px;color:#888">Ollama</div>
+          <div style="font-size:10px;color:var(--text2)">Llama 3 / Mistral / Qwen</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Air-gapped</span>
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">On-prem</span>
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Free</span>
+      </div>
+      <div style="font-size:10px;margin-top:4px" id="hub-llm-status-ollama"></div>
+    </div>
+    <div class="card hub-llm-card" data-provider="none" onclick="hubSelectLLM('none')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;padding:16px;position:relative;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <div style="width:36px;height:36px;border-radius:8px;background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">&#x2699;</div>
+        <div>
+          <div style="font-weight:700;font-size:14px;color:var(--text2)">Built-in Only</div>
+          <div style="font-size:10px;color:var(--text2)">Rule-based analysis</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">No API key</span>
+        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Offline</span>
+      </div>
+      <div style="font-size:10px;margin-top:4px" id="hub-llm-status-none"></div>
     </div>
   </div>
 
@@ -3029,7 +3203,7 @@ function loadEnabledProviders() {
   try {
     const settings = JSON.parse(localStorage.getItem('mcp-llm-settings'));
     if (settings && settings.providers) {
-      const labels = { openai: 'OpenAI (GPT)', anthropic: 'Anthropic (Claude)', azure: 'Azure OpenAI', ollama: 'Ollama (Local)' };
+      const labels = { anthropic: 'Anthropic (Claude)', openai: 'OpenAI (GPT)', azure: 'Azure OpenAI', google: 'Google Gemini', bedrock: 'AWS Bedrock', ollama: 'Ollama (Local)' };
       Object.entries(settings.providers).forEach(function(entry) {
         if (entry[1].enabled) {
           const opt = document.createElement('option');
@@ -4969,16 +5143,35 @@ function hubChatWithCluster(clusterId, clusterName, platform) {
       ],
     };
     var suggestions = platformSuggestions[platform] || platformSuggestions['openshift'];
+    var activeLLM = 'none';
+    try { activeLLM = getProviderConfig()?.defaultProvider || 'none'; } catch(e) {}
+    var llmInfo = LLM_PROVIDERS[activeLLM] || LLM_PROVIDERS['none'];
+    var llmOptionsHtml = Object.keys(LLM_PROVIDERS).map(function(k) {
+      var lp = LLM_PROVIDERS[k];
+      var isActive = k === activeLLM;
+      return '<option value="' + k + '"' + (isActive ? ' selected' : '') + '>' + lp.name + (k !== 'none' ? ' — ' + lp.models : '') + '</option>';
+    }).join('');
+
     welcomeEl.innerHTML =
       '<div style="width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,' + pInfo.color + ',' + pInfo.color + 'cc);display:flex;align-items:center;justify-content:center;font-size:28px;color:#fff;margin-bottom:4px">' + pInfo.icon + '</div>' +
-      '<h2 style="color:' + pInfo.color + '">Welcome to ' + esc(clusterName) + '</h2>' +
-      '<p style="font-size:13px;max-width:480px">' + pInfo.name + ' cluster &mdash; Ask questions, diagnose issues, or run analysis using AI-powered insights.</p>' +
+      '<h2 style="color:' + pInfo.color + ';margin-bottom:4px">Welcome to ' + esc(clusterName) + '</h2>' +
+      '<p style="font-size:13px;max-width:480px;margin-bottom:16px">' + pInfo.name + ' cluster &mdash; Ask questions, diagnose issues, or run analysis using AI-powered insights.</p>' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 16px">' +
+        '<div style="display:flex;align-items:center;gap:8px">' +
+          '<span style="width:28px;height:28px;border-radius:6px;background:' + pInfo.color + '15;display:flex;align-items:center;justify-content:center;font-size:14px">' + pInfo.icon + '</span>' +
+          '<div><div style="font-size:11px;font-weight:600;color:var(--text)">' + esc(clusterName) + '</div><div style="font-size:9px;color:var(--text2)">' + pInfo.name + '</div></div>' +
+        '</div>' +
+        '<div style="width:1px;height:28px;background:var(--border)"></div>' +
+        '<div style="font-size:10px;color:var(--text2);white-space:nowrap">AI Brain:</div>' +
+        '<select onchange="hubSwitchChatLLM(this.value)" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:11px;outline:none;cursor:pointer;min-width:160px">' + llmOptionsHtml + '</select>' +
+        '<div style="display:flex;align-items:center;gap:4px"><span style="width:6px;height:6px;border-radius:50%;background:' + llmInfo.color + ';display:inline-block"></span><span style="font-size:10px;color:' + llmInfo.color + ';font-weight:600">' + llmInfo.name + '</span></div>' +
+      '</div>' +
       '<div class="welcome-suggestions" style="max-width:560px">' +
         suggestions.map(function(s) {
           return '<button onclick="sendFullChat(\'' + s.query.replace(/'/g, "\\'") + '\')" style="border-left:3px solid ' + pInfo.color + '">' + esc(s.label) + '</button>';
         }).join('') +
       '</div>' +
-      '<div style="font-size:10px;color:var(--text2);margin-top:16px;opacity:.6">Powered by TCS CloudNexus AI &bull; ' + pInfo.name + ' intelligence</div>';
+      '<div style="font-size:10px;color:var(--text2);margin-top:16px;opacity:.6">Powered by TCS CloudNexus AI &bull; ' + pInfo.name + ' + ' + llmInfo.name + '</div>';
   }
   var input = document.getElementById('chat-input') || document.querySelector('.chat-input input');
   if (input) {
@@ -4986,6 +5179,15 @@ function hubChatWithCluster(clusterId, clusterName, platform) {
     input.value = '';
     input.focus();
   }
+}
+
+function hubSwitchChatLLM(provider) {
+  var sel = document.getElementById('settings-default-provider');
+  if (sel) sel.value = provider;
+  var chatSel = document.getElementById('full-llm-provider');
+  if (chatSel) chatSel.value = provider;
+  try { saveSettings(); } catch(e) {}
+  if (typeof onFullProviderChange === 'function') onFullProviderChange();
 }
 
 var _remoteAgents = {};
@@ -5601,21 +5803,43 @@ function hubSelectLLM(provider) {
   saveSettings();
 }
 
+var LLM_PROVIDERS = {
+  anthropic: { name: 'Anthropic', color: '#d97706', icon: '&#x2728;', models: 'Claude Opus 4 / Sonnet 4' },
+  azure:     { name: 'Azure OpenAI', color: '#0078d4', icon: '&#x2601;', models: 'GPT-4o / GPT-4 Turbo' },
+  openai:    { name: 'OpenAI', color: '#10a37f', icon: '&#x1F916;', models: 'GPT-4o / o1 / o3' },
+  google:    { name: 'Google Gemini', color: '#4285f4', icon: '&#x1F48E;', models: 'Gemini 2.5 Pro / Flash' },
+  bedrock:   { name: 'AWS Bedrock', color: '#ff9900', icon: '&#x1F310;', models: 'Claude / Titan / Llama' },
+  ollama:    { name: 'Ollama', color: '#888888', icon: '&#x1F4BB;', models: 'Llama 3 / Mistral / Qwen' },
+  none:      { name: 'Built-in', color: '#6b7280', icon: '&#x2699;', models: 'Rule-based analysis' },
+};
+
 function hubHighlightActiveLLM() {
   try {
     var settings = getProviderConfig();
     var active = settings?.defaultProvider || 'none';
+    var configuredCount = 0;
     document.querySelectorAll('.hub-llm-card').forEach(function(card) {
       var p = card.dataset.provider;
-      card.style.borderColor = (p === active) ? 'var(--accent)' : 'var(--border)';
-      card.style.background = (p === active) ? 'var(--accent)11' : '';
+      var provColor = LLM_PROVIDERS[p]?.color || 'var(--accent)';
+      card.style.borderColor = (p === active) ? provColor : 'var(--border)';
+      card.style.background = (p === active) ? provColor + '11' : '';
       var statusEl = document.getElementById('hub-llm-status-' + p);
       if (statusEl) {
-        if (p === active) statusEl.innerHTML = '<span style="color:var(--accent)">&#x2714; Active</span>';
-        else if (settings?.providers?.[p]?.apiKey) statusEl.innerHTML = '<span style="color:var(--text2)">Configured</span>';
-        else statusEl.innerHTML = '';
+        if (p === active) {
+          statusEl.innerHTML = '<span style="display:inline-flex;align-items:center;gap:4px;color:' + provColor + ';font-weight:600"><span style="width:6px;height:6px;border-radius:50%;background:' + provColor + ';display:inline-block;animation:pulse 2s infinite"></span> Active</span>';
+          configuredCount++;
+        } else if (p !== 'none' && settings?.providers?.[p]?.apiKey) {
+          statusEl.innerHTML = '<span style="display:inline-flex;align-items:center;gap:4px;color:#22c55e"><span style="width:6px;height:6px;border-radius:50%;background:#22c55e;display:inline-block"></span> Connected</span>';
+          configuredCount++;
+        } else if (p === 'none') {
+          statusEl.innerHTML = '<span style="color:var(--text2)">Always available</span>';
+        } else {
+          statusEl.innerHTML = '<span style="color:var(--text2);opacity:.5">Not configured</span>';
+        }
       }
     });
+    var countEl = document.getElementById('hub-llm-configured-count');
+    if (countEl) countEl.textContent = configuredCount + ' configured';
   } catch(e) {}
 }
 
@@ -5629,7 +5853,7 @@ loadHubView = async function() {
 function updateChatHubBadge() {
   var badge = document.getElementById('chat-hub-count');
   if (!badge) return;
-  var clusterCount = _hubServers.length;
+  var clusterCount = _hubServers.length + Object.keys(_remoteAgents).filter(function(n) { return !_hubServers.some(function(s) { return s.name === n; }); }).length;
   badge.textContent = clusterCount > 0 ? clusterCount : '';
   var btn = document.getElementById('chat-hub-btn');
   if (btn) btn.style.borderColor = clusterCount > 0 ? 'var(--accent)' : '';
@@ -5637,7 +5861,14 @@ function updateChatHubBadge() {
   if (llmEl) {
     try {
       var cfg = getProviderConfig();
-      llmEl.textContent = (cfg?.defaultProvider && cfg.defaultProvider !== 'none') ? '1' : '0';
+      var count = 0;
+      if (cfg?.providers) {
+        Object.keys(cfg.providers).forEach(function(k) {
+          if (cfg.providers[k]?.apiKey) count++;
+        });
+      }
+      if (cfg?.defaultProvider && cfg.defaultProvider !== 'none' && count === 0) count = 1;
+      llmEl.textContent = count;
     } catch(e) { llmEl.textContent = '0'; }
   }
 }
