@@ -4380,144 +4380,458 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   var ns = p.ns;
   var safeName = (clusterName || 'my-cluster').replace(/[^a-z0-9-]/gi, '-').toLowerCase();
   var serverUrl = location.origin;
-  var yaml = '';
-  yaml += '# CloudNexus AI Agent — ' + p.name + '\n';
-  yaml += '# Cluster: ' + (clusterName || safeName) + '\n';
-  yaml += '# Generated: ' + new Date().toISOString().split('T')[0] + '\n';
-  yaml += '---\n';
-  yaml += 'apiVersion: v1\n';
-  yaml += 'kind: Namespace\n';
-  yaml += 'metadata:\n';
-  yaml += '  name: ' + ns + '\n';
-  yaml += '  labels:\n';
-  yaml += '    app.kubernetes.io/part-of: cloudnexus-ai\n';
-  yaml += '    app.kubernetes.io/managed-by: cloudnexus-hub\n';
-  yaml += '---\n';
-  yaml += 'apiVersion: v1\n';
-  yaml += 'kind: ServiceAccount\n';
-  yaml += 'metadata:\n';
-  yaml += '  name: cloudnexus-agent\n';
-  yaml += '  namespace: ' + ns + '\n';
-  yaml += '---\n';
-  yaml += 'apiVersion: rbac.authorization.k8s.io/v1\n';
-  yaml += 'kind: ClusterRole\n';
-  yaml += 'metadata:\n';
-  yaml += '  name: cloudnexus-agent-role\n';
-  yaml += 'rules:\n';
-  yaml += '  - apiGroups: [""]\n';
-  yaml += '    resources: [pods, services, nodes, events, namespaces,\n';
-  yaml += '                configmaps, persistentvolumeclaims]\n';
-  yaml += '    verbs: [get, list, watch]\n';
-  yaml += '  - apiGroups: [apps]\n';
-  yaml += '    resources: [deployments, statefulsets, daemonsets, replicasets]\n';
-  yaml += '    verbs: [get, list, watch]\n';
-  yaml += '  - apiGroups: [batch]\n';
-  yaml += '    resources: [jobs, cronjobs]\n';
-  yaml += '    verbs: [get, list, watch]\n';
-  yaml += '  - apiGroups: [networking.k8s.io]\n';
-  yaml += '    resources: [ingresses, networkpolicies]\n';
-  yaml += '    verbs: [get, list, watch]\n';
-  yaml += '  - apiGroups: [metrics.k8s.io]\n';
-  yaml += '    resources: [pods, nodes]\n';
-  yaml += '    verbs: [get, list]\n';
+  var date = new Date().toISOString().split('T')[0];
+
+  var lines = [
+    '# ============================================================',
+    '# TCS CloudNexus AI — Cluster Agent Deployment',
+    '# Platform : ' + p.name,
+    '# Cluster  : ' + (clusterName || safeName),
+    '# Registry : quay.io/karuppucs/cloudnexus-agent:latest',
+    '# Generated: ' + date,
+    '# ============================================================',
+    '#',
+    '# Apply with: ' + p.cli + ' apply -f cloudnexus-agent-' + platform + '.yaml',
+    '# Remove with: ' + p.cli + ' delete -f cloudnexus-agent-' + platform + '.yaml',
+    '#',
+    '# Prerequisites:',
+    '#   - Cluster admin or equivalent RBAC permissions',
+    '#   - Network access from cluster to hub: ' + serverUrl,
+  ];
+
   if (platform === 'openshift') {
-    yaml += '  - apiGroups: [route.openshift.io]\n';
-    yaml += '    resources: [routes]\n';
-    yaml += '    verbs: [get, list, watch]\n';
-    yaml += '  - apiGroups: [apps.openshift.io]\n';
-    yaml += '    resources: [deploymentconfigs]\n';
-    yaml += '    verbs: [get, list, watch]\n';
-    yaml += '  - apiGroups: [project.openshift.io]\n';
-    yaml += '    resources: [projects]\n';
-    yaml += '    verbs: [get, list]\n';
+    lines.push('#   - OpenShift 4.x with cluster-admin or dedicated role');
+  } else if (platform === 'eks') {
+    lines.push('#   - EKS cluster with aws-auth ConfigMap configured');
+    lines.push('#   - ECR pull access or public quay.io access');
+  } else if (platform === 'aks') {
+    lines.push('#   - AKS cluster with Azure RBAC or Kubernetes RBAC');
+  } else if (platform === 'gke') {
+    lines.push('#   - GKE cluster with Workload Identity or node SA');
+  } else if (platform === 'rancher') {
+    lines.push('#   - Rancher-managed cluster with project access');
   }
-  yaml += '---\n';
-  yaml += 'apiVersion: rbac.authorization.k8s.io/v1\n';
-  yaml += 'kind: ClusterRoleBinding\n';
-  yaml += 'metadata:\n';
-  yaml += '  name: cloudnexus-agent-binding\n';
-  yaml += 'roleRef:\n';
-  yaml += '  apiGroup: rbac.authorization.k8s.io\n';
-  yaml += '  kind: ClusterRole\n';
-  yaml += '  name: cloudnexus-agent-role\n';
-  yaml += 'subjects:\n';
-  yaml += '  - kind: ServiceAccount\n';
-  yaml += '    name: cloudnexus-agent\n';
-  yaml += '    namespace: ' + ns + '\n';
-  yaml += '---\n';
-  yaml += 'apiVersion: v1\n';
-  yaml += 'kind: ConfigMap\n';
-  yaml += 'metadata:\n';
-  yaml += '  name: cloudnexus-agent-config\n';
-  yaml += '  namespace: ' + ns + '\n';
-  yaml += 'data:\n';
-  yaml += '  HUB_SERVER_URL: "' + serverUrl + '"\n';
-  yaml += '  CLUSTER_NAME: "' + safeName + '"\n';
-  yaml += '  CLUSTER_PLATFORM: "' + platform + '"\n';
-  yaml += '  SCAN_INTERVAL: "60"\n';
-  yaml += '  LOG_LEVEL: "info"\n';
-  yaml += '---\n';
-  yaml += 'apiVersion: apps/v1\n';
-  yaml += 'kind: Deployment\n';
-  yaml += 'metadata:\n';
-  yaml += '  name: cloudnexus-agent\n';
-  yaml += '  namespace: ' + ns + '\n';
-  yaml += '  labels:\n';
-  yaml += '    app: cloudnexus-agent\n';
-  yaml += '    app.kubernetes.io/part-of: cloudnexus-ai\n';
-  yaml += 'spec:\n';
-  yaml += '  replicas: 1\n';
-  yaml += '  selector:\n';
-  yaml += '    matchLabels:\n';
-  yaml += '      app: cloudnexus-agent\n';
-  yaml += '  template:\n';
-  yaml += '    metadata:\n';
-  yaml += '      labels:\n';
-  yaml += '        app: cloudnexus-agent\n';
-  yaml += '    spec:\n';
-  yaml += '      serviceAccountName: cloudnexus-agent\n';
-  yaml += '      containers:\n';
-  yaml += '        - name: agent\n';
-  yaml += '          image: quay.io/karuppucs/cloudnexus-agent:latest\n';
-  yaml += '          envFrom:\n';
-  yaml += '            - configMapRef:\n';
-  yaml += '                name: cloudnexus-agent-config\n';
-  yaml += '          ports:\n';
-  yaml += '            - containerPort: 8080\n';
-  yaml += '              name: http\n';
-  yaml += '          resources:\n';
-  yaml += '            requests:\n';
-  yaml += '              cpu: 100m\n';
-  yaml += '              memory: 128Mi\n';
-  yaml += '            limits:\n';
-  yaml += '              cpu: 500m\n';
-  yaml += '              memory: 256Mi\n';
-  yaml += '          livenessProbe:\n';
-  yaml += '            httpGet:\n';
-  yaml += '              path: /healthz\n';
-  yaml += '              port: 8080\n';
-  yaml += '            initialDelaySeconds: 10\n';
-  yaml += '            periodSeconds: 30\n';
-  yaml += '          readinessProbe:\n';
-  yaml += '            httpGet:\n';
-  yaml += '              path: /readyz\n';
-  yaml += '              port: 8080\n';
-  yaml += '            initialDelaySeconds: 5\n';
-  yaml += '            periodSeconds: 10\n';
-  yaml += '---\n';
-  yaml += 'apiVersion: v1\n';
-  yaml += 'kind: Service\n';
-  yaml += 'metadata:\n';
-  yaml += '  name: cloudnexus-agent\n';
-  yaml += '  namespace: ' + ns + '\n';
-  yaml += 'spec:\n';
-  yaml += '  selector:\n';
-  yaml += '    app: cloudnexus-agent\n';
-  yaml += '  ports:\n';
-  yaml += '    - port: 8080\n';
-  yaml += '      targetPort: 8080\n';
-  yaml += '      name: http\n';
-  return yaml;
+
+  lines.push('# ============================================================');
+  lines.push('');
+
+  // --- Namespace ---
+  lines.push('---');
+  lines.push('apiVersion: v1');
+  lines.push('kind: Namespace');
+  lines.push('metadata:');
+  lines.push('  name: ' + ns);
+  lines.push('  labels:');
+  lines.push('    app.kubernetes.io/name: cloudnexus-agent');
+  lines.push('    app.kubernetes.io/part-of: cloudnexus-ai');
+  lines.push('    app.kubernetes.io/managed-by: cloudnexus-hub');
+  if (platform === 'openshift') {
+    lines.push('  annotations:');
+    lines.push('    openshift.io/description: "TCS CloudNexus AI monitoring agent"');
+  }
+  lines.push('');
+
+  // --- ServiceAccount ---
+  lines.push('---');
+  lines.push('apiVersion: v1');
+  lines.push('kind: ServiceAccount');
+  lines.push('metadata:');
+  lines.push('  name: cloudnexus-agent');
+  lines.push('  namespace: ' + ns);
+  lines.push('  labels:');
+  lines.push('    app.kubernetes.io/name: cloudnexus-agent');
+  if (platform === 'eks') {
+    lines.push('  # Uncomment to use IAM Roles for Service Accounts (IRSA):');
+    lines.push('  # annotations:');
+    lines.push('  #   eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/cloudnexus-agent');
+  } else if (platform === 'aks') {
+    lines.push('  # Uncomment to use Azure Workload Identity:');
+    lines.push('  # annotations:');
+    lines.push('  #   azure.workload.identity/client-id: <CLIENT_ID>');
+  } else if (platform === 'gke') {
+    lines.push('  # Uncomment to use GKE Workload Identity:');
+    lines.push('  # annotations:');
+    lines.push('  #   iam.gke.io/gcp-service-account: cloudnexus@PROJECT.iam.gserviceaccount.com');
+  }
+  lines.push('');
+
+  // --- ClusterRole ---
+  lines.push('---');
+  lines.push('apiVersion: rbac.authorization.k8s.io/v1');
+  lines.push('kind: ClusterRole');
+  lines.push('metadata:');
+  lines.push('  name: cloudnexus-agent-role');
+  lines.push('  labels:');
+  lines.push('    app.kubernetes.io/name: cloudnexus-agent');
+  lines.push('rules:');
+  lines.push('  # Core API — pods, nodes, events, services, namespaces');
+  lines.push('  - apiGroups: [""]');
+  lines.push('    resources:');
+  lines.push('      - pods');
+  lines.push('      - pods/log');
+  lines.push('      - nodes');
+  lines.push('      - services');
+  lines.push('      - events');
+  lines.push('      - namespaces');
+  lines.push('      - configmaps');
+  lines.push('      - persistentvolumeclaims');
+  lines.push('      - endpoints');
+  lines.push('      - replicationcontrollers');
+  lines.push('      - serviceaccounts');
+  lines.push('      - resourcequotas');
+  lines.push('      - limitranges');
+  lines.push('    verbs: ["get", "list", "watch"]');
+  lines.push('');
+  lines.push('  # Apps — deployments, statefulsets, daemonsets, replicasets');
+  lines.push('  - apiGroups: ["apps"]');
+  lines.push('    resources:');
+  lines.push('      - deployments');
+  lines.push('      - statefulsets');
+  lines.push('      - daemonsets');
+  lines.push('      - replicasets');
+  lines.push('    verbs: ["get", "list", "watch"]');
+  lines.push('');
+  lines.push('  # Batch — jobs, cronjobs');
+  lines.push('  - apiGroups: ["batch"]');
+  lines.push('    resources:');
+  lines.push('      - jobs');
+  lines.push('      - cronjobs');
+  lines.push('    verbs: ["get", "list", "watch"]');
+  lines.push('');
+  lines.push('  # Networking');
+  lines.push('  - apiGroups: ["networking.k8s.io"]');
+  lines.push('    resources:');
+  lines.push('      - ingresses');
+  lines.push('      - networkpolicies');
+  lines.push('    verbs: ["get", "list", "watch"]');
+  lines.push('');
+  lines.push('  # Metrics (requires metrics-server)');
+  lines.push('  - apiGroups: ["metrics.k8s.io"]');
+  lines.push('    resources:');
+  lines.push('      - pods');
+  lines.push('      - nodes');
+  lines.push('    verbs: ["get", "list"]');
+  lines.push('');
+  lines.push('  # Storage');
+  lines.push('  - apiGroups: ["storage.k8s.io"]');
+  lines.push('    resources:');
+  lines.push('      - storageclasses');
+  lines.push('      - volumeattachments');
+  lines.push('    verbs: ["get", "list", "watch"]');
+  lines.push('');
+  lines.push('  # Autoscaling');
+  lines.push('  - apiGroups: ["autoscaling"]');
+  lines.push('    resources:');
+  lines.push('      - horizontalpodautoscalers');
+  lines.push('    verbs: ["get", "list", "watch"]');
+  lines.push('');
+  lines.push('  # Policy');
+  lines.push('  - apiGroups: ["policy"]');
+  lines.push('    resources:');
+  lines.push('      - poddisruptionbudgets');
+  lines.push('    verbs: ["get", "list", "watch"]');
+
+  // Platform-specific RBAC
+  if (platform === 'openshift') {
+    lines.push('');
+    lines.push('  # OpenShift — Routes');
+    lines.push('  - apiGroups: ["route.openshift.io"]');
+    lines.push('    resources:');
+    lines.push('      - routes');
+    lines.push('    verbs: ["get", "list", "watch"]');
+    lines.push('');
+    lines.push('  # OpenShift — DeploymentConfigs');
+    lines.push('  - apiGroups: ["apps.openshift.io"]');
+    lines.push('    resources:');
+    lines.push('      - deploymentconfigs');
+    lines.push('    verbs: ["get", "list", "watch"]');
+    lines.push('');
+    lines.push('  # OpenShift — Projects');
+    lines.push('  - apiGroups: ["project.openshift.io"]');
+    lines.push('    resources:');
+    lines.push('      - projects');
+    lines.push('    verbs: ["get", "list"]');
+    lines.push('');
+    lines.push('  # OpenShift — Cluster Config (version, operators)');
+    lines.push('  - apiGroups: ["config.openshift.io"]');
+    lines.push('    resources:');
+    lines.push('      - clusterversions');
+    lines.push('      - clusteroperators');
+    lines.push('      - infrastructures');
+    lines.push('    verbs: ["get", "list"]');
+    lines.push('');
+    lines.push('  # OpenShift — Machine API');
+    lines.push('  - apiGroups: ["machine.openshift.io"]');
+    lines.push('    resources:');
+    lines.push('      - machines');
+    lines.push('      - machinesets');
+    lines.push('    verbs: ["get", "list"]');
+    lines.push('');
+    lines.push('  # OpenShift — Security Context Constraints');
+    lines.push('  - apiGroups: ["security.openshift.io"]');
+    lines.push('    resources:');
+    lines.push('      - securitycontextconstraints');
+    lines.push('    verbs: ["get", "list"]');
+  }
+
+  if (platform === 'rancher') {
+    lines.push('');
+    lines.push('  # Rancher — Cluster management CRDs');
+    lines.push('  - apiGroups: ["management.cattle.io"]');
+    lines.push('    resources:');
+    lines.push('      - clusters');
+    lines.push('      - nodes');
+    lines.push('    verbs: ["get", "list", "watch"]');
+    lines.push('');
+    lines.push('  # Rancher — Fleet');
+    lines.push('  - apiGroups: ["fleet.cattle.io"]');
+    lines.push('    resources:');
+    lines.push('      - bundles');
+    lines.push('      - gitrepos');
+    lines.push('    verbs: ["get", "list"]');
+  }
+
+  if (platform === 'eks') {
+    lines.push('');
+    lines.push('  # EKS — Fargate profiles and add-ons (read-only)');
+    lines.push('  - apiGroups: ["eks.amazonaws.com"]');
+    lines.push('    resources: ["*"]');
+    lines.push('    verbs: ["get", "list"]');
+  }
+
+  if (platform === 'gke') {
+    lines.push('');
+    lines.push('  # GKE — BackendConfig, ManagedCertificate');
+    lines.push('  - apiGroups: ["cloud.google.com"]');
+    lines.push('    resources: ["*"]');
+    lines.push('    verbs: ["get", "list"]');
+  }
+  lines.push('');
+
+  // --- ClusterRoleBinding ---
+  lines.push('---');
+  lines.push('apiVersion: rbac.authorization.k8s.io/v1');
+  lines.push('kind: ClusterRoleBinding');
+  lines.push('metadata:');
+  lines.push('  name: cloudnexus-agent-binding');
+  lines.push('  labels:');
+  lines.push('    app.kubernetes.io/name: cloudnexus-agent');
+  lines.push('roleRef:');
+  lines.push('  apiGroup: rbac.authorization.k8s.io');
+  lines.push('  kind: ClusterRole');
+  lines.push('  name: cloudnexus-agent-role');
+  lines.push('subjects:');
+  lines.push('  - kind: ServiceAccount');
+  lines.push('    name: cloudnexus-agent');
+  lines.push('    namespace: ' + ns);
+  lines.push('');
+
+  // --- ConfigMap ---
+  lines.push('---');
+  lines.push('apiVersion: v1');
+  lines.push('kind: ConfigMap');
+  lines.push('metadata:');
+  lines.push('  name: cloudnexus-agent-config');
+  lines.push('  namespace: ' + ns);
+  lines.push('  labels:');
+  lines.push('    app.kubernetes.io/name: cloudnexus-agent');
+  lines.push('data:');
+  lines.push('  HUB_SERVER_URL: "' + serverUrl + '"');
+  lines.push('  CLUSTER_NAME: "' + safeName + '"');
+  lines.push('  CLUSTER_PLATFORM: "' + platform + '"');
+  lines.push('  SCAN_INTERVAL: "60"');
+  lines.push('  LOG_LEVEL: "info"');
+  if (apiUrl) {
+    lines.push('  API_SERVER_URL: "' + apiUrl + '"');
+  }
+  lines.push('');
+
+  // --- Secret (placeholder for token) ---
+  lines.push('---');
+  lines.push('apiVersion: v1');
+  lines.push('kind: Secret');
+  lines.push('metadata:');
+  lines.push('  name: cloudnexus-agent-secret');
+  lines.push('  namespace: ' + ns);
+  lines.push('  labels:');
+  lines.push('    app.kubernetes.io/name: cloudnexus-agent');
+  lines.push('type: Opaque');
+  lines.push('stringData:');
+  lines.push('  # Agent uses in-cluster ServiceAccount token by default.');
+  lines.push('  # Uncomment to override with an explicit bearer token:');
+  lines.push('  # BEARER_TOKEN: "sha256~xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"');
+  lines.push('  AGENT_ID: "' + safeName + '"');
+  lines.push('');
+
+  // --- Deployment ---
+  lines.push('---');
+  lines.push('apiVersion: apps/v1');
+  lines.push('kind: Deployment');
+  lines.push('metadata:');
+  lines.push('  name: cloudnexus-agent');
+  lines.push('  namespace: ' + ns);
+  lines.push('  labels:');
+  lines.push('    app: cloudnexus-agent');
+  lines.push('    app.kubernetes.io/name: cloudnexus-agent');
+  lines.push('    app.kubernetes.io/part-of: cloudnexus-ai');
+  lines.push('    app.kubernetes.io/version: "1.0.0"');
+  lines.push('spec:');
+  lines.push('  replicas: 1');
+  lines.push('  revisionHistoryLimit: 3');
+  lines.push('  strategy:');
+  lines.push('    type: RollingUpdate');
+  lines.push('    rollingUpdate:');
+  lines.push('      maxUnavailable: 0');
+  lines.push('      maxSurge: 1');
+  lines.push('  selector:');
+  lines.push('    matchLabels:');
+  lines.push('      app: cloudnexus-agent');
+  lines.push('  template:');
+  lines.push('    metadata:');
+  lines.push('      labels:');
+  lines.push('        app: cloudnexus-agent');
+  lines.push('        app.kubernetes.io/name: cloudnexus-agent');
+  lines.push('      annotations:');
+  lines.push('        prometheus.io/scrape: "true"');
+  lines.push('        prometheus.io/port: "8080"');
+  lines.push('        prometheus.io/path: "/status"');
+  lines.push('    spec:');
+  lines.push('      serviceAccountName: cloudnexus-agent');
+  if (platform === 'openshift') {
+    lines.push('      securityContext:');
+    lines.push('        runAsNonRoot: true');
+  } else {
+    lines.push('      securityContext:');
+    lines.push('        runAsNonRoot: true');
+    lines.push('        runAsUser: 1001');
+    lines.push('        runAsGroup: 1001');
+    lines.push('        fsGroup: 1001');
+  }
+  lines.push('      terminationGracePeriodSeconds: 30');
+  lines.push('      containers:');
+  lines.push('        - name: agent');
+  lines.push('          image: quay.io/karuppucs/cloudnexus-agent:latest');
+  lines.push('          imagePullPolicy: Always');
+  lines.push('          envFrom:');
+  lines.push('            - configMapRef:');
+  lines.push('                name: cloudnexus-agent-config');
+  lines.push('            - secretRef:');
+  lines.push('                name: cloudnexus-agent-secret');
+  lines.push('                optional: true');
+  lines.push('          ports:');
+  lines.push('            - containerPort: 8080');
+  lines.push('              name: http');
+  lines.push('              protocol: TCP');
+  lines.push('          resources:');
+  lines.push('            requests:');
+  lines.push('              cpu: 50m');
+  lines.push('              memory: 64Mi');
+  lines.push('            limits:');
+  lines.push('              cpu: 200m');
+  lines.push('              memory: 128Mi');
+  lines.push('          livenessProbe:');
+  lines.push('            httpGet:');
+  lines.push('              path: /healthz');
+  lines.push('              port: 8080');
+  lines.push('            initialDelaySeconds: 10');
+  lines.push('            periodSeconds: 30');
+  lines.push('            timeoutSeconds: 5');
+  lines.push('            failureThreshold: 3');
+  lines.push('          readinessProbe:');
+  lines.push('            httpGet:');
+  lines.push('              path: /readyz');
+  lines.push('              port: 8080');
+  lines.push('            initialDelaySeconds: 5');
+  lines.push('            periodSeconds: 10');
+  lines.push('            timeoutSeconds: 3');
+  lines.push('            failureThreshold: 2');
+  lines.push('          securityContext:');
+  lines.push('            allowPrivilegeEscalation: false');
+  lines.push('            readOnlyRootFilesystem: true');
+  lines.push('            capabilities:');
+  lines.push('              drop:');
+  lines.push('                - ALL');
+  lines.push('');
+
+  // --- Service ---
+  lines.push('---');
+  lines.push('apiVersion: v1');
+  lines.push('kind: Service');
+  lines.push('metadata:');
+  lines.push('  name: cloudnexus-agent');
+  lines.push('  namespace: ' + ns);
+  lines.push('  labels:');
+  lines.push('    app: cloudnexus-agent');
+  lines.push('    app.kubernetes.io/name: cloudnexus-agent');
+  lines.push('spec:');
+  lines.push('  type: ClusterIP');
+  lines.push('  selector:');
+  lines.push('    app: cloudnexus-agent');
+  lines.push('  ports:');
+  lines.push('    - port: 8080');
+  lines.push('      targetPort: 8080');
+  lines.push('      protocol: TCP');
+  lines.push('      name: http');
+
+  // --- OpenShift Route ---
+  if (platform === 'openshift') {
+    lines.push('');
+    lines.push('---');
+    lines.push('apiVersion: route.openshift.io/v1');
+    lines.push('kind: Route');
+    lines.push('metadata:');
+    lines.push('  name: cloudnexus-agent');
+    lines.push('  namespace: ' + ns);
+    lines.push('  labels:');
+    lines.push('    app: cloudnexus-agent');
+    lines.push('spec:');
+    lines.push('  to:');
+    lines.push('    kind: Service');
+    lines.push('    name: cloudnexus-agent');
+    lines.push('  port:');
+    lines.push('    targetPort: http');
+    lines.push('  tls:');
+    lines.push('    termination: edge');
+    lines.push('    insecureEdgeTerminationPolicy: Redirect');
+  }
+
+  // --- Ingress for non-OpenShift ---
+  if (platform !== 'openshift') {
+    lines.push('');
+    lines.push('# ---');
+    lines.push('# Uncomment to expose the agent via Ingress:');
+    lines.push('# apiVersion: networking.k8s.io/v1');
+    lines.push('# kind: Ingress');
+    lines.push('# metadata:');
+    lines.push('#   name: cloudnexus-agent');
+    lines.push('#   namespace: ' + ns);
+    lines.push('#   annotations:');
+    if (platform === 'eks') {
+      lines.push('#     kubernetes.io/ingress.class: alb');
+      lines.push('#     alb.ingress.kubernetes.io/scheme: internal');
+    } else if (platform === 'gke') {
+      lines.push('#     kubernetes.io/ingress.class: gce');
+    } else if (platform === 'aks') {
+      lines.push('#     kubernetes.io/ingress.class: azure/application-gateway');
+    } else {
+      lines.push('#     kubernetes.io/ingress.class: nginx');
+    }
+    lines.push('# spec:');
+    lines.push('#   rules:');
+    lines.push('#     - host: cloudnexus-agent.' + safeName + '.local');
+    lines.push('#       http:');
+    lines.push('#         paths:');
+    lines.push('#           - path: /');
+    lines.push('#             pathType: Prefix');
+    lines.push('#             backend:');
+    lines.push('#               service:');
+    lines.push('#                 name: cloudnexus-agent');
+    lines.push('#                 port:');
+    lines.push('#                   number: 8080');
+  }
+
+  lines.push('');
+  return lines.join('\n');
 }
 
 function hubAddCluster(platform) {
