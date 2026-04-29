@@ -25,7 +25,10 @@ import {
   ocpFetch,
   runWithTrace,
   renderTraceMarkdown,
+  setRemoteCluster,
+  clearRemoteCluster,
 } from "../utils/openshift-client.js";
+import { getConnectedAgents } from "../index.js";
 import { cacheGet, cacheSet, isEnabled as cacheEnabled } from "../utils/cache.js";
 import {
   addMessage as histAddMessage,
@@ -3733,6 +3736,16 @@ export async function handleChatAPI(req, res) {
       return;
     }
 
+    // Remote cluster override — when the user selects a remote cluster in
+    // the dashboard, route all ocpGet/ocpFetch calls to that cluster.
+    if (body.cluster && body.cluster !== "local") {
+      const agents = getConnectedAgents();
+      const agent = agents.get(body.cluster);
+      if (agent && agent.apiUrl && agent.token) {
+        setRemoteCluster(agent.apiUrl, agent.token);
+      }
+    }
+
     // Slash commands — fast-path for dashboard shortcuts
     const slashReply = await maybeHandleSlashCommand(userMessage, conversationId);
     if (slashReply) {
@@ -4178,6 +4191,7 @@ export async function handleChatAPI(req, res) {
     console.error("Chat API error:", err);
     json(res, 500, { error: err.message });
   } finally {
+    clearRemoteCluster();
     histLogQuery({
       conversationId,
       query: userMessage,
@@ -4201,6 +4215,15 @@ export async function handleChatCompareAPI(req, res) {
     if (!message) return json(res, 400, { error: "Missing 'message' field" });
     if (!Array.isArray(providers) || providers.length < 1 || providers.length > 3) {
       return json(res, 400, { error: "Provide 1-3 providers in the 'providers' array" });
+    }
+
+    // Remote cluster override
+    if (body.cluster && body.cluster !== "local") {
+      const agents = getConnectedAgents();
+      const agent = agents.get(body.cluster);
+      if (agent && agent.apiUrl && agent.token) {
+        setRemoteCluster(agent.apiUrl, agent.token);
+      }
     }
 
     // Gather cluster context once, shared across all providers
@@ -4258,6 +4281,8 @@ export async function handleChatCompareAPI(req, res) {
   } catch (err) {
     console.error("[chat-compare] error:", err);
     return json(res, 500, { error: err.message });
+  } finally {
+    clearRemoteCluster();
   }
 }
 
@@ -4271,6 +4296,15 @@ export async function handleChatInvestigateAPI(req, res) {
     const { message, provider, apiKey, apiUrl, model, conversationId, history } = body;
 
     if (!message) return json(res, 400, { error: "Missing 'message' field" });
+
+    // Remote cluster override
+    if (body.cluster && body.cluster !== "local") {
+      const agents = getConnectedAgents();
+      const agent = agents.get(body.cluster);
+      if (agent && agent.apiUrl && agent.token) {
+        setRemoteCluster(agent.apiUrl, agent.token);
+      }
+    }
 
     const llmOpts = {};
     if (provider) llmOpts.provider = provider;
@@ -4334,6 +4368,8 @@ export async function handleChatInvestigateAPI(req, res) {
   } catch (err) {
     console.error("[chat-investigate] error:", err);
     return json(res, 500, { error: err.message });
+  } finally {
+    clearRemoteCluster();
   }
 }
 

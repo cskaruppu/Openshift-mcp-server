@@ -112,6 +112,25 @@ export function renderTraceMarkdown(trace) {
 }
 
 // ---------------------------------------------------------------------------
+// Remote cluster override — allows routing all ocpFetch() calls to a remote
+// cluster without changing hundreds of call sites.
+// ---------------------------------------------------------------------------
+let _remoteClusterOverride = null;
+
+/**
+ * Set a remote cluster override so subsequent ocpFetch() calls target
+ * the given apiUrl/token instead of the local cluster.
+ */
+export function setRemoteCluster(apiUrl, token) {
+  _remoteClusterOverride = { apiUrl, token };
+}
+
+/** Clear the remote cluster override, reverting to the local cluster. */
+export function clearRemoteCluster() {
+  _remoteClusterOverride = null;
+}
+
+// ---------------------------------------------------------------------------
 // Auth
 // ---------------------------------------------------------------------------
 let _cachedToken = null;
@@ -143,8 +162,11 @@ async function token() {
 const OCP_FETCH_TIMEOUT_MS = parseInt(process.env.OCP_FETCH_TIMEOUT_MS || "15000", 10);
 
 export async function ocpFetch(path, options = {}) {
-  const tk = await token();
-  const url = `${OPENSHIFT_API_URL}${path}`;
+  // When a remote cluster override is active, route to that cluster instead.
+  const remote = _remoteClusterOverride;
+  const baseUrl = remote ? remote.apiUrl : OPENSHIFT_API_URL;
+  const tk = remote ? remote.token : await token();
+  const url = `${baseUrl}${path}`;
   const method = (options.method || "GET").toUpperCase();
   const startedAt = Date.now();
   const acceptsText = options.headers && options.headers.Accept === "text/plain";
@@ -244,6 +266,51 @@ export async function canI({ verb, group = "", resource, namespace = "", name = 
     // operations — the real call will surface the error.
     return { allowed: true, reason: `preflight-error:${err.message}` };
   }
+}
+
+/**
+ * Make an authenticated request to a remote OpenShift / K8s API.
+ * Like ocpFetch but targets apiUrl instead of the local OPENSHIFT_API_URL
+ * and uses the provided bearerToken instead of the local SA token.
+ */
+export async function remoteOcpFetch(apiUrl, bearerToken, path, options = {}) {
+  const url = `${apiUrl}${path}`;
+  const method = (options.method || "GET").toUpperCase();
+  const startedAt = Date.now();
+  const acceptsText = options.headers && options.headers.Accept === "text/plain";
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || OCP_FETCH_TIMEOUT_MS);
+  let resp;
+  try {
+    resp = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${bearerToken}`,
+        Accept: acceptsText ? "text/plain" : "application/json",
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+  const durationMs = Date.now() - startedAt;
+  const trace = getTrace();
+  if (trace) {
+    trace.push({ method, path, status: resp.status, durationMs, remote: apiUrl });
+  }
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "");
+    throw new Error(`Remote OCP API ${resp.status}: ${body.slice(0, 500)}`);
+  }
+  if (acceptsText) return resp.text();
+  return resp.json();
+}
+
+/** Shorthand GET against a remote cluster. */
+export async function remoteOcpGet(apiUrl, bearerToken, path) {
+  return remoteOcpFetch(apiUrl, bearerToken, path);
 }
 
 export function getApiUrl() {
