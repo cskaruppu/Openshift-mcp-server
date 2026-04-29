@@ -426,6 +426,28 @@ tr:hover td{background:#ffffff06}
 .kebab-item.danger{color:#ef4444}
 .kebab-item.danger:hover{background:#ef44440d}
 .kebab-sep{height:1px;background:var(--border);margin:2px 0}
+/* AI Hub command center */
+@keyframes hubGlow{0%,100%{opacity:.4}50%{opacity:1}}
+@keyframes hubOrbit{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+@keyframes hubDataFlow{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+.hub-grid{display:grid;grid-template-columns:320px 1fr;gap:16px;margin-bottom:20px}
+@media(max-width:900px){.hub-grid{grid-template-columns:1fr}}
+.hub-panel{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.hub-panel-head{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border);background:linear-gradient(135deg,var(--card),var(--bg))}
+.hub-panel-head h3{font-size:13px;font-weight:700;margin:0;color:var(--text)}
+.hub-panel-body{padding:10px}
+.hub-llm-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;transition:all .15s;border:1px solid transparent;margin-bottom:4px}
+.hub-llm-row:hover{background:var(--bg);border-color:var(--border)}
+.hub-llm-row.active{border-color:var(--accent);background:var(--accent)08}
+.hub-llm-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.hub-llm-icon{width:32px;height:32px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.hub-quick-bar{background:linear-gradient(135deg,#0f172a,#1e1b4b,#0f172a);border:1px solid #334155;border-radius:14px;padding:16px 20px;margin-bottom:16px;position:relative;overflow:hidden}
+.hub-quick-bar::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,#6366f108,transparent);animation:hubDataFlow 6s ease infinite;background-size:200% 100%}
+.hub-platform-pill{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:var(--card);transition:all .15s;white-space:nowrap}
+.hub-platform-pill:hover{transform:translateY(-1px);box-shadow:0 2px 8px #0004}
+.hub-stat-ring{width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;flex-shrink:0}
+.hub-stat-ring::before{content:'';position:absolute;inset:0;border-radius:50%;border:2px solid;opacity:.15}
+.hub-stat-ring::after{content:'';position:absolute;inset:0;border-radius:50%;border:2px solid transparent;border-top-color:inherit;animation:hubOrbit 3s linear infinite}
 /* Compare cards */
 .compare-container{display:flex;gap:14px;flex-wrap:wrap;width:100%;margin:8px 0}
 .compare-card{flex:1;min-width:250px;background:var(--bg);border:1px solid var(--border);border-radius:8px;overflow:hidden}
@@ -1304,339 +1326,257 @@ tr:hover td{background:#ffffff06}
 
 <!-- AI Hub View -->
 <div id="view-hub" class="container" style="display:none">
-  <!-- Hub Header with gradient accent -->
-  <div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;padding:20px 24px;background:linear-gradient(135deg,#0f172a 0%,#1e1b4b 50%,#1e293b 100%);border-radius:14px;border:1px solid #334155;position:relative;overflow:hidden">
-    <div style="position:absolute;top:-20px;right:-20px;width:120px;height:120px;background:radial-gradient(circle,#6366f115,transparent);border-radius:50%"></div>
-    <div style="position:absolute;bottom:-30px;left:40%;width:180px;height:80px;background:radial-gradient(ellipse,#e0404010,transparent);border-radius:50%"></div>
-    <div>
-      <div style="font-size:22px;font-weight:800;color:#f8fafc;letter-spacing:-.5px">AI Hub</div>
-      <div style="font-size:12px;color:#94a3b8;margin-top:4px">Connect any LLM + any Kubernetes cluster &mdash; Multi-cloud AI intelligence via MCP protocol</div>
-    </div>
-    <div style="margin-left:auto;display:flex;gap:10px;align-items:center;z-index:1">
-      <div style="background:#22c55e15;border:1px solid #22c55e33;border-radius:10px;padding:10px 18px;text-align:center;backdrop-filter:blur(4px)">
-        <div style="font-size:22px;font-weight:800;color:#22c55e" id="hub-count-clusters">1</div>
-        <div style="font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-top:2px">Clusters</div>
-      </div>
-      <div style="background:#6366f115;border:1px solid #6366f133;border-radius:10px;padding:10px 18px;text-align:center;backdrop-filter:blur(4px)">
-        <div style="font-size:22px;font-weight:800;color:#818cf8" id="hub-count-tools">0</div>
-        <div style="font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-top:2px">Capabilities</div>
-      </div>
-      <div style="background:#f59e0b15;border:1px solid #f59e0b33;border-radius:10px;padding:10px 18px;text-align:center;backdrop-filter:blur(4px)">
-        <div style="font-size:22px;font-weight:800;color:#fbbf24" id="hub-count-llm">0</div>
-        <div style="font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-top:2px">LLMs</div>
-      </div>
-    </div>
-  </div>
 
-  <!-- Connected Kubernetes Clusters -->
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
-    <div class="section-title" style="font-size:15px;margin:0">Kubernetes Clusters</div>
-    <span style="font-size:11px;color:var(--text2)">Connected platforms with CloudNexus agent</span>
-  </div>
-  <div id="hub-servers-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(370px,1fr));gap:14px;margin-bottom:28px">
-    <div class="card" style="opacity:.5;text-align:center;padding:30px">Loading clusters...</div>
-  </div>
-
-  <!-- Add Kubernetes Cluster -->
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
-    <div class="section-title" style="font-size:15px;margin:0">Add Kubernetes Cluster</div>
-    <span style="font-size:11px;color:var(--text2)">Select platform to generate agent YAML and connect</span>
-  </div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:24px">
-    <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:all .2s;text-align:center;padding:18px" onclick="hubAddCluster('openshift')" onmouseover="this.style.borderColor='#e04040';this.style.background='#e0404008'" onmouseout="this.style.borderColor='var(--border)';this.style.background=''">
-      <div style="font-size:28px;margin-bottom:6px">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="#e04040"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-      </div>
-      <div style="font-weight:700;font-size:13px;color:#e04040">OpenShift</div>
-      <div style="font-size:10px;color:var(--text2);margin-top:4px">Red Hat OpenShift 4.x</div>
-    </div>
-    <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:all .2s;text-align:center;padding:18px" onclick="hubAddCluster('rancher')" onmouseover="this.style.borderColor='#0075a8';this.style.background='#0075a808'" onmouseout="this.style.borderColor='var(--border)';this.style.background=''">
-      <div style="font-size:28px;margin-bottom:6px">&#x1F42E;</div>
-      <div style="font-weight:700;font-size:13px;color:#0075a8">Rancher</div>
-      <div style="font-size:10px;color:var(--text2);margin-top:4px">SUSE Rancher / RKE2</div>
-    </div>
-    <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:all .2s;text-align:center;padding:18px" onclick="hubAddCluster('eks')" onmouseover="this.style.borderColor='#ff9900';this.style.background='#ff990008'" onmouseout="this.style.borderColor='var(--border)';this.style.background=''">
-      <div style="font-size:28px;margin-bottom:6px">&#x2601;</div>
-      <div style="font-weight:700;font-size:13px;color:#ff9900">Amazon EKS</div>
-      <div style="font-size:10px;color:var(--text2);margin-top:4px">AWS Elastic Kubernetes</div>
-    </div>
-    <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:all .2s;text-align:center;padding:18px" onclick="hubAddCluster('aks')" onmouseover="this.style.borderColor='#0078d4';this.style.background='#0078d408'" onmouseout="this.style.borderColor='var(--border)';this.style.background=''">
-      <div style="font-size:28px;margin-bottom:6px">&#x26C5;</div>
-      <div style="font-weight:700;font-size:13px;color:#0078d4">Azure AKS</div>
-      <div style="font-size:10px;color:var(--text2);margin-top:4px">Azure Kubernetes Service</div>
-    </div>
-    <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:all .2s;text-align:center;padding:18px" onclick="hubAddCluster('gke')" onmouseover="this.style.borderColor='#4285f4';this.style.background='#4285f408'" onmouseout="this.style.borderColor='var(--border)';this.style.background=''">
-      <div style="font-size:28px;margin-bottom:6px">&#x1F310;</div>
-      <div style="font-weight:700;font-size:13px;color:#4285f4">Google GKE</div>
-      <div style="font-size:10px;color:var(--text2);margin-top:4px">Google Kubernetes Engine</div>
-    </div>
-    <div class="card" style="cursor:pointer;border:1px solid var(--border);transition:all .2s;text-align:center;padding:18px" onclick="hubAddCluster('k8s')" onmouseover="this.style.borderColor='#326ce5';this.style.background='#326ce508'" onmouseout="this.style.borderColor='var(--border)';this.style.background=''">
-      <div style="font-size:28px;margin-bottom:6px">&#x2699;</div>
-      <div style="font-weight:700;font-size:13px;color:#326ce5">Vanilla K8s</div>
-      <div style="font-size:10px;color:var(--text2);margin-top:4px">kubeadm / k3s / microk8s</div>
-    </div>
-  </div>
-
-  <!-- Agent Install Dialog (hidden by default) -->
-  <div id="hub-cluster-dialog" style="display:none;margin-bottom:24px" class="card">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">
-      <span style="font-weight:700;font-size:15px" id="hub-cluster-dialog-title">Connect Cluster</span>
-      <button onclick="document.getElementById('hub-cluster-dialog').style.display='none'" style="margin-left:auto;background:none;border:none;color:var(--text2);cursor:pointer;font-size:18px">&times;</button>
-    </div>
-
-    <!-- Step 1: Cluster Details -->
-    <div style="display:flex;gap:6px;align-items:center;margin-bottom:12px">
-      <span style="background:var(--accent);color:#fff;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0">1</span>
-      <span style="font-size:12px;font-weight:600;color:var(--text)">Cluster Connection Details</span>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;margin-left:26px">
-      <div>
-        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Cluster Name</label>
-        <input type="text" id="hub-cluster-name" placeholder="e.g. production-ocp, staging-eks" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none">
-      </div>
-      <div>
-        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">API Server URL</label>
-        <input type="text" id="hub-cluster-url" placeholder="https://api.cluster.example.com:6443" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none">
-      </div>
-    </div>
-    <div style="margin-bottom:16px;margin-left:26px">
-      <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Bearer Token / Kubeconfig</label>
-      <textarea id="hub-cluster-token" rows="3" placeholder="Paste bearer token or kubeconfig YAML..." style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:11px;font-family:monospace;outline:none;resize:vertical"></textarea>
-    </div>
-
-    <!-- Step 2: Agent YAML -->
-    <div style="display:flex;gap:6px;align-items:center;margin-bottom:12px">
-      <span style="background:var(--accent2);color:#fff;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0">2</span>
-      <span style="font-size:12px;font-weight:600;color:var(--text)">Deploy CloudNexus Agent</span>
-      <span style="font-size:10px;color:var(--text2);margin-left:4px">Apply this YAML to your target cluster</span>
-    </div>
-    <div style="margin-left:26px;margin-bottom:16px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:#161b22;border-bottom:1px solid #30363d">
-        <span style="font-size:11px;font-weight:600;color:#58a6ff" id="hub-yaml-filename">cloudnexus-agent.yaml</span>
-        <button onclick="navigator.clipboard.writeText(document.getElementById('hub-agent-yaml').textContent).then(function(){this.textContent='Copied!'}.bind(this))" style="background:none;border:1px solid #30363d;color:#8b949e;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px">Copy YAML</button>
-      </div>
-      <pre id="hub-agent-yaml" style="margin:0;padding:14px 16px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:11px;color:#c9d1d9;white-space:pre;overflow-x:auto;max-height:340px;overflow-y:auto;line-height:1.5;tab-size:2"></pre>
-    </div>
-
-    <!-- Step 3: Connect -->
-    <div style="display:flex;gap:6px;align-items:center;margin-bottom:12px">
-      <span style="background:var(--accent3);color:#fff;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0">3</span>
-      <span style="font-size:12px;font-weight:600;color:var(--text)">Verify &amp; Connect</span>
-    </div>
-    <div style="display:flex;gap:8px;align-items:center;margin-left:26px">
-      <button onclick="hubConnectCluster()" style="background:linear-gradient(135deg,var(--accent),#c03030);color:#fff;border:none;border-radius:8px;padding:10px 28px;cursor:pointer;font-size:13px;font-weight:700;letter-spacing:.3px;transition:transform .15s" onmouseover="this.style.transform='translateY(-1px)'" onmouseout="this.style.transform=''">Connect Cluster</button>
-      <span id="hub-cluster-status" style="font-size:12px;color:var(--text2)"></span>
-    </div>
-  </div>
-
-  <!-- Architecture Diagram — How It Works -->
-  <div class="card" style="margin-bottom:24px;border:1px solid #334155;background:linear-gradient(135deg,#0f172a,#1a1a2e);overflow:hidden;position:relative">
-    <div style="position:absolute;top:-40px;right:-40px;width:200px;height:200px;background:radial-gradient(circle,#6366f108,transparent);border-radius:50%"></div>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
-      <span style="font-size:14px;font-weight:700;color:#f8fafc">How It Works</span>
-      <span style="font-size:10px;color:#64748b;background:#1e293b;border:1px solid #334155;border-radius:4px;padding:2px 8px">Like Claude Desktop &mdash; but for Kubernetes</span>
-    </div>
-    <div style="display:flex;align-items:center;justify-content:center;gap:0;padding:8px 0;flex-wrap:wrap">
-      <!-- LLM Providers Column -->
-      <div style="display:flex;flex-direction:column;gap:6px;align-items:center;min-width:140px">
-        <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#64748b;font-weight:600;margin-bottom:4px">LLM Providers</div>
-        <div style="background:#0078d415;border:1px solid #0078d433;border-radius:8px;padding:6px 14px;font-size:11px;color:#60a5fa;display:flex;align-items:center;gap:6px"><span style="font-size:14px">&#x2601;</span> Azure OpenAI</div>
-        <div style="background:#d9770615;border:1px solid #d9770633;border-radius:8px;padding:6px 14px;font-size:11px;color:#fbbf24;display:flex;align-items:center;gap:6px"><span style="font-size:14px">&#x2728;</span> Claude Opus</div>
-        <div style="background:#10a37f15;border:1px solid #10a37f33;border-radius:8px;padding:6px 14px;font-size:11px;color:#34d399;display:flex;align-items:center;gap:6px"><span style="font-size:14px">&#x1F916;</span> OpenAI GPT</div>
-        <div style="background:#88888815;border:1px solid #88888833;border-radius:8px;padding:6px 14px;font-size:11px;color:#94a3b8;display:flex;align-items:center;gap:6px"><span style="font-size:14px">&#x1F4BB;</span> Ollama Local</div>
-      </div>
-      <!-- Arrow -->
-      <div style="display:flex;flex-direction:column;align-items:center;padding:0 14px">
-        <div style="font-size:9px;color:#475569;margin-bottom:4px">AI Chat</div>
-        <div style="width:50px;height:2px;background:linear-gradient(90deg,#6366f1,#e04040);position:relative">
-          <span style="position:absolute;right:-6px;top:-4px;color:#e04040;font-size:10px">&#x25B6;</span>
-        </div>
-        <div style="width:50px;height:2px;background:linear-gradient(90deg,#e04040,#6366f1);position:relative;margin-top:6px">
-          <span style="position:absolute;left:-6px;top:-4px;color:#6366f1;font-size:10px">&#x25C0;</span>
-        </div>
-        <div style="font-size:9px;color:#475569;margin-top:4px">Response</div>
-      </div>
-      <!-- MCP Hub Center -->
-      <div style="background:linear-gradient(135deg,#e04040,#c03030);border-radius:14px;padding:16px 20px;text-align:center;min-width:160px;box-shadow:0 4px 20px #e0404030;position:relative">
-        <div style="position:absolute;top:-1px;left:50%;transform:translateX(-50%);background:#fbbf24;color:#0f172a;font-size:8px;font-weight:700;padding:2px 10px;border-radius:0 0 6px 6px;letter-spacing:.5px">MCP PROTOCOL</div>
-        <div style="font-size:16px;font-weight:800;color:#fff;margin-top:8px">CloudNexus AI</div>
-        <div style="font-size:10px;color:#fca5a5;margin-top:4px">Intelligence Hub</div>
-        <div style="display:flex;gap:4px;justify-content:center;margin-top:8px">
-          <span style="background:#ffffff20;border-radius:4px;padding:2px 6px;font-size:8px;color:#fff">MCP Server</span>
-          <span style="background:#ffffff20;border-radius:4px;padding:2px 6px;font-size:8px;color:#fff">K8s Tools</span>
-        </div>
-      </div>
-      <!-- Arrow -->
-      <div style="display:flex;flex-direction:column;align-items:center;padding:0 14px">
-        <div style="font-size:9px;color:#475569;margin-bottom:4px">Query</div>
-        <div style="width:50px;height:2px;background:linear-gradient(90deg,#e04040,#22c55e);position:relative">
-          <span style="position:absolute;right:-6px;top:-4px;color:#22c55e;font-size:10px">&#x25B6;</span>
-        </div>
-        <div style="width:50px;height:2px;background:linear-gradient(90deg,#22c55e,#e04040);position:relative;margin-top:6px">
-          <span style="position:absolute;left:-6px;top:-4px;color:#e04040;font-size:10px">&#x25C0;</span>
-        </div>
-        <div style="font-size:9px;color:#475569;margin-top:4px">Data</div>
-      </div>
-      <!-- K8s Clusters Column -->
-      <div style="display:flex;flex-direction:column;gap:6px;align-items:center;min-width:140px">
-        <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#64748b;font-weight:600;margin-bottom:4px">K8s Clusters</div>
-        <div style="background:#e0404015;border:1px solid #e0404033;border-radius:8px;padding:6px 14px;font-size:11px;color:#f87171;display:flex;align-items:center;gap:6px"><span style="font-size:14px">&#x2B22;</span> OpenShift</div>
-        <div style="background:#ff990015;border:1px solid #ff990033;border-radius:8px;padding:6px 14px;font-size:11px;color:#fbbf24;display:flex;align-items:center;gap:6px"><span style="font-size:14px">&#x2601;</span> Amazon EKS</div>
-        <div style="background:#0078d415;border:1px solid #0078d433;border-radius:8px;padding:6px 14px;font-size:11px;color:#60a5fa;display:flex;align-items:center;gap:6px"><span style="font-size:14px">&#x26C5;</span> Azure AKS</div>
-        <div style="background:#326ce515;border:1px solid #326ce533;border-radius:8px;padding:6px 14px;font-size:11px;color:#818cf8;display:flex;align-items:center;gap:6px"><span style="font-size:14px">&#x2699;</span> Vanilla K8s</div>
-      </div>
-    </div>
-    <div style="text-align:center;font-size:10px;color:#475569;margin-top:8px;font-style:italic">You choose the LLM &bull; Connect any cluster &bull; AI queries flow through MCP tools &bull; Multi-cloud, multi-LLM, one platform</div>
-  </div>
-
-  <!-- AI Brain (LLM Providers) -->
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
-    <div class="section-title" style="font-size:15px;margin:0">AI Brain</div>
-    <span style="font-size:11px;color:var(--text2)">Connect LLM providers &mdash; like adding AI servers in Claude Desktop</span>
-    <span style="font-size:10px;color:var(--text2);margin-left:auto;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:3px 8px" id="hub-llm-configured-count">0 configured</span>
-  </div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:24px" id="hub-llm-cards">
-    <div class="card hub-llm-card" data-provider="anthropic" onclick="hubSelectLLM('anthropic')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;padding:16px;position:relative;overflow:hidden">
-      <div style="position:absolute;top:0;right:0;width:50px;height:50px;background:radial-gradient(circle at top right,#d9770610,transparent);pointer-events:none"></div>
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-        <div style="width:36px;height:36px;border-radius:8px;background:#d9770615;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">&#x2728;</div>
+  <!-- Quick Launch Bar — The hero section -->
+  <div class="hub-quick-bar">
+    <div style="position:relative;z-index:1">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
         <div>
-          <div style="font-weight:700;font-size:14px;color:#d97706">Anthropic</div>
-          <div style="font-size:10px;color:var(--text2)">Claude Opus 4 / Sonnet 4</div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#e04040,#6366f1);display:flex;align-items:center;justify-content:center">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4m-10-10h4m12 0h4m-3.5-6.5l-2.8 2.8m-7.4 7.4l-2.8 2.8m0-13l2.8 2.8m7.4 7.4l2.8 2.8"/></svg>
+            </div>
+            <div>
+              <div style="font-size:20px;font-weight:800;color:#f8fafc;letter-spacing:-.5px">AI Hub</div>
+              <div style="font-size:11px;color:#64748b">Connect LLMs + Clusters via MCP &mdash; Like Claude Desktop for Kubernetes</div>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <div class="hub-stat-ring" style="color:#22c55e;border-color:#22c55e">
+            <div style="text-align:center"><div style="font-size:18px;font-weight:800;color:#22c55e" id="hub-count-clusters">0</div><div style="font-size:7px;color:#64748b;text-transform:uppercase;letter-spacing:.5px">Clusters</div></div>
+          </div>
+          <div class="hub-stat-ring" style="color:#818cf8;border-color:#818cf8">
+            <div style="text-align:center"><div style="font-size:18px;font-weight:800;color:#818cf8" id="hub-count-tools">0</div><div style="font-size:7px;color:#64748b;text-transform:uppercase;letter-spacing:.5px">Tools</div></div>
+          </div>
+          <div class="hub-stat-ring" style="color:#fbbf24;border-color:#fbbf24">
+            <div style="text-align:center"><div style="font-size:18px;font-weight:800;color:#fbbf24" id="hub-count-llm">0</div><div style="font-size:7px;color:#64748b;text-transform:uppercase;letter-spacing:.5px">LLMs</div></div>
+          </div>
         </div>
       </div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">200K context</span>
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Tool use</span>
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Thinking</span>
-      </div>
-      <div style="font-size:10px;margin-top:4px" id="hub-llm-status-anthropic"></div>
-    </div>
-    <div class="card hub-llm-card" data-provider="azure" onclick="hubSelectLLM('azure')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;padding:16px;position:relative;overflow:hidden">
-      <div style="position:absolute;top:0;right:0;width:50px;height:50px;background:radial-gradient(circle at top right,#0078d410,transparent);pointer-events:none"></div>
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-        <div style="width:36px;height:36px;border-radius:8px;background:#0078d415;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">&#x2601;</div>
-        <div>
-          <div style="font-weight:700;font-size:14px;color:#0078d4">Azure OpenAI</div>
-          <div style="font-size:10px;color:var(--text2)">GPT-4o / GPT-4 Turbo</div>
+      <!-- Quick launch row -->
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <div style="flex:1;min-width:200px;display:flex;gap:8px;align-items:center;background:#1e293b;border:1px solid #334155;border-radius:10px;padding:6px 10px">
+          <span style="font-size:14px">&#x2699;</span>
+          <select id="hub-quick-cluster" style="flex:1;background:transparent;border:none;color:#f8fafc;font-size:12px;outline:none;cursor:pointer">
+            <option value="" style="background:#1e293b">Select cluster...</option>
+          </select>
         </div>
-      </div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Enterprise</span>
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">RBAC</span>
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Private</span>
-      </div>
-      <div style="font-size:10px;margin-top:4px" id="hub-llm-status-azure"></div>
-    </div>
-    <div class="card hub-llm-card" data-provider="openai" onclick="hubSelectLLM('openai')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;padding:16px;position:relative;overflow:hidden">
-      <div style="position:absolute;top:0;right:0;width:50px;height:50px;background:radial-gradient(circle at top right,#10a37f10,transparent);pointer-events:none"></div>
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-        <div style="width:36px;height:36px;border-radius:8px;background:#10a37f15;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">&#x1F916;</div>
-        <div>
-          <div style="font-weight:700;font-size:14px;color:#10a37f">OpenAI</div>
-          <div style="font-size:10px;color:var(--text2)">GPT-4o / o1 / o3-mini</div>
+        <div style="font-size:16px;color:#334155">+</div>
+        <div style="flex:1;min-width:200px;display:flex;gap:8px;align-items:center;background:#1e293b;border:1px solid #334155;border-radius:10px;padding:6px 10px">
+          <span style="font-size:14px">&#x1F9E0;</span>
+          <select id="hub-quick-llm" style="flex:1;background:transparent;border:none;color:#f8fafc;font-size:12px;outline:none;cursor:pointer">
+            <option value="" style="background:#1e293b">Select AI brain...</option>
+          </select>
         </div>
+        <button onclick="hubQuickLaunch()" style="background:linear-gradient(135deg,#e04040,#c03030);color:#fff;border:none;border-radius:10px;padding:10px 28px;cursor:pointer;font-size:13px;font-weight:700;letter-spacing:.3px;white-space:nowrap;transition:all .15s;box-shadow:0 2px 12px #e0404040" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 20px #e0404060'" onmouseout="this.style.transform='';this.style.boxShadow='0 2px 12px #e0404040'">Start AI Chat</button>
       </div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">128K context</span>
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Functions</span>
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Vision</span>
-      </div>
-      <div style="font-size:10px;margin-top:4px" id="hub-llm-status-openai"></div>
-    </div>
-    <div class="card hub-llm-card" data-provider="google" onclick="hubSelectLLM('google')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;padding:16px;position:relative;overflow:hidden">
-      <div style="position:absolute;top:0;right:0;width:50px;height:50px;background:radial-gradient(circle at top right,#4285f410,transparent);pointer-events:none"></div>
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-        <div style="width:36px;height:36px;border-radius:8px;background:#4285f415;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">&#x1F48E;</div>
-        <div>
-          <div style="font-weight:700;font-size:14px;color:#4285f4">Google Gemini</div>
-          <div style="font-size:10px;color:var(--text2)">Gemini 2.5 Pro / Flash</div>
-        </div>
-      </div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">1M context</span>
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Multimodal</span>
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Grounding</span>
-      </div>
-      <div style="font-size:10px;margin-top:4px" id="hub-llm-status-google"></div>
-    </div>
-    <div class="card hub-llm-card" data-provider="bedrock" onclick="hubSelectLLM('bedrock')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;padding:16px;position:relative;overflow:hidden">
-      <div style="position:absolute;top:0;right:0;width:50px;height:50px;background:radial-gradient(circle at top right,#ff990010,transparent);pointer-events:none"></div>
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-        <div style="width:36px;height:36px;border-radius:8px;background:#ff990015;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">&#x1F310;</div>
-        <div>
-          <div style="font-weight:700;font-size:14px;color:#ff9900">AWS Bedrock</div>
-          <div style="font-size:10px;color:var(--text2)">Claude / Titan / Llama</div>
-        </div>
-      </div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">IAM Auth</span>
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">VPC</span>
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Multi-model</span>
-      </div>
-      <div style="font-size:10px;margin-top:4px" id="hub-llm-status-bedrock"></div>
-    </div>
-    <div class="card hub-llm-card" data-provider="ollama" onclick="hubSelectLLM('ollama')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;padding:16px;position:relative;overflow:hidden">
-      <div style="position:absolute;top:0;right:0;width:50px;height:50px;background:radial-gradient(circle at top right,#88888810,transparent);pointer-events:none"></div>
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-        <div style="width:36px;height:36px;border-radius:8px;background:#88888815;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">&#x1F4BB;</div>
-        <div>
-          <div style="font-weight:700;font-size:14px;color:#888">Ollama</div>
-          <div style="font-size:10px;color:var(--text2)">Llama 3 / Mistral / Qwen</div>
-        </div>
-      </div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Air-gapped</span>
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">On-prem</span>
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Free</span>
-      </div>
-      <div style="font-size:10px;margin-top:4px" id="hub-llm-status-ollama"></div>
-    </div>
-    <div class="card hub-llm-card" data-provider="none" onclick="hubSelectLLM('none')" style="cursor:pointer;border:2px solid var(--border);transition:all .2s;padding:16px;position:relative;overflow:hidden">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-        <div style="width:36px;height:36px;border-radius:8px;background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">&#x2699;</div>
-        <div>
-          <div style="font-weight:700;font-size:14px;color:var(--text2)">Built-in Only</div>
-          <div style="font-size:10px;color:var(--text2)">Rule-based analysis</div>
-        </div>
-      </div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">No API key</span>
-        <span style="background:var(--bg);border-radius:3px;padding:1px 6px;font-size:9px;color:var(--text2)">Offline</span>
-      </div>
-      <div style="font-size:10px;margin-top:4px" id="hub-llm-status-none"></div>
     </div>
   </div>
 
-  <!-- Capability Tools Browser -->
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
-    <div class="section-title" style="font-size:15px;margin:0">Capabilities</div>
-    <input type="text" id="hub-tool-search" oninput="filterHubTools()" placeholder="Search capabilities..." style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 12px;color:var(--text);font-size:12px;outline:none;width:260px">
-    <select id="hub-tool-server-filter" onchange="filterHubTools()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:12px;outline:none">
-      <option value="all">All Clusters</option>
-    </select>
-    <span id="hub-tool-count" style="font-size:11px;color:var(--text2);margin-left:auto"></span>
-  </div>
-  <div id="hub-tools-list" style="max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:var(--card)">
-    <div style="padding:20px;text-align:center;color:var(--text2);font-size:12px">Loading capabilities...</div>
+  <!-- Two-column command center -->
+  <div class="hub-grid">
+
+    <!-- LEFT: AI Brain panel -->
+    <div class="hub-panel">
+      <div class="hub-panel-head">
+        <span style="font-size:16px">&#x1F9E0;</span>
+        <h3>AI Brain</h3>
+        <span style="font-size:10px;color:var(--text2);margin-left:auto" id="hub-llm-configured-count">0 configured</span>
+      </div>
+      <div class="hub-panel-body" id="hub-llm-cards">
+        <div class="hub-llm-row" data-provider="anthropic" onclick="hubSelectLLM('anthropic')">
+          <div class="hub-llm-icon" style="background:#d9770615">&#x2728;</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;font-weight:700;color:#d97706">Anthropic</div>
+            <div style="font-size:9px;color:var(--text2)">Claude Opus 4 / Sonnet 4</div>
+          </div>
+          <div class="hub-llm-dot" style="background:#333" id="hub-llm-status-anthropic" data-status></div>
+        </div>
+        <div class="hub-llm-row" data-provider="azure" onclick="hubSelectLLM('azure')">
+          <div class="hub-llm-icon" style="background:#0078d415">&#x2601;</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;font-weight:700;color:#0078d4">Azure OpenAI</div>
+            <div style="font-size:9px;color:var(--text2)">GPT-4o / GPT-4 Turbo</div>
+          </div>
+          <div class="hub-llm-dot" style="background:#333" id="hub-llm-status-azure" data-status></div>
+        </div>
+        <div class="hub-llm-row" data-provider="openai" onclick="hubSelectLLM('openai')">
+          <div class="hub-llm-icon" style="background:#10a37f15">&#x1F916;</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;font-weight:700;color:#10a37f">OpenAI</div>
+            <div style="font-size:9px;color:var(--text2)">GPT-4o / o1 / o3-mini</div>
+          </div>
+          <div class="hub-llm-dot" style="background:#333" id="hub-llm-status-openai" data-status></div>
+        </div>
+        <div class="hub-llm-row" data-provider="google" onclick="hubSelectLLM('google')">
+          <div class="hub-llm-icon" style="background:#4285f415">&#x1F48E;</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;font-weight:700;color:#4285f4">Google Gemini</div>
+            <div style="font-size:9px;color:var(--text2)">Gemini 2.5 Pro / Flash</div>
+          </div>
+          <div class="hub-llm-dot" style="background:#333" id="hub-llm-status-google" data-status></div>
+        </div>
+        <div class="hub-llm-row" data-provider="bedrock" onclick="hubSelectLLM('bedrock')">
+          <div class="hub-llm-icon" style="background:#ff990015">&#x1F310;</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;font-weight:700;color:#ff9900">AWS Bedrock</div>
+            <div style="font-size:9px;color:var(--text2)">Claude / Titan / Llama</div>
+          </div>
+          <div class="hub-llm-dot" style="background:#333" id="hub-llm-status-bedrock" data-status></div>
+        </div>
+        <div class="hub-llm-row" data-provider="ollama" onclick="hubSelectLLM('ollama')">
+          <div class="hub-llm-icon" style="background:#88888815">&#x1F4BB;</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;font-weight:700;color:#888">Ollama</div>
+            <div style="font-size:9px;color:var(--text2)">Llama 3 / Mistral / Local</div>
+          </div>
+          <div class="hub-llm-dot" style="background:#333" id="hub-llm-status-ollama" data-status></div>
+        </div>
+        <div class="hub-llm-row" data-provider="none" onclick="hubSelectLLM('none')" style="opacity:.6">
+          <div class="hub-llm-icon" style="background:var(--bg)">&#x2699;</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;font-weight:600;color:var(--text2)">Built-in Only</div>
+            <div style="font-size:9px;color:var(--text2)">Rule-based, no API key</div>
+          </div>
+          <div class="hub-llm-dot" style="background:#333" id="hub-llm-status-none" data-status></div>
+        </div>
+      </div>
+      <div style="padding:8px 16px 12px;border-top:1px solid var(--border)">
+        <button onclick="showView('settings')" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:7px;color:var(--text2);cursor:pointer;font-size:11px;transition:all .15s" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--text)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text2)'">&#x2699; Configure API Keys</button>
+      </div>
+    </div>
+
+    <!-- RIGHT: Clusters panel -->
+    <div class="hub-panel">
+      <div class="hub-panel-head">
+        <span style="font-size:16px">&#x2388;</span>
+        <h3>Kubernetes Clusters</h3>
+        <span style="font-size:10px;color:var(--text2);margin-left:auto">Connected via CloudNexus agent</span>
+      </div>
+      <div class="hub-panel-body" style="min-height:120px">
+        <div id="hub-servers-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px">
+          <div style="opacity:.4;text-align:center;padding:24px;font-size:12px;color:var(--text2)">Loading clusters...</div>
+        </div>
+      </div>
+      <!-- Add cluster — compact platform pills -->
+      <div style="padding:10px 16px 14px;border-top:1px solid var(--border)">
+        <div style="font-size:10px;font-weight:600;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Add Cluster</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <span class="hub-platform-pill" onclick="hubAddCluster('openshift')" style="color:#e04040;border-color:#e0404033" onmouseover="this.style.borderColor='#e04040'" onmouseout="this.style.borderColor='#e0404033'">&#x2B22; OpenShift</span>
+          <span class="hub-platform-pill" onclick="hubAddCluster('rancher')" style="color:#0075a8;border-color:#0075a833" onmouseover="this.style.borderColor='#0075a8'" onmouseout="this.style.borderColor='#0075a833'">&#x1F42E; Rancher</span>
+          <span class="hub-platform-pill" onclick="hubAddCluster('eks')" style="color:#ff9900;border-color:#ff990033" onmouseover="this.style.borderColor='#ff9900'" onmouseout="this.style.borderColor='#ff990033'">&#x2601; EKS</span>
+          <span class="hub-platform-pill" onclick="hubAddCluster('aks')" style="color:#0078d4;border-color:#0078d433" onmouseover="this.style.borderColor='#0078d4'" onmouseout="this.style.borderColor='#0078d433'">&#x26C5; AKS</span>
+          <span class="hub-platform-pill" onclick="hubAddCluster('gke')" style="color:#4285f4;border-color:#4285f433" onmouseover="this.style.borderColor='#4285f4'" onmouseout="this.style.borderColor='#4285f433'">&#x1F310; GKE</span>
+          <span class="hub-platform-pill" onclick="hubAddCluster('k8s')" style="color:#326ce5;border-color:#326ce533" onmouseover="this.style.borderColor='#326ce5'" onmouseout="this.style.borderColor='#326ce533'">&#x2699; K8s</span>
+        </div>
+      </div>
+    </div>
   </div>
 
-  <!-- Orchestrator -->
-  <div class="card" style="margin-top:24px;border:1px solid #6366f133;background:linear-gradient(135deg,var(--card),#6366f108)">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
-      <span style="font-weight:600;font-size:14px">Cross-Cluster AI Query</span>
-      <span style="font-size:11px;color:var(--text2)">Ask anything &mdash; AI orchestrates across all connected clusters</span>
+  <!-- Cluster Dialog (modal overlay) -->
+  <div id="hub-cluster-dialog" style="display:none;position:fixed;inset:0;z-index:9999;background:#000a;overflow-y:auto">
+    <div style="max-width:640px;margin:40px auto;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;position:relative;box-shadow:0 20px 60px #000a">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px;padding-bottom:14px;border-bottom:1px solid var(--border)">
+        <span style="font-weight:700;font-size:16px" id="hub-cluster-dialog-title">Connect Cluster</span>
+        <button onclick="document.getElementById('hub-cluster-dialog').style.display='none'" style="margin-left:auto;background:none;border:none;color:var(--text2);cursor:pointer;font-size:22px;line-height:1">&times;</button>
+      </div>
+
+      <!-- Step 1 -->
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+        <span style="background:var(--accent);color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">1</span>
+        <span style="font-size:13px;font-weight:600">Cluster Connection Details</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;margin-left:30px">
+        <div>
+          <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Cluster Name</label>
+          <input type="text" id="hub-cluster-name" placeholder="e.g. production-ocp" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">API Server URL</label>
+          <input type="text" id="hub-cluster-url" placeholder="https://api.cluster.example.com:6443" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box">
+        </div>
+      </div>
+      <div style="margin-bottom:16px;margin-left:30px">
+        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Bearer Token / Kubeconfig</label>
+        <textarea id="hub-cluster-token" rows="3" placeholder="Paste bearer token or kubeconfig YAML..." style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:11px;font-family:monospace;outline:none;resize:vertical;box-sizing:border-box"></textarea>
+      </div>
+
+      <!-- Step 2 -->
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+        <span style="background:var(--accent2);color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">2</span>
+        <span style="font-size:13px;font-weight:600">Deploy CloudNexus Agent</span>
+        <span style="font-size:10px;color:var(--text2)">Apply this YAML to your target cluster</span>
+      </div>
+      <div style="margin-left:30px;margin-bottom:16px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:#161b22;border-bottom:1px solid #30363d">
+          <span style="font-size:11px;font-weight:600;color:#58a6ff" id="hub-yaml-filename">cloudnexus-agent.yaml</span>
+          <button onclick="navigator.clipboard.writeText(document.getElementById('hub-agent-yaml').textContent).then(function(){this.textContent='Copied!'}.bind(this))" style="background:none;border:1px solid #30363d;color:#8b949e;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px">Copy YAML</button>
+        </div>
+        <pre id="hub-agent-yaml" style="margin:0;padding:14px 16px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:11px;color:#c9d1d9;white-space:pre;overflow-x:auto;max-height:300px;overflow-y:auto;line-height:1.5;tab-size:2"></pre>
+      </div>
+
+      <!-- Step 3 -->
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+        <span style="background:#22c55e;color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">3</span>
+        <span style="font-size:13px;font-weight:600">Verify &amp; Connect</span>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;margin-left:30px">
+        <button onclick="hubConnectCluster()" style="background:linear-gradient(135deg,var(--accent),#c03030);color:#fff;border:none;border-radius:8px;padding:10px 28px;cursor:pointer;font-size:13px;font-weight:700;letter-spacing:.3px;transition:transform .15s" onmouseover="this.style.transform='translateY(-1px)'" onmouseout="this.style.transform=''">Connect Cluster</button>
+        <span id="hub-cluster-status" style="font-size:12px;color:var(--text2)"></span>
+      </div>
     </div>
-    <div style="display:flex;gap:8px">
-      <input type="text" id="hub-orchestrator-input" placeholder="e.g. Compare pod health across all clusters, find OOMKilled pods everywhere..." style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 14px;color:var(--text);font-size:13px;outline:none" onkeydown="if(event.key==='Enter')runHubOrchestrator()">
-      <button onclick="runHubOrchestrator()" style="background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border:none;border-radius:6px;padding:10px 24px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap">Run</button>
+  </div>
+
+  <!-- Capabilities & Orchestrator (collapsible) -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+    <!-- Capabilities -->
+    <div class="hub-panel">
+      <div class="hub-panel-head" style="cursor:pointer" onclick="var b=document.getElementById('hub-cap-body');b.style.display=b.style.display==='none'?'block':'none';this.querySelector('.hub-chevron').textContent=b.style.display==='none'?'▶':'▼'">
+        <span style="font-size:14px">&#x1F527;</span>
+        <h3>MCP Capabilities</h3>
+        <span class="hub-chevron" style="font-size:10px;color:var(--text2);margin-left:auto">&#x25BC;</span>
+      </div>
+      <div id="hub-cap-body">
+        <div style="padding:8px 12px;display:flex;gap:6px;border-bottom:1px solid var(--border)">
+          <input type="text" id="hub-tool-search" oninput="filterHubTools()" placeholder="Search tools..." style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:5px 10px;color:var(--text);font-size:11px;outline:none">
+          <select id="hub-tool-server-filter" onchange="filterHubTools()" style="background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:5px 8px;color:var(--text);font-size:11px;outline:none">
+            <option value="all">All</option>
+          </select>
+          <span id="hub-tool-count" style="font-size:10px;color:var(--text2);align-self:center"></span>
+        </div>
+        <div id="hub-tools-list" style="max-height:260px;overflow-y:auto">
+          <div style="padding:16px;text-align:center;color:var(--text2);font-size:11px">Loading...</div>
+        </div>
+      </div>
     </div>
-    <div id="hub-orchestrator-output" style="margin-top:14px;display:none">
-      <div id="hub-orchestrator-steps" style="font-size:11px;color:var(--text2);margin-bottom:8px"></div>
-      <div id="hub-orchestrator-result" class="card" style="background:var(--bg);font-size:13px;white-space:pre-wrap;max-height:500px;overflow-y:auto"></div>
+
+    <!-- Cross-Cluster Query -->
+    <div class="hub-panel">
+      <div class="hub-panel-head">
+        <span style="font-size:14px">&#x1F50D;</span>
+        <h3>Cross-Cluster AI Query</h3>
+      </div>
+      <div style="padding:14px">
+        <div style="font-size:11px;color:var(--text2);margin-bottom:10px">Ask anything &mdash; AI orchestrates across all connected clusters</div>
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <input type="text" id="hub-orchestrator-input" placeholder="e.g. Compare pod health across all clusters..." style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:9px 12px;color:var(--text);font-size:12px;outline:none" onkeydown="if(event.key==='Enter')runHubOrchestrator()">
+          <button onclick="runHubOrchestrator()" style="background:linear-gradient(135deg,#6366f1,#818cf8);color:#fff;border:none;border-radius:6px;padding:9px 20px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap">Run</button>
+        </div>
+        <div id="hub-orchestrator-output" style="display:none">
+          <div id="hub-orchestrator-steps" style="font-size:10px;color:var(--text2);margin-bottom:6px"></div>
+          <div id="hub-orchestrator-result" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:12px;white-space:pre-wrap;max-height:200px;overflow-y:auto"></div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
+          <button onclick="document.getElementById('hub-orchestrator-input').value='Find all CrashLoopBackOff pods across every cluster';runHubOrchestrator()" style="background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:4px 10px;color:var(--text2);cursor:pointer;font-size:10px;transition:border-color .15s" onmouseover="this.style.borderColor='#6366f1'" onmouseout="this.style.borderColor='var(--border)'">CrashLoop scan</button>
+          <button onclick="document.getElementById('hub-orchestrator-input').value='Compare node capacity across all clusters';runHubOrchestrator()" style="background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:4px 10px;color:var(--text2);cursor:pointer;font-size:10px;transition:border-color .15s" onmouseover="this.style.borderColor='#6366f1'" onmouseout="this.style.borderColor='var(--border)'">Capacity compare</button>
+          <button onclick="document.getElementById('hub-orchestrator-input').value='Show cluster drift between production and staging';runHubOrchestrator()" style="background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:4px 10px;color:var(--text2);cursor:pointer;font-size:10px;transition:border-color .15s" onmouseover="this.style.borderColor='#6366f1'" onmouseout="this.style.borderColor='var(--border)'">Drift check</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
+
 
 <!-- AI Intelligence View -->
 <div id="view-intelligence" class="container" style="display:none">
@@ -5025,7 +4965,7 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
 function hubAddCluster(platform) {
   var info = K8S_PLATFORMS[platform] || K8S_PLATFORMS['k8s'];
   var dialog = document.getElementById('hub-cluster-dialog');
-  dialog.style.display = '';
+  dialog.style.display = 'block';
   dialog.dataset.platform = platform;
   document.getElementById('hub-cluster-dialog-title').innerHTML =
     '<span style="color:' + info.color + '">' + info.icon + '</span> Connect ' + info.name + ' Cluster';
@@ -5795,12 +5735,21 @@ async function runPredictions() {
 function hubSelectLLM(provider) {
   var sel = document.getElementById('settings-default-provider');
   if (sel) sel.value = provider;
-  document.querySelectorAll('.hub-llm-card').forEach(function(card) {
-    var p = card.dataset.provider;
-    card.style.borderColor = (p === provider) ? 'var(--accent)' : 'var(--border)';
-    card.style.background = (p === provider) ? 'var(--accent)11' : '';
+  document.querySelectorAll('.hub-llm-row').forEach(function(row) {
+    var p = row.dataset.provider;
+    var provColor = LLM_PROVIDERS[p]?.color || 'var(--accent)';
+    if (p === provider) {
+      row.classList.add('active');
+      row.style.borderColor = provColor;
+      row.style.background = provColor + '08';
+    } else {
+      row.classList.remove('active');
+      row.style.borderColor = 'transparent';
+      row.style.background = '';
+    }
   });
   saveSettings();
+  hubPopulateQuickSelectors();
 }
 
 var LLM_PROVIDERS = {
@@ -5818,24 +5767,29 @@ function hubHighlightActiveLLM() {
     var settings = getProviderConfig();
     var active = settings?.defaultProvider || 'none';
     var configuredCount = 0;
-    document.querySelectorAll('.hub-llm-card').forEach(function(card) {
-      var p = card.dataset.provider;
-      var provColor = LLM_PROVIDERS[p]?.color || 'var(--accent)';
-      card.style.borderColor = (p === active) ? provColor : 'var(--border)';
-      card.style.background = (p === active) ? provColor + '11' : '';
-      var statusEl = document.getElementById('hub-llm-status-' + p);
-      if (statusEl) {
-        if (p === active) {
-          statusEl.innerHTML = '<span style="display:inline-flex;align-items:center;gap:4px;color:' + provColor + ';font-weight:600"><span style="width:6px;height:6px;border-radius:50%;background:' + provColor + ';display:inline-block;animation:pulse 2s infinite"></span> Active</span>';
-          configuredCount++;
-        } else if (p !== 'none' && settings?.providers?.[p]?.apiKey) {
-          statusEl.innerHTML = '<span style="display:inline-flex;align-items:center;gap:4px;color:#22c55e"><span style="width:6px;height:6px;border-radius:50%;background:#22c55e;display:inline-block"></span> Connected</span>';
-          configuredCount++;
-        } else if (p === 'none') {
-          statusEl.innerHTML = '<span style="color:var(--text2)">Always available</span>';
-        } else {
-          statusEl.innerHTML = '<span style="color:var(--text2);opacity:.5">Not configured</span>';
-        }
+    document.querySelectorAll('.hub-llm-row').forEach(function(row) {
+      var p = row.dataset.provider;
+      if (!p) return;
+      var provColor = LLM_PROVIDERS[p]?.color || '#6b7280';
+      var dotEl = document.getElementById('hub-llm-status-' + p);
+
+      if (p === active) {
+        row.classList.add('active');
+        row.style.borderColor = provColor;
+        row.style.background = provColor + '08';
+        if (dotEl) { dotEl.style.background = provColor; dotEl.style.animation = 'pulse 2s infinite'; dotEl.title = 'Active'; }
+        configuredCount++;
+      } else if (p !== 'none' && settings?.providers?.[p]?.apiKey) {
+        row.classList.remove('active');
+        row.style.borderColor = 'transparent';
+        row.style.background = '';
+        if (dotEl) { dotEl.style.background = '#22c55e'; dotEl.style.animation = ''; dotEl.title = 'Connected'; }
+        configuredCount++;
+      } else {
+        row.classList.remove('active');
+        row.style.borderColor = 'transparent';
+        row.style.background = '';
+        if (dotEl) { dotEl.style.background = '#333'; dotEl.style.animation = ''; dotEl.title = p === 'none' ? 'Available' : 'Not configured'; }
       }
     });
     var countEl = document.getElementById('hub-llm-configured-count');
@@ -5843,10 +5797,64 @@ function hubHighlightActiveLLM() {
   } catch(e) {}
 }
 
+function hubPopulateQuickSelectors() {
+  var clusterSel = document.getElementById('hub-quick-cluster');
+  var llmSel = document.getElementById('hub-quick-llm');
+  if (!clusterSel || !llmSel) return;
+
+  var currentCluster = clusterSel.value;
+  var currentLLM = llmSel.value;
+  clusterSel.innerHTML = '<option value="" style="background:var(--card)">Select cluster...</option>';
+  var allNames = new Set();
+  _hubServers.forEach(function(s) { allNames.add(s.name); });
+  Object.keys(_remoteAgents).forEach(function(n) { allNames.add(n); });
+  allNames.forEach(function(name) {
+    var a = _remoteAgents[name];
+    var s = _hubServers.find(function(sv) { return sv.name === name; });
+    var platform = (a && a.platform) || (s && s.platform) || 'k8s';
+    var pInfo = K8S_PLATFORMS[platform] || K8S_PLATFORMS['k8s'];
+    var opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = pInfo.icon + ' ' + name;
+    opt.style.background = 'var(--card)';
+    clusterSel.appendChild(opt);
+  });
+  if (currentCluster) clusterSel.value = currentCluster;
+
+  llmSel.innerHTML = '<option value="" style="background:var(--card)">Select AI brain...</option>';
+  var settings = null;
+  try { settings = getProviderConfig(); } catch(e) {}
+  Object.keys(LLM_PROVIDERS).forEach(function(k) {
+    var lp = LLM_PROVIDERS[k];
+    var isConfigured = k === 'none' || (settings?.providers?.[k]?.apiKey);
+    var isActive = settings?.defaultProvider === k;
+    var opt = document.createElement('option');
+    opt.value = k;
+    opt.textContent = lp.name + (isActive ? ' (active)' : isConfigured ? ' (ready)' : '');
+    opt.style.background = 'var(--card)';
+    llmSel.appendChild(opt);
+  });
+  if (currentLLM) llmSel.value = currentLLM;
+  else if (settings?.defaultProvider) llmSel.value = settings.defaultProvider;
+}
+
+function hubQuickLaunch() {
+  var cluster = document.getElementById('hub-quick-cluster')?.value;
+  var llm = document.getElementById('hub-quick-llm')?.value;
+  if (!cluster) { alert('Please select a cluster'); return; }
+  if (llm && llm !== 'none') hubSwitchChatLLM(llm);
+  var s = _hubServers.find(function(sv) { return sv.name === cluster; });
+  var a = _remoteAgents[cluster];
+  var platform = (a && a.platform) || (s && s.platform) || 'k8s';
+  var clusterId = s ? s.id : ('agent-' + cluster);
+  hubChatWithCluster(clusterId, cluster, platform);
+}
+
 var _origLoadHubView = loadHubView;
 loadHubView = async function() {
   await _origLoadHubView();
   hubHighlightActiveLLM();
+  hubPopulateQuickSelectors();
   updateChatHubBadge();
 };
 
