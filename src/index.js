@@ -125,10 +125,10 @@ const silencedAlerts = new Map();
 
 function createMcpServer() {
   const server = new McpServer({
-    name: "tcs-cloudnexus-ai",
+    name: "tcs-kubenexus-ai",
     version: "1.0.0",
     description:
-      "TCS CloudNexus AI — OpenShift Intelligence Platform with MCP Hub, multi-server orchestration, diagnostics, ITSM integration, and automated remediation.",
+      "KubeNexus AI — OpenShift Intelligence Platform with MCP Hub, multi-server orchestration, diagnostics, ITSM integration, and automated remediation.",
   });
 
   // Register all tool groups
@@ -797,7 +797,7 @@ async function startSSE() {
     }
 
     // -----------------------------------------------------------------------
-    // Agent API — receives reports from remote CloudNexus agents on clusters
+    // Agent API — receives reports from remote KubeNexus agents on clusters
     // -----------------------------------------------------------------------
     if (url.pathname === "/api/agent/register" && req.method === "POST") {
       const body = await readJsonBody(req);
@@ -1255,7 +1255,7 @@ async function startSSE() {
   });
 
   httpServer.listen(PORT, "0.0.0.0", () => {
-    console.error(`TCS CloudNexus AI — OpenShift Intelligence Platform`);
+    console.error(`KubeNexus AI — OpenShift Intelligence Platform`);
     console.error(`  Server running on http://0.0.0.0:${PORT}`);
     console.error(`  MCP SSE:          GET  /sse`);
     console.error(`  MCP Message:      POST /message?sessionId=<id>`);

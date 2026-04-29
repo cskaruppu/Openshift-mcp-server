@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TCS CloudNexus AI - OpenShift Intelligence Platform</title>
+<title>KubeNexus AI - Kubernetes Intelligence Platform</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--accent:#e04040;--accent2:#3b82f6;--accent3:#10b981;--text:#e4e4e7;--text2:#a1a1aa;--warn:#f59e0b;--crit:#ef4444;--ok:#22c55e}
@@ -13,7 +13,7 @@ body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--
 .header .logo svg{width:40px;height:40px}
 .header .brand{display:flex;flex-direction:column;line-height:1.2}
 .header .brand-name{font-size:22px;font-weight:700;letter-spacing:0.5px}
-.header .brand-name .tcs{color:#3b82f6}
+
 .header .brand-name .cn{color:#e04040}
 .header .brand-name .ai{color:#10b981}
 .header .brand-sub{font-size:11px;color:var(--text2);letter-spacing:1.5px;text-transform:uppercase;font-weight:400}
@@ -582,8 +582,8 @@ tr:hover td{background:#ffffff06}
       <circle cx="20" cy="20" r="3" fill="#10b981"/>
     </svg>
     <div class="brand">
-      <span class="brand-name"><span class="tcs">TCS</span> <span class="cn">CloudNexus</span> <span class="ai">AI</span></span>
-      <span class="brand-sub">OpenShift Intelligence Platform</span>
+      <span class="brand-name"><span class="cn">KubeNexus</span> <span class="ai">AI</span></span>
+      <span class="brand-sub">Kubernetes Intelligence Platform</span>
     </div>
   </div>
   <div class="nav-tabs">
@@ -973,7 +973,7 @@ tr:hover td{background:#ffffff06}
         <!-- Welcome screen (shown when no messages) -->
         <div class="chat-welcome" id="chat-welcome">
           <svg width="48" height="48" viewBox="0 0 36 36" fill="none"><circle cx="18" cy="18" r="17" stroke="#e04040" stroke-width="2"/><path d="M12 18l4 4 8-8" stroke="#e04040" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <h2>TCS CloudNexus AI</h2>
+          <h2>KubeNexus AI</h2>
           <p>Your AI-powered cluster companion. Ask questions, diagnose issues, run what-if analysis, or generate policies using natural language.</p>
           <div style="font-size:11px;color:var(--text2);margin-bottom:16px">Type <kbd style="background:var(--card);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:10px">/</kbd> for slash commands &bull; Click the mic for voice input &bull; Pin important findings</div>
           <div class="welcome-suggestions">
@@ -1452,7 +1452,7 @@ tr:hover td{background:#ffffff06}
       <div class="hub-panel-head">
         <span style="font-size:16px">&#x2388;</span>
         <h3>Kubernetes Clusters</h3>
-        <span style="font-size:10px;color:var(--text2);margin-left:auto">Connected via CloudNexus agent</span>
+        <span style="font-size:10px;color:var(--text2);margin-left:auto">Connected via KubeNexus agent</span>
       </div>
       <div class="hub-panel-body" style="min-height:120px">
         <div id="hub-servers-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px">
@@ -1505,12 +1505,12 @@ tr:hover td{background:#ffffff06}
       <!-- Step 2 -->
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
         <span style="background:var(--accent2);color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">2</span>
-        <span style="font-size:13px;font-weight:600">Deploy CloudNexus Agent</span>
+        <span style="font-size:13px;font-weight:600">Deploy KubeNexus Agent</span>
         <span style="font-size:10px;color:var(--text2)">Apply this YAML to your target cluster</span>
       </div>
       <div style="margin-left:30px;margin-bottom:16px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:#161b22;border-bottom:1px solid #30363d">
-          <span style="font-size:11px;font-weight:600;color:#58a6ff" id="hub-yaml-filename">cloudnexus-agent.yaml</span>
+          <span style="font-size:11px;font-weight:600;color:#58a6ff" id="hub-yaml-filename">kubenexus-agent.yaml</span>
           <button onclick="navigator.clipboard.writeText(document.getElementById('hub-agent-yaml').textContent).then(function(){this.textContent='Copied!'}.bind(this))" style="background:none;border:1px solid #30363d;color:#8b949e;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px">Copy YAML</button>
         </div>
         <pre id="hub-agent-yaml" style="margin:0;padding:14px 16px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:11px;color:#c9d1d9;white-space:pre;overflow-x:auto;max-height:300px;overflow-y:auto;line-height:1.5;tab-size:2"></pre>
@@ -1718,7 +1718,7 @@ function setConnected(ok, label) {
   const dot = document.getElementById('conn-dot');
   const lbl = document.getElementById('conn-label');
   dot.className = ok ? 'dot' : 'dot err';
-  lbl.textContent = label || (ok ? 'CloudNexus Connected' : 'Connection Error');
+  lbl.textContent = label || (ok ? 'KubeNexus Connected' : 'Connection Error');
   // Show diagnostic banner on error
   let banner = document.getElementById('diag-banner');
   if (!ok && !banner) {
@@ -1726,7 +1726,7 @@ function setConnected(ok, label) {
     banner.id = 'diag-banner';
     banner.style.cssText = 'background:#2a1010;border:1px solid var(--crit);border-radius:8px;padding:12px 16px;margin:12px auto;max-width:1440px;font-size:13px;color:#fca5a5;display:flex;align-items:center;gap:12px';
     banner.innerHTML = '<span style="font-size:18px;flex-shrink:0">&#x26A0;</span>' +
-      '<div><strong style="color:var(--crit)">Dashboard cannot connect to CloudNexus API</strong>' +
+      '<div><strong style="color:var(--crit)">Dashboard cannot connect to KubeNexus API</strong>' +
       '<div style="margin-top:4px;color:var(--text2)">Error: ' + esc(label || 'Unknown') + '</div>' +
       '<div style="margin-top:6px"><button onclick="runDiagnostics()" style="background:var(--accent2);color:#fff;border:none;border-radius:6px;padding:4px 14px;cursor:pointer;font-size:12px">Run Diagnostics</button>' +
       ' <span id="diag-result" style="font-size:11px;color:var(--text2);margin-left:8px"></span></div></div>' +
@@ -2618,7 +2618,7 @@ function renderConversation() {
           }).join('') + '</div>';
       }
       html += '<div class="conv-msg ai">' +
-        '<div class="conv-header"><div class="conv-avatar">TCS</div><span class="conv-name">TCS CloudNexus AI</span>' + providerTag + '</div>' +
+        '<div class="conv-header"><div class="conv-avatar">KN</div><span class="conv-name">KubeNexus AI</span>' + providerTag + '</div>' +
         toolsBlock +
         '<div class="conv-body">' + (msg.html || md(msg.text || '')) + '</div></div>';
     }
@@ -2632,7 +2632,7 @@ function createWelcomeEl() {
   div.className = 'chat-welcome';
   div.id = 'chat-welcome';
   div.innerHTML = '<svg width="48" height="48" viewBox="0 0 36 36" fill="none"><circle cx="18" cy="18" r="17" stroke="#e04040" stroke-width="2"/><path d="M12 18l4 4 8-8" stroke="#e04040" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
-    '<h2>TCS CloudNexus AI</h2>' +
+    '<h2>KubeNexus AI</h2>' +
     '<p>List, inspect, diagnose, and manage your OpenShift cluster resources — pods, deployments, services, events, and more.</p>' +
     '<div class="welcome-suggestions">' +
     '<button onclick="sendFullChat(\'Show me all pods with issues\')">Pod issues</button>' +
@@ -2771,7 +2771,7 @@ async function sendFullChat(text) {
   thinkingDiv.id = 'full-thinking';
   const thinkLabel = _chatMode === 'investigate' ? 'Deep investigation in progress...' :
                      _chatMode === 'compare' ? 'Querying multiple providers...' : 'Analyzing cluster data...';
-  thinkingDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">TCS</div><span class="conv-name">TCS CloudNexus AI</span></div>' +
+  thinkingDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">KN</div><span class="conv-name">KubeNexus AI</span></div>' +
     '<div class="conv-body" style="color:var(--text2)"><div class="thinking-dots"><span></span><span></span><span></span></div> ' + thinkLabel + '</div>';
   inner.appendChild(thinkingDiv);
   scrollConversation();
@@ -2927,7 +2927,7 @@ async function executeRunbook(runbookId) {
   const thinkDiv = document.createElement('div');
   thinkDiv.className = 'conv-msg ai';
   thinkDiv.id = 'full-thinking';
-  thinkDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">TCS</div><span class="conv-name">TCS CloudNexus AI</span></div>' +
+  thinkDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">KN</div><span class="conv-name">KubeNexus AI</span></div>' +
     '<div class="conv-body"><div class="runbook-progress"><div class="runbook-progress-title">Running: ' + esc(label) + '</div>' +
     '<div class="thinking-dots"><span></span><span></span><span></span></div> Executing steps...</div></div>';
   inner.appendChild(thinkDiv);
@@ -3408,7 +3408,7 @@ renderConversation = function() {
       const upClass = msg.feedback === 1 ? ' voted' : '';
       const downClass = msg.feedback === -1 ? ' voted' : '';
       html += '<div class="conv-msg ai">' +
-        '<div class="conv-header"><div class="conv-avatar">TCS</div><span class="conv-name">TCS CloudNexus AI</span>' + providerTag + confidenceTag + '</div>' +
+        '<div class="conv-header"><div class="conv-avatar">KN</div><span class="conv-name">KubeNexus AI</span>' + providerTag + confidenceTag + '</div>' +
         '<div class="conv-body">' + (msg.html || md(msg.text || '')) + '</div>' +
         '<div class="conv-feedback">' +
           '<button class="' + upClass + '" onclick="sendFeedback(' + idx + ',1)" title="Helpful">&#x1F44D;</button>' +
@@ -3909,7 +3909,7 @@ async function sendFullChatStreaming(text) {
   const inner = document.getElementById('chat-conv-inner');
   const streamDiv = document.createElement('div');
   streamDiv.className = 'conv-msg ai streaming-text';
-  streamDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">TCS</div><span class="conv-name">TCS CloudNexus AI</span></div>' +
+  streamDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">KN</div><span class="conv-name">KubeNexus AI</span></div>' +
     '<div class="conv-body" id="stream-body"><div class="thinking-dots"><span></span><span></span><span></span></div> Analyzing...</div>';
   inner.appendChild(streamDiv);
   scrollConversation();
@@ -4106,7 +4106,7 @@ function exportConversation(format) {
       if (m.role === 'user') {
         lines.push('## User', '', m.text, '');
       } else {
-        lines.push('## TCS CloudNexus AI' + (m.provider ? ' (' + m.provider + ')' : ''), '', m.text, '');
+        lines.push('## KubeNexus AI' + (m.provider ? ' (' + m.provider + ')' : ''), '', m.text, '');
       }
     }
     content = lines.join('\n');
@@ -4492,12 +4492,12 @@ var _hubTools = [];
 var _hubServers = [];
 
 var K8S_PLATFORMS = {
-  openshift: { name: 'OpenShift', color: '#e04040', icon: '⬢', version: '4.x', ns: 'openshift-cloudnexus', cli: 'oc' },
-  rancher:   { name: 'Rancher',   color: '#0075a8', icon: '🐮', version: 'RKE2', ns: 'cloudnexus-system', cli: 'kubectl' },
-  eks:       { name: 'Amazon EKS', color: '#ff9900', icon: '☁', version: 'EKS', ns: 'cloudnexus-system', cli: 'kubectl' },
-  aks:       { name: 'Azure AKS', color: '#0078d4', icon: '⛅', version: 'AKS', ns: 'cloudnexus-system', cli: 'kubectl' },
-  gke:       { name: 'Google GKE', color: '#4285f4', icon: '🌐', version: 'GKE', ns: 'cloudnexus-system', cli: 'kubectl' },
-  k8s:       { name: 'Vanilla K8s', color: '#326ce5', icon: '⚙', version: 'K8s', ns: 'cloudnexus-system', cli: 'kubectl' },
+  openshift: { name: 'OpenShift', color: '#e04040', icon: '⬢', version: '4.x', ns: 'openshift-kubenexus', cli: 'oc' },
+  rancher:   { name: 'Rancher',   color: '#0075a8', icon: '🐮', version: 'RKE2', ns: 'kubenexus-system', cli: 'kubectl' },
+  eks:       { name: 'Amazon EKS', color: '#ff9900', icon: '☁', version: 'EKS', ns: 'kubenexus-system', cli: 'kubectl' },
+  aks:       { name: 'Azure AKS', color: '#0078d4', icon: '⛅', version: 'AKS', ns: 'kubenexus-system', cli: 'kubectl' },
+  gke:       { name: 'Google GKE', color: '#4285f4', icon: '🌐', version: 'GKE', ns: 'kubenexus-system', cli: 'kubectl' },
+  k8s:       { name: 'Vanilla K8s', color: '#326ce5', icon: '⚙', version: 'K8s', ns: 'kubenexus-system', cli: 'kubectl' },
 };
 
 function generateAgentYAML(platform, clusterName, apiUrl) {
@@ -4509,15 +4509,15 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
 
   var lines = [
     '# ============================================================',
-    '# TCS CloudNexus AI — Cluster Agent Deployment',
+    '# KubeNexus AI — Cluster Agent Deployment',
     '# Platform : ' + p.name,
     '# Cluster  : ' + (clusterName || safeName),
-    '# Registry : quay.io/karuppucs/cloudnexus-agent:latest',
+    '# Registry : quay.io/karuppucs/kubenexus-agent:latest',
     '# Generated: ' + date,
     '# ============================================================',
     '#',
-    '# Apply with: ' + p.cli + ' apply -f cloudnexus-agent-' + platform + '.yaml',
-    '# Remove with: ' + p.cli + ' delete -f cloudnexus-agent-' + platform + '.yaml',
+    '# Apply with: ' + p.cli + ' apply -f kubenexus-agent-' + platform + '.yaml',
+    '# Remove with: ' + p.cli + ' delete -f kubenexus-agent-' + platform + '.yaml',
     '#',
     '# Prerequisites:',
     '#   - Cluster admin or equivalent RBAC permissions',
@@ -4547,12 +4547,12 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('metadata:');
   lines.push('  name: ' + ns);
   lines.push('  labels:');
-  lines.push('    app.kubernetes.io/name: cloudnexus-agent');
-  lines.push('    app.kubernetes.io/part-of: cloudnexus-ai');
-  lines.push('    app.kubernetes.io/managed-by: cloudnexus-hub');
+  lines.push('    app.kubernetes.io/name: kubenexus-agent');
+  lines.push('    app.kubernetes.io/part-of: kubenexus-ai');
+  lines.push('    app.kubernetes.io/managed-by: kubenexus-hub');
   if (platform === 'openshift') {
     lines.push('  annotations:');
-    lines.push('    openshift.io/description: "TCS CloudNexus AI monitoring agent"');
+    lines.push('    openshift.io/description: "KubeNexus AI monitoring agent"');
   }
   lines.push('');
 
@@ -4561,14 +4561,14 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('apiVersion: v1');
   lines.push('kind: ServiceAccount');
   lines.push('metadata:');
-  lines.push('  name: cloudnexus-agent');
+  lines.push('  name: kubenexus-agent');
   lines.push('  namespace: ' + ns);
   lines.push('  labels:');
-  lines.push('    app.kubernetes.io/name: cloudnexus-agent');
+  lines.push('    app.kubernetes.io/name: kubenexus-agent');
   if (platform === 'eks') {
     lines.push('  # Uncomment to use IAM Roles for Service Accounts (IRSA):');
     lines.push('  # annotations:');
-    lines.push('  #   eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/cloudnexus-agent');
+    lines.push('  #   eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/kubenexus-agent');
   } else if (platform === 'aks') {
     lines.push('  # Uncomment to use Azure Workload Identity:');
     lines.push('  # annotations:');
@@ -4576,7 +4576,7 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   } else if (platform === 'gke') {
     lines.push('  # Uncomment to use GKE Workload Identity:');
     lines.push('  # annotations:');
-    lines.push('  #   iam.gke.io/gcp-service-account: cloudnexus@PROJECT.iam.gserviceaccount.com');
+    lines.push('  #   iam.gke.io/gcp-service-account: kubenexus@PROJECT.iam.gserviceaccount.com');
   }
   lines.push('');
 
@@ -4585,9 +4585,9 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('apiVersion: rbac.authorization.k8s.io/v1');
   lines.push('kind: ClusterRole');
   lines.push('metadata:');
-  lines.push('  name: cloudnexus-agent-role');
+  lines.push('  name: kubenexus-agent-role');
   lines.push('  labels:');
-  lines.push('    app.kubernetes.io/name: cloudnexus-agent');
+  lines.push('    app.kubernetes.io/name: kubenexus-agent');
   lines.push('rules:');
   lines.push('  # Core API — pods, nodes, events, services, namespaces');
   lines.push('  - apiGroups: [""]');
@@ -4738,16 +4738,16 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('apiVersion: rbac.authorization.k8s.io/v1');
   lines.push('kind: ClusterRoleBinding');
   lines.push('metadata:');
-  lines.push('  name: cloudnexus-agent-binding');
+  lines.push('  name: kubenexus-agent-binding');
   lines.push('  labels:');
-  lines.push('    app.kubernetes.io/name: cloudnexus-agent');
+  lines.push('    app.kubernetes.io/name: kubenexus-agent');
   lines.push('roleRef:');
   lines.push('  apiGroup: rbac.authorization.k8s.io');
   lines.push('  kind: ClusterRole');
-  lines.push('  name: cloudnexus-agent-role');
+  lines.push('  name: kubenexus-agent-role');
   lines.push('subjects:');
   lines.push('  - kind: ServiceAccount');
-  lines.push('    name: cloudnexus-agent');
+  lines.push('    name: kubenexus-agent');
   lines.push('    namespace: ' + ns);
   lines.push('');
 
@@ -4756,10 +4756,10 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('apiVersion: v1');
   lines.push('kind: ConfigMap');
   lines.push('metadata:');
-  lines.push('  name: cloudnexus-agent-config');
+  lines.push('  name: kubenexus-agent-config');
   lines.push('  namespace: ' + ns);
   lines.push('  labels:');
-  lines.push('    app.kubernetes.io/name: cloudnexus-agent');
+  lines.push('    app.kubernetes.io/name: kubenexus-agent');
   lines.push('data:');
   lines.push('  HUB_SERVER_URL: "' + serverUrl + '"');
   lines.push('  CLUSTER_NAME: "' + safeName + '"');
@@ -4776,10 +4776,10 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('apiVersion: v1');
   lines.push('kind: Secret');
   lines.push('metadata:');
-  lines.push('  name: cloudnexus-agent-secret');
+  lines.push('  name: kubenexus-agent-secret');
   lines.push('  namespace: ' + ns);
   lines.push('  labels:');
-  lines.push('    app.kubernetes.io/name: cloudnexus-agent');
+  lines.push('    app.kubernetes.io/name: kubenexus-agent');
   lines.push('type: Opaque');
   lines.push('stringData:');
   lines.push('  # Agent uses in-cluster ServiceAccount token by default.');
@@ -4793,12 +4793,12 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('apiVersion: apps/v1');
   lines.push('kind: Deployment');
   lines.push('metadata:');
-  lines.push('  name: cloudnexus-agent');
+  lines.push('  name: kubenexus-agent');
   lines.push('  namespace: ' + ns);
   lines.push('  labels:');
-  lines.push('    app: cloudnexus-agent');
-  lines.push('    app.kubernetes.io/name: cloudnexus-agent');
-  lines.push('    app.kubernetes.io/part-of: cloudnexus-ai');
+  lines.push('    app: kubenexus-agent');
+  lines.push('    app.kubernetes.io/name: kubenexus-agent');
+  lines.push('    app.kubernetes.io/part-of: kubenexus-ai');
   lines.push('    app.kubernetes.io/version: "1.0.0"');
   lines.push('spec:');
   lines.push('  replicas: 1');
@@ -4810,18 +4810,18 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('      maxSurge: 1');
   lines.push('  selector:');
   lines.push('    matchLabels:');
-  lines.push('      app: cloudnexus-agent');
+  lines.push('      app: kubenexus-agent');
   lines.push('  template:');
   lines.push('    metadata:');
   lines.push('      labels:');
-  lines.push('        app: cloudnexus-agent');
-  lines.push('        app.kubernetes.io/name: cloudnexus-agent');
+  lines.push('        app: kubenexus-agent');
+  lines.push('        app.kubernetes.io/name: kubenexus-agent');
   lines.push('      annotations:');
   lines.push('        prometheus.io/scrape: "true"');
   lines.push('        prometheus.io/port: "8080"');
   lines.push('        prometheus.io/path: "/status"');
   lines.push('    spec:');
-  lines.push('      serviceAccountName: cloudnexus-agent');
+  lines.push('      serviceAccountName: kubenexus-agent');
   if (platform === 'openshift') {
     lines.push('      securityContext:');
     lines.push('        runAsNonRoot: true');
@@ -4835,16 +4835,16 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('      terminationGracePeriodSeconds: 30');
   lines.push('      containers:');
   lines.push('        - name: agent');
-  lines.push('          image: quay.io/karuppucs/cloudnexus-agent:latest');
+  lines.push('          image: quay.io/karuppucs/kubenexus-agent:latest');
   lines.push('          imagePullPolicy: Always');
   lines.push('          env:');
   lines.push('            - name: NODE_EXTRA_CA_CERTS');
   lines.push('              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt');
   lines.push('          envFrom:');
   lines.push('            - configMapRef:');
-  lines.push('                name: cloudnexus-agent-config');
+  lines.push('                name: kubenexus-agent-config');
   lines.push('            - secretRef:');
-  lines.push('                name: cloudnexus-agent-secret');
+  lines.push('                name: kubenexus-agent-secret');
   lines.push('                optional: true');
   lines.push('          ports:');
   lines.push('            - containerPort: 8080');
@@ -4886,15 +4886,15 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('apiVersion: v1');
   lines.push('kind: Service');
   lines.push('metadata:');
-  lines.push('  name: cloudnexus-agent');
+  lines.push('  name: kubenexus-agent');
   lines.push('  namespace: ' + ns);
   lines.push('  labels:');
-  lines.push('    app: cloudnexus-agent');
-  lines.push('    app.kubernetes.io/name: cloudnexus-agent');
+  lines.push('    app: kubenexus-agent');
+  lines.push('    app.kubernetes.io/name: kubenexus-agent');
   lines.push('spec:');
   lines.push('  type: ClusterIP');
   lines.push('  selector:');
-  lines.push('    app: cloudnexus-agent');
+  lines.push('    app: kubenexus-agent');
   lines.push('  ports:');
   lines.push('    - port: 8080');
   lines.push('      targetPort: 8080');
@@ -4908,14 +4908,14 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
     lines.push('apiVersion: route.openshift.io/v1');
     lines.push('kind: Route');
     lines.push('metadata:');
-    lines.push('  name: cloudnexus-agent');
+    lines.push('  name: kubenexus-agent');
     lines.push('  namespace: ' + ns);
     lines.push('  labels:');
-    lines.push('    app: cloudnexus-agent');
+    lines.push('    app: kubenexus-agent');
     lines.push('spec:');
     lines.push('  to:');
     lines.push('    kind: Service');
-    lines.push('    name: cloudnexus-agent');
+    lines.push('    name: kubenexus-agent');
     lines.push('  port:');
     lines.push('    targetPort: http');
     lines.push('  tls:');
@@ -4931,7 +4931,7 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
     lines.push('# apiVersion: networking.k8s.io/v1');
     lines.push('# kind: Ingress');
     lines.push('# metadata:');
-    lines.push('#   name: cloudnexus-agent');
+    lines.push('#   name: kubenexus-agent');
     lines.push('#   namespace: ' + ns);
     lines.push('#   annotations:');
     if (platform === 'eks') {
@@ -4946,14 +4946,14 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
     }
     lines.push('# spec:');
     lines.push('#   rules:');
-    lines.push('#     - host: cloudnexus-agent.' + safeName + '.local');
+    lines.push('#     - host: kubenexus-agent.' + safeName + '.local');
     lines.push('#       http:');
     lines.push('#         paths:');
     lines.push('#           - path: /');
     lines.push('#             pathType: Prefix');
     lines.push('#             backend:');
     lines.push('#               service:');
-    lines.push('#                 name: cloudnexus-agent');
+    lines.push('#                 name: kubenexus-agent');
     lines.push('#                 port:');
     lines.push('#                   number: 8080');
   }
@@ -4973,7 +4973,7 @@ function hubAddCluster(platform) {
   document.getElementById('hub-cluster-url').value = '';
   document.getElementById('hub-cluster-token').value = '';
   document.getElementById('hub-cluster-status').textContent = '';
-  document.getElementById('hub-yaml-filename').textContent = 'cloudnexus-agent-' + platform + '.yaml';
+  document.getElementById('hub-yaml-filename').textContent = 'kubenexus-agent-' + platform + '.yaml';
   var yaml = generateAgentYAML(platform, '', '');
   document.getElementById('hub-agent-yaml').textContent = yaml;
 
@@ -5111,7 +5111,7 @@ function hubChatWithCluster(clusterId, clusterName, platform) {
           return '<button onclick="sendFullChat(\'' + s.query.replace(/'/g, "\\'") + '\')" style="border-left:3px solid ' + pInfo.color + '">' + esc(s.label) + '</button>';
         }).join('') +
       '</div>' +
-      '<div style="font-size:10px;color:var(--text2);margin-top:16px;opacity:.6">Powered by TCS CloudNexus AI &bull; ' + pInfo.name + ' + ' + llmInfo.name + '</div>';
+      '<div style="font-size:10px;color:var(--text2);margin-top:16px;opacity:.6">Powered by KubeNexus AI &bull; ' + pInfo.name + ' + ' + llmInfo.name + '</div>';
   }
   var input = document.getElementById('chat-input') || document.querySelector('.chat-input input');
   if (input) {
@@ -5913,7 +5913,7 @@ document.addEventListener('keydown', function(e) {
 <div class="app-footer">
   <div class="footer-left">
     <span class="ft-dot"></span>
-    TCS CloudNexus AI &bull; Kubernetes Intelligence Platform &bull; Powered by AI Hub + Multi-LLM + ACM + Ansible + ServiceNow
+    KubeNexus AI &bull; Kubernetes Intelligence Platform &bull; Powered by KubeNexus + Multi-LLM + ACM + Ansible + ServiceNow
   </div>
   <div class="footer-right">&copy; 2026 Tata Consultancy Services. All Rights Reserved.</div>
 </div>

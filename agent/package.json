@@ -1,13 +1,13 @@
 {
-  "name": "cloudnexus-agent",
+  "name": "kubenexus-agent",
   "version": "1.0.0",
-  "description": "TCS CloudNexus AI — Kubernetes Cluster Agent",
+  "description": "TCS KubeNexus AI — Kubernetes Cluster Agent",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js"
   },
-  "keywords": ["kubernetes", "openshift", "cloudnexus", "agent"],
+  "keywords": ["kubernetes", "openshift", "kubenexus", "agent"],
   "license": "MIT",
   "dependencies": {}
 }
