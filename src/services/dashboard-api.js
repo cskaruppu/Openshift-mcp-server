@@ -4,7 +4,7 @@
  */
 
 import { readFile, writeFile } from "node:fs/promises";
-import { ocpGet } from "../utils/openshift-client.js";
+import { ocpGet, ocpFetch } from "../utils/openshift-client.js";
 import { callLLM } from "./llm.js";
 import { query as dbQuery, isEnabled as dbEnabled } from "../utils/db.js";
 
@@ -600,4 +600,324 @@ export async function handleDashboardAPI(pathname, req, res) {
     console.error(`Dashboard API error [${pathname}]:`, err.message);
     json(res, 500, { error: err.message });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Upgrade workflow handlers
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /api/upgrade/analyze — Comprehensive upgrade impact analysis.
+ * Gathers ClusterVersion, ClusterOperators, Nodes, and MachineConfigPools
+ * to produce a single JSON overview the UI can render.
+ */
+export async function handleUpgradeAnalyze(req, res) {
+  try {
+    const [clusterVersion, operators, nodes, mcpools] = await Promise.all([
+      ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
+      ocpGet("/apis/config.openshift.io/v1/clusteroperators"),
+      ocpGet("/api/v1/nodes"),
+      ocpGet("/apis/machineconfiguration.openshift.io/v1/machineconfigpools").catch(() => null),
+    ]);
+
+    // --- Current version & channel ---
+    const currentVersion = clusterVersion?.status?.desired?.version || "unknown";
+    const channel = clusterVersion?.spec?.channel || "unknown";
+
+    // --- Available updates ---
+    const rawUpdates = clusterVersion?.status?.availableUpdates || [];
+    const availableUpdates = rawUpdates.map((u) => ({
+      version: u.version,
+      image: u.image || "",
+      url: u.url || "",
+      channels: u.channels || [],
+    }));
+
+    // --- Upgrade in progress? ---
+    const cvConditions = clusterVersion?.status?.conditions || [];
+    const progressing = cvConditions.find((c) => c.type === "Progressing");
+    const upgradeInProgress =
+      progressing?.status === "True" &&
+      (progressing?.message || "").toLowerCase().includes("working towards");
+
+    // --- Operators ---
+    const opItems = (operators?.items || []).map((op) => {
+      const conds = (op.status?.conditions || []).reduce((acc, c) => {
+        acc[c.type] = { status: c.status, message: c.message || "" };
+        return acc;
+      }, {});
+      const versions = (op.status?.versions || []).reduce((acc, v) => {
+        acc[v.name] = v.version;
+        return acc;
+      }, {});
+      return {
+        name: op.metadata.name,
+        versions,
+        available: conds.Available?.status === "True",
+        progressing: conds.Progressing?.status === "True",
+        degraded: conds.Degraded?.status === "True",
+        message: conds.Progressing?.message || conds.Degraded?.message || "",
+      };
+    });
+
+    // --- Nodes ---
+    const nodeList = (nodes?.items || []).map((n) => {
+      const roles = Object.keys(n.metadata.labels || {})
+        .filter((l) => l.startsWith("node-role.kubernetes.io/"))
+        .map((l) => l.replace("node-role.kubernetes.io/", ""));
+      return {
+        name: n.metadata.name,
+        roles,
+        kubeletVersion: n.status?.nodeInfo?.kubeletVersion || "",
+        osImage: n.status?.nodeInfo?.osImage || "",
+        ready: (n.status?.conditions || []).some(
+          (c) => c.type === "Ready" && c.status === "True"
+        ),
+      };
+    });
+
+    // --- MachineConfigPool status ---
+    const mcpStatus = (mcpools?.items || []).map((pool) => {
+      const conds = (pool.status?.conditions || []).reduce((acc, c) => {
+        acc[c.type] = { status: c.status, message: c.message || "" };
+        return acc;
+      }, {});
+      return {
+        name: pool.metadata.name,
+        machineCount: pool.status?.machineCount || 0,
+        readyMachineCount: pool.status?.readyMachineCount || 0,
+        updatedMachineCount: pool.status?.updatedMachineCount || 0,
+        degradedMachineCount: pool.status?.degradedMachineCount || 0,
+        updating: conds.Updating?.status === "True",
+        degraded: conds.Degraded?.status === "True",
+      };
+    });
+
+    // --- Risks from conditions ---
+    const risks = cvConditions
+      .filter(
+        (c) =>
+          (c.type === "Failing" && c.status === "True") ||
+          (c.type === "Degraded" && c.status === "True") ||
+          (c.type === "RetrievedUpdates" && c.status === "False") ||
+          (c.type === "Upgradeable" && c.status === "False")
+      )
+      .map((c) => ({
+        type: c.type,
+        message: c.message || "",
+        lastTransition: c.lastTransitionTime || "",
+      }));
+
+    // --- Estimated time (rough: ~10 min per node, minimum 15 min) ---
+    const nodeCount = nodeList.length;
+    const estimatedMinutes = Math.max(15, nodeCount * 10);
+    const estimatedTime = `${estimatedMinutes} minutes`;
+
+    json(res, 200, {
+      currentVersion,
+      channel,
+      availableUpdates,
+      operators: opItems,
+      nodes: nodeList,
+      mcpStatus,
+      risks,
+      estimatedTime,
+      upgradeInProgress,
+    });
+  } catch (err) {
+    console.error("[upgrade/analyze] error:", err.message);
+    json(res, 500, { error: err.message });
+  }
+}
+
+/**
+ * POST /api/upgrade/start — Initiate a cluster upgrade by patching ClusterVersion.
+ * Body: { version: "4.19.28" }
+ */
+export async function handleUpgradeStart(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const { version } = body;
+    if (!version || typeof version !== "string") {
+      return json(res, 400, { error: "Missing or invalid 'version' field" });
+    }
+
+    // Validate that the requested version is in availableUpdates
+    const clusterVersion = await ocpGet(
+      "/apis/config.openshift.io/v1/clusterversions/version"
+    );
+    const available = (clusterVersion?.status?.availableUpdates || []).map(
+      (u) => u.version
+    );
+    if (!available.includes(version)) {
+      return json(res, 400, {
+        error: `Version "${version}" is not in the list of available updates`,
+        availableUpdates: available,
+      });
+    }
+
+    // Check if an upgrade is already in progress
+    const progressing = (clusterVersion?.status?.conditions || []).find(
+      (c) => c.type === "Progressing"
+    );
+    if (
+      progressing?.status === "True" &&
+      (progressing?.message || "").toLowerCase().includes("working towards")
+    ) {
+      return json(res, 409, {
+        error: "An upgrade is already in progress",
+        message: progressing.message,
+      });
+    }
+
+    // PATCH ClusterVersion to set desiredUpdate
+    await ocpFetch(
+      "/apis/config.openshift.io/v1/clusterversions/version",
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/merge-patch+json" },
+        body: JSON.stringify({
+          spec: { desiredUpdate: { version } },
+        }),
+      }
+    );
+
+    json(res, 200, { success: true, version, message: `Upgrade to ${version} initiated` });
+  } catch (err) {
+    console.error("[upgrade/start] error:", err.message);
+    json(res, 500, { error: err.message });
+  }
+}
+
+/**
+ * GET /api/upgrade/status — SSE stream of upgrade progress.
+ * Polls ClusterVersion and ClusterOperators every 10 seconds and emits
+ * progress events until the upgrade completes, fails, or 30 minutes elapse.
+ */
+export function handleUpgradeStatus(req, res) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  });
+
+  const POLL_INTERVAL_MS = 10_000;
+  const TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+  const startTime = Date.now();
+  let closed = false;
+
+  function send(eventData) {
+    if (closed) return;
+    res.write(`data: ${JSON.stringify(eventData)}\n\n`);
+  }
+
+  async function poll() {
+    if (closed) return;
+
+    // Enforce 30-minute timeout
+    if (Date.now() - startTime > TIMEOUT_MS) {
+      send({ phase: "timeout", message: "Upgrade status stream timed out after 30 minutes" });
+      cleanup();
+      return;
+    }
+
+    try {
+      const [cv, ops] = await Promise.all([
+        ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
+        ocpGet("/apis/config.openshift.io/v1/clusteroperators"),
+      ]);
+
+      const conditions = (cv?.status?.conditions || []).reduce((acc, c) => {
+        acc[c.type] = { status: c.status, message: c.message || "", lastTransition: c.lastTransitionTime || "" };
+        return acc;
+      }, {});
+
+      const desiredVersion = cv?.status?.desired?.version || "unknown";
+      const currentHistory = (cv?.status?.history || []).find(
+        (h) => h.version === desiredVersion
+      );
+
+      // Operator counts
+      const opItems = ops?.items || [];
+      let updatingCount = 0;
+      let degradedCount = 0;
+      for (const op of opItems) {
+        const opConds = op.status?.conditions || [];
+        if (opConds.some((c) => c.type === "Progressing" && c.status === "True")) updatingCount++;
+        if (opConds.some((c) => c.type === "Degraded" && c.status === "True")) degradedCount++;
+      }
+
+      // Determine phase
+      let phase = "unknown";
+      let progress = 0;
+      const progressing = conditions.Progressing;
+      const available = conditions.Available;
+      const failing = conditions.Failing || conditions.Degraded;
+
+      if (currentHistory?.state === "Completed") {
+        phase = "complete";
+        progress = 100;
+      } else if (failing?.status === "True") {
+        phase = "failed";
+        progress = 0;
+      } else if (progressing?.status === "True") {
+        const msg = (progressing.message || "").toLowerCase();
+        if (msg.includes("working towards")) {
+          // Estimate progress based on operator counts
+          const totalOps = opItems.length || 1;
+          const doneOps = totalOps - updatingCount;
+          progress = Math.min(95, Math.round((doneOps / totalOps) * 90) + 5);
+
+          if (progress < 20) phase = "preparing";
+          else if (progress < 80) phase = "updating";
+          else phase = "completing";
+        } else {
+          phase = "preparing";
+          progress = 5;
+        }
+      } else if (available?.status === "True" && progressing?.status !== "True") {
+        // Not progressing and available — likely complete or idle
+        phase = "complete";
+        progress = 100;
+      }
+
+      const eventData = {
+        phase,
+        version: desiredVersion,
+        message: progressing?.message || "",
+        progress,
+        operators: { updating: updatingCount, degraded: degradedCount, total: opItems.length },
+        conditions: Object.entries(conditions).map(([type, c]) => ({
+          type,
+          status: c.status,
+          message: c.message,
+        })),
+      };
+
+      send(eventData);
+
+      // Close stream on terminal states
+      if (phase === "complete" || phase === "failed") {
+        cleanup();
+        return;
+      }
+    } catch (err) {
+      send({ phase: "error", message: err.message, progress: 0 });
+    }
+  }
+
+  const intervalId = setInterval(poll, POLL_INTERVAL_MS);
+
+  function cleanup() {
+    if (closed) return;
+    closed = true;
+    clearInterval(intervalId);
+    res.end();
+  }
+
+  // Handle client disconnect
+  req.on("close", cleanup);
+
+  // Fire first poll immediately
+  poll();
 }

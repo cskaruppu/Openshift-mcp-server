@@ -48,7 +48,7 @@ import { registerSCCAdvisorTools } from "./tools/scc-advisor.js";
 import { registerTimelineTools } from "./tools/timeline.js";
 import { registerUpgradeAdvisorTools } from "./tools/upgrade-advisor.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode } from "./services/auth.js";
-import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest } from "./services/dashboard-api.js";
+import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI } from "./services/chat-api.js";
 import {
   listActions,
@@ -1183,6 +1183,20 @@ async function startSSE() {
         sessions: sessions.size,
         safetyMode: getSafetyMode(),
       });
+    }
+
+    // Upgrade workflow — /api/upgrade/*
+    if (req.method === "GET" && url.pathname === "/api/upgrade/analyze") {
+      await handleUpgradeAnalyze(req, res);
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/upgrade/start") {
+      await handleUpgradeStart(req, res);
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/upgrade/status") {
+      handleUpgradeStatus(req, res);
+      return;
     }
 
     // Dashboard REST API — /api/...

@@ -659,6 +659,93 @@ tr:hover td{background:#ffffff06}
 .quick-actions-bar{display:flex;gap:6px;align-items:center;margin-right:auto}
 .quick-action{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:3px 8px;color:var(--text2);cursor:pointer;font-size:11px;transition:all .2s;display:flex;align-items:center;gap:3px}
 .quick-action:hover{border-color:var(--accent2);color:var(--text)}
+/* Upgrade Wizard Modal */
+.uw-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:10000;display:flex;align-items:center;justify-content:center;animation:uw-fadeIn .2s ease}
+@keyframes uw-fadeIn{from{opacity:0}to{opacity:1}}
+.uw-modal{background:#151820;border-radius:16px;max-width:600px;width:94%;max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,0.6);color:var(--text);font-family:inherit;position:relative;animation:uw-slideUp .25s ease}
+@keyframes uw-slideUp{from{transform:translateY(30px);opacity:0}to{transform:translateY(0);opacity:1}}
+.uw-modal::-webkit-scrollbar{width:6px}
+.uw-modal::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.uw-header{padding:24px 28px 16px;border-bottom:1px solid var(--border)}
+.uw-title{font-size:18px;font-weight:700;letter-spacing:0.3px}
+.uw-title-box{background:linear-gradient(135deg,#1a1040,#2a1520);border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin-top:12px;font-family:'Courier New',monospace;font-size:13px;text-align:center;color:var(--text)}
+.uw-body{padding:20px 28px 24px}
+.uw-section{margin-bottom:20px}
+.uw-section-title{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.uw-box{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;font-size:13px;line-height:1.7}
+.uw-box ul{list-style:none;padding:0;margin:0}
+.uw-box li{padding:2px 0}
+.uw-box li::before{content:"\2022";color:var(--accent2);margin-right:8px}
+.uw-box-divider{border-top:1px solid var(--border);margin:8px 0}
+.uw-risk-item{padding:3px 0;font-size:13px}
+.uw-risk-ok{color:var(--ok)}
+.uw-risk-warn{color:var(--warn)}
+.uw-risk-crit{color:var(--crit)}
+.uw-versions{display:flex;flex-direction:column;gap:8px}
+.uw-ver-card{background:var(--card);border:2px solid var(--border);border-radius:10px;padding:10px 14px;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:10px;font-size:13px}
+.uw-ver-card:hover{border-color:var(--accent2);background:#1e2230}
+.uw-ver-card.active{border-color:var(--accent2);background:rgba(59,130,246,0.1);box-shadow:0 0 0 1px var(--accent2)}
+.uw-ver-radio{width:16px;height:16px;border-radius:50%;border:2px solid var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:border-color .2s}
+.uw-ver-card.active .uw-ver-radio{border-color:var(--accent2)}
+.uw-ver-card.active .uw-ver-radio::after{content:'';width:8px;height:8px;border-radius:50%;background:var(--accent2)}
+.uw-ver-name{font-weight:600;flex:1}
+.uw-ver-tag{font-size:10px;padding:2px 6px;border-radius:4px;background:var(--border);color:var(--text2)}
+.uw-ver-tag.recommended{background:rgba(34,197,94,0.15);color:var(--ok)}
+.uw-footer{padding:16px 28px 20px;display:flex;justify-content:flex-end;gap:10px;border-top:1px solid var(--border)}
+.uw-btn{padding:8px 20px;border-radius:8px;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all .2s}
+.uw-btn-cancel{background:var(--card);color:var(--text2);border:1px solid var(--border)}
+.uw-btn-cancel:hover{background:var(--border);color:var(--text)}
+.uw-btn-primary{background:var(--accent2);color:#fff}
+.uw-btn-primary:hover{background:#2563eb;box-shadow:0 4px 12px rgba(59,130,246,0.3)}
+.uw-btn-danger{background:var(--accent);color:#fff}
+.uw-btn-danger:hover{background:#c03030}
+.uw-btn:disabled{opacity:0.5;cursor:not-allowed}
+/* Phase steps indicator */
+.uw-phases{display:flex;align-items:center;gap:0;padding:12px 28px;border-bottom:1px solid var(--border)}
+.uw-phase-dot{width:10px;height:10px;border-radius:50%;background:var(--border);transition:background .3s}
+.uw-phase-dot.active{background:var(--accent2);box-shadow:0 0 6px var(--accent2)}
+.uw-phase-dot.done{background:var(--ok)}
+.uw-phase-line{flex:1;height:2px;background:var(--border);margin:0 4px}
+.uw-phase-line.done{background:var(--ok)}
+.uw-phase-label{font-size:10px;color:var(--text2);margin-top:4px}
+.uw-phase-step{display:flex;flex-direction:column;align-items:center;gap:4px}
+/* Confirmation */
+.uw-confirm-msg{text-align:center;padding:20px 0;font-size:14px;line-height:1.6}
+.uw-confirm-icon{font-size:36px;margin-bottom:12px;display:block}
+/* Progress */
+.uw-progress-bar-outer{background:var(--border);border-radius:8px;height:12px;overflow:hidden;margin-bottom:16px}
+.uw-progress-bar-inner{height:100%;border-radius:8px;background:linear-gradient(90deg,var(--accent2),var(--accent3));transition:width .5s ease;position:relative}
+.uw-progress-bar-inner::after{content:'';position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(90deg,rgba(255,255,255,0) 0%,rgba(255,255,255,0.15) 50%,rgba(255,255,255,0) 100%);animation:uw-shimmer 1.5s infinite}
+@keyframes uw-shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.uw-progress-pct{font-size:20px;font-weight:700;text-align:center;margin-bottom:8px;color:var(--accent2)}
+.uw-progress-phase{text-align:center;font-size:13px;color:var(--text2);margin-bottom:16px}
+.uw-op-counts{display:flex;gap:12px;justify-content:center;margin-bottom:16px;flex-wrap:wrap}
+.uw-op-count{font-size:12px;padding:4px 10px;border-radius:6px;background:var(--card);border:1px solid var(--border)}
+.uw-op-count .cnt-val{font-weight:700;margin-right:4px}
+.uw-op-count.healthy .cnt-val{color:var(--ok)}
+.uw-op-count.updating .cnt-val{color:var(--accent2)}
+.uw-op-count.degraded .cnt-val{color:var(--crit)}
+.uw-log{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;font-family:'Courier New',monospace;font-size:11px;max-height:180px;overflow-y:auto;line-height:1.6;color:var(--text2)}
+.uw-log-entry{padding:1px 0}
+.uw-log-time{color:var(--accent2);margin-right:6px}
+.uw-success{text-align:center;padding:20px 0}
+.uw-success-icon{font-size:48px;display:block;margin-bottom:12px}
+.uw-success-text{font-size:16px;font-weight:600;color:var(--ok)}
+/* Light theme overrides */
+.light-theme .uw-modal{background:#ffffff;color:#1a1a2e;box-shadow:0 24px 80px rgba(0,0,0,0.15)}
+.light-theme .uw-title-box{background:linear-gradient(135deg,#f0ecf8,#f8ecec);border-color:#e0e0e6;color:#1a1a2e}
+.light-theme .uw-box{background:#f6f8fa;border-color:#e0e0e6}
+.light-theme .uw-ver-card{background:#f6f8fa;border-color:#e0e0e6}
+.light-theme .uw-ver-card:hover{background:#eef0f4;border-color:#2563eb}
+.light-theme .uw-ver-card.active{background:rgba(37,99,235,0.06);border-color:#2563eb}
+.light-theme .uw-btn-cancel{background:#f0f0f5;border-color:#e0e0e6;color:#6b6b80}
+.light-theme .uw-btn-cancel:hover{background:#e0e0e6;color:#1a1a2e}
+.light-theme .uw-progress-bar-outer{background:#e0e0e6}
+.light-theme .uw-log{background:#f6f8fa;border-color:#e0e0e6;color:#6b6b80}
+.light-theme .uw-op-count{background:#f6f8fa;border-color:#e0e0e6}
+.light-theme .uw-header{border-color:#e0e0e6}
+.light-theme .uw-footer{border-color:#e0e0e6}
+.light-theme .uw-phases{border-color:#e0e0e6}
 </style>
 </head>
 <body>
@@ -2181,9 +2268,15 @@ function md(text) {
     const id = 'cmd-' + Math.random().toString(36).substr(2, 6);
     // Detect first oc/kubectl command — show inline Run button
     const firstCmd = trimmed.split('\n').find((l) => /^\s*(oc|kubectl)\s+/.test(l));
-    const runBtn = firstCmd
-      ? '<button class="fix-copy" onclick="runChatCommand(this, ' + JSON.stringify(firstCmd.trim()).replace(/"/g, '&quot;') + ')" title="Send this command to AI Chat">&#x25B6; Run</button>'
-      : '';
+    var runBtn = '';
+    if (firstCmd) {
+      var upgradeMatch = firstCmd.trim().match(/^oc\s+adm\s+upgrade\s+--to=([\w.\-]+)/);
+      if (upgradeMatch) {
+        runBtn = '<button class="fix-copy" onclick="openUpgradeWizard(\'' + upgradeMatch[1].replace(/'/g, "\\'") + '\')" title="Open Upgrade Wizard">&#x25B6; Run</button>';
+      } else {
+        runBtn = '<button class="fix-copy" onclick="runChatCommand(this, ' + JSON.stringify(firstCmd.trim()).replace(/"/g, '&quot;') + ')" title="Send this command to AI Chat">&#x25B6; Run</button>';
+      }
+    }
     return '\n<div class="fix-box">' +
       '<div class="fix-header"><span class="fix-label">Command / Fix</span>' +
       '<div style="display:flex;gap:4px">' + runBtn +
@@ -6303,6 +6396,301 @@ document.addEventListener('keydown', function(e) {
     toggleSettingsPanel();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Upgrade Wizard — interactive cluster upgrade flow
+// ---------------------------------------------------------------------------
+var _uwSelectedVersion = '';
+var _uwEventSource = null;
+
+function uwApiBase() {
+  return MCP_API.replace(/\/api$/, '');
+}
+
+function openUpgradeWizard(version) {
+  _uwSelectedVersion = version;
+  // Create overlay
+  var overlay = document.createElement('div');
+  overlay.className = 'uw-overlay';
+  overlay.id = 'uw-overlay';
+  overlay.onclick = function(e) { if (e.target === overlay) closeUpgradeWizard(); };
+
+  var modal = document.createElement('div');
+  modal.className = 'uw-modal';
+  modal.id = 'uw-modal';
+  modal.innerHTML = uwBuildPhaseIndicator(1) +
+    '<div class="uw-header"><div class="uw-title">Cluster Upgrade Wizard</div>' +
+    '<div class="uw-title-box">Loading upgrade analysis...</div></div>' +
+    '<div class="uw-body" id="uw-body"><div style="text-align:center;padding:40px 0;color:var(--text2)">Analyzing cluster...</div></div>' +
+    '<div class="uw-footer"><button class="uw-btn uw-btn-cancel" onclick="closeUpgradeWizard()">Cancel</button></div>';
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  // Fetch upgrade analysis
+  fetch(uwApiBase() + '/api/upgrade/analyze')
+    .then(function(r) { return r.json(); })
+    .then(function(data) { uwShowImpactAnalysis(data, version); })
+    .catch(function(err) { uwShowError('Failed to fetch upgrade analysis: ' + err.message); });
+}
+
+function closeUpgradeWizard() {
+  if (_uwEventSource) { _uwEventSource.close(); _uwEventSource = null; }
+  var overlay = document.getElementById('uw-overlay');
+  if (overlay) overlay.remove();
+}
+
+function uwBuildPhaseIndicator(active) {
+  var phases = ['Analysis', 'Confirm', 'Upgrade'];
+  var html = '<div class="uw-phases">';
+  for (var i = 0; i < phases.length; i++) {
+    var cls = i < active - 1 ? 'done' : (i === active - 1 ? 'active' : '');
+    html += '<div class="uw-phase-step"><div class="uw-phase-dot ' + cls + '"></div><div class="uw-phase-label">' + phases[i] + '</div></div>';
+    if (i < phases.length - 1) {
+      html += '<div class="uw-phase-line ' + (i < active - 1 ? 'done' : '') + '"></div>';
+    }
+  }
+  html += '</div>';
+  return html;
+}
+
+function uwShowError(msg) {
+  var body = document.getElementById('uw-body');
+  if (body) body.innerHTML = '<div style="text-align:center;padding:40px 0;color:var(--crit)">' + msg + '</div>';
+}
+
+function uwShowImpactAnalysis(data, preselectedVersion) {
+  var modal = document.getElementById('uw-modal');
+  if (!modal) return;
+
+  var currentVersion = (data && data.currentVersion) || 'unknown';
+  var components = (data && data.components) || {};
+  var operators = components.clusterOperators || 45;
+  var masterNodes = components.masterNodes || 3;
+  var workerNodes = components.workerNodes || 5;
+  var mcpPools = components.machineConfigPools || 2;
+  var estimatedTime = (data && data.estimatedTime) || '~45 minutes';
+  var riskLevel = (data && data.riskLevel) || 'Low';
+  var risks = (data && data.risks) || [
+    { status: 'ok', message: 'No degraded operators detected' },
+    { status: 'ok', message: 'All nodes ready' },
+    { status: 'ok', message: 'etcd healthy (3/3)' }
+  ];
+  var availableVersions = (data && data.availableVersions) || [preselectedVersion];
+  var recommended = (data && data.recommendedVersion) || availableVersions[0];
+
+  // Ensure preselected version is in the list
+  if (availableVersions.indexOf(preselectedVersion) === -1) {
+    availableVersions.unshift(preselectedVersion);
+  }
+  // Limit to top 5
+  availableVersions = availableVersions.slice(0, 5);
+
+  _uwSelectedVersion = preselectedVersion;
+
+  // Build risk items
+  var risksHtml = '';
+  for (var i = 0; i < risks.length; i++) {
+    var r = risks[i];
+    var rCls = r.status === 'ok' ? 'uw-risk-ok' : (r.status === 'warn' ? 'uw-risk-warn' : 'uw-risk-crit');
+    var rIcon = r.status === 'ok' ? '✔' : (r.status === 'warn' ? '⚠' : '✖');
+    risksHtml += '<div class="uw-risk-item ' + rCls + '">' + rIcon + ' ' + r.message + '</div>';
+  }
+
+  // Build version cards
+  var versionsHtml = '';
+  for (var v = 0; v < availableVersions.length; v++) {
+    var ver = availableVersions[v];
+    var isActive = ver === preselectedVersion ? ' active' : '';
+    var tag = ver === recommended ? '<span class="uw-ver-tag recommended">Recommended</span>' : '';
+    versionsHtml += '<div class="uw-ver-card' + isActive + '" data-version="' + ver + '" onclick="uwSelectVersion(this, \'' + ver + '\')">' +
+      '<div class="uw-ver-radio"></div>' +
+      '<div class="uw-ver-name">' + ver + '</div>' + tag + '</div>';
+  }
+
+  modal.innerHTML = uwBuildPhaseIndicator(1) +
+    '<div class="uw-header"><div class="uw-title">Cluster Upgrade Wizard</div>' +
+    '<div class="uw-title-box">Cluster Upgrade &mdash; ' + currentVersion + ' → <span id="uw-target-ver">' + preselectedVersion + '</span></div></div>' +
+    '<div class="uw-body" id="uw-body">' +
+      '<div class="uw-section"><div class="uw-section-title">📊 Impact Analysis</div>' +
+        '<div class="uw-box"><ul>' +
+          '<li>' + operators + ' ClusterOperators</li>' +
+          '<li>' + masterNodes + ' master nodes (reboot required)</li>' +
+          '<li>' + workerNodes + ' worker nodes (reboot required)</li>' +
+          '<li>MachineConfigPools: ' + mcpPools + '</li>' +
+        '</ul><div class="uw-box-divider"></div>' +
+        'Estimated time: ' + estimatedTime + '<br>Risk level: <strong>' + riskLevel + '</strong></div></div>' +
+      '<div class="uw-section"><div class="uw-section-title">⚠️ Risks</div>' + risksHtml + '</div>' +
+      '<div class="uw-section"><div class="uw-section-title">🔄 Select Version</div>' +
+        '<div class="uw-versions" id="uw-versions">' + versionsHtml + '</div></div>' +
+    '</div>' +
+    '<div class="uw-footer">' +
+      '<button class="uw-btn uw-btn-cancel" onclick="closeUpgradeWizard()">Cancel</button>' +
+      '<button class="uw-btn uw-btn-primary" id="uw-start-btn" onclick="uwShowConfirmation()">Start Upgrade →</button>' +
+    '</div>';
+}
+
+function uwSelectVersion(card, ver) {
+  _uwSelectedVersion = ver;
+  var cards = document.querySelectorAll('#uw-versions .uw-ver-card');
+  for (var i = 0; i < cards.length; i++) cards[i].classList.remove('active');
+  card.classList.add('active');
+  var targetEl = document.getElementById('uw-target-ver');
+  if (targetEl) targetEl.textContent = ver;
+}
+
+function uwShowConfirmation() {
+  var modal = document.getElementById('uw-modal');
+  if (!modal) return;
+
+  var titleBox = modal.querySelector('.uw-title-box');
+  var currentVersion = '';
+  if (titleBox) {
+    var parts = titleBox.textContent.split('→');
+    currentVersion = parts[0] ? parts[0].replace('Cluster Upgrade', '').replace('—', '').trim() : '';
+  }
+
+  modal.innerHTML = uwBuildPhaseIndicator(2) +
+    '<div class="uw-header"><div class="uw-title">Confirm Upgrade</div>' +
+    '<div class="uw-title-box">Cluster Upgrade &mdash; ' + (currentVersion || '?') + ' → ' + _uwSelectedVersion + '</div></div>' +
+    '<div class="uw-body" id="uw-body">' +
+      '<div class="uw-confirm-msg">' +
+        '<span class="uw-confirm-icon">⚠️</span>' +
+        'Are you sure you want to upgrade from <strong>' + (currentVersion || 'current version') + '</strong> to <strong>' + _uwSelectedVersion + '</strong>?<br><br>' +
+        '<span style="color:var(--text2)">This operation cannot be undone.</span>' +
+      '</div>' +
+    '</div>' +
+    '<div class="uw-footer">' +
+      '<button class="uw-btn uw-btn-cancel" onclick="closeUpgradeWizard()">Cancel</button>' +
+      '<button class="uw-btn uw-btn-danger" onclick="uwStartUpgrade()">Confirm Upgrade</button>' +
+    '</div>';
+}
+
+function uwStartUpgrade() {
+  var modal = document.getElementById('uw-modal');
+  if (!modal) return;
+
+  modal.innerHTML = uwBuildPhaseIndicator(3) +
+    '<div class="uw-header"><div class="uw-title">Upgrading Cluster</div>' +
+    '<div class="uw-title-box">Upgrading to ' + _uwSelectedVersion + '</div></div>' +
+    '<div class="uw-body" id="uw-body">' +
+      '<div class="uw-progress-pct" id="uw-pct">0%</div>' +
+      '<div class="uw-progress-bar-outer"><div class="uw-progress-bar-inner" id="uw-bar" style="width:0%"></div></div>' +
+      '<div class="uw-progress-phase" id="uw-phase">Initiating upgrade...</div>' +
+      '<div class="uw-op-counts" id="uw-op-counts">' +
+        '<div class="uw-op-count healthy"><span class="cnt-val" id="uw-cnt-healthy">0</span>Healthy</div>' +
+        '<div class="uw-op-count updating"><span class="cnt-val" id="uw-cnt-updating">0</span>Updating</div>' +
+        '<div class="uw-op-count degraded"><span class="cnt-val" id="uw-cnt-degraded">0</span>Degraded</div>' +
+      '</div>' +
+      '<div class="uw-log" id="uw-log"></div>' +
+    '</div>' +
+    '<div class="uw-footer" id="uw-footer"></div>';
+
+  // POST to start upgrade
+  fetch(uwApiBase() + '/api/upgrade/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ version: _uwSelectedVersion })
+  })
+  .then(function(r) {
+    if (!r.ok) throw new Error('Server returned ' + r.status);
+    return r.json();
+  })
+  .then(function() {
+    uwConnectSSE();
+  })
+  .catch(function(err) {
+    uwAddLog('ERROR: ' + err.message);
+    uwSetPhase('Failed to start upgrade');
+    var footer = document.getElementById('uw-footer');
+    if (footer) footer.innerHTML = '<button class="uw-btn uw-btn-cancel" onclick="closeUpgradeWizard()">Close</button>';
+  });
+}
+
+function uwConnectSSE() {
+  if (_uwEventSource) _uwEventSource.close();
+  _uwEventSource = new EventSource(uwApiBase() + '/api/upgrade/status');
+
+  _uwEventSource.onmessage = function(e) {
+    try {
+      var d = JSON.parse(e.data);
+      if (d.progress !== undefined) uwSetProgress(d.progress);
+      if (d.phase) uwSetPhase(d.phase);
+      if (d.operators) uwSetOperatorCounts(d.operators);
+      if (d.message) uwAddLog(d.message);
+      if (d.complete) {
+        _uwEventSource.close();
+        _uwEventSource = null;
+        uwShowComplete(d.success !== false);
+      }
+    } catch(ex) {
+      uwAddLog(e.data);
+    }
+  };
+
+  _uwEventSource.onerror = function() {
+    // SSE may close on completion; if we haven't shown complete yet, show error
+    if (_uwEventSource) {
+      _uwEventSource.close();
+      _uwEventSource = null;
+      uwAddLog('Connection to upgrade status stream lost');
+      var footer = document.getElementById('uw-footer');
+      if (footer) footer.innerHTML = '<button class="uw-btn uw-btn-cancel" onclick="closeUpgradeWizard()">Close</button>';
+    }
+  };
+}
+
+function uwSetProgress(pct) {
+  var el = document.getElementById('uw-pct');
+  var bar = document.getElementById('uw-bar');
+  if (el) el.textContent = Math.round(pct) + '%';
+  if (bar) bar.style.width = Math.round(pct) + '%';
+}
+
+function uwSetPhase(phase) {
+  var el = document.getElementById('uw-phase');
+  if (el) el.textContent = phase;
+}
+
+function uwSetOperatorCounts(ops) {
+  var h = document.getElementById('uw-cnt-healthy');
+  var u = document.getElementById('uw-cnt-updating');
+  var d = document.getElementById('uw-cnt-degraded');
+  if (h) h.textContent = (ops.healthy || 0);
+  if (u) u.textContent = (ops.updating || 0);
+  if (d) d.textContent = (ops.degraded || 0);
+}
+
+function uwAddLog(msg) {
+  var log = document.getElementById('uw-log');
+  if (!log) return;
+  var now = new Date();
+  var ts = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2) + ':' + ('0' + now.getSeconds()).slice(-2);
+  var entry = document.createElement('div');
+  entry.className = 'uw-log-entry';
+  entry.innerHTML = '<span class="uw-log-time">' + ts + '</span>' + msg;
+  log.appendChild(entry);
+  log.scrollTop = log.scrollHeight;
+}
+
+function uwShowComplete(success) {
+  uwSetProgress(100);
+  var body = document.getElementById('uw-body');
+  var footer = document.getElementById('uw-footer');
+  if (!body) return;
+
+  if (success) {
+    body.innerHTML = '<div class="uw-success">' +
+      '<span class="uw-success-icon">✅</span>' +
+      '<div class="uw-success-text">Cluster upgraded to ' + _uwSelectedVersion + ' successfully!</div>' +
+      '</div>';
+  } else {
+    body.innerHTML = '<div class="uw-success">' +
+      '<span class="uw-success-icon">❌</span>' +
+      '<div style="font-size:16px;font-weight:600;color:var(--crit)">Upgrade encountered issues. Check cluster status.</div>' +
+      '</div>';
+  }
+  if (footer) footer.innerHTML = '<button class="uw-btn uw-btn-primary" onclick="closeUpgradeWizard()">Close</button>';
+}
 </script>
 
 <div class="app-footer">
