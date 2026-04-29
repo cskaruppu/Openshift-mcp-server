@@ -1137,7 +1137,7 @@ tr:hover td{background:#ffffff06}
         </div>
       </div>
       <div id="sec-findings" style="display:flex;flex-direction:column;gap:4px;font-size:12px"></div>
-      <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="showView('chat');setTimeout(()=>{document.getElementById('full-chat-input').value='/security';sendFullChat('/security')},200)">View Full Security Audit &#x2192;</button></div>
+      <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="openNewChatWithCommand('/security','Security Audit')">View Full Security Audit &#x2192;</button></div>
     </div>
 
     <!-- GitOps Sync Status -->
@@ -1150,7 +1150,7 @@ tr:hover td{background:#ffffff06}
         <div style="text-align:center;flex:1;min-width:60px"><div class="metric" style="font-size:28px;color:var(--text2)" id="gitops-total">--</div><div class="metric-label">Total</div></div>
       </div>
       <div id="gitops-apps" style="display:flex;flex-direction:column;gap:4px;font-size:12px;max-height:120px;overflow-y:auto"></div>
-      <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="showView('chat');setTimeout(()=>{document.getElementById('full-chat-input').value='/gitops';sendFullChat('/gitops')},200)">View All Applications &#x2192;</button></div>
+      <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="openNewChatWithCommand('/gitops','GitOps Applications')">View All Applications &#x2192;</button></div>
     </div>
 
     <!-- DR Readiness -->
@@ -1170,7 +1170,7 @@ tr:hover td{background:#ffffff06}
         </div>
       </div>
       <div id="dr-details" style="display:flex;flex-direction:column;gap:4px;font-size:12px"></div>
-      <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="showView('chat');setTimeout(()=>{document.getElementById('full-chat-input').value='/dr';sendFullChat('/dr')},200)">Full DR Assessment &#x2192;</button></div>
+      <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="openNewChatWithCommand('/dr','DR Assessment')">Full DR Assessment &#x2192;</button></div>
     </div>
 
     <!-- Resource Optimization -->
@@ -1190,7 +1190,7 @@ tr:hover td{background:#ffffff06}
         <div class="progress-bar"><div class="progress-fill" id="opt-mem-bar" style="width:0%;background:var(--ok)"></div></div>
       </div>
       <div id="opt-problems" style="display:flex;flex-direction:column;gap:3px;font-size:11px;max-height:80px;overflow-y:auto"></div>
-      <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="showView('chat');setTimeout(()=>{document.getElementById('full-chat-input').value='/recommendations';sendFullChat('/recommendations')},200)">Full Optimization Report &#x2192;</button></div>
+      <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="openNewChatWithCommand('/recommendations','Resource Optimization')">Full Optimization Report &#x2192;</button></div>
     </div>
   </div>
 
@@ -2986,6 +2986,38 @@ async function newChat() {
 
   renderChatHistory();
   renderConversation();
+}
+
+async function openNewChatWithCommand(command, title) {
+  await detectHistoryBackend();
+  const id = 'chat-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+  const history = loadChatHistory();
+  const chat = {
+    id,
+    title: title || command,
+    messages: [],
+    messageCount: 0,
+    updatedAt: new Date().toISOString(),
+    loaded: true,
+  };
+  history.chats.unshift(chat);
+  history.activeId = id;
+  saveChatHistory(history);
+  if (_historyRemote) {
+    fetch(chatApiBase() + '/api/chats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, title: chat.title }),
+    }).catch(() => {});
+  }
+  renderChatHistory();
+  renderConversation();
+  showView('chat');
+  setTimeout(function() {
+    var input = document.getElementById('full-chat-input');
+    if (input) input.value = command;
+    sendFullChat(command);
+  }, 150);
 }
 
 async function selectChat(id) {
