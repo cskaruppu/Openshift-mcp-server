@@ -121,9 +121,9 @@ tr:hover td{background:#ffffff06}
 .nav-tab:hover{border-color:var(--accent);color:var(--text)}
 .nav-tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 /* Full-page chat layout */
-.chat-fullpage{display:flex;height:calc(100vh - 65px);background:var(--bg)}
-.chat-sidebar{width:260px;background:#12141c;border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
-.actions-panel{width:320px;background:#12141c;border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
+.chat-fullpage{display:flex;height:calc(100vh - 65px);background:#0a0c10}
+.chat-sidebar{width:260px;background:#0e1018;border-right:1px solid #1a1d28;display:flex;flex-direction:column;flex-shrink:0}
+.actions-panel{width:320px;background:#0e1018;border-left:1px solid #1a1d28;display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
 .actions-header{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:space-between}
 .actions-header .snow-badge{font-size:10px;padding:2px 6px;border-radius:4px;font-weight:500}
 .actions-header .snow-on{background:#0f3b1f;color:#8aeca2}
@@ -148,29 +148,31 @@ tr:hover td{background:#ffffff06}
 .action-card .ac-btns button.primary:hover{opacity:.9}
 .action-card .ac-btns button:disabled{opacity:.5;cursor:not-allowed}
 @media(max-width:1100px){.actions-panel{display:none}}
-.sidebar-header{padding:16px;border-bottom:1px solid var(--border)}
-.new-chat-btn{width:100%;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer}
-.new-chat-btn:hover{opacity:.9}
+.sidebar-header{padding:16px;border-bottom:1px solid #1a1d28}
+.new-chat-btn{width:100%;background:transparent;color:var(--text);border:1px solid #2a2d3a;border-radius:10px;padding:10px;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
+.new-chat-btn:hover{background:#1a1d27;border-color:var(--accent2)}
 .chat-history-list{flex:1;overflow-y:auto;padding:8px}
-.history-item{padding:10px 12px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text2);margin-bottom:2px;position:relative}
-.history-item:hover{background:#1a1d27}
-.history-item.active{background:#2a2d3a;color:var(--text)}
+.history-item{padding:10px 12px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text2);margin-bottom:2px;position:relative;transition:background .15s}
+.history-item:hover{background:#151820}
+.history-item.active{background:#1a1e2e;color:var(--text)}
 .history-title{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:20px}
 .history-meta{font-size:11px;color:var(--text2);margin-top:2px}
 .history-delete{background:none;border:none;color:var(--text2);cursor:pointer;font-size:16px;padding:0 4px;position:absolute;top:8px;right:8px;opacity:0}
 .history-item:hover .history-delete{opacity:1}
 .history-delete:hover{color:var(--crit)}
-.chat-main-area{flex:1;display:flex;flex-direction:column;min-width:0}
-.chat-conversation{flex:1;overflow-y:auto}
-.chat-conv-inner{max-width:800px;margin:0 auto;padding:24px 32px}
-.conv-msg{margin-bottom:24px}
+.chat-main-area{flex:1;display:flex;flex-direction:column;min-width:0;background:#0a0c10}
+.chat-conversation{flex:1;overflow-y:auto;background:#0a0c10}
+.chat-conv-inner{max-width:780px;margin:0 auto;padding:32px 24px 100px}
+.conv-msg{margin-bottom:28px;animation:msgIn .25s ease-out}
+@keyframes msgIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 .conv-msg.user{display:flex;justify-content:flex-end}
-.conv-msg.user .conv-bubble{background:var(--accent);color:#fff;border-radius:18px 18px 4px 18px;padding:12px 18px;max-width:70%;font-size:14px;line-height:1.5}
-.conv-msg.ai .conv-header{display:flex;align-items:center;gap:8px;margin-bottom:8px}
-.conv-avatar{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#e04040,#c03030);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
+.conv-msg.user .conv-bubble{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-radius:20px 20px 4px 20px;padding:12px 18px;max-width:70%;font-size:14px;line-height:1.5;box-shadow:0 2px 8px #2563eb30}
+.conv-msg.ai{position:relative}
+.conv-msg.ai .conv-header{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.conv-avatar{width:30px;height:30px;border-radius:10px;background:linear-gradient(135deg,#e04040,#a020a0);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
 .conv-name{font-size:13px;font-weight:600;color:var(--text)}
-.conv-provider-tag{font-size:11px;color:var(--text2);background:#2a2d3a;padding:1px 6px;border-radius:4px}
-.conv-body{padding-left:36px;font-size:14px;line-height:1.6;color:var(--text);word-wrap:break-word}
+.conv-provider-tag{font-size:10px;color:#818cf8;background:#818cf815;padding:2px 8px;border-radius:10px;font-weight:500;letter-spacing:.2px}
+.conv-body{padding-left:38px;font-size:14px;line-height:1.7;color:#d1d5db;word-wrap:break-word}
 .conv-body .chat-heading{font-size:15px;font-weight:700;margin:12px 0 6px;padding-bottom:4px;border-bottom:1px solid #3a3d4a;color:#fff}
 .conv-body .chat-heading:first-child{margin-top:0}
 .conv-body .status-crit{color:#ef4444;font-weight:700}
@@ -203,20 +205,37 @@ tr:hover td{background:#ffffff06}
 .conv-body .apply-result.err{background:#ef444422;color:var(--crit)}
 .conv-body .chat-list-item{padding:2px 0}
 .chat-welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;text-align:center;color:var(--text2);padding:60px 20px}
-.chat-welcome h2{font-size:24px;font-weight:600;color:var(--text);margin:16px 0 8px}
-.chat-welcome p{font-size:15px;margin-bottom:24px;max-width:500px}
-.welcome-suggestions{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:600px}
-.welcome-suggestions button{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 16px;color:var(--text);font-size:13px;cursor:pointer;transition:all .2s}
-.welcome-suggestions button:hover{border-color:var(--accent);color:var(--accent)}
-.chat-bottom-bar{border-top:1px solid var(--border);padding:16px 24px 20px;background:var(--bg)}
-.chat-bottom-inner{max-width:800px;margin:0 auto}
-.chat-controls-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:var(--text2)}
-.chat-input-row{display:flex;gap:8px}
-.chat-input-full{flex:1;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 18px;color:var(--text);font-size:14px;outline:none;font-family:inherit}
-.chat-input-full:focus{border-color:var(--accent);box-shadow:0 0 0 2px #e0404033}
-.chat-send-btn{background:var(--accent);color:#fff;border:none;border-radius:12px;padding:14px 28px;font-weight:600;cursor:pointer;font-size:14px}
-.chat-send-btn:hover{opacity:.9}
-.chat-send-btn:disabled{opacity:.5;cursor:not-allowed}
+.chat-welcome h2{font-size:28px;font-weight:700;color:#fff;margin:20px 0 8px;letter-spacing:-.3px}
+.chat-welcome p{font-size:15px;margin-bottom:28px;max-width:500px;color:#9ca3af;line-height:1.6}
+.welcome-suggestions{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;max-width:550px;width:100%}
+.welcome-suggestions button{background:#151820;border:1px solid #2a2d3a;border-radius:12px;padding:12px 16px;color:#d1d5db;font-size:13px;cursor:pointer;transition:all .2s;text-align:left}
+.welcome-suggestions button:hover{border-color:#3b82f6;color:#fff;background:#1a1e2e;transform:translateY(-1px)}
+.chat-bottom-bar{position:absolute;bottom:0;left:0;right:0;padding:0 24px 20px;background:linear-gradient(to top,#0a0c10 60%,transparent);pointer-events:none;z-index:10}
+.chat-bottom-inner{max-width:780px;margin:0 auto;pointer-events:auto}
+.chat-controls-row{display:none}
+.chat-input-row{display:flex;align-items:center;gap:0;background:#151820;border:1px solid #2a2d3a;border-radius:16px;padding:4px 4px 4px 6px;transition:border-color .2s,box-shadow .2s}
+.chat-input-row:focus-within{border-color:#3b82f6;box-shadow:0 0 0 2px #3b82f620}
+.chat-input-full{flex:1;background:transparent;border:none;padding:12px 14px;color:var(--text);font-size:14px;outline:none;font-family:inherit}
+.chat-input-full::placeholder{color:#4b5563}
+.chat-send-btn{background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;border:none;border-radius:12px;padding:10px 18px;font-weight:600;cursor:pointer;font-size:13px;transition:all .15s;flex-shrink:0}
+.chat-send-btn:hover{background:linear-gradient(135deg,#2563eb,#1d4ed8);transform:scale(1.02)}
+.chat-send-btn:disabled{opacity:.3;cursor:not-allowed;transform:none}
+/* Model pill inside input bar */
+.chat-model-pill{display:inline-flex;align-items:center;gap:4px;background:#1e2130;border:1px solid #2a2d3a;border-radius:10px;padding:5px 10px;font-size:11px;color:#9ca3af;cursor:pointer;transition:all .15s;flex-shrink:0;white-space:nowrap}
+.chat-model-pill:hover{border-color:#3b82f6;color:#d1d5db}
+.chat-model-pill .pill-dot{width:6px;height:6px;border-radius:50%;background:#22c55e}
+/* Tools flyout panel — hidden by default */
+.chat-tools-flyout{position:absolute;bottom:calc(100% + 8px);right:0;background:#151820;border:1px solid #2a2d3a;border-radius:14px;padding:12px;min-width:320px;display:none;box-shadow:0 -8px 32px #00000060;z-index:20}
+.chat-tools-flyout.open{display:block;animation:flyIn .15s ease-out}
+@keyframes flyIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.chat-tools-flyout .tools-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.chat-tools-flyout .tool-btn{background:#1a1e2e;border:1px solid #2a2d3a;border-radius:8px;padding:8px 10px;color:#9ca3af;font-size:11px;cursor:pointer;transition:all .15s;text-align:left;display:flex;align-items:center;gap:6px}
+.chat-tools-flyout .tool-btn:hover{background:#1e2236;border-color:#3b82f6;color:var(--text)}
+.chat-tools-flyout .tool-btn.active{background:#3b82f615;border-color:#3b82f6;color:#3b82f6}
+.chat-tools-flyout .tools-section{font-size:10px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;padding:8px 4px 4px;grid-column:1/-1}
+/* Action bar buttons inside input row */
+.input-action-btn{background:transparent;border:none;color:#4b5563;cursor:pointer;padding:8px;border-radius:8px;font-size:16px;transition:all .15s;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.input-action-btn:hover{color:#d1d5db;background:#1e2130}
 .thinking-dots{display:inline-flex;gap:4px;padding:4px 0}
 .thinking-dots span{width:6px;height:6px;border-radius:50%;background:var(--text2);animation:bounce .8s infinite}
 .thinking-dots span:nth-child(2){animation-delay:.15s}
@@ -312,7 +331,29 @@ tr:hover td{background:#ffffff06}
 .light-theme .history-item:hover,.light-theme .slash-item:hover,.light-theme .slash-item.active{background:#eeeef2}
 .light-theme .history-item.active{background:#dde0e8;color:var(--text)}
 .light-theme .chat-sidebar,.light-theme .actions-panel{background:#eef0f4}
-.light-theme .chat-input-full{background:var(--card)}
+.light-theme .chat-input-full{background:transparent}
+.light-theme .chat-bottom-bar{background:linear-gradient(to top,#f5f5f7 60%,transparent)}
+.light-theme .chat-input-row{background:#fff;border-color:#e0e0e6}
+.light-theme .chat-input-row:focus-within{border-color:#2563eb;box-shadow:0 0 0 2px #2563eb20}
+.light-theme .chat-model-pill{background:#f0f2f6;border-color:#e0e0e6;color:#6b6b80}
+.light-theme .chat-model-pill:hover{border-color:#2563eb;color:#1a1a2e}
+.light-theme .chat-tools-flyout{background:#fff;border-color:#e0e0e6;box-shadow:0 -8px 32px #00000015}
+.light-theme .chat-tools-flyout .tool-btn{background:#f6f8fa;border-color:#e0e0e6;color:#6b6b80}
+.light-theme .chat-tools-flyout .tool-btn:hover{background:#eef0f4;border-color:#2563eb;color:#1a1a2e}
+.light-theme .chat-tools-flyout .tool-btn.active{background:#2563eb10;border-color:#2563eb;color:#2563eb}
+.light-theme .chat-tools-flyout .tools-section{color:#9ca3af}
+.light-theme .input-action-btn{color:#9ca3af}
+.light-theme .input-action-btn:hover{color:#1a1a2e;background:#eef0f4}
+.light-theme .chat-welcome h2{color:#1a1a2e}
+.light-theme .welcome-suggestions button{background:#fff;border-color:#e0e0e6;color:#4b5563}
+.light-theme .welcome-suggestions button:hover{border-color:#2563eb;color:#1a1a2e;background:#f6f8fa}
+.light-theme .conv-body{color:#374151}
+.light-theme .conv-body .chat-heading{color:#1a1a2e;border-color:#e0e0e6}
+.light-theme .conv-body .pod-issue{background:#fff5f5;border-color:#dc262640}
+.light-theme .conv-body .fix-box{background:#f6f8fa;border-color:#d0d7de}
+.light-theme .conv-body .fix-box .fix-header{background:#ebedf0;border-color:#d0d7de}
+.light-theme .conv-body .fix-box pre{color:#1a1a2e}
+.light-theme .conv-body .summary-bar{background:#f0f2f6}
 .light-theme .pod-issue{background:#fff0f0;border-color:#dc262655}
 .light-theme .summary-bar{background:#f0f2f6}
 .light-theme .conv-body .chat-heading{color:var(--text);border-color:#d0d0da}
@@ -372,18 +413,18 @@ tr:hover td{background:#ffffff06}
 .think-stage .stage-label{flex:1}
 @keyframes spin{to{transform:rotate(360deg)}}
 /* Auto-generated follow-up suggestions under AI replies */
-.followup-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)}
-.followup-chips .chip-label{font-size:11px;color:var(--text2);width:100%;margin-bottom:2px;letter-spacing:0.3px;text-transform:uppercase}
-.followup-chip{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:5px 12px;color:var(--text2);cursor:pointer;font-size:12px;transition:all 0.18s;display:inline-flex;align-items:center;gap:5px}
-.followup-chip:hover{border-color:var(--accent2);color:var(--accent2);background:#3b82f608;transform:translateY(-1px)}
-.followup-chip .chip-arrow{opacity:0.5;font-size:11px}
-/* Conversation memory chip — shows tracked context */
-.memory-chip{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(90deg,#3b82f614,#8b5cf614);border:1px solid #3b82f640;border-radius:14px;padding:3px 10px;font-size:11px;color:var(--text);margin-right:8px;margin-bottom:6px}
-.memory-chip .chip-key{color:var(--text2);font-weight:500}
-.memory-chip .chip-val{color:var(--accent2);font-family:'SF Mono',monospace;font-size:11px}
-.memory-bar{display:flex;flex-wrap:wrap;align-items:center;padding:6px 12px;background:#0f111720;border-bottom:1px solid var(--border);font-size:11px;min-height:0}
+.followup-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid #1a1e2e}
+.followup-chips .chip-label{font-size:10px;color:#4b5563;width:100%;margin-bottom:2px;letter-spacing:.3px;text-transform:uppercase}
+.followup-chip{background:#151820;border:1px solid #2a2d3a;border-radius:20px;padding:6px 14px;color:#9ca3af;cursor:pointer;font-size:12px;transition:all .15s;display:inline-flex;align-items:center;gap:5px}
+.followup-chip:hover{border-color:#3b82f6;color:#d1d5db;background:#1a1e2e;transform:translateY(-1px)}
+.followup-chip .chip-arrow{opacity:.4;font-size:11px}
+/* Conversation memory chip — inline in the input area */
+.memory-chip{display:inline-flex;align-items:center;gap:4px;background:#1e213008;border:1px solid #2a2d3a;border-radius:12px;padding:2px 8px;font-size:10px;color:#9ca3af;margin-right:4px}
+.memory-chip .chip-key{color:#6b7280;font-weight:500}
+.memory-chip .chip-val{color:#818cf8;font-family:'SF Mono',monospace;font-size:10px}
+.memory-bar{display:flex;flex-wrap:wrap;align-items:center;padding:0 4px 6px;font-size:10px;min-height:0}
 .memory-bar:empty{display:none}
-.memory-bar .mem-label{color:var(--text2);margin-right:6px;font-size:10px;text-transform:uppercase;letter-spacing:0.4px}
+.memory-bar .mem-label{color:#4b5563;margin-right:4px;font-size:9px;text-transform:uppercase;letter-spacing:.4px}
 /* Inline run/apply buttons in AI replies */
 .inline-action{display:inline-flex;align-items:center;gap:5px;background:var(--accent2);color:#fff;border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px;font-weight:500;margin:2px 4px 2px 0;transition:all 0.18s;vertical-align:middle}
 .inline-action:hover{opacity:0.85;transform:translateY(-1px)}
@@ -585,11 +626,12 @@ tr:hover td{background:#ffffff06}
 .pin-card .pin-remove:hover{color:var(--crit)}
 .pin-btn{background:none;border:none;color:var(--text2);cursor:pointer;font-size:12px;padding:2px 6px;border-radius:4px;transition:all .2s}
 .pin-btn:hover{color:var(--accent);background:#e0404015}
-/* Smart suggestions bar */
-.smart-suggestions{display:flex;gap:6px;margin-bottom:8px;overflow-x:auto;padding-bottom:4px;flex-wrap:nowrap}
-.smart-suggestion{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:5px 12px;color:var(--text2);cursor:pointer;font-size:11px;white-space:nowrap;transition:all .2s;display:flex;align-items:center;gap:4px;flex-shrink:0}
-.smart-suggestion:hover{border-color:var(--accent2);color:var(--accent2);background:#3b82f610}
-.smart-suggestion .ss-icon{font-size:12px}
+/* Smart suggestions — compact row above input */
+.smart-suggestions{display:flex;gap:6px;margin-bottom:8px;overflow-x:auto;padding-bottom:2px;flex-wrap:nowrap;scrollbar-width:none}
+.smart-suggestions::-webkit-scrollbar{display:none}
+.smart-suggestion{background:#15182008;border:1px solid #2a2d3a;border-radius:20px;padding:4px 12px;color:#6b7280;cursor:pointer;font-size:11px;white-space:nowrap;transition:all .15s;display:flex;align-items:center;gap:4px;flex-shrink:0}
+.smart-suggestion:hover{border-color:#3b82f6;color:#d1d5db;background:#3b82f608}
+.smart-suggestion .ss-icon{font-size:11px}
 /* Confidence meter */
 .confidence-meter{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;margin-left:8px}
 .confidence-meter .cm-bar{width:40px;height:4px;background:var(--border);border-radius:2px;overflow:hidden}
@@ -1005,65 +1047,66 @@ tr:hover td{background:#ffffff06}
       <div class="chat-conv-inner" id="chat-conv-inner">
         <!-- Welcome screen (shown when no messages) -->
         <div class="chat-welcome" id="chat-welcome">
-          <svg width="48" height="48" viewBox="0 0 36 36" fill="none"><circle cx="18" cy="18" r="17" stroke="#e04040" stroke-width="2"/><path d="M12 18l4 4 8-8" stroke="#e04040" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div style="width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#e04040,#a020a0);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#fff">KN</div>
           <h2>KubeNexus AI</h2>
-          <p>Your AI-powered cluster companion. Ask questions, diagnose issues, run what-if analysis, or generate policies using natural language.</p>
-          <div style="font-size:11px;color:var(--text2);margin-bottom:16px">Type <kbd style="background:var(--card);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:10px">/</kbd> for slash commands &bull; Click the mic for voice input &bull; Pin important findings</div>
+          <p>Your intelligent Kubernetes companion. Diagnose issues, analyze pods, run audits, and manage clusters with natural language.</p>
           <div class="welcome-suggestions">
-            <button onclick="sendFullChat('Show me all pods with issues')">Pod issues</button>
-            <button onclick="sendFullChat('Check cluster health')">Cluster health</button>
-            <button onclick="sendFullChat('/security')">Security audit</button>
-            <button onclick="sendFullChat('What if I scale nginx to 10 replicas?')">What-if analysis</button>
-            <button onclick="sendFullChat('Explain the SCC assigned to pod X')">Explain SCC</button>
-            <button onclick="sendFullChat('Compare drift between cluster1 and cluster2')">Cluster drift</button>
-            <button onclick="sendFullChat('Generate NetworkPolicy to block egress for namespace test')">Generate policy</button>
-            <button onclick="sendFullChat('Show incident timeline for namespace production')">Incident timeline</button>
-            <button onclick="sendFullChat('Check upgrade readiness for 4.15')">Upgrade advisor</button>
-            <button onclick="sendFullChat('Show CrashLoopBackOff pods')">CrashLoopBackOff</button>
+            <button onclick="sendFullChat('Show me all pods with issues')">&#x1F534; Show pod issues</button>
+            <button onclick="sendFullChat('Check cluster health')">&#x1F3E5; Cluster health</button>
+            <button onclick="sendFullChat('/security')">&#x1F6E1; Security audit</button>
+            <button onclick="sendFullChat('Show CrashLoopBackOff pods')">&#x1F504; CrashLoopBackOff</button>
+            <button onclick="sendFullChat('Check upgrade readiness for 4.15')">&#x2B06; Upgrade advisor</button>
+            <button onclick="sendFullChat('What if I scale nginx to 10 replicas?')">&#x1F4A1; What-if analysis</button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Bottom input bar -->
+    <!-- Bottom input bar — clean minimal design -->
     <div class="chat-bottom-bar">
-      <div class="chat-bottom-inner">
+      <div class="chat-bottom-inner" style="position:relative">
+        <!-- Hidden controls row for backward compat (selectors still exist but hidden) -->
         <div class="chat-controls-row">
-          <select id="full-llm-provider" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer" onchange="onFullProviderChange()">
-            <option value="none">Built-in Analysis</option>
-          </select>
-          <select id="full-llm-model-select" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;max-width:180px" onchange="onFullModelChange()">
-            <option value="">Default Model</option>
-          </select>
-          <div class="chat-mode-toggles">
-            <button class="mode-toggle" id="toggle-investigate" onclick="toggleChatMode('investigate')" title="Deep investigation with multi-step analysis">&#x1F50D; Deep Investigate</button>
-            <button class="mode-toggle" id="toggle-compare" onclick="toggleChatMode('compare')" title="Compare responses from all enabled providers side-by-side">&#x2194; Compare</button>
-            <div class="runbook-dropdown">
-              <button class="mode-toggle" id="runbook-btn" onclick="toggleRunbookMenu()">&#x1F4CB; Runbooks &#x25BE;</button>
-              <div class="runbook-menu" id="runbook-menu">
-                <div class="runbook-menu-item" onclick="executeRunbook('crashloop-diagnosis')">&#x1F534; Diagnose CrashLoop</div>
-                <div class="runbook-menu-item" onclick="executeRunbook('security-hardening')">&#x1F6E1; Security Hardening</div>
-                <div class="runbook-menu-item" onclick="executeRunbook('pre-upgrade-check')">&#x2B06; Pre-Upgrade Check</div>
-                <div class="runbook-menu-item" onclick="executeRunbook('capacity-planning')">&#x1F4CA; Capacity Planning</div>
-                <div class="runbook-menu-item" onclick="executeRunbook('network-troubleshoot')">&#x1F310; Network Troubleshoot</div>
-              </div>
-            </div>
-            <button class="mode-toggle" onclick="showView('hub')" title="AI Hub — Kubernetes cluster intelligence" id="chat-hub-btn">&#x1F50C; AI Hub <span id="chat-hub-count" style="background:var(--accent);color:#fff;border-radius:8px;padding:0 5px;font-size:9px;margin-left:2px"></span></button>
-            <button class="mode-toggle" onclick="showView('settings')" title="Configure LLM providers in Settings">&#x2699; Configure in Settings</button>
-          </div>
-          <!-- Hidden fields for backward compat -->
+          <select id="full-llm-provider" onchange="onFullProviderChange()"><option value="none">Built-in Analysis</option></select>
+          <select id="full-llm-model-select" onchange="onFullModelChange()"><option value="">Default Model</option></select>
           <div style="display:none">
             <input type="text" id="full-llm-api-key">
             <input type="text" id="full-llm-api-url">
             <input type="text" id="full-llm-model">
           </div>
         </div>
+        <!-- Memory bar -->
         <div class="memory-bar" id="chat-memory-bar"></div>
+        <!-- Smart suggestions -->
         <div class="smart-suggestions" id="smart-suggestions"></div>
+        <!-- Tools flyout panel -->
+        <div class="chat-tools-flyout" id="chat-tools-flyout">
+          <div class="tools-section" style="padding-top:0">MODES</div>
+          <div class="tools-grid">
+            <button class="tool-btn" id="toggle-investigate" onclick="toggleChatMode('investigate');toggleToolsFlyout()">&#x1F50D; Deep Investigate</button>
+            <button class="tool-btn" id="toggle-compare" onclick="toggleChatMode('compare');toggleToolsFlyout()">&#x2194; Compare</button>
+          </div>
+          <div class="tools-section">RUNBOOKS</div>
+          <div class="tools-grid">
+            <button class="tool-btn" onclick="executeRunbook('crashloop-diagnosis');toggleToolsFlyout()">&#x1F534; CrashLoop</button>
+            <button class="tool-btn" onclick="executeRunbook('security-hardening');toggleToolsFlyout()">&#x1F6E1; Security</button>
+            <button class="tool-btn" onclick="executeRunbook('pre-upgrade-check');toggleToolsFlyout()">&#x2B06; Upgrade Check</button>
+            <button class="tool-btn" onclick="executeRunbook('capacity-planning');toggleToolsFlyout()">&#x1F4CA; Capacity</button>
+            <button class="tool-btn" onclick="executeRunbook('network-troubleshoot');toggleToolsFlyout()">&#x1F310; Network</button>
+          </div>
+          <div class="tools-section">NAVIGATE</div>
+          <div class="tools-grid">
+            <button class="tool-btn" onclick="showView('hub');toggleToolsFlyout()">&#x1F50C; AI Hub</button>
+            <button class="tool-btn" onclick="showView('settings');toggleToolsFlyout()">&#x2699; Settings</button>
+          </div>
+        </div>
+        <!-- Clean input row -->
         <div class="chat-input-row">
-          <input type="text" class="chat-input-full" id="full-chat-input" placeholder="Ask about your cluster, type / for commands, or use voice..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendFullChat()}">
-          <button class="voice-btn" id="voice-btn" onclick="toggleVoiceInput()" title="Voice input (speech-to-text)">&#x1F3A4;</button>
-          <button class="chat-send-btn" id="full-chat-send" onclick="sendFullChat()">Send</button>
+          <button class="input-action-btn" onclick="toggleToolsFlyout()" title="Tools & Modes" id="tools-toggle-btn">&#x2795;</button>
+          <input type="text" class="chat-input-full" id="full-chat-input" placeholder="Ask about your cluster..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendFullChat()}">
+          <span class="chat-model-pill" onclick="toggleModelPicker()" id="model-pill-display"><span class="pill-dot"></span>Built-in</span>
+          <button class="input-action-btn" id="voice-btn" onclick="toggleVoiceInput()" title="Voice input">&#x1F3A4;</button>
+          <button class="chat-send-btn" id="full-chat-send" onclick="sendFullChat()">&#x2191;</button>
         </div>
       </div>
     </div>
@@ -2530,6 +2573,7 @@ function showView(view) {
       renderMemoryBar();
     });
     loadSmartSuggestions();
+    setTimeout(updateModelPill, 100);
   } else if (view === 'audit') {
     loadAuditView();
   } else if (view === 'alerts-view') {
@@ -2747,18 +2791,16 @@ function createWelcomeEl() {
   const div = document.createElement('div');
   div.className = 'chat-welcome';
   div.id = 'chat-welcome';
-  div.innerHTML = '<svg width="48" height="48" viewBox="0 0 36 36" fill="none"><circle cx="18" cy="18" r="17" stroke="#e04040" stroke-width="2"/><path d="M12 18l4 4 8-8" stroke="#e04040" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+  div.innerHTML = '<div style="width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#e04040,#a020a0);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#fff">KN</div>' +
     '<h2>KubeNexus AI</h2>' +
-    '<p>List, inspect, diagnose, and manage your OpenShift cluster resources — pods, deployments, services, events, and more.</p>' +
+    '<p>Your intelligent Kubernetes companion. Diagnose issues, analyze pods, run audits, and manage clusters with natural language.</p>' +
     '<div class="welcome-suggestions">' +
-    '<button onclick="sendFullChat(\'Show me all pods with issues\')">Pod issues</button>' +
-    '<button onclick="sendFullChat(\'List projects\')">List projects</button>' +
-    '<button onclick="sendFullChat(\'Check cluster health\')">Cluster health</button>' +
-    '<button onclick="sendFullChat(\'List nodes\')">List nodes</button>' +
-    '<button onclick="sendFullChat(\'List events\')">Events</button>' +
-    '<button onclick="sendFullChat(\'How many pods are running?\')">Pod summary</button>' +
-    '<button onclick="sendFullChat(\'Show CrashLoopBackOff pods\')">CrashLoopBackOff</button>' +
-    '<button onclick="sendFullChat(\'List deployments\')">Deployments</button>' +
+    '<button onclick="sendFullChat(\'Show me all pods with issues\')">&#x1F534; Show pod issues</button>' +
+    '<button onclick="sendFullChat(\'Check cluster health\')">&#x1F3E5; Cluster health</button>' +
+    '<button onclick="sendFullChat(\'\/security\')">&#x1F6E1; Security audit</button>' +
+    '<button onclick="sendFullChat(\'Show CrashLoopBackOff pods\')">&#x1F504; CrashLoopBackOff</button>' +
+    '<button onclick="sendFullChat(\'Check upgrade readiness for 4.15\')">&#x2B06; Upgrade advisor</button>' +
+    '<button onclick="sendFullChat(\'What if I scale nginx to 10 replicas?\')">&#x1F4A1; What-if analysis</button>' +
     '</div>';
   return div;
 }
@@ -2782,9 +2824,43 @@ function toggleChatMode(mode) {
 
 function toggleRunbookMenu() {
   const menu = document.getElementById('runbook-menu');
-  menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+  if (menu) menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
 }
+
+// Tools flyout panel — replaces the old controls row
+function toggleToolsFlyout() {
+  const flyout = document.getElementById('chat-tools-flyout');
+  if (flyout) flyout.classList.toggle('open');
+}
+// Model picker — cycle through providers or open settings
+function toggleModelPicker() {
+  const sel = document.getElementById('full-llm-provider');
+  if (!sel) return;
+  const opts = Array.from(sel.options);
+  const curIdx = sel.selectedIndex;
+  sel.selectedIndex = (curIdx + 1) % opts.length;
+  sel.dispatchEvent(new Event('change'));
+  updateModelPill();
+}
+function updateModelPill() {
+  const pill = document.getElementById('model-pill-display');
+  if (!pill) return;
+  const sel = document.getElementById('full-llm-provider');
+  const modelSel = document.getElementById('full-llm-model-select');
+  const provider = sel ? sel.value : 'none';
+  const model = modelSel ? (modelSel.selectedOptions[0]?.text || '') : '';
+  const names = { none: 'Built-in', openai: 'OpenAI', anthropic: 'Anthropic', azure: 'Azure AI', ollama: 'Ollama', gemini: 'Gemini', bedrock: 'Bedrock' };
+  const colors = { none: '#6b7280', openai: '#22c55e', anthropic: '#f59e0b', azure: '#3b82f6', ollama: '#8b5cf6', gemini: '#4285f4', bedrock: '#ff9900' };
+  const displayName = model && model !== 'Default Model' ? model : (names[provider] || provider);
+  const color = colors[provider] || '#6b7280';
+  pill.innerHTML = '<span class="pill-dot" style="background:' + color + '"></span>' + esc(displayName);
+}
+// Close flyout when clicking outside
 document.addEventListener('click', function(e) {
+  const flyout = document.getElementById('chat-tools-flyout');
+  if (flyout && flyout.classList.contains('open') && !e.target.closest('.chat-tools-flyout') && !e.target.closest('#tools-toggle-btn')) {
+    flyout.classList.remove('open');
+  }
   const menu = document.getElementById('runbook-menu');
   if (menu && !e.target.closest('.runbook-dropdown')) menu.style.display = 'none';
 });
@@ -3277,7 +3353,7 @@ function loadEnabledProviders() {
 // Compat shims for old code paths
 function syncLLMToFull() { loadEnabledProviders(); }
 function loadFullLLMConfig() { loadEnabledProviders(); }
-function onFullProviderChange() {}
+function onFullProviderChange() { if (typeof updateModelPill === 'function') updateModelPill(); }
 function toggleFullLLMConfig() { showView('settings'); }
 function saveFullLLMConfig() {}
 
