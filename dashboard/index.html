@@ -362,6 +362,39 @@ tr:hover td{background:#ffffff06}
 .export-btn:hover{border-color:var(--accent2);color:var(--accent2)}
 /* Streaming text */
 .streaming-text .conv-body::after{content:'|';animation:blink 1s step-end infinite;color:var(--accent)}
+/* Staged thinking indicator (ChatGPT/Claude-style) */
+.think-stage{display:flex;align-items:center;gap:8px;padding:6px 0;color:var(--text2);font-size:13px}
+.think-stage .stage-icon{width:14px;height:14px;border-radius:50%;border:2px solid var(--border);position:relative;flex-shrink:0}
+.think-stage.active .stage-icon{border-color:var(--accent2);border-top-color:transparent;animation:spin 0.8s linear infinite}
+.think-stage.done .stage-icon{background:var(--ok);border-color:var(--ok)}
+.think-stage.done .stage-icon::after{content:'';position:absolute;top:1px;left:3px;width:3px;height:6px;border:solid #fff;border-width:0 1.5px 1.5px 0;transform:rotate(45deg)}
+.think-stage.pending{opacity:0.45}
+.think-stage .stage-label{flex:1}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* Auto-generated follow-up suggestions under AI replies */
+.followup-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)}
+.followup-chips .chip-label{font-size:11px;color:var(--text2);width:100%;margin-bottom:2px;letter-spacing:0.3px;text-transform:uppercase}
+.followup-chip{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:5px 12px;color:var(--text2);cursor:pointer;font-size:12px;transition:all 0.18s;display:inline-flex;align-items:center;gap:5px}
+.followup-chip:hover{border-color:var(--accent2);color:var(--accent2);background:#3b82f608;transform:translateY(-1px)}
+.followup-chip .chip-arrow{opacity:0.5;font-size:11px}
+/* Conversation memory chip — shows tracked context */
+.memory-chip{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(90deg,#3b82f614,#8b5cf614);border:1px solid #3b82f640;border-radius:14px;padding:3px 10px;font-size:11px;color:var(--text);margin-right:8px;margin-bottom:6px}
+.memory-chip .chip-key{color:var(--text2);font-weight:500}
+.memory-chip .chip-val{color:var(--accent2);font-family:'SF Mono',monospace;font-size:11px}
+.memory-bar{display:flex;flex-wrap:wrap;align-items:center;padding:6px 12px;background:#0f111720;border-bottom:1px solid var(--border);font-size:11px;min-height:0}
+.memory-bar:empty{display:none}
+.memory-bar .mem-label{color:var(--text2);margin-right:6px;font-size:10px;text-transform:uppercase;letter-spacing:0.4px}
+/* Inline run/apply buttons in AI replies */
+.inline-action{display:inline-flex;align-items:center;gap:5px;background:var(--accent2);color:#fff;border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px;font-weight:500;margin:2px 4px 2px 0;transition:all 0.18s;vertical-align:middle}
+.inline-action:hover{opacity:0.85;transform:translateY(-1px)}
+.inline-action.danger{background:var(--crit)}
+.inline-action.success{background:var(--ok)}
+.inline-action:disabled{opacity:0.5;cursor:not-allowed;transform:none}
+.inline-action .ia-icon{font-size:12px}
+/* Code block with copy/run buttons */
+.code-actions{display:flex;gap:4px;justify-content:flex-end;margin-top:-2px;margin-bottom:6px}
+.code-actions button{background:var(--card);border:1px solid var(--border);border-radius:5px;padding:3px 8px;color:var(--text2);cursor:pointer;font-size:10px;transition:all 0.15s}
+.code-actions button:hover{border-color:var(--accent2);color:var(--accent2)}
 /* Settings view */
 .settings-container{max-width:960px;margin:0 auto;padding:24px}
 .settings-section{margin-bottom:28px}
@@ -1025,6 +1058,7 @@ tr:hover td{background:#ffffff06}
             <input type="text" id="full-llm-model">
           </div>
         </div>
+        <div class="memory-bar" id="chat-memory-bar"></div>
         <div class="smart-suggestions" id="smart-suggestions"></div>
         <div class="chat-input-row">
           <input type="text" class="chat-input-full" id="full-chat-input" placeholder="Ask about your cluster, type / for commands, or use voice..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendFullChat()}">
@@ -2103,13 +2137,19 @@ function md(text) {
   // Escape HTML first
   let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-  // Fenced code blocks: ```command``` -> styled fix box with copy button
+  // Fenced code blocks: ```command``` -> styled fix box with copy + run buttons
   html = html.replace(/```([\s\S]*?)```/g, function(match, code) {
     const trimmed = code.trim();
     const id = 'cmd-' + Math.random().toString(36).substr(2, 6);
+    // Detect first oc/kubectl command — show inline Run button
+    const firstCmd = trimmed.split('\n').find((l) => /^\s*(oc|kubectl)\s+/.test(l));
+    const runBtn = firstCmd
+      ? '<button class="fix-copy" onclick="runChatCommand(this, ' + JSON.stringify(firstCmd.trim()).replace(/"/g, '&quot;') + ')" title="Send this command to AI Chat">&#x25B6; Run</button>'
+      : '';
     return '\n<div class="fix-box">' +
       '<div class="fix-header"><span class="fix-label">Command / Fix</span>' +
-      '<button class="fix-copy" onclick="copyCmd(\'' + id + '\')">Copy</button></div>' +
+      '<div style="display:flex;gap:4px">' + runBtn +
+      '<button class="fix-copy" onclick="copyCmd(\'' + id + '\')">Copy</button></div></div>' +
       '<pre id="' + id + '">' + trimmed + '</pre></div>\n';
   });
 
@@ -2215,6 +2255,36 @@ function copyCmd(id) {
   });
 }
 
+// Run an oc/kubectl command from a code block by sending it back through chat
+function runChatCommand(btn, cmd) {
+  if (!cmd) return;
+  // Translate oc command to natural language for the chat NLU
+  // Examples:
+  //   "oc logs my-pod -n my-ns"      -> "show logs for my-pod in namespace my-ns"
+  //   "oc delete pod my-pod -n my-ns" -> "delete pod my-pod in namespace my-ns"
+  //   "oc describe pod X -n NS"       -> "describe pod X in namespace NS"
+  let nlu = cmd;
+  const m = cmd.match(/^\s*(?:oc|kubectl)\s+(\w+)\s+([\w-]+)?(?:\s+([\w-]+))?(?:\s+-n\s+([\w-]+))?/);
+  if (m) {
+    const [, verb, a1, a2, ns] = m;
+    const nsPart = ns ? ` in namespace ${ns}` : '';
+    if (verb === 'logs')         nlu = `show logs for ${a1}${nsPart}`;
+    else if (verb === 'describe') nlu = `describe ${a1} ${a2 || ''}${nsPart}`;
+    else if (verb === 'delete')   nlu = `delete ${a1} ${a2 || ''}${nsPart}`;
+    else if (verb === 'get')      nlu = `list ${a1}${nsPart}`;
+    else if (verb === 'rollout')  nlu = `restart ${a1} ${a2 || ''}${nsPart}`;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Sent'; setTimeout(() => { btn.disabled = false; btn.innerHTML = '▶ Run'; }, 1500); }
+  // Prefer full chat (streaming view); fall back to sidebar chat
+  if (typeof sendFullChat === 'function' && document.getElementById('full-chat-input')) {
+    showView('chat');
+    setTimeout(() => sendFullChat(nlu), 100);
+  } else {
+    const input = document.getElementById('chat-input');
+    if (input) { input.value = nlu; sendMessage(); }
+  }
+}
+
 // Apply fix directly on the cluster via /api/execute
 async function applyFix(btnId, action, name, ns) {
   const btn = document.getElementById(btnId);
@@ -2262,14 +2332,18 @@ async function sendMessage() {
   messages.innerHTML += '<div class="msg user">' + esc(text) + '</div>';
   input.value = '';
 
-  // Show thinking indicator
+  // Staged thinking indicator
   const thinkingId = 'thinking-' + Date.now();
-  messages.innerHTML += '<div class="msg ai" id="' + thinkingId + '" style="color:var(--text2)"><span class="dot" style="display:inline-block;width:6px;height:6px;margin-right:6px"></span>Analyzing cluster data...</div>';
+  const thinkingEl = document.createElement('div');
+  thinkingEl.className = 'msg ai';
+  thinkingEl.id = thinkingId;
+  thinkingEl.innerHTML = buildThinkingStages();
+  messages.appendChild(thinkingEl);
   messages.scrollTop = messages.scrollHeight;
 
   try {
-    // Include LLM provider settings from UI
-    const chatBody = { message: text };
+    // Build request body — include LLM provider settings + enable streaming
+    const chatBody = { message: text, stream: true };
     const selProvider = document.getElementById('llm-provider').value;
     if (selProvider && selProvider !== 'none') {
       chatBody.provider = selProvider;
@@ -2283,31 +2357,72 @@ async function sendMessage() {
 
     const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
       body: JSON.stringify(chatBody),
     });
-    const data = await resp.json();
 
-    const thinkingEl = document.getElementById(thinkingId);
-    if (thinkingEl) {
-      const providerTag = data.provider && data.provider !== 'none'
-        ? '<span class="tool-tag">' + data.provider + '</span> '
+    advanceThinkingStage(thinkingEl, 'query');
+
+    let fullText = '';
+    let provider = selProvider || 'none';
+
+    if (!resp.ok || !resp.headers.get('content-type')?.includes('text/event-stream')) {
+      // Fallback to non-streaming JSON response
+      advanceThinkingStage(thinkingEl, 'generate');
+      const data = resp.ok ? await resp.json() : { error: 'Server error: ' + resp.status };
+      fullText = data.reply || data.error || 'No response';
+      provider = data.provider || provider;
+      thinkingEl.innerHTML = md(fullText);
+    } else {
+      // Token-by-token streaming
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let firstChunk = true;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (payload === '[DONE]') continue;
+          try {
+            const evt = JSON.parse(payload);
+            if (evt.delta) {
+              if (firstChunk) {
+                advanceThinkingStage(thinkingEl, 'generate');
+                thinkingEl.innerHTML = '';
+                firstChunk = false;
+              }
+              fullText += evt.delta;
+              thinkingEl.innerHTML = md(fullText);
+              messages.scrollTop = messages.scrollHeight;
+            }
+            if (evt.done) provider = evt.provider || provider;
+            if (evt.error) fullText += '\n\nError: ' + evt.error;
+          } catch (e) {}
+        }
+      }
+      if (!fullText) {
+        thinkingEl.innerHTML = 'No response received.';
+        return;
+      }
+    }
+
+    // Append provider tag + auto-generated follow-ups
+    if (fullText && !/^Error:/.test(fullText)) {
+      const providerTag = provider && provider !== 'none'
+        ? '<div style="margin-top:6px"><span class="tool-tag">' + esc(provider) + '</span></div>'
         : '';
-      const contextTags = (data.contextKeys || [])
-        .filter(k => !['clusterVersion','channel'].includes(k))
-        .map(k => '<span class="tool-tag">' + k + '</span>')
-        .join(' ');
-
-      thinkingEl.style.color = '';
-      thinkingEl.innerHTML = md(data.reply || data.error || 'No response') +
-        (providerTag || contextTags ? '<br><br>' + providerTag + contextTags : '');
+      const followups = renderFollowUps(text, fullText);
+      thinkingEl.innerHTML = md(fullText) + providerTag + followups;
     }
   } catch (err) {
-    const thinkingEl = document.getElementById(thinkingId);
-    if (thinkingEl) {
-      thinkingEl.innerHTML = 'Error: ' + esc(err.message);
-      thinkingEl.style.color = 'var(--crit)';
-    }
+    thinkingEl.innerHTML = 'Error: ' + esc(err.message);
+    thinkingEl.style.color = 'var(--crit)';
   }
   messages.scrollTop = messages.scrollHeight;
 }
@@ -2412,6 +2527,7 @@ function showView(view) {
       renderChatHistory();
       renderConversation();
       scrollConversation();
+      renderMemoryBar();
     });
     loadSmartSuggestions();
   } else if (view === 'audit') {
@@ -3884,6 +4000,137 @@ async function testNotificationWebhook() {
 // ---------------------------------------------------------------------------
 // SSE Streaming — progressive text rendering for chat responses
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Staged thinking indicator — ChatGPT/Claude-style progressive feedback
+// Stages: Understanding → Querying cluster → Generating response
+// ---------------------------------------------------------------------------
+function buildThinkingStages() {
+  return '<div class="think-stages">' +
+    '<div class="think-stage active" data-stage="parse"><span class="stage-icon"></span><span class="stage-label">Understanding your question...</span></div>' +
+    '<div class="think-stage pending" data-stage="query"><span class="stage-icon"></span><span class="stage-label">Querying cluster data</span></div>' +
+    '<div class="think-stage pending" data-stage="generate"><span class="stage-icon"></span><span class="stage-label">Generating response</span></div>' +
+    '</div>';
+}
+function advanceThinkingStage(container, stageName) {
+  if (!container) return;
+  const stages = container.querySelectorAll('.think-stage');
+  let foundActive = false;
+  stages.forEach((s) => {
+    const name = s.dataset.stage;
+    if (foundActive) return;
+    if (name === stageName) {
+      s.classList.remove('pending');
+      s.classList.remove('done');
+      s.classList.add('active');
+      foundActive = true;
+    } else {
+      s.classList.remove('active', 'pending');
+      s.classList.add('done');
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Auto-generated follow-up suggestions — analyze AI reply + user question
+// to propose 3 natural next-step actions (like ChatGPT/Claude do)
+// ---------------------------------------------------------------------------
+function generateFollowUps(userMsg, aiReply) {
+  const text = (aiReply || '').toLowerCase();
+  const userLower = (userMsg || '').toLowerCase();
+  const followups = [];
+
+  // Extract a referenced pod name from the reply (most common case)
+  const podMatch = (aiReply || '').match(/`([a-z][-a-z0-9]*(?:-[a-z0-9]{4,10}){1,2})`/);
+  const nsMatch = (aiReply || '').match(/(?:in|namespace)\s+`([a-z0-9][-a-z0-9]*)`/i);
+  const podName = podMatch ? podMatch[1] : null;
+  const ns = nsMatch ? nsMatch[1] : null;
+
+  // Pod-specific follow-ups when AI just analyzed a pod
+  if (podName && ns && /pod|crash|oom|imagepull|container|restart/.test(text)) {
+    followups.push({ icon: '\u{1F4C4}', text: 'Show full logs', query: `show logs for ${podName} in namespace ${ns}` });
+    followups.push({ icon: '\u{1F504}', text: 'Restart this pod', query: `restart pod ${podName} in namespace ${ns}` });
+    followups.push({ icon: '\u{1F4CA}', text: 'Resource usage', query: `top pod ${podName} in namespace ${ns}` });
+    return followups.slice(0, 3);
+  }
+
+  // Cluster health / overview follow-ups
+  if (/cluster.*health|overview|operator|node.*ready/.test(text) || /cluster.*health|overview/.test(userLower)) {
+    followups.push({ icon: '\u{1F6A8}', text: 'Show failing pods', query: 'Show me all pods with issues' });
+    followups.push({ icon: '⚠', text: 'Check critical alerts', query: '/alerts' });
+    followups.push({ icon: '\u{1F4DC}', text: 'Recent events', query: 'list recent events' });
+    return followups.slice(0, 3);
+  }
+
+  // Issue/problem follow-ups
+  if (/crashloop|oomkill|imagepull|fail|error/.test(text)) {
+    followups.push({ icon: '\u{1F50D}', text: 'Why is it failing?', query: 'diagnose root cause' });
+    if (podName) followups.push({ icon: '\u{1F4C4}', text: 'Show logs', query: `show logs for ${podName}${ns ? ' in namespace ' + ns : ''}` });
+    followups.push({ icon: '\u{1F4DC}', text: 'See related events', query: ns ? `list events in ${ns}` : 'list recent events' });
+    return followups.slice(0, 3);
+  }
+
+  // List-style follow-ups (user asked "list X")
+  if (/^(list|show|get|how many)/i.test(userLower)) {
+    followups.push({ icon: '\u{1F50D}', text: 'Filter to issues only', query: userMsg + ' with issues' });
+    followups.push({ icon: '\u{1F4C8}', text: 'Resource usage', query: 'show top pods' });
+    followups.push({ icon: '⚠', text: 'Check alerts', query: '/alerts' });
+    return followups.slice(0, 3);
+  }
+
+  // Default exploratory follow-ups
+  followups.push({ icon: '\u{1F50D}', text: 'Tell me more', query: 'explain in more detail' });
+  followups.push({ icon: '\u{1F4A1}', text: 'Suggest fix', query: 'suggest a fix' });
+  followups.push({ icon: '\u{1F4CB}', text: 'Show cluster health', query: 'check cluster health' });
+  return followups.slice(0, 3);
+}
+function renderFollowUps(userMsg, aiReply) {
+  const fups = generateFollowUps(userMsg, aiReply);
+  if (!fups.length) return '';
+  return '<div class="followup-chips">' +
+    '<span class="chip-label">Suggested next:</span>' +
+    fups.map((f) =>
+      '<button class="followup-chip" onclick="sendFullChat(\'' + f.query.replace(/'/g, "\\'") + '\')">' +
+        '<span>' + f.icon + '</span><span>' + esc(f.text) + '</span><span class="chip-arrow">→</span>' +
+      '</button>'
+    ).join('') +
+  '</div>';
+}
+
+// ---------------------------------------------------------------------------
+// Conversation memory chip — show what AI is "tracking" across messages
+// (current pod, namespace, last action) so the user knows pronouns will resolve
+// ---------------------------------------------------------------------------
+function renderMemoryBar() {
+  const bar = document.getElementById('chat-memory-bar');
+  if (!bar) return;
+  const history = loadChatHistory();
+  const chat = history.chats.find((c) => c.id === history.activeId);
+  if (!chat || !chat.messages || chat.messages.length === 0) {
+    bar.innerHTML = '';
+    return;
+  }
+  // Scan recent messages for the last referenced pod/namespace/deployment
+  const recent = chat.messages.slice(-6).map((m) => m.text || '').join(' ');
+  let pod = null, ns = null, deploy = null;
+  const podM = recent.match(/\b([a-z][-a-z0-9]*(?:-[a-z0-9]{4,10}){2})\b/);
+  if (podM) pod = podM[1];
+  const nsM = recent.match(/namespace\s+`?([a-z0-9][-a-z0-9]*)`?/i) || recent.match(/in\s+`([a-z0-9][-a-z0-9]*)`/i);
+  if (nsM) ns = nsM[1];
+  const depM = recent.match(/deployment\s+`?([a-z0-9][-a-z0-9]*)`?/i);
+  if (depM) deploy = depM[1];
+
+  const chips = [];
+  if (pod) chips.push('<span class="memory-chip"><span class="chip-key">pod</span><span class="chip-val">' + esc(pod) + '</span></span>');
+  if (ns) chips.push('<span class="memory-chip"><span class="chip-key">ns</span><span class="chip-val">' + esc(ns) + '</span></span>');
+  if (deploy) chips.push('<span class="memory-chip"><span class="chip-key">deploy</span><span class="chip-val">' + esc(deploy) + '</span></span>');
+
+  if (chips.length === 0) {
+    bar.innerHTML = '';
+    return;
+  }
+  bar.innerHTML = '<span class="mem-label">Tracking:</span>' + chips.join('');
+}
+
 async function sendFullChatStreaming(text) {
   const input = document.getElementById('full-chat-input');
   const sendBtn = document.getElementById('full-chat-send');
@@ -3910,7 +4157,7 @@ async function sendFullChatStreaming(text) {
   const streamDiv = document.createElement('div');
   streamDiv.className = 'conv-msg ai streaming-text';
   streamDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">KN</div><span class="conv-name">KubeNexus AI</span></div>' +
-    '<div class="conv-body" id="stream-body"><div class="thinking-dots"><span></span><span></span><span></span></div> Analyzing...</div>';
+    '<div class="conv-body" id="stream-body">' + buildThinkingStages() + '</div>';
   inner.appendChild(streamDiv);
   scrollConversation();
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '...'; }
@@ -3929,8 +4176,12 @@ async function sendFullChatStreaming(text) {
       body: JSON.stringify(chatBody),
     });
 
+    // Advance to "querying" stage as soon as we get the response headers
+    advanceThinkingStage(streamDiv, 'query');
+
     if (!resp.ok || !resp.headers.get('content-type')?.includes('text/event-stream')) {
       // Fallback to non-streaming
+      advanceThinkingStage(streamDiv, 'generate');
       const data = resp.ok ? await resp.json() : { error: 'Server error: ' + resp.status };
       fullText = data.reply || data.error || 'No response';
       streamProvider = data.provider || streamProvider;
@@ -3954,7 +4205,12 @@ async function sendFullChatStreaming(text) {
           try {
             const evt = JSON.parse(payload);
             if (evt.delta) {
-              if (firstChunk) { body.innerHTML = ''; firstChunk = false; }
+              if (firstChunk) {
+                // First token arrived — clear thinking, advance final stage
+                advanceThinkingStage(streamDiv, 'generate');
+                body.innerHTML = '';
+                firstChunk = false;
+              }
               fullText += evt.delta;
               body.innerHTML = md(fullText);
               scrollConversation();
@@ -3975,6 +4231,7 @@ async function sendFullChatStreaming(text) {
   }
 
   streamDiv.classList.remove('streaming-text');
+
   history = loadChatHistory();
   const activeChat = history.chats.find(c => c.id === history.activeId);
   if (activeChat) {
@@ -3983,8 +4240,21 @@ async function sendFullChatStreaming(text) {
     saveChatHistory(history);
   }
   renderConversation();
+
+  // Append auto-generated follow-up suggestions to the last AI reply
+  // (after renderConversation rebuilds the DOM from history)
+  if (fullText && !/^Error:/.test(fullText)) {
+    const allAiBodies = document.querySelectorAll('#chat-conv-inner .conv-msg.ai .conv-body');
+    const lastBody = allAiBodies[allAiBodies.length - 1];
+    if (lastBody) {
+      const followups = renderFollowUps(msg, fullText);
+      if (followups) lastBody.insertAdjacentHTML('beforeend', followups);
+    }
+  }
+
   if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = 'Send'; }
   renderChatHistory();
+  renderMemoryBar();
   if (/<!--action:/.test(fullText)) refreshActionsPanel();
 }
 
