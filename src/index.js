@@ -109,6 +109,17 @@ import {
   buildKBContext,
 } from "./services/knowledge-base.js";
 import {
+  initLearningEngine,
+  recordIncident as leRecordIncident,
+  recordResolution as leRecordResolution,
+  findSimilarIncidents,
+  getTeamPlaybook,
+  getIncidentStats,
+  buildLearningContext,
+  buildSignature as leBuildSignature,
+  signatureForInsight,
+} from "./services/learning-engine.js";
+import {
   initAutomationRules,
   createRule,
   listRules,
@@ -242,6 +253,35 @@ async function loadClustersFromDB() {
 function sendJson(res, status, body) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
+}
+
+/**
+ * Parse a kubectl/oc command to extract namespace, resource name, and a
+ * short summary. Used by the learning loop to associate fixes with incidents.
+ */
+function parseCommandTarget(command) {
+  const out = { namespace: "", name: "", verb: "", resource: "", summary: "" };
+  if (!command) return out;
+  const tokens = String(command).trim().split(/\s+/);
+  // Skip cli word
+  if (tokens[0] === "kubectl" || tokens[0] === "oc") tokens.shift();
+  out.verb = tokens[0] || "";
+  // -n / --namespace
+  for (let i = 1; i < tokens.length - 1; i++) {
+    if (tokens[i] === "-n" || tokens[i] === "--namespace") {
+      out.namespace = tokens[i + 1];
+    }
+  }
+  // Resource + name = first 1-2 positional after verb
+  if (out.verb === "rollout") {
+    out.resource = tokens[2] || "";
+    out.name = tokens[3] || "";
+  } else if (out.verb === "patch" || out.verb === "delete" || out.verb === "scale" || out.verb === "describe" || out.verb === "logs") {
+    out.resource = tokens[1] || (out.verb === "logs" ? "pod" : "");
+    out.name = (out.verb === "logs") ? (tokens[1] || "") : (tokens[2] || "");
+  }
+  out.summary = `${out.verb} ${out.resource ? out.resource + "/" : ""}${out.name || ""}`.trim();
+  return out;
 }
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024; // 2 MB
@@ -413,9 +453,10 @@ async function startSSE() {
   // Initialize AI Intelligence features
   try {
     await initKnowledgeBase();
+    await initLearningEngine();
     await initAutomationRules();
     startProactiveMonitor();
-    console.log("[startup] AI Intelligence: proactive monitor, knowledge base, automation rules — active");
+    console.log("[startup] AI Intelligence: proactive monitor, knowledge base, learning engine, automation rules — active");
   } catch (err) {
     console.warn("[startup] AI Intelligence init:", err.message);
   }
@@ -1044,10 +1085,55 @@ async function startSSE() {
     if (req.method === "POST" && url.pathname === "/api/alerts/execute-fix") {
       try {
         const body = await readJsonBody(req);
-        const result = await executeFixCommand(body.command || "", { dryRun: !!body.dryRun });
+        const command = body.command || "";
+        const result = await executeFixCommand(command, { dryRun: !!body.dryRun });
+
+        // Learning loop: record this fix outcome so future similar issues can
+        // surface the team's proven approach. Skip dry-runs (no real change).
+        if (!body.dryRun && command) {
+          const meta = parseCommandTarget(command);
+          leRecordResolution({
+            cluster: process.env.CLUSTER_NAME || body.cluster || "local",
+            namespace: meta.namespace || body.namespace || "",
+            resourceName: meta.name || body.resourceName || "",
+            signature: body.signature || null,
+            command,
+            summary: body.summary || meta.summary || "",
+            success: !!result.success,
+            user: body.user || body.conversationId || "",
+          }).catch(() => {});
+        }
         return sendJson(res, 200, result);
       } catch (e) {
         return sendJson(res, 500, { success: false, stderr: e.message });
+      }
+    }
+
+    // GET /api/intelligence/playbook — top patterns from team history
+    if (req.method === "GET" && url.pathname === "/api/intelligence/playbook") {
+      try {
+        const limit = Math.min(parseInt(url.searchParams.get("limit"), 10) || 20, 100);
+        const sinceDays = Math.min(parseInt(url.searchParams.get("sinceDays"), 10) || 90, 365);
+        const playbook = await getTeamPlaybook({ limit, sinceDays });
+        const stats = await getIncidentStats({ sinceDays });
+        return sendJson(res, 200, { playbook, stats, sinceDays });
+      } catch (e) {
+        return sendJson(res, 500, { error: e.message });
+      }
+    }
+
+    // GET /api/intelligence/similar?signature=X — find historical incidents matching signature
+    if (req.method === "GET" && url.pathname === "/api/intelligence/similar") {
+      try {
+        const signature = url.searchParams.get("signature") || "";
+        const cluster = url.searchParams.get("cluster") || null;
+        const sinceDays = Math.min(parseInt(url.searchParams.get("sinceDays"), 10) || 90, 365);
+        const limit = Math.min(parseInt(url.searchParams.get("limit"), 10) || 5, 50);
+        if (!signature) return sendJson(res, 400, { error: "signature is required" });
+        const matches = await findSimilarIncidents(signature, { cluster, sinceDays, limit });
+        return sendJson(res, 200, { matches, signature, sinceDays });
+      } catch (e) {
+        return sendJson(res, 500, { error: e.message });
       }
     }
 

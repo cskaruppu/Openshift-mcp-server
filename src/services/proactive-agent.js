@@ -18,6 +18,7 @@
 import { ocpGet } from "../utils/openshift-client.js";
 import { callLLM, llmEnabled } from "./llm.js";
 import { query as dbQuery } from "../utils/db.js";
+import { recordIncident as leRecordIncident, signatureForInsight } from "./learning-engine.js";
 import { cacheGet, cacheSet } from "../utils/cache.js";
 
 const SCAN_INTERVAL_MS = parseInt(process.env.PROACTIVE_SCAN_INTERVAL || "60000", 10);
@@ -541,14 +542,34 @@ function addInsight(insight) {
     existing.count = (existing.count || 1) + 1;
     return;
   }
-  _insights.push({
+  const enriched = {
     ...insight,
     id,
     firstSeen: Date.now(),
     lastSeen: Date.now(),
     count: 1,
     aiAnalysis: null,
-  });
+  };
+  _insights.push(enriched);
+  // Persist to learning engine for cross-cluster + time correlation
+  try {
+    const [kind, ...rest] = (insight.resource || "").split("/");
+    const rname = rest.join("/");
+    const sig = signatureForInsight(insight);
+    if (sig) {
+      enriched.signature = sig;
+      leRecordIncident({
+        cluster: process.env.CLUSTER_NAME || "local",
+        namespace: insight.namespace || "",
+        resourceType: kind || "",
+        resourceName: rname || "",
+        signature: sig,
+        issueType: insight.type,
+        severity: insight.severity || 50,
+        context: { title: insight.title, detail: insight.detail },
+      }).catch(() => {});
+    }
+  } catch { /* swallow */ }
 }
 
 async function persistInsights() {

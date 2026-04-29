@@ -53,6 +53,13 @@ import { runAgent } from "./agent-loop.js";
 import { runOrchestrator } from "./mcp-orchestrator.js";
 import { getConnectionCount } from "./mcp-hub.js";
 import { findSimilar as kbFindSimilar, buildKBContext, recordResolution } from "./knowledge-base.js";
+import {
+  buildSignature as leBuildSignature,
+  findSimilarIncidents as leFindSimilarIncidents,
+  buildLearningContext as leBuildLearningContext,
+  getTeamPlaybook as leGetTeamPlaybook,
+  getIncidentStats as leGetIncidentStats,
+} from "./learning-engine.js";
 import { maybeEnhance as nluEnhanceWithLLM } from "./nlu-llm.js";
 import { summarizeIfNeeded } from "./summarizer.js";
 import { suggestPlaybook, renderPlaybookMarkdown } from "./playbooks.js";
@@ -183,6 +190,15 @@ function buildHelpMessage() {
     "",
     "**Follow-ups** — I remember the last resource you mentioned",
     "  - `delete it` / `show its logs` / `same in production namespace`",
+    "",
+    "**Slash commands**",
+    "  - `/security` — full security & compliance audit with AI remediation",
+    "  - `/recommendations` — cluster optimization report (right-sizing, capacity)",
+    "  - `/health` — cluster health snapshot",
+    "  - `/dr` — disaster recovery readiness assessment",
+    "  - `/gitops` — ArgoCD applications status",
+    "  - `/playbook` — your team's learned patterns from past resolutions",
+    "  - `/audit` — recent executed actions audit trail",
     "",
     "Type any of the above naturally — punctuation, casing, and word order don't matter.",
   ].join("\n");
@@ -2459,9 +2475,35 @@ async function generateSecurityRemediation(findings, score, grade, llmOpts) {
     return `[${f.severity}] ${f.title} (type: ${f.type})\n  Why: ${f.why}\n  Affected resources:\n${itemLines}${f.total > f.items.length ? `\n    ... and ${f.total - f.items.length} more` : ""}`;
   }).join("\n\n");
 
+  // Pull team playbook context: similar past resolutions for each finding type
+  let learningContext = "";
+  try {
+    const sigsByFinding = findings.flatMap((f) =>
+      f.items.slice(0, 2).map((it) =>
+        leBuildSignature({
+          type: f.type === "privileged" ? "PrivilegedContainer"
+            : f.type === "runAsRoot" ? "RunAsRoot"
+            : f.type === "noLimits" ? "NoResourceLimits"
+            : f.type === "hostNetwork" ? "HostNetwork"
+            : f.type === "noNetworkPolicy" ? "NoNetworkPolicy"
+            : f.type === "latestTag" ? "LatestImageTag"
+            : f.type,
+          resource: it.pod || it.namespace || "",
+          namespace: it.namespace,
+        })
+      )
+    );
+    const allMatches = [];
+    for (const sig of sigsByFinding.slice(0, 6)) {
+      const matches = await leFindSimilarIncidents(sig, { sinceDays: 90, limit: 2 });
+      if (matches.length) allMatches.push(...matches);
+    }
+    learningContext = leBuildLearningContext(allMatches);
+  } catch { /* swallow */ }
+
   const userPrompt = `Security scan results — Score: ${score}/100, Grade: ${grade}
 
-${findingsSummary}
+${findingsSummary}${learningContext}
 
 Provide detailed, step-by-step remediation with executable oc/kubectl commands for each finding. Use the real resource names listed above.`;
 
@@ -2586,12 +2628,36 @@ async function generateOptimizationRemediation(findings, clusterStats, llmOpts) 
     return `[${f.severity}] ${f.title} (type: ${f.type})\n  ${f.description}\n  Affected resources:\n${itemLines}${f.total > f.items.length ? `\n    ... and ${f.total - f.items.length} more` : ""}`;
   }).join("\n\n");
 
+  // Pull team playbook context for optimization patterns
+  let learningContext = "";
+  try {
+    const sigs = findings.flatMap((f) =>
+      f.items.slice(0, 2).map((it) =>
+        leBuildSignature({
+          type: f.type === "over-provisioned" ? "OverProvisioned"
+            : f.type === "under-provisioned" ? "UnderProvisioned"
+            : f.type === "no-limits" ? "NoResourceLimits"
+            : f.type === "high-restarts" ? "HighRestartRate"
+            : f.type === "capacity" ? "ClusterCapacity" : f.type,
+          resource: it.pod || it.ns || "",
+          namespace: it.ns,
+        })
+      )
+    );
+    const allMatches = [];
+    for (const sig of sigs.slice(0, 6)) {
+      const matches = await leFindSimilarIncidents(sig, { sinceDays: 90, limit: 2 });
+      if (matches.length) allMatches.push(...matches);
+    }
+    learningContext = leBuildLearningContext(allMatches);
+  } catch { /* swallow */ }
+
   const userPrompt = `Cluster optimization scan results:
 - Total user pods: ${clusterStats.totalPods}
 - CPU headroom: ${clusterStats.cpuH}%
 - Memory headroom: ${clusterStats.memH}%
 
-${findingsSummary}
+${findingsSummary}${learningContext}
 
 Provide detailed optimization recommendations with executable oc/kubectl commands for each finding. Use the real resource names listed above. Calculate right-sized values based on actual usage data.`;
 
@@ -2954,6 +3020,72 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
       };
     } catch (e) {
       return { reply: `[ERROR] Security audit failed: ${e.message}`, contextKeys: ["slash", "security"] };
+    }
+  }
+
+  // --- Team playbook (continuous learning loop) ---
+  if (cmd === "playbook") {
+    try {
+      const sinceDays = Math.min(parseInt(arg, 10) || 90, 365);
+      const [playbook, stats] = await Promise.all([
+        leGetTeamPlaybook({ limit: 25, sinceDays }),
+        leGetIncidentStats({ sinceDays }),
+      ]);
+
+      const lines = [
+        `### Team Playbook — Learned Patterns`,
+        ``,
+        `Patterns your team has resolved over the past ${sinceDays} days. The AI uses these as context when similar issues recur.`,
+        ``,
+        `| Metric | Value |`,
+        `|---|---|`,
+        `| Total incidents | ${stats.total ?? 0} |`,
+        `| Resolved | ${stats.resolved_count ?? 0} |`,
+        `| Currently open | ${stats.open_count ?? 0} |`,
+        `| Failed fixes | ${stats.failed_count ?? 0} |`,
+        `| Unique patterns | ${stats.unique_patterns ?? 0} |`,
+        `| Clusters affected | ${stats.clusters_affected ?? 0} |`,
+        ``,
+      ];
+
+      if (!playbook || playbook.length === 0) {
+        lines.push(`---`);
+        lines.push(`[INFO] No resolved patterns yet. The playbook builds as your team fixes issues.`);
+        lines.push(``);
+        lines.push(`**How it works:**`);
+        lines.push(`  - When the proactive agent detects an anomaly, it records an incident with a stable signature`);
+        lines.push(`  - When you run a fix command (Run button), the resolution is linked to that incident`);
+        lines.push(`  - When the same pattern recurs (here or on another cluster), the AI surfaces the prior fix automatically`);
+      } else {
+        lines.push(`---`);
+        lines.push(`### Top Patterns`);
+        lines.push(``);
+        lines.push(`| # | Pattern | Resolved | Total Seen | Clusters | Last Fix |`);
+        lines.push(`|---|---|---|---|---|---|`);
+        for (let i = 0; i < playbook.length; i++) {
+          const p = playbook[i];
+          const last = p.last_resolved ? new Date(p.last_resolved).toISOString().slice(0, 10) : "—";
+          const sig = (p.issue_signature || "").length > 60 ? p.issue_signature.slice(0, 57) + "…" : p.issue_signature;
+          lines.push(`| ${i + 1} | \`${sig}\` | ${p.resolved_count} | ${p.occurrences} | ${p.clusters_affected} | ${last} |`);
+        }
+        lines.push(``);
+        const top = playbook[0];
+        if (top?.sample_command) {
+          lines.push(`---`);
+          lines.push(`### Sample Resolution`);
+          lines.push(`Most-used pattern: \`${top.issue_signature}\``);
+          lines.push(`Last applied command:`);
+          lines.push(`@@SEC_FIX_CMD|${String(top.sample_command).slice(0, 500)}@@`);
+        }
+      }
+
+      return {
+        reply: lines.join("\n"),
+        provider: "built-in",
+        contextKeys: ["slash", "playbook"],
+      };
+    } catch (e) {
+      return { reply: `[ERROR] Playbook unavailable: ${e.message}`, contextKeys: ["slash", "playbook"] };
     }
   }
 

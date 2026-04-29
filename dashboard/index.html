@@ -1876,6 +1876,7 @@ tr:hover td{background:#ffffff06}
         <div class="ai-cmd-stat" style="--c:#6366f1"><div class="v" id="aic-predictions">0</div><div class="l">Predicted</div></div>
         <div class="ai-cmd-stat" style="--c:#22c55e"><div class="v" id="aic-resolved">0</div><div class="l">Auto-Fixed</div></div>
         <div class="ai-cmd-stat" style="--c:#a855f7"><div class="v" id="aic-investigating">0</div><div class="l">Investigating</div></div>
+        <div class="ai-cmd-stat" style="--c:#0ea5e9" title="Patterns your team has resolved before — used as AI context for new issues" onclick="openNewChatWithCommand('/playbook','Team Playbook')" style="cursor:pointer"><div class="v" id="aic-learned">0</div><div class="l">Learned</div></div>
       </div>
       <div class="ai-cmd-status">
         <span id="aic-monitor-status">Initializing...</span>
@@ -4051,6 +4052,7 @@ const SLASH_COMMANDS = [
   { cmd: '/audit', desc: 'Show recent audit trail', category: 'general' },
   { cmd: '/alerts', desc: 'List firing Alertmanager alerts', category: 'cluster' },
   { cmd: '/security', desc: 'Run security & compliance audit', category: 'security' },
+  { cmd: '/playbook', desc: 'View team\'s learned patterns from past resolutions', category: 'intelligence' },
   { cmd: '/gitops', desc: 'List ArgoCD/GitOps applications', category: 'cluster' },
   { cmd: '/recommendations', desc: 'Get cluster optimization recommendations', category: 'cluster' },
   { cmd: '/backups', desc: 'List Velero/OADP backup status', category: 'cluster' },
@@ -4211,6 +4213,16 @@ async function loadUnifiedAlerts() {
     var elW = document.getElementById('aic-warning');
     if (elC) elC.textContent = summary.critical;
     if (elW) elW.textContent = summary.warning;
+
+    // Fetch team playbook stats (continuous learning loop)
+    fetch(MCP_API.replace(/\/api$/, '') + '/api/intelligence/playbook?limit=1&sinceDays=90')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var learned = (data?.stats?.unique_patterns) || 0;
+        var elL = document.getElementById('aic-learned');
+        if (elL) elL.textContent = learned;
+      })
+      .catch(function() {});
 
     // Update severity pills
     var pAll = document.getElementById('aic-pill-all');
