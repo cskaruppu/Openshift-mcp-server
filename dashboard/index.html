@@ -2773,18 +2773,39 @@ function loadLLMConfig() {
 // Load saved LLM settings on page init
 loadLLMConfig();
 
-// Eagerly sync LLM settings from backend → localStorage on every page load
-// so chat dropdown, AI Hub brain dots, etc. always have fresh data
+// ========================================================================
+// In-memory LLM settings cache — THE single source of truth
+// Never overwritten with empty/default data. All UI consumers read from here.
+// ========================================================================
+var _llmSettingsCache = null;
+
+function _hasRealProviders(s) {
+  if (!s || !s.providers) return false;
+  return Object.values(s.providers).some(function(c) { return c.enabled || c.apiKey; });
+}
+
+function _cacheLLMSettings(settings) {
+  if (!_hasRealProviders(settings)) return false;
+  _llmSettingsCache = settings;
+  try { localStorage.setItem('mcp-llm-settings', JSON.stringify(settings)); } catch(e) {}
+  return true;
+}
+
+// Boot: hydrate cache from localStorage first (synchronous, instant)
+try {
+  var _bootSettings = JSON.parse(localStorage.getItem('mcp-llm-settings'));
+  if (_hasRealProviders(_bootSettings)) _llmSettingsCache = _bootSettings;
+} catch(e) {}
+
+// Then async-fetch from backend, which is authoritative
 (async function syncSettingsFromBackend() {
   try {
     var resp = await (await fetch((typeof MCP_API !== 'undefined' ? MCP_API.replace(/\/api$/, '') : '') + '/api/settings/llm')).json();
-    if (resp && resp.providers) {
-      var hasAny = Object.values(resp.providers).some(function(c) { return c.enabled || c.apiKey; });
-      if (hasAny) {
-        localStorage.setItem('mcp-llm-settings', JSON.stringify(resp));
-      }
+    if (_cacheLLMSettings(resp)) {
+      if (typeof loadEnabledProviders === 'function') loadEnabledProviders();
+      if (typeof hubHighlightActiveLLM === 'function') hubHighlightActiveLLM();
     }
-  } catch(e) { /* backend not reachable — keep stale localStorage */ }
+  } catch(e) {}
 })();
 
 // ---------------------------------------------------------------------------
@@ -3142,16 +3163,17 @@ function updateClusterDot() {
 }
 
 function getProviderConfig() {
+  if (_llmSettingsCache) return _llmSettingsCache;
+  // Fallback: try localStorage
   try {
     var saved = JSON.parse(localStorage.getItem('mcp-llm-settings'));
-    if (saved) return saved;
+    if (saved && saved.providers) { _llmSettingsCache = saved; return saved; }
   } catch {}
-  // If localStorage is empty, trigger a background sync from backend
+  // Last resort: background fetch from backend
   fetch((typeof MCP_API !== 'undefined' ? MCP_API.replace(/\/api$/, '') : '') + '/api/settings/llm')
     .then(function(r) { return r.json(); })
     .then(function(resp) {
-      if (resp && resp.providers) {
-        localStorage.setItem('mcp-llm-settings', JSON.stringify(resp));
+      if (_cacheLLMSettings(resp)) {
         if (typeof loadEnabledProviders === 'function') loadEnabledProviders();
         if (typeof hubHighlightActiveLLM === 'function') hubHighlightActiveLLM();
       }
@@ -3459,13 +3481,8 @@ async function executeRunbook(runbookId) {
 // Settings page — LLM provider configuration
 // ---------------------------------------------------------------------------
 function applySettingsToUI(resp) {
-  // Always sync backend response into localStorage so chat dropdown,
-  // getProviderConfig(), and hubHighlightActiveLLM() stay in sync
-  try {
-    if (resp && resp.providers) {
-      localStorage.setItem('mcp-llm-settings', JSON.stringify(resp));
-    }
-  } catch(e) {}
+  // Only cache settings that have real configured providers — never overwrite with defaults
+  _cacheLLMSettings(resp);
   const provs = resp.providers || {};
   ['openai', 'anthropic', 'azure', 'google', 'bedrock', 'ollama'].forEach(function(p) {
     const cfg = provs[p] || {};
@@ -3511,32 +3528,29 @@ function hasAnyProviderConfigured(settings) {
 
 async function loadSettings() {
   try {
-    const resp = await apiFetch('/api/settings/llm');
+    var resp = await apiFetch('/api/settings/llm');
     if (hasAnyProviderConfigured(resp)) {
-      localStorage.setItem('mcp-llm-settings', JSON.stringify(resp));
+      // Backend has real settings — use them as authoritative
+      _cacheLLMSettings(resp);
       applySettingsToUI(resp);
+    } else if (_llmSettingsCache && hasAnyProviderConfigured(_llmSettingsCache)) {
+      // Backend returned defaults but we have cached settings — use cache and push to backend
+      applySettingsToUI(_llmSettingsCache);
+      fetch(MCP_API.replace(/\/api$/, '') + '/api/settings/llm', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(_llmSettingsCache),
+      }).catch(function() {});
     } else {
-      var local = null;
-      try { local = JSON.parse(localStorage.getItem('mcp-llm-settings')); } catch(e) {}
-      if (local && hasAnyProviderConfigured(local)) {
-        applySettingsToUI(local);
-        fetch(MCP_API.replace(/\/api$/, '') + '/api/settings/llm', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(local),
-        }).catch(function() {});
-      } else {
-        applySettingsToUI(resp);
-      }
+      // No settings anywhere — show defaults (but don't cache them)
+      applySettingsToUI(resp);
     }
-    loadNotificationSettings();
   } catch (e) {
-    console.warn('Failed to load settings from server, using localStorage:', e);
-    try {
-      var cached = JSON.parse(localStorage.getItem('mcp-llm-settings'));
-      if (cached) applySettingsToUI(cached);
-    } catch(e2) {}
-    loadNotificationSettings();
+    // Network error — use in-memory cache
+    if (_llmSettingsCache) {
+      applySettingsToUI(_llmSettingsCache);
+    }
   }
+  loadNotificationSettings();
 }
 
 async function saveSettings() {
@@ -3577,7 +3591,7 @@ async function saveSettings() {
       var where = data.storage === 'database' ? ' — saved to PostgreSQL (persists across restarts)' : ' — saved to PVC disk (persists across restarts)';
       statusEl.textContent = '✓ Saved' + where;
       statusEl.style.color = 'var(--ok)';
-      localStorage.setItem('mcp-llm-settings', JSON.stringify(data.settings || settings));
+      _cacheLLMSettings(data.settings || settings);
       loadEnabledProviders();
       var storageEl = document.getElementById('settings-storage-indicator');
       if (storageEl) {
@@ -3638,47 +3652,26 @@ function updateTempLabel() {
 function onProviderToggle(p) {}
 
 function loadEnabledProviders() {
-  const sel = document.getElementById('full-llm-provider');
+  var sel = document.getElementById('full-llm-provider');
   if (!sel) return;
-  const current = sel.value;
+  var current = sel.value;
   sel.innerHTML = '<option value="none">Built-in Analysis</option>';
-  const labels = { anthropic: 'Anthropic (Claude)', openai: 'OpenAI (GPT)', azure: 'Azure OpenAI', google: 'Google Gemini', bedrock: 'AWS Bedrock', ollama: 'Ollama (Local)' };
+  var labels = { anthropic: 'Anthropic (Claude)', openai: 'OpenAI (GPT)', azure: 'Azure OpenAI', google: 'Google Gemini', bedrock: 'AWS Bedrock', ollama: 'Ollama (Local)' };
 
-  function populateFromSettings(settings) {
-    if (settings && settings.providers) {
-      Object.entries(settings.providers).forEach(function(entry) {
-        if (entry[1].enabled || entry[1].apiKey) {
-          if (!sel.querySelector('option[value="' + entry[0] + '"]')) {
-            var opt = document.createElement('option');
-            opt.value = entry[0];
-            opt.textContent = labels[entry[0]] || entry[0];
-            sel.appendChild(opt);
-          }
+  // Read from in-memory cache (authoritative)
+  var settings = _llmSettingsCache;
+  if (settings && settings.providers) {
+    Object.entries(settings.providers).forEach(function(entry) {
+      if (entry[1].enabled || entry[1].apiKey) {
+        if (!sel.querySelector('option[value="' + entry[0] + '"]')) {
+          var opt = document.createElement('option');
+          opt.value = entry[0];
+          opt.textContent = labels[entry[0]] || entry[0];
+          sel.appendChild(opt);
         }
-      });
-    }
-    sel.value = current || 'none';
-    if (!sel.value) sel.value = 'none';
-  }
-
-  try {
-    var settings = JSON.parse(localStorage.getItem('mcp-llm-settings'));
-    if (settings && settings.providers) {
-      populateFromSettings(settings);
-      return;
-    }
-  } catch {}
-
-  // Fallback: fetch from backend if localStorage is empty
-  fetch((typeof MCP_API !== 'undefined' ? MCP_API.replace(/\/api$/, '') : '') + '/api/settings/llm')
-    .then(function(r) { return r.json(); })
-    .then(function(resp) {
-      if (resp && resp.providers) {
-        localStorage.setItem('mcp-llm-settings', JSON.stringify(resp));
-        populateFromSettings(resp);
-        if (typeof hubHighlightActiveLLM === 'function') hubHighlightActiveLLM();
       }
-    }).catch(function() {});
+    });
+  }
   sel.value = current || 'none';
   if (!sel.value) sel.value = 'none';
 }

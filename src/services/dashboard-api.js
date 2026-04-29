@@ -54,7 +54,14 @@ function readJsonBody(req) {
 async function loadSettingsFromDB() {
   if (!await dbEnabled()) return null;
   const result = await dbQuery("SELECT value FROM kv_store WHERE key = $1", [SETTINGS_DB_KEY]);
-  if (result?.rows?.length) return result.rows[0].value;
+  if (result?.rows?.length) {
+    let val = result.rows[0].value;
+    // Guard: if pg returned a string instead of an object (JSONB double-encoding), parse it
+    if (typeof val === "string") {
+      try { val = JSON.parse(val); } catch { return null; }
+    }
+    return val;
+  }
   return null;
 }
 
@@ -74,12 +81,24 @@ async function saveSettingsToDB(settings) {
 export async function handleLLMSettingsGet(req, res) {
   try {
     const fromDB = await loadSettingsFromDB();
-    if (fromDB) return json(res, 200, { ...fromDB, _storage: "database" });
-  } catch { /* fall through */ }
+    if (fromDB && fromDB.providers) {
+      const provCount = Object.values(fromDB.providers).filter(c => c.enabled || c.apiKey).length;
+      console.log(`[settings] loaded from DB — ${provCount} provider(s) configured`);
+      return json(res, 200, { ...fromDB, _storage: "database" });
+    }
+  } catch (e) {
+    console.warn("[settings] DB read failed:", e.message);
+  }
   try {
     const raw = await readFile(LLM_SETTINGS_PATH, "utf8");
-    return json(res, 200, { ...JSON.parse(raw), _storage: "file" });
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.providers) {
+      const provCount = Object.values(parsed.providers).filter(c => c.enabled || c.apiKey).length;
+      console.log(`[settings] loaded from file — ${provCount} provider(s) configured`);
+      return json(res, 200, { ...parsed, _storage: "file" });
+    }
   } catch { /* fall through */ }
+  console.log("[settings] no saved settings found — returning defaults");
   return json(res, 200, { ...DEFAULT_LLM_SETTINGS, _storage: "defaults" });
 }
 
@@ -108,7 +127,9 @@ export async function handleLLMSettingsPost(req, res) {
     };
 
     const savedToDB = await saveSettingsToDB(settings);
-    await writeFile(LLM_SETTINGS_PATH, JSON.stringify(settings, null, 2), "utf8").catch(() => {});
+    const savedToFile = await writeFile(LLM_SETTINGS_PATH, JSON.stringify(settings, null, 2), "utf8").then(() => true).catch(() => false);
+    const provCount = Object.values(settings.providers).filter(c => c.enabled || c.apiKey).length;
+    console.log(`[settings] saved — DB=${savedToDB}, file=${savedToFile}, ${provCount} provider(s) configured`);
     return json(res, 200, { success: true, settings, storage: savedToDB ? "database" : "file" });
   } catch (err) {
     return json(res, 500, { error: err.message });
