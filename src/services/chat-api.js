@@ -1205,7 +1205,14 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
 
   // Intent: diagnose / troubleshoot
   if (lower.match(/diagnos|troubleshoot|debug|investig|analyz|analyse|check/)) {
-    if (!context.intents.includes("pod_issues") && !context.intents.includes("nodes")) {
+    if (context.intents.includes("specific_pod")) {
+      // User wants to analyse a specific pod — add pod_issues to fetch
+      // supporting data but NOT cluster_health (which floods the context
+      // with unrelated pods and confuses the LLM).
+      if (!context.intents.includes("pod_issues")) {
+        context.intents.push("pod_issues");
+      }
+    } else if (!context.intents.includes("pod_issues") && !context.intents.includes("nodes")) {
       context.intents.push("cluster_health");
     }
   }
@@ -1748,10 +1755,15 @@ IMPORTANT: You are given REAL-TIME cluster data as JSON context. This is NOT hyp
 - For operator issues, check ClusterOperator status conditions
 - For upgrade issues, reference MachineConfigPool status and ClusterVersion
 
+## CRITICAL — Specific pod/resource focus:
+- When the cluster data contains "_focusPod" or "targetPod", the user is asking about THAT SPECIFIC pod. Your ENTIRE response must be about that pod only.
+- Do NOT list other pods, do NOT give a general cluster overview, do NOT mention unrelated failing pods.
+- Analyze the specific pod's container states, exit codes, restart counts, events, and metrics.
+- If the pod is healthy, say so. If it has errors, diagnose the exact root cause for that pod.
+
 ## Conversation continuity:
 - You receive conversation history. Use it to understand follow-up questions.
 - If the user says "show its logs", "restart it", "what namespace is it in", "explain more", "fix it" — refer to the pod/deployment/resource from the previous messages.
-- When cluster data mentions a targetPod or targetPodName, that's the specific resource the user is asking about — focus your analysis there.
 - Maintain context across the conversation like a human SRE colleague would.
 
 ## Response style:
@@ -1782,7 +1794,30 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
   if (!provider || provider === "none") {
     return builtInAnalysis(userMessage, clusterContext);
   }
-  const contextStr = JSON.stringify(clusterContext, null, 2);
+
+  // When a specific pod is the target, restructure the context so the LLM
+  // sees it first and doesn't get distracted by the broader problemPods list.
+  const ctx = { ...clusterContext };
+  if (ctx.targetPod) {
+    // Move targetPod + events + metrics to the top-level focus keys
+    const focused = {
+      _focusPod: ctx.targetPod,
+      _focusPodEvents: ctx.targetPodEvents || [],
+      _focusPodMetrics: ctx.targetPodMetrics || null,
+    };
+    // Remove the broad problemPods to avoid LLM confusion — keep only
+    // the target pod if it happens to be in that list.
+    if (Array.isArray(ctx.problemPods)) {
+      ctx.problemPods = ctx.problemPods.filter(
+        (p) => p.name === ctx.targetPodName
+      );
+    }
+    // Merge focused data first so it appears at the top of the JSON
+    Object.assign(focused, ctx);
+    Object.assign(ctx, focused);
+  }
+
+  const contextStr = JSON.stringify(ctx, null, 2);
   const userContent = `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;
 
   // Build messages array, optionally including conversation history
@@ -1958,6 +1993,64 @@ function builtInAnalysis(userMessage, ctx) {
   // INTENT-DRIVEN RESPONSE — only show what the user asked for
   // -------------------------------------------------------------------------
   const intents = ctx.intents || [];
+
+  // --- SPECIFIC POD: highest priority when user asks about a named pod ---
+  if (intents.includes("specific_pod") && ctx.targetPod) {
+    const tp = ctx.targetPod;
+    parts.push(`### Pod: \`${tp.name}\` in \`${tp.namespace}\``);
+    parts.push(`**Phase:** ${tp.phase} | **Node:** ${tp.node || "N/A"} | **Started:** ${tp.startTime || "N/A"}`);
+    if (tp.ownerKind) parts.push(`**Owner:** ${tp.ownerKind}/${tp.ownerName}`);
+    if (tp.images?.length) parts.push(`**Image(s):** ${tp.images.map((i) => `\`${i}\``).join(", ")}`);
+
+    // Container details
+    parts.push(`\n#### Containers`);
+    (tp.containers || []).forEach((c) => {
+      const icon = c.ready ? "[OK]" : "[CRITICAL]";
+      parts.push(`  - ${icon} **${c.name}** — state: \`${c.state}\`, ready: ${c.ready}, restarts: ${c.restarts}`);
+      if (c.exitCode !== undefined && c.exitCode !== null) parts.push(`    Exit code: ${c.exitCode}`);
+      if (c.lastState) parts.push(`    Last termination: ${c.lastState.reason} (exit ${c.lastState.exitCode})`);
+    });
+
+    // Resource limits
+    if (tp.resourceLimits?.length) {
+      parts.push(`\n#### Resources`);
+      tp.resourceLimits.forEach((r) => {
+        parts.push(`  - **${r.name}** — mem: ${r.memRequest || "?"}/${r.memLimit || "?"}, cpu: ${r.cpuRequest || "?"}/${r.cpuLimit || "?"}`);
+      });
+    }
+
+    // Events
+    if (ctx.targetPodEvents?.length) {
+      parts.push(`\n#### Recent Events`);
+      ctx.targetPodEvents.slice(0, 10).forEach((e) => {
+        const icon = e.type === "Warning" ? "[WARNING]" : "[OK]";
+        parts.push(`  - ${icon} **${e.reason}**: ${(e.message || "").substring(0, 150)}${e.count > 1 ? ` (x${e.count})` : ""}`);
+      });
+    }
+
+    // Metrics
+    if (ctx.targetPodMetrics?.containers?.length) {
+      parts.push(`\n#### Current Usage`);
+      ctx.targetPodMetrics.containers.forEach((c) => {
+        parts.push(`  - **${c.name}** — CPU: ${c.cpu || "?"}, Memory: ${c.memory || "?"}`);
+      });
+    }
+
+    // Conditions
+    const badConditions = (tp.conditions || []).filter((c) => c.status !== "True" && c.type !== "PodScheduled");
+    if (badConditions.length > 0) {
+      parts.push(`\n#### Failed Conditions`);
+      badConditions.forEach((c) => {
+        parts.push(`  - **${c.type}:** ${c.reason || c.message || c.status}`);
+      });
+    }
+
+    // Quick commands
+    parts.push(`\n#### Diagnostic Commands`);
+    parts.push("```" + `oc describe pod ${tp.name} -n ${tp.namespace}\noc logs ${tp.name} -n ${tp.namespace}\noc get pod ${tp.name} -n ${tp.namespace} -o yaml` + "```");
+    parts.push(`@@APPLY_BTN|delete_pod|${tp.name}|${tp.namespace}|Restart Pod@@`);
+    return parts.join("\n");
+  }
 
   // --- NAMESPACE-SPECIFIC: always takes priority when user mentions a namespace ---
   if (intents.includes("namespace_specific") && ctx.namespacePods) {
@@ -3906,6 +3999,21 @@ export async function handleChatAPI(req, res) {
       try {
         const { result: sseTraced, trace: sseTrace } = await runWithTrace(async () => {
           let context = await gatherClusterContext(userMessage, parsed);
+          // Focus context on target pod when present (same as callLLMWithContext)
+          if (context.targetPod) {
+            const focused = {
+              _focusPod: context.targetPod,
+              _focusPodEvents: context.targetPodEvents || [],
+              _focusPodMetrics: context.targetPodMetrics || null,
+            };
+            if (Array.isArray(context.problemPods)) {
+              context.problemPods = context.problemPods.filter(
+                (p) => p.name === context.targetPodName
+              );
+            }
+            Object.assign(focused, context);
+            Object.assign(context, focused);
+          }
           const contextStr = JSON.stringify(context, null, 2);
           const userContent = `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;
           const priorMessages = historyToMessages(llmOpts.history);
@@ -3967,6 +4075,11 @@ export async function handleChatAPI(req, res) {
       let replyText;
       let toolsUsed = [];
 
+      // When a specific pod is targeted, narrow the hint to just that pod
+      const hintPods = context.targetPodName
+        ? (context.problemPods || []).filter((p) => p.name === context.targetPodName)
+        : (context.problemPods || []).slice(0, 5);
+
       if (hubActive && llmEnabled(llmOpts)) {
         try {
           // Enrich with knowledge base matches
@@ -3984,8 +4097,9 @@ export async function handleChatAPI(req, res) {
           const orchRes = await runOrchestrator({
             userMessage: userMessage + kbContext,
             contextHint: {
-              problemPods: (context.problemPods || []).slice(0, 5),
+              problemPods: hintPods,
               correlations: context.correlations || [],
+              targetPod: context.targetPod || null,
             },
             llmOpts,
           });
@@ -4000,8 +4114,9 @@ export async function handleChatAPI(req, res) {
           const agentRes = await runAgent({
             userMessage,
             contextHint: {
-              problemPods: (context.problemPods || []).slice(0, 5),
+              problemPods: hintPods,
               correlations: context.correlations || [],
+              targetPod: context.targetPod || null,
             },
             llmOpts,
           });
