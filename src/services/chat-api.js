@@ -856,7 +856,9 @@ async function handleListCommand(message, preParsed) {
   // (gatherClusterContext) — but only when there's no explicit list verb,
   // so "list crashloopbackoff pods" still returns a focused list.
   if (cmd.filter && !["list", "get"].includes(cmd.operation)) return null;
-  if (!cmd.filter && lower.match(/\bhealth\b|\bdiagnos|\bwhat.*wrong\b|\boverview\b/)) return null;
+  // Diagnostic / analytical questions should go to the LLM, not be
+  // handled as a simple resource listing.
+  if (lower.match(/\bwhy\b|\bhealth\b|\bdiagnos|\bwhat.*wrong\b|\boverview\b|\btroubleshoot|\banalyz|\banalyse|\binvestigat|\bdebug|\breason|\bcause|\bexplain\b|\bpending\s+state|\bfailing\b|\broot\s+cause/)) return null;
 
   const resInfo = RESOURCE_MAP[cmd.resourceType];
   if (!resInfo) return null;

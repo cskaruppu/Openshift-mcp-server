@@ -143,6 +143,18 @@ const VERB_TABLE = {
   stop:     { intent: "stop",    weight: 85 },
   upgrade:  { intent: "upgrade", weight: 85 },
   migrate:  { intent: "update",  weight: 80 },
+  // diagnostic — high priority so they win over implicit "list" fallback
+  // and bypass handleListCommand/handleDirectCommand → route to LLM
+  why:          { intent: "diagnose", weight: 70 },
+  troubleshoot: { intent: "diagnose", weight: 75 },
+  diagnose:     { intent: "diagnose", weight: 80 },
+  investigate:  { intent: "diagnose", weight: 75 },
+  analyze:      { intent: "diagnose", weight: 70 },
+  analyse:      { intent: "diagnose", weight: 70 },
+  debug:        { intent: "diagnose", weight: 70 },
+  root:         { intent: "diagnose", weight: 50 },
+  cause:        { intent: "diagnose", weight: 50 },
+  reason:       { intent: "diagnose", weight: 55 },
 };
 
 // Backwards-compatible flat lookup for callers that just want the intent.
@@ -179,6 +191,8 @@ const STOP_WORDS = new Set([
   "edit", "modify", "change", "set", "scale", "restart", "help", "info",
   "start", "stop", "upgrade", "migrate",
   "use", "using", "via", "with", "without",
+  "why", "troubleshoot", "diagnose", "investigate", "analyze", "analyse",
+  "debug", "root", "cause", "reason",
 ]);
 
 // Filter keywords (issue type). Order matters: most specific first.
