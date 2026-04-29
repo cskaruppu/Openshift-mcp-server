@@ -4048,6 +4048,12 @@ export async function handleChatAPI(req, res) {
       }).catch(() => {});
     }
 
+    // Update conversation memory immediately after parsing so ALL code paths
+    // (cache hits, slash commands, errors) carry context to the next turn.
+    if (conversationId && (parsed.name || parsed.namespace || parsed.resource)) {
+      updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
+    }
+
     // ---- Redis cache lookup ----
     // Mutating intents (delete / update / exec / run) always bypass the
     // cache so they hit the live cluster.

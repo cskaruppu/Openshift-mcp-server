@@ -515,7 +515,24 @@ export function parse(message, memory = {}) {
     return makeResult({ intent: "unknown", raw, confidence: 0 });
   }
 
-  // ---- 12. Confidence scoring ----
+  // ---- 12. Implicit context carryover from memory ----
+  // If we found a resource name but no namespace, inherit from memory.
+  // This handles "show logs for pod-xyz" after "show pods in sock-shop".
+  if (name && !namespace && !allNs && memory.namespace) {
+    namespace = memory.namespace;
+  }
+  // If we have an intent + name but no resource, inherit resource from memory.
+  if (name && !resource && memory.resource) {
+    resource = memory.resource;
+  }
+  // If we have a namespace-targeted intent but no name, and the same namespace
+  // is in memory, inherit the last resource name.
+  if (!name && namespace && memory.name && memory.namespace === namespace && intent && intent !== "list") {
+    name = memory.name;
+    if (!resource && memory.resource) resource = memory.resource;
+  }
+
+  // ---- 13. Confidence scoring ----
   let confidence = 0.4;
   if (intent) confidence += 0.2;
   if (resource) confidence += 0.2;
