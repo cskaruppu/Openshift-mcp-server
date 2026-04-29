@@ -2542,6 +2542,150 @@ function appendBuiltInRemediation(lines, findings) {
 }
 
 // ---------------------------------------------------------------------------
+// Optimization / recommendations remediation helpers
+// ---------------------------------------------------------------------------
+
+const OPTIMIZATION_REMEDIATION_PROMPT = `You are a Kubernetes and OpenShift performance optimization expert. Analyze the following cluster optimization findings and provide DETAILED, SPECIFIC remediation steps with executable commands.
+
+CRITICAL REQUIREMENTS:
+1. For EACH finding, provide EXACT oc/kubectl commands targeting the REAL resource names from the findings.
+2. Wrap each executable command in @@SEC_FIX_CMD|<command>@@ tags so the UI can render Dry Run / Run buttons.
+3. Prioritize by severity — CRITICAL findings first (under-provisioned, capacity warnings).
+
+FOR OVER-PROVISIONED PODS:
+- Calculate a right-sized CPU request: actual usage + 20-30% buffer, rounded to nearest 50m
+- Calculate a right-sized memory request: actual usage + 20% buffer, rounded to nearest 32Mi
+- Provide oc patch commands for each pod's owning Deployment/StatefulSet to set the new requests
+- Suggest VPA (Vertical Pod Autoscaler) configuration for namespaces with many over-provisioned pods
+
+FOR UNDER-PROVISIONED PODS:
+- Calculate a proper CPU request: at least match current usage + 25% buffer
+- Provide oc patch commands to increase CPU/memory requests and limits
+- Suggest HPA (Horizontal Pod Autoscaler) for workloads that need scaling
+- Warn about potential OOMKill risk if memory is also under-provisioned
+
+FOR PODS WITHOUT RESOURCE LIMITS:
+- Provide oc patch commands to add reasonable default limits (cpu: 500m, memory: 256Mi)
+- Suggest LimitRange objects for each affected namespace
+- Provide oc create limitrange commands
+
+FOR HIGH-RESTART PODS:
+- Provide oc logs --previous commands to check last crash logs
+- Provide oc describe pod commands to check events and exit codes
+- Suggest common fixes: increase memory limits for OOMKilled, fix liveness probes for CrashLoopBackOff
+
+FOR CLUSTER CAPACITY:
+- Suggest scaling MachineSets if available
+- Provide oc get machinesets and oc scale commands
+- Recommend enabling ClusterAutoscaler
+
+FORMAT:
+- Use markdown headers (###) for each section
+- Use numbered steps
+- Use @@SEC_FIX_CMD|<exact command>@@ for executable commands
+- Add brief explanation before each command
+- Include verification commands after fixes
+
+IMPORTANT: Generate REAL commands with ACTUAL resource names from the findings. Do NOT use placeholders like <pod-name>.`;
+
+async function generateOptimizationRemediation(findings, clusterStats, llmOpts) {
+  const findingsSummary = findings.map((f) => {
+    const itemLines = f.items.map((it) => {
+      const parts = [it.ns, it.pod];
+      if (it.reqCpu) parts.push(`reqCPU=${it.reqCpu}`, `usageCPU=${it.usageCpu}`, `util=${it.util}%`);
+      if (it.reqMem) parts.push(`reqMem=${it.reqMem}`, `usageMem=${it.usageMem}`);
+      if (it.restarts) parts.push(`restarts=${it.restarts}`);
+      return `    - ${parts.join(" / ")}`;
+    }).join("\n");
+    return `[${f.severity}] ${f.title} (type: ${f.type})\n  ${f.description}\n  Affected resources:\n${itemLines}${f.total > f.items.length ? `\n    ... and ${f.total - f.items.length} more` : ""}`;
+  }).join("\n\n");
+
+  const userPrompt = `Cluster optimization scan results:
+- Total user pods: ${clusterStats.totalPods}
+- CPU headroom: ${clusterStats.cpuH}%
+- Memory headroom: ${clusterStats.memH}%
+
+${findingsSummary}
+
+Provide detailed optimization recommendations with executable oc/kubectl commands for each finding. Use the real resource names listed above. Calculate right-sized values based on actual usage data.`;
+
+  const r = await callLLM({
+    messages: [{ role: "user", content: userPrompt }],
+    system: OPTIMIZATION_REMEDIATION_PROMPT,
+    maxTokens: 4000,
+    temperature: 0.2,
+    provider: llmOpts.provider,
+    apiUrl: llmOpts.apiUrl,
+    apiKey: llmOpts.apiKey,
+    model: llmOpts.model,
+    azureDeployment: llmOpts.azureDeployment,
+    azureApiVersion: llmOpts.azureApiVersion,
+  });
+
+  return r.text || null;
+}
+
+function appendBuiltInOptimization(lines, findings, fmtCpu, fmtMem, totalAllocCpu, totalReqCpu) {
+  for (const f of findings) {
+    lines.push(`**Remediation for ${f.title}:**`);
+    switch (f.type) {
+      case "over-provisioned":
+        for (const it of f.items.slice(0, 5)) {
+          const rightSizedCpu = Math.max(10, Math.ceil((it.rawUsageCpu || 0.01) * 1.3 * 1000));
+          const deployName = it.pod.replace(/-[a-z0-9]+-[a-z0-9]+$/, "");
+          lines.push(`  - Right-size \`${it.pod}\` in \`${it.ns}\` — current usage ${it.usageCpu}, requested ${it.reqCpu}:`);
+          lines.push(`    @@SEC_FIX_CMD|oc patch deployment ${deployName} -n ${it.ns} -p '{"spec":{"template":{"spec":{"containers":[{"name":"${deployName}","resources":{"requests":{"cpu":"${rightSizedCpu}m"}}}]}}}}' --type=strategic@@`);
+        }
+        if (f.total > 5) lines.push(`  - … and ${f.total - 5} more pods to right-size`);
+        lines.push(`  - Consider VPA for automatic right-sizing: \`oc apply -f vpa.yaml\``);
+        break;
+      case "under-provisioned":
+        for (const it of f.items.slice(0, 5)) {
+          const rightSizedCpu = Math.ceil((it.rawUsageCpu || 0.5) * 1.25 * 1000);
+          const deployName = it.pod.replace(/-[a-z0-9]+-[a-z0-9]+$/, "");
+          lines.push(`  - Increase resources for \`${it.pod}\` in \`${it.ns}\` — using ${it.usageCpu} but only requested ${it.reqCpu}:`);
+          lines.push(`    @@SEC_FIX_CMD|oc patch deployment ${deployName} -n ${it.ns} -p '{"spec":{"template":{"spec":{"containers":[{"name":"${deployName}","resources":{"requests":{"cpu":"${rightSizedCpu}m"},"limits":{"cpu":"${rightSizedCpu * 2}m"}}}]}}}}' --type=strategic@@`);
+        }
+        if (f.total > 5) lines.push(`  - … and ${f.total - 5} more pods to scale up`);
+        lines.push(`  - Set up HPA for auto-scaling:`);
+        if (f.items[0]) {
+          const d0 = f.items[0].pod.replace(/-[a-z0-9]+-[a-z0-9]+$/, "");
+          lines.push(`    @@SEC_FIX_CMD|oc autoscale deployment ${d0} -n ${f.items[0].ns} --min=2 --max=10 --cpu-percent=70@@`);
+        }
+        break;
+      case "no-limits":
+        for (const it of f.items.slice(0, 3)) {
+          const deployName = it.pod.replace(/-[a-z0-9]+-[a-z0-9]+$/, "");
+          lines.push(`  - Add resource limits for \`${it.pod}\` in \`${it.ns}\`:`);
+          lines.push(`    @@SEC_FIX_CMD|oc patch deployment ${deployName} -n ${it.ns} -p '{"spec":{"template":{"spec":{"containers":[{"name":"${deployName}","resources":{"limits":{"cpu":"500m","memory":"256Mi"},"requests":{"cpu":"100m","memory":"128Mi"}}}]}}}}' --type=strategic@@`);
+        }
+        // Group by namespace for LimitRange
+        const nsSet = [...new Set(f.items.map((it) => it.ns))];
+        for (const ns of nsSet.slice(0, 3)) {
+          lines.push(`  - Apply namespace-wide defaults for \`${ns}\`:`);
+          lines.push(`    @@SEC_FIX_CMD|oc create limitrange default-limits --default-cpu=500m --default-memory=256Mi --default-request-cpu=100m --default-request-memory=128Mi -n ${ns}@@`);
+        }
+        break;
+      case "high-restarts":
+        for (const it of f.items.slice(0, 5)) {
+          lines.push(`  - Investigate \`${it.pod}\` in \`${it.ns}\` (${it.restarts} restarts):`);
+          lines.push(`    @@SEC_FIX_CMD|oc logs ${it.pod} -n ${it.ns} --previous --tail=50@@`);
+          lines.push(`    @@SEC_FIX_CMD|oc describe pod ${it.pod} -n ${it.ns}@@`);
+        }
+        lines.push(`  - Common causes: OOMKilled (increase memory limits), CrashLoopBackOff (fix application code/config)`);
+        break;
+      case "capacity":
+        lines.push(`  1. Right-size over-provisioned workloads to free up resources`);
+        lines.push(`  2. Check MachineSets for scale-up opportunities:`);
+        lines.push(`    @@SEC_FIX_CMD|oc get machinesets -n openshift-machine-api@@`);
+        lines.push(`  3. Enable cluster autoscaler for automatic node scaling`);
+        break;
+    }
+    lines.push(``);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Slash command fast-path — returns { reply, contextKeys } or null
 // ---------------------------------------------------------------------------
 async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}) {
@@ -3158,6 +3302,9 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
         .map((p) => ({ ns: p.metadata.namespace, pod: p.metadata.name, restarts: Math.max(...(p.status?.containerStatuses || []).map((c) => c.restartCount || 0)) }))
         .sort((a, b) => b.restarts - a.restarts);
 
+      const recProvider = llmOpts.provider || LLM_PROVIDER;
+      const hasLLM = recProvider && recProvider !== "none";
+
       const lines = [
         `### Cluster Optimization Report`,
         ``,
@@ -3175,103 +3322,118 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
         ``,
       ];
 
-      // Over-provisioned detail
+      // Build structured findings for each category
+      const recFindings = [];
+
       if (overList.length > 0) {
-        lines.push(`---`);
-        lines.push(`### [WARNING] ${over} Over-Provisioned Pod(s)`);
-        lines.push(``);
-        lines.push(`These pods are using less than 10% of their requested CPU — you are paying for unused resources.`);
-        lines.push(``);
-        lines.push(`| Namespace | Pod | CPU Request | CPU Usage | Utilization |`);
-        lines.push(`|---|---|---|---|---|`);
-        for (const o of overList.slice(0, 10)) {
-          const util = o.reqCpu > 0 ? Math.round((o.usageCpu / o.reqCpu) * 100) : 0;
-          lines.push(`| ${o.ns} | ${o.pod} | ${fmtCpu(o.reqCpu)} | ${fmtCpu(o.usageCpu)} | ${util}% |`);
-        }
-        if (overList.length > 10) lines.push(`| … | *${overList.length - 10} more* | | | |`);
-        lines.push(``);
-        lines.push(`**Remediation:**`);
-        lines.push(`  1. Right-size CPU requests to match actual usage (add 20% buffer)`);
-        lines.push(`  2. Use VPA (Vertical Pod Autoscaler) for automatic right-sizing:`);
-        lines.push(`     \`oc apply -f vpa.yaml\` with \`updateMode: Auto\``);
-        lines.push(`  3. For batch workloads, consider switching to Jobs instead of long-running pods`);
-        lines.push(``);
+        recFindings.push({
+          severity: "WARNING", type: "over-provisioned",
+          title: `${over} Over-Provisioned Pod(s)`,
+          description: "These pods are using less than 10% of their requested CPU — you are paying for unused resources.",
+          items: overList.slice(0, 10).map((o) => ({
+            ns: o.ns, pod: o.pod,
+            reqCpu: fmtCpu(o.reqCpu), usageCpu: fmtCpu(o.usageCpu),
+            util: o.reqCpu > 0 ? Math.round((o.usageCpu / o.reqCpu) * 100) : 0,
+            reqMem: fmtMem(o.reqMem), usageMem: fmtMem(o.usageMem),
+            rawReqCpu: o.reqCpu, rawUsageCpu: o.usageCpu,
+          })),
+          total: overList.length,
+        });
       }
-
-      // Under-provisioned detail
       if (underList.length > 0) {
-        lines.push(`---`);
-        lines.push(`### [CRITICAL] ${under} Under-Provisioned Pod(s)`);
-        lines.push(``);
-        lines.push(`These pods are using more than 150% of their CPU request — they may be throttled or evicted.`);
-        lines.push(``);
-        lines.push(`| Namespace | Pod | CPU Request | CPU Usage | Utilization |`);
-        lines.push(`|---|---|---|---|---|`);
-        for (const u of underList.slice(0, 10)) {
-          const util = u.reqCpu > 0 ? Math.round((u.usageCpu / u.reqCpu) * 100) : 0;
-          lines.push(`| ${u.ns} | ${u.pod} | ${fmtCpu(u.reqCpu)} | ${fmtCpu(u.usageCpu)} | ${util}% |`);
-        }
-        if (underList.length > 10) lines.push(`| … | *${underList.length - 10} more* | | | |`);
-        lines.push(``);
-        lines.push(`**Remediation:**`);
-        lines.push(`  1. Increase CPU requests to at least match current usage`);
-        lines.push(`  2. Set up HPA (Horizontal Pod Autoscaler) for scaling:`);
-        lines.push(`     \`oc autoscale deployment/<name> --min=2 --max=10 --cpu-percent=70\``);
-        lines.push(`  3. Check if CPU limits are causing throttling — consider increasing or removing limits`);
-        lines.push(``);
+        recFindings.push({
+          severity: "CRITICAL", type: "under-provisioned",
+          title: `${under} Under-Provisioned Pod(s)`,
+          description: "These pods are using more than 150% of their CPU request — they may be throttled or evicted.",
+          items: underList.slice(0, 10).map((u) => ({
+            ns: u.ns, pod: u.pod,
+            reqCpu: fmtCpu(u.reqCpu), usageCpu: fmtCpu(u.usageCpu),
+            util: u.reqCpu > 0 ? Math.round((u.usageCpu / u.reqCpu) * 100) : 0,
+            rawReqCpu: u.reqCpu, rawUsageCpu: u.usageCpu,
+          })),
+          total: underList.length,
+        });
       }
-
-      // No limits detail
       if (noLimList.length > 0) {
-        lines.push(`---`);
-        lines.push(`### [WARNING] ${noLim} Pod(s) Without Resource Limits`);
-        lines.push(``);
-        lines.push(`| Namespace | Pod |`);
-        lines.push(`|---|---|`);
-        for (const n of noLimList.slice(0, 10)) {
-          lines.push(`| ${n.ns} | ${n.pod} |`);
-        }
-        if (noLimList.length > 10) lines.push(`| … | *${noLimList.length - 10} more* |`);
-        lines.push(``);
-        lines.push(`**Remediation:**`);
-        lines.push(`  1. Add resource limits and requests to all containers`);
-        lines.push(`  2. Apply a LimitRange for namespace defaults:`);
-        lines.push(`     \`oc create limitrange default --default-cpu=500m --default-memory=256Mi -n <ns>\``);
-        lines.push(``);
+        recFindings.push({
+          severity: "WARNING", type: "no-limits",
+          title: `${noLim} Pod(s) Without Resource Limits`,
+          description: "Pods without resource limits can consume unbounded resources and starve other workloads.",
+          items: noLimList.slice(0, 10).map((n) => ({ ns: n.ns, pod: n.pod })),
+          total: noLimList.length,
+        });
       }
-
-      // High restart pods
       if (restartPods.length > 0) {
+        recFindings.push({
+          severity: "WARNING", type: "high-restarts",
+          title: `${restartPods.length} Pod(s) With Excessive Restarts`,
+          description: "Pods with high restart counts indicate application instability — possible OOMKill, CrashLoopBackOff, or liveness probe failures.",
+          items: restartPods.slice(0, 10).map((r) => ({ ns: r.ns, pod: r.pod, restarts: r.restarts })),
+          total: restartPods.length,
+        });
+      }
+      if (cpuH < 15 || memH < 15) {
+        recFindings.push({
+          severity: "CRITICAL", type: "capacity",
+          title: "Cluster Capacity Warning",
+          description: `CPU headroom: ${cpuH}% (${fmtCpu(totalAllocCpu - totalReqCpu)} free of ${fmtCpu(totalAllocCpu)}). Memory headroom: ${memH}% (${fmtMem(totalAllocMem - totalReqMem)} free of ${fmtMem(totalAllocMem)}).`,
+          items: [],
+          total: 0,
+          cpuH, memH,
+        });
+      }
+
+      // Render data tables for each finding
+      for (const f of recFindings) {
         lines.push(`---`);
-        lines.push(`### [WARNING] ${restartPods.length} Pod(s) With Excessive Restarts`);
+        lines.push(`### [${f.severity}] ${f.title}`);
         lines.push(``);
-        lines.push(`| Namespace | Pod | Restarts |`);
-        lines.push(`|---|---|---|`);
-        for (const r of restartPods.slice(0, 10)) {
-          lines.push(`| ${r.ns} | ${r.pod} | ${r.restarts} |`);
+        lines.push(f.description);
+        lines.push(``);
+        if (f.type === "over-provisioned" || f.type === "under-provisioned") {
+          lines.push(`| Namespace | Pod | CPU Request | CPU Usage | Utilization |`);
+          lines.push(`|---|---|---|---|---|`);
+          for (const it of f.items) lines.push(`| ${it.ns} | ${it.pod} | ${it.reqCpu} | ${it.usageCpu} | ${it.util}% |`);
+          if (f.total > 10) lines.push(`| … | *${f.total - 10} more* | | | |`);
+        } else if (f.type === "no-limits") {
+          lines.push(`| Namespace | Pod |`);
+          lines.push(`|---|---|`);
+          for (const it of f.items) lines.push(`| ${it.ns} | ${it.pod} |`);
+          if (f.total > 10) lines.push(`| … | *${f.total - 10} more* |`);
+        } else if (f.type === "high-restarts") {
+          lines.push(`| Namespace | Pod | Restarts |`);
+          lines.push(`|---|---|---|`);
+          for (const it of f.items) lines.push(`| ${it.ns} | ${it.pod} | ${it.restarts} |`);
+        } else if (f.type === "capacity") {
+          if (f.cpuH < 15) lines.push(`  - CPU headroom is very low at **${f.cpuH}%**`);
+          if (f.memH < 15) lines.push(`  - Memory headroom is very low at **${f.memH}%**`);
         }
-        lines.push(``);
-        lines.push(`**Remediation:**`);
-        lines.push(`  1. Check logs: \`oc logs <pod-name> -n <ns> --previous\``);
-        lines.push(`  2. Check events: \`oc describe pod <pod-name> -n <ns>\``);
-        lines.push(`  3. Common causes: OOMKilled (increase memory limits), CrashLoopBackOff (fix application code/config)`);
         lines.push(``);
       }
 
-      // Cluster capacity warnings
-      if (cpuH < 15 || memH < 15) {
-        lines.push(`---`);
-        lines.push(`### [CRITICAL] Cluster Capacity Warning`);
-        lines.push(``);
-        if (cpuH < 15) lines.push(`  - CPU headroom is very low at **${cpuH}%** — only ${fmtCpu(totalAllocCpu - totalReqCpu)} cores free`);
-        if (memH < 15) lines.push(`  - Memory headroom is very low at **${memH}%** — only ${fmtMem(totalAllocMem - totalReqMem)} free`);
-        lines.push(``);
-        lines.push(`**Remediation:**`);
-        lines.push(`  1. Right-size over-provisioned workloads to free up resources`);
-        lines.push(`  2. Add worker nodes: \`oc get machinesets -n openshift-machine-api\` then scale up`);
-        lines.push(`  3. Enable cluster autoscaler for automatic node scaling`);
-        lines.push(``);
-      } else if (cpuH < 30 || memH < 30) {
+      // AI-powered recommendations (Azure OpenAI / any LLM)
+      if (hasLLM && recFindings.length > 0) {
+        try {
+          const aiRec = await generateOptimizationRemediation(recFindings, { cpuH, memH, totalPods: userPods.length }, llmOpts);
+          if (aiRec) {
+            lines.push(`---`);
+            lines.push(``);
+            lines.push(`### AI Optimization Recommendations`);
+            lines.push(`*Powered by ${recProvider === "azure" ? "Azure OpenAI" : recProvider}*`);
+            lines.push(``);
+            lines.push(aiRec);
+            lines.push(``);
+          }
+        } catch (err) {
+          console.error("[recommendations] AI remediation failed, falling back to built-in:", err.message);
+          appendBuiltInOptimization(lines, recFindings, fmtCpu, fmtMem, totalAllocCpu, totalReqCpu);
+        }
+      } else {
+        appendBuiltInOptimization(lines, recFindings, fmtCpu, fmtMem, totalAllocCpu, totalReqCpu);
+      }
+
+      // Capacity headroom note (non-critical)
+      if (cpuH >= 15 && memH >= 15 && (cpuH < 30 || memH < 30)) {
         lines.push(`---`);
         if (cpuH < 30) lines.push(`[WARNING] CPU headroom is getting tight at ${cpuH}%.`);
         if (memH < 30) lines.push(`[WARNING] Memory headroom is getting tight at ${memH}%.`);
@@ -3281,19 +3443,21 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
       // Summary
       lines.push(`---`);
       if (cpuH >= 30 && memH >= 30 && over === 0 && under === 0 && noLim === 0 && restartPods.length === 0) {
-        lines.push(`@@SUMMARY@@\n**Cluster resources are well-balanced.** No optimization needed at this time.\n@@/SUMMARY@@`);
+        lines.push(`**Cluster resources are well-balanced.** No optimization needed at this time.`);
       } else {
-        lines.push(`@@SUMMARY@@`);
         lines.push(`**Optimization opportunities identified:**`);
         if (over > 0) lines.push(`  - Right-size ${over} over-provisioned pod(s) to reclaim wasted CPU/memory`);
         if (under > 0) lines.push(`  - Increase resources for ${under} under-provisioned pod(s) to prevent throttling`);
         if (noLim > 0) lines.push(`  - Add resource limits to ${noLim} pod(s)`);
         if (restartPods.length > 0) lines.push(`  - Investigate ${restartPods.length} pod(s) with excessive restarts`);
         if (cpuH < 30) lines.push(`  - Plan capacity expansion — CPU headroom is ${cpuH}%`);
-        lines.push(`@@/SUMMARY@@`);
       }
 
-      return { reply: lines.join("\n"), contextKeys: ["slash", "recommendations"] };
+      return {
+        reply: lines.join("\n"),
+        provider: hasLLM ? recProvider : "built-in",
+        contextKeys: ["slash", "recommendations"],
+      };
     } catch (e) {
       return { reply: `[ERROR] Optimization report failed: ${e.message}`, contextKeys: ["slash", "recommendations"] };
     }
