@@ -16,6 +16,8 @@ const DEFAULT_LLM_SETTINGS = {
     openai: { apiKey: "", apiUrl: "https://api.openai.com", model: "gpt-4", enabled: false },
     anthropic: { apiKey: "", apiUrl: "https://api.anthropic.com", model: "claude-sonnet-4-20250514", enabled: false },
     azure: { apiKey: "", apiUrl: "", model: "gpt-4", deployment: "", apiVersion: "2024-12-01-preview", enabled: false },
+    google: { apiKey: "", apiUrl: "https://generativelanguage.googleapis.com", model: "gemini-2.5-pro", enabled: false },
+    bedrock: { apiKey: "", apiUrl: "https://bedrock-runtime.us-east-1.amazonaws.com", model: "anthropic.claude-v2", enabled: false },
     ollama: { apiKey: "", apiUrl: "http://ollama:11434", model: "llama3", enabled: false },
   },
   defaults: {
@@ -28,7 +30,7 @@ const DEFAULT_LLM_SETTINGS = {
 };
 
 // Providers that require an API key
-const PROVIDERS_REQUIRING_KEY = new Set(["openai", "anthropic", "azure"]);
+const PROVIDERS_REQUIRING_KEY = new Set(["openai", "anthropic", "azure", "google", "bedrock"]);
 
 function json(res, status, data) {
   res.writeHead(status, { "Content-Type": "application/json" });
@@ -72,13 +74,13 @@ async function saveSettingsToDB(settings) {
 export async function handleLLMSettingsGet(req, res) {
   try {
     const fromDB = await loadSettingsFromDB();
-    if (fromDB) return json(res, 200, fromDB);
+    if (fromDB) return json(res, 200, { ...fromDB, _storage: "database" });
   } catch { /* fall through */ }
   try {
     const raw = await readFile(LLM_SETTINGS_PATH, "utf8");
-    return json(res, 200, JSON.parse(raw));
+    return json(res, 200, { ...JSON.parse(raw), _storage: "file" });
   } catch { /* fall through */ }
-  return json(res, 200, DEFAULT_LLM_SETTINGS);
+  return json(res, 200, { ...DEFAULT_LLM_SETTINGS, _storage: "defaults" });
 }
 
 /**

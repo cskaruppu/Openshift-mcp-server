@@ -1414,6 +1414,7 @@ tr:hover td{background:#ffffff06}
     <div class="settings-save-bar">
       <button onclick="saveSettings()">Save Settings</button>
       <span class="save-status" id="settings-save-status"></span>
+      <span id="settings-storage-indicator" style="margin-left:auto;font-size:11px;color:var(--text2);display:flex;align-items:center;gap:6px"></span>
     </div>
   </div>
 </div>
@@ -3230,6 +3231,14 @@ function applySettingsToUI(resp) {
   if (tokEl) tokEl.value = defs.maxTokens || 2000;
   const sysEl = document.getElementById('settings-system-prompt');
   if (sysEl) sysEl.value = defs.systemPrompt || '';
+  const storageEl = document.getElementById('settings-storage-indicator');
+  if (storageEl) {
+    var storage = resp._storage || 'defaults';
+    var icons = { database: '\u{1F5C4}️', file: '\u{1F4BE}', defaults: '⚠️' };
+    var labels = { database: 'Persisted in PostgreSQL', file: 'Persisted on disk (PVC)', defaults: 'Not yet saved' };
+    var colors = { database: 'var(--ok)', file: 'var(--accent2)', defaults: 'var(--text2)' };
+    storageEl.innerHTML = '<span style="color:' + colors[storage] + '">' + icons[storage] + ' ' + labels[storage] + '</span>';
+  }
   loadEnabledProviders();
 }
 
@@ -3303,11 +3312,17 @@ async function saveSettings() {
       statusEl.textContent = 'Error: ' + data.error + (data.details ? ' — ' + data.details.join(', ') : '');
       statusEl.style.color = 'var(--crit)';
     } else {
-      var where = data.storage === 'database' ? ' (database)' : ' (server)';
-      statusEl.textContent = 'Saved successfully' + where;
+      var where = data.storage === 'database' ? ' — saved to PostgreSQL (persists across restarts)' : ' — saved to PVC disk (persists across restarts)';
+      statusEl.textContent = '✓ Saved' + where;
       statusEl.style.color = 'var(--ok)';
       localStorage.setItem('mcp-llm-settings', JSON.stringify(data.settings || settings));
       loadEnabledProviders();
+      var storageEl = document.getElementById('settings-storage-indicator');
+      if (storageEl) {
+        var icon = data.storage === 'database' ? '\u{1F5C4}️' : '\u{1F4BE}';
+        var label = data.storage === 'database' ? 'Persisted in PostgreSQL' : 'Persisted on disk (PVC)';
+        storageEl.innerHTML = '<span style="color:var(--ok)">' + icon + ' ' + label + '</span>';
+      }
     }
     setTimeout(function() { statusEl.textContent = ''; }, 4000);
   } catch (e) {
