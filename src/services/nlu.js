@@ -369,6 +369,11 @@ export function parse(message, memory = {}) {
   if (!resource) {
     if (intent === "logs" || intent === "top" || intent === "exec") resource = "pod";
     if (intent === "upgrade" && /\b(cluster|openshift|ocp)\b/.test(lower)) resource = "clusterversion";
+    // For describe/get/delete/restart without explicit resource: inherit
+    // from memory if available; otherwise default to pod (most common).
+    if (!resource && (intent === "describe" || intent === "get" || intent === "delete" || intent === "restart")) {
+      resource = memory.resource || "pod";
+    }
   }
 
   // ---- 3. Namespace extraction ----
@@ -442,30 +447,57 @@ export function parse(message, memory = {}) {
   }
 
   // ---- 6. Resource name extraction ----
-  // Strategy: search for the first non-noise DNS-label token that comes
-  // AFTER the resource word — or, if the resource was inferred (no
-  // explicit token), after the verb. Skip namespace markers and the
-  // namespace value itself.
+  // Strategy: try forward search after the resource word (most common shape
+  // "describe pod NAME"), then backward search before the resource word
+  // (handles "NAME pod logs" or "NAME describe"), then a global fallback.
   let name = null;
+  const isCandidateName = (t, idx) => {
+    if (NS_KEYWORDS.has(t)) return false;
+    if (t === "-n" || t === "--namespace" || t === "--ns") return false;
+    if (idx > 0 && (tokens[idx - 1] === "-n" || tokens[idx - 1] === "--namespace" || tokens[idx - 1] === "--ns")) return false;
+    if (t === namespace) return false;
+    if (t === "--") return false;
+    if (isNoise(t)) return false;
+    if (!isDnsLabel(t)) return false;
+    if (/^\d+$/.test(t)) return false;
+    if (idx === resourceTokenIdx) return false;
+    if (idx === intentTokenIdx) return false;
+    return true;
+  };
+
+  // 6a. Forward search after resource word (or after intent verb if no resource).
   if (resource) {
     const startIdx = resourceTokenIdx >= 0 ? resourceTokenIdx + 1 :
                      intentTokenIdx >= 0   ? intentTokenIdx   + 1 : 0;
     for (let i = startIdx; i < tokens.length; i++) {
-      const t = tokens[i];
-      // Skip namespace marker triplets ("namespace foo" / "-n foo").
-      if (NS_KEYWORDS.has(t)) { i++; continue; }
-      if (t === "-n" || t === "--namespace" || t === "--ns") { i++; continue; }
-      if (t === namespace) continue;
-      if (t === "--") break; // exec command separator
-      if (isNoise(t)) continue;
-      if (!isDnsLabel(t)) continue;
-      // Skip pure numbers (e.g. replica counts).
-      if (/^\d+$/.test(t)) continue;
-      name = t;
-      break;
+      if (tokens[i] === "--") break;
+      if (NS_KEYWORDS.has(tokens[i]) || tokens[i] === "-n" || tokens[i] === "--namespace" || tokens[i] === "--ns") { i++; continue; }
+      if (isCandidateName(tokens[i], i)) { name = tokens[i]; break; }
     }
   }
-  // Pronoun resolution: "delete it", "show its logs"
+
+  // 6b. Backward search before resource word — handles "NAME pod logs" or
+  //     "NAME describe" where the user puts the resource name first.
+  if (!name && (resourceTokenIdx > 0 || (intentTokenIdx > 0 && resource))) {
+    const stopIdx = resourceTokenIdx > 0 ? resourceTokenIdx : intentTokenIdx;
+    for (let i = stopIdx - 1; i >= 0; i--) {
+      if (isCandidateName(tokens[i], i)) { name = tokens[i]; break; }
+    }
+  }
+
+  // 6c. Global fallback — if there's an intent but still no name, look
+  //     anywhere in the message for a non-noise DNS-label that resembles
+  //     a workload name (has a hyphen, suggesting deployment-hash-suffix).
+  if (!name && intent) {
+    for (let i = 0; i < tokens.length; i++) {
+      const t = tokens[i];
+      if (!isCandidateName(t, i)) continue;
+      // Prefer hyphenated names — they look like real K8s resource names.
+      if (t.includes("-") || t.length > 4) { name = t; break; }
+    }
+  }
+
+  // 6d. Pronoun resolution: "delete it", "show its logs"
   if (!name && memory.name &&
       /\b(it|its|that\s+one|the\s+same|same\s+pod)\b/.test(lower)) {
     name = memory.name;
@@ -516,15 +548,22 @@ export function parse(message, memory = {}) {
   }
 
   // ---- 12. Implicit context carryover from memory ----
-  // If we found a resource name but no namespace, inherit from memory.
-  // This handles "show logs for pod-xyz" after "show pods in sock-shop".
-  if (name && !namespace && !allNs && memory.namespace) {
-    namespace = memory.namespace;
+  // ChatGPT/Claude-style continuity: when the user follows up without
+  // re-specifying namespace/resource, inherit from the last turn.
+
+  // Carry namespace forward if we have ANY actionable context (name or
+  // intent+resource) but no explicit namespace and no "all namespaces" flag.
+  if (!namespace && !allNs && memory.namespace) {
+    if (name || (intent && resource && intent !== "list")) {
+      namespace = memory.namespace;
+    }
   }
-  // If we have an intent + name but no resource, inherit resource from memory.
+
+  // Inherit resource from memory if we have a name but no resource type.
   if (name && !resource && memory.resource) {
     resource = memory.resource;
   }
+
   // If we have a namespace-targeted intent but no name, and the same namespace
   // is in memory, inherit the last resource name.
   if (!name && namespace && memory.name && memory.namespace === namespace && intent && intent !== "list") {
