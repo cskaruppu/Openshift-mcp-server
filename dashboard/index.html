@@ -3757,8 +3757,25 @@ function loadEnabledProviders() {
       }
     });
   }
-  sel.value = current || 'none';
-  if (!sel.value) sel.value = 'none';
+  // Restore previous selection, or use defaultProvider from settings, or fall back to first configured provider
+  if (current && sel.querySelector('option[value="' + current + '"]')) {
+    sel.value = current;
+  } else {
+    var defProv = settings?.defaults?.provider || settings?.defaultProvider || null;
+    if (defProv && defProv !== 'none' && sel.querySelector('option[value="' + defProv + '"]')) {
+      sel.value = defProv;
+    } else if (settings && settings.providers) {
+      // Auto-select the first configured (non-none) provider
+      var firstConfigured = Object.entries(settings.providers).find(function(e) { return e[1].enabled || e[1].apiKey; });
+      if (firstConfigured && sel.querySelector('option[value="' + firstConfigured[0] + '"]')) {
+        sel.value = firstConfigured[0];
+      } else {
+        sel.value = 'none';
+      }
+    } else {
+      sel.value = 'none';
+    }
+  }
 }
 
 // Compat shims for old code paths

@@ -297,22 +297,8 @@ function json(res, status, data) {
 
 /** Fetch pod logs (plain text, not JSON) */
 async function fetchPodLogs(namespace, podName, tailLines = 80) {
-  const { readFile } = await import("node:fs/promises");
-  let tk = process.env.OPENSHIFT_TOKEN || "";
-  if (!tk) {
-    try { tk = (await readFile("/var/run/secrets/kubernetes.io/serviceaccount/token", "utf8")).trim(); } catch {}
-  }
-  const apiUrl = process.env.OPENSHIFT_API_URL ||
-    `https://${process.env.KUBERNETES_SERVICE_HOST}:${process.env.KUBERNETES_SERVICE_PORT}`;
-  const resp = await fetch(
-    `${apiUrl}/api/v1/namespaces/${namespace}/pods/${podName}/log?tailLines=${tailLines}`,
-    { headers: { Authorization: `Bearer ${tk}`, Accept: "text/plain" } }
-  );
-  if (!resp.ok) {
-    const body = await resp.text();
-    throw new Error(`${resp.status}: ${body}`);
-  }
-  return resp.text();
+  const path = `/api/v1/namespaces/${namespace}/pods/${podName}/log?tailLines=${tailLines}`;
+  return ocpFetch(path, { headers: { Accept: "text/plain" } });
 }
 
 // ---------------------------------------------------------------------------

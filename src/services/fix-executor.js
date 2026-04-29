@@ -13,7 +13,7 @@
  * delete node) are blocked unconditionally to avoid catastrophic mistakes.
  */
 
-import { ocpGet, ocpDelete, ocpPatch, ocpPost, canI } from "../utils/openshift-client.js";
+import { ocpGet, ocpDelete, ocpPatch, ocpPost, ocpFetch, canI } from "../utils/openshift-client.js";
 
 const BLOCKED_PATTERNS = [
   /\bdelete\s+(?:namespace|ns|crd|customresourcedefinition|node|nodes|clusterrole|clusterrolebinding|persistentvolume|pv)\b/i,
@@ -227,7 +227,7 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
       const container = flags.container || flags.c || "";
       let path = `/api/v1/namespaces/${namespace}/pods/${podName}/log?tailLines=${tail}&previous=${previous}`;
       if (container) path += `&container=${encodeURIComponent(container)}`;
-      const resp = await ocpGet(path);
+      const resp = await ocpFetch(path, { headers: { Accept: "text/plain" } });
       result.success = true;
       result.stdout = typeof resp === "string" ? resp.slice(0, 8000) : JSON.stringify(resp).slice(0, 8000);
       return result;
