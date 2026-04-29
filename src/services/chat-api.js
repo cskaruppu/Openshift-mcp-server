@@ -314,7 +314,14 @@ function json(res, status, data) {
 /** Fetch pod logs (plain text, not JSON) */
 async function fetchPodLogs(namespace, podName, tailLines = 80) {
   const path = `/api/v1/namespaces/${namespace}/pods/${podName}/log?tailLines=${tailLines}`;
-  return ocpFetch(path, { headers: { Accept: "text/plain" } });
+  try {
+    return await ocpFetch(path, { headers: { Accept: "text/plain" } });
+  } catch (err) {
+    if (err.message && err.message.includes("406")) {
+      return await ocpFetch(path, { headers: { Accept: "*/*" } });
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -476,6 +483,7 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
       parts.push("```" + logText.substring(0, 4000) + "```");
       if (logText.length > 4000) parts.push(`\n[WARNING] Logs truncated. Use \`oc logs ${cmd.resourceName} -n ${cmd.namespace}\` for full output.`);
     } catch (err) {
+      if (llmAvailable) return null;
       parts.push(`### Pod Logs Error`);
       parts.push(`[CRITICAL] Failed to get logs for \`${cmd.resourceName}\` in \`${cmd.namespace}\``);
       parts.push(`**Error:** ${err.message}`);
@@ -575,6 +583,7 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
   // -----------------------------------------------------------------------
   if (cmd.operation === "get" && cmd.resourceName) {
     if (resInfo.namespaced && !cmd.namespace) {
+      if (llmAvailable) return null;
       parts.push(`### Get ${cmd.resourceType}`);
       parts.push(`[WARNING] Please specify the namespace.`);
       parts.push(`\n**Example:** "describe ${cmd.resourceType} ${cmd.resourceName} in namespace my-ns"`);
@@ -667,6 +676,7 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
         }
       }
     } catch (err) {
+      if (llmAvailable) return null;
       parts.push(`### Error`);
       parts.push(`[CRITICAL] Failed to get ${cmd.resourceType} \`${cmd.resourceName}\`: ${err.message}`);
     }
@@ -1424,8 +1434,15 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
             // Try previous container logs if current failed
             try {
               const prevPath = `/api/v1/namespaces/${ns}/pods/${podName}/log?tailLines=80&previous=true`;
-              const prevTxt = await ocpFetch(prevPath, { headers: { Accept: "text/plain" } });
-              context.targetPodLogsPrevious = String(prevTxt || "").slice(0, 6000);
+              let prevTxt;
+              try {
+                prevTxt = await ocpFetch(prevPath, { headers: { Accept: "text/plain" } });
+              } catch (e2) {
+                if (e2.message && e2.message.includes("406")) {
+                  prevTxt = await ocpFetch(prevPath, { headers: { Accept: "*/*" } });
+                }
+              }
+              if (prevTxt) context.targetPodLogsPrevious = String(prevTxt).slice(0, 6000);
             } catch { /* swallow */ }
           }
         }).catch(() => {})

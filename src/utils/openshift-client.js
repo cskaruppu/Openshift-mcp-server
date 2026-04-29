@@ -169,7 +169,8 @@ export async function ocpFetch(path, options = {}) {
   const url = `${baseUrl}${path}`;
   const method = (options.method || "GET").toUpperCase();
   const startedAt = Date.now();
-  const acceptsText = options.headers && options.headers.Accept === "text/plain";
+  const acceptHdr = options.headers && options.headers.Accept;
+  const acceptsText = acceptHdr === "text/plain" || acceptHdr === "*/*";
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || OCP_FETCH_TIMEOUT_MS);
   let resp;
@@ -277,7 +278,8 @@ export async function remoteOcpFetch(apiUrl, bearerToken, path, options = {}) {
   const url = `${apiUrl}${path}`;
   const method = (options.method || "GET").toUpperCase();
   const startedAt = Date.now();
-  const acceptsText = options.headers && options.headers.Accept === "text/plain";
+  const acceptHdr = options.headers && options.headers.Accept;
+  const acceptsText = acceptHdr === "text/plain" || acceptHdr === "*/*";
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || OCP_FETCH_TIMEOUT_MS);
   let resp;

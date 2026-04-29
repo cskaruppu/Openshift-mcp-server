@@ -227,7 +227,16 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
       const container = flags.container || flags.c || "";
       let path = `/api/v1/namespaces/${namespace}/pods/${podName}/log?tailLines=${tail}&previous=${previous}`;
       if (container) path += `&container=${encodeURIComponent(container)}`;
-      const resp = await ocpFetch(path, { headers: { Accept: "text/plain" } });
+      let resp;
+      try {
+        resp = await ocpFetch(path, { headers: { Accept: "text/plain" } });
+      } catch (e) {
+        if (e.message && e.message.includes("406")) {
+          resp = await ocpFetch(path, { headers: { Accept: "*/*" } });
+        } else {
+          throw e;
+        }
+      }
       result.success = true;
       result.stdout = typeof resp === "string" ? resp.slice(0, 8000) : JSON.stringify(resp).slice(0, 8000);
       return result;
