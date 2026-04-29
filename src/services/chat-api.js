@@ -439,9 +439,13 @@ function _legacyParseCommand_unused(message) {
 // Direct command handler — handles specific CRUD/operations without LLM
 // Returns null if the message isn't a recognized direct command
 // ---------------------------------------------------------------------------
-async function handleDirectCommand(message, preParsed) {
+async function handleDirectCommand(message, preParsed, opts = {}) {
   const cmd = preParsed || parseCommand(message);
   const lower = message.toLowerCase().trim();
+  // When an LLM is available, return null on "missing required field" cases
+  // so the chat falls through to the LLM with full conversation context —
+  // the LLM can resolve ambiguity from the prior turns.
+  const llmAvailable = !!opts.llmAvailable;
 
   // Only handle the *specific* CRUD verbs here. List/get queries are
   // routed through handleListCommand so they share one code path.
@@ -458,6 +462,7 @@ async function handleDirectCommand(message, preParsed) {
   // -----------------------------------------------------------------------
   if (cmd.operation === "logs" && cmd.resourceType === "pod") {
     if (!cmd.resourceName || !cmd.namespace) {
+      if (llmAvailable) return null; // let the LLM handle ambiguity
       parts.push(`### Pod Logs`);
       parts.push(`[WARNING] Please specify both pod name and namespace.`);
       parts.push(`\n**Example:** "show logs for my-pod in namespace my-ns"`);
@@ -534,12 +539,14 @@ async function handleDirectCommand(message, preParsed) {
   // -----------------------------------------------------------------------
   if (cmd.operation === "delete") {
     if (!cmd.resourceName) {
+      if (llmAvailable) return null;
       parts.push(`### Delete ${cmd.resourceType}`);
       parts.push(`[WARNING] Please specify the resource name to delete.`);
       parts.push(`\n**Example:** "delete pod my-pod in namespace my-ns"`);
       return parts.join("\n");
     }
     if (resInfo.namespaced && !cmd.namespace) {
+      if (llmAvailable) return null;
       parts.push(`### Delete ${cmd.resourceType}`);
       parts.push(`[WARNING] Please specify the namespace.`);
       parts.push(`\n**Example:** "delete ${cmd.resourceType} ${cmd.resourceName} in namespace my-ns"`);
@@ -850,13 +857,18 @@ async function handleDirectCommand(message, preParsed) {
 // ---------------------------------------------------------------------------
 // List resources — handles "list/show X" queries
 // ---------------------------------------------------------------------------
-async function handleListCommand(message, preParsed) {
+async function handleListCommand(message, preParsed, opts = {}) {
   const lower = message.toLowerCase().trim();
   const cmd = preParsed || parseCommand(message);
+  const llmAvailable = !!opts.llmAvailable;
 
   // Must have a resource type and a list/get-style intent.
   if (!cmd.resourceType) return null;
   if (!["list", "get"].includes(cmd.operation)) return null;
+  // When the user wants a specific resource (describe/get) and we have an
+  // LLM available, return null so the LLM can gather richer context (events,
+  // logs, related resources) instead of a generic list.
+  if (llmAvailable && cmd.operation === "get" && cmd.resourceName) return null;
   // Issue/health questions go through the intent-driven analysis path
   // (gatherClusterContext) — but only when there's no explicit list verb,
   // so "list crashloopbackoff pods" still returns a focused list.
@@ -1396,6 +1408,29 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
         }
       }).catch(() => {})
     );
+    // Also fetch logs for this pod when the user asks about logs/describe/diagnose
+    const wantsLogs = /\b(log|logs|tail|describe|why|diagnose|debug|investigate|fail|error|crash|wrong|issue|problem|inspect|details?)\b/i.test(userMessage);
+    if (wantsLogs) {
+      tasks.push(
+        ocpGet("/api/v1/pods").then(async (d) => {
+          const pod = (d.items || []).find((p) => p.metadata.name === podName);
+          if (!pod) return;
+          const ns = pod.metadata.namespace;
+          try {
+            const txt = await fetchPodLogs(ns, podName, 80);
+            context.targetPodLogs = String(txt || "").slice(0, 6000);
+          } catch (err) {
+            context.targetPodLogsError = err.message;
+            // Try previous container logs if current failed
+            try {
+              const prevPath = `/api/v1/namespaces/${ns}/pods/${podName}/log?tailLines=80&previous=true`;
+              const prevTxt = await ocpFetch(prevPath, { headers: { Accept: "text/plain" } });
+              context.targetPodLogsPrevious = String(prevTxt || "").slice(0, 6000);
+            } catch { /* swallow */ }
+          }
+        }).catch(() => {})
+      );
+    }
     // Also fetch metrics for this pod if available
     tasks.push(
       ocpGet("/apis/metrics.k8s.io/v1beta1/pods").then((d) => {
@@ -1766,12 +1801,20 @@ IMPORTANT: You are given REAL-TIME cluster data as JSON context. This is NOT hyp
 - When the cluster data contains "_focusPod" or "targetPod", the user is asking about THAT SPECIFIC pod. Your ENTIRE response must be about that pod only.
 - Do NOT list other pods, do NOT give a general cluster overview, do NOT mention unrelated failing pods.
 - Analyze the specific pod's container states, exit codes, restart counts, events, and metrics.
+- "_focusPodLogs" contains the actual log output — quote relevant lines when asked for logs or when diagnosing.
+- "_focusPodLogsPrevious" contains previous-container logs (after a crash) — use these for OOMKill / CrashLoop diagnosis.
 - If the pod is healthy, say so. If it has errors, diagnose the exact root cause for that pod.
 
 ## Conversation continuity:
 - You receive conversation history. Use it to understand follow-up questions.
+- If the user follows up with just a resource name (e.g. "user-db-xyz logs", "describe payment-svc-abc"), find that resource in the conversation history (previous list) and the live cluster data, then answer about it.
+- Carry forward namespace/cluster context from prior turns — the user does not need to repeat it.
 - If the user says "show its logs", "restart it", "what namespace is it in", "explain more", "fix it" — refer to the pod/deployment/resource from the previous messages.
 - Maintain context across the conversation like a human SRE colleague would.
+
+## When required information is missing:
+- NEVER respond with "[WARNING] Please specify the namespace" or similar generic templates. Instead, look at the conversation history and live cluster data — the namespace was likely in the prior turn.
+- If you genuinely cannot resolve a resource, list the most likely candidates from the live data and ask which one the user means.
 
 ## Response style:
 - Be specific to THIS cluster's data — never give generic advice when you have real data
@@ -1806,9 +1849,12 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
   // sees it first and doesn't get distracted by the broader problemPods list.
   const ctx = { ...clusterContext };
   if (ctx.targetPod) {
-    // Move targetPod + events + metrics to the top-level focus keys
+    // Move targetPod + events + metrics + logs to the top-level focus keys
     const focused = {
       _focusPod: ctx.targetPod,
+      _focusPodLogs: ctx.targetPodLogs || null,
+      _focusPodLogsPrevious: ctx.targetPodLogsPrevious || null,
+      _focusPodLogsError: ctx.targetPodLogsError || null,
       _focusPodEvents: ctx.targetPodEvents || [],
       _focusPodMetrics: ctx.targetPodMetrics || null,
     };
@@ -4347,7 +4393,8 @@ export async function handleChatAPI(req, res) {
 
     // Try direct command handler first (for specific CRUD operations)
     // This handles: logs, top, delete, run, exec, update
-    const directResult = await handleDirectCommand(userMessage, cmd);
+    const llmActive = activeProvider && activeProvider !== "none";
+    const directResult = await handleDirectCommand(userMessage, cmd, { llmAvailable: llmActive });
     if (directResult) {
       const provider = activeProvider === "none" ? "built-in" : activeProvider;
       const payload = {
@@ -4371,7 +4418,7 @@ export async function handleChatAPI(req, res) {
     }
 
     // Try list command handler (for "list/show/get X" queries)
-    const listResult = await handleListCommand(userMessage, cmd);
+    const listResult = await handleListCommand(userMessage, cmd, { llmAvailable: llmActive });
     if (listResult) {
       const provider = activeProvider === "none" ? "built-in" : activeProvider;
       const payload = {
@@ -4401,6 +4448,9 @@ export async function handleChatAPI(req, res) {
           if (context.targetPod) {
             const focused = {
               _focusPod: context.targetPod,
+              _focusPodLogs: context.targetPodLogs || null,
+              _focusPodLogsPrevious: context.targetPodLogsPrevious || null,
+              _focusPodLogsError: context.targetPodLogsError || null,
               _focusPodEvents: context.targetPodEvents || [],
               _focusPodMetrics: context.targetPodMetrics || null,
             };
