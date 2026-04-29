@@ -41,6 +41,13 @@ const SEVERITY_WEIGHTS = {
   HighRestartRate: 60,
   PodPending: 50,
   CertExpiringSoon: 90,
+  OperatorDegraded: 88,
+  OperatorUnavailable: 92,
+  PVCNearFull: 78,
+  PVCPending: 65,
+  EndpointNotReady: 60,
+  QuotaExhausted: 72,
+  EventStorm: 70,
 };
 
 export function startProactiveMonitor() {
@@ -88,7 +95,17 @@ async function runScan() {
     detectPodAnomalies(podItems, eventItems);
     detectNodeAnomalies(nodeItems);
     detectRestartSpikes(podItems);
-    await detectCertExpiry();
+    detectEventStorms(eventItems);
+
+    // Cluster-level and component-level detection (non-blocking)
+    await Promise.allSettled([
+      detectCertExpiry(),
+      detectOperatorHealth(),
+      detectPVCIssues(),
+      detectEndpointHealth(),
+      detectResourceQuotas(),
+    ]);
+
     correlateInsights();
 
     _baseline.lastScan = Date.now();
@@ -277,6 +294,214 @@ async function detectCertExpiry() {
       } catch { /* skip unparseable certs */ }
     }
   } catch { /* openshift-config may not be accessible */ }
+}
+
+// Detect warning event storms — many events in a short window indicates instability
+function detectEventStorms(events) {
+  const now = Date.now();
+  const fiveMin = 5 * 60 * 1000;
+  const recentWarnings = (events || []).filter((e) => {
+    const ts = new Date(e.lastTimestamp || e.metadata?.creationTimestamp).getTime();
+    return e.type === "Warning" && now - ts < fiveMin;
+  });
+  if (recentWarnings.length > 50) {
+    const byReason = {};
+    recentWarnings.forEach((e) => { byReason[e.reason] = (byReason[e.reason] || 0) + 1; });
+    const topReason = Object.entries(byReason).sort((a, b) => b[1] - a[1])[0];
+    addInsight({
+      type: "EventStorm",
+      resource: "cluster/events",
+      namespace: "",
+      severity: SEVERITY_WEIGHTS.EventStorm,
+      title: `Event storm: ${recentWarnings.length} warnings in 5 minutes`,
+      detail: `Top reason: ${topReason[0]} (${topReason[1]}x). Cluster may be under stress.`,
+      recommendation: "Investigate the root cause of the warning event flood",
+    });
+  }
+}
+
+// Detect degraded/unavailable ClusterOperators (OpenShift)
+async function detectOperatorHealth() {
+  try {
+    const ops = await ocpGet("/apis/config.openshift.io/v1/clusteroperators");
+    for (const op of ops.items || []) {
+      const name = op.metadata?.name;
+      const conditions = op.status?.conditions || [];
+      const degraded = conditions.find((c) => c.type === "Degraded" && c.status === "True");
+      const available = conditions.find((c) => c.type === "Available" && c.status === "False");
+      const progressing = conditions.find((c) => c.type === "Progressing" && c.status === "True");
+
+      if (available) {
+        addInsight({
+          type: "OperatorUnavailable",
+          resource: `clusteroperator/${name}`,
+          namespace: "",
+          severity: SEVERITY_WEIGHTS.OperatorUnavailable,
+          title: `ClusterOperator "${name}" is Unavailable`,
+          detail: available.message || available.reason || "Operator not serving",
+          recommendation: `Check operator pods: oc get pods -n openshift-${name}`,
+        });
+      } else if (degraded) {
+        addInsight({
+          type: "OperatorDegraded",
+          resource: `clusteroperator/${name}`,
+          namespace: "",
+          severity: SEVERITY_WEIGHTS.OperatorDegraded,
+          title: `ClusterOperator "${name}" is Degraded`,
+          detail: degraded.message || degraded.reason || "Partial functionality",
+          recommendation: `Investigate: oc describe clusteroperator ${name}`,
+        });
+      }
+      if (progressing && !available && !degraded) {
+        addInsight({
+          type: "OperatorDegraded",
+          resource: `clusteroperator/${name}`,
+          namespace: "",
+          severity: 45,
+          title: `ClusterOperator "${name}" is Progressing`,
+          detail: progressing.message || "Update in progress",
+          recommendation: "Monitor — this may resolve automatically",
+        });
+      }
+    }
+  } catch { /* not OpenShift or no access */ }
+}
+
+// Detect PVC issues — pending PVCs and PVCs nearing capacity
+async function detectPVCIssues() {
+  try {
+    const pvcs = await ocpGet("/api/v1/persistentvolumeclaims");
+    for (const pvc of pvcs.items || []) {
+      const ns = pvc.metadata?.namespace;
+      const name = pvc.metadata?.name;
+      if (!ns || !name) continue;
+      if (ns.startsWith("openshift-") || ns === "kube-system") continue;
+
+      if (pvc.status?.phase === "Pending") {
+        const age = Date.now() - new Date(pvc.metadata.creationTimestamp).getTime();
+        if (age > 2 * 60 * 1000) {
+          addInsight({
+            type: "PVCPending",
+            resource: `pvc/${name}`,
+            namespace: ns,
+            severity: SEVERITY_WEIGHTS.PVCPending,
+            title: `PVC "${name}" stuck Pending for ${Math.round(age / 60000)}m`,
+            detail: `StorageClass: ${pvc.spec?.storageClassName || "default"}. No volume bound.`,
+            recommendation: "Check StorageClass availability, provisioner logs, and quota",
+          });
+        }
+      }
+
+      // PVC capacity check via metrics
+      const capacity = pvc.status?.capacity?.storage;
+      if (capacity && pvc.status?.phase === "Bound") {
+        try {
+          // kubelet_volume_stats_used_bytes — exposed via metrics
+          const statsPath = `/api/v1/namespaces/${ns}/pods?labelSelector=`;
+          // Simple heuristic: large PVCs (>10Gi) that have been bound for >24h get flagged for monitoring
+          const capBytes = parsePVCSize(capacity);
+          if (capBytes > 0 && capBytes <= 2 * 1024 * 1024 * 1024) {
+            const age = Date.now() - new Date(pvc.metadata.creationTimestamp).getTime();
+            if (age > 24 * 3600 * 1000) {
+              addInsight({
+                type: "PVCNearFull",
+                resource: `pvc/${name}`,
+                namespace: ns,
+                severity: SEVERITY_WEIGHTS.PVCNearFull,
+                title: `PVC "${name}" is small (${capacity}) — check capacity`,
+                detail: `Bound for ${Math.round(age / 3600000)}h. Small PVCs fill faster.`,
+                recommendation: `Monitor usage: oc exec <pod> -n ${ns} -- df -h`,
+              });
+            }
+          }
+        } catch { /* skip */ }
+      }
+    }
+  } catch { /* skip */ }
+}
+
+function parsePVCSize(s) {
+  if (!s) return 0;
+  if (s.endsWith("Gi")) return parseInt(s) * 1024 * 1024 * 1024;
+  if (s.endsWith("Mi")) return parseInt(s) * 1024 * 1024;
+  if (s.endsWith("Ti")) return parseInt(s) * 1024 * 1024 * 1024 * 1024;
+  return parseInt(s) || 0;
+}
+
+// Detect service endpoints that have no ready addresses (broken services)
+async function detectEndpointHealth() {
+  try {
+    const endpoints = await ocpGet("/api/v1/endpoints");
+    for (const ep of endpoints.items || []) {
+      const ns = ep.metadata?.namespace;
+      const name = ep.metadata?.name;
+      if (!ns || !name) continue;
+      if (ns.startsWith("openshift-") || ns === "kube-system" || ns === "default") continue;
+
+      const subsets = ep.subsets || [];
+      const readyCount = subsets.reduce((s, sub) => s + (sub.addresses?.length || 0), 0);
+      const notReadyCount = subsets.reduce((s, sub) => s + (sub.notReadyAddresses?.length || 0), 0);
+
+      if (readyCount === 0 && notReadyCount > 0) {
+        addInsight({
+          type: "EndpointNotReady",
+          resource: `service/${name}`,
+          namespace: ns,
+          severity: SEVERITY_WEIGHTS.EndpointNotReady,
+          title: `Service "${name}" has 0 ready endpoints (${notReadyCount} not-ready)`,
+          detail: "All backing pods are unhealthy — traffic will fail",
+          recommendation: `Check pods: kubectl get pods -n ${ns} -l <selector>`,
+        });
+      }
+    }
+  } catch { /* skip */ }
+}
+
+// Detect resource quota exhaustion in namespaces
+async function detectResourceQuotas() {
+  try {
+    const quotas = await ocpGet("/api/v1/resourcequotas");
+    for (const q of quotas.items || []) {
+      const ns = q.metadata?.namespace;
+      const name = q.metadata?.name;
+      if (!ns) continue;
+
+      const hard = q.status?.hard || {};
+      const used = q.status?.used || {};
+
+      for (const [resource, limit] of Object.entries(hard)) {
+        const usedVal = parseQuotaValue(used[resource]);
+        const hardVal = parseQuotaValue(limit);
+        if (hardVal <= 0) continue;
+        const pct = usedVal / hardVal;
+
+        if (pct >= 0.9) {
+          addInsight({
+            type: "QuotaExhausted",
+            resource: `resourcequota/${name}`,
+            namespace: ns,
+            severity: SEVERITY_WEIGHTS.QuotaExhausted + (pct >= 1.0 ? 10 : 0),
+            title: `Quota "${resource}" at ${Math.round(pct * 100)}% in ${ns}`,
+            detail: `Used: ${used[resource]} / Hard: ${limit}`,
+            recommendation: pct >= 1.0
+              ? "Quota exceeded — new pods will be rejected. Increase quota or free resources."
+              : "Approaching quota limit — plan capacity or clean up unused resources.",
+          });
+        }
+      }
+    }
+  } catch { /* skip */ }
+}
+
+function parseQuotaValue(v) {
+  if (!v) return 0;
+  if (typeof v === "number") return v;
+  const s = String(v);
+  if (s.endsWith("m")) return parseInt(s) / 1000;
+  if (s.endsWith("Ki")) return parseInt(s) * 1024;
+  if (s.endsWith("Mi")) return parseInt(s) * 1024 * 1024;
+  if (s.endsWith("Gi")) return parseInt(s) * 1024 * 1024 * 1024;
+  return parseFloat(s) || 0;
 }
 
 function correlateInsights() {

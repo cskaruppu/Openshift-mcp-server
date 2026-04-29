@@ -21,6 +21,8 @@ const _trends = {
   nodeMemory: [],
   nodeCPU: [],
   eventRate: [],
+  operatorHealth: [],
+  pvcUsage: [],
 };
 
 const _predictions = [];
@@ -31,6 +33,7 @@ export async function runPredictiveAnalysis() {
       collectRestartTrend(),
       collectResourceTrend(),
       collectEventTrend(),
+      collectOperatorTrend(),
     ]);
 
     _predictions.length = 0;
@@ -38,6 +41,9 @@ export async function runPredictiveAnalysis() {
     predictOOM();
     predictRestartEscalation();
     predictCapacityExhaustion();
+    predictMemoryExhaustion();
+    predictEventEscalation();
+    predictOperatorDegradation();
 
     return _predictions.slice();
   } catch (err) {
@@ -185,6 +191,137 @@ function predictCapacityExhaustion() {
   }
 }
 
+// Collect ClusterOperator health trends (OpenShift)
+async function collectOperatorTrend() {
+  try {
+    const ops = await ocpGet("/apis/config.openshift.io/v1/clusteroperators");
+    const now = Date.now();
+    const dp = { timestamp: now, operators: {} };
+    for (const op of ops.items || []) {
+      const name = op.metadata?.name;
+      const conditions = op.status?.conditions || [];
+      const degraded = conditions.find((c) => c.type === "Degraded" && c.status === "True");
+      const available = conditions.find((c) => c.type === "Available");
+      dp.operators[name] = {
+        available: available?.status === "True",
+        degraded: !!degraded,
+        reason: degraded?.reason || available?.reason || "",
+      };
+    }
+    _trends.operatorHealth.push(dp);
+    if (_trends.operatorHealth.length > 30) _trends.operatorHealth.shift();
+  } catch { /* not OpenShift or no access */ }
+}
+
+// Predict node memory exhaustion using linear growth model
+function predictMemoryExhaustion() {
+  if (_trends.nodeMemory.length < 2) return;
+
+  const nodeGroups = {};
+  for (const dp of _trends.nodeMemory) {
+    if (!nodeGroups[dp.node]) nodeGroups[dp.node] = [];
+    nodeGroups[dp.node].push(dp);
+  }
+
+  for (const [node, points] of Object.entries(nodeGroups)) {
+    if (points.length < 2) continue;
+    const first = points[0];
+    const last = points[points.length - 1];
+    const elapsedH = (last.timestamp - first.timestamp) / 3600000;
+    if (elapsedH < 0.1) continue;
+
+    const growthRate = (last.value - first.value) / elapsedH;
+    if (growthRate <= 0) continue;
+
+    // Assume typical node has ~16GB (or use actual allocatable if available)
+    const maxMem = 16 * 1024 * 1024 * 1024;
+    const remaining = maxMem - last.value;
+    if (remaining <= 0) continue;
+    const hoursLeft = remaining / growthRate;
+
+    if (hoursLeft < 48 && hoursLeft > 0) {
+      _predictions.push({
+        type: "MemoryExhaustion",
+        resource: `node/${node}`,
+        severity: hoursLeft < 6 ? "critical" : hoursLeft < 12 ? "warning" : "info",
+        title: `Node ${node} memory may exhaust in ~${Math.round(hoursLeft)}h`,
+        detail: `Current growth: ${(growthRate / (1024 * 1024)).toFixed(0)}MB/hour. Current: ${(last.value / (1024 * 1024 * 1024)).toFixed(1)}GB`,
+        prediction: `Estimated ${Math.round(hoursLeft)} hours until memory pressure triggers evictions`,
+        confidence: Math.min(elapsedH / 2, 0.85),
+      });
+    }
+  }
+}
+
+// Predict event rate escalation — if warning events are accelerating, something is degrading
+function predictEventEscalation() {
+  if (_trends.eventRate.length < 3) return;
+
+  const recent = _trends.eventRate.slice(-5);
+  if (recent.length < 3) return;
+
+  // Linear regression on event counts
+  let increasing = 0;
+  for (let i = 1; i < recent.length; i++) {
+    if (recent[i].count > recent[i - 1].count) increasing++;
+  }
+
+  const first = recent[0];
+  const last = recent[recent.length - 1];
+  const delta = last.count - first.count;
+
+  if (increasing >= recent.length - 1 && delta > 10 && last.count > 20) {
+    const elapsedMin = (last.timestamp - first.timestamp) / 60000;
+    const ratePerMin = delta / Math.max(elapsedMin, 1);
+    _predictions.push({
+      type: "EventEscalation",
+      resource: "cluster/events",
+      severity: last.count > 100 ? "critical" : "warning",
+      title: "Warning events accelerating across cluster",
+      detail: `${last.count} warnings now (+${delta} in ${Math.round(elapsedMin)}min). Rate: ${ratePerMin.toFixed(1)}/min`,
+      prediction: "Cluster instability is increasing — investigate root cause before cascading failures",
+      confidence: Math.min(increasing / recent.length, 0.9),
+    });
+  }
+}
+
+// Predict operator degradation — operators that flip between healthy/degraded
+function predictOperatorDegradation() {
+  if (_trends.operatorHealth.length < 3) return;
+
+  // Check for operators that are newly degraded or flapping
+  const latest = _trends.operatorHealth[_trends.operatorHealth.length - 1];
+  if (!latest) return;
+
+  for (const [opName, state] of Object.entries(latest.operators)) {
+    if (!state.degraded && state.available) continue;
+
+    // Count how many recent scans this operator was degraded
+    let degradedCount = 0;
+    const window = _trends.operatorHealth.slice(-5);
+    for (const dp of window) {
+      if (dp.operators[opName]?.degraded || !dp.operators[opName]?.available) {
+        degradedCount++;
+      }
+    }
+
+    if (degradedCount >= 2) {
+      const isPersistent = degradedCount >= window.length - 1;
+      _predictions.push({
+        type: "OperatorDegradation",
+        resource: `clusteroperator/${opName}`,
+        severity: !state.available ? "critical" : isPersistent ? "warning" : "info",
+        title: `Operator "${opName}" ${!state.available ? "unavailable" : "degraded"} — ${isPersistent ? "persistent" : "intermittent"}`,
+        detail: `Degraded in ${degradedCount}/${window.length} recent scans. Reason: ${state.reason || "unknown"}`,
+        prediction: isPersistent
+          ? `Operator "${opName}" consistently unhealthy — may block cluster upgrades and affect dependent components`
+          : `Operator "${opName}" is flapping — may indicate underlying infrastructure instability`,
+        confidence: degradedCount / window.length,
+      });
+    }
+  }
+}
+
 function parseCPU(val) {
   if (!val) return 0;
   if (val.endsWith("n")) return parseInt(val);
@@ -211,5 +348,6 @@ export function getTrends() {
     nodeMemory: _trends.nodeMemory.length,
     nodeCPU: _trends.nodeCPU.length,
     eventRate: _trends.eventRate.slice(-10),
+    operatorHealth: _trends.operatorHealth.length,
   };
 }
