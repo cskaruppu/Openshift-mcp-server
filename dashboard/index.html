@@ -62,6 +62,7 @@ tr:hover td{background:#ffffff06}
 .msg .tool-tag{display:inline-block;background:#3b82f633;color:var(--accent2);padding:1px 6px;border-radius:4px;font-size:11px;margin-top:4px}
 /* Chat rich formatting */
 .msg .chat-heading{font-size:14px;font-weight:700;margin:10px 0 6px;padding-bottom:4px;border-bottom:1px solid #3a3d4a;color:#fff}
+.msg .chat-heading.chat-heading-sm{font-size:13px;border-bottom:none;margin:8px 0 4px}
 .msg .chat-heading:first-child{margin-top:0}
 .msg .chat-section{margin:8px 0}
 .msg .status-crit{color:#ef4444;font-weight:700}
@@ -184,6 +185,7 @@ tr:hover td{background:#ffffff06}
 .conv-provider-tag{font-size:10px;color:#818cf8;background:#818cf815;padding:2px 8px;border-radius:10px;font-weight:500;letter-spacing:.2px}
 .conv-body{padding-left:38px;font-size:14px;line-height:1.7;color:#d1d5db;word-wrap:break-word}
 .conv-body .chat-heading{font-size:15px;font-weight:700;margin:12px 0 6px;padding-bottom:4px;border-bottom:1px solid #3a3d4a;color:#fff}
+.conv-body .chat-heading.chat-heading-sm{font-size:13px;border-bottom:none;margin:8px 0 4px}
 .conv-body .chat-heading:first-child{margin-top:0}
 .conv-body .status-crit{color:#ef4444;font-weight:700}
 .conv-body .status-warn{color:#f59e0b;font-weight:600}
@@ -481,8 +483,10 @@ tr:hover td{background:#ffffff06}
 .light-theme .header{background:linear-gradient(135deg,#f8f9fc 0%,#eee8f8 40%,#f8e8e8 100%);border-image:linear-gradient(90deg,#e04040,#3b82f6,#10b981) 1}
 .light-theme .app-footer{background:linear-gradient(135deg,#f8f9fc 0%,#eee8f8 100%);border-top:1px solid #e0e0e0;color:#666}
 .light-theme .msg.ai,.light-theme .conv-body code{background:#eeeef2}
-.light-theme .fix-box,.light-theme .fix-box pre{background:#f6f8fa;color:#1a1a2e}
+.light-theme .fix-box,.light-theme .fix-box pre{background:#f6f8fa;color:#1a1a2e;border-color:#d0d7de}
 .light-theme .fix-box .fix-header{background:#ebedf0;border-color:#d0d7de}
+.light-theme .fix-box .fix-copy{border-color:#d0d7de;color:#57606a}
+.light-theme .fix-box .fix-copy:hover{border-color:#2563eb;color:#2563eb}
 .light-theme .history-item:hover,.light-theme .slash-item:hover,.light-theme .slash-item.active{background:#eeeef2}
 .light-theme .history-item.active{background:#dde0e8;color:var(--text)}
 .light-theme .chat-sidebar,.light-theme .actions-panel{background:#eef0f4}
@@ -520,7 +524,23 @@ tr:hover td{background:#ffffff06}
 .light-theme .chat-conv-inner{background:#fff}
 .light-theme .pod-issue{background:#fff0f0;border-color:#dc262655}
 .light-theme .summary-bar{background:#f0f2f6}
-.light-theme .conv-body .chat-heading{color:var(--text);border-color:#d0d0da}
+.light-theme .msg .chat-heading,.light-theme .conv-body .chat-heading{color:var(--text);border-color:#d0d0da}
+/* Light-theme: security/optimization fix command boxes */
+.light-theme .sec-fix-cmd{background:#f6f8fa;border-color:#d0d7de;color:#1a1a2e}
+.light-theme .sec-fix-cmd code{color:#0550ae}
+.light-theme .sec-fix-dry{background:#d97706;color:#fff}
+.light-theme .sec-fix-run{background:#16a34a;color:#fff}
+/* Light-theme: AI intelligence fix command boxes */
+.light-theme .aic-ai-fix-cmd{background:#f6f8fa;border-color:#d0d7de;color:#1a1a2e}
+.light-theme .aic-ai-fix-cmd code{color:#0550ae}
+.light-theme .aic-ai-fix-cmd button{background:#2563eb}
+/* Light-theme: fix result output boxes */
+.light-theme .aic-fix-result{border-color:#d0d7de}
+.light-theme .aic-fix-result.success{border-color:#16a34a;background:#f0fdf408}
+.light-theme .aic-fix-result.error{border-color:#dc2626;background:#fef2f208}
+.light-theme .aic-fix-out{background:#f0fdf4;color:#14532d;border-color:#bbf7d0}
+.light-theme .aic-fix-err{background:#fef2f2;color:#991b1b}
+.light-theme .aic-fix-promote button{background:#2563eb;color:#fff}
 /* Theme toggle */
 .theme-toggle{background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--text2);cursor:pointer;font-size:14px;transition:all .2s;display:flex;align-items:center;gap:4px}
 .theme-toggle:hover{border-color:var(--accent);color:var(--text)}
@@ -2457,6 +2477,7 @@ function md(text) {
   });
 
   // Section headings: ### Heading
+  html = html.replace(/^#### (.+)$/gm, '\n<div class="chat-heading chat-heading-sm">$1</div>\n');
   html = html.replace(/^### (.+)$/gm, '\n<div class="chat-heading">$1</div>\n');
   html = html.replace(/^## (.+)$/gm, '\n<div class="chat-heading">$1</div>\n');
 
