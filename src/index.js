@@ -67,7 +67,7 @@ import {
   updateTitle,
   isHistoryEnabled,
 } from "./services/chat-history.js";
-import { initDb, query as dbQuery } from "./utils/db.js";
+import { initDb, query as dbQuery, isEnabled as dbEnabled } from "./utils/db.js";
 import { initCache, isEnabled as cacheReady } from "./utils/cache.js";
 import { handleMetricsRequest } from "./services/metrics.js";
 import { enforce as enforceRateLimit } from "./services/rate-limit.js";
@@ -190,6 +190,52 @@ async function startStdio() {
 // browser localStorage.
 // ---------------------------------------------------------------------------
 const _connectedAgents = new Map();
+
+/** Export a getter so other modules (e.g. chat-api) can look up agents. */
+export function getConnectedAgents() {
+  return _connectedAgents;
+}
+
+/** Persist the connected-agents map to the kv_store table. */
+async function saveClustersToDB() {
+  if (!(await dbEnabled())) return;
+  try {
+    const obj = Object.fromEntries(_connectedAgents);
+    await dbQuery(
+      `INSERT INTO kv_store (key, value, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+      ["connected_clusters", JSON.stringify(obj)]
+    );
+  } catch (err) {
+    console.warn("[hub] Failed to persist clusters to DB:", err.message);
+  }
+}
+
+/** Load previously registered clusters from the kv_store table on startup. */
+async function loadClustersFromDB() {
+  if (!(await dbEnabled())) return;
+  try {
+    const result = await dbQuery(
+      "SELECT value FROM kv_store WHERE key = $1",
+      ["connected_clusters"]
+    );
+    if (result?.rows?.length) {
+      const obj = typeof result.rows[0].value === "string"
+        ? JSON.parse(result.rows[0].value)
+        : result.rows[0].value;
+      for (const [name, agent] of Object.entries(obj)) {
+        if (!_connectedAgents.has(name)) {
+          _connectedAgents.set(name, agent);
+        }
+      }
+      if (_connectedAgents.size > 0) {
+        console.log(`[startup] Restored ${_connectedAgents.size} cluster registrations from DB`);
+      }
+    }
+  } catch (err) {
+    console.warn("[hub] Failed to load clusters from DB:", err.message);
+  }
+}
 
 function sendJson(res, status, body) {
   res.writeHead(status, { "Content-Type": "application/json" });
@@ -371,6 +417,9 @@ async function startSSE() {
   } catch (err) {
     console.warn("[startup] AI Intelligence init:", err.message);
   }
+
+  // Restore registered clusters from DB
+  await loadClustersFromDB();
 
   // Restore silenced alerts from DB
   try {
@@ -748,7 +797,7 @@ async function startSSE() {
         clusterName: name,
         platform: platform || "k8s",
         apiUrl,
-        hasToken: !!token,
+        token: token || null,
         registeredAt: new Date().toISOString(),
         lastReport: null,
         lastReportTime: null,
@@ -757,6 +806,7 @@ async function startSSE() {
         source: "dashboard",
       });
 
+      saveClustersToDB().catch(() => {});
       console.error(`[hub] Cluster registered: ${name} (${platform}) — test: ${testResult?.ok ? "OK" : "failed"}`);
       return sendJson(res, 200, {
         ok: true,
@@ -775,6 +825,7 @@ async function startSSE() {
           name: agent.clusterName,
           platform: agent.platform,
           apiUrl: agent.apiUrl,
+          hasToken: !!agent.token,
           status: elapsed !== null && elapsed < 300 ? "live" : agent.status || "registered",
           registeredAt: agent.registeredAt,
           lastReportTime: agent.lastReportTime,
@@ -793,6 +844,7 @@ async function startSSE() {
     if (url.pathname.startsWith("/api/hub/clusters/") && req.method === "DELETE") {
       const name = decodeURIComponent(url.pathname.split("/api/hub/clusters/")[1]);
       _connectedAgents.delete(name);
+      saveClustersToDB().catch(() => {});
       return sendJson(res, 200, { ok: true, deleted: name });
     }
 
@@ -808,6 +860,7 @@ async function startSSE() {
         registeredAt: new Date().toISOString(),
         lastReport: null, status: "registered",
       });
+      saveClustersToDB().catch(() => {});
       console.error(`[agent] Registered: ${clusterName} (${platform}) agent v${agentVersion}`);
       return sendJson(res, 200, { ok: true, message: `Agent "${clusterName}" registered` });
     }
@@ -821,6 +874,7 @@ async function startSSE() {
       agent.lastReportTime = new Date().toISOString();
       agent.status = "live";
       _connectedAgents.set(clusterName, agent);
+      saveClustersToDB().catch(() => {});
       const issues = report.pods?.issues?.length || 0;
       if (issues > 0) {
         console.error(`[agent] ${clusterName}: ${issues} issues detected`);
@@ -836,6 +890,8 @@ async function startSSE() {
           : null;
         agents.push({
           ...agent,
+          token: undefined,
+          hasToken: !!agent.token,
           status: elapsed !== null && elapsed < 300 ? "live" : elapsed !== null ? "stale" : "registered",
           lastReport: undefined,
           summary: agent.lastReport ? {
