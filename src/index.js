@@ -95,6 +95,7 @@ import {
   getInsightsSummary,
   dismissInsight,
   analyzeInsight,
+  analyzeAlert,
   isMonitorRunning,
 } from "./services/proactive-agent.js";
 import {
@@ -1024,6 +1025,17 @@ async function startSSE() {
         return sendJson(res, 200, { report: report || null });
       } catch (err) {
         return sendJson(res, 500, { error: err.message });
+      }
+    }
+
+    // POST /api/alerts/analyze — AI investigates a specific alert
+    if (req.method === "POST" && url.pathname === "/api/alerts/analyze") {
+      try {
+        const body = await readJsonBody(req);
+        const result = await analyzeAlert(body.alert || {}, body.llmOpts || {});
+        return sendJson(res, 200, result);
+      } catch (e) {
+        return sendJson(res, 500, { error: e.message });
       }
     }
 

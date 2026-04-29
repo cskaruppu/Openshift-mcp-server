@@ -325,6 +325,129 @@ tr:hover td{background:#ffffff06}
 .silence-modal .modal-actions .btn-cancel{background:transparent;color:var(--text)}
 .alert-row.silenced{opacity:.5}
 .alert-row.silenced .alert-title::after{content:" (silenced)";font-size:11px;font-weight:400;color:var(--text2)}
+
+/* ===== AI Intelligence Command Center ===== */
+.ai-cmd-hero{position:relative;background:linear-gradient(135deg,#0f172a 0%,#1e1b4b 50%,#0f172a 100%);border:1px solid #334155;border-radius:16px;padding:22px 26px;margin-bottom:18px;overflow:hidden}
+.ai-cmd-hero-glow{position:absolute;inset:0;background:radial-gradient(circle at 30% 50%,#6366f120 0%,transparent 60%),radial-gradient(circle at 80% 30%,#ef444415 0%,transparent 60%);animation:aicGlow 8s ease infinite alternate;pointer-events:none}
+@keyframes aicGlow{0%{opacity:.5}100%{opacity:1}}
+.ai-cmd-hero-inner{position:relative;z-index:1}
+.ai-cmd-title{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.ai-cmd-pulse{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#ef4444,#6366f1);display:flex;align-items:center;justify-content:center;position:relative;box-shadow:0 0 0 0 #6366f180;animation:aicPulse 2s infinite}
+.ai-cmd-pulse span{width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 0 8px #fff}
+@keyframes aicPulse{0%{box-shadow:0 0 0 0 #6366f180}70%{box-shadow:0 0 0 16px #6366f100}100%{box-shadow:0 0 0 0 #6366f100}}
+.ai-cmd-name{font-size:22px;font-weight:800;color:#f8fafc;letter-spacing:-.5px}
+.ai-cmd-sub{font-size:12px;color:#94a3b8;margin-top:2px}
+.ai-cmd-stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px}
+.ai-cmd-stat{background:#1e293b80;border:1px solid #334155;border-left:3px solid var(--c);border-radius:10px;padding:12px 14px;backdrop-filter:blur(10px)}
+.ai-cmd-stat .v{font-size:24px;font-weight:800;color:var(--c);line-height:1}
+.ai-cmd-stat .l{font-size:10px;color:#64748b;margin-top:4px;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+.ai-cmd-status{display:flex;align-items:center;gap:10px;font-size:12px;color:#94a3b8;flex-wrap:wrap}
+.ai-cmd-sep{color:#475569}
+.ai-cmd-btn{background:#1e293b;border:1px solid #334155;color:#cbd5e1;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:11px;font-weight:600;transition:all .15s}
+.ai-cmd-btn:hover{background:#334155;border-color:#475569;color:#fff}
+
+.ai-section{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+.ai-section-head{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.ai-section-title{display:flex;align-items:center;gap:12px;flex:1}
+.ai-section-icon{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;flex-shrink:0}
+.ai-section-name{font-size:15px;font-weight:700;color:var(--text)}
+.ai-section-sub{font-size:11px;color:var(--text2);margin-top:1px}
+.ai-section-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+.ai-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:900px){.ai-grid-2{grid-template-columns:1fr}.ai-cmd-stats{grid-template-columns:repeat(2,1fr)}}
+
+/* Severity pill filters */
+.aic-pills{display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.aic-pill{display:inline-flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--border);border-radius:999px;padding:6px 14px;color:var(--text);cursor:pointer;font-size:12px;font-weight:600;transition:all .15s}
+.aic-pill .ct{background:var(--border);color:var(--text2);padding:1px 7px;border-radius:999px;font-size:10px;font-weight:700}
+.aic-pill.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.aic-pill.active .ct{background:#fff3;color:#fff}
+.aic-pill.crit.active{background:#ef4444;border-color:#ef4444}
+.aic-pill.warn.active{background:#f59e0b;border-color:#f59e0b}
+.aic-pill.info.active{background:#3b82f6;border-color:#3b82f6}
+.aic-pill:hover{border-color:var(--accent)}
+.aic-search-wrap{display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap}
+.aic-search-wrap input,.aic-search-wrap select{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:12px;outline:none}
+.aic-search-wrap input{min-width:200px}
+.aic-toggle{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);cursor:pointer;white-space:nowrap}
+
+/* Mini trend chart in header */
+.aic-trends-mini{display:inline-flex;align-items:flex-end;gap:1px;height:24px;width:140px}
+.aic-trends-mini .b{flex:1;background:#ef4444;min-height:1px;opacity:.7;border-radius:1px 1px 0 0}
+.aic-trends-mini .b.warn{background:#f59e0b}
+
+/* Alert card */
+.aic-alerts-list{display:flex;flex-direction:column;gap:10px}
+.aic-empty{text-align:center;padding:40px 20px;color:var(--text2);font-size:13px}
+.aic-empty.ok{color:var(--ok);font-size:15px;font-weight:600}
+.aic-card{background:var(--bg);border:1px solid var(--border);border-left:4px solid var(--bar);border-radius:10px;overflow:hidden;transition:all .15s}
+.aic-card.crit{--bar:#ef4444}
+.aic-card.warn{--bar:#f59e0b}
+.aic-card.info{--bar:#3b82f6}
+.aic-card:hover{border-color:var(--accent2);box-shadow:0 2px 8px #0003}
+.aic-card-head{display:flex;align-items:flex-start;gap:12px;padding:12px 16px;cursor:pointer}
+.aic-card-head:hover{background:#ffffff04}
+.aic-card-body{flex:1;min-width:0}
+.aic-card-row1{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+.aic-card-name{font-size:13px;font-weight:700;color:var(--text)}
+.aic-card-badges{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+.aic-bg{font-size:9px;font-weight:700;padding:2px 7px;border-radius:4px;text-transform:uppercase;letter-spacing:.5px}
+.aic-bg.crit{background:#ef444422;color:#ef4444}
+.aic-bg.warn{background:#f59e0b22;color:#f59e0b}
+.aic-bg.info{background:#3b82f622;color:#3b82f6}
+.aic-bg.src{background:var(--border);color:var(--text2);font-weight:500}
+.aic-bg.cluster{background:#6366f122;color:#a5b4fc}
+.aic-card-meta{font-size:11px;color:var(--text2);display:flex;flex-wrap:wrap;gap:10px;margin-top:4px}
+.aic-card-meta span{display:inline-flex;align-items:center;gap:4px}
+.aic-card-summary{font-size:12px;color:var(--text2);margin-top:6px;line-height:1.5;font-family:inherit}
+.aic-card-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.aic-act{background:transparent;border:1px solid var(--border);color:var(--text2);border-radius:6px;padding:5px 10px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap}
+.aic-act:hover{background:var(--accent2);color:#fff;border-color:var(--accent2)}
+.aic-act.primary{background:var(--accent2);color:#fff;border-color:var(--accent2)}
+.aic-act.primary:hover{background:var(--accent);border-color:var(--accent)}
+.aic-act.danger{color:#ef4444}
+.aic-act.danger:hover{background:#ef4444;color:#fff;border-color:#ef4444}
+.aic-act.success{color:#22c55e;border-color:#22c55e44}
+.aic-act.success:hover{background:#22c55e;color:#fff;border-color:#22c55e}
+
+/* AI Investigation panel inside alert card */
+.aic-ai{border-top:1px solid var(--border);background:linear-gradient(180deg,#6366f108,transparent);padding:14px 16px}
+.aic-ai-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:11px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.aic-ai-spark{width:18px;height:18px;border-radius:4px;background:linear-gradient(135deg,#6366f1,#a855f7);display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700}
+.aic-ai-spark.loading{animation:aicSpin 1s linear infinite}
+@keyframes aicSpin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
+.aic-ai-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px}
+@media (max-width:700px){.aic-ai-grid{grid-template-columns:1fr}}
+.aic-ai-block{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+.aic-ai-label{font-size:10px;color:var(--text2);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.aic-ai-text{font-size:12px;color:var(--text);line-height:1.5;white-space:pre-wrap}
+.aic-ai-fix-cmd{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px 12px;font-family:'SF Mono','Cascadia Code',monospace;font-size:11px;color:#7ee787;margin-top:8px;display:flex;align-items:center;gap:8px;overflow-x:auto}
+.aic-ai-fix-cmd code{flex:1;white-space:pre;font-family:inherit;color:inherit}
+.aic-ai-fix-cmd button{background:#1f6feb;border:none;color:#fff;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px;font-weight:600;white-space:nowrap;flex-shrink:0}
+.aic-ai-fix-cmd button:hover{background:#388bfd}
+.aic-ai-loading{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2);font-style:italic;padding:6px 0}
+.aic-ai-error{color:#ef4444;font-size:12px;font-style:italic}
+.aic-card-collapsed .aic-ai{display:none}
+
+/* Predictions */
+.aic-predictions{display:flex;flex-direction:column;gap:8px}
+.aic-pred{display:flex;gap:10px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;align-items:flex-start}
+.aic-pred-icon{font-size:20px;flex-shrink:0}
+.aic-pred-body{flex:1;min-width:0}
+.aic-pred-title{font-size:12px;font-weight:700;color:var(--text)}
+.aic-pred-detail{font-size:11px;color:var(--text2);margin-top:3px;line-height:1.5}
+.aic-pred-conf{display:inline-flex;align-items:center;gap:4px;font-size:10px;background:var(--card);padding:2px 8px;border-radius:999px;margin-top:6px}
+
+/* KB list */
+.aic-kb-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;max-height:340px;overflow-y:auto}
+.aic-kb-item{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+.aic-kb-type{display:inline-block;background:#6366f122;color:#a5b4fc;padding:1px 7px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:6px}
+.aic-kb-symptom{font-size:12px;font-weight:600;color:var(--text);margin-bottom:4px}
+.aic-kb-resolution{font-size:11px;color:var(--text2);line-height:1.5}
+.aic-kb-eff{float:right;font-size:10px;color:var(--text2)}
+
+/* Group badge */
+.aic-group-badge{background:#a855f722;color:#a855f7;font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px}
 /* Notification config */
 .notif-section{margin-top:24px;padding-top:20px;border-top:1px solid var(--border)}
 .notif-section h3{margin:0 0 12px}
@@ -768,9 +891,8 @@ tr:hover td{background:#ffffff06}
     <button class="nav-tab active" data-view="dashboard" onclick="showView('dashboard')">Dashboard</button>
     <button class="nav-tab" data-view="chat" onclick="showView('chat')">AI Chat</button>
     <button class="nav-tab" data-view="audit" onclick="showView('audit')">Audit</button>
-    <button class="nav-tab" data-view="alerts-view" onclick="showView('alerts-view')">Alerts <span class="alerts-badge" id="alerts-badge">0</span></button>
     <button class="nav-tab" data-view="hub" onclick="showView('hub')">AI Hub</button>
-    <button class="nav-tab" data-view="intelligence" onclick="showView('intelligence')">AI Intelligence <span class="alerts-badge" id="intel-badge" style="background:#6366f1">0</span></button>
+    <button class="nav-tab" data-view="intelligence" onclick="showView('intelligence')">AI Intelligence <span class="alerts-badge" id="intel-badge" style="background:#6366f1">0</span><span class="alerts-badge" id="alerts-badge" style="display:none">0</span></button>
   </div>
   <div class="status">
     <div class="dot" id="conn-dot"></div>
@@ -1040,7 +1162,7 @@ tr:hover td{background:#ffffff06}
       <div class="section-title" style="margin-top:24px">
         <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
         Active Alerts <span id="alert-count" style="font-size:12px;color:var(--text2);font-weight:400"></span>
-        <span style="margin-left:auto;cursor:pointer;font-size:12px;color:var(--accent2)" onclick="showView('alerts-view')">View All &#8594;</span>
+        <span style="margin-left:auto;cursor:pointer;font-size:12px;color:var(--accent2)" onclick="showView('intelligence')">View All &#8594;</span>
       </div>
       <div id="alert-widget" class="card" style="padding:0;overflow:hidden">
         <div style="padding:16px;text-align:center;color:var(--text2);font-size:13px">Loading alerts...</div>
@@ -1263,61 +1385,7 @@ tr:hover td{background:#ffffff06}
 </div>
 
 <!-- Alerts View -->
-<div id="view-alerts-view" class="container" style="display:none">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-    <div class="section-title" style="margin:0">Alerts &amp; Events</div>
-    <div class="refresh-bar">
-      <span id="alerts-countdown"></span>
-      <button onclick="loadAlertsView()">Refresh Now</button>
-    </div>
-  </div>
-
-  <!-- Severity summary bar -->
-  <div class="severity-bar" id="alerts-severity-bar">
-    <div class="severity-stat"><span class="severity-dot crit"></span> <span id="sev-crit-count">0</span> Critical</div>
-    <div class="severity-stat"><span class="severity-dot warn"></span> <span id="sev-warn-count">0</span> Warning</div>
-    <div class="severity-stat"><span class="severity-dot info"></span> <span id="sev-info-count">0</span> Info</div>
-    <div class="severity-stat" style="margin-left:auto"><span class="severity-dot ok"></span> Total: <span id="sev-total-count">0</span></div>
-  </div>
-
-  <!-- Alert trends (24h) -->
-  <div>
-    <div class="trends-header">
-      <span class="title">Alert Trend (24h)</span>
-      <span class="legend"><span><span class="dot" style="background:var(--crit)"></span> Critical</span><span><span class="dot" style="background:var(--warn)"></span> Warning</span></span>
-    </div>
-    <div class="trends-chart" id="alerts-trends-chart">
-      <div style="width:100%;text-align:center;font-size:11px;color:var(--text2)">Loading trend data...</div>
-    </div>
-  </div>
-
-  <!-- Filters toolbar -->
-  <div class="alerts-toolbar">
-    <select id="alert-filter-severity" onchange="renderAlertsView()">
-      <option value="all">All Severities</option>
-      <option value="critical">Critical</option>
-      <option value="warning">Warning</option>
-      <option value="info">Info</option>
-    </select>
-    <select id="alert-filter-source" onchange="renderAlertsView()">
-      <option value="all">All Sources</option>
-      <option value="alertmanager">Alertmanager</option>
-      <option value="events">K8s Events</option>
-    </select>
-    <select id="alert-filter-namespace" onchange="renderAlertsView()">
-      <option value="all">All Namespaces</option>
-    </select>
-    <input type="text" id="alert-search" placeholder="Search alerts..." oninput="renderAlertsView()">
-    <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text2);cursor:pointer;white-space:nowrap">
-      <input type="checkbox" id="alert-show-silenced" onchange="renderAlertsView()"> Show silenced
-    </label>
-  </div>
-
-  <!-- Alerts list -->
-  <div class="card" style="padding:0;overflow:hidden" id="alerts-list-card">
-    <div style="padding:24px;text-align:center;color:var(--text2);font-size:13px">Loading alerts...</div>
-  </div>
-</div>
+<!-- Alerts view merged into AI Intelligence below -->
 
 <!-- Settings View -->
 <div id="view-settings" class="container" style="display:none">
@@ -1739,78 +1807,135 @@ tr:hover td{background:#ffffff06}
 
 <!-- AI Intelligence View -->
 <div id="view-intelligence" class="container" style="display:none">
-  <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
-    <div>
-      <div class="section-title" style="margin:0">AI Intelligence</div>
-      <div style="font-size:12px;color:var(--text2);margin-top:4px">Proactive monitoring, predictions, knowledge base, and automation</div>
-    </div>
-    <div style="margin-left:auto;display:flex;gap:8px">
-      <div id="intel-monitor-status" style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 14px;font-size:12px"></div>
+
+  <!-- Hero header -->
+  <div class="ai-cmd-hero">
+    <div class="ai-cmd-hero-glow"></div>
+    <div class="ai-cmd-hero-inner">
+      <div class="ai-cmd-title">
+        <div class="ai-cmd-pulse"><span></span></div>
+        <div>
+          <div class="ai-cmd-name">AI Intelligence Command Center</div>
+          <div class="ai-cmd-sub">Real-time alerts &middot; Auto-investigated by AI &middot; One-click remediation</div>
+        </div>
+      </div>
+      <div class="ai-cmd-stats">
+        <div class="ai-cmd-stat" style="--c:#ef4444"><div class="v" id="aic-critical">0</div><div class="l">Critical</div></div>
+        <div class="ai-cmd-stat" style="--c:#f59e0b"><div class="v" id="aic-warning">0</div><div class="l">Warning</div></div>
+        <div class="ai-cmd-stat" style="--c:#6366f1"><div class="v" id="aic-predictions">0</div><div class="l">Predicted</div></div>
+        <div class="ai-cmd-stat" style="--c:#22c55e"><div class="v" id="aic-resolved">0</div><div class="l">Auto-Fixed</div></div>
+        <div class="ai-cmd-stat" style="--c:#a855f7"><div class="v" id="aic-investigating">0</div><div class="l">Investigating</div></div>
+      </div>
+      <div class="ai-cmd-status">
+        <span id="aic-monitor-status">Initializing...</span>
+        <span class="ai-cmd-sep">&bull;</span>
+        <span id="aic-countdown">Auto-refresh in 30s</span>
+        <span class="ai-cmd-sep">&bull;</span>
+        <button class="ai-cmd-btn" onclick="loadIntelligenceView()">&#x21BB; Refresh</button>
+        <button class="ai-cmd-btn" onclick="aicToggleAutoFix()" id="aic-autofix-btn">&#x1F916; Auto-Fix: <span id="aic-autofix-state">OFF</span></button>
+      </div>
     </div>
   </div>
 
-  <!-- Summary Cards -->
-  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
-    <div class="card" style="text-align:center;border-top:3px solid #ef4444">
-      <div style="font-size:24px;font-weight:700" id="intel-critical">0</div>
-      <div style="font-size:11px;color:var(--text2)">Critical Issues</div>
+  <!-- Alert Triage — main feature -->
+  <div class="ai-section">
+    <div class="ai-section-head">
+      <div class="ai-section-title">
+        <span class="ai-section-icon" style="background:linear-gradient(135deg,#ef4444,#f59e0b)">&#x26A1;</span>
+        <div>
+          <div class="ai-section-name">Live Alert Feed</div>
+          <div class="ai-section-sub">Each alert is automatically investigated by AI within seconds</div>
+        </div>
+      </div>
+      <div class="ai-section-actions">
+        <span id="aic-trends-mini" class="aic-trends-mini" title="24h trend"></span>
+      </div>
     </div>
-    <div class="card" style="text-align:center;border-top:3px solid #f59e0b">
-      <div style="font-size:24px;font-weight:700" id="intel-warnings">0</div>
-      <div style="font-size:11px;color:var(--text2)">Warnings</div>
+
+    <!-- Severity pills (filters) -->
+    <div class="aic-pills">
+      <button class="aic-pill active" data-sev="all" onclick="aicSetSeverityFilter('all')"><span>All</span><span class="ct" id="aic-pill-all">0</span></button>
+      <button class="aic-pill crit" data-sev="critical" onclick="aicSetSeverityFilter('critical')"><span>&#x1F534; Critical</span><span class="ct" id="aic-pill-crit">0</span></button>
+      <button class="aic-pill warn" data-sev="warning" onclick="aicSetSeverityFilter('warning')"><span>&#x1F7E0; Warning</span><span class="ct" id="aic-pill-warn">0</span></button>
+      <button class="aic-pill info" data-sev="info" onclick="aicSetSeverityFilter('info')"><span>&#x1F535; Info</span><span class="ct" id="aic-pill-info">0</span></button>
+      <div class="aic-search-wrap">
+        <input type="text" id="aic-search" placeholder="Search alerts, namespaces, resources..." oninput="renderUnifiedAlerts()">
+        <select id="aic-cluster-filter" onchange="renderUnifiedAlerts()" title="Filter by cluster">
+          <option value="all">All Clusters</option>
+        </select>
+        <select id="aic-ns-filter" onchange="renderUnifiedAlerts()" title="Filter by namespace">
+          <option value="all">All Namespaces</option>
+        </select>
+        <label class="aic-toggle" title="Group alerts by root cause">
+          <input type="checkbox" id="aic-group-toggle" onchange="renderUnifiedAlerts()"> Group similar
+        </label>
+      </div>
     </div>
-    <div class="card" style="text-align:center;border-top:3px solid #6366f1">
-      <div style="font-size:24px;font-weight:700" id="intel-predictions">0</div>
-      <div style="font-size:11px;color:var(--text2)">Predictions</div>
-    </div>
-    <div class="card" style="text-align:center;border-top:3px solid #22c55e">
-      <div style="font-size:24px;font-weight:700" id="intel-kb-count">0</div>
-      <div style="font-size:11px;color:var(--text2)">KB Entries</div>
+
+    <!-- Alert cards -->
+    <div id="aic-alerts-list" class="aic-alerts-list">
+      <div class="aic-empty">Loading alerts...</div>
     </div>
   </div>
 
-  <!-- Proactive Insights -->
-  <div class="card" style="margin-bottom:16px">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-      <span style="font-weight:600;font-size:14px">Proactive Insights</span>
-      <span style="font-size:11px;color:var(--text2)">AI-detected issues — no query needed</span>
-      <button onclick="loadIntelligenceView()" style="margin-left:auto;background:none;border:1px solid var(--border);border-radius:4px;padding:4px 10px;color:var(--text);cursor:pointer;font-size:11px">Refresh</button>
+  <!-- Predictive Intelligence + Automation -->
+  <div class="ai-grid-2">
+    <div class="ai-section">
+      <div class="ai-section-head">
+        <div class="ai-section-title">
+          <span class="ai-section-icon" style="background:linear-gradient(135deg,#6366f1,#a855f7)">&#x1F52E;</span>
+          <div>
+            <div class="ai-section-name">Predictive Intelligence</div>
+            <div class="ai-section-sub">Forecasted issues based on trend analysis</div>
+          </div>
+        </div>
+        <button class="ai-cmd-btn" onclick="runPredictions()">Analyze Now</button>
+      </div>
+      <div id="intel-predictions-list" class="aic-predictions"></div>
     </div>
-    <div id="intel-insights-list" style="max-height:350px;overflow-y:auto"></div>
-  </div>
 
-  <!-- Predictions -->
-  <div class="card" style="margin-bottom:16px">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-      <span style="font-weight:600;font-size:14px">Predictive Intelligence</span>
-      <span style="font-size:11px;color:var(--text2)">Forecasted issues based on trend analysis</span>
-      <button onclick="runPredictions()" style="margin-left:auto;background:none;border:1px solid var(--border);border-radius:4px;padding:4px 10px;color:var(--text);cursor:pointer;font-size:11px">Analyze Now</button>
+    <div class="ai-section">
+      <div class="ai-section-head">
+        <div class="ai-section-title">
+          <span class="ai-section-icon" style="background:linear-gradient(135deg,#22c55e,#10b981)">&#x1F916;</span>
+          <div>
+            <div class="ai-section-name">Automation Rules</div>
+            <div class="ai-section-sub">Natural language triggers — "When X, do Y"</div>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <input type="text" id="intel-rule-input" placeholder='e.g. "When a pod OOMKills in production, notify Slack"' style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:12px;outline:none" onkeydown="if(event.key==='Enter')createAutomationRule()">
+        <button onclick="createAutomationRule()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 16px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap">Create</button>
+      </div>
+      <div id="intel-rule-status" style="font-size:12px;margin-bottom:8px"></div>
+      <div id="intel-rules-list"></div>
     </div>
-    <div id="intel-predictions-list"></div>
-  </div>
-
-  <!-- Automation Rules -->
-  <div class="card" style="margin-bottom:16px">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-      <span style="font-weight:600;font-size:14px">Automation Rules</span>
-      <span style="font-size:11px;color:var(--text2)">Natural language triggers — "When X happens, do Y"</span>
-    </div>
-    <div style="display:flex;gap:8px;margin-bottom:12px">
-      <input type="text" id="intel-rule-input" placeholder='e.g. "When a pod OOMKills in production, create ServiceNow incident and notify Slack"' style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:12px;outline:none" onkeydown="if(event.key==='Enter')createAutomationRule()">
-      <button onclick="createAutomationRule()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 16px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap">Create Rule</button>
-    </div>
-    <div id="intel-rule-status" style="font-size:12px;margin-bottom:8px"></div>
-    <div id="intel-rules-list"></div>
   </div>
 
   <!-- Knowledge Base -->
-  <div class="card">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-      <span style="font-weight:600;font-size:14px">Knowledge Base</span>
-      <span style="font-size:11px;color:var(--text2)">Learned resolutions from past incidents</span>
-      <span style="margin-left:auto;font-size:11px;color:var(--text2)" id="intel-kb-stats"></span>
+  <div class="ai-section">
+    <div class="ai-section-head">
+      <div class="ai-section-title">
+        <span class="ai-section-icon" style="background:linear-gradient(135deg,#0ea5e9,#06b6d4)">&#x1F4DA;</span>
+        <div>
+          <div class="ai-section-name">Knowledge Base</div>
+          <div class="ai-section-sub">Learned resolutions from past incidents</div>
+        </div>
+      </div>
+      <span style="font-size:11px;color:var(--text2)" id="intel-kb-stats"></span>
     </div>
-    <div id="intel-kb-list" style="max-height:300px;overflow-y:auto"></div>
+    <div id="intel-kb-list" class="aic-kb-list"></div>
+  </div>
+
+  <!-- Hidden compatibility shims for old IDs (referenced by legacy code) -->
+  <div style="display:none">
+    <div id="intel-critical">0</div>
+    <div id="intel-warnings">0</div>
+    <div id="intel-predictions">0</div>
+    <div id="intel-kb-count">0</div>
+    <div id="intel-monitor-status"></div>
+    <div id="intel-insights-list"></div>
   </div>
 </div>
 
@@ -2653,7 +2778,9 @@ loadLLMConfig();
 // View switching — Dashboard vs AI Chat
 // ---------------------------------------------------------------------------
 function showView(view) {
-  const views = ['dashboard', 'chat', 'audit', 'alerts-view', 'settings', 'hub', 'intelligence'];
+  // Alerts is now merged into AI Intelligence
+  if (view === 'alerts-view' || view === 'alerts') view = 'intelligence';
+  const views = ['dashboard', 'chat', 'audit', 'settings', 'hub', 'intelligence'];
   const tabs = document.querySelectorAll('.nav-tab');
   tabs.forEach(t => t.classList.toggle('active', t.dataset.view === view));
 
@@ -2675,8 +2802,6 @@ function showView(view) {
     setTimeout(function() { document.getElementById('full-chat-input')?.focus(); }, 200);
   } else if (view === 'audit') {
     loadAuditView();
-  } else if (view === 'alerts-view') {
-    loadAlertsView();
   } else if (view === 'settings') {
     loadSettings();
   } else if (view === 'hub') {
@@ -3925,13 +4050,42 @@ async function loadAuditView() {
 }
 
 // ---------------------------------------------------------------------------
-// Alerts view — unified loader, filters, auto-refresh
+// AI Intelligence Command Center — unified alert feed with AI auto-investigation
 // ---------------------------------------------------------------------------
 let _alertsData = [];
 let _alertsCountdown = 30;
 let _alertsTimer = null;
+let _aicSeverityFilter = 'all';
+let _aicAutoFix = false;
+const _aicInvestigationCache = new Map(); // alertKey -> { ts, analysis, status }
+const AIC_INVESTIGATION_TTL_MS = 10 * 60 * 1000;
+
+function aicAlertKey(a) {
+  return (a.name || '') + '|' + (a.namespace || '') + '|' + (a.resource || '');
+}
+
+function aicSetSeverityFilter(sev) {
+  _aicSeverityFilter = sev;
+  document.querySelectorAll('.aic-pill').forEach(function(p) {
+    p.classList.toggle('active', p.dataset.sev === sev);
+  });
+  renderUnifiedAlerts();
+}
+
+function aicToggleAutoFix() {
+  _aicAutoFix = !_aicAutoFix;
+  var el = document.getElementById('aic-autofix-state');
+  if (el) el.textContent = _aicAutoFix ? 'ON' : 'OFF';
+  var btn = document.getElementById('aic-autofix-btn');
+  if (btn) btn.style.background = _aicAutoFix ? '#22c55e' : '#1e293b';
+}
 
 async function loadAlertsView() {
+  // Backwards-compat alias — funnels to unified loader
+  return loadIntelligenceView();
+}
+
+async function loadUnifiedAlerts() {
   try {
     const [alertsResp] = await Promise.all([
       fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts').then(r => r.json()),
@@ -3944,103 +4098,281 @@ async function loadAlertsView() {
     const nonSilenced = _alertsData.filter(a => !a.silenced);
     updateAlertsBadge(nonSilenced.length);
 
-    document.getElementById('sev-crit-count').textContent = summary.critical;
-    document.getElementById('sev-warn-count').textContent = summary.warning;
-    document.getElementById('sev-info-count').textContent = summary.info;
-    document.getElementById('sev-total-count').textContent = _alertsData.length;
+    // Update hero stat cards
+    var elC = document.getElementById('aic-critical');
+    var elW = document.getElementById('aic-warning');
+    if (elC) elC.textContent = summary.critical;
+    if (elW) elW.textContent = summary.warning;
+
+    // Update severity pills
+    var pAll = document.getElementById('aic-pill-all');
+    var pCrit = document.getElementById('aic-pill-crit');
+    var pWarn = document.getElementById('aic-pill-warn');
+    var pInfo = document.getElementById('aic-pill-info');
+    if (pAll) pAll.textContent = _alertsData.length;
+    if (pCrit) pCrit.textContent = summary.critical;
+    if (pWarn) pWarn.textContent = summary.warning;
+    if (pInfo) pInfo.textContent = summary.info;
 
     // Populate namespace filter
     const nsSet = new Set(_alertsData.map(a => a.namespace).filter(Boolean));
-    const nsSel = document.getElementById('alert-filter-namespace');
-    const curNs = nsSel.value;
-    nsSel.innerHTML = '<option value="all">All Namespaces</option>' +
-      [...nsSet].sort().map(ns => '<option value="' + esc(ns) + '">' + esc(ns) + '</option>').join('');
-    nsSel.value = nsSet.has(curNs) ? curNs : 'all';
+    const nsSel = document.getElementById('aic-ns-filter');
+    if (nsSel) {
+      const curNs = nsSel.value;
+      nsSel.innerHTML = '<option value="all">All Namespaces</option>' +
+        [...nsSet].sort().map(ns => '<option value="' + esc(ns) + '">' + esc(ns) + '</option>').join('');
+      nsSel.value = nsSet.has(curNs) ? curNs : 'all';
+    }
 
-    renderAlertsView();
+    // Populate cluster filter (pulled from registered clusters if available)
+    var clusterSel = document.getElementById('aic-cluster-filter');
+    if (clusterSel && typeof _remoteAgents !== 'undefined') {
+      var clusters = Object.keys(_remoteAgents || {});
+      var cur = clusterSel.value;
+      var opts = '<option value="all">All Clusters</option><option value="local">Local</option>';
+      clusters.forEach(function(c) { opts += '<option value="' + esc(c) + '">' + esc(c) + '</option>'; });
+      clusterSel.innerHTML = opts;
+      clusterSel.value = cur || 'all';
+    }
+
+    renderUnifiedAlerts();
     resetAlertsCountdown();
   } catch (e) {
-    document.getElementById('alerts-list-card').innerHTML = '<div style="padding:24px;text-align:center;color:var(--crit)">Alerts unavailable: ' + esc(e.message) + '</div>';
+    var el = document.getElementById('aic-alerts-list');
+    if (el) el.innerHTML = '<div class="aic-empty" style="color:var(--crit)">Alerts unavailable: ' + esc(e.message) + '</div>';
   }
 }
 
-function renderAlertsView() {
-  const container = document.getElementById('alerts-list-card');
-  const sevFilter = document.getElementById('alert-filter-severity').value;
-  const srcFilter = document.getElementById('alert-filter-source').value;
-  const nsFilter = document.getElementById('alert-filter-namespace').value;
-  const search = (document.getElementById('alert-search').value || '').toLowerCase();
-  const showSilenced = document.getElementById('alert-show-silenced').checked;
+function renderUnifiedAlerts() {
+  const container = document.getElementById('aic-alerts-list');
+  if (!container) return;
+  const search = (document.getElementById('aic-search')?.value || '').toLowerCase();
+  const nsFilter = document.getElementById('aic-ns-filter')?.value || 'all';
+  const clusterFilter = document.getElementById('aic-cluster-filter')?.value || 'all';
+  const groupSimilar = !!document.getElementById('aic-group-toggle')?.checked;
 
   let filtered = _alertsData.filter(a => {
-    if (!showSilenced && a.silenced) return false;
-    if (sevFilter !== 'all' && a.severity !== sevFilter) return false;
-    if (srcFilter !== 'all' && a.source !== srcFilter) return false;
+    if (a.silenced) return false;
+    if (_aicSeverityFilter !== 'all' && a.severity !== _aicSeverityFilter) return false;
     if (nsFilter !== 'all' && a.namespace !== nsFilter) return false;
-    if (search && !(a.name + ' ' + a.resource + ' ' + a.summary + ' ' + a.namespace).toLowerCase().includes(search)) return false;
+    if (clusterFilter !== 'all') {
+      var ac = a.cluster || 'local';
+      if (ac !== clusterFilter) return false;
+    }
+    if (search && !(a.name + ' ' + (a.resource || '') + ' ' + (a.summary || '') + ' ' + (a.namespace || '')).toLowerCase().includes(search)) return false;
     return true;
   });
 
   if (filtered.length === 0 && _alertsData.length === 0) {
-    container.innerHTML = '<div class="alert-healthy">' +
-      '<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>' +
-      '<div class="title">All Systems Healthy</div>' +
-      '<div class="subtitle">No active alerts or warning events detected across the cluster</div></div>';
+    container.innerHTML = '<div class="aic-empty ok">' +
+      '<div style="font-size:48px;margin-bottom:8px">&#x2705;</div>' +
+      '<div>All Systems Healthy</div>' +
+      '<div style="font-size:12px;color:var(--text2);margin-top:4px;font-weight:400">No active alerts detected. AI is continuously monitoring.</div>' +
+    '</div>';
     return;
   }
-
   if (filtered.length === 0) {
-    container.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text2);font-size:13px">No alerts match the current filters</div>';
+    container.innerHTML = '<div class="aic-empty">No alerts match the current filters</div>';
     return;
   }
 
-  container.innerHTML = filtered.map((a, i) => {
-    const badgeClass = a.severity === 'critical' ? 'badge-crit' : a.severity === 'warning' ? 'badge-warn' : 'badge-info';
-    const label = a.severity.charAt(0).toUpperCase() + a.severity.slice(1);
-    const srcLabel = a.source === 'alertmanager' ? 'Prometheus' : 'K8s Event';
-    const duration = a.since ? timeAgo(a.since) : '';
-    const isSilenced = !!a.silenced;
-    return '<div class="alert-row' + (isSilenced ? ' silenced' : '') + '">' +
-      '<div class="sev-indicator ' + esc(a.severity) + '"></div>' +
-      '<div class="alert-body">' +
-        '<div class="alert-title">' + esc(a.name) + '</div>' +
-        '<div class="alert-meta">' +
-          '<span class="badge ' + badgeClass + '">' + esc(label) + '</span>' +
-          '<span style="background:var(--border);padding:1px 6px;border-radius:4px;font-size:10px">' + esc(srcLabel) + '</span>' +
-          (a.resource ? '<span>' + esc(a.resource) + '</span>' : '') +
-          (a.namespace ? '<span>' + esc(a.namespace) + '</span>' : '') +
-          (duration ? '<span>' + esc(duration) + '</span>' : '') +
-          (a.count > 1 ? '<span>x' + a.count + '</span>' : '') +
+  // Group similar alerts (same alert name + namespace) if requested
+  var displayList = filtered;
+  if (groupSimilar) {
+    var groups = new Map();
+    filtered.forEach(function(a) {
+      var k = a.name + '|' + (a.namespace || '');
+      if (!groups.has(k)) groups.set(k, { ...a, _groupCount: 1, _groupResources: [a.resource].filter(Boolean) });
+      else {
+        var g = groups.get(k);
+        g._groupCount++;
+        if (a.resource) g._groupResources.push(a.resource);
+      }
+    });
+    displayList = Array.from(groups.values());
+  }
+
+  container.innerHTML = displayList.map(function(a, i) {
+    var sevClass = a.severity === 'critical' ? 'crit' : a.severity === 'warning' ? 'warn' : 'info';
+    var srcLabel = a.source === 'alertmanager' ? 'Prometheus' : 'K8s Event';
+    var duration = a.since ? timeAgo(a.since) : '';
+    var key = aicAlertKey(a);
+    return '<div class="aic-card ' + sevClass + '" data-alert-key="' + esc(key) + '" data-alert-idx="' + i + '">' +
+      '<div class="aic-card-head" onclick="aicToggleCard(' + i + ')">' +
+        '<div class="aic-card-body">' +
+          '<div class="aic-card-row1">' +
+            '<span class="aic-card-name">' + esc(a.name) + '</span>' +
+            '<span class="aic-card-badges">' +
+              '<span class="aic-bg ' + sevClass + '">' + esc(a.severity) + '</span>' +
+              '<span class="aic-bg src">' + esc(srcLabel) + '</span>' +
+              (a.cluster ? '<span class="aic-bg cluster">' + esc(a.cluster) + '</span>' : '') +
+              (a._groupCount > 1 ? '<span class="aic-group-badge">&times;' + a._groupCount + ' similar</span>' : (a.count > 1 ? '<span class="aic-group-badge">&times;' + a.count + '</span>' : '')) +
+            '</span>' +
+          '</div>' +
+          '<div class="aic-card-meta">' +
+            (a.namespace ? '<span>&#x1F4E6; ' + esc(a.namespace) + '</span>' : '') +
+            (a.resource ? '<span>&#x1F517; ' + esc(a.resource) + '</span>' : '') +
+            (duration ? '<span>&#x23F1; ' + esc(duration) + '</span>' : '') +
+          '</div>' +
+          (a.summary ? '<div class="aic-card-summary">' + esc(a.summary) + '</div>' : '') +
         '</div>' +
-        (a.summary ? '<div class="alert-summary">' + esc(a.summary) + '</div>' : '') +
+        '<div class="aic-card-actions" onclick="event.stopPropagation()">' +
+          '<button class="aic-act primary" onclick="aicReinvestigate(' + i + ')" title="Re-run AI analysis">&#x1F9E0; AI</button>' +
+          '<button class="aic-act" onclick="aicOpenInChat(' + i + ')" title="Discuss in chat">&#x1F4AC;</button>' +
+          '<button class="aic-act" onclick="aicSilenceAlert(' + i + ')" title="Silence">&#x1F507;</button>' +
+        '</div>' +
       '</div>' +
-      '<div class="alert-actions">' +
-        '<button data-investigate="' + i + '">Investigate</button>' +
-        (isSilenced
-          ? '<button data-unsilence="' + i + '" style="color:var(--ok)">Unsilence</button>'
-          : '<button data-silence="' + i + '">Silence</button>') +
+      '<div class="aic-ai" id="aic-ai-' + i + '">' +
+        '<div class="aic-ai-head"><span class="aic-ai-spark loading">&#x2728;</span> AI Investigation <span style="color:var(--text2);font-weight:400;text-transform:none;letter-spacing:0">(loading...)</span></div>' +
+        '<div class="aic-ai-loading">AI is analyzing this alert...</div>' +
       '</div>' +
     '</div>';
   }).join('');
 
-  container.querySelectorAll('[data-investigate]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const a = filtered[parseInt(btn.dataset.investigate)];
-      if (a) investigateAlert(a.name, a.namespace, a.resource);
-    });
+  // Auto-investigate visible alerts (queued, not parallel-flooded)
+  aicQueueInvestigations(displayList);
+}
+
+function aicToggleCard(idx) {
+  var card = document.querySelector('.aic-card[data-alert-idx="' + idx + '"]');
+  if (card) card.classList.toggle('aic-card-collapsed');
+}
+
+let _aicQueue = [];
+let _aicProcessing = false;
+const AIC_CONCURRENCY = 2;
+let _aicActive = 0;
+
+function aicQueueInvestigations(alerts) {
+  alerts.forEach(function(a, idx) {
+    var key = aicAlertKey(a);
+    var cached = _aicInvestigationCache.get(key);
+    if (cached && cached.status === 'done' && Date.now() - cached.ts < AIC_INVESTIGATION_TTL_MS) {
+      aicRenderInvestigation(idx, cached.analysis);
+    } else if (cached && cached.status === 'pending') {
+      // already in flight
+    } else {
+      _aicQueue.push({ idx: idx, alert: a, key: key });
+    }
   });
-  container.querySelectorAll('[data-silence]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const a = filtered[parseInt(btn.dataset.silence)];
-      if (a) showSilenceModal(a.name, a.namespace);
-    });
+  aicProcessQueue();
+}
+
+function aicProcessQueue() {
+  while (_aicActive < AIC_CONCURRENCY && _aicQueue.length > 0) {
+    var item = _aicQueue.shift();
+    _aicActive++;
+    _aicInvestigationCache.set(item.key, { status: 'pending', ts: Date.now() });
+
+    var indicatorEl = document.getElementById('aic-investigating');
+    if (indicatorEl) indicatorEl.textContent = _aicActive + _aicQueue.length;
+
+    var opts = (typeof getActiveProviderOpts === 'function') ? getActiveProviderOpts() : { provider: 'none' };
+    fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/analyze', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ alert: item.alert, llmOpts: opts }),
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(analysis) {
+        _aicInvestigationCache.set(item.key, { status: 'done', ts: Date.now(), analysis: analysis });
+        aicRenderInvestigation(item.idx, analysis);
+      })
+      .catch(function(e) {
+        _aicInvestigationCache.set(item.key, { status: 'done', ts: Date.now(), analysis: { error: e.message } });
+        aicRenderInvestigation(item.idx, { error: e.message });
+      })
+      .finally(function() {
+        _aicActive--;
+        var ind = document.getElementById('aic-investigating');
+        if (ind) ind.textContent = _aicActive + _aicQueue.length;
+        aicProcessQueue();
+      });
+  }
+}
+
+function aicRenderInvestigation(idx, analysis) {
+  var el = document.getElementById('aic-ai-' + idx);
+  if (!el) return;
+  if (analysis.error) {
+    el.innerHTML = '<div class="aic-ai-head"><span class="aic-ai-spark">&#x2728;</span> AI Investigation</div>' +
+      '<div class="aic-ai-error">' + esc(analysis.error) + '</div>';
+    return;
+  }
+  var cmdHtml = analysis.fixCommand ? '<div class="aic-ai-fix-cmd"><code>' + esc(analysis.fixCommand) + '</code>' +
+    '<button onclick="aicCopyCmd(this, \'' + esc(analysis.fixCommand).replace(/'/g, "\\'") + '\')">Copy</button>' +
+    '<button onclick="aicRunCmd(\'' + esc(analysis.fixCommand).replace(/'/g, "\\'") + '\', ' + idx + ')" style="background:#22c55e">&#x25B6; Run</button>' +
+    '</div>' : '';
+  el.innerHTML = '<div class="aic-ai-head"><span class="aic-ai-spark">&#x2728;</span> AI Investigation' +
+    (analysis.cached ? ' <span style="color:var(--text2);font-weight:400;text-transform:none;letter-spacing:0">(cached)</span>' : '') +
+    '</div>' +
+    '<div class="aic-ai-grid">' +
+      '<div class="aic-ai-block">' +
+        '<div class="aic-ai-label">&#x1F50D; Root Cause</div>' +
+        '<div class="aic-ai-text">' + esc(analysis.rootCause || '—') + '</div>' +
+      '</div>' +
+      '<div class="aic-ai-block">' +
+        '<div class="aic-ai-label">&#x26A0; Impact</div>' +
+        '<div class="aic-ai-text">' + esc(analysis.impact || '—') + '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="aic-ai-block">' +
+      '<div class="aic-ai-label">&#x1F527; Recommended Fix</div>' +
+      '<div class="aic-ai-text">' + esc(analysis.fix || '—') + '</div>' +
+      cmdHtml +
+    '</div>' +
+    (analysis.preventStrategy ? '<div class="aic-ai-block" style="margin-top:8px">' +
+      '<div class="aic-ai-label">&#x1F6E1; Prevent Recurrence</div>' +
+      '<div class="aic-ai-text">' + esc(analysis.preventStrategy) + '</div>' +
+    '</div>' : '');
+}
+
+function aicCopyCmd(btn, cmd) {
+  navigator.clipboard.writeText(cmd).then(function() {
+    var orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(function() { btn.textContent = orig; }, 1500);
   });
-  container.querySelectorAll('[data-unsilence]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const a = filtered[parseInt(btn.dataset.unsilence)];
-      if (a) unsilenceAlert(a.name, a.namespace);
-    });
-  });
+}
+
+function aicRunCmd(cmd, idx) {
+  if (!confirm('Run this command in chat?\n\n' + cmd)) return;
+  showView('chat');
+  setTimeout(function() {
+    var input = document.getElementById('full-chat-input');
+    if (input) { input.value = cmd; if (typeof sendFullChat === 'function') sendFullChat(cmd); }
+  }, 200);
+}
+
+function aicReinvestigate(idx) {
+  var card = document.querySelector('.aic-card[data-alert-idx="' + idx + '"]');
+  if (!card) return;
+  var key = card.dataset.alertKey;
+  _aicInvestigationCache.delete(key);
+  var el = document.getElementById('aic-ai-' + idx);
+  if (el) el.innerHTML = '<div class="aic-ai-head"><span class="aic-ai-spark loading">&#x2728;</span> AI Investigation <span style="color:var(--text2);font-weight:400;text-transform:none;letter-spacing:0">(re-running...)</span></div><div class="aic-ai-loading">Re-analyzing with current LLM provider...</div>';
+  // Find alert in current data
+  var alerts = _alertsData.filter(function(a) { return !a.silenced; });
+  var a = alerts.find(function(x) { return aicAlertKey(x) === key; });
+  if (a) {
+    _aicQueue.push({ idx: idx, alert: a, key: key });
+    aicProcessQueue();
+  }
+}
+
+function aicOpenInChat(idx) {
+  var card = document.querySelector('.aic-card[data-alert-idx="' + idx + '"]');
+  if (!card) return;
+  var key = card.dataset.alertKey;
+  var a = _alertsData.find(function(x) { return aicAlertKey(x) === key; });
+  if (a) investigateAlert(a.name, a.namespace, a.resource);
+}
+
+function aicSilenceAlert(idx) {
+  var card = document.querySelector('.aic-card[data-alert-idx="' + idx + '"]');
+  if (!card) return;
+  var key = card.dataset.alertKey;
+  var a = _alertsData.find(function(x) { return aicAlertKey(x) === key; });
+  if (a) showSilenceModal(a.name, a.namespace);
 }
 
 function investigateAlert(name, namespace, resource) {
@@ -4057,9 +4389,16 @@ function investigateAlert(name, namespace, resource) {
 
 function updateAlertsBadge(count) {
   const badge = document.getElementById('alerts-badge');
-  if (!badge) return;
-  badge.textContent = String(count);
-  badge.classList.toggle('visible', count > 0);
+  if (badge) {
+    badge.textContent = String(count);
+    badge.classList.toggle('visible', count > 0);
+  }
+  // Also update intel badge with combined critical+warning
+  var intelBadge = document.getElementById('intel-badge');
+  if (intelBadge) {
+    intelBadge.textContent = String(count);
+    intelBadge.style.background = count > 0 ? '#ef4444' : '#6366f1';
+  }
 }
 
 function resetAlertsCountdown() {
@@ -4067,10 +4406,10 @@ function resetAlertsCountdown() {
   if (_alertsTimer) clearInterval(_alertsTimer);
   _alertsTimer = setInterval(() => {
     _alertsCountdown--;
-    const el = document.getElementById('alerts-countdown');
+    const el = document.getElementById('aic-countdown');
     if (el) el.textContent = 'Auto-refresh in ' + _alertsCountdown + 's';
     if (_alertsCountdown <= 0) {
-      loadAlertsView();
+      loadUnifiedAlerts();
     }
   }, 1000);
 }
@@ -4091,31 +4430,24 @@ setTimeout(() => {
 }, 3000);
 
 // ---------------------------------------------------------------------------
-// Alert Trends — 24h bar chart
+// Alert Trends — 24h mini bar chart in section header
 // ---------------------------------------------------------------------------
 async function loadAlertsTrends() {
-  const chart = document.getElementById('alerts-trends-chart');
+  const chart = document.getElementById('aic-trends-mini');
+  if (!chart) return;
   try {
     const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/history');
     const data = await resp.json();
     const buckets = data.buckets || [];
-    if (buckets.length === 0) {
-      chart.innerHTML = '<div style="width:100%;text-align:center;font-size:11px;color:var(--text2)">No trend data</div>';
-      return;
-    }
+    if (buckets.length === 0) { chart.innerHTML = ''; return; }
     const maxVal = Math.max(1, ...buckets.map(b => b.critical + b.warning));
-    chart.innerHTML = buckets.map((b, i) => {
-      const critH = Math.round((b.critical / maxVal) * 48);
-      const warnH = Math.round((b.warning / maxVal) * 48);
-      const showLabel = (i % 3 === 0);
-      return '<div class="bar-group">' +
-        '<div class="bar crit" style="height:' + critH + 'px" title="' + b.critical + ' critical"></div>' +
-        '<div class="bar warn" style="height:' + warnH + 'px" title="' + b.warning + ' warning"></div>' +
-        (showLabel ? '<span class="bar-label">' + esc(b.hour) + '</span>' : '') +
-      '</div>';
+    chart.innerHTML = buckets.map(function(b) {
+      const totalH = Math.round(((b.critical + b.warning) / maxVal) * 22);
+      const isCrit = b.critical > 0;
+      return '<div class="b ' + (isCrit ? '' : 'warn') + '" style="height:' + totalH + 'px" title="' + b.hour + ': ' + b.critical + ' crit / ' + b.warning + ' warn"></div>';
     }).join('');
   } catch {
-    chart.innerHTML = '<div style="width:100%;text-align:center;font-size:11px;color:var(--text2)">Trend data unavailable</div>';
+    chart.innerHTML = '';
   }
 }
 
@@ -4622,7 +4954,7 @@ document.addEventListener('keydown', function(e) {
   if (ctrl && e.key === '1') { e.preventDefault(); showView('dashboard'); return; }
   if (ctrl && e.key === '2') { e.preventDefault(); showView('chat'); return; }
   if (ctrl && e.key === '3') { e.preventDefault(); showView('audit'); return; }
-  if (ctrl && e.key === '4') { e.preventDefault(); showView('alerts-view'); return; }
+  if (ctrl && e.key === '4') { e.preventDefault(); showView('intelligence'); return; }
   if (ctrl && e.key === '5') { e.preventDefault(); showView('hub'); return; }
   if (ctrl && e.key === '6') { e.preventDefault(); toggleSettingsPanel(); return; }
 });
@@ -6074,25 +6406,39 @@ async function runHubOrchestrator() {
 // AI Intelligence View
 // ---------------------------------------------------------------------------
 async function loadIntelligenceView() {
+  // Load alerts first (the primary feature) — runs in parallel with intel data
+  loadUnifiedAlerts();
+
   try {
     var resp = await fetch(MCP_API + '/intelligence/dashboard');
     var data = await resp.json();
 
-    document.getElementById('intel-critical').textContent = data.proactive?.critical || 0;
-    document.getElementById('intel-warnings').textContent = data.proactive?.warning || 0;
-    document.getElementById('intel-predictions').textContent = (data.predictions || []).length;
-    document.getElementById('intel-kb-count').textContent = data.knowledgeBase?.totalEntries || 0;
+    var elPred = document.getElementById('aic-predictions');
+    if (elPred) elPred.textContent = (data.predictions || []).length;
 
-    var badge = document.getElementById('intel-badge');
-    var total = (data.proactive?.critical || 0) + (data.predictions || []).length;
-    if (badge) badge.textContent = total;
+    // Compute auto-resolved count from KB entries (those with high effectiveness)
+    var resolved = 0;
+    try { resolved = (data.knowledgeBase?.totalEntries || 0); } catch(e) {}
+    var elRes = document.getElementById('aic-resolved');
+    if (elRes) elRes.textContent = resolved;
 
-    var monEl = document.getElementById('intel-monitor-status');
-    monEl.innerHTML = data.monitoring
-      ? '<span style="color:#22c55e">&#x2714; Monitor Active</span> &bull; ' + (data.proactive?.total || 0) + ' insights'
-      : '<span style="color:var(--text2)">Monitor Inactive</span>';
+    var monEl = document.getElementById('aic-monitor-status');
+    if (monEl) {
+      monEl.innerHTML = data.monitoring
+        ? '<span style="color:#22c55e">&#x25CF;</span> AI Monitor Active'
+        : '<span style="color:var(--text2)">&#x25CB;</span> Monitor Inactive';
+    }
 
-    renderIntelInsights(data.insights || []);
+    // Legacy compatibility — keep hidden elements in sync
+    var lc = document.getElementById('intel-critical');
+    var lw = document.getElementById('intel-warnings');
+    var lp = document.getElementById('intel-predictions');
+    var lk = document.getElementById('intel-kb-count');
+    if (lc) lc.textContent = data.proactive?.critical || 0;
+    if (lw) lw.textContent = data.proactive?.warning || 0;
+    if (lp) lp.textContent = (data.predictions || []).length;
+    if (lk) lk.textContent = data.knowledgeBase?.totalEntries || 0;
+
     renderIntelPredictions(data.predictions || []);
     renderIntelKBStats(data.knowledgeBase || {});
     loadAutomationRules();
@@ -6126,16 +6472,17 @@ function renderIntelInsights(insights) {
 
 function renderIntelPredictions(predictions) {
   var el = document.getElementById('intel-predictions-list');
+  if (!el) return;
   if (!predictions.length) { el.innerHTML = '<div style="text-align:center;color:var(--text2);padding:20px;font-size:12px">No predictions yet. Trends are being collected.</div>'; return; }
   el.innerHTML = predictions.map(function(p) {
     var sevColor = p.severity === 'critical' ? '#ef4444' : '#f59e0b';
     var conf = Math.round((p.confidence || 0) * 100);
-    return '<div style="display:flex;gap:10px;padding:10px;border-bottom:1px solid var(--border)">' +
-      '<span style="color:' + sevColor + ';font-size:16px">&#x1F52E;</span>' +
-      '<div style="flex:1">' +
-        '<div style="font-weight:600;font-size:12px">' + esc(p.title) + '</div>' +
-        '<div style="font-size:11px;color:var(--text2);margin-top:2px">' + esc(p.prediction || p.detail) + '</div>' +
-        '<div style="font-size:10px;color:var(--text2);margin-top:4px">Confidence: <span style="color:' + (conf > 70 ? '#ef4444' : '#f59e0b') + '">' + conf + '%</span></div>' +
+    return '<div class="aic-pred">' +
+      '<span class="aic-pred-icon" style="color:' + sevColor + '">&#x1F52E;</span>' +
+      '<div class="aic-pred-body">' +
+        '<div class="aic-pred-title">' + esc(p.title) + '</div>' +
+        '<div class="aic-pred-detail">' + esc(p.prediction || p.detail) + '</div>' +
+        '<span class="aic-pred-conf">Confidence: <strong style="color:' + (conf > 70 ? '#ef4444' : '#f59e0b') + '">' + conf + '%</strong></span>' +
       '</div></div>';
   }).join('');
 }
@@ -6175,16 +6522,15 @@ async function loadKBEntries() {
     var resp = await fetch(MCP_API + '/intelligence/kb');
     var data = await resp.json();
     var el = document.getElementById('intel-kb-list');
+    if (!el) return;
     var entries = data.entries || [];
-    if (!entries.length) { el.innerHTML = '<div style="text-align:center;color:var(--text2);padding:12px;font-size:12px">Knowledge base is empty. Resolutions will be recorded as the AI solves issues.</div>'; return; }
+    if (!entries.length) { el.innerHTML = '<div style="text-align:center;color:var(--text2);padding:20px;font-size:12px;grid-column:1/-1">Knowledge base is empty. Resolutions will be recorded as the AI solves issues.</div>'; return; }
     el.innerHTML = entries.slice(0, 20).map(function(e) {
-      return '<div style="padding:8px;border-bottom:1px solid var(--border)">' +
-        '<div style="display:flex;gap:6px;align-items:center">' +
-          '<code style="background:#6366f11a;color:#6366f1;padding:1px 6px;border-radius:4px;font-size:10px">' + esc(e.type || 'unknown') + '</code>' +
-          '<span style="font-size:12px;font-weight:500">' + esc((e.symptoms || '').substring(0, 80)) + '</span>' +
-          '<span style="margin-left:auto;font-size:10px;color:var(--text2)">eff: ' + (e.effectiveness || 0) + '</span>' +
-        '</div>' +
-        '<div style="font-size:11px;color:var(--accent);margin-top:4px">' + esc((e.resolution || '').substring(0, 150)) + '</div>' +
+      return '<div class="aic-kb-item">' +
+        '<span class="aic-kb-eff">eff: ' + (e.effectiveness || 0) + '</span>' +
+        '<div class="aic-kb-type">' + esc(e.type || 'unknown') + '</div>' +
+        '<div class="aic-kb-symptom">' + esc((e.symptoms || '').substring(0, 100)) + '</div>' +
+        '<div class="aic-kb-resolution">' + esc((e.resolution || '').substring(0, 180)) + '</div>' +
       '</div>';
     }).join('');
   } catch(e) { console.error('KB load error:', e); }

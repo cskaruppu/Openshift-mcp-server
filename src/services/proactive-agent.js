@@ -373,3 +373,135 @@ Occurrences: ${insight.count}`;
 export function isMonitorRunning() {
   return _running;
 }
+
+/**
+ * Analyze any cluster alert (Prometheus, K8s event, etc.) with the LLM.
+ * Returns structured root cause / impact / fix. Cached for 10 min per key.
+ */
+const _alertAnalysisCache = new Map();
+const ALERT_ANALYSIS_TTL_MS = 10 * 60 * 1000;
+
+export async function analyzeAlert(alert, llmOpts = {}) {
+  if (!alert || !alert.name) return { error: "Invalid alert" };
+  const key = `${alert.name}|${alert.namespace || ""}|${alert.resource || ""}`;
+  const cached = _alertAnalysisCache.get(key);
+  if (cached && Date.now() - cached.ts < ALERT_ANALYSIS_TTL_MS) {
+    return { ...cached.data, cached: true };
+  }
+
+  if (!llmEnabled(llmOpts)) {
+    const fallback = ruleBasedAlertAnalysis(alert);
+    _alertAnalysisCache.set(key, { ts: Date.now(), data: fallback });
+    return fallback;
+  }
+
+  try {
+    const prompt = `You are a Kubernetes/OpenShift SRE expert. Analyze this cluster alert and respond ONLY with a JSON object (no markdown, no commentary).
+
+Alert: ${alert.name}
+Severity: ${alert.severity || "unknown"}
+Namespace: ${alert.namespace || "n/a"}
+Resource: ${alert.resource || "n/a"}
+Summary: ${alert.summary || "n/a"}
+Source: ${alert.source || "n/a"}
+
+Respond with this exact JSON shape:
+{
+  "rootCause": "1-2 sentence root cause analysis",
+  "impact": "1 sentence describing what is affected and how serious",
+  "fix": "step-by-step fix in 3-5 bullets",
+  "fixCommand": "single kubectl/oc command to remediate (or empty string if not applicable)",
+  "preventStrategy": "1 sentence on prevention"
+}`;
+
+    const result = await callLLM({
+      messages: [{ role: "user", content: prompt }],
+      maxTokens: 600,
+      temperature: 0.2,
+      ...llmOpts,
+    });
+
+    let parsed;
+    try {
+      const text = (result.text || "").trim();
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    } catch { parsed = null; }
+
+    const analysis = parsed || {
+      rootCause: result.text || "AI analysis unavailable",
+      impact: "Unknown impact",
+      fix: "",
+      fixCommand: "",
+      preventStrategy: "",
+    };
+    _alertAnalysisCache.set(key, { ts: Date.now(), data: analysis });
+    return analysis;
+  } catch (err) {
+    const fallback = ruleBasedAlertAnalysis(alert);
+    fallback.error = err.message;
+    return fallback;
+  }
+}
+
+function ruleBasedAlertAnalysis(alert) {
+  const name = (alert.name || "").toLowerCase();
+  const summary = (alert.summary || "").toLowerCase();
+  const ns = alert.namespace || "";
+  const res = alert.resource || "";
+
+  if (name.includes("failedmount") || summary.includes("mountvolume")) {
+    const secMatch = (alert.summary || "").match(/secret\s+"?([^"\s]+)"?\s+not found/i);
+    return {
+      rootCause: "The pod cannot start because a referenced secret/configmap volume does not exist in the namespace.",
+      impact: `Pod ${res} cannot start; service is degraded.`,
+      fix: "1. Verify the secret/configmap name in the pod spec\n2. Create the missing secret in the namespace\n3. Restart the pod",
+      fixCommand: secMatch ? `kubectl get secret ${secMatch[1]} -n ${ns} || kubectl create secret generic ${secMatch[1]} -n ${ns}` : `kubectl describe ${res} -n ${ns}`,
+      preventStrategy: "Use Helm/Kustomize templates to ensure secrets are deployed alongside workloads.",
+    };
+  }
+  if (name.includes("crashloop") || summary.includes("crashloopbackoff")) {
+    return {
+      rootCause: "Container is crashing repeatedly; likely a bad image, missing config, or failing probe.",
+      impact: `Pod ${res} unavailable; user traffic may be affected.`,
+      fix: "1. Check container logs\n2. Verify image tag and entrypoint\n3. Review readiness/liveness probes\n4. Check resource requests/limits",
+      fixCommand: `kubectl logs ${res} -n ${ns} --previous`,
+      preventStrategy: "Add startup probes and validate images in CI before deploy.",
+    };
+  }
+  if (name.includes("oom") || name.includes("memorypressure")) {
+    return {
+      rootCause: "Container exceeded its memory limit and was killed by the kernel OOM killer.",
+      impact: `${res} restarted; in-flight requests dropped.`,
+      fix: "1. Increase memory limit in pod spec\n2. Profile heap usage and optimize\n3. Add HorizontalPodAutoscaler",
+      fixCommand: `kubectl top pod ${res} -n ${ns}`,
+      preventStrategy: "Set requests=limits and monitor working-set memory.",
+    };
+  }
+  if (name.includes("imagepull") || name.includes("errimage")) {
+    return {
+      rootCause: "Kubelet cannot pull the container image — wrong tag, missing registry credentials, or network issue.",
+      impact: `Pod ${res} stuck in ImagePullBackOff; deployment is blocked.`,
+      fix: "1. Verify image name and tag exist in registry\n2. Check imagePullSecrets is set on the pod\n3. Test image pull manually from a node",
+      fixCommand: `kubectl describe pod ${res} -n ${ns}`,
+      preventStrategy: "Use immutable tags and pin image digests.",
+    };
+  }
+  if (name.includes("nodenotready") || name.includes("nodedown")) {
+    return {
+      rootCause: "Node has stopped reporting to the control plane; kubelet may be down or network is partitioned.",
+      impact: "All pods on the node are unschedulable; cluster capacity reduced.",
+      fix: "1. SSH to the node and check kubelet status\n2. Verify node network connectivity\n3. Drain and reboot if necessary",
+      fixCommand: `kubectl describe node ${res || "<node>"}`,
+      preventStrategy: "Enable node auto-repair and monitor kubelet heartbeats.",
+    };
+  }
+
+  return {
+    rootCause: `Alert "${alert.name}" fired with severity ${alert.severity || "unknown"}.`,
+    impact: alert.summary || "See alert details.",
+    fix: "Review the alert summary, check recent events, and consult the runbook for this alert.",
+    fixCommand: ns && res ? `kubectl describe ${res} -n ${ns}` : "",
+    preventStrategy: "Add a runbook entry for this alert in your knowledge base.",
+  };
+}
