@@ -410,7 +410,7 @@ Respond with this exact JSON shape:
   "rootCause": "1-2 sentence root cause analysis",
   "impact": "1 sentence describing what is affected and how serious",
   "fix": "step-by-step fix in 3-5 bullets",
-  "fixCommand": "single kubectl/oc command to remediate (or empty string if not applicable)",
+  "fixCommand": "single kubectl command using ONLY these verbs: get, describe, logs, top, events, scale, rollout restart, delete pod. Always include -n <namespace>. Empty string if no safe one-liner exists.",
   "preventStrategy": "1 sentence on prevention"
 }`;
 
@@ -455,35 +455,38 @@ function ruleBasedAlertAnalysis(alert) {
     return {
       rootCause: "The pod cannot start because a referenced secret/configmap volume does not exist in the namespace.",
       impact: `Pod ${res} cannot start; service is degraded.`,
-      fix: "1. Verify the secret/configmap name in the pod spec\n2. Create the missing secret in the namespace\n3. Restart the pod",
-      fixCommand: secMatch ? `kubectl get secret ${secMatch[1]} -n ${ns} || kubectl create secret generic ${secMatch[1]} -n ${ns}` : `kubectl describe ${res} -n ${ns}`,
+      fix: "1. Verify the secret/configmap name in the pod spec\n2. Create the missing secret in the namespace\n3. Delete the pod so it gets re-scheduled with the new secret",
+      fixCommand: secMatch && ns ? `kubectl get secret ${secMatch[1]} -n ${ns}` : (ns && extractPodName(res) ? `kubectl describe pod ${extractPodName(res)} -n ${ns}` : ""),
       preventStrategy: "Use Helm/Kustomize templates to ensure secrets are deployed alongside workloads.",
     };
   }
   if (name.includes("crashloop") || summary.includes("crashloopbackoff")) {
+    const podName = extractPodName(res);
     return {
       rootCause: "Container is crashing repeatedly; likely a bad image, missing config, or failing probe.",
       impact: `Pod ${res} unavailable; user traffic may be affected.`,
-      fix: "1. Check container logs\n2. Verify image tag and entrypoint\n3. Review readiness/liveness probes\n4. Check resource requests/limits",
-      fixCommand: `kubectl logs ${res} -n ${ns} --previous`,
+      fix: "1. Check container logs (Run will show recent logs)\n2. Verify image tag and entrypoint\n3. Review readiness/liveness probes\n4. Delete the pod to retry",
+      fixCommand: ns && podName ? `kubectl logs ${podName} -n ${ns} --previous` : "",
       preventStrategy: "Add startup probes and validate images in CI before deploy.",
     };
   }
   if (name.includes("oom") || name.includes("memorypressure")) {
+    const podName = extractPodName(res);
     return {
       rootCause: "Container exceeded its memory limit and was killed by the kernel OOM killer.",
       impact: `${res} restarted; in-flight requests dropped.`,
-      fix: "1. Increase memory limit in pod spec\n2. Profile heap usage and optimize\n3. Add HorizontalPodAutoscaler",
-      fixCommand: `kubectl top pod ${res} -n ${ns}`,
+      fix: "1. Check memory usage with the Run button\n2. Increase memory limit in pod spec\n3. Profile heap usage\n4. Add HorizontalPodAutoscaler",
+      fixCommand: ns && podName ? `kubectl top pod ${podName} -n ${ns}` : "",
       preventStrategy: "Set requests=limits and monitor working-set memory.",
     };
   }
   if (name.includes("imagepull") || name.includes("errimage")) {
+    const podName = extractPodName(res);
     return {
       rootCause: "Kubelet cannot pull the container image — wrong tag, missing registry credentials, or network issue.",
       impact: `Pod ${res} stuck in ImagePullBackOff; deployment is blocked.`,
-      fix: "1. Verify image name and tag exist in registry\n2. Check imagePullSecrets is set on the pod\n3. Test image pull manually from a node",
-      fixCommand: `kubectl describe pod ${res} -n ${ns}`,
+      fix: "1. Verify image name and tag exist in registry\n2. Check imagePullSecrets is set on the pod\n3. Click Run to see the pod's full description",
+      fixCommand: ns && podName ? `kubectl describe pod ${podName} -n ${ns}` : "",
       preventStrategy: "Use immutable tags and pin image digests.",
     };
   }
@@ -492,16 +495,24 @@ function ruleBasedAlertAnalysis(alert) {
       rootCause: "Node has stopped reporting to the control plane; kubelet may be down or network is partitioned.",
       impact: "All pods on the node are unschedulable; cluster capacity reduced.",
       fix: "1. SSH to the node and check kubelet status\n2. Verify node network connectivity\n3. Drain and reboot if necessary",
-      fixCommand: `kubectl describe node ${res || "<node>"}`,
+      fixCommand: res ? `kubectl describe node ${res}` : "",
       preventStrategy: "Enable node auto-repair and monitor kubelet heartbeats.",
     };
   }
 
+  const fallbackPod = extractPodName(res);
   return {
     rootCause: `Alert "${alert.name}" fired with severity ${alert.severity || "unknown"}.`,
     impact: alert.summary || "See alert details.",
     fix: "Review the alert summary, check recent events, and consult the runbook for this alert.",
-    fixCommand: ns && res ? `kubectl describe ${res} -n ${ns}` : "",
+    fixCommand: ns && fallbackPod ? `kubectl describe pod ${fallbackPod} -n ${ns}` : "",
     preventStrategy: "Add a runbook entry for this alert in your knowledge base.",
   };
+}
+
+// Resource strings often look like "pod/foo-bar-123" or just "foo-bar-123"
+function extractPodName(res) {
+  if (!res) return "";
+  const m = res.match(/^(?:pod\/)?([^\/\s]+)/);
+  return m ? m[1] : "";
 }

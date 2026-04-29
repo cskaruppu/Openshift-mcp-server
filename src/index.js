@@ -98,6 +98,7 @@ import {
   analyzeAlert,
   isMonitorRunning,
 } from "./services/proactive-agent.js";
+import { executeFixCommand } from "./services/fix-executor.js";
 import {
   initKnowledgeBase,
   recordResolution,
@@ -1036,6 +1037,17 @@ async function startSSE() {
         return sendJson(res, 200, result);
       } catch (e) {
         return sendJson(res, 500, { error: e.message });
+      }
+    }
+
+    // POST /api/alerts/execute-fix — runs a kubectl/oc command (dry-run or real)
+    if (req.method === "POST" && url.pathname === "/api/alerts/execute-fix") {
+      try {
+        const body = await readJsonBody(req);
+        const result = await executeFixCommand(body.command || "", { dryRun: !!body.dryRun });
+        return sendJson(res, 200, result);
+      } catch (e) {
+        return sendJson(res, 500, { success: false, stderr: e.message });
       }
     }
 
