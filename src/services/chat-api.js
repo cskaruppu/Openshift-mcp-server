@@ -2436,9 +2436,115 @@ function builtInAnalysis(userMessage, ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// Security remediation helpers
+// ---------------------------------------------------------------------------
+
+const SECURITY_REMEDIATION_PROMPT = `You are a Kubernetes and OpenShift security expert. Analyze the following security findings from a live cluster scan and provide DETAILED, SPECIFIC remediation steps.
+
+CRITICAL REQUIREMENTS:
+1. For EACH finding, provide the EXACT oc/kubectl commands to fix the specific resources listed (use real namespace, pod, deployment names from the findings).
+2. Wrap each executable command in @@SEC_FIX_CMD|<command>@@ tags so the UI can render Dry Run / Run buttons.
+3. Prioritize by severity — CRITICAL findings first.
+4. For privileged containers: provide oc patch commands to set securityContext.privileged=false on the owning Deployment/DaemonSet/StatefulSet.
+5. For run-as-root: provide oc patch commands to set runAsNonRoot=true and runAsUser=1000.
+6. For missing resource limits: provide oc patch commands to add CPU/memory limits.
+7. For hostNetwork: explain which workloads can safely remove it and which cannot (e.g. CNI plugins, ingress controllers).
+8. For missing NetworkPolicies: provide oc apply commands with inline YAML for default-deny policies per namespace.
+9. For :latest images: provide oc set image commands with pinned tags.
+10. Include a "Verification" step after each remediation to confirm the fix worked.
+11. Warn about any commands that could cause service disruption and recommend doing them in maintenance windows.
+12. For OpenShift-specific resources, recommend appropriate SCCs (restricted, nonroot, anyuid) instead of generic Pod Security Standards.
+
+FORMAT:
+- Use markdown headers (###) for each finding section
+- Use numbered steps for remediation
+- Use @@SEC_FIX_CMD|<exact oc/kubectl command>@@ for executable commands
+- Add brief explanation before each command
+- Include verification commands after fixes
+
+IMPORTANT: Generate REAL commands with the ACTUAL resource names from the findings. Do NOT use placeholders like <pod-name> — use the real names provided.`;
+
+async function generateSecurityRemediation(findings, score, grade, llmOpts) {
+  const findingsSummary = findings.map((f) => {
+    const itemLines = f.items.map((it) => {
+      const parts = [it.namespace, it.pod, it.container, it.image].filter(Boolean);
+      return `    - ${parts.join(" / ")}`;
+    }).join("\n");
+    return `[${f.severity}] ${f.title} (type: ${f.type})\n  Why: ${f.why}\n  Affected resources:\n${itemLines}${f.total > f.items.length ? `\n    ... and ${f.total - f.items.length} more` : ""}`;
+  }).join("\n\n");
+
+  const userPrompt = `Security scan results — Score: ${score}/100, Grade: ${grade}
+
+${findingsSummary}
+
+Provide detailed, step-by-step remediation with executable oc/kubectl commands for each finding. Use the real resource names listed above.`;
+
+  const r = await callLLM({
+    messages: [{ role: "user", content: userPrompt }],
+    system: SECURITY_REMEDIATION_PROMPT,
+    maxTokens: 4000,
+    temperature: 0.2,
+    provider: llmOpts.provider,
+    apiUrl: llmOpts.apiUrl,
+    apiKey: llmOpts.apiKey,
+    model: llmOpts.model,
+    azureDeployment: llmOpts.azureDeployment,
+    azureApiVersion: llmOpts.azureApiVersion,
+  });
+
+  return r.text || null;
+}
+
+function appendBuiltInRemediation(lines, findings) {
+  for (const f of findings) {
+    lines.push(`**Remediation for ${f.title}:**`);
+    switch (f.type) {
+      case "privileged":
+        for (const it of f.items.slice(0, 3)) {
+          lines.push(`  - Patch the deployment owning \`${it.pod}\` in \`${it.namespace}\`:`);
+          lines.push(`    @@SEC_FIX_CMD|oc patch deployment ${it.pod.replace(/-[a-z0-9]+-[a-z0-9]+$/, "")} -n ${it.namespace} -p '{"spec":{"template":{"spec":{"containers":[{"name":"${it.container}","securityContext":{"privileged":false,"allowPrivilegeEscalation":false}}]}}}}' --type=strategic@@`);
+        }
+        lines.push(`  - Apply restricted SCC: \`oc adm policy add-scc-to-user restricted -z default -n <ns>\``);
+        break;
+      case "hostNetwork":
+        lines.push(`  1. Remove \`hostNetwork: true\` from the pod spec`);
+        lines.push(`  2. Use Kubernetes Services or Ingress/Routes to expose pods instead`);
+        lines.push(`  3. If host networking is required (e.g. CNI plugins), isolate in a dedicated namespace with strict RBAC`);
+        break;
+      case "runAsRoot":
+        for (const it of f.items.slice(0, 3)) {
+          lines.push(`  - Enforce non-root for \`${it.pod}\` in \`${it.namespace}\`:`);
+          lines.push(`    @@SEC_FIX_CMD|oc patch deployment ${it.pod.replace(/-[a-z0-9]+-[a-z0-9]+$/, "")} -n ${it.namespace} -p '{"spec":{"template":{"spec":{"securityContext":{"runAsNonRoot":true,"runAsUser":1000}}}}}' --type=strategic@@`);
+        }
+        break;
+      case "noLimits":
+        for (const it of f.items.slice(0, 3)) {
+          lines.push(`  - Add resource limits for \`${it.container}\` in \`${it.pod}\` (\`${it.namespace}\`):`);
+          lines.push(`    @@SEC_FIX_CMD|oc patch deployment ${it.pod.replace(/-[a-z0-9]+-[a-z0-9]+$/, "")} -n ${it.namespace} -p '{"spec":{"template":{"spec":{"containers":[{"name":"${it.container}","resources":{"limits":{"cpu":"500m","memory":"256Mi"},"requests":{"cpu":"100m","memory":"128Mi"}}}]}}}}' --type=strategic@@`);
+        }
+        lines.push(`  - Or apply a LimitRange to enforce defaults:`);
+        lines.push(`    @@SEC_FIX_CMD|oc create limitrange default-limits --default-cpu=500m --default-memory=256Mi -n ${f.items[0]?.namespace || "default"}@@`);
+        break;
+      case "latestTag":
+        lines.push(`  1. Pin images to immutable tags or SHA digests`);
+        lines.push(`  2. Set \`imagePullPolicy: IfNotPresent\` when using fixed tags`);
+        lines.push(`  3. Use an image policy admission controller to block \`:latest\` cluster-wide`);
+        break;
+      case "noNetworkPolicy":
+        for (const it of f.items.slice(0, 3)) {
+          lines.push(`  - Apply default-deny ingress to \`${it.namespace}\`:`);
+          lines.push(`    @@SEC_FIX_CMD|oc apply -n ${it.namespace} -f - <<< '{"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy","metadata":{"name":"default-deny-ingress","namespace":"${it.namespace}"},"spec":{"podSelector":{},"policyTypes":["Ingress"]}}'@@`);
+        }
+        break;
+    }
+    lines.push(``);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Slash command fast-path — returns { reply, contextKeys } or null
 // ---------------------------------------------------------------------------
-async function maybeHandleSlashCommand(userMessage, conversationId) {
+async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}) {
   const text = String(userMessage || "").trim();
   if (!text.startsWith("/")) return null;
   const [cmdRaw, ...rest] = text.slice(1).split(/\s+/);
@@ -2556,7 +2662,6 @@ async function maybeHandleSlashCommand(userMessage, conversationId) {
       const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
 
       const showMax = 10;
-      const trunc = (arr) => arr.length > showMax ? arr.slice(0, showMax).join(", ") + ` … and ${arr.length - showMax} more` : arr.join(", ");
 
       const lines = [
         `### Security & Compliance Audit`,
@@ -2568,166 +2673,155 @@ async function maybeHandleSlashCommand(userMessage, conversationId) {
         ``,
       ];
 
-      // --- Finding: Privileged containers ---
+      // Determine if an LLM provider is available for AI-powered remediation
+      const secProvider = llmOpts.provider || LLM_PROVIDER;
+      const hasLLM = secProvider && secProvider !== "none";
+
+      // Build findings data for both built-in and LLM paths
+      const findings = [];
+
       if (privilegedList.length > 0) {
-        lines.push(`---`);
-        lines.push(`### [CRITICAL] ${privilegedList.length} Privileged Container(s)`);
-        lines.push(``);
-        lines.push(`| Namespace | Pod | Container |`);
-        lines.push(`|-----------|-----|-----------|`);
-        for (const ref of privilegedList.slice(0, showMax)) {
-          const [ns2, pod, ctr] = ref.split("/");
-          lines.push(`| ${ns2} | ${pod} | ${ctr} |`);
-        }
-        if (privilegedList.length > showMax) lines.push(`| … | *${privilegedList.length - showMax} more* | |`);
-        lines.push(``);
-        lines.push(`**Why it matters:** Privileged containers have unrestricted host access — a compromised container can take over the entire node.`);
-        lines.push(``);
-        lines.push(`**Remediation:**`);
-        lines.push(`  1. Set \`securityContext.privileged: false\` in the container spec`);
-        lines.push(`  2. Use \`allowPrivilegeEscalation: false\` and drop all capabilities`);
-        lines.push(`  3. If host access is needed, use specific capabilities instead (e.g. \`NET_ADMIN\`)`);
-        lines.push(`  4. Apply an SCC/PSA policy: \`oc adm policy add-scc-to-user restricted -z <sa> -n <ns>\``);
-        lines.push(``);
+        findings.push({
+          severity: "CRITICAL",
+          title: `${privilegedList.length} Privileged Container(s)`,
+          type: "privileged",
+          items: privilegedList.slice(0, showMax).map((ref) => {
+            const [ns2, pod, ctr] = ref.split("/");
+            return { namespace: ns2, pod, container: ctr };
+          }),
+          total: privilegedList.length,
+          why: "Privileged containers have unrestricted host access — a compromised container can take over the entire node.",
+        });
       }
-
-      // --- Finding: hostNetwork ---
       if (hostNetList.length > 0) {
-        lines.push(`---`);
-        lines.push(`### [CRITICAL] ${hostNetList.length} Pod(s) Using hostNetwork`);
-        lines.push(``);
-        lines.push(`| Namespace | Pod |`);
-        lines.push(`|-----------|-----|`);
-        for (const h of hostNetList.slice(0, showMax)) {
-          lines.push(`| ${h.namespace} | ${h.pod} |`);
-        }
-        if (hostNetList.length > showMax) lines.push(`| … | *${hostNetList.length - showMax} more* |`);
-        lines.push(``);
-        lines.push(`**Why it matters:** hostNetwork pods share the node's network stack, exposing node-level services and bypassing NetworkPolicies.`);
-        lines.push(``);
-        lines.push(`**Remediation:**`);
-        lines.push(`  1. Remove \`hostNetwork: true\` from the pod spec`);
-        lines.push(`  2. Use Kubernetes Services or Ingress/Routes to expose pods instead`);
-        lines.push(`  3. If host networking is required (e.g. CNI plugins), isolate in a dedicated namespace with strict RBAC`);
-        lines.push(``);
+        findings.push({
+          severity: "CRITICAL",
+          title: `${hostNetList.length} Pod(s) Using hostNetwork`,
+          type: "hostNetwork",
+          items: hostNetList.slice(0, showMax).map((h) => ({ namespace: h.namespace, pod: h.pod })),
+          total: hostNetList.length,
+          why: "hostNetwork pods share the node's network stack, exposing node-level services and bypassing NetworkPolicies.",
+        });
       }
-
-      // --- Finding: Run as root ---
       if (runAsRootList.length > 0) {
-        lines.push(`---`);
-        lines.push(`### [WARNING] ${runAsRootList.length} Container(s) May Run as Root`);
-        lines.push(``);
-        lines.push(`| Namespace | Pod | Container |`);
-        lines.push(`|-----------|-----|-----------|`);
-        for (const ref of runAsRootList.slice(0, showMax)) {
-          const [ns2, pod, ctr] = ref.split("/");
-          lines.push(`| ${ns2} | ${pod} | ${ctr} |`);
-        }
-        if (runAsRootList.length > showMax) lines.push(`| … | *${runAsRootList.length - showMax} more* | |`);
-        lines.push(``);
-        lines.push(`**Why it matters:** Root containers can modify the host filesystem and escalate privileges if a breakout occurs.`);
-        lines.push(``);
-        lines.push(`**Remediation:**`);
-        lines.push(`  1. Set \`securityContext.runAsNonRoot: true\` at the pod or container level`);
-        lines.push(`  2. Specify a non-root \`runAsUser\` (e.g. \`runAsUser: 1000\`)`);
-        lines.push(`  3. Rebuild images to run as non-root: \`USER 1000\` in Dockerfile`);
-        lines.push(`  4. Enforce via Pod Security Admission: label namespace with \`pod-security.kubernetes.io/enforce: restricted\``);
-        lines.push(``);
+        findings.push({
+          severity: "WARNING",
+          title: `${runAsRootList.length} Container(s) May Run as Root`,
+          type: "runAsRoot",
+          items: runAsRootList.slice(0, showMax).map((ref) => {
+            const [ns2, pod, ctr] = ref.split("/");
+            return { namespace: ns2, pod, container: ctr };
+          }),
+          total: runAsRootList.length,
+          why: "Root containers can modify the host filesystem and escalate privileges if a breakout occurs.",
+        });
       }
-
-      // --- Finding: No resource limits ---
       if (noLimitsList.length > 0) {
-        lines.push(`---`);
-        lines.push(`### [WARNING] ${noLimitsList.length} Container(s) Without Resource Limits`);
-        lines.push(``);
-        lines.push(`| Namespace | Pod | Container |`);
-        lines.push(`|-----------|-----|-----------|`);
-        for (const ref of noLimitsList.slice(0, showMax)) {
-          const [ns2, pod, ctr] = ref.split("/");
-          lines.push(`| ${ns2} | ${pod} | ${ctr} |`);
-        }
-        if (noLimitsList.length > showMax) lines.push(`| … | *${noLimitsList.length - showMax} more* | |`);
-        lines.push(``);
-        lines.push(`**Why it matters:** Without limits, a single container can starve other workloads and cause node instability.`);
-        lines.push(``);
-        lines.push(`**Remediation:**`);
-        lines.push(`  1. Add \`resources.limits.cpu\` and \`resources.limits.memory\` to every container`);
-        lines.push(`  2. Set matching \`resources.requests\` for guaranteed QoS class`);
-        lines.push(`  3. Apply a \`LimitRange\` to the namespace to enforce defaults:`);
-        lines.push(`     \`oc create limitrange default-limits --default-cpu=500m --default-memory=256Mi -n <ns>\``);
-        lines.push(``);
+        findings.push({
+          severity: "WARNING",
+          title: `${noLimitsList.length} Container(s) Without Resource Limits`,
+          type: "noLimits",
+          items: noLimitsList.slice(0, showMax).map((ref) => {
+            const [ns2, pod, ctr] = ref.split("/");
+            return { namespace: ns2, pod, container: ctr };
+          }),
+          total: noLimitsList.length,
+          why: "Without limits, a single container can starve other workloads and cause node instability.",
+        });
       }
-
-      // --- Finding: :latest / untagged images ---
       if (latestTagList.length > 0) {
+        findings.push({
+          severity: "WARNING",
+          title: `${latestTagList.length} Image(s) Using :latest or Untagged`,
+          type: "latestTag",
+          items: latestTagList.slice(0, showMax).map(({ ref, image }) => {
+            const [ns2, pod, ctr] = ref.split("/");
+            return { namespace: ns2, pod, container: ctr, image };
+          }),
+          total: latestTagList.length,
+          why: ":latest tags make deployments non-reproducible and can pull untested or vulnerable versions.",
+        });
+      }
+      if (uncoveredNs.length > 0) {
+        findings.push({
+          severity: "WARNING",
+          title: `${uncoveredNs.length} Namespace(s) Without NetworkPolicy`,
+          type: "noNetworkPolicy",
+          items: uncoveredNs.slice(0, showMax).map((n) => ({ namespace: n })),
+          total: uncoveredNs.length,
+          why: "Without NetworkPolicies, all pods can communicate freely — a compromised pod can reach any service in the cluster.",
+        });
+      }
+
+      // Render findings table for each finding
+      for (const f of findings) {
         lines.push(`---`);
-        lines.push(`### [WARNING] ${latestTagList.length} Image(s) Using :latest or Untagged`);
+        lines.push(`### [${f.severity}] ${f.title}`);
         lines.push(``);
-        lines.push(`| Namespace | Pod | Container | Image |`);
-        lines.push(`|-----------|-----|-----------|-------|`);
-        for (const { ref, image } of latestTagList.slice(0, showMax)) {
-          const [ns2, pod, ctr] = ref.split("/");
-          lines.push(`| ${ns2} | ${pod} | ${ctr} | \`${image}\` |`);
+        if (f.type === "hostNetwork") {
+          lines.push(`| Namespace | Pod |`);
+          lines.push(`|-----------|-----|`);
+          for (const it of f.items) lines.push(`| ${it.namespace} | ${it.pod} |`);
+        } else if (f.type === "noNetworkPolicy") {
+          lines.push(`| Namespace |`);
+          lines.push(`|-----------|`);
+          for (const it of f.items) lines.push(`| ${it.namespace} |`);
+        } else if (f.type === "latestTag") {
+          lines.push(`| Namespace | Pod | Container | Image |`);
+          lines.push(`|-----------|-----|-----------|-------|`);
+          for (const it of f.items) lines.push(`| ${it.namespace} | ${it.pod} | ${it.container} | \`${it.image}\` |`);
+        } else {
+          lines.push(`| Namespace | Pod | Container |`);
+          lines.push(`|-----------|-----|-----------|`);
+          for (const it of f.items) lines.push(`| ${it.namespace} | ${it.pod} | ${it.container} |`);
         }
-        if (latestTagList.length > showMax) lines.push(`| … | *${latestTagList.length - showMax} more* | | |`);
+        if (f.total > showMax) lines.push(`| … | *${f.total - showMax} more* | |`);
         lines.push(``);
-        lines.push(`**Why it matters:** \`:latest\` tags make deployments non-reproducible and can pull untested or vulnerable versions.`);
-        lines.push(``);
-        lines.push(`**Remediation:**`);
-        lines.push(`  1. Pin images to immutable tags or SHA digests (e.g. \`nginx:1.25.3\` or \`nginx@sha256:abc…\`)`);
-        lines.push(`  2. Set \`imagePullPolicy: IfNotPresent\` (not \`Always\`) when using fixed tags`);
-        lines.push(`  3. Use an image policy admission controller to block \`:latest\` tags cluster-wide`);
+        lines.push(`**Why it matters:** ${f.why}`);
         lines.push(``);
       }
 
-      // --- Finding: Missing NetworkPolicies ---
-      if (uncoveredNs.length > 0) {
-        lines.push(`---`);
-        lines.push(`### [WARNING] ${uncoveredNs.length} Namespace(s) Without NetworkPolicy`);
-        lines.push(``);
-        lines.push(`| Namespace |`);
-        lines.push(`|-----------|`);
-        for (const n of uncoveredNs.slice(0, showMax)) {
-          lines.push(`| ${n} |`);
+      // --- AI-powered remediation (Azure OpenAI / any LLM) ---
+      if (hasLLM && findings.length > 0) {
+        try {
+          const aiRemediation = await generateSecurityRemediation(findings, score, grade, llmOpts);
+          if (aiRemediation) {
+            lines.push(`---`);
+            lines.push(``);
+            lines.push(`### AI Security Remediation`);
+            lines.push(`*Powered by ${secProvider === "azure" ? "Azure OpenAI" : secProvider}*`);
+            lines.push(``);
+            lines.push(aiRemediation);
+            lines.push(``);
+          }
+        } catch (err) {
+          console.error("[security] AI remediation failed, falling back to built-in:", err.message);
+          appendBuiltInRemediation(lines, findings);
         }
-        if (uncoveredNs.length > showMax) lines.push(`| … *${uncoveredNs.length - showMax} more* |`);
-        lines.push(``);
-        lines.push(`**Why it matters:** Without NetworkPolicies, all pods can communicate freely — a compromised pod can reach any service in the cluster.`);
-        lines.push(``);
-        lines.push(`**Remediation:**`);
-        lines.push(`  1. Apply a default-deny ingress policy to each namespace:`);
-        lines.push("     ```yaml");
-        lines.push(`     apiVersion: networking.k8s.io/v1`);
-        lines.push(`     kind: NetworkPolicy`);
-        lines.push(`     metadata:`);
-        lines.push(`       name: default-deny-ingress`);
-        lines.push(`     spec:`);
-        lines.push(`       podSelector: {}`);
-        lines.push(`       policyTypes: [Ingress]`);
-        lines.push("     ```");
-        lines.push(`  2. Then add allow rules for legitimate traffic patterns`);
-        lines.push(`  3. Test connectivity after applying: \`oc exec <pod> -- curl <target-svc>\``);
-        lines.push(``);
+      } else {
+        appendBuiltInRemediation(lines, findings);
       }
 
       // --- Summary ---
       lines.push(`---`);
       lines.push(``);
-      if (score >= 90) lines.push(`@@SUMMARY@@\n**Security posture is strong.** No critical issues found. Continue monitoring to maintain compliance.\n@@/SUMMARY@@`);
-      else if (score >= 70) lines.push(`@@SUMMARY@@\n**Some improvements recommended.** Address the warnings above to strengthen your security posture. Start with the highest-severity items.\n@@/SUMMARY@@`);
+      if (score >= 90) lines.push(`**Security posture is strong.** No critical issues found. Continue monitoring to maintain compliance.`);
+      else if (score >= 70) lines.push(`**Some improvements recommended.** Address the warnings above to strengthen your security posture. Start with the highest-severity items.`);
       else {
-        lines.push(`@@SUMMARY@@`);
         lines.push(`**Significant security risks detected.** Prioritize remediation in this order:`);
-        if (privilegedList.length > 0) lines.push(`  1. Remove privileged mode from ${privilegedList.length} container(s)`);
-        if (hostNetList.length > 0) lines.push(`  ${privilegedList.length > 0 ? "2" : "1"}. Eliminate hostNetwork from ${hostNetList.length} pod(s)`);
-        const nextNum = (privilegedList.length > 0 ? 1 : 0) + (hostNetList.length > 0 ? 1 : 0) + 1;
-        if (runAsRootList.length > 0) lines.push(`  ${nextNum}. Enforce non-root for ${runAsRootList.length} container(s)`);
-        if (noLimitsList.length > 0) lines.push(`  ${nextNum + (runAsRootList.length > 0 ? 1 : 0)}. Add resource limits to ${noLimitsList.length} container(s)`);
-        if (uncoveredNs.length > 0) lines.push(`  ${nextNum + (runAsRootList.length > 0 ? 1 : 0) + (noLimitsList.length > 0 ? 1 : 0)}. Apply NetworkPolicies to ${uncoveredNs.length} namespace(s)`);
-        lines.push(`@@/SUMMARY@@`);
+        let n = 1;
+        if (privilegedList.length > 0) lines.push(`  ${n++}. Remove privileged mode from ${privilegedList.length} container(s)`);
+        if (hostNetList.length > 0) lines.push(`  ${n++}. Eliminate hostNetwork from ${hostNetList.length} pod(s)`);
+        if (runAsRootList.length > 0) lines.push(`  ${n++}. Enforce non-root for ${runAsRootList.length} container(s)`);
+        if (noLimitsList.length > 0) lines.push(`  ${n++}. Add resource limits to ${noLimitsList.length} container(s)`);
+        if (uncoveredNs.length > 0) lines.push(`  ${n++}. Apply NetworkPolicies to ${uncoveredNs.length} namespace(s)`);
       }
 
-      return { reply: lines.join("\n"), contextKeys: ["slash", "security"] };
+      return {
+        reply: lines.join("\n"),
+        provider: hasLLM ? secProvider : "built-in",
+        contextKeys: ["slash", "security"],
+      };
     } catch (e) {
       return { reply: `[ERROR] Security audit failed: ${e.message}`, contextKeys: ["slash", "security"] };
     }
@@ -3747,18 +3841,28 @@ export async function handleChatAPI(req, res) {
     }
 
     // Slash commands — fast-path for dashboard shortcuts
-    const slashReply = await maybeHandleSlashCommand(userMessage, conversationId);
+    // Override LLM settings from request (for UI provider selector)
+    const llmOpts = {};
+    if (body.provider) llmOpts.provider = body.provider;
+    if (body.apiKey) llmOpts.apiKey = body.apiKey;
+    if (body.apiUrl) llmOpts.apiUrl = body.apiUrl;
+    if (body.model) llmOpts.model = body.model;
+    if (body.azureDeployment) llmOpts.azureDeployment = body.azureDeployment;
+    if (body.azureApiVersion) llmOpts.azureApiVersion = body.azureApiVersion;
+
+    const slashReply = await maybeHandleSlashCommand(userMessage, conversationId, llmOpts);
     if (slashReply) {
+      const slashProvider = slashReply.provider || "built-in";
       if (conversationId) {
         histAddMessage(conversationId, {
           role: "assistant",
           content: slashReply.reply,
-          provider: "built-in",
+          provider: slashProvider,
         }).catch(() => {});
       }
       return json(res, 200, {
         reply: slashReply.reply,
-        provider: "built-in",
+        provider: slashProvider,
         contextKeys: slashReply.contextKeys || ["slash"],
         cached: false,
         conversationId,
@@ -3769,15 +3873,6 @@ export async function handleChatAPI(req, res) {
     const wantsStream =
       body.stream === true ||
       (req.headers.accept || "").includes("text/event-stream");
-
-    // Override LLM settings from request (for UI provider selector)
-    const llmOpts = {};
-    if (body.provider) llmOpts.provider = body.provider;
-    if (body.apiKey) llmOpts.apiKey = body.apiKey;
-    if (body.apiUrl) llmOpts.apiUrl = body.apiUrl;
-    if (body.model) llmOpts.model = body.model;
-    if (body.azureDeployment) llmOpts.azureDeployment = body.azureDeployment;
-    if (body.azureApiVersion) llmOpts.azureApiVersion = body.azureApiVersion;
 
     // Conversation history — only include when an LLM provider is active
     const requestedProvider = body.provider || LLM_PROVIDER;

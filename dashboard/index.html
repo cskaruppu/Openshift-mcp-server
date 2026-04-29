@@ -429,6 +429,16 @@ tr:hover td{background:#ffffff06}
 .aic-ai-error{color:#ef4444;font-size:12px;font-style:italic}
 .aic-card-collapsed .aic-ai{display:none}
 
+/* Security fix command inline */
+.sec-fix-cmd{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px 14px;margin:8px 0;font-family:'SF Mono','Cascadia Code',monospace;font-size:11.5px;color:#7ee787;overflow-x:auto}
+.sec-fix-cmd code{display:block;white-space:pre-wrap;word-break:break-all;margin-bottom:8px;font-family:inherit;color:inherit}
+.sec-fix-actions{display:flex;gap:6px;flex-wrap:wrap}
+.sec-fix-btn{border:none;color:#fff;border-radius:4px;padding:4px 14px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap;transition:background .15s}
+.sec-fix-dry{background:#f59e0b}
+.sec-fix-dry:hover{background:#d97706}
+.sec-fix-run{background:#22c55e}
+.sec-fix-run:hover{background:#16a34a}
+
 /* Predictions */
 .aic-predictions{display:flex;flex-direction:column;gap:8px}
 .aic-pred{display:flex;gap:10px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;align-items:flex-start}
@@ -2471,6 +2481,20 @@ function md(text) {
     return '\n<div><button class="apply-btn" id="' + eid + '" onclick="applyFix(\'' + eid + '\',\'' +
       action + '\',\'' + name + '\',\'' + ns + '\')">' + label +
       '</button><span id="' + eid + '-result"></span></div>\n';
+  });
+
+  // Security fix command: @@SEC_FIX_CMD|command@@ — renders with Dry Run / Run buttons
+  html = html.replace(/@@SEC_FIX_CMD\|([^@]+)@@/g, function(m, cmd) {
+    var idx = Math.floor(Math.random() * 100000);
+    var encodedCmd = btoa(unescape(encodeURIComponent(cmd)));
+    return '<div class="sec-fix-cmd">' +
+      '<code>' + esc(cmd) + '</code>' +
+      '<div class="sec-fix-actions">' +
+      '<button onclick="aicExecuteFix(\'' + encodedCmd + '\', ' + idx + ', true)" class="sec-fix-btn sec-fix-dry" title="Server-side dry run — preview without changes">Dry Run</button>' +
+      '<button onclick="aicExecuteFix(\'' + encodedCmd + '\', ' + idx + ', false)" class="sec-fix-btn sec-fix-run" title="Execute on cluster now">Run</button>' +
+      '</div>' +
+      '<div class="aic-fix-result" id="aic-fix-result-' + idx + '"></div>' +
+      '</div>';
   });
 
   // Score gauge: @@SCORE|value|label@@  (0-100)
