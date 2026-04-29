@@ -97,7 +97,7 @@ function parseFlags(tokens) {
         flags[t.slice(2)] = true;
       }
     } else if (t.startsWith("-") && t.length === 2) {
-      const key = { n: "namespace", l: "selector", o: "output", f: "filename", c: "container", w: "watch" }[t[1]];
+      const key = { n: "namespace", l: "selector", o: "output", f: "filename", c: "container", w: "watch", p: "patch" }[t[1]];
       if (key && i + 1 < tokens.length && !tokens[i + 1].startsWith("-")) {
         flags[key] = tokens[++i];
       } else {
@@ -342,6 +342,45 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
       });
       result.success = true;
       result.stdout = (dryRun ? "[DRY RUN] Would restart " : "Restarted ") + `${resource}/${name} in ${namespace}`;
+      return result;
+    }
+
+    if (verb === "patch") {
+      const rawResource = positional[0];
+      const name = positional[1];
+      if (!rawResource || !name) {
+        result.stderr = `Usage: ${cli} patch <resource> <name> -p '<json>' [--type=merge|strategic|json] -n <ns>`;
+        return result;
+      }
+      const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
+      const allowedPatch = ["deployments", "daemonsets", "statefulsets", "services", "configmaps", "pods", "ingresses", "cronjobs", "jobs"];
+      if (!allowedPatch.includes(resource)) {
+        result.stderr = `Patch not allowed for resource '${resource}'. Allowed: ${allowedPatch.join(", ")}`;
+        return result;
+      }
+      if (!namespace) { result.stderr = "Namespace required (-n <ns>)"; return result; }
+      const patchStr = flags.patch || flags.p;
+      if (!patchStr) {
+        result.stderr = "Missing patch body. Use -p '<json>' or --patch='<json>'";
+        return result;
+      }
+      let patchBody;
+      try { patchBody = JSON.parse(patchStr); } catch {
+        result.stderr = `Invalid JSON in patch body: ${patchStr.slice(0, 200)}`;
+        return result;
+      }
+      const patchType = (flags.type || "strategic").toLowerCase();
+      const contentType = patchType === "json"
+        ? "application/json-patch+json"
+        : patchType === "merge"
+          ? "application/merge-patch+json"
+          : "application/strategic-merge-patch+json";
+      const path = buildPath(resource, namespace, name) + dryRunParam;
+      const resp = await ocpPatch(path, patchBody, contentType);
+      result.success = true;
+      result.stdout = (dryRun ? "[DRY RUN] Would patch " : "Patched ") +
+        `${resource}/${name} in ${namespace}` +
+        (resp?.metadata?.resourceVersion ? ` (rv: ${resp.metadata.resourceVersion})` : "");
       return result;
     }
 

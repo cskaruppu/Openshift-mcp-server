@@ -209,11 +209,11 @@ export async function ocpGet(path) {
   return ocpFetch(path);
 }
 
-/** Shorthand PATCH (strategic merge) */
-export async function ocpPatch(path, body) {
+/** Shorthand PATCH (strategic merge by default) */
+export async function ocpPatch(path, body, contentType = "application/strategic-merge-patch+json") {
   return ocpFetch(path, {
     method: "PATCH",
-    headers: { "Content-Type": "application/strategic-merge-patch+json" },
+    headers: { "Content-Type": contentType },
     body: JSON.stringify(body),
   });
 }

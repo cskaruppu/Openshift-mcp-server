@@ -4805,6 +4805,23 @@ export async function handleExecuteAPI(req, res) {
       return json(res, 200, { success: true, message: resultPayload.message });
     }
 
+    if (action === "patch_deployment" || action === "patch") {
+      const dep = deployment || pod;
+      const patchBody = body.patchBody || body.options?.patchBody;
+      if (!dep) return json(res, 400, { success: false, error: "Missing deployment name" });
+      if (!patchBody) return json(res, 400, { success: false, error: "Missing patch body" });
+      let patch;
+      try { patch = typeof patchBody === "string" ? JSON.parse(patchBody) : patchBody; }
+      catch { return json(res, 400, { success: false, error: "Invalid JSON in patch body" }); }
+      await ocpPatch(
+        `/apis/apps/v1/namespaces/${namespace}/deployments/${dep}`,
+        patch
+      );
+      success = true;
+      resultPayload = { message: `Deployment '${dep}' patched in '${namespace}'.` };
+      return json(res, 200, { success: true, message: resultPayload.message });
+    }
+
     json(res, 400, { success: false, error: `Unknown action: ${action}` });
   } catch (err) {
     console.error("Execute API error:", err);
