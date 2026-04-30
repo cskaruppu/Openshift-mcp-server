@@ -115,6 +115,47 @@ function nluToCommand(p) {
 }
 
 // ---------------------------------------------------------------------------
+// Kubernetes resource quantity helpers — convert raw metrics API values
+// (nanocores, Ki) to human-readable format (millicores, Mi/Gi).
+// ---------------------------------------------------------------------------
+function parseCpuNano(v) {
+  if (!v) return 0;
+  const s = String(v);
+  if (s.endsWith("n")) return parseInt(s, 10);
+  if (s.endsWith("u")) return parseInt(s, 10) * 1000;
+  if (s.endsWith("m")) return parseInt(s, 10) * 1_000_000;
+  return parseFloat(s) * 1_000_000_000;
+}
+function fmtCpu(v) {
+  const nano = parseCpuNano(v);
+  if (nano === 0) return "0m";
+  const milli = nano / 1_000_000;
+  if (milli >= 1000) return (milli / 1000).toFixed(1) + " cores";
+  if (milli >= 1) return Math.round(milli) + "m";
+  return "<1m";
+}
+function parseMemBytes(v) {
+  if (!v) return 0;
+  const s = String(v);
+  if (s.endsWith("Ki")) return parseInt(s, 10) * 1024;
+  if (s.endsWith("Mi")) return parseInt(s, 10) * 1024 * 1024;
+  if (s.endsWith("Gi")) return parseInt(s, 10) * 1024 * 1024 * 1024;
+  if (s.endsWith("Ti")) return parseInt(s, 10) * 1024 * 1024 * 1024 * 1024;
+  if (s.endsWith("k") || s.endsWith("K")) return parseInt(s, 10) * 1000;
+  if (s.endsWith("M")) return parseInt(s, 10) * 1_000_000;
+  if (s.endsWith("G")) return parseInt(s, 10) * 1_000_000_000;
+  return parseFloat(s);
+}
+function fmtMem(v) {
+  const bytes = parseMemBytes(v);
+  if (bytes === 0) return "0Mi";
+  const mi = bytes / (1024 * 1024);
+  if (mi >= 1024) return (mi / 1024).toFixed(1) + "Gi";
+  if (mi >= 1) return Math.round(mi) + "Mi";
+  return "<1Mi";
+}
+
+// ---------------------------------------------------------------------------
 // Cache config — TTL in seconds for cached chat replies / cluster context
 // ---------------------------------------------------------------------------
 const CHAT_CACHE_TTL = parseInt(process.env.CHAT_CACHE_TTL || "60", 10);
@@ -578,18 +619,32 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
       if (cmd.resourceType === "node") {
         parts.push(`### Node Resource Usage`);
         items.forEach((n) => {
-          const cpu = n.usage?.cpu || "?";
-          const mem = n.usage?.memory || "?";
+          const cpu = fmtCpu(n.usage?.cpu);
+          const mem = fmtMem(n.usage?.memory);
           parts.push(`  - **${n.metadata.name}** — CPU: ${cpu}, Memory: ${mem}`);
         });
       } else {
         const label = cmd.namespace ? `in \`${cmd.namespace}\`` : "(all namespaces)";
         parts.push(`### Pod Resource Usage ${label}`);
-        items.slice(0, 30).forEach((p) => {
-          const containers = (p.containers || []).map((c) =>
-            `${c.name}: CPU ${c.usage?.cpu || "?"}, Mem ${c.usage?.memory || "?"}`
+        // Compute totals per pod for sorting
+        const podMetrics = items.slice(0, 30).map((p) => {
+          const containers = (p.containers || []).map((c) => ({
+            name: c.name,
+            cpu: fmtCpu(c.usage?.cpu),
+            mem: fmtMem(c.usage?.memory),
+            cpuRaw: parseCpuNano(c.usage?.cpu),
+            memRaw: parseMemBytes(c.usage?.memory),
+          }));
+          const totalCpu = containers.reduce((s, c) => s + c.cpuRaw, 0);
+          const totalMem = containers.reduce((s, c) => s + c.memRaw, 0);
+          return { pod: p, containers, totalCpu, totalMem };
+        });
+        podMetrics.sort((a, b) => b.totalCpu - a.totalCpu);
+        podMetrics.forEach(({ pod: p, containers }) => {
+          const cList = containers.map((c) =>
+            `${c.name}: CPU ${c.cpu}, Mem ${c.mem}`
           ).join(" | ");
-          parts.push(`  - **${p.metadata.name}** (${p.metadata.namespace}) — ${containers}`);
+          parts.push(`  - **${p.metadata.name}** (${p.metadata.namespace}) — ${cList}`);
         });
         if (items.length > 30) parts.push(`\n... and ${items.length - 30} more pods`);
       }
