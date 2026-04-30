@@ -2512,22 +2512,40 @@ function md(text) {
   text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, function(match, lang, code) {
     var trimmed = code.replace(/^\n+|\n+$/g, '');
     var id = 'cmd-' + Math.random().toString(36).substr(2, 6);
-    var firstCmd = trimmed.split('\n').find(function(l) { return /^\s*(oc|kubectl)\s+/.test(l); });
+    // Join multi-line commands with backslash continuation into a single command
+    var lines = trimmed.split('\n');
+    var fullCmd = null;
+    for (var li = 0; li < lines.length; li++) {
+      if (/^\s*(oc|kubectl)\s+/.test(lines[li])) {
+        var parts = [lines[li]];
+        while (li < lines.length - 1 && lines[li].trimEnd().endsWith('\\')) {
+          li++;
+          parts.push(lines[li]);
+        }
+        fullCmd = parts.map(function(p) { return p.replace(/\\\s*$/, '').trim(); }).join(' ').replace(/\s+/g, ' ').trim();
+        break;
+      }
+    }
     var runBtn = '';
-    if (firstCmd) {
-      var upgradeMatch = firstCmd.trim().match(/^oc\s+adm\s+upgrade\s+--to=([\w.\-]+)/);
+    var dryRunBtn = '';
+    if (fullCmd) {
+      var upgradeMatch = fullCmd.match(/^oc\s+adm\s+upgrade\s+--to=([\w.\-]+)/);
+      var cmdJson = JSON.stringify(fullCmd).replace(/"/g, '&quot;');
       if (upgradeMatch) {
         runBtn = '<button class="fix-copy" onclick="openUpgradeWizard(\'' + upgradeMatch[1].replace(/'/g, "\\'") + '\')" title="Open Upgrade Wizard">&#x25B6; Run</button>';
       } else {
-        runBtn = '<button class="fix-copy" onclick="runChatCommand(this, ' + JSON.stringify(firstCmd.trim()).replace(/"/g, '&quot;') + ')" title="Send this command to AI Chat">&#x25B6; Run</button>';
+        var dryCmd = fullCmd.replace(/\s*--dry-run\S*/g, '') + ' --dry-run=client';
+        var dryCmdJson = JSON.stringify(dryCmd).replace(/"/g, '&quot;');
+        dryRunBtn = '<button class="fix-copy" style="color:#f59e0b;border-color:#f59e0b55" onclick="runChatCommand(this, ' + dryCmdJson + ', true)" title="Dry run (no changes applied)">&#x1F50D; Dry Run</button>';
+        runBtn = '<button class="fix-copy" onclick="runChatCommand(this, ' + cmdJson + ')" title="Execute this command">&#x25B6; Run</button>';
       }
     }
-    var langLabel = lang || (firstCmd ? 'shell' : '');
+    var langLabel = lang || (fullCmd ? 'shell' : '');
     var headerLabel = langLabel ? langLabel.charAt(0).toUpperCase() + langLabel.slice(1) : 'Command / Fix';
     var highlighted = _syntaxHL(trimmed, langLabel);
     return ph('<div class="fix-box">' +
       '<div class="fix-header"><span class="fix-label">' + esc(headerLabel) + '</span>' +
-      '<div style="display:flex;gap:4px">' + runBtn +
+      '<div style="display:flex;gap:4px">' + dryRunBtn + runBtn +
       '<button class="fix-copy" onclick="copyCmd(\'' + id + '\')">Copy</button></div></div>' +
       '<pre id="' + id + '">' + highlighted + '</pre></div>');
   });
@@ -2822,26 +2840,32 @@ function copyCmd(id) {
 }
 
 // Run an oc/kubectl command from a code block by sending it back through chat
-function runChatCommand(btn, cmd) {
+function runChatCommand(btn, cmd, isDryRun) {
   if (!cmd) return;
-  // Translate oc command to natural language for the chat NLU
-  // Examples:
-  //   "oc logs my-pod -n my-ns"      -> "show logs for my-pod in namespace my-ns"
-  //   "oc delete pod my-pod -n my-ns" -> "delete pod my-pod in namespace my-ns"
-  //   "oc describe pod X -n NS"       -> "describe pod X in namespace NS"
+  // Extract namespace from -n/--namespace flag anywhere in the command
+  const nsMatch = cmd.match(/(?:^|\s)(?:-n|--namespace)[=\s]+([a-z0-9][-a-z0-9]*)/i);
+  const ns = nsMatch ? nsMatch[1] : null;
+  const nsPart = ns ? ` in namespace ${ns}` : '';
+  const dryLabel = isDryRun ? ' (dry run)' : '';
+
   let nlu = cmd;
-  const m = cmd.match(/^\s*(?:oc|kubectl)\s+(\w+)\s+([\w-]+)?(?:\s+([\w-]+))?(?:\s+-n\s+([\w-]+))?/);
+  const m = cmd.match(/^\s*(?:oc|kubectl)\s+(\S+)(?:\s+(\S+))?(?:\s+(\S+))?/);
   if (m) {
-    const [, verb, a1, a2, ns] = m;
-    const nsPart = ns ? ` in namespace ${ns}` : '';
-    if (verb === 'logs')         nlu = `show logs for ${a1}${nsPart}`;
-    else if (verb === 'describe') nlu = `describe ${a1} ${a2 || ''}${nsPart}`;
-    else if (verb === 'delete')   nlu = `delete ${a1} ${a2 || ''}${nsPart}`;
-    else if (verb === 'get')      nlu = `list ${a1}${nsPart}`;
-    else if (verb === 'rollout')  nlu = `restart ${a1} ${a2 || ''}${nsPart}`;
+    const verb = m[1];
+    const a1 = m[2] || '';
+    const a2 = m[3] || '';
+    if (verb === 'logs')              nlu = `show logs for ${a1}${nsPart}`;
+    else if (verb === 'describe')     nlu = `describe ${a1} ${a2}${nsPart}`;
+    else if (verb === 'delete')       nlu = `delete ${a1} ${a2}${nsPart}`;
+    else if (verb === 'get')          nlu = `list ${a1}${nsPart}`;
+    else if (verb === 'rollout')      nlu = `restart ${a1} ${a2}${nsPart}`;
+    else if (verb === 'set')          nlu = `run: ${cmd}${dryLabel}`;
+    else if (verb === 'scale')        nlu = `scale ${a1} ${a2}${nsPart}${dryLabel}`;
+    else if (verb === 'adm')          nlu = `run: ${cmd}`;
+    else                              nlu = `run: ${cmd}${dryLabel}`;
   }
-  if (btn) { btn.disabled = true; btn.textContent = 'Sent'; setTimeout(() => { btn.disabled = false; btn.innerHTML = '▶ Run'; }, 1500); }
-  // Prefer full chat (streaming view); fall back to sidebar chat
+  const origLabel = isDryRun ? '&#x1F50D; Dry Run' : '&#x25B6; Run';
+  if (btn) { btn.disabled = true; btn.textContent = 'Sent'; setTimeout(() => { btn.disabled = false; btn.innerHTML = origLabel; }, 1500); }
   if (typeof sendFullChat === 'function' && document.getElementById('full-chat-input')) {
     showView('chat');
     setTimeout(() => sendFullChat(nlu), 100);
