@@ -123,8 +123,12 @@ oc apply -f "$K8S_DIR/redis.yaml" 2>&1 | grep -v "is invalid" || true
 # 6. MCP Server + Service + Route
 # ---------------------------------------------------------------------------
 next "Deploying MCP server..."
+# Ensure deployment.yaml uses the correct image before applying
+sed -i "s|image:.*openshift-mcp-server:.*|image: ${IMAGE}|" "$K8S_DIR/deployment.yaml"
 oc apply -f "$K8S_DIR/deployment.yaml"
 oc apply -f "$K8S_DIR/service.yaml"
+# Force the image in the live deployment in case YAML had a stale tag
+oc set image deployment/mcp-server mcp-server="$IMAGE" -n "$NS"
 
 # ---------------------------------------------------------------------------
 # 7. Rollout and verify
