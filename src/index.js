@@ -1039,21 +1039,41 @@ async function startSSE() {
       }
     }
 
-    // GET /api/audit — executed + pending actions log
+    // GET /api/audit — executed + pending actions + query analytics
     if (req.method === "GET" && url.pathname === "/api/audit") {
       try {
         const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10), 200);
-        const executed = await dbQuery(
-          "SELECT id, action, target, namespace, success, created_at FROM executed_actions ORDER BY id DESC LIMIT $1",
-          [limit]
-        );
-        const pending = await dbQuery(
-          "SELECT id, action, resource_type, resource_name, namespace, status, created_at FROM pending_actions ORDER BY created_at DESC LIMIT $1",
-          [limit]
-        );
+        const [executed, pending, queries, queryStats] = await Promise.all([
+          dbQuery(
+            "SELECT id, action, target, namespace, success, created_at FROM executed_actions ORDER BY id DESC LIMIT $1",
+            [limit]
+          ),
+          dbQuery(
+            "SELECT id, action, resource_type, resource_name, namespace, status, created_at FROM pending_actions ORDER BY created_at DESC LIMIT $1",
+            [limit]
+          ),
+          dbQuery(
+            "SELECT id, query, intents, cache_hit, duration_ms, created_at FROM query_log ORDER BY created_at DESC LIMIT $1",
+            [limit]
+          ),
+          dbQuery(
+            `SELECT
+              COUNT(*)::int AS total_queries,
+              COUNT(*) FILTER (WHERE cache_hit)::int AS cache_hits,
+              ROUND(AVG(duration_ms))::int AS avg_duration_ms
+            FROM query_log`
+          ),
+        ]);
+        const stats = queryStats?.rows?.[0] || {};
         return sendJson(res, 200, {
           executed: executed?.rows || [],
           pending: pending?.rows || [],
+          queries: queries?.rows || [],
+          queryStats: {
+            totalQueries: stats.total_queries || 0,
+            cacheHits: stats.cache_hits || 0,
+            avgDurationMs: stats.avg_duration_ms || 0,
+          },
         });
       } catch (err) {
         return sendJson(res, 500, { error: err.message });
