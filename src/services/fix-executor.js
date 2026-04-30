@@ -41,6 +41,11 @@ const RESOURCE_ALIASES = {
   ev: "events", event: "events", events: "events",
   pvc: "persistentvolumeclaims", persistentvolumeclaim: "persistentvolumeclaims",
   ing: "ingresses", ingress: "ingresses", ingresses: "ingresses",
+  clusterversion: "clusterversions", clusterversions: "clusterversions",
+  co: "clusteroperators", clusteroperator: "clusteroperators", clusteroperators: "clusteroperators",
+  machine: "machines", machines: "machines",
+  machineset: "machinesets", machinesets: "machinesets",
+  route: "routes", routes: "routes",
 };
 
 const RESOURCE_API_PATHS = {
@@ -59,6 +64,11 @@ const RESOURCE_API_PATHS = {
   jobs: { group: "batch", version: "v1" },
   cronjobs: { group: "batch", version: "v1" },
   ingresses: { group: "networking.k8s.io", version: "v1" },
+  clusterversions: { group: "config.openshift.io", version: "v1" },
+  clusteroperators: { group: "config.openshift.io", version: "v1" },
+  machines: { group: "machine.openshift.io", version: "v1beta1" },
+  machinesets: { group: "machine.openshift.io", version: "v1beta1" },
+  routes: { group: "route.openshift.io", version: "v1" },
 };
 
 function tokenize(cmd) {
@@ -114,8 +124,8 @@ function buildPath(resource, namespace, name) {
   const info = RESOURCE_API_PATHS[resource];
   if (!info) return null;
   const base = info.group === "" ? `/api/${info.version}` : `/apis/${info.group}/${info.version}`;
-  if (resource === "nodes" || resource === "namespaces" || resource === "persistentvolumes") {
-    // Cluster-scoped
+  const CLUSTER_SCOPED = new Set(["nodes", "namespaces", "persistentvolumes", "clusterversions", "clusteroperators"]);
+  if (CLUSTER_SCOPED.has(resource)) {
     return name ? `${base}/${resource}/${name}` : `${base}/${resource}`;
   }
   if (!namespace) return null;

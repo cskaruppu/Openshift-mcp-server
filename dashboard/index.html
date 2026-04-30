@@ -2617,9 +2617,9 @@ function md(text) {
   text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, function(match, lang, code) {
     var trimmed = code.replace(/^\n+|\n+$/g, '');
     var id = 'cmd-' + Math.random().toString(36).substr(2, 6);
-    // Join multi-line commands with backslash continuation into a single command
+    // Join multi-line commands with backslash continuation; prefer write commands over read-only
     var lines = trimmed.split('\n');
-    var fullCmd = null;
+    var allCmds = [];
     for (var li = 0; li < lines.length; li++) {
       if (/^\s*(oc|kubectl)\s+/.test(lines[li])) {
         var parts = [lines[li]];
@@ -2627,17 +2627,22 @@ function md(text) {
           li++;
           parts.push(lines[li]);
         }
-        fullCmd = parts.map(function(p) { return p.replace(/\\\s*$/, '').trim(); }).join(' ').replace(/\s+/g, ' ').trim();
-        break;
+        allCmds.push(parts.map(function(p) { return p.replace(/\\\s*$/, '').trim(); }).join(' ').replace(/\s+/g, ' ').trim());
       }
     }
+    var readOnlyPat = /^(?:oc|kubectl)\s+(?:get|describe|logs|top|events|explain|config|version|cluster-info|status|whoami|api-resources|api-versions)\b/i;
+    var fullCmd = allCmds.find(function(c) { return !readOnlyPat.test(c); }) || allCmds[0] || null;
     var runBtn = '';
     var dryRunBtn = '';
     if (fullCmd) {
       var upgradeMatch = fullCmd.match(/^oc\s+adm\s+upgrade\s+--to=([\w.\-]+)/);
       var cmdJson = JSON.stringify(fullCmd).replace(/"/g, '&quot;');
+      var readOnlyVerbs = /^(?:oc|kubectl)\s+(?:get|describe|logs|top|events|explain|config|version|cluster-info|status|whoami|api-resources|api-versions)\b/i;
+      var isReadOnly = readOnlyVerbs.test(fullCmd);
       if (upgradeMatch) {
         runBtn = '<button class="fix-copy" onclick="openUpgradeWizard(\'' + upgradeMatch[1].replace(/'/g, "\\'") + '\')" title="Open Upgrade Wizard">&#x25B6; Run</button>';
+      } else if (isReadOnly) {
+        runBtn = '<button class="fix-copy" onclick="runChatCommand(this, ' + cmdJson + ')" title="Execute this command">&#x25B6; Run</button>';
       } else {
         var dryCmd = fullCmd.replace(/\s*--dry-run\S*/g, '') + ' --dry-run=client';
         var dryCmdJson = JSON.stringify(dryCmd).replace(/"/g, '&quot;');
