@@ -437,6 +437,7 @@ export function parse(message, memory = {}) {
     namespace = memory.namespace;
   }
 
+
   // ---- 4. allNs flag ----
   const allNs = /\ball\s+(namespaces?|projects?|ns)\b|\beverywhere\b/.test(lower);
 

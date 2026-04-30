@@ -485,11 +485,35 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
   // LOGS — show pod logs
   // -----------------------------------------------------------------------
   if (cmd.operation === "logs" && cmd.resourceType === "pod") {
-    if (!cmd.resourceName || !cmd.namespace) {
-      if (llmAvailable) return null; // let the LLM handle ambiguity
+    // Auto-discover namespace when pod name is given but namespace isn't.
+    // This handles the common flow: user lists pods in a namespace → clicks
+    // a pod name → asks for logs without repeating the namespace.
+    if (cmd.resourceName && !cmd.namespace) {
+      try {
+        const allPods = await ocpGet(`/api/v1/pods?fieldSelector=metadata.name=${encodeURIComponent(cmd.resourceName)}`);
+        const found = (allPods.items || []);
+        if (found.length === 1) {
+          cmd.namespace = found[0].metadata.namespace;
+        } else if (found.length > 1) {
+          const nsList = found.map(p => `\`${p.metadata.namespace}\``).join(", ");
+          parts.push(`### Pod Logs`);
+          parts.push(`[WARNING] Pod \`${cmd.resourceName}\` exists in multiple namespaces: ${nsList}`);
+          parts.push(`\nPlease specify: "show logs for ${cmd.resourceName} in namespace <ns>"`);
+          return parts.join("\n");
+        }
+      } catch { /* field-selector not supported on all clusters — fall through */ }
+    }
+    if (!cmd.resourceName) {
+      if (llmAvailable) return null;
       parts.push(`### Pod Logs`);
-      parts.push(`[WARNING] Please specify both pod name and namespace.`);
+      parts.push(`[WARNING] Please specify the pod name.`);
       parts.push(`\n**Example:** "show logs for my-pod in namespace my-ns"`);
+      return parts.join("\n");
+    }
+    if (!cmd.namespace) {
+      parts.push(`### Pod Logs`);
+      parts.push(`[WARNING] Could not determine the namespace for \`${cmd.resourceName}\`.`);
+      parts.push(`\nPlease specify: "show logs for ${cmd.resourceName} in namespace <ns>"`);
       return parts.join("\n");
     }
     try {
@@ -629,11 +653,27 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
   // GET / DESCRIBE — get details of a specific resource
   // -----------------------------------------------------------------------
   if (cmd.operation === "get" && cmd.resourceName) {
+    // Auto-discover namespace when resource name is given but namespace isn't
+    if (resInfo.namespaced && !cmd.namespace && cmd.resourceName) {
+      try {
+        const apiPath = `${resInfo.api}/${resInfo.resource}?fieldSelector=metadata.name=${encodeURIComponent(cmd.resourceName)}`;
+        const search = await ocpGet(apiPath);
+        const found = (search.items || []);
+        if (found.length === 1) {
+          cmd.namespace = found[0].metadata.namespace;
+        } else if (found.length > 1) {
+          const nsList = found.map(r => `\`${r.metadata.namespace}\``).join(", ");
+          parts.push(`### ${cmd.resourceType}: \`${cmd.resourceName}\``);
+          parts.push(`Found in multiple namespaces: ${nsList}`);
+          parts.push(`\nPlease specify: "describe ${cmd.resourceType} ${cmd.resourceName} in namespace <ns>"`);
+          return parts.join("\n");
+        }
+      } catch { /* field-selector not supported — fall through */ }
+    }
     if (resInfo.namespaced && !cmd.namespace) {
-      if (llmAvailable) return null;
-      parts.push(`### Get ${cmd.resourceType}`);
-      parts.push(`[WARNING] Please specify the namespace.`);
-      parts.push(`\n**Example:** "describe ${cmd.resourceType} ${cmd.resourceName} in namespace my-ns"`);
+      parts.push(`### ${cmd.resourceType}: \`${cmd.resourceName}\``);
+      parts.push(`[WARNING] Could not determine the namespace for \`${cmd.resourceName}\`.`);
+      parts.push(`\nPlease specify: "describe ${cmd.resourceType} ${cmd.resourceName} in namespace <ns>"`);
       return parts.join("\n");
     }
     const path = resInfo.namespaced
