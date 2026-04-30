@@ -2840,38 +2840,52 @@ function copyCmd(id) {
 }
 
 // Run an oc/kubectl command from a code block by sending it back through chat
-function runChatCommand(btn, cmd, isDryRun) {
-  if (!cmd) return;
-  // Extract namespace from -n/--namespace flag anywhere in the command
-  const nsMatch = cmd.match(/(?:^|\s)(?:-n|--namespace)[=\s]+([a-z0-9][-a-z0-9]*)/i);
-  const ns = nsMatch ? nsMatch[1] : null;
-  const nsPart = ns ? ` in namespace ${ns}` : '';
-  const dryLabel = isDryRun ? ' (dry run)' : '';
+async function runChatCommand(btn, cmd, isDryRun) {
+  if (!cmd || !btn) return;
+  var origLabel = isDryRun ? '&#x1F50D; Dry Run' : '&#x25B6; Run';
+  btn.disabled = true;
+  btn.textContent = isDryRun ? 'Running dry run...' : 'Executing...';
 
-  let nlu = cmd;
-  const m = cmd.match(/^\s*(?:oc|kubectl)\s+(\S+)(?:\s+(\S+))?(?:\s+(\S+))?/);
-  if (m) {
-    const verb = m[1];
-    const a1 = m[2] || '';
-    const a2 = m[3] || '';
-    if (verb === 'logs')              nlu = `show logs for ${a1}${nsPart}`;
-    else if (verb === 'describe')     nlu = `describe ${a1} ${a2}${nsPart}`;
-    else if (verb === 'delete')       nlu = `delete ${a1} ${a2}${nsPart}`;
-    else if (verb === 'get')          nlu = `list ${a1}${nsPart}`;
-    else if (verb === 'rollout')      nlu = `restart ${a1} ${a2}${nsPart}`;
-    else if (verb === 'set')          nlu = `run: ${cmd}${dryLabel}`;
-    else if (verb === 'scale')        nlu = `scale ${a1} ${a2}${nsPart}${dryLabel}`;
-    else if (verb === 'adm')          nlu = `run: ${cmd}`;
-    else                              nlu = `run: ${cmd}${dryLabel}`;
+  // Find or create output container below the fix-box
+  var fixBox = btn.closest('.fix-box');
+  var outputEl = fixBox ? fixBox.querySelector('.cmd-output') : null;
+  if (!outputEl && fixBox) {
+    outputEl = document.createElement('div');
+    outputEl.className = 'cmd-output';
+    fixBox.appendChild(outputEl);
   }
-  const origLabel = isDryRun ? '&#x1F50D; Dry Run' : '&#x25B6; Run';
-  if (btn) { btn.disabled = true; btn.textContent = 'Sent'; setTimeout(() => { btn.disabled = false; btn.innerHTML = origLabel; }, 1500); }
-  if (typeof sendFullChat === 'function' && document.getElementById('full-chat-input')) {
-    showView('chat');
-    setTimeout(() => sendFullChat(nlu), 100);
-  } else {
-    const input = document.getElementById('chat-input');
-    if (input) { input.value = nlu; sendMessage(); }
+  if (outputEl) {
+    outputEl.innerHTML = '<div style="padding:8px 12px;color:var(--text2);font-size:11px"><div class="thinking-dots" style="display:inline-flex"><span></span><span></span><span></span></div> ' + (isDryRun ? 'Running dry run...' : 'Executing command...') + '</div>';
+  }
+
+  try {
+    var apiBase = (typeof MCP_API !== 'undefined' ? MCP_API.replace(/\/api$/, '') : '') || '';
+    var resp = await fetch(apiBase + '/api/alerts/execute-fix', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: cmd, dryRun: !!isDryRun }),
+    });
+    var data = await resp.json();
+    if (outputEl) {
+      var statusIcon = data.success ? '<span style="color:#22c55e;font-weight:600">[OK]</span>' : '<span style="color:#ef4444;font-weight:600">[ERROR]</span>';
+      var header = isDryRun ? 'Dry Run Result' : 'Execution Result';
+      var outText = data.stdout || '';
+      var errText = data.stderr || '';
+      var html = '<div style="border-top:1px solid #30363d;padding:8px 12px;font-size:11px">' +
+        '<div style="margin-bottom:6px;font-weight:600;color:var(--text2)">' + statusIcon + ' ' + header + (data.durationMs ? ' <span style="color:var(--text2);font-weight:400">(' + data.durationMs + 'ms)</span>' : '') + '</div>';
+      if (outText) html += '<pre style="margin:0;padding:8px;background:#0d1117;border-radius:4px;color:#7ee787;font-family:\'SF Mono\',monospace;font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow:auto">' + esc(outText) + '</pre>';
+      if (errText) html += '<pre style="margin:4px 0 0;padding:8px;background:#1a0a0a;border-radius:4px;color:#fca5a5;font-family:\'SF Mono\',monospace;font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow:auto">' + esc(errText) + '</pre>';
+      html += '</div>';
+      outputEl.innerHTML = html;
+    }
+    btn.innerHTML = data.success ? (isDryRun ? '&#x2705; Done' : '&#x2705; Applied') : '&#x274C; Failed';
+    setTimeout(function() { btn.disabled = false; btn.innerHTML = origLabel; }, 3000);
+  } catch (err) {
+    if (outputEl) {
+      outputEl.innerHTML = '<div style="border-top:1px solid #30363d;padding:8px 12px;font-size:11px;color:#fca5a5"><span style="font-weight:600">[ERROR]</span> ' + esc(err.message) + '</div>';
+    }
+    btn.innerHTML = '&#x274C; Error';
+    setTimeout(function() { btn.disabled = false; btn.innerHTML = origLabel; }, 3000);
   }
 }
 
@@ -3397,13 +3411,18 @@ function renderChatHistory() {
 
   // Auto-fix titles: if any chat still says "New conversation" but has user messages, generate a title
   var titleFixed = false;
+  var needsRemoteFix = [];
   history.chats.forEach(function(c) {
-    if (c.title === 'New conversation' && c.messages && c.messages.length > 0) {
-      var firstUserMsg = c.messages.find(function(m) { return m.role === 'user'; });
-      if (firstUserMsg && firstUserMsg.text) {
-        c.title = generateChatTitle(firstUserMsg.text);
-        persistChatTitle(c.id, c.title);
-        titleFixed = true;
+    if (c.title === 'New conversation') {
+      if (c.messages && c.messages.length > 0) {
+        var firstUserMsg = c.messages.find(function(m) { return m.role === 'user'; });
+        if (firstUserMsg && firstUserMsg.text) {
+          c.title = generateChatTitle(firstUserMsg.text);
+          persistChatTitle(c.id, c.title);
+          titleFixed = true;
+        }
+      } else if (_historyRemote && !c.loaded) {
+        needsRemoteFix.push(c.id);
       }
     }
   });
@@ -3419,6 +3438,28 @@ function renderChatHistory() {
       '<button class="history-delete" onclick="deleteChat(\'' + c.id + '\', event)" title="Delete">&times;</button>' +
       '</div>';
   }).join('');
+
+  // Background-fix titles for unloaded remote chats
+  if (needsRemoteFix.length > 0) {
+    needsRemoteFix.forEach(function(chatId) {
+      fetch(chatApiBase() + '/api/chats/' + encodeURIComponent(chatId))
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(data) {
+          if (!data || !data.messages) return;
+          var firstUser = data.messages.find(function(m) { return m.role === 'user'; });
+          if (firstUser && (firstUser.content || firstUser.text)) {
+            var h = loadChatHistory();
+            var chat = h.chats.find(function(c) { return c.id === chatId; });
+            if (chat && chat.title === 'New conversation') {
+              chat.title = generateChatTitle(firstUser.content || firstUser.text);
+              persistChatTitle(chatId, chat.title);
+              saveChatHistory(h);
+              renderChatHistory();
+            }
+          }
+        }).catch(function() {});
+    });
+  }
 }
 
 function renderConversation() {
