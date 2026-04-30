@@ -3204,6 +3204,33 @@ function getActiveChat() {
   return history.chats.find(c => c.id === history.activeId) || null;
 }
 
+function generateChatTitle(msg) {
+  if (!msg) return 'New conversation';
+  let t = msg.trim().replace(/\s+/g, ' ');
+  const patterns = [
+    { re: /\b(?:list|show|get)\s+(?:all\s+)?(\w+)/i, fmt: (m) => capitalize(m[1]) + ' listing' },
+    { re: /\b(?:top|metrics|usage)\s+(?:for\s+)?(\w+)/i, fmt: (m) => capitalize(m[1]) + ' resource usage' },
+    { re: /\b(?:describe|details?)\s+(?:of\s+)?(\w+)\s+(\S+)/i, fmt: (m) => capitalize(m[1]) + ' ' + m[2] + ' details' },
+    { re: /\b(?:logs?|log)\s+(?:of|for|from)?\s*(\S+)/i, fmt: (m) => 'Logs for ' + m[1] },
+    { re: /\b(?:why|what.*wrong|troubleshoot|debug|diagnos)\b.*?(\w+)/i, fmt: (m) => capitalize(m[1]) + ' troubleshooting' },
+    { re: /\b(?:health|status|check)\s+(?:of\s+)?(?:the\s+)?(\w+)/i, fmt: (m) => capitalize(m[1]) + ' health check' },
+    { re: /\b(?:scale|restart|rollout|delete|create)\s+(\w+)/i, fmt: (m) => capitalize(m[0].split(/\s/)[0]) + ' ' + m[1] },
+    { re: /\b(?:how many|count)\s+(\w+)/i, fmt: (m) => capitalize(m[1]) + ' count' },
+    { re: /\b(?:compare|diff)\b/i, fmt: () => 'Resource comparison' },
+    { re: /\b(?:cluster|openshift)\s+(\w+)/i, fmt: (m) => 'Cluster ' + m[1] },
+  ];
+  for (const p of patterns) {
+    const m = t.match(p.re);
+    if (m) {
+      const title = p.fmt(m);
+      return title.length > 40 ? title.substring(0, 40) + '...' : title;
+    }
+  }
+  const words = t.split(/\s+/).slice(0, 6).join(' ');
+  return words.length > 40 ? words.substring(0, 40) + '...' : words;
+}
+function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : ''; }
+
 async function newChat() {
   await detectHistoryBackend();
   const history = loadChatHistory();
@@ -3585,7 +3612,7 @@ async function sendFullChat(text) {
 
   chat.messages.push({ role: 'user', text: msg });
   if (chat.messages.filter(m => m.role === 'user').length === 1) {
-    chat.title = msg.length > 50 ? msg.substring(0, 50) + '...' : msg;
+    chat.title = generateChatTitle(msg);
   }
   chat.updatedAt = new Date().toISOString();
   saveChatHistory(history);
@@ -5178,7 +5205,7 @@ async function sendFullChatStreaming(text) {
 
   chat.messages.push({ role: 'user', text: msg });
   if (chat.messages.filter(m => m.role === 'user').length === 1) {
-    chat.title = msg.length > 50 ? msg.substring(0, 50) + '...' : msg;
+    chat.title = generateChatTitle(msg);
   }
   chat.updatedAt = new Date().toISOString();
   saveChatHistory(history);
