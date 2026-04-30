@@ -2504,6 +2504,9 @@ function md(text) {
   var placeholders = [];
   function ph(html) { var idx = placeholders.length; placeholders.push(html); return '\x00PH' + idx + '\x00'; }
 
+  // Strip HTML comments (e.g. <!--action:ID-->) so they don't render as visible text
+  text = text.replace(/<!--[\s\S]*?-->/g, '');
+
   // Extract fenced code blocks BEFORE escaping
   text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, function(match, lang, code) {
     var trimmed = code.replace(/^\n+|\n+$/g, '');
@@ -3997,15 +4000,18 @@ function loadEnabledProviders() {
       }
     });
   }
-  // Restore previous selection, or use defaultProvider from settings, or fall back to first configured provider
-  if (current && sel.querySelector('option[value="' + current + '"]')) {
+  // Restore previous selection: saved choice → current → defaultProvider → first configured
+  var savedProv = null;
+  try { savedProv = localStorage.getItem('mcp-selected-provider'); } catch(e) {}
+  if (current && current !== 'none' && sel.querySelector('option[value="' + current + '"]')) {
     sel.value = current;
+  } else if (savedProv && sel.querySelector('option[value="' + savedProv + '"]')) {
+    sel.value = savedProv;
   } else {
     var defProv = settings?.defaults?.provider || settings?.defaultProvider || null;
     if (defProv && defProv !== 'none' && sel.querySelector('option[value="' + defProv + '"]')) {
       sel.value = defProv;
     } else if (settings && settings.providers) {
-      // Auto-select the first configured (non-none) provider
       var firstConfigured = Object.entries(settings.providers).find(function(e) { return e[1].enabled || e[1].apiKey; });
       if (firstConfigured && sel.querySelector('option[value="' + firstConfigured[0] + '"]')) {
         sel.value = firstConfigured[0];
@@ -4021,7 +4027,11 @@ function loadEnabledProviders() {
 // Compat shims for old code paths
 function syncLLMToFull() { loadEnabledProviders(); }
 function loadFullLLMConfig() { loadEnabledProviders(); }
-function onFullProviderChange() { if (typeof updateModelPill === 'function') updateModelPill(); }
+function onFullProviderChange() {
+  var sel = document.getElementById('full-llm-provider');
+  if (sel) { try { localStorage.setItem('mcp-selected-provider', sel.value); } catch(e) {} }
+  if (typeof updateModelPill === 'function') updateModelPill();
+}
 function toggleFullLLMConfig() { showView('settings'); }
 function saveFullLLMConfig() {}
 
