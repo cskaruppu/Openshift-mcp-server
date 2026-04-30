@@ -1,0 +1,15 @@
+{
+  "_comment": "Configuration for SSE (HTTP) transport mode — used by the web dashboard",
+  "server": {
+    "command": "node src/index.js",
+    "env": {
+      "PORT": "3001",
+      "KUBECONFIG": "/path/to/.kube/config",
+      "MCP_TRANSPORT": "sse"
+    }
+  },
+  "client": {
+    "sseEndpoint": "http://localhost:3001/sse",
+    "messagesEndpoint": "http://localhost:3001/messages"
+  }
+}

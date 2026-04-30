@@ -48,6 +48,8 @@ import { registerPolicyGenTools } from "./tools/policy-gen.js";
 import { registerSCCAdvisorTools } from "./tools/scc-advisor.js";
 import { registerTimelineTools } from "./tools/timeline.js";
 import { registerUpgradeAdvisorTools } from "./tools/upgrade-advisor.js";
+import { registerBenchmarkTools } from "./tools/benchmarks.js";
+import { registerProvisioningTools } from "./tools/provisioning.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode } from "./services/auth.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI } from "./services/chat-api.js";
@@ -184,6 +186,8 @@ function createMcpServer() {
   registerSCCAdvisorTools(server);
   registerTimelineTools(server);
   registerUpgradeAdvisorTools(server);
+  registerBenchmarkTools(server);
+  registerProvisioningTools(server);
 
   return server;
 }

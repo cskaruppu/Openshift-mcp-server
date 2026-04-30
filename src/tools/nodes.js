@@ -149,6 +149,149 @@ export function registerNodeTools(server) {
     }
   );
 
+  // ---------- Check Kubelet Status ----------
+  server.tool(
+    "check_kubelet_status",
+    "Check kubelet health and recent logs across all cluster nodes. Reports service status and error/warning counts.",
+    {
+      hoursBack: z.number().min(1).max(168).default(24).describe("Hours of logs to analyze"),
+    },
+    async ({ hoursBack }) => {
+      try {
+        const data = await ocpGet("/api/v1/nodes");
+        const nodes = data.items || [];
+        const results = [];
+
+        for (const node of nodes) {
+          const name = node.metadata.name;
+          const conditions = node.status?.conditions || [];
+          const ready = conditions.find(c => c.type === "Ready");
+          const kubeletVersion = node.status?.nodeInfo?.kubeletVersion || "unknown";
+
+          const kubeletConditions = conditions.filter(c =>
+            ["Ready", "MemoryPressure", "DiskPressure", "PIDPressure"].includes(c.type)
+          ).map(c => ({ type: c.type, status: c.status, message: c.message, lastTransition: c.lastTransitionTime }));
+
+          let logSnippet = "";
+          try {
+            const logs = await ocpFetch(`/api/v1/nodes/${name}/proxy/logs/journal?unit=kubelet&boot=0&entries=50`, {
+              headers: { Accept: "text/plain" },
+            });
+            const text = typeof logs === "string" ? logs : JSON.stringify(logs);
+            const lines = text.split("\n");
+            const errors = lines.filter(l => /error|fail|warn/i.test(l));
+            logSnippet = errors.length > 0
+              ? `${errors.length} issues found in recent logs:\n${errors.slice(-10).join("\n")}`
+              : "No errors/warnings in recent kubelet logs";
+          } catch {
+            logSnippet = "Unable to retrieve kubelet logs (nodes/proxy permission may be required)";
+          }
+
+          results.push({
+            node: name,
+            kubeletVersion,
+            status: ready?.status === "True" ? "healthy" : "unhealthy",
+            conditions: kubeletConditions,
+            logs: logSnippet,
+          });
+        }
+
+        const healthy = results.filter(r => r.status === "healthy").length;
+        const summary = `Kubelet Status: ${healthy}/${results.length} nodes healthy (checked last ${hoursBack}h)`;
+        return {
+          content: [{ type: "text", text: `${summary}\n\n${JSON.stringify(results, null, 2)}` }],
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+      }
+    }
+  );
+
+  // ---------- Check CRI-O Status ----------
+  server.tool(
+    "check_crio_status",
+    "Check CRI-O container runtime health and recent logs across all cluster nodes.",
+    {
+      hoursBack: z.number().min(1).max(168).default(24).describe("Hours of logs to analyze"),
+      includeContainerErrors: z.boolean().default(true).describe("Include container-level errors in analysis"),
+    },
+    async ({ hoursBack, includeContainerErrors }) => {
+      try {
+        const data = await ocpGet("/api/v1/nodes");
+        const nodes = data.items || [];
+        const results = [];
+
+        for (const node of nodes) {
+          const name = node.metadata.name;
+          const crVersion = node.status?.nodeInfo?.containerRuntimeVersion || "unknown";
+          const ready = (node.status?.conditions || []).find(c => c.type === "Ready");
+
+          let crioLogs = "";
+          let containerIssues = [];
+
+          try {
+            const logs = await ocpFetch(`/api/v1/nodes/${name}/proxy/logs/journal?unit=crio&boot=0&entries=50`, {
+              headers: { Accept: "text/plain" },
+            });
+            const text = typeof logs === "string" ? logs : JSON.stringify(logs);
+            const lines = text.split("\n");
+            const errors = lines.filter(l => /error|fail|warn/i.test(l));
+            crioLogs = errors.length > 0
+              ? `${errors.length} issues found:\n${errors.slice(-10).join("\n")}`
+              : "No errors/warnings in recent CRI-O logs";
+          } catch {
+            crioLogs = "Unable to retrieve CRI-O logs (nodes/proxy permission may be required)";
+          }
+
+          if (includeContainerErrors) {
+            try {
+              const pods = await ocpGet(`/api/v1/pods?fieldSelector=spec.nodeName=${name}`);
+              for (const pod of (pods.items || [])) {
+                for (const cs of (pod.status?.containerStatuses || [])) {
+                  if (cs.state?.waiting && cs.state.waiting.reason !== "ContainerCreating") {
+                    containerIssues.push({
+                      pod: pod.metadata.name,
+                      namespace: pod.metadata.namespace,
+                      container: cs.name,
+                      reason: cs.state.waiting.reason,
+                      message: cs.state.waiting.message || "",
+                    });
+                  }
+                  if (cs.restartCount > 5) {
+                    containerIssues.push({
+                      pod: pod.metadata.name,
+                      namespace: pod.metadata.namespace,
+                      container: cs.name,
+                      reason: "HighRestarts",
+                      message: `${cs.restartCount} restarts`,
+                    });
+                  }
+                }
+              }
+            } catch { /* skip container checks if access denied */ }
+          }
+
+          results.push({
+            node: name,
+            containerRuntime: crVersion,
+            status: ready?.status === "True" ? "healthy" : "degraded",
+            logs: crioLogs,
+            containerIssues: containerIssues.slice(0, 10),
+          });
+        }
+
+        const healthy = results.filter(r => r.status === "healthy").length;
+        const totalIssues = results.reduce((s, r) => s + r.containerIssues.length, 0);
+        const summary = `CRI-O Status: ${healthy}/${results.length} nodes healthy, ${totalIssues} container issues (last ${hoursBack}h)`;
+        return {
+          content: [{ type: "text", text: `${summary}\n\n${JSON.stringify(results, null, 2)}` }],
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+      }
+    }
+  );
+
   // ---------- Node Stats Summary ----------
   server.tool(
     "nodes_stats_summary",

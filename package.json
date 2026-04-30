@@ -20,6 +20,7 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@kubernetes/client-node": "^1.4.0",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "ioredis": "^5.4.1",
     "pg": "^8.13.1",
