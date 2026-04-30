@@ -3221,6 +3221,15 @@ function saveChatHistory(history) {
     localStorage.setItem('mcp-active-chat', history.activeId);
   }
 }
+function persistChatTitle(chatId, title) {
+  if (_historyRemote && chatId && title) {
+    fetch(chatApiBase() + '/api/chats/' + encodeURIComponent(chatId), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: title }),
+    }).catch(() => {});
+  }
+}
 
 function getActiveChat() {
   const history = loadChatHistory();
@@ -3393,6 +3402,7 @@ function renderChatHistory() {
       var firstUserMsg = c.messages.find(function(m) { return m.role === 'user'; });
       if (firstUserMsg && firstUserMsg.text) {
         c.title = generateChatTitle(firstUserMsg.text);
+        persistChatTitle(c.id, c.title);
         titleFixed = true;
       }
     }
@@ -3660,6 +3670,7 @@ async function sendFullChat(text) {
   chat.messages.push({ role: 'user', text: msg });
   if (chat.messages.filter(m => m.role === 'user').length === 1) {
     chat.title = generateChatTitle(msg);
+    persistChatTitle(chat.id, chat.title);
   }
   chat.updatedAt = new Date().toISOString();
   saveChatHistory(history);
@@ -5253,6 +5264,7 @@ async function sendFullChatStreaming(text) {
   chat.messages.push({ role: 'user', text: msg });
   if (chat.messages.filter(m => m.role === 'user').length === 1) {
     chat.title = generateChatTitle(msg);
+    persistChatTitle(chat.id, chat.title);
   }
   chat.updatedAt = new Date().toISOString();
   saveChatHistory(history);
