@@ -11,10 +11,12 @@ data:
   NODE_TLS_REJECT_UNAUTHORIZED: "0"
   # Authentication: "none" (default), "token" (set MCP_API_TOKEN in secrets), "oauth" (OpenShift SSO)
   AUTH_MODE: "none"
-  # LLM Provider: "openai", "anthropic", "ollama", or "none" (built-in analysis)
-  LLM_PROVIDER: "none"
-  # LLM_API_URL: "https://api.openai.com"    # or Ollama URL, etc.
-  # LLM_MODEL: "gpt-4"                       # or claude-sonnet-4-20250514, llama3, etc.
+  # LLM Provider: "azure", "openai", "anthropic", "ollama", or "none" (built-in analysis)
+  LLM_PROVIDER: "azure"
+  # LLM_API_URL: Azure OpenAI endpoint (e.g. https://<resource>.openai.azure.com)
+  # LLM_MODEL: "gpt-4"
+  # AZURE_OPENAI_DEPLOYMENT: deployment name in Azure portal
+  # AZURE_OPENAI_API_VERSION: "2024-12-01-preview"
   # ---- Cache & DB (optional — falls back to stateless if unset) ----
   REDIS_URL: "redis://mcp-redis.openshift-mcp.svc.cluster.local:6379"
   CHAT_CACHE_TTL: "60"

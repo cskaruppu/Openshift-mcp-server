@@ -21,7 +21,7 @@ const DEFAULT_LLM_SETTINGS = {
     ollama: { apiKey: "", apiUrl: "http://ollama:11434", model: "llama3", enabled: false },
   },
   defaults: {
-    provider: "none",
+    provider: "azure",
     temperature: 0.3,
     maxTokens: 2000,
     systemPrompt: "",

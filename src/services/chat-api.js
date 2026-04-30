@@ -4412,160 +4412,14 @@ export async function handleChatAPI(req, res) {
     // This handles: logs, top, delete, run, exec, update
     const llmActive = activeProvider && activeProvider !== "none";
 
-    // ---- LLM-first agentic path ----
-    // When an LLM provider is active, route through the agentic tool-calling
-    // loop (like Claude Desktop does) instead of returning templated markdown.
-    // The LLM autonomously decides which tools to call, gathers evidence, and
-    // narrates its findings — giving a true "AI assistant" experience.
-    // Rule-based handlers are only used as fallback when LLM is "none".
-    if (llmActive) {
-      if (wantsStream) {
-        // --- Streaming agentic path ---
-        sseStart(res);
-        try {
-          const { result: agentTraced, trace: agentTrace } = await runWithTrace(async () => {
-            const context = await gatherClusterContext(userMessage, parsed);
-            const hintPods = context.targetPodName
-              ? (context.problemPods || []).filter((p) => p.name === context.targetPodName)
-              : (context.problemPods || []).slice(0, 5);
-            const priorMessages = historyToMessages(llmOpts.history);
-            let fullText = "";
-            let toolsUsed = [];
-            const contextHint = {
-              problemPods: hintPods,
-              correlations: context.correlations || [],
-              targetPod: context.targetPod || null,
-              targetPodLogs: context.targetPodLogs || null,
-              targetPodLogsPrevious: context.targetPodLogsPrevious || null,
-              targetPodEvents: context.targetPodEvents || [],
-              targetPodMetrics: context.targetPodMetrics || null,
-            };
-
-            const orchRes = await runOrchestrator({
-              userMessage,
-              contextHint,
-              llmOpts,
-              conversationHistory: priorMessages,
-              onDelta: (chunk) => {
-                fullText += chunk;
-                sseSend(res, { delta: chunk });
-              },
-              onToolCall: (tc) => {
-                toolsUsed.push(tc.name);
-                sseSend(res, {
-                  toolCall: {
-                    name: tc.name,
-                    arguments: tc.arguments,
-                    step: tc.step,
-                  },
-                });
-              },
-              onStep: (stepInfo) => {
-                sseSend(res, {
-                  step: {
-                    number: stepInfo.step,
-                    toolCalls: (stepInfo.toolCalls || []).map((tc) => tc.name),
-                  },
-                });
-              },
-            });
-            fullText = orchRes.text || fullText;
-            toolsUsed = (orchRes.toolCalls || []).map((tc) => tc.name);
-            return { context, fullText, toolsUsed };
-          });
-          const { context, fullText, toolsUsed } = agentTraced;
-          const correlationsBlock = renderCorrelationsMarkdown(context?.correlations || []);
-          if (correlationsBlock) sseSend(res, { delta: "\n" + correlationsBlock });
-          const topCause = context?.correlations?.[0];
-          if (topCause?.likelyCause) {
-            const pb = suggestPlaybook(topCause.likelyCause, { pod: topCause.pod, namespace: topCause.namespace });
-            if (pb) sseSend(res, { delta: "\n" + renderPlaybookMarkdown(pb) });
-          }
-          const traceMd = renderTraceMarkdown(agentTrace);
-          if (traceMd) sseSend(res, { delta: "\n" + traceMd });
-          sseSend(res, { done: true, provider: activeProvider, conversationId, toolsUsed });
-          sseEnd(res);
-          if (conversationId) {
-            histAddMessage(conversationId, { role: "assistant", content: fullText, provider: activeProvider }).catch(() => {});
-          }
-          updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
-          observeHistogram("mcp_chat_latency_seconds", { provider: activeProvider }, (Date.now() - startedAt) / 1000);
-        } catch (sseErr) {
-          console.error("[chat-api] Streaming agent error:", sseErr.message);
-          sseSend(res, { error: sseErr.message });
-          sseEnd(res);
-        }
-        return;
-      }
-
-      // --- Non-streaming agentic path ---
-      const { result: traced, trace } = await runWithTrace(async () => {
-        const context = await gatherClusterContext(userMessage, parsed);
-        const hintPods = context.targetPodName
-          ? (context.problemPods || []).filter((p) => p.name === context.targetPodName)
-          : (context.problemPods || []).slice(0, 5);
-        const priorMessages = historyToMessages(llmOpts.history);
-        let replyText = "";
-        let toolsUsed = [];
-        const contextHint = {
-          problemPods: hintPods,
-          correlations: context.correlations || [],
-          targetPod: context.targetPod || null,
-          targetPodLogs: context.targetPodLogs || null,
-          targetPodLogsPrevious: context.targetPodLogsPrevious || null,
-          targetPodEvents: context.targetPodEvents || [],
-          targetPodMetrics: context.targetPodMetrics || null,
-        };
-
-        try {
-          const orchRes = await runOrchestrator({
-            userMessage,
-            contextHint,
-            llmOpts,
-            conversationHistory: priorMessages,
-          });
-          replyText = orchRes?.text || "";
-          toolsUsed = (orchRes?.toolCalls || []).map((tc) => tc.name);
-        } catch (e) {
-          console.warn("[chat-api] orchestrator failed, falling back to context-only LLM:", e.message);
-          replyText = await callLLMWithContext(userMessage, context, llmOpts);
-        }
-        return { context, replyText, toolsUsed };
-      });
-      let { context, replyText: reply, toolsUsed = [] } = traced;
-      intentsForLog = Array.isArray(context?.intents) ? context.intents : Object.keys(context || {});
-
-      const correlationsBlock = renderCorrelationsMarkdown(context?.correlations || []);
-      if (correlationsBlock) reply += "\n" + correlationsBlock;
-      const topCause = context?.correlations?.[0];
-      if (topCause?.likelyCause) {
-        const pb = suggestPlaybook(topCause.likelyCause, { pod: topCause.pod, namespace: topCause.namespace });
-        if (pb) reply += "\n" + renderPlaybookMarkdown(pb);
-      }
-      const traceMd = renderTraceMarkdown(trace);
-      if (traceMd) reply += "\n" + traceMd;
-
-      const payload = {
-        reply,
-        provider: activeProvider,
-        contextKeys: Object.keys(context || {}),
-        correlations: context?.correlations || [],
-        trace: trace.slice(0, 20),
-        toolsUsed: toolsUsed || [],
-      };
-      cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
-      if (conversationId) {
-        histAddMessage(conversationId, { role: "assistant", content: reply, provider: activeProvider }).catch(() => {});
-      }
-      updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
-      observeHistogram("mcp_chat_latency_seconds", { provider: activeProvider }, (Date.now() - startedAt) / 1000);
-      return json(res, 200, { ...payload, cached: false, conversationId });
-    }
-
-    // ---- Fallback: rule-based handlers (when LLM provider is "none") ----
-    const directResult = await handleDirectCommand(userMessage, cmd, { llmAvailable: false });
+    // Rule-based handlers run first for straightforward commands (logs,
+    // describe, list, get, etc.) — they're fast, reliable, and don't burn
+    // LLM tokens. When they can handle the request, return immediately.
+    // When they return null (ambiguous or unrecognized), fall through to
+    // the agentic LLM path.
+    const directResult = await handleDirectCommand(userMessage, cmd, { llmAvailable: llmActive });
     if (directResult) {
-      const provider = "built-in";
+      const provider = llmActive ? activeProvider : "built-in";
       const payload = {
         reply: directResult,
         provider,
@@ -4586,10 +4440,10 @@ export async function handleChatAPI(req, res) {
       return json(res, 200, { ...payload, cached: false, conversationId });
     }
 
-    // Try list command handler (for "list/show/get X" queries) — built-in only
-    const listResult = await handleListCommand(userMessage, cmd, { llmAvailable: false });
+    // Try list command handler (for "list/show/get X" queries)
+    const listResult = await handleListCommand(userMessage, cmd, { llmAvailable: llmActive });
     if (listResult) {
-      const provider = "built-in";
+      const provider = llmActive ? activeProvider : "built-in";
       const payload = {
         reply: listResult,
         provider,
@@ -4597,43 +4451,190 @@ export async function handleChatAPI(req, res) {
       };
       cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
       if (conversationId) {
-        histAddMessage(conversationId, { role: "assistant", content: listResult, provider }).catch(() => {});
+        histAddMessage(conversationId, {
+          role: "assistant",
+          content: listResult,
+          provider,
+        }).catch(() => {});
       }
       updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
       return json(res, 200, { ...payload, cached: false, conversationId });
     }
 
-    // ---- Final fallback: gather context and return a built-in summary ----
+    // ---- Streaming SSE path ----
+    if (wantsStream && llmEnabled(llmOpts)) {
+      sseStart(res);
+      try {
+        const { result: sseTraced, trace: sseTrace } = await runWithTrace(async () => {
+          let context = await gatherClusterContext(userMessage, parsed);
+          if (context.targetPod) {
+            const focused = {
+              _focusPod: context.targetPod,
+              _focusPodLogs: context.targetPodLogs || null,
+              _focusPodLogsPrevious: context.targetPodLogsPrevious || null,
+              _focusPodLogsError: context.targetPodLogsError || null,
+              _focusPodEvents: context.targetPodEvents || [],
+              _focusPodMetrics: context.targetPodMetrics || null,
+            };
+            if (Array.isArray(context.problemPods)) {
+              context.problemPods = context.problemPods.filter(
+                (p) => p.name === context.targetPodName
+              );
+            }
+            Object.assign(focused, context);
+            Object.assign(context, focused);
+          }
+          const contextStr = JSON.stringify(context, null, 2);
+          const userContent = `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;
+          const priorMessages = historyToMessages(llmOpts.history);
+          let fullText = "";
+          await callLLMStream({
+            messages: [...priorMessages, { role: "user", content: userContent }],
+            system: SYSTEM_PROMPT,
+            maxTokens: 2000,
+            temperature: 0.3,
+            ...llmOpts,
+            onDelta: (chunk) => {
+              fullText += chunk;
+              sseSend(res, { delta: chunk });
+            },
+          });
+          return { context, fullText };
+        });
+        const { context, fullText } = sseTraced;
+        const correlationsBlock = renderCorrelationsMarkdown(context?.correlations || []);
+        if (correlationsBlock) sseSend(res, { delta: "\n" + correlationsBlock });
+        const topCause = context?.correlations?.[0];
+        if (topCause?.likelyCause) {
+          const pb = suggestPlaybook(topCause.likelyCause, { pod: topCause.pod, namespace: topCause.namespace });
+          if (pb) sseSend(res, { delta: "\n" + renderPlaybookMarkdown(pb) });
+        }
+        const traceMd = renderTraceMarkdown(sseTrace);
+        if (traceMd) sseSend(res, { delta: "\n" + traceMd });
+        sseSend(res, { done: true, provider: activeProvider, conversationId });
+        sseEnd(res);
+        if (conversationId) {
+          histAddMessage(conversationId, { role: "assistant", content: sseTraced.fullText, provider: activeProvider }).catch(() => {});
+        }
+        updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
+        observeHistogram("mcp_chat_latency_seconds", { provider: activeProvider }, (Date.now() - startedAt) / 1000);
+      } catch (sseErr) {
+        sseSend(res, { error: sseErr.message });
+        sseEnd(res);
+      }
+      return;
+    }
+
+    // Gather cluster context + call LLM inside a trace scope so that every
+    // ocpFetch made during this request is captured for explainability.
     const { result: traced, trace } = await runWithTrace(async () => {
-      const context = await gatherClusterContext(userMessage, parsed);
-      const replyText = await callLLMWithContext(userMessage, context, llmOpts);
-      return { context, replyText, toolsUsed: [] };
+      const ctxKey = `ctx:${cacheKeyForChat(userMessage, "ctx")}`;
+      let context = await cacheGet(ctxKey);
+      if (!context) {
+        context = await gatherClusterContext(userMessage, parsed);
+        cacheSet(ctxKey, context, CONTEXT_CACHE_TTL).catch(() => {});
+      }
+
+      // Route through orchestrator when external MCP servers are connected,
+      // or through agent loop for diagnose-type queries.
+      const hubActive = getConnectionCount() > 0;
+      const wantsDiagnose =
+        llmEnabled(llmOpts) &&
+        /\b(diagnose|root\s*cause|why\s+is|what'?s\s+wrong|troubleshoot)\b/i.test(userMessage);
+      let replyText;
+      let toolsUsed = [];
+
+      const hintPods = context.targetPodName
+        ? (context.problemPods || []).filter((p) => p.name === context.targetPodName)
+        : (context.problemPods || []).slice(0, 5);
+
+      if (hubActive && llmEnabled(llmOpts)) {
+        try {
+          let kbContext = "";
+          try {
+            const kbMatches = kbFindSimilar({
+              type: parsed?.resource || "",
+              symptoms: userMessage,
+              namespace: parsed?.namespace || "",
+              limit: 3,
+            });
+            kbContext = buildKBContext(kbMatches);
+          } catch { /* KB optional */ }
+
+          const orchRes = await runOrchestrator({
+            userMessage: userMessage + kbContext,
+            contextHint: {
+              problemPods: hintPods,
+              correlations: context.correlations || [],
+              targetPod: context.targetPod || null,
+            },
+            llmOpts,
+          });
+          replyText = orchRes?.text || "";
+          toolsUsed = (orchRes?.toolCalls || []).map((tc) => tc.name);
+        } catch (e) {
+          console.warn("[chat-api] orchestrator failed, falling back:", e.message);
+          replyText = await callLLMWithContext(userMessage, context, llmOpts);
+        }
+      } else if (wantsDiagnose) {
+        try {
+          const agentRes = await runAgent({
+            userMessage,
+            contextHint: {
+              problemPods: hintPods,
+              correlations: context.correlations || [],
+              targetPod: context.targetPod || null,
+            },
+            llmOpts,
+          });
+          replyText = agentRes?.text || (await callLLMWithContext(userMessage, context, llmOpts));
+          toolsUsed = (agentRes?.toolCalls || []).map((tc) => tc.name);
+        } catch (e) {
+          console.warn("[chat-api] agent loop failed, falling back:", e.message);
+          replyText = await callLLMWithContext(userMessage, context, llmOpts);
+        }
+      } else {
+        replyText = await callLLMWithContext(userMessage, context, llmOpts);
+      }
+      return { context, replyText, toolsUsed };
     });
     let { context, replyText: reply, toolsUsed = [] } = traced;
+    intentsForLog = Array.isArray(context?.intents) ? context.intents : Object.keys(context || {});
+
     const correlationsBlock = renderCorrelationsMarkdown(context?.correlations || []);
     if (correlationsBlock) reply += "\n" + correlationsBlock;
+
     const topCause = context?.correlations?.[0];
     if (topCause?.likelyCause) {
-      const pb = suggestPlaybook(topCause.likelyCause, { pod: topCause.pod, namespace: topCause.namespace });
+      const pb = suggestPlaybook(topCause.likelyCause, {
+        pod: topCause.pod,
+        namespace: topCause.namespace,
+      });
       if (pb) reply += "\n" + renderPlaybookMarkdown(pb);
     }
+
     const traceMd = renderTraceMarkdown(trace);
     if (traceMd) reply += "\n" + traceMd;
 
     const payload = {
       reply,
-      provider: "built-in",
+      provider: activeProvider,
       contextKeys: Object.keys(context || {}),
       correlations: context?.correlations || [],
       trace: trace.slice(0, 20),
-      toolsUsed,
+      toolsUsed: toolsUsed || [],
     };
     cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
     if (conversationId) {
-      histAddMessage(conversationId, { role: "assistant", content: reply, provider: "built-in" }).catch(() => {});
+      histAddMessage(conversationId, {
+        role: "assistant",
+        content: reply,
+        provider: activeProvider,
+      }).catch(() => {});
     }
     updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
-    observeHistogram("mcp_chat_latency_seconds", { provider: "built-in" }, (Date.now() - startedAt) / 1000);
+
+    observeHistogram("mcp_chat_latency_seconds", { provider: activeProvider }, (Date.now() - startedAt) / 1000);
     json(res, 200, { ...payload, cached: false, conversationId });
   } catch (err) {
     console.error("Chat API error:", err);

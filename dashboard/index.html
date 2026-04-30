@@ -2528,6 +2528,15 @@ function md(text) {
       '<pre id="' + id + '">' + highlighted + '</pre></div>');
   });
 
+  // Extract <details> blocks (API trace, etc.) BEFORE escaping
+  text = text.replace(/<details><summary>([\s\S]*?)<\/summary>([\s\S]*?)<\/details>/g, function(m, title, body) {
+    var inner = body.trim().replace(/\x00PH(\d+)\x00/g, function(_, idx) { return placeholders[parseInt(idx)]; });
+    return ph('<div class="tool-trace" onclick="this.classList.toggle(\'open\')">' +
+      '<div class="tool-trace-header"><span class="tool-trace-name">' + esc(title.trim()) + '</span>' +
+      '<span class="tool-trace-chevron">&#9654;</span></div>' +
+      '<div class="tool-trace-body">' + inner + '</div></div>');
+  });
+
   // Extract custom tokens BEFORE escaping
   text = text.replace(/@@POD_ISSUE\|([^|]*)\|([^|]*)\|([^@]*)@@/g, function(m,a,b,c) {
     return ph('<div class="pod-issue"><div class="pod-name">' + esc(a) + '</div><div class="pod-ns">' + esc(b) + '</div><div class="pod-detail">' + esc(c) + '</div></div>');
