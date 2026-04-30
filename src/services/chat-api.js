@@ -618,10 +618,12 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
 
       if (cmd.resourceType === "node") {
         parts.push(`### Node Resource Usage`);
+        parts.push(`| Node | CPU | Memory |`);
+        parts.push(`| --- | --- | --- |`);
         items.forEach((n) => {
           const cpu = fmtCpu(n.usage?.cpu);
           const mem = fmtMem(n.usage?.memory);
-          parts.push(`  - **${n.metadata.name}** — CPU: ${cpu}, Memory: ${mem}`);
+          parts.push(`| **${n.metadata.name}** | ${cpu} | ${mem} |`);
         });
       } else {
         const label = cmd.namespace ? `in \`${cmd.namespace}\`` : "(all namespaces)";
@@ -637,14 +639,15 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
           }));
           const totalCpu = containers.reduce((s, c) => s + c.cpuRaw, 0);
           const totalMem = containers.reduce((s, c) => s + c.memRaw, 0);
-          return { pod: p, containers, totalCpu, totalMem };
+          return { pod: p, containers, totalCpu, totalMem, totalCpuFmt: fmtCpu(String(totalCpu) + "n"), totalMemFmt: fmtMem(String(Math.round(totalMem / 1024)) + "Ki") };
         });
         podMetrics.sort((a, b) => b.totalCpu - a.totalCpu);
-        podMetrics.forEach(({ pod: p, containers }) => {
-          const cList = containers.map((c) =>
-            `${c.name}: CPU ${c.cpu}, Mem ${c.mem}`
-          ).join(" | ");
-          parts.push(`  - **${p.metadata.name}** (${p.metadata.namespace}) — ${cList}`);
+        parts.push(`| Pod | Namespace | CPU | Memory | Containers |`);
+        parts.push(`| --- | --- | --- | --- | --- |`);
+        podMetrics.forEach(({ pod: p, containers, totalCpuFmt, totalMemFmt }) => {
+          const cCount = containers.length;
+          const cDetail = cCount > 1 ? `${cCount} containers` : containers[0]?.name || "1";
+          parts.push(`| \`${p.metadata.name}\` | ${p.metadata.namespace} | ${totalCpuFmt} | ${totalMemFmt} | ${cDetail} |`);
         });
         if (items.length > 30) parts.push(`\n... and ${items.length - 30} more pods`);
       }
@@ -1038,11 +1041,13 @@ async function handleListCommand(message, preParsed, opts = {}) {
       const data = await ocpGet("/apis/project.openshift.io/v1/projects");
       const items = data.items || [];
       const parts = [`### OpenShift Projects (${items.length})`];
+      parts.push(`| Status | Project | Display Name | Phase |`);
+      parts.push(`| --- | --- | --- | --- |`);
       items.forEach((p) => {
         const displayName = p.metadata?.annotations?.["openshift.io/display-name"] || "";
         const status = p.status?.phase || "Active";
         const icon = status === "Active" ? "[OK]" : "[WARNING]";
-        parts.push(`  - ${icon} **${p.metadata.name}**${displayName ? ` (${displayName})` : ""} — ${status}`);
+        parts.push(`| ${icon} | **${p.metadata.name}** | ${displayName || "—"} | ${status} |`);
       });
       return parts.join("\n");
     } catch (err) {
@@ -1062,10 +1067,13 @@ async function handleListCommand(message, preParsed, opts = {}) {
         .slice(0, 25);
       const label = cmd.namespace ? `in \`${cmd.namespace}\`` : "(all namespaces)";
       const parts = [`### Events ${label} (showing ${items.length})`];
+      parts.push(`| Type | Reason | Resource | Namespace | Message | Count | Last Seen |`);
+      parts.push(`| --- | --- | --- | --- | --- | --- | --- |`);
       items.forEach((e) => {
         const icon = e.type === "Warning" ? "[WARNING]" : "[OK]";
-        const age = e.lastTimestamp ? ` — ${new Date(e.lastTimestamp).toLocaleString()}` : "";
-        parts.push(`  - ${icon} **${e.reason}** — ${e.involvedObject.kind}/${e.involvedObject.name} in \`${e.metadata.namespace}\`: ${(e.message || "").substring(0, 120)}${e.count > 1 ? ` (x${e.count})` : ""}${age}`);
+        const age = e.lastTimestamp ? new Date(e.lastTimestamp).toLocaleString() : "—";
+        const msg = (e.message || "").substring(0, 80).replace(/\|/g, "/");
+        parts.push(`| ${icon} | **${e.reason}** | ${e.involvedObject.kind}/${e.involvedObject.name} | ${e.metadata.namespace} | ${msg} | ${e.count > 1 ? `x${e.count}` : "1"} | ${age} |`);
       });
       return parts.join("\n");
     } catch (err) {
@@ -1103,131 +1111,168 @@ async function handleListCommand(message, preParsed, opts = {}) {
       return parts.join("\n");
     }
 
-    // Resource-specific formatting
+    // Resource-specific formatting — table output
     if (cmd.resourceType === "pod" || cmd.resourceType === "pods") {
+      parts.push(`| Status | Pod | Namespace | Phase | Restarts |`);
+      parts.push(`| --- | --- | --- | --- | --- |`);
       items.slice(0, 40).forEach((p) => {
         const phase = p.status?.phase || "Unknown";
         const restarts = (p.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0);
         const icon = phase === "Running" ? "[OK]" : phase === "Succeeded" ? "[OK]" : "[CRITICAL]";
-        const ns = p.metadata.namespace;
-        parts.push(`  - ${icon} **${p.metadata.name}** (${ns}) — ${phase}${restarts > 0 ? ` — restarts: ${restarts}` : ""}`);
+        parts.push(`| ${icon} | \`${p.metadata.name}\` | ${p.metadata.namespace} | ${phase} | ${restarts} |`);
       });
     } else if (["deployment", "deployments", "deploy"].includes(cmd.resourceType)) {
+      parts.push(`| Status | Deployment | Namespace | Ready |`);
+      parts.push(`| --- | --- | --- | --- |`);
       items.slice(0, 30).forEach((d) => {
         const ready = d.status?.readyReplicas ?? 0;
         const desired = d.spec?.replicas ?? 0;
         const icon = ready === desired ? "[OK]" : "[CRITICAL]";
-        parts.push(`  - ${icon} **${d.metadata.name}** (${d.metadata.namespace}) — ${ready}/${desired} ready`);
+        parts.push(`| ${icon} | **${d.metadata.name}** | ${d.metadata.namespace} | ${ready}/${desired} |`);
       });
     } else if (["service", "services", "svc"].includes(cmd.resourceType)) {
+      parts.push(`| Service | Namespace | Type | Cluster IP | Ports |`);
+      parts.push(`| --- | --- | --- | --- | --- |`);
       items.slice(0, 30).forEach((s) => {
         const ports = (s.spec?.ports || []).map((p) => `${p.port}/${p.protocol}`).join(", ");
-        parts.push(`  - **${s.metadata.name}** (${s.metadata.namespace}) — ${s.spec?.type} — ${s.spec?.clusterIP} — ${ports}`);
+        parts.push(`| **${s.metadata.name}** | ${s.metadata.namespace} | ${s.spec?.type} | ${s.spec?.clusterIP} | ${ports} |`);
       });
     } else if (["node", "nodes"].includes(cmd.resourceType)) {
+      parts.push(`| Status | Node | Roles | CPU | Memory |`);
+      parts.push(`| --- | --- | --- | --- | --- |`);
       items.forEach((n) => {
         const ready = (n.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True");
         const roles = Object.keys(n.metadata?.labels || {}).filter(l => l.startsWith("node-role.kubernetes.io/")).map(l => l.split("/")[1]);
         const icon = ready ? "[OK]" : "[CRITICAL]";
-        parts.push(`  - ${icon} **${n.metadata.name}** (${roles.join(", ") || "worker"}) — CPU: ${n.status?.capacity?.cpu}, Mem: ${n.status?.capacity?.memory}`);
+        parts.push(`| ${icon} | **${n.metadata.name}** | ${roles.join(", ") || "worker"} | ${n.status?.capacity?.cpu} | ${n.status?.capacity?.memory} |`);
       });
     } else if (["namespace", "namespaces", "ns"].includes(cmd.resourceType)) {
+      parts.push(`| Status | Namespace | Phase |`);
+      parts.push(`| --- | --- | --- |`);
       items.forEach((ns) => {
         const icon = ns.status?.phase === "Active" ? "[OK]" : "[WARNING]";
-        parts.push(`  - ${icon} **${ns.metadata.name}** — ${ns.status?.phase}`);
+        parts.push(`| ${icon} | **${ns.metadata.name}** | ${ns.status?.phase} |`);
       });
     } else if (["route", "routes"].includes(cmd.resourceType)) {
+      parts.push(`| Route | Namespace | Host | Target |`);
+      parts.push(`| --- | --- | --- | --- |`);
       items.slice(0, 30).forEach((r) => {
-        parts.push(`  - **${r.metadata.name}** (${r.metadata.namespace}) — host: ${r.spec?.host || "?"} -> ${r.spec?.to?.name || "?"}`);
+        parts.push(`| **${r.metadata.name}** | ${r.metadata.namespace} | ${r.spec?.host || "?"} | ${r.spec?.to?.name || "?"} |`);
       });
     } else if (["configmap", "configmaps", "cm"].includes(cmd.resourceType)) {
+      parts.push(`| ConfigMap | Namespace | Keys |`);
+      parts.push(`| --- | --- | --- |`);
       items.slice(0, 30).forEach((c) => {
         const keys = Object.keys(c.data || {}).length;
-        parts.push(`  - **${c.metadata.name}** (${c.metadata.namespace}) — ${keys} key(s)`);
+        parts.push(`| **${c.metadata.name}** | ${c.metadata.namespace} | ${keys} |`);
       });
     } else if (["secret", "secrets"].includes(cmd.resourceType)) {
+      parts.push(`| Secret | Namespace | Type | Keys |`);
+      parts.push(`| --- | --- | --- | --- |`);
       items.slice(0, 30).forEach((s) => {
         const keys = Object.keys(s.data || {}).length;
-        parts.push(`  - **${s.metadata.name}** (${s.metadata.namespace}) — type: ${s.type} — ${keys} key(s)`);
+        parts.push(`| **${s.metadata.name}** | ${s.metadata.namespace} | ${s.type} | ${keys} |`);
       });
     } else if (["pvc", "pvcs", "persistentvolumeclaim"].includes(cmd.resourceType)) {
+      parts.push(`| Status | PVC | Namespace | Phase | Storage | Class |`);
+      parts.push(`| --- | --- | --- | --- | --- | --- |`);
       items.slice(0, 30).forEach((p) => {
         const icon = p.status?.phase === "Bound" ? "[OK]" : "[WARNING]";
-        parts.push(`  - ${icon} **${p.metadata.name}** (${p.metadata.namespace}) — ${p.status?.phase} — ${p.spec?.resources?.requests?.storage || "?"} — ${p.spec?.storageClassName || "default"}`);
+        parts.push(`| ${icon} | **${p.metadata.name}** | ${p.metadata.namespace} | ${p.status?.phase} | ${p.spec?.resources?.requests?.storage || "?"} | ${p.spec?.storageClassName || "default"} |`);
       });
     } else if (["virtualmachine", "vm", "vms", "virtualmachines"].includes(cmd.resourceType)) {
+      parts.push(`| Status | VM | Namespace | State | CPU | Memory |`);
+      parts.push(`| --- | --- | --- | --- | --- | --- |`);
       items.slice(0, 30).forEach((v) => {
         const ready = v.status?.ready;
         const printable = v.status?.printableStatus || (ready ? "Running" : "Stopped");
         const icon = ready ? "[OK]" : "[WARNING]";
         const cpu = v.spec?.template?.spec?.domain?.cpu?.cores || "?";
         const mem = v.spec?.template?.spec?.domain?.resources?.requests?.memory || "?";
-        parts.push(`  - ${icon} **${v.metadata.name}** (${v.metadata.namespace}) — ${printable} — CPU: ${cpu}, Mem: ${mem}`);
+        parts.push(`| ${icon} | **${v.metadata.name}** | ${v.metadata.namespace} | ${printable} | ${cpu} | ${mem} |`);
       });
     } else if (["virtualmachineinstance", "vmi", "vmis"].includes(cmd.resourceType)) {
+      parts.push(`| Status | VMI | Namespace | Phase | Node | IP |`);
+      parts.push(`| --- | --- | --- | --- | --- | --- |`);
       items.slice(0, 30).forEach((v) => {
         const phase = v.status?.phase || "Unknown";
         const icon = phase === "Running" ? "[OK]" : "[WARNING]";
         const node = v.status?.nodeName || "unassigned";
         const ip = (v.status?.interfaces || [])[0]?.ipAddress || "none";
-        parts.push(`  - ${icon} **${v.metadata.name}** (${v.metadata.namespace}) — ${phase} — Node: ${node} — IP: ${ip}`);
+        parts.push(`| ${icon} | **${v.metadata.name}** | ${v.metadata.namespace} | ${phase} | ${node} | ${ip} |`);
       });
     } else if (["pipeline", "pipelines"].includes(cmd.resourceType)) {
+      parts.push(`| Pipeline | Namespace | Tasks |`);
+      parts.push(`| --- | --- | --- |`);
       items.slice(0, 30).forEach((p) => {
         const taskCount = p.spec?.tasks?.length || 0;
-        parts.push(`  - **${p.metadata.name}** (${p.metadata.namespace}) — ${taskCount} task(s)`);
+        parts.push(`| **${p.metadata.name}** | ${p.metadata.namespace} | ${taskCount} |`);
       });
     } else if (["pipelinerun", "pipelineruns"].includes(cmd.resourceType)) {
+      parts.push(`| Status | PipelineRun | Namespace | Result | Pipeline | Started |`);
+      parts.push(`| --- | --- | --- | --- | --- | --- |`);
       items.slice(0, 30).forEach((p) => {
         const succeeded = (p.status?.conditions || []).find(c => c.type === "Succeeded");
         const status = succeeded ? (succeeded.status === "True" ? "Succeeded" : succeeded.status === "False" ? "Failed" : "Running") : "Pending";
         const icon = status === "Succeeded" ? "[OK]" : status === "Failed" ? "[CRITICAL]" : "[WARNING]";
         const pipeline = p.spec?.pipelineRef?.name || "inline";
         const start = p.status?.startTime ? new Date(p.status.startTime).toLocaleString() : "?";
-        parts.push(`  - ${icon} **${p.metadata.name}** (${p.metadata.namespace}) — ${status} — pipeline: ${pipeline} — started: ${start}`);
+        parts.push(`| ${icon} | **${p.metadata.name}** | ${p.metadata.namespace} | ${status} | ${pipeline} | ${start} |`);
       });
     } else if (["task", "tasks"].includes(cmd.resourceType)) {
+      parts.push(`| Task | Namespace | Steps |`);
+      parts.push(`| --- | --- | --- |`);
       items.slice(0, 30).forEach((t) => {
         const stepCount = t.spec?.steps?.length || 0;
-        parts.push(`  - **${t.metadata.name}** (${t.metadata.namespace}) — ${stepCount} step(s)`);
+        parts.push(`| **${t.metadata.name}** | ${t.metadata.namespace} | ${stepCount} |`);
       });
     } else if (["taskrun", "taskruns"].includes(cmd.resourceType)) {
+      parts.push(`| Status | TaskRun | Namespace | Result | Task |`);
+      parts.push(`| --- | --- | --- | --- | --- |`);
       items.slice(0, 30).forEach((t) => {
         const succeeded = (t.status?.conditions || []).find(c => c.type === "Succeeded");
         const status = succeeded ? (succeeded.status === "True" ? "Succeeded" : succeeded.status === "False" ? "Failed" : "Running") : "Pending";
         const icon = status === "Succeeded" ? "[OK]" : status === "Failed" ? "[CRITICAL]" : "[WARNING]";
         const taskName = t.spec?.taskRef?.name || "inline";
-        parts.push(`  - ${icon} **${t.metadata.name}** (${t.metadata.namespace}) — ${status} — task: ${taskName}`);
+        parts.push(`| ${icon} | **${t.metadata.name}** | ${t.metadata.namespace} | ${status} | ${taskName} |`);
       });
     } else if (["clusterversion", "clusterversions"].includes(cmd.resourceType)) {
+      parts.push(`| Status | Name | Version | Channel | Updates |`);
+      parts.push(`| --- | --- | --- | --- | --- |`);
       items.forEach((cv) => {
         const version = cv.status?.desired?.version || "?";
         const channel = cv.spec?.channel || "?";
         const updates = cv.status?.availableUpdates?.length || 0;
         const progressing = (cv.status?.conditions || []).find(c => c.type === "Progressing");
         const icon = progressing?.status === "True" ? "[WARNING]" : "[OK]";
-        parts.push(`  - ${icon} **${cv.metadata.name}** — v${version} — channel: ${channel} — ${updates} update(s) available`);
+        parts.push(`| ${icon} | **${cv.metadata.name}** | v${version} | ${channel} | ${updates} available |`);
       });
     } else if (["machine", "machines"].includes(cmd.resourceType)) {
+      parts.push(`| Status | Machine | Namespace | Phase | Node | Type |`);
+      parts.push(`| --- | --- | --- | --- | --- | --- |`);
       items.slice(0, 30).forEach((m) => {
         const phase = m.status?.phase || "Unknown";
         const icon = phase === "Running" ? "[OK]" : "[WARNING]";
         const nodeRef = m.status?.nodeRef?.name || "unassigned";
         const instanceType = m.spec?.providerSpec?.value?.instanceType || m.spec?.providerSpec?.value?.vmSize || "?";
-        parts.push(`  - ${icon} **${m.metadata.name}** (${m.metadata.namespace}) — ${phase} — node: ${nodeRef} — type: ${instanceType}`);
+        parts.push(`| ${icon} | **${m.metadata.name}** | ${m.metadata.namespace} | ${phase} | ${nodeRef} | ${instanceType} |`);
       });
     } else if (["machineset", "machinesets"].includes(cmd.resourceType)) {
+      parts.push(`| Status | MachineSet | Namespace | Ready |`);
+      parts.push(`| --- | --- | --- | --- |`);
       items.slice(0, 30).forEach((ms) => {
         const desired = ms.spec?.replicas ?? 0;
         const ready = ms.status?.readyReplicas ?? 0;
         const icon = ready === desired ? "[OK]" : "[WARNING]";
-        parts.push(`  - ${icon} **${ms.metadata.name}** (${ms.metadata.namespace}) — ${ready}/${desired} ready`);
+        parts.push(`| ${icon} | **${ms.metadata.name}** | ${ms.metadata.namespace} | ${ready}/${desired} |`);
       });
     } else {
       // Generic format
+      parts.push(`| Name | Namespace |`);
+      parts.push(`| --- | --- |`);
       items.slice(0, 30).forEach((item) => {
-        const ns = item.metadata?.namespace ? ` (${item.metadata.namespace})` : "";
-        parts.push(`  - **${item.metadata?.name}**${ns}`);
+        const ns = item.metadata?.namespace || "—";
+        parts.push(`| **${item.metadata?.name}** | ${ns} |`);
       });
     }
 
