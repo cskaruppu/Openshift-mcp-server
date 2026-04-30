@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>KubeNexus AI - Kubernetes Intelligence Platform</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"></noscript>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--accent:#e04040;--accent2:#3b82f6;--accent3:#10b981;--text:#e4e4e7;--text2:#a1a1aa;--warn:#f59e0b;--crit:#ef4444;--ok:#22c55e}
@@ -2585,11 +2587,19 @@ async function refreshAll() {
     'Updated: ' + new Date().toLocaleTimeString();
 }
 
-// Initial load
-refreshAll();
+// Initial load — defer so the browser can paint the shell first
+var _currentView = 'dashboard';
+(window.requestIdleCallback || function(cb) { setTimeout(cb, 50); })(function() { refreshAll(); });
 
-// Auto-refresh
-setInterval(refreshAll, REFRESH_INTERVAL);
+// View-aware auto-refresh — only poll when the dashboard tab is visible
+var _dashRefreshTimer = null;
+function startDashRefresh() {
+  if (_dashRefreshTimer) return;
+  _dashRefreshTimer = setInterval(function() {
+    if (_currentView === 'dashboard') refreshAll();
+  }, REFRESH_INTERVAL);
+}
+startDashRefresh();
 
 // ---------------------------------------------------------------------------
 // Chat — sends user message to /api/chat which queries the cluster + LLM
@@ -3244,6 +3254,7 @@ try {
 function showView(view) {
   // Alerts is now merged into AI Intelligence
   if (view === 'alerts-view' || view === 'alerts') view = 'intelligence';
+  _currentView = view;
   const views = ['dashboard', 'chat', 'audit', 'settings', 'hub', 'intelligence'];
   const tabs = document.querySelectorAll('.nav-tab');
   tabs.forEach(t => t.classList.toggle('active', t.dataset.view === view));
@@ -5209,13 +5220,15 @@ function resetAlertsCountdown() {
   }, 1000);
 }
 
-// Poll alerts badge every 60s
-setInterval(() => {
-  fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts')
-    .then(r => r.json())
-    .then(d => updateAlertsBadge((d.alerts || []).filter(a => !a.silenced).length))
-    .catch(() => {});
-}, 60000);
+// Poll alerts badge every 60s — deferred to avoid competing with initial load
+setTimeout(function() {
+  setInterval(() => {
+    fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts')
+      .then(r => r.json())
+      .then(d => updateAlertsBadge((d.alerts || []).filter(a => !a.silenced).length))
+      .catch(() => {});
+  }, 60000);
+}, 10000);
 // Initial fetch
 setTimeout(() => {
   fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts')
@@ -5795,6 +5808,18 @@ document.addEventListener('keydown', function(e) {
 });
 
 // ---------------------------------------------------------------------------
+// Pause polling when browser tab is hidden to save resources
+// ---------------------------------------------------------------------------
+document.addEventListener('visibilitychange', function() {
+  if (document.hidden) {
+    if (_dashRefreshTimer) { clearInterval(_dashRefreshTimer); _dashRefreshTimer = null; }
+  } else {
+    startDashRefresh();
+    if (_currentView === 'dashboard') refreshAll();
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Export conversation as markdown or JSON
 // ---------------------------------------------------------------------------
 function exportConversation(format) {
@@ -5992,11 +6017,10 @@ function getGuardrails() {
 // ---------------------------------------------------------------------------
 // Auto-refresh toggle
 // ---------------------------------------------------------------------------
-let _autoRefreshInterval = null;
 function toggleAutoRefresh() {
   const enabled = document.getElementById('so-autorefresh')?.checked;
-  if (_autoRefreshInterval) { clearInterval(_autoRefreshInterval); _autoRefreshInterval = null; }
-  if (enabled) { _autoRefreshInterval = setInterval(refreshAll, REFRESH_INTERVAL); }
+  if (_dashRefreshTimer) { clearInterval(_dashRefreshTimer); _dashRefreshTimer = null; }
+  if (enabled) startDashRefresh();
 }
 
 // ---------------------------------------------------------------------------
@@ -7436,8 +7460,8 @@ async function runPredictions() {
   } catch(e) { alert('Error: ' + e.message); }
 }
 
-// Auto-refresh intelligence badge
-(function() {
+// Auto-refresh intelligence badge — deferred to avoid competing with initial load
+setTimeout(function() {
   setInterval(function() {
     fetch(MCP_API + '/intelligence/insights').then(function(r) { return r.json(); }).then(function(d) {
       var badge = document.getElementById('intel-badge');
@@ -7448,7 +7472,7 @@ async function runPredictions() {
       }
     }).catch(function() {});
   }, 60000);
-})();
+}, 15000);
 
 // (Marketplace templates removed — AI Hub is Kubernetes-focused)
 

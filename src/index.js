@@ -9,6 +9,7 @@
 import { createServer } from "node:http";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve, extname } from "node:path";
+import { gzipSync } from "node:zlib";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -1421,22 +1422,59 @@ async function startSSE() {
     // Serve dashboard HTML — fallback for any non-API, non-MCP route
     if (req.method === "GET") {
       const DASHBOARD_DIR = process.env.DASHBOARD_DIR || resolve(process.cwd(), "dashboard");
-      const MIME = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon" };
+      const MIME = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon" };
+      const COMPRESSIBLE = new Set([".html", ".css", ".js", ".json", ".svg"]);
       const filePath = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\//, "");
+
+      if (!startSSE._gzCache) startSSE._gzCache = new Map();
+      const gzCache = startSSE._gzCache;
+
       try {
         const full = resolve(DASHBOARD_DIR, filePath);
         if (!full.startsWith(DASHBOARD_DIR)) throw new Error("forbidden");
         const data = await readFile(full);
-        const ct = MIME[extname(full)] || "application/octet-stream";
-        res.writeHead(200, { "Content-Type": ct });
-        res.end(data);
+        const ext = extname(full);
+        const ct = MIME[ext] || "application/octet-stream";
+        const acceptGzip = (req.headers["accept-encoding"] || "").includes("gzip");
+
+        if (acceptGzip && COMPRESSIBLE.has(ext)) {
+          let cached = gzCache.get(full);
+          if (!cached || cached.srcLen !== data.length) {
+            cached = { gz: gzipSync(data, { level: 6 }), srcLen: data.length };
+            gzCache.set(full, cached);
+          }
+          res.writeHead(200, {
+            "Content-Type": ct,
+            "Content-Encoding": "gzip",
+            "Cache-Control": ext === ".html" ? "no-cache, must-revalidate" : "public, max-age=86400",
+            "Vary": "Accept-Encoding",
+          });
+          res.end(cached.gz);
+        } else {
+          res.writeHead(200, {
+            "Content-Type": ct,
+            "Cache-Control": ext === ".html" ? "no-cache, must-revalidate" : "public, max-age=86400",
+          });
+          res.end(data);
+        }
         return;
       } catch {
-        // Not a static file — try index.html for SPA-style routing
         try {
-          const data = await readFile(resolve(DASHBOARD_DIR, "index.html"));
-          res.writeHead(200, { "Content-Type": "text/html" });
-          res.end(data);
+          const full = resolve(DASHBOARD_DIR, "index.html");
+          const data = await readFile(full);
+          const acceptGzip = (req.headers["accept-encoding"] || "").includes("gzip");
+          if (acceptGzip) {
+            let cached = gzCache.get(full);
+            if (!cached || cached.srcLen !== data.length) {
+              cached = { gz: gzipSync(data, { level: 6 }), srcLen: data.length };
+              gzCache.set(full, cached);
+            }
+            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Encoding": "gzip", "Cache-Control": "no-cache, must-revalidate", "Vary": "Accept-Encoding" });
+            res.end(cached.gz);
+          } else {
+            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache, must-revalidate" });
+            res.end(data);
+          }
           return;
         } catch { /* fall through to 404 */ }
       }
