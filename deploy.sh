@@ -79,10 +79,11 @@ if $GIT_PULL; then
     git checkout "$DEPLOY_BRANCH" 2>/dev/null || git checkout -b "$DEPLOY_BRANCH" "origin/$DEPLOY_BRANCH"
   fi
   echo "       Branch: $DEPLOY_BRANCH"
-  git pull origin "$DEPLOY_BRANCH" --ff-only || {
-    echo "       WARN: fast-forward pull failed, trying rebase..."
-    git pull origin "$DEPLOY_BRANCH" --rebase
-  }
+  # Clean up any stale rebase state
+  git rebase --abort 2>/dev/null || true
+  rm -fr "$SCRIPT_DIR/.git/rebase-apply" "$SCRIPT_DIR/.git/rebase-merge" 2>/dev/null || true
+  git fetch origin "$DEPLOY_BRANCH"
+  git reset --hard "origin/$DEPLOY_BRANCH"
   echo "       Commit: $(git log --oneline -1)"
 else
   echo "       Skipped (--no-pull)"
