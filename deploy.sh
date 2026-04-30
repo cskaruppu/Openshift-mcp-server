@@ -71,11 +71,17 @@ echo "============================================"
 next "Pulling latest code..."
 if $GIT_PULL; then
   cd "$SCRIPT_DIR"
-  BRANCH=$(git rev-parse --abbrev-ref HEAD)
-  echo "       Branch: $BRANCH"
-  git pull origin "$BRANCH" --ff-only || {
+  DEPLOY_BRANCH="claude/setup-mcp-openshift-9JUo7"
+  CURRENT=$(git rev-parse --abbrev-ref HEAD)
+  if [ "$CURRENT" != "$DEPLOY_BRANCH" ]; then
+    echo "       Switching from $CURRENT to $DEPLOY_BRANCH..."
+    git fetch origin "$DEPLOY_BRANCH"
+    git checkout "$DEPLOY_BRANCH" 2>/dev/null || git checkout -b "$DEPLOY_BRANCH" "origin/$DEPLOY_BRANCH"
+  fi
+  echo "       Branch: $DEPLOY_BRANCH"
+  git pull origin "$DEPLOY_BRANCH" --ff-only || {
     echo "       WARN: fast-forward pull failed, trying rebase..."
-    git pull origin "$BRANCH" --rebase
+    git pull origin "$DEPLOY_BRANCH" --rebase
   }
   echo "       Commit: $(git log --oneline -1)"
 else
