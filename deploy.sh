@@ -4,84 +4,139 @@
 # ============================================================================
 #
 # Usage:
-#   ./deploy.sh                    # Deploy to default namespace (openshift-mcp)
-#   ./deploy.sh my-namespace       # Deploy to custom namespace
-#   ./deploy.sh --build            # Build container image and deploy
+#   ./deploy.sh                    # Full deploy: git pull, build, push, deploy
+#   ./deploy.sh --no-build         # Deploy manifests only (skip image build)
+#   ./deploy.sh --no-pull          # Skip git pull
+#   ./deploy.sh -n my-namespace    # Deploy to custom namespace
 #
-# Architecture:
-#   ┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-#   │   Browser    │────▶│  mcp-server  │────▶│  OpenShift   │
-#   │  Dashboard   │◀────│  (API + UI)  │◀────│  API Server  │
-#   └─────────────┘     └──────┬───────┘     └─────────────┘
-#                              │
-#                     ┌────────┴────────┐
-#                     │                 │
-#               ┌─────▼─────┐   ┌──────▼──────┐
-#               │ PostgreSQL │   │    Redis     │
-#               │  (history) │   │   (cache)    │
-#               └───────────┘   └─────────────┘
+# Examples:
+#   ./deploy.sh                    # Pull latest code, build image, deploy all
+#   ./deploy.sh --no-build         # Just apply k8s manifests and restart
+#   ./deploy.sh --no-pull --no-build  # Only restart the deployment
 #
 # ============================================================================
 
 set -euo pipefail
 
-NS="${1:-openshift-mcp}"
-BUILD=false
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+NS="openshift-mcp"
+BUILD=true
+GIT_PULL=true
 IMAGE="quay.io/karuppucs/openshift-mcp-server:latest"
 
-for arg in "$@"; do
-  case "$arg" in
-    --build) BUILD=true ;;
+# ---------------------------------------------------------------------------
+# Parse arguments
+# ---------------------------------------------------------------------------
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -n|--namespace)  NS="$2"; shift 2 ;;
+    --no-build)      BUILD=false; shift ;;
+    --no-pull)       GIT_PULL=false; shift ;;
+    --build)         BUILD=true; shift ;;
+    -h|--help)
+      echo "Usage: ./deploy.sh [OPTIONS]"
+      echo ""
+      echo "Options:"
+      echo "  -n, --namespace NS   Target namespace (default: openshift-mcp)"
+      echo "  --no-build           Skip Docker build and push"
+      echo "  --no-pull            Skip git pull"
+      echo "  --build              Force build (default)"
+      echo "  -h, --help           Show this help"
+      exit 0
+      ;;
+    *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 K8S_DIR="$SCRIPT_DIR/k8s"
 
+STEPS=7
+STEP=0
+next() { STEP=$((STEP + 1)); echo ""; echo "[$STEP/$STEPS] $1"; }
+
 echo "============================================"
 echo " OpenShift MCP AI Assistant — Deploying"
-echo " Namespace: $NS"
+echo " Namespace : $NS"
+echo " Image     : $IMAGE"
+echo " Build     : $BUILD"
+echo " Git pull  : $GIT_PULL"
 echo "============================================"
-echo ""
 
-# 0. Build container image (optional)
+# ---------------------------------------------------------------------------
+# 1. Git pull latest code
+# ---------------------------------------------------------------------------
+next "Pulling latest code..."
+if $GIT_PULL; then
+  cd "$SCRIPT_DIR"
+  BRANCH=$(git rev-parse --abbrev-ref HEAD)
+  echo "       Branch: $BRANCH"
+  git pull origin "$BRANCH" --ff-only || {
+    echo "       WARN: fast-forward pull failed, trying rebase..."
+    git pull origin "$BRANCH" --rebase
+  }
+  echo "       Commit: $(git log --oneline -1)"
+else
+  echo "       Skipped (--no-pull)"
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Build and push container image
+# ---------------------------------------------------------------------------
+next "Building container image..."
 if $BUILD; then
-  echo "[1/6] Building container image..."
-  docker build -t "$IMAGE" "$SCRIPT_DIR"
+  cd "$SCRIPT_DIR"
+  docker build -t "$IMAGE" .
+  echo "       Build complete. Pushing to registry..."
   docker push "$IMAGE"
   echo "       Image pushed: $IMAGE"
 else
-  echo "[1/6] Skipping build (use --build to build image)"
+  echo "       Skipped (--no-build)"
 fi
 
-# 1. Namespace, RBAC, config
-echo "[2/6] Creating namespace, service account, RBAC..."
+# ---------------------------------------------------------------------------
+# 3. Create namespace, RBAC, config, secrets
+# ---------------------------------------------------------------------------
+next "Applying namespace, service account, RBAC, config..."
 oc apply -f "$K8S_DIR/namespace.yaml"
 oc apply -f "$K8S_DIR/serviceaccount.yaml"
 oc apply -f "$K8S_DIR/secret.yaml"
 oc apply -f "$K8S_DIR/configmap.yaml"
 oc apply -f "$K8S_DIR/networkpolicy.yaml"
 
-# 2. Data stores (ignore StatefulSet immutable field errors for existing deployments)
-echo "[3/6] Deploying PostgreSQL and Redis..."
-oc apply -f "$K8S_DIR/postgres.yaml" 2>&1 | grep -v "is invalid" || true
-oc apply -f "$K8S_DIR/redis.yaml"
+# ---------------------------------------------------------------------------
+# 4. Persistent storage
+# ---------------------------------------------------------------------------
+next "Applying persistent volume claims..."
+oc apply -f "$K8S_DIR/pvc.yaml"
 
-# 3. MCP Server (serves both API and dashboard)
-echo "[4/6] Deploying MCP server..."
+# ---------------------------------------------------------------------------
+# 5. Data stores
+# ---------------------------------------------------------------------------
+next "Deploying PostgreSQL and Redis..."
+oc apply -f "$K8S_DIR/postgres.yaml" 2>&1 | grep -v "is invalid" || true
+oc apply -f "$K8S_DIR/redis.yaml" 2>&1 | grep -v "is invalid" || true
+
+# ---------------------------------------------------------------------------
+# 6. MCP Server + Service + Route
+# ---------------------------------------------------------------------------
+next "Deploying MCP server..."
 oc apply -f "$K8S_DIR/deployment.yaml"
 oc apply -f "$K8S_DIR/service.yaml"
 
-# 4. Roll out
-echo "[5/6] Rolling out..."
+# ---------------------------------------------------------------------------
+# 7. Rollout and verify
+# ---------------------------------------------------------------------------
+next "Rolling out and verifying..."
 oc rollout restart deployment/mcp-server -n "$NS"
-oc rollout status deployment/mcp-server -n "$NS" --timeout=120s
+echo "       Waiting for rollout to complete..."
+oc rollout status deployment/mcp-server -n "$NS" --timeout=180s
 
-# 5. Print access info
 echo ""
-echo "[6/6] Verifying..."
-echo ""
-oc get pods -n "$NS"
+echo "--- Pod Status ---"
+oc get pods -n "$NS" -o wide
 echo ""
 
 ROUTE=$(oc get route mcp-server -n "$NS" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
@@ -95,5 +150,5 @@ if [ -n "$ROUTE" ]; then
   echo " Health:     https://$ROUTE/healthz"
 fi
 echo ""
-echo " Configure LLM providers in Settings tab"
+echo " Commit: $(git log --oneline -1 2>/dev/null || echo 'N/A')"
 echo "============================================"
