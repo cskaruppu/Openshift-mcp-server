@@ -23,7 +23,13 @@ metadata:
     app.kubernetes.io/name: openshift-mcp-server
     app.kubernetes.io/part-of: mcp-ai-assistant
   annotations:
-    haproxy.router.openshift.io/timeout: 120s
+    # SSE / streaming chat requires longer timeouts and disabled response buffering.
+    # Without these, HAProxy holds the entire SSE response until the connection closes,
+    # making the chat appear stuck on "gathering" until page refresh.
+    haproxy.router.openshift.io/timeout: 600s
+    haproxy.router.openshift.io/timeout-tunnel: 600s
+    haproxy.router.openshift.io/disable_cookies: "true"
+    router.openshift.io/haproxy.health.check.interval: 5s
 spec:
   to:
     kind: Service

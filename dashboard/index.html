@@ -5238,6 +5238,9 @@ async function sendFullChatStreaming(text) {
           if (payload === '[DONE]') continue;
           try {
             const evt = JSON.parse(payload);
+            if (evt.stage) {
+              advanceThinkingStage(streamDiv, evt.stage === 'generating' ? 'generate' : 'query');
+            }
             if (evt.toolCall) {
               if (!toolTracesEl) {
                 toolTracesEl = document.createElement('div');

@@ -4124,7 +4124,12 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
 }
 
 // ---------------------------------------------------------------------------
-// SSE helper — writes Server-Sent Events to the response stream
+// SSE helper — writes Server-Sent Events to the response stream.
+// Defeats proxy/HAProxy buffering by:
+//  - flushHeaders() to send headers immediately
+//  - setNoDelay(true) to disable Nagle's algorithm on the socket
+//  - Sending a 2KB padding comment to push past HAProxy's internal buffer
+//  - Periodic heartbeats during long-running operations
 // ---------------------------------------------------------------------------
 function sseStart(res) {
   res.writeHead(200, {
@@ -4132,12 +4137,26 @@ function sseStart(res) {
     "Cache-Control": "no-cache, no-transform",
     Connection: "keep-alive",
     "X-Accel-Buffering": "no",
+    "Transfer-Encoding": "chunked",
   });
+  if (typeof res.flushHeaders === "function") res.flushHeaders();
+  if (res.socket && typeof res.socket.setNoDelay === "function") {
+    res.socket.setNoDelay(true);
+  }
+  // Send 2KB padding comment to flush past HAProxy/proxy buffer thresholds.
+  // Without this, proxies often hold the response until enough bytes arrive.
+  const padding = ":" + " ".repeat(2048) + "\n\n";
+  res.write(padding);
   res.write(": ping\n\n");
 }
 function sseSend(res, obj) {
   try {
     res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  } catch {}
+}
+function sseHeartbeat(res) {
+  try {
+    res.write(": heartbeat " + Date.now() + "\n\n");
   } catch {}
 }
 function sseEnd(res) {
@@ -4464,9 +4483,15 @@ export async function handleChatAPI(req, res) {
     // ---- Streaming SSE path ----
     if (wantsStream && llmEnabled(llmOpts)) {
       sseStart(res);
+      // Periodic heartbeat keeps proxies/HAProxy from buffering the connection
+      // and lets the client know the server is still working during the long
+      // gatherClusterContext + LLM call.
+      const heartbeat = setInterval(() => sseHeartbeat(res), 2000);
       try {
+        sseSend(res, { stage: "querying" });
         const { result: sseTraced, trace: sseTrace } = await runWithTrace(async () => {
           let context = await gatherClusterContext(userMessage, parsed);
+          sseSend(res, { stage: "generating" });
           if (context.targetPod) {
             const focused = {
               _focusPod: context.targetPod,
@@ -4521,6 +4546,8 @@ export async function handleChatAPI(req, res) {
       } catch (sseErr) {
         sseSend(res, { error: sseErr.message });
         sseEnd(res);
+      } finally {
+        clearInterval(heartbeat);
       }
       return;
     }
