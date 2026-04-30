@@ -4479,6 +4479,15 @@ export async function handleChatAPI(req, res) {
           cacheHit: true,
           durationMs: Date.now() - startedAt,
         }).catch(() => {});
+        if (wantsStream) {
+          sseStart(res);
+          sseSend(res, { stage: "querying" });
+          sseSend(res, { stage: "generating" });
+          sseSend(res, { delta: cached.reply });
+          sseSend(res, { done: true, provider: cached.provider, conversationId });
+          sseEnd(res);
+          return;
+        }
         return json(res, 200, {
           reply: cached.reply,
           provider: cached.provider,
@@ -4501,6 +4510,13 @@ export async function handleChatAPI(req, res) {
       cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
       if (conversationId) {
         histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+      }
+      if (wantsStream) {
+        sseStart(res);
+        sseSend(res, { delta: reply });
+        sseSend(res, { done: true, provider, conversationId });
+        sseEnd(res);
+        return;
       }
       return json(res, 200, { ...payload, cached: false, conversationId });
     }
@@ -4542,6 +4558,13 @@ export async function handleChatAPI(req, res) {
       if (conversationId) {
         histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
       }
+      if (wantsStream) {
+        sseStart(res);
+        sseSend(res, { delta: reply });
+        sseSend(res, { done: true, provider, conversationId });
+        sseEnd(res);
+        return;
+      }
       return json(res, 200, { ...payload, cached: false, conversationId });
     }
 
@@ -4561,6 +4584,13 @@ export async function handleChatAPI(req, res) {
         ].join("\n");
         if (conversationId) {
           histAddMessage(conversationId, { role: "assistant", content: reply, provider: "built-in" }).catch(() => {});
+        }
+        if (wantsStream) {
+          sseStart(res);
+          sseSend(res, { delta: reply });
+          sseSend(res, { done: true, provider: "built-in", conversationId });
+          sseEnd(res);
+          return;
         }
         return json(res, 200, {
           reply,
@@ -4592,15 +4622,27 @@ export async function handleChatAPI(req, res) {
           histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
         }
         updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
+        if (wantsStream) {
+          sseStart(res);
+          sseSend(res, { delta: reply });
+          sseSend(res, { done: true, provider, conversationId, pendingAction: act });
+          sseEnd(res);
+          return;
+        }
         return json(res, 200, { ...payload, cached: false, conversationId });
       } catch (err) {
         console.error("[chat-api] action workflow error:", err);
-        // Resource not found / RBAC denied — return a clear error to the user
-        // instead of falling through to the generic analysis path.
         if (/Resource not found|RBAC denied/i.test(err.message)) {
           const reply = `### Cannot ${actionIntent.action} ${actionIntent.resourceType}\n\n[WARNING] ${err.message}`;
           if (conversationId) {
             histAddMessage(conversationId, { role: "assistant", content: reply, provider: "built-in" }).catch(() => {});
+          }
+          if (wantsStream) {
+            sseStart(res);
+            sseSend(res, { delta: reply });
+            sseSend(res, { done: true, provider: "built-in", conversationId });
+            sseEnd(res);
+            return;
           }
           return json(res, 200, {
             reply,
@@ -4641,8 +4683,16 @@ export async function handleChatAPI(req, res) {
           provider,
         }).catch(() => {});
       }
-      // Update conversation memory so follow-ups can resolve "it" / "its".
       updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
+      if (wantsStream) {
+        sseStart(res);
+        sseSend(res, { stage: "querying" });
+        sseSend(res, { stage: "generating" });
+        sseSend(res, { delta: directResult });
+        sseSend(res, { done: true, provider, conversationId });
+        sseEnd(res);
+        return;
+      }
       return json(res, 200, { ...payload, cached: false, conversationId });
     }
 
@@ -4664,6 +4714,15 @@ export async function handleChatAPI(req, res) {
         }).catch(() => {});
       }
       updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
+      if (wantsStream) {
+        sseStart(res);
+        sseSend(res, { stage: "querying" });
+        sseSend(res, { stage: "generating" });
+        sseSend(res, { delta: listResult });
+        sseSend(res, { done: true, provider, conversationId });
+        sseEnd(res);
+        return;
+      }
       return json(res, 200, { ...payload, cached: false, conversationId });
     }
 
