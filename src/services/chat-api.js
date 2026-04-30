@@ -69,6 +69,23 @@ import { enforce as enforceRateLimit } from "./rate-limit.js";
 
 // Map an NLU intent to the legacy "operation" string used by the response
 // handlers below, plus a few normalizations.
+// Common English words the NLU sometimes mistakes for resource/namespace names
+// when the user pastes a tool description ("a specific pod in the specified
+// namespace"). Reject them so we don't fire bogus 404 lookups.
+const NLU_BAD_NAMES = new Set([
+  "specific", "specified", "all", "some", "any", "each", "every",
+  "the", "this", "that", "those", "these", "an",
+  "which", "what", "where", "when", "how", "why", "who",
+  "here", "there", "now", "then", "your", "their", "our",
+  "current", "given", "selected", "chosen", "available",
+  "running", "pending", "failed", "completed",
+  "name", "names", "value", "values",
+]);
+function _sanitizeNluName(name) {
+  if (!name) return null;
+  return NLU_BAD_NAMES.has(String(name).toLowerCase()) ? null : name;
+}
+
 function nluToCommand(p) {
   // Map intent → operation.
   let operation = null;
@@ -86,8 +103,8 @@ function nluToCommand(p) {
   return {
     operation,
     resourceType: p.resource,
-    resourceName: p.name,
-    namespace: p.namespace,
+    resourceName: _sanitizeNluName(p.name),
+    namespace: _sanitizeNluName(p.namespace),
     filter: p.filter,
     allNs: p.allNs,
     scope: p.scope,
@@ -496,6 +513,25 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
   // TOP — pod resource usage metrics
   // -----------------------------------------------------------------------
   if (cmd.operation === "top") {
+    // Reject common English words that the parser sometimes mistakes for resource
+    // names ("specific", "specified", "all", etc.) — these come from the user
+    // pasting a tool description like "top gets metrics for a specific pod".
+    const englishWordRe = /^(specific|specified|all|some|any|each|every|the|this|that|those|these|a|an|which|what|where|when|how|why|who|here|there|now|then)$/i;
+    if (cmd.resourceName && englishWordRe.test(cmd.resourceName)) {
+      if (llmAvailable) return null;
+      parts.push(`### Top — Resource Usage`);
+      parts.push(`[WARNING] I couldn't tell which pod or namespace you meant.`);
+      parts.push(`\n**Example:** \`top pods\`, \`top pod my-pod in namespace my-ns\`, or \`top nodes\``);
+      return parts.join("\n");
+    }
+    if (cmd.namespace && englishWordRe.test(cmd.namespace)) {
+      if (llmAvailable) return null;
+      parts.push(`### Top — Resource Usage`);
+      parts.push(`[WARNING] I couldn't tell which namespace you meant.`);
+      parts.push(`\n**Example:** \`top pods in default\` or \`top nodes\``);
+      return parts.join("\n");
+    }
+
     try {
       let path = "/apis/metrics.k8s.io/v1beta1";
       if (cmd.resourceType === "node") {
@@ -534,10 +570,21 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
         if (items.length > 30) parts.push(`\n... and ${items.length - 30} more pods`);
       }
     } catch (err) {
-      parts.push(`### Metrics Error`);
-      parts.push(`[WARNING] ${err.message}`);
-      parts.push(`\nMetrics server may not be installed. Install with:`);
-      parts.push("```" + `oc apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml` + "```");
+      // 404 NotFound usually means the parser misidentified a word as the pod
+      // or namespace name. When an LLM is available, let it handle the query
+      // instead of returning a misleading error.
+      const is404 = /OCP API 404|NotFound|not found/i.test(err.message);
+      if (is404 && llmAvailable) return null;
+      if (is404) {
+        parts.push(`### Top — Resource Usage`);
+        parts.push(`[WARNING] Pod${cmd.resourceName ? ` \`${cmd.resourceName}\`` : ""}${cmd.namespace ? ` in namespace \`${cmd.namespace}\`` : ""} not found.`);
+        parts.push(`\n**Example:** \`top pods\`, \`top pod my-pod in namespace my-ns\`, or \`top nodes\``);
+      } else {
+        parts.push(`### Metrics Error`);
+        parts.push(`[WARNING] ${err.message}`);
+        parts.push(`\nMetrics server may not be installed. Install with:`);
+        parts.push("```" + `oc apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml` + "```");
+      }
     }
     return parts.join("\n");
   }
