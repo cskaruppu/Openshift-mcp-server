@@ -88,9 +88,9 @@ fi
 next "Building container image..."
 if $BUILD; then
   cd "$SCRIPT_DIR"
-  docker build -t "$IMAGE" .
+  podman build -t "$IMAGE" .
   echo "       Build complete. Pushing to registry..."
-  docker push "$IMAGE"
+  podman push "$IMAGE"
   echo "       Image pushed: $IMAGE"
 else
   echo "       Skipped (--no-build)"
