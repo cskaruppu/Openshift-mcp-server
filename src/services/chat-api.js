@@ -1286,6 +1286,179 @@ async function handleListCommand(message, preParsed, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// ITSM — detect "raise change request / incident" intent and auto-populate
+// ---------------------------------------------------------------------------
+const ITSM_PATTERNS = {
+  change_request: /\b(?:raise|create|open|submit|file|generate|draft|prepare)\s+(?:a\s+)?(?:change\s*request|CR|change\s*ticket|change\s*record|RFC)\b/i,
+  incident: /\b(?:raise|create|open|submit|file|generate|report|log)\s+(?:a\s+|an\s+)?(?:incident|INC|incident\s*ticket|P[1-4]\s+incident|sev\s*\d\s+incident)\b/i,
+};
+
+async function detectITSMIntent(message) {
+  const lower = message.toLowerCase();
+  for (const [type, pat] of Object.entries(ITSM_PATTERNS)) {
+    if (pat.test(message)) return type;
+  }
+  if (/\b(?:change\s*request|CR)\b/i.test(lower) && /\b(?:with|for|about|regarding|cluster|upgrade|deployment|service)\b/i.test(lower)) {
+    return "change_request";
+  }
+  if (/\b(?:incident)\b/i.test(lower) && /\b(?:with|for|about|regarding|alert|down|issue|failure|outage)\b/i.test(lower)) {
+    return "incident";
+  }
+  return null;
+}
+
+async function gatherITSMContext(message) {
+  const ctx = { cluster: {}, recent: {} };
+  try {
+    const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+    ctx.cluster.version = cv.status?.desired?.version || cv.status?.history?.[0]?.version || "unknown";
+    ctx.cluster.channel = cv.spec?.channel || "unknown";
+    ctx.cluster.clusterID = cv.spec?.clusterID || cv.metadata?.uid || "";
+    const available = (cv.status?.availableUpdates || []).map(u => u.version);
+    ctx.cluster.availableUpdates = available.slice(0, 5);
+    const conditions = (cv.status?.conditions || []);
+    ctx.cluster.conditions = conditions.map(c => `${c.type}: ${c.status}`).join(", ");
+  } catch { /* cluster info unavailable */ }
+  try {
+    const infra = await ocpGet("/apis/config.openshift.io/v1/infrastructures/cluster");
+    ctx.cluster.platform = infra.status?.platform || "unknown";
+    ctx.cluster.apiURL = infra.status?.apiServerURL || "";
+  } catch {}
+  try {
+    const nodes = await ocpGet("/api/v1/nodes");
+    ctx.cluster.nodeCount = (nodes.items || []).length;
+    ctx.cluster.nodeNames = (nodes.items || []).slice(0, 5).map(n => n.metadata.name);
+  } catch {}
+
+  // Extract context clues from message
+  const nsMatch = message.match(/(?:namespace|ns|project)\s+["']?([a-z0-9][-a-z0-9]*)["']?/i) ||
+                  message.match(/\bin\s+["']?([a-z0-9][-a-z0-9]*)["']?\s*(?:namespace)?/i);
+  ctx.recent.namespace = nsMatch ? nsMatch[1] : "";
+
+  const resMatch = message.match(/\b(deployment|service|pod|route|configmap|secret|statefulset|daemonset|pvc|ingress|cronjob|job)\s+["']?([a-z0-9][-a-z0-9.]*)["']?/i);
+  ctx.recent.resourceType = resMatch ? resMatch[1] : "";
+  ctx.recent.resourceName = resMatch ? resMatch[2] : "";
+
+  return ctx;
+}
+
+function buildITSMForm(type, message, ctx) {
+  const now = new Date();
+  const planned = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+  const fmtDate = (d) => d.toISOString().slice(0, 16).replace("T", " ");
+  const c = ctx.cluster;
+  const r = ctx.recent;
+
+  const isUpgrade = /upgrade/i.test(message);
+  const targetVersion = isUpgrade && c.availableUpdates?.length ? c.availableUpdates[0] : "";
+
+  if (type === "change_request") {
+    let title = "OpenShift Change";
+    let description = [];
+    let risk = "moderate";
+    let changeType = "normal";
+    let rollback = "";
+    let validation = "";
+
+    if (isUpgrade) {
+      title = `OpenShift Cluster Upgrade: ${c.version || "current"} → ${targetVersion || "target"}`;
+      description = [
+        `Cluster: OpenShift ${c.version} (channel: ${c.channel})`,
+        `Platform: ${c.platform || "N/A"}`,
+        `Nodes: ${c.nodeCount || "N/A"}`,
+        `Target Version: ${targetVersion || "[specify target]"}`,
+        `Cluster ID: ${c.clusterID || "N/A"}`,
+        `API Server: ${c.apiURL || "N/A"}`,
+      ];
+      risk = "high";
+      changeType = "normal";
+      rollback = "OpenShift supports rollback via: oc adm upgrade --to=<previous-version>. Monitor ClusterOperators and MachineConfigPool status. If rollback fails, restore from etcd backup.";
+      validation = "1. Verify all ClusterOperators are Available (oc get co)\n2. Check node status (oc get nodes)\n3. Confirm workload health (oc get pods --all-namespaces | grep -v Running)\n4. Validate MachineConfigPool status (oc get mcp)";
+    } else {
+      if (r.resourceType && r.resourceName) {
+        title = `OpenShift Change: ${r.resourceType} '${r.resourceName}'` + (r.namespace ? ` in ${r.namespace}` : "");
+        description = [
+          `Cluster: OpenShift ${c.version || "N/A"} (channel: ${c.channel || "N/A"})`,
+          `Namespace: ${r.namespace || "[specify]"}`,
+          `Resource: ${r.resourceType}/${r.resourceName}`,
+          `Action: [create/modify/delete/scale]`,
+          `Details: [Provide YAML diff or summary of the change]`,
+        ];
+      } else {
+        title = "OpenShift Change — [describe the change]";
+        description = [
+          `Cluster: OpenShift ${c.version || "N/A"} (channel: ${c.channel || "N/A"})`,
+          `Namespace: ${r.namespace || "[specify namespace]"}`,
+          `Resource: [resource type/name]`,
+          `Action: [create/modify/delete/scale]`,
+          `Details: [Provide YAML diff or summary of the change]`,
+        ];
+      }
+      rollback = "[Describe rollback steps for this change]";
+      validation = "[Describe how you will verify the change is successful]";
+    }
+
+    return {
+      type: "change_request",
+      fields: {
+        title: { label: "Change Request Title", value: title },
+        justification: { label: "Business Justification", value: isUpgrade ? "Security patches and bug fixes in latest OpenShift release. Staying current with stable channel updates." : "" },
+        changeType: { label: "Change Type", value: changeType, options: ["standard", "normal", "emergency"] },
+        priority: { label: "Priority", value: "3", options: ["1 - Critical", "2 - High", "3 - Moderate", "4 - Low"] },
+        risk: { label: "Risk Level", value: risk, options: ["low", "moderate", "high"] },
+        plannedDate: { label: "Planned Implementation Date/Time", value: fmtDate(planned) },
+        assignmentGroup: { label: "Assignment Group", value: "" },
+        description: { label: "Change Description", value: description.join("\n") },
+        impact: { label: "Impact Assessment", value: isUpgrade ? "Cluster nodes will be rebooted sequentially. Running workloads with proper PodDisruptionBudgets will experience minimal disruption." : "[Describe potential impact]" },
+        rollback: { label: "Rollback Plan", value: rollback },
+        validation: { label: "Testing/Validation Plan", value: validation },
+      },
+      servicenowEnabled: isServiceNowEnabled(),
+    };
+  }
+
+  // Incident
+  const alertMatch = message.match(/\b(alert|down|crash|oom|error|failure|outage|degraded|unavailable)\w*/i);
+  const urgency = alertMatch && /down|crash|outage|unavailable/i.test(alertMatch[0]) ? "1" : "2";
+  let incTitle = "OpenShift Incident";
+  let incDesc = [];
+
+  if (r.resourceType && r.resourceName) {
+    incTitle = `${r.resourceType} '${r.resourceName}' issue` + (r.namespace ? ` in ${r.namespace}` : "");
+    incDesc = [
+      `Cluster: OpenShift ${c.version || "N/A"}`,
+      `Namespace: ${r.namespace || "[specify]"}`,
+      `Affected Resource: ${r.resourceType}/${r.resourceName}`,
+      `Symptom: [describe the issue]`,
+      `First Observed: ${fmtDate(now)}`,
+    ];
+  } else {
+    incTitle = alertMatch ? `OpenShift ${alertMatch[0]} — [affected component]` : "OpenShift Incident — [describe issue]";
+    incDesc = [
+      `Cluster: OpenShift ${c.version || "N/A"}`,
+      `Namespace: ${r.namespace || "[specify]"}`,
+      `Affected Resource: [specify]`,
+      `Symptom: [describe the issue]`,
+      `First Observed: ${fmtDate(now)}`,
+    ];
+  }
+
+  return {
+    type: "incident",
+    fields: {
+      title: { label: "Incident Title", value: incTitle },
+      urgency: { label: "Urgency", value: urgency, options: ["1 - High", "2 - Medium", "3 - Low"] },
+      impact: { label: "Impact", value: "2", options: ["1 - High", "2 - Medium", "3 - Low"] },
+      category: { label: "Category", value: "Infrastructure" },
+      assignmentGroup: { label: "Assignment Group", value: "" },
+      description: { label: "Description", value: incDesc.join("\n") },
+      workaround: { label: "Workaround (if any)", value: "" },
+    },
+    servicenowEnabled: isServiceNowEnabled(),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Gather cluster context based on user query
 // ---------------------------------------------------------------------------
 async function gatherClusterContext(userMessage, nluParsed = null) {
@@ -4654,6 +4827,30 @@ export async function handleChatAPI(req, res) {
         }
         // Other errors — fall through to default handlers so the user still gets a reply.
       }
+    }
+
+    // ---- ITSM: detect "raise change request" / "create incident" ----
+    const itsmType = await detectITSMIntent(userMessage);
+    if (itsmType) {
+      const itsmCtx = await gatherITSMContext(userMessage);
+      const form = buildITSMForm(itsmType, userMessage, itsmCtx);
+      const formToken = `@@ITSM_FORM|${JSON.stringify(form).replace(/@@/g, "@ @")}@@`;
+      const label = itsmType === "change_request" ? "Change Request" : "Incident";
+      const reply = `### ${label} Form\n\nI've auto-populated the ${label.toLowerCase()} form based on the current cluster context. Review and edit the fields below, then submit.\n\n${formToken}`;
+      const provider = "built-in";
+      if (conversationId) {
+        histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+      }
+      if (wantsStream) {
+        sseStart(res);
+        sseSend(res, { stage: "querying" });
+        sseSend(res, { stage: "generating" });
+        sseSend(res, { delta: reply });
+        sseSend(res, { done: true, provider, conversationId });
+        sseEnd(res);
+        return;
+      }
+      return json(res, 200, { reply, provider, contextKeys: ["itsm", itsmType], cached: false, conversationId });
     }
 
     // Try direct command handler first (for specific CRUD operations)

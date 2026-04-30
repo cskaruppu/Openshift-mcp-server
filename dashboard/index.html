@@ -117,6 +117,27 @@ tr:hover td{background:#ffffff06}
 .msg .apply-result.ok{background:#22c55e22;color:var(--ok)}
 .msg .apply-result.err{background:#ef444422;color:var(--crit)}
 .msg .analysis-text{font-size:12px;color:var(--text2);padding:4px 12px;margin:2px 0;border-left:2px solid var(--accent2);line-height:1.5}
+.itsm-form{background:#0d1117;border:1px solid var(--border);border-radius:10px;margin:12px 0;overflow:hidden}
+.itsm-form-header{display:flex;align-items:center;gap:10px;padding:14px 18px;background:linear-gradient(135deg,#1a1040 0%,#0d1117 100%);border-bottom:1px solid var(--border)}
+.itsm-form-header .itsm-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px}
+.itsm-form-header .itsm-icon.cr{background:#3b82f633;color:var(--accent2)}
+.itsm-form-header .itsm-icon.inc{background:#ef444433;color:var(--crit)}
+.itsm-form-header h4{font-size:14px;font-weight:600;color:var(--text)}
+.itsm-form-header .itsm-badge{font-size:10px;padding:2px 8px;border-radius:9999px;font-weight:600}
+.itsm-form-body{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+.itsm-field label{display:block;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.itsm-field input,.itsm-field textarea,.itsm-field select{width:100%;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;font-family:inherit;outline:none;transition:border-color .2s}
+.itsm-field input:focus,.itsm-field textarea:focus,.itsm-field select:focus{border-color:var(--accent2)}
+.itsm-field textarea{min-height:70px;resize:vertical;line-height:1.5}
+.itsm-field select{cursor:pointer;appearance:auto}
+.itsm-actions{display:flex;gap:8px;padding:12px 18px;border-top:1px solid var(--border);background:#0a0e14}
+.itsm-actions button{padding:8px 20px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;border:none;transition:all .2s}
+.itsm-actions .itsm-submit{background:var(--accent2);color:#fff}
+.itsm-actions .itsm-submit:hover{background:#2563eb}
+.itsm-actions .itsm-submit:disabled{background:#555;cursor:not-allowed}
+.itsm-actions .itsm-cancel{background:transparent;border:1px solid var(--border);color:var(--text2)}
+.itsm-actions .itsm-cancel:hover{border-color:var(--text);color:var(--text)}
+.itsm-result{padding:10px 18px;font-size:12px;border-top:1px solid var(--border)}
 /* Syntax highlighting for code blocks */
 .fix-box .kw{color:#ff7b72}
 .fix-box .str{color:#a5d6ff}
@@ -2688,6 +2709,12 @@ function md(text) {
       action + '\',\'' + name + '\',\'' + ns + '\')">' + esc(label) +
       '</button><span id="' + eid + '-result"></span></div>');
   });
+  text = text.replace(/@@ITSM_FORM\|(.+?)@@/g, function(m, jsonStr) {
+    try {
+      var form = JSON.parse(jsonStr.replace(/@ @/g, '@@'));
+      return ph(renderITSMForm(form));
+    } catch(e) { return ph('<div style="color:var(--crit)">Failed to render ITSM form: ' + esc(e.message) + '</div>'); }
+  });
   text = text.replace(/@@SEC_FIX_CMD\|([^@]+)@@/g, function(m, cmd) {
     var idx = Math.floor(Math.random() * 100000);
     var encodedCmd = btoa(unescape(encodeURIComponent(cmd)));
@@ -2937,6 +2964,115 @@ function _syntaxHL(code, lang) {
   escaped = escaped.replace(/\b(oc|kubectl|docker|podman|helm|git|curl|grep|awk|sed|cat|echo|export|sudo|apt|yum|dnf|pip|npm|cd|ls|mkdir|rm|cp|mv|chmod|chown)\b/g, function(m) { return tok('<span class="kw">' + m + '</span>'); });
   escaped = escaped.replace(/\s(--?[\w-]+)/g, function(m, flag) { return ' ' + tok('<span class="flag">' + flag + '</span>'); });
   return restore(escaped);
+}
+
+// ---------------------------------------------------------------------------
+// ITSM Form — interactive change request / incident form in chat
+// ---------------------------------------------------------------------------
+function renderITSMForm(form) {
+  var fid = 'itsm-' + Math.random().toString(36).substr(2, 8);
+  var isCR = form.type === 'change_request';
+  var label = isCR ? 'Change Request' : 'Incident';
+  var iconClass = isCR ? 'cr' : 'inc';
+  var icon = isCR ? '&#x1F4CB;' : '&#x1F6A8;';
+  var snowBadge = form.servicenowEnabled
+    ? '<span class="itsm-badge" style="background:#22c55e33;color:var(--ok)">ServiceNow Connected</span>'
+    : '<span class="itsm-badge" style="background:#f59e0b33;color:var(--warn)">Local Only</span>';
+
+  var fieldsHtml = '';
+  var fieldKeys = Object.keys(form.fields);
+  for (var i = 0; i < fieldKeys.length; i++) {
+    var key = fieldKeys[i];
+    var f = form.fields[key];
+    var inputId = fid + '-' + key;
+
+    if (f.options && f.options.length > 0) {
+      var opts = f.options.map(function(o) {
+        var val = o.charAt(0) === '1' || o.charAt(0) === '2' || o.charAt(0) === '3' || o.charAt(0) === '4' ? o.split(' - ')[0].trim() : o;
+        var selected = (f.value === o || f.value === val) ? ' selected' : '';
+        return '<option value="' + esc(val) + '"' + selected + '>' + esc(o) + '</option>';
+      }).join('');
+      fieldsHtml += '<div class="itsm-field"><label for="' + inputId + '">' + esc(f.label) + '</label>' +
+        '<select id="' + inputId + '" data-field="' + esc(key) + '">' + opts + '</select></div>';
+    } else if (f.value && (f.value.indexOf('\n') !== -1 || f.value.length > 80)) {
+      fieldsHtml += '<div class="itsm-field"><label for="' + inputId + '">' + esc(f.label) + '</label>' +
+        '<textarea id="' + inputId + '" data-field="' + esc(key) + '" rows="' + Math.min(Math.max(f.value.split('\n').length, 2), 6) + '">' + esc(f.value) + '</textarea></div>';
+    } else {
+      fieldsHtml += '<div class="itsm-field"><label for="' + inputId + '">' + esc(f.label) + '</label>' +
+        '<input type="text" id="' + inputId + '" data-field="' + esc(key) + '" value="' + esc(f.value || '') + '"></div>';
+    }
+  }
+
+  return '<div class="itsm-form" id="' + fid + '">' +
+    '<div class="itsm-form-header">' +
+      '<div class="itsm-icon ' + iconClass + '">' + icon + '</div>' +
+      '<div style="flex:1"><h4>' + label + ' Form</h4>' +
+      '<div style="font-size:11px;color:var(--text2);margin-top:2px">Auto-populated from cluster context</div></div>' +
+      snowBadge +
+    '</div>' +
+    '<div class="itsm-form-body">' + fieldsHtml + '</div>' +
+    '<div class="itsm-actions">' +
+      '<button class="itsm-submit" onclick="submitITSMForm(\'' + fid + '\', \'' + form.type + '\')">&#x1F4E4; Submit ' + label + '</button>' +
+      '<button class="itsm-cancel" onclick="cancelITSMForm(\'' + fid + '\')">Cancel</button>' +
+    '</div>' +
+    '<div class="itsm-result" id="' + fid + '-result" style="display:none"></div>' +
+  '</div>';
+}
+
+async function submitITSMForm(formId, type) {
+  var form = document.getElementById(formId);
+  if (!form) return;
+  var btn = form.querySelector('.itsm-submit');
+  var resultEl = document.getElementById(formId + '-result');
+  if (btn) { btn.disabled = true; btn.textContent = 'Submitting...'; }
+
+  var fields = {};
+  var inputs = form.querySelectorAll('[data-field]');
+  for (var i = 0; i < inputs.length; i++) {
+    fields[inputs[i].dataset.field] = inputs[i].value;
+  }
+
+  try {
+    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/itsm/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: type, fields: fields }),
+    });
+    var data = await resp.json();
+    if (data.success) {
+      if (resultEl) {
+        resultEl.style.display = 'block';
+        resultEl.innerHTML = '<div style="color:var(--ok);font-weight:600">&#x2705; ' + esc(data.message) + '</div>' +
+          '<div style="margin-top:6px;font-size:11px;color:var(--text2)">Ticket ID: <strong style="color:var(--text)">' + esc(data.ticketId) + '</strong></div>';
+      }
+      if (btn) { btn.textContent = 'Submitted'; btn.style.background = 'var(--ok)'; }
+      // Disable all form inputs
+      inputs = form.querySelectorAll('input,textarea,select');
+      for (i = 0; i < inputs.length; i++) { inputs[i].disabled = true; inputs[i].style.opacity = '0.6'; }
+    } else {
+      throw new Error(data.error || 'Submission failed');
+    }
+  } catch (e) {
+    if (resultEl) {
+      resultEl.style.display = 'block';
+      resultEl.innerHTML = '<div style="color:var(--crit)">&#x274C; Error: ' + esc(e.message) + '</div>';
+    }
+    if (btn) { btn.disabled = false; btn.textContent = '&#x1F4E4; Retry Submit'; }
+  }
+}
+
+function cancelITSMForm(formId) {
+  var form = document.getElementById(formId);
+  if (!form) return;
+  form.querySelector('.itsm-form-body').style.display = 'none';
+  form.querySelector('.itsm-actions').style.display = 'none';
+  var header = form.querySelector('.itsm-form-header');
+  if (header) {
+    var note = document.createElement('div');
+    note.style.cssText = 'padding:10px 18px;font-size:12px;color:var(--text2)';
+    note.textContent = 'Form cancelled.';
+    header.after(note);
+  }
 }
 
 // Copy command from fix box

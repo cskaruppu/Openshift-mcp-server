@@ -61,6 +61,10 @@ import {
   isServiceNowEnabled,
 } from "./services/action-workflow.js";
 import {
+  createChangeRequest as snowCreateCR,
+  createIncident as snowCreateIncident,
+} from "./utils/servicenow-client.js";
+import {
   listChats,
   getChat,
   createChat,
@@ -1127,6 +1131,82 @@ async function startSSE() {
         return sendJson(res, 200, result);
       } catch (e) {
         return sendJson(res, 500, { success: false, stderr: e.message });
+      }
+    }
+
+    // POST /api/itsm/submit — submit a change request or incident
+    if (req.method === "POST" && url.pathname === "/api/itsm/submit") {
+      try {
+        const body = await readJsonBody(req);
+        const { type, fields } = body;
+        if (!type || !fields) {
+          return sendJson(res, 400, { error: "Missing type or fields" });
+        }
+
+        if (!isServiceNowEnabled()) {
+          // ServiceNow not configured — save locally and return a mock ticket
+          const ticketId = type === "change_request"
+            ? `CR-${Date.now().toString(36).toUpperCase()}`
+            : `INC-${Date.now().toString(36).toUpperCase()}`;
+          if (dbEnabled()) {
+            try {
+              await dbQuery(
+                `INSERT INTO itsm_tickets (ticket_id, type, title, fields, status, created_at)
+                 VALUES ($1, $2, $3, $4, $5, NOW())`,
+                [ticketId, type, fields.title || "", JSON.stringify(fields), "saved_locally"]
+              );
+            } catch { /* table may not exist yet — that's OK */ }
+          }
+          return sendJson(res, 200, {
+            success: true,
+            ticketId,
+            status: "saved_locally",
+            message: `${type === "change_request" ? "Change Request" : "Incident"} saved locally as ${ticketId}. ServiceNow is not configured — configure SERVICENOW_INSTANCE, SERVICENOW_USERNAME, and SERVICENOW_PASSWORD environment variables to submit directly.`,
+          });
+        }
+
+        // Submit to ServiceNow
+        let result;
+        if (type === "change_request") {
+          result = await snowCreateCR({
+            shortDescription: fields.title || "",
+            description: [
+              fields.description || "",
+              fields.impact ? `\nImpact Assessment: ${fields.impact}` : "",
+              fields.rollback ? `\nRollback Plan: ${fields.rollback}` : "",
+              fields.validation ? `\nValidation Plan: ${fields.validation}` : "",
+            ].filter(Boolean).join("\n"),
+            type: fields.changeType || "normal",
+            priority: (fields.priority || "3").charAt(0),
+            risk: fields.risk || "moderate",
+            assignmentGroup: fields.assignmentGroup || "",
+            justification: fields.justification || "",
+          });
+        } else {
+          result = await snowCreateIncident({
+            shortDescription: fields.title || "",
+            description: [
+              fields.description || "",
+              fields.workaround ? `\nWorkaround: ${fields.workaround}` : "",
+            ].filter(Boolean).join("\n"),
+            urgency: (fields.urgency || "2").charAt(0),
+            impact: (fields.impact || "2").charAt(0),
+            category: fields.category || "Infrastructure",
+            assignmentGroup: fields.assignmentGroup || "",
+          });
+        }
+
+        const record = result?.result || result;
+        const number = record?.number || record?.sys_id || "N/A";
+        return sendJson(res, 200, {
+          success: true,
+          ticketId: number,
+          sysId: record?.sys_id || "",
+          status: "submitted",
+          message: `${type === "change_request" ? "Change Request" : "Incident"} ${number} created in ServiceNow.`,
+        });
+      } catch (e) {
+        return sendJson(res, 500, { error: e.message });
       }
     }
 
