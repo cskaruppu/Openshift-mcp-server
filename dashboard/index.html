@@ -56,13 +56,16 @@ tr:hover td{background:#ffffff06}
 .chat-panel{background:var(--card);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;height:620px}
 .chat-header{padding:16px 20px;border-bottom:1px solid var(--border);font-weight:600;display:flex;align-items:center;gap:8px}
 .chat-messages{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:12px}
-.msg{max-width:90%;padding:12px 16px;border-radius:12px;font-size:13px;line-height:1.6}
+.msg{max-width:90%;padding:12px 16px;border-radius:12px;font-size:14px;line-height:1.7}
 .msg.user{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:4px}
 .msg.ai{align-self:flex-start;background:#2a2d3a;border-bottom-left-radius:4px;max-width:95%;width:95%;overflow-x:hidden;word-wrap:break-word}
 .msg .tool-tag{display:inline-block;background:#3b82f633;color:var(--accent2);padding:1px 6px;border-radius:4px;font-size:11px;margin-top:4px}
-/* Chat rich formatting */
-.msg .chat-heading{font-size:14px;font-weight:700;margin:10px 0 6px;padding-bottom:4px;border-bottom:1px solid #3a3d4a;color:#fff}
-.msg .chat-heading.chat-heading-sm{font-size:13px;border-bottom:none;margin:8px 0 4px}
+/* Chat rich formatting — ChatGPT/Claude-style */
+.msg p,.conv-body p{margin:0 0 12px;line-height:1.7}
+.msg p:last-child,.conv-body p:last-child{margin-bottom:0}
+.msg .chat-heading{font-size:15px;font-weight:700;margin:16px 0 8px;padding-bottom:5px;border-bottom:1px solid #3a3d4a;color:#fff;letter-spacing:-0.01em}
+.msg .chat-heading.h2{font-size:16px}
+.msg .chat-heading.chat-heading-sm{font-size:13px;border-bottom:none;margin:10px 0 4px}
 .msg .chat-heading:first-child{margin-top:0}
 .msg .chat-section{margin:8px 0}
 .msg .status-crit{color:#ef4444;font-weight:700}
@@ -72,22 +75,36 @@ tr:hover td{background:#ffffff06}
 .msg .pod-issue .pod-name{font-weight:700;color:#ef4444;font-size:13px;word-break:break-all}
 .msg .pod-issue .pod-ns{color:var(--text2);font-size:11px}
 .msg .pod-issue .pod-detail{color:#fca5a5;margin-top:3px;word-break:break-word}
-.msg .fix-box{display:block;width:100%;background:#0d1117;border:1px solid #30363d;border-radius:8px;margin:8px 0;overflow:hidden}
+.msg .fix-box{display:block;width:100%;background:#0d1117;border:1px solid #30363d;border-radius:8px;margin:10px 0;overflow:hidden}
 .msg .fix-box .fix-header{display:flex;justify-content:space-between;align-items:center;padding:6px 12px;background:#161b22;border-bottom:1px solid #30363d;font-size:11px;color:var(--text2)}
 .msg .fix-box .fix-header .fix-label{font-weight:600;color:var(--accent2)}
 .msg .fix-box .fix-copy{background:none;border:1px solid #30363d;color:var(--text2);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:10px}
 .msg .fix-box .fix-copy:hover{color:#fff;border-color:#58a6ff}
-.msg .fix-box pre{margin:0;padding:10px 12px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:12px;color:#e6edf3;white-space:pre-wrap;word-break:break-all;line-height:1.5}
+.msg .fix-box pre{margin:0;padding:10px 12px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:12.5px;color:#e6edf3;white-space:pre-wrap;word-break:break-all;line-height:1.5}
 .msg .summary-bar{display:flex;width:100%;gap:12px;flex-wrap:wrap;margin:8px 0;padding:8px 12px;background:#161b22;border-radius:6px;font-size:12px}
 .msg .summary-item{display:flex;align-items:center;gap:4px}
 .msg .summary-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
 .msg .summary-dot.red{background:#ef4444}
 .msg .summary-dot.amber{background:#f59e0b}
 .msg .summary-dot.green{background:#22c55e}
-.msg code{background:#0f1117;padding:1px 5px;border-radius:3px;font-family:'SF Mono','Cascadia Code',monospace;font-size:12px}
+.msg code,.conv-body code{background:#1e1e2e;padding:2px 6px;border-radius:4px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:12.5px;color:#e2b3ff}
+.msg ul,.msg ol,.conv-body ul,.conv-body ol{margin:6px 0 10px 0;padding-left:24px}
+.msg li,.conv-body li{padding:2px 0;line-height:1.6}
+.msg li>ul,.msg li>ol,.conv-body li>ul,.conv-body li>ol{margin:2px 0 2px 0}
 .msg .chat-list{margin:4px 0 4px 8px}
 .msg .chat-list-item{padding:2px 0;display:flex;align-items:flex-start;gap:6px}
 .msg .chat-list-item::before{content:'\2022';color:var(--text2);flex-shrink:0;margin-top:0}
+.msg blockquote,.conv-body blockquote{border-left:3px solid var(--accent2);margin:10px 0;padding:6px 14px;color:var(--text2);background:#3b82f60a;border-radius:0 6px 6px 0;font-size:13px}
+.msg blockquote p:last-child,.conv-body blockquote p:last-child{margin-bottom:0}
+.msg hr,.conv-body hr{border:none;border-top:1px solid #3a3d4a;margin:14px 0}
+.msg a,.conv-body a{color:var(--accent2);text-decoration:none;border-bottom:1px solid transparent}
+.msg a:hover,.conv-body a:hover{border-bottom-color:var(--accent2)}
+.msg .md-table,.conv-body .md-table{width:100%;border-collapse:separate;border-spacing:0;margin:10px 0;font-size:13px;border:1px solid #30363d;border-radius:8px;overflow:hidden}
+.msg .md-table th,.conv-body .md-table th{background:#161b22;padding:8px 12px;text-align:left;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:0.03em;color:var(--text2);border-bottom:1px solid #30363d}
+.msg .md-table td,.conv-body .md-table td{padding:7px 12px;border-bottom:1px solid #21262d}
+.msg .md-table tr:last-child td,.conv-body .md-table tr:last-child td{border-bottom:none}
+.msg .md-table tr:nth-child(even) td,.conv-body .md-table tr:nth-child(even) td{background:#ffffff05}
+.msg .md-table tr:hover td,.conv-body .md-table tr:hover td{background:#ffffff0a}
 .msg .apply-btn{display:inline-block;background:#e04040;color:#fff;border:none;border-radius:6px;padding:6px 16px;font-size:12px;font-weight:600;cursor:pointer;margin:6px 4px 6px 0;transition:all .2s}
 .msg .apply-btn:hover{background:#c03030;transform:translateY(-1px)}
 .msg .apply-btn:disabled{background:#555;cursor:not-allowed;transform:none}
@@ -97,6 +114,14 @@ tr:hover td{background:#ffffff06}
 .msg .apply-result.ok{background:#22c55e22;color:var(--ok)}
 .msg .apply-result.err{background:#ef444422;color:var(--crit)}
 .msg .analysis-text{font-size:12px;color:var(--text2);padding:4px 12px;margin:2px 0;border-left:2px solid var(--accent2);line-height:1.5}
+/* Syntax highlighting for code blocks */
+.fix-box .kw{color:#ff7b72}
+.fix-box .str{color:#a5d6ff}
+.fix-box .num{color:#79c0ff}
+.fix-box .cmt{color:#8b949e;font-style:italic}
+.fix-box .key{color:#7ee787}
+.fix-box .bool{color:#ff7b72}
+.fix-box .flag{color:#d2a8ff}
 .chat-input{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border)}
 .chat-input input{flex:1;background:#0f1117;border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;outline:none}
 .chat-input input:focus{border-color:var(--accent)}
@@ -184,8 +209,9 @@ tr:hover td{background:#ffffff06}
 .conv-name{font-size:13px;font-weight:600;color:var(--text)}
 .conv-provider-tag{font-size:10px;color:#818cf8;background:#818cf815;padding:2px 8px;border-radius:10px;font-weight:500;letter-spacing:.2px}
 .conv-body{padding-left:38px;font-size:14px;line-height:1.7;color:#d1d5db;word-wrap:break-word}
-.conv-body .chat-heading{font-size:15px;font-weight:700;margin:12px 0 6px;padding-bottom:4px;border-bottom:1px solid #3a3d4a;color:#fff}
-.conv-body .chat-heading.chat-heading-sm{font-size:13px;border-bottom:none;margin:8px 0 4px}
+.conv-body .chat-heading{font-size:16px;font-weight:700;margin:16px 0 8px;padding-bottom:5px;border-bottom:1px solid #3a3d4a;color:#fff;letter-spacing:-0.01em}
+.conv-body .chat-heading.h2{font-size:17px}
+.conv-body .chat-heading.chat-heading-sm{font-size:13px;border-bottom:none;margin:10px 0 4px}
 .conv-body .chat-heading:first-child{margin-top:0}
 .conv-body .status-crit{color:#ef4444;font-weight:700}
 .conv-body .status-warn{color:#f59e0b;font-weight:600}
@@ -194,19 +220,18 @@ tr:hover td{background:#ffffff06}
 .conv-body .pod-issue .pod-name{font-weight:700;color:#ef4444;font-size:14px;word-break:break-all}
 .conv-body .pod-issue .pod-ns{color:var(--text2);font-size:12px}
 .conv-body .pod-issue .pod-detail{color:#fca5a5;margin-top:3px}
-.conv-body .fix-box{display:block;width:100%;background:#0d1117;border:1px solid #30363d;border-radius:8px;margin:8px 0;overflow:hidden}
+.conv-body .fix-box{display:block;width:100%;background:#0d1117;border:1px solid #30363d;border-radius:8px;margin:10px 0;overflow:hidden}
 .conv-body .fix-box .fix-header{display:flex;justify-content:space-between;align-items:center;padding:6px 12px;background:#161b22;border-bottom:1px solid #30363d;font-size:11px;color:var(--text2)}
 .conv-body .fix-box .fix-header .fix-label{font-weight:600;color:var(--accent2)}
 .conv-body .fix-box .fix-copy{background:none;border:1px solid #30363d;color:var(--text2);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:10px}
 .conv-body .fix-box .fix-copy:hover{color:#fff;border-color:#58a6ff}
-.conv-body .fix-box pre{margin:0;padding:10px 12px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:12px;color:#e6edf3;white-space:pre-wrap;word-break:break-all;line-height:1.5}
+.conv-body .fix-box pre{margin:0;padding:10px 12px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:12.5px;color:#e6edf3;white-space:pre-wrap;word-break:break-all;line-height:1.5}
 .conv-body .summary-bar{display:flex;width:100%;gap:12px;flex-wrap:wrap;margin:8px 0;padding:8px 12px;background:#161b22;border-radius:6px;font-size:12px}
 .conv-body .summary-item{display:flex;align-items:center;gap:4px}
 .conv-body .summary-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
 .conv-body .summary-dot.red{background:#ef4444}
 .conv-body .summary-dot.amber{background:#f59e0b}
 .conv-body .summary-dot.green{background:#22c55e}
-.conv-body code{background:#0f1117;padding:1px 5px;border-radius:3px;font-family:'SF Mono','Cascadia Code',monospace;font-size:12px}
 .conv-body .apply-btn{display:inline-block;background:#e04040;color:#fff;border:none;border-radius:6px;padding:6px 16px;font-size:12px;font-weight:600;cursor:pointer;margin:6px 4px 6px 0}
 .conv-body .apply-btn:hover{background:#c03030}
 .conv-body .apply-btn:disabled{background:#555;cursor:not-allowed}
@@ -216,6 +241,11 @@ tr:hover td{background:#ffffff06}
 .conv-body .apply-result.ok{background:#22c55e22;color:var(--ok)}
 .conv-body .apply-result.err{background:#ef444422;color:var(--crit)}
 .conv-body .chat-list-item{padding:2px 0}
+.conv-body blockquote{border-left:3px solid var(--accent2);margin:10px 0;padding:6px 14px;color:var(--text2);background:#3b82f60a;border-radius:0 6px 6px 0;font-size:13px}
+.conv-body blockquote p:last-child{margin-bottom:0}
+.conv-body hr{border:none;border-top:1px solid #3a3d4a;margin:14px 0}
+.conv-body a{color:var(--accent2);text-decoration:none;border-bottom:1px solid transparent}
+.conv-body a:hover{border-bottom-color:var(--accent2)}
 .chat-welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;text-align:center;color:var(--text2);padding:60px 20px}
 .chat-welcome h2{font-size:32px;font-weight:700;color:#e5e7eb;margin:24px 0 6px;letter-spacing:-.5px}
 .chat-welcome p{font-size:14px;margin-bottom:36px;max-width:460px;color:#6b7280;line-height:1.6}
@@ -482,7 +512,22 @@ tr:hover td{background:#ffffff06}
 .light-theme{--bg:#f5f5f7;--card:#ffffff;--border:#e0e0e6;--text:#1a1a2e;--text2:#6b6b80;--accent:#e04040;--accent2:#2563eb;--accent3:#059669;--warn:#d97706;--crit:#dc2626;--ok:#16a34a}
 .light-theme .header{background:linear-gradient(135deg,#f8f9fc 0%,#eee8f8 40%,#f8e8e8 100%);border-image:linear-gradient(90deg,#e04040,#3b82f6,#10b981) 1}
 .light-theme .app-footer{background:linear-gradient(135deg,#f8f9fc 0%,#eee8f8 100%);border-top:1px solid #e0e0e0;color:#666}
-.light-theme .msg.ai,.light-theme .conv-body code{background:#eeeef2}
+.light-theme .msg.ai{background:#eeeef2}
+.light-theme .msg code,.light-theme .conv-body code{background:#e8e8f0;color:#6f42c1}
+.light-theme .msg blockquote,.light-theme .conv-body blockquote{background:#2563eb06;border-color:#2563eb;color:#57606a}
+.light-theme .msg hr,.light-theme .conv-body hr{border-color:#e0e0e6}
+.light-theme .msg .md-table,.light-theme .conv-body .md-table{border-color:#d0d7de}
+.light-theme .msg .md-table th,.light-theme .conv-body .md-table th{background:#f6f8fa;color:#57606a;border-color:#d0d7de}
+.light-theme .msg .md-table td,.light-theme .conv-body .md-table td{border-color:#eaeef2}
+.light-theme .msg .md-table tr:nth-child(even) td,.light-theme .conv-body .md-table tr:nth-child(even) td{background:#f9fafb}
+.light-theme .msg .md-table tr:hover td,.light-theme .conv-body .md-table tr:hover td{background:#f0f2f6}
+.light-theme .fix-box .kw{color:#cf222e}
+.light-theme .fix-box .str{color:#0a3069}
+.light-theme .fix-box .num{color:#0550ae}
+.light-theme .fix-box .cmt{color:#6e7781;font-style:italic}
+.light-theme .fix-box .key{color:#116329}
+.light-theme .fix-box .bool{color:#cf222e}
+.light-theme .fix-box .flag{color:#8250df}
 .light-theme .fix-box,.light-theme .fix-box pre{background:#f6f8fa;color:#1a1a2e;border-color:#d0d7de}
 .light-theme .fix-box .fix-header{background:#ebedf0;border-color:#d0d7de}
 .light-theme .fix-box .fix-copy{border-color:#d0d7de;color:#57606a}
@@ -2436,15 +2481,15 @@ setInterval(refreshAll, REFRESH_INTERVAL);
 // ---------------------------------------------------------------------------
 // Rich markdown-to-HTML converter for chat responses
 function md(text) {
-  // Escape HTML first
-  let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // --- Phase 1: Extract fenced code blocks and custom tokens to protect from escaping ---
+  var placeholders = [];
+  function ph(html) { var idx = placeholders.length; placeholders.push(html); return '\x00PH' + idx + '\x00'; }
 
-  // Fenced code blocks: ```command``` -> styled fix box with copy + run buttons
-  html = html.replace(/```([\s\S]*?)```/g, function(match, code) {
-    const trimmed = code.trim();
-    const id = 'cmd-' + Math.random().toString(36).substr(2, 6);
-    // Detect first oc/kubectl command — show inline Run button
-    const firstCmd = trimmed.split('\n').find((l) => /^\s*(oc|kubectl)\s+/.test(l));
+  // Extract fenced code blocks BEFORE escaping
+  text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, function(match, lang, code) {
+    var trimmed = code.replace(/^\n+|\n+$/g, '');
+    var id = 'cmd-' + Math.random().toString(36).substr(2, 6);
+    var firstCmd = trimmed.split('\n').find(function(l) { return /^\s*(oc|kubectl)\s+/.test(l); });
     var runBtn = '';
     if (firstCmd) {
       var upgradeMatch = firstCmd.trim().match(/^oc\s+adm\s+upgrade\s+--to=([\w.\-]+)/);
@@ -2454,118 +2499,284 @@ function md(text) {
         runBtn = '<button class="fix-copy" onclick="runChatCommand(this, ' + JSON.stringify(firstCmd.trim()).replace(/"/g, '&quot;') + ')" title="Send this command to AI Chat">&#x25B6; Run</button>';
       }
     }
-    return '\n<div class="fix-box">' +
-      '<div class="fix-header"><span class="fix-label">Command / Fix</span>' +
+    var langLabel = lang || (firstCmd ? 'shell' : '');
+    var headerLabel = langLabel ? langLabel.charAt(0).toUpperCase() + langLabel.slice(1) : 'Command / Fix';
+    var highlighted = _syntaxHL(trimmed, langLabel);
+    return ph('<div class="fix-box">' +
+      '<div class="fix-header"><span class="fix-label">' + esc(headerLabel) + '</span>' +
       '<div style="display:flex;gap:4px">' + runBtn +
       '<button class="fix-copy" onclick="copyCmd(\'' + id + '\')">Copy</button></div></div>' +
-      '<pre id="' + id + '">' + trimmed + '</pre></div>\n';
+      '<pre id="' + id + '">' + highlighted + '</pre></div>');
   });
 
-  // Status markers: [CRITICAL], [WARNING], [OK], [INFO]
-  html = html.replace(/\[CRITICAL\]/g, '<span class="status-crit">[CRITICAL]</span>');
-  html = html.replace(/\[WARNING\]/g, '<span class="status-warn">[WARNING]</span>');
-  html = html.replace(/\[OK\]/g, '<span class="status-ok">[OK]</span>');
-  html = html.replace(/\[INFO\]/g, '<span style="color:var(--accent2);font-weight:600">[INFO]</span>');
-
-  // Markdown tables: | col | col |
-  html = html.replace(/((?:^\|.+\|[ \t]*$\n?){2,})/gm, function(block) {
-    const rows = block.trim().split('\n').filter(r => r.trim());
-    if (rows.length < 2) return block;
-    const parse = r => r.replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
-    const hdr = parse(rows[0]);
-    // Check if row[1] is a separator (|---|---|)
-    const isSep = /^\|[\s:|-]+\|$/.test(rows[1].trim());
-    const dataStart = isSep ? 2 : 1;
-    let t = '<table class="md-table"><thead><tr>' + hdr.map(h => '<th>' + h + '</th>').join('') + '</tr></thead><tbody>';
-    for (let i = dataStart; i < rows.length; i++) {
-      const cells = parse(rows[i]);
-      t += '<tr>' + cells.map(c => '<td>' + c + '</td>').join('') + '</tr>';
-    }
-    t += '</tbody></table>';
-    return '\n' + t + '\n';
+  // Extract custom tokens BEFORE escaping
+  text = text.replace(/@@POD_ISSUE\|([^|]*)\|([^|]*)\|([^@]*)@@/g, function(m,a,b,c) {
+    return ph('<div class="pod-issue"><div class="pod-name">' + esc(a) + '</div><div class="pod-ns">' + esc(b) + '</div><div class="pod-detail">' + esc(c) + '</div></div>');
   });
-
-  // Section headings: ### Heading
-  html = html.replace(/^#### (.+)$/gm, '\n<div class="chat-heading chat-heading-sm">$1</div>\n');
-  html = html.replace(/^### (.+)$/gm, '\n<div class="chat-heading">$1</div>\n');
-  html = html.replace(/^## (.+)$/gm, '\n<div class="chat-heading">$1</div>\n');
-
-  // Pod issue cards: @@POD_ISSUE|name|namespace|detail@@
-  html = html.replace(/@@POD_ISSUE\|([^|]*)\|([^|]*)\|([^@]*)@@/g,
-    '\n<div class="pod-issue"><div class="pod-name">$1</div><div class="pod-ns">$2</div><div class="pod-detail">$3</div></div>\n');
-
-  // Summary bar: @@SUMMARY|red:N|amber:N|green:N@@
-  html = html.replace(/@@SUMMARY\|([^@]*)@@/g, function(match, items) {
-    const parts = items.split('|').map(item => {
-      const [colorLabel, val] = item.split(':');
-      const color = colorLabel === 'red' ? 'red' : colorLabel === 'amber' ? 'amber' : 'green';
-      const label = color === 'red' ? 'Critical' : color === 'amber' ? 'Warning' : 'Healthy';
-      return '<span class="summary-item"><span class="summary-dot ' + color + '"></span>' + val + ' ' + label + '</span>';
+  text = text.replace(/@@SUMMARY\|([^@]*)@@/g, function(m, items) {
+    var parts = items.split('|').map(function(item) {
+      var sp = item.split(':'); var colorLabel = sp[0]; var val = sp[1];
+      var color = colorLabel === 'red' ? 'red' : colorLabel === 'amber' ? 'amber' : 'green';
+      var label = color === 'red' ? 'Critical' : color === 'amber' ? 'Warning' : 'Healthy';
+      return '<span class="summary-item"><span class="summary-dot ' + color + '"></span>' + esc(val) + ' ' + label + '</span>';
     });
-    return '\n<div class="summary-bar">' + parts.join('') + '</div>\n';
+    return ph('<div class="summary-bar">' + parts.join('') + '</div>');
   });
-
-  // Apply button: @@APPLY_BTN|action|name|namespace|label@@
-  html = html.replace(/@@APPLY_BTN\|([^|]*)\|([^|]*)\|([^|]*)\|([^@]*)@@/g, function(m, action, name, ns, label) {
-    const eid = 'apply-' + Math.random().toString(36).substr(2, 6);
-    return '\n<div><button class="apply-btn" id="' + eid + '" onclick="applyFix(\'' + eid + '\',\'' +
-      action + '\',\'' + name + '\',\'' + ns + '\')">' + label +
-      '</button><span id="' + eid + '-result"></span></div>\n';
+  text = text.replace(/@@APPLY_BTN\|([^|]*)\|([^|]*)\|([^|]*)\|([^@]*)@@/g, function(m, action, name, ns, label) {
+    var eid = 'apply-' + Math.random().toString(36).substr(2, 6);
+    return ph('<div><button class="apply-btn" id="' + eid + '" onclick="applyFix(\'' + eid + '\',\'' +
+      action + '\',\'' + name + '\',\'' + ns + '\')">' + esc(label) +
+      '</button><span id="' + eid + '-result"></span></div>');
   });
-
-  // Security fix command: @@SEC_FIX_CMD|command@@ — renders with Dry Run / Run buttons
-  html = html.replace(/@@SEC_FIX_CMD\|([^@]+)@@/g, function(m, cmd) {
+  text = text.replace(/@@SEC_FIX_CMD\|([^@]+)@@/g, function(m, cmd) {
     var idx = Math.floor(Math.random() * 100000);
     var encodedCmd = btoa(unescape(encodeURIComponent(cmd)));
-    return '<div class="sec-fix-cmd">' +
+    return ph('<div class="sec-fix-cmd">' +
       '<code>' + esc(cmd) + '</code>' +
       '<div class="sec-fix-actions">' +
-      '<button onclick="aicExecuteFix(\'' + encodedCmd + '\', ' + idx + ', true)" class="sec-fix-btn sec-fix-dry" title="Server-side dry run — preview without changes">Dry Run</button>' +
+      '<button onclick="aicExecuteFix(\'' + encodedCmd + '\', ' + idx + ', true)" class="sec-fix-btn sec-fix-dry" title="Server-side dry run">Dry Run</button>' +
       '<button onclick="aicExecuteFix(\'' + encodedCmd + '\', ' + idx + ', false)" class="sec-fix-btn sec-fix-run" title="Execute on cluster now">Run</button>' +
-      '</div>' +
-      '<div class="aic-fix-result" id="aic-fix-result-' + idx + '"></div>' +
-      '</div>';
+      '</div><div class="aic-fix-result" id="aic-fix-result-' + idx + '"></div></div>');
   });
-
-  // Score gauge: @@SCORE|value|label@@  (0-100)
-  html = html.replace(/@@SCORE\|(\d+)\|([^@]*)@@/g, function(m, val, label) {
-    const v = Math.max(0, Math.min(100, parseInt(val)));
-    const circ = 2 * Math.PI * 22;
-    const offset = circ - (v / 100) * circ;
-    const color = v >= 80 ? '#22c55e' : v >= 60 ? '#f59e0b' : '#ef4444';
-    return '<div class="score-gauge">' +
-      '<div class="score-ring"><svg width="52" height="52" viewBox="0 0 52 52">' +
+  text = text.replace(/@@SCORE\|(\d+)\|([^@]*)@@/g, function(m, val, label) {
+    var v = Math.max(0, Math.min(100, parseInt(val)));
+    var circ = 2 * Math.PI * 22;
+    var offset = circ - (v / 100) * circ;
+    var color = v >= 80 ? '#22c55e' : v >= 60 ? '#f59e0b' : '#ef4444';
+    return ph('<div class="score-gauge"><div class="score-ring"><svg width="52" height="52" viewBox="0 0 52 52">' +
       '<circle class="ring-bg" cx="26" cy="26" r="22"/>' +
       '<circle class="ring-fg" cx="26" cy="26" r="22" stroke="' + color + '" stroke-dasharray="' + circ.toFixed(1) + '" stroke-dashoffset="' + offset.toFixed(1) + '"/>' +
       '</svg><div class="score-val" style="color:' + color + '">' + v + '</div></div>' +
-      '<div><div class="score-title">' + label + '</div>' +
-      '<div class="score-label">Score: ' + v + ' / 100</div></div></div>';
+      '<div><div class="score-title">' + esc(label) + '</div><div class="score-label">Score: ' + v + ' / 100</div></div></div>');
   });
-
-  // Grade badge: @@GRADE|A|label@@
-  html = html.replace(/@@GRADE\|([A-F])\|([^@]*)@@/g, function(m, grade, label) {
-    return '<span style="display:inline-flex;align-items:center;gap:6px;margin:4px 0">' +
+  text = text.replace(/@@GRADE\|([A-F])\|([^@]*)@@/g, function(m, grade, label) {
+    return ph('<span style="display:inline-flex;align-items:center;gap:6px;margin:4px 0">' +
       '<span class="grade-badge grade-' + grade + '">' + grade + '</span>' +
-      '<span style="font-weight:600;font-size:13px">' + label + '</span></span>';
+      '<span style="font-weight:600;font-size:13px">' + esc(label) + '</span></span>');
   });
 
-  // Bold
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  // Inline code
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-  // Numbered lists:   1. item
-  html = html.replace(/^  (\d+)\. (.+)$/gm, '<div class="chat-list-item" style="margin-left:12px"><span style="color:var(--accent2);font-weight:600;flex-shrink:0">$1.</span> $2</div>');
-  // Bullet lists
-  html = html.replace(/^  - (.+)$/gm, '<div class="chat-list-item">$1</div>');
-  html = html.replace(/^- (.+)$/gm, '<div class="chat-list-item">$1</div>');
+  // Extract inline code BEFORE escaping
+  text = text.replace(/`([^`\n]+)`/g, function(m, c) { return ph('<code>' + esc(c) + '</code>'); });
 
-  // Line breaks — but strip <br> before/after block elements to prevent extra spacing
-  html = html.replace(/\n/g, '<br>');
-  // Clean up <br> next to block-level elements
-  html = html.replace(/<br>\s*(<div )/g, '$1');
-  html = html.replace(/(<\/div>)\s*<br>/g, '$1');
+  // --- Phase 2: Escape remaining HTML ---
+  text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  // --- Phase 3: Block-level elements ---
+  var lines = text.split('\n');
+  var out = [];
+  var i = 0;
+
+  while (i < lines.length) {
+    var line = lines[i];
+
+    // Headings
+    if (/^#{1,4} /.test(line)) {
+      _flushPara(out);
+      if (/^#### /.test(line)) out.push({ type: 'block', html: '<div class="chat-heading chat-heading-sm">' + _inlineMd(line.replace(/^#### /, '')) + '</div>' });
+      else if (/^### /.test(line)) out.push({ type: 'block', html: '<div class="chat-heading">' + _inlineMd(line.replace(/^### /, '')) + '</div>' });
+      else if (/^## /.test(line)) out.push({ type: 'block', html: '<div class="chat-heading h2">' + _inlineMd(line.replace(/^## /, '')) + '</div>' });
+      else out.push({ type: 'block', html: '<div class="chat-heading h2">' + _inlineMd(line.replace(/^# /, '')) + '</div>' });
+      i++; continue;
+    }
+
+    // Horizontal rule
+    if (/^---+\s*$/.test(line) || /^\*\*\*+\s*$/.test(line)) {
+      _flushPara(out);
+      out.push({ type: 'block', html: '<hr>' });
+      i++; continue;
+    }
+
+    // Placeholder line (block-level custom token)
+    if (/^\x00PH\d+\x00$/.test(line.trim())) {
+      _flushPara(out);
+      out.push({ type: 'block', html: line.trim() });
+      i++; continue;
+    }
+
+    // Markdown table (| col | col |)
+    if (/^\|.+\|/.test(line)) {
+      _flushPara(out);
+      var tableLines = [];
+      while (i < lines.length && /^\|.+\|/.test(lines[i])) { tableLines.push(lines[i]); i++; }
+      if (tableLines.length >= 2) {
+        var parseRow = function(r) { return r.replace(/^\|/, '').replace(/\|$/, '').split('|').map(function(c) { return c.trim(); }); };
+        var hdr = parseRow(tableLines[0]);
+        var isSep = /^\|[\s:|-]+\|$/.test(tableLines[1].trim());
+        var dataStart = isSep ? 2 : 1;
+        var t = '<table class="md-table"><thead><tr>' + hdr.map(function(h) { return '<th>' + _inlineMd(h) + '</th>'; }).join('') + '</tr></thead><tbody>';
+        for (var ti = dataStart; ti < tableLines.length; ti++) {
+          var cells = parseRow(tableLines[ti]);
+          t += '<tr>' + cells.map(function(c) { return '<td>' + _inlineMd(c) + '</td>'; }).join('') + '</tr>';
+        }
+        t += '</tbody></table>';
+        out.push({ type: 'block', html: t });
+      }
+      continue;
+    }
+
+    // Blockquote (> is HTML-escaped to &gt; at this point)
+    if (/^&gt;\s?/.test(line)) {
+      _flushPara(out);
+      var bqLines = [];
+      while (i < lines.length && /^&gt;\s?/.test(lines[i])) { bqLines.push(lines[i].replace(/^&gt;\s?/, '')); i++; }
+      out.push({ type: 'block', html: '<blockquote>' + md(bqLines.join('\n')) + '</blockquote>' });
+      continue;
+    }
+
+    // Unordered list
+    if (/^(\s*)[-*]\s/.test(line)) {
+      _flushPara(out);
+      out.push({ type: 'block', html: _parseList(lines, i, 'ul') });
+      while (i < lines.length && (/^(\s*)[-*]\s/.test(lines[i]) || /^(\s+)\S/.test(lines[i]) && !/^(\s*)(\d+)\.\s/.test(lines[i]) && !/^(\s*)[-*]\s/.test(lines[i]))) i++;
+      continue;
+    }
+
+    // Ordered list
+    if (/^(\s*)\d+\.\s/.test(line)) {
+      _flushPara(out);
+      out.push({ type: 'block', html: _parseList(lines, i, 'ol') });
+      while (i < lines.length && (/^(\s*)\d+\.\s/.test(lines[i]) || /^(\s+)\S/.test(lines[i]) && !/^(\s*)[-*]\s/.test(lines[i]) && !/^(\s*)\d+\.\s/.test(lines[i]))) i++;
+      continue;
+    }
+
+    // Blank line
+    if (line.trim() === '') {
+      _flushPara(out);
+      i++; continue;
+    }
+
+    // Regular text line -> collect into paragraph
+    if (!out.length || out[out.length - 1].type !== 'para') {
+      out.push({ type: 'para', lines: [] });
+    }
+    out[out.length - 1].lines.push(line);
+    i++;
+  }
+  _flushPara(out);
+
+  // --- Phase 4: Render output ---
+  var html = out.map(function(item) {
+    return item.html;
+  }).join('\n');
+
+  // --- Phase 5: Restore placeholders ---
+  html = html.replace(/\x00PH(\d+)\x00/g, function(m, idx) { return placeholders[parseInt(idx)]; });
 
   return html;
+}
+
+// Flush accumulated paragraph lines into a <p> tag
+function _flushPara(out) {
+  if (out.length && out[out.length - 1].type === 'para') {
+    var item = out[out.length - 1];
+    item.type = 'block';
+    item.html = '<p>' + item.lines.map(function(l) { return _inlineMd(l); }).join('<br>') + '</p>';
+    delete item.lines;
+  }
+}
+
+// Inline markdown: bold, italic, strikethrough, links, status markers
+function _inlineMd(text) {
+  // Status markers
+  text = text.replace(/\[CRITICAL\]/g, '<span class="status-crit">[CRITICAL]</span>');
+  text = text.replace(/\[WARNING\]/g, '<span class="status-warn">[WARNING]</span>');
+  text = text.replace(/\[OK\]/g, '<span class="status-ok">[OK]</span>');
+  text = text.replace(/\[INFO\]/g, '<span style="color:var(--accent2);font-weight:600">[INFO]</span>');
+  // Links: [text](url)
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // Bold + italic: ***text***
+  text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  // Bold: **text**
+  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Italic: *text* (but not inside words with asterisks, and not starting with **)
+  text = text.replace(/(?<!\w)\*([^*\n]+?)\*(?!\w)/g, '<em>$1</em>');
+  // Strikethrough: ~~text~~
+  text = text.replace(/~~(.+?)~~/g, '<del>$1</del>');
+  return text;
+}
+
+// Parse nested lists from lines array starting at position i
+function _parseList(lines, startI, type) {
+  var items = [];
+  var i = startI;
+  var baseIndent = -1;
+  var listPat = type === 'ul' ? /^(\s*)[-*]\s(.*)/ : /^(\s*)\d+\.\s(.*)/;
+
+  while (i < lines.length) {
+    var m = lines[i].match(listPat);
+    if (m) {
+      var indent = m[1].length;
+      if (baseIndent < 0) baseIndent = indent;
+      if (indent > baseIndent) {
+        // Nested list — find the sub-block and recurse
+        var subStart = i;
+        var subType = /^(\s*)[-*]\s/.test(lines[i]) ? 'ul' : 'ol';
+        while (i < lines.length) {
+          var nextM = lines[i].match(/^(\s*)[-*]\s|^(\s*)\d+\.\s/);
+          if (nextM) {
+            var ni = (nextM[1] || nextM[2] || '').length;
+            if (ni <= baseIndent) break;
+          } else if (/^\S/.test(lines[i])) break;
+          else if (lines[i].trim() === '') break;
+          i++;
+        }
+        if (items.length > 0) {
+          items[items.length - 1].sub = _parseList(lines, subStart, subType);
+        }
+        continue;
+      } else if (indent < baseIndent) {
+        break;
+      }
+      items.push({ text: m[2], sub: '' });
+      i++;
+    } else if (/^\s+\S/.test(lines[i]) && items.length > 0) {
+      // Continuation line
+      items[items.length - 1].text += ' ' + lines[i].trim();
+      i++;
+    } else {
+      break;
+    }
+  }
+
+  var tag = type === 'ul' ? 'ul' : 'ol';
+  return '<' + tag + '>' + items.map(function(item) {
+    return '<li>' + _inlineMd(item.text) + (item.sub || '') + '</li>';
+  }).join('') + '</' + tag + '>';
+}
+
+// Lightweight syntax highlighting for code blocks
+function _syntaxHL(code, lang) {
+  var escaped = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  lang = (lang || '').toLowerCase();
+  if (!lang) return escaped;
+
+  // Placeholder approach: extract strings and comments first to avoid regex conflicts
+  var toks = [];
+  function tok(html) { var idx = toks.length; toks.push(html); return '\x01T' + idx + '\x01'; }
+  function restore(s) { return s.replace(/\x01T(\d+)\x01/g, function(m, i) { return toks[parseInt(i)]; }); }
+
+  if (lang === 'json') {
+    escaped = escaped.replace(/"([^"]*)"(\s*:)/g, function(m, k, c) { return tok('<span class="key">"' + k + '"</span>') + c; });
+    escaped = escaped.replace(/:\s*"([^"]*)"/g, function(m, v) { return ': ' + tok('<span class="str">"' + v + '"</span>'); });
+    escaped = escaped.replace(/:\s*(true|false|null)\b/g, function(m, v) { return ': ' + tok('<span class="bool">' + v + '</span>'); });
+    escaped = escaped.replace(/:\s*(-?\d+\.?\d*)/g, function(m, v) { return ': ' + tok('<span class="num">' + v + '</span>'); });
+    return restore(escaped);
+  }
+
+  if (lang === 'yaml' || lang === 'yml') {
+    escaped = escaped.replace(/#.*$/gm, function(m) { return tok('<span class="cmt">' + m + '</span>'); });
+    escaped = escaped.replace(/(["'])([^"']*)\1/g, function(m) { return tok('<span class="str">' + m + '</span>'); });
+    escaped = escaped.replace(/^(\s*)([\w.-]+)(\s*:)/gm, function(m, sp, k, c) { return sp + tok('<span class="key">' + k + '</span>') + c; });
+    escaped = escaped.replace(/:\s*(true|false|yes|no|null|~)\b/gi, function(m, v) { return ': ' + tok('<span class="bool">' + v + '</span>'); });
+    return restore(escaped);
+  }
+
+  // Shell / bash / default for oc/kubectl commands
+  escaped = escaped.replace(/#.*$/gm, function(m) { return tok('<span class="cmt">' + m + '</span>'); });
+  escaped = escaped.replace(/(["'])([^"']*)\1/g, function(m) { return tok('<span class="str">' + m + '</span>'); });
+  escaped = escaped.replace(/\b(oc|kubectl|docker|podman|helm|git|curl|grep|awk|sed|cat|echo|export|sudo|apt|yum|dnf|pip|npm|cd|ls|mkdir|rm|cp|mv|chmod|chown)\b/g, function(m) { return tok('<span class="kw">' + m + '</span>'); });
+  escaped = escaped.replace(/\s(--?[\w-]+)/g, function(m, flag) { return ' ' + tok('<span class="flag">' + flag + '</span>'); });
+  return restore(escaped);
 }
 
 // Copy command from fix box
@@ -3124,7 +3335,7 @@ function renderConversation() {
       html += '<div class="conv-msg ai">' +
         '<div class="conv-header"><div class="conv-avatar">KN</div><span class="conv-name">KubeNexus AI</span>' + providerTag + '</div>' +
         toolsBlock +
-        '<div class="conv-body">' + (msg.html || md(msg.text || '')) + '</div></div>';
+        '<div class="conv-body">' + md(msg.text || '') + '</div></div>';
     }
   }
   inner.innerHTML = html;
@@ -4030,7 +4241,7 @@ renderConversation = function() {
       const downClass = msg.feedback === -1 ? ' voted' : '';
       html += '<div class="conv-msg ai">' +
         '<div class="conv-header"><div class="conv-avatar">KN</div><span class="conv-name">KubeNexus AI</span>' + providerTag + confidenceTag + '</div>' +
-        '<div class="conv-body">' + (msg.html || md(msg.text || '')) + '</div>' +
+        '<div class="conv-body">' + md(msg.text || '') + '</div>' +
         '<div class="conv-feedback">' +
           '<button class="' + upClass + '" onclick="sendFeedback(' + idx + ',1)" title="Helpful">&#x1F44D;</button>' +
           '<button class="' + downClass + '" onclick="sendFeedback(' + idx + ',-1)" title="Not helpful">&#x1F44E;</button>' +
