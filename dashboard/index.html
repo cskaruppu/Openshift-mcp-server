@@ -3231,27 +3231,37 @@ function getActiveChat() {
 function generateChatTitle(msg) {
   if (!msg) return 'New conversation';
   let t = msg.trim().replace(/\s+/g, ' ');
+  // Extract namespace if mentioned: "in/under/from X namespace" or "namespace X"
+  var nsMatch = t.match(/(?:in|under|from|for|of)\s+(?:namespace|ns|project)?\s*([a-z0-9][-a-z0-9]*)\s*(?:namespace|ns)?/i)
+    || t.match(/(?:namespace|ns|project)\s+([a-z0-9][-a-z0-9]+)/i);
+  var ns = nsMatch ? nsMatch[1] : null;
+  // Filter out common words that aren't real namespace names
+  if (ns && /^(the|all|every|each|my|our|your|this|that|some|any)$/i.test(ns)) ns = null;
+  var nsSuffix = ns ? ' in ' + ns : '';
+
   const patterns = [
-    { re: /\b(?:list|show|get)\s+(?:all\s+)?(\w+)/i, fmt: (m) => capitalize(m[1]) + ' listing' },
-    { re: /\b(?:top|metrics|usage)\s+(?:for\s+)?(\w+)/i, fmt: (m) => capitalize(m[1]) + ' resource usage' },
-    { re: /\b(?:describe|details?)\s+(?:of\s+)?(\w+)\s+(\S+)/i, fmt: (m) => capitalize(m[1]) + ' ' + m[2] + ' details' },
+    { re: /\b(?:list|show|get|display)\s+(?:all\s+|the\s+|of\s+)?(?:all\s+)?(\w+)/i, fmt: (m) => capitalize(m[1]) + ' listing' + nsSuffix },
+    { re: /\b(?:top|metrics|usage|resource)\s+(?:of\s+|for\s+)?(\w+)/i, fmt: (m) => capitalize(m[1]) + ' resource usage' + nsSuffix },
+    { re: /\b(\w+)\s+(?:list|listing|overview)\b/i, fmt: (m) => capitalize(m[1]) + ' listing' + nsSuffix },
+    { re: /\b(?:describe|details?|info)\s+(?:of\s+|for\s+|about\s+)?(\w+)\s+(\S+)/i, fmt: (m) => capitalize(m[1]) + ' ' + m[2] + ' details' },
     { re: /\b(?:logs?|log)\s+(?:of|for|from)?\s*(\S+)/i, fmt: (m) => 'Logs for ' + m[1] },
-    { re: /\b(?:why|what.*wrong|troubleshoot|debug|diagnos)\b.*?(\w+)/i, fmt: (m) => capitalize(m[1]) + ' troubleshooting' },
+    { re: /\b(?:why|what.*wrong|troubleshoot|debug|diagnos|issue|problem)\b.*?(\w+)/i, fmt: (m) => capitalize(m[1]) + ' troubleshooting' },
     { re: /\b(?:health|status|check)\s+(?:of\s+)?(?:the\s+)?(\w+)/i, fmt: (m) => capitalize(m[1]) + ' health check' },
-    { re: /\b(?:scale|restart|rollout|delete|create)\s+(\w+)/i, fmt: (m) => capitalize(m[0].split(/\s/)[0]) + ' ' + m[1] },
-    { re: /\b(?:how many|count)\s+(\w+)/i, fmt: (m) => capitalize(m[1]) + ' count' },
+    { re: /\b(?:scale|restart|rollout|delete|create|apply)\s+(\w+)/i, fmt: (m) => capitalize(m[0].split(/\s/)[0]) + ' ' + m[1] + nsSuffix },
+    { re: /\b(?:how many|count|number of)\s+(\w+)/i, fmt: (m) => capitalize(m[1]) + ' count' + nsSuffix },
     { re: /\b(?:compare|diff)\b/i, fmt: () => 'Resource comparison' },
     { re: /\b(?:cluster|openshift)\s+(\w+)/i, fmt: (m) => 'Cluster ' + m[1] },
+    { re: /\b(?:pod|pods|deployment|deployments|service|services|node|nodes|route|routes|pvc|secret|secrets|configmap|namespace|namespaces)\b/i, fmt: (m) => capitalize(m[0]) + ' query' + nsSuffix },
   ];
   for (const p of patterns) {
     const m = t.match(p.re);
     if (m) {
-      const title = p.fmt(m);
-      return title.length > 40 ? title.substring(0, 40) + '...' : title;
+      var title = p.fmt(m);
+      return title.length > 45 ? title.substring(0, 42) + '...' : title;
     }
   }
-  const words = t.split(/\s+/).slice(0, 6).join(' ');
-  return words.length > 40 ? words.substring(0, 40) + '...' : words;
+  var words = t.split(/\s+/).slice(0, 6).join(' ');
+  return words.length > 45 ? words.substring(0, 42) + '...' : words;
 }
 function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : ''; }
 
