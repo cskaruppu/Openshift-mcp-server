@@ -122,6 +122,21 @@ tr:hover td{background:#ffffff06}
 .fix-box .key{color:#7ee787}
 .fix-box .bool{color:#ff7b72}
 .fix-box .flag{color:#d2a8ff}
+/* Tool-call trace cards — Claude Desktop style */
+.tool-trace{margin:8px 0;border:1px solid #30363d;border-radius:8px;overflow:hidden;font-size:12px}
+.tool-trace-header{display:flex;align-items:center;gap:8px;padding:6px 12px;background:#161b22;cursor:pointer;user-select:none}
+.tool-trace-header:hover{background:#1c2028}
+.tool-trace-icon{width:16px;height:16px;color:var(--accent2);flex-shrink:0}
+.tool-trace-name{font-weight:600;color:var(--accent2);font-family:'SF Mono','Cascadia Code',monospace;font-size:11px}
+.tool-trace-status{margin-left:auto;font-size:10px;color:var(--ok);font-weight:600}
+.tool-trace-status.running{color:var(--warn);animation:pulse 1.5s ease-in-out infinite}
+.tool-trace-chevron{color:var(--text2);font-size:10px;transition:transform .2s}
+.tool-trace.open .tool-trace-chevron{transform:rotate(90deg)}
+.tool-trace-body{display:none;padding:8px 12px;background:#0d1117;border-top:1px solid #30363d;font-family:'SF Mono','Cascadia Code',monospace;font-size:11px;color:#8b949e;white-space:pre-wrap;max-height:200px;overflow:auto}
+.tool-trace.open .tool-trace-body{display:block}
+.tool-trace-step{padding:4px 12px;background:#161b22;border-top:1px solid #21262d;font-size:10px;color:var(--text2);display:flex;align-items:center;gap:6px}
+.tool-trace-step-num{background:var(--accent2);color:#fff;width:16px;height:16px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 .chat-input{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border)}
 .chat-input input{flex:1;background:#0f1117;border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;outline:none}
 .chat-input input:focus{border-color:var(--accent)}
@@ -528,6 +543,10 @@ tr:hover td{background:#ffffff06}
 .light-theme .fix-box .key{color:#116329}
 .light-theme .fix-box .bool{color:#cf222e}
 .light-theme .fix-box .flag{color:#8250df}
+.light-theme .tool-trace{border-color:#d0d7de}
+.light-theme .tool-trace-header{background:#f6f8fa}
+.light-theme .tool-trace-header:hover{background:#ebedf0}
+.light-theme .tool-trace-body{background:#f6f8fa;border-color:#d0d7de;color:#57606a}
 .light-theme .fix-box,.light-theme .fix-box pre{background:#f6f8fa;color:#1a1a2e;border-color:#d0d7de}
 .light-theme .fix-box .fix-header{background:#ebedf0;border-color:#d0d7de}
 .light-theme .fix-box .fix-copy{border-color:#d0d7de;color:#57606a}
@@ -5185,6 +5204,8 @@ async function sendFullChatStreaming(text) {
       const body = document.getElementById('stream-body');
       let buf = '';
       let firstChunk = true;
+      var toolTraces = [];
+      var toolTracesEl = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -5198,9 +5219,35 @@ async function sendFullChatStreaming(text) {
           if (payload === '[DONE]') continue;
           try {
             const evt = JSON.parse(payload);
+            if (evt.toolCall) {
+              if (!toolTracesEl) {
+                toolTracesEl = document.createElement('div');
+                toolTracesEl.className = 'tool-traces-container';
+                body.parentNode.insertBefore(toolTracesEl, body);
+              }
+              var tcId = 'tc-' + Math.random().toString(36).substr(2, 6);
+              toolTraces.push(evt.toolCall);
+              var tcHtml = '<div class="tool-trace" id="' + tcId + '" onclick="this.classList.toggle(\'open\')">' +
+                '<div class="tool-trace-header">' +
+                '<svg class="tool-trace-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M8.878.392a1.75 1.75 0 00-1.756 0l-5.25 3.045A1.75 1.75 0 001 5.07v5.86c0 .624.332 1.2.872 1.514l5.25 3.045a1.75 1.75 0 001.756 0l5.25-3.045c.54-.313.872-.89.872-1.514V5.07c0-.624-.332-1.2-.872-1.514L8.878.392z"/></svg>' +
+                '<span class="tool-trace-name">' + esc(evt.toolCall.name) + '</span>' +
+                '<span class="tool-trace-status">called</span>' +
+                '<span class="tool-trace-chevron">&#9654;</span>' +
+                '</div>' +
+                '<div class="tool-trace-body">' + esc(JSON.stringify(evt.toolCall.arguments || {}, null, 2)) + '</div>' +
+                '</div>';
+              toolTracesEl.insertAdjacentHTML('beforeend', tcHtml);
+              scrollConversation();
+            }
+            if (evt.step && evt.step.toolCalls && evt.step.toolCalls.length) {
+              if (firstChunk) {
+                advanceThinkingStage(streamDiv, 'generate');
+                body.innerHTML = '';
+                firstChunk = false;
+              }
+            }
             if (evt.delta) {
               if (firstChunk) {
-                // First token arrived — clear thinking, advance final stage
                 advanceThinkingStage(streamDiv, 'generate');
                 body.innerHTML = '';
                 firstChunk = false;
@@ -5211,6 +5258,14 @@ async function sendFullChatStreaming(text) {
             }
             if (evt.done) {
               streamProvider = evt.provider || streamProvider;
+              if (evt.toolsUsed && evt.toolsUsed.length) {
+                var toolsTag = '<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center">' +
+                  '<span style="font-size:10px;color:var(--text2)">Tools used:</span>' +
+                  evt.toolsUsed.map(function(t) {
+                    return '<code style="background:#6366f11a;color:#818cf8;padding:2px 6px;border-radius:4px;font-size:10px">' + esc(t) + '</code>';
+                  }).join('') + '</div>';
+                body.insertAdjacentHTML('beforeend', toolsTag);
+              }
             }
             if (evt.error) {
               fullText += '\n\nError: ' + evt.error;
@@ -5229,7 +5284,7 @@ async function sendFullChatStreaming(text) {
   history = loadChatHistory();
   const activeChat = history.chats.find(c => c.id === history.activeId);
   if (activeChat) {
-    activeChat.messages.push({ role: 'ai', text: fullText, html: md(fullText), provider: streamProvider });
+    activeChat.messages.push({ role: 'ai', text: fullText, provider: streamProvider, toolsUsed: toolTraces.map(function(t) { return t.name; }) });
     activeChat.updatedAt = new Date().toISOString();
     saveChatHistory(history);
   }
