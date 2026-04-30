@@ -3386,6 +3386,19 @@ function renderChatHistory() {
     return;
   }
 
+  // Auto-fix titles: if any chat still says "New conversation" but has user messages, generate a title
+  var titleFixed = false;
+  history.chats.forEach(function(c) {
+    if (c.title === 'New conversation' && c.messages && c.messages.length > 0) {
+      var firstUserMsg = c.messages.find(function(m) { return m.role === 'user'; });
+      if (firstUserMsg && firstUserMsg.text) {
+        c.title = generateChatTitle(firstUserMsg.text);
+        titleFixed = true;
+      }
+    }
+  });
+  if (titleFixed) saveChatHistory(history);
+
   list.innerHTML = history.chats.map(c => {
     const active = c.id === history.activeId ? ' active' : '';
     const time = c.updatedAt ? timeAgo(c.updatedAt) : '';
