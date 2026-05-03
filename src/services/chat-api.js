@@ -66,6 +66,7 @@ import { suggestPlaybook, renderPlaybookMarkdown } from "./playbooks.js";
 import { findResource } from "./resource-index.js";
 import { incCounter, observeHistogram } from "./metrics.js";
 import { enforce as enforceRateLimit } from "./rate-limit.js";
+import { runPreflightChecks, formatPreflightReport } from "../tools/upgrade-preflight.js";
 
 // Map an NLU intent to the legacy "operation" string used by the response
 // handlers below, plus a few normalizations.
@@ -4836,7 +4837,33 @@ export async function handleChatAPI(req, res) {
       const form = buildITSMForm(itsmType, userMessage, itsmCtx);
       const formToken = `@@ITSM_FORM|${JSON.stringify(form).replace(/@@/g, "@ @")}@@`;
       const label = itsmType === "change_request" ? "Change Request" : "Incident";
-      const reply = `### ${label} Form\n\nI've auto-populated the ${label.toLowerCase()} form based on the current cluster context. Review and edit the fields below, then submit.\n\n${formToken}`;
+
+      // Auto-run preflight assessment for upgrade-related Change Requests
+      let preflightSection = "";
+      const isUpgradeRelated = /upgrade/i.test(userMessage);
+      if (itsmType === "change_request" && isUpgradeRelated) {
+        try {
+          const versionMatch = userMessage.match(/(\d+\.\d+\.\d+)/g);
+          let targetVer = "";
+          let currentVer = "";
+          if (versionMatch && versionMatch.length >= 2) {
+            currentVer = versionMatch[0];
+            targetVer = versionMatch[1];
+          } else if (versionMatch && versionMatch.length === 1) {
+            targetVer = versionMatch[0];
+          } else if (itsmCtx.cluster?.availableUpdates?.length) {
+            targetVer = itsmCtx.cluster.availableUpdates[0];
+          }
+          if (targetVer) {
+            const preflightReport = await runPreflightChecks(targetVer, currentVer || undefined);
+            const reportMarkdown = formatPreflightReport(preflightReport);
+            const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(preflightReport).replace(/@@/g, "@ @")}@@`;
+            preflightSection = `${reportMarkdown}\n\n${reportToken}\n\n---\n\n`;
+          }
+        } catch { /* preflight failed gracefully — continue with CR form */ }
+      }
+
+      const reply = `${preflightSection}### ${label} Form\n\nI've auto-populated the ${label.toLowerCase()} form based on the current cluster context.${preflightSection ? " The pre-upgrade assessment report is shown above." : ""} Review and edit the fields below, then submit.\n\n${formToken}`;
       const provider = "built-in";
       if (conversationId) {
         histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
@@ -4844,13 +4871,51 @@ export async function handleChatAPI(req, res) {
       if (wantsStream) {
         sseStart(res);
         sseSend(res, { stage: "querying" });
+        sseSend(res, { stage: "preflight_assessment" });
         sseSend(res, { stage: "generating" });
         sseSend(res, { delta: reply });
         sseSend(res, { done: true, provider, conversationId });
         sseEnd(res);
         return;
       }
-      return json(res, 200, { reply, provider, contextKeys: ["itsm", itsmType], cached: false, conversationId });
+      return json(res, 200, { reply, provider, contextKeys: ["itsm", itsmType, isUpgradeRelated ? "preflight" : null].filter(Boolean), cached: false, conversationId });
+    }
+
+    // ---- Upgrade preflight: direct "upgrade cluster" or "precheck upgrade" ----
+    const UPGRADE_PREFLIGHT_PAT = /\b(?:pre-?(?:check|flight|upgrade)|upgrade.*(?:pre-?check|assessment|readiness|compatible|compatibility)|check.*(?:before|prior).*upgrade|upgrade\s+cluster.*(?:from|to)\s+\d+\.\d+)\b/i;
+    if (UPGRADE_PREFLIGHT_PAT.test(userMessage)) {
+      try {
+        const versionMatch = userMessage.match(/(\d+\.\d+\.\d+)/g);
+        let targetVer = "";
+        let currentVer = "";
+        if (versionMatch && versionMatch.length >= 2) {
+          currentVer = versionMatch[0];
+          targetVer = versionMatch[1];
+        } else if (versionMatch && versionMatch.length === 1) {
+          targetVer = versionMatch[0];
+        }
+        if (targetVer) {
+          const preflightReport = await runPreflightChecks(targetVer, currentVer || undefined);
+          const reportMarkdown = formatPreflightReport(preflightReport);
+          const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(preflightReport).replace(/@@/g, "@ @")}@@`;
+          const reply = `${reportMarkdown}\n\n${reportToken}`;
+          const provider = "built-in";
+          if (conversationId) {
+            histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+          }
+          if (wantsStream) {
+            sseStart(res);
+            sseSend(res, { stage: "querying" });
+            sseSend(res, { stage: "preflight_assessment" });
+            sseSend(res, { stage: "generating" });
+            sseSend(res, { delta: reply });
+            sseSend(res, { done: true, provider, conversationId });
+            sseEnd(res);
+            return;
+          }
+          return json(res, 200, { reply, provider, contextKeys: ["preflight", "upgrade"], cached: false, conversationId });
+        }
+      } catch { /* fall through on failure */ }
     }
 
     // Try direct command handler first (for specific CRUD operations)

@@ -117,6 +117,40 @@ tr:hover td{background:#ffffff06}
 .msg .apply-result.ok{background:#22c55e22;color:var(--ok)}
 .msg .apply-result.err{background:#ef444422;color:var(--crit)}
 .msg .analysis-text{font-size:12px;color:var(--text2);padding:4px 12px;margin:2px 0;border-left:2px solid var(--accent2);line-height:1.5}
+.preflight-report{background:#0d1117;border:1px solid var(--border);border-radius:10px;margin:12px 0;overflow:hidden;font-size:12px}
+.preflight-header{padding:16px 18px;background:linear-gradient(135deg,#0a1628 0%,#0d1117 100%);border-bottom:1px solid var(--border)}
+.preflight-title{font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px}
+.preflight-meta{font-size:12px;color:var(--text2);margin-bottom:8px}
+.preflight-meta .preflight-type{background:var(--accent2);color:#000;font-size:10px;padding:1px 6px;border-radius:4px;margin-left:8px;font-weight:600}
+.preflight-status{font-size:14px;font-weight:700}
+.preflight-summary{display:flex;gap:8px;padding:12px 18px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.pf-badge{padding:4px 10px;border-radius:6px;font-weight:600;font-size:11px}
+.pf-badge.pf-pass{background:#22c55e22;color:var(--ok)}
+.pf-badge.pf-warn{background:#f59e0b22;color:var(--warn)}
+.pf-badge.pf-fail{background:#ef444422;color:var(--crit)}
+.preflight-checks{padding:8px 18px}
+.pf-check{margin:4px 0;padding:8px 12px;border-radius:6px;border:1px solid var(--border)}
+.pf-check-pass{border-left:3px solid var(--ok)}
+.pf-check-warning{border-left:3px solid var(--warn)}
+.pf-check-fail{border-left:3px solid var(--crit)}
+.pf-check-header{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:space-between}
+.pf-check-detail{color:var(--text2);font-size:11px;flex:1;text-align:right;min-width:120px}
+.pf-expand{font-size:10px;color:var(--text2);transition:transform 0.2s}
+.pf-check-items{margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
+.pf-item{display:flex;gap:8px;padding:3px 0;flex-wrap:wrap;align-items:center}
+.pf-item-name{font-weight:600;color:var(--accent2);min-width:140px}
+.pf-item-issue{color:var(--crit);font-size:11px}
+.pf-item-msg{color:var(--text2);font-size:11px;word-break:break-word}
+.pf-item-sev{font-size:10px;padding:1px 5px;border-radius:3px;font-weight:700}
+.pf-sev-critical{background:#ef444433;color:var(--crit)}
+.pf-sev-warning{background:#f59e0b33;color:var(--warn)}
+.pf-operators-section{padding:8px 18px;border-top:1px solid var(--border)}
+.pf-operators-section .pf-check-header{padding:8px 0}
+.pf-op-table{overflow-x:auto}
+.pf-op-table table{width:100%;border-collapse:collapse;font-size:11px;margin:4px 0 12px}
+.pf-op-table th{text-align:left;padding:4px 8px;border-bottom:1px solid var(--border);color:var(--text2);font-weight:600}
+.pf-op-table td{padding:3px 8px;border-bottom:1px solid #1a1a2e;color:var(--text)}
+.preflight-footer{display:flex;gap:16px;padding:10px 18px;border-top:1px solid var(--border);color:var(--text2);font-size:11px;flex-wrap:wrap}
 .itsm-form{background:#0d1117;border:1px solid var(--border);border-radius:10px;margin:12px 0;overflow:hidden}
 .itsm-form-header{display:flex;align-items:center;gap:10px;padding:14px 18px;background:linear-gradient(135deg,#1a1040 0%,#0d1117 100%);border-bottom:1px solid var(--border)}
 .itsm-form-header .itsm-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px}
@@ -3262,6 +3296,12 @@ function md(text) {
       action + '\',\'' + name + '\',\'' + ns + '\')">' + esc(label) +
       '</button><span id="' + eid + '-result"></span></div>');
   });
+  text = text.replace(/@@PREFLIGHT_REPORT\|(.+?)@@/g, function(m, jsonStr) {
+    try {
+      var report = JSON.parse(jsonStr.replace(/@ @/g, '@@'));
+      return ph(renderPreflightReport(report));
+    } catch(e) { return ph('<div style="color:var(--crit)">Failed to render preflight report: ' + esc(e.message) + '</div>'); }
+  });
   text = text.replace(/@@ITSM_FORM\|(.+?)@@/g, function(m, jsonStr) {
     try {
       var form = JSON.parse(jsonStr.replace(/@ @/g, '@@'));
@@ -3517,6 +3557,116 @@ function _syntaxHL(code, lang) {
   escaped = escaped.replace(/\b(oc|kubectl|docker|podman|helm|git|curl|grep|awk|sed|cat|echo|export|sudo|apt|yum|dnf|pip|npm|cd|ls|mkdir|rm|cp|mv|chmod|chown)\b/g, function(m) { return tok('<span class="kw">' + m + '</span>'); });
   escaped = escaped.replace(/\s(--?[\w-]+)/g, function(m, flag) { return ' ' + tok('<span class="flag">' + flag + '</span>'); });
   return restore(escaped);
+}
+
+// ---------------------------------------------------------------------------
+// Pre-Upgrade Preflight Report — interactive assessment card in chat
+// ---------------------------------------------------------------------------
+function renderPreflightReport(report) {
+  var pid = 'pf-' + Math.random().toString(36).substr(2, 8);
+  var statusColor = report.overallStatus === 'NOT_READY' ? 'var(--crit)' :
+    report.overallStatus === 'READY_WITH_WARNINGS' ? 'var(--warn)' : 'var(--ok)';
+  var statusIcon = report.overallStatus === 'NOT_READY' ? '&#x274C;' :
+    report.overallStatus === 'READY_WITH_WARNINGS' ? '&#x26A0;&#xFE0F;' : '&#x2705;';
+  var statusLabel = report.overallStatus === 'NOT_READY' ? 'NOT READY — Blockers Found' :
+    report.overallStatus === 'READY_WITH_WARNINGS' ? 'READY (with warnings)' : 'READY FOR UPGRADE';
+
+  var html = '<div class="preflight-report" id="' + pid + '">';
+  html += '<div class="preflight-header">';
+  html += '<div class="preflight-title">Pre-Upgrade Cluster Assessment</div>';
+  html += '<div class="preflight-meta">' + esc(report.fromVersion) + ' &#x2192; ' + esc(report.targetVersion) +
+    ' <span class="preflight-type">' + esc(report.upgradeType || '') + '</span></div>';
+  html += '<div class="preflight-status" style="color:' + statusColor + '">' + statusIcon + ' ' + statusLabel + '</div>';
+  html += '</div>';
+
+  // Summary badges
+  html += '<div class="preflight-summary">';
+  html += '<span class="pf-badge pf-pass">' + report.summary.pass + ' Passed</span>';
+  html += '<span class="pf-badge pf-warn">' + report.summary.warning + ' Warnings</span>';
+  html += '<span class="pf-badge pf-fail">' + report.summary.fail + ' Failed</span>';
+  html += '</div>';
+
+  // Check items
+  html += '<div class="preflight-checks">';
+  var checks = report.checks || [];
+  for (var i = 0; i < checks.length; i++) {
+    var c = checks[i];
+    var cIcon = c.status === 'pass' ? '&#x2705;' : c.status === 'warning' ? '&#x26A0;&#xFE0F;' : '&#x274C;';
+    var cClass = 'pf-check pf-check-' + c.status;
+    var hasItems = c.items && c.items.length > 0 && c.status !== 'pass';
+    var itemId = pid + '-c' + i;
+    html += '<div class="' + cClass + '">';
+    html += '<div class="pf-check-header" ' + (hasItems ? 'onclick="togglePreflightSection(\'' + itemId + '\')" style="cursor:pointer"' : '') + '>';
+    html += '<span>' + cIcon + ' <strong>' + esc(c.category) + '</strong></span>';
+    html += '<span class="pf-check-detail">' + esc(c.details) + '</span>';
+    if (hasItems) html += '<span class="pf-expand">&#x25BC;</span>';
+    html += '</div>';
+    if (hasItems) {
+      html += '<div class="pf-check-items" id="' + itemId + '" style="display:none">';
+      var items = c.items.slice(0, 15);
+      for (var j = 0; j < items.length; j++) {
+        var it = items[j];
+        html += '<div class="pf-item">';
+        if (it.name) html += '<span class="pf-item-name">' + esc(it.name) + '</span>';
+        if (it.issue) html += '<span class="pf-item-issue">' + esc(it.issue) + '</span>';
+        if (it.message) html += '<span class="pf-item-msg">' + esc(String(it.message).slice(0, 120)) + '</span>';
+        if (it.severity) html += '<span class="pf-item-sev pf-sev-' + esc(it.severity) + '">' + esc(it.severity) + '</span>';
+        html += '</div>';
+      }
+      if (c.items.length > 15) html += '<div class="pf-item" style="opacity:0.6">... and ' + (c.items.length - 15) + ' more</div>';
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // Operator summary tables (collapsible)
+  html += '<div class="pf-operators-section">';
+  html += '<div class="pf-check-header" onclick="togglePreflightSection(\'' + pid + '-ops\')" style="cursor:pointer">';
+  html += '<strong>Cluster Operators (' + (report.operators ? report.operators.clusterOperators : 0) + ')</strong>';
+  html += '<span class="pf-expand">&#x25BC;</span></div>';
+  html += '<div class="pf-op-table" id="' + pid + '-ops" style="display:none"><table>';
+  html += '<tr><th>Operator</th><th>Version</th><th>Available</th><th>Degraded</th></tr>';
+  var allOps = report.allClusterOperators || [];
+  for (var k = 0; k < allOps.length; k++) {
+    var op = allOps[k];
+    html += '<tr><td>' + esc(op.name) + '</td><td>' + esc(op.version || '-') + '</td>';
+    html += '<td style="color:' + (op.available ? 'var(--ok)' : 'var(--crit)') + '">' + (op.available ? 'Yes' : 'NO') + '</td>';
+    html += '<td style="color:' + (op.degraded ? 'var(--crit)' : 'var(--ok)') + '">' + (op.degraded ? 'YES' : 'No') + '</td></tr>';
+  }
+  html += '</table></div>';
+
+  html += '<div class="pf-check-header" onclick="togglePreflightSection(\'' + pid + '-olm\')" style="cursor:pointer">';
+  html += '<strong>Installed Operators — OLM (' + (report.operators ? report.operators.olmOperators : 0) + ')</strong>';
+  html += '<span class="pf-expand">&#x25BC;</span></div>';
+  html += '<div class="pf-op-table" id="' + pid + '-olm" style="display:none"><table>';
+  html += '<tr><th>Operator</th><th>Version</th><th>Namespace</th><th>Status</th><th>Compatible</th></tr>';
+  var olmOps = report.allOLMOperators || [];
+  for (var l = 0; l < olmOps.length; l++) {
+    var olm = olmOps[l];
+    var compatColor = olm.compatible === 'yes' ? 'var(--ok)' : olm.compatible === 'no' ? 'var(--crit)' : 'var(--warn)';
+    var compatText = olm.compatible === 'yes' ? 'Yes' : olm.compatible === 'no' ? 'NO' : '?';
+    html += '<tr><td>' + esc(olm.name) + '</td><td>' + esc(olm.version || '-') + '</td>';
+    html += '<td>' + esc(olm.namespace || '-') + '</td>';
+    html += '<td>' + esc(olm.status || '-') + '</td>';
+    html += '<td style="color:' + compatColor + '">' + compatText + '</td></tr>';
+  }
+  html += '</table></div>';
+  html += '</div>';
+
+  // Cluster info footer
+  html += '<div class="preflight-footer">';
+  html += '<span>Channel: ' + esc(report.channel || '') + '</span>';
+  html += '<span>Cluster ID: ' + esc(report.clusterID || 'N/A') + '</span>';
+  html += '<span>Assessed: ' + esc(report.timestamp ? new Date(report.timestamp).toLocaleString() : '') + '</span>';
+  html += '</div>';
+  html += '</div>';
+  return html;
+}
+
+function togglePreflightSection(id) {
+  var el = document.getElementById(id);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 
 // ---------------------------------------------------------------------------
