@@ -809,6 +809,21 @@ tr:hover td{background:#ffffff06}
 .think-stage.pending{opacity:0.45}
 .think-stage .stage-label{flex:1}
 @keyframes spin{to{transform:rotate(360deg)}}
+/* Clarification / disambiguation cards */
+.clarify-card{background:var(--card);border:1px solid var(--accent2);border-radius:12px;padding:16px;margin:8px 0}
+.clarify-card .clarify-header{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.clarify-card .clarify-icon{font-size:18px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb, var(--accent2) 15%, transparent);border-radius:8px}
+.clarify-card .clarify-question{font-size:14px;font-weight:600;color:var(--text)}
+.clarify-card .clarify-context{font-size:12px;color:var(--text2);margin-bottom:12px;padding:6px 10px;background:var(--bg-alt);border-radius:6px;border-left:3px solid var(--accent2)}
+.clarify-options{display:flex;flex-direction:column;gap:6px}
+.clarify-option{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg-alt);border:1px solid var(--border);border-radius:10px;cursor:pointer;transition:all .15s;text-align:left;font-family:inherit;color:var(--text)}
+.clarify-option:hover{border-color:var(--accent2);background:var(--hover);transform:translateX(4px)}
+.clarify-option .clarify-opt-icon{font-size:16px;width:28px;text-align:center;flex-shrink:0}
+.clarify-option .clarify-opt-body{flex:1;min-width:0}
+.clarify-option .clarify-opt-label{font-size:13px;font-weight:600;color:var(--text)}
+.clarify-option .clarify-opt-desc{font-size:11px;color:var(--text2);margin-top:2px}
+.clarify-option .clarify-opt-arrow{color:var(--text2);opacity:.4;font-size:14px}
+.clarify-option:hover .clarify-opt-arrow{opacity:1;color:var(--accent2)}
 /* Auto-generated follow-up suggestions under AI replies */
 .followup-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
 .followup-chips .chip-label{font-size:10px;color:#4b5563;width:100%;margin-bottom:2px;letter-spacing:.3px;text-transform:uppercase}
@@ -3337,6 +3352,26 @@ function md(text) {
     return ph('<span style="display:inline-flex;align-items:center;gap:6px;margin:4px 0">' +
       '<span class="grade-badge grade-' + grade + '">' + grade + '</span>' +
       '<span style="font-weight:600;font-size:13px">' + esc(label) + '</span></span>');
+  });
+  text = text.replace(/@@CLARIFY\|(.+?)@@/g, function(m, jsonStr) {
+    try {
+      var data = JSON.parse(jsonStr.replace(/@ @/g, '@@'));
+      var html = '<div class="clarify-card">' +
+        '<div class="clarify-header"><div class="clarify-icon">\u{1F914}</div>' +
+        '<div class="clarify-question">' + esc(data.question || 'What would you like to do?') + '</div></div>';
+      if (data.context) html += '<div class="clarify-context">' + esc(data.context) + '</div>';
+      html += '<div class="clarify-options">';
+      (data.options || []).forEach(function(opt) {
+        var q = (opt.query || '').replace(/'/g, "\\'");
+        html += '<button class="clarify-option" onclick="sendFullChat(\'' + q + '\')">' +
+          '<span class="clarify-opt-icon">' + (opt.icon || '\u{27A1}') + '</span>' +
+          '<div class="clarify-opt-body"><div class="clarify-opt-label">' + esc(opt.label || '') + '</div>' +
+          (opt.desc ? '<div class="clarify-opt-desc">' + esc(opt.desc) + '</div>' : '') +
+          '</div><span class="clarify-opt-arrow">\u{2192}</span></button>';
+      });
+      html += '</div></div>';
+      return ph(html);
+    } catch(e) { return ''; }
   });
 
   // Extract inline code BEFORE escaping
@@ -6392,6 +6427,19 @@ function generateFollowUps(userMsg, aiReply) {
   const nsMatch = (aiReply || '').match(/(?:in|namespace)\s+`([a-z0-9][-a-z0-9]*)`/i);
   const podName = podMatch ? podMatch[1] : null;
   const ns = nsMatch ? nsMatch[1] : null;
+
+  // Clarify card replies don't need followups (they ARE the followups)
+  if (/@@CLARIFY\|/.test(aiReply || '')) return [];
+
+  // Upgrade-specific follow-ups
+  if (/upgrade.*status|upgrade.*analysis|available.*update|cluster.*version/i.test(text) || /upgrade|version/i.test(userLower)) {
+    var verMatch = (aiReply || '').match(/(\d+\.\d+\.\d+)/);
+    var ver = verMatch ? verMatch[1] : '';
+    followups.push({ icon: '\u{1F50D}', text: 'Run pre-upgrade check', query: ver ? 'precheck upgrade to ' + ver : 'precheck upgrade' });
+    followups.push({ icon: '\u{1F4CB}', text: 'Raise change request', query: ver ? 'raise change request for upgrade to ' + ver : 'raise change request for upgrade' });
+    followups.push({ icon: '\u{2764}', text: 'Check cluster health', query: 'check cluster health' });
+    return followups.slice(0, 3);
+  }
 
   // Pod-specific follow-ups when AI just analyzed a pod
   if (podName && ns && /pod|crash|oom|imagepull|container|restart/.test(text)) {

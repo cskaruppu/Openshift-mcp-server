@@ -384,6 +384,135 @@ async function fetchPodLogs(namespace, podName, tailLines = 80) {
 }
 
 // ---------------------------------------------------------------------------
+// Smart disambiguation — detect ambiguous queries and generate clarification
+// cards with clickable options (similar to ChatGPT / Copilot / Google Assistant).
+// Returns null when the query is clear enough, or a @@CLARIFY token otherwise.
+// ---------------------------------------------------------------------------
+const AMBIGUITY_PATTERNS = [
+  {
+    test: (msg, p) => /\b(?:upgrade|update)\b/i.test(msg) && p.resource === "clusterversion" && p.confidence <= 0.8 && !/\bpre-?(?:check|flight)|assessment|readiness|status|available|history|to\s+v?\d+\.\d+/i.test(msg),
+    question: "What would you like to do with the cluster upgrade?",
+    context: "I detected an upgrade-related request. Let me help you with the right action.",
+    options: [
+      { icon: "\u{1F4CA}", label: "Show upgrade status", desc: "Current version, channel, and available updates", query: "show cluster version upgrade status" },
+      { icon: "\u{1F50D}", label: "Run pre-upgrade assessment", desc: "Check cluster readiness before upgrading", query: "precheck upgrade" },
+      { icon: "\u{2B06}", label: "Show available upgrade paths", desc: "List all versions you can upgrade to", query: "list available cluster version updates" },
+      { icon: "\u{1F6E0}", label: "Start an upgrade", desc: "Initiate the cluster upgrade process", query: "upgrade cluster version" },
+    ],
+  },
+  {
+    test: (msg, p) => /^\s*pods?\s*$/i.test(msg.trim()),
+    question: "What would you like to know about pods?",
+    context: "Your query is quite broad. Here are the most common actions:",
+    options: [
+      { icon: "\u{1F4CB}", label: "List all pods", desc: "Show pods across all namespaces", query: "list pods in all namespaces" },
+      { icon: "\u{26A0}", label: "Show problem pods", desc: "Pods with CrashLoopBackOff, OOMKill, or errors", query: "show pods with issues" },
+      { icon: "\u{1F4CA}", label: "Pod resource usage", desc: "CPU and memory consumption by pod", query: "show top pods" },
+      { icon: "\u{1F50E}", label: "Find a specific pod", desc: "Search by name or namespace", query: "list pods in namespace " },
+    ],
+  },
+  {
+    test: (msg, p) => /^\s*(?:deployment|deploy)s?\s*$/i.test(msg.trim()),
+    question: "What would you like to know about deployments?",
+    context: "Multiple actions are available for deployments:",
+    options: [
+      { icon: "\u{1F4CB}", label: "List deployments", desc: "Show all deployments across namespaces", query: "list deployments in all namespaces" },
+      { icon: "\u{26A0}", label: "Show unhealthy deployments", desc: "Deployments with unavailable replicas", query: "show deployments with issues" },
+      { icon: "\u{1F4CA}", label: "Deployment resource usage", desc: "CPU/memory for deployment pods", query: "top pods" },
+    ],
+  },
+  {
+    test: (msg, p) => /^\s*(?:node|nodes)\s*$/i.test(msg.trim()),
+    question: "What would you like to know about nodes?",
+    context: "Several node operations are available:",
+    options: [
+      { icon: "\u{1F4CB}", label: "List all nodes", desc: "Show node status, roles, and versions", query: "list nodes" },
+      { icon: "\u{1F4CA}", label: "Node resource usage", desc: "CPU and memory allocation per node", query: "top nodes" },
+      { icon: "\u{26A0}", label: "Check node health", desc: "Show nodes with NotReady or pressure conditions", query: "show nodes with issues" },
+    ],
+  },
+  {
+    test: (msg, p) => /^\s*(?:cluster|openshift)\s*$/i.test(msg.trim()),
+    question: "What would you like to know about the cluster?",
+    context: "I can help with various cluster operations:",
+    options: [
+      { icon: "\u{2764}", label: "Cluster health check", desc: "Overall health, operators, nodes, and alerts", query: "check cluster health" },
+      { icon: "\u{2B06}", label: "Upgrade status", desc: "Current version and available updates", query: "show cluster version" },
+      { icon: "\u{1F512}", label: "Security scan", desc: "Run a security assessment", query: "/security" },
+      { icon: "\u{1F4CA}", label: "Resource optimization", desc: "Check resource utilization and waste", query: "/optimize" },
+    ],
+  },
+  {
+    test: (msg, p) => p.intent !== "unknown" && p.resource && p.name && !p.namespace && /\b(describe|get|detail|info|inspect|explain)\b/i.test(msg) && !/(all|every|across)\s*(namespace|ns)/i.test(msg),
+    question: `Which namespace is "${msg => msg}" in?`,
+    dynamicQuestion: (msg, p) => `I found a request for ${p.resource} "${p.name}", but which namespace?`,
+    context: "I need the namespace to look up this specific resource.",
+    options: [
+      { icon: "\u{1F50E}", label: "Search all namespaces", desc: "I'll look across the entire cluster", dynamicQuery: (msg, p) => `describe ${p.resource} ${p.name} in all namespaces` },
+      { icon: "\u{1F4DD}", label: "Let me specify", desc: "Type the namespace name", dynamicQuery: (msg, p) => `describe ${p.resource} ${p.name} in namespace ` },
+    ],
+  },
+  {
+    test: (msg, p) => p.resource === "deployment" && p.name && p.confidence < 0.7 && !/(list|show|get|describe|logs|scale|restart|delete|top)/i.test(msg),
+    dynamicQuestion: (msg, p) => `What would you like to do with deployment "${p.name}"?`,
+    context: "I found a deployment name but need to know what action you want.",
+    options: [
+      { icon: "\u{1F50D}", label: "Describe it", desc: "Show details, replicas, and status", dynamicQuery: (msg, p) => `describe deployment ${p.name} in all namespaces` },
+      { icon: "\u{1F4C4}", label: "Show logs", desc: "View logs from this deployment's pods", dynamicQuery: (msg, p) => `show logs for deployment ${p.name}` },
+      { icon: "\u{1F504}", label: "Restart it", desc: "Rolling restart of all pods", dynamicQuery: (msg, p) => `restart deployment ${p.name}` },
+      { icon: "\u{1F4CA}", label: "Resource usage", desc: "CPU and memory consumption", dynamicQuery: (msg, p) => `top pods for deployment ${p.name}` },
+    ],
+  },
+  {
+    test: (msg, p) => p.resource && p.confidence >= 0.4 && p.confidence < 0.6 && msg.trim().split(/\s+/).length <= 3 && !p.name,
+    dynamicQuestion: (msg, p) => `What would you like to do with ${p.resource}s?`,
+    context: "Your query could mean several things. Please pick the most relevant:",
+    options: [
+      { icon: "\u{1F4CB}", label: "List all", desc: "Show a table of all instances", dynamicQuery: (msg, p) => `list ${p.resource}s in all namespaces` },
+      { icon: "\u{26A0}", label: "Show issues", desc: "Filter to problem instances only", dynamicQuery: (msg, p) => `show ${p.resource}s with issues` },
+      { icon: "\u{1F4CA}", label: "Resource usage", desc: "CPU and memory metrics", dynamicQuery: (msg, p) => `top ${p.resource}s` },
+    ],
+  },
+  {
+    test: (msg, p) => p.confidence <= 0.4 && p.intent === "unknown" && msg.trim().split(/\s+/).length <= 3,
+    question: "I'm not sure what you're looking for. Can you help me understand?",
+    context: "Your query is short and I want to make sure I give you the right answer.",
+    options: [
+      { icon: "\u{2764}", label: "Check cluster health", desc: "Overall cluster status and issues", query: "check cluster health" },
+      { icon: "\u{1F4CB}", label: "List resources", desc: "Show pods, deployments, services, etc.", query: "list pods" },
+      { icon: "\u{1F6A8}", label: "Show current issues", desc: "Pods with errors, alerts, and events", query: "show pods with issues" },
+      { icon: "\u{2753}", label: "Show available commands", desc: "See what I can do", query: "help" },
+    ],
+  },
+];
+
+function detectAmbiguity(userMessage, parsed, memory = {}) {
+  const lower = userMessage.toLowerCase().trim();
+  if (lower.length > 120) return null;
+  if (/^(help|\/\w)/.test(lower)) return null;
+  if (parsed.intent === "diagnose") return null;
+  if (memory.resource && memory.name && parsed.resource === memory.resource) return null;
+
+  for (const pattern of AMBIGUITY_PATTERNS) {
+    if (pattern.test(userMessage, parsed)) {
+      const question = pattern.dynamicQuestion
+        ? pattern.dynamicQuestion(userMessage, parsed)
+        : pattern.question;
+      const context = pattern.context;
+      const options = (pattern.options || []).map(opt => ({
+        icon: opt.icon,
+        label: opt.label,
+        desc: opt.desc || "",
+        query: opt.dynamicQuery ? opt.dynamicQuery(userMessage, parsed) : opt.query,
+      }));
+      const token = JSON.stringify({ question, context, options }).replace(/@@/g, "@ @");
+      return `@@CLARIFY|${token}@@`;
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Command parser — extract operation, resource, name, namespace from message
 // ---------------------------------------------------------------------------
 function parseCommand(message, memory) {
@@ -2427,16 +2556,24 @@ IMPORTANT: You are given REAL-TIME cluster data as JSON context. This is NOT hyp
 - If the user says "show its logs", "restart it", "what namespace is it in", "explain more", "fix it" — refer to the pod/deployment/resource from the previous messages.
 - Maintain context across the conversation like a human SRE colleague would.
 
-## When required information is missing:
+## When required information is missing or intent is ambiguous:
 - NEVER respond with "[WARNING] Please specify the namespace" or similar generic templates. Instead, look at the conversation history and live cluster data — the namespace was likely in the prior turn.
 - If you genuinely cannot resolve a resource, list the most likely candidates from the live data and ask which one the user means.
+- When the user's intent could match multiple actions (e.g., "upgrade" could mean check status, run precheck, or start upgrade), ask a brief clarifying question with 2-4 numbered options. For example: "I can help with that. Did you mean:\n1. Check the current upgrade status\n2. Run a pre-upgrade assessment\n3. Start the upgrade process"
+- NEVER dump raw technical data (image SHA hashes, long version lists) without analysis. Always summarize, compare, and recommend.
+- When showing version/upgrade information, group versions logically, highlight the recommended path, and explain trade-offs (Z-stream vs minor, skipped versions, etc.).
+- Prioritize answering the user's EXACT question. If they ask "upgrade to 4.19.23", respond specifically about 4.19.23 — don't redirect to a different version unless there's a good reason.
+- When you lack enough context to give a definitive answer, say what you DO know, state your assumption, and ask if the user wants something different.
 
 ## Response style:
 - Be specific to THIS cluster's data — never give generic advice when you have real data
 - Start with a clear diagnosis, then provide remediation steps
 - Use markdown formatting with headers, code blocks, and tables
-- Keep responses focused and actionable
-- When the user asks a follow-up about a previously discussed resource, don't re-list all resources — focus on the specific one from context`;
+- Keep responses focused and actionable — answer the exact question asked
+- When the user asks a follow-up about a previously discussed resource, don't re-list all resources — focus on the specific one from context
+- Never show raw image SHA hashes or internal registry URLs — users want version numbers and actionable commands
+- When recommending actions, always include the exact \`oc\` command the user can copy-paste
+- If an action is risky (upgrade, delete, scale down), warn about the impact and suggest a precheck or dry-run first`;
 
 // ---------------------------------------------------------------------------
 // Call external LLM — thin wrapper around the centralized llm.js module
@@ -5064,6 +5201,30 @@ export async function handleChatAPI(req, res) {
           });
         }
         // Other errors — fall through to default handlers so the user still gets a reply.
+      }
+    }
+
+    // ---- Smart disambiguation: ask clarifying question when intent is ambiguous ----
+    // Only triggers for short/vague queries with low NLU confidence and no
+    // conversation history that would resolve the ambiguity.
+    const hasHistory = Array.isArray(llmOpts.history) && llmOpts.history.length > 0;
+    if (!hasHistory) {
+      const clarifyToken = detectAmbiguity(userMessage, parsed, memory);
+      if (clarifyToken) {
+        const reply = clarifyToken;
+        const provider = "built-in";
+        if (conversationId) {
+          histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+        }
+        if (wantsStream) {
+          sseStart(res);
+          sseSend(res, { stage: "querying" });
+          sseSend(res, { delta: reply });
+          sseSend(res, { done: true, provider, conversationId });
+          sseEnd(res);
+          return;
+        }
+        return json(res, 200, { reply, provider, contextKeys: ["clarify", parsed.intent], cached: false, conversationId });
       }
     }
 
