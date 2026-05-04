@@ -1112,6 +1112,12 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
   // -----------------------------------------------------------------------
   if (cmd.operation === "upgrade") {
     if (cmd.resourceType === "clusterversion") {
+      // If user is asking for a precheck/preflight, return null so the
+      // dedicated preflight handler (earlier in the main flow) handles it.
+      if (/\bpre-?(?:check|flight|upgrade)|assessment|readiness|compatib/i.test(lower)) {
+        return null;
+      }
+
       try {
         const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
         const currentVersion = cv.status?.desired?.version || "unknown";
@@ -1121,31 +1127,118 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
         const progressing = conditions.find(c => c.type === "Progressing");
         const updates = cv.status?.availableUpdates || [];
 
-        parts.push(`### Cluster Version & Upgrade Status`);
-        parts.push(`**Current version:** ${currentVersion}`);
-        parts.push(`**Channel:** ${channel}`);
-        if (available) {
-          const icon = available.status === "True" ? "[OK]" : "[CRITICAL]";
-          parts.push(`${icon} **Available:** ${available.message || available.reason || available.status}`);
-        }
-        if (progressing) {
-          const icon = progressing.status === "True" ? "[WARNING]" : "[OK]";
-          parts.push(`${icon} **Progressing:** ${progressing.message || progressing.reason || progressing.status}`);
-        }
+        // Extract target version from user message ("upgrade to 4.19.23")
+        const targetMatch = lower.match(/(?:to|version)\s+v?(\d+\.\d+\.\d+)/);
+        const requestedVersion = targetMatch ? targetMatch[1] : null;
 
-        if (updates.length > 0) {
-          parts.push(`\n**Available updates (${updates.length}):**`);
-          updates.slice(0, 10).forEach(u => {
-            parts.push(`  - **${u.version}**${u.image ? ` — \`${u.image.substring(0, 80)}...\`` : ""}`);
-          });
-          parts.push(`\n**To upgrade:**`);
-          parts.push("```" + `oc adm upgrade --to=${updates[0].version}` + "```");
+        // Sort updates descending
+        const sorted = [...updates].sort((a, b) => {
+          const pa = (a.version || "").split(".").map(Number);
+          const pb = (b.version || "").split(".").map(Number);
+          for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0); }
+          return 0;
+        });
+
+        if (requestedVersion) {
+          // User asked for a specific version — provide targeted response
+          const matchedUpdate = sorted.find(u => u.version === requestedVersion);
+          const curParts = currentVersion.split(".").map(Number);
+          const tgtParts = requestedVersion.split(".").map(Number);
+          const isZStream = curParts[0] === tgtParts[0] && curParts[1] === tgtParts[1];
+          const upgradeType = isZStream ? "Z-stream (patch)" : "Minor version";
+
+          parts.push(`### Upgrade Analysis: ${currentVersion} → ${requestedVersion}`);
+          parts.push(`**Current version:** ${currentVersion}`);
+          parts.push(`**Target version:** ${requestedVersion}`);
+          parts.push(`**Channel:** ${channel}`);
+          parts.push(`**Upgrade type:** ${upgradeType}`);
+          parts.push("");
+
+          if (matchedUpdate) {
+            parts.push(`[OK] **Version ${requestedVersion} is available** in the current channel.`);
+            parts.push("");
+
+            // Check how many versions between current and target
+            const versionsSkipped = sorted.filter(u => {
+              const up = u.version.split(".").map(Number);
+              return up[0] === curParts[0] && up[1] === curParts[1] && up[2] > curParts[2] && up[2] < tgtParts[2];
+            });
+            if (versionsSkipped.length > 0) {
+              parts.push(`> Note: This skips ${versionsSkipped.length} intermediate version(s): ${versionsSkipped.map(v => v.version).join(", ")}. OpenShift supports direct Z-stream upgrades within a channel.`);
+              parts.push("");
+            }
+
+            // Show latest available for comparison
+            if (sorted.length > 0 && sorted[0].version !== requestedVersion) {
+              parts.push(`> Latest available: **${sorted[0].version}**. You requested ${requestedVersion}.`);
+              parts.push("");
+            }
+
+            parts.push(`**To upgrade:**`);
+            parts.push("```" + `oc adm upgrade --to=${requestedVersion}` + "```");
+            parts.push("");
+            parts.push(`**Recommended:** Run a pre-upgrade assessment first:`);
+            parts.push(`> Ask me: *"precheck upgrade to ${requestedVersion}"*`);
+          } else {
+            parts.push(`[CRITICAL] **Version ${requestedVersion} is NOT available** in channel \`${channel}\`.`);
+            parts.push("");
+            if (sorted.length > 0) {
+              parts.push(`Available versions:`);
+              sorted.slice(0, 5).forEach(u => {
+                parts.push(`  - **${u.version}**`);
+              });
+              parts.push("");
+              parts.push(`Did you mean **${sorted[0].version}** (latest) or check if ${requestedVersion} is in a different channel?`);
+            }
+          }
         } else {
-          parts.push(`\n[OK] Cluster is up to date. No upgrades available in channel \`${channel}\`.`);
+          // No specific version requested — show overview with analysis
+          parts.push(`### Cluster Upgrade Status`);
+          parts.push(`**Current version:** ${currentVersion}`);
+          parts.push(`**Channel:** ${channel}`);
+          if (available) {
+            const icon = available.status === "True" ? "[OK]" : "[CRITICAL]";
+            parts.push(`${icon} **Available:** ${available.message || available.reason || available.status}`);
+          }
+          if (progressing) {
+            const icon = progressing.status === "True" ? "[WARNING]" : "[OK]";
+            parts.push(`${icon} **Progressing:** ${progressing.message || progressing.reason || progressing.status}`);
+          }
+
+          if (sorted.length > 0) {
+            const latest = sorted[0];
+            const latestParts = latest.version.split(".").map(Number);
+            const isMinor = curParts[0] !== latestParts[0] || curParts[1] !== latestParts[1];
+
+            parts.push("");
+            parts.push(`**Available updates (${sorted.length}):**`);
+
+            // Group by minor version
+            const groups = {};
+            sorted.forEach(u => {
+              const mm = u.version.split(".").slice(0, 2).join(".");
+              if (!groups[mm]) groups[mm] = [];
+              groups[mm].push(u);
+            });
+
+            Object.keys(groups).sort().reverse().forEach(mm => {
+              const vers = groups[mm];
+              parts.push(`  **${mm}.x:** ${vers.map(v => v.version).join(", ")}`);
+            });
+
+            parts.push("");
+            parts.push(`**Recommendation:** Upgrade to **${latest.version}** (latest ${isMinor ? "minor" : "patch"}).`);
+            parts.push("```" + `oc adm upgrade --to=${latest.version}` + "```");
+            parts.push("");
+            parts.push(`Run a pre-upgrade assessment first:`);
+            parts.push(`> Ask me: *"precheck upgrade to ${latest.version}"*`);
+          } else {
+            parts.push(`\n[OK] Cluster is up to date. No upgrades available in channel \`${channel}\`.`);
+          }
         }
       } catch (err) {
         parts.push(`### Cluster Upgrade Error`);
-        parts.push(`[CRITICAL] Failed to check cluster version: ${err.message}`);
+        parts.push(`[CRITICAL] Failed to fetch cluster version data: ${err.message}`);
       }
       return parts.join("\n");
     }
@@ -5026,8 +5119,8 @@ export async function handleChatAPI(req, res) {
       return json(res, 200, { reply, provider, contextKeys: ["itsm", itsmType, isUpgradeRelated ? "preflight" : null].filter(Boolean), cached: false, conversationId });
     }
 
-    // ---- Upgrade preflight: direct "upgrade cluster" or "precheck upgrade" ----
-    const UPGRADE_PREFLIGHT_PAT = /\b(?:pre-?(?:check|flight|upgrade)|upgrade.*(?:pre-?check|assessment|readiness|compatible|compatibility)|check.*(?:before|prior).*upgrade|upgrade\s+cluster.*(?:from|to)\s+\d+\.\d+)\b/i;
+    // ---- Upgrade preflight: "precheck upgrade", "cluster upgrade precheck", etc. ----
+    const UPGRADE_PREFLIGHT_PAT = /\b(?:pre-?(?:check|flight|upgrade)|upgrade.*(?:pre-?check|assessment|readiness|compatible|compatibility)|check.*(?:before|prior).*upgrade|upgrade\s+cluster.*(?:from|to)\s+\d+\.\d+|cluster\s+(?:upgrade\s+)?pre-?check)\b/i;
     if (UPGRADE_PREFLIGHT_PAT.test(userMessage)) {
       try {
         const versionMatch = userMessage.match(/(\d+\.\d+\.\d+)/g);
@@ -5039,6 +5132,25 @@ export async function handleChatAPI(req, res) {
         } else if (versionMatch && versionMatch.length === 1) {
           targetVer = versionMatch[0];
         }
+
+        // If no target version specified, auto-detect from cluster
+        if (!targetVer) {
+          try {
+            const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+            currentVer = cv.status?.desired?.version || "";
+            const updates = cv.status?.availableUpdates || [];
+            if (updates.length > 0) {
+              const sorted = [...updates].sort((a, b) => {
+                const pa = (a.version || "").split(".").map(Number);
+                const pb = (b.version || "").split(".").map(Number);
+                for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0); }
+                return 0;
+              });
+              targetVer = sorted[0].version;
+            }
+          } catch { /* ignore — will fall through */ }
+        }
+
         if (targetVer) {
           const preflightReport = await runPreflightChecks(targetVer, currentVer || undefined);
           const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(preflightReport).replace(/@@/g, "@ @")}@@`;
