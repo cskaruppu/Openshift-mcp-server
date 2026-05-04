@@ -4983,8 +4983,10 @@ export async function handleChatAPI(req, res) {
       const label = itsmType === "change_request" ? "Change Request" : "Incident";
 
       // Auto-run preflight assessment for upgrade-related Change Requests
+      // Detect upgrade context from: message text, available updates, or "above" references
       let preflightSection = "";
-      const isUpgradeRelated = /upgrade/i.test(userMessage);
+      const isUpgradeRelated = /upgrade/i.test(userMessage) ||
+        (/\b(?:above|previous|pre-?check|assessment)\b/i.test(userMessage) && itsmCtx.cluster?.availableUpdates?.length > 0);
       if (itsmType === "change_request" && isUpgradeRelated) {
         try {
           const versionMatch = userMessage.match(/(\d+\.\d+\.\d+)/g);
@@ -5000,9 +5002,8 @@ export async function handleChatAPI(req, res) {
           }
           if (targetVer) {
             const preflightReport = await runPreflightChecks(targetVer, currentVer || undefined);
-            const reportMarkdown = formatPreflightReport(preflightReport);
             const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(preflightReport).replace(/@@/g, "@ @")}@@`;
-            preflightSection = `${reportMarkdown}\n\n${reportToken}\n\n---\n\n`;
+            preflightSection = `${reportToken}\n\n---\n\n`;
           }
         } catch { /* preflight failed gracefully — continue with CR form */ }
       }
@@ -5015,7 +5016,7 @@ export async function handleChatAPI(req, res) {
       if (wantsStream) {
         sseStart(res);
         sseSend(res, { stage: "querying" });
-        sseSend(res, { stage: "preflight_assessment" });
+        if (preflightSection) sseSend(res, { stage: "preflight_assessment" });
         sseSend(res, { stage: "generating" });
         sseSend(res, { delta: reply });
         sseSend(res, { done: true, provider, conversationId });
@@ -5040,9 +5041,8 @@ export async function handleChatAPI(req, res) {
         }
         if (targetVer) {
           const preflightReport = await runPreflightChecks(targetVer, currentVer || undefined);
-          const reportMarkdown = formatPreflightReport(preflightReport);
           const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(preflightReport).replace(/@@/g, "@ @")}@@`;
-          const reply = `${reportMarkdown}\n\n${reportToken}`;
+          const reply = reportToken;
           const provider = "built-in";
           if (conversationId) {
             histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
