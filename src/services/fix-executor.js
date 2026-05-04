@@ -295,8 +295,56 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
     }
 
     // ===== oc adm subcommands =====
+    // "oc adm" is a prefix for many subcommands. Re-route known ones to
+    // their native handlers; for the rest, return a helpful message.
     if (verb === "adm") {
-      const subVerb = positional[0];
+      const subVerb = positional.shift();
+      if (!subVerb) { result.stderr = "Missing adm subcommand"; return result; }
+
+      // oc adm top → reuse the existing "top" handler
+      if (subVerb === "top") {
+        const subj = positional[0];
+        const target = positional[1] || "";
+        if (subj === "pod" || subj === "pods") {
+          if (!namespace) { result.stderr = "Namespace required (-n <ns>)"; return result; }
+          const path = target
+            ? `/apis/metrics.k8s.io/v1beta1/namespaces/${namespace}/pods/${target}`
+            : `/apis/metrics.k8s.io/v1beta1/namespaces/${namespace}/pods`;
+          const resp = await ocpGet(path);
+          if (resp.items) {
+            result.stdout = "POD                              CPU       MEMORY\n" +
+              resp.items.map((p) => {
+                const cpu = (p.containers || []).reduce((sum, c) => sum + (c.usage?.cpu || "0"), "");
+                const mem = (p.containers || []).reduce((sum, c) => sum + (c.usage?.memory || "0"), "");
+                return `${(p.metadata?.name || "").padEnd(32)} ${cpu.padEnd(10)} ${mem}`;
+              }).join("\n");
+          } else {
+            result.stdout = JSON.stringify(resp, null, 2);
+          }
+          result.success = true;
+          return result;
+        }
+        if (subj === "node" || subj === "nodes") {
+          const path = target ? `/apis/metrics.k8s.io/v1beta1/nodes/${target}` : `/apis/metrics.k8s.io/v1beta1/nodes`;
+          const resp = await ocpGet(path);
+          if (resp.items) {
+            result.stdout = "NODE                             CPU       MEMORY\n" +
+              resp.items.map((n) => {
+                return `${(n.metadata?.name || "").padEnd(32)} ${(n.usage?.cpu || "0").padEnd(10)} ${n.usage?.memory || "0"}`;
+              }).join("\n");
+          } else if (resp.metadata?.name) {
+            result.stdout = `${resp.metadata.name}: CPU=${resp.usage?.cpu || "?"}, Memory=${resp.usage?.memory || "?"}`;
+          } else {
+            result.stdout = JSON.stringify(resp, null, 2).slice(0, 4000);
+          }
+          result.success = true;
+          return result;
+        }
+        result.stderr = `Usage: oc adm top <node|pod> [name] [-n namespace]`;
+        return result;
+      }
+
+      // oc adm upgrade
       if (subVerb === "upgrade") {
         const targetVersion = flags.to;
         const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
@@ -307,7 +355,6 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
         const progressing = conditions.find(c => c.type === "Progressing");
 
         if (!targetVersion) {
-          // Read-only: just show available updates
           const lines = [`Cluster version is ${currentVersion}`, `Channel: ${channel}`];
           if (progressing?.status === "True") {
             lines.push(`Upgrade in progress: ${progressing.message}`);
@@ -323,7 +370,6 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
           return result;
         }
 
-        // Write: initiate upgrade (requires explicit confirmation, not dry-run safe)
         if (dryRun) {
           const available = updates.some(u => u.version === targetVersion);
           result.success = true;
@@ -334,14 +380,43 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
           return result;
         }
 
-        // Actual upgrade
         const body = { spec: { desiredUpdate: { version: targetVersion } } };
         await ocpPatch("/apis/config.openshift.io/v1/clusterversions/version", body);
         result.success = true;
         result.stdout = `Upgrade initiated: ${currentVersion} → ${targetVersion}\nMonitor with: oc get clusterversion`;
         return result;
       }
-      result.stderr = `Unsupported adm subcommand: ${subVerb}. Supported: upgrade`;
+
+      // oc adm node-logs → read-only, fetch node logs
+      if (subVerb === "node-logs") {
+        const nodeName = positional[0];
+        if (!nodeName) { result.stderr = "Usage: oc adm node-logs <node-name> [--path=kubelet]"; return result; }
+        const logPath = flags.path || "kubelet";
+        try {
+          const resp = await ocpFetch(`/api/v1/nodes/${nodeName}/proxy/logs/${logPath}`, { headers: { Accept: "text/plain" } });
+          const text = typeof resp === "string" ? resp : JSON.stringify(resp);
+          const lines = text.split("\n");
+          result.success = true;
+          result.stdout = lines.slice(-200).join("\n") || "(no logs)";
+        } catch (e) {
+          result.stderr = `Failed to get node logs: ${e.message}. The service account may need nodes/proxy permission.`;
+        }
+        return result;
+      }
+
+      // oc adm inspect, must-gather, release info → informational, not executable here
+      if (["inspect", "must-gather", "release", "policy", "groups", "prune", "certificate"].includes(subVerb)) {
+        result.stderr = `'oc adm ${subVerb}' requires direct CLI access. Run it in your terminal:\n  oc adm ${subVerb} ${positional.join(" ")}`;
+        return result;
+      }
+
+      // oc adm cordon/drain/uncordon/taint → blocked by safety
+      if (["cordon", "uncordon", "drain", "taint"].includes(subVerb)) {
+        result.stderr = `'oc adm ${subVerb}' is blocked for safety. Run it manually after review.`;
+        return result;
+      }
+
+      result.stderr = `'oc adm ${subVerb}' is not supported via this runner. Run it directly:\n  oc adm ${subVerb} ${positional.join(" ")} ${Object.entries(flags).map(([k, v]) => v === true ? "--" + k : "--" + k + "=" + v).join(" ")}`.trim();
       return result;
     }
 
