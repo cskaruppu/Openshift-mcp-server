@@ -3238,14 +3238,14 @@ function md(text) {
         allCmds.push(parts.map(function(p) { return p.replace(/\\\s*$/, '').trim(); }).join(' ').replace(/\s+/g, ' ').trim());
       }
     }
-    var readOnlyPat = /^(?:oc|kubectl)\s+(?:get|describe|logs|top|events|explain|config|version|cluster-info|status|whoami|api-resources|api-versions)\b/i;
+    var readOnlyPat = /^(?:oc|kubectl)\s+(?:get|describe|logs|top|events|explain|config|version|cluster-info|status|whoami|api-resources|api-versions|adm\s+upgrade(?:\s|$)(?!.*--to))\b/i;
     var fullCmd = allCmds.find(function(c) { return !readOnlyPat.test(c); }) || allCmds[0] || null;
     var runBtn = '';
     var dryRunBtn = '';
     if (fullCmd) {
       var upgradeMatch = fullCmd.match(/^oc\s+adm\s+upgrade\s+--to=([\w.\-]+)/);
       var cmdJson = JSON.stringify(fullCmd).replace(/"/g, '&quot;');
-      var readOnlyVerbs = /^(?:oc|kubectl)\s+(?:get|describe|logs|top|events|explain|config|version|cluster-info|status|whoami|api-resources|api-versions)\b/i;
+      var readOnlyVerbs = /^(?:oc|kubectl)\s+(?:get|describe|logs|top|events|explain|config|version|cluster-info|status|whoami|api-resources|api-versions|adm\s+upgrade(?:\s|$)(?!.*--to))\b/i;
       var isReadOnly = readOnlyVerbs.test(fullCmd);
       if (upgradeMatch) {
         runBtn = '<button class="fix-copy" onclick="openUpgradeWizard(\'' + upgradeMatch[1].replace(/'/g, "\\'") + '\')" title="Open Upgrade Wizard">&#x25B6; Run</button>';

@@ -294,6 +294,57 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
       return result;
     }
 
+    // ===== oc adm subcommands =====
+    if (verb === "adm") {
+      const subVerb = positional[0];
+      if (subVerb === "upgrade") {
+        const targetVersion = flags.to;
+        const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+        const currentVersion = cv.status?.desired?.version || "unknown";
+        const channel = cv.spec?.channel || "unknown";
+        const updates = cv.status?.availableUpdates || [];
+        const conditions = cv.status?.conditions || [];
+        const progressing = conditions.find(c => c.type === "Progressing");
+
+        if (!targetVersion) {
+          // Read-only: just show available updates
+          const lines = [`Cluster version is ${currentVersion}`, `Channel: ${channel}`];
+          if (progressing?.status === "True") {
+            lines.push(`Upgrade in progress: ${progressing.message}`);
+          }
+          if (updates.length > 0) {
+            lines.push(`\nAvailable updates:`);
+            updates.slice(0, 15).forEach(u => lines.push(`  ${u.version}`));
+          } else {
+            lines.push(`No updates available in channel ${channel}`);
+          }
+          result.success = true;
+          result.stdout = lines.join("\n");
+          return result;
+        }
+
+        // Write: initiate upgrade (requires explicit confirmation, not dry-run safe)
+        if (dryRun) {
+          const available = updates.some(u => u.version === targetVersion);
+          result.success = true;
+          result.stdout = `[DRY RUN] Would upgrade cluster from ${currentVersion} to ${targetVersion}\n` +
+            `Channel: ${channel}\n` +
+            `Target available: ${available ? "YES" : "NO — version not in available updates"}\n` +
+            (progressing?.status === "True" ? `WARNING: Upgrade already in progress\n` : "");
+          return result;
+        }
+
+        // Actual upgrade
+        const body = { spec: { desiredUpdate: { version: targetVersion } } };
+        await ocpPatch("/apis/config.openshift.io/v1/clusterversions/version", body);
+        result.success = true;
+        result.stdout = `Upgrade initiated: ${currentVersion} → ${targetVersion}\nMonitor with: oc get clusterversion`;
+        return result;
+      }
+      result.stderr = `Unsupported adm subcommand: ${subVerb}. Supported: upgrade`;
+      return result;
+    }
+
     // ===== Write verbs =====
     const dryRunParam = dryRun ? "?dryRun=All" : "";
 

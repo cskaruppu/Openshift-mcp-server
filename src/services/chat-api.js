@@ -513,6 +513,150 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
   // the LLM can resolve ambiguity from the prior turns.
   const llmAvailable = !!opts.llmAvailable;
 
+  // -----------------------------------------------------------------------
+  // UPGRADE COMPARISON — "difference between current and upgrade version"
+  // Handles natural-language queries about version differences, available
+  // upgrades, and what changes between versions.
+  // -----------------------------------------------------------------------
+  const UPGRADE_COMPARE_PAT = /\b(?:differ(?:ence|ent)|compare|comparison|what(?:'?s)?\s+(?:new|changed)|between.*(?:current|upgrade|version)|upgrade.*(?:version|available|path|option)|available.*upgrade|what.*upgrade|which.*version|next.*version|latest.*version|can\s+(?:i|we)\s+upgrade)\b/i;
+  if (UPGRADE_COMPARE_PAT.test(lower) && /\b(?:upgrade|version|cluster|upgrad)\b/i.test(lower)) {
+    try {
+      const [cvResp, opsResp, nodesResp] = await Promise.allSettled([
+        ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
+        ocpGet("/apis/config.openshift.io/v1/clusteroperators"),
+        ocpGet("/api/v1/nodes"),
+      ]);
+
+      const cv = cvResp.status === "fulfilled" ? cvResp.value : null;
+      if (!cv) throw new Error("Cannot read ClusterVersion");
+
+      const currentVersion = cv.status?.desired?.version || "unknown";
+      const channel = cv.spec?.channel || "unknown";
+      const clusterID = cv.spec?.clusterID || "";
+      const conditions = cv.status?.conditions || [];
+      const updates = cv.status?.availableUpdates || [];
+      const history = cv.status?.history || [];
+      const progressing = conditions.find(c => c.type === "Progressing");
+      const operators = opsResp.status === "fulfilled" ? (opsResp.value.items || []) : [];
+      const nodes = nodesResp.status === "fulfilled" ? (nodesResp.value.items || []) : [];
+      const degradedOps = operators.filter(o => (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True"));
+
+      const parts = [];
+      parts.push(`### Cluster Upgrade Analysis`);
+      parts.push(``);
+      parts.push(`| Property | Value |`);
+      parts.push(`|----------|-------|`);
+      parts.push(`| Current Version | \`${currentVersion}\` |`);
+      parts.push(`| Update Channel | \`${channel}\` |`);
+      parts.push(`| Cluster ID | \`${clusterID || "N/A"}\` |`);
+      parts.push(`| Nodes | ${nodes.length} |`);
+      parts.push(`| Cluster Operators | ${operators.length} (${degradedOps.length} degraded) |`);
+      if (progressing?.status === "True") {
+        parts.push(`| Upgrade Status | **In Progress** — ${progressing.message || ""} |`);
+      } else {
+        parts.push(`| Upgrade Status | Idle |`);
+      }
+      parts.push(``);
+
+      if (updates.length > 0) {
+        const sorted = [...updates].sort((a, b) => (b.version || "").localeCompare(a.version || ""));
+        const latestMinor = {};
+        for (const u of sorted) {
+          const [, maj, min] = (u.version || "").match(/^(\d+)\.(\d+)/) || [];
+          const key = `${maj}.${min}`;
+          if (!latestMinor[key]) latestMinor[key] = u;
+        }
+
+        parts.push(`### Available Upgrade Paths (${updates.length} versions)`);
+        parts.push(``);
+
+        // Group by minor version
+        const minorGroups = {};
+        for (const u of sorted) {
+          const [, maj, min] = (u.version || "").match(/^(\d+)\.(\d+)/) || [];
+          const key = `${maj}.${min}`;
+          if (!minorGroups[key]) minorGroups[key] = [];
+          minorGroups[key].push(u);
+        }
+
+        for (const [minor, versions] of Object.entries(minorGroups)) {
+          const isSameMinor = currentVersion.startsWith(minor + ".");
+          const upgradeType = isSameMinor ? "Z-stream (patch)" : "Minor version upgrade";
+          parts.push(`#### ${minor}.x — ${upgradeType}`);
+          parts.push(`| Version | Type | Vs Current (${currentVersion}) |`);
+          parts.push(`|---------|------|------|`);
+          for (const v of versions.slice(0, 8)) {
+            const [, , , curPatch] = currentVersion.match(/^(\d+)\.(\d+)\.(\d+)/) || [0, 0, 0, 0];
+            const [, , , vPatch] = (v.version || "").match(/^(\d+)\.(\d+)\.(\d+)/) || [0, 0, 0, 0];
+            const diff = isSameMinor ? `+${Number(vPatch) - Number(curPatch)} patches` : "Minor upgrade";
+            parts.push(`| \`${v.version}\` | ${upgradeType} | ${diff} |`);
+          }
+          if (versions.length > 8) parts.push(`| ... | | +${versions.length - 8} more |`);
+          parts.push(``);
+        }
+
+        // Recommendation
+        const recommended = sorted[0];
+        const recSameMinor = recommended.version.startsWith(currentVersion.replace(/\.\d+$/, "."));
+        parts.push(`### Recommendation`);
+        parts.push(``);
+        if (recSameMinor) {
+          parts.push(`The latest available **patch upgrade** is \`${recommended.version}\`. Patch upgrades include security fixes, bug fixes, and minor enhancements within the same minor release.`);
+        } else {
+          const sameMinorUpdates = sorted.filter(u => u.version.startsWith(currentVersion.replace(/\.\d+$/, ".")));
+          if (sameMinorUpdates.length > 0) {
+            parts.push(`- **Patch upgrade** (recommended): \`${sameMinorUpdates[0].version}\` — same minor, lower risk`);
+            parts.push(`- **Minor upgrade** (available): \`${recommended.version}\` — new features, higher risk`);
+          } else {
+            parts.push(`The next available upgrade is \`${recommended.version}\` (minor version change).`);
+          }
+        }
+        parts.push(``);
+
+        if (degradedOps.length > 0) {
+          parts.push(`> **Warning:** ${degradedOps.length} operator(s) are degraded: ${degradedOps.map(o => o.metadata.name).join(", ")}. Resolve before upgrading.`);
+          parts.push(``);
+        }
+
+        parts.push(`### Upgrade Commands`);
+        parts.push(`\`\`\`sh`);
+        parts.push(`# Check available upgrades`);
+        parts.push(`oc adm upgrade`);
+        parts.push(``);
+        parts.push(`# Upgrade to a specific version`);
+        parts.push(`oc adm upgrade --to=${recommended.version}`);
+        parts.push(``);
+        parts.push(`# Run pre-upgrade assessment first`);
+        parts.push(`# Ask me: "precheck upgrade to ${recommended.version}"`);
+        parts.push(`\`\`\``);
+
+        // Recent upgrade history
+        if (history.length > 1) {
+          parts.push(``);
+          parts.push(`### Recent Upgrade History`);
+          parts.push(`| Version | State | Completed |`);
+          parts.push(`|---------|-------|-----------|`);
+          for (const h of history.slice(0, 5)) {
+            parts.push(`| \`${h.version}\` | ${h.state} | ${h.completionTime ? new Date(h.completionTime).toLocaleString() : "—"} |`);
+          }
+        }
+      } else {
+        parts.push(`### No Available Upgrades`);
+        parts.push(`Your cluster (\`${currentVersion}\`) is up to date on channel \`${channel}\`.`);
+        parts.push(``);
+        parts.push(`To check other channels:`);
+        parts.push(`\`\`\`sh`);
+        parts.push(`oc adm upgrade channel stable-4.20`);
+        parts.push(`oc adm upgrade`);
+        parts.push(`\`\`\``);
+      }
+
+      return parts.join("\n");
+    } catch (err) {
+      return `### Cluster Upgrade Analysis\n\n[CRITICAL] Failed to fetch cluster version data: ${err.message}`;
+    }
+  }
+
   // Only handle the *specific* CRUD verbs here. List/get queries are
   // routed through handleListCommand so they share one code path.
   if (!cmd.operation || !cmd.resourceType) return null;
