@@ -38,7 +38,7 @@ export async function runPreflightChecks(targetVersion, currentVersion) {
     ocpGet("/apis/config.openshift.io/v1/clusteroperators"),
     ocpGet("/api/v1/nodes"),
     ocpGet("/apis/machineconfiguration.openshift.io/v1/machineconfigpools"),
-    ocpGet("/api/v1/namespaces/openshift-etcd/pods"),
+    ocpGet("/api/v1/namespaces/openshift-etcd/pods?labelSelector=app=etcd"),
     ocpGet("/apis/operators.coreos.com/v1alpha1/subscriptions"),
     ocpGet("/apis/operators.coreos.com/v1alpha1/clusterserviceversions"),
     ocpGet("/apis/policy/v1/poddisruptionbudgets"),
@@ -51,8 +51,29 @@ export async function runPreflightChecks(targetVersion, currentVersion) {
   const nodes = nodesResp.status === "fulfilled" ? (nodesResp.value.items || []) : [];
   const mcps = mcpResp.status === "fulfilled" ? (mcpResp.value.items || []) : [];
   const etcdPods = etcdResp.status === "fulfilled" ? (etcdResp.value.items || []) : [];
-  const olmSubs = olmSubsResp.status === "fulfilled" ? (olmSubsResp.value.items || []) : [];
-  const olmCsvs = olmCsvsResp.status === "fulfilled" ? (olmCsvsResp.value.items || []) : [];
+  let olmSubs = olmSubsResp.status === "fulfilled" ? (olmSubsResp.value.items || []) : [];
+  let olmCsvs = olmCsvsResp.status === "fulfilled" ? (olmCsvsResp.value.items || []) : [];
+
+  // Fallback: if cluster-wide CSV query returned empty, try specific OLM namespaces
+  if (olmCsvs.length === 0) {
+    const olmNamespaces = ["openshift-operators", "openshift-operator-lifecycle-manager", "operators"];
+    for (const ns of olmNamespaces) {
+      try {
+        const resp = await ocpGet(`/apis/operators.coreos.com/v1alpha1/namespaces/${ns}/clusterserviceversions`);
+        if (resp.items && resp.items.length > 0) {
+          olmCsvs = olmCsvs.concat(resp.items);
+        }
+      } catch { /* namespace may not exist */ }
+    }
+  }
+  // Also try to detect operators from ClusterOperator versions for compatibility info
+  if (olmCsvs.length === 0 && olmSubs.length === 0) {
+    // No OLM operators — build list from subscriptions in well-known namespaces
+    try {
+      const subResp = await ocpGet("/apis/operators.coreos.com/v1alpha1/namespaces/openshift-operators/subscriptions");
+      if (subResp.items) olmSubs = subResp.items;
+    } catch { /* ignore */ }
+  }
   const pdbItems = pdbs.status === "fulfilled" ? (pdbs.value.items || []) : [];
   const pvItems = pvResp.status === "fulfilled" ? (pvResp.value.items || []) : [];
 
@@ -154,15 +175,36 @@ export async function runPreflightChecks(targetVersion, currentVersion) {
     }
   }
 
-  // Check subscriptions for channel issues
+  // Check subscriptions for channel issues and also build list of installed operators from subs
   for (const sub of olmSubs) {
-    const subName = sub.metadata.name;
+    const subName = sub.spec?.name || sub.metadata.name;
     const subChannel = sub.spec?.channel || "";
     const catalogSource = sub.spec?.source || "";
     const state = sub.status?.state || "";
-    if (state === "AtLatestKnown" || state === "") continue;
+    const installedCSV = sub.status?.installedCSV || "";
+    const currentCSV = sub.status?.currentCSV || "";
+
+    // If no CSV was found for this subscription, add it to the healthy/issues list from sub data
+    const csvExists = olmCsvs.some(c => c.metadata.name === installedCSV || c.metadata.name === currentCSV);
+    if (!csvExists && installedCSV) {
+      // Subscription exists but CSV not in our list — add from subscription data
+      const subVersion = installedCSV.replace(/^.*\.v/, "").replace(/^.*-/, "") || "";
+      if (state === "AtLatestKnown" || !state) {
+        olmHealthy.push({
+          name: subName,
+          csvName: installedCSV,
+          namespace: sub.metadata.namespace,
+          version: subVersion,
+          status: "Succeeded",
+          compatible: "yes",
+          channel: subChannel,
+          source: catalogSource,
+        });
+      }
+    }
+
     if (state === "UpgradePending" || state === "UpgradeFailed") {
-      const existing = olmIssues.find(i => i.csvName?.startsWith(subName));
+      const existing = olmIssues.find(i => i.csvName?.startsWith(subName) || i.name === subName);
       if (!existing) {
         olmIssues.push({
           name: subName,
@@ -176,10 +218,15 @@ export async function runPreflightChecks(targetVersion, currentVersion) {
     }
   }
 
+  const totalOLM = olmCsvs.length + olmSubs.filter(s => {
+    const csv = s.status?.installedCSV || "";
+    return csv && !olmCsvs.some(c => c.metadata.name === csv);
+  }).length;
+
   checks.push({
     category: "Installed Operators (OLM)",
     status: olmIssues.some(i => i.compatible === "no") ? "fail" : olmIssues.length > 0 ? "warning" : "pass",
-    details: `Total: ${olmCsvs.length} | Healthy & Compatible: ${olmHealthy.length} | Issues: ${olmIssues.length}`,
+    details: `Total: ${totalOLM || olmHealthy.length + olmIssues.length} | Healthy & Compatible: ${olmHealthy.length} | Issues: ${olmIssues.length}`,
     items: olmIssues,
     compatible: olmHealthy,
   });
@@ -229,16 +276,45 @@ export async function runPreflightChecks(targetVersion, currentVersion) {
     items: mcpIssues,
   });
 
-  // 7. Etcd Health
-  const etcdRunning = etcdPods.filter(p => p.status?.phase === "Running");
-  const etcdTotal = etcdPods.length;
-  checks.push({
-    category: "Etcd Cluster",
-    status: etcdTotal > 0 && etcdRunning.length < etcdTotal ? "fail" : etcdTotal === 0 ? "warning" : "pass",
-    details: etcdTotal > 0
-      ? `${etcdRunning.length}/${etcdTotal} etcd pods running`
-      : "Unable to verify etcd pods (check permissions)",
+  // 7. Etcd Health — expected count matches control-plane/master node count
+  const controlPlaneNodes = nodes.filter(n => {
+    const labels = n.metadata?.labels || {};
+    return labels["node-role.kubernetes.io/master"] !== undefined ||
+           labels["node-role.kubernetes.io/control-plane"] !== undefined;
   });
+  const expectedEtcd = controlPlaneNodes.length || 1;
+
+  // Filter to actual etcd member pods (not operator/guard pods)
+  let etcdMembers = etcdPods.filter(p => {
+    const name = p.metadata?.name || "";
+    return name.startsWith("etcd-") && !name.includes("operator") && !name.includes("guard") && !name.includes("quorum");
+  });
+  // If label selector returned nothing, try all pods but filter strictly
+  if (etcdMembers.length === 0) {
+    etcdMembers = etcdPods.filter(p => {
+      const containers = p.spec?.containers || [];
+      return containers.some(c => c.name === "etcd" || c.name === "etcdctl");
+    });
+  }
+  // Last fallback: if still empty but we got pods, it could be SNO with a different layout
+  if (etcdMembers.length === 0 && etcdPods.length > 0) {
+    etcdMembers = etcdPods.filter(p => p.status?.phase === "Running");
+  }
+
+  const etcdRunning = etcdMembers.filter(p => p.status?.phase === "Running");
+  const etcdExpectedLabel = expectedEtcd === 1 ? "single-node" : `${expectedEtcd}-node HA`;
+  let etcdStatus, etcdDetails;
+  if (etcdMembers.length === 0) {
+    etcdStatus = "warning";
+    etcdDetails = `Unable to verify etcd pods (check permissions or label selector)`;
+  } else if (etcdRunning.length >= expectedEtcd) {
+    etcdStatus = "pass";
+    etcdDetails = `${etcdRunning.length}/${expectedEtcd} etcd members running (${etcdExpectedLabel} cluster)`;
+  } else {
+    etcdStatus = "fail";
+    etcdDetails = `${etcdRunning.length}/${expectedEtcd} etcd members running (expected ${expectedEtcd} for ${etcdExpectedLabel} cluster)`;
+  }
+  checks.push({ category: "Etcd Cluster", status: etcdStatus, details: etcdDetails });
 
   // 8. Deprecated APIs (check for removed APIs in target version)
   const deprecatedAPIs = await checkDeprecatedAPIs(targetVersion, isMajorUpgrade);
@@ -344,7 +420,7 @@ export async function runPreflightChecks(targetVersion, currentVersion) {
       fail: checks.filter(c => c.status === "fail").length,
     },
     overallStatus: checks.some(c => c.status === "fail") ? "NOT_READY" : checks.some(c => c.status === "warning") ? "READY_WITH_WARNINGS" : "READY",
-    operators: { clusterOperators: operators.length, olmOperators: olmCsvs.length },
+    operators: { clusterOperators: operators.length, olmOperators: olmHealthy.length + olmIssues.length },
     allClusterOperators: operators.map(o => ({
       name: o.metadata.name,
       version: (o.status?.versions || []).find(v => v.name === "operator")?.version || "",
