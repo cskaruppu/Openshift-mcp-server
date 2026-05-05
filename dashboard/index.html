@@ -3807,11 +3807,15 @@ async function submitITSMForm(formId, type) {
       throw new Error(data.error || 'Submission failed');
     }
   } catch (e) {
+    var errMsg = e.message || 'Unknown error';
+    if (/fetch failed|Failed to fetch|NetworkError|ERR_CONNECTION/i.test(errMsg)) {
+      errMsg = 'Cannot reach the server. Check that the MCP server is running and ServiceNow environment variables (SERVICENOW_INSTANCE, SERVICENOW_USERNAME, SERVICENOW_PASSWORD) are configured.';
+    }
     if (resultEl) {
       resultEl.style.display = 'block';
-      resultEl.innerHTML = '<div style="color:var(--crit)">&#x274C; Error: ' + esc(e.message) + '</div>';
+      resultEl.innerHTML = '<div style="color:var(--crit)">&#x274C; Error: ' + esc(errMsg) + '</div>';
     }
-    if (btn) { btn.disabled = false; btn.textContent = '&#x1F4E4; Retry Submit'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = '&#x1F4E4; Retry Submit'; }
   }
 }
 

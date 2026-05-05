@@ -11,16 +11,24 @@ function authHeader() {
 }
 
 export async function snowFetch(path, options = {}) {
+  if (!SNOW_INSTANCE) {
+    throw new Error("ServiceNow instance URL not configured. Set SERVICENOW_INSTANCE environment variable.");
+  }
   const url = `${SNOW_INSTANCE}/api${path}`;
-  const resp = await fetch(url, {
-    ...options,
-    headers: {
-      Authorization: authHeader(),
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
+  let resp;
+  try {
+    resp = await fetch(url, {
+      ...options,
+      headers: {
+        Authorization: authHeader(),
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    });
+  } catch (e) {
+    throw new Error(`Cannot connect to ServiceNow (${SNOW_INSTANCE}): ${e.message}. Verify SERVICENOW_INSTANCE is correct and reachable.`);
+  }
   if (!resp.ok) {
     const body = await resp.text();
     throw new Error(`ServiceNow API ${resp.status}: ${body}`);

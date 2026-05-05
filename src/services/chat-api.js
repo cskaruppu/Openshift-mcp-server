@@ -1709,7 +1709,7 @@ async function gatherITSMContext(message) {
   return ctx;
 }
 
-function buildITSMForm(type, message, ctx) {
+function buildITSMForm(type, message, ctx, preflightReport = null) {
   const now = new Date();
   const planned = new Date(now.getTime() + 48 * 60 * 60 * 1000);
   const fmtDate = (d) => d.toISOString().slice(0, 16).replace("T", " ");
@@ -1717,7 +1717,9 @@ function buildITSMForm(type, message, ctx) {
   const r = ctx.recent;
 
   const isUpgrade = /upgrade/i.test(message);
-  const targetVersion = isUpgrade && c.availableUpdates?.length ? c.availableUpdates[0] : "";
+  const userVersionMatch = message.match(/(\d+\.\d+\.\d+)/);
+  const targetVersion = userVersionMatch ? userVersionMatch[1]
+    : (isUpgrade && c.availableUpdates?.length ? c.availableUpdates[0] : "");
 
   if (type === "change_request") {
     let title = "OpenShift Change";
@@ -1726,21 +1728,114 @@ function buildITSMForm(type, message, ctx) {
     let changeType = "normal";
     let rollback = "";
     let validation = "";
+    let impact = "[Describe potential impact]";
+    let justification = "";
 
     if (isUpgrade) {
-      title = `OpenShift Cluster Upgrade: ${c.version || "current"} → ${targetVersion || "target"}`;
+      const pf = preflightReport;
+      const fromVer = pf?.fromVersion || c.version || "current";
+      const toVer = pf?.targetVersion || targetVersion || "target";
+      const upgradeType = pf?.upgradeType || (fromVer !== toVer ? "Upgrade" : "");
+      const overallStatus = pf?.overallStatus || "";
+
+      title = `OpenShift Cluster Upgrade: ${fromVer} → ${toVer}`;
       description = [
-        `Cluster: OpenShift ${c.version} (channel: ${c.channel})`,
-        `Platform: ${c.platform || "N/A"}`,
-        `Nodes: ${c.nodeCount || "N/A"}`,
-        `Target Version: ${targetVersion || "[specify target]"}`,
-        `Cluster ID: ${c.clusterID || "N/A"}`,
-        `API Server: ${c.apiURL || "N/A"}`,
+        `## Cluster Environment`,
+        `- **Current Version:** ${fromVer}`,
+        `- **Target Version:** ${toVer}`,
+        `- **Upgrade Type:** ${upgradeType}`,
+        `- **Channel:** ${c.channel || "N/A"}`,
+        `- **Platform:** ${c.platform || "N/A"}`,
+        `- **Node Count:** ${c.nodeCount || "N/A"}`,
+        `- **Cluster ID:** ${c.clusterID || "N/A"}`,
+        `- **API Server:** ${c.apiURL || "N/A"}`,
       ];
-      risk = "high";
-      changeType = "normal";
-      rollback = "OpenShift supports rollback via: oc adm upgrade --to=<previous-version>. Monitor ClusterOperators and MachineConfigPool status. If rollback fails, restore from etcd backup.";
-      validation = "1. Verify all ClusterOperators are Available (oc get co)\n2. Check node status (oc get nodes)\n3. Confirm workload health (oc get pods --all-namespaces | grep -v Running)\n4. Validate MachineConfigPool status (oc get mcp)";
+
+      if (pf && pf.checks) {
+        description.push("");
+        description.push(`## Pre-Upgrade Assessment: ${overallStatus}`);
+        description.push(`- **Checks Passed:** ${pf.summary?.pass || 0}/${pf.summary?.total || 0}`);
+        description.push(`- **Warnings:** ${pf.summary?.warning || 0}`);
+        description.push(`- **Failures:** ${pf.summary?.fail || 0}`);
+
+        const failures = pf.checks.filter(ch => ch.status === "fail");
+        const warnings = pf.checks.filter(ch => ch.status === "warning");
+        if (failures.length > 0) {
+          description.push("");
+          description.push(`### Blockers (must resolve)`);
+          for (const f of failures) {
+            description.push(`- **${f.category}:** ${f.details}`);
+            if (f.recommendation) description.push(`  → ${f.recommendation}`);
+          }
+        }
+        if (warnings.length > 0) {
+          description.push("");
+          description.push(`### Warnings (review before proceeding)`);
+          for (const w of warnings) {
+            description.push(`- **${w.category}:** ${w.details}`);
+            if (w.recommendation) description.push(`  → ${w.recommendation}`);
+          }
+        }
+
+        description.push("");
+        description.push(`### Cluster Operators: ${pf.operators?.clusterOperators || 0} total`);
+        const unhealthyOps = (pf.allClusterOperators || []).filter(o => o.degraded || !o.available);
+        if (unhealthyOps.length > 0) {
+          for (const op of unhealthyOps) {
+            description.push(`- **${op.name}:** ${op.degraded ? "DEGRADED" : "Unavailable"} (version: ${op.version || "N/A"})`);
+          }
+        } else {
+          description.push(`- All cluster operators healthy and available`);
+        }
+
+        description.push("");
+        description.push(`### Installed Operators (OLM): ${pf.operators?.olmOperators || 0} total`);
+        const olmIssues = (pf.allOLMOperators || []).filter(o => o.compatible !== "yes" || o.issue);
+        if (olmIssues.length > 0) {
+          for (const op of olmIssues.slice(0, 10)) {
+            description.push(`- **${op.name}** (${op.version || "N/A"}): ${op.issue || op.status || "review"}`);
+          }
+        } else if (pf.operators?.olmOperators > 0) {
+          description.push(`- All OLM operators compatible with ${toVer}`);
+        } else {
+          description.push(`- No OLM-managed operators detected`);
+        }
+      }
+
+      risk = pf?.overallStatus === "NOT_READY" ? "high"
+           : pf?.overallStatus === "READY_WITH_WARNINGS" ? "high"
+           : "moderate";
+
+      justification = [
+        `Security patches, bug fixes, and feature updates in OpenShift ${toVer}.`,
+        upgradeType.includes("Patch") ? `Z-stream update within the ${c.channel || "stable"} channel — low risk, recommended by Red Hat.` : `Minor version upgrade — review release notes for breaking changes.`,
+        pf ? `Pre-upgrade assessment: ${overallStatus} (${pf.summary?.pass || 0} passed, ${pf.summary?.warning || 0} warnings, ${pf.summary?.fail || 0} failures).` : "",
+      ].filter(Boolean).join(" ");
+
+      impact = [
+        `Cluster nodes will be rebooted sequentially during the rolling upgrade.`,
+        `Workloads with properly configured PodDisruptionBudgets will experience minimal disruption.`,
+        pf?.summary?.fail > 0 ? `WARNING: ${pf.summary.fail} preflight check(s) FAILED — resolve before proceeding.` : "",
+        c.nodeCount ? `${c.nodeCount} nodes will be upgraded (1 at a time for worker MCP).` : "",
+      ].filter(Boolean).join("\n");
+
+      rollback = [
+        `1. Monitor upgrade progress: oc adm upgrade`,
+        `2. If issues arise, rollback: oc adm upgrade --to=${fromVer}`,
+        `3. Monitor ClusterOperators: oc get co | grep -v 'True.*False.*False'`,
+        `4. Check MachineConfigPool: oc get mcp`,
+        `5. If rollback fails, restore from etcd backup (see Red Hat KB)`,
+      ].join("\n");
+
+      validation = [
+        `1. oc adm upgrade — confirm version is ${toVer}`,
+        `2. oc get co — all operators Available=True, Degraded=False`,
+        `3. oc get nodes — all nodes Ready, version updated`,
+        `4. oc get mcp — all pools Updated=True, Degraded=False`,
+        `5. oc get pods -A | grep -Ev 'Running|Completed' — no unexpected pod issues`,
+        `6. Verify application health and smoke-test critical workloads`,
+        pf?.checks?.find(ch => ch.category === "Firing Alerts") ? `7. oc get alertmanager — no new critical alerts` : "",
+      ].filter(Boolean).join("\n");
     } else {
       if (r.resourceType && r.resourceName) {
         title = `OpenShift Change: ${r.resourceType} '${r.resourceName}'` + (r.namespace ? ` in ${r.namespace}` : "");
@@ -1755,7 +1850,7 @@ function buildITSMForm(type, message, ctx) {
         title = "OpenShift Change — [describe the change]";
         description = [
           `Cluster: OpenShift ${c.version || "N/A"} (channel: ${c.channel || "N/A"})`,
-          `Namespace: ${r.namespace || "[specify namespace]"}`,
+          `Namespace: ${r.namespace || "[specify]"}`,
           `Resource: [resource type/name]`,
           `Action: [create/modify/delete/scale]`,
           `Details: [Provide YAML diff or summary of the change]`,
@@ -1769,14 +1864,14 @@ function buildITSMForm(type, message, ctx) {
       type: "change_request",
       fields: {
         title: { label: "Change Request Title", value: title },
-        justification: { label: "Business Justification", value: isUpgrade ? "Security patches and bug fixes in latest OpenShift release. Staying current with stable channel updates." : "" },
+        justification: { label: "Business Justification", value: justification },
         changeType: { label: "Change Type", value: changeType, options: ["standard", "normal", "emergency"] },
-        priority: { label: "Priority", value: "3", options: ["1 - Critical", "2 - High", "3 - Moderate", "4 - Low"] },
+        priority: { label: "Priority", value: risk === "high" ? "2" : "3", options: ["1 - Critical", "2 - High", "3 - Moderate", "4 - Low"] },
         risk: { label: "Risk Level", value: risk, options: ["low", "moderate", "high"] },
         plannedDate: { label: "Planned Implementation Date/Time", value: fmtDate(planned) },
         assignmentGroup: { label: "Assignment Group", value: "" },
         description: { label: "Change Description", value: description.join("\n") },
-        impact: { label: "Impact Assessment", value: isUpgrade ? "Cluster nodes will be rebooted sequentially. Running workloads with proper PodDisruptionBudgets will experience minimal disruption." : "[Describe potential impact]" },
+        impact: { label: "Impact Assessment", value: impact },
         rollback: { label: "Rollback Plan", value: rollback },
         validation: { label: "Testing/Validation Plan", value: validation },
       },
@@ -5232,13 +5327,12 @@ export async function handleChatAPI(req, res) {
     const itsmType = await detectITSMIntent(userMessage);
     if (itsmType) {
       const itsmCtx = await gatherITSMContext(userMessage);
-      const form = buildITSMForm(itsmType, userMessage, itsmCtx);
-      const formToken = `@@ITSM_FORM|${JSON.stringify(form).replace(/@@/g, "@ @")}@@`;
       const label = itsmType === "change_request" ? "Change Request" : "Incident";
 
       // Auto-run preflight assessment for upgrade-related Change Requests
-      // Detect upgrade context from: message text, available updates, or "above" references
+      // and pass the report INTO the CR form fields so they're pre-populated.
       let preflightSection = "";
+      let preflightReport = null;
       const isUpgradeRelated = /upgrade/i.test(userMessage) ||
         (/\b(?:above|previous|pre-?check|assessment)\b/i.test(userMessage) && itsmCtx.cluster?.availableUpdates?.length > 0);
       if (itsmType === "change_request" && isUpgradeRelated) {
@@ -5255,14 +5349,17 @@ export async function handleChatAPI(req, res) {
             targetVer = itsmCtx.cluster.availableUpdates[0];
           }
           if (targetVer) {
-            const preflightReport = await runPreflightChecks(targetVer, currentVer || undefined);
+            preflightReport = await runPreflightChecks(targetVer, currentVer || undefined);
             const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(preflightReport).replace(/@@/g, "@ @")}@@`;
             preflightSection = `${reportToken}\n\n---\n\n`;
           }
         } catch { /* preflight failed gracefully — continue with CR form */ }
       }
 
-      const reply = `${preflightSection}### ${label} Form\n\nI've auto-populated the ${label.toLowerCase()} form based on the current cluster context.${preflightSection ? " The pre-upgrade assessment report is shown above." : ""} Review and edit the fields below, then submit.\n\n${formToken}`;
+      const form = buildITSMForm(itsmType, userMessage, itsmCtx, preflightReport);
+      const formToken = `@@ITSM_FORM|${JSON.stringify(form).replace(/@@/g, "@ @")}@@`;
+
+      const reply = `${preflightSection}### ${label} Form\n\nI've auto-populated the ${label.toLowerCase()} form based on the current cluster context${preflightSection ? " and the 22-point pre-upgrade assessment above" : ""}. Review and edit the fields below, then submit.\n\n${formToken}`;
       const provider = "built-in";
       if (conversationId) {
         histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
