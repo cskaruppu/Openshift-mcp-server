@@ -1716,10 +1716,13 @@ function buildITSMForm(type, message, ctx, preflightReport = null) {
   const c = ctx.cluster;
   const r = ctx.recent;
 
-  const isUpgrade = /upgrade/i.test(message);
+  // If a preflightReport was passed, this IS an upgrade CR regardless of message keywords.
+  // Also match: "upgrade", "precheck", "pre-check", "above" (referencing prior precheck).
+  const isUpgrade = !!preflightReport || /upgrade|pre-?check|above\s+(?:pre|check|assessment)/i.test(message);
   const userVersionMatch = message.match(/(\d+\.\d+\.\d+)/);
   const targetVersion = userVersionMatch ? userVersionMatch[1]
-    : (isUpgrade && c.availableUpdates?.length ? c.availableUpdates[0] : "");
+    : preflightReport?.targetVersion
+    || (c.availableUpdates?.length ? c.availableUpdates[0] : "");
 
   if (type === "change_request") {
     let title = "OpenShift Change";
