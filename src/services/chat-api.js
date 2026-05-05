@@ -1761,105 +1761,328 @@ function buildITSMForm(type, message, ctx, preflightReport = null) {
       const toVer = pf?.targetVersion || targetVersion || "target";
       const upgradeType = pf?.upgradeType || (fromVer !== toVer ? "Upgrade" : "");
       const overallStatus = pf?.overallStatus || "";
+      const vd = pf?.versionDelta || {};
+      const nt = pf?.nodeTopology || {};
+      const fromMinor = (fromVer.match(/^\d+\.(\d+)/) || [])[1] || "";
+      const toMinor = (toVer.match(/^\d+\.(\d+)/) || [])[1] || "";
 
       title = `OpenShift Cluster Upgrade: ${fromVer} → ${toVer}`;
+
+      // --- DESCRIPTION: Version comparison + cluster environment ---
       description = [
-        `## Cluster Environment`,
-        `- **Current Version:** ${fromVer}`,
-        `- **Target Version:** ${toVer}`,
-        `- **Upgrade Type:** ${upgradeType}`,
-        `- **Channel:** ${c.channel || "N/A"}`,
-        `- **Platform:** ${c.platform || "N/A"}`,
-        `- **Node Count:** ${c.nodeCount || "N/A"}`,
-        `- **Cluster ID:** ${c.clusterID || "N/A"}`,
-        `- **API Server:** ${c.apiURL || "N/A"}`,
+        `═══════════════════════════════════════════════`,
+        `OPENSHIFT CLUSTER UPGRADE — CHANGE DESCRIPTION`,
+        `═══════════════════════════════════════════════`,
+        ``,
+        `1. VERSION COMPARISON`,
+        `───────────────────────────────────────────────`,
+        `Current Version       : ${fromVer}`,
+        `Target Version        : ${toVer}`,
+        `Upgrade Type          : ${upgradeType}`,
+        `Kubernetes Version    : ${vd.kubeFrom || "N/A"} → ${vd.kubeTo || "N/A"}${vd.kubeSkew ? ` (${vd.kubeSkew} minor version${vd.kubeSkew > 1 ? "s" : ""})` : ""}`,
+        `CRI-O Runtime         : ${vd.criO || "matches Kubernetes version"}`,
+        `RHEL Base             : ${vd.rhelBase || "RHEL CoreOS"}`,
+        `Update Channel        : ${c.channel || "N/A"}`,
+        ``,
       ];
 
+      // Feature highlights between versions
+      const features = vd.featureHighlights || [];
+      if (features.length > 0) {
+        description.push(`2. WHAT'S NEW IN ${toVer}`);
+        description.push(`───────────────────────────────────────────────`);
+        for (const feat of features) {
+          description.push(`  • ${feat}`);
+        }
+        description.push(``);
+      }
+
+      // API changes
+      const apiRemovals = vd.apiRemovals || {};
+      if (apiRemovals.removed?.length > 0 || apiRemovals.deprecated?.length > 0) {
+        description.push(`3. API CHANGES`);
+        description.push(`───────────────────────────────────────────────`);
+        if (apiRemovals.removed?.length > 0) {
+          description.push(`  REMOVED APIs (must migrate before upgrade):`);
+          for (const api of apiRemovals.removed) {
+            description.push(`    ✗ ${api.api} [${api.kinds?.join(", ")}] → use ${api.replacement}`);
+          }
+        }
+        if (apiRemovals.deprecated?.length > 0) {
+          description.push(`  DEPRECATED APIs (plan migration):`);
+          for (const api of apiRemovals.deprecated.slice(0, 8)) {
+            description.push(`    ⚠ ${api.name} → ${api.replacement || "check docs"}`);
+          }
+        }
+        description.push(``);
+      }
+
+      // Cluster environment
+      description.push(`4. CLUSTER ENVIRONMENT`);
+      description.push(`───────────────────────────────────────────────`);
+      description.push(`Platform              : ${c.platform || "N/A"}`);
+      description.push(`Cluster ID            : ${c.clusterID || "N/A"}`);
+      description.push(`API Server            : ${c.apiURL || "N/A"}`);
+      const masterCount = nt.masters || 0;
+      const workerCount = nt.workers || 0;
+      const infraCount = nt.infra || 0;
+      description.push(`Nodes                 : ${nt.total || c.nodeCount || "N/A"} total (${masterCount} control-plane, ${workerCount} worker${infraCount ? `, ${infraCount} infra` : ""})`);
+      description.push(`Estimated Duration    : ${vd.estimatedDuration || "~1-2 hours (varies by cluster size)"}`);
+      description.push(``);
+
+      // Pre-upgrade assessment summary
       if (pf && pf.checks) {
-        description.push("");
-        description.push(`## Pre-Upgrade Assessment: ${overallStatus}`);
-        description.push(`- **Checks Passed:** ${pf.summary?.pass || 0}/${pf.summary?.total || 0}`);
-        description.push(`- **Warnings:** ${pf.summary?.warning || 0}`);
-        description.push(`- **Failures:** ${pf.summary?.fail || 0}`);
+        description.push(`5. PRE-UPGRADE ASSESSMENT: ${overallStatus}`);
+        description.push(`───────────────────────────────────────────────`);
+        description.push(`Total Checks          : ${pf.summary?.total || 0}`);
+        description.push(`Passed                : ${pf.summary?.pass || 0}`);
+        description.push(`Warnings              : ${pf.summary?.warning || 0}`);
+        description.push(`Failed                : ${pf.summary?.fail || 0}`);
+        description.push(``);
 
         const failures = pf.checks.filter(ch => ch.status === "fail");
         const warnings = pf.checks.filter(ch => ch.status === "warning");
         if (failures.length > 0) {
-          description.push("");
-          description.push(`### Blockers (must resolve)`);
+          description.push(`  BLOCKERS (must resolve before upgrade):`);
           for (const f of failures) {
-            description.push(`- **${f.category}:** ${f.details}`);
-            if (f.recommendation) description.push(`  → ${f.recommendation}`);
+            description.push(`    [FAIL] ${f.category}: ${f.details}`);
+            if (f.recommendation) description.push(`           → ${f.recommendation}`);
           }
+          description.push(``);
         }
         if (warnings.length > 0) {
-          description.push("");
-          description.push(`### Warnings (review before proceeding)`);
+          description.push(`  WARNINGS (review before proceeding):`);
           for (const w of warnings) {
-            description.push(`- **${w.category}:** ${w.details}`);
-            if (w.recommendation) description.push(`  → ${w.recommendation}`);
+            description.push(`    [WARN] ${w.category}: ${w.details}`);
+            if (w.recommendation) description.push(`           → ${w.recommendation}`);
           }
+          description.push(``);
         }
 
-        description.push("");
-        description.push(`### Cluster Operators: ${pf.operators?.clusterOperators || 0} total`);
-        const unhealthyOps = (pf.allClusterOperators || []).filter(o => o.degraded || !o.available);
-        if (unhealthyOps.length > 0) {
-          for (const op of unhealthyOps) {
-            description.push(`- **${op.name}:** ${op.degraded ? "DEGRADED" : "Unavailable"} (version: ${op.version || "N/A"})`);
+        const passedChecks = pf.checks.filter(ch => ch.status === "pass");
+        if (passedChecks.length > 0) {
+          description.push(`  PASSED CHECKS:`);
+          for (const p of passedChecks) {
+            description.push(`    [PASS] ${p.category}: ${p.details}`);
           }
-        } else {
-          description.push(`- All cluster operators healthy and available`);
-        }
-
-        description.push("");
-        description.push(`### Installed Operators (OLM): ${pf.operators?.olmOperators || 0} total`);
-        const olmIssues = (pf.allOLMOperators || []).filter(o => o.compatible !== "yes" || o.issue);
-        if (olmIssues.length > 0) {
-          for (const op of olmIssues.slice(0, 10)) {
-            description.push(`- **${op.name}** (${op.version || "N/A"}): ${op.issue || op.status || "review"}`);
-          }
-        } else if (pf.operators?.olmOperators > 0) {
-          description.push(`- All OLM operators compatible with ${toVer}`);
-        } else {
-          description.push(`- No OLM-managed operators detected`);
+          description.push(``);
         }
       }
 
+      // Operator status
+      description.push(`6. OPERATOR STATUS`);
+      description.push(`───────────────────────────────────────────────`);
+      description.push(`Cluster Operators     : ${pf?.operators?.clusterOperators || 0}`);
+      const unhealthyOps = (pf?.allClusterOperators || []).filter(o => o.degraded || !o.available);
+      if (unhealthyOps.length > 0) {
+        for (const op of unhealthyOps) {
+          description.push(`  ✗ ${op.name}: ${op.degraded ? "DEGRADED" : "Unavailable"} (${op.version || "N/A"})`);
+        }
+      } else {
+        description.push(`  ✓ All cluster operators healthy and available`);
+      }
+      description.push(`OLM Operators         : ${pf?.operators?.olmOperators || 0}`);
+      const olmIssues = (pf?.allOLMOperators || []).filter(o => o.compatible !== "yes" || o.issue);
+      if (olmIssues.length > 0) {
+        for (const op of olmIssues.slice(0, 10)) {
+          description.push(`  ✗ ${op.name} (${op.version || "N/A"}): ${op.issue || op.status || "review compatibility"}`);
+        }
+      } else if (pf?.operators?.olmOperators > 0) {
+        description.push(`  ✓ All OLM operators compatible with ${toVer}`);
+      }
+      description.push(``);
+
+      // Node topology details
+      if (nt.nodeDetails?.length > 0) {
+        description.push(`7. NODE TOPOLOGY`);
+        description.push(`───────────────────────────────────────────────`);
+        for (const nd of nt.nodeDetails) {
+          const readyStr = nd.ready ? "Ready" : "NOT READY";
+          description.push(`  ${nd.name} [${nd.role}] — kubelet: ${nd.kubeletVersion || "N/A"}, ${readyStr}`);
+        }
+        description.push(``);
+      }
+
+      // Reference links
+      description.push(`8. REFERENCES`);
+      description.push(`───────────────────────────────────────────────`);
+      if (vd.releaseNotesURL) description.push(`Release Notes         : ${vd.releaseNotesURL}`);
+      if (vd.errataURL) description.push(`Errata / Advisories   : ${vd.errataURL}`);
+      description.push(`Red Hat Support       : https://access.redhat.com/support/cases`);
+      description.push(`OCP Life Cycle        : https://access.redhat.com/support/policy/updates/openshift`);
+
+      // --- RISK ---
       risk = pf?.overallStatus === "NOT_READY" ? "high"
            : pf?.overallStatus === "READY_WITH_WARNINGS" ? "high"
            : "moderate";
 
+      // --- JUSTIFICATION ---
       justification = [
-        `Security patches, bug fixes, and feature updates in OpenShift ${toVer}.`,
-        upgradeType.includes("Patch") ? `Z-stream update within the ${c.channel || "stable"} channel — low risk, recommended by Red Hat.` : `Minor version upgrade — review release notes for breaking changes.`,
-        pf ? `Pre-upgrade assessment: ${overallStatus} (${pf.summary?.pass || 0} passed, ${pf.summary?.warning || 0} warnings, ${pf.summary?.fail || 0} failures).` : "",
-      ].filter(Boolean).join(" ");
-
-      impact = [
-        `Cluster nodes will be rebooted sequentially during the rolling upgrade.`,
-        `Workloads with properly configured PodDisruptionBudgets will experience minimal disruption.`,
-        pf?.summary?.fail > 0 ? `WARNING: ${pf.summary.fail} preflight check(s) FAILED — resolve before proceeding.` : "",
-        c.nodeCount ? `${c.nodeCount} nodes will be upgraded (1 at a time for worker MCP).` : "",
+        `Business Requirement: Maintain OpenShift cluster on supported, secure version.`,
+        `Security: OpenShift ${toVer} includes critical security patches (CVEs), bug fixes, and platform improvements.`,
+        upgradeType.includes("Patch") ? `This is a Z-stream (patch) update within the ${c.channel || "stable"} channel — low risk, recommended by Red Hat for all production clusters.` : `This is a minor version upgrade (${fromVer.match(/^\d+\.\d+/)?.[0]} → ${toVer.match(/^\d+\.\d+/)?.[0]}) — includes new features, Kubernetes ${vd.kubeFrom || ""} → ${vd.kubeTo || ""} update, and security fixes.`,
+        `Compliance: Running unsupported versions may violate organizational security policies and SLAs.`,
+        pf ? `Pre-Upgrade Assessment: ${overallStatus} — ${pf.summary?.pass || 0} passed, ${pf.summary?.warning || 0} warnings, ${pf.summary?.fail || 0} failures out of ${pf.summary?.total || 0} industry-standard checks.` : "",
       ].filter(Boolean).join("\n");
 
+      // --- IMPACT ---
+      impact = [
+        `SCOPE OF IMPACT:`,
+        `• Control Plane: ${masterCount || 3} master nodes will be upgraded sequentially (auto-managed by CVO)`,
+        `• Worker Nodes: ${workerCount || "N/A"} worker nodes will be cordoned, drained, upgraded, and uncordoned one at a time via MachineConfigPool`,
+        infraCount ? `• Infrastructure Nodes: ${infraCount} infra nodes will follow same rolling process` : "",
+        `• Kubernetes API: Brief API unavailability during control plane rollover (~2-5 min per master)`,
+        `• Workloads: Pods on drained nodes will be rescheduled; applications with PodDisruptionBudgets will experience graceful disruption`,
+        `• Estimated Total Duration: ${vd.estimatedDuration || "~1-2 hours"}`,
+        ``,
+        `RISK MITIGATION:`,
+        `• Rolling upgrade strategy ensures cluster remains operational throughout`,
+        `• Workloads with ≥2 replicas and proper anti-affinity will have zero downtime`,
+        `• PodDisruptionBudgets enforced during node drain`,
+        pf?.summary?.fail > 0 ? `\nWARNING: ${pf.summary.fail} preflight check(s) FAILED — these MUST be resolved before proceeding.` : "",
+      ].filter(Boolean).join("\n");
+
+      // --- ROLLBACK / BACKOUT PLAN ---
       rollback = [
-        `1. Monitor upgrade progress: oc adm upgrade`,
-        `2. If issues arise, rollback: oc adm upgrade --to=${fromVer}`,
-        `3. Monitor ClusterOperators: oc get co | grep -v 'True.*False.*False'`,
-        `4. Check MachineConfigPool: oc get mcp`,
-        `5. If rollback fails, restore from etcd backup (see Red Hat KB)`,
+        `BACKOUT PLAN — OpenShift ${toVer} → ${fromVer}`,
+        `═══════════════════════════════════════════════`,
+        ``,
+        `IMPORTANT: OpenShift minor version upgrades (e.g., 4.18 → 4.19) are`,
+        `ONE-WAY and cannot be rolled back. Only Z-stream (patch) updates`,
+        `within the same minor version can be reverted.`,
+        ``,
+        `PRE-UPGRADE SAFEGUARDS:`,
+        `  1. Verify etcd backup exists: oc get etcdbackup -n openshift-etcd`,
+        `  2. Confirm cluster backup: oc adm must-gather`,
+        `  3. Document current state: oc get co; oc get nodes; oc get mcp`,
+        ``,
+        upgradeType.includes("Patch") ? [
+          `Z-STREAM ROLLBACK PROCEDURE:`,
+          `  1. oc adm upgrade --to=${fromVer}`,
+          `  2. Monitor: oc adm upgrade (wait for Available=True)`,
+          `  3. Verify: oc get co | grep -v 'True.*False.*False'`,
+          `  4. Check nodes: oc get nodes -o wide`,
+          `  5. Validate MCP: oc get mcp`,
+        ].join("\n") : [
+          `MINOR VERSION — DISASTER RECOVERY ONLY:`,
+          `  1. Restore cluster from etcd backup snapshot`,
+          `  2. Follow Red Hat KCS: https://access.redhat.com/solutions/5599961`,
+          `  3. Restore procedure requires full cluster outage`,
+          `  4. Contact Red Hat Support for assisted recovery`,
+        ].join("\n"),
+        ``,
+        `ESCALATION PATH:`,
+        `  1. L1: Cluster admin monitors oc adm upgrade for 30 min`,
+        `  2. L2: If operators degraded >15 min, engage platform team`,
+        `  3. L3: If cluster unrecoverable, initiate etcd restore + Red Hat Support case`,
       ].join("\n");
 
+      // --- IMPLEMENTATION PLAN ---
+      const implementationPlan = [
+        `IMPLEMENTATION PLAN — OpenShift ${fromVer} → ${toVer}`,
+        `═══════════════════════════════════════════════`,
+        ``,
+        `PRE-IMPLEMENTATION (T-60 min):`,
+        `  □ Verify pre-upgrade assessment: ${pf?.summary?.total || 22} checks passed`,
+        `  □ Confirm etcd backup: oc get etcdbackup -n openshift-etcd`,
+        `  □ Run must-gather: oc adm must-gather --dest-dir=/tmp/pre-upgrade-${fromVer}`,
+        `  □ Verify all ClusterOperators healthy: oc get co`,
+        `  □ Verify all nodes Ready: oc get nodes`,
+        `  □ Verify MachineConfigPools not updating: oc get mcp`,
+        `  □ Notify stakeholders per communication plan`,
+        `  □ Verify PDB compliance for critical workloads`,
+        ``,
+        `IMPLEMENTATION (T-0):`,
+        `  1. Set maintenance channel (if needed):`,
+        `     oc adm upgrade channel ${c.channel || "stable-" + toMinor}`,
+        `  2. Initiate cluster upgrade:`,
+        `     oc adm upgrade --to=${toVer}`,
+        `  3. Monitor control plane upgrade:`,
+        `     watch "oc get co; oc adm upgrade"`,
+        `  4. Verify control plane completion:`,
+        `     oc get co | grep -v 'True.*False.*False'`,
+        `  5. Monitor worker node rolling update:`,
+        `     watch "oc get nodes; oc get mcp"`,
+        `  6. Wait for all MachineConfigPools to complete:`,
+        `     oc wait mcp --all --for=condition=Updated --timeout=90m`,
+        ``,
+        `POST-IMPLEMENTATION:`,
+        `  □ Verify cluster version: oc adm upgrade`,
+        `  □ Verify all operators: oc get co`,
+        `  □ Verify all nodes: oc get nodes -o wide`,
+        `  □ Run smoke tests on critical applications`,
+        `  □ Check for new alerts: oc get alerts (Prometheus)`,
+        `  □ Update CMDB / asset inventory with new version`,
+        `  □ Close maintenance window notification`,
+      ].join("\n");
+
+      // --- VALIDATION / TEST PLAN ---
       validation = [
-        `1. oc adm upgrade — confirm version is ${toVer}`,
-        `2. oc get co — all operators Available=True, Degraded=False`,
-        `3. oc get nodes — all nodes Ready, version updated`,
-        `4. oc get mcp — all pools Updated=True, Degraded=False`,
-        `5. oc get pods -A | grep -Ev 'Running|Completed' — no unexpected pod issues`,
-        `6. Verify application health and smoke-test critical workloads`,
-        pf?.checks?.find(ch => ch.category === "Firing Alerts") ? `7. oc get alertmanager — no new critical alerts` : "",
-      ].filter(Boolean).join("\n");
+        `TESTING & VALIDATION PLAN`,
+        `═══════════════════════════════════════════════`,
+        ``,
+        `AUTOMATED CHECKS (run immediately after upgrade):`,
+        `  1. oc adm upgrade — confirm desired version is ${toVer}`,
+        `  2. oc get co — all operators: Available=True, Degraded=False, Progressing=False`,
+        `  3. oc get nodes -o wide — all nodes Ready, version updated to ${vd.kubeTo || toVer}`,
+        `  4. oc get mcp — all pools: Updated=True, Degraded=False, MachineCount=ReadyMachineCount`,
+        `  5. oc get pods -A | grep -Ev 'Running|Completed' — no CrashLoopBackOff or unexpected states`,
+        `  6. oc get csr — no pending certificate signing requests`,
+        ``,
+        `APPLICATION VALIDATION:`,
+        `  7. Verify critical application endpoints respond (HTTP 200)`,
+        `  8. Run application-specific smoke tests / health checks`,
+        `  9. Confirm ingress routes / TLS certificates functioning`,
+        `  10. Validate persistent volume claims are bound and accessible`,
+        ``,
+        `MONITORING VALIDATION:`,
+        `  11. Check Prometheus / Alertmanager for new critical alerts`,
+        `  12. Verify monitoring stack is scraping all targets`,
+        `  13. Confirm log aggregation pipeline is operational`,
+        ``,
+        `OPERATOR VALIDATION:`,
+        `  14. oc get csv -A — all ClusterServiceVersions in Succeeded phase`,
+        `  15. Verify operator-managed CRDs are accessible`,
+        `  16. Check operator logs for errors: oc logs -n openshift-operator-lifecycle-manager`,
+        ``,
+        `SIGN-OFF CRITERIA:`,
+        `  • All ${pf?.summary?.total || 22} automated checks pass`,
+        `  • No new critical/warning alerts within 30 min post-upgrade`,
+        `  • Application health checks pass`,
+        `  • Change Advisory Board (CAB) notified of successful completion`,
+      ].join("\n");
+
+      // --- COMMUNICATION PLAN (work notes) ---
+      const communicationPlan = [
+        `COMMUNICATION PLAN:`,
+        `Pre-Change   : Notify all application teams 48h before maintenance window`,
+        `During Change: Post status updates every 30 min to #platform-ops channel`,
+        `Post-Change  : Send completion notice with validation results`,
+        `Failure      : Immediately notify incident commander; initiate backout plan`,
+      ].join("\n");
+
+      // Store implementation plan + communication plan for the form
+      changeType = "normal";
+
+      return {
+        type: "change_request",
+        fields: {
+          title: { label: "Change Request Title", value: title },
+          justification: { label: "Business Justification", value: justification },
+          changeType: { label: "Change Type", value: changeType, options: ["standard", "normal", "emergency"] },
+          priority: { label: "Priority", value: risk === "high" ? "2" : "3", options: ["1 - Critical", "2 - High", "3 - Moderate", "4 - Low"] },
+          risk: { label: "Risk Level", value: risk, options: ["low", "moderate", "high"] },
+          plannedDate: { label: "Planned Implementation Date/Time", value: fmtDate(planned) },
+          assignmentGroup: { label: "Assignment Group", value: "" },
+          description: { label: "Change Description", value: description.join("\n") },
+          implementationPlan: { label: "Implementation Plan", value: implementationPlan },
+          impact: { label: "Impact Assessment", value: impact },
+          rollback: { label: "Backout / Rollback Plan", value: rollback },
+          validation: { label: "Testing / Validation Plan", value: validation },
+          communicationPlan: { label: "Communication Plan", value: communicationPlan },
+        },
+        servicenowEnabled: isServiceNowEnabled(),
+      };
     } else {
       if (r.resourceType && r.resourceName) {
         title = `OpenShift Change: ${r.resourceType} '${r.resourceName}'` + (r.namespace ? ` in ${r.namespace}` : "");

@@ -790,6 +790,27 @@ export async function runPreflightChecks(targetVersion, currentVersion) {
       progressing: (o.status?.conditions || []).find(c => c.type === "Progressing")?.status === "True",
     })),
     allOLMOperators: [...olmHealthy, ...olmIssues],
+    versionDelta: (() => {
+      const kubeFrom = ocpToKube(fromVersion);
+      const kubeTo = ocpToKube(targetVersion);
+      const fromMinorKube = kubeFrom ? parseInt(kubeFrom.split(".")[1], 10) : 0;
+      const toMinorKube = kubeTo ? parseInt(kubeTo.split(".")[1], 10) : 0;
+      const kubeSkew = Math.abs(toMinorKube - fromMinorKube);
+      const ocpMinor = (targetVersion.match(/^(\d+\.\d+)/) || [])[1] || targetVersion;
+      return {
+        kubeFrom,
+        kubeTo,
+        kubeSkew,
+        rhelBase: getRHELBase(targetVersion),
+        criO: kubeTo,
+        estimatedDuration: estimateUpgradeDuration(nodes),
+        errataURL: `https://access.redhat.com/errata/#/?q=openshift+${targetVersion}&p=1`,
+        releaseNotesURL: `https://docs.openshift.com/container-platform/${ocpMinor}/release_notes/ocp-${ocpMinor}-release-notes.html`,
+        apiRemovals: [...deprecatedAPIs.removed, ...deprecatedAPIs.deprecated],
+        featureHighlights: getFeatureHighlights(fromVersion, targetVersion),
+      };
+    })(),
+    nodeTopology: buildNodeTopology(nodes),
   };
 }
 
@@ -1102,6 +1123,103 @@ async function checkDeprecatedAPIs(targetVersion, isMajorUpgrade) {
   } catch { /* skip if can't list APIs */ }
 
   return { removed, deprecated };
+}
+
+// Notable features per OCP minor version for version delta analysis.
+const OCP_FEATURE_HIGHLIGHTS = {
+  "4.14": ["OVN-Kubernetes as default CNI", "OADP 1.3", "Cert-Manager operator GA"],
+  "4.15": ["RHEL 9 worker support", "IPv6/dual-stack enhancements", "oc-mirror v2"],
+  "4.16": ["OLM v1 tech preview", "HyperShift GA", "ARM64 support expanded"],
+  "4.17": ["Cluster API provider", "RHEL 9 only", "MicroShift enhancements", "Monitoring stack updates"],
+  "4.18": ["Network Observability GA", "Platform Operators", "Node health checks GA"],
+  "4.19": ["OLM v1 GA", "CGroupsV2 mandatory", "IPv4/IPv6 dual-stack GA"],
+};
+
+function getFeatureHighlights(fromVersion, targetVersion) {
+  const fromMinor = parseMinor(fromVersion);
+  const toMinor = parseMinor(targetVersion);
+  if (fromMinor === null || toMinor === null) return [];
+  const highlights = [];
+  for (let m = fromMinor + 1; m <= toMinor; m++) {
+    const key = `4.${m}`;
+    if (OCP_FEATURE_HIGHLIGHTS[key]) {
+      highlights.push({ version: key, features: OCP_FEATURE_HIGHLIGHTS[key] });
+    }
+  }
+  return highlights;
+}
+
+function parseMinor(version) {
+  const m = (version || "").match(/^4\.(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+function getRHELBase(targetVersion) {
+  const minor = parseMinor(targetVersion);
+  if (minor === null) return "unknown";
+  if (minor >= 17) return "RHEL 9.x only";
+  if (minor >= 14) return "RHEL 8.x / 9.x";
+  return "RHEL 8.x";
+}
+
+function estimateUpgradeDuration(nodes) {
+  const labels = (n) => n.metadata?.labels || {};
+  const masters = nodes.filter(n => {
+    const l = labels(n);
+    return l["node-role.kubernetes.io/master"] !== undefined ||
+           l["node-role.kubernetes.io/control-plane"] !== undefined;
+  });
+  const workers = nodes.filter(n => {
+    const l = labels(n);
+    return l["node-role.kubernetes.io/worker"] !== undefined;
+  });
+  const baseMinutes = 20;
+  const totalMinutes = baseMinutes + (workers.length * 10) + (masters.length * 15);
+  const hours = Math.floor(totalMinutes / 60);
+  const mins = totalMinutes % 60;
+  if (hours > 0) {
+    return `~${hours}h ${mins}m (${totalMinutes} minutes)`;
+  }
+  return `~${totalMinutes} minutes`;
+}
+
+function buildNodeTopology(nodes) {
+  const labels = (n) => n.metadata?.labels || {};
+  let masterCount = 0;
+  let workerCount = 0;
+  let infraCount = 0;
+
+  const nodeDetails = nodes.map(n => {
+    const l = labels(n);
+    const isMaster = l["node-role.kubernetes.io/master"] !== undefined ||
+                     l["node-role.kubernetes.io/control-plane"] !== undefined;
+    const isInfra = l["node-role.kubernetes.io/infra"] !== undefined;
+    const isWorker = l["node-role.kubernetes.io/worker"] !== undefined;
+
+    if (isMaster) masterCount++;
+    if (isInfra) infraCount++;
+    if (isWorker) workerCount++;
+
+    const role = isMaster ? "master" : isInfra ? "infra" : isWorker ? "worker" : "other";
+    const conds = n.status?.conditions || [];
+    const readyCond = conds.find(c => c.type === "Ready");
+
+    return {
+      name: n.metadata?.name || "unknown",
+      role,
+      kubeletVersion: n.status?.nodeInfo?.kubeletVersion || "",
+      osImage: n.status?.nodeInfo?.osImage || "",
+      ready: readyCond?.status === "True",
+    };
+  });
+
+  return {
+    masters: masterCount,
+    workers: workerCount,
+    infra: infraCount,
+    total: nodes.length,
+    nodeDetails,
+  };
 }
 
 function calculateUpgradeCapacity(nodes) {

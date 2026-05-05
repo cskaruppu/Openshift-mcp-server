@@ -79,18 +79,35 @@ export async function createChangeRequest({
   assignmentGroup = "",
   risk = "moderate",
   justification = "",
+  implementationPlan = "",
+  backoutPlan = "",
+  testPlan = "",
+  impact = "3",
+  category = "Infrastructure",
+  startDate = "",
+  endDate = "",
+  workNotes = "",
 }) {
+  const payload = {
+    short_description: shortDescription,
+    description,
+    type,
+    priority,
+    assignment_group: assignmentGroup,
+    risk,
+    justification,
+    impact,
+    category,
+  };
+  if (implementationPlan) payload.implementation_plan = implementationPlan;
+  if (backoutPlan) payload.backout_plan = backoutPlan;
+  if (testPlan) payload.test_plan = testPlan;
+  if (startDate) payload.start_date = startDate;
+  if (endDate) payload.end_date = endDate;
+  if (workNotes) payload.work_notes = workNotes;
   return snowFetch("/now/table/change_request", {
     method: "POST",
-    body: JSON.stringify({
-      short_description: shortDescription,
-      description,
-      type,
-      priority,
-      assignment_group: assignmentGroup,
-      risk,
-      justification,
-    }),
+    body: JSON.stringify(payload),
   });
 }
 
