@@ -1,20 +1,30 @@
 /**
  * ServiceNow REST API client utility.
+ *
+ * Credentials are read from process.env on EVERY call (not cached at module
+ * load) so that runtime updates from the dashboard settings API take effect
+ * immediately without restarting the server.
  */
 
-const SNOW_INSTANCE = process.env.SERVICENOW_INSTANCE || "";
-const SNOW_USER = process.env.SERVICENOW_USERNAME || "";
-const SNOW_PASS = process.env.SERVICENOW_PASSWORD || "";
+function getConfig() {
+  return {
+    instance: (process.env.SERVICENOW_INSTANCE || "").replace(/\/+$/, ""),
+    user: process.env.SERVICENOW_USERNAME || "",
+    pass: process.env.SERVICENOW_PASSWORD || "",
+  };
+}
 
 function authHeader() {
-  return `Basic ${Buffer.from(`${SNOW_USER}:${SNOW_PASS}`).toString("base64")}`;
+  const { user, pass } = getConfig();
+  return `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
 }
 
 export async function snowFetch(path, options = {}) {
-  if (!SNOW_INSTANCE) {
-    throw new Error("ServiceNow instance URL not configured. Set SERVICENOW_INSTANCE environment variable.");
+  const { instance } = getConfig();
+  if (!instance) {
+    throw new Error("ServiceNow instance URL not configured. Set SERVICENOW_INSTANCE via the dashboard Settings panel or environment variable.");
   }
-  const url = `${SNOW_INSTANCE}/api${path}`;
+  const url = `${instance}/api${path}`;
   let resp;
   try {
     resp = await fetch(url, {
@@ -27,7 +37,7 @@ export async function snowFetch(path, options = {}) {
       },
     });
   } catch (e) {
-    throw new Error(`Cannot connect to ServiceNow (${SNOW_INSTANCE}): ${e.message}. Verify SERVICENOW_INSTANCE is correct and reachable.`);
+    throw new Error(`Cannot connect to ServiceNow (${instance}): ${e.message}. Verify SERVICENOW_INSTANCE is correct and reachable.`);
   }
   if (!resp.ok) {
     const body = await resp.text();

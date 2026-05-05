@@ -29,16 +29,21 @@ import {
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
-const SNOW_ENABLED = Boolean(
-  process.env.SERVICENOW_INSTANCE &&
-  process.env.SERVICENOW_USERNAME &&
-  process.env.SERVICENOW_PASSWORD
-);
+// Read dynamically so dashboard settings take effect without restart.
+function snowEnabled() {
+  return Boolean(
+    process.env.SERVICENOW_INSTANCE &&
+    process.env.SERVICENOW_USERNAME &&
+    process.env.SERVICENOW_PASSWORD
+  );
+}
 // When true (default), a pending action auto-progresses to "approved" as soon
 // as it is confirmed, skipping the ServiceNow gate. Useful for demos and
-// environments without a real ServiceNow instance. Set AUTO_APPROVE=false to
+// environments without a real ServiceNow instance. Set ACTION_AUTO_APPROVE=false to
 // require a real CR.
-const AUTO_APPROVE = process.env.ACTION_AUTO_APPROVE !== "false" && !SNOW_ENABLED;
+function autoApprove() {
+  return process.env.ACTION_AUTO_APPROVE !== "false" && !snowEnabled();
+}
 
 // Which (action, resourceType) combinations are allowed through the workflow.
 const ALLOWED = new Set([
@@ -480,7 +485,7 @@ export async function confirmAction(id) {
 
   // Build the ServiceNow CR
   let snowInfo = {};
-  if (SNOW_ENABLED) {
+  if (snowEnabled()) {
     try {
       const shortDescription = `[OCP] ${act.summary}`;
       const description = [
@@ -513,7 +518,7 @@ export async function confirmAction(id) {
     }
   }
 
-  const nextStatus = AUTO_APPROVE ? "approved" : "awaiting_approval";
+  const nextStatus = autoApprove() ? "approved" : "awaiting_approval";
   const updated = await store("update", id, { ...snowInfo, status: nextStatus });
   return { action: updated };
 }
@@ -536,7 +541,7 @@ export async function refreshFromServiceNow(id) {
   const act = await getAction(id);
   if (!act) return { error: "not_found" };
   if (act.status !== "awaiting_approval") return { action: act };
-  if (!SNOW_ENABLED || !act.servicenowSysId) return { action: act };
+  if (!snowEnabled() || !act.servicenowSysId) return { action: act };
   try {
     const resp = await getRecord("change_request", act.servicenowSysId);
     const state = resp?.result?.state || "";
@@ -618,7 +623,7 @@ export async function executeAction(id) {
   });
 
   // Update + close the ServiceNow CR with the outcome (best effort).
-  if (act.servicenowSysId && SNOW_ENABLED) {
+  if (act.servicenowSysId && snowEnabled()) {
     try {
       await closeServiceNowCR(act, success, fullResult);
     } catch (err) {
@@ -1016,7 +1021,7 @@ async function performClusterAction(act) {
  * `<!--action:ID-->` marker to pop open the action card.
  */
 export function renderPendingMessage(act) {
-  const snowLine = SNOW_ENABLED
+  const snowLine = snowEnabled()
     ? "I will open a ServiceNow Change Request once you confirm. The action runs only after the CR is approved."
     : "ServiceNow is not configured in this environment, so the action will run immediately after you confirm.";
   const parts = [
@@ -1052,5 +1057,5 @@ export function isWorkflowEnabled() {
 }
 
 export function isServiceNowEnabled() {
-  return SNOW_ENABLED;
+  return snowEnabled();
 }

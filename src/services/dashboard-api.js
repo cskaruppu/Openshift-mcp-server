@@ -188,6 +188,107 @@ export async function handleLLMSettingsTest(req, res) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// ServiceNow Settings — GET / POST / test
+// ---------------------------------------------------------------------------
+const SNOW_SETTINGS_DB_KEY = "servicenow_settings";
+
+export async function handleServiceNowSettingsGet(req, res) {
+  // Try DB first
+  try {
+    if (await dbEnabled()) {
+      const result = await dbQuery("SELECT value FROM kv_store WHERE key = $1", [SNOW_SETTINGS_DB_KEY]);
+      if (result?.rows?.length) {
+        let val = result.rows[0].value;
+        if (typeof val === "string") { try { val = JSON.parse(val); } catch { val = null; } }
+        if (val) {
+          return json(res, 200, { ...val, password: val.password ? "••••••••" : "", _storage: "database" });
+        }
+      }
+    }
+  } catch { /* fall through */ }
+  // Fall back to env vars
+  const instance = process.env.SERVICENOW_INSTANCE || "";
+  const username = process.env.SERVICENOW_USERNAME || "";
+  const password = process.env.SERVICENOW_PASSWORD || "";
+  return json(res, 200, {
+    instance,
+    username,
+    password: password ? "••••••••" : "",
+    enabled: Boolean(instance && username && password),
+    _storage: instance ? "environment" : "none",
+  });
+}
+
+export async function handleServiceNowSettingsPost(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const { instance, username, password } = body;
+    if (!instance || !username || !password) {
+      return json(res, 400, { error: "All fields are required: instance, username, password" });
+    }
+    // Normalize instance URL: strip trailing slash
+    const normalizedInstance = instance.replace(/\/+$/, "");
+    // Save to env (in-process) so the ServiceNow client picks them up immediately
+    process.env.SERVICENOW_INSTANCE = normalizedInstance;
+    process.env.SERVICENOW_USERNAME = username;
+    process.env.SERVICENOW_PASSWORD = password;
+    // Persist to DB so it survives restarts
+    const settings = { instance: normalizedInstance, username, password, enabled: true };
+    let savedToDB = false;
+    try {
+      if (await dbEnabled()) {
+        await dbQuery(
+          `INSERT INTO kv_store (key, value) VALUES ($1, $2)
+           ON CONFLICT (key) DO UPDATE SET value = $2`,
+          [SNOW_SETTINGS_DB_KEY, JSON.stringify(settings)]
+        );
+        savedToDB = true;
+      }
+    } catch { /* DB optional */ }
+    console.log(`[servicenow-settings] saved — instance=${normalizedInstance}, user=${username}, db=${savedToDB}`);
+    return json(res, 200, { success: true, enabled: true, storage: savedToDB ? "database" : "process" });
+  } catch (err) {
+    return json(res, 500, { error: err.message });
+  }
+}
+
+export async function handleServiceNowSettingsTest(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const instance = (body.instance || process.env.SERVICENOW_INSTANCE || "").replace(/\/+$/, "");
+    const username = body.username || process.env.SERVICENOW_USERNAME || "";
+    const password = body.password || process.env.SERVICENOW_PASSWORD || "";
+    if (!instance || !username || !password) {
+      return json(res, 200, { success: false, error: "Instance URL, username, and password are required." });
+    }
+    const startMs = Date.now();
+    const testUrl = `${instance}/api/now/table/sys_properties?sysparm_limit=1`;
+    let resp;
+    try {
+      resp = await fetch(testUrl, {
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`,
+          Accept: "application/json",
+        },
+      });
+    } catch (e) {
+      return json(res, 200, { success: false, error: `Cannot connect to ${instance}: ${e.message}` });
+    }
+    const durationMs = Date.now() - startMs;
+    if (resp.status === 401 || resp.status === 403) {
+      return json(res, 200, { success: false, error: `Authentication failed (${resp.status}). Check username and password.`, durationMs });
+    }
+    if (!resp.ok) {
+      const text = await resp.text();
+      return json(res, 200, { success: false, error: `ServiceNow returned ${resp.status}: ${text.substring(0, 200)}`, durationMs });
+    }
+    return json(res, 200, { success: true, message: `Connected to ${instance}`, durationMs });
+  } catch (err) {
+    return json(res, 200, { success: false, error: err.message });
+  }
+}
+
 function parseCpu(s) {
   if (!s) return 0;
   if (typeof s === "number") return s;

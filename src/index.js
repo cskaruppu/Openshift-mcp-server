@@ -52,7 +52,7 @@ import { registerBenchmarkTools } from "./tools/benchmarks.js";
 import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode } from "./services/auth.js";
-import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus } from "./services/dashboard-api.js";
+import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI } from "./services/chat-api.js";
 import {
   listActions,
@@ -982,6 +982,20 @@ async function startSSE() {
     }
     if (url.pathname === "/api/settings/llm/test" && req.method === "POST") {
       await handleLLMSettingsTest(req, res);
+      return;
+    }
+
+    // ServiceNow settings — /api/settings/servicenow
+    if (url.pathname === "/api/settings/servicenow" && req.method === "GET") {
+      await handleServiceNowSettingsGet(req, res);
+      return;
+    }
+    if (url.pathname === "/api/settings/servicenow" && req.method === "POST") {
+      await handleServiceNowSettingsPost(req, res);
+      return;
+    }
+    if (url.pathname === "/api/settings/servicenow/test" && req.method === "POST") {
+      await handleServiceNowSettingsTest(req, res);
       return;
     }
 

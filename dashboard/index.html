@@ -1273,6 +1273,31 @@ tr:hover td{background:#ffffff06}
       <div id="so-provider-status" style="font-size:12px;color:var(--text2)">Loading provider status...</div>
     </div>
 
+    <!-- ServiceNow Integration -->
+    <div class="so-section">
+      <div class="so-section-title">ServiceNow Integration</div>
+      <div id="snow-config-status" style="font-size:12px;margin-bottom:8px;color:var(--text2)">Checking...</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div>
+          <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:2px">Instance URL</label>
+          <input type="text" id="snow-instance" placeholder="https://your-instance.service-now.com" style="width:100%;padding:6px 10px;background:var(--bg-alt);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:2px">Username</label>
+          <input type="text" id="snow-username" placeholder="admin" style="width:100%;padding:6px 10px;background:var(--bg-alt);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:2px">Password</label>
+          <input type="password" id="snow-password" placeholder="password" style="width:100%;padding:6px 10px;background:var(--bg-alt);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px">
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="nav-tab" style="flex:1;font-size:11px;padding:6px" onclick="testServiceNowConnection()">Test Connection</button>
+          <button class="nav-tab" style="flex:1;font-size:11px;padding:6px;background:var(--accent2);color:#fff" onclick="saveServiceNowSettings()">Save</button>
+        </div>
+        <div id="snow-config-result" style="font-size:11px;display:none"></div>
+      </div>
+    </div>
+
     <!-- Appearance -->
     <div class="so-section">
       <div class="so-section-title">Appearance</div>
@@ -6900,6 +6925,7 @@ function toggleSettingsPanel() {
     updateProviderStatus();
     loadGuardrails();
     loadPersona();
+    loadServiceNowSettings();
     const themeToggle = document.getElementById('so-theme-toggle');
     if (themeToggle) themeToggle.checked = !document.body.classList.contains('light-theme');
   }
@@ -7002,6 +7028,104 @@ function loadGuardrails() {
 
 function getGuardrails() {
   try { return JSON.parse(localStorage.getItem('mcp-guardrails')) || {}; } catch { return {}; }
+}
+
+// ---------------------------------------------------------------------------
+// ServiceNow Settings
+// ---------------------------------------------------------------------------
+async function loadServiceNowSettings() {
+  const statusEl = document.getElementById('snow-config-status');
+  try {
+    const resp = await fetch('/api/settings/servicenow');
+    if (!resp.ok) throw new Error('Failed to load');
+    const data = await resp.json();
+    document.getElementById('snow-instance').value = data.instance || '';
+    document.getElementById('snow-username').value = data.username || '';
+    document.getElementById('snow-password').value = '';
+    document.getElementById('snow-password').placeholder = data.password && data.password !== '' ? data.password : 'password';
+    if (data.enabled) {
+      statusEl.innerHTML = '<span style="color:var(--ok)">&#x25CF;</span> Connected <span style="color:var(--text2);font-size:10px">(' + (data._storage || 'unknown') + ')</span>';
+    } else {
+      statusEl.innerHTML = '<span style="color:var(--warn)">&#x25CB;</span> Not configured';
+    }
+    const badge = document.getElementById('snow-badge');
+    if (badge) {
+      badge.textContent = data.enabled ? 'ServiceNow: on' : 'ServiceNow: off';
+      badge.className = 'snow-badge ' + (data.enabled ? 'snow-on' : 'snow-off');
+    }
+  } catch (e) {
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--crit)">&#x25CF;</span> Error loading settings';
+  }
+}
+
+async function saveServiceNowSettings() {
+  const resultEl = document.getElementById('snow-config-result');
+  const instance = document.getElementById('snow-instance').value.trim();
+  const username = document.getElementById('snow-username').value.trim();
+  const passwordInput = document.getElementById('snow-password');
+  const password = passwordInput.value.trim();
+  if (!instance || !username || !password) {
+    resultEl.style.display = 'block';
+    resultEl.style.color = 'var(--warn)';
+    resultEl.textContent = 'All fields are required. Enter instance URL, username, and password.';
+    return;
+  }
+  resultEl.style.display = 'block';
+  resultEl.style.color = 'var(--text2)';
+  resultEl.textContent = 'Saving...';
+  try {
+    const resp = await fetch('/api/settings/servicenow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instance, username, password }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || data.error) {
+      resultEl.style.color = 'var(--crit)';
+      resultEl.textContent = data.error || 'Save failed';
+      return;
+    }
+    resultEl.style.color = 'var(--ok)';
+    resultEl.textContent = 'Saved successfully (' + (data.storage || 'process') + ')';
+    passwordInput.value = '';
+    passwordInput.placeholder = '••••••••';
+    loadServiceNowSettings();
+  } catch (e) {
+    resultEl.style.color = 'var(--crit)';
+    resultEl.textContent = 'Network error: ' + e.message;
+  }
+}
+
+async function testServiceNowConnection() {
+  const resultEl = document.getElementById('snow-config-result');
+  const instance = document.getElementById('snow-instance').value.trim();
+  const username = document.getElementById('snow-username').value.trim();
+  const password = document.getElementById('snow-password').value.trim();
+  resultEl.style.display = 'block';
+  resultEl.style.color = 'var(--text2)';
+  resultEl.textContent = 'Testing connection...';
+  try {
+    const body = {};
+    if (instance) body.instance = instance;
+    if (username) body.username = username;
+    if (password) body.password = password;
+    const resp = await fetch('/api/settings/servicenow/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (data.success) {
+      resultEl.style.color = 'var(--ok)';
+      resultEl.textContent = data.message + (data.durationMs ? ' (' + data.durationMs + 'ms)' : '');
+    } else {
+      resultEl.style.color = 'var(--crit)';
+      resultEl.textContent = data.error || 'Connection failed';
+    }
+  } catch (e) {
+    resultEl.style.color = 'var(--crit)';
+    resultEl.textContent = 'Network error: ' + e.message;
+  }
 }
 
 // ---------------------------------------------------------------------------
