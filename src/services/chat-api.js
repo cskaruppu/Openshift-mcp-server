@@ -89,6 +89,20 @@ function getCachedPreflightReport(conversationId) {
   return entry.report;
 }
 
+// Track submitted upgrade CRs per conversation for approval monitoring.
+const _submittedCRs = new Map();
+export function trackSubmittedCR(conversationId, crInfo) {
+  if (!conversationId || !crInfo) return;
+  _submittedCRs.set(conversationId, { ...crInfo, ts: Date.now() });
+}
+function getTrackedCR(conversationId) {
+  if (!conversationId) return null;
+  const entry = _submittedCRs.get(conversationId);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > 24 * 60 * 60 * 1000) { _submittedCRs.delete(conversationId); return null; }
+  return entry;
+}
+
 // Map an NLU intent to the legacy "operation" string used by the response
 // handlers below, plus a few normalizations.
 // Common English words the NLU sometimes mistakes for resource/namespace names
@@ -5609,7 +5623,14 @@ export async function handleChatAPI(req, res) {
       }
 
       const form = buildITSMForm(itsmType, userMessage, itsmCtx, preflightReport);
-      if (preflightReport) form._preflightReport = preflightReport;
+      if (preflightReport) {
+        form._preflightReport = preflightReport;
+        form._upgradeInfo = {
+          targetVersion: preflightReport.targetVersion || "",
+          fromVersion: preflightReport.fromVersion || "",
+          conversationId: conversationId || "",
+        };
+      }
       const formToken = `@@ITSM_FORM|${JSON.stringify(form).replace(/@@/g, "@ @")}@@`;
 
       const reply = `${preflightSection}### ${label} Form\n\nI've auto-populated the ${label.toLowerCase()} form based on the current cluster context${preflightReport ? " and the 22-point pre-upgrade assessment" : ""}. Review and edit the fields below, then submit.\n\n${formToken}`;
@@ -5628,6 +5649,120 @@ export async function handleChatAPI(req, res) {
         return;
       }
       return json(res, 200, { reply, provider, contextKeys: ["itsm", itsmType, isUpgradeRelated ? "preflight" : null].filter(Boolean), cached: false, conversationId });
+    }
+
+    // ---- CR status check / upgrade execution: "check CR status", "is CR approved",
+    //      "proceed with upgrade", "execute upgrade", "start the upgrade" ----
+    const CR_STATUS_PAT = /\b(?:(?:check|status|track|monitor|poll)\s+(?:cr|change\s*request|ticket|CHG)|(?:cr|change\s*request|CHG)\s+(?:status|approved|rejected|state)|(?:is|has)\s+(?:the\s+)?(?:cr|change\s*request|ticket)\s+(?:been\s+)?(?:approved|rejected)|(?:proceed|execute|start|run|initiate|trigger)\s+(?:the\s+)?(?:upgrade|cluster\s+upgrade)|(?:upgrade|go\s+ahead)\s+(?:the\s+)?cluster|CHG\d{7})\b/i;
+    if (CR_STATUS_PAT.test(userMessage)) {
+      const trackedCR = getTrackedCR(conversationId);
+      const crNumberMatch = userMessage.match(/CHG\d{7}/i);
+
+      // If user is asking about CR status (not explicitly asking to execute)
+      const wantsExec = /(?:proceed|execute|start|run|initiate|trigger|go\s+ahead)\s+(?:the\s+)?(?:upgrade|cluster)/i.test(userMessage);
+
+      if (trackedCR && trackedCR.sysId) {
+        try {
+          const statusResp = await fetch(`http://localhost:${process.env.PORT || 3001}/api/itsm/cr-status`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sysId: trackedCR.sysId, ticketId: trackedCR.ticketId }),
+          }).then(r => r.json()).catch(() => null);
+
+          if (statusResp) {
+            const pfr = getCachedPreflightReport(conversationId) || trackedCR.preflightReport;
+            const vd = pfr?.versionDelta || {};
+
+            if (statusResp.status === "approved" || wantsExec) {
+              const execData = {
+                ticketId: statusResp.ticketId || trackedCR.ticketId,
+                sysId: trackedCR.sysId,
+                targetVersion: trackedCR.targetVersion || pfr?.targetVersion || "",
+                fromVersion: trackedCR.fromVersion || pfr?.fromVersion || "",
+                upgradeType: pfr?.upgradeType || "",
+                channel: pfr?.channel || "",
+                preflightStatus: pfr?.overallStatus || "UNKNOWN",
+                nodeCount: pfr?.nodeTopology?.total || 0,
+                estimatedDuration: vd.estimatedDuration || "",
+              };
+              const execToken = `@@UPGRADE_EXECUTE|${JSON.stringify(execData).replace(/@@/g, "@ @")}@@`;
+
+              let statusMsg = statusResp.status === "approved"
+                ? `Change Request **${statusResp.ticketId}** has been **approved** in ServiceNow (State: ${statusResp.stateLabel}).`
+                : `Change Request **${statusResp.ticketId}** is currently in **${statusResp.stateLabel}** state (approval: ${statusResp.approval}).`;
+
+              if (statusResp.status === "approved" || wantsExec) {
+                statusMsg += `\n\nYou can now proceed with the cluster upgrade. Choose an option below:`;
+              }
+
+              const reply = `${statusMsg}\n\n${execToken}`;
+              const provider = "built-in";
+              if (conversationId) histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+              if (wantsStream) {
+                sseStart(res);
+                sseSend(res, { stage: "querying" });
+                sseSend(res, { stage: "generating" });
+                sseSend(res, { delta: reply });
+                sseSend(res, { done: true, provider, conversationId });
+                sseEnd(res);
+                return;
+              }
+              return json(res, 200, { reply, provider, contextKeys: ["upgrade", "execute"], cached: false, conversationId });
+            } else {
+              // CR not yet approved — show status
+              const reply = `Change Request **${statusResp.ticketId}** is currently in **${statusResp.stateLabel}** state (approval: ${statusResp.approval}).\n\nI'll continue monitoring. Ask me again or say "proceed with upgrade" once it's approved.`;
+              const provider = "built-in";
+              if (conversationId) histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+              if (wantsStream) {
+                sseStart(res);
+                sseSend(res, { stage: "querying" });
+                sseSend(res, { delta: reply });
+                sseSend(res, { done: true, provider, conversationId });
+                sseEnd(res);
+                return;
+              }
+              return json(res, 200, { reply, provider, contextKeys: ["itsm", "cr-status"], cached: false, conversationId });
+            }
+          }
+        } catch { /* fall through to LLM */ }
+      } else if (wantsExec) {
+        // User wants to execute but we have no tracked CR — build exec card from cluster state
+        try {
+          const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+          const currentVer = cv?.status?.desired?.version || "";
+          const available = (cv?.status?.availableUpdates || []).map(u => u.version);
+          const versionMatch = userMessage.match(/(\d+\.\d+\.\d+)/);
+          const targetVer = versionMatch ? versionMatch[1] : (available.length > 0 ? available[0] : "");
+          const pfr = getCachedPreflightReport(conversationId);
+
+          if (targetVer) {
+            const execData = {
+              ticketId: crNumberMatch ? crNumberMatch[0] : "Direct",
+              sysId: "",
+              targetVersion: targetVer,
+              fromVersion: currentVer,
+              upgradeType: pfr?.upgradeType || "",
+              channel: cv?.spec?.channel || "",
+              preflightStatus: pfr?.overallStatus || "UNKNOWN",
+              nodeCount: pfr?.nodeTopology?.total || 0,
+              estimatedDuration: pfr?.versionDelta?.estimatedDuration || "",
+            };
+            const execToken = `@@UPGRADE_EXECUTE|${JSON.stringify(execData).replace(/@@/g, "@ @")}@@`;
+            const reply = `Ready to upgrade cluster from **${currentVer}** to **${targetVer}**. Choose an option below:\n\n${execToken}`;
+            const provider = "built-in";
+            if (conversationId) histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+            if (wantsStream) {
+              sseStart(res);
+              sseSend(res, { stage: "querying" });
+              sseSend(res, { delta: reply });
+              sseSend(res, { done: true, provider, conversationId });
+              sseEnd(res);
+              return;
+            }
+            return json(res, 200, { reply, provider, contextKeys: ["upgrade", "execute"], cached: false, conversationId });
+          }
+        } catch { /* fall through */ }
+      }
     }
 
     // ---- Upgrade preflight: "precheck upgrade", "cluster upgrade precheck", etc. ----

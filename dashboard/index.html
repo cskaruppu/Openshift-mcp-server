@@ -177,6 +177,37 @@ tr:hover td{background:#ffffff06}
 .itsm-actions .itsm-cancel{background:transparent;border:1px solid var(--border);color:var(--text)}
 .itsm-actions .itsm-cancel:hover{border-color:var(--accent2);color:var(--accent2)}
 .itsm-result{padding:10px 18px;font-size:12px;border-top:1px solid var(--border);color:var(--text)}
+/* Upgrade Execute card */
+.ux-card{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin:12px 0}
+.ux-header{background:linear-gradient(135deg,#065f46 0%,#059669 100%);color:#fff;padding:16px 20px;display:flex;align-items:center;gap:12px}
+.ux-header h4{margin:0;font-size:15px;font-weight:700}
+.ux-header .ux-ticket{background:rgba(255,255,255,.2);padding:3px 10px;border-radius:12px;font-size:11px;font-weight:500}
+.ux-body{padding:16px 20px}
+.ux-version-row{display:flex;align-items:center;gap:12px;margin:12px 0;padding:14px;background:var(--bg-alt);border-radius:8px}
+.ux-ver{text-align:center;flex:1}
+.ux-ver .ux-ver-num{font-size:22px;font-weight:800;color:var(--text)}
+.ux-ver .ux-ver-label{font-size:10px;text-transform:uppercase;color:var(--text2);letter-spacing:.5px}
+.ux-arrow{font-size:24px;color:var(--accent2);font-weight:700}
+.ux-checklist{margin:12px 0;padding:0;list-style:none;font-size:12px;color:var(--text2)}
+.ux-checklist li{padding:4px 0}
+.ux-checklist li::before{content:'\\2713';color:var(--ok);margin-right:8px;font-weight:700}
+.ux-actions{display:flex;gap:8px;margin:16px 0 8px}
+.ux-btn{padding:10px 20px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s}
+.ux-btn:disabled{opacity:.5;cursor:not-allowed}
+.ux-btn-dryrun{background:transparent;border:2px solid var(--accent2);color:var(--accent2)}
+.ux-btn-dryrun:hover:not(:disabled){background:color-mix(in srgb,var(--accent2) 10%,transparent)}
+.ux-btn-execute{background:#059669;color:#fff}
+.ux-btn-execute:hover:not(:disabled){background:#047857}
+.ux-btn-cancel{background:var(--bg-alt);color:var(--text2)}
+.ux-btn-cancel:hover:not(:disabled){background:var(--border)}
+.ux-advanced-toggle{font-size:11px;color:var(--accent2);cursor:pointer;margin:8px 0;display:inline-block}
+.ux-advanced{display:none;padding:12px;background:var(--bg-alt);border-radius:8px;margin:8px 0}
+.ux-advanced label{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2);padding:4px 0}
+.ux-advanced select{padding:4px 8px;font-size:12px;background:var(--card);border:1px solid var(--border);border-radius:4px;color:var(--text)}
+.ux-progress-bar{height:8px;background:var(--bg-alt);border-radius:4px;overflow:hidden;margin:10px 0}
+.ux-progress-fill{height:100%;background:var(--accent2);border-radius:4px;transition:width .5s ease}
+.ux-progress-msg{font-size:13px;font-weight:600;color:var(--text)}
+.ux-progress-detail{font-size:12px;color:var(--text2)}
 /* Syntax highlighting for code blocks */
 .fix-box .kw{color:#ff7b72}
 .fix-box .str{color:#a5d6ff}
@@ -3353,6 +3384,12 @@ function md(text) {
       return ph(renderITSMForm(form));
     } catch(e) { return ph('<div style="color:var(--crit)">Failed to render ITSM form: ' + esc(e.message) + '</div>'); }
   });
+  text = text.replace(/@@UPGRADE_EXECUTE\|(.+?)@@/g, function(m, jsonStr) {
+    try {
+      var data = JSON.parse(jsonStr.replace(/@ @/g, '@@'));
+      return ph(renderUpgradeExecuteCard(data));
+    } catch(e) { return ph('<div style="color:var(--crit)">Failed to render upgrade execute card: ' + esc(e.message) + '</div>'); }
+  });
   text = text.replace(/@@SEC_FIX_CMD\|([^@]+)@@/g, function(m, cmd) {
     var idx = Math.floor(Math.random() * 100000);
     var encodedCmd = btoa(unescape(encodeURIComponent(cmd)));
@@ -3753,6 +3790,9 @@ function renderITSMForm(form) {
   if (form._preflightReport) {
     window['_pfr_' + fid] = form._preflightReport;
   }
+  if (form._upgradeInfo) {
+    window['_uinfo_' + fid] = form._upgradeInfo;
+  }
   var isCR = form.type === 'change_request';
   var label = isCR ? 'Change Request' : 'Incident';
   var iconClass = isCR ? 'cr' : 'inc';
@@ -3818,6 +3858,11 @@ async function submitITSMForm(formId, type) {
     var payload = { type: type, fields: fields };
     var pfr = window['_pfr_' + formId];
     if (pfr) payload.preflightReport = pfr;
+    var uinfo = window['_uinfo_' + formId];
+    if (uinfo) {
+      payload.upgradeInfo = uinfo;
+      payload.conversationId = uinfo.conversationId || '';
+    }
     var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/itsm/submit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3828,13 +3873,18 @@ async function submitITSMForm(formId, type) {
       if (resultEl) {
         resultEl.style.display = 'block';
         var attachNote = data.attachmentId ? '<div style="margin-top:4px;font-size:11px;color:var(--ok)">&#x1F4CE; Pre-Assessment HTML report attached</div>' : '';
+        var pollNote = data.sysId && type === 'change_request' ? '<div style="margin-top:6px;font-size:11px;color:var(--accent2)">&#x1F50D; Monitoring CR approval status... Ask "check CR status" or "proceed with upgrade" once approved.</div>' : '';
         resultEl.innerHTML = '<div style="color:var(--ok);font-weight:600">&#x2705; ' + esc(data.message) + '</div>' +
-          '<div style="margin-top:6px;font-size:11px;color:var(--text2)">Ticket ID: <strong style="color:var(--text)">' + esc(data.ticketId) + '</strong></div>' + attachNote;
+          '<div style="margin-top:6px;font-size:11px;color:var(--text2)">Ticket ID: <strong style="color:var(--text)">' + esc(data.ticketId) + '</strong></div>' + attachNote + pollNote;
       }
       if (btn) { btn.textContent = 'Submitted'; btn.style.background = 'var(--ok)'; }
       // Disable all form inputs
       inputs = form.querySelectorAll('input,textarea,select');
       for (i = 0; i < inputs.length; i++) { inputs[i].disabled = true; inputs[i].style.opacity = '0.6'; }
+      // Start auto-polling for CR approval if we have a sysId
+      if (data.sysId && type === 'change_request' && pfr) {
+        pollCRApproval(data.sysId, data.ticketId, pfr, uinfo);
+      }
     } else {
       throw new Error(data.error || 'Submission failed');
     }
@@ -3862,6 +3912,242 @@ function cancelITSMForm(formId) {
     note.style.cssText = 'padding:10px 18px;font-size:12px;color:var(--text2)';
     note.textContent = 'Form cancelled.';
     header.after(note);
+  }
+}
+
+function pollCRApproval(sysId, ticketId, preflightReport, upgradeInfo) {
+  var attempts = 0;
+  var maxAttempts = 180;
+  var intervalMs = 20000;
+  var timer = setInterval(async function() {
+    attempts++;
+    if (attempts > maxAttempts) { clearInterval(timer); return; }
+    try {
+      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/itsm/cr-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sysId: sysId, ticketId: ticketId }),
+      });
+      var data = await resp.json();
+      if (data.status === 'approved') {
+        clearInterval(timer);
+        var execData = {
+          ticketId: ticketId,
+          sysId: sysId,
+          targetVersion: upgradeInfo?.targetVersion || preflightReport?.targetVersion || '',
+          fromVersion: upgradeInfo?.fromVersion || preflightReport?.fromVersion || '',
+          upgradeType: preflightReport?.upgradeType || '',
+          channel: preflightReport?.channel || '',
+          preflightStatus: preflightReport?.overallStatus || 'UNKNOWN',
+          nodeCount: preflightReport?.nodeTopology?.total || 0,
+          estimatedDuration: preflightReport?.versionDelta?.estimatedDuration || '',
+        };
+        var msgHtml = '<div style="padding:12px;margin:8px 0;background:color-mix(in srgb,var(--ok) 10%,var(--card));border:1px solid var(--ok);border-radius:8px">' +
+          '<div style="font-weight:700;color:var(--ok);margin-bottom:6px">&#x2705; Change Request ' + esc(ticketId) + ' has been APPROVED in ServiceNow</div>' +
+          '<div style="font-size:12px;color:var(--text2)">You can now proceed with the cluster upgrade.</div></div>';
+        msgHtml += renderUpgradeExecuteCard(execData);
+        appendAssistantMessage(msgHtml);
+      } else if (data.status === 'rejected') {
+        clearInterval(timer);
+        var msgHtml2 = '<div style="padding:12px;margin:8px 0;background:color-mix(in srgb,var(--crit) 10%,var(--card));border:1px solid var(--crit);border-radius:8px">' +
+          '<div style="font-weight:700;color:var(--crit)">&#x274C; Change Request ' + esc(ticketId) + ' was REJECTED in ServiceNow</div>' +
+          '<div style="font-size:12px;color:var(--text2);margin-top:4px">Reason: ' + esc(data.stateLabel) + '. Please review and resubmit if needed.</div></div>';
+        appendAssistantMessage(msgHtml2);
+      }
+    } catch (e) {}
+  }, intervalMs);
+}
+
+function appendAssistantMessage(html) {
+  var chatBox = document.getElementById('chat-box');
+  if (!chatBox) return;
+  var msgDiv = document.createElement('div');
+  msgDiv.className = 'msg msg-bot';
+  msgDiv.innerHTML = '<div class="msg-avatar">&#x1F916;</div><div class="msg-bubble">' + html + '</div>';
+  chatBox.appendChild(msgDiv);
+  chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+function renderUpgradeExecuteCard(data) {
+  var fid = 'ux-' + Math.random().toString(36).substr(2, 8);
+  var channel = data.channel || 'stable-4.19';
+  var channelBase = channel.replace(/^(stable|fast|candidate)-/, '');
+  var channelOptions = ['stable-' + channelBase, 'fast-' + channelBase, 'candidate-' + channelBase];
+
+  var checklistItems = [
+    'ServiceNow CR <strong>' + esc(data.ticketId) + '</strong> approved',
+    'Pre-flight checks status: <strong>' + esc(data.preflightStatus || 'READY') + '</strong>',
+    'Cluster nodes: <strong>' + esc(String(data.nodeCount || '?')) + '</strong> &mdash; Estimated duration: <strong>' + esc(data.estimatedDuration || 'unknown') + '</strong>',
+    'Backup and rollback plan reviewed',
+    'Stakeholders notified of maintenance window'
+  ];
+  var checklistHtml = '';
+  for (var i = 0; i < checklistItems.length; i++) {
+    checklistHtml += '<li>' + checklistItems[i] + '</li>';
+  }
+
+  var channelOptionsHtml = '';
+  for (var c = 0; c < channelOptions.length; c++) {
+    var sel = channelOptions[c] === channel ? ' selected' : '';
+    channelOptionsHtml += '<option value="' + esc(channelOptions[c]) + '"' + sel + '>' + esc(channelOptions[c]) + '</option>';
+  }
+
+  return '<div class="ux-card" id="' + fid + '" data-target-version="' + esc(data.targetVersion) + '">' +
+    '<div class="ux-header">' +
+      '<span style="font-size:20px">&#x2705;</span>' +
+      '<h4>Upgrade Approved</h4>' +
+      '<span class="ux-ticket">' + esc(data.ticketId) + '</span>' +
+    '</div>' +
+    '<div class="ux-body">' +
+      '<div class="ux-version-row">' +
+        '<div class="ux-ver">' +
+          '<div class="ux-ver-num">' + esc(data.fromVersion) + '</div>' +
+          '<div class="ux-ver-label">Current</div>' +
+        '</div>' +
+        '<div class="ux-arrow">&#x2192;</div>' +
+        '<div class="ux-ver">' +
+          '<div class="ux-ver-num">' + esc(data.targetVersion) + '</div>' +
+          '<div class="ux-ver-label">Target</div>' +
+        '</div>' +
+      '</div>' +
+      '<div style="text-align:center;margin:-4px 0 8px;font-size:12px;color:var(--text2)">' + esc(data.upgradeType || 'Patch') + ' upgrade via <strong>' + esc(channel) + '</strong></div>' +
+      '<ul class="ux-checklist">' + checklistHtml + '</ul>' +
+      '<div class="ux-actions">' +
+        '<button class="ux-btn ux-btn-dryrun" onclick="upgradeAction(\'dryrun\',\'' + fid + '\')">&#x1F9EA; Dry Run</button>' +
+        '<button class="ux-btn ux-btn-execute" onclick="upgradeAction(\'execute\',\'' + fid + '\')">&#x1F680; Execute Upgrade</button>' +
+        '<button class="ux-btn ux-btn-cancel" onclick="upgradeAction(\'cancel\',\'' + fid + '\')">Cancel</button>' +
+      '</div>' +
+      '<div class="ux-advanced-toggle" onclick="toggleUpgradeAdvanced(\'' + fid + '\')">&#x25B6; Advanced Options</div>' +
+      '<div class="ux-advanced" id="' + fid + '-advanced">' +
+        '<label>Channel: <select class="ux-channel-select">' + channelOptionsHtml + '</select></label>' +
+        '<label><input type="checkbox" class="ux-force"> Force upgrade (bypass version validation)</label>' +
+        '<label><input type="checkbox" class="ux-ack-risk"> Acknowledge risks for minor version upgrade</label>' +
+      '</div>' +
+      '<div id="' + fid + '-progress" style="display:none"></div>' +
+    '</div>' +
+  '</div>';
+}
+
+function toggleUpgradeAdvanced(formId) {
+  var adv = document.getElementById(formId + '-advanced');
+  var toggle = document.querySelector('#' + formId + ' .ux-advanced-toggle');
+  if (!adv) return;
+  if (adv.style.display === 'block') {
+    adv.style.display = 'none';
+    if (toggle) toggle.innerHTML = '&#x25B6; Advanced Options';
+  } else {
+    adv.style.display = 'block';
+    if (toggle) toggle.innerHTML = '&#x25BC; Advanced Options';
+  }
+}
+
+async function upgradeAction(action, formId) {
+  var card = document.getElementById(formId);
+  if (!card) return;
+  var progressEl = document.getElementById(formId + '-progress');
+  var btns = card.querySelectorAll('.ux-btn');
+
+  if (action === 'cancel') {
+    card.querySelector('.ux-actions').innerHTML = '<div style="padding:12px;color:var(--text2)">Upgrade cancelled by user.</div>';
+    return;
+  }
+
+  // Disable all buttons
+  for (var i = 0; i < btns.length; i++) btns[i].disabled = true;
+
+  var targetVersion = card.dataset.targetVersion;
+  var channel = card.querySelector('.ux-channel-select') ? card.querySelector('.ux-channel-select').value : '';
+  var force = card.querySelector('.ux-force') ? card.querySelector('.ux-force').checked : false;
+
+  progressEl.style.display = 'block';
+  progressEl.innerHTML = '<div class="ux-progress-msg">Initiating ' + (action === 'dryrun' ? 'dry run' : 'upgrade') + '...</div><div class="ux-progress-bar"><div class="ux-progress-fill" id="' + formId + '-bar" style="width:0%"></div></div>';
+
+  if (action === 'dryrun') {
+    // Dry run — just validates
+    try {
+      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/upgrade/dryrun', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version: targetVersion, channel: channel }),
+      });
+      var data = await resp.json();
+      if (data.success) {
+        progressEl.innerHTML = '<div style="color:var(--ok);font-weight:600">&#x2705; Dry run passed</div><pre style="font-size:11px;background:var(--bg-alt);padding:10px;border-radius:6px;margin-top:8px;overflow-x:auto;max-height:200px">' + esc(data.details || JSON.stringify(data, null, 2)) + '</pre>';
+        // Re-enable execute button
+        var execBtn = card.querySelector('.ux-btn-execute');
+        if (execBtn) execBtn.disabled = false;
+      } else {
+        progressEl.innerHTML = '<div style="color:var(--crit)">&#x274C; Dry run failed: ' + esc(data.error || 'Unknown error') + '</div>';
+        for (var j = 0; j < btns.length; j++) btns[j].disabled = false;
+      }
+    } catch (e) {
+      progressEl.innerHTML = '<div style="color:var(--crit)">&#x274C; Error: ' + esc(e.message) + '</div>';
+      for (var j = 0; j < btns.length; j++) btns[j].disabled = false;
+    }
+    return;
+  }
+
+  // Execute upgrade
+  try {
+    // If channel change needed, do it first
+    if (channel) {
+      progressEl.innerHTML = '<div class="ux-progress-msg">Setting channel to ' + esc(channel) + '...</div><div class="ux-progress-bar"><div class="ux-progress-fill" id="' + formId + '-bar" style="width:5%"></div></div>';
+      await fetch(MCP_API.replace(/\/api$/, '') + '/api/upgrade/channel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel: channel }),
+      });
+    }
+
+    // Start the upgrade
+    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/upgrade/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: targetVersion, force: force }),
+    });
+    var data = await resp.json();
+    if (!data.success) {
+      progressEl.innerHTML = '<div style="color:var(--crit)">&#x274C; ' + esc(data.error || 'Failed to start upgrade') + '</div>';
+      for (var j = 0; j < btns.length; j++) btns[j].disabled = false;
+      return;
+    }
+
+    // Start SSE monitoring
+    progressEl.innerHTML = '<div class="ux-progress-msg">&#x1F680; Upgrade initiated — monitoring progress...</div><div class="ux-progress-bar"><div class="ux-progress-fill" id="' + formId + '-bar" style="width:5%;transition:width 0.5s"></div></div><div class="ux-progress-detail" id="' + formId + '-detail"></div><div class="ux-op-status" id="' + formId + '-ops"></div>';
+
+    var evtSource = new EventSource(MCP_API.replace(/\/api$/, '') + '/api/upgrade/status');
+    evtSource.onmessage = function(evt) {
+      try {
+        var d = JSON.parse(evt.data);
+        var bar = document.getElementById(formId + '-bar');
+        var detail = document.getElementById(formId + '-detail');
+        var opsEl = document.getElementById(formId + '-ops');
+        if (bar) bar.style.width = d.progress + '%';
+
+        var phaseLabel = { preparing: 'Preparing...', updating: 'Updating operators & nodes...', completing: 'Finalizing...', complete: 'Upgrade complete!', failed: 'Upgrade failed', timeout: 'Monitoring timed out' }[d.phase] || d.phase;
+
+        if (detail) detail.innerHTML = '<div style="margin-top:8px;font-size:12px"><strong>' + esc(phaseLabel) + '</strong> (' + d.progress + '%)</div><div style="font-size:11px;color:var(--text2);margin-top:4px">' + esc(d.message || '') + '</div>';
+
+        if (opsEl && d.operators) {
+          opsEl.innerHTML = '<div style="font-size:11px;margin-top:6px;color:var(--text2)">Operators: ' + d.operators.updating + ' updating, ' + d.operators.degraded + ' degraded, ' + d.operators.total + ' total</div>';
+        }
+
+        if (d.phase === 'complete') {
+          evtSource.close();
+          if (bar) bar.style.background = 'var(--ok)';
+          if (detail) detail.innerHTML = '<div style="margin-top:10px;color:var(--ok);font-weight:700;font-size:14px">&#x2705; Cluster successfully upgraded to ' + esc(d.version) + '</div>';
+        } else if (d.phase === 'failed' || d.phase === 'timeout') {
+          evtSource.close();
+          if (bar) bar.style.background = 'var(--crit)';
+        }
+      } catch (e) {}
+    };
+    evtSource.onerror = function() {
+      evtSource.close();
+    };
+  } catch (e) {
+    progressEl.innerHTML = '<div style="color:var(--crit)">&#x274C; Error: ' + esc(e.message) + '</div>';
+    for (var j = 0; j < btns.length; j++) btns[j].disabled = false;
   }
 }
 

@@ -52,8 +52,8 @@ import { registerBenchmarkTools } from "./tools/benchmarks.js";
 import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode } from "./services/auth.js";
-import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus } from "./services/dashboard-api.js";
-import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI } from "./services/chat-api.js";
+import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck } from "./services/dashboard-api.js";
+import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, trackSubmittedCR } from "./services/chat-api.js";
 import {
   listActions,
   getAction,
@@ -1399,7 +1399,7 @@ async function startSSE() {
     if (req.method === "POST" && url.pathname === "/api/itsm/submit") {
       try {
         const body = await readJsonBody(req);
-        const { type, fields, preflightReport } = body;
+        const { type, fields, preflightReport, upgradeInfo, conversationId: submitConvId } = body;
         if (!type || !fields) {
           return sendJson(res, 400, { error: "Missing type or fields" });
         }
@@ -1483,6 +1483,20 @@ async function startSSE() {
             console.log(`[itsm] Attached pre-assessment HTML report to ${number}`);
           } catch (attErr) {
             console.warn(`[itsm] Failed to attach report to ${number}: ${attErr.message}`);
+          }
+        }
+
+        // Track the CR for approval monitoring in chat
+        if (sysId && type === "change_request" && (upgradeInfo || preflightReport)) {
+          const convId = submitConvId || upgradeInfo?.conversationId || "";
+          if (convId) {
+            trackSubmittedCR(convId, {
+              ticketId: number,
+              sysId,
+              targetVersion: upgradeInfo?.targetVersion || preflightReport?.targetVersion || "",
+              fromVersion: upgradeInfo?.fromVersion || preflightReport?.fromVersion || "",
+              preflightReport,
+            });
           }
         }
 
@@ -1752,6 +1766,20 @@ async function startSSE() {
     }
     if (req.method === "GET" && url.pathname === "/api/upgrade/status") {
       handleUpgradeStatus(req, res);
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/upgrade/dryrun") {
+      await handleUpgradeDryRun(req, res);
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/upgrade/channel") {
+      await handleUpgradeChannel(req, res);
+      return;
+    }
+
+    // ServiceNow CR status check
+    if (req.method === "POST" && url.pathname === "/api/itsm/cr-status") {
+      await handleCRStatusCheck(req, res);
       return;
     }
 

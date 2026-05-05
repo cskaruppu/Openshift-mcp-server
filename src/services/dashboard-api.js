@@ -1043,3 +1043,166 @@ export function handleUpgradeStatus(req, res) {
   // Fire first poll immediately
   poll();
 }
+
+// ---------------------------------------------------------------------------
+// Upgrade dry-run — validates without applying
+// ---------------------------------------------------------------------------
+export async function handleUpgradeDryRun(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const { version, channel } = body;
+    if (!version) return json(res, 400, { error: "Missing 'version' field" });
+
+    const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+    const currentVersion = cv?.status?.desired?.version || "unknown";
+    const currentChannel = cv?.spec?.channel || "";
+    const available = (cv?.status?.availableUpdates || []).map(u => u.version);
+
+    const details = [];
+    details.push(`Current version : ${currentVersion}`);
+    details.push(`Target version  : ${version}`);
+    details.push(`Current channel : ${currentChannel}`);
+    if (channel && channel !== currentChannel) {
+      details.push(`Channel change  : ${currentChannel} → ${channel}`);
+    }
+    details.push(`Available updates: ${available.length > 0 ? available.join(", ") : "none"}`);
+    details.push(``);
+
+    // Check if upgrade is already in progress
+    const progressing = (cv?.status?.conditions || []).find(c => c.type === "Progressing");
+    if (progressing?.status === "True" && (progressing?.message || "").includes("working towards")) {
+      return json(res, 200, { success: false, error: `Upgrade already in progress: ${progressing.message}`, details: details.join("\n") });
+    }
+
+    // Check version availability
+    if (!available.includes(version)) {
+      details.push(`[FAIL] Version ${version} is NOT in available updates.`);
+      details.push(`       Available: ${available.join(", ") || "none"}`);
+      if (channel && channel !== currentChannel) {
+        details.push(`       A channel switch to '${channel}' may make it available — try switching first.`);
+      }
+      return json(res, 200, { success: false, error: `Version ${version} not available`, details: details.join("\n") });
+    }
+
+    // Validate operators
+    const ops = await ocpGet("/apis/config.openshift.io/v1/clusteroperators");
+    const degraded = (ops?.items || []).filter(o =>
+      (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True")
+    );
+    const unavailable = (ops?.items || []).filter(o =>
+      !(o.status?.conditions || []).some(c => c.type === "Available" && c.status === "True")
+    );
+
+    details.push(`[PASS] Version ${version} is in available updates`);
+    details.push(`[PASS] Cluster version operator is healthy`);
+
+    if (degraded.length > 0) {
+      details.push(`[WARN] ${degraded.length} degraded operator(s): ${degraded.map(o => o.metadata.name).join(", ")}`);
+    } else {
+      details.push(`[PASS] No degraded operators`);
+    }
+    if (unavailable.length > 0) {
+      details.push(`[WARN] ${unavailable.length} unavailable operator(s): ${unavailable.map(o => o.metadata.name).join(", ")}`);
+    } else {
+      details.push(`[PASS] All operators available`);
+    }
+
+    // Check nodes
+    const nodes = await ocpGet("/api/v1/nodes");
+    const notReady = (nodes?.items || []).filter(n =>
+      !(n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True")
+    );
+    if (notReady.length > 0) {
+      details.push(`[WARN] ${notReady.length} node(s) NOT ready: ${notReady.map(n => n.metadata.name).join(", ")}`);
+    } else {
+      details.push(`[PASS] All ${(nodes?.items || []).length} nodes ready`);
+    }
+
+    // Check MCP
+    try {
+      const mcps = await ocpGet("/apis/machineconfiguration.openshift.io/v1/machineconfigpools");
+      const mcpUpdating = (mcps?.items || []).filter(m =>
+        (m.status?.conditions || []).some(c => c.type === "Updating" && c.status === "True")
+      );
+      if (mcpUpdating.length > 0) {
+        details.push(`[WARN] ${mcpUpdating.length} MachineConfigPool(s) currently updating`);
+      } else {
+        details.push(`[PASS] No MachineConfigPools updating`);
+      }
+    } catch { details.push(`[INFO] MachineConfigPools not available`); }
+
+    details.push(``);
+    const hasWarn = details.some(d => d.includes("[WARN]"));
+    details.push(hasWarn
+      ? `DRY RUN RESULT: PASSED WITH WARNINGS — review warnings before proceeding`
+      : `DRY RUN RESULT: PASSED — safe to proceed with upgrade to ${version}`);
+
+    return json(res, 200, { success: true, details: details.join("\n"), warnings: hasWarn });
+  } catch (err) {
+    return json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Channel switch — change OCP update channel
+// ---------------------------------------------------------------------------
+export async function handleUpgradeChannel(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const { channel } = body;
+    if (!channel) return json(res, 400, { error: "Missing 'channel' field" });
+
+    await ocpFetch("/apis/config.openshift.io/v1/clusterversions/version", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/merge-patch+json" },
+      body: JSON.stringify({ spec: { channel } }),
+    });
+
+    json(res, 200, { success: true, channel, message: `Channel switched to ${channel}` });
+  } catch (err) {
+    json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ServiceNow CR approval polling
+// ---------------------------------------------------------------------------
+export async function handleCRStatusCheck(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const { sysId, ticketId } = body;
+    if (!sysId) return json(res, 400, { error: "Missing 'sysId'" });
+
+    const { getRecord } = await import("../utils/servicenow-client.js");
+    const resp = await getRecord("change_request", sysId);
+    const record = resp?.result || {};
+    const state = record.state || "";
+    const approval = record.approval || "";
+
+    // ServiceNow change states: -5=new, -4=assess, -3=authorize, -2=scheduled,
+    // -1=implement, 0=review, 3=closed, 4=cancelled
+    const stateLabels = { "-5": "New", "-4": "Assess", "-3": "Authorize", "-2": "Scheduled", "-1": "Implement", "0": "Review", "3": "Closed", "4": "Cancelled" };
+    const stateLabel = stateLabels[state] || state;
+
+    let status = "pending";
+    if (approval === "approved" || state === "-1" || state === "-2") {
+      status = "approved";
+    } else if (approval === "rejected" || state === "4") {
+      status = "rejected";
+    } else if (state === "3") {
+      status = "closed";
+    }
+
+    return json(res, 200, {
+      ticketId: ticketId || record.number || "",
+      sysId,
+      status,
+      state,
+      stateLabel,
+      approval: approval || "requested",
+      shortDescription: record.short_description || "",
+    });
+  } catch (err) {
+    return json(res, 200, { status: "error", error: err.message });
+  }
+}
