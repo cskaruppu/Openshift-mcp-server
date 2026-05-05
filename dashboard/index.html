@@ -3801,6 +3801,14 @@ function renderITSMForm(form) {
   }
   if (form._upgradeInfo) {
     window['_uinfo_' + fid] = form._upgradeInfo;
+  } else if (form.type === 'change_request') {
+    // Extract version info from form fields as fallback for upgrade tracking
+    var verMatch = (form.fields?.short_description || '').match(/(\d+\.\d+\.\d+)/g);
+    if (verMatch && verMatch.length >= 2) {
+      window['_uinfo_' + fid] = { fromVersion: verMatch[0], targetVersion: verMatch[1] };
+    } else if (verMatch && verMatch.length === 1) {
+      window['_uinfo_' + fid] = { targetVersion: verMatch[0] };
+    }
   }
   var isCR = form.type === 'change_request';
   var label = isCR ? 'Change Request' : 'Incident';
@@ -3891,8 +3899,8 @@ async function submitITSMForm(formId, type) {
       inputs = form.querySelectorAll('input,textarea,select');
       for (i = 0; i < inputs.length; i++) { inputs[i].disabled = true; inputs[i].style.opacity = '0.6'; }
       // Start auto-polling for CR approval if we have a sysId
-      if (data.sysId && type === 'change_request' && pfr) {
-        pollCRApproval(data.sysId, data.ticketId, pfr, uinfo);
+      if (data.sysId && type === 'change_request') {
+        pollCRApproval(data.sysId, data.ticketId, pfr || null, uinfo || null);
       }
     } else {
       throw new Error(data.error || 'Submission failed');
@@ -3928,6 +3936,25 @@ function pollCRApproval(sysId, ticketId, preflightReport, upgradeInfo) {
   var attempts = 0;
   var maxAttempts = 180;
   var intervalMs = 20000;
+
+  // Try to extract version info from ITSM form fields if not available from preflight/upgradeInfo
+  var fallbackTarget = '';
+  var fallbackFrom = '';
+  if (!upgradeInfo?.targetVersion && !preflightReport?.targetVersion) {
+    try {
+      var formEl = document.querySelector('.itsm-form');
+      if (formEl) {
+        var allFields = formEl.querySelectorAll('[data-field]');
+        for (var fi = 0; fi < allFields.length; fi++) {
+          var val = allFields[fi].value || '';
+          var vers = val.match(/(\d+\.\d+\.\d+)/g);
+          if (vers && vers.length >= 2) { fallbackFrom = vers[0]; fallbackTarget = vers[1]; break; }
+          if (vers && vers.length === 1 && /target|upgrade|to/i.test(allFields[fi].dataset.field)) { fallbackTarget = vers[0]; }
+        }
+      }
+    } catch(e) {}
+  }
+
   var timer = setInterval(async function() {
     attempts++;
     if (attempts > maxAttempts) { clearInterval(timer); return; }
@@ -3940,11 +3967,24 @@ function pollCRApproval(sysId, ticketId, preflightReport, upgradeInfo) {
       var data = await resp.json();
       if (data.status === 'approved') {
         clearInterval(timer);
+
+        // Try to get version info from cluster if not available
+        var targetVer = upgradeInfo?.targetVersion || preflightReport?.targetVersion || fallbackTarget;
+        var fromVer = upgradeInfo?.fromVersion || preflightReport?.fromVersion || fallbackFrom;
+        if (!targetVer || !fromVer) {
+          try {
+            var clResp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/cluster/version');
+            var clData = await clResp.json();
+            if (!fromVer && clData.current) fromVer = clData.current;
+            if (!targetVer && clData.available && clData.available.length) targetVer = clData.available[0];
+          } catch(e) {}
+        }
+
         var execData = {
           ticketId: ticketId,
           sysId: sysId,
-          targetVersion: upgradeInfo?.targetVersion || preflightReport?.targetVersion || '',
-          fromVersion: upgradeInfo?.fromVersion || preflightReport?.fromVersion || '',
+          targetVersion: targetVer || '',
+          fromVersion: fromVer || '',
           upgradeType: preflightReport?.upgradeType || '',
           channel: preflightReport?.channel || '',
           preflightStatus: preflightReport?.overallStatus || 'UNKNOWN',
@@ -3952,11 +3992,11 @@ function pollCRApproval(sysId, ticketId, preflightReport, upgradeInfo) {
           estimatedDuration: preflightReport?.versionDelta?.estimatedDuration || '',
         };
         var execToken = '@@UPGRADE_EXECUTE|' + JSON.stringify(execData).replace(/@@/g, '@ @') + '@@';
-        var msgText = '### \\u2705 Change Request ' + esc(ticketId) + ' — APPROVED\n\nChange Request **' + esc(ticketId) + '** has been **approved** in ServiceNow. You can now proceed with the cluster upgrade.\n\n' + execToken;
+        var msgText = '### \\u2705 Change Request ' + esc(ticketId) + ' \\u2014 APPROVED\n\nChange Request **' + esc(ticketId) + '** has been **approved** in ServiceNow. You can now proceed with the cluster upgrade.\n\n' + execToken;
         appendAssistantMessage(msgText);
       } else if (data.status === 'rejected') {
         clearInterval(timer);
-        var msgText2 = '### \\u274C Change Request ' + esc(ticketId) + ' — REJECTED\n\n' +
+        var msgText2 = '### \\u274C Change Request ' + esc(ticketId) + ' \\u2014 REJECTED\n\n' +
           'Change Request **' + esc(ticketId) + '** was **rejected** in ServiceNow.\n\n' +
           'Reason: **' + esc(data.stateLabel) + '**. Please review and resubmit if needed.';
         appendAssistantMessage(msgText2);

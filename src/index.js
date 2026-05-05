@@ -1761,6 +1761,18 @@ async function startSSE() {
     }
 
     // Upgrade workflow — /api/upgrade/*
+    if (req.method === "GET" && url.pathname === "/api/cluster/version") {
+      try {
+        const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+        const current = cv?.status?.desired?.version || cv?.status?.history?.[0]?.version || "";
+        const channel = cv?.spec?.channel || "";
+        const available = (cv?.status?.availableUpdates || []).map(u => u.version);
+        json(res, 200, { current, channel, available });
+      } catch (err) {
+        json(res, 200, { current: "", channel: "", available: [], error: err.message });
+      }
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/api/upgrade/analyze") {
       await handleUpgradeAnalyze(req, res);
       return;
