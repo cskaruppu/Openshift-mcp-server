@@ -3,7 +3,8 @@
  * These endpoints query the OpenShift API and return JSON.
  */
 
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { ocpGet, ocpFetch } from "../utils/openshift-client.js";
 import { callLLM } from "./llm.js";
 import { query as dbQuery, isEnabled as dbEnabled } from "../utils/db.js";
@@ -192,31 +193,77 @@ export async function handleLLMSettingsTest(req, res) {
 // ServiceNow Settings — GET / POST / test
 // ---------------------------------------------------------------------------
 const SNOW_SETTINGS_DB_KEY = "servicenow_settings";
+const SNOW_SETTINGS_PATH = process.env.SNOW_SETTINGS_PATH || "/data/mcp-servicenow-settings.json";
 
-export async function handleServiceNowSettingsGet(req, res) {
-  // Try DB first
+/**
+ * Load ServiceNow settings from DB → file → env vars. Returns null if nothing
+ * found. Called on startup to restore process.env and by the GET handler.
+ */
+async function loadSnowSettings() {
+  // 1. Try DB
   try {
     if (await dbEnabled()) {
       const result = await dbQuery("SELECT value FROM kv_store WHERE key = $1", [SNOW_SETTINGS_DB_KEY]);
       if (result?.rows?.length) {
         let val = result.rows[0].value;
         if (typeof val === "string") { try { val = JSON.parse(val); } catch { val = null; } }
-        if (val) {
-          return json(res, 200, { ...val, password: val.password ? "••••••••" : "", _storage: "database" });
+        if (val && val.instance && val.username && val.password) {
+          return { ...val, _storage: "database" };
         }
       }
     }
   } catch { /* fall through */ }
-  // Fall back to env vars
+  // 2. Try file
+  try {
+    const raw = await readFile(SNOW_SETTINGS_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.instance && parsed.username && parsed.password) {
+      return { ...parsed, _storage: "file" };
+    }
+  } catch { /* fall through */ }
+  // 3. Env vars (not persisted, just runtime)
   const instance = process.env.SERVICENOW_INSTANCE || "";
   const username = process.env.SERVICENOW_USERNAME || "";
   const password = process.env.SERVICENOW_PASSWORD || "";
+  if (instance && username && password) {
+    return { instance, username, password, enabled: true, _storage: "environment" };
+  }
+  return null;
+}
+
+/**
+ * Restore ServiceNow credentials into process.env on startup so the
+ * ServiceNow client picks them up immediately. Call this once from init.
+ */
+export async function restoreServiceNowSettings() {
+  const settings = await loadSnowSettings();
+  if (settings && settings.instance && settings.username && settings.password) {
+    process.env.SERVICENOW_INSTANCE = settings.instance;
+    process.env.SERVICENOW_USERNAME = settings.username;
+    process.env.SERVICENOW_PASSWORD = settings.password;
+    console.log(`[servicenow-settings] restored from ${settings._storage} — instance=${settings.instance}, user=${settings.username}`);
+    return true;
+  }
+  return false;
+}
+
+export async function handleServiceNowSettingsGet(req, res) {
+  const settings = await loadSnowSettings();
+  if (settings) {
+    return json(res, 200, {
+      instance: settings.instance || "",
+      username: settings.username || "",
+      password: settings.password ? "••••••••" : "",
+      enabled: Boolean(settings.instance && settings.username && settings.password),
+      _storage: settings._storage || "unknown",
+    });
+  }
   return json(res, 200, {
-    instance,
-    username,
-    password: password ? "••••••••" : "",
-    enabled: Boolean(instance && username && password),
-    _storage: instance ? "environment" : "none",
+    instance: "",
+    username: "",
+    password: "",
+    enabled: false,
+    _storage: "none",
   });
 }
 
@@ -227,27 +274,37 @@ export async function handleServiceNowSettingsPost(req, res) {
     if (!instance || !username || !password) {
       return json(res, 400, { error: "All fields are required: instance, username, password" });
     }
-    // Normalize instance URL: strip trailing slash
     const normalizedInstance = instance.replace(/\/+$/, "");
-    // Save to env (in-process) so the ServiceNow client picks them up immediately
+    // Save to env immediately
     process.env.SERVICENOW_INSTANCE = normalizedInstance;
     process.env.SERVICENOW_USERNAME = username;
     process.env.SERVICENOW_PASSWORD = password;
-    // Persist to DB so it survives restarts
     const settings = { instance: normalizedInstance, username, password, enabled: true };
+
+    // Persist to DB
     let savedToDB = false;
     try {
       if (await dbEnabled()) {
         await dbQuery(
-          `INSERT INTO kv_store (key, value) VALUES ($1, $2)
-           ON CONFLICT (key) DO UPDATE SET value = $2`,
+          `INSERT INTO kv_store (key, value, updated_at) VALUES ($1, $2, NOW())
+           ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
           [SNOW_SETTINGS_DB_KEY, JSON.stringify(settings)]
         );
         savedToDB = true;
       }
     } catch { /* DB optional */ }
-    console.log(`[servicenow-settings] saved — instance=${normalizedInstance}, user=${username}, db=${savedToDB}`);
-    return json(res, 200, { success: true, enabled: true, storage: savedToDB ? "database" : "process" });
+
+    // Persist to file (always, as fallback for pod restarts without DB)
+    let savedToFile = false;
+    try {
+      await mkdir(dirname(SNOW_SETTINGS_PATH), { recursive: true }).catch(() => {});
+      await writeFile(SNOW_SETTINGS_PATH, JSON.stringify(settings, null, 2), "utf8");
+      savedToFile = true;
+    } catch { /* file write optional */ }
+
+    const storage = savedToDB ? "database" : savedToFile ? "file" : "process";
+    console.log(`[servicenow-settings] saved — instance=${normalizedInstance}, user=${username}, db=${savedToDB}, file=${savedToFile}`);
+    return json(res, 200, { success: true, enabled: true, storage });
   } catch (err) {
     return json(res, 500, { error: err.message });
   }

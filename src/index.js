@@ -52,7 +52,7 @@ import { registerBenchmarkTools } from "./tools/benchmarks.js";
 import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode } from "./services/auth.js";
-import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck } from "./services/dashboard-api.js";
+import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, trackSubmittedCR } from "./services/chat-api.js";
 import {
   listActions,
@@ -715,6 +715,11 @@ async function startSSE() {
 
   // Restore registered clusters from DB
   await loadClustersFromDB();
+
+  // Restore ServiceNow settings from DB/file into process.env
+  try {
+    await restoreServiceNowSettings();
+  } catch (e) { console.warn("[startup] ServiceNow settings restore:", e.message); }
 
   // Restore silenced alerts from DB
   try {

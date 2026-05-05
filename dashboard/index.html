@@ -7379,7 +7379,8 @@ async function saveServiceNowSettings() {
       return;
     }
     resultEl.style.color = 'var(--ok)';
-    resultEl.textContent = 'Saved successfully (' + (data.storage || 'process') + ')';
+    var storageLabel = { database: 'database (persistent)', file: 'config file (persistent)', process: 'memory only (will not survive restart)' }[data.storage] || data.storage;
+    resultEl.textContent = 'Saved to ' + storageLabel;
     passwordInput.value = '';
     passwordInput.placeholder = '••••••••';
     loadServiceNowSettings();
