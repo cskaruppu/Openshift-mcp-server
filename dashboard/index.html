@@ -321,16 +321,32 @@ tr:hover td{background:#ffffff06}
 .risk-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:0;overflow:hidden}
 .risk-header{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border)}
 .risk-header h3{font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
-.risk-list{padding:12px 18px;display:flex;flex-direction:column;gap:8px;max-height:200px;overflow-y:auto}
-.risk-item{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:var(--card-deep);border-radius:8px;border-left:3px solid var(--warn);transition:all .2s}
-.risk-item:hover{border-left-color:var(--accent2);background:var(--card)}
-.risk-item.high{border-left-color:var(--crit)}
-.risk-item .risk-icon{font-size:20px;flex-shrink:0;margin-top:2px}
+.risk-summary{display:flex;gap:6px;padding:10px 18px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.risk-stat{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);padding:3px 10px;border-radius:12px;background:var(--card-deep);cursor:pointer;border:1px solid transparent;transition:all .15s;user-select:none}
+.risk-stat:hover,.risk-stat.active{border-color:var(--border);background:var(--hover)}
+.risk-stat .rs-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.risk-stat .rs-num{font-weight:700;color:var(--text)}
+.risk-filters{display:flex;gap:4px;padding:8px 18px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.risk-filter-btn{font-size:10px;padding:3px 10px;border-radius:10px;background:var(--card-deep);color:var(--text2);border:1px solid var(--border);cursor:pointer;transition:all .15s}
+.risk-filter-btn:hover,.risk-filter-btn.active{background:var(--accent2);color:#fff;border-color:var(--accent2)}
+.risk-list{padding:10px 18px;display:flex;flex-direction:column;gap:6px;max-height:320px;overflow-y:auto}
+.risk-item{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:var(--card-deep);border-radius:8px;border-left:3px solid var(--warn);transition:all .2s;cursor:pointer}
+.risk-item:hover{background:var(--hover)}
+.risk-item.critical{border-left-color:var(--crit)}
+.risk-item.warning{border-left-color:var(--warn)}
+.risk-item.info{border-left-color:var(--accent2)}
+.risk-item .risk-icon{font-size:18px;flex-shrink:0;margin-top:1px}
 .risk-item .risk-body{flex:1;min-width:0}
-.risk-item .risk-title{font-size:12px;font-weight:600;color:var(--text)}
-.risk-item .risk-desc{font-size:11px;color:var(--text2);margin-top:2px;line-height:1.4}
-.risk-item .risk-eta{font-size:10px;color:var(--warn);font-weight:600;margin-top:4px}
-.risk-item.high .risk-eta{color:var(--crit)}
+.risk-item .risk-title{font-size:12px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px}
+.risk-item .risk-sev{font-size:9px;padding:1px 6px;border-radius:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+.risk-item.critical .risk-sev{background:rgba(248,81,73,.15);color:var(--crit)}
+.risk-item.warning .risk-sev{background:rgba(210,153,34,.15);color:var(--warn)}
+.risk-item.info .risk-sev{background:rgba(88,166,255,.15);color:var(--accent2)}
+.risk-item .risk-evidence{font-size:10px;color:var(--text2);margin-top:4px;line-height:1.5;font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;background:rgba(0,0,0,.2);padding:6px 8px;border-radius:4px;white-space:pre-wrap}
+.risk-item .risk-impact{font-size:10px;color:var(--text2);margin-top:3px;line-height:1.4}
+.risk-item .risk-action{font-size:10px;font-weight:600;margin-top:4px;color:var(--accent2)}
+.risk-item.critical .risk-action{color:var(--crit)}
+.risk-item.warning .risk-action{color:var(--warn)}
 .risk-empty{padding:20px;text-align:center;color:var(--text2);font-size:13px}
 /* Quick Command Bar */
 .cmd-bar-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9998;display:none;align-items:flex-start;justify-content:center;padding-top:18vh;backdrop-filter:blur(4px)}
@@ -1488,6 +1504,13 @@ tr:hover td{background:#ffffff06}
       <div class="risk-header">
         <h3>&#x1F52E; AI Risk Predictions</h3>
         <span class="badge badge-info" id="risk-count">Analyzing...</span>
+      </div>
+      <div class="risk-summary" id="risk-summary"></div>
+      <div class="risk-filters" id="risk-filters">
+        <button class="risk-filter-btn active" onclick="filterRisks('all')">All</button>
+        <button class="risk-filter-btn" onclick="filterRisks('critical')">Critical</button>
+        <button class="risk-filter-btn" onclick="filterRisks('warning')">Warning</button>
+        <button class="risk-filter-btn" onclick="filterRisks('info')">Info</button>
       </div>
       <div class="risk-list" id="risk-list">
         <div style="padding:20px;text-align:center;color:var(--text2);font-size:13px">Analyzing cluster patterns...</div>
@@ -3045,91 +3068,251 @@ function hideHmTooltip() {
 }
 
 // ---------------------------------------------------------------------------
-// Feature 4: AI Risk Predictions
+// Feature 4: AI Risk Predictions (Evidence-Based)
 // ---------------------------------------------------------------------------
+var _riskData = [];
+var _riskFilter = 'all';
+
+function filterRisks(filter) {
+  _riskFilter = filter;
+  document.querySelectorAll('.risk-filter-btn').forEach(function(b) {
+    b.classList.toggle('active', b.textContent.toLowerCase() === filter);
+  });
+  renderRiskList();
+}
+
+function renderRiskList() {
+  var list = document.getElementById('risk-list');
+  var filtered = _riskFilter === 'all' ? _riskData : _riskData.filter(function(r) { return r.severity === _riskFilter; });
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="risk-empty">&#x2705; ' + (_riskFilter === 'all' ? 'No risks detected — cluster is healthy' : 'No ' + _riskFilter + ' risks') + '</div>';
+    return;
+  }
+  list.innerHTML = filtered.map(function(r) {
+    var clickAction = r.ns && r.pod
+      ? ' onclick="openNewChatWithCommand(\'troubleshoot pod ' + esc(r.pod) + ' in namespace ' + esc(r.ns) + '\',\'Troubleshoot ' + esc(r.pod) + '\')"'
+      : r.node
+      ? ' onclick="openNewChatWithCommand(\'diagnose node ' + esc(r.node) + '\',\'Diagnose ' + esc(r.node) + '\')"'
+      : '';
+    return '<div class="risk-item ' + esc(r.severity) + '"' + clickAction + '>' +
+      '<div class="risk-icon">' + r.icon + '</div>' +
+      '<div class="risk-body">' +
+        '<div class="risk-title">' + r.title + ' <span class="risk-sev">' + r.severity + '</span></div>' +
+        '<div class="risk-evidence">' + r.evidence + '</div>' +
+        '<div class="risk-impact">' + r.impact + '</div>' +
+        '<div class="risk-action">' + r.action + '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function renderRiskSummary() {
+  var el = document.getElementById('risk-summary');
+  var counts = { critical: 0, warning: 0, info: 0 };
+  _riskData.forEach(function(r) { counts[r.severity] = (counts[r.severity] || 0) + 1; });
+  var colors = { critical: 'var(--crit)', warning: 'var(--warn)', info: 'var(--accent2)' };
+  el.innerHTML = Object.keys(counts).map(function(k) {
+    return '<div class="risk-stat' + (_riskFilter === k ? ' active' : '') + '" onclick="filterRisks(\'' + k + '\')">' +
+      '<span class="rs-dot" style="background:' + colors[k] + '"></span>' +
+      '<span class="rs-num">' + counts[k] + '</span> ' + k +
+    '</div>';
+  }).join('');
+}
+
 async function loadRiskPredictions() {
   var list = document.getElementById('risk-list');
   var badge = document.getElementById('risk-count');
   try {
-    var risks = [];
-    // Gather pod issues for prediction
+    _riskData = [];
+    var seen = {};
+
     var pods = [];
     try { pods = await apiFetch('/api/pods/issues'); } catch {}
 
-    // Predict OOM risk from high restart counts
     (pods || []).forEach(function(p) {
+      var podKey = p.namespace + '/' + p.name;
+      if (seen[podKey]) return;
+      seen[podKey] = true;
+
+      var oomIssues = [];
+      var crashIssues = [];
+      var imgIssues = [];
+      var restartIssues = [];
+
       (p.issues || []).forEach(function(i) {
-        if (i.reason === 'OOMKilled' || (i.restarts > 5)) {
-          risks.push({
-            severity: i.restarts > 10 ? 'high' : 'medium',
-            icon: '&#x1F4A5;',
-            title: esc(p.name) + ' likely to OOM',
-            desc: esc(i.container) + ' has ' + i.restarts + ' restarts in ' + esc(p.namespace) + '. Memory pressure trend suggests failure within ~' + Math.max(1, Math.round(30 / Math.max(1, i.restarts))) + ' hours.',
-            eta: '~' + Math.max(1, Math.round(30 / Math.max(1, i.restarts))) + 'h estimated',
-            ns: p.namespace, pod: p.name,
-          });
-        } else if (i.reason === 'CrashLoopBackOff') {
-          risks.push({
-            severity: 'high',
-            icon: '&#x1F525;',
-            title: esc(p.name) + ' in crash loop',
-            desc: esc(i.container) + ' in ' + esc(p.namespace) + ' is crash-looping. Will not recover without intervention.',
-            eta: 'Immediate action needed',
-            ns: p.namespace, pod: p.name,
-          });
-        }
+        if (i.reason === 'OOMKilled') oomIssues.push(i);
+        else if (i.reason === 'CrashLoopBackOff') crashIssues.push(i);
+        else if (i.reason === 'ImagePullBackOff' || i.reason === 'ErrImagePull') imgIssues.push(i);
+        else if (i.restarts > 10) restartIssues.push(i);
       });
+
+      if (oomIssues.length > 0) {
+        var oi = oomIssues[0];
+        var evidenceLines = [];
+        evidenceLines.push('Container: ' + oi.container);
+        evidenceLines.push('Last exit:  code ' + (oi.lastExitCode !== null ? oi.lastExitCode : 'N/A') + ' (OOMKilled)');
+        if (oi.lastTerminatedAt) evidenceLines.push('Killed at:  ' + new Date(oi.lastTerminatedAt).toLocaleString());
+        evidenceLines.push('Restarts:   ' + oi.restarts);
+        evidenceLines.push('Mem limit:  ' + (oi.memLimit || 'none set'));
+        evidenceLines.push('Mem request:' + (oi.memReq || 'none set'));
+        if (p.qosClass) evidenceLines.push('QoS class:  ' + p.qosClass);
+
+        _riskData.push({
+          severity: 'critical',
+          icon: '&#x1F4A5;',
+          title: esc(p.name),
+          evidence: evidenceLines.join('\n'),
+          impact: 'Container exceeded memory limit' + (oi.memLimit ? ' (' + oi.memLimit + ')' : '') + ' and was killed by the kernel OOM killer. ' + (oi.restarts > 3 ? 'Repeated OOM kills (' + oi.restarts + 'x) indicate the limit is too low for the workload.' : 'Will keep crashing until memory limit is increased or workload reduced.'),
+          action: oi.memLimit ? '&#x2794; Increase memory limit above ' + oi.memLimit + ' or profile memory usage' : '&#x2794; Set memory limits to prevent node-level OOM',
+          ns: p.namespace, pod: p.name,
+        });
+      }
+
+      if (crashIssues.length > 0) {
+        var ci = crashIssues[0];
+        var ceLines = [];
+        ceLines.push('Container:  ' + ci.container);
+        ceLines.push('State:      CrashLoopBackOff');
+        ceLines.push('Restarts:   ' + ci.restarts);
+        if (ci.lastExitCode !== null) ceLines.push('Last exit:  code ' + ci.lastExitCode);
+        if (ci.lastTerminatedAt) ceLines.push('Last crash: ' + new Date(ci.lastTerminatedAt).toLocaleString());
+        ceLines.push('Ready:      ' + (ci.ready ? 'yes' : 'no'));
+
+        _riskData.push({
+          severity: 'critical',
+          icon: '&#x1F525;',
+          title: esc(p.name),
+          evidence: ceLines.join('\n'),
+          impact: 'Container is in a crash loop — Kubernetes keeps restarting it but it fails every time' + (ci.lastExitCode === 1 ? ' (exit code 1: application error).' : ci.lastExitCode === 137 ? ' (exit code 137: killed by signal).' : ci.lastExitCode === 139 ? ' (exit code 139: segmentation fault).' : '.') + ' This pod is effectively down.',
+          action: '&#x2794; Check container logs: oc logs ' + p.name + ' -c ' + ci.container + ' -n ' + p.namespace,
+          ns: p.namespace, pod: p.name,
+        });
+      }
+
+      if (imgIssues.length > 0) {
+        var ii = imgIssues[0];
+        _riskData.push({
+          severity: 'warning',
+          icon: '&#x1F4E6;',
+          title: esc(p.name),
+          evidence: 'Container:  ' + ii.container + '\nState:      ' + ii.reason + '\nReady:      no\nNamespace:  ' + p.namespace,
+          impact: 'Container image cannot be pulled. Pod is stuck and will not start until the image is accessible.',
+          action: '&#x2794; Verify image name, tag, and registry credentials',
+          ns: p.namespace, pod: p.name,
+        });
+      }
+
+      if (restartIssues.length > 0 && oomIssues.length === 0 && crashIssues.length === 0) {
+        var ri = restartIssues[0];
+        var reLines = [];
+        reLines.push('Container:  ' + ri.container);
+        reLines.push('Restarts:   ' + ri.restarts);
+        if (ri.lastExitCode !== null) reLines.push('Last exit:  code ' + ri.lastExitCode);
+        if (ri.lastTerminatedAt) reLines.push('Last restart: ' + new Date(ri.lastTerminatedAt).toLocaleString());
+        reLines.push('Pod age:    ' + p.podAgeHours + 'h');
+        if (p.ownerKind) reLines.push('Owner:      ' + p.ownerKind + '/' + p.ownerName);
+
+        var restartRate = p.podAgeHours > 0 ? (ri.restarts / p.podAgeHours).toFixed(1) : ri.restarts;
+
+        _riskData.push({
+          severity: 'warning',
+          icon: '&#x1F504;',
+          title: esc(p.name),
+          evidence: reLines.join('\n'),
+          impact: ri.restarts + ' restarts over ' + p.podAgeHours + 'h (' + restartRate + '/hour). Frequent restarts indicate an intermittent failure that may escalate.',
+          action: '&#x2794; Review container logs and events for root cause',
+          ns: p.namespace, pod: p.name,
+        });
+      }
+
+      if (p.phase === 'Failed') {
+        _riskData.push({
+          severity: 'critical',
+          icon: '&#x274C;',
+          title: esc(p.name),
+          evidence: 'Phase:      Failed\nNamespace:  ' + p.namespace + '\nNode:       ' + (p.node || 'unassigned') + '\nPod age:    ' + p.podAgeHours + 'h',
+          impact: 'Pod has permanently failed and will not be restarted by its controller.',
+          action: '&#x2794; Check pod events: oc describe pod ' + p.name + ' -n ' + p.namespace,
+          ns: p.namespace, pod: p.name,
+        });
+      }
     });
 
-    // Check node pressure
+    // Node-level risks from actual conditions
     try {
       var nodes = await apiFetch('/api/nodes');
       (nodes || []).forEach(function(n) {
+        var shortName = n.name.split('.')[0];
+
         if (!n.ready) {
-          risks.push({
-            severity: 'high', icon: '&#x1F6A8;',
-            title: 'Node ' + esc(n.name.split('.')[0]) + ' NotReady',
-            desc: 'Node is not in Ready state. Workloads may be evicted or unschedulable.',
-            eta: 'Investigate immediately',
+          _riskData.push({
+            severity: 'critical', icon: '&#x1F6A8;',
+            title: 'Node ' + esc(shortName),
+            evidence: 'Status:     NotReady\nRoles:      ' + (n.roles || []).join(', ') + '\nPods:       ' + n.pods + '\nKubelet:    ' + (n.kubeletVersion || 'unknown'),
+            impact: 'Node is not Ready. All pods on this node may be evicted. New pods cannot be scheduled here.',
+            action: '&#x2794; Check node: oc describe node ' + n.name,
+            node: n.name,
           });
         }
-        // High pod count warning
-        if (n.pods > 200) {
-          risks.push({
-            severity: 'medium', icon: '&#x26A0;',
-            title: 'Node ' + esc(n.name.split('.')[0]) + ' pod density high',
-            desc: n.pods + ' pods running. Approaching kubelet limits. Consider spreading workloads.',
-            eta: 'Within 24h if unchecked',
+
+        if (n.memoryPressure) {
+          _riskData.push({
+            severity: 'critical', icon: '&#x1F4A7;',
+            title: 'Node ' + esc(shortName) + ' — MemoryPressure',
+            evidence: 'Condition:  MemoryPressure=True\nMemory:     ' + n.memory + '\nPods:       ' + n.pods,
+            impact: 'Node is running low on memory. Kubelet will start evicting pods by priority to reclaim memory.',
+            action: '&#x2794; Reduce workload on this node or add memory',
+            node: n.name,
+          });
+        }
+
+        if (n.diskPressure) {
+          _riskData.push({
+            severity: 'critical', icon: '&#x1F4BE;',
+            title: 'Node ' + esc(shortName) + ' — DiskPressure',
+            evidence: 'Condition:  DiskPressure=True\nPods:       ' + n.pods,
+            impact: 'Node disk is nearly full. Kubelet will evict pods and refuse new scheduling. Container images may fail to pull.',
+            action: '&#x2794; Clean up disk space or expand storage',
+            node: n.name,
+          });
+        }
+
+        if (n.pidPressure) {
+          _riskData.push({
+            severity: 'warning', icon: '&#x1F9F5;',
+            title: 'Node ' + esc(shortName) + ' — PIDPressure',
+            evidence: 'Condition:  PIDPressure=True\nPods:       ' + n.pods,
+            impact: 'Node is running out of process IDs. New containers may fail to start.',
+            action: '&#x2794; Identify pods spawning excessive processes',
+            node: n.name,
+          });
+        }
+
+        var maxPods = n.maxPods || 110;
+        var podUtil = n.pods / maxPods;
+        if (podUtil > 0.85) {
+          _riskData.push({
+            severity: podUtil > 0.95 ? 'critical' : 'warning',
+            icon: '&#x1F4E6;',
+            title: 'Node ' + esc(shortName) + ' — Pod density ' + Math.round(podUtil * 100) + '%',
+            evidence: 'Running:    ' + n.pods + ' / ' + maxPods + ' max pods\nUtilization: ' + Math.round(podUtil * 100) + '%\nRoles:      ' + (n.roles || []).join(', '),
+            impact: n.pods + ' of ' + maxPods + ' pod slots used. ' + (podUtil > 0.95 ? 'Almost at capacity — new pods will fail to schedule.' : 'Approaching capacity — may prevent scheduling soon.'),
+            action: '&#x2794; Spread workloads across nodes or increase maxPods',
+            node: n.name,
           });
         }
       });
     } catch {}
 
-    // Dedup and sort
-    risks.sort(function(a, b) { return a.severity === 'high' ? -1 : b.severity === 'high' ? 1 : 0; });
-    risks = risks.slice(0, 8);
+    // Sort: critical first, then warning, then info
+    var sevOrder = { critical: 0, warning: 1, info: 2 };
+    _riskData.sort(function(a, b) { return (sevOrder[a.severity] || 9) - (sevOrder[b.severity] || 9); });
 
-    badge.textContent = risks.length + ' prediction' + (risks.length !== 1 ? 's' : '');
-    badge.className = 'badge ' + (risks.some(function(r) { return r.severity === 'high'; }) ? 'badge-crit' : risks.length > 0 ? 'badge-warn' : 'badge-ok');
+    badge.textContent = _riskData.length + ' finding' + (_riskData.length !== 1 ? 's' : '');
+    badge.className = 'badge ' + (_riskData.some(function(r) { return r.severity === 'critical'; }) ? 'badge-crit' : _riskData.length > 0 ? 'badge-warn' : 'badge-ok');
 
-    if (risks.length === 0) {
-      list.innerHTML = '<div class="risk-empty">&#x2705; No risk predictions — cluster looks healthy</div>';
-      return;
-    }
-
-    list.innerHTML = risks.map(function(r) {
-      var clickAction = r.ns && r.pod
-        ? ' onclick="openNewChatWithCommand(\'troubleshoot pod ' + esc(r.pod) + ' in namespace ' + esc(r.ns) + '\',\'Troubleshoot ' + esc(r.pod) + '\')"'
-        : '';
-      return '<div class="risk-item ' + (r.severity === 'high' ? 'high' : '') + '" style="cursor:pointer"' + clickAction + '>' +
-        '<div class="risk-icon">' + r.icon + '</div>' +
-        '<div class="risk-body">' +
-          '<div class="risk-title">' + r.title + '</div>' +
-          '<div class="risk-desc">' + r.desc + '</div>' +
-          '<div class="risk-eta">&#x23F1; ' + r.eta + '</div>' +
-        '</div>' +
-      '</div>';
-    }).join('');
+    renderRiskSummary();
+    renderRiskList();
   } catch (e) {
     list.innerHTML = '<div class="risk-empty" style="color:var(--crit)">Error: ' + esc(e.message) + '</div>';
     badge.textContent = 'Error';

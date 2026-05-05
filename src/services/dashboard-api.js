@@ -474,9 +474,13 @@ export async function handleDashboardAPI(pathname, req, res) {
               name,
               roles,
               ready: conditions.Ready === "True",
+              memoryPressure: conditions.MemoryPressure === "True",
+              diskPressure: conditions.DiskPressure === "True",
+              pidPressure: conditions.PIDPressure === "True",
               cpu: node.status?.capacity?.cpu || "0",
               memory: node.status?.capacity?.memory || "0",
               pods: podCount,
+              maxPods: parseInt(node.status?.allocatable?.pods || "110", 10),
               kubeletVersion: node.status?.nodeInfo?.kubeletVersion,
               osImage: node.status?.nodeInfo?.osImage,
             };
@@ -504,6 +508,7 @@ export async function handleDashboardAPI(pathname, req, res) {
           })
           .map((p) => {
             const cs = p.status?.containerStatuses || [];
+            const ics = p.status?.initContainerStatuses || [];
             const problems = cs
               .filter(
                 (c) =>
@@ -511,19 +516,42 @@ export async function handleDashboardAPI(pathname, req, res) {
                   c.lastState?.terminated?.reason === "OOMKilled" ||
                   c.restartCount > 10
               )
-              .map((c) => ({
-                container: c.name,
-                reason:
-                  c.state?.waiting?.reason ||
-                  c.lastState?.terminated?.reason ||
-                  `${c.restartCount} restarts`,
-                restarts: c.restartCount,
-              }));
+              .map((c) => {
+                const memLimit = (p.spec?.containers || []).find(
+                  (sc) => sc.name === c.name
+                )?.resources?.limits?.memory || "";
+                const memReq = (p.spec?.containers || []).find(
+                  (sc) => sc.name === c.name
+                )?.resources?.requests?.memory || "";
+                return {
+                  container: c.name,
+                  reason:
+                    c.state?.waiting?.reason ||
+                    c.lastState?.terminated?.reason ||
+                    `${c.restartCount} restarts`,
+                  restarts: c.restartCount,
+                  ready: c.ready || false,
+                  started: c.started || false,
+                  lastTerminatedAt: c.lastState?.terminated?.finishedAt || "",
+                  lastExitCode: c.lastState?.terminated?.exitCode ?? null,
+                  memLimit,
+                  memReq,
+                };
+              });
+            const podAge = p.metadata?.creationTimestamp
+              ? Math.round((Date.now() - new Date(p.metadata.creationTimestamp).getTime()) / 3600000)
+              : 0;
+            const ownerKind = p.metadata?.ownerReferences?.[0]?.kind || "";
+            const ownerName = p.metadata?.ownerReferences?.[0]?.name || "";
             return {
               name: p.metadata.name,
               namespace: p.metadata.namespace,
               phase: p.status?.phase,
               node: p.spec?.nodeName,
+              qosClass: p.status?.qosClass || "",
+              podAgeHours: podAge,
+              ownerKind,
+              ownerName,
               issues: problems,
             };
           });
