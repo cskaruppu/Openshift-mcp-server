@@ -532,9 +532,30 @@ export async function handleDashboardAPI(pathname, req, res) {
         break;
       }
 
-      // ---- Namespaces with workload counts ----
+      // ---- Namespaces with workload counts and health ----
       case "/api/namespaces": {
-        const namespaces = await ocpGet("/api/v1/namespaces");
+        const [namespaces, allPods] = await Promise.all([
+          ocpGet("/api/v1/namespaces"),
+          ocpGet("/api/v1/pods"),
+        ]);
+
+        const podsByNs = {};
+        for (const pod of (allPods.items || [])) {
+          const ns = pod.metadata?.namespace || "";
+          if (!podsByNs[ns]) podsByNs[ns] = { total: 0, running: 0, failed: 0, pending: 0, warning: 0 };
+          podsByNs[ns].total++;
+          const phase = pod.status?.phase || "";
+          if (phase === "Running" || phase === "Succeeded") {
+            const restarts = (pod.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0);
+            if (restarts > 10) podsByNs[ns].warning++;
+            else podsByNs[ns].running++;
+          } else if (phase === "Failed") {
+            podsByNs[ns].failed++;
+          } else {
+            podsByNs[ns].pending++;
+          }
+        }
+
         const nsList = (namespaces.items || [])
           .filter(
             (ns) =>
@@ -543,11 +564,28 @@ export async function handleDashboardAPI(pathname, req, res) {
               ns.metadata.name !== "default" &&
               ns.metadata.name !== "openshift"
           )
-          .map((ns) => ({
-            name: ns.metadata.name,
-            status: ns.status?.phase,
-            created: ns.metadata.creationTimestamp,
-          }));
+          .map((ns) => {
+            const name = ns.metadata.name;
+            const counts = podsByNs[name] || { total: 0, running: 0, failed: 0, pending: 0, warning: 0 };
+            let health = "idle";
+            if (counts.total > 0) {
+              if (counts.failed > 0) health = "critical";
+              else if (counts.warning > 0) health = "warning";
+              else if (counts.pending > 0) health = "pending";
+              else health = "healthy";
+            }
+            return {
+              name,
+              status: ns.status?.phase,
+              created: ns.metadata.creationTimestamp,
+              podCount: counts.total,
+              running: counts.running,
+              failed: counts.failed,
+              pending: counts.pending,
+              warning: counts.warning,
+              health,
+            };
+          });
 
         json(res, 200, nsList);
         break;
