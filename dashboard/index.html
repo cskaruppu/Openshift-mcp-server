@@ -3750,6 +3750,9 @@ function togglePreflightSection(id) {
 // ---------------------------------------------------------------------------
 function renderITSMForm(form) {
   var fid = 'itsm-' + Math.random().toString(36).substr(2, 8);
+  if (form._preflightReport) {
+    window['_pfr_' + fid] = form._preflightReport;
+  }
   var isCR = form.type === 'change_request';
   var label = isCR ? 'Change Request' : 'Incident';
   var iconClass = isCR ? 'cr' : 'inc';
@@ -3812,17 +3815,21 @@ async function submitITSMForm(formId, type) {
   }
 
   try {
+    var payload = { type: type, fields: fields };
+    var pfr = window['_pfr_' + formId];
+    if (pfr) payload.preflightReport = pfr;
     var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/itsm/submit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: type, fields: fields }),
+      body: JSON.stringify(payload),
     });
     var data = await resp.json();
     if (data.success) {
       if (resultEl) {
         resultEl.style.display = 'block';
+        var attachNote = data.attachmentId ? '<div style="margin-top:4px;font-size:11px;color:var(--ok)">&#x1F4CE; Pre-Assessment HTML report attached</div>' : '';
         resultEl.innerHTML = '<div style="color:var(--ok);font-weight:600">&#x2705; ' + esc(data.message) + '</div>' +
-          '<div style="margin-top:6px;font-size:11px;color:var(--text2)">Ticket ID: <strong style="color:var(--text)">' + esc(data.ticketId) + '</strong></div>';
+          '<div style="margin-top:6px;font-size:11px;color:var(--text2)">Ticket ID: <strong style="color:var(--text)">' + esc(data.ticketId) + '</strong></div>' + attachNote;
       }
       if (btn) { btn.textContent = 'Submitted'; btn.style.background = 'var(--ok)'; }
       // Disable all form inputs

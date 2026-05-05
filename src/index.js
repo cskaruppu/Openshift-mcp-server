@@ -66,6 +66,7 @@ import {
 import {
   createChangeRequest as snowCreateCR,
   createIncident as snowCreateIncident,
+  attachFile as snowAttachFile,
 } from "./utils/servicenow-client.js";
 import {
   listChats,
@@ -264,6 +265,123 @@ async function loadClustersFromDB() {
 function sendJson(res, status, body) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
+}
+
+function esc(s) { return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+function generatePreflightHTML(report, ticketNumber, fields) {
+  const checks = report.checks || [];
+  const ts = report.timestamp ? new Date(report.timestamp).toLocaleString() : new Date().toLocaleString();
+  const fromVer = report.fromVersion || "N/A";
+  const toVer = report.targetVersion || "N/A";
+  const status = report.overallStatus || "UNKNOWN";
+  const statusColor = status === "READY" ? "#22c55e" : status === "READY_WITH_WARNINGS" ? "#f59e0b" : "#ef4444";
+
+  const checkRows = checks.map(c => {
+    const sc = c.status === "pass" ? "#22c55e" : c.status === "warning" ? "#f59e0b" : "#ef4444";
+    const icon = c.status === "pass" ? "PASS" : c.status === "warning" ? "WARN" : "FAIL";
+    return `<tr>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb"><span style="color:${sc};font-weight:700">${icon}</span></td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-weight:500">${esc(c.category)}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb">${esc(c.details)}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#6b7280">${esc(c.recommendation || "")}</td>
+    </tr>`;
+  }).join("");
+
+  const clusterOps = (report.allClusterOperators || []).map(o => {
+    const avail = o.available ? '<span style="color:#22c55e">Yes</span>' : '<span style="color:#ef4444">NO</span>';
+    const deg = o.degraded ? '<span style="color:#ef4444">YES</span>' : '<span style="color:#22c55e">No</span>';
+    return `<tr><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb">${esc(o.name)}</td><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb">${esc(o.version || "-")}</td><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb">${avail}</td><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb">${deg}</td></tr>`;
+  }).join("");
+
+  const olmOps = (report.allOLMOperators || []).map(o => {
+    const compat = o.compatible === "yes" ? '<span style="color:#22c55e">Yes</span>' : o.compatible === "no" ? '<span style="color:#ef4444">No</span>' : '<span style="color:#f59e0b">?</span>';
+    return `<tr><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb">${esc(o.name)}</td><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb">${esc(o.version || "-")}</td><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb">${esc(o.namespace || "-")}</td><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb">${esc(o.channel || "-")}</td><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb">${compat}</td></tr>`;
+  }).join("");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pre-Assessment Report — ${esc(ticketNumber)}</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 1100px; margin: 0 auto; padding: 24px; color: #1f2937; background: #fff; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  h2 { font-size: 16px; margin-top: 28px; margin-bottom: 8px; border-bottom: 2px solid #e5e7eb; padding-bottom: 4px; }
+  .meta { font-size: 13px; color: #6b7280; margin-bottom: 20px; }
+  .status-badge { display: inline-block; padding: 4px 14px; border-radius: 20px; font-weight: 700; font-size: 14px; color: #fff; }
+  .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0; }
+  .summary-card { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; text-align: center; }
+  .summary-card .num { font-size: 28px; font-weight: 700; }
+  .summary-card .lbl { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .5px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 16px; }
+  th { text-align: left; padding: 8px 12px; background: #f3f4f6; border-bottom: 2px solid #d1d5db; font-size: 12px; text-transform: uppercase; letter-spacing: .3px; color: #374151; }
+  .section-fields { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin: 12px 0; }
+  .section-fields dt { font-weight: 600; font-size: 12px; color: #6b7280; text-transform: uppercase; margin-top: 10px; }
+  .section-fields dd { margin: 2px 0 0 0; white-space: pre-wrap; }
+  .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #e5e7eb; font-size: 11px; color: #9ca3af; text-align: center; }
+</style>
+</head>
+<body>
+<h1>OpenShift Cluster Pre-Upgrade Assessment Report</h1>
+<div class="meta">
+  Ticket: <strong>${esc(ticketNumber)}</strong> &nbsp;|&nbsp;
+  Generated: ${esc(ts)} &nbsp;|&nbsp;
+  Cluster ID: ${esc(report.clusterID || "N/A")} &nbsp;|&nbsp;
+  Channel: ${esc(report.channel || "N/A")}
+</div>
+
+<div style="margin:16px 0">
+  <span style="font-size:14px;font-weight:600">Upgrade Path:</span>
+  <span style="font-size:18px;font-weight:700;margin-left:8px">${esc(fromVer)} &rarr; ${esc(toVer)}</span>
+  <span class="status-badge" style="background:${statusColor};margin-left:16px">${esc(status)}</span>
+</div>
+
+<div class="summary-grid">
+  <div class="summary-card"><div class="num" style="color:#22c55e">${report.summary?.pass || 0}</div><div class="lbl">Passed</div></div>
+  <div class="summary-card"><div class="num" style="color:#f59e0b">${report.summary?.warning || 0}</div><div class="lbl">Warnings</div></div>
+  <div class="summary-card"><div class="num" style="color:#ef4444">${report.summary?.fail || 0}</div><div class="lbl">Failed</div></div>
+  <div class="summary-card"><div class="num">${report.summary?.total || checks.length}</div><div class="lbl">Total Checks</div></div>
+</div>
+
+<h2>Assessment Checks (${checks.length})</h2>
+<table>
+  <tr><th>Status</th><th>Category</th><th>Details</th><th>Recommendation</th></tr>
+  ${checkRows}
+</table>
+
+${clusterOps ? `<h2>Cluster Operators (${(report.allClusterOperators || []).length})</h2>
+<table>
+  <tr><th>Operator</th><th>Version</th><th>Available</th><th>Degraded</th></tr>
+  ${clusterOps}
+</table>` : ""}
+
+${olmOps ? `<h2>OLM Operators (${(report.allOLMOperators || []).length})</h2>
+<table>
+  <tr><th>Operator</th><th>Version</th><th>Namespace</th><th>Channel</th><th>Compatible</th></tr>
+  ${olmOps}
+</table>` : ""}
+
+<h2>Change Request Details</h2>
+<div class="section-fields">
+  <dl>
+    <dt>Impact Assessment</dt>
+    <dd>${esc(fields?.impact || "N/A")}</dd>
+    <dt>Rollback Plan</dt>
+    <dd>${esc(fields?.rollback || "N/A")}</dd>
+    <dt>Testing / Validation Plan</dt>
+    <dd>${esc(fields?.validation || "N/A")}</dd>
+    <dt>Business Justification</dt>
+    <dd>${esc(fields?.justification || "N/A")}</dd>
+  </dl>
+</div>
+
+<div class="footer">
+  Generated by KubeNexus AI &mdash; OpenShift Intelligence Platform
+</div>
+</body>
+</html>`;
 }
 
 /**
@@ -1158,13 +1276,12 @@ async function startSSE() {
     if (req.method === "POST" && url.pathname === "/api/itsm/submit") {
       try {
         const body = await readJsonBody(req);
-        const { type, fields } = body;
+        const { type, fields, preflightReport } = body;
         if (!type || !fields) {
           return sendJson(res, 400, { error: "Missing type or fields" });
         }
 
         if (!isServiceNowEnabled()) {
-          // ServiceNow not configured — save locally and return a mock ticket
           const ticketId = type === "change_request"
             ? `CR-${Date.now().toString(36).toUpperCase()}`
             : `INC-${Date.now().toString(36).toUpperCase()}`;
@@ -1175,13 +1292,13 @@ async function startSSE() {
                  VALUES ($1, $2, $3, $4, $5, NOW())`,
                 [ticketId, type, fields.title || "", JSON.stringify(fields), "saved_locally"]
               );
-            } catch { /* table may not exist yet — that's OK */ }
+            } catch { /* table may not exist yet */ }
           }
           return sendJson(res, 200, {
             success: true,
             ticketId,
             status: "saved_locally",
-            message: `${type === "change_request" ? "Change Request" : "Incident"} saved locally as ${ticketId}. ServiceNow is not configured — configure SERVICENOW_INSTANCE, SERVICENOW_USERNAME, and SERVICENOW_PASSWORD environment variables to submit directly.`,
+            message: `${type === "change_request" ? "Change Request" : "Incident"} saved locally as ${ticketId}. Configure ServiceNow credentials in Settings to submit directly.`,
           });
         }
 
@@ -1192,9 +1309,10 @@ async function startSSE() {
             shortDescription: fields.title || "",
             description: [
               fields.description || "",
-              fields.impact ? `\nImpact Assessment: ${fields.impact}` : "",
-              fields.rollback ? `\nRollback Plan: ${fields.rollback}` : "",
-              fields.validation ? `\nValidation Plan: ${fields.validation}` : "",
+              fields.impact ? `\n\nIMPACT ASSESSMENT\n${fields.impact}` : "",
+              fields.rollback ? `\n\nROLLBACK PLAN\n${fields.rollback}` : "",
+              fields.validation ? `\n\nTESTING/VALIDATION PLAN\n${fields.validation}` : "",
+              fields.justification ? `\n\nBUSINESS JUSTIFICATION\n${fields.justification}` : "",
             ].filter(Boolean).join("\n"),
             type: fields.changeType || "normal",
             priority: (fields.priority || "3").charAt(0),
@@ -1218,10 +1336,32 @@ async function startSSE() {
 
         const record = result?.result || result;
         const number = record?.number || record?.sys_id || "N/A";
+        const sysId = record?.sys_id || "";
+
+        // Attach HTML pre-assessment report if a preflight report is present
+        let attachmentId = "";
+        if (preflightReport && sysId && type === "change_request") {
+          try {
+            const htmlReport = generatePreflightHTML(preflightReport, number, fields);
+            const buf = Buffer.from(htmlReport, "utf-8");
+            const attResult = await snowAttachFile(
+              "change_request", sysId,
+              `Pre-Assessment_Report_${number}.html`,
+              "text/html",
+              buf,
+            );
+            attachmentId = attResult?.result?.sys_id || "";
+            console.log(`[itsm] Attached pre-assessment HTML report to ${number}`);
+          } catch (attErr) {
+            console.warn(`[itsm] Failed to attach report to ${number}: ${attErr.message}`);
+          }
+        }
+
         return sendJson(res, 200, {
           success: true,
           ticketId: number,
-          sysId: record?.sys_id || "",
+          sysId,
+          attachmentId,
           status: "submitted",
           message: `${type === "change_request" ? "Change Request" : "Incident"} ${number} created in ServiceNow.`,
         });

@@ -113,3 +113,24 @@ export async function updateRecord(table, sysId, data) {
     body: JSON.stringify(data),
   });
 }
+
+/** Attach a file to a ServiceNow record */
+export async function attachFile(table, sysId, fileName, contentType, fileBuffer) {
+  const { instance } = getConfig();
+  if (!instance) throw new Error("ServiceNow instance URL not configured.");
+  const url = `${instance}/api/now/attachment/file?table_name=${table}&table_sys_id=${sysId}&file_name=${encodeURIComponent(fileName)}`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: authHeader(),
+      "Content-Type": contentType,
+      Accept: "application/json",
+    },
+    body: fileBuffer,
+  });
+  if (!resp.ok) {
+    const body = await resp.text();
+    throw new Error(`ServiceNow attachment API ${resp.status}: ${body}`);
+  }
+  return resp.json();
+}

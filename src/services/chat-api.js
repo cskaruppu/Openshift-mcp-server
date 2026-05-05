@@ -68,6 +68,27 @@ import { incCounter, observeHistogram } from "./metrics.js";
 import { enforce as enforceRateLimit } from "./rate-limit.js";
 import { runPreflightChecks, formatPreflightReport } from "../tools/upgrade-preflight.js";
 
+// In-memory cache: conversationId → most recent preflight report.
+// Allows "raise a CR with above precheck details" to retrieve the report
+// even though it was generated in a previous chat turn.
+const _preflightCache = new Map();
+const PREFLIGHT_CACHE_MAX = 200;
+function cachePreflightReport(conversationId, report) {
+  if (!conversationId || !report) return;
+  _preflightCache.set(conversationId, { report, ts: Date.now() });
+  if (_preflightCache.size > PREFLIGHT_CACHE_MAX) {
+    const oldest = [..._preflightCache.entries()].sort((a, b) => a[1].ts - b[1].ts)[0];
+    if (oldest) _preflightCache.delete(oldest[0]);
+  }
+}
+function getCachedPreflightReport(conversationId) {
+  if (!conversationId) return null;
+  const entry = _preflightCache.get(conversationId);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > 30 * 60 * 1000) { _preflightCache.delete(conversationId); return null; }
+  return entry.report;
+}
+
 // Map an NLU intent to the legacy "operation" string used by the response
 // handlers below, plus a few normalizations.
 // Common English words the NLU sometimes mistakes for resource/namespace names
@@ -5336,9 +5357,9 @@ export async function handleChatAPI(req, res) {
       // and pass the report INTO the CR form fields so they're pre-populated.
       let preflightSection = "";
       let preflightReport = null;
-      const isUpgradeRelated = /upgrade/i.test(userMessage) ||
-        (/\b(?:above|previous|pre-?check|assessment)\b/i.test(userMessage) && itsmCtx.cluster?.availableUpdates?.length > 0);
+      const isUpgradeRelated = /upgrade|pre-?(?:check|flight)|above\s+(?:pre|check|assessment|details|report)|previous\s+(?:pre|check|assessment)|with\s+(?:above|precheck|pre-?check)/i.test(userMessage);
       if (itsmType === "change_request" && isUpgradeRelated) {
+        // 1) Try to run a fresh preflight if we can determine a target version
         try {
           const versionMatch = userMessage.match(/(\d+\.\d+\.\d+)/g);
           let targetVer = "";
@@ -5353,16 +5374,22 @@ export async function handleChatAPI(req, res) {
           }
           if (targetVer) {
             preflightReport = await runPreflightChecks(targetVer, currentVer || undefined);
+            cachePreflightReport(conversationId, preflightReport);
             const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(preflightReport).replace(/@@/g, "@ @")}@@`;
             preflightSection = `${reportToken}\n\n---\n\n`;
           }
         } catch { /* preflight failed gracefully — continue with CR form */ }
+        // 2) Fall back to cached preflight from earlier in this conversation
+        if (!preflightReport) {
+          preflightReport = getCachedPreflightReport(conversationId);
+        }
       }
 
       const form = buildITSMForm(itsmType, userMessage, itsmCtx, preflightReport);
+      if (preflightReport) form._preflightReport = preflightReport;
       const formToken = `@@ITSM_FORM|${JSON.stringify(form).replace(/@@/g, "@ @")}@@`;
 
-      const reply = `${preflightSection}### ${label} Form\n\nI've auto-populated the ${label.toLowerCase()} form based on the current cluster context${preflightSection ? " and the 22-point pre-upgrade assessment above" : ""}. Review and edit the fields below, then submit.\n\n${formToken}`;
+      const reply = `${preflightSection}### ${label} Form\n\nI've auto-populated the ${label.toLowerCase()} form based on the current cluster context${preflightReport ? " and the 22-point pre-upgrade assessment" : ""}. Review and edit the fields below, then submit.\n\n${formToken}`;
       const provider = "built-in";
       if (conversationId) {
         histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
@@ -5414,6 +5441,7 @@ export async function handleChatAPI(req, res) {
 
         if (targetVer) {
           const preflightReport = await runPreflightChecks(targetVer, currentVer || undefined);
+          cachePreflightReport(conversationId, preflightReport);
           const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(preflightReport).replace(/@@/g, "@ @")}@@`;
           const reply = reportToken;
           const provider = "built-in";
