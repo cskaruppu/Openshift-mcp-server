@@ -72,7 +72,8 @@ const RESOURCE_API_PATHS = {
 };
 
 function tokenize(cmd) {
-  // Simple shell tokenizer — handles quoted strings
+  // Strip shell line-continuation (backslash + newline)
+  cmd = cmd.replace(/\\\s*\n/g, " ");
   const tokens = [];
   let current = "";
   let quote = null;
@@ -85,11 +86,14 @@ function tokenize(cmd) {
       quote = c;
     } else if (c === " " || c === "\t" || c === "\n") {
       if (current) { tokens.push(current); current = ""; }
+    } else if (c === "\\" && i + 1 < cmd.length && (cmd[i + 1] === " " || cmd[i + 1] === "\n")) {
+      // Lone backslash before whitespace — skip it (line continuation)
+      continue;
     } else {
       current += c;
     }
   }
-  if (current) tokens.push(current);
+  if (current && current !== "\\") tokens.push(current);
   return tokens;
 }
 
@@ -208,10 +212,36 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
       return result;
     }
 
+    // Extract flags that appear before the verb (e.g. oc -n my-ns get pods)
+    const preFlags = {};
+    while (tokens.length > 0 && tokens[0].startsWith("-")) {
+      const t = tokens.shift();
+      if (t.startsWith("--")) {
+        const eq = t.indexOf("=");
+        if (eq !== -1) {
+          const key = t.slice(2, eq);
+          preFlags[key] = t.slice(eq + 1);
+        } else if (tokens.length > 0 && !tokens[0].startsWith("-")) {
+          preFlags[t.slice(2)] = tokens.shift();
+        } else {
+          preFlags[t.slice(2)] = true;
+        }
+      } else if (t.length === 2) {
+        const key = { n: "namespace", l: "selector", o: "output", f: "filename", c: "container" }[t[1]];
+        if (key && tokens.length > 0 && !tokens[0].startsWith("-")) {
+          preFlags[key] = tokens.shift();
+        } else {
+          preFlags[t.slice(1)] = true;
+        }
+      }
+    }
+
     const verb = tokens.shift();
     if (!verb) { result.stderr = "Missing verb"; return result; }
 
-    const { flags, positional } = parseFlags(tokens);
+    const { flags: postFlags, positional } = parseFlags(tokens);
+    // Merge pre-verb flags into post-verb flags (post-verb wins on conflict)
+    const flags = Object.assign({}, preFlags, postFlags);
     const namespace = flags.namespace || flags.n || "";
 
     // ===== Read-only verbs =====
@@ -529,8 +559,158 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
       return result;
     }
 
+    if (verb === "set") {
+      const subVerb = positional.shift();
+      if (subVerb === "resources") {
+        // oc set resources deployment/loadgenerator --containers=main --requests=memory=512Mi --limits=memory=1Gi -n ns
+        const target = positional[0];
+        if (!target) { result.stderr = `Usage: ${cli} set resources <resource>/<name> --containers=<c> --requests=<r> --limits=<l> -n <ns>`; return result; }
+        if (!namespace) { result.stderr = "Namespace required (-n <ns>)"; return result; }
+        const slashIdx = target.indexOf("/");
+        if (slashIdx === -1) { result.stderr = `Resource must be in format <type>/<name>, got '${target}'`; return result; }
+        const rawResource = target.slice(0, slashIdx);
+        const resName = target.slice(slashIdx + 1);
+        const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
+        if (!["deployments", "daemonsets", "statefulsets"].includes(resource)) {
+          result.stderr = `set resources not supported for '${resource}'. Use deployments, daemonsets, or statefulsets.`;
+          return result;
+        }
+        const containerName = flags.containers || flags.container || "";
+        const reqStr = flags.requests || "";
+        const limStr = flags.limits || "";
+        const resources = {};
+        if (reqStr) {
+          resources.requests = {};
+          reqStr.split(",").forEach(function(kv) { const [k, v] = kv.split("="); if (k && v) resources.requests[k] = v; });
+        }
+        if (limStr) {
+          resources.limits = {};
+          limStr.split(",").forEach(function(kv) { const [k, v] = kv.split("="); if (k && v) resources.limits[k] = v; });
+        }
+        // Build a strategic-merge-patch targeting the named container
+        const current = await ocpGet(buildPath(resource, namespace, resName));
+        const containers = current?.spec?.template?.spec?.containers || [];
+        const targetContainer = containerName
+          ? containers.find(c => c.name === containerName)
+          : containers[0];
+        if (!targetContainer) {
+          result.stderr = containerName
+            ? `Container '${containerName}' not found in ${resource}/${resName}`
+            : `No containers found in ${resource}/${resName}`;
+          return result;
+        }
+        const patchBody = {
+          spec: {
+            template: {
+              spec: {
+                containers: [{
+                  name: targetContainer.name,
+                  resources: resources,
+                }],
+              },
+            },
+          },
+        };
+        const path = buildPath(resource, namespace, resName) + dryRunParam;
+        const resp = await ocpPatch(path, patchBody, "application/strategic-merge-patch+json");
+        const desc = [];
+        if (resources.requests) desc.push("requests=" + Object.entries(resources.requests).map(([k, v]) => k + ":" + v).join(","));
+        if (resources.limits) desc.push("limits=" + Object.entries(resources.limits).map(([k, v]) => k + ":" + v).join(","));
+        result.success = true;
+        result.stdout = (dryRun ? "[DRY RUN] Would set " : "Set ") +
+          `resources on ${resource}/${resName} container '${targetContainer.name}' in ${namespace}\n` +
+          desc.join(", ") +
+          (resp?.metadata?.resourceVersion ? `\n(rv: ${resp.metadata.resourceVersion})` : "");
+        return result;
+      }
+
+      if (subVerb === "image") {
+        // oc set image deployment/name container=image:tag -n ns
+        const target = positional[0];
+        const imageSpec = positional[1];
+        if (!target || !imageSpec) { result.stderr = `Usage: ${cli} set image <resource>/<name> <container>=<image> -n <ns>`; return result; }
+        if (!namespace) { result.stderr = "Namespace required (-n <ns>)"; return result; }
+        const slashIdx = target.indexOf("/");
+        if (slashIdx === -1) { result.stderr = `Resource must be in format <type>/<name>`; return result; }
+        const rawResource = target.slice(0, slashIdx);
+        const resName = target.slice(slashIdx + 1);
+        const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
+        const eqIdx = imageSpec.indexOf("=");
+        if (eqIdx === -1) { result.stderr = `Image spec must be <container>=<image:tag>`; return result; }
+        const cName = imageSpec.slice(0, eqIdx);
+        const cImage = imageSpec.slice(eqIdx + 1);
+        const patchBody = {
+          spec: { template: { spec: { containers: [{ name: cName, image: cImage }] } } },
+        };
+        const path = buildPath(resource, namespace, resName) + dryRunParam;
+        await ocpPatch(path, patchBody, "application/strategic-merge-patch+json");
+        result.success = true;
+        result.stdout = (dryRun ? "[DRY RUN] Would set " : "Set ") + `image on ${resource}/${resName}: ${cName}=${cImage} in ${namespace}`;
+        return result;
+      }
+
+      if (subVerb === "env") {
+        // oc set env deployment/name KEY=VALUE -n ns
+        const target = positional[0];
+        if (!target) { result.stderr = `Usage: ${cli} set env <resource>/<name> KEY=VALUE... -n <ns>`; return result; }
+        if (!namespace) { result.stderr = "Namespace required (-n <ns>)"; return result; }
+        const slashIdx = target.indexOf("/");
+        if (slashIdx === -1) { result.stderr = `Resource must be in format <type>/<name>`; return result; }
+        const rawResource = target.slice(0, slashIdx);
+        const resName = target.slice(slashIdx + 1);
+        const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
+        const envPairs = positional.slice(1).filter(p => p.includes("="));
+        if (envPairs.length === 0) { result.stderr = "No env vars specified. Use KEY=VALUE format."; return result; }
+        const current = await ocpGet(buildPath(resource, namespace, resName));
+        const ctn = flags.containers || flags.container || (current?.spec?.template?.spec?.containers?.[0]?.name) || "";
+        if (!ctn) { result.stderr = "Could not determine container name"; return result; }
+        const existingEnv = (current?.spec?.template?.spec?.containers?.find(c => c.name === ctn)?.env) || [];
+        const newEnv = [...existingEnv];
+        envPairs.forEach(pair => {
+          const [k, ...rest] = pair.split("=");
+          const v = rest.join("=");
+          const idx = newEnv.findIndex(e => e.name === k);
+          if (idx !== -1) newEnv[idx] = { name: k, value: v };
+          else newEnv.push({ name: k, value: v });
+        });
+        const patchBody = { spec: { template: { spec: { containers: [{ name: ctn, env: newEnv }] } } } };
+        const path = buildPath(resource, namespace, resName) + dryRunParam;
+        await ocpPatch(path, patchBody, "application/strategic-merge-patch+json");
+        result.success = true;
+        result.stdout = (dryRun ? "[DRY RUN] Would set " : "Set ") + `env on ${resource}/${resName}: ${envPairs.join(", ")} in ${namespace}`;
+        return result;
+      }
+
+      result.stderr = `'set ${subVerb || ""}' is not supported. Supported: set resources, set image, set env`;
+      return result;
+    }
+
     if (verb === "annotate" || verb === "label") {
-      result.stderr = `'${verb}' execution requires structured input — use the chat interface for this command.`;
+      const rawResource = positional[0];
+      const name = positional[1];
+      if (!rawResource || !name) { result.stderr = `Usage: ${cli} ${verb} <resource> <name> key=value... -n <ns>`; return result; }
+      const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
+      if (!namespace && !["nodes", "namespaces", "clusterversions", "clusteroperators"].includes(resource)) {
+        result.stderr = "Namespace required (-n <ns>)";
+        return result;
+      }
+      const kvPairs = positional.slice(2).filter(p => p.includes("=") || p.endsWith("-"));
+      if (kvPairs.length === 0) { result.stderr = `No ${verb}s specified. Use key=value or key- to remove.`; return result; }
+      const patchData = {};
+      const field = verb === "label" ? "labels" : "annotations";
+      kvPairs.forEach(kv => {
+        if (kv.endsWith("-")) {
+          patchData[kv.slice(0, -1)] = null;
+        } else {
+          const [k, ...rest] = kv.split("=");
+          patchData[k] = rest.join("=");
+        }
+      });
+      const patchBody = { metadata: { [field]: patchData } };
+      const path = buildPath(resource, namespace, name) + dryRunParam;
+      await ocpPatch(path, patchBody, "application/merge-patch+json");
+      result.success = true;
+      result.stdout = (dryRun ? "[DRY RUN] Would " : "") + `${verb} ${resource}/${name}: ${kvPairs.join(", ")}`;
       return result;
     }
 
