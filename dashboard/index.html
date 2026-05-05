@@ -178,7 +178,8 @@ tr:hover td{background:#ffffff06}
 .itsm-actions .itsm-cancel:hover{border-color:var(--accent2);color:var(--accent2)}
 .itsm-result{padding:10px 18px;font-size:12px;border-top:1px solid var(--border);color:var(--text)}
 /* Upgrade Execute card */
-.ux-card{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin:12px 0}
+.ux-card{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin:12px 0;width:100%}
+.conv-body .ux-card{margin-left:-38px;width:calc(100% + 38px)}
 .ux-header{background:linear-gradient(135deg,#065f46 0%,#059669 100%);color:#fff;padding:16px 20px;display:flex;align-items:center;gap:12px}
 .ux-header h4{margin:0;font-size:15px;font-weight:700}
 .ux-header .ux-ticket{background:rgba(255,255,255,.2);padding:3px 10px;border-radius:12px;font-size:11px;font-weight:500}
@@ -191,7 +192,7 @@ tr:hover td{background:#ffffff06}
 .ux-checklist{margin:12px 0;padding:0;list-style:none;font-size:12px;color:var(--text2)}
 .ux-checklist li{padding:4px 0}
 .ux-checklist li::before{content:'\\2713';color:var(--ok);margin-right:8px;font-weight:700}
-.ux-actions{display:flex;gap:8px;margin:16px 0 8px}
+.ux-actions{display:flex;gap:8px;margin:16px 0 8px;flex-wrap:wrap}
 .ux-btn{padding:10px 20px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s}
 .ux-btn:disabled{opacity:.5;cursor:not-allowed}
 .ux-btn-dryrun{background:transparent;border:2px solid var(--accent2);color:var(--accent2)}
@@ -3372,19 +3373,19 @@ function md(text) {
       action + '\',\'' + name + '\',\'' + ns + '\')">' + esc(label) +
       '</button><span id="' + eid + '-result"></span></div>');
   });
-  text = text.replace(/@@PREFLIGHT_REPORT\|(.+?)@@/g, function(m, jsonStr) {
+  text = text.replace(/@@PREFLIGHT_REPORT\|([\s\S]+?)@@/g, function(m, jsonStr) {
     try {
       var report = JSON.parse(jsonStr.replace(/@ @/g, '@@'));
       return ph(renderPreflightReport(report));
     } catch(e) { return ph('<div style="color:var(--crit)">Failed to render preflight report: ' + esc(e.message) + '</div>'); }
   });
-  text = text.replace(/@@ITSM_FORM\|(.+?)@@/g, function(m, jsonStr) {
+  text = text.replace(/@@ITSM_FORM\|([\s\S]+?)@@/g, function(m, jsonStr) {
     try {
       var form = JSON.parse(jsonStr.replace(/@ @/g, '@@'));
       return ph(renderITSMForm(form));
     } catch(e) { return ph('<div style="color:var(--crit)">Failed to render ITSM form: ' + esc(e.message) + '</div>'); }
   });
-  text = text.replace(/@@UPGRADE_EXECUTE\|(.+?)@@/g, function(m, jsonStr) {
+  text = text.replace(/@@UPGRADE_EXECUTE\|([\s\S]+?)@@/g, function(m, jsonStr) {
     try {
       var data = JSON.parse(jsonStr.replace(/@ @/g, '@@'));
       return ph(renderUpgradeExecuteCard(data));
@@ -3959,13 +3960,34 @@ function pollCRApproval(sysId, ticketId, preflightReport, upgradeInfo) {
 }
 
 function appendAssistantMessage(html) {
-  var chatBox = document.getElementById('chat-box');
-  if (!chatBox) return;
+  // Try full chat view first, fall back to quick chat
+  var container = document.getElementById('chat-conv-inner') || document.getElementById('chat-box');
+  if (!container) return;
   var msgDiv = document.createElement('div');
-  msgDiv.className = 'msg msg-bot';
-  msgDiv.innerHTML = '<div class="msg-avatar">&#x1F916;</div><div class="msg-bubble">' + html + '</div>';
-  chatBox.appendChild(msgDiv);
-  chatBox.scrollTop = chatBox.scrollHeight;
+  if (container.id === 'chat-conv-inner') {
+    msgDiv.className = 'conv-msg ai';
+    msgDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">KN</div><span class="conv-name">KubeNexus AI</span></div>' +
+      '<div class="conv-body">' + html + '</div>';
+  } else {
+    msgDiv.className = 'msg msg-bot';
+    msgDiv.innerHTML = '<div class="msg-avatar">&#x1F916;</div><div class="msg-bubble">' + html + '</div>';
+  }
+  container.appendChild(msgDiv);
+  if (container.id === 'chat-conv-inner') {
+    scrollConversation();
+  } else {
+    container.scrollTop = container.scrollHeight;
+  }
+  // Also save to chat history so it persists
+  try {
+    var history = loadChatHistory();
+    var activeChat = history.chats.find(function(c) { return c.id === history.activeId; });
+    if (activeChat) {
+      activeChat.messages.push({ role: 'ai', text: '', html: html, provider: 'built-in' });
+      activeChat.updatedAt = new Date().toISOString();
+      saveChatHistory(history);
+    }
+  } catch(e) {}
 }
 
 function renderUpgradeExecuteCard(data) {
@@ -4893,10 +4915,11 @@ function renderConversation() {
             return '<code style="background:color-mix(in srgb,var(--accent2) 10%,transparent);color:var(--accent2);padding:2px 6px;border-radius:4px;font-size:10px">' + esc(t) + '</code>';
           }).join('') + '</div>';
       }
+      var bodyHtml = (msg.html && !msg.text) ? msg.html : md(msg.text || '');
       html += '<div class="conv-msg ai">' +
         '<div class="conv-header"><div class="conv-avatar">KN</div><span class="conv-name">KubeNexus AI</span>' + providerTag + '</div>' +
         toolsBlock +
-        '<div class="conv-body">' + md(msg.text || '') + '</div></div>';
+        '<div class="conv-body">' + bodyHtml + '</div></div>';
     }
   }
   inner.innerHTML = html;

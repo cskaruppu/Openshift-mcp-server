@@ -1697,6 +1697,11 @@ const ITSM_PATTERNS = {
 
 async function detectITSMIntent(message) {
   const lower = message.toLowerCase();
+  // Exclude CR status/tracking/execution queries from ITSM form creation
+  if (/\b(?:check|status|track|monitor|poll|approved|rejected|proceed|execute|start|run)\b/i.test(lower) &&
+      /\b(?:cr|change\s*request|CHG)\b/i.test(lower)) {
+    return null;
+  }
   for (const [type, pat] of Object.entries(ITSM_PATTERNS)) {
     if (pat.test(message)) return type;
   }
@@ -5653,13 +5658,13 @@ export async function handleChatAPI(req, res) {
 
     // ---- CR status check / upgrade execution: "check CR status", "is CR approved",
     //      "proceed with upgrade", "execute upgrade", "start the upgrade" ----
-    const CR_STATUS_PAT = /\b(?:(?:check|status|track|monitor|poll)\s+(?:cr|change\s*request|ticket|CHG)|(?:cr|change\s*request|CHG)\s+(?:status|approved|rejected|state)|(?:is|has)\s+(?:the\s+)?(?:cr|change\s*request|ticket)\s+(?:been\s+)?(?:approved|rejected)|(?:proceed|execute|start|run|initiate|trigger)\s+(?:the\s+)?(?:upgrade|cluster\s+upgrade)|(?:upgrade|go\s+ahead)\s+(?:the\s+)?cluster|CHG\d{7})\b/i;
+    const CR_STATUS_PAT = /\b(?:(?:check|status|track|monitor|poll)\s+(?:cr|change\s*request|ticket|CHG)|(?:cr|change\s*request|CHG)\s+(?:status|approved|rejected|state)|(?:is|has)\s+(?:the\s+)?(?:cr|change\s*request|ticket)\s+(?:been\s+)?(?:approved|rejected)|(?:proceed|execute|start|run|initiate|trigger)\s+(?:(?:the|with)\s+)?(?:(?:the|cluster)\s+)?(?:upgrade|cluster\s+upgrade)|(?:upgrade|go\s+ahead)\s+(?:the\s+)?cluster|CHG\d{7})\b/i;
     if (CR_STATUS_PAT.test(userMessage)) {
       const trackedCR = getTrackedCR(conversationId);
       const crNumberMatch = userMessage.match(/CHG\d{7}/i);
 
       // If user is asking about CR status (not explicitly asking to execute)
-      const wantsExec = /(?:proceed|execute|start|run|initiate|trigger|go\s+ahead)\s+(?:the\s+)?(?:upgrade|cluster)/i.test(userMessage);
+      const wantsExec = /(?:proceed|execute|start|run|initiate|trigger|go\s+ahead)\s+(?:(?:the|with)\s+)?(?:(?:the|cluster)\s+)?(?:upgrade|cluster)/i.test(userMessage);
 
       if (trackedCR && trackedCR.sysId) {
         try {
