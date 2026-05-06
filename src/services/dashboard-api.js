@@ -448,6 +448,31 @@ export async function handleDashboardAPI(pathname, req, res) {
         break;
       }
 
+      // ---- Cluster Operators with individual health ----
+      case "/api/cluster/operators": {
+        const operators = await ocpGet("/apis/config.openshift.io/v1/clusteroperators");
+        const result = (operators.items || []).map((op) => {
+          const conditions = (op.status?.conditions || []).reduce(
+            (acc, c) => { acc[c.type] = { status: c.status, message: c.message || "", reason: c.reason || "" }; return acc; }, {}
+          );
+          const available = conditions.Available?.status === "True";
+          const degraded = conditions.Degraded?.status === "True";
+          const progressing = conditions.Progressing?.status === "True";
+          const health = degraded ? "degraded" : !available ? "unavailable" : progressing ? "progressing" : "available";
+          return {
+            name: op.metadata.name,
+            health,
+            available,
+            degraded,
+            progressing,
+            version: (op.status?.versions || []).find(v => v.name === "operator")?.version || "",
+            message: degraded ? conditions.Degraded.message : progressing ? conditions.Progressing.message : "",
+          };
+        });
+        json(res, 200, result);
+        break;
+      }
+
       // ---- Node list ----
       case "/api/nodes": {
         const nodes = await ocpGet("/api/v1/nodes");
