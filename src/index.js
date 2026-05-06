@@ -145,6 +145,7 @@ import {
   getPredictions,
   getTrends,
 } from "./services/predictive-intel.js";
+import { trackCR, getCR, listCRs, getPendingCRs, updateCRStatus, syncCRFromServiceNow, syncAllPendingCRs, cleanupOldCRs } from "./services/cr-tracker.js";
 
 const silencedAlerts = new Map();
 
@@ -673,6 +674,85 @@ async function handleChatHistoryAPI(url, req, res) {
       }
     }
     return sendJson(res, 405, { error: "Method not allowed" });
+  }
+
+  return sendJson(res, 404, { error: "Not found" });
+}
+
+// ---------------------------------------------------------------------------
+// /api/cr — CR tracking API (backed by cr-tracker service)
+// ---------------------------------------------------------------------------
+async function handleCRTrackingAPI(url, req, res) {
+  // POST /api/cr/sync-all — sync all pending CRs from ServiceNow
+  if (url.pathname === "/api/cr/sync-all" && req.method === "POST") {
+    try {
+      const results = await syncAllPendingCRs();
+      return sendJson(res, 200, { results });
+    } catch (e) {
+      return sendJson(res, 500, { error: e.message });
+    }
+  }
+
+  // GET /api/cr/pending — list CRs with pending status
+  if (url.pathname === "/api/cr/pending" && req.method === "GET") {
+    try {
+      const crs = await getPendingCRs();
+      return sendJson(res, 200, { crs });
+    } catch (e) {
+      return sendJson(res, 500, { error: e.message });
+    }
+  }
+
+  // POST /api/cr/:ticketId/sync — sync a single CR from ServiceNow
+  const syncMatch = url.pathname.match(/^\/api\/cr\/([^/]+)\/sync$/);
+  if (syncMatch && req.method === "POST") {
+    try {
+      const ticketId = decodeURIComponent(syncMatch[1]);
+      const result = await syncCRFromServiceNow(ticketId);
+      return sendJson(res, 200, { result });
+    } catch (e) {
+      return sendJson(res, 500, { error: e.message });
+    }
+  }
+
+  // GET /api/cr/:ticketId — get a single CR
+  const idMatch = url.pathname.match(/^\/api\/cr\/([^/]+)$/);
+  if (idMatch && req.method === "GET") {
+    try {
+      const ticketId = decodeURIComponent(idMatch[1]);
+      const cr = await getCR(ticketId);
+      if (!cr) return sendJson(res, 404, { error: "CR not found" });
+      return sendJson(res, 200, { cr });
+    } catch (e) {
+      return sendJson(res, 500, { error: e.message });
+    }
+  }
+
+  // PATCH /api/cr/:ticketId — update CR status
+  if (idMatch && req.method === "PATCH") {
+    try {
+      const ticketId = decodeURIComponent(idMatch[1]);
+      const body = await readJsonBody(req);
+      await updateCRStatus(ticketId, body.status, {
+        metadata: body.metadata || {},
+        scheduledDate: body.scheduledDate || undefined,
+      });
+      return sendJson(res, 200, { success: true });
+    } catch (e) {
+      return sendJson(res, 500, { error: e.message });
+    }
+  }
+
+  // GET /api/cr — list CRs with optional filters
+  if (url.pathname === "/api/cr" && req.method === "GET") {
+    try {
+      const status = url.searchParams.get("status") || undefined;
+      const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+      const crs = await listCRs({ status, limit });
+      return sendJson(res, 200, { crs });
+    } catch (e) {
+      return sendJson(res, 500, { error: e.message });
+    }
   }
 
   return sendJson(res, 404, { error: "Not found" });
@@ -1346,6 +1426,12 @@ async function startSSE() {
       return;
     }
 
+    // CR tracking — /api/cr
+    if (url.pathname === "/api/cr" || url.pathname.startsWith("/api/cr/")) {
+      await handleCRTrackingAPI(url, req, res);
+      return;
+    }
+
     // Persistent chat history — /api/chats (DB-backed if Postgres configured)
     if (url.pathname === "/api/chats" || url.pathname.startsWith("/api/chats/")) {
       await handleChatHistoryAPI(url, req, res);
@@ -1574,6 +1660,22 @@ async function startSSE() {
             });
           }
         }
+
+        // Persist CR to tracking table
+        try {
+          await trackCR({
+            ticketId: number,
+            sysId: sysId || null,
+            conversationId: submitConvId || upgradeInfo?.conversationId || null,
+            title: fields.short_description || fields.title || '',
+            targetVersion: upgradeInfo?.targetVersion || '',
+            fromVersion: upgradeInfo?.fromVersion || '',
+            channel: upgradeInfo?.channel || '',
+            upgradeType: upgradeInfo?.upgradeType || '',
+            scheduledDate: fields.planned_start_date || fields.start_date || null,
+            preflightReport: preflightReport || null,
+          });
+        } catch (e) {}
 
         // Record in audit trail
         if (await dbEnabled()) {
@@ -1881,7 +1983,30 @@ async function startSSE() {
 
     // ServiceNow CR status check
     if (req.method === "POST" && url.pathname === "/api/itsm/cr-status") {
-      await handleCRStatusCheck(req, res);
+      // Buffer the body so we can read it and still pass it to the handler
+      const rawBody = await new Promise((resolve, reject) => {
+        const chunks = [];
+        req.on("data", (c) => chunks.push(c));
+        req.on("end", () => resolve(Buffer.concat(chunks)));
+        req.on("error", reject);
+      });
+      const parsedBody = JSON.parse(rawBody.toString());
+      const { ticketId: crTicketId } = parsedBody;
+      // Create a wrapper so handleCRStatusCheck can still read the body
+      const fakeReq = Object.create(req);
+      fakeReq._body = rawBody;
+      fakeReq.on = function (evt, cb) {
+        if (evt === "data") { cb(rawBody); return this; }
+        if (evt === "end") { cb(); return this; }
+        return req.on(evt, cb);
+      };
+      await handleCRStatusCheck(fakeReq, res);
+      // Sync CR status to tracking DB
+      try {
+        if (crTicketId) {
+          await syncCRFromServiceNow(crTicketId);
+        }
+      } catch (e) {}
       return;
     }
 
@@ -2001,6 +2126,21 @@ async function startSSE() {
     console.error(`  Orchestrator:     POST /api/hub/orchestrate`);
     console.error(`  Health check:     GET  /healthz`);
   });
+
+  // Background CR status sync — every 4 hours
+  setInterval(async () => {
+    try {
+      const results = await syncAllPendingCRs();
+      if (results && results.some(r => r.changed)) {
+        console.log("[cr-sync] Updated:", results.filter(r => r.changed).map(r => r.ticketId + "→" + r.newStatus).join(", "));
+      }
+    } catch (e) {}
+  }, 4 * 60 * 60 * 1000);
+
+  // Daily cleanup of old CRs (90+ days)
+  setInterval(async () => {
+    try { await cleanupOldCRs(90); } catch (e) {}
+  }, 24 * 60 * 60 * 1000);
 
   // Reload config on SIGHUP (e.g. after ConfigMap update)
   process.on("SIGHUP", () => {

@@ -1363,6 +1363,12 @@ export async function handleCRStatusCheck(req, res) {
           );
         }
       } catch {}
+
+      // Sync CR tracking table
+      try {
+        const { updateCRStatus } = await import("./cr-tracker.js");
+        await updateCRStatus(tid, status);
+      } catch {}
     }
 
     return json(res, 200, {

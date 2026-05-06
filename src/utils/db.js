@@ -167,6 +167,26 @@ CREATE TABLE IF NOT EXISTS kv_store (
   value JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS change_requests (
+  id TEXT PRIMARY KEY,
+  ticket_id TEXT NOT NULL,
+  sys_id TEXT,
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'submitted',
+  title TEXT,
+  target_version TEXT,
+  from_version TEXT,
+  channel TEXT,
+  upgrade_type TEXT,
+  scheduled_date TIMESTAMPTZ,
+  preflight_report JSONB,
+  metadata JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_cr_status ON change_requests (status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cr_ticket ON change_requests (ticket_id);
 `;
 
 async function ensureSchema() {
