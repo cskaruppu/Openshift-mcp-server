@@ -145,7 +145,7 @@ import {
   getPredictions,
   getTrends,
 } from "./services/predictive-intel.js";
-import { trackCR, getCR, listCRs, getPendingCRs, updateCRStatus, syncCRFromServiceNow, syncAllPendingCRs, cleanupOldCRs } from "./services/cr-tracker.js";
+import { trackCR, getCR, listCRs, getPendingCRs, updateCRStatus, syncCRFromServiceNow, syncAllPendingCRs, cleanupOldCRs, backfillFromAuditTrail } from "./services/cr-tracker.js";
 
 const silencedAlerts = new Map();
 
@@ -683,6 +683,16 @@ async function handleChatHistoryAPI(url, req, res) {
 // /api/cr — CR tracking API (backed by cr-tracker service)
 // ---------------------------------------------------------------------------
 async function handleCRTrackingAPI(url, req, res) {
+  // POST /api/cr/backfill — import historical CRs from executed_actions
+  if (url.pathname === "/api/cr/backfill" && req.method === "POST") {
+    try {
+      const result = await backfillFromAuditTrail();
+      return sendJson(res, 200, result);
+    } catch (e) {
+      return sendJson(res, 500, { error: e.message });
+    }
+  }
+
   // POST /api/cr/sync-all — sync all pending CRs from ServiceNow
   if (url.pathname === "/api/cr/sync-all" && req.method === "POST") {
     try {
@@ -2126,6 +2136,14 @@ async function startSSE() {
     console.error(`  Orchestrator:     POST /api/hub/orchestrate`);
     console.error(`  Health check:     GET  /healthz`);
   });
+
+  // Backfill historical CRs from executed_actions audit trail (one-time on startup)
+  setTimeout(async () => {
+    try {
+      const r = await backfillFromAuditTrail();
+      if (r && r.imported > 0) console.log(`[cr-backfill] Imported ${r.imported} historical CR(s) (${r.skipped} already tracked)`);
+    } catch (e) {}
+  }, 5000);
 
   // Background CR status sync — every 4 hours
   setInterval(async () => {

@@ -6479,6 +6479,16 @@ async function refreshPendingCRs() {
   renderPendingCRPanel(crs);
 }
 
+window.backfillCRs = async function() {
+  try {
+    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/cr/backfill', { method: 'POST' });
+    var data = await resp.json();
+    console.log('Backfill result:', data);
+    await refreshPendingCRs();
+    return data;
+  } catch(e) { console.error('Backfill failed:', e); }
+};
+
 // ---------------------------------------------------------------------------
 // Proactive CR Notifications on Session Start
 // ---------------------------------------------------------------------------

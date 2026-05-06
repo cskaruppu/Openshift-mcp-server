@@ -222,3 +222,51 @@ export async function cleanupOldCRs(daysOld = 90) {
 
   return result?.rowCount || 0;
 }
+
+export async function backfillFromAuditTrail() {
+  if (!(await dbEnabled())) return { imported: 0, skipped: 0 };
+
+  const created = await query(
+    `SELECT target, result, created_at
+       FROM executed_actions
+      WHERE action = 'create_change_request'
+      ORDER BY created_at DESC`
+  );
+
+  const approved = await query(
+    `SELECT target, created_at
+       FROM executed_actions
+      WHERE action IN ('cr_approved', 'cr_rejected')`
+  );
+
+  const statusMap = new Map();
+  for (const row of approved?.rows || []) {
+    statusMap.set(row.target, row.action === "cr_approved" ? "approved" : "rejected");
+  }
+
+  let imported = 0;
+  let skipped = 0;
+
+  for (const row of created?.rows || []) {
+    const ticketId = row.target;
+    if (!ticketId) { skipped++; continue; }
+
+    const existing = await query(
+      `SELECT id FROM change_requests WHERE ticket_id = $1 OR id = $1 LIMIT 1`,
+      [ticketId]
+    );
+    if (existing?.rows?.length) { skipped++; continue; }
+
+    const meta = row.result || {};
+    const status = statusMap.get(ticketId) || "submitted";
+
+    await query(
+      `INSERT INTO change_requests (id, ticket_id, sys_id, status, title, created_at, updated_at)
+       VALUES ($1, $1, $2, $3, $4, $5, NOW())`,
+      [ticketId, meta.sysId || null, status, meta.title || meta.shortDescription || "", row.created_at]
+    );
+    imported++;
+  }
+
+  return { imported, skipped };
+}
