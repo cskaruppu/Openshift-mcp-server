@@ -7185,3 +7185,71 @@ export async function handleExecuteAPI(req, res) {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// POST /api/chat/feedback — structured feedback with positive/negative rating
+// ---------------------------------------------------------------------------
+export async function handleFeedbackAPI(req, res) {
+  try {
+    const body = await readBody(req);
+    const { conversationId, messageIndex, rating, comment } = body;
+
+    if (!rating || !['positive', 'negative'].includes(rating)) {
+      return json(res, 400, { error: "Rating must be 'positive' or 'negative'" });
+    }
+
+    // Store feedback in DB (best-effort)
+    try {
+      const { query: dbq } = await import("../utils/db.js");
+      await dbq(`
+        CREATE TABLE IF NOT EXISTS chat_feedback (
+          id SERIAL PRIMARY KEY,
+          conversation_id TEXT,
+          message_index INTEGER,
+          rating TEXT NOT NULL,
+          comment TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await dbq(
+        `INSERT INTO chat_feedback (conversation_id, message_index, rating, comment) VALUES ($1, $2, $3, $4)`,
+        [conversationId || null, messageIndex || 0, rating, comment || null]
+      );
+    } catch {
+      // DB optional — feedback still counted via metrics
+    }
+
+    // Track metrics
+    incCounter("mcp_chat_feedback_total", { rating });
+
+    json(res, 200, { success: true });
+  } catch (err) {
+    json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/chat/feedback/stats — aggregate feedback statistics
+// ---------------------------------------------------------------------------
+export async function handleFeedbackStatsAPI(req, res) {
+  try {
+    let stats = { total: 0, positive: 0, negative: 0, recentNegative: [] };
+    try {
+      const { query: dbq } = await import("../utils/db.js");
+      const rows = await dbq(`SELECT rating, COUNT(*) as count FROM chat_feedback GROUP BY rating`);
+      if (rows?.rows) {
+        for (const r of rows.rows) {
+          stats[r.rating] = parseInt(r.count);
+          stats.total += parseInt(r.count);
+        }
+      }
+      const recent = await dbq(`SELECT * FROM chat_feedback WHERE rating = 'negative' ORDER BY created_at DESC LIMIT 10`);
+      stats.recentNegative = recent?.rows || [];
+    } catch {
+      // DB not available — return zeroed stats
+    }
+    json(res, 200, stats);
+  } catch (err) {
+    json(res, 500, { error: err.message });
+  }
+}

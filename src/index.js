@@ -53,7 +53,7 @@ import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode } from "./services/auth.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
-import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, trackSubmittedCR } from "./services/chat-api.js";
+import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, trackSubmittedCR } from "./services/chat-api.js";
 import {
   listActions,
   getAction,
@@ -1266,6 +1266,16 @@ async function startSSE() {
     // AI Runbooks — /api/chat/runbook (POST)
     if (req.method === "POST" && url.pathname === "/api/chat/runbook") {
       await handleChatRunbookAPI(req, res);
+      return;
+    }
+
+    // Chat feedback — /api/chat/feedback (POST) & /api/chat/feedback/stats (GET)
+    if (req.method === "POST" && url.pathname === "/api/chat/feedback") {
+      await handleFeedbackAPI(req, res);
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/chat/feedback/stats") {
+      await handleFeedbackStatsAPI(req, res);
       return;
     }
 
