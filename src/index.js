@@ -1505,6 +1505,21 @@ async function startSSE() {
           }
         }
 
+        // Record in audit trail
+        if (await dbEnabled()) {
+          dbQuery(
+            `INSERT INTO executed_actions (action, target, namespace, success, result)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+              type === "change_request" ? "create_change_request" : "create_incident",
+              number,
+              "servicenow",
+              true,
+              JSON.stringify({ ticketId: number, sysId, title: fields.title || "" }),
+            ]
+          ).catch(() => {});
+        }
+
         return sendJson(res, 200, {
           success: true,
           ticketId: number,

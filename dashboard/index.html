@@ -1932,6 +1932,7 @@ tr:hover td{background:#ffffff06}
         <button class="aic-pill active" data-type="all" onclick="filterAuditTimeline('all',this)" style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:var(--accent2);color:#fff;cursor:pointer">All</button>
         <button class="aic-pill" data-type="success" onclick="filterAuditTimeline('success',this)" style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer">Success</button>
         <button class="aic-pill" data-type="failed" onclick="filterAuditTimeline('failed',this)" style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer">Failed</button>
+        <button class="aic-pill" data-type="itsm" onclick="filterAuditTimeline('itsm',this)" style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer">ITSM</button>
       </div>
     </div>
     <div id="audit-timeline" style="padding:16px;max-height:500px;overflow-y:auto">
@@ -4241,6 +4242,15 @@ async function submitITSMForm(formId, type) {
       // Disable all form inputs
       inputs = form.querySelectorAll('input,textarea,select');
       for (i = 0; i < inputs.length; i++) { inputs[i].disabled = true; inputs[i].style.opacity = '0.6'; }
+      // Persist ticket info as a separate chat message so it survives re-renders
+      var crLabel = type === 'change_request' ? 'Change Request' : 'Incident';
+      var confirmMsg = '### \\u2705 ' + crLabel + ' ' + esc(data.ticketId) + ' Created\n\n' +
+        '**Ticket ID:** `' + esc(data.ticketId) + '`\n' +
+        '**Status:** Submitted to ServiceNow\n' +
+        '**Title:** ' + esc(fields.title || '') + '\n' +
+        (data.attachmentId ? '**Attachment:** Pre-Assessment report attached\n' : '') +
+        (data.sysId && type === 'change_request' ? '\n> Monitoring approval status automatically. Ask "check CR status" or "proceed with upgrade" once approved.' : '');
+      appendAssistantMessage(confirmMsg);
       // Start auto-polling for CR approval if we have a sysId
       if (data.sysId && type === 'change_request') {
         pollCRApproval(data.sysId, data.ticketId, pfr || null, uinfo || null);
@@ -6368,16 +6378,36 @@ function renderAuditTimeline() {
   var items = _auditData.executed;
   if (_auditTimelineFilter === 'success') items = items.filter(function(r) { return r.success; });
   else if (_auditTimelineFilter === 'failed') items = items.filter(function(r) { return !r.success; });
+  else if (_auditTimelineFilter === 'itsm') items = items.filter(function(r) { return /^(create_change_request|create_incident|cr_approved|cr_rejected)$/.test(r.action); });
 
   if (!items.length) {
     el.innerHTML = '<div style="padding:30px;text-align:center;color:var(--text2);font-size:12px">No ' + _auditTimelineFilter + ' actions found</div>';
     return;
   }
 
+  var AUDIT_ICONS = {
+    'create_change_request': '&#x1F4CB;',
+    'create_incident': '&#x1F6A8;',
+    'cr_approved': '&#x2705;',
+    'cr_rejected': '&#x274C;',
+    'delete_pod': '&#x1F5D1;',
+    'restart_deployment': '&#x1F504;',
+    'scale_deployment': '&#x2696;',
+  };
+  var AUDIT_LABELS = {
+    'create_change_request': 'Change Request Created',
+    'create_incident': 'Incident Created',
+    'cr_approved': 'Change Request Approved',
+    'cr_rejected': 'Change Request Rejected',
+  };
   el.innerHTML = items.map(function(r) {
-    var icon = r.success ? '<span style="color:var(--ok)">&#x2705;</span>' : '<span style="color:var(--crit)">&#x274C;</span>';
-    var statusBadge = r.success ? '<span class="badge badge-ok">Success</span>' : '<span class="badge badge-crit">Failed</span>';
-    var action = esc(r.action || '').replace(/_/g, ' ');
+    var isITSM = /^(create_change_request|create_incident|cr_approved|cr_rejected)$/.test(r.action);
+    var icon = AUDIT_ICONS[r.action] || (r.success ? '<span style="color:var(--ok)">&#x2705;</span>' : '<span style="color:var(--crit)">&#x274C;</span>');
+    if (!isITSM) icon = r.success ? '<span style="color:var(--ok)">&#x2705;</span>' : '<span style="color:var(--crit)">&#x274C;</span>';
+    var statusBadge = isITSM
+      ? '<span class="badge badge-info" style="background:rgba(88,166,255,.12);color:var(--accent2)">ITSM</span>'
+      : (r.success ? '<span class="badge badge-ok">Success</span>' : '<span class="badge badge-crit">Failed</span>');
+    var action = AUDIT_LABELS[r.action] || esc(r.action || '').replace(/_/g, ' ');
     var target = esc(r.target || '—');
     var ns = r.namespace ? '<code style="background:color-mix(in srgb,var(--accent2) 10%,transparent);color:var(--accent2);padding:1px 6px;border-radius:4px;font-size:10px">' + esc(r.namespace) + '</code>' : '';
     var t = r.created_at ? new Date(r.created_at) : null;

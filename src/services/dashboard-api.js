@@ -1341,6 +1341,30 @@ export async function handleCRStatusCheck(req, res) {
       status = "closed";
     }
 
+    // Record approval/rejection in audit trail (once per ticket)
+    if ((status === "approved" || status === "rejected") && await dbEnabled()) {
+      const tid = ticketId || record.number || sysId;
+      try {
+        const existing = await dbQuery(
+          `SELECT id FROM executed_actions WHERE action = $1 AND target = $2 LIMIT 1`,
+          [status === "approved" ? "cr_approved" : "cr_rejected", tid]
+        );
+        if (!existing?.rows?.length) {
+          await dbQuery(
+            `INSERT INTO executed_actions (action, target, namespace, success, result)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+              status === "approved" ? "cr_approved" : "cr_rejected",
+              tid,
+              "servicenow",
+              status === "approved",
+              JSON.stringify({ ticketId: tid, sysId, stateLabel, shortDescription: record.short_description || "" }),
+            ]
+          );
+        }
+      } catch {}
+    }
+
     return json(res, 200, {
       ticketId: ticketId || record.number || "",
       sysId,
