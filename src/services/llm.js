@@ -21,6 +21,10 @@ const DEFAULT_MODEL = process.env.LLM_MODEL || "gpt-4";
 const DEFAULT_AZURE_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || "";
 const DEFAULT_AZURE_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || "2024-12-01-preview";
 
+const AZURE_USE_MANAGED_IDENTITY = process.env.AZURE_USE_MANAGED_IDENTITY === "true";
+const AZURE_TENANT_ID = process.env.AZURE_TENANT_ID || "";
+const AZURE_CLIENT_ID = process.env.AZURE_CLIENT_ID || "";
+
 const HTTPS_PROXY = process.env.HTTPS_PROXY || process.env.HTTP_PROXY
   || process.env.https_proxy || process.env.http_proxy || "";
 
@@ -219,6 +223,36 @@ async function callOpenAI(messages, o, stream, hooks = {}) {
 }
 
 // ===========================================================================
+// Azure Managed Identity token helper
+// ===========================================================================
+let _azureTokenCache = { token: null, expiresAt: 0 };
+
+async function getAzureToken() {
+  if (_azureTokenCache.token && Date.now() < _azureTokenCache.expiresAt - 60000) {
+    return _azureTokenCache.token;
+  }
+  const scope = "https://cognitiveservices.azure.com/.default";
+  const url = AZURE_CLIENT_ID
+    ? `http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=${encodeURIComponent(scope)}&client_id=${AZURE_CLIENT_ID}`
+    : `http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=${encodeURIComponent(scope)}`;
+
+  const resp = await undiciFetch(url, {
+    headers: { "Metadata": "true" },
+    dispatcher: new Agent({ connect: { timeout: 5000 } }),
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Azure managed identity token error ${resp.status}: ${err.substring(0, 200)}`);
+  }
+  const data = await resp.json();
+  _azureTokenCache = {
+    token: data.access_token,
+    expiresAt: parseInt(data.expires_on, 10) * 1000,
+  };
+  return data.access_token;
+}
+
+// ===========================================================================
 // Azure OpenAI
 // ===========================================================================
 async function callAzureOpenAI(messages, o, stream, hooks = {}) {
@@ -241,11 +275,19 @@ async function callAzureOpenAI(messages, o, stream, hooks = {}) {
       function: { name: t.name, description: t.description, parameters: t.input_schema },
     }));
   }
+  let authHeaders;
+  if (AZURE_USE_MANAGED_IDENTITY || o.azureManagedIdentity) {
+    const token = await getAzureToken();
+    authHeaders = { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" };
+  } else {
+    authHeaders = { "api-key": o.apiKey, "Content-Type": "application/json" };
+  }
+
   let resp;
   try {
     resp = await llmFetch(url, {
       method: "POST",
-      headers: { "api-key": o.apiKey, "Content-Type": "application/json" },
+      headers: authHeaders,
       body: JSON.stringify(body),
     }, o.maxRetries);
   } catch (fetchErr) {
@@ -254,6 +296,14 @@ async function callAzureOpenAI(messages, o, stream, hooks = {}) {
     throw new Error(`Azure OpenAI network error: ${detail} (URL: ${baseUrl})`);
   }
   const contentType = resp.headers.get("content-type") || "";
+  if (resp.status === 429) {
+    const retryAfter = resp.headers.get("retry-after") || "10";
+    const delay = parseInt(retryAfter, 10) * 1000;
+    console.warn(`[llm] Azure rate limited, retry after ${retryAfter}s`);
+    await new Promise(r => setTimeout(r, delay));
+    // Retry once
+    return callAzureOpenAI(messages, { ...o, maxRetries: 0 }, stream, hooks);
+  }
   if (!resp.ok) {
     const err = await resp.text();
     throw new Error(`Azure OpenAI ${resp.status}: ${err.substring(0, 500)} (URL: ${url})`);
@@ -271,6 +321,15 @@ async function callAzureOpenAI(messages, o, stream, hooks = {}) {
       name: tc.function?.name,
       arguments: safeJSON(tc.function?.arguments),
     }));
+    // Check Azure content safety filters
+    const filterResults = data.choices?.[0]?.content_filter_results;
+    if (filterResults) {
+      const blocked = Object.entries(filterResults).filter(([_, v]) => v.filtered);
+      if (blocked.length > 0) {
+        console.warn(`[llm] Azure content filter blocked: ${blocked.map(([k]) => k).join(", ")}`);
+        return { text: "I cannot provide that response due to content safety policies. Please rephrase your question.", toolCalls: [], filtered: true };
+      }
+    }
     return { text, toolCalls, raw: data };
   }
   // Streaming — Azure uses same SSE format as OpenAI

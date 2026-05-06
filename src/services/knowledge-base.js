@@ -13,9 +13,57 @@
  */
 
 import { query as dbQuery } from "../utils/db.js";
+import { callLLM } from "./llm.js";
+
+let _embeddingCache = new Map();
+const MAX_EMBEDDING_CACHE = 200;
 
 const _memKB = [];
 const MAX_ENTRIES = 500;
+
+async function computeEmbedding(text) {
+  const cached = _embeddingCache.get(text);
+  if (cached) return cached;
+
+  // Use a simple TF-IDF-like approach as fallback when no embedding API is available
+  // This gives us semantic-ish matching without requiring an external API
+  const words = text.toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(w => w.length > 2);
+
+  // Build term frequency vector
+  const tf = {};
+  for (const w of words) {
+    tf[w] = (tf[w] || 0) + 1;
+  }
+
+  // Normalize
+  const norm = Math.sqrt(Object.values(tf).reduce((s, v) => s + v * v, 0)) || 1;
+  for (const k in tf) tf[k] /= norm;
+
+  if (_embeddingCache.size >= MAX_EMBEDDING_CACHE) {
+    const first = _embeddingCache.keys().next().value;
+    _embeddingCache.delete(first);
+  }
+  _embeddingCache.set(text, tf);
+  return tf;
+}
+
+function cosineSimilarity(a, b) {
+  if (!a || !b) return 0;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  let dot = 0, normA = 0, normB = 0;
+  for (const k of keys) {
+    const va = a[k] || 0;
+    const vb = b[k] || 0;
+    dot += va * vb;
+    normA += va * va;
+    normB += vb * vb;
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom > 0 ? dot / denom : 0;
+}
 
 export async function initKnowledgeBase() {
   try {
@@ -93,12 +141,14 @@ export async function recordResolution({
  * Find similar past resolutions for a given issue.
  * Returns scored matches sorted by relevance.
  */
-export function findSimilar({ type, resource, namespace, symptoms, limit = 5 }) {
+export async function findSimilar({ type, resource, namespace, symptoms, limit = 5 }) {
   const scored = [];
+  const queryEmbed = symptoms ? await computeEmbedding(symptoms) : null;
 
   for (const entry of _memKB) {
     let score = 0;
 
+    // Original keyword scoring
     if (entry.type === type) score += 40;
 
     if (resource && entry.resource_pattern !== "*") {
@@ -116,6 +166,13 @@ export function findSimilar({ type, resource, namespace, symptoms, limit = 5 }) 
       const entryWords = entry.symptoms.toLowerCase().split(/\s+/);
       const overlap = words.filter((w) => entryWords.includes(w)).length;
       score += Math.min(overlap * 5, 25);
+    }
+
+    // Semantic similarity boost (0-30 points)
+    if (queryEmbed && entry.symptoms) {
+      const entryEmbed = await computeEmbedding(entry.symptoms);
+      const sim = cosineSimilarity(queryEmbed, entryEmbed);
+      score += Math.round(sim * 30);
     }
 
     score += Math.min(entry.effectiveness || 0, 10);

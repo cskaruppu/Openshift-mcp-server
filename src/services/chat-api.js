@@ -2934,7 +2934,181 @@ IMPORTANT: You are given REAL-TIME cluster data as JSON context. This is NOT hyp
 - When the user asks a follow-up about a previously discussed resource, don't re-list all resources — focus on the specific one from context
 - Never show raw image SHA hashes or internal registry URLs — users want version numbers and actionable commands
 - When recommending actions, always include the exact \`oc\` command the user can copy-paste
-- If an action is risky (upgrade, delete, scale down), warn about the impact and suggest a precheck or dry-run first`;
+- If an action is risky (upgrade, delete, scale down), warn about the impact and suggest a precheck or dry-run first
+
+## Few-shot examples
+
+**User:** "What's wrong with pod user-db-7f8d9c in sock-shop namespace?"
+**Assistant:** Pod \`user-db-7f8d9c\` in \`sock-shop\` is in **CrashLoopBackOff** (restarts: 47).
+- **Exit code 137** (SIGKILL) → container killed by OOM Killer
+- Memory limit: \`64Mi\`, but the process needs ~120Mi based on last OOMKill event
+- **Fix:** \`oc -n sock-shop set resources deployment/user-db --limits=memory=256Mi --requests=memory=128Mi\`
+
+**User:** "How is the cluster health?"
+**Assistant:** **Cluster:** OpenShift 4.16.3 (stable-4.16)
+
+| Node | Role | Status | CPU | Memory |
+|------|------|--------|-----|--------|
+| node-1 | master | Ready | 42% | 61% |
+| node-2 | worker | Ready | 78% | 55% |
+| node-3 | worker | NotReady | — | MemoryPressure |
+
+**Summary:** 2 of 3 nodes healthy. \`node-3\` has MemoryPressure — run \`oc adm drain node-3 --ignore-daemonsets\` then investigate.
+
+**User:** "Can you show me more details on that pod?"
+**Assistant:** Referring back to \`user-db-7f8d9c\` in \`sock-shop\`:
+- **Last crash:** 2 min ago, reason: OOMKilled, exit code 137
+- **Events:** 12 Back-off warnings in the last hour
+- Run \`oc -n sock-shop logs user-db-7f8d9c --previous\` to see pre-crash output`;
+
+// ---------------------------------------------------------------------------
+// Post-response grounding check — verify numbers, namespaces, and node
+// conditions mentioned by the LLM against the actual cluster context.
+// ---------------------------------------------------------------------------
+function groundingCheck(reply, ctx) {
+  const warnings = [];
+  if (!reply || !ctx) return { verified: true, warnings };
+
+  // --- Check numeric claims like "5 pods crashing" against actual counts ---
+  const countPattern = /(\d+)\s+pods?\s+(?:crash|fail|error|restart|pending|not\s*ready|crashloop)/gi;
+  let m;
+  while ((m = countPattern.exec(reply)) !== null) {
+    const claimedCount = parseInt(m[1], 10);
+    const actualProblemCount = Array.isArray(ctx.problemPods) ? ctx.problemPods.length : 0;
+    if (claimedCount > 0 && actualProblemCount > 0 && Math.abs(claimedCount - actualProblemCount) > 1) {
+      warnings.push(`Response mentions ${claimedCount} problem pods but context has ${actualProblemCount}`);
+    }
+  }
+
+  // --- Check namespace names mentioned in the response ---
+  const nsPattern = /(?:namespace|ns|project)\s+`?([a-z0-9][-a-z0-9]+)`?/gi;
+  const ctxNamespaces = new Set();
+  if (Array.isArray(ctx.namespaces)) ctx.namespaces.forEach((n) => ctxNamespaces.add(typeof n === "string" ? n : n.name || ""));
+  if (ctx.targetNamespaceFromMemory) ctxNamespaces.add(ctx.targetNamespaceFromMemory);
+  if (Array.isArray(ctx.problemPods)) ctx.problemPods.forEach((p) => { if (p.namespace) ctxNamespaces.add(p.namespace); });
+  if (Array.isArray(ctx.allPods)) ctx.allPods.forEach((p) => { if (p.namespace) ctxNamespaces.add(p.namespace); });
+
+  if (ctxNamespaces.size > 0) {
+    while ((m = nsPattern.exec(reply)) !== null) {
+      const ns = m[1];
+      // Skip well-known system namespaces that are always present
+      if (/^(default|kube-system|openshift|openshift-.+)$/.test(ns)) continue;
+      if (!ctxNamespaces.has(ns)) {
+        warnings.push(`Namespace "${ns}" mentioned but not found in cluster context`);
+      }
+    }
+  }
+
+  // --- Check node condition claims (e.g. "node X has MemoryPressure") ---
+  const nodeCondPattern = /(?:node|worker|master)\s+`?([a-z0-9][-a-z0-9.]+)`?\s+(?:has|shows?|reports?|is\s+in|experiencing)\s+`?(MemoryPressure|DiskPressure|PIDPressure|NotReady|NetworkUnavailable)`?/gi;
+  const nodeMap = new Map();
+  if (Array.isArray(ctx.nodes)) {
+    ctx.nodes.forEach((n) => {
+      const name = n.name || n.metadata?.name || "";
+      const conditions = new Set();
+      if (Array.isArray(n.conditions)) {
+        n.conditions.forEach((c) => {
+          if (c.status === "True" || (c.type === "Ready" && c.status === "False")) {
+            conditions.add(c.type);
+          }
+        });
+      }
+      if (n.status === "NotReady") conditions.add("NotReady");
+      if (name) nodeMap.set(name, conditions);
+    });
+  }
+
+  while ((m = nodeCondPattern.exec(reply)) !== null) {
+    const nodeName = m[1];
+    const condition = m[2];
+    if (nodeMap.has(nodeName)) {
+      const actualConds = nodeMap.get(nodeName);
+      if (!actualConds.has(condition)) {
+        warnings.push(`Node "${nodeName}" claimed to have ${condition} but context shows otherwise`);
+      }
+    } else if (nodeMap.size > 0) {
+      warnings.push(`Node "${nodeName}" mentioned but not found in cluster context`);
+    }
+  }
+
+  return { verified: warnings.length === 0, warnings };
+}
+
+// ---------------------------------------------------------------------------
+// Post-response resource-name validation — check that pod/resource names in
+// the LLM reply actually exist in the cluster context.
+// ---------------------------------------------------------------------------
+const GENERIC_POD_NAMES = new Set([
+  "pod-name", "example-pod", "my-app", "my-pod", "test-pod", "some-pod",
+  "your-pod", "pod-xyz", "app-name", "my-deployment", "your-deployment",
+  "example-app", "sample-app", "demo-app", "your-app", "my-service",
+]);
+
+function validateResponse(reply, clusterContext) {
+  if (!reply || !clusterContext) return reply;
+
+  // Build the set of known resource names from context
+  const knownNames = new Set();
+
+  const addNames = (arr) => {
+    if (!Array.isArray(arr)) return;
+    arr.forEach((item) => {
+      const name = typeof item === "string" ? item : (item.name || item.metadata?.name || "");
+      if (name) knownNames.add(name);
+    });
+  };
+
+  addNames(clusterContext.problemPods);
+  addNames(clusterContext.allPods);
+  addNames(clusterContext.nodes);
+  addNames(clusterContext.deployments);
+  addNames(clusterContext.namespaces);
+  addNames(clusterContext.operators);
+  if (clusterContext.targetPodName) knownNames.add(clusterContext.targetPodName);
+  if (clusterContext.targetPod?.name) knownNames.add(clusterContext.targetPod.name);
+  if (clusterContext.targetPod?.metadata?.name) knownNames.add(clusterContext.targetPod.metadata.name);
+
+  // Extract pod-like names from the reply
+  const podPattern = /\b([a-z][-a-z0-9]*(?:-[a-z0-9]{4,10}){1,2})\b/g;
+  const unrecognized = [];
+  let match;
+  const seen = new Set();
+
+  while ((match = podPattern.exec(reply)) !== null) {
+    const candidate = match[1];
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    // Skip generic/example names
+    if (GENERIC_POD_NAMES.has(candidate)) continue;
+    // Skip very short matches or common non-pod patterns
+    if (candidate.length < 6) continue;
+    // Skip if it's in the known names
+    if (knownNames.has(candidate)) continue;
+    // Skip if it's a substring-match of a known name (partial matches)
+    let partialMatch = false;
+    for (const known of knownNames) {
+      if (known.includes(candidate) || candidate.includes(known)) {
+        partialMatch = true;
+        break;
+      }
+    }
+    if (partialMatch) continue;
+    unrecognized.push(candidate);
+  }
+
+  // Run the full grounding check (numbers, node conditions, namespaces)
+  const grounding = groundingCheck(reply, clusterContext);
+
+  // Only flag when there are 3+ unrecognized pod-like names (to avoid false positives)
+  const needsDisclaimer = unrecognized.length >= 3 || !grounding.verified;
+
+  if (needsDisclaimer) {
+    const disclaimer = `\n\n> ⚠️ **Grounding notice:** Some resource names in this response could not be verified against live cluster data. Always verify with \`oc get\` before acting.`;
+    return reply + disclaimer;
+  }
+
+  return reply;
+}
 
 // ---------------------------------------------------------------------------
 // Call external LLM — thin wrapper around the centralized llm.js module
@@ -2946,10 +3120,220 @@ IMPORTANT: You are given REAL-TIME cluster data as JSON context. This is NOT hyp
  */
 function historyToMessages(history, limit = 10) {
   if (!Array.isArray(history) || history.length === 0) return [];
-  return history.slice(-limit).map((h) => ({
+  const recent = history.slice(-limit);
+
+  if (recent.length <= 6) {
+    return recent.map((h) => ({
+      role: h.role === "ai" ? "assistant" : "user",
+      content: h.text || "",
+    }));
+  }
+
+  // Summarize older messages into a compact context block so the LLM
+  // retains awareness of earlier conversation without consuming full tokens.
+  const older = recent.slice(0, -6);
+  const latest = recent.slice(-6);
+
+  const summaryParts = [];
+  for (const h of older) {
+    const text = (h.text || "").substring(0, 300);
+    // Extract key entities
+    const pods =
+      text.match(/\b[a-z][-a-z0-9]*(?:-[a-z0-9]{4,10}){1,2}\b/g) || [];
+    const namespaces =
+      text.match(/(?:namespace|ns|project)\s+(\S+)/gi) || [];
+    const actions =
+      text.match(
+        /(?:restart|scale|delete|upgrade|rollout|patch|create|apply)\b/gi
+      ) || [];
+    const role = h.role === "ai" ? "Assistant" : "User";
+    const brief = text.replace(/\n+/g, " ").substring(0, 150);
+    summaryParts.push(
+      `[${role}]: ${brief}` +
+        (pods.length
+          ? " | Pods: " + [...new Set(pods)].slice(0, 3).join(", ")
+          : "") +
+        (actions.length
+          ? " | Actions: " + [...new Set(actions)].join(", ")
+          : "")
+    );
+  }
+
+  const summaryMsg = {
+    role: "system",
+    content: `[Conversation summary - earlier messages condensed]\n${summaryParts.join("\n")}`,
+  };
+
+  const latestMsgs = latest.map((h) => ({
     role: h.role === "ai" ? "assistant" : "user",
     content: h.text || "",
   }));
+
+  return [summaryMsg, ...latestMsgs];
+}
+
+// ---------------------------------------------------------------------------
+// Summarize raw cluster context into concise bullet-point text to reduce
+// token usage when sending to the LLM.
+// ---------------------------------------------------------------------------
+function summarizeContext(ctx) {
+  if (!ctx || typeof ctx !== "object") return "";
+  const sections = [];
+
+  // --- Cluster version ---
+  if (ctx.clusterVersion) {
+    const cv = ctx.clusterVersion;
+    const ver = cv.desired || cv.version || "unknown";
+    const channel = cv.channel || "";
+    sections.push(`## Cluster\n- OpenShift ${ver}${channel ? `, channel ${channel}` : ""}`);
+  }
+
+  // --- Nodes ---
+  if (Array.isArray(ctx.nodes) && ctx.nodes.length > 0) {
+    const readyCount = ctx.nodes.filter(
+      (n) => n.status === "Ready" || n.conditions?.some?.((c) => c.type === "Ready" && c.status === "True")
+    ).length;
+    const notReady = ctx.nodes.filter(
+      (n) => n.status !== "Ready" && !(n.conditions?.some?.((c) => c.type === "Ready" && c.status === "True"))
+    );
+    let nodeLine = `${ctx.nodes.length} nodes (${readyCount} Ready`;
+    if (notReady.length > 0) {
+      const details = notReady
+        .slice(0, 3)
+        .map((n) => {
+          const pressures = (n.conditions || [])
+            .filter((c) => c.type !== "Ready" && c.status === "True")
+            .map((c) => c.type);
+          return `${n.name || "unknown"}${pressures.length ? " " + pressures.join(",") : ""}`;
+        })
+        .join("; ");
+      nodeLine += `, ${notReady.length} NotReady: ${details}`;
+    }
+    nodeLine += ")";
+    sections.push(`## Nodes\n- ${nodeLine}`);
+  }
+
+  // --- Problem pods ---
+  if (Array.isArray(ctx.problemPods) && ctx.problemPods.length > 0) {
+    const grouped = {};
+    for (const p of ctx.problemPods) {
+      const state = p.reason || p.state || p.status || "Unknown";
+      if (!grouped[state]) grouped[state] = [];
+      grouped[state].push(p);
+    }
+    const lines = [`${ctx.problemPods.length} problem pod(s):`];
+    for (const [state, pods] of Object.entries(grouped)) {
+      const podBriefs = pods.slice(0, 5).map((p) => {
+        const parts = [p.name || "?"];
+        if (p.namespace) parts[0] += ` (${p.namespace}`;
+        const exitCode = p.exitCode ?? p.containers?.[0]?.exitCode;
+        if (exitCode !== undefined && exitCode !== null) parts[0] += `, exitCode=${exitCode}`;
+        const reason = p.lastTerminatedReason || p.containers?.[0]?.lastTerminatedReason;
+        if (reason) parts[0] += `, ${reason}`;
+        if (p.namespace) parts[0] += ")";
+        if (p.restartCount !== undefined) parts.push(`restarts=${p.restartCount}`);
+        return parts.join(", ");
+      });
+      lines.push(`  - **${state}**: ${podBriefs.join("; ")}${pods.length > 5 ? ` (+${pods.length - 5} more)` : ""}`);
+    }
+    sections.push(`## Problem Pods\n${lines.join("\n")}`);
+  }
+
+  // --- Operators ---
+  if (Array.isArray(ctx.operators) && ctx.operators.length > 0) {
+    const degraded = ctx.operators.filter(
+      (o) => o.degraded === true || o.available === false || o.status === "Degraded"
+    );
+    let opLine = `${ctx.operators.length} operators`;
+    if (degraded.length > 0) {
+      const names = degraded.slice(0, 5).map((o) => o.name || "unknown").join(", ");
+      opLine += ` (${degraded.length} degraded: ${names})`;
+    } else {
+      opLine += " (all available)";
+    }
+    sections.push(`## Operators\n- ${opLine}`);
+  }
+
+  // --- Focus pod (keep as structured JSON for detailed diagnosis) ---
+  if (ctx._focusPod) {
+    const focus = {
+      _focusPod: ctx._focusPod,
+    };
+    if (ctx._focusPodLogs) focus._focusPodLogs = ctx._focusPodLogs;
+    if (ctx._focusPodLogsPrevious) focus._focusPodLogsPrevious = ctx._focusPodLogsPrevious;
+    if (ctx._focusPodLogsError) focus._focusPodLogsError = ctx._focusPodLogsError;
+    if (ctx._focusPodEvents) focus._focusPodEvents = ctx._focusPodEvents;
+    if (ctx._focusPodMetrics) focus._focusPodMetrics = ctx._focusPodMetrics;
+    sections.push(`## Focus Pod (detailed)\n\`\`\`json\n${JSON.stringify(focus, null, 2)}\n\`\`\``);
+  }
+
+  // --- Correlations ---
+  if (Array.isArray(ctx.correlations) && ctx.correlations.length > 0) {
+    const lines = ctx.correlations.slice(0, 10).map((c) => {
+      let line = `- **${c.pod || "unknown"}** (${c.namespace || "?"}) — ${c.likelyCause || "unknown cause"}`;
+      if (Array.isArray(c.evidence) && c.evidence.length > 0) {
+        line += ": " + c.evidence.slice(0, 3).join("; ");
+      }
+      return line;
+    });
+    sections.push(`## Correlations\n${lines.join("\n")}`);
+  }
+
+  // --- Events (last 5 relevant) ---
+  if (Array.isArray(ctx.events) && ctx.events.length > 0) {
+    const relevant = ctx.events
+      .filter((e) => e.type === "Warning" || e.reason === "BackOff" || e.reason === "OOMKilling" || e.reason === "Failed" || e.reason === "Unhealthy" || e.reason === "FailedScheduling")
+      .slice(0, 5);
+    const evts = (relevant.length > 0 ? relevant : ctx.events.slice(0, 5)).map((e) => {
+      return `- [${e.type || "?"}] ${e.reason || "?"}: ${(e.message || "").substring(0, 120)}${e.namespace ? " (" + e.namespace + ")" : ""}`;
+    });
+    sections.push(`## Events (recent)\n${evts.join("\n")}`);
+  }
+
+  // --- Deployments ---
+  if (Array.isArray(ctx.deployments) && ctx.deployments.length > 0) {
+    const unhealthy = ctx.deployments.filter(
+      (d) => d.availableReplicas < d.replicas || d.unavailableReplicas > 0
+    );
+    if (unhealthy.length > 0) {
+      const lines = unhealthy.slice(0, 5).map(
+        (d) => `- ${d.name} (${d.namespace || "?"}): ${d.availableReplicas || 0}/${d.replicas || "?"} ready`
+      );
+      sections.push(`## Deployments (unhealthy)\n${lines.join("\n")}`);
+    } else {
+      sections.push(`## Deployments\n- ${ctx.deployments.length} deployment(s), all healthy`);
+    }
+  }
+
+  // --- Any remaining top-level keys that might carry useful data ---
+  const summarizedKeys = new Set([
+    "clusterVersion", "nodes", "problemPods", "operators",
+    "_focusPod", "_focusPodLogs", "_focusPodLogsPrevious",
+    "_focusPodLogsError", "_focusPodEvents", "_focusPodMetrics",
+    "correlations", "events", "deployments",
+    "targetPod", "targetPodName", "targetPodLogs",
+    "targetPodLogsPrevious", "targetPodLogsError",
+    "targetPodEvents", "targetPodMetrics", "queryFilter",
+  ]);
+  const remaining = {};
+  for (const [key, value] of Object.entries(ctx)) {
+    if (!summarizedKeys.has(key) && value !== null && value !== undefined) {
+      remaining[key] = value;
+    }
+  }
+  if (Object.keys(remaining).length > 0) {
+    // Include remaining data as compact JSON so nothing is lost
+    const compactJson = JSON.stringify(remaining);
+    // Only include if reasonably sized
+    if (compactJson.length < 3000) {
+      sections.push(`## Additional Data\n\`\`\`json\n${compactJson}\n\`\`\``);
+    } else {
+      // Truncate to keep token budget manageable
+      sections.push(`## Additional Data (truncated)\n\`\`\`json\n${compactJson.substring(0, 3000)}...\n\`\`\``);
+    }
+  }
+
+  return sections.join("\n\n");
 }
 
 async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
@@ -2983,7 +3367,7 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
     Object.assign(ctx, focused);
   }
 
-  const contextStr = JSON.stringify(ctx, null, 2);
+  const contextStr = summarizeContext(ctx);
   const userContent = `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;
 
   // Build messages array, optionally including conversation history
@@ -3006,7 +3390,7 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
       azureDeployment: opts.azureDeployment,
       azureApiVersion: opts.azureApiVersion,
     });
-    return r.text || builtInAnalysis(userMessage, clusterContext);
+    return validateResponse(r.text, clusterContext) || builtInAnalysis(userMessage, clusterContext);
   } catch (err) {
     return `LLM Error: ${err.message}\n\n---\n\n${builtInAnalysis(userMessage, clusterContext)}`;
   }
@@ -5925,7 +6309,7 @@ export async function handleChatAPI(req, res) {
             Object.assign(focused, context);
             Object.assign(context, focused);
           }
-          const contextStr = JSON.stringify(context, null, 2);
+          const contextStr = summarizeContext(context);
           const userContent = `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;
           const priorMessages = historyToMessages(llmOpts.history);
           let fullText = "";
@@ -6120,7 +6504,7 @@ export async function handleChatCompareAPI(req, res) {
 
     // Gather cluster context once, shared across all providers
     const context = await gatherClusterContext(message);
-    const contextStr = JSON.stringify(context, null, 2);
+    const contextStr = summarizeContext(context);
     const userContent = `${message}\n\n--- Live Cluster Data ---\n${contextStr}`;
 
     // Send to all providers in parallel
