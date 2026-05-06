@@ -5973,6 +5973,67 @@ export async function handleChatAPI(req, res) {
       }
     }
 
+    // ---- Confidence-based routing ----
+    // Very low confidence with no conversation history — ask for clarification
+    // rather than risk a poor answer.
+    const confidence = parsed.confidence || 0;
+    if (confidence < 0.3 && !hasHistory) {
+      const reply = `I'm not sure I understood your question correctly. Could you rephrase or provide more details?\n\nFor example, you can ask:\n- "Show pods with issues in namespace X"\n- "Check cluster health"\n- "Diagnose pod my-pod-xyz"\n- "List deployments in production"`;
+      const provider = "built-in";
+      if (conversationId) {
+        histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+      }
+      if (wantsStream) {
+        sseStart(res);
+        sseSend(res, { delta: reply });
+        sseSend(res, { done: true, provider, conversationId });
+        sseEnd(res);
+        return;
+      }
+      return json(res, 200, { reply, provider, contextKeys: ["lowConfidence"], cached: false, conversationId });
+    }
+
+    // High confidence with a clear built-in intent and no LLM configured —
+    // route directly to builtInAnalysis without the overhead of LLM context
+    // preparation.  This fast-path covers pod_issues, cluster_health, nodes, etc.
+    const FAST_BUILT_IN_INTENTS = new Set(["list", "get", "describe", "diagnose", "health"]);
+    const FAST_BUILT_IN_RESOURCES = new Set(["pod", "node", "deployment", "cluster", "namespace", "service"]);
+    if (
+      confidence > 0.8 &&
+      FAST_BUILT_IN_INTENTS.has(parsed.intent) &&
+      FAST_BUILT_IN_RESOURCES.has(parsed.resource) &&
+      !llmEnabled(llmOpts)
+    ) {
+      try {
+        const fastCtx = await gatherClusterContext(userMessage, parsed);
+        const reply = builtInAnalysis(userMessage, fastCtx);
+        const provider = "built-in";
+        if (conversationId) {
+          histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+        }
+        updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
+        if (wantsStream) {
+          sseStart(res);
+          sseSend(res, { stage: "querying" });
+          sseSend(res, { stage: "generating" });
+          sseSend(res, { delta: reply });
+          sseSend(res, { done: true, provider, conversationId });
+          sseEnd(res);
+          return;
+        }
+        return json(res, 200, {
+          reply,
+          provider,
+          contextKeys: Object.keys(fastCtx || {}),
+          cached: false,
+          conversationId,
+        });
+      } catch (e) {
+        console.warn("[chat-api] fast built-in path failed, falling through:", e.message);
+        // Fall through to normal handling
+      }
+    }
+
     // ---- ITSM: detect "raise change request" / "create incident" ----
     const itsmType = await detectITSMIntent(userMessage);
     if (itsmType) {
@@ -6327,6 +6388,12 @@ export async function handleChatAPI(req, res) {
           return { context, fullText };
         });
         const { context, fullText } = sseTraced;
+        // Post-stream grounding validation — append disclaimer if needed
+        const validatedFull = validateResponse(fullText, context);
+        if (validatedFull && validatedFull.length > fullText.length) {
+          const groundingDisclaimer = validatedFull.slice(fullText.length);
+          sseSend(res, { delta: groundingDisclaimer });
+        }
         const correlationsBlock = renderCorrelationsMarkdown(context?.correlations || []);
         if (correlationsBlock) sseSend(res, { delta: "\n" + correlationsBlock });
         const topCause = context?.correlations?.[0];
@@ -6379,7 +6446,7 @@ export async function handleChatAPI(req, res) {
         try {
           let kbContext = "";
           try {
-            const kbMatches = kbFindSimilar({
+            const kbMatches = await kbFindSimilar({
               type: parsed?.resource || "",
               symptoms: userMessage,
               namespace: parsed?.namespace || "",
@@ -6426,6 +6493,8 @@ export async function handleChatAPI(req, res) {
       return { context, replyText, toolsUsed };
     });
     let { context, replyText: reply, toolsUsed = [] } = traced;
+    // Post-response grounding validation for non-streaming path
+    reply = validateResponse(reply, context);
     intentsForLog = Array.isArray(context?.intents) ? context.intents : Object.keys(context || {});
 
     const correlationsBlock = renderCorrelationsMarkdown(context?.correlations || []);

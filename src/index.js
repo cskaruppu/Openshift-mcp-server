@@ -998,7 +998,7 @@ async function startSSE() {
     }
     if (url.pathname === "/api/intelligence/kb/search" && req.method === "POST") {
       const body = await readJsonBody(req);
-      const matches = kbFindSimilar(body);
+      const matches = await kbFindSimilar(body);
       return sendJson(res, 200, { matches, context: buildKBContext(matches) });
     }
     if (url.pathname === "/api/intelligence/kb/record" && req.method === "POST") {
