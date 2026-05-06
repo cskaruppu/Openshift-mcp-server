@@ -139,6 +139,32 @@ export async function addMessage(conversationId, { role, content, html, provider
   };
 }
 
+/** Update a message's content by DB id. */
+export async function updateMessage(conversationId, messageId, { content, html }) {
+  const r = await query(
+    `UPDATE messages SET content = $1, html = $2
+      WHERE id = $3 AND conversation_id = $4
+      RETURNING id`,
+    [content, html || null, messageId, conversationId]
+  );
+  return r && r.rowCount > 0;
+}
+
+/** Find a message by content substring and replace it. */
+export async function replaceMessageContent(conversationId, search, newContent) {
+  const r = await query(
+    `UPDATE messages SET content = $1, html = NULL
+      WHERE id = (
+        SELECT id FROM messages
+        WHERE conversation_id = $2 AND content LIKE '%' || $3 || '%'
+        ORDER BY id DESC LIMIT 1
+      )
+      RETURNING id`,
+    [newContent, conversationId, search]
+  );
+  return r && r.rowCount > 0;
+}
+
 /** Update conversation title. */
 export async function updateTitle(id, title) {
   const r = await query(

@@ -74,6 +74,8 @@ import {
   createChat,
   deleteChat,
   updateTitle,
+  updateMessage,
+  replaceMessageContent,
   isHistoryEnabled,
 } from "./services/chat-history.js";
 import { initDb, query as dbQuery, isEnabled as dbEnabled } from "./utils/db.js";
@@ -608,6 +610,41 @@ async function handleChatHistoryAPI(url, req, res) {
           return sendJson(res, ok ? 200 : 404, { success: ok });
         }
         return sendJson(res, 400, { error: "No fields to update" });
+      } catch (err) {
+        return sendJson(res, 400, { error: err.message });
+      }
+    }
+    return sendJson(res, 405, { error: "Method not allowed" });
+  }
+
+  // /api/chats/:id/messages/replace  (search & replace by content substring)
+  const mr = url.pathname.match(/^\/api\/chats\/([^/]+)\/messages\/replace$/);
+  if (mr) {
+    const chatId = decodeURIComponent(mr[1]);
+    if (req.method === "POST") {
+      try {
+        const body = await readJsonBody(req);
+        if (!body.search || !body.content) return sendJson(res, 400, { error: "search and content required" });
+        const ok = await replaceMessageContent(chatId, body.search, body.content);
+        return sendJson(res, ok ? 200 : 404, { success: ok });
+      } catch (err) {
+        return sendJson(res, 400, { error: err.message });
+      }
+    }
+    return sendJson(res, 405, { error: "Method not allowed" });
+  }
+
+  // /api/chats/:id/messages/:msgId
+  const mm = url.pathname.match(/^\/api\/chats\/([^/]+)\/messages\/(\d+)$/);
+  if (mm) {
+    const chatId = decodeURIComponent(mm[1]);
+    const msgId = Number(mm[2]);
+    if (req.method === "PATCH") {
+      try {
+        const body = await readJsonBody(req);
+        if (!body.content) return sendJson(res, 400, { error: "content required" });
+        const ok = await updateMessage(chatId, msgId, { content: body.content, html: body.html });
+        return sendJson(res, ok ? 200 : 404, { success: ok });
       } catch (err) {
         return sendJson(res, 400, { error: err.message });
       }

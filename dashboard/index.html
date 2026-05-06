@@ -4283,8 +4283,25 @@ async function submitITSMForm(formId, type) {
                 try {
                   var pf = JSON.parse(fmMatch[1].replace(/@ @/g, '@@'));
                   if (pf.type === type) {
-                    ac.messages[mi].text = mt.replace(/@@ITSM_FORM\|[\s\S]+?@@/, submittedToken);
+                    var newText = mt.replace(/@@ITSM_FORM\|[\s\S]+?@@/, submittedToken);
+                    ac.messages[mi].text = newText;
                     saveChatHistory(hist);
+                    // Persist to server DB so the change survives page refresh
+                    if (_historyRemote) {
+                      if (ac.messages[mi].dbId) {
+                        fetch(chatApiBase() + '/api/chats/' + encodeURIComponent(hist.activeId) + '/messages/' + ac.messages[mi].dbId, {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ content: newText }),
+                        }).catch(function() {});
+                      } else {
+                        fetch(chatApiBase() + '/api/chats/' + encodeURIComponent(hist.activeId) + '/messages/replace', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ search: '@@ITSM_FORM|', content: newText }),
+                        }).catch(function() {});
+                      }
+                    }
                     break;
                   }
                 } catch(pe) {}
@@ -5187,6 +5204,7 @@ async function selectChat(id) {
           const full = await resp.json();
           chat.title = full.title || chat.title;
           chat.messages = (full.messages || []).map(m => ({
+            dbId: m.id,
             role: m.role === 'assistant' ? 'ai' : m.role,
             text: m.content,
             html: m.html || (m.role !== 'user' ? md(m.content || '') : null),
