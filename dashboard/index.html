@@ -1227,6 +1227,60 @@ tr:hover td{background:#ffffff06}
 .light-theme .uw-header{border-color:#e0e0e6}
 .light-theme .uw-footer{border-color:#e0e0e6}
 .light-theme .uw-phases{border-color:#e0e0e6}
+/* Pending CR Panel */
+.pending-cr-panel {
+  margin: 0 0 16px 0;
+  border: 1px solid color-mix(in srgb, var(--accent2) 25%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent2) 5%, var(--bg));
+  overflow: hidden;
+}
+.pending-cr-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--accent2) 10%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent2);
+  cursor: pointer;
+  user-select: none;
+}
+.pending-cr-panel-header:hover { background: color-mix(in srgb, var(--accent2) 15%, transparent); }
+.pending-cr-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  font-size: 12px;
+}
+.pending-cr-item:hover { background: color-mix(in srgb, var(--accent2) 5%, transparent); }
+.cr-status-badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.cr-status-badge.approved { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+.cr-status-badge.submitted { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+.cr-status-badge.scheduled { background: color-mix(in srgb, var(--accent2) 15%, transparent); color: var(--accent2); }
+.cr-age { color: var(--text2); font-size: 10px; white-space: nowrap; }
+.cr-actions { display: flex; gap: 4px; margin-left: auto; }
+.cr-actions button {
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent2) 30%, transparent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent2);
+  font-size: 10px;
+  cursor: pointer;
+}
+.cr-actions button:hover { background: color-mix(in srgb, var(--accent2) 15%, transparent); }
+.cr-actions button.execute { border-color: color-mix(in srgb, var(--ok) 40%, transparent); color: var(--ok); }
+.cr-actions button.execute:hover { background: color-mix(in srgb, var(--ok) 15%, transparent); }
 </style>
 </head>
 <body>
@@ -1764,6 +1818,7 @@ tr:hover td{background:#ffffff06}
 
     <!-- Conversation messages -->
     <div class="chat-conversation" id="chat-conversation">
+      <div id="pending-cr-panel" style="display:none"></div>
       <div class="chat-conv-inner" id="chat-conv-inner">
         <div class="chat-welcome" id="chat-welcome">
           <div style="width:52px;height:52px;border-radius:16px;background:linear-gradient(135deg,#e04040,#a020a0);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:#fff">KN</div>
@@ -5016,6 +5071,7 @@ function showView(view) {
       scrollConversation();
     });
     setTimeout(function() { document.getElementById('full-chat-input')?.focus(); }, 200);
+    checkPendingCRNotifications();
   } else if (view === 'audit') {
     loadAuditView();
   } else if (view === 'settings') {
@@ -5678,6 +5734,13 @@ async function sendFullChat(text) {
       const clusterCtx = clusterSel && clusterSel.value !== 'local' ? clusterSel.value : undefined;
       const chatBody = { message: msg, conversationId: history.activeId, history: chatHistory, ...providerOpts };
       if (clusterCtx) chatBody.cluster = clusterCtx;
+      // Attach pending CR context if relevant
+      try {
+        var pendingCrs = await fetchPendingCRs();
+        if (pendingCrs && pendingCrs.length > 0) {
+          chatBody.pendingCRs = pendingCrs;
+        }
+      } catch(e) {}
       const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -6295,6 +6358,176 @@ function stopActionsPolling() {
   const cv = document.getElementById('view-chat');
   if (cv && cv.style.display !== 'none') startActionsPolling();
 })();
+
+// ---------------------------------------------------------------------------
+// Pending CRs Panel
+// ---------------------------------------------------------------------------
+async function fetchPendingCRs() {
+  try {
+    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/cr/pending');
+    if (!resp.ok) return [];
+    var data = await resp.json();
+    return data.crs || [];
+  } catch(e) { return []; }
+}
+
+function formatCRAge(dateStr) {
+  if (!dateStr) return '';
+  var ms = Date.now() - new Date(dateStr).getTime();
+  var mins = Math.floor(ms / 60000);
+  if (mins < 60) return mins + 'm ago';
+  var hours = Math.floor(mins / 60);
+  if (hours < 24) return hours + 'h ago';
+  var days = Math.floor(hours / 24);
+  return days + 'd ago';
+}
+
+function renderPendingCRPanel(crs) {
+  var panel = document.getElementById('pending-cr-panel');
+  if (!panel) return;
+  if (!crs || crs.length === 0) { panel.style.display = 'none'; return; }
+
+  panel.style.display = 'block';
+  var count = crs.length;
+  var html = '<div class="pending-cr-panel">' +
+    '<div class="pending-cr-panel-header" onclick="togglePendingCRBody()">' +
+      '<span>&#x1F4CB;</span>' +
+      '<span>Pending Change Requests (' + count + ')</span>' +
+      '<span style="margin-left:auto;font-size:10px" id="cr-panel-arrow">&#x25BC;</span>' +
+    '</div>' +
+    '<div id="pending-cr-body">';
+
+  crs.forEach(function(cr) {
+    var statusClass = cr.status || 'submitted';
+    var age = formatCRAge(cr.createdAt);
+    var schedInfo = '';
+    if (cr.scheduledDate) {
+      var sd = new Date(cr.scheduledDate);
+      var now = new Date();
+      var daysUntil = Math.ceil((sd - now) / 86400000);
+      if (daysUntil > 0) schedInfo = '<span style="color:var(--accent2);font-size:10px"> (in ' + daysUntil + ' days)</span>';
+      else if (daysUntil === 0) schedInfo = '<span style="color:var(--warn);font-size:10px"> (today!)</span>';
+      else schedInfo = '<span style="color:var(--crit);font-size:10px"> (' + Math.abs(daysUntil) + 'd overdue)</span>';
+    }
+
+    html += '<div class="pending-cr-item">' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-weight:600;color:var(--text)">' + esc(cr.ticketId) + ' <span class="cr-status-badge ' + statusClass + '">' + esc(cr.status) + '</span>' + schedInfo + '</div>' +
+        '<div style="color:var(--text2);font-size:11px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(cr.title || '') + '</div>' +
+        '<div style="color:var(--text2);font-size:10px;margin-top:2px">' +
+          (cr.fromVersion && cr.targetVersion ? esc(cr.fromVersion) + ' &#x2192; ' + esc(cr.targetVersion) : '') +
+          (cr.channel ? ' &middot; ' + esc(cr.channel) : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="cr-age">' + age + '</div>' +
+      '<div class="cr-actions">' +
+        '<button onclick="syncCR(\'' + esc(cr.ticketId) + '\')">&#x1F504; Sync</button>' +
+        (cr.status === 'approved' && !cr.scheduledDate ? '<button onclick="scheduleCR(\'' + esc(cr.ticketId) + '\')">&#x1F4C5; Schedule</button>' : '') +
+        (cr.status === 'approved' ? '<button class="execute" onclick="executePendingCR(\'' + esc(cr.ticketId) + '\')">&#x25B6; Execute</button>' : '') +
+      '</div>' +
+    '</div>';
+  });
+
+  html += '</div></div>';
+  panel.innerHTML = html;
+}
+
+function togglePendingCRBody() {
+  var body = document.getElementById('pending-cr-body');
+  var arrow = document.getElementById('cr-panel-arrow');
+  if (body) {
+    var visible = body.style.display !== 'none';
+    body.style.display = visible ? 'none' : 'block';
+    if (arrow) arrow.innerHTML = visible ? '&#x25B6;' : '&#x25BC;';
+  }
+}
+
+async function syncCR(ticketId) {
+  try {
+    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/cr/' + encodeURIComponent(ticketId) + '/sync', { method: 'POST' });
+    var data = await resp.json();
+    if (data.changed) {
+      refreshPendingCRs();
+    }
+  } catch(e) {}
+}
+
+async function executePendingCR(ticketId) {
+  // Send a chat message to trigger the upgrade execution
+  var input = document.getElementById('full-chat-input');
+  if (input) {
+    input.value = 'Execute upgrade for change request ' + ticketId;
+    sendFullChat();
+  }
+}
+
+async function scheduleCR(ticketId) {
+  var date = prompt('Enter planned execution date (YYYY-MM-DD):');
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+  try {
+    await fetch(MCP_API.replace(/\/api$/, '') + '/api/cr/' + encodeURIComponent(ticketId), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'scheduled', scheduledDate: date + 'T00:00:00Z' }),
+    });
+    refreshPendingCRs();
+  } catch(e) {}
+}
+
+async function refreshPendingCRs() {
+  var crs = await fetchPendingCRs();
+  renderPendingCRPanel(crs);
+}
+
+// ---------------------------------------------------------------------------
+// Proactive CR Notifications on Session Start
+// ---------------------------------------------------------------------------
+async function checkPendingCRNotifications() {
+  try {
+    var crs = await fetchPendingCRs();
+    if (!crs || crs.length === 0) return;
+    renderPendingCRPanel(crs);
+
+    // Show proactive notification for old approved CRs
+    var now = Date.now();
+    crs.forEach(function(cr) {
+      if (cr.status !== 'approved') return;
+      var ageMs = now - new Date(cr.createdAt).getTime();
+      var ageDays = Math.floor(ageMs / 86400000);
+      if (ageDays >= 1) {
+        var notifId = 'cr-notif-' + cr.ticketId;
+        if (document.getElementById(notifId)) return; // already shown
+        var inner = document.getElementById('chat-conv-inner');
+        if (!inner) return;
+        var notif = document.createElement('div');
+        notif.id = notifId;
+        notif.style.cssText = 'margin:8px 0;padding:10px 14px;border-radius:8px;background:color-mix(in srgb,var(--warn) 10%,var(--bg));border:1px solid color-mix(in srgb,var(--warn) 30%,transparent);font-size:12px;display:flex;align-items:center;gap:8px';
+        var schedNote = '';
+        if (cr.scheduledDate) {
+          var sd = new Date(cr.scheduledDate);
+          var daysUntil = Math.ceil((sd - now) / 86400000);
+          if (daysUntil <= 0) schedNote = ' <strong style="color:var(--crit)">Scheduled date has passed!</strong>';
+          else if (daysUntil <= 3) schedNote = ' Scheduled in <strong>' + daysUntil + ' day(s)</strong>.';
+        }
+        notif.innerHTML = '<span style="font-size:16px">&#x26A0;&#xFE0F;</span>' +
+          '<div style="flex:1"><strong>' + esc(cr.ticketId) + '</strong> was approved <strong>' + ageDays + ' day(s) ago</strong> but not yet executed.' + schedNote +
+          '<br><span style="color:var(--text2)">' + esc(cr.title || '') + ' &middot; ' + esc(cr.fromVersion || '') + ' &#x2192; ' + esc(cr.targetVersion || '') + '</span></div>' +
+          '<button onclick="executePendingCR(\'' + esc(cr.ticketId) + '\');this.parentElement.remove()" style="padding:4px 10px;border:1px solid var(--ok);border-radius:6px;background:transparent;color:var(--ok);font-size:11px;cursor:pointer;white-space:nowrap">Execute Now</button>' +
+          '<button onclick="this.parentElement.remove()" style="padding:4px 8px;border:none;background:transparent;color:var(--text2);cursor:pointer;font-size:14px">&times;</button>';
+        inner.insertBefore(notif, inner.firstChild);
+      }
+    });
+  } catch(e) {}
+}
+
+// Periodically refresh pending CRs every 5 minutes
+setInterval(refreshPendingCRs, 5 * 60 * 1000);
+
+// Fire an initial pending CR check shortly after page load
+setTimeout(function() {
+  var cv = document.getElementById('view-chat');
+  if (cv && cv.style.display !== 'none') checkPendingCRNotifications();
+}, 4000);
 
 // ---------------------------------------------------------------------------
 // Feedback — thumbs up/down on AI messages

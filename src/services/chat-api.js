@@ -37,6 +37,7 @@ import {
   isHistoryEnabled,
 } from "./chat-history.js";
 import { parse as nluParse, describeParse } from "./nlu.js";
+import { getPendingCRs } from "./cr-tracker.js";
 import { getMemory, updateMemory, memoryPatchFromParse } from "./conversation-memory.js";
 import {
   actionFromParse,
@@ -2719,6 +2720,32 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
             type: c.type, status: c.status, message: c.message,
           })),
         };
+      }).catch(() => {})
+    );
+    tasks.push(
+      getPendingCRs().then((crs) => {
+        if (crs && crs.length > 0) {
+          context.pendingChangeRequests = crs.map(cr => ({
+            ticketId: cr.ticketId, status: cr.status, title: cr.title,
+            targetVersion: cr.targetVersion, fromVersion: cr.fromVersion,
+            scheduledDate: cr.scheduledDate, createdAt: cr.createdAt,
+          }));
+        }
+      }).catch(() => {})
+    );
+  }
+
+  // Also inject pending CRs when user explicitly mentions change requests
+  if (/\b(change.?request|CHG\d|CR\s*status|pending.?cr|approved.?cr)\b/i.test(lower) && !context.intents.includes("cluster_upgrade")) {
+    tasks.push(
+      getPendingCRs().then((crs) => {
+        if (crs && crs.length > 0) {
+          context.pendingChangeRequests = crs.map(cr => ({
+            ticketId: cr.ticketId, status: cr.status, title: cr.title,
+            targetVersion: cr.targetVersion, fromVersion: cr.fromVersion,
+            scheduledDate: cr.scheduledDate, createdAt: cr.createdAt,
+          }));
+        }
       }).catch(() => {})
     );
   }
