@@ -6349,10 +6349,11 @@ export async function handleChatAPI(req, res) {
       // gatherClusterContext + LLM call.
       const heartbeat = setInterval(() => sseHeartbeat(res), 2000);
       try {
-        sseSend(res, { stage: "querying" });
+        sseSend(res, { stage: "querying", toolProgress: "Fetching cluster data..." });
         const { result: sseTraced, trace: sseTrace } = await runWithTrace(async () => {
           let context = await gatherClusterContext(userMessage, parsed);
-          sseSend(res, { stage: "generating" });
+          sseSend(res, { stage: "analyzing", toolProgress: "Analyzing " + (context.problemPods?.length || 0) + " problem pods, " + (context.nodes?.length || 0) + " nodes..." });
+          sseSend(res, { stage: "generating", toolProgress: "Generating response with " + activeProvider + "..." });
           if (context.targetPod) {
             const focused = {
               _focusPod: context.targetPod,
