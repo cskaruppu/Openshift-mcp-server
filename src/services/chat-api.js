@@ -1303,10 +1303,11 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
           return 0;
         });
 
+        const curParts = currentVersion.split(".").map(Number);
+
         if (requestedVersion) {
           // User asked for a specific version — provide targeted response
           const matchedUpdate = sorted.find(u => u.version === requestedVersion);
-          const curParts = currentVersion.split(".").map(Number);
           const tgtParts = requestedVersion.split(".").map(Number);
           const isZStream = curParts[0] === tgtParts[0] && curParts[1] === tgtParts[1];
           const upgradeType = isZStream ? "Z-stream (patch)" : "Minor version";
