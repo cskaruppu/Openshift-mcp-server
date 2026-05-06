@@ -257,49 +257,37 @@ tr:hover td{background:#ffffff06}
 .loading{color:var(--text2);font-size:13px;padding:12px;text-align:center}
 .empty-row td{color:var(--text2);text-align:center;padding:20px}
 .last-updated{font-size:11px;color:var(--text2);margin-left:auto}
-/* Cluster Topology Map */
+/* Cluster Node Topology */
 .topo-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:0;overflow:hidden}
 .topo-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border)}
 .topo-header h3{font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
-.topo-canvas{padding:16px;min-height:320px;position:relative;overflow-x:auto}
-.arch-layer{margin-bottom:12px;border:1px solid var(--border);border-radius:10px;overflow:hidden}
-.arch-layer-head{display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--card-deep);font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;border-bottom:1px solid var(--border)}
-.arch-layer-head .arch-layer-icon{font-size:14px}
-.arch-layer-body{display:flex;flex-wrap:wrap;gap:8px;padding:10px 14px}
-.arch-comp{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;min-width:130px;cursor:pointer;transition:all .2s;position:relative}
-.arch-comp:hover{transform:translateY(-1px);box-shadow:0 3px 12px rgba(0,0,0,.2)}
-.arch-comp.available{border-color:var(--ok);background:rgba(34,197,94,.06)}
-.arch-comp.available .arch-comp-dot{background:var(--ok);box-shadow:0 0 6px rgba(34,197,94,.5)}
-.arch-comp.degraded{border-color:var(--crit);background:rgba(248,81,73,.06)}
-.arch-comp.degraded .arch-comp-dot{background:var(--crit);box-shadow:0 0 6px rgba(248,81,73,.5)}
-.arch-comp.progressing{border-color:var(--accent2);background:rgba(88,166,255,.06)}
-.arch-comp.progressing .arch-comp-dot{background:var(--accent2);box-shadow:0 0 6px rgba(88,166,255,.5);animation:arch-pulse 1.5s infinite}
-.arch-comp.unavailable{border-color:var(--warn);background:rgba(210,153,34,.06)}
-.arch-comp.unavailable .arch-comp-dot{background:var(--warn);box-shadow:0 0 6px rgba(210,153,34,.5)}
-.arch-comp.unknown{border-color:var(--border);background:var(--bg)}
-.arch-comp.unknown .arch-comp-dot{background:var(--text2)}
-@keyframes arch-pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.arch-comp-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.arch-comp-info{flex:1;min-width:0}
-.arch-comp-name{font-size:11px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.arch-comp-ver{font-size:9px;color:var(--text2)}
-.arch-comp-icon{font-size:16px;flex-shrink:0}
-.arch-node{display:flex;flex-direction:column;align-items:center;padding:10px 14px;background:var(--bg);border:1.5px solid var(--border);border-radius:10px;min-width:110px;cursor:pointer;transition:all .2s;gap:4px}
-.arch-node:hover{transform:translateY(-1px);box-shadow:0 3px 12px rgba(0,0,0,.2)}
-.arch-node.healthy{border-color:var(--ok);background:rgba(34,197,94,.06)}
-.arch-node.warning{border-color:var(--warn);background:rgba(210,153,34,.06)}
-.arch-node.critical{border-color:var(--crit);background:rgba(248,81,73,.06)}
-.arch-node-icon{font-size:20px}
-.arch-node-name{font-size:10px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100px;text-align:center}
-.arch-node-role{font-size:8px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px}
-.arch-node-stats{display:flex;gap:6px;font-size:9px;color:var(--text2)}
-.arch-node-pods{display:flex;gap:2px;flex-wrap:wrap;justify-content:center;max-width:100px}
-.arch-node-pods span{width:6px;height:6px;border-radius:1.5px;background:var(--ok)}
-.arch-node-pods span.w{background:var(--warn)}
-.arch-node-pods span.c{background:var(--crit)}
-.arch-conn{position:relative;display:flex;align-items:center;justify-content:center;padding:2px 0}
-.arch-conn::before{content:'';position:absolute;left:50%;width:1px;height:100%;background:var(--border);transform:translateX(-50%)}
-.arch-conn-arrow{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:2px 10px;font-size:9px;color:var(--text2);z-index:1;white-space:nowrap}
+.topo-op-bar{display:flex;gap:4px;padding:10px 18px;border-bottom:1px solid var(--border);align-items:center;flex-wrap:wrap}
+.topo-op-pill{font-size:10px;padding:3px 8px;border-radius:10px;display:flex;align-items:center;gap:4px;background:var(--card-deep);border:1px solid var(--border)}
+.topo-op-pill .op-dot{width:6px;height:6px;border-radius:50%}
+.topo-op-pill.ok .op-dot{background:var(--ok)}
+.topo-op-pill.degraded .op-dot{background:var(--crit)}
+.topo-op-pill.progressing .op-dot{background:var(--accent2);animation:topo-pulse 1.5s infinite}
+@keyframes topo-pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.topo-canvas{display:flex;flex-wrap:wrap;gap:10px;padding:14px 18px}
+.topo-node{display:flex;align-items:center;gap:12px;flex:1;min-width:220px;max-width:100%;padding:12px 14px;background:var(--card-deep);border:1.5px solid var(--border);border-radius:10px;cursor:pointer;transition:all .2s}
+.topo-node:hover{border-color:var(--accent2);box-shadow:0 2px 10px rgba(0,0,0,.15)}
+.topo-node.healthy{border-color:var(--ok)}
+.topo-node.warning{border-color:var(--warn)}
+.topo-node.critical{border-color:var(--crit)}
+.topo-node-left{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:40px}
+.topo-node-left .tn-icon{font-size:24px}
+.topo-node-left .tn-status{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+.topo-node.warning .tn-status{background:var(--warn)}
+.topo-node.critical .tn-status{background:var(--crit)}
+.topo-node-mid{flex:1;min-width:0}
+.topo-node-mid .tn-name{font-size:12px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topo-node-mid .tn-role{font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-top:1px}
+.topo-node-mid .tn-stats{display:flex;gap:10px;margin-top:6px;font-size:10px;color:var(--text2)}
+.topo-node-mid .tn-stats span{display:flex;align-items:center;gap:3px}
+.topo-node-pods{display:flex;flex-wrap:wrap;gap:2px;max-width:60px}
+.topo-node-pods span{width:5px;height:5px;border-radius:1px;background:var(--ok)}
+.topo-node-pods span.w{background:var(--warn)}
+.topo-node-pods span.c{background:var(--crit)}
 .topo-legend{display:flex;gap:14px;padding:10px 18px;border-top:1px solid var(--border);font-size:10px;color:var(--text2);flex-wrap:wrap}
 .topo-legend span{display:flex;align-items:center;gap:4px}
 .topo-legend i{width:8px;height:8px;border-radius:50%;display:inline-block}
@@ -1466,18 +1454,17 @@ tr:hover td{background:#ffffff06}
     <!-- Live Cluster Topology Map -->
     <div class="topo-card">
       <div class="topo-header">
-        <h3>&#x1F3D7; Cluster Architecture</h3>
+        <h3>&#x1F5A5; Node Topology</h3>
         <span style="font-size:11px;color:var(--text2)" id="topo-summary">Loading...</span>
       </div>
+      <div class="topo-op-bar" id="topo-op-bar"></div>
       <div class="topo-canvas" id="topo-canvas">
-        <div style="padding:20px;text-align:center;color:var(--text2);font-size:13px">Loading architecture...</div>
+        <div style="padding:20px;text-align:center;color:var(--text2);font-size:13px">Loading nodes...</div>
       </div>
       <div class="topo-legend">
-        <span><i style="background:var(--ok)"></i> Available</span>
-        <span><i style="background:var(--accent2)"></i> Progressing</span>
-        <span><i style="background:var(--warn)"></i> Unavailable</span>
-        <span><i style="background:var(--crit)"></i> Degraded</span>
-        <span><i style="background:var(--text2)"></i> Unknown</span>
+        <span><i style="background:var(--ok)"></i> Ready</span>
+        <span><i style="background:var(--warn)"></i> Warning</span>
+        <span><i style="background:var(--crit)"></i> NotReady</span>
       </div>
     </div>
     <!-- Cluster Health Timeline -->
@@ -2789,138 +2776,64 @@ async function loadACMClusters() {
 }
 
 // ---------------------------------------------------------------------------
-// Feature 1: Live Cluster Topology Map
+// Feature 1: Node Topology
 // ---------------------------------------------------------------------------
-var ARCH_LAYERS = {
-  controlPlane: {
-    label: 'Control Plane',
-    icon: '&#x1F3DB;',
-    operators: ['kube-apiserver','etcd','kube-controller-manager','kube-scheduler','openshift-apiserver','openshift-controller-manager'],
-    icons: {'kube-apiserver':'&#x1F310;','etcd':'&#x1F4BE;','kube-controller-manager':'&#x2699;','kube-scheduler':'&#x1F4CB;','openshift-apiserver':'&#x1F511;','openshift-controller-manager':'&#x1F39B;'}
-  },
-  networking: {
-    label: 'Networking & Ingress',
-    icon: '&#x1F310;',
-    operators: ['network','ingress','dns','service-ca'],
-    icons: {'network':'&#x1F578;','ingress':'&#x1F6AA;','dns':'&#x1F4E1;','service-ca':'&#x1F4DC;'}
-  },
-  storage: {
-    label: 'Storage & Registry',
-    icon: '&#x1F4C1;',
-    operators: ['storage','image-registry','csi-snapshot-controller'],
-    icons: {'storage':'&#x1F4BE;','image-registry':'&#x1F4E6;','csi-snapshot-controller':'&#x1F4F8;'}
-  },
-  monitoring: {
-    label: 'Monitoring & Logging',
-    icon: '&#x1F4CA;',
-    operators: ['monitoring','console','insights','cluster-autoscaler'],
-    icons: {'monitoring':'&#x1F4CA;','console':'&#x1F5A5;','insights':'&#x1F50D;','cluster-autoscaler':'&#x2696;'}
-  },
-  machine: {
-    label: 'Machine Management',
-    icon: '&#x2699;',
-    operators: ['machine-api','machine-config','node-tuning','cloud-credential'],
-    icons: {'machine-api':'&#x1F916;','machine-config':'&#x1F527;','node-tuning':'&#x1F3AF;','cloud-credential':'&#x1F512;'}
-  },
-  auth: {
-    label: 'Authentication & Security',
-    icon: '&#x1F6E1;',
-    operators: ['authentication','operator-lifecycle-manager','marketplace','config-operator'],
-    icons: {'authentication':'&#x1F510;','operator-lifecycle-manager':'&#x1F4E6;','marketplace':'&#x1F6D2;','config-operator':'&#x2699;'}
-  }
-};
-
 async function loadTopology() {
   var canvas = document.getElementById('topo-canvas');
   var summary = document.getElementById('topo-summary');
+  var opBar = document.getElementById('topo-op-bar');
   try {
     var results = await Promise.all([
-      apiFetch('/api/cluster/operators').catch(function() { return []; }),
       apiFetch('/api/nodes'),
       apiFetch('/api/cluster/summary').catch(function() { return null; }),
       apiFetch('/api/pods/issues').catch(function() { return []; }),
+      apiFetch('/api/cluster/operators').catch(function() { return []; }),
     ]);
-    var operators = results[0] || [];
-    var nodes = results[1] || [];
-    var clusterSummary = results[2];
-    var podIssues = results[3] || [];
+    var nodes = results[0] || [];
+    var clusterSummary = results[1];
+    var podIssues = results[2] || [];
+    var operators = results[3] || [];
 
-    // Build operator lookup
-    var opMap = {};
-    operators.forEach(function(op) { opMap[op.name] = op; });
-
-    // Summary line
-    var totalOps = operators.length;
-    var degradedCount = operators.filter(function(o) { return o.health === 'degraded'; }).length;
-    var availCount = operators.filter(function(o) { return o.health === 'available'; }).length;
     var readyNodes = nodes.filter(function(n) { return n.ready; }).length;
+    var totalOps = operators.length;
+    var degradedOps = operators.filter(function(o) { return o.health === 'degraded'; });
+    var progressingOps = operators.filter(function(o) { return o.health === 'progressing'; });
+    var availCount = operators.filter(function(o) { return o.health === 'available'; }).length;
+
+    // Summary
     if (clusterSummary && clusterSummary.cluster) {
-      summary.innerHTML = '<span style="color:var(--text)">' + esc(clusterSummary.cluster.version) + '</span> &middot; ' +
+      summary.innerHTML = esc(clusterSummary.cluster.version) + ' &middot; ' +
         readyNodes + '/' + nodes.length + ' nodes &middot; ' +
-        availCount + '/' + totalOps + ' operators' +
-        (degradedCount > 0 ? ' &middot; <span style="color:var(--crit)">' + degradedCount + ' degraded</span>' : '');
+        availCount + '/' + totalOps + ' operators';
     } else {
-      summary.textContent = readyNodes + '/' + nodes.length + ' nodes, ' + totalOps + ' operators';
+      summary.textContent = readyNodes + '/' + nodes.length + ' nodes';
     }
 
-    var html = '';
-
-    // Render architecture layers
-    var layerKeys = Object.keys(ARCH_LAYERS);
-    for (var li = 0; li < layerKeys.length; li++) {
-      var layer = ARCH_LAYERS[layerKeys[li]];
-      var comps = [];
-      layer.operators.forEach(function(opName) {
-        var op = opMap[opName];
-        if (op) {
-          comps.push(op);
-          delete opMap[opName];
-        }
+    // Compact operator status bar — only show if there are degraded/progressing
+    if (degradedOps.length > 0 || progressingOps.length > 0) {
+      var opHtml = '<span style="font-size:10px;color:var(--text2);margin-right:4px">Operators:</span>';
+      degradedOps.forEach(function(op) {
+        opHtml += '<span class="topo-op-pill degraded" title="' + esc(op.name) + ': ' + esc((op.message || '').slice(0, 100)) + '" style="cursor:pointer" onclick="openNewChatWithCommand(\'describe clusteroperator ' + esc(op.name) + '\',\'' + esc(op.name) + '\')"><span class="op-dot"></span>' + esc(op.name) + '</span>';
       });
-      if (comps.length === 0) continue;
-
-      html += '<div class="arch-layer">' +
-        '<div class="arch-layer-head"><span class="arch-layer-icon">' + layer.icon + '</span> ' + layer.label + '</div>' +
-        '<div class="arch-layer-body">';
-      comps.forEach(function(op) {
-        var icon = layer.icons[op.name] || '&#x2699;';
-        var displayName = op.name.replace(/-/g, ' ');
-        html += '<div class="arch-comp ' + esc(op.health) + '" title="' + esc(op.name) + (op.message ? ': ' + esc(op.message.slice(0, 120)) : '') + '" onclick="openNewChatWithCommand(\'describe clusteroperator ' + esc(op.name) + '\',\'' + esc(op.name) + '\')">' +
-          '<div class="arch-comp-dot"></div>' +
-          '<div class="arch-comp-info">' +
-            '<div class="arch-comp-name">' + esc(displayName) + '</div>' +
-            (op.version ? '<div class="arch-comp-ver">v' + esc(op.version) + '</div>' : '') +
-          '</div>' +
-          '<div class="arch-comp-icon">' + icon + '</div>' +
-        '</div>';
+      progressingOps.forEach(function(op) {
+        opHtml += '<span class="topo-op-pill progressing" title="' + esc(op.name) + ': ' + esc((op.message || '').slice(0, 100)) + '" style="cursor:pointer" onclick="openNewChatWithCommand(\'describe clusteroperator ' + esc(op.name) + '\',\'' + esc(op.name) + '\')"><span class="op-dot"></span>' + esc(op.name) + '</span>';
       });
-      html += '</div></div>';
+      if (availCount > 0) {
+        opHtml += '<span class="topo-op-pill ok"><span class="op-dot"></span>' + availCount + ' healthy</span>';
+      }
+      opBar.innerHTML = opHtml;
+      opBar.style.display = '';
+    } else {
+      opBar.innerHTML = '<span style="font-size:10px;color:var(--text2)">Operators:</span><span class="topo-op-pill ok"><span class="op-dot"></span>' + availCount + '/' + totalOps + ' healthy</span>';
+      opBar.style.display = '';
     }
 
-    // Remaining operators not in any layer
-    var remaining = Object.values(opMap);
-    if (remaining.length > 0) {
-      html += '<div class="arch-layer">' +
-        '<div class="arch-layer-head"><span class="arch-layer-icon">&#x1F4E6;</span> Other Operators</div>' +
-        '<div class="arch-layer-body">';
-      remaining.forEach(function(op) {
-        var displayName = op.name.replace(/-/g, ' ');
-        html += '<div class="arch-comp ' + esc(op.health) + '" title="' + esc(op.name) + (op.message ? ': ' + esc(op.message.slice(0, 120)) : '') + '" onclick="openNewChatWithCommand(\'describe clusteroperator ' + esc(op.name) + '\',\'' + esc(op.name) + '\')">' +
-          '<div class="arch-comp-dot"></div>' +
-          '<div class="arch-comp-info">' +
-            '<div class="arch-comp-name">' + esc(displayName) + '</div>' +
-            (op.version ? '<div class="arch-comp-ver">v' + esc(op.version) + '</div>' : '') +
-          '</div>' +
-          '<div class="arch-comp-icon">&#x2699;</div>' +
-        '</div>';
-      });
-      html += '</div></div>';
+    if (!nodes || nodes.length === 0) {
+      canvas.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">No nodes found</div>';
+      return;
     }
 
-    // Connection arrow
-    html += '<div class="arch-conn"><span class="arch-conn-arrow">&#x2193; schedules workloads on &#x2193;</span></div>';
-
-    // Infrastructure Nodes layer
+    // Pod issues by node
     var issuePodsByNode = {};
     podIssues.forEach(function(p) {
       var node = p.node || '';
@@ -2928,39 +2841,42 @@ async function loadTopology() {
       issuePodsByNode[node].push(p);
     });
 
-    html += '<div class="arch-layer">' +
-      '<div class="arch-layer-head"><span class="arch-layer-icon">&#x1F5A5;</span> Nodes (' + readyNodes + '/' + nodes.length + ' Ready)</div>' +
-      '<div class="arch-layer-body">';
-    nodes.forEach(function(n) {
+    canvas.innerHTML = nodes.map(function(n) {
       var issues = issuePodsByNode[n.name] || [];
       var health = !n.ready ? 'critical' : issues.length > 0 ? 'warning' : 'healthy';
       var roleLabel = (n.roles || []).join(', ') || 'worker';
       var icon = roleLabel.includes('master') || roleLabel.includes('control') ? '&#x1F3DB;' : '&#x2699;';
       var podCount = n.pods || 0;
+      var maxPods = n.maxPods || 110;
+      var podPct = maxPods > 0 ? Math.round((podCount / maxPods) * 100) : 0;
+
+      // Pod dots — compact, max 20
       var dotCount = Math.min(podCount, 20);
       var critCount = issues.filter(function(p) { return p.phase === 'Failed'; }).length;
       var warnCount = issues.length - critCount;
       var okCount = Math.max(0, dotCount - critCount - warnCount);
       var dots = '';
-      for (var ci = 0; ci < critCount && (ci + 0) < dotCount; ci++) dots += '<span class="c"></span>';
+      for (var ci = 0; ci < critCount && ci < dotCount; ci++) dots += '<span class="c"></span>';
       for (var wi = 0; wi < warnCount && (ci + wi) < dotCount; wi++) dots += '<span class="w"></span>';
       for (var oi = 0; oi < okCount; oi++) dots += '<span></span>';
 
-      html += '<div class="arch-node ' + health + '" title="' + esc(n.name) + '" onclick="openNewChatWithCommand(\'describe node ' + esc(n.name) + '\',\'Node: ' + esc(n.name) + '\')">' +
-        '<div class="arch-node-icon">' + icon + '</div>' +
-        '<div class="arch-node-name">' + esc(n.name.split('.')[0]) + '</div>' +
-        '<div class="arch-node-role">' + esc(roleLabel) + '</div>' +
-        '<div class="arch-node-stats">' +
-          '<span>' + esc(n.cpu || '-') + ' CPU</span>' +
-          '<span>' + formatMem(n.memory) + '</span>' +
-          '<span>' + podCount + ' pods</span>' +
+      return '<div class="topo-node ' + health + '" title="' + esc(n.name) + '" onclick="openNewChatWithCommand(\'describe node ' + esc(n.name) + '\',\'Node: ' + esc(n.name) + '\')">' +
+        '<div class="topo-node-left">' +
+          '<div class="tn-icon">' + icon + '</div>' +
+          '<div class="tn-status"></div>' +
         '</div>' +
-        (dots ? '<div class="arch-node-pods">' + dots + '</div>' : '') +
+        '<div class="topo-node-mid">' +
+          '<div class="tn-name">' + esc(n.name.split('.')[0]) + '</div>' +
+          '<div class="tn-role">' + esc(roleLabel) + '</div>' +
+          '<div class="tn-stats">' +
+            '<span>' + esc(n.cpu || '-') + ' CPU</span>' +
+            '<span>' + formatMem(n.memory) + '</span>' +
+            '<span>' + podCount + '/' + maxPods + ' pods (' + podPct + '%)</span>' +
+          '</div>' +
+        '</div>' +
+        (dots ? '<div class="topo-node-pods">' + dots + '</div>' : '') +
       '</div>';
-    });
-    html += '</div></div>';
-
-    canvas.innerHTML = html;
+    }).join('');
   } catch (e) {
     canvas.innerHTML = '<div style="padding:20px;text-align:center;color:var(--crit);font-size:12px">Error: ' + esc(e.message) + '</div>';
   }
