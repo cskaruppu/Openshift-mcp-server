@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "kubenexus": {
+      "command": "node",
+      "args": ["src/index.js"],
+      "cwd": "/path/to/openshift-mcp-server",
+      "env": {
+        "KUBECONFIG": "/path/to/.kube/config",
+        "MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}

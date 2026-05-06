@@ -48,9 +48,12 @@ import { registerPolicyGenTools } from "./tools/policy-gen.js";
 import { registerSCCAdvisorTools } from "./tools/scc-advisor.js";
 import { registerTimelineTools } from "./tools/timeline.js";
 import { registerUpgradeAdvisorTools } from "./tools/upgrade-advisor.js";
+import { registerBenchmarkTools } from "./tools/benchmarks.js";
+import { registerProvisioningTools } from "./tools/provisioning.js";
+import { registerPreflightTools } from "./tools/upgrade-preflight.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode } from "./services/auth.js";
-import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus } from "./services/dashboard-api.js";
-import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI } from "./services/chat-api.js";
+import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
+import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, trackSubmittedCR } from "./services/chat-api.js";
 import {
   listActions,
   getAction,
@@ -63,6 +66,7 @@ import {
 import {
   createChangeRequest as snowCreateCR,
   createIncident as snowCreateIncident,
+  attachFile as snowAttachFile,
 } from "./utils/servicenow-client.js";
 import {
   listChats,
@@ -184,6 +188,9 @@ function createMcpServer() {
   registerSCCAdvisorTools(server);
   registerTimelineTools(server);
   registerUpgradeAdvisorTools(server);
+  registerBenchmarkTools(server);
+  registerProvisioningTools(server);
+  registerPreflightTools(server);
 
   return server;
 }
@@ -258,6 +265,246 @@ async function loadClustersFromDB() {
 function sendJson(res, status, body) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
+}
+
+function esc(s) { return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+function generatePreflightHTML(report, ticketNumber, fields) {
+  const checks = report.checks || [];
+  const ts = report.timestamp ? new Date(report.timestamp).toLocaleString() : new Date().toLocaleString();
+  const fromVer = report.fromVersion || "N/A";
+  const toVer = report.targetVersion || "N/A";
+  const status = report.overallStatus || "UNKNOWN";
+  const statusColor = status === "READY" ? "#22c55e" : status === "READY_WITH_WARNINGS" ? "#f59e0b" : "#ef4444";
+  const vd = report.versionDelta || {};
+  const nt = report.nodeTopology || {};
+
+  const tdS = 'style="padding:8px 12px;border-bottom:1px solid #e5e7eb"';
+  const tdSm = 'style="padding:6px 10px;border-bottom:1px solid #e5e7eb"';
+
+  const checkRows = checks.map(c => {
+    const sc = c.status === "pass" ? "#22c55e" : c.status === "warning" ? "#f59e0b" : "#ef4444";
+    const icon = c.status === "pass" ? "&#x2705;" : c.status === "warning" ? "&#x26A0;&#xFE0F;" : "&#x274C;";
+    return `<tr><td ${tdS}><span style="color:${sc}">${icon}</span></td><td ${tdS}><b>${esc(c.category)}</b></td><td ${tdS}>${esc(c.details)}</td><td ${tdS} style="font-size:12px;color:#6b7280">${esc(c.recommendation || "")}</td></tr>`;
+  }).join("");
+
+  const clusterOpsRows = (report.allClusterOperators || []).map(o => {
+    const avail = o.available ? '<span style="color:#22c55e">&#x2705; Yes</span>' : '<span style="color:#ef4444">&#x274C; NO</span>';
+    const deg = o.degraded ? '<span style="color:#ef4444">&#x274C; YES</span>' : '<span style="color:#22c55e">No</span>';
+    return `<tr><td ${tdSm}>${esc(o.name)}</td><td ${tdSm}>${esc(o.version || "-")}</td><td ${tdSm}>${avail}</td><td ${tdSm}>${deg}</td></tr>`;
+  }).join("");
+
+  const olmOpsRows = (report.allOLMOperators || []).map(o => {
+    const compat = o.compatible === "yes" ? '<span style="color:#22c55e">&#x2705;</span>' : o.compatible === "no" ? '<span style="color:#ef4444">&#x274C;</span>' : '<span style="color:#f59e0b">&#x2753;</span>';
+    return `<tr><td ${tdSm}>${esc(o.name)}</td><td ${tdSm}>${esc(o.version || "-")}</td><td ${tdSm}>${esc(o.namespace || "-")}</td><td ${tdSm}>${esc(o.channel || o.source || "-")}</td><td ${tdSm}>${esc(o.status || "-")}</td><td ${tdSm}>${compat}</td></tr>`;
+  }).join("");
+
+  // Node topology table
+  const nodeRows = (nt.nodeDetails || []).map(n => {
+    const readyColor = n.ready ? "#22c55e" : "#ef4444";
+    return `<tr><td ${tdSm}>${esc(n.name)}</td><td ${tdSm}>${esc(n.role)}</td><td ${tdSm}>${esc(n.kubeletVersion || "-")}</td><td ${tdSm}>${esc(n.osImage || "-")}</td><td ${tdSm}><span style="color:${readyColor};font-weight:600">${n.ready ? "Ready" : "NOT READY"}</span></td></tr>`;
+  }).join("");
+
+  // Feature highlights
+  const featuresHTML = (vd.featureHighlights || []).map(fg => {
+    const items = (fg.features || []).map(f => `<li>${esc(f)}</li>`).join("");
+    return `<div style="margin-bottom:12px"><strong style="color:#1e40af">OCP ${esc(fg.version)}</strong><ul style="margin:4px 0 0 0;padding-left:20px">${items}</ul></div>`;
+  }).join("");
+
+  // API changes
+  const apiRemovals = vd.apiRemovals || {};
+  let apiHTML = "";
+  if (apiRemovals.removed?.length > 0 || apiRemovals.deprecated?.length > 0) {
+    apiHTML = `<h2>&#x1F6A8; API Changes Between Versions</h2>`;
+    if (apiRemovals.removed?.length > 0) {
+      apiHTML += `<h3 style="color:#ef4444;font-size:14px">Removed APIs (must migrate)</h3><table><tr><th>API Group/Version</th><th>Affected Kinds</th><th>Replacement</th></tr>`;
+      apiHTML += apiRemovals.removed.map(a => `<tr><td ${tdSm} style="color:#ef4444;font-weight:600">${esc(a.api)}</td><td ${tdSm}>${esc((a.kinds || []).join(", "))}</td><td ${tdSm}>${esc(a.replacement)}</td></tr>`).join("");
+      apiHTML += `</table>`;
+    }
+    if (apiRemovals.deprecated?.length > 0) {
+      apiHTML += `<h3 style="color:#f59e0b;font-size:14px">Deprecated APIs (plan migration)</h3><table><tr><th>API</th><th>Issue</th><th>Replacement</th></tr>`;
+      apiHTML += apiRemovals.deprecated.slice(0, 15).map(a => `<tr><td ${tdSm}>${esc(a.name)}</td><td ${tdSm}>${esc(a.issue || "")}</td><td ${tdSm}>${esc(a.replacement || "check docs")}</td></tr>`).join("");
+      apiHTML += `</table>`;
+    }
+  }
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pre-Upgrade Assessment Report — ${esc(ticketNumber)} — OCP ${esc(fromVer)} → ${esc(toVer)}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 1200px; margin: 0 auto; padding: 32px; color: #1f2937; background: #fff; line-height: 1.5; }
+  h1 { font-size: 24px; margin-bottom: 4px; color: #111827; }
+  h2 { font-size: 17px; margin-top: 32px; margin-bottom: 10px; border-bottom: 2px solid #2563eb; padding-bottom: 6px; color: #1e40af; }
+  h3 { font-size: 14px; margin-top: 16px; margin-bottom: 6px; }
+  .header-bar { background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%); color: #fff; padding: 24px 32px; border-radius: 12px; margin-bottom: 24px; }
+  .header-bar h1 { color: #fff; margin: 0 0 8px; font-size: 22px; }
+  .header-bar .meta { color: rgba(255,255,255,.8); font-size: 12px; margin: 0; }
+  .meta a { color: inherit; }
+  .status-badge { display: inline-block; padding: 5px 16px; border-radius: 20px; font-weight: 700; font-size: 13px; color: #fff; }
+  .version-grid { display: grid; grid-template-columns: 1fr 60px 1fr; gap: 0; margin: 20px 0; align-items: center; }
+  .ver-card { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px; padding: 18px; text-align: center; }
+  .ver-card .ver-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #6b7280; margin-bottom: 6px; }
+  .ver-card .ver-num { font-size: 26px; font-weight: 800; color: #111827; }
+  .ver-card .ver-sub { font-size: 11px; color: #6b7280; margin-top: 4px; }
+  .ver-arrow { text-align: center; font-size: 28px; color: #2563eb; font-weight: 700; }
+  .summary-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin: 16px 0; }
+  .summary-card { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 10px; text-align: center; }
+  .summary-card .num { font-size: 26px; font-weight: 700; }
+  .summary-card .lbl { font-size: 10px; color: #6b7280; text-transform: uppercase; letter-spacing: .5px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 16px; }
+  th { text-align: left; padding: 8px 12px; background: #f0f4ff; border-bottom: 2px solid #c7d2fe; font-size: 11px; text-transform: uppercase; letter-spacing: .3px; color: #374151; }
+  td { vertical-align: top; }
+  .plan-section { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px; padding: 20px; margin: 14px 0; }
+  .plan-section h3 { margin-top: 0; color: #1e40af; font-size: 14px; }
+  .plan-section pre { white-space: pre-wrap; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; line-height: 1.6; margin: 0; color: #374151; }
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
+  .info-card { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; }
+  .info-card .info-label { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: #6b7280; margin-bottom: 4px; }
+  .info-card .info-value { font-size: 14px; font-weight: 600; color: #111827; }
+  .footer { margin-top: 40px; padding-top: 14px; border-top: 2px solid #e5e7eb; font-size: 11px; color: #9ca3af; text-align: center; }
+  @media print { body { padding: 12px; } .header-bar { break-inside: avoid; } table { page-break-inside: auto; } tr { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="header-bar">
+  <h1>&#x1F6E1; OpenShift Cluster Pre-Upgrade Assessment Report</h1>
+  <div class="meta">
+    Change Request: <strong>${esc(ticketNumber)}</strong> &nbsp;&bull;&nbsp;
+    Generated: ${esc(ts)} &nbsp;&bull;&nbsp;
+    Cluster ID: ${esc(report.clusterID || "N/A")} &nbsp;&bull;&nbsp;
+    Channel: ${esc(report.channel || "N/A")}
+  </div>
+</div>
+
+<!-- ═══ VERSION COMPARISON ═══ -->
+<h2>&#x1F504; Version Comparison</h2>
+<div class="version-grid">
+  <div class="ver-card">
+    <div class="ver-label">Current Version</div>
+    <div class="ver-num">${esc(fromVer)}</div>
+    <div class="ver-sub">Kubernetes ${esc(vd.kubeFrom || "N/A")}</div>
+  </div>
+  <div class="ver-arrow">&rarr;</div>
+  <div class="ver-card" style="border-color:#2563eb">
+    <div class="ver-label" style="color:#2563eb">Target Version</div>
+    <div class="ver-num" style="color:#2563eb">${esc(toVer)}</div>
+    <div class="ver-sub">Kubernetes ${esc(vd.kubeTo || "N/A")}</div>
+  </div>
+</div>
+<div class="info-grid">
+  <div class="info-card">
+    <div class="info-label">Upgrade Type</div>
+    <div class="info-value">${esc(report.upgradeType || "N/A")}</div>
+  </div>
+  <div class="info-card">
+    <div class="info-label">Kubernetes Skew</div>
+    <div class="info-value">${vd.kubeSkew || 0} minor version${(vd.kubeSkew || 0) !== 1 ? "s" : ""} (${esc(vd.kubeFrom || "?")} &rarr; ${esc(vd.kubeTo || "?")})</div>
+  </div>
+  <div class="info-card">
+    <div class="info-label">CRI-O Runtime</div>
+    <div class="info-value">${esc(vd.criO || "matches Kubernetes")}</div>
+  </div>
+  <div class="info-card">
+    <div class="info-label">RHEL Base</div>
+    <div class="info-value">${esc(vd.rhelBase || "RHEL CoreOS")}</div>
+  </div>
+  <div class="info-card">
+    <div class="info-label">Estimated Duration</div>
+    <div class="info-value">${esc(vd.estimatedDuration || "~1-2 hours")}</div>
+  </div>
+  <div class="info-card">
+    <div class="info-label">Overall Readiness</div>
+    <div class="info-value"><span class="status-badge" style="background:${statusColor}">${esc(status)}</span></div>
+  </div>
+</div>
+
+<!-- ═══ WHAT'S NEW ═══ -->
+${featuresHTML ? `<h2>&#x2728; What's New Between Versions</h2>${featuresHTML}` : ""}
+
+${apiHTML}
+
+<!-- ═══ ASSESSMENT SUMMARY ═══ -->
+<h2>&#x1F4CB; Pre-Upgrade Assessment (${checks.length} Checks)</h2>
+<div class="summary-grid">
+  <div class="summary-card"><div class="num" style="color:#22c55e">${report.summary?.pass || 0}</div><div class="lbl">Passed</div></div>
+  <div class="summary-card"><div class="num" style="color:#f59e0b">${report.summary?.warning || 0}</div><div class="lbl">Warnings</div></div>
+  <div class="summary-card"><div class="num" style="color:#ef4444">${report.summary?.fail || 0}</div><div class="lbl">Failed</div></div>
+  <div class="summary-card"><div class="num">${report.summary?.total || checks.length}</div><div class="lbl">Total</div></div>
+  <div class="summary-card"><div class="num" style="color:${statusColor}">${status === "READY" ? "GO" : status === "READY_WITH_WARNINGS" ? "WARN" : "NO-GO"}</div><div class="lbl">Decision</div></div>
+</div>
+
+<table>
+  <tr><th style="width:40px">Status</th><th style="width:180px">Category</th><th>Details</th><th style="width:240px">Recommendation</th></tr>
+  ${checkRows}
+</table>
+
+<!-- ═══ CLUSTER OPERATORS ═══ -->
+<h2>&#x2699; Cluster Operators (${(report.allClusterOperators || []).length})</h2>
+<table>
+  <tr><th>Operator</th><th>Version</th><th>Available</th><th>Degraded</th></tr>
+  ${clusterOpsRows}
+</table>
+
+<!-- ═══ OLM OPERATORS ═══ -->
+<h2>&#x1F4E6; Installed Operators — OLM (${(report.allOLMOperators || []).length})</h2>
+${olmOpsRows ? `<table>
+  <tr><th>Operator</th><th>Version</th><th>Namespace</th><th>Channel</th><th>Status</th><th>Compatible</th></tr>
+  ${olmOpsRows}
+</table>` : '<p style="color:#6b7280;font-style:italic">No OLM-managed operators detected.</p>'}
+
+<!-- ═══ NODE TOPOLOGY ═══ -->
+<h2>&#x1F5A5; Node Topology (${nt.total || "N/A"} nodes)</h2>
+<div class="info-grid">
+  <div class="info-card"><div class="info-label">Control Plane</div><div class="info-value">${nt.masters || 0} nodes</div></div>
+  <div class="info-card"><div class="info-label">Worker</div><div class="info-value">${nt.workers || 0} nodes</div></div>
+  ${nt.infra ? `<div class="info-card"><div class="info-label">Infrastructure</div><div class="info-value">${nt.infra} nodes</div></div>` : ""}
+  <div class="info-card"><div class="info-label">Total</div><div class="info-value">${nt.total || 0} nodes</div></div>
+</div>
+${nodeRows ? `<table>
+  <tr><th>Node Name</th><th>Role</th><th>Kubelet Version</th><th>OS Image</th><th>Status</th></tr>
+  ${nodeRows}
+</table>` : ""}
+
+<!-- ═══ IMPLEMENTATION PLAN ═══ -->
+${fields?.implementationPlan ? `<h2>&#x1F4DD; Implementation Plan</h2>
+<div class="plan-section"><pre>${esc(fields.implementationPlan)}</pre></div>` : ""}
+
+<!-- ═══ IMPACT ASSESSMENT ═══ -->
+${fields?.impact ? `<h2>&#x1F4A5; Impact Assessment</h2>
+<div class="plan-section"><pre>${esc(fields.impact)}</pre></div>` : ""}
+
+<!-- ═══ BACKOUT PLAN ═══ -->
+${fields?.rollback ? `<h2>&#x21A9; Backout / Rollback Plan</h2>
+<div class="plan-section"><pre>${esc(fields.rollback)}</pre></div>` : ""}
+
+<!-- ═══ TESTING PLAN ═══ -->
+${fields?.validation ? `<h2>&#x1F9EA; Testing / Validation Plan</h2>
+<div class="plan-section"><pre>${esc(fields.validation)}</pre></div>` : ""}
+
+<!-- ═══ BUSINESS JUSTIFICATION ═══ -->
+${fields?.justification ? `<h2>&#x1F4BC; Business Justification</h2>
+<div class="plan-section"><pre>${esc(fields.justification)}</pre></div>` : ""}
+
+<!-- ═══ REFERENCES ═══ -->
+<h2>&#x1F517; References</h2>
+<div class="info-grid">
+  ${vd.releaseNotesURL ? `<div class="info-card"><div class="info-label">Release Notes</div><div class="info-value" style="font-size:12px;word-break:break-all"><a href="${esc(vd.releaseNotesURL)}" style="color:#2563eb">${esc(vd.releaseNotesURL)}</a></div></div>` : ""}
+  ${vd.errataURL ? `<div class="info-card"><div class="info-label">Errata / Advisories</div><div class="info-value" style="font-size:12px;word-break:break-all"><a href="${esc(vd.errataURL)}" style="color:#2563eb">${esc(vd.errataURL)}</a></div></div>` : ""}
+  <div class="info-card"><div class="info-label">OCP Life Cycle Policy</div><div class="info-value" style="font-size:12px"><a href="https://access.redhat.com/support/policy/updates/openshift" style="color:#2563eb">Red Hat OpenShift Life Cycle</a></div></div>
+  <div class="info-card"><div class="info-label">Support</div><div class="info-value" style="font-size:12px"><a href="https://access.redhat.com/support/cases" style="color:#2563eb">Red Hat Support Cases</a></div></div>
+</div>
+
+<div class="footer">
+  Generated by <strong>KubeNexus AI</strong> &mdash; OpenShift Intelligence Platform &mdash; ${esc(ts)}<br>
+  This report was auto-generated from a live ${checks.length}-point cluster assessment and attached to ServiceNow ${esc(ticketNumber)}.
+</div>
+</body>
+</html>`;
 }
 
 /**
@@ -468,6 +715,11 @@ async function startSSE() {
 
   // Restore registered clusters from DB
   await loadClustersFromDB();
+
+  // Restore ServiceNow settings from DB/file into process.env
+  try {
+    await restoreServiceNowSettings();
+  } catch (e) { console.warn("[startup] ServiceNow settings restore:", e.message); }
 
   // Restore silenced alerts from DB
   try {
@@ -979,6 +1231,20 @@ async function startSSE() {
       return;
     }
 
+    // ServiceNow settings — /api/settings/servicenow
+    if (url.pathname === "/api/settings/servicenow" && req.method === "GET") {
+      await handleServiceNowSettingsGet(req, res);
+      return;
+    }
+    if (url.pathname === "/api/settings/servicenow" && req.method === "POST") {
+      await handleServiceNowSettingsPost(req, res);
+      return;
+    }
+    if (url.pathname === "/api/settings/servicenow/test" && req.method === "POST") {
+      await handleServiceNowSettingsTest(req, res);
+      return;
+    }
+
     // LLM Chat API — /api/chat (POST)
     if (req.method === "POST" && url.pathname === "/api/chat") {
       await handleChatAPI(req, res);
@@ -1138,13 +1404,12 @@ async function startSSE() {
     if (req.method === "POST" && url.pathname === "/api/itsm/submit") {
       try {
         const body = await readJsonBody(req);
-        const { type, fields } = body;
+        const { type, fields, preflightReport, upgradeInfo, conversationId: submitConvId } = body;
         if (!type || !fields) {
           return sendJson(res, 400, { error: "Missing type or fields" });
         }
 
         if (!isServiceNowEnabled()) {
-          // ServiceNow not configured — save locally and return a mock ticket
           const ticketId = type === "change_request"
             ? `CR-${Date.now().toString(36).toUpperCase()}`
             : `INC-${Date.now().toString(36).toUpperCase()}`;
@@ -1155,32 +1420,39 @@ async function startSSE() {
                  VALUES ($1, $2, $3, $4, $5, NOW())`,
                 [ticketId, type, fields.title || "", JSON.stringify(fields), "saved_locally"]
               );
-            } catch { /* table may not exist yet — that's OK */ }
+            } catch { /* table may not exist yet */ }
           }
           return sendJson(res, 200, {
             success: true,
             ticketId,
             status: "saved_locally",
-            message: `${type === "change_request" ? "Change Request" : "Incident"} saved locally as ${ticketId}. ServiceNow is not configured — configure SERVICENOW_INSTANCE, SERVICENOW_USERNAME, and SERVICENOW_PASSWORD environment variables to submit directly.`,
+            message: `${type === "change_request" ? "Change Request" : "Incident"} saved locally as ${ticketId}. Configure ServiceNow credentials in Settings to submit directly.`,
           });
         }
 
         // Submit to ServiceNow
         let result;
+        const plannedDate = fields.plannedDate || "";
+        const endDate = plannedDate ? new Date(new Date(plannedDate).getTime() + 4 * 3600000).toISOString().slice(0, 16).replace("T", " ") : "";
         if (type === "change_request") {
           result = await snowCreateCR({
             shortDescription: fields.title || "",
-            description: [
-              fields.description || "",
-              fields.impact ? `\nImpact Assessment: ${fields.impact}` : "",
-              fields.rollback ? `\nRollback Plan: ${fields.rollback}` : "",
-              fields.validation ? `\nValidation Plan: ${fields.validation}` : "",
-            ].filter(Boolean).join("\n"),
+            description: fields.description || "",
             type: fields.changeType || "normal",
             priority: (fields.priority || "3").charAt(0),
             risk: fields.risk || "moderate",
+            impact: (fields.priority || "3").charAt(0),
             assignmentGroup: fields.assignmentGroup || "",
             justification: fields.justification || "",
+            implementationPlan: fields.implementationPlan || "",
+            backoutPlan: fields.rollback || "",
+            testPlan: fields.validation || "",
+            startDate: plannedDate,
+            endDate,
+            workNotes: [
+              fields.impact || "",
+              fields.communicationPlan || "",
+            ].filter(Boolean).join("\n\n"),
           });
         } else {
           result = await snowCreateIncident({
@@ -1198,10 +1470,61 @@ async function startSSE() {
 
         const record = result?.result || result;
         const number = record?.number || record?.sys_id || "N/A";
+        const sysId = record?.sys_id || "";
+
+        // Attach HTML pre-assessment report if a preflight report is present
+        let attachmentId = "";
+        if (preflightReport && sysId && type === "change_request") {
+          try {
+            const htmlReport = generatePreflightHTML(preflightReport, number, fields);
+            const buf = Buffer.from(htmlReport, "utf-8");
+            const attResult = await snowAttachFile(
+              "change_request", sysId,
+              `Pre-Assessment_Report_${number}.html`,
+              "text/html",
+              buf,
+            );
+            attachmentId = attResult?.result?.sys_id || "";
+            console.log(`[itsm] Attached pre-assessment HTML report to ${number}`);
+          } catch (attErr) {
+            console.warn(`[itsm] Failed to attach report to ${number}: ${attErr.message}`);
+          }
+        }
+
+        // Track the CR for approval monitoring in chat
+        if (sysId && type === "change_request" && (upgradeInfo || preflightReport)) {
+          const convId = submitConvId || upgradeInfo?.conversationId || "";
+          if (convId) {
+            trackSubmittedCR(convId, {
+              ticketId: number,
+              sysId,
+              targetVersion: upgradeInfo?.targetVersion || preflightReport?.targetVersion || "",
+              fromVersion: upgradeInfo?.fromVersion || preflightReport?.fromVersion || "",
+              preflightReport,
+            });
+          }
+        }
+
+        // Record in audit trail
+        if (await dbEnabled()) {
+          dbQuery(
+            `INSERT INTO executed_actions (action, target, namespace, success, result)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+              type === "change_request" ? "create_change_request" : "create_incident",
+              number,
+              "servicenow",
+              true,
+              JSON.stringify({ ticketId: number, sysId, title: fields.title || "" }),
+            ]
+          ).catch(() => {});
+        }
+
         return sendJson(res, 200, {
           success: true,
           ticketId: number,
-          sysId: record?.sys_id || "",
+          sysId,
+          attachmentId,
           status: "submitted",
           message: `${type === "change_request" ? "Change Request" : "Incident"} ${number} created in ServiceNow.`,
         });
@@ -1453,6 +1776,18 @@ async function startSSE() {
     }
 
     // Upgrade workflow — /api/upgrade/*
+    if (req.method === "GET" && url.pathname === "/api/cluster/version") {
+      try {
+        const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+        const current = cv?.status?.desired?.version || cv?.status?.history?.[0]?.version || "";
+        const channel = cv?.spec?.channel || "";
+        const available = (cv?.status?.availableUpdates || []).map(u => u.version);
+        json(res, 200, { current, channel, available });
+      } catch (err) {
+        json(res, 200, { current: "", channel: "", available: [], error: err.message });
+      }
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/api/upgrade/analyze") {
       await handleUpgradeAnalyze(req, res);
       return;
@@ -1463,6 +1798,20 @@ async function startSSE() {
     }
     if (req.method === "GET" && url.pathname === "/api/upgrade/status") {
       handleUpgradeStatus(req, res);
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/upgrade/dryrun") {
+      await handleUpgradeDryRun(req, res);
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/upgrade/channel") {
+      await handleUpgradeChannel(req, res);
+      return;
+    }
+
+    // ServiceNow CR status check
+    if (req.method === "POST" && url.pathname === "/api/itsm/cr-status") {
+      await handleCRStatusCheck(req, res);
       return;
     }
 

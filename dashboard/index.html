@@ -9,7 +9,7 @@
 <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"></noscript>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--accent:#e04040;--accent2:#3b82f6;--accent3:#10b981;--text:#e4e4e7;--text2:#a1a1aa;--warn:#f59e0b;--crit:#ef4444;--ok:#22c55e}
+:root{--bg:#0f1117;--bg-deep:#0a0c10;--bg-alt:#161b22;--card:#1a1d27;--card-deep:#0d1117;--border:#2a2d3a;--border2:#30363d;--hover:#2a2d3a;--accent:#e04040;--accent2:#3b82f6;--accent3:#10b981;--text:#e4e4e7;--text2:#a1a1aa;--text-code:#e6edf3;--text-code-accent:#e2b3ff;--warn:#f59e0b;--crit:#ef4444;--ok:#22c55e}
 body{font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
 .header{background:linear-gradient(135deg,#0a0e1a 0%,#1a1040 40%,#2a1520 100%);border-bottom:2px solid transparent;border-image:linear-gradient(90deg,#e04040,#3b82f6,#10b981) 1;padding:16px 32px;display:flex;align-items:center;justify-content:space-between}
 .header .logo{display:flex;align-items:center;gap:14px}
@@ -38,7 +38,7 @@ body{font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;backgroun
 .grid-3{grid-template-columns:repeat(3,1fr)}
 .grid-2{grid-template-columns:repeat(2,1fr)}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;transition:border-color .2s}
-.card:hover{border-color:#3a3d4a}
+.card:hover{border-color:var(--border2)}
 .card h3{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:12px}
 .metric{font-size:36px;font-weight:700;line-height:1}
 .metric.ok{color:var(--ok)}
@@ -61,36 +61,36 @@ tr:hover td{background:#ffffff06}
 .chat-messages{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:12px}
 .msg{max-width:90%;padding:12px 16px;border-radius:12px;font-size:14px;line-height:1.7}
 .msg.user{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:4px}
-.msg.ai{align-self:flex-start;background:#2a2d3a;border-bottom-left-radius:4px;max-width:95%;width:95%;overflow-x:hidden;word-wrap:break-word}
-.msg .tool-tag{display:inline-block;background:#3b82f633;color:var(--accent2);padding:1px 6px;border-radius:4px;font-size:11px;margin-top:4px}
+.msg.ai{align-self:flex-start;background:var(--hover);border-bottom-left-radius:4px;max-width:95%;width:95%;overflow-x:hidden;word-wrap:break-word}
+.msg .tool-tag{display:inline-block;background:color-mix(in srgb,var(--accent2) 20%,transparent);color:var(--accent2);padding:1px 6px;border-radius:4px;font-size:11px;margin-top:4px}
 /* Chat rich formatting — ChatGPT/Claude-style */
 .msg p,.conv-body p{margin:0 0 12px;line-height:1.7}
 .msg p:last-child,.conv-body p:last-child{margin-bottom:0}
-.msg .chat-heading{font-size:15px;font-weight:700;margin:16px 0 8px;padding-bottom:5px;border-bottom:1px solid #3a3d4a;color:#fff;letter-spacing:-0.01em}
+.msg .chat-heading{font-size:15px;font-weight:700;margin:16px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--border2);color:var(--text);letter-spacing:-0.01em}
 .msg .chat-heading.h2{font-size:16px}
 .msg .chat-heading.chat-heading-sm{font-size:13px;border-bottom:none;margin:10px 0 4px}
 .msg .chat-heading:first-child{margin-top:0}
 .msg .chat-section{margin:8px 0}
-.msg .status-crit{color:#ef4444;font-weight:700}
-.msg .status-warn{color:#f59e0b;font-weight:600}
-.msg .status-ok{color:#22c55e;font-weight:600}
-.msg .pod-issue{display:block;width:100%;background:#1a0a0a;border:1px solid #ef444455;border-left:3px solid #ef4444;border-radius:6px;padding:8px 12px;margin:6px 0;font-size:12px;clear:both}
-.msg .pod-issue .pod-name{font-weight:700;color:#ef4444;font-size:13px;word-break:break-all}
+.msg .status-crit{color:var(--crit);font-weight:700}
+.msg .status-warn{color:var(--warn);font-weight:600}
+.msg .status-ok{color:var(--ok);font-weight:600}
+.msg .pod-issue{display:block;width:100%;background:color-mix(in srgb,var(--crit) 8%,var(--card-deep));border:1px solid color-mix(in srgb,var(--crit) 33%,transparent);border-left:3px solid var(--crit);border-radius:6px;padding:8px 12px;margin:6px 0;font-size:12px;clear:both}
+.msg .pod-issue .pod-name{font-weight:700;color:var(--crit);font-size:13px;word-break:break-all}
 .msg .pod-issue .pod-ns{color:var(--text2);font-size:11px}
-.msg .pod-issue .pod-detail{color:#fca5a5;margin-top:3px;word-break:break-word}
-.msg .fix-box{display:block;width:100%;background:#0d1117;border:1px solid #30363d;border-radius:8px;margin:10px 0;overflow:hidden}
-.msg .fix-box .fix-header{display:flex;justify-content:space-between;align-items:center;padding:6px 12px;background:#161b22;border-bottom:1px solid #30363d;font-size:11px;color:var(--text2)}
+.msg .pod-issue .pod-detail{color:color-mix(in srgb,var(--crit) 70%,var(--text));margin-top:3px;word-break:break-word}
+.msg .fix-box{display:block;width:100%;background:var(--card-deep);border:1px solid var(--border2);border-radius:8px;margin:10px 0;overflow:hidden}
+.msg .fix-box .fix-header{display:flex;justify-content:space-between;align-items:center;padding:6px 12px;background:var(--bg-alt);border-bottom:1px solid var(--border2);font-size:11px;color:var(--text2)}
 .msg .fix-box .fix-header .fix-label{font-weight:600;color:var(--accent2)}
-.msg .fix-box .fix-copy{background:none;border:1px solid #30363d;color:var(--text2);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:10px}
-.msg .fix-box .fix-copy:hover{color:#fff;border-color:#58a6ff}
-.msg .fix-box pre{margin:0;padding:10px 12px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:12.5px;color:#e6edf3;white-space:pre-wrap;word-break:break-all;line-height:1.5}
-.msg .summary-bar{display:flex;width:100%;gap:12px;flex-wrap:wrap;margin:8px 0;padding:8px 12px;background:#161b22;border-radius:6px;font-size:12px}
+.msg .fix-box .fix-copy{background:none;border:1px solid var(--border2);color:var(--text2);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:10px}
+.msg .fix-box .fix-copy:hover{color:var(--text);border-color:var(--accent2)}
+.msg .fix-box pre{margin:0;padding:10px 12px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:12.5px;color:var(--text-code);white-space:pre-wrap;word-break:break-all;line-height:1.5}
+.msg .summary-bar{display:flex;width:100%;gap:12px;flex-wrap:wrap;margin:8px 0;padding:8px 12px;background:var(--bg-alt);border-radius:6px;font-size:12px}
 .msg .summary-item{display:flex;align-items:center;gap:4px}
 .msg .summary-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
-.msg .summary-dot.red{background:#ef4444}
-.msg .summary-dot.amber{background:#f59e0b}
-.msg .summary-dot.green{background:#22c55e}
-.msg code,.conv-body code{background:#1e1e2e;padding:2px 6px;border-radius:4px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:12.5px;color:#e2b3ff}
+.msg .summary-dot.red{background:var(--crit)}
+.msg .summary-dot.amber{background:var(--warn)}
+.msg .summary-dot.green{background:var(--ok)}
+.msg code,.conv-body code{background:var(--card-deep);padding:2px 6px;border-radius:4px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:12.5px;color:var(--text-code-accent)}
 .msg ul,.msg ol,.conv-body ul,.conv-body ol{margin:6px 0 10px 0;padding-left:24px}
 .msg li,.conv-body li{padding:2px 0;line-height:1.6}
 .msg li>ul,.msg li>ol,.conv-body li>ul,.conv-body li>ol{margin:2px 0 2px 0}
@@ -99,12 +99,12 @@ tr:hover td{background:#ffffff06}
 .msg .chat-list-item::before{content:'\2022';color:var(--text2);flex-shrink:0;margin-top:0}
 .msg blockquote,.conv-body blockquote{border-left:3px solid var(--accent2);margin:10px 0;padding:6px 14px;color:var(--text2);background:#3b82f60a;border-radius:0 6px 6px 0;font-size:13px}
 .msg blockquote p:last-child,.conv-body blockquote p:last-child{margin-bottom:0}
-.msg hr,.conv-body hr{border:none;border-top:1px solid #3a3d4a;margin:14px 0}
+.msg hr,.conv-body hr{border:none;border-top:1px solid var(--border2);margin:14px 0}
 .msg a,.conv-body a{color:var(--accent2);text-decoration:none;border-bottom:1px solid transparent}
 .msg a:hover,.conv-body a:hover{border-bottom-color:var(--accent2)}
-.msg .md-table,.conv-body .md-table{width:100%;border-collapse:separate;border-spacing:0;margin:10px 0;font-size:13px;border:1px solid #30363d;border-radius:8px;overflow:hidden}
-.msg .md-table th,.conv-body .md-table th{background:#161b22;padding:8px 12px;text-align:left;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:0.03em;color:var(--text2);border-bottom:1px solid #30363d}
-.msg .md-table td,.conv-body .md-table td{padding:7px 12px;border-bottom:1px solid #21262d}
+.msg .md-table,.conv-body .md-table{width:100%;border-collapse:separate;border-spacing:0;margin:10px 0;font-size:13px;border:1px solid var(--border2);border-radius:8px;overflow:hidden}
+.msg .md-table th,.conv-body .md-table th{background:var(--bg-alt);padding:8px 12px;text-align:left;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:0.03em;color:var(--text2);border-bottom:1px solid var(--border2)}
+.msg .md-table td,.conv-body .md-table td{padding:7px 12px;border-bottom:1px solid var(--border)}
 .msg .md-table tr:last-child td,.conv-body .md-table tr:last-child td{border-bottom:none}
 .msg .md-table tr:nth-child(even) td,.conv-body .md-table tr:nth-child(even) td{background:#ffffff05}
 .msg .md-table tr:hover td,.conv-body .md-table tr:hover td{background:#ffffff0a}
@@ -117,27 +117,106 @@ tr:hover td{background:#ffffff06}
 .msg .apply-result.ok{background:#22c55e22;color:var(--ok)}
 .msg .apply-result.err{background:#ef444422;color:var(--crit)}
 .msg .analysis-text{font-size:12px;color:var(--text2);padding:4px 12px;margin:2px 0;border-left:2px solid var(--accent2);line-height:1.5}
-.itsm-form{background:#0d1117;border:1px solid var(--border);border-radius:10px;margin:12px 0;overflow:hidden}
-.itsm-form-header{display:flex;align-items:center;gap:10px;padding:14px 18px;background:linear-gradient(135deg,#1a1040 0%,#0d1117 100%);border-bottom:1px solid var(--border)}
+.preflight-report{background:var(--card);border:1px solid var(--border);border-radius:10px;margin:12px 0;overflow:hidden;font-size:12px}
+.preflight-header{padding:16px 18px;background:linear-gradient(135deg,rgba(59,130,246,0.08) 0%,var(--card) 100%);border-bottom:1px solid var(--border)}
+.preflight-title{font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px}
+.preflight-meta{font-size:13px;color:var(--text);margin-bottom:8px;font-weight:500}
+.preflight-meta .preflight-type{background:var(--accent2);color:#fff;font-size:10px;padding:2px 8px;border-radius:4px;margin-left:8px;font-weight:600}
+.preflight-status{font-size:14px;font-weight:700;margin-top:4px}
+.preflight-summary{display:flex;gap:10px;padding:12px 18px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.pf-badge{padding:5px 12px;border-radius:6px;font-weight:700;font-size:12px}
+.pf-badge.pf-pass{background:#22c55e22;color:var(--ok)}
+.pf-badge.pf-warn{background:#f59e0b22;color:var(--warn)}
+.pf-badge.pf-fail{background:#ef444422;color:var(--crit)}
+.preflight-checks{padding:10px 18px}
+.pf-check{margin:6px 0;padding:10px 14px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.02)}
+.pf-check-pass{border-left:3px solid var(--ok)}
+.pf-check-warning{border-left:3px solid var(--warn)}
+.pf-check-fail{border-left:3px solid var(--crit);background:rgba(239,68,68,0.04)}
+.pf-check-header{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:space-between}
+.pf-check-header strong{color:var(--text)}
+.pf-check-detail{color:var(--text);font-size:11px;flex:1;text-align:right;min-width:120px;opacity:0.85}
+.pf-expand{font-size:10px;color:var(--text);transition:transform 0.2s;opacity:0.6}
+.pf-check-items{margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
+.pf-item{display:flex;gap:8px;padding:4px 0;flex-wrap:wrap;align-items:center}
+.pf-item-name{font-weight:600;color:var(--accent2);min-width:140px}
+.pf-item-issue{color:var(--crit);font-size:11px;font-weight:500}
+.pf-item-msg{color:var(--text);font-size:11px;word-break:break-word;opacity:0.75}
+.pf-recommendation{margin-top:8px;padding:8px 12px;background:color-mix(in srgb, var(--accent2) 10%, transparent);border-left:3px solid var(--accent2);border-radius:4px;color:var(--text);font-size:12px;line-height:1.4}
+.pf-item-sev{font-size:10px;padding:2px 6px;border-radius:3px;font-weight:700}
+.pf-sev-critical{background:#ef444433;color:var(--crit)}
+.pf-sev-warning{background:#f59e0b33;color:var(--warn)}
+.pf-operators-section{padding:10px 18px;border-top:1px solid var(--border)}
+.pf-operators-section .pf-check-header{padding:10px 0}
+.pf-operators-section .pf-check-header strong{color:var(--text)}
+.pf-op-table{overflow-x:auto}
+.pf-op-table table{width:100%;border-collapse:collapse;font-size:11px;margin:4px 0 12px}
+.pf-op-table th{text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text);font-weight:600;opacity:0.7;text-transform:uppercase;font-size:10px;letter-spacing:.3px}
+.pf-op-table td{padding:5px 10px;border-bottom:1px solid var(--border);color:var(--text)}
+.pf-op-table tr:hover td{background:rgba(59,130,246,0.04)}
+.preflight-footer{display:flex;gap:16px;padding:12px 18px;border-top:1px solid var(--border);color:var(--text);font-size:11px;flex-wrap:wrap;opacity:0.7}
+.itsm-form{background:var(--card);border:1px solid var(--border);border-radius:10px;margin:12px 0;overflow:hidden}
+.itsm-form-header{display:flex;align-items:center;gap:10px;padding:14px 18px;background:linear-gradient(135deg,rgba(59,130,246,0.06) 0%,var(--card) 100%);border-bottom:1px solid var(--border)}
 .itsm-form-header .itsm-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px}
 .itsm-form-header .itsm-icon.cr{background:#3b82f633;color:var(--accent2)}
 .itsm-form-header .itsm-icon.inc{background:#ef444433;color:var(--crit)}
 .itsm-form-header h4{font-size:14px;font-weight:600;color:var(--text)}
-.itsm-form-header .itsm-badge{font-size:10px;padding:2px 8px;border-radius:9999px;font-weight:600}
+.itsm-form-header .itsm-sub{font-size:11px;color:var(--text);opacity:0.65}
+.itsm-form-header .itsm-badge{font-size:10px;padding:3px 10px;border-radius:9999px;font-weight:700}
 .itsm-form-body{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
-.itsm-field label{display:block;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
-.itsm-field input,.itsm-field textarea,.itsm-field select{width:100%;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;font-family:inherit;outline:none;transition:border-color .2s}
+.itsm-field label{display:block;font-size:11px;font-weight:600;color:var(--text);opacity:0.7;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.itsm-field input,.itsm-field textarea,.itsm-field select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;font-family:inherit;outline:none;transition:border-color .2s}
 .itsm-field input:focus,.itsm-field textarea:focus,.itsm-field select:focus{border-color:var(--accent2)}
 .itsm-field textarea{min-height:70px;resize:vertical;line-height:1.5}
 .itsm-field select{cursor:pointer;appearance:auto}
-.itsm-actions{display:flex;gap:8px;padding:12px 18px;border-top:1px solid var(--border);background:#0a0e14}
+.itsm-actions{display:flex;gap:8px;padding:12px 18px;border-top:1px solid var(--border);background:var(--bg)}
 .itsm-actions button{padding:8px 20px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;border:none;transition:all .2s}
 .itsm-actions .itsm-submit{background:var(--accent2);color:#fff}
 .itsm-actions .itsm-submit:hover{background:#2563eb}
 .itsm-actions .itsm-submit:disabled{background:#555;cursor:not-allowed}
-.itsm-actions .itsm-cancel{background:transparent;border:1px solid var(--border);color:var(--text2)}
-.itsm-actions .itsm-cancel:hover{border-color:var(--text);color:var(--text)}
-.itsm-result{padding:10px 18px;font-size:12px;border-top:1px solid var(--border)}
+.itsm-actions .itsm-cancel{background:transparent;border:1px solid var(--border);color:var(--text)}
+.itsm-actions .itsm-cancel:hover{border-color:var(--accent2);color:var(--accent2)}
+.itsm-result{padding:10px 18px;font-size:12px;border-top:1px solid var(--border);color:var(--text)}
+/* Upgrade Execute card */
+.ux-card{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin:12px 0;width:100%;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+.conv-body .ux-card{margin-left:-38px;width:calc(100% + 38px)}
+.ux-header{background:linear-gradient(135deg,#065f46 0%,#059669 100%);color:#fff;padding:16px 20px;display:flex;align-items:center;gap:12px}
+.ux-header h4{margin:0;font-size:15px;font-weight:700}
+.ux-header .ux-ticket{background:rgba(255,255,255,.2);padding:3px 10px;border-radius:12px;font-size:11px;font-weight:500}
+.ux-body{padding:16px 20px}
+.ux-version-row{display:flex;align-items:center;gap:12px;margin:12px 0;padding:14px;background:var(--bg-alt);border-radius:8px}
+.ux-ver{text-align:center;flex:1}
+.ux-ver .ux-ver-num{font-size:22px;font-weight:800;color:var(--text)}
+.ux-ver .ux-ver-label{font-size:10px;text-transform:uppercase;color:var(--text2);letter-spacing:.5px}
+.ux-arrow{font-size:24px;color:var(--accent2);font-weight:700}
+.ux-checklist{margin:12px 0;padding:0;list-style:none;font-size:12px;color:var(--text2)}
+.ux-checklist li{padding:4px 0}
+.ux-checklist li::before{content:'\\2713';color:var(--ok);margin-right:8px;font-weight:700}
+.ux-actions{display:flex;gap:8px;margin:16px 0 8px;flex-wrap:wrap}
+.ux-btn{padding:10px 20px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s}
+.ux-btn:disabled{opacity:.5;cursor:not-allowed}
+.ux-btn-dryrun{background:transparent;border:2px solid var(--accent2);color:var(--accent2)}
+.ux-btn-dryrun:hover:not(:disabled){background:color-mix(in srgb,var(--accent2) 10%,transparent)}
+.ux-btn-execute{background:#059669;color:#fff}
+.ux-btn-execute:hover:not(:disabled){background:#047857}
+.ux-btn-cancel{background:var(--bg-alt);color:var(--text2)}
+.ux-btn-cancel:hover:not(:disabled){background:var(--border)}
+.ux-advanced-toggle{font-size:11px;color:var(--accent2);cursor:pointer;margin:8px 0;display:inline-block}
+.ux-advanced{display:none;padding:12px;background:var(--bg-alt);border-radius:8px;margin:8px 0}
+.ux-advanced label{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2);padding:4px 0}
+.ux-advanced select{padding:4px 8px;font-size:12px;background:var(--card);border:1px solid var(--border);border-radius:4px;color:var(--text)}
+.ux-cmd-preview{font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:12px;background:#0d1117;color:#c9d1d9;padding:10px 14px;border-radius:6px;margin:10px 0 14px;border:1px solid #30363d}
+.ux-btn-icon{margin-right:4px}
+.ux-progress-bar{height:8px;background:var(--bg-alt);border-radius:4px;overflow:hidden;margin:10px 0}
+.ux-progress-fill{height:100%;background:var(--accent2);border-radius:4px;transition:width .5s ease}
+.ux-progress-msg{font-size:13px;font-weight:600;color:var(--text)}
+.ux-progress-detail{font-size:12px;color:var(--text2)}
+.ux-terminal{font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:11px;background:#0d1117;color:#c9d1d9;padding:12px 14px;border-radius:6px;border:1px solid #30363d;max-height:250px;overflow-y:auto;margin:8px 0;white-space:pre-wrap;line-height:1.5}
+.ux-terminal .t-ok{color:#3fb950}
+.ux-terminal .t-warn{color:#d29922}
+.ux-terminal .t-err{color:#f85149}
+.ux-terminal .t-info{color:#58a6ff}
+.ux-terminal .t-dim{color:#8b949e}
 /* Syntax highlighting for code blocks */
 .fix-box .kw{color:#ff7b72}
 .fix-box .str{color:#a5d6ff}
@@ -147,22 +226,22 @@ tr:hover td{background:#ffffff06}
 .fix-box .bool{color:#ff7b72}
 .fix-box .flag{color:#d2a8ff}
 /* Tool-call trace cards — Claude Desktop style */
-.tool-trace{margin:8px 0;border:1px solid #30363d;border-radius:8px;overflow:hidden;font-size:12px}
-.tool-trace-header{display:flex;align-items:center;gap:8px;padding:6px 12px;background:#161b22;cursor:pointer;user-select:none}
-.tool-trace-header:hover{background:#1c2028}
+.tool-trace{margin:8px 0;border:1px solid var(--border2);border-radius:8px;overflow:hidden;font-size:12px}
+.tool-trace-header{display:flex;align-items:center;gap:8px;padding:6px 12px;background:var(--bg-alt);cursor:pointer;user-select:none}
+.tool-trace-header:hover{background:var(--card)}
 .tool-trace-icon{width:16px;height:16px;color:var(--accent2);flex-shrink:0}
 .tool-trace-name{font-weight:600;color:var(--accent2);font-family:'SF Mono','Cascadia Code',monospace;font-size:11px}
 .tool-trace-status{margin-left:auto;font-size:10px;color:var(--ok);font-weight:600}
 .tool-trace-status.running{color:var(--warn);animation:pulse 1.5s ease-in-out infinite}
 .tool-trace-chevron{color:var(--text2);font-size:10px;transition:transform .2s}
 .tool-trace.open .tool-trace-chevron{transform:rotate(90deg)}
-.tool-trace-body{display:none;padding:8px 12px;background:#0d1117;border-top:1px solid #30363d;font-family:'SF Mono','Cascadia Code',monospace;font-size:11px;color:#8b949e;white-space:pre-wrap;max-height:200px;overflow:auto}
+.tool-trace-body{display:none;padding:8px 12px;background:var(--card-deep);border-top:1px solid var(--border2);font-family:'SF Mono','Cascadia Code',monospace;font-size:11px;color:var(--text2);white-space:pre-wrap;max-height:200px;overflow:auto}
 .tool-trace.open .tool-trace-body{display:block}
-.tool-trace-step{padding:4px 12px;background:#161b22;border-top:1px solid #21262d;font-size:10px;color:var(--text2);display:flex;align-items:center;gap:6px}
+.tool-trace-step{padding:4px 12px;background:var(--bg-alt);border-top:1px solid var(--border);font-size:10px;color:var(--text2);display:flex;align-items:center;gap:6px}
 .tool-trace-step-num{background:var(--accent2);color:#fff;width:16px;height:16px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 .chat-input{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border)}
-.chat-input input{flex:1;background:#0f1117;border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;outline:none}
+.chat-input input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;outline:none}
 .chat-input input:focus{border-color:var(--accent)}
 .chat-input button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 20px;font-weight:600;cursor:pointer;font-size:13px}
 .chat-input button:hover{opacity:.9}
@@ -178,29 +257,40 @@ tr:hover td{background:#ffffff06}
 .loading{color:var(--text2);font-size:13px;padding:12px;text-align:center}
 .empty-row td{color:var(--text2);text-align:center;padding:20px}
 .last-updated{font-size:11px;color:var(--text2);margin-left:auto}
-/* Cluster Topology Map */
+/* Cluster Node Topology */
 .topo-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:0;overflow:hidden}
 .topo-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border)}
 .topo-header h3{font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
-.topo-canvas{padding:18px;min-height:220px;position:relative}
-.topo-node{display:inline-flex;flex-direction:column;align-items:center;background:#0d1117;border:2px solid var(--border);border-radius:12px;padding:12px;margin:6px;min-width:140px;cursor:pointer;transition:all .25s;position:relative;vertical-align:top}
-.topo-node:hover{border-color:var(--accent2);transform:translateY(-2px);box-shadow:0 4px 16px rgba(59,130,246,.15)}
+.topo-op-bar{display:flex;gap:4px;padding:10px 18px;border-bottom:1px solid var(--border);align-items:center;flex-wrap:wrap}
+.topo-op-pill{font-size:10px;padding:3px 8px;border-radius:10px;display:flex;align-items:center;gap:4px;background:var(--card-deep);border:1px solid var(--border)}
+.topo-op-pill .op-dot{width:6px;height:6px;border-radius:50%}
+.topo-op-pill.ok .op-dot{background:var(--ok)}
+.topo-op-pill.degraded .op-dot{background:var(--crit)}
+.topo-op-pill.progressing .op-dot{background:var(--accent2);animation:topo-pulse 1.5s infinite}
+@keyframes topo-pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.topo-canvas{display:flex;flex-wrap:wrap;gap:10px;padding:14px 18px}
+.topo-node{display:flex;align-items:center;gap:12px;flex:1;min-width:220px;max-width:100%;padding:12px 14px;background:var(--card-deep);border:1.5px solid var(--border);border-radius:10px;cursor:pointer;transition:all .2s}
+.topo-node:hover{border-color:var(--accent2);box-shadow:0 2px 10px rgba(0,0,0,.15)}
 .topo-node.healthy{border-color:var(--ok)}
 .topo-node.warning{border-color:var(--warn)}
 .topo-node.critical{border-color:var(--crit)}
-.topo-node-icon{font-size:22px;margin-bottom:4px}
-.topo-node-name{font-size:11px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
-.topo-node-role{font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px}
-.topo-node-stats{display:flex;gap:8px;margin-top:6px;font-size:10px;color:var(--text2)}
-.topo-node-stats span{display:flex;align-items:center;gap:2px}
-.topo-pods{display:flex;flex-wrap:wrap;gap:3px;margin-top:8px;justify-content:center}
-.topo-pod{width:8px;height:8px;border-radius:2px;background:var(--ok);transition:all .2s}
-.topo-pod.warn{background:var(--warn)}
-.topo-pod.crit{background:var(--crit)}
-.topo-pod.pending{background:var(--text2)}
-.topo-legend{display:flex;gap:14px;padding:10px 18px;border-top:1px solid var(--border);font-size:10px;color:var(--text2)}
+.topo-node-left{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:40px}
+.topo-node-left .tn-icon{font-size:24px}
+.topo-node-left .tn-status{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+.topo-node.warning .tn-status{background:var(--warn)}
+.topo-node.critical .tn-status{background:var(--crit)}
+.topo-node-mid{flex:1;min-width:0}
+.topo-node-mid .tn-name{font-size:12px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topo-node-mid .tn-role{font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-top:1px}
+.topo-node-mid .tn-stats{display:flex;gap:10px;margin-top:6px;font-size:10px;color:var(--text2)}
+.topo-node-mid .tn-stats span{display:flex;align-items:center;gap:3px}
+.topo-node-pods{display:flex;flex-wrap:wrap;gap:2px;max-width:60px}
+.topo-node-pods span{width:5px;height:5px;border-radius:1px;background:var(--ok)}
+.topo-node-pods span.w{background:var(--warn)}
+.topo-node-pods span.c{background:var(--crit)}
+.topo-legend{display:flex;gap:14px;padding:10px 18px;border-top:1px solid var(--border);font-size:10px;color:var(--text2);flex-wrap:wrap}
 .topo-legend span{display:flex;align-items:center;gap:4px}
-.topo-legend i{width:8px;height:8px;border-radius:2px;display:inline-block}
+.topo-legend i{width:8px;height:8px;border-radius:50%;display:inline-block}
 /* Health Timeline */
 .timeline-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:0;overflow:hidden}
 .timeline-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border)}
@@ -208,44 +298,76 @@ tr:hover td{background:#ffffff06}
 .timeline-body{padding:14px 18px}
 .timeline-svg{width:100%;height:80px}
 .timeline-events{display:flex;gap:8px;flex-wrap:wrap;padding:8px 18px 14px;font-size:10px}
-.timeline-event{display:flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;background:#1e2030;border:1px solid var(--border)}
+.timeline-event{display:flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;background:var(--card);border:1px solid var(--border)}
 .timeline-event .ev-dot{width:6px;height:6px;border-radius:50%}
 /* Namespace Heatmap */
 .heatmap-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:0;overflow:hidden}
 .heatmap-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border)}
-.heatmap-header h3{font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
-.heatmap-grid{display:flex;flex-wrap:wrap;gap:4px;padding:14px 18px}
-.heatmap-cell{width:48px;height:48px;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:8px;font-weight:600;color:#fff;cursor:pointer;transition:all .2s;position:relative;overflow:hidden}
-.heatmap-cell:hover{transform:scale(1.15);z-index:2;box-shadow:0 4px 12px rgba(0,0,0,.4)}
-.heatmap-cell .hm-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:44px;line-height:1.1}
-.heatmap-cell .hm-count{font-size:12px;font-weight:800;margin-top:1px}
-.heatmap-legend{display:flex;align-items:center;gap:6px;padding:8px 18px 14px;font-size:10px;color:var(--text2)}
-.heatmap-legend .hm-grad{display:flex;height:8px;border-radius:4px;overflow:hidden;width:100px}
-.heatmap-legend .hm-grad span{flex:1}
+.heatmap-header h3{font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px;margin:0}
+.hm-stats{display:flex;gap:12px;font-size:11px}
+.hm-stat{display:flex;align-items:center;gap:4px}
+.hm-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.heatmap-toolbar{display:flex;align-items:center;gap:8px;padding:8px 18px;border-bottom:1px solid var(--border);background:var(--bg-alt)}
+.hm-filter-btn{background:none;border:1px solid var(--border);color:var(--text2);padding:3px 10px;border-radius:12px;font-size:10px;cursor:pointer;transition:all .15s}
+.hm-filter-btn:hover,.hm-filter-btn.active{background:var(--accent2);color:#fff;border-color:var(--accent2)}
+.hm-search{background:var(--card);border:1px solid var(--border);color:var(--text);padding:3px 10px;border-radius:12px;font-size:10px;width:120px;outline:none}
+.hm-search:focus{border-color:var(--accent2)}
+.heatmap-grid{display:flex;flex-wrap:wrap;gap:5px;padding:14px 18px;max-height:340px;overflow-y:auto;scrollbar-width:thin}
+.heatmap-grid::-webkit-scrollbar{width:4px}
+.heatmap-grid::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+.heatmap-cell{width:72px;height:56px;border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:9px;font-weight:600;color:#fff;cursor:pointer;transition:all .2s;position:relative;overflow:hidden;border:1px solid transparent}
+.heatmap-cell:hover{transform:scale(1.08);z-index:2;box-shadow:0 4px 16px rgba(0,0,0,.5);border-color:rgba(255,255,255,.3)}
+.heatmap-cell .hm-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:66px;line-height:1.2;opacity:.85}
+.heatmap-cell .hm-count{font-size:16px;font-weight:800;margin-top:2px;line-height:1}
+.heatmap-cell .hm-health{position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;border:1px solid rgba(0,0,0,.3)}
+.hm-tooltip{position:fixed;background:#1c2128;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:11px;color:var(--text);z-index:1000;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,.5);min-width:180px;display:none}
+.hm-tooltip .hm-tt-name{font-size:13px;font-weight:700;margin-bottom:6px;color:#fff}
+.hm-tooltip .hm-tt-row{display:flex;justify-content:space-between;padding:2px 0;color:var(--text2)}
+.hm-tooltip .hm-tt-row span:last-child{font-weight:600;color:var(--text)}
+.hm-tooltip .hm-tt-bar{height:4px;background:#30363d;border-radius:2px;margin-top:6px;overflow:hidden}
+.hm-tooltip .hm-tt-bar div{height:100%;border-radius:2px;transition:width .3s}
+.heatmap-legend{display:flex;align-items:center;gap:10px;padding:10px 18px;font-size:10px;color:var(--text2);border-top:1px solid var(--border);flex-wrap:wrap}
+.hm-legend-item{display:flex;align-items:center;gap:4px}
 /* AI Risk Prediction */
 .risk-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:0;overflow:hidden}
 .risk-header{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border)}
 .risk-header h3{font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
-.risk-list{padding:12px 18px;display:flex;flex-direction:column;gap:8px;max-height:200px;overflow-y:auto}
-.risk-item{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:#0d1117;border-radius:8px;border-left:3px solid var(--warn);transition:all .2s}
-.risk-item:hover{border-left-color:var(--accent2);background:#111525}
-.risk-item.high{border-left-color:var(--crit)}
-.risk-item .risk-icon{font-size:20px;flex-shrink:0;margin-top:2px}
+.risk-summary{display:flex;gap:6px;padding:10px 18px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.risk-stat{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);padding:3px 10px;border-radius:12px;background:var(--card-deep);cursor:pointer;border:1px solid transparent;transition:all .15s;user-select:none}
+.risk-stat:hover,.risk-stat.active{border-color:var(--border);background:var(--hover)}
+.risk-stat .rs-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.risk-stat .rs-num{font-weight:700;color:var(--text)}
+.risk-filters{display:flex;gap:4px;padding:8px 18px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.risk-filter-btn{font-size:10px;padding:3px 10px;border-radius:10px;background:var(--card-deep);color:var(--text2);border:1px solid var(--border);cursor:pointer;transition:all .15s}
+.risk-filter-btn:hover,.risk-filter-btn.active{background:var(--accent2);color:#fff;border-color:var(--accent2)}
+.risk-list{padding:10px 18px;display:flex;flex-direction:column;gap:6px;max-height:320px;overflow-y:auto}
+.risk-item{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:var(--card-deep);border-radius:8px;border-left:3px solid var(--warn);transition:all .2s;cursor:pointer}
+.risk-item:hover{background:var(--hover)}
+.risk-item.critical{border-left-color:var(--crit)}
+.risk-item.warning{border-left-color:var(--warn)}
+.risk-item.info{border-left-color:var(--accent2)}
+.risk-item .risk-icon{font-size:18px;flex-shrink:0;margin-top:1px}
 .risk-item .risk-body{flex:1;min-width:0}
-.risk-item .risk-title{font-size:12px;font-weight:600;color:var(--text)}
-.risk-item .risk-desc{font-size:11px;color:var(--text2);margin-top:2px;line-height:1.4}
-.risk-item .risk-eta{font-size:10px;color:var(--warn);font-weight:600;margin-top:4px}
-.risk-item.high .risk-eta{color:var(--crit)}
+.risk-item .risk-title{font-size:12px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px}
+.risk-item .risk-sev{font-size:9px;padding:1px 6px;border-radius:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+.risk-item.critical .risk-sev{background:rgba(248,81,73,.15);color:var(--crit)}
+.risk-item.warning .risk-sev{background:rgba(210,153,34,.15);color:var(--warn)}
+.risk-item.info .risk-sev{background:rgba(88,166,255,.15);color:var(--accent2)}
+.risk-item .risk-evidence{font-size:10px;color:var(--text2);margin-top:4px;line-height:1.5;font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;background:rgba(0,0,0,.2);padding:6px 8px;border-radius:4px;white-space:pre-wrap}
+.risk-item .risk-impact{font-size:10px;color:var(--text2);margin-top:3px;line-height:1.4}
+.risk-item .risk-action{font-size:10px;font-weight:600;margin-top:4px;color:var(--accent2)}
+.risk-item.critical .risk-action{color:var(--crit)}
+.risk-item.warning .risk-action{color:var(--warn)}
 .risk-empty{padding:20px;text-align:center;color:var(--text2);font-size:13px}
 /* Quick Command Bar */
 .cmd-bar-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9998;display:none;align-items:flex-start;justify-content:center;padding-top:18vh;backdrop-filter:blur(4px)}
 .cmd-bar-overlay.open{display:flex}
-.cmd-bar{width:560px;max-width:90vw;background:#1a1d27;border:1px solid var(--border);border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.5);overflow:hidden}
+.cmd-bar{width:560px;max-width:90vw;background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.5);overflow:hidden}
 .cmd-bar input{width:100%;padding:16px 20px;background:transparent;border:none;color:var(--text);font-size:16px;font-family:inherit;outline:none}
 .cmd-bar input::placeholder{color:var(--text2)}
 .cmd-bar-results{max-height:320px;overflow-y:auto;border-top:1px solid var(--border)}
 .cmd-bar-item{display:flex;align-items:center;gap:10px;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text2);transition:background .1s}
-.cmd-bar-item:hover,.cmd-bar-item.active{background:#2a2d3a;color:var(--text)}
+.cmd-bar-item:hover,.cmd-bar-item.active{background:var(--hover);color:var(--text)}
 .cmd-bar-item .cb-icon{font-size:16px;width:24px;text-align:center;flex-shrink:0}
 .cmd-bar-item .cb-label{flex:1}
 .cmd-bar-item .cb-shortcut{font-size:10px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;color:var(--text2)}
@@ -258,98 +380,98 @@ tr:hover td{background:#ffffff06}
 .nav-tab:hover{border-color:var(--accent);color:var(--text)}
 .nav-tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 /* Full-page chat layout */
-.chat-fullpage{display:flex;height:calc(100vh - 65px);background:#0a0c10}
-.chat-sidebar{width:260px;background:#0e1018;border-right:1px solid #1a1d28;display:flex;flex-direction:column;flex-shrink:0}
-.actions-panel{width:320px;background:#0e1018;border-left:1px solid #1a1d28;display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
+.chat-fullpage{display:flex;height:calc(100vh - 65px);background:var(--bg-deep)}
+.chat-sidebar{width:260px;background:var(--bg);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.actions-panel{width:320px;background:var(--bg);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
 .actions-header{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:space-between}
 .actions-header .snow-badge{font-size:10px;padding:2px 6px;border-radius:4px;font-weight:500}
-.actions-header .snow-on{background:#0f3b1f;color:#8aeca2}
-.actions-header .snow-off{background:#3a2a0f;color:#ecca8a}
+.actions-header .snow-on{background:color-mix(in srgb,var(--ok) 15%,var(--card));color:var(--ok)}
+.actions-header .snow-off{background:color-mix(in srgb,var(--warn) 15%,var(--card));color:var(--warn)}
 .actions-list{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:10px}
 .actions-empty{color:var(--text2);font-size:12px;text-align:center;padding:20px 10px;font-style:italic}
 .action-card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px}
 .action-card.pending{border-left:3px solid var(--accent)}
-.action-card.awaiting{border-left:3px solid #eca95f}
-.action-card.approved{border-left:3px solid #5fb3ec}
-.action-card.executed{border-left:3px solid #5fec8a}
-.action-card.failed,.action-card.rejected{border-left:3px solid #ec5f5f}
-.action-card.cancelled{border-left:3px solid #6c7280;opacity:.7}
+.action-card.awaiting{border-left:3px solid var(--warn)}
+.action-card.approved{border-left:3px solid var(--accent2)}
+.action-card.executed{border-left:3px solid var(--ok)}
+.action-card.failed,.action-card.rejected{border-left:3px solid var(--crit)}
+.action-card.cancelled{border-left:3px solid var(--text2);opacity:.7}
 .action-card .ac-summary{font-size:13px;font-weight:500;line-height:1.3}
 .action-card .ac-meta{font-size:11px;color:var(--text2);display:flex;gap:8px;flex-wrap:wrap}
-.action-card .ac-status{font-size:10px;text-transform:uppercase;letter-spacing:.5px;padding:2px 6px;border-radius:3px;background:#1c1f2c;color:var(--text2);display:inline-block;align-self:flex-start}
-.action-card .ac-cr{font-size:11px;color:#8ab4ec}
-.action-card .ac-result{font-size:11px;color:var(--text2);background:#0f1117;padding:6px 8px;border-radius:4px;word-break:break-word}
+.action-card .ac-status{font-size:10px;text-transform:uppercase;letter-spacing:.5px;padding:2px 6px;border-radius:3px;background:var(--card-deep);color:var(--text2);display:inline-block;align-self:flex-start}
+.action-card .ac-cr{font-size:11px;color:var(--accent2)}
+.action-card .ac-result{font-size:11px;color:var(--text2);background:var(--bg);padding:6px 8px;border-radius:4px;word-break:break-word}
 .action-card .ac-btns{display:flex;gap:6px}
 .action-card .ac-btns button{flex:1;padding:6px 10px;font-size:11px;font-weight:600;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer}
 .action-card .ac-btns button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .action-card .ac-btns button.primary:hover{opacity:.9}
 .action-card .ac-btns button:disabled{opacity:.5;cursor:not-allowed}
 @media(max-width:1100px){.actions-panel{display:none}}
-.sidebar-header{padding:12px 14px;border-bottom:1px solid #1a1d28}
+.sidebar-header{padding:12px 14px;border-bottom:1px solid var(--border)}
 .new-chat-btn{background:transparent;color:var(--text2);border:none;border-radius:8px;padding:10px 12px;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:8px}
-.new-chat-btn:hover{background:#151820;color:var(--text)}
+.new-chat-btn:hover{background:var(--card);color:var(--text)}
 .export-btn{background:transparent;color:var(--text2);border:none;border-radius:8px;padding:8px 10px;font-size:12px;cursor:pointer;transition:all .2s}
-.export-btn:hover{background:#151820;color:var(--text)}
+.export-btn:hover{background:var(--card);color:var(--text)}
 .chat-history-list{flex:1;overflow-y:auto;padding:6px 8px}
 .history-item{padding:10px 12px;border-radius:10px;cursor:pointer;font-size:13px;color:var(--text2);margin-bottom:2px;position:relative;transition:background .15s}
-.history-item:hover{background:#151820}
-.history-item.active{background:#1a1e2e;color:var(--text)}
+.history-item:hover{background:var(--card)}
+.history-item.active{background:var(--card);color:var(--text)}
 .history-title{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:20px}
 .history-meta{font-size:11px;color:var(--text2);margin-top:2px}
 .history-menu-btn{background:none;border:none;color:var(--text2);cursor:pointer;font-size:16px;padding:2px 4px;position:absolute;top:8px;right:8px;opacity:0;border-radius:4px;line-height:1;letter-spacing:2px}
 .history-item:hover .history-menu-btn{opacity:1}
-.history-menu-btn:hover{color:var(--text);background:#2a2d3a}
-.history-dropdown{position:absolute;top:28px;right:4px;background:#1e2030;border:1px solid var(--border);border-radius:8px;padding:4px 0;min-width:160px;z-index:999;box-shadow:0 8px 24px rgba(0,0,0,.4);display:none}
+.history-menu-btn:hover{color:var(--text);background:var(--hover)}
+.history-dropdown{position:absolute;top:28px;right:4px;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:4px 0;min-width:160px;z-index:999;box-shadow:0 8px 24px rgba(0,0,0,.4);display:none}
 .history-dropdown.open{display:block}
 .history-dropdown button{display:flex;align-items:center;gap:8px;width:100%;background:none;border:none;color:var(--text2);padding:8px 14px;font-size:12px;font-family:inherit;cursor:pointer;text-align:left;transition:background .1s}
-.history-dropdown button:hover{background:#2a2d3a;color:var(--text)}
+.history-dropdown button:hover{background:var(--hover);color:var(--text)}
 .history-dropdown button.danger:hover{color:var(--crit);background:#ef444415}
 .history-dropdown .dropdown-sep{height:1px;background:var(--border);margin:4px 0}
-.history-item.starred .history-title::before{content:'\2605 ';color:#f59e0b;font-size:11px}
-.chat-main-area{flex:1;display:flex;flex-direction:column;min-width:0;background:#0a0c10}
+.history-item.starred .history-title::before{content:'\2605 ';color:var(--warn);font-size:11px}
+.chat-main-area{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg-deep)}
 /* Context bar — cluster + LLM selector */
-.chat-context-bar{display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 24px;border-bottom:1px solid #1a1d28;background:#0d0f15;flex-shrink:0}
-.ctx-select{background:#151820;border:1px solid #2a2d3a;border-radius:8px;padding:6px 12px;color:#d1d5db;font-size:12px;outline:none;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='%236b7280'%3E%3Cpath d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:28px;min-width:140px;transition:border-color .2s}
-.ctx-select:hover,.ctx-select:focus{border-color:#3b82f6}
-.ctx-select option{background:#151820;color:#d1d5db}
-.ctx-label{font-size:10px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+.chat-context-bar{display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 24px;border-bottom:1px solid var(--border);background:var(--bg);flex-shrink:0}
+.ctx-select{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 12px;color:var(--text);font-size:12px;outline:none;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='%236b7280'%3E%3Cpath d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:28px;min-width:140px;transition:border-color .2s}
+.ctx-select:hover,.ctx-select:focus{border-color:var(--accent2)}
+.ctx-select option{background:var(--card);color:var(--text)}
+.ctx-label{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
 .ctx-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .ctx-group{display:flex;align-items:center;gap:6px}
-.chat-conversation{flex:1;overflow-y:auto;background:#0a0c10}
+.chat-conversation{flex:1;overflow-y:auto;background:var(--bg-deep)}
 .chat-conv-inner{max-width:780px;margin:0 auto;padding:32px 24px 100px}
 .conv-msg{margin-bottom:28px;animation:msgIn .25s ease-out}
 @keyframes msgIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 .conv-msg.user{display:flex;justify-content:flex-end}
-.conv-msg.user .conv-bubble{background:#2a2d3a;color:#e5e7eb;border-radius:18px 18px 4px 18px;padding:12px 18px;max-width:70%;font-size:14px;line-height:1.6}
+.conv-msg.user .conv-bubble{background:var(--hover);color:var(--text);border-radius:18px 18px 4px 18px;padding:12px 18px;max-width:70%;font-size:14px;line-height:1.6}
 .conv-msg.ai{position:relative}
 .conv-msg.ai .conv-header{display:flex;align-items:center;gap:8px;margin-bottom:10px}
 .conv-avatar{width:30px;height:30px;border-radius:10px;background:linear-gradient(135deg,#e04040,#a020a0);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
 .conv-name{font-size:13px;font-weight:600;color:var(--text)}
 .conv-provider-tag{font-size:10px;color:#818cf8;background:#818cf815;padding:2px 8px;border-radius:10px;font-weight:500;letter-spacing:.2px}
-.conv-body{padding-left:38px;font-size:14px;line-height:1.7;color:#d1d5db;word-wrap:break-word}
-.conv-body .chat-heading{font-size:16px;font-weight:700;margin:16px 0 8px;padding-bottom:5px;border-bottom:1px solid #3a3d4a;color:#fff;letter-spacing:-0.01em}
+.conv-body{padding-left:38px;font-size:14px;line-height:1.7;color:var(--text);word-wrap:break-word}
+.conv-body .chat-heading{font-size:16px;font-weight:700;margin:16px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--border2);color:var(--text);letter-spacing:-0.01em}
 .conv-body .chat-heading.h2{font-size:17px}
 .conv-body .chat-heading.chat-heading-sm{font-size:13px;border-bottom:none;margin:10px 0 4px}
 .conv-body .chat-heading:first-child{margin-top:0}
-.conv-body .status-crit{color:#ef4444;font-weight:700}
-.conv-body .status-warn{color:#f59e0b;font-weight:600}
-.conv-body .status-ok{color:#22c55e;font-weight:600}
-.conv-body .pod-issue{display:block;width:100%;background:#1a0a0a;border:1px solid #ef444455;border-left:3px solid #ef4444;border-radius:6px;padding:8px 12px;margin:6px 0;font-size:13px}
-.conv-body .pod-issue .pod-name{font-weight:700;color:#ef4444;font-size:14px;word-break:break-all}
+.conv-body .status-crit{color:var(--crit);font-weight:700}
+.conv-body .status-warn{color:var(--warn);font-weight:600}
+.conv-body .status-ok{color:var(--ok);font-weight:600}
+.conv-body .pod-issue{display:block;width:100%;background:color-mix(in srgb,var(--crit) 8%,var(--card-deep));border:1px solid color-mix(in srgb,var(--crit) 33%,transparent);border-left:3px solid var(--crit);border-radius:6px;padding:8px 12px;margin:6px 0;font-size:13px}
+.conv-body .pod-issue .pod-name{font-weight:700;color:var(--crit);font-size:14px;word-break:break-all}
 .conv-body .pod-issue .pod-ns{color:var(--text2);font-size:12px}
-.conv-body .pod-issue .pod-detail{color:#fca5a5;margin-top:3px}
-.conv-body .fix-box{display:block;width:100%;background:#0d1117;border:1px solid #30363d;border-radius:8px;margin:10px 0;overflow:hidden}
-.conv-body .fix-box .fix-header{display:flex;justify-content:space-between;align-items:center;padding:6px 12px;background:#161b22;border-bottom:1px solid #30363d;font-size:11px;color:var(--text2)}
+.conv-body .pod-issue .pod-detail{color:color-mix(in srgb,var(--crit) 70%,var(--text));margin-top:3px}
+.conv-body .fix-box{display:block;width:100%;background:var(--card-deep);border:1px solid var(--border2);border-radius:8px;margin:10px 0;overflow:hidden}
+.conv-body .fix-box .fix-header{display:flex;justify-content:space-between;align-items:center;padding:6px 12px;background:var(--bg-alt);border-bottom:1px solid var(--border2);font-size:11px;color:var(--text2)}
 .conv-body .fix-box .fix-header .fix-label{font-weight:600;color:var(--accent2)}
-.conv-body .fix-box .fix-copy{background:none;border:1px solid #30363d;color:var(--text2);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:10px}
-.conv-body .fix-box .fix-copy:hover{color:#fff;border-color:#58a6ff}
-.conv-body .fix-box pre{margin:0;padding:10px 12px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:12.5px;color:#e6edf3;white-space:pre-wrap;word-break:break-all;line-height:1.5}
-.conv-body .summary-bar{display:flex;width:100%;gap:12px;flex-wrap:wrap;margin:8px 0;padding:8px 12px;background:#161b22;border-radius:6px;font-size:12px}
+.conv-body .fix-box .fix-copy{background:none;border:1px solid var(--border2);color:var(--text2);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:10px}
+.conv-body .fix-box .fix-copy:hover{color:var(--text);border-color:var(--accent2)}
+.conv-body .fix-box pre{margin:0;padding:10px 12px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:12.5px;color:var(--text-code);white-space:pre-wrap;word-break:break-all;line-height:1.5}
+.conv-body .summary-bar{display:flex;width:100%;gap:12px;flex-wrap:wrap;margin:8px 0;padding:8px 12px;background:var(--bg-alt);border-radius:6px;font-size:12px}
 .conv-body .summary-item{display:flex;align-items:center;gap:4px}
 .conv-body .summary-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
-.conv-body .summary-dot.red{background:#ef4444}
-.conv-body .summary-dot.amber{background:#f59e0b}
-.conv-body .summary-dot.green{background:#22c55e}
+.conv-body .summary-dot.red{background:var(--crit)}
+.conv-body .summary-dot.amber{background:var(--warn)}
+.conv-body .summary-dot.green{background:var(--ok)}
 .conv-body .apply-btn{display:inline-block;background:#e04040;color:#fff;border:none;border-radius:6px;padding:6px 16px;font-size:12px;font-weight:600;cursor:pointer;margin:6px 4px 6px 0}
 .conv-body .apply-btn:hover{background:#c03030}
 .conv-body .apply-btn:disabled{background:#555;cursor:not-allowed}
@@ -361,40 +483,40 @@ tr:hover td{background:#ffffff06}
 .conv-body .chat-list-item{padding:2px 0}
 .conv-body blockquote{border-left:3px solid var(--accent2);margin:10px 0;padding:6px 14px;color:var(--text2);background:#3b82f60a;border-radius:0 6px 6px 0;font-size:13px}
 .conv-body blockquote p:last-child{margin-bottom:0}
-.conv-body hr{border:none;border-top:1px solid #3a3d4a;margin:14px 0}
+.conv-body hr{border:none;border-top:1px solid var(--border2);margin:14px 0}
 .conv-body a{color:var(--accent2);text-decoration:none;border-bottom:1px solid transparent}
 .conv-body a:hover{border-bottom-color:var(--accent2)}
 .chat-welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;text-align:center;color:var(--text2);padding:60px 20px}
-.chat-welcome h2{font-size:32px;font-weight:700;color:#e5e7eb;margin:24px 0 6px;letter-spacing:-.5px}
-.chat-welcome p{font-size:14px;margin-bottom:36px;max-width:460px;color:#6b7280;line-height:1.6}
+.chat-welcome h2{font-size:32px;font-weight:700;color:var(--text);margin:24px 0 6px;letter-spacing:-.5px}
+.chat-welcome p{font-size:14px;margin-bottom:36px;max-width:460px;color:var(--text2);line-height:1.6}
 .welcome-suggestions{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;max-width:560px;width:100%}
-.welcome-suggestions button{background:transparent;border:1px solid #1f2233;border-radius:14px;padding:14px 18px;color:#9ca3af;font-size:13px;cursor:pointer;transition:all .2s;text-align:left;line-height:1.4}
-.welcome-suggestions button:hover{border-color:#3b82f680;color:#d1d5db;background:#151820}
-.chat-bottom-bar{position:absolute;bottom:0;left:0;right:0;padding:0 24px 16px;background:linear-gradient(to top,#0a0c10 70%,transparent);pointer-events:none;z-index:10}
+.welcome-suggestions button{background:transparent;border:1px solid var(--border);border-radius:14px;padding:14px 18px;color:var(--text2);font-size:13px;cursor:pointer;transition:all .2s;text-align:left;line-height:1.4}
+.welcome-suggestions button:hover{border-color:color-mix(in srgb,var(--accent2) 50%,transparent);color:var(--text);background:var(--card)}
+.chat-bottom-bar{position:absolute;bottom:0;left:0;right:0;padding:0 24px 16px;background:linear-gradient(to top,var(--bg-deep) 70%,transparent);pointer-events:none;z-index:10}
 .chat-bottom-inner{max-width:780px;margin:0 auto;pointer-events:auto}
 .chat-controls-row{display:none}
-.chat-input-row{display:flex;align-items:center;gap:0;background:#151820;border:1px solid #1f2233;border-radius:24px;padding:4px 6px 4px 6px;transition:border-color .2s,box-shadow .2s}
-.chat-input-row:focus-within{border-color:#3b82f680;box-shadow:0 0 0 3px #3b82f612}
+.chat-input-row{display:flex;align-items:center;gap:0;background:var(--card);border:1px solid var(--border);border-radius:24px;padding:4px 6px 4px 6px;transition:border-color .2s,box-shadow .2s}
+.chat-input-row:focus-within{border-color:color-mix(in srgb,var(--accent2) 50%,transparent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent2) 7%,transparent)}
 .chat-input-full{flex:1;background:transparent;border:none;padding:12px 16px;color:var(--text);font-size:14px;outline:none;font-family:inherit}
-.chat-input-full::placeholder{color:#4b5563}
-.chat-send-btn{background:#e5e7eb;color:#0a0c10;border:none;border-radius:50%;width:36px;height:36px;font-weight:700;cursor:pointer;font-size:16px;transition:all .15s;flex-shrink:0;display:flex;align-items:center;justify-content:center}
-.chat-send-btn:hover{background:#fff;transform:scale(1.05)}
+.chat-input-full::placeholder{color:var(--text2)}
+.chat-send-btn{background:var(--text);color:var(--bg-deep);border:none;border-radius:50%;width:36px;height:36px;font-weight:700;cursor:pointer;font-size:16px;transition:all .15s;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.chat-send-btn:hover{opacity:.85;transform:scale(1.05)}
 .chat-send-btn:disabled{opacity:.2;cursor:not-allowed;transform:none}
-.chat-bottom-hint{text-align:center;font-size:11px;color:#3a3d4a;margin-top:8px}
+.chat-bottom-hint{text-align:center;font-size:11px;color:var(--text2);opacity:.5;margin-top:8px}
 /* Model pill — hidden, kept for JS compat */
 .chat-model-pill{display:none}
 /* Tools flyout panel — hidden by default */
-.chat-tools-flyout{position:absolute;bottom:calc(100% + 8px);left:0;background:#151820;border:1px solid #1f2233;border-radius:16px;padding:14px;min-width:300px;display:none;box-shadow:0 -8px 32px #00000060;z-index:20}
+.chat-tools-flyout{position:absolute;bottom:calc(100% + 8px);left:0;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:14px;min-width:300px;display:none;box-shadow:0 -8px 32px #00000060;z-index:20}
 .chat-tools-flyout.open{display:block;animation:flyIn .15s ease-out}
 @keyframes flyIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 .chat-tools-flyout .tools-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-.chat-tools-flyout .tool-btn{background:#1a1e2e;border:1px solid #1f2233;border-radius:10px;padding:9px 12px;color:#9ca3af;font-size:12px;cursor:pointer;transition:all .15s;text-align:left;display:flex;align-items:center;gap:6px}
-.chat-tools-flyout .tool-btn:hover{background:#1e2236;border-color:#3b82f680;color:var(--text)}
-.chat-tools-flyout .tool-btn.active{background:#3b82f615;border-color:#3b82f6;color:#3b82f6}
-.chat-tools-flyout .tools-section{font-size:10px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px;padding:8px 4px 4px;grid-column:1/-1}
+.chat-tools-flyout .tool-btn{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 12px;color:var(--text2);font-size:12px;cursor:pointer;transition:all .15s;text-align:left;display:flex;align-items:center;gap:6px}
+.chat-tools-flyout .tool-btn:hover{background:var(--hover);border-color:color-mix(in srgb,var(--accent2) 50%,transparent);color:var(--text)}
+.chat-tools-flyout .tool-btn.active{background:color-mix(in srgb,var(--accent2) 8%,transparent);border-color:var(--accent2);color:var(--accent2)}
+.chat-tools-flyout .tools-section{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;padding:8px 4px 4px;grid-column:1/-1}
 /* Action bar buttons inside input row */
-.input-action-btn{background:transparent;border:none;color:#4b5563;cursor:pointer;padding:8px;border-radius:50%;font-size:18px;transition:all .15s;flex-shrink:0;display:flex;align-items:center;justify-content:center;width:36px;height:36px}
-.input-action-btn:hover{color:#d1d5db;background:#1e2130}
+.input-action-btn{background:transparent;border:none;color:var(--text2);cursor:pointer;padding:8px;border-radius:50%;font-size:18px;transition:all .15s;flex-shrink:0;display:flex;align-items:center;justify-content:center;width:36px;height:36px}
+.input-action-btn:hover{color:var(--text);background:var(--hover)}
 .thinking-dots{display:inline-flex;gap:4px;padding:4px 0}
 .thinking-dots span{width:6px;height:6px;border-radius:50%;background:var(--text2);animation:bounce .8s infinite}
 .thinking-dots span:nth-child(2){animation-delay:.15s}
@@ -410,7 +532,7 @@ tr:hover td{background:#ffffff06}
 .slash-palette{position:absolute;bottom:100%;left:0;right:0;background:var(--card);border:1px solid var(--border);border-radius:8px;max-height:220px;overflow-y:auto;display:none;z-index:100;box-shadow:0 -4px 16px #0008}
 .slash-palette.open{display:block}
 .slash-item{padding:8px 14px;cursor:pointer;font-size:13px;color:var(--text);display:flex;flex-direction:column;gap:2px}
-.slash-item:hover,.slash-item.active{background:#2a2d3a}
+.slash-item:hover,.slash-item.active{background:var(--hover)}
 .slash-item .slash-cmd{font-weight:600;color:var(--accent2)}
 .slash-item .slash-desc{font-size:11px;color:var(--text2)}
 /* Streaming cursor */
@@ -571,23 +693,23 @@ tr:hover td{background:#ffffff06}
 .aic-ai-block{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
 .aic-ai-label{font-size:10px;color:var(--text2);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
 .aic-ai-text{font-size:12px;color:var(--text);line-height:1.5;white-space:pre-wrap}
-.aic-ai-fix-cmd{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px 12px;font-family:'SF Mono','Cascadia Code',monospace;font-size:11px;color:#7ee787;margin-top:8px;display:flex;align-items:center;gap:8px;overflow-x:auto}
+.aic-ai-fix-cmd{background:var(--card-deep);border:1px solid var(--border2);border-radius:6px;padding:8px 12px;font-family:'SF Mono','Cascadia Code',monospace;font-size:11px;color:var(--ok);margin-top:8px;display:flex;align-items:center;gap:8px;overflow-x:auto}
 .aic-ai-fix-cmd code{flex:1;white-space:pre;font-family:inherit;color:inherit}
 .aic-ai-fix-cmd button{background:#1f6feb;border:none;color:#fff;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px;font-weight:600;white-space:nowrap;flex-shrink:0}
 .aic-ai-fix-cmd button:hover{background:#388bfd}
 .aic-ai-loading{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2);font-style:italic;padding:6px 0}
-.aic-ai-error{color:#ef4444;font-size:12px;font-style:italic}
+.aic-ai-error{color:var(--crit);font-size:12px;font-style:italic}
 .aic-card-collapsed .aic-ai{display:none}
 
 /* Security fix command inline */
-.sec-fix-cmd{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px 14px;margin:8px 0;font-family:'SF Mono','Cascadia Code',monospace;font-size:11.5px;color:#7ee787;overflow-x:auto}
+.sec-fix-cmd{background:var(--card-deep);border:1px solid var(--border2);border-radius:6px;padding:10px 14px;margin:8px 0;font-family:'SF Mono','Cascadia Code',monospace;font-size:11.5px;color:var(--ok);overflow-x:auto}
 .sec-fix-cmd code{display:block;white-space:pre-wrap;word-break:break-all;margin-bottom:8px;font-family:inherit;color:inherit}
 .sec-fix-actions{display:flex;gap:6px;flex-wrap:wrap}
 .sec-fix-btn{border:none;color:#fff;border-radius:4px;padding:4px 14px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap;transition:background .15s}
-.sec-fix-dry{background:#f59e0b}
-.sec-fix-dry:hover{background:#d97706}
-.sec-fix-run{background:#22c55e}
-.sec-fix-run:hover{background:#16a34a}
+.sec-fix-dry{background:var(--warn)}
+.sec-fix-dry:hover{background:color-mix(in srgb,var(--warn) 85%,black)}
+.sec-fix-run{background:var(--ok)}
+.sec-fix-run:hover{background:color-mix(in srgb,var(--ok) 85%,black)}
 
 /* Predictions */
 .aic-predictions{display:flex;flex-direction:column;gap:8px}
@@ -619,15 +741,15 @@ tr:hover td{background:#ffffff06}
 .aic-fix-dur{color:var(--text2);font-weight:400;font-size:11px}
 .aic-fix-promote{margin-left:auto;background:#22c55e;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600}
 .aic-fix-promote:hover{background:#16a34a}
-.aic-fix-out{margin:0;padding:10px 12px;background:#0d1117;color:#c9d1d9;font-family:'SF Mono','Cascadia Code',monospace;font-size:11px;line-height:1.5;white-space:pre-wrap;max-height:240px;overflow:auto;border-top:1px solid var(--border)}
-.aic-fix-err{margin:0;padding:10px 12px;background:#3a1212;color:#fca5a5;font-family:'SF Mono','Cascadia Code',monospace;font-size:11px;line-height:1.5;white-space:pre-wrap;max-height:240px;overflow:auto;border-top:1px solid var(--border)}
+.aic-fix-out{margin:0;padding:10px 12px;background:var(--card-deep);color:var(--text-code);font-family:'SF Mono','Cascadia Code',monospace;font-size:11px;line-height:1.5;white-space:pre-wrap;max-height:240px;overflow:auto;border-top:1px solid var(--border)}
+.aic-fix-err{margin:0;padding:10px 12px;background:color-mix(in srgb,var(--crit) 12%,var(--card-deep));color:color-mix(in srgb,var(--crit) 70%,var(--text));font-family:'SF Mono','Cascadia Code',monospace;font-size:11px;line-height:1.5;white-space:pre-wrap;max-height:240px;overflow:auto;border-top:1px solid var(--border)}
 /* Notification config */
 .notif-section{margin-top:24px;padding-top:20px;border-top:1px solid var(--border)}
 .notif-section h3{margin:0 0 12px}
 .light-theme .alert-row:hover{background:#f0f0f5}
 .light-theme .severity-bar,.light-theme .trends-chart{background:#fafafa}
 /* Light theme */
-.light-theme{--bg:#f5f5f7;--card:#ffffff;--border:#e0e0e6;--text:#1a1a2e;--text2:#6b6b80;--accent:#e04040;--accent2:#2563eb;--accent3:#059669;--warn:#d97706;--crit:#dc2626;--ok:#16a34a}
+.light-theme{--bg:#f5f5f7;--bg-deep:#ffffff;--bg-alt:#f6f8fa;--card:#ffffff;--card-deep:#f6f8fa;--border:#e0e0e6;--border2:#d0d7de;--hover:#eeeef2;--accent:#e04040;--accent2:#2563eb;--accent3:#059669;--text:#1a1a2e;--text2:#6b6b80;--text-code:#1a1a2e;--text-code-accent:#6f42c1;--warn:#d97706;--crit:#dc2626;--ok:#16a34a}
 .light-theme .header{background:linear-gradient(135deg,#f8f9fc 0%,#eee8f8 40%,#f8e8e8 100%);border-image:linear-gradient(90deg,#e04040,#3b82f6,#10b981) 1}
 .light-theme .app-footer{background:linear-gradient(135deg,#f8f9fc 0%,#eee8f8 100%);border-top:1px solid #e0e0e0;color:#666}
 .light-theme .msg.ai{background:#eeeef2}
@@ -724,10 +846,10 @@ tr:hover td{background:#ffffff06}
 .sidebar-search input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:7px 10px 7px 30px;color:var(--text);font-size:12px;outline:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='%23a1a1aa' viewBox='0 0 24 24'%3E%3Cpath d='M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:8px center}
 .sidebar-search input:focus{border-color:var(--accent2)}
 /* Score gauge card */
-.score-gauge{display:inline-flex;align-items:center;gap:10px;background:#161b22;border:1px solid var(--border);border-radius:10px;padding:10px 16px;margin:6px 0;min-width:200px}
+.score-gauge{display:inline-flex;align-items:center;gap:10px;background:var(--bg-alt);border:1px solid var(--border);border-radius:10px;padding:10px 16px;margin:6px 0;min-width:200px}
 .score-ring{position:relative;width:52px;height:52px;flex-shrink:0}
 .score-ring svg{transform:rotate(-90deg)}
-.score-ring .ring-bg{fill:none;stroke:#2a2d3a;stroke-width:5}
+.score-ring .ring-bg{fill:none;stroke:var(--border);stroke-width:5}
 .score-ring .ring-fg{fill:none;stroke-width:5;stroke-linecap:round;transition:stroke-dashoffset .6s ease}
 .score-val{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700}
 .score-label{font-size:12px;color:var(--text2)}
@@ -740,11 +862,11 @@ tr:hover td{background:#ffffff06}
 .grade-D{background:#f9731633;color:#fb923c;border:2px solid #fb923c}
 .grade-F{background:#ef444433;color:#f87171;border:2px solid #f87171}
 /* Markdown tables */
-.md-table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0;background:#0d1117;border-radius:8px;overflow:hidden}
-.md-table th{background:#161b22;padding:6px 10px;text-align:left;font-weight:600;color:var(--text);font-size:11px;text-transform:uppercase;letter-spacing:.3px;border-bottom:1px solid #30363d}
-.md-table td{padding:6px 10px;border-bottom:1px solid #21262d;color:var(--text)}
+.md-table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0;background:var(--card-deep);border-radius:8px;overflow:hidden}
+.md-table th{background:var(--bg-alt);padding:6px 10px;text-align:left;font-weight:600;color:var(--text);font-size:11px;text-transform:uppercase;letter-spacing:.3px;border-bottom:1px solid var(--border2)}
+.md-table td{padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text)}
 .md-table tr:last-child td{border-bottom:none}
-.md-table tr:hover td{background:#1c2028}
+.md-table tr:hover td{background:var(--card)}
 .light-theme .md-table,.light-theme .score-gauge{background:#f6f8fa;border-color:#d0d7de}
 .light-theme .md-table th{background:#ebedf0;color:var(--text);border-color:#d0d7de}
 .light-theme .md-table td{border-color:#e0e0e6}
@@ -755,7 +877,7 @@ tr:hover td{background:#ffffff06}
 .kbd-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px 32px;min-width:340px;box-shadow:0 8px 32px #0004}
 .kbd-card h3{margin-bottom:16px;font-size:16px;color:var(--text)}
 .kbd-row{display:flex;justify-content:space-between;padding:6px 0;font-size:13px;color:var(--text)}
-.kbd-key{background:#0f1117;border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:12px;font-family:'SF Mono',monospace;color:var(--text2)}
+.kbd-key{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:12px;font-family:'SF Mono',monospace;color:var(--text2)}
 .kbd-card .close-btn{position:absolute;top:12px;right:16px;background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer}
 /* Export button */
 .export-btn{background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--text2);cursor:pointer;font-size:11px;transition:all .2s}
@@ -771,11 +893,26 @@ tr:hover td{background:#ffffff06}
 .think-stage.pending{opacity:0.45}
 .think-stage .stage-label{flex:1}
 @keyframes spin{to{transform:rotate(360deg)}}
+/* Clarification / disambiguation cards */
+.clarify-card{background:var(--card);border:1px solid var(--accent2);border-radius:12px;padding:16px;margin:8px 0}
+.clarify-card .clarify-header{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.clarify-card .clarify-icon{font-size:18px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb, var(--accent2) 15%, transparent);border-radius:8px}
+.clarify-card .clarify-question{font-size:14px;font-weight:600;color:var(--text)}
+.clarify-card .clarify-context{font-size:12px;color:var(--text2);margin-bottom:12px;padding:6px 10px;background:var(--bg-alt);border-radius:6px;border-left:3px solid var(--accent2)}
+.clarify-options{display:flex;flex-direction:column;gap:6px}
+.clarify-option{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg-alt);border:1px solid var(--border);border-radius:10px;cursor:pointer;transition:all .15s;text-align:left;font-family:inherit;color:var(--text)}
+.clarify-option:hover{border-color:var(--accent2);background:var(--hover);transform:translateX(4px)}
+.clarify-option .clarify-opt-icon{font-size:16px;width:28px;text-align:center;flex-shrink:0}
+.clarify-option .clarify-opt-body{flex:1;min-width:0}
+.clarify-option .clarify-opt-label{font-size:13px;font-weight:600;color:var(--text)}
+.clarify-option .clarify-opt-desc{font-size:11px;color:var(--text2);margin-top:2px}
+.clarify-option .clarify-opt-arrow{color:var(--text2);opacity:.4;font-size:14px}
+.clarify-option:hover .clarify-opt-arrow{opacity:1;color:var(--accent2)}
 /* Auto-generated follow-up suggestions under AI replies */
-.followup-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid #1a1e2e}
+.followup-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
 .followup-chips .chip-label{font-size:10px;color:#4b5563;width:100%;margin-bottom:2px;letter-spacing:.3px;text-transform:uppercase}
-.followup-chip{background:#151820;border:1px solid #2a2d3a;border-radius:20px;padding:6px 14px;color:#9ca3af;cursor:pointer;font-size:12px;transition:all .15s;display:inline-flex;align-items:center;gap:5px}
-.followup-chip:hover{border-color:#3b82f6;color:#d1d5db;background:#1a1e2e;transform:translateY(-1px)}
+.followup-chip{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:6px 14px;color:var(--text2);cursor:pointer;font-size:12px;transition:all .15s;display:inline-flex;align-items:center;gap:5px}
+.followup-chip:hover{border-color:var(--accent2);color:var(--text);background:var(--hover);transform:translateY(-1px)}
 .followup-chip .chip-arrow{opacity:.4;font-size:11px}
 /* Conversation memory chip — inline in the input area */
 .memory-chip{display:inline-flex;align-items:center;gap:4px;background:#1e213008;border:1px solid #2a2d3a;border-radius:12px;padding:2px 8px;font-size:10px;color:#9ca3af;margin-right:4px}
@@ -888,14 +1025,14 @@ tr:hover td{background:#ffffff06}
 /* Compare cards */
 .compare-container{display:flex;gap:14px;flex-wrap:wrap;width:100%;margin:8px 0}
 .compare-card{flex:1;min-width:250px;background:var(--bg);border:1px solid var(--border);border-radius:8px;overflow:hidden}
-.compare-card .cc-header{padding:8px 12px;background:#161b22;border-bottom:1px solid var(--border);font-size:12px;font-weight:600;color:var(--accent2)}
+.compare-card .cc-header{padding:8px 12px;background:var(--bg-alt);border-bottom:1px solid var(--border);font-size:12px;font-weight:600;color:var(--accent2)}
 .compare-card .cc-body{padding:10px 12px;font-size:13px;line-height:1.6;max-height:300px;overflow-y:auto}
 .compare-card .cc-footer{padding:6px 12px;border-top:1px solid var(--border);font-size:11px;color:var(--text2);display:flex;justify-content:space-between;align-items:center}
 .compare-card .cc-footer button{background:var(--accent);color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px}
 .compare-card .cc-footer button:hover{opacity:.9}
 /* Investigation steps */
 .investigation-steps{margin:8px 0;border:1px solid var(--border);border-radius:8px;overflow:hidden}
-.investigation-steps .inv-header{padding:8px 12px;background:#161b22;border-bottom:1px solid var(--border);font-size:12px;font-weight:600;color:var(--text);cursor:pointer;display:flex;align-items:center;gap:6px}
+.investigation-steps .inv-header{padding:8px 12px;background:var(--bg-alt);border-bottom:1px solid var(--border);font-size:12px;font-weight:600;color:var(--text);cursor:pointer;display:flex;align-items:center;gap:6px}
 .investigation-steps .inv-header .inv-arrow{transition:transform .2s;font-size:10px}
 .investigation-steps .inv-header .inv-arrow.open{transform:rotate(90deg)}
 .investigation-steps .inv-body{display:none;padding:8px 12px}
@@ -1006,7 +1143,7 @@ tr:hover td{background:#ffffff06}
 /* Upgrade Wizard Modal */
 .uw-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:10000;display:flex;align-items:center;justify-content:center;animation:uw-fadeIn .2s ease}
 @keyframes uw-fadeIn{from{opacity:0}to{opacity:1}}
-.uw-modal{background:#151820;border-radius:16px;max-width:600px;width:94%;max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,0.6);color:var(--text);font-family:inherit;position:relative;animation:uw-slideUp .25s ease}
+.uw-modal{background:var(--card);border-radius:16px;max-width:600px;width:94%;max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,0.6);color:var(--text);font-family:inherit;position:relative;animation:uw-slideUp .25s ease}
 @keyframes uw-slideUp{from{transform:translateY(30px);opacity:0}to{transform:translateY(0);opacity:1}}
 .uw-modal::-webkit-scrollbar{width:6px}
 .uw-modal::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
@@ -1219,6 +1356,31 @@ tr:hover td{background:#ffffff06}
       <div id="so-provider-status" style="font-size:12px;color:var(--text2)">Loading provider status...</div>
     </div>
 
+    <!-- ServiceNow Integration -->
+    <div class="so-section">
+      <div class="so-section-title">ServiceNow Integration</div>
+      <div id="snow-config-status" style="font-size:12px;margin-bottom:8px;color:var(--text2)">Checking...</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div>
+          <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:2px">Instance URL</label>
+          <input type="text" id="snow-instance" placeholder="https://your-instance.service-now.com" style="width:100%;padding:6px 10px;background:var(--bg-alt);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:2px">Username</label>
+          <input type="text" id="snow-username" placeholder="admin" style="width:100%;padding:6px 10px;background:var(--bg-alt);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:2px">Password</label>
+          <input type="password" id="snow-password" placeholder="password" style="width:100%;padding:6px 10px;background:var(--bg-alt);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px">
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="nav-tab" style="flex:1;font-size:11px;padding:6px" onclick="testServiceNowConnection()">Test Connection</button>
+          <button class="nav-tab" style="flex:1;font-size:11px;padding:6px;background:var(--accent2);color:#fff" onclick="saveServiceNowSettings()">Save</button>
+        </div>
+        <div id="snow-config-result" style="font-size:11px;display:none"></div>
+      </div>
+    </div>
+
     <!-- Appearance -->
     <div class="so-section">
       <div class="so-section-title">Appearance</div>
@@ -1292,17 +1454,17 @@ tr:hover td{background:#ffffff06}
     <!-- Live Cluster Topology Map -->
     <div class="topo-card">
       <div class="topo-header">
-        <h3>&#x1F310; Cluster Topology</h3>
+        <h3>&#x1F5A5; Node Topology</h3>
         <span style="font-size:11px;color:var(--text2)" id="topo-summary">Loading...</span>
       </div>
+      <div class="topo-op-bar" id="topo-op-bar"></div>
       <div class="topo-canvas" id="topo-canvas">
-        <div style="padding:20px;text-align:center;color:var(--text2);font-size:13px">Loading topology...</div>
+        <div style="padding:20px;text-align:center;color:var(--text2);font-size:13px">Loading nodes...</div>
       </div>
       <div class="topo-legend">
-        <span><i style="background:var(--ok)"></i> Running</span>
+        <span><i style="background:var(--ok)"></i> Ready</span>
         <span><i style="background:var(--warn)"></i> Warning</span>
-        <span><i style="background:var(--crit)"></i> Failed</span>
-        <span><i style="background:var(--text2)"></i> Pending</span>
+        <span><i style="background:var(--crit)"></i> NotReady</span>
       </div>
     </div>
     <!-- Cluster Health Timeline -->
@@ -1324,23 +1486,42 @@ tr:hover td{background:#ffffff06}
     <div class="heatmap-card">
       <div class="heatmap-header">
         <h3>&#x1F5FA; Namespace Heatmap</h3>
-        <span style="font-size:11px;color:var(--text2)" id="heatmap-summary">Loading...</span>
+        <div class="hm-stats" id="heatmap-stats"></div>
+      </div>
+      <div class="heatmap-toolbar">
+        <button class="hm-filter-btn active" onclick="filterHeatmap('all',this)">All</button>
+        <button class="hm-filter-btn" onclick="filterHeatmap('critical',this)">Critical</button>
+        <button class="hm-filter-btn" onclick="filterHeatmap('warning',this)">Warning</button>
+        <button class="hm-filter-btn" onclick="filterHeatmap('healthy',this)">Healthy</button>
+        <button class="hm-filter-btn" onclick="filterHeatmap('idle',this)">Idle</button>
+        <input type="text" class="hm-search" placeholder="Search namespace..." oninput="searchHeatmap(this.value)">
+        <span style="margin-left:auto;font-size:10px;color:var(--text2)" id="heatmap-summary"></span>
       </div>
       <div class="heatmap-grid" id="heatmap-grid">
         <div style="padding:20px;text-align:center;color:var(--text2);font-size:13px;width:100%">Loading namespaces...</div>
       </div>
-      <div class="heatmap-legend">
-        <span>Low</span>
-        <div class="hm-grad"><span style="background:#0d4429"></span><span style="background:#176d3a"></span><span style="background:#2ea043"></span><span style="background:#f59e0b"></span><span style="background:#ef4444"></span></div>
-        <span>High</span>
-        <span style="margin-left:auto">Pod count per namespace</span>
+      <div class="heatmap-legend" id="heatmap-legend">
+        <span class="hm-legend-item"><span class="hm-dot" style="background:#3fb950"></span> Healthy</span>
+        <span class="hm-legend-item"><span class="hm-dot" style="background:#d29922"></span> Warning</span>
+        <span class="hm-legend-item"><span class="hm-dot" style="background:#f85149"></span> Critical</span>
+        <span class="hm-legend-item"><span class="hm-dot" style="background:#8b949e"></span> Idle</span>
+        <span class="hm-legend-item"><span class="hm-dot" style="background:#58a6ff"></span> Pending</span>
+        <span style="margin-left:auto;font-size:10px">Click cell to inspect</span>
       </div>
+      <div class="hm-tooltip" id="hm-tooltip"></div>
     </div>
     <!-- AI Risk Prediction -->
     <div class="risk-card">
       <div class="risk-header">
         <h3>&#x1F52E; AI Risk Predictions</h3>
         <span class="badge badge-info" id="risk-count">Analyzing...</span>
+      </div>
+      <div class="risk-summary" id="risk-summary"></div>
+      <div class="risk-filters" id="risk-filters">
+        <button class="risk-filter-btn active" onclick="filterRisks('all')">All</button>
+        <button class="risk-filter-btn" onclick="filterRisks('critical')">Critical</button>
+        <button class="risk-filter-btn" onclick="filterRisks('warning')">Warning</button>
+        <button class="risk-filter-btn" onclick="filterRisks('info')">Info</button>
       </div>
       <div class="risk-list" id="risk-list">
         <div style="padding:20px;text-align:center;color:var(--text2);font-size:13px">Analyzing cluster patterns...</div>
@@ -1493,7 +1674,7 @@ tr:hover td{background:#ffffff06}
         <button class="icon-btn" onclick="showEmergency('drain_node')">&#x2B07; Drain Node</button>
         <button class="icon-btn" onclick="showEmergency('rollback_deployment')">&#x21BA; Rollback Deployment</button>
       </div>
-      <div id="emergency-form" style="display:none;margin-top:16px;padding:16px;background:#0f1117;border-radius:8px">
+      <div id="emergency-form" style="display:none;margin-top:16px;padding:16px;background:var(--bg);border-radius:8px">
         <div style="font-weight:600;margin-bottom:8px" id="emergency-title">Emergency: Restart Pod</div>
         <input type="text" placeholder="Namespace" style="width:100%;margin-bottom:8px;padding:8px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text)">
         <input type="text" placeholder="Resource name" style="width:100%;margin-bottom:8px;padding:8px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text)">
@@ -1506,19 +1687,19 @@ tr:hover td{background:#ffffff06}
       <h3>Ansible Automation Platform</h3>
       <p style="font-size:13px;color:var(--text2);margin-bottom:16px">Available remediation playbooks and recent job history.</p>
       <div style="display:flex;flex-direction:column;gap:8px">
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#0f1117;border-radius:6px;font-size:13px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg);border-radius:6px;font-size:13px">
           <div><strong>ocp-pod-restart</strong><br><span style="color:var(--text2);font-size:11px">Graceful pod restart with health check</span></div>
           <button class="icon-btn">Launch</button>
         </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#0f1117;border-radius:6px;font-size:13px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg);border-radius:6px;font-size:13px">
           <div><strong>ocp-scale-deployment</strong><br><span style="color:var(--text2);font-size:11px">Scale deployment replicas with validation</span></div>
           <button class="icon-btn">Launch</button>
         </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#0f1117;border-radius:6px;font-size:13px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg);border-radius:6px;font-size:13px">
           <div><strong>ocp-node-maintenance</strong><br><span style="color:var(--text2);font-size:11px">Cordon, drain, and maintain worker nodes</span></div>
           <button class="icon-btn">Launch</button>
         </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#0f1117;border-radius:6px;font-size:13px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg);border-radius:6px;font-size:13px">
           <div><strong>ocp-cluster-health-report</strong><br><span style="color:var(--text2);font-size:11px">Full cluster health assessment and report</span></div>
           <button class="icon-btn">Launch</button>
         </div>
@@ -1751,6 +1932,7 @@ tr:hover td{background:#ffffff06}
         <button class="aic-pill active" data-type="all" onclick="filterAuditTimeline('all',this)" style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:var(--accent2);color:#fff;cursor:pointer">All</button>
         <button class="aic-pill" data-type="success" onclick="filterAuditTimeline('success',this)" style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer">Success</button>
         <button class="aic-pill" data-type="failed" onclick="filterAuditTimeline('failed',this)" style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer">Failed</button>
+        <button class="aic-pill" data-type="itsm" onclick="filterAuditTimeline('itsm',this)" style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer">ITSM</button>
       </div>
     </div>
     <div id="audit-timeline" style="padding:16px;max-height:500px;overflow-y:auto">
@@ -2148,12 +2330,12 @@ tr:hover td{background:#ffffff06}
         <span style="font-size:13px;font-weight:600">Deploy KubeNexus Agent</span>
         <span style="font-size:10px;color:var(--text2)">Apply this YAML to your target cluster</span>
       </div>
-      <div style="margin-left:30px;margin-bottom:16px;background:#0d1117;border:1px solid #30363d;border-radius:10px;overflow:hidden">
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:#161b22;border-bottom:1px solid #30363d">
-          <span style="font-size:11px;font-weight:600;color:#58a6ff" id="hub-yaml-filename">kubenexus-agent.yaml</span>
-          <button onclick="navigator.clipboard.writeText(document.getElementById('hub-agent-yaml').textContent).then(function(){this.textContent='Copied!'}.bind(this))" style="background:none;border:1px solid #30363d;color:#8b949e;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px">Copy YAML</button>
+      <div style="margin-left:30px;margin-bottom:16px;background:var(--card-deep);border:1px solid var(--border2);border-radius:10px;overflow:hidden">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:var(--bg-alt);border-bottom:1px solid var(--border2)">
+          <span style="font-size:11px;font-weight:600;color:var(--accent2)" id="hub-yaml-filename">kubenexus-agent.yaml</span>
+          <button onclick="navigator.clipboard.writeText(document.getElementById('hub-agent-yaml').textContent).then(function(){this.textContent='Copied!'}.bind(this))" style="background:none;border:1px solid var(--border2);color:var(--text2);border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px">Copy YAML</button>
         </div>
-        <pre id="hub-agent-yaml" style="margin:0;padding:14px 16px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:11px;color:#c9d1d9;white-space:pre;overflow-x:auto;max-height:300px;overflow-y:auto;line-height:1.5;tab-size:2"></pre>
+        <pre id="hub-agent-yaml" style="margin:0;padding:14px 16px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:11px;color:var(--text-code);white-space:pre;overflow-x:auto;max-height:300px;overflow-y:auto;line-height:1.5;tab-size:2"></pre>
       </div>
 
       <!-- Step 3 -->
@@ -2399,7 +2581,7 @@ function setConnected(ok, label) {
   if (!ok && !banner) {
     banner = document.createElement('div');
     banner.id = 'diag-banner';
-    banner.style.cssText = 'background:#2a1010;border:1px solid var(--crit);border-radius:8px;padding:12px 16px;margin:12px auto;max-width:1440px;font-size:13px;color:#fca5a5;display:flex;align-items:center;gap:12px';
+    banner.style.cssText = 'background:color-mix(in srgb,var(--crit) 10%,var(--card));border:1px solid var(--crit);border-radius:8px;padding:12px 16px;margin:12px auto;max-width:1440px;font-size:13px;color:color-mix(in srgb,var(--crit) 70%,var(--text));display:flex;align-items:center;gap:12px';
     banner.innerHTML = '<span style="font-size:18px;flex-shrink:0">&#x26A0;</span>' +
       '<div><strong style="color:var(--crit)">Dashboard cannot connect to KubeNexus API</strong>' +
       '<div style="margin-top:4px;color:var(--text2)">Error: ' + esc(label || 'Unknown') + '</div>' +
@@ -2547,7 +2729,7 @@ async function loadPodIssues() {
       return;
     }
     container.innerHTML = pods.slice(0, 8).map(p => `
-      <div style="padding:10px;background:#0f1117;border-radius:8px;font-size:13px">
+      <div style="padding:10px;background:var(--bg);border-radius:8px;font-size:13px">
         <div style="display:flex;justify-content:space-between">
           <strong>${esc(p.name)}</strong>
           <span class="badge badge-crit">${esc(p.phase || 'Issue')}</span>
@@ -2577,7 +2759,7 @@ async function loadACMClusters() {
       const badgeClass = c.available ? 'badge-ok' : 'badge-warn';
       const label = c.available ? 'Available' : 'Unavailable';
       return `
-        <div style="padding:10px;background:#0f1117;border-radius:8px;font-size:13px">
+        <div style="padding:10px;background:var(--bg);border-radius:8px;font-size:13px">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <strong>${esc(c.name)}</strong>
             <span class="badge ${badgeClass}">${label}</span>
@@ -2595,76 +2777,113 @@ async function loadACMClusters() {
 }
 
 // ---------------------------------------------------------------------------
-// Feature 1: Live Cluster Topology Map
+// Feature 1: Node Topology
 // ---------------------------------------------------------------------------
 async function loadTopology() {
   var canvas = document.getElementById('topo-canvas');
   var summary = document.getElementById('topo-summary');
+  var opBar = document.getElementById('topo-op-bar');
   try {
-    var nodes = await apiFetch('/api/nodes');
-    var pods = [];
-    try { pods = await apiFetch('/api/pods/issues'); } catch {}
-    var allPodsData = {};
-    try {
-      var summ = await apiFetch('/api/cluster/summary');
-      if (summ && summ.nodes) summary.textContent = summ.nodes.ready + '/' + summ.nodes.total + ' nodes ready';
-    } catch {}
+    var results = await Promise.all([
+      apiFetch('/api/nodes'),
+      apiFetch('/api/cluster/summary').catch(function() { return null; }),
+      apiFetch('/api/pods/issues').catch(function() { return []; }),
+      apiFetch('/api/cluster/operators').catch(function() { return []; }),
+    ]);
+    var nodes = results[0] || [];
+    var clusterSummary = results[1];
+    var podIssues = results[2] || [];
+    var operators = results[3] || [];
 
-    // Fetch pod counts per node
-    var podsByNode = {};
-    try {
-      var podList = await apiFetch('/api/dashboard/summary');
-      if (podList && podList.podsByNode) podsByNode = podList.podsByNode;
-    } catch {}
+    var readyNodes = nodes.filter(function(n) { return n.ready; }).length;
+    var totalOps = operators.length;
+    var degradedOps = operators.filter(function(o) { return o.health === 'degraded'; });
+    var progressingOps = operators.filter(function(o) { return o.health === 'progressing'; });
+    var availCount = operators.filter(function(o) { return o.health === 'available'; }).length;
+
+    // Summary
+    if (clusterSummary && clusterSummary.cluster) {
+      summary.innerHTML = esc(clusterSummary.cluster.version) + ' &middot; ' +
+        readyNodes + '/' + nodes.length + ' nodes &middot; ' +
+        availCount + '/' + totalOps + ' operators';
+    } else {
+      summary.textContent = readyNodes + '/' + nodes.length + ' nodes';
+    }
+
+    // Compact operator status bar — only show if there are degraded/progressing
+    if (degradedOps.length > 0 || progressingOps.length > 0) {
+      var opHtml = '<span style="font-size:10px;color:var(--text2);margin-right:4px">Operators:</span>';
+      degradedOps.forEach(function(op) {
+        opHtml += '<span class="topo-op-pill degraded" title="' + esc(op.name) + ': ' + esc((op.message || '').slice(0, 100)) + '" style="cursor:pointer" onclick="openNewChatWithCommand(\'describe clusteroperator ' + esc(op.name) + '\',\'' + esc(op.name) + '\')"><span class="op-dot"></span>' + esc(op.name) + '</span>';
+      });
+      progressingOps.forEach(function(op) {
+        opHtml += '<span class="topo-op-pill progressing" title="' + esc(op.name) + ': ' + esc((op.message || '').slice(0, 100)) + '" style="cursor:pointer" onclick="openNewChatWithCommand(\'describe clusteroperator ' + esc(op.name) + '\',\'' + esc(op.name) + '\')"><span class="op-dot"></span>' + esc(op.name) + '</span>';
+      });
+      if (availCount > 0) {
+        opHtml += '<span class="topo-op-pill ok"><span class="op-dot"></span>' + availCount + ' healthy</span>';
+      }
+      opBar.innerHTML = opHtml;
+      opBar.style.display = '';
+    } else {
+      opBar.innerHTML = '<span style="font-size:10px;color:var(--text2)">Operators:</span><span class="topo-op-pill ok"><span class="op-dot"></span>' + availCount + '/' + totalOps + ' healthy</span>';
+      opBar.style.display = '';
+    }
 
     if (!nodes || nodes.length === 0) {
       canvas.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">No nodes found</div>';
       return;
     }
 
-    var issuePods = {};
-    (pods || []).forEach(function(p) {
-      if (!issuePods[p.nodeName]) issuePods[p.nodeName] = [];
-      issuePods[p.nodeName].push(p);
+    // Pod issues by node
+    var issuePodsByNode = {};
+    podIssues.forEach(function(p) {
+      var node = p.node || '';
+      if (!issuePodsByNode[node]) issuePodsByNode[node] = [];
+      issuePodsByNode[node].push(p);
     });
 
     canvas.innerHTML = nodes.map(function(n) {
-      var issues = issuePods[n.name] || [];
-      var podCount = podsByNode[n.name] || n.pods || 0;
+      var issues = issuePodsByNode[n.name] || [];
       var health = !n.ready ? 'critical' : issues.length > 0 ? 'warning' : 'healthy';
       var roleLabel = (n.roles || []).join(', ') || 'worker';
       var icon = roleLabel.includes('master') || roleLabel.includes('control') ? '&#x1F3DB;' : '&#x2699;';
+      var podCount = n.pods || 0;
+      var maxPods = n.maxPods || 110;
+      var podPct = maxPods > 0 ? Math.round((podCount / maxPods) * 100) : 0;
 
-      // Generate pod dots (show up to 30)
-      var dotCount = Math.min(podCount, 30);
-      var podsHtml = '';
-      if (dotCount > 0) {
-        var critCount = issues.filter(function(p) { return p.phase === 'Failed' || p.phase === 'CrashLoopBackOff'; }).length;
-        var warnCount = issues.length - critCount;
-        var okCount = Math.max(0, dotCount - critCount - warnCount);
-        var dots = [];
-        for (var ci = 0; ci < critCount && dots.length < dotCount; ci++) dots.push('crit');
-        for (var wi = 0; wi < warnCount && dots.length < dotCount; wi++) dots.push('warn');
-        for (var oi = 0; oi < okCount && dots.length < dotCount; oi++) dots.push('');
-        podsHtml = '<div class="topo-pods">' + dots.map(function(cls) {
-          return '<div class="topo-pod ' + cls + '"></div>';
-        }).join('') + (podCount > 30 ? '<span style="font-size:8px;color:var(--text2);margin-left:2px">+' + (podCount - 30) + '</span>' : '') + '</div>';
-      }
+      // Pod dots — compact, max 20
+      var dotCount = Math.min(podCount, 20);
+      var critCount = issues.filter(function(p) { return p.phase === 'Failed'; }).length;
+      var warnCount = issues.length - critCount;
+      var okCount = Math.max(0, dotCount - critCount - warnCount);
+      var dots = '';
+      for (var ci = 0; ci < critCount && ci < dotCount; ci++) dots += '<span class="c"></span>';
+      for (var wi = 0; wi < warnCount && (ci + wi) < dotCount; wi++) dots += '<span class="w"></span>';
+      for (var oi = 0; oi < okCount; oi++) dots += '<span></span>';
 
-      return '<div class="topo-node ' + health + '" title="' + esc(n.name) + ' (' + roleLabel + ')" onclick="openNewChatWithCommand(\'describe node ' + esc(n.name) + '\',\'Node: ' + esc(n.name) + '\')">' +
-        '<div class="topo-node-icon">' + icon + '</div>' +
-        '<div class="topo-node-name">' + esc(n.name.split('.')[0]) + '</div>' +
-        '<div class="topo-node-role">' + esc(roleLabel) + '</div>' +
-        '<div class="topo-node-stats">' +
-          '<span>&#x1F4BB; ' + esc(n.cpu || '--') + '</span>' +
-          '<span>&#x1F4BE; ' + formatMem(n.memory) + '</span>' +
-          '<span>&#x1F4E6; ' + podCount + '</span>' +
+      return '<div class="topo-node ' + health + '" title="' + esc(n.name) + '" onclick="openNewChatWithCommand(\'describe node ' + esc(n.name) + '\',\'Node: ' + esc(n.name) + '\')">' +
+        '<div class="topo-node-left">' +
+          '<div class="tn-icon">' + icon + '</div>' +
+          '<div class="tn-status"></div>' +
         '</div>' +
-        podsHtml +
+        '<div class="topo-node-mid">' +
+          '<div class="tn-name">' + esc(n.name.split('.')[0]) + '</div>' +
+          '<div class="tn-role">' + esc(roleLabel) + '</div>' +
+          '<div class="tn-stats">' +
+            '<span>' + esc(n.cpu || '-') + ' CPU</span>' +
+            '<span>' + formatMem(n.memory) + '</span>' +
+            '<span>' + podCount + '/' + maxPods + ' pods (' + podPct + '%)</span>' +
+          '</div>' +
+        '</div>' +
+        (dots ? '<div class="topo-node-pods">' + dots + '</div>' : '') +
       '</div>';
     }).join('');
   } catch (e) {
-    canvas.innerHTML = '<div style="padding:20px;text-align:center;color:var(--crit);font-size:12px">Error: ' + esc(e.message) + '</div>';
+    canvas.innerHTML = '<div style="padding:20px;text-align:center;font-size:12px">' +
+      '<div style="color:var(--text2);margin-bottom:6px">Unable to load node topology</div>' +
+      '<div style="color:var(--text2);font-size:11px">Waiting for cluster API connection...</div>' +
+      '</div>';
+    opBar.innerHTML = '';
   }
 }
 
@@ -2713,12 +2932,13 @@ function renderTimeline() {
 
   // Color based on current health
   var lastV = points[points.length - 1].v;
-  var color = lastV >= 80 ? '#22c55e' : lastV >= 50 ? '#f59e0b' : '#ef4444';
+  var color = lastV >= 80 ? 'var(--ok)' : lastV >= 50 ? 'var(--warn)' : 'var(--crit)';
+  var colorHex = lastV >= 80 ? '#22c55e' : lastV >= 50 ? '#f59e0b' : '#ef4444';
 
   svg.innerHTML =
     '<defs><linearGradient id="tl-grad" x1="0" y1="0" x2="0" y2="1">' +
-      '<stop offset="0%" stop-color="' + color + '" stop-opacity="0.3"/>' +
-      '<stop offset="100%" stop-color="' + color + '" stop-opacity="0"/>' +
+      '<stop offset="0%" stop-color="' + colorHex + '" stop-opacity="0.3"/>' +
+      '<stop offset="100%" stop-color="' + colorHex + '" stop-opacity="0"/>' +
     '</linearGradient></defs>' +
     // Grid lines
     '<line x1="0" y1="20" x2="600" y2="20" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="4"/>' +
@@ -2731,9 +2951,9 @@ function renderTimeline() {
     // Area fill
     '<path d="' + areaD + '" fill="url(#tl-grad)"/>' +
     // Line
-    '<path d="' + pathD + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linecap="round"/>' +
+    '<path d="' + pathD + '" fill="none" stroke="' + colorHex + '" stroke-width="2" stroke-linecap="round"/>' +
     // Current point
-    '<circle cx="' + points[points.length - 1].x + '" cy="' + points[points.length - 1].y + '" r="4" fill="' + color + '" stroke="#0f1117" stroke-width="2"/>' +
+    '<circle cx="' + points[points.length - 1].x + '" cy="' + points[points.length - 1].y + '" r="4" fill="' + colorHex + '" stroke="var(--bg)" stroke-width="2"/>' +
     // Time labels
     '<text x="50" y="78" fill="var(--text2)" font-size="8" text-anchor="middle">-20h</text>' +
     '<text x="150" y="78" fill="var(--text2)" font-size="8" text-anchor="middle">-16h</text>' +
@@ -2766,138 +2986,382 @@ function renderTimeline() {
 // ---------------------------------------------------------------------------
 // Feature 3: Namespace Heatmap
 // ---------------------------------------------------------------------------
+var _heatmapData = [];
+var _heatmapFilter = 'all';
+var _heatmapSearch = '';
+
+var HM_COLORS = {
+  critical: { bg: 'linear-gradient(135deg,#b91c1c,#dc2626)', dot: '#f85149', border: '#f8514950' },
+  warning:  { bg: 'linear-gradient(135deg,#92400e,#d97706)', dot: '#d29922', border: '#d2992250' },
+  healthy:  { bg: 'linear-gradient(135deg,#064e3b,#059669)', dot: '#3fb950', border: '#3fb95050' },
+  pending:  { bg: 'linear-gradient(135deg,#1e3a5f,#2563eb)', dot: '#58a6ff', border: '#58a6ff50' },
+  idle:     { bg: '#21262d', dot: '#8b949e', border: '#30363d' },
+};
+
 async function loadNamespaceHeatmap() {
   var grid = document.getElementById('heatmap-grid');
   var summaryEl = document.getElementById('heatmap-summary');
+  var statsEl = document.getElementById('heatmap-stats');
   try {
-    var data = await apiFetch('/api/cluster/summary');
     var nsList = [];
-    try {
-      var nsData = await apiFetch('/api/namespaces');
-      nsList = nsData || [];
-    } catch {}
+    try { nsList = await apiFetch('/api/namespaces') || []; } catch {}
 
-    if (nsList.length === 0 && data && data.namespaces) {
-      summaryEl.textContent = data.namespaces.total + ' namespaces';
+    if (nsList.length === 0) {
+      try {
+        var data = await apiFetch('/api/cluster/summary');
+        if (data && data.namespaces) summaryEl.textContent = data.namespaces.total + ' namespaces';
+      } catch {}
       grid.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2);font-size:12px">Namespace details unavailable</div>';
       return;
     }
 
-    // Sort by pod count descending
     nsList.sort(function(a, b) { return (b.podCount || 0) - (a.podCount || 0); });
-    var maxPods = Math.max(1, nsList.reduce(function(m, ns) { return Math.max(m, ns.podCount || 0); }, 1));
-    summaryEl.textContent = nsList.length + ' namespaces';
+    _heatmapData = nsList;
 
-    grid.innerHTML = nsList.slice(0, 40).map(function(ns) {
-      var count = ns.podCount || 0;
-      var intensity = count / maxPods;
-      var bg;
-      if (intensity === 0) bg = '#161b22';
-      else if (intensity < 0.2) bg = '#0d4429';
-      else if (intensity < 0.4) bg = '#176d3a';
-      else if (intensity < 0.6) bg = '#2ea043';
-      else if (intensity < 0.8) bg = '#c08a20';
-      else bg = '#c44040';
+    var counts = { healthy: 0, warning: 0, critical: 0, pending: 0, idle: 0 };
+    var totalPods = 0;
+    for (var i = 0; i < nsList.length; i++) {
+      counts[nsList[i].health || 'idle']++;
+      totalPods += (nsList[i].podCount || 0);
+    }
 
-      var name = ns.name || ns.metadata?.name || '?';
-      var shortName = name.length > 8 ? name.substr(0, 7) + '…' : name;
+    summaryEl.textContent = nsList.length + ' ns / ' + totalPods + ' pods';
+    statsEl.innerHTML =
+      '<span class="hm-stat"><span class="hm-dot" style="background:#3fb950"></span>' + counts.healthy + '</span>' +
+      '<span class="hm-stat"><span class="hm-dot" style="background:#d29922"></span>' + counts.warning + '</span>' +
+      '<span class="hm-stat"><span class="hm-dot" style="background:#f85149"></span>' + counts.critical + '</span>';
 
-      return '<div class="heatmap-cell" style="background:' + bg + '" title="' + esc(name) + ': ' + count + ' pods" onclick="openNewChatWithCommand(\'list pods in namespace ' + esc(name) + '\',\'Pods in ' + esc(name) + '\')">' +
-        '<div class="hm-name">' + esc(shortName) + '</div>' +
-        '<div class="hm-count">' + count + '</div>' +
-      '</div>';
-    }).join('') + (nsList.length > 40 ? '<div style="display:flex;align-items:center;justify-content:center;width:48px;height:48px;font-size:10px;color:var(--text2)">+' + (nsList.length - 40) + '</div>' : '');
+    renderHeatmapGrid();
   } catch (e) {
     grid.innerHTML = '<div style="padding:20px;text-align:center;color:var(--crit);font-size:12px;width:100%">Error: ' + esc(e.message) + '</div>';
   }
 }
 
+function renderHeatmapGrid() {
+  var grid = document.getElementById('heatmap-grid');
+  var filtered = _heatmapData.filter(function(ns) {
+    if (_heatmapFilter !== 'all' && ns.health !== _heatmapFilter) return false;
+    if (_heatmapSearch && !(ns.name || '').toLowerCase().includes(_heatmapSearch.toLowerCase())) return false;
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    grid.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2);font-size:12px;width:100%">No matching namespaces</div>';
+    return;
+  }
+
+  grid.innerHTML = filtered.map(function(ns) {
+    var count = ns.podCount || 0;
+    var health = ns.health || 'idle';
+    var colors = HM_COLORS[health] || HM_COLORS.idle;
+    var name = ns.name || '?';
+    var shortName = name.length > 10 ? name.substr(0, 9) + '…' : name;
+
+    return '<div class="heatmap-cell" style="background:' + colors.bg + ';border-color:' + colors.border + '"' +
+      ' data-ns="' + esc(name) + '" data-pods="' + count + '" data-running="' + (ns.running || 0) +
+      '" data-failed="' + (ns.failed || 0) + '" data-warning="' + (ns.warning || 0) +
+      '" data-pending="' + (ns.pending || 0) + '" data-health="' + health + '"' +
+      ' onmouseenter="showHmTooltip(event,this)" onmouseleave="hideHmTooltip()"' +
+      ' onclick="openNewChatWithCommand(\'show all pods in namespace ' + esc(name) + ' with status\',\'Pods in ' + esc(name) + '\')">' +
+      '<span class="hm-health" style="background:' + colors.dot + '"></span>' +
+      '<div class="hm-name">' + esc(shortName) + '</div>' +
+      '<div class="hm-count">' + count + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function filterHeatmap(filter, btn) {
+  _heatmapFilter = filter;
+  document.querySelectorAll('.hm-filter-btn').forEach(function(b) { b.classList.remove('active'); });
+  if (btn) btn.classList.add('active');
+  renderHeatmapGrid();
+}
+
+function searchHeatmap(val) {
+  _heatmapSearch = val;
+  renderHeatmapGrid();
+}
+
+function showHmTooltip(evt, cell) {
+  var tt = document.getElementById('hm-tooltip');
+  if (!tt) return;
+  var name = cell.dataset.ns;
+  var pods = parseInt(cell.dataset.pods) || 0;
+  var running = parseInt(cell.dataset.running) || 0;
+  var failed = parseInt(cell.dataset.failed) || 0;
+  var warning = parseInt(cell.dataset.warning) || 0;
+  var pending = parseInt(cell.dataset.pending) || 0;
+  var health = cell.dataset.health;
+  var colors = HM_COLORS[health] || HM_COLORS.idle;
+  var pct = pods > 0 ? Math.round((running / pods) * 100) : 0;
+
+  tt.innerHTML =
+    '<div class="hm-tt-name" style="color:' + colors.dot + '">' + esc(name) + '</div>' +
+    '<div class="hm-tt-row"><span>Total Pods</span><span>' + pods + '</span></div>' +
+    '<div class="hm-tt-row"><span style="color:#3fb950">Running</span><span>' + running + '</span></div>' +
+    (failed > 0 ? '<div class="hm-tt-row"><span style="color:#f85149">Failed</span><span>' + failed + '</span></div>' : '') +
+    (warning > 0 ? '<div class="hm-tt-row"><span style="color:#d29922">High Restarts</span><span>' + warning + '</span></div>' : '') +
+    (pending > 0 ? '<div class="hm-tt-row"><span style="color:#58a6ff">Pending</span><span>' + pending + '</span></div>' : '') +
+    '<div class="hm-tt-bar"><div style="width:' + pct + '%;background:' + colors.dot + '"></div></div>' +
+    '<div style="text-align:center;font-size:9px;color:var(--text2);margin-top:3px">' + pct + '% healthy</div>';
+
+  tt.style.display = 'block';
+  var rect = cell.getBoundingClientRect();
+  tt.style.left = Math.min(rect.left, window.innerWidth - 200) + 'px';
+  tt.style.top = (rect.bottom + 8) + 'px';
+}
+
+function hideHmTooltip() {
+  var tt = document.getElementById('hm-tooltip');
+  if (tt) tt.style.display = 'none';
+}
+
 // ---------------------------------------------------------------------------
-// Feature 4: AI Risk Predictions
+// Feature 4: AI Risk Predictions (Evidence-Based)
 // ---------------------------------------------------------------------------
+var _riskData = [];
+var _riskFilter = 'all';
+
+function filterRisks(filter) {
+  _riskFilter = filter;
+  document.querySelectorAll('.risk-filter-btn').forEach(function(b) {
+    b.classList.toggle('active', b.textContent.toLowerCase() === filter);
+  });
+  renderRiskList();
+}
+
+function renderRiskList() {
+  var list = document.getElementById('risk-list');
+  var filtered = _riskFilter === 'all' ? _riskData : _riskData.filter(function(r) { return r.severity === _riskFilter; });
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="risk-empty">&#x2705; ' + (_riskFilter === 'all' ? 'No risks detected — cluster is healthy' : 'No ' + _riskFilter + ' risks') + '</div>';
+    return;
+  }
+  list.innerHTML = filtered.map(function(r) {
+    var clickAction = r.ns && r.pod
+      ? ' onclick="openNewChatWithCommand(\'troubleshoot pod ' + esc(r.pod) + ' in namespace ' + esc(r.ns) + '\',\'Troubleshoot ' + esc(r.pod) + '\')"'
+      : r.node
+      ? ' onclick="openNewChatWithCommand(\'diagnose node ' + esc(r.node) + '\',\'Diagnose ' + esc(r.node) + '\')"'
+      : '';
+    return '<div class="risk-item ' + esc(r.severity) + '"' + clickAction + '>' +
+      '<div class="risk-icon">' + r.icon + '</div>' +
+      '<div class="risk-body">' +
+        '<div class="risk-title">' + r.title + ' <span class="risk-sev">' + r.severity + '</span></div>' +
+        '<div class="risk-evidence">' + r.evidence + '</div>' +
+        '<div class="risk-impact">' + r.impact + '</div>' +
+        '<div class="risk-action">' + r.action + '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function renderRiskSummary() {
+  var el = document.getElementById('risk-summary');
+  var counts = { critical: 0, warning: 0, info: 0 };
+  _riskData.forEach(function(r) { counts[r.severity] = (counts[r.severity] || 0) + 1; });
+  var colors = { critical: 'var(--crit)', warning: 'var(--warn)', info: 'var(--accent2)' };
+  el.innerHTML = Object.keys(counts).map(function(k) {
+    return '<div class="risk-stat' + (_riskFilter === k ? ' active' : '') + '" onclick="filterRisks(\'' + k + '\')">' +
+      '<span class="rs-dot" style="background:' + colors[k] + '"></span>' +
+      '<span class="rs-num">' + counts[k] + '</span> ' + k +
+    '</div>';
+  }).join('');
+}
+
 async function loadRiskPredictions() {
   var list = document.getElementById('risk-list');
   var badge = document.getElementById('risk-count');
   try {
-    var risks = [];
-    // Gather pod issues for prediction
+    _riskData = [];
+    var seen = {};
+
     var pods = [];
     try { pods = await apiFetch('/api/pods/issues'); } catch {}
 
-    // Predict OOM risk from high restart counts
     (pods || []).forEach(function(p) {
+      var podKey = p.namespace + '/' + p.name;
+      if (seen[podKey]) return;
+      seen[podKey] = true;
+
+      var oomIssues = [];
+      var crashIssues = [];
+      var imgIssues = [];
+      var restartIssues = [];
+
       (p.issues || []).forEach(function(i) {
-        if (i.reason === 'OOMKilled' || (i.restarts > 5)) {
-          risks.push({
-            severity: i.restarts > 10 ? 'high' : 'medium',
-            icon: '&#x1F4A5;',
-            title: esc(p.name) + ' likely to OOM',
-            desc: esc(i.container) + ' has ' + i.restarts + ' restarts in ' + esc(p.namespace) + '. Memory pressure trend suggests failure within ~' + Math.max(1, Math.round(30 / Math.max(1, i.restarts))) + ' hours.',
-            eta: '~' + Math.max(1, Math.round(30 / Math.max(1, i.restarts))) + 'h estimated',
-            ns: p.namespace, pod: p.name,
-          });
-        } else if (i.reason === 'CrashLoopBackOff') {
-          risks.push({
-            severity: 'high',
-            icon: '&#x1F525;',
-            title: esc(p.name) + ' in crash loop',
-            desc: esc(i.container) + ' in ' + esc(p.namespace) + ' is crash-looping. Will not recover without intervention.',
-            eta: 'Immediate action needed',
-            ns: p.namespace, pod: p.name,
-          });
-        }
+        if (i.reason === 'OOMKilled') oomIssues.push(i);
+        else if (i.reason === 'CrashLoopBackOff') crashIssues.push(i);
+        else if (i.reason === 'ImagePullBackOff' || i.reason === 'ErrImagePull') imgIssues.push(i);
+        else if (i.restarts > 10) restartIssues.push(i);
       });
+
+      if (oomIssues.length > 0) {
+        var oi = oomIssues[0];
+        var evidenceLines = [];
+        evidenceLines.push('Container: ' + oi.container);
+        evidenceLines.push('Last exit:  code ' + (oi.lastExitCode !== null ? oi.lastExitCode : 'N/A') + ' (OOMKilled)');
+        if (oi.lastTerminatedAt) evidenceLines.push('Killed at:  ' + new Date(oi.lastTerminatedAt).toLocaleString());
+        evidenceLines.push('Restarts:   ' + oi.restarts);
+        evidenceLines.push('Mem limit:  ' + (oi.memLimit || 'none set'));
+        evidenceLines.push('Mem request:' + (oi.memReq || 'none set'));
+        if (p.qosClass) evidenceLines.push('QoS class:  ' + p.qosClass);
+
+        _riskData.push({
+          severity: 'critical',
+          icon: '&#x1F4A5;',
+          title: esc(p.name),
+          evidence: evidenceLines.join('\n'),
+          impact: 'Container exceeded memory limit' + (oi.memLimit ? ' (' + oi.memLimit + ')' : '') + ' and was killed by the kernel OOM killer. ' + (oi.restarts > 3 ? 'Repeated OOM kills (' + oi.restarts + 'x) indicate the limit is too low for the workload.' : 'Will keep crashing until memory limit is increased or workload reduced.'),
+          action: oi.memLimit ? '&#x2794; Increase memory limit above ' + oi.memLimit + ' or profile memory usage' : '&#x2794; Set memory limits to prevent node-level OOM',
+          ns: p.namespace, pod: p.name,
+        });
+      }
+
+      if (crashIssues.length > 0) {
+        var ci = crashIssues[0];
+        var ceLines = [];
+        ceLines.push('Container:  ' + ci.container);
+        ceLines.push('State:      CrashLoopBackOff');
+        ceLines.push('Restarts:   ' + ci.restarts);
+        if (ci.lastExitCode !== null) ceLines.push('Last exit:  code ' + ci.lastExitCode);
+        if (ci.lastTerminatedAt) ceLines.push('Last crash: ' + new Date(ci.lastTerminatedAt).toLocaleString());
+        ceLines.push('Ready:      ' + (ci.ready ? 'yes' : 'no'));
+
+        _riskData.push({
+          severity: 'critical',
+          icon: '&#x1F525;',
+          title: esc(p.name),
+          evidence: ceLines.join('\n'),
+          impact: 'Container is in a crash loop — Kubernetes keeps restarting it but it fails every time' + (ci.lastExitCode === 1 ? ' (exit code 1: application error).' : ci.lastExitCode === 137 ? ' (exit code 137: killed by signal).' : ci.lastExitCode === 139 ? ' (exit code 139: segmentation fault).' : '.') + ' This pod is effectively down.',
+          action: '&#x2794; Check container logs: oc logs ' + p.name + ' -c ' + ci.container + ' -n ' + p.namespace,
+          ns: p.namespace, pod: p.name,
+        });
+      }
+
+      if (imgIssues.length > 0) {
+        var ii = imgIssues[0];
+        _riskData.push({
+          severity: 'warning',
+          icon: '&#x1F4E6;',
+          title: esc(p.name),
+          evidence: 'Container:  ' + ii.container + '\nState:      ' + ii.reason + '\nReady:      no\nNamespace:  ' + p.namespace,
+          impact: 'Container image cannot be pulled. Pod is stuck and will not start until the image is accessible.',
+          action: '&#x2794; Verify image name, tag, and registry credentials',
+          ns: p.namespace, pod: p.name,
+        });
+      }
+
+      if (restartIssues.length > 0 && oomIssues.length === 0 && crashIssues.length === 0) {
+        var ri = restartIssues[0];
+        var reLines = [];
+        reLines.push('Container:  ' + ri.container);
+        reLines.push('Restarts:   ' + ri.restarts);
+        if (ri.lastExitCode !== null) reLines.push('Last exit:  code ' + ri.lastExitCode);
+        if (ri.lastTerminatedAt) reLines.push('Last restart: ' + new Date(ri.lastTerminatedAt).toLocaleString());
+        reLines.push('Pod age:    ' + p.podAgeHours + 'h');
+        if (p.ownerKind) reLines.push('Owner:      ' + p.ownerKind + '/' + p.ownerName);
+
+        var restartRate = p.podAgeHours > 0 ? (ri.restarts / p.podAgeHours).toFixed(1) : ri.restarts;
+
+        _riskData.push({
+          severity: 'warning',
+          icon: '&#x1F504;',
+          title: esc(p.name),
+          evidence: reLines.join('\n'),
+          impact: ri.restarts + ' restarts over ' + p.podAgeHours + 'h (' + restartRate + '/hour). Frequent restarts indicate an intermittent failure that may escalate.',
+          action: '&#x2794; Review container logs and events for root cause',
+          ns: p.namespace, pod: p.name,
+        });
+      }
+
+      if (p.phase === 'Failed') {
+        _riskData.push({
+          severity: 'critical',
+          icon: '&#x274C;',
+          title: esc(p.name),
+          evidence: 'Phase:      Failed\nNamespace:  ' + p.namespace + '\nNode:       ' + (p.node || 'unassigned') + '\nPod age:    ' + p.podAgeHours + 'h',
+          impact: 'Pod has permanently failed and will not be restarted by its controller.',
+          action: '&#x2794; Check pod events: oc describe pod ' + p.name + ' -n ' + p.namespace,
+          ns: p.namespace, pod: p.name,
+        });
+      }
     });
 
-    // Check node pressure
+    // Node-level risks from actual conditions
     try {
       var nodes = await apiFetch('/api/nodes');
       (nodes || []).forEach(function(n) {
+        var shortName = n.name.split('.')[0];
+
         if (!n.ready) {
-          risks.push({
-            severity: 'high', icon: '&#x1F6A8;',
-            title: 'Node ' + esc(n.name.split('.')[0]) + ' NotReady',
-            desc: 'Node is not in Ready state. Workloads may be evicted or unschedulable.',
-            eta: 'Investigate immediately',
+          _riskData.push({
+            severity: 'critical', icon: '&#x1F6A8;',
+            title: 'Node ' + esc(shortName),
+            evidence: 'Status:     NotReady\nRoles:      ' + (n.roles || []).join(', ') + '\nPods:       ' + n.pods + '\nKubelet:    ' + (n.kubeletVersion || 'unknown'),
+            impact: 'Node is not Ready. All pods on this node may be evicted. New pods cannot be scheduled here.',
+            action: '&#x2794; Check node: oc describe node ' + n.name,
+            node: n.name,
           });
         }
-        // High pod count warning
-        if (n.pods > 200) {
-          risks.push({
-            severity: 'medium', icon: '&#x26A0;',
-            title: 'Node ' + esc(n.name.split('.')[0]) + ' pod density high',
-            desc: n.pods + ' pods running. Approaching kubelet limits. Consider spreading workloads.',
-            eta: 'Within 24h if unchecked',
+
+        if (n.memoryPressure) {
+          _riskData.push({
+            severity: 'critical', icon: '&#x1F4A7;',
+            title: 'Node ' + esc(shortName) + ' — MemoryPressure',
+            evidence: 'Condition:  MemoryPressure=True\nMemory:     ' + n.memory + '\nPods:       ' + n.pods,
+            impact: 'Node is running low on memory. Kubelet will start evicting pods by priority to reclaim memory.',
+            action: '&#x2794; Reduce workload on this node or add memory',
+            node: n.name,
+          });
+        }
+
+        if (n.diskPressure) {
+          _riskData.push({
+            severity: 'critical', icon: '&#x1F4BE;',
+            title: 'Node ' + esc(shortName) + ' — DiskPressure',
+            evidence: 'Condition:  DiskPressure=True\nPods:       ' + n.pods,
+            impact: 'Node disk is nearly full. Kubelet will evict pods and refuse new scheduling. Container images may fail to pull.',
+            action: '&#x2794; Clean up disk space or expand storage',
+            node: n.name,
+          });
+        }
+
+        if (n.pidPressure) {
+          _riskData.push({
+            severity: 'warning', icon: '&#x1F9F5;',
+            title: 'Node ' + esc(shortName) + ' — PIDPressure',
+            evidence: 'Condition:  PIDPressure=True\nPods:       ' + n.pods,
+            impact: 'Node is running out of process IDs. New containers may fail to start.',
+            action: '&#x2794; Identify pods spawning excessive processes',
+            node: n.name,
+          });
+        }
+
+        var maxPods = n.maxPods || 110;
+        var podUtil = n.pods / maxPods;
+        if (podUtil > 0.85) {
+          _riskData.push({
+            severity: podUtil > 0.95 ? 'critical' : 'warning',
+            icon: '&#x1F4E6;',
+            title: 'Node ' + esc(shortName) + ' — Pod density ' + Math.round(podUtil * 100) + '%',
+            evidence: 'Running:    ' + n.pods + ' / ' + maxPods + ' max pods\nUtilization: ' + Math.round(podUtil * 100) + '%\nRoles:      ' + (n.roles || []).join(', '),
+            impact: n.pods + ' of ' + maxPods + ' pod slots used. ' + (podUtil > 0.95 ? 'Almost at capacity — new pods will fail to schedule.' : 'Approaching capacity — may prevent scheduling soon.'),
+            action: '&#x2794; Spread workloads across nodes or increase maxPods',
+            node: n.name,
           });
         }
       });
     } catch {}
 
-    // Dedup and sort
-    risks.sort(function(a, b) { return a.severity === 'high' ? -1 : b.severity === 'high' ? 1 : 0; });
-    risks = risks.slice(0, 8);
+    // Sort: critical first, then warning, then info
+    var sevOrder = { critical: 0, warning: 1, info: 2 };
+    _riskData.sort(function(a, b) { return (sevOrder[a.severity] || 9) - (sevOrder[b.severity] || 9); });
 
-    badge.textContent = risks.length + ' prediction' + (risks.length !== 1 ? 's' : '');
-    badge.className = 'badge ' + (risks.some(function(r) { return r.severity === 'high'; }) ? 'badge-crit' : risks.length > 0 ? 'badge-warn' : 'badge-ok');
+    badge.textContent = _riskData.length + ' finding' + (_riskData.length !== 1 ? 's' : '');
+    badge.className = 'badge ' + (_riskData.some(function(r) { return r.severity === 'critical'; }) ? 'badge-crit' : _riskData.length > 0 ? 'badge-warn' : 'badge-ok');
 
-    if (risks.length === 0) {
-      list.innerHTML = '<div class="risk-empty">&#x2705; No risk predictions — cluster looks healthy</div>';
-      return;
-    }
-
-    list.innerHTML = risks.map(function(r) {
-      var clickAction = r.ns && r.pod
-        ? ' onclick="openNewChatWithCommand(\'troubleshoot pod ' + esc(r.pod) + ' in namespace ' + esc(r.ns) + '\',\'Troubleshoot ' + esc(r.pod) + '\')"'
-        : '';
-      return '<div class="risk-item ' + (r.severity === 'high' ? 'high' : '') + '" style="cursor:pointer"' + clickAction + '>' +
-        '<div class="risk-icon">' + r.icon + '</div>' +
-        '<div class="risk-body">' +
-          '<div class="risk-title">' + r.title + '</div>' +
-          '<div class="risk-desc">' + r.desc + '</div>' +
-          '<div class="risk-eta">&#x23F1; ' + r.eta + '</div>' +
-        '</div>' +
-      '</div>';
-    }).join('');
+    renderRiskSummary();
+    renderRiskList();
   } catch (e) {
     list.innerHTML = '<div class="risk-empty" style="color:var(--crit)">Error: ' + esc(e.message) + '</div>';
     badge.textContent = 'Error';
@@ -3204,15 +3668,14 @@ function md(text) {
         allCmds.push(parts.map(function(p) { return p.replace(/\\\s*$/, '').trim(); }).join(' ').replace(/\s+/g, ' ').trim());
       }
     }
-    var readOnlyPat = /^(?:oc|kubectl)\s+(?:get|describe|logs|top|events|explain|config|version|cluster-info|status|whoami|api-resources|api-versions)\b/i;
+    var readOnlyPat = /^(?:oc|kubectl)\s+(?:get|describe|logs|top|events|explain|config|version|cluster-info|status|whoami|api-resources|api-versions|adm\s+(?:top|node-logs|upgrade(?:\s|$)(?!.*--to)|inspect|must-gather|release\s+info))\b/i;
     var fullCmd = allCmds.find(function(c) { return !readOnlyPat.test(c); }) || allCmds[0] || null;
     var runBtn = '';
     var dryRunBtn = '';
     if (fullCmd) {
       var upgradeMatch = fullCmd.match(/^oc\s+adm\s+upgrade\s+--to=([\w.\-]+)/);
       var cmdJson = JSON.stringify(fullCmd).replace(/"/g, '&quot;');
-      var readOnlyVerbs = /^(?:oc|kubectl)\s+(?:get|describe|logs|top|events|explain|config|version|cluster-info|status|whoami|api-resources|api-versions)\b/i;
-      var isReadOnly = readOnlyVerbs.test(fullCmd);
+      var isReadOnly = readOnlyPat.test(fullCmd);
       if (upgradeMatch) {
         runBtn = '<button class="fix-copy" onclick="openUpgradeWizard(\'' + upgradeMatch[1].replace(/'/g, "\\'") + '\')" title="Open Upgrade Wizard">&#x25B6; Run</button>';
       } else if (isReadOnly) {
@@ -3220,7 +3683,7 @@ function md(text) {
       } else {
         var dryCmd = fullCmd.replace(/\s*--dry-run\S*/g, '') + ' --dry-run=client';
         var dryCmdJson = JSON.stringify(dryCmd).replace(/"/g, '&quot;');
-        dryRunBtn = '<button class="fix-copy" style="color:#f59e0b;border-color:#f59e0b55" onclick="runChatCommand(this, ' + dryCmdJson + ', true)" title="Dry run (no changes applied)">&#x1F50D; Dry Run</button>';
+        dryRunBtn = '<button class="fix-copy" style="color:var(--warn);border-color:color-mix(in srgb,var(--warn) 33%,transparent)" onclick="runChatCommand(this, ' + dryCmdJson + ', true)" title="Dry run (no changes applied)">&#x1F50D; Dry Run</button>';
         runBtn = '<button class="fix-copy" onclick="runChatCommand(this, ' + cmdJson + ')" title="Execute this command">&#x25B6; Run</button>';
       }
     }
@@ -3262,7 +3725,13 @@ function md(text) {
       action + '\',\'' + name + '\',\'' + ns + '\')">' + esc(label) +
       '</button><span id="' + eid + '-result"></span></div>');
   });
-  text = text.replace(/@@ITSM_FORM\|(.+?)@@/g, function(m, jsonStr) {
+  text = text.replace(/@@PREFLIGHT_REPORT\|([\s\S]+?)@@/g, function(m, jsonStr) {
+    try {
+      var report = JSON.parse(jsonStr.replace(/@ @/g, '@@'));
+      return ph(renderPreflightReport(report));
+    } catch(e) { return ph('<div style="color:var(--crit)">Failed to render preflight report: ' + esc(e.message) + '</div>'); }
+  });
+  text = text.replace(/@@ITSM_FORM\|([\s\S]+?)@@/g, function(m, jsonStr) {
     try {
       var form = JSON.parse(jsonStr.replace(/@ @/g, '@@'));
       return ph(renderITSMForm(form));
@@ -3294,7 +3763,7 @@ function md(text) {
     var v = Math.max(0, Math.min(100, parseInt(val)));
     var circ = 2 * Math.PI * 22;
     var offset = circ - (v / 100) * circ;
-    var color = v >= 80 ? '#22c55e' : v >= 60 ? '#f59e0b' : '#ef4444';
+    var color = v >= 80 ? 'var(--ok)' : v >= 60 ? 'var(--warn)' : 'var(--crit)';
     return ph('<div class="score-gauge"><div class="score-ring"><svg width="52" height="52" viewBox="0 0 52 52">' +
       '<circle class="ring-bg" cx="26" cy="26" r="22"/>' +
       '<circle class="ring-fg" cx="26" cy="26" r="22" stroke="' + color + '" stroke-dasharray="' + circ.toFixed(1) + '" stroke-dashoffset="' + offset.toFixed(1) + '"/>' +
@@ -3305,6 +3774,26 @@ function md(text) {
     return ph('<span style="display:inline-flex;align-items:center;gap:6px;margin:4px 0">' +
       '<span class="grade-badge grade-' + grade + '">' + grade + '</span>' +
       '<span style="font-weight:600;font-size:13px">' + esc(label) + '</span></span>');
+  });
+  text = text.replace(/@@CLARIFY\|(.+?)@@/g, function(m, jsonStr) {
+    try {
+      var data = JSON.parse(jsonStr.replace(/@ @/g, '@@'));
+      var html = '<div class="clarify-card">' +
+        '<div class="clarify-header"><div class="clarify-icon">\u{1F914}</div>' +
+        '<div class="clarify-question">' + esc(data.question || 'What would you like to do?') + '</div></div>';
+      if (data.context) html += '<div class="clarify-context">' + esc(data.context) + '</div>';
+      html += '<div class="clarify-options">';
+      (data.options || []).forEach(function(opt) {
+        var q = (opt.query || '').replace(/'/g, "\\'");
+        html += '<button class="clarify-option" onclick="sendFullChat(\'' + q + '\')">' +
+          '<span class="clarify-opt-icon">' + (opt.icon || '\u{27A1}') + '</span>' +
+          '<div class="clarify-opt-body"><div class="clarify-opt-label">' + esc(opt.label || '') + '</div>' +
+          (opt.desc ? '<div class="clarify-opt-desc">' + esc(opt.desc) + '</div>' : '') +
+          '</div><span class="clarify-opt-arrow">\u{2192}</span></button>';
+      });
+      html += '</div></div>';
+      return ph(html);
+    } catch(e) { return ''; }
   });
 
   // Extract inline code BEFORE escaping
@@ -3532,17 +4021,152 @@ function _syntaxHL(code, lang) {
 }
 
 // ---------------------------------------------------------------------------
+// Pre-Upgrade Preflight Report — interactive assessment card in chat
+// ---------------------------------------------------------------------------
+function renderPreflightReport(report) {
+  var pid = 'pf-' + Math.random().toString(36).substr(2, 8);
+  var statusColor = report.overallStatus === 'NOT_READY' ? 'var(--crit)' :
+    report.overallStatus === 'READY_WITH_WARNINGS' ? 'var(--warn)' : 'var(--ok)';
+  var statusIcon = report.overallStatus === 'NOT_READY' ? '&#x274C;' :
+    report.overallStatus === 'READY_WITH_WARNINGS' ? '&#x26A0;&#xFE0F;' : '&#x2705;';
+  var statusLabel = report.overallStatus === 'NOT_READY' ? 'NOT READY — Blockers Found' :
+    report.overallStatus === 'READY_WITH_WARNINGS' ? 'READY (with warnings)' : 'READY FOR UPGRADE';
+
+  var html = '<div class="preflight-report" id="' + pid + '">';
+  html += '<div class="preflight-header">';
+  html += '<div class="preflight-title">Pre-Upgrade Cluster Assessment</div>';
+  html += '<div class="preflight-meta">' + esc(report.fromVersion) + ' &#x2192; ' + esc(report.targetVersion) +
+    ' <span class="preflight-type">' + esc(report.upgradeType || '') + '</span></div>';
+  html += '<div class="preflight-status" style="color:' + statusColor + '">' + statusIcon + ' ' + statusLabel + '</div>';
+  html += '</div>';
+
+  // Summary badges
+  html += '<div class="preflight-summary">';
+  html += '<span class="pf-badge pf-pass">' + report.summary.pass + ' Passed</span>';
+  html += '<span class="pf-badge pf-warn">' + report.summary.warning + ' Warnings</span>';
+  html += '<span class="pf-badge pf-fail">' + report.summary.fail + ' Failed</span>';
+  html += '</div>';
+
+  // Check items
+  html += '<div class="preflight-checks">';
+  var checks = report.checks || [];
+  for (var i = 0; i < checks.length; i++) {
+    var c = checks[i];
+    var cIcon = c.status === 'pass' ? '&#x2705;' : c.status === 'warning' ? '&#x26A0;&#xFE0F;' : '&#x274C;';
+    var cClass = 'pf-check pf-check-' + c.status;
+    var hasItems = c.items && c.items.length > 0 && c.status !== 'pass';
+    var itemId = pid + '-c' + i;
+    html += '<div class="' + cClass + '">';
+    html += '<div class="pf-check-header" ' + (hasItems ? 'onclick="togglePreflightSection(\'' + itemId + '\')" style="cursor:pointer"' : '') + '>';
+    html += '<span>' + cIcon + ' <strong>' + esc(c.category) + '</strong></span>';
+    html += '<span class="pf-check-detail">' + esc(c.details) + '</span>';
+    if (hasItems) html += '<span class="pf-expand">&#x25BC;</span>';
+    html += '</div>';
+    if (hasItems) {
+      html += '<div class="pf-check-items" id="' + itemId + '" style="display:none">';
+      var items = c.items.slice(0, 15);
+      for (var j = 0; j < items.length; j++) {
+        var it = items[j];
+        html += '<div class="pf-item">';
+        if (it.name) html += '<span class="pf-item-name">' + esc(it.name) + '</span>';
+        if (it.issue) html += '<span class="pf-item-issue">' + esc(it.issue) + '</span>';
+        if (it.message) html += '<span class="pf-item-msg">' + esc(String(it.message).slice(0, 120)) + '</span>';
+        if (it.severity) html += '<span class="pf-item-sev pf-sev-' + esc(it.severity) + '">' + esc(it.severity) + '</span>';
+        html += '</div>';
+      }
+      if (c.items.length > 15) html += '<div class="pf-item" style="opacity:0.6">... and ' + (c.items.length - 15) + ' more</div>';
+      html += '</div>';
+    }
+    if (c.recommendation) {
+      html += '<div class="pf-recommendation">&#x1F4A1; ' + esc(c.recommendation) + '</div>';
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // Operator summary tables (collapsible)
+  html += '<div class="pf-operators-section">';
+  html += '<div class="pf-check-header" onclick="togglePreflightSection(\'' + pid + '-ops\')" style="cursor:pointer">';
+  html += '<strong>Cluster Operators (' + (report.operators ? report.operators.clusterOperators : 0) + ')</strong>';
+  html += '<span class="pf-expand">&#x25BC;</span></div>';
+  html += '<div class="pf-op-table" id="' + pid + '-ops" style="display:none"><table>';
+  html += '<tr><th>Operator</th><th>Version</th><th>Available</th><th>Degraded</th></tr>';
+  var allOps = report.allClusterOperators || [];
+  for (var k = 0; k < allOps.length; k++) {
+    var op = allOps[k];
+    html += '<tr><td>' + esc(op.name) + '</td><td>' + esc(op.version || '-') + '</td>';
+    html += '<td style="color:' + (op.available ? 'var(--ok)' : 'var(--crit)') + '">' + (op.available ? 'Yes' : 'NO') + '</td>';
+    html += '<td style="color:' + (op.degraded ? 'var(--crit)' : 'var(--ok)') + '">' + (op.degraded ? 'YES' : 'No') + '</td></tr>';
+  }
+  html += '</table></div>';
+
+  var olmOps = report.allOLMOperators || [];
+  var olmCount = olmOps.length || (report.operators ? report.operators.olmOperators : 0);
+  html += '<div class="pf-check-header" onclick="togglePreflightSection(\'' + pid + '-olm\')" style="cursor:pointer">';
+  html += '<strong>Installed Operators — OLM (' + olmCount + ')</strong>';
+  html += '<span class="pf-expand">&#x25BC;</span></div>';
+  html += '<div class="pf-op-table" id="' + pid + '-olm" style="display:none">';
+  if (olmOps.length === 0) {
+    html += '<div style="padding:12px 10px;color:var(--text);opacity:0.6;font-style:italic">No OLM-managed operators detected. Cluster operators are listed above. If operators are installed via Subscription, they will appear here after OLM reconciles.</div>';
+  } else {
+    html += '<table>';
+    html += '<tr><th>Operator</th><th>Version</th><th>Namespace</th><th>Channel</th><th>Status</th><th>Compatible</th></tr>';
+    for (var l = 0; l < olmOps.length; l++) {
+      var olm = olmOps[l];
+      var compatColor = olm.compatible === 'yes' ? 'var(--ok)' : olm.compatible === 'no' ? 'var(--crit)' : 'var(--warn)';
+      var compatText = olm.compatible === 'yes' ? 'Yes' : olm.compatible === 'no' ? 'NO' : '?';
+      html += '<tr><td>' + esc(olm.name) + '</td><td>' + esc(olm.version || '-') + '</td>';
+      html += '<td>' + esc(olm.namespace || '-') + '</td>';
+      html += '<td>' + esc(olm.channel || olm.source || '-') + '</td>';
+      html += '<td>' + esc(olm.status || '-') + '</td>';
+      html += '<td style="color:' + compatColor + ';font-weight:600">' + compatText + '</td></tr>';
+    }
+    html += '</table>';
+  }
+  html += '</div>';
+  html += '</div>';
+
+  // Cluster info footer
+  html += '<div class="preflight-footer">';
+  html += '<span>Channel: ' + esc(report.channel || '') + '</span>';
+  html += '<span>Cluster ID: ' + esc(report.clusterID || 'N/A') + '</span>';
+  html += '<span>Assessed: ' + esc(report.timestamp ? new Date(report.timestamp).toLocaleString() : '') + '</span>';
+  html += '</div>';
+  html += '</div>';
+  return html;
+}
+
+function togglePreflightSection(id) {
+  var el = document.getElementById(id);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+// ---------------------------------------------------------------------------
 // ITSM Form — interactive change request / incident form in chat
 // ---------------------------------------------------------------------------
 function renderITSMForm(form) {
   var fid = 'itsm-' + Math.random().toString(36).substr(2, 8);
+  if (form._preflightReport) {
+    window['_pfr_' + fid] = form._preflightReport;
+  }
+  if (form._upgradeInfo) {
+    window['_uinfo_' + fid] = form._upgradeInfo;
+  } else if (form.type === 'change_request') {
+    // Extract version info from form fields as fallback for upgrade tracking
+    var verMatch = (form.fields?.short_description || '').match(/(\d+\.\d+\.\d+)/g);
+    if (verMatch && verMatch.length >= 2) {
+      window['_uinfo_' + fid] = { fromVersion: verMatch[0], targetVersion: verMatch[1] };
+    } else if (verMatch && verMatch.length === 1) {
+      window['_uinfo_' + fid] = { targetVersion: verMatch[0] };
+    }
+  }
   var isCR = form.type === 'change_request';
   var label = isCR ? 'Change Request' : 'Incident';
   var iconClass = isCR ? 'cr' : 'inc';
   var icon = isCR ? '&#x1F4CB;' : '&#x1F6A8;';
   var snowBadge = form.servicenowEnabled
-    ? '<span class="itsm-badge" style="background:#22c55e33;color:var(--ok)">ServiceNow Connected</span>'
-    : '<span class="itsm-badge" style="background:#f59e0b33;color:var(--warn)">Local Only</span>';
+    ? '<span class="itsm-badge" style="background:color-mix(in srgb,var(--ok) 20%,transparent);color:var(--ok)">ServiceNow Connected</span>'
+    : '<span class="itsm-badge" style="background:color-mix(in srgb,var(--warn) 20%,transparent);color:var(--warn)">Local Only</span>';
 
   var fieldsHtml = '';
   var fieldKeys = Object.keys(form.fields);
@@ -3614,17 +4238,27 @@ async function submitITSMForm(formId, type) {
   }
 
   try {
+    var payload = { type: type, fields: fields };
+    var pfr = window['_pfr_' + formId];
+    if (pfr) payload.preflightReport = pfr;
+    var uinfo = window['_uinfo_' + formId];
+    if (uinfo) {
+      payload.upgradeInfo = uinfo;
+      payload.conversationId = uinfo.conversationId || '';
+    }
     var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/itsm/submit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: type, fields: fields }),
+      body: JSON.stringify(payload),
     });
     var data = await resp.json();
     if (data.success) {
       if (resultEl) {
         resultEl.style.display = 'block';
+        var attachNote = data.attachmentId ? '<div style="margin-top:4px;font-size:11px;color:var(--ok)">&#x1F4CE; Pre-Assessment HTML report attached</div>' : '';
+        var pollNote = data.sysId && type === 'change_request' ? '<div style="margin-top:6px;font-size:11px;color:var(--accent2)">&#x1F50D; Monitoring CR approval status... Ask "check CR status" or "proceed with upgrade" once approved.</div>' : '';
         resultEl.innerHTML = '<div style="color:var(--ok);font-weight:600">&#x2705; ' + esc(data.message) + '</div>' +
-          '<div style="margin-top:6px;font-size:11px;color:var(--text2)">Ticket ID: <strong style="color:var(--text)">' + esc(data.ticketId) + '</strong></div>';
+          '<div style="margin-top:6px;font-size:11px;color:var(--text2)">Ticket ID: <strong style="color:var(--text)">' + esc(data.ticketId) + '</strong></div>' + attachNote + pollNote;
       }
       if (btn) { btn.textContent = 'Submitted'; btn.style.background = 'var(--ok)'; }
       // Disable all form inputs
@@ -3676,11 +4310,15 @@ async function submitITSMForm(formId, type) {
       throw new Error(data.error || 'Submission failed');
     }
   } catch (e) {
+    var errMsg = e.message || 'Unknown error';
+    if (/fetch failed|Failed to fetch|NetworkError|ERR_CONNECTION/i.test(errMsg)) {
+      errMsg = 'Cannot reach the server. Check that the MCP server is running and ServiceNow environment variables (SERVICENOW_INSTANCE, SERVICENOW_USERNAME, SERVICENOW_PASSWORD) are configured.';
+    }
     if (resultEl) {
       resultEl.style.display = 'block';
-      resultEl.innerHTML = '<div style="color:var(--crit)">&#x274C; Error: ' + esc(e.message) + '</div>';
+      resultEl.innerHTML = '<div style="color:var(--crit)">&#x274C; Error: ' + esc(errMsg) + '</div>';
     }
-    if (btn) { btn.disabled = false; btn.textContent = '&#x1F4E4; Retry Submit'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = '&#x1F4E4; Retry Submit'; }
   }
 }
 
@@ -3695,6 +4333,315 @@ function cancelITSMForm(formId) {
     note.style.cssText = 'padding:10px 18px;font-size:12px;color:var(--text2)';
     note.textContent = 'Form cancelled.';
     header.after(note);
+  }
+}
+
+function pollCRApproval(sysId, ticketId, preflightReport, upgradeInfo) {
+  var attempts = 0;
+  var maxAttempts = 180;
+  var intervalMs = 20000;
+
+  // Try to extract version info from ITSM form fields if not available from preflight/upgradeInfo
+  var fallbackTarget = '';
+  var fallbackFrom = '';
+  if (!upgradeInfo?.targetVersion && !preflightReport?.targetVersion) {
+    try {
+      var formEl = document.querySelector('.itsm-form');
+      if (formEl) {
+        var allFields = formEl.querySelectorAll('[data-field]');
+        for (var fi = 0; fi < allFields.length; fi++) {
+          var val = allFields[fi].value || '';
+          var vers = val.match(/(\d+\.\d+\.\d+)/g);
+          if (vers && vers.length >= 2) { fallbackFrom = vers[0]; fallbackTarget = vers[1]; break; }
+          if (vers && vers.length === 1 && /target|upgrade|to/i.test(allFields[fi].dataset.field)) { fallbackTarget = vers[0]; }
+        }
+      }
+    } catch(e) {}
+  }
+
+  var timer = setInterval(async function() {
+    attempts++;
+    if (attempts > maxAttempts) { clearInterval(timer); return; }
+    try {
+      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/itsm/cr-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sysId: sysId, ticketId: ticketId }),
+      });
+      var data = await resp.json();
+      if (data.status === 'approved') {
+        clearInterval(timer);
+
+        // Try to get version info from cluster if not available
+        var targetVer = upgradeInfo?.targetVersion || preflightReport?.targetVersion || fallbackTarget;
+        var fromVer = upgradeInfo?.fromVersion || preflightReport?.fromVersion || fallbackFrom;
+        if (!targetVer || !fromVer) {
+          try {
+            var clResp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/cluster/version');
+            var clData = await clResp.json();
+            if (!fromVer && clData.current) fromVer = clData.current;
+            if (!targetVer && clData.available && clData.available.length) targetVer = clData.available[0];
+          } catch(e) {}
+        }
+
+        var execData = {
+          ticketId: ticketId,
+          sysId: sysId,
+          targetVersion: targetVer || '',
+          fromVersion: fromVer || '',
+          upgradeType: preflightReport?.upgradeType || '',
+          channel: preflightReport?.channel || '',
+          preflightStatus: preflightReport?.overallStatus || 'UNKNOWN',
+          nodeCount: preflightReport?.nodeTopology?.total || 0,
+          estimatedDuration: preflightReport?.versionDelta?.estimatedDuration || '',
+        };
+        var execToken = '@@UPGRADE_EXECUTE|' + JSON.stringify(execData).replace(/@@/g, '@ @') + '@@';
+        var msgText = '### \\u2705 Change Request ' + esc(ticketId) + ' \\u2014 APPROVED\n\nChange Request **' + esc(ticketId) + '** has been **approved** in ServiceNow. You can now proceed with the cluster upgrade.\n\n' + execToken;
+        appendAssistantMessage(msgText);
+      } else if (data.status === 'rejected') {
+        clearInterval(timer);
+        var msgText2 = '### \\u274C Change Request ' + esc(ticketId) + ' \\u2014 REJECTED\n\n' +
+          'Change Request **' + esc(ticketId) + '** was **rejected** in ServiceNow.\n\n' +
+          'Reason: **' + esc(data.stateLabel) + '**. Please review and resubmit if needed.';
+        appendAssistantMessage(msgText2);
+      }
+    } catch (e) {}
+  }, intervalMs);
+}
+
+function appendAssistantMessage(msgText) {
+  var container = document.getElementById('chat-conv-inner');
+  if (!container) return;
+  var msgDiv = document.createElement('div');
+  msgDiv.className = 'conv-msg ai';
+  msgDiv.innerHTML = '<div class="conv-header"><div class="conv-avatar">KN</div><span class="conv-name">KubeNexus AI</span></div>' +
+    '<div class="conv-body">' + md(msgText) + '</div>';
+  container.appendChild(msgDiv);
+  scrollConversation();
+  try {
+    var history = loadChatHistory();
+    var activeChat = history.chats.find(function(c) { return c.id === history.activeId; });
+    if (activeChat) {
+      activeChat.messages.push({ role: 'ai', text: msgText, provider: 'built-in' });
+      activeChat.updatedAt = new Date().toISOString();
+      saveChatHistory(history);
+    }
+  } catch(e) {}
+}
+
+function renderUpgradeExecuteCard(data) {
+  var fid = 'ux-' + Math.random().toString(36).substr(2, 8);
+  var channel = data.channel || 'stable-4.19';
+  var channelBase = channel.replace(/^(stable|fast|candidate)-/, '');
+  var channelOptions = ['stable-' + channelBase, 'fast-' + channelBase, 'candidate-' + channelBase];
+
+  var checklistItems = [
+    'ServiceNow CR <strong>' + esc(data.ticketId) + '</strong> approved',
+    'Pre-flight checks status: <strong>' + esc(data.preflightStatus || 'READY') + '</strong>',
+    'Cluster nodes: <strong>' + esc(String(data.nodeCount || '?')) + '</strong> &mdash; Estimated duration: <strong>' + esc(data.estimatedDuration || 'unknown') + '</strong>',
+    'Backup and rollback plan reviewed',
+    'Stakeholders notified of maintenance window'
+  ];
+  var checklistHtml = '';
+  for (var i = 0; i < checklistItems.length; i++) {
+    checklistHtml += '<li>' + checklistItems[i] + '</li>';
+  }
+
+  var channelOptionsHtml = '';
+  for (var c = 0; c < channelOptions.length; c++) {
+    var sel = channelOptions[c] === channel ? ' selected' : '';
+    channelOptionsHtml += '<option value="' + esc(channelOptions[c]) + '"' + sel + '>' + esc(channelOptions[c]) + '</option>';
+  }
+
+  var cmdPreview = 'oc adm upgrade --to=' + esc(data.targetVersion);
+
+  return '<div class="ux-card" id="' + fid + '" data-target-version="' + esc(data.targetVersion) + '">' +
+    '<div class="ux-header">' +
+      '<span style="font-size:20px">&#x2705;</span>' +
+      '<div style="flex:1"><h4 style="margin:0">Upgrade Approved &mdash; Ready to Execute</h4>' +
+      '<div style="font-size:11px;opacity:.8;margin-top:2px">CR ' + esc(data.ticketId) + ' &bull; ' + esc(data.upgradeType || 'Patch') + ' upgrade via ' + esc(channel) + '</div></div>' +
+    '</div>' +
+    '<div class="ux-body">' +
+      '<div class="ux-version-row">' +
+        '<div class="ux-ver">' +
+          '<div class="ux-ver-label">CURRENT VERSION</div>' +
+          '<div class="ux-ver-num">' + esc(data.fromVersion) + '</div>' +
+        '</div>' +
+        '<div class="ux-arrow">&#x27A1;</div>' +
+        '<div class="ux-ver">' +
+          '<div class="ux-ver-label">TARGET VERSION</div>' +
+          '<div class="ux-ver-num" style="color:var(--ok)">' + esc(data.targetVersion) + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<ul class="ux-checklist">' + checklistHtml + '</ul>' +
+      '<div class="ux-cmd-preview"><span style="color:var(--ok)">$</span> ' + cmdPreview + '</div>' +
+      '<div class="ux-actions">' +
+        '<button class="ux-btn ux-btn-dryrun" onclick="upgradeAction(\'dryrun\',\'' + fid + '\')" title="Validate upgrade without applying changes">' +
+          '<span class="ux-btn-icon">&#x1F50D;</span> Dry Run</button>' +
+        '<button class="ux-btn ux-btn-execute" onclick="upgradeAction(\'execute\',\'' + fid + '\')" title="Apply the upgrade to the cluster">' +
+          '<span class="ux-btn-icon">&#x25B6;</span> Execute Upgrade</button>' +
+        '<button class="ux-btn ux-btn-cancel" onclick="upgradeAction(\'cancel\',\'' + fid + '\')" title="Cancel without making changes">' +
+          '<span class="ux-btn-icon">&#x2715;</span> Cancel</button>' +
+      '</div>' +
+      '<div class="ux-advanced-toggle" onclick="toggleUpgradeAdvanced(\'' + fid + '\')">&#x25B6; Advanced Options</div>' +
+      '<div class="ux-advanced" id="' + fid + '-advanced">' +
+        '<label>Channel: <select class="ux-channel-select">' + channelOptionsHtml + '</select></label>' +
+        '<label><input type="checkbox" class="ux-force"> Force upgrade (bypass version validation)</label>' +
+        '<label><input type="checkbox" class="ux-ack-risk"> Acknowledge risks for minor version upgrade</label>' +
+      '</div>' +
+      '<div id="' + fid + '-progress" style="display:none"></div>' +
+    '</div>' +
+  '</div>';
+}
+
+function toggleUpgradeAdvanced(formId) {
+  var adv = document.getElementById(formId + '-advanced');
+  var toggle = document.querySelector('#' + formId + ' .ux-advanced-toggle');
+  if (!adv) return;
+  if (adv.style.display === 'block') {
+    adv.style.display = 'none';
+    if (toggle) toggle.innerHTML = '&#x25B6; Advanced Options';
+  } else {
+    adv.style.display = 'block';
+    if (toggle) toggle.innerHTML = '&#x25BC; Advanced Options';
+  }
+}
+
+function termLine(cls, text) { return '<div class="' + cls + '">' + text + '</div>'; }
+
+async function upgradeAction(action, formId) {
+  var card = document.getElementById(formId);
+  if (!card) return;
+  var progressEl = document.getElementById(formId + '-progress');
+  var btns = card.querySelectorAll('.ux-btn');
+
+  if (action === 'cancel') {
+    card.querySelector('.ux-actions').innerHTML =
+      '<div style="padding:10px 0;font-size:13px;color:var(--text2)">&#x2715; Upgrade cancelled by user. No changes were made to the cluster.</div>';
+    return;
+  }
+
+  for (var i = 0; i < btns.length; i++) btns[i].disabled = true;
+
+  var targetVersion = card.dataset.targetVersion;
+  var channel = card.querySelector('.ux-channel-select') ? card.querySelector('.ux-channel-select').value : '';
+  var force = card.querySelector('.ux-force') ? card.querySelector('.ux-force').checked : false;
+
+  progressEl.style.display = 'block';
+
+  if (action === 'dryrun') {
+    progressEl.innerHTML = '<div class="ux-terminal" id="' + formId + '-term">' +
+      termLine('t-info', '$ oc adm upgrade --to=' + esc(targetVersion) + ' --dry-run') +
+      termLine('t-dim', 'Validating upgrade path...') + '</div>';
+    var term = document.getElementById(formId + '-term');
+    try {
+      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/upgrade/dryrun', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version: targetVersion, channel: channel }),
+      });
+      var data = await resp.json();
+      if (data.success) {
+        var details = data.details || JSON.stringify(data, null, 2);
+        var lines = details.split('\\n');
+        for (var li = 0; li < lines.length; li++) {
+          term.innerHTML += termLine('t-dim', esc(lines[li]));
+        }
+        term.innerHTML += termLine('t-ok', '\\u2713 Dry run PASSED — upgrade path is valid');
+        term.innerHTML += termLine('t-info', 'Ready to execute. Click "Execute Upgrade" to proceed.');
+        var execBtn = card.querySelector('.ux-btn-execute');
+        if (execBtn) execBtn.disabled = false;
+        var cancelBtn = card.querySelector('.ux-btn-cancel');
+        if (cancelBtn) cancelBtn.disabled = false;
+      } else {
+        term.innerHTML += termLine('t-err', '\\u2717 Dry run FAILED: ' + esc(data.error || 'Unknown error'));
+        for (var j = 0; j < btns.length; j++) btns[j].disabled = false;
+      }
+    } catch (e) {
+      term.innerHTML += termLine('t-err', '\\u2717 Error: ' + esc(e.message));
+      for (var j = 0; j < btns.length; j++) btns[j].disabled = false;
+    }
+    term.scrollTop = term.scrollHeight;
+    return;
+  }
+
+  // Execute upgrade
+  progressEl.innerHTML = '<div class="ux-terminal" id="' + formId + '-term">' +
+    termLine('t-info', '$ oc adm upgrade --to=' + esc(targetVersion)) +
+    '</div>' +
+    '<div class="ux-progress-bar"><div class="ux-progress-fill" id="' + formId + '-bar" style="width:0%"></div></div>';
+  var term = document.getElementById(formId + '-term');
+
+  try {
+    if (channel) {
+      term.innerHTML += termLine('t-dim', '$ oc adm upgrade channel --channel=' + esc(channel));
+      term.innerHTML += termLine('t-dim', 'Setting update channel...');
+      await fetch(MCP_API.replace(/\/api$/, '') + '/api/upgrade/channel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel: channel }),
+      });
+      term.innerHTML += termLine('t-ok', '\\u2713 Channel set to ' + esc(channel));
+    }
+
+    term.innerHTML += termLine('t-dim', 'Initiating cluster upgrade to ' + esc(targetVersion) + '...');
+
+    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/upgrade/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: targetVersion, force: force }),
+    });
+    var data = await resp.json();
+    if (!data.success) {
+      term.innerHTML += termLine('t-err', '\\u2717 ' + esc(data.error || 'Failed to start upgrade'));
+      for (var j = 0; j < btns.length; j++) btns[j].disabled = false;
+      return;
+    }
+
+    term.innerHTML += termLine('t-ok', '\\u2713 Upgrade initiated successfully');
+    term.innerHTML += termLine('t-dim', 'Monitoring ClusterVersion status...');
+
+    var evtSource = new EventSource(MCP_API.replace(/\/api$/, '') + '/api/upgrade/status');
+    evtSource.onmessage = function(evt) {
+      try {
+        var d = JSON.parse(evt.data);
+        var bar = document.getElementById(formId + '-bar');
+        if (bar) bar.style.width = d.progress + '%';
+
+        var phaseLabels = {
+          preparing: 'Preparing cluster for upgrade...',
+          updating: 'Updating operators and nodes...',
+          completing: 'Finalizing upgrade...',
+          complete: '\\u2713 Upgrade complete!',
+          failed: '\\u2717 Upgrade failed',
+          timeout: '\\u26A0 Monitoring timed out',
+        };
+        var phaseText = phaseLabels[d.phase] || d.phase;
+        var phaseCls = d.phase === 'complete' ? 't-ok' : (d.phase === 'failed' || d.phase === 'timeout') ? 't-err' : 't-dim';
+
+        term.innerHTML += termLine(phaseCls, phaseText + ' [' + d.progress + '%]');
+        if (d.message) term.innerHTML += termLine('t-dim', '  ' + esc(d.message));
+
+        if (d.operators) {
+          term.innerHTML += termLine('t-dim', '  Operators: ' + d.operators.updating + ' updating / ' + d.operators.degraded + ' degraded / ' + d.operators.total + ' total');
+        }
+
+        if (d.phase === 'complete') {
+          evtSource.close();
+          if (bar) bar.style.background = 'var(--ok)';
+          term.innerHTML += termLine('t-ok', '');
+          term.innerHTML += termLine('t-ok', '\\u2501\\u2501\\u2501 Cluster upgraded to ' + esc(d.version) + ' \\u2501\\u2501\\u2501');
+        } else if (d.phase === 'failed' || d.phase === 'timeout') {
+          evtSource.close();
+          if (bar) bar.style.background = 'var(--crit)';
+        }
+        term.scrollTop = term.scrollHeight;
+      } catch (e) {}
+    };
+    evtSource.onerror = function() { evtSource.close(); };
+  } catch (e) {
+    term.innerHTML += termLine('t-err', '\\u2717 Error: ' + esc(e.message));
+    for (var j = 0; j < btns.length; j++) btns[j].disabled = false;
   }
 }
 
@@ -3736,14 +4683,14 @@ async function runChatCommand(btn, cmd, isDryRun) {
     });
     var data = await resp.json();
     if (outputEl) {
-      var statusIcon = data.success ? '<span style="color:#22c55e;font-weight:600">[OK]</span>' : '<span style="color:#ef4444;font-weight:600">[ERROR]</span>';
+      var statusIcon = data.success ? '<span style="color:var(--ok);font-weight:600">[OK]</span>' : '<span style="color:var(--crit);font-weight:600">[ERROR]</span>';
       var header = isDryRun ? 'Dry Run Result' : 'Execution Result';
       var outText = data.stdout || '';
       var errText = data.stderr || '';
-      var html = '<div style="border-top:1px solid #30363d;padding:8px 12px;font-size:11px">' +
+      var html = '<div style="border-top:1px solid var(--border2);padding:8px 12px;font-size:11px">' +
         '<div style="margin-bottom:6px;font-weight:600;color:var(--text2)">' + statusIcon + ' ' + header + (data.durationMs ? ' <span style="color:var(--text2);font-weight:400">(' + data.durationMs + 'ms)</span>' : '') + '</div>';
-      if (outText) html += '<pre style="margin:0;padding:8px;background:#0d1117;border-radius:4px;color:#7ee787;font-family:\'SF Mono\',monospace;font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow:auto">' + esc(outText) + '</pre>';
-      if (errText) html += '<pre style="margin:4px 0 0;padding:8px;background:#1a0a0a;border-radius:4px;color:#fca5a5;font-family:\'SF Mono\',monospace;font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow:auto">' + esc(errText) + '</pre>';
+      if (outText) html += '<pre style="margin:0;padding:8px;background:var(--card-deep);border-radius:4px;color:var(--ok);font-family:\'SF Mono\',monospace;font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow:auto">' + esc(outText) + '</pre>';
+      if (errText) html += '<pre style="margin:4px 0 0;padding:8px;background:color-mix(in srgb,var(--crit) 10%,var(--card-deep));border-radius:4px;color:color-mix(in srgb,var(--crit) 70%,var(--text));font-family:\'SF Mono\',monospace;font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow:auto">' + esc(errText) + '</pre>';
       html += '</div>';
       outputEl.innerHTML = html;
     }
@@ -3751,7 +4698,7 @@ async function runChatCommand(btn, cmd, isDryRun) {
     setTimeout(function() { btn.disabled = false; btn.innerHTML = origLabel; }, 3000);
   } catch (err) {
     if (outputEl) {
-      outputEl.innerHTML = '<div style="border-top:1px solid #30363d;padding:8px 12px;font-size:11px;color:#fca5a5"><span style="font-weight:600">[ERROR]</span> ' + esc(err.message) + '</div>';
+      outputEl.innerHTML = '<div style="border-top:1px solid var(--border2);padding:8px 12px;font-size:11px;color:var(--crit)"><span style="font-weight:600">[ERROR]</span> ' + esc(err.message) + '</div>';
     }
     btn.innerHTML = '&#x274C; Error';
     setTimeout(function() { btn.disabled = false; btn.innerHTML = origLabel; }, 3000);
@@ -4300,7 +5247,7 @@ function renameChat(id, ev) {
   var input = document.createElement('input');
   input.type = 'text';
   input.value = chat.title;
-  input.style.cssText = 'width:100%;background:#161b22;border:1px solid var(--accent2);border-radius:4px;padding:3px 6px;color:var(--text);font-size:13px;font-family:inherit;outline:none';
+  input.style.cssText = 'width:100%;background:var(--bg-alt);border:1px solid var(--accent2);border-radius:4px;padding:3px 6px;color:var(--text);font-size:13px;font-family:inherit;outline:none';
 
   titleEl.innerHTML = '';
   titleEl.appendChild(input);
@@ -4437,7 +5384,7 @@ function renderConversation() {
         toolsBlock = '<div style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:4px;align-items:center">' +
           '<span style="font-size:10px;color:var(--text2);margin-right:4px">&#x1F527; Tools:</span>' +
           msg.toolsUsed.map(function(t) {
-            return '<code style="background:#6366f11a;color:#818cf8;padding:2px 6px;border-radius:4px;font-size:10px">' + esc(t) + '</code>';
+            return '<code style="background:color-mix(in srgb,var(--accent2) 10%,transparent);color:var(--accent2);padding:2px 6px;border-radius:4px;font-size:10px">' + esc(t) + '</code>';
           }).join('') + '</div>';
       }
       html += '<div class="conv-msg ai">' +
@@ -4558,12 +5505,12 @@ function updateClusterDot() {
   if (!dot || !sel) return;
   var val = sel.value;
   if (val === 'local') {
-    dot.style.background = '#22c55e';
+    dot.style.background = 'var(--ok)';
   } else {
     var agent = (_remoteAgents || {})[val];
     var srv = (_hubServers || []).find(function(s) { return s.name === val; });
     var info = agent || srv || {};
-    dot.style.background = (info.status === 'connected' || info.status === 'live') ? '#22c55e' : '#6366f1';
+    dot.style.background = (info.status === 'connected' || info.status === 'live') ? 'var(--ok)' : 'var(--accent2)';
   }
 }
 
@@ -4630,7 +5577,7 @@ function renderExplainability(data) {
   }
   if (data.toolsUsed && data.toolsUsed.length) {
     html += '<div style="margin-top:6px"><strong>AI Tools Used:</strong></div><div style="margin:4px 0 0 4px;display:flex;flex-wrap:wrap;gap:4px">';
-    data.toolsUsed.forEach(function(t) { html += '<code style="background:#6366f11a;color:#6366f1;padding:2px 6px;border-radius:4px;font-size:10px">' + esc(t) + '</code>'; });
+    data.toolsUsed.forEach(function(t) { html += '<code style="background:color-mix(in srgb,var(--accent2) 10%,transparent);color:var(--accent2);padding:2px 6px;border-radius:4px;font-size:10px">' + esc(t) + '</code>'; });
     html += '</div>';
   }
   if (data.trace && data.trace.length) {
@@ -5422,7 +6369,7 @@ const SLASH_COMMANDS = [
       const matches = SLASH_COMMANDS.filter(c => c.cmd.slice(1).startsWith(q));
       if (matches.length > 0) {
         const catIcons = { unique: '&#x2728;', security: '&#x1F6E1;', cluster: '&#x2699;', general: '&#x2139;' };
-        const catColors = { unique: 'var(--accent)', security: '#f59e0b', cluster: 'var(--accent2)', general: 'var(--text2)' };
+        const catColors = { unique: 'var(--accent)', security: 'var(--warn)', cluster: 'var(--accent2)', general: 'var(--text2)' };
         palette.innerHTML = matches.map(m => {
           const icon = catIcons[m.category] || '';
           const color = catColors[m.category] || 'var(--text2)';
@@ -5482,23 +6429,43 @@ function renderAuditTimeline() {
   var items = _auditData.executed;
   if (_auditTimelineFilter === 'success') items = items.filter(function(r) { return r.success; });
   else if (_auditTimelineFilter === 'failed') items = items.filter(function(r) { return !r.success; });
+  else if (_auditTimelineFilter === 'itsm') items = items.filter(function(r) { return /^(create_change_request|create_incident|cr_approved|cr_rejected)$/.test(r.action); });
 
   if (!items.length) {
     el.innerHTML = '<div style="padding:30px;text-align:center;color:var(--text2);font-size:12px">No ' + _auditTimelineFilter + ' actions found</div>';
     return;
   }
 
+  var AUDIT_ICONS = {
+    'create_change_request': '&#x1F4CB;',
+    'create_incident': '&#x1F6A8;',
+    'cr_approved': '&#x2705;',
+    'cr_rejected': '&#x274C;',
+    'delete_pod': '&#x1F5D1;',
+    'restart_deployment': '&#x1F504;',
+    'scale_deployment': '&#x2696;',
+  };
+  var AUDIT_LABELS = {
+    'create_change_request': 'Change Request Created',
+    'create_incident': 'Incident Created',
+    'cr_approved': 'Change Request Approved',
+    'cr_rejected': 'Change Request Rejected',
+  };
   el.innerHTML = items.map(function(r) {
-    var icon = r.success ? '<span style="color:#22c55e">&#x2705;</span>' : '<span style="color:#ef4444">&#x274C;</span>';
-    var statusBadge = r.success ? '<span class="badge badge-ok">Success</span>' : '<span class="badge badge-crit">Failed</span>';
-    var action = esc(r.action || '').replace(/_/g, ' ');
+    var isITSM = /^(create_change_request|create_incident|cr_approved|cr_rejected)$/.test(r.action);
+    var icon = AUDIT_ICONS[r.action] || (r.success ? '<span style="color:var(--ok)">&#x2705;</span>' : '<span style="color:var(--crit)">&#x274C;</span>');
+    if (!isITSM) icon = r.success ? '<span style="color:var(--ok)">&#x2705;</span>' : '<span style="color:var(--crit)">&#x274C;</span>';
+    var statusBadge = isITSM
+      ? '<span class="badge badge-info" style="background:rgba(88,166,255,.12);color:var(--accent2)">ITSM</span>'
+      : (r.success ? '<span class="badge badge-ok">Success</span>' : '<span class="badge badge-crit">Failed</span>');
+    var action = AUDIT_LABELS[r.action] || esc(r.action || '').replace(/_/g, ' ');
     var target = esc(r.target || '—');
-    var ns = r.namespace ? '<code style="background:#3b82f61a;color:#60a5fa;padding:1px 6px;border-radius:4px;font-size:10px">' + esc(r.namespace) + '</code>' : '';
+    var ns = r.namespace ? '<code style="background:color-mix(in srgb,var(--accent2) 10%,transparent);color:var(--accent2);padding:1px 6px;border-radius:4px;font-size:10px">' + esc(r.namespace) + '</code>' : '';
     var t = r.created_at ? new Date(r.created_at) : null;
     var timeStr = t ? t.toLocaleString() : '—';
     var ago = t ? timeAgo(r.created_at) : '';
-    return '<div style="display:flex;gap:12px;padding:12px 0;border-bottom:1px solid #1a1d2811;align-items:flex-start">' +
-      '<div style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:' + (r.success ? '#22c55e11' : '#ef444411') + ';display:flex;align-items:center;justify-content:center;font-size:14px">' + icon + '</div>' +
+    return '<div style="display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);align-items:flex-start">' +
+      '<div style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:' + (r.success ? 'color-mix(in srgb,var(--ok) 7%,transparent)' : 'color-mix(in srgb,var(--crit) 7%,transparent)') + ';display:flex;align-items:center;justify-content:center;font-size:14px">' + icon + '</div>' +
       '<div style="flex:1;min-width:0">' +
         '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
           '<span style="font-weight:600;font-size:13px;text-transform:capitalize">' + action + '</span>' +
@@ -5540,15 +6507,15 @@ async function loadAuditView() {
     if (pendingBadge) pendingBadge.textContent = pending.length;
     if (pending.length) {
       pendingEl.innerHTML = pending.map(function(r) {
-        var statusColors = { pending_confirmation: '#f59e0b', approved: '#3b82f6', executed: '#22c55e', rejected: '#ef4444', cancelled: '#6b7280' };
-        var color = statusColors[r.status] || '#6b7280';
+        var statusColors = { pending_confirmation: 'var(--warn)', approved: 'var(--accent2)', executed: 'var(--ok)', rejected: 'var(--crit)', cancelled: 'var(--text2)' };
+        var color = statusColors[r.status] || 'var(--text2)';
         var statusLabel = (r.status || '').replace(/_/g, ' ');
         return '<div style="background:var(--bg);border:1px solid var(--border);border-left:3px solid ' + color + ';border-radius:8px;padding:12px;margin-bottom:8px">' +
           '<div style="display:flex;justify-content:space-between;align-items:flex-start">' +
             '<div>' +
               '<div style="font-weight:600;font-size:13px;text-transform:capitalize">' + esc((r.action || '').replace(/_/g, ' ')) + '</div>' +
               '<div style="font-size:12px;color:var(--text2);margin-top:2px">' + esc(r.resource_type || '') + ' / <span style="color:var(--text)">' + esc(r.resource_name || '') + '</span></div>' +
-              (r.namespace ? '<div style="margin-top:4px"><code style="background:#3b82f61a;color:#60a5fa;padding:1px 6px;border-radius:4px;font-size:10px">' + esc(r.namespace) + '</code></div>' : '') +
+              (r.namespace ? '<div style="margin-top:4px"><code style="background:color-mix(in srgb,var(--accent2) 10%,transparent);color:var(--accent2);padding:1px 6px;border-radius:4px;font-size:10px">' + esc(r.namespace) + '</code></div>' : '') +
             '</div>' +
             '<div style="text-align:right">' +
               '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:600;text-transform:capitalize;background:' + color + '22;color:' + color + '">' + statusLabel + '</span>' +
@@ -5608,9 +6575,9 @@ async function loadAuditView() {
     if (queries.length) {
       qt.innerHTML = queries.slice(0, 30).map(function(q) {
         var intents = (q.intents || []).map(function(i) {
-          return '<span style="display:inline-block;background:#8b5cf61a;color:#a78bfa;padding:1px 6px;border-radius:4px;font-size:10px;margin:1px 2px">' + esc(i) + '</span>';
+          return '<span style="display:inline-block;background:color-mix(in srgb,var(--accent2) 10%,transparent);color:var(--accent2);padding:1px 6px;border-radius:4px;font-size:10px;margin:1px 2px">' + esc(i) + '</span>';
         }).join('');
-        var cacheIcon = q.cache_hit ? '<span style="color:#22c55e" title="Cache hit">&#x26A1;</span>' : '<span style="color:var(--text2)" title="Cache miss">&#x25CB;</span>';
+        var cacheIcon = q.cache_hit ? '<span style="color:var(--ok)" title="Cache hit">&#x26A1;</span>' : '<span style="color:var(--text2)" title="Cache miss">&#x25CB;</span>';
         var dur = q.duration_ms != null ? (q.duration_ms > 1000 ? (q.duration_ms/1000).toFixed(1) + 's' : q.duration_ms + 'ms') : '—';
         var durColor = q.duration_ms > 5000 ? 'var(--crit)' : q.duration_ms > 2000 ? 'var(--warn)' : 'var(--ok)';
         return '<tr>' +
@@ -5658,7 +6625,7 @@ function aicToggleAutoFix() {
   var el = document.getElementById('aic-autofix-state');
   if (el) el.textContent = _aicAutoFix ? 'ON' : 'OFF';
   var btn = document.getElementById('aic-autofix-btn');
-  if (btn) btn.style.background = _aicAutoFix ? '#22c55e' : '#1e293b';
+  if (btn) btn.style.background = _aicAutoFix ? 'var(--ok)' : 'var(--card)';
 }
 
 async function loadAlertsView() {
@@ -5893,8 +6860,8 @@ function aicRenderInvestigation(idx, analysis) {
     var encodedCmd = btoa(unescape(encodeURIComponent(analysis.fixCommand)));
     return '<div class="aic-ai-fix-cmd"><code>' + esc(analysis.fixCommand) + '</code>' +
       '<button onclick="aicCopyCmd(this, \'' + encodedCmd + '\')" title="Copy to clipboard">&#x1F4CB; Copy</button>' +
-      '<button onclick="aicExecuteFix(\'' + encodedCmd + '\', ' + idx + ', true)" style="background:#f59e0b" title="Server-side dry run — preview without changing anything">&#x1F50D; Dry Run</button>' +
-      '<button onclick="aicExecuteFix(\'' + encodedCmd + '\', ' + idx + ', false)" style="background:#22c55e" title="Execute on cluster now">&#x25B6; Run</button>' +
+      '<button onclick="aicExecuteFix(\'' + encodedCmd + '\', ' + idx + ', true)" style="background:var(--warn)" title="Server-side dry run — preview without changing anything">&#x1F50D; Dry Run</button>' +
+      '<button onclick="aicExecuteFix(\'' + encodedCmd + '\', ' + idx + ', false)" style="background:var(--ok)" title="Execute on cluster now">&#x25B6; Run</button>' +
       '</div>' +
       '<div class="aic-fix-result" id="aic-fix-result-' + idx + '"></div>';
   })() : '';
@@ -5959,14 +6926,14 @@ async function aicExecuteFix(encodedCmd, idx, dryRun) {
     aicRenderFixResult(resultEl, data, dryRun);
   } catch (e) {
     resultEl.className = 'aic-fix-result error';
-    resultEl.innerHTML = '<div class="aic-fix-head"><span style="color:#ef4444">&#x2718;</span> Network error: ' + esc(e.message) + '</div>';
+    resultEl.innerHTML = '<div class="aic-fix-head"><span style="color:var(--crit)">&#x2718;</span> Network error: ' + esc(e.message) + '</div>';
   }
 }
 
 function aicRenderFixResult(el, data, dryRun) {
   var ok = !!data.success;
   el.className = 'aic-fix-result ' + (ok ? 'success' : 'error');
-  var icon = ok ? '<span style="color:#22c55e">&#x2714;</span>' : '<span style="color:#ef4444">&#x2718;</span>';
+  var icon = ok ? '<span style="color:var(--ok)">&#x2714;</span>' : '<span style="color:var(--crit)">&#x2718;</span>';
   var label = dryRun ? (ok ? 'Dry run succeeded' : 'Dry run failed')
                      : (ok ? 'Executed successfully' : 'Execution failed');
   var dur = data.durationMs ? ' <span class="aic-fix-dur">(' + data.durationMs + 'ms)</span>' : '';
@@ -6048,7 +7015,7 @@ function updateAlertsBadge(count) {
   var intelBadge = document.getElementById('intel-badge');
   if (intelBadge) {
     intelBadge.textContent = String(count);
-    intelBadge.style.background = count > 0 ? '#ef4444' : '#6366f1';
+    intelBadge.style.background = count > 0 ? 'var(--crit)' : 'var(--accent2)';
   }
 }
 
@@ -6301,6 +7268,19 @@ function generateFollowUps(userMsg, aiReply) {
   const podName = podMatch ? podMatch[1] : null;
   const ns = nsMatch ? nsMatch[1] : null;
 
+  // Clarify card replies don't need followups (they ARE the followups)
+  if (/@@CLARIFY\|/.test(aiReply || '')) return [];
+
+  // Upgrade-specific follow-ups
+  if (/upgrade.*status|upgrade.*analysis|available.*update|cluster.*version/i.test(text) || /upgrade|version/i.test(userLower)) {
+    var verMatch = (aiReply || '').match(/(\d+\.\d+\.\d+)/);
+    var ver = verMatch ? verMatch[1] : '';
+    followups.push({ icon: '\u{1F50D}', text: 'Run pre-upgrade check', query: ver ? 'precheck upgrade to ' + ver : 'precheck upgrade' });
+    followups.push({ icon: '\u{1F4CB}', text: 'Raise change request', query: ver ? 'raise change request for upgrade to ' + ver : 'raise change request for upgrade' });
+    followups.push({ icon: '\u{2764}', text: 'Check cluster health', query: 'check cluster health' });
+    return followups.slice(0, 3);
+  }
+
   // Pod-specific follow-ups when AI just analyzed a pod
   if (podName && ns && /pod|crash|oom|imagepull|container|restart/.test(text)) {
     followups.push({ icon: '\u{1F4C4}', text: 'Show full logs', query: `show logs for ${podName} in namespace ${ns}` });
@@ -6509,7 +7489,7 @@ async function sendFullChatStreaming(text) {
                 var toolsTag = '<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center">' +
                   '<span style="font-size:10px;color:var(--text2)">Tools used:</span>' +
                   evt.toolsUsed.map(function(t) {
-                    return '<code style="background:#6366f11a;color:#818cf8;padding:2px 6px;border-radius:4px;font-size:10px">' + esc(t) + '</code>';
+                    return '<code style="background:color-mix(in srgb,var(--accent2) 10%,transparent);color:var(--accent2);padding:2px 6px;border-radius:4px;font-size:10px">' + esc(t) + '</code>';
                   }).join('') + '</div>';
                 body.insertAdjacentHTML('beforeend', toolsTag);
               }
@@ -6752,6 +7732,7 @@ function toggleSettingsPanel() {
     updateProviderStatus();
     loadGuardrails();
     loadPersona();
+    loadServiceNowSettings();
     const themeToggle = document.getElementById('so-theme-toggle');
     if (themeToggle) themeToggle.checked = !document.body.classList.contains('light-theme');
   }
@@ -6854,6 +7835,105 @@ function loadGuardrails() {
 
 function getGuardrails() {
   try { return JSON.parse(localStorage.getItem('mcp-guardrails')) || {}; } catch { return {}; }
+}
+
+// ---------------------------------------------------------------------------
+// ServiceNow Settings
+// ---------------------------------------------------------------------------
+async function loadServiceNowSettings() {
+  const statusEl = document.getElementById('snow-config-status');
+  try {
+    const resp = await fetch('/api/settings/servicenow');
+    if (!resp.ok) throw new Error('Failed to load');
+    const data = await resp.json();
+    document.getElementById('snow-instance').value = data.instance || '';
+    document.getElementById('snow-username').value = data.username || '';
+    document.getElementById('snow-password').value = '';
+    document.getElementById('snow-password').placeholder = data.password && data.password !== '' ? data.password : 'password';
+    if (data.enabled) {
+      statusEl.innerHTML = '<span style="color:var(--ok)">&#x25CF;</span> Connected <span style="color:var(--text2);font-size:10px">(' + (data._storage || 'unknown') + ')</span>';
+    } else {
+      statusEl.innerHTML = '<span style="color:var(--warn)">&#x25CB;</span> Not configured';
+    }
+    const badge = document.getElementById('snow-badge');
+    if (badge) {
+      badge.textContent = data.enabled ? 'ServiceNow: on' : 'ServiceNow: off';
+      badge.className = 'snow-badge ' + (data.enabled ? 'snow-on' : 'snow-off');
+    }
+  } catch (e) {
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--crit)">&#x25CF;</span> Error loading settings';
+  }
+}
+
+async function saveServiceNowSettings() {
+  const resultEl = document.getElementById('snow-config-result');
+  const instance = document.getElementById('snow-instance').value.trim();
+  const username = document.getElementById('snow-username').value.trim();
+  const passwordInput = document.getElementById('snow-password');
+  const password = passwordInput.value.trim();
+  if (!instance || !username || !password) {
+    resultEl.style.display = 'block';
+    resultEl.style.color = 'var(--warn)';
+    resultEl.textContent = 'All fields are required. Enter instance URL, username, and password.';
+    return;
+  }
+  resultEl.style.display = 'block';
+  resultEl.style.color = 'var(--text2)';
+  resultEl.textContent = 'Saving...';
+  try {
+    const resp = await fetch('/api/settings/servicenow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instance, username, password }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || data.error) {
+      resultEl.style.color = 'var(--crit)';
+      resultEl.textContent = data.error || 'Save failed';
+      return;
+    }
+    resultEl.style.color = 'var(--ok)';
+    var storageLabel = { database: 'database (persistent)', file: 'config file (persistent)', process: 'memory only (will not survive restart)' }[data.storage] || data.storage;
+    resultEl.textContent = 'Saved to ' + storageLabel;
+    passwordInput.value = '';
+    passwordInput.placeholder = '••••••••';
+    loadServiceNowSettings();
+  } catch (e) {
+    resultEl.style.color = 'var(--crit)';
+    resultEl.textContent = 'Network error: ' + e.message;
+  }
+}
+
+async function testServiceNowConnection() {
+  const resultEl = document.getElementById('snow-config-result');
+  const instance = document.getElementById('snow-instance').value.trim();
+  const username = document.getElementById('snow-username').value.trim();
+  const password = document.getElementById('snow-password').value.trim();
+  resultEl.style.display = 'block';
+  resultEl.style.color = 'var(--text2)';
+  resultEl.textContent = 'Testing connection...';
+  try {
+    const body = {};
+    if (instance) body.instance = instance;
+    if (username) body.username = username;
+    if (password) body.password = password;
+    const resp = await fetch('/api/settings/servicenow/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (data.success) {
+      resultEl.style.color = 'var(--ok)';
+      resultEl.textContent = data.message + (data.durationMs ? ' (' + data.durationMs + 'ms)' : '');
+    } else {
+      resultEl.style.color = 'var(--crit)';
+      resultEl.textContent = data.error || 'Connection failed';
+    }
+  } catch (e) {
+    resultEl.style.color = 'var(--crit)';
+    resultEl.textContent = 'Network error: ' + e.message;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -7570,8 +8650,8 @@ async function hubConnectCluster() {
   var token = document.getElementById('hub-cluster-token').value.trim();
   var statusEl = document.getElementById('hub-cluster-status');
 
-  if (!name) { statusEl.innerHTML = '<span style="color:#ef4444">Please enter a cluster name</span>'; return; }
-  if (!apiUrl) { statusEl.innerHTML = '<span style="color:#ef4444">Please enter the API server URL</span>'; return; }
+  if (!name) { statusEl.innerHTML = '<span style="color:var(--crit)">Please enter a cluster name</span>'; return; }
+  if (!apiUrl) { statusEl.innerHTML = '<span style="color:var(--crit)">Please enter the API server URL</span>'; return; }
 
   statusEl.innerHTML = '<span style="color:var(--warn)"><span class="hub-spin">&#x21BB;</span> Testing connection to cluster API...</span>';
   try {
@@ -7585,15 +8665,15 @@ async function hubConnectCluster() {
 
     var test = data.connectionTest;
     if (test && test.ok) {
-      statusEl.innerHTML = '<span style="color:#22c55e">&#x2714; Cluster connected! API reachable. Deploy the agent YAML above to enable continuous monitoring.</span>';
+      statusEl.innerHTML = '<span style="color:var(--ok)">&#x2714; Cluster connected! API reachable. Deploy the agent YAML above to enable continuous monitoring.</span>';
     } else {
       var reason = test ? (test.message || 'status ' + test.status) : 'unknown';
-      statusEl.innerHTML = '<span style="color:#f59e0b">&#x26A0; Cluster registered but API test failed: ' + esc(reason) + '. Deploy the agent YAML — it will connect using in-cluster credentials.</span>';
+      statusEl.innerHTML = '<span style="color:var(--warn)">&#x26A0; Cluster registered but API test failed: ' + esc(reason) + '. Deploy the agent YAML — it will connect using in-cluster credentials.</span>';
     }
     setTimeout(function() { dialog.style.display = 'none'; }, 3000);
     loadHubView();
   } catch (e) {
-    statusEl.innerHTML = '<span style="color:#ef4444">&#x2716; Error: ' + esc(e.message) + '</span>';
+    statusEl.innerHTML = '<span style="color:var(--crit)">&#x2716; Error: ' + esc(e.message) + '</span>';
   }
 }
 
@@ -7765,7 +8845,7 @@ async function hubCheckStatus(clusterName, source) {
   var s = _hubServers.find(function(sv) { return sv.name === clusterName; });
   var info = a || s || {};
   var pInfo = K8S_PLATFORMS[info.platform || 'k8s'] || K8S_PLATFORMS['k8s'];
-  var statusColor = (info.status === 'connected' || info.status === 'live') ? '#22c55e' : info.status === 'registered' ? '#6366f1' : '#ef4444';
+  var statusColor = (info.status === 'connected' || info.status === 'live') ? 'var(--ok)' : info.status === 'registered' ? 'var(--accent2)' : 'var(--crit)';
   var statusLabel = (info.status === 'connected' || info.status === 'live') ? 'Live' : info.status === 'registered' ? 'Registered' : info.status || 'Unknown';
   statusDialog.innerHTML =
     '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:420px;max-height:80vh;overflow-y:auto;padding:24px">' +
@@ -7780,10 +8860,10 @@ async function hubCheckStatus(clusterName, source) {
         '<div style="background:var(--bg);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--text2);margin-bottom:4px">Registered</div><div style="font-size:12px;font-weight:500">' + (info.registeredAt ? new Date(info.registeredAt).toLocaleString() : 'Built-in') + '</div></div>' +
       '</div>' +
       (info.summary ? '<div style="border-top:1px solid var(--border);padding-top:12px"><div style="font-size:11px;font-weight:600;margin-bottom:8px;color:var(--text2)">Cluster Metrics</div><div style="display:flex;gap:8px;flex-wrap:wrap">' +
-        (info.summary.nodes ? '<span style="background:#22c55e11;border:1px solid #22c55e33;border-radius:6px;padding:4px 10px;font-size:11px;color:#22c55e">Nodes: ' + info.summary.nodes + '</span>' : '') +
+        (info.summary.nodes ? '<span style="background:color-mix(in srgb,var(--ok) 7%,transparent);border:1px solid color-mix(in srgb,var(--ok) 20%,transparent);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--ok)">Nodes: ' + info.summary.nodes + '</span>' : '') +
         (info.summary.pods != null ? '<span style="background:' + pInfo.color + '11;border:1px solid ' + pInfo.color + '33;border-radius:6px;padding:4px 10px;font-size:11px;color:' + pInfo.color + '">Pods: ' + info.summary.pods + '</span>' : '') +
-        (info.summary.issues > 0 ? '<span style="background:#ef444415;border:1px solid #ef444433;border-radius:6px;padding:4px 10px;font-size:11px;color:#ef4444">' + info.summary.issues + ' issues</span>' : '') +
-        (info.summary.warnings > 0 ? '<span style="background:#f59e0b15;border:1px solid #f59e0b33;border-radius:6px;padding:4px 10px;font-size:11px;color:#f59e0b">' + info.summary.warnings + ' warnings</span>' : '') +
+        (info.summary.issues > 0 ? '<span style="background:color-mix(in srgb,var(--crit) 8%,transparent);border:1px solid color-mix(in srgb,var(--crit) 20%,transparent);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--crit)">' + info.summary.issues + ' issues</span>' : '') +
+        (info.summary.warnings > 0 ? '<span style="background:color-mix(in srgb,var(--warn) 8%,transparent);border:1px solid color-mix(in srgb,var(--warn) 20%,transparent);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--warn)">' + info.summary.warnings + ' warnings</span>' : '') +
       '</div></div>' : '') +
       (info.apiUrl ? '<div style="margin-top:12px;font-size:10px;color:var(--text2);word-break:break-all;font-family:monospace;background:var(--bg);padding:6px 10px;border-radius:6px">API: ' + esc(info.apiUrl) + '</div>' : '') +
     '</div>';
@@ -7828,7 +8908,7 @@ async function hubSaveEditCluster(oldName, source) {
   var newUrl = document.getElementById('edit-cluster-url').value.trim();
   var newPlatform = document.getElementById('edit-cluster-platform').value;
   var statusEl = document.getElementById('edit-cluster-status');
-  if (!newName) { statusEl.innerHTML = '<span style="color:#ef4444">Cluster name required</span>'; return; }
+  if (!newName) { statusEl.innerHTML = '<span style="color:var(--crit)">Cluster name required</span>'; return; }
   try {
     if (oldName !== newName || source === 'dashboard') {
       await fetch(MCP_API + '/hub/clusters/' + encodeURIComponent(oldName), { method: 'DELETE' });
@@ -7842,7 +8922,7 @@ async function hubSaveEditCluster(oldName, source) {
     document.querySelector('div[style*="fixed"][style*="inset"]').remove();
     loadHubView();
   } catch (e) {
-    statusEl.innerHTML = '<span style="color:#ef4444">' + esc(e.message) + '</span>';
+    statusEl.innerHTML = '<span style="color:var(--crit)">' + esc(e.message) + '</span>';
   }
 }
 
@@ -7935,15 +9015,15 @@ function renderHubServers() {
     var pInfo = K8S_PLATFORMS[c.platform] || K8S_PLATFORMS['k8s'];
     var statusColor, statusLabel, statusPulse;
     if (c.status === 'live' || c.status === 'connected') {
-      statusColor = '#22c55e'; statusLabel = 'Live'; statusPulse = 'animation:pulse 2s infinite';
+      statusColor = 'var(--ok)'; statusLabel = 'Live'; statusPulse = 'animation:pulse 2s infinite';
     } else if (c.status === 'connecting' || c.status === 'registered') {
-      statusColor = c.status === 'connecting' ? '#f59e0b' : '#6366f1';
+      statusColor = c.status === 'connecting' ? 'var(--warn)' : 'var(--accent2)';
       statusLabel = c.status === 'connecting' ? 'Connecting' : 'Registered';
       statusPulse = c.status === 'connecting' ? 'animation:pulse 1s infinite' : '';
     } else if (c.status === 'stale') {
-      statusColor = '#f59e0b'; statusLabel = 'Stale'; statusPulse = '';
+      statusColor = 'var(--warn)'; statusLabel = 'Stale'; statusPulse = '';
     } else {
-      statusColor = '#ef4444'; statusLabel = 'Failed'; statusPulse = '';
+      statusColor = 'var(--crit)'; statusLabel = 'Failed'; statusPulse = '';
     }
 
     var summaryHtml = '';
@@ -7951,8 +9031,8 @@ function renderHubServers() {
       summaryHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
         (c.summary.nodes ? '<span style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--text2)">Nodes: ' + c.summary.nodes + '</span>' : '') +
         (c.summary.pods != null ? '<span style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--text2)">Pods: ' + c.summary.pods + '</span>' : '') +
-        (c.summary.issues > 0 ? '<span style="background:#ef444415;border:1px solid #ef444433;border-radius:4px;padding:2px 8px;font-size:10px;color:#ef4444">' + c.summary.issues + ' issues</span>' : '') +
-        (c.summary.warnings > 0 ? '<span style="background:#f59e0b15;border:1px solid #f59e0b33;border-radius:4px;padding:2px 8px;font-size:10px;color:#f59e0b">' + c.summary.warnings + ' warnings</span>' : '') +
+        (c.summary.issues > 0 ? '<span style="background:color-mix(in srgb,var(--crit) 8%,transparent);border:1px solid color-mix(in srgb,var(--crit) 20%,transparent);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--crit)">' + c.summary.issues + ' issues</span>' : '') +
+        (c.summary.warnings > 0 ? '<span style="background:color-mix(in srgb,var(--warn) 8%,transparent);border:1px solid color-mix(in srgb,var(--warn) 20%,transparent);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--warn)">' + c.summary.warnings + ' warnings</span>' : '') +
       '</div>';
     }
 
@@ -7960,14 +9040,14 @@ function renderHubServers() {
     if (c.toolCount > 0) {
       toolsHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
         '<span style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--text2)">' + c.toolCount + ' capabilities</span>' +
-        (c.isBuiltin ? '<span style="background:#22c55e11;border:1px solid #22c55e33;border-radius:4px;padding:2px 8px;font-size:10px;color:#22c55e">Primary</span>' : '') +
+        (c.isBuiltin ? '<span style="background:color-mix(in srgb,var(--ok) 7%,transparent);border:1px solid color-mix(in srgb,var(--ok) 20%,transparent);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--ok)">Primary</span>' : '') +
         '<span style="background:' + pInfo.color + '11;border:1px solid ' + pInfo.color + '33;border-radius:4px;padding:2px 8px;font-size:10px;color:' + pInfo.color + '">' + c.platform.toUpperCase() + '</span>' +
       '</div>';
     } else {
       toolsHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
         '<span style="background:' + pInfo.color + '11;border:1px solid ' + pInfo.color + '33;border-radius:4px;padding:2px 8px;font-size:10px;color:' + pInfo.color + '">' + c.platform.toUpperCase() + '</span>' +
-        (c.source === 'agent' ? '<span style="background:#6366f111;border:1px solid #6366f133;border-radius:4px;padding:2px 8px;font-size:10px;color:#6366f1">Agent</span>' : '') +
-        (c.source === 'dashboard' ? '<span style="background:#f59e0b11;border:1px solid #f59e0b33;border-radius:4px;padding:2px 8px;font-size:10px;color:#f59e0b">Manual</span>' : '') +
+        (c.source === 'agent' ? '<span style="background:color-mix(in srgb,var(--accent2) 7%,transparent);border:1px solid color-mix(in srgb,var(--accent2) 20%,transparent);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--accent2)">Agent</span>' : '') +
+        (c.source === 'dashboard' ? '<span style="background:color-mix(in srgb,var(--warn) 7%,transparent);border:1px solid color-mix(in srgb,var(--warn) 20%,transparent);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--warn)">Manual</span>' : '') +
       '</div>';
     }
 
@@ -8098,7 +9178,7 @@ async function runHubOrchestrator() {
     stepsEl.textContent = stepsInfo;
     resultEl.innerHTML = renderMarkdown(data.text || 'No response');
   } catch (e) {
-    stepsEl.innerHTML = '<span style="color:#ef4444">Error</span>';
+    stepsEl.innerHTML = '<span style="color:var(--crit)">Error</span>';
     resultEl.textContent = e.message;
   }
 }
@@ -8126,7 +9206,7 @@ async function loadIntelligenceView() {
     var monEl = document.getElementById('aic-monitor-status');
     if (monEl) {
       monEl.innerHTML = data.monitoring
-        ? '<span style="color:#22c55e">&#x25CF;</span> AI Monitor Active'
+        ? '<span style="color:var(--ok)">&#x25CF;</span> AI Monitor Active'
         : '<span style="color:var(--text2)">&#x25CB;</span> Monitor Inactive';
     }
 
@@ -8153,7 +9233,7 @@ function renderIntelInsights(insights) {
   var el = document.getElementById('intel-insights-list');
   if (!insights.length) { el.innerHTML = '<div style="text-align:center;color:var(--text2);padding:20px;font-size:12px">No active issues detected. The AI is watching your cluster.</div>'; return; }
   el.innerHTML = insights.map(function(i) {
-    var sevColor = i.severity >= 80 ? '#ef4444' : i.severity >= 50 ? '#f59e0b' : '#6366f1';
+    var sevColor = i.severity >= 80 ? 'var(--crit)' : i.severity >= 50 ? 'var(--warn)' : 'var(--accent2)';
     var sevLabel = i.severity >= 80 ? 'CRITICAL' : i.severity >= 50 ? 'WARNING' : 'INFO';
     return '<div style="display:flex;gap:10px;padding:10px;border-bottom:1px solid var(--border);align-items:flex-start">' +
       '<span style="background:' + sevColor + '22;color:' + sevColor + ';font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;white-space:nowrap">' + sevLabel + '</span>' +
@@ -8176,14 +9256,14 @@ function renderIntelPredictions(predictions) {
   if (!el) return;
   if (!predictions.length) { el.innerHTML = '<div style="text-align:center;color:var(--text2);padding:20px;font-size:12px">No predictions yet. Trends are being collected.</div>'; return; }
   el.innerHTML = predictions.map(function(p) {
-    var sevColor = p.severity === 'critical' ? '#ef4444' : '#f59e0b';
+    var sevColor = p.severity === 'critical' ? 'var(--crit)' : 'var(--warn)';
     var conf = Math.round((p.confidence || 0) * 100);
     return '<div class="aic-pred">' +
       '<span class="aic-pred-icon" style="color:' + sevColor + '">&#x1F52E;</span>' +
       '<div class="aic-pred-body">' +
         '<div class="aic-pred-title">' + esc(p.title) + '</div>' +
         '<div class="aic-pred-detail">' + esc(p.prediction || p.detail) + '</div>' +
-        '<span class="aic-pred-conf">Confidence: <strong style="color:' + (conf > 70 ? '#ef4444' : '#f59e0b') + '">' + conf + '%</strong></span>' +
+        '<span class="aic-pred-conf">Confidence: <strong style="color:' + (conf > 70 ? 'var(--crit)' : 'var(--warn)') + '">' + conf + '%</strong></span>' +
       '</div></div>';
   }).join('');
 }
@@ -8212,7 +9292,7 @@ async function loadAutomationRules() {
             ' | Runs: ' + (r.executions || 0) +
           '</div>' +
         '</div>' +
-        '<button onclick="deleteAutomationRule(' + r.id + ')" style="background:none;border:1px solid #ef444433;border-radius:4px;padding:2px 8px;color:#ef4444;cursor:pointer;font-size:10px">&times;</button>' +
+        '<button onclick="deleteAutomationRule(' + r.id + ')" style="background:none;border:1px solid color-mix(in srgb,var(--crit) 20%,transparent);border-radius:4px;padding:2px 8px;color:var(--crit);cursor:pointer;font-size:10px">&times;</button>' +
       '</div>';
     }).join('');
   } catch(e) { console.error('Rules load error:', e); }
@@ -8273,12 +9353,12 @@ async function createAutomationRule() {
       body: JSON.stringify({ description: desc }),
     });
     var data = await resp.json();
-    if (data.error) { statusEl.innerHTML = '<span style="color:#ef4444">' + esc(data.error) + '</span>'; return; }
+    if (data.error) { statusEl.innerHTML = '<span style="color:var(--crit)">' + esc(data.error) + '</span>'; return; }
     var parsed = data.parsed || {};
-    statusEl.innerHTML = '<span style="color:#22c55e">Rule created! Triggers: ' + (parsed.conditions || []).join(', ') + ' | Actions: ' + (parsed.actions || []).map(function(a) { return a.type; }).join(', ') + '</span>';
+    statusEl.innerHTML = '<span style="color:var(--ok)">Rule created! Triggers: ' + (parsed.conditions || []).join(', ') + ' | Actions: ' + (parsed.actions || []).map(function(a) { return a.type; }).join(', ') + '</span>';
     input.value = '';
     loadAutomationRules();
-  } catch(e) { statusEl.innerHTML = '<span style="color:#ef4444">Error: ' + esc(e.message) + '</span>'; }
+  } catch(e) { statusEl.innerHTML = '<span style="color:var(--crit)">Error: ' + esc(e.message) + '</span>'; }
 }
 
 async function toggleAutomationRule(id, enabled) {
@@ -8372,13 +9452,13 @@ function hubHighlightActiveLLM() {
         row.classList.remove('active');
         row.style.borderColor = 'transparent';
         row.style.background = '';
-        if (dotEl) { dotEl.style.background = '#22c55e'; dotEl.style.animation = ''; dotEl.title = 'Connected'; }
+        if (dotEl) { dotEl.style.background = 'var(--ok)'; dotEl.style.animation = ''; dotEl.title = 'Connected'; }
         configuredCount++;
       } else {
         row.classList.remove('active');
         row.style.borderColor = 'transparent';
         row.style.background = '';
-        if (dotEl) { dotEl.style.background = '#333'; dotEl.style.animation = ''; dotEl.title = p === 'none' ? 'Available' : 'Not configured'; }
+        if (dotEl) { dotEl.style.background = 'var(--text2)'; dotEl.style.animation = ''; dotEl.title = p === 'none' ? 'Available' : 'Not configured'; }
       }
     });
     var countEl = document.getElementById('hub-llm-configured-count');

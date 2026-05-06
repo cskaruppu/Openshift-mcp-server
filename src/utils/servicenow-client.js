@@ -1,26 +1,44 @@
 /**
  * ServiceNow REST API client utility.
+ *
+ * Credentials are read from process.env on EVERY call (not cached at module
+ * load) so that runtime updates from the dashboard settings API take effect
+ * immediately without restarting the server.
  */
 
-const SNOW_INSTANCE = process.env.SERVICENOW_INSTANCE || "";
-const SNOW_USER = process.env.SERVICENOW_USERNAME || "";
-const SNOW_PASS = process.env.SERVICENOW_PASSWORD || "";
+function getConfig() {
+  return {
+    instance: (process.env.SERVICENOW_INSTANCE || "").replace(/\/+$/, ""),
+    user: process.env.SERVICENOW_USERNAME || "",
+    pass: process.env.SERVICENOW_PASSWORD || "",
+  };
+}
 
 function authHeader() {
-  return `Basic ${Buffer.from(`${SNOW_USER}:${SNOW_PASS}`).toString("base64")}`;
+  const { user, pass } = getConfig();
+  return `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
 }
 
 export async function snowFetch(path, options = {}) {
-  const url = `${SNOW_INSTANCE}/api${path}`;
-  const resp = await fetch(url, {
-    ...options,
-    headers: {
-      Authorization: authHeader(),
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
+  const { instance } = getConfig();
+  if (!instance) {
+    throw new Error("ServiceNow instance URL not configured. Set SERVICENOW_INSTANCE via the dashboard Settings panel or environment variable.");
+  }
+  const url = `${instance}/api${path}`;
+  let resp;
+  try {
+    resp = await fetch(url, {
+      ...options,
+      headers: {
+        Authorization: authHeader(),
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    });
+  } catch (e) {
+    throw new Error(`Cannot connect to ServiceNow (${instance}): ${e.message}. Verify SERVICENOW_INSTANCE is correct and reachable.`);
+  }
   if (!resp.ok) {
     const body = await resp.text();
     throw new Error(`ServiceNow API ${resp.status}: ${body}`);
@@ -61,18 +79,35 @@ export async function createChangeRequest({
   assignmentGroup = "",
   risk = "moderate",
   justification = "",
+  implementationPlan = "",
+  backoutPlan = "",
+  testPlan = "",
+  impact = "3",
+  category = "Infrastructure",
+  startDate = "",
+  endDate = "",
+  workNotes = "",
 }) {
+  const payload = {
+    short_description: shortDescription,
+    description,
+    type,
+    priority,
+    assignment_group: assignmentGroup,
+    risk,
+    justification,
+    impact,
+    category,
+  };
+  if (implementationPlan) payload.implementation_plan = implementationPlan;
+  if (backoutPlan) payload.backout_plan = backoutPlan;
+  if (testPlan) payload.test_plan = testPlan;
+  if (startDate) payload.start_date = startDate;
+  if (endDate) payload.end_date = endDate;
+  if (workNotes) payload.work_notes = workNotes;
   return snowFetch("/now/table/change_request", {
     method: "POST",
-    body: JSON.stringify({
-      short_description: shortDescription,
-      description,
-      type,
-      priority,
-      assignment_group: assignmentGroup,
-      risk,
-      justification,
-    }),
+    body: JSON.stringify(payload),
   });
 }
 
@@ -94,4 +129,25 @@ export async function updateRecord(table, sysId, data) {
     method: "PATCH",
     body: JSON.stringify(data),
   });
+}
+
+/** Attach a file to a ServiceNow record */
+export async function attachFile(table, sysId, fileName, contentType, fileBuffer) {
+  const { instance } = getConfig();
+  if (!instance) throw new Error("ServiceNow instance URL not configured.");
+  const url = `${instance}/api/now/attachment/file?table_name=${table}&table_sys_id=${sysId}&file_name=${encodeURIComponent(fileName)}`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: authHeader(),
+      "Content-Type": contentType,
+      Accept: "application/json",
+    },
+    body: fileBuffer,
+  });
+  if (!resp.ok) {
+    const body = await resp.text();
+    throw new Error(`ServiceNow attachment API ${resp.status}: ${body}`);
+  }
+  return resp.json();
 }

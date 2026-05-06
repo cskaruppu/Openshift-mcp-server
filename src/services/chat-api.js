@@ -66,6 +66,42 @@ import { suggestPlaybook, renderPlaybookMarkdown } from "./playbooks.js";
 import { findResource } from "./resource-index.js";
 import { incCounter, observeHistogram } from "./metrics.js";
 import { enforce as enforceRateLimit } from "./rate-limit.js";
+import { runPreflightChecks, formatPreflightReport } from "../tools/upgrade-preflight.js";
+
+// In-memory cache: conversationId → most recent preflight report.
+// Allows "raise a CR with above precheck details" to retrieve the report
+// even though it was generated in a previous chat turn.
+const _preflightCache = new Map();
+const PREFLIGHT_CACHE_MAX = 200;
+function cachePreflightReport(conversationId, report) {
+  if (!conversationId || !report) return;
+  _preflightCache.set(conversationId, { report, ts: Date.now() });
+  if (_preflightCache.size > PREFLIGHT_CACHE_MAX) {
+    const oldest = [..._preflightCache.entries()].sort((a, b) => a[1].ts - b[1].ts)[0];
+    if (oldest) _preflightCache.delete(oldest[0]);
+  }
+}
+function getCachedPreflightReport(conversationId) {
+  if (!conversationId) return null;
+  const entry = _preflightCache.get(conversationId);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > 30 * 60 * 1000) { _preflightCache.delete(conversationId); return null; }
+  return entry.report;
+}
+
+// Track submitted upgrade CRs per conversation for approval monitoring.
+const _submittedCRs = new Map();
+export function trackSubmittedCR(conversationId, crInfo) {
+  if (!conversationId || !crInfo) return;
+  _submittedCRs.set(conversationId, { ...crInfo, ts: Date.now() });
+}
+function getTrackedCR(conversationId) {
+  if (!conversationId) return null;
+  const entry = _submittedCRs.get(conversationId);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > 24 * 60 * 60 * 1000) { _submittedCRs.delete(conversationId); return null; }
+  return entry;
+}
 
 // Map an NLU intent to the legacy "operation" string used by the response
 // handlers below, plus a few normalizations.
@@ -383,6 +419,135 @@ async function fetchPodLogs(namespace, podName, tailLines = 80) {
 }
 
 // ---------------------------------------------------------------------------
+// Smart disambiguation — detect ambiguous queries and generate clarification
+// cards with clickable options (similar to ChatGPT / Copilot / Google Assistant).
+// Returns null when the query is clear enough, or a @@CLARIFY token otherwise.
+// ---------------------------------------------------------------------------
+const AMBIGUITY_PATTERNS = [
+  {
+    test: (msg, p) => /\b(?:upgrade|update)\b/i.test(msg) && p.resource === "clusterversion" && p.confidence <= 0.8 && !/\bpre-?(?:check|flight)|assessment|readiness|status|available|history|to\s+v?\d+\.\d+/i.test(msg),
+    question: "What would you like to do with the cluster upgrade?",
+    context: "I detected an upgrade-related request. Let me help you with the right action.",
+    options: [
+      { icon: "\u{1F4CA}", label: "Show upgrade status", desc: "Current version, channel, and available updates", query: "show cluster version upgrade status" },
+      { icon: "\u{1F50D}", label: "Run pre-upgrade assessment", desc: "Check cluster readiness before upgrading", query: "precheck upgrade" },
+      { icon: "\u{2B06}", label: "Show available upgrade paths", desc: "List all versions you can upgrade to", query: "list available cluster version updates" },
+      { icon: "\u{1F6E0}", label: "Start an upgrade", desc: "Initiate the cluster upgrade process", query: "upgrade cluster version" },
+    ],
+  },
+  {
+    test: (msg, p) => /^\s*pods?\s*$/i.test(msg.trim()),
+    question: "What would you like to know about pods?",
+    context: "Your query is quite broad. Here are the most common actions:",
+    options: [
+      { icon: "\u{1F4CB}", label: "List all pods", desc: "Show pods across all namespaces", query: "list pods in all namespaces" },
+      { icon: "\u{26A0}", label: "Show problem pods", desc: "Pods with CrashLoopBackOff, OOMKill, or errors", query: "show pods with issues" },
+      { icon: "\u{1F4CA}", label: "Pod resource usage", desc: "CPU and memory consumption by pod", query: "show top pods" },
+      { icon: "\u{1F50E}", label: "Find a specific pod", desc: "Search by name or namespace", query: "list pods in namespace " },
+    ],
+  },
+  {
+    test: (msg, p) => /^\s*(?:deployment|deploy)s?\s*$/i.test(msg.trim()),
+    question: "What would you like to know about deployments?",
+    context: "Multiple actions are available for deployments:",
+    options: [
+      { icon: "\u{1F4CB}", label: "List deployments", desc: "Show all deployments across namespaces", query: "list deployments in all namespaces" },
+      { icon: "\u{26A0}", label: "Show unhealthy deployments", desc: "Deployments with unavailable replicas", query: "show deployments with issues" },
+      { icon: "\u{1F4CA}", label: "Deployment resource usage", desc: "CPU/memory for deployment pods", query: "top pods" },
+    ],
+  },
+  {
+    test: (msg, p) => /^\s*(?:node|nodes)\s*$/i.test(msg.trim()),
+    question: "What would you like to know about nodes?",
+    context: "Several node operations are available:",
+    options: [
+      { icon: "\u{1F4CB}", label: "List all nodes", desc: "Show node status, roles, and versions", query: "list nodes" },
+      { icon: "\u{1F4CA}", label: "Node resource usage", desc: "CPU and memory allocation per node", query: "top nodes" },
+      { icon: "\u{26A0}", label: "Check node health", desc: "Show nodes with NotReady or pressure conditions", query: "show nodes with issues" },
+    ],
+  },
+  {
+    test: (msg, p) => /^\s*(?:cluster|openshift)\s*$/i.test(msg.trim()),
+    question: "What would you like to know about the cluster?",
+    context: "I can help with various cluster operations:",
+    options: [
+      { icon: "\u{2764}", label: "Cluster health check", desc: "Overall health, operators, nodes, and alerts", query: "check cluster health" },
+      { icon: "\u{2B06}", label: "Upgrade status", desc: "Current version and available updates", query: "show cluster version" },
+      { icon: "\u{1F512}", label: "Security scan", desc: "Run a security assessment", query: "/security" },
+      { icon: "\u{1F4CA}", label: "Resource optimization", desc: "Check resource utilization and waste", query: "/optimize" },
+    ],
+  },
+  {
+    test: (msg, p) => p.intent !== "unknown" && p.resource && p.name && !p.namespace && /\b(describe|get|detail|info|inspect|explain)\b/i.test(msg) && !/(all|every|across)\s*(namespace|ns)/i.test(msg),
+    question: `Which namespace is "${msg => msg}" in?`,
+    dynamicQuestion: (msg, p) => `I found a request for ${p.resource} "${p.name}", but which namespace?`,
+    context: "I need the namespace to look up this specific resource.",
+    options: [
+      { icon: "\u{1F50E}", label: "Search all namespaces", desc: "I'll look across the entire cluster", dynamicQuery: (msg, p) => `describe ${p.resource} ${p.name} in all namespaces` },
+      { icon: "\u{1F4DD}", label: "Let me specify", desc: "Type the namespace name", dynamicQuery: (msg, p) => `describe ${p.resource} ${p.name} in namespace ` },
+    ],
+  },
+  {
+    test: (msg, p) => p.resource === "deployment" && p.name && p.confidence < 0.7 && !/(list|show|get|describe|logs|scale|restart|delete|top)/i.test(msg),
+    dynamicQuestion: (msg, p) => `What would you like to do with deployment "${p.name}"?`,
+    context: "I found a deployment name but need to know what action you want.",
+    options: [
+      { icon: "\u{1F50D}", label: "Describe it", desc: "Show details, replicas, and status", dynamicQuery: (msg, p) => `describe deployment ${p.name} in all namespaces` },
+      { icon: "\u{1F4C4}", label: "Show logs", desc: "View logs from this deployment's pods", dynamicQuery: (msg, p) => `show logs for deployment ${p.name}` },
+      { icon: "\u{1F504}", label: "Restart it", desc: "Rolling restart of all pods", dynamicQuery: (msg, p) => `restart deployment ${p.name}` },
+      { icon: "\u{1F4CA}", label: "Resource usage", desc: "CPU and memory consumption", dynamicQuery: (msg, p) => `top pods for deployment ${p.name}` },
+    ],
+  },
+  {
+    test: (msg, p) => p.resource && p.confidence >= 0.4 && p.confidence < 0.6 && msg.trim().split(/\s+/).length <= 3 && !p.name,
+    dynamicQuestion: (msg, p) => `What would you like to do with ${p.resource}s?`,
+    context: "Your query could mean several things. Please pick the most relevant:",
+    options: [
+      { icon: "\u{1F4CB}", label: "List all", desc: "Show a table of all instances", dynamicQuery: (msg, p) => `list ${p.resource}s in all namespaces` },
+      { icon: "\u{26A0}", label: "Show issues", desc: "Filter to problem instances only", dynamicQuery: (msg, p) => `show ${p.resource}s with issues` },
+      { icon: "\u{1F4CA}", label: "Resource usage", desc: "CPU and memory metrics", dynamicQuery: (msg, p) => `top ${p.resource}s` },
+    ],
+  },
+  {
+    test: (msg, p) => p.confidence <= 0.4 && p.intent === "unknown" && msg.trim().split(/\s+/).length <= 3,
+    question: "I'm not sure what you're looking for. Can you help me understand?",
+    context: "Your query is short and I want to make sure I give you the right answer.",
+    options: [
+      { icon: "\u{2764}", label: "Check cluster health", desc: "Overall cluster status and issues", query: "check cluster health" },
+      { icon: "\u{1F4CB}", label: "List resources", desc: "Show pods, deployments, services, etc.", query: "list pods" },
+      { icon: "\u{1F6A8}", label: "Show current issues", desc: "Pods with errors, alerts, and events", query: "show pods with issues" },
+      { icon: "\u{2753}", label: "Show available commands", desc: "See what I can do", query: "help" },
+    ],
+  },
+];
+
+function detectAmbiguity(userMessage, parsed, memory = {}) {
+  const lower = userMessage.toLowerCase().trim();
+  if (lower.length > 120) return null;
+  if (/^(help|\/\w)/.test(lower)) return null;
+  if (parsed.intent === "diagnose") return null;
+  if (memory.resource && memory.name && parsed.resource === memory.resource) return null;
+
+  for (const pattern of AMBIGUITY_PATTERNS) {
+    if (pattern.test(userMessage, parsed)) {
+      const question = pattern.dynamicQuestion
+        ? pattern.dynamicQuestion(userMessage, parsed)
+        : pattern.question;
+      const context = pattern.context;
+      const options = (pattern.options || []).map(opt => ({
+        icon: opt.icon,
+        label: opt.label,
+        desc: opt.desc || "",
+        query: opt.dynamicQuery ? opt.dynamicQuery(userMessage, parsed) : opt.query,
+      }));
+      const token = JSON.stringify({ question, context, options }).replace(/@@/g, "@ @");
+      return `@@CLARIFY|${token}@@`;
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Command parser — extract operation, resource, name, namespace from message
 // ---------------------------------------------------------------------------
 function parseCommand(message, memory) {
@@ -511,6 +676,150 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
   // so the chat falls through to the LLM with full conversation context —
   // the LLM can resolve ambiguity from the prior turns.
   const llmAvailable = !!opts.llmAvailable;
+
+  // -----------------------------------------------------------------------
+  // UPGRADE COMPARISON — "difference between current and upgrade version"
+  // Handles natural-language queries about version differences, available
+  // upgrades, and what changes between versions.
+  // -----------------------------------------------------------------------
+  const UPGRADE_COMPARE_PAT = /\b(?:differ(?:ence|ent)|compare|comparison|what(?:'?s)?\s+(?:new|changed)|between.*(?:current|upgrade|version)|upgrade.*(?:version|available|path|option)|available.*upgrade|what.*upgrade|which.*version|next.*version|latest.*version|can\s+(?:i|we)\s+upgrade)\b/i;
+  if (UPGRADE_COMPARE_PAT.test(lower) && /\b(?:upgrade|version|cluster|upgrad)\b/i.test(lower)) {
+    try {
+      const [cvResp, opsResp, nodesResp] = await Promise.allSettled([
+        ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
+        ocpGet("/apis/config.openshift.io/v1/clusteroperators"),
+        ocpGet("/api/v1/nodes"),
+      ]);
+
+      const cv = cvResp.status === "fulfilled" ? cvResp.value : null;
+      if (!cv) throw new Error("Cannot read ClusterVersion");
+
+      const currentVersion = cv.status?.desired?.version || "unknown";
+      const channel = cv.spec?.channel || "unknown";
+      const clusterID = cv.spec?.clusterID || "";
+      const conditions = cv.status?.conditions || [];
+      const updates = cv.status?.availableUpdates || [];
+      const history = cv.status?.history || [];
+      const progressing = conditions.find(c => c.type === "Progressing");
+      const operators = opsResp.status === "fulfilled" ? (opsResp.value.items || []) : [];
+      const nodes = nodesResp.status === "fulfilled" ? (nodesResp.value.items || []) : [];
+      const degradedOps = operators.filter(o => (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True"));
+
+      const parts = [];
+      parts.push(`### Cluster Upgrade Analysis`);
+      parts.push(``);
+      parts.push(`| Property | Value |`);
+      parts.push(`|----------|-------|`);
+      parts.push(`| Current Version | \`${currentVersion}\` |`);
+      parts.push(`| Update Channel | \`${channel}\` |`);
+      parts.push(`| Cluster ID | \`${clusterID || "N/A"}\` |`);
+      parts.push(`| Nodes | ${nodes.length} |`);
+      parts.push(`| Cluster Operators | ${operators.length} (${degradedOps.length} degraded) |`);
+      if (progressing?.status === "True") {
+        parts.push(`| Upgrade Status | **In Progress** — ${progressing.message || ""} |`);
+      } else {
+        parts.push(`| Upgrade Status | Idle |`);
+      }
+      parts.push(``);
+
+      if (updates.length > 0) {
+        const sorted = [...updates].sort((a, b) => (b.version || "").localeCompare(a.version || ""));
+        const latestMinor = {};
+        for (const u of sorted) {
+          const [, maj, min] = (u.version || "").match(/^(\d+)\.(\d+)/) || [];
+          const key = `${maj}.${min}`;
+          if (!latestMinor[key]) latestMinor[key] = u;
+        }
+
+        parts.push(`### Available Upgrade Paths (${updates.length} versions)`);
+        parts.push(``);
+
+        // Group by minor version
+        const minorGroups = {};
+        for (const u of sorted) {
+          const [, maj, min] = (u.version || "").match(/^(\d+)\.(\d+)/) || [];
+          const key = `${maj}.${min}`;
+          if (!minorGroups[key]) minorGroups[key] = [];
+          minorGroups[key].push(u);
+        }
+
+        for (const [minor, versions] of Object.entries(minorGroups)) {
+          const isSameMinor = currentVersion.startsWith(minor + ".");
+          const upgradeType = isSameMinor ? "Z-stream (patch)" : "Minor version upgrade";
+          parts.push(`#### ${minor}.x — ${upgradeType}`);
+          parts.push(`| Version | Type | Vs Current (${currentVersion}) |`);
+          parts.push(`|---------|------|------|`);
+          for (const v of versions.slice(0, 8)) {
+            const [, , , curPatch] = currentVersion.match(/^(\d+)\.(\d+)\.(\d+)/) || [0, 0, 0, 0];
+            const [, , , vPatch] = (v.version || "").match(/^(\d+)\.(\d+)\.(\d+)/) || [0, 0, 0, 0];
+            const diff = isSameMinor ? `+${Number(vPatch) - Number(curPatch)} patches` : "Minor upgrade";
+            parts.push(`| \`${v.version}\` | ${upgradeType} | ${diff} |`);
+          }
+          if (versions.length > 8) parts.push(`| ... | | +${versions.length - 8} more |`);
+          parts.push(``);
+        }
+
+        // Recommendation
+        const recommended = sorted[0];
+        const recSameMinor = recommended.version.startsWith(currentVersion.replace(/\.\d+$/, "."));
+        parts.push(`### Recommendation`);
+        parts.push(``);
+        if (recSameMinor) {
+          parts.push(`The latest available **patch upgrade** is \`${recommended.version}\`. Patch upgrades include security fixes, bug fixes, and minor enhancements within the same minor release.`);
+        } else {
+          const sameMinorUpdates = sorted.filter(u => u.version.startsWith(currentVersion.replace(/\.\d+$/, ".")));
+          if (sameMinorUpdates.length > 0) {
+            parts.push(`- **Patch upgrade** (recommended): \`${sameMinorUpdates[0].version}\` — same minor, lower risk`);
+            parts.push(`- **Minor upgrade** (available): \`${recommended.version}\` — new features, higher risk`);
+          } else {
+            parts.push(`The next available upgrade is \`${recommended.version}\` (minor version change).`);
+          }
+        }
+        parts.push(``);
+
+        if (degradedOps.length > 0) {
+          parts.push(`> **Warning:** ${degradedOps.length} operator(s) are degraded: ${degradedOps.map(o => o.metadata.name).join(", ")}. Resolve before upgrading.`);
+          parts.push(``);
+        }
+
+        parts.push(`### Upgrade Commands`);
+        parts.push(`\`\`\`sh`);
+        parts.push(`# Check available upgrades`);
+        parts.push(`oc adm upgrade`);
+        parts.push(``);
+        parts.push(`# Upgrade to a specific version`);
+        parts.push(`oc adm upgrade --to=${recommended.version}`);
+        parts.push(``);
+        parts.push(`# Run pre-upgrade assessment first`);
+        parts.push(`# Ask me: "precheck upgrade to ${recommended.version}"`);
+        parts.push(`\`\`\``);
+
+        // Recent upgrade history
+        if (history.length > 1) {
+          parts.push(``);
+          parts.push(`### Recent Upgrade History`);
+          parts.push(`| Version | State | Completed |`);
+          parts.push(`|---------|-------|-----------|`);
+          for (const h of history.slice(0, 5)) {
+            parts.push(`| \`${h.version}\` | ${h.state} | ${h.completionTime ? new Date(h.completionTime).toLocaleString() : "—"} |`);
+          }
+        }
+      } else {
+        parts.push(`### No Available Upgrades`);
+        parts.push(`Your cluster (\`${currentVersion}\`) is up to date on channel \`${channel}\`.`);
+        parts.push(``);
+        parts.push(`To check other channels:`);
+        parts.push(`\`\`\`sh`);
+        parts.push(`oc adm upgrade channel stable-4.20`);
+        parts.push(`oc adm upgrade`);
+        parts.push(`\`\`\``);
+      }
+
+      return parts.join("\n");
+    } catch (err) {
+      return `### Cluster Upgrade Analysis\n\n[CRITICAL] Failed to fetch cluster version data: ${err.message}`;
+    }
+  }
 
   // Only handle the *specific* CRUD verbs here. List/get queries are
   // routed through handleListCommand so they share one code path.
@@ -967,6 +1276,12 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
   // -----------------------------------------------------------------------
   if (cmd.operation === "upgrade") {
     if (cmd.resourceType === "clusterversion") {
+      // If user is asking for a precheck/preflight, return null so the
+      // dedicated preflight handler (earlier in the main flow) handles it.
+      if (/\bpre-?(?:check|flight|upgrade)|assessment|readiness|compatib/i.test(lower)) {
+        return null;
+      }
+
       try {
         const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
         const currentVersion = cv.status?.desired?.version || "unknown";
@@ -976,31 +1291,118 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
         const progressing = conditions.find(c => c.type === "Progressing");
         const updates = cv.status?.availableUpdates || [];
 
-        parts.push(`### Cluster Version & Upgrade Status`);
-        parts.push(`**Current version:** ${currentVersion}`);
-        parts.push(`**Channel:** ${channel}`);
-        if (available) {
-          const icon = available.status === "True" ? "[OK]" : "[CRITICAL]";
-          parts.push(`${icon} **Available:** ${available.message || available.reason || available.status}`);
-        }
-        if (progressing) {
-          const icon = progressing.status === "True" ? "[WARNING]" : "[OK]";
-          parts.push(`${icon} **Progressing:** ${progressing.message || progressing.reason || progressing.status}`);
-        }
+        // Extract target version from user message ("upgrade to 4.19.23")
+        const targetMatch = lower.match(/(?:to|version)\s+v?(\d+\.\d+\.\d+)/);
+        const requestedVersion = targetMatch ? targetMatch[1] : null;
 
-        if (updates.length > 0) {
-          parts.push(`\n**Available updates (${updates.length}):**`);
-          updates.slice(0, 10).forEach(u => {
-            parts.push(`  - **${u.version}**${u.image ? ` — \`${u.image.substring(0, 80)}...\`` : ""}`);
-          });
-          parts.push(`\n**To upgrade:**`);
-          parts.push("```" + `oc adm upgrade --to=${updates[0].version}` + "```");
+        // Sort updates descending
+        const sorted = [...updates].sort((a, b) => {
+          const pa = (a.version || "").split(".").map(Number);
+          const pb = (b.version || "").split(".").map(Number);
+          for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0); }
+          return 0;
+        });
+
+        if (requestedVersion) {
+          // User asked for a specific version — provide targeted response
+          const matchedUpdate = sorted.find(u => u.version === requestedVersion);
+          const curParts = currentVersion.split(".").map(Number);
+          const tgtParts = requestedVersion.split(".").map(Number);
+          const isZStream = curParts[0] === tgtParts[0] && curParts[1] === tgtParts[1];
+          const upgradeType = isZStream ? "Z-stream (patch)" : "Minor version";
+
+          parts.push(`### Upgrade Analysis: ${currentVersion} → ${requestedVersion}`);
+          parts.push(`**Current version:** ${currentVersion}`);
+          parts.push(`**Target version:** ${requestedVersion}`);
+          parts.push(`**Channel:** ${channel}`);
+          parts.push(`**Upgrade type:** ${upgradeType}`);
+          parts.push("");
+
+          if (matchedUpdate) {
+            parts.push(`[OK] **Version ${requestedVersion} is available** in the current channel.`);
+            parts.push("");
+
+            // Check how many versions between current and target
+            const versionsSkipped = sorted.filter(u => {
+              const up = u.version.split(".").map(Number);
+              return up[0] === curParts[0] && up[1] === curParts[1] && up[2] > curParts[2] && up[2] < tgtParts[2];
+            });
+            if (versionsSkipped.length > 0) {
+              parts.push(`> Note: This skips ${versionsSkipped.length} intermediate version(s): ${versionsSkipped.map(v => v.version).join(", ")}. OpenShift supports direct Z-stream upgrades within a channel.`);
+              parts.push("");
+            }
+
+            // Show latest available for comparison
+            if (sorted.length > 0 && sorted[0].version !== requestedVersion) {
+              parts.push(`> Latest available: **${sorted[0].version}**. You requested ${requestedVersion}.`);
+              parts.push("");
+            }
+
+            parts.push(`**To upgrade:**`);
+            parts.push("```" + `oc adm upgrade --to=${requestedVersion}` + "```");
+            parts.push("");
+            parts.push(`**Recommended:** Run a pre-upgrade assessment first:`);
+            parts.push(`> Ask me: *"precheck upgrade to ${requestedVersion}"*`);
+          } else {
+            parts.push(`[CRITICAL] **Version ${requestedVersion} is NOT available** in channel \`${channel}\`.`);
+            parts.push("");
+            if (sorted.length > 0) {
+              parts.push(`Available versions:`);
+              sorted.slice(0, 5).forEach(u => {
+                parts.push(`  - **${u.version}**`);
+              });
+              parts.push("");
+              parts.push(`Did you mean **${sorted[0].version}** (latest) or check if ${requestedVersion} is in a different channel?`);
+            }
+          }
         } else {
-          parts.push(`\n[OK] Cluster is up to date. No upgrades available in channel \`${channel}\`.`);
+          // No specific version requested — show overview with analysis
+          parts.push(`### Cluster Upgrade Status`);
+          parts.push(`**Current version:** ${currentVersion}`);
+          parts.push(`**Channel:** ${channel}`);
+          if (available) {
+            const icon = available.status === "True" ? "[OK]" : "[CRITICAL]";
+            parts.push(`${icon} **Available:** ${available.message || available.reason || available.status}`);
+          }
+          if (progressing) {
+            const icon = progressing.status === "True" ? "[WARNING]" : "[OK]";
+            parts.push(`${icon} **Progressing:** ${progressing.message || progressing.reason || progressing.status}`);
+          }
+
+          if (sorted.length > 0) {
+            const latest = sorted[0];
+            const latestParts = latest.version.split(".").map(Number);
+            const isMinor = curParts[0] !== latestParts[0] || curParts[1] !== latestParts[1];
+
+            parts.push("");
+            parts.push(`**Available updates (${sorted.length}):**`);
+
+            // Group by minor version
+            const groups = {};
+            sorted.forEach(u => {
+              const mm = u.version.split(".").slice(0, 2).join(".");
+              if (!groups[mm]) groups[mm] = [];
+              groups[mm].push(u);
+            });
+
+            Object.keys(groups).sort().reverse().forEach(mm => {
+              const vers = groups[mm];
+              parts.push(`  **${mm}.x:** ${vers.map(v => v.version).join(", ")}`);
+            });
+
+            parts.push("");
+            parts.push(`**Recommendation:** Upgrade to **${latest.version}** (latest ${isMinor ? "minor" : "patch"}).`);
+            parts.push("```" + `oc adm upgrade --to=${latest.version}` + "```");
+            parts.push("");
+            parts.push(`Run a pre-upgrade assessment first:`);
+            parts.push(`> Ask me: *"precheck upgrade to ${latest.version}"*`);
+          } else {
+            parts.push(`\n[OK] Cluster is up to date. No upgrades available in channel \`${channel}\`.`);
+          }
         }
       } catch (err) {
         parts.push(`### Cluster Upgrade Error`);
-        parts.push(`[CRITICAL] Failed to check cluster version: ${err.message}`);
+        parts.push(`[CRITICAL] Failed to fetch cluster version data: ${err.message}`);
       }
       return parts.join("\n");
     }
@@ -1295,6 +1697,11 @@ const ITSM_PATTERNS = {
 
 async function detectITSMIntent(message) {
   const lower = message.toLowerCase();
+  // Exclude CR status/tracking/execution queries from ITSM form creation
+  if (/\b(?:check|status|track|monitor|poll|approved|rejected|proceed|execute|start|run)\b/i.test(lower) &&
+      /\b(?:cr|change\s*request|CHG)\b/i.test(lower)) {
+    return null;
+  }
   for (const [type, pat] of Object.entries(ITSM_PATTERNS)) {
     if (pat.test(message)) return type;
   }
@@ -1342,15 +1749,20 @@ async function gatherITSMContext(message) {
   return ctx;
 }
 
-function buildITSMForm(type, message, ctx) {
+function buildITSMForm(type, message, ctx, preflightReport = null) {
   const now = new Date();
   const planned = new Date(now.getTime() + 48 * 60 * 60 * 1000);
   const fmtDate = (d) => d.toISOString().slice(0, 16).replace("T", " ");
   const c = ctx.cluster;
   const r = ctx.recent;
 
-  const isUpgrade = /upgrade/i.test(message);
-  const targetVersion = isUpgrade && c.availableUpdates?.length ? c.availableUpdates[0] : "";
+  // If a preflightReport was passed, this IS an upgrade CR regardless of message keywords.
+  // Also match: "upgrade", "precheck", "pre-check", "above" (referencing prior precheck).
+  const isUpgrade = !!preflightReport || /upgrade|pre-?check|above\s+(?:pre|check|assessment)/i.test(message);
+  const userVersionMatch = message.match(/(\d+\.\d+\.\d+)/);
+  const targetVersion = userVersionMatch ? userVersionMatch[1]
+    : preflightReport?.targetVersion
+    || (c.availableUpdates?.length ? c.availableUpdates[0] : "");
 
   if (type === "change_request") {
     let title = "OpenShift Change";
@@ -1359,21 +1771,337 @@ function buildITSMForm(type, message, ctx) {
     let changeType = "normal";
     let rollback = "";
     let validation = "";
+    let impact = "[Describe potential impact]";
+    let justification = "";
 
     if (isUpgrade) {
-      title = `OpenShift Cluster Upgrade: ${c.version || "current"} → ${targetVersion || "target"}`;
+      const pf = preflightReport;
+      const fromVer = pf?.fromVersion || c.version || "current";
+      const toVer = pf?.targetVersion || targetVersion || "target";
+      const upgradeType = pf?.upgradeType || (fromVer !== toVer ? "Upgrade" : "");
+      const overallStatus = pf?.overallStatus || "";
+      const vd = pf?.versionDelta || {};
+      const nt = pf?.nodeTopology || {};
+      const fromMinor = (fromVer.match(/^\d+\.(\d+)/) || [])[1] || "";
+      const toMinor = (toVer.match(/^\d+\.(\d+)/) || [])[1] || "";
+
+      title = `OpenShift Cluster Upgrade: ${fromVer} → ${toVer}`;
+
+      // --- DESCRIPTION: Version comparison + cluster environment ---
       description = [
-        `Cluster: OpenShift ${c.version} (channel: ${c.channel})`,
-        `Platform: ${c.platform || "N/A"}`,
-        `Nodes: ${c.nodeCount || "N/A"}`,
-        `Target Version: ${targetVersion || "[specify target]"}`,
-        `Cluster ID: ${c.clusterID || "N/A"}`,
-        `API Server: ${c.apiURL || "N/A"}`,
+        `═══════════════════════════════════════════════`,
+        `OPENSHIFT CLUSTER UPGRADE — CHANGE DESCRIPTION`,
+        `═══════════════════════════════════════════════`,
+        ``,
+        `1. VERSION COMPARISON`,
+        `───────────────────────────────────────────────`,
+        `Current Version       : ${fromVer}`,
+        `Target Version        : ${toVer}`,
+        `Upgrade Type          : ${upgradeType}`,
+        `Kubernetes Version    : ${vd.kubeFrom || "N/A"} → ${vd.kubeTo || "N/A"}${vd.kubeSkew ? ` (${vd.kubeSkew} minor version${vd.kubeSkew > 1 ? "s" : ""})` : ""}`,
+        `CRI-O Runtime         : ${vd.criO || "matches Kubernetes version"}`,
+        `RHEL Base             : ${vd.rhelBase || "RHEL CoreOS"}`,
+        `Update Channel        : ${c.channel || "N/A"}`,
+        ``,
       ];
-      risk = "high";
+
+      // Feature highlights between versions
+      const features = vd.featureHighlights || [];
+      if (features.length > 0) {
+        description.push(`2. WHAT'S NEW IN ${toVer}`);
+        description.push(`───────────────────────────────────────────────`);
+        for (const feat of features) {
+          description.push(`  • ${feat}`);
+        }
+        description.push(``);
+      }
+
+      // API changes
+      const apiRemovals = vd.apiRemovals || {};
+      if (apiRemovals.removed?.length > 0 || apiRemovals.deprecated?.length > 0) {
+        description.push(`3. API CHANGES`);
+        description.push(`───────────────────────────────────────────────`);
+        if (apiRemovals.removed?.length > 0) {
+          description.push(`  REMOVED APIs (must migrate before upgrade):`);
+          for (const api of apiRemovals.removed) {
+            description.push(`    ✗ ${api.api} [${api.kinds?.join(", ")}] → use ${api.replacement}`);
+          }
+        }
+        if (apiRemovals.deprecated?.length > 0) {
+          description.push(`  DEPRECATED APIs (plan migration):`);
+          for (const api of apiRemovals.deprecated.slice(0, 8)) {
+            description.push(`    ⚠ ${api.name} → ${api.replacement || "check docs"}`);
+          }
+        }
+        description.push(``);
+      }
+
+      // Cluster environment
+      description.push(`4. CLUSTER ENVIRONMENT`);
+      description.push(`───────────────────────────────────────────────`);
+      description.push(`Platform              : ${c.platform || "N/A"}`);
+      description.push(`Cluster ID            : ${c.clusterID || "N/A"}`);
+      description.push(`API Server            : ${c.apiURL || "N/A"}`);
+      const masterCount = nt.masters || 0;
+      const workerCount = nt.workers || 0;
+      const infraCount = nt.infra || 0;
+      description.push(`Nodes                 : ${nt.total || c.nodeCount || "N/A"} total (${masterCount} control-plane, ${workerCount} worker${infraCount ? `, ${infraCount} infra` : ""})`);
+      description.push(`Estimated Duration    : ${vd.estimatedDuration || "~1-2 hours (varies by cluster size)"}`);
+      description.push(``);
+
+      // Pre-upgrade assessment summary
+      if (pf && pf.checks) {
+        description.push(`5. PRE-UPGRADE ASSESSMENT: ${overallStatus}`);
+        description.push(`───────────────────────────────────────────────`);
+        description.push(`Total Checks          : ${pf.summary?.total || 0}`);
+        description.push(`Passed                : ${pf.summary?.pass || 0}`);
+        description.push(`Warnings              : ${pf.summary?.warning || 0}`);
+        description.push(`Failed                : ${pf.summary?.fail || 0}`);
+        description.push(``);
+
+        const failures = pf.checks.filter(ch => ch.status === "fail");
+        const warnings = pf.checks.filter(ch => ch.status === "warning");
+        if (failures.length > 0) {
+          description.push(`  BLOCKERS (must resolve before upgrade):`);
+          for (const f of failures) {
+            description.push(`    [FAIL] ${f.category}: ${f.details}`);
+            if (f.recommendation) description.push(`           → ${f.recommendation}`);
+          }
+          description.push(``);
+        }
+        if (warnings.length > 0) {
+          description.push(`  WARNINGS (review before proceeding):`);
+          for (const w of warnings) {
+            description.push(`    [WARN] ${w.category}: ${w.details}`);
+            if (w.recommendation) description.push(`           → ${w.recommendation}`);
+          }
+          description.push(``);
+        }
+
+        const passedChecks = pf.checks.filter(ch => ch.status === "pass");
+        if (passedChecks.length > 0) {
+          description.push(`  PASSED CHECKS:`);
+          for (const p of passedChecks) {
+            description.push(`    [PASS] ${p.category}: ${p.details}`);
+          }
+          description.push(``);
+        }
+      }
+
+      // Operator status
+      description.push(`6. OPERATOR STATUS`);
+      description.push(`───────────────────────────────────────────────`);
+      description.push(`Cluster Operators     : ${pf?.operators?.clusterOperators || 0}`);
+      const unhealthyOps = (pf?.allClusterOperators || []).filter(o => o.degraded || !o.available);
+      if (unhealthyOps.length > 0) {
+        for (const op of unhealthyOps) {
+          description.push(`  ✗ ${op.name}: ${op.degraded ? "DEGRADED" : "Unavailable"} (${op.version || "N/A"})`);
+        }
+      } else {
+        description.push(`  ✓ All cluster operators healthy and available`);
+      }
+      description.push(`OLM Operators         : ${pf?.operators?.olmOperators || 0}`);
+      const olmIssues = (pf?.allOLMOperators || []).filter(o => o.compatible !== "yes" || o.issue);
+      if (olmIssues.length > 0) {
+        for (const op of olmIssues.slice(0, 10)) {
+          description.push(`  ✗ ${op.name} (${op.version || "N/A"}): ${op.issue || op.status || "review compatibility"}`);
+        }
+      } else if (pf?.operators?.olmOperators > 0) {
+        description.push(`  ✓ All OLM operators compatible with ${toVer}`);
+      }
+      description.push(``);
+
+      // Node topology details
+      if (nt.nodeDetails?.length > 0) {
+        description.push(`7. NODE TOPOLOGY`);
+        description.push(`───────────────────────────────────────────────`);
+        for (const nd of nt.nodeDetails) {
+          const readyStr = nd.ready ? "Ready" : "NOT READY";
+          description.push(`  ${nd.name} [${nd.role}] — kubelet: ${nd.kubeletVersion || "N/A"}, ${readyStr}`);
+        }
+        description.push(``);
+      }
+
+      // Reference links
+      description.push(`8. REFERENCES`);
+      description.push(`───────────────────────────────────────────────`);
+      if (vd.releaseNotesURL) description.push(`Release Notes         : ${vd.releaseNotesURL}`);
+      if (vd.errataURL) description.push(`Errata / Advisories   : ${vd.errataURL}`);
+      description.push(`Red Hat Support       : https://access.redhat.com/support/cases`);
+      description.push(`OCP Life Cycle        : https://access.redhat.com/support/policy/updates/openshift`);
+
+      // --- RISK ---
+      risk = pf?.overallStatus === "NOT_READY" ? "high"
+           : pf?.overallStatus === "READY_WITH_WARNINGS" ? "high"
+           : "moderate";
+
+      // --- JUSTIFICATION ---
+      justification = [
+        `Business Requirement: Maintain OpenShift cluster on supported, secure version.`,
+        `Security: OpenShift ${toVer} includes critical security patches (CVEs), bug fixes, and platform improvements.`,
+        upgradeType.includes("Patch") ? `This is a Z-stream (patch) update within the ${c.channel || "stable"} channel — low risk, recommended by Red Hat for all production clusters.` : `This is a minor version upgrade (${fromVer.match(/^\d+\.\d+/)?.[0]} → ${toVer.match(/^\d+\.\d+/)?.[0]}) — includes new features, Kubernetes ${vd.kubeFrom || ""} → ${vd.kubeTo || ""} update, and security fixes.`,
+        `Compliance: Running unsupported versions may violate organizational security policies and SLAs.`,
+        pf ? `Pre-Upgrade Assessment: ${overallStatus} — ${pf.summary?.pass || 0} passed, ${pf.summary?.warning || 0} warnings, ${pf.summary?.fail || 0} failures out of ${pf.summary?.total || 0} industry-standard checks.` : "",
+      ].filter(Boolean).join("\n");
+
+      // --- IMPACT ---
+      impact = [
+        `SCOPE OF IMPACT:`,
+        `• Control Plane: ${masterCount || 3} master nodes will be upgraded sequentially (auto-managed by CVO)`,
+        `• Worker Nodes: ${workerCount || "N/A"} worker nodes will be cordoned, drained, upgraded, and uncordoned one at a time via MachineConfigPool`,
+        infraCount ? `• Infrastructure Nodes: ${infraCount} infra nodes will follow same rolling process` : "",
+        `• Kubernetes API: Brief API unavailability during control plane rollover (~2-5 min per master)`,
+        `• Workloads: Pods on drained nodes will be rescheduled; applications with PodDisruptionBudgets will experience graceful disruption`,
+        `• Estimated Total Duration: ${vd.estimatedDuration || "~1-2 hours"}`,
+        ``,
+        `RISK MITIGATION:`,
+        `• Rolling upgrade strategy ensures cluster remains operational throughout`,
+        `• Workloads with ≥2 replicas and proper anti-affinity will have zero downtime`,
+        `• PodDisruptionBudgets enforced during node drain`,
+        pf?.summary?.fail > 0 ? `\nWARNING: ${pf.summary.fail} preflight check(s) FAILED — these MUST be resolved before proceeding.` : "",
+      ].filter(Boolean).join("\n");
+
+      // --- ROLLBACK / BACKOUT PLAN ---
+      rollback = [
+        `BACKOUT PLAN — OpenShift ${toVer} → ${fromVer}`,
+        `═══════════════════════════════════════════════`,
+        ``,
+        `IMPORTANT: OpenShift minor version upgrades (e.g., 4.18 → 4.19) are`,
+        `ONE-WAY and cannot be rolled back. Only Z-stream (patch) updates`,
+        `within the same minor version can be reverted.`,
+        ``,
+        `PRE-UPGRADE SAFEGUARDS:`,
+        `  1. Verify etcd backup exists: oc get etcdbackup -n openshift-etcd`,
+        `  2. Confirm cluster backup: oc adm must-gather`,
+        `  3. Document current state: oc get co; oc get nodes; oc get mcp`,
+        ``,
+        upgradeType.includes("Patch") ? [
+          `Z-STREAM ROLLBACK PROCEDURE:`,
+          `  1. oc adm upgrade --to=${fromVer}`,
+          `  2. Monitor: oc adm upgrade (wait for Available=True)`,
+          `  3. Verify: oc get co | grep -v 'True.*False.*False'`,
+          `  4. Check nodes: oc get nodes -o wide`,
+          `  5. Validate MCP: oc get mcp`,
+        ].join("\n") : [
+          `MINOR VERSION — DISASTER RECOVERY ONLY:`,
+          `  1. Restore cluster from etcd backup snapshot`,
+          `  2. Follow Red Hat KCS: https://access.redhat.com/solutions/5599961`,
+          `  3. Restore procedure requires full cluster outage`,
+          `  4. Contact Red Hat Support for assisted recovery`,
+        ].join("\n"),
+        ``,
+        `ESCALATION PATH:`,
+        `  1. L1: Cluster admin monitors oc adm upgrade for 30 min`,
+        `  2. L2: If operators degraded >15 min, engage platform team`,
+        `  3. L3: If cluster unrecoverable, initiate etcd restore + Red Hat Support case`,
+      ].join("\n");
+
+      // --- IMPLEMENTATION PLAN ---
+      const implementationPlan = [
+        `IMPLEMENTATION PLAN — OpenShift ${fromVer} → ${toVer}`,
+        `═══════════════════════════════════════════════`,
+        ``,
+        `PRE-IMPLEMENTATION (T-60 min):`,
+        `  □ Verify pre-upgrade assessment: ${pf?.summary?.total || 22} checks passed`,
+        `  □ Confirm etcd backup: oc get etcdbackup -n openshift-etcd`,
+        `  □ Run must-gather: oc adm must-gather --dest-dir=/tmp/pre-upgrade-${fromVer}`,
+        `  □ Verify all ClusterOperators healthy: oc get co`,
+        `  □ Verify all nodes Ready: oc get nodes`,
+        `  □ Verify MachineConfigPools not updating: oc get mcp`,
+        `  □ Notify stakeholders per communication plan`,
+        `  □ Verify PDB compliance for critical workloads`,
+        ``,
+        `IMPLEMENTATION (T-0):`,
+        `  1. Set maintenance channel (if needed):`,
+        `     oc adm upgrade channel ${c.channel || "stable-" + toMinor}`,
+        `  2. Initiate cluster upgrade:`,
+        `     oc adm upgrade --to=${toVer}`,
+        `  3. Monitor control plane upgrade:`,
+        `     watch "oc get co; oc adm upgrade"`,
+        `  4. Verify control plane completion:`,
+        `     oc get co | grep -v 'True.*False.*False'`,
+        `  5. Monitor worker node rolling update:`,
+        `     watch "oc get nodes; oc get mcp"`,
+        `  6. Wait for all MachineConfigPools to complete:`,
+        `     oc wait mcp --all --for=condition=Updated --timeout=90m`,
+        ``,
+        `POST-IMPLEMENTATION:`,
+        `  □ Verify cluster version: oc adm upgrade`,
+        `  □ Verify all operators: oc get co`,
+        `  □ Verify all nodes: oc get nodes -o wide`,
+        `  □ Run smoke tests on critical applications`,
+        `  □ Check for new alerts: oc get alerts (Prometheus)`,
+        `  □ Update CMDB / asset inventory with new version`,
+        `  □ Close maintenance window notification`,
+      ].join("\n");
+
+      // --- VALIDATION / TEST PLAN ---
+      validation = [
+        `TESTING & VALIDATION PLAN`,
+        `═══════════════════════════════════════════════`,
+        ``,
+        `AUTOMATED CHECKS (run immediately after upgrade):`,
+        `  1. oc adm upgrade — confirm desired version is ${toVer}`,
+        `  2. oc get co — all operators: Available=True, Degraded=False, Progressing=False`,
+        `  3. oc get nodes -o wide — all nodes Ready, version updated to ${vd.kubeTo || toVer}`,
+        `  4. oc get mcp — all pools: Updated=True, Degraded=False, MachineCount=ReadyMachineCount`,
+        `  5. oc get pods -A | grep -Ev 'Running|Completed' — no CrashLoopBackOff or unexpected states`,
+        `  6. oc get csr — no pending certificate signing requests`,
+        ``,
+        `APPLICATION VALIDATION:`,
+        `  7. Verify critical application endpoints respond (HTTP 200)`,
+        `  8. Run application-specific smoke tests / health checks`,
+        `  9. Confirm ingress routes / TLS certificates functioning`,
+        `  10. Validate persistent volume claims are bound and accessible`,
+        ``,
+        `MONITORING VALIDATION:`,
+        `  11. Check Prometheus / Alertmanager for new critical alerts`,
+        `  12. Verify monitoring stack is scraping all targets`,
+        `  13. Confirm log aggregation pipeline is operational`,
+        ``,
+        `OPERATOR VALIDATION:`,
+        `  14. oc get csv -A — all ClusterServiceVersions in Succeeded phase`,
+        `  15. Verify operator-managed CRDs are accessible`,
+        `  16. Check operator logs for errors: oc logs -n openshift-operator-lifecycle-manager`,
+        ``,
+        `SIGN-OFF CRITERIA:`,
+        `  • All ${pf?.summary?.total || 22} automated checks pass`,
+        `  • No new critical/warning alerts within 30 min post-upgrade`,
+        `  • Application health checks pass`,
+        `  • Change Advisory Board (CAB) notified of successful completion`,
+      ].join("\n");
+
+      // --- COMMUNICATION PLAN (work notes) ---
+      const communicationPlan = [
+        `COMMUNICATION PLAN:`,
+        `Pre-Change   : Notify all application teams 48h before maintenance window`,
+        `During Change: Post status updates every 30 min to #platform-ops channel`,
+        `Post-Change  : Send completion notice with validation results`,
+        `Failure      : Immediately notify incident commander; initiate backout plan`,
+      ].join("\n");
+
+      // Store implementation plan + communication plan for the form
       changeType = "normal";
-      rollback = "OpenShift supports rollback via: oc adm upgrade --to=<previous-version>. Monitor ClusterOperators and MachineConfigPool status. If rollback fails, restore from etcd backup.";
-      validation = "1. Verify all ClusterOperators are Available (oc get co)\n2. Check node status (oc get nodes)\n3. Confirm workload health (oc get pods --all-namespaces | grep -v Running)\n4. Validate MachineConfigPool status (oc get mcp)";
+
+      return {
+        type: "change_request",
+        fields: {
+          title: { label: "Change Request Title", value: title },
+          justification: { label: "Business Justification", value: justification },
+          changeType: { label: "Change Type", value: changeType, options: ["standard", "normal", "emergency"] },
+          priority: { label: "Priority", value: risk === "high" ? "2" : "3", options: ["1 - Critical", "2 - High", "3 - Moderate", "4 - Low"] },
+          risk: { label: "Risk Level", value: risk, options: ["low", "moderate", "high"] },
+          plannedDate: { label: "Planned Implementation Date/Time", value: fmtDate(planned) },
+          assignmentGroup: { label: "Assignment Group", value: "" },
+          description: { label: "Change Description", value: description.join("\n") },
+          implementationPlan: { label: "Implementation Plan", value: implementationPlan },
+          impact: { label: "Impact Assessment", value: impact },
+          rollback: { label: "Backout / Rollback Plan", value: rollback },
+          validation: { label: "Testing / Validation Plan", value: validation },
+          communicationPlan: { label: "Communication Plan", value: communicationPlan },
+        },
+        servicenowEnabled: isServiceNowEnabled(),
+      };
     } else {
       if (r.resourceType && r.resourceName) {
         title = `OpenShift Change: ${r.resourceType} '${r.resourceName}'` + (r.namespace ? ` in ${r.namespace}` : "");
@@ -1388,7 +2116,7 @@ function buildITSMForm(type, message, ctx) {
         title = "OpenShift Change — [describe the change]";
         description = [
           `Cluster: OpenShift ${c.version || "N/A"} (channel: ${c.channel || "N/A"})`,
-          `Namespace: ${r.namespace || "[specify namespace]"}`,
+          `Namespace: ${r.namespace || "[specify]"}`,
           `Resource: [resource type/name]`,
           `Action: [create/modify/delete/scale]`,
           `Details: [Provide YAML diff or summary of the change]`,
@@ -1402,14 +2130,14 @@ function buildITSMForm(type, message, ctx) {
       type: "change_request",
       fields: {
         title: { label: "Change Request Title", value: title },
-        justification: { label: "Business Justification", value: isUpgrade ? "Security patches and bug fixes in latest OpenShift release. Staying current with stable channel updates." : "" },
+        justification: { label: "Business Justification", value: justification },
         changeType: { label: "Change Type", value: changeType, options: ["standard", "normal", "emergency"] },
-        priority: { label: "Priority", value: "3", options: ["1 - Critical", "2 - High", "3 - Moderate", "4 - Low"] },
+        priority: { label: "Priority", value: risk === "high" ? "2" : "3", options: ["1 - Critical", "2 - High", "3 - Moderate", "4 - Low"] },
         risk: { label: "Risk Level", value: risk, options: ["low", "moderate", "high"] },
         plannedDate: { label: "Planned Implementation Date/Time", value: fmtDate(planned) },
         assignmentGroup: { label: "Assignment Group", value: "" },
         description: { label: "Change Description", value: description.join("\n") },
-        impact: { label: "Impact Assessment", value: isUpgrade ? "Cluster nodes will be rebooted sequentially. Running workloads with proper PodDisruptionBudgets will experience minimal disruption." : "[Describe potential impact]" },
+        impact: { label: "Impact Assessment", value: impact },
         rollback: { label: "Rollback Plan", value: rollback },
         validation: { label: "Testing/Validation Plan", value: validation },
       },
@@ -2189,16 +2917,24 @@ IMPORTANT: You are given REAL-TIME cluster data as JSON context. This is NOT hyp
 - If the user says "show its logs", "restart it", "what namespace is it in", "explain more", "fix it" — refer to the pod/deployment/resource from the previous messages.
 - Maintain context across the conversation like a human SRE colleague would.
 
-## When required information is missing:
+## When required information is missing or intent is ambiguous:
 - NEVER respond with "[WARNING] Please specify the namespace" or similar generic templates. Instead, look at the conversation history and live cluster data — the namespace was likely in the prior turn.
 - If you genuinely cannot resolve a resource, list the most likely candidates from the live data and ask which one the user means.
+- When the user's intent could match multiple actions (e.g., "upgrade" could mean check status, run precheck, or start upgrade), ask a brief clarifying question with 2-4 numbered options. For example: "I can help with that. Did you mean:\n1. Check the current upgrade status\n2. Run a pre-upgrade assessment\n3. Start the upgrade process"
+- NEVER dump raw technical data (image SHA hashes, long version lists) without analysis. Always summarize, compare, and recommend.
+- When showing version/upgrade information, group versions logically, highlight the recommended path, and explain trade-offs (Z-stream vs minor, skipped versions, etc.).
+- Prioritize answering the user's EXACT question. If they ask "upgrade to 4.19.23", respond specifically about 4.19.23 — don't redirect to a different version unless there's a good reason.
+- When you lack enough context to give a definitive answer, say what you DO know, state your assumption, and ask if the user wants something different.
 
 ## Response style:
 - Be specific to THIS cluster's data — never give generic advice when you have real data
 - Start with a clear diagnosis, then provide remediation steps
 - Use markdown formatting with headers, code blocks, and tables
-- Keep responses focused and actionable
-- When the user asks a follow-up about a previously discussed resource, don't re-list all resources — focus on the specific one from context`;
+- Keep responses focused and actionable — answer the exact question asked
+- When the user asks a follow-up about a previously discussed resource, don't re-list all resources — focus on the specific one from context
+- Never show raw image SHA hashes or internal registry URLs — users want version numbers and actionable commands
+- When recommending actions, always include the exact \`oc\` command the user can copy-paste
+- If an action is risky (upgrade, delete, scale down), warn about the impact and suggest a precheck or dry-run first`;
 
 // ---------------------------------------------------------------------------
 // Call external LLM — thin wrapper around the centralized llm.js module
@@ -4829,14 +5565,80 @@ export async function handleChatAPI(req, res) {
       }
     }
 
+    // ---- Smart disambiguation: ask clarifying question when intent is ambiguous ----
+    // Only triggers for short/vague queries with low NLU confidence and no
+    // conversation history that would resolve the ambiguity.
+    const hasHistory = Array.isArray(llmOpts.history) && llmOpts.history.length > 0;
+    if (!hasHistory) {
+      const clarifyToken = detectAmbiguity(userMessage, parsed, memory);
+      if (clarifyToken) {
+        const reply = clarifyToken;
+        const provider = "built-in";
+        if (conversationId) {
+          histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+        }
+        if (wantsStream) {
+          sseStart(res);
+          sseSend(res, { stage: "querying" });
+          sseSend(res, { delta: reply });
+          sseSend(res, { done: true, provider, conversationId });
+          sseEnd(res);
+          return;
+        }
+        return json(res, 200, { reply, provider, contextKeys: ["clarify", parsed.intent], cached: false, conversationId });
+      }
+    }
+
     // ---- ITSM: detect "raise change request" / "create incident" ----
     const itsmType = await detectITSMIntent(userMessage);
     if (itsmType) {
       const itsmCtx = await gatherITSMContext(userMessage);
-      const form = buildITSMForm(itsmType, userMessage, itsmCtx);
-      const formToken = `@@ITSM_FORM|${JSON.stringify(form).replace(/@@/g, "@ @")}@@`;
       const label = itsmType === "change_request" ? "Change Request" : "Incident";
-      const reply = `### ${label} Form\n\nI've auto-populated the ${label.toLowerCase()} form based on the current cluster context. Review and edit the fields below, then submit.\n\n${formToken}`;
+
+      // Auto-run preflight assessment for upgrade-related Change Requests
+      // and pass the report INTO the CR form fields so they're pre-populated.
+      let preflightSection = "";
+      let preflightReport = null;
+      const isUpgradeRelated = /upgrade|pre-?(?:check|flight)|above\s+(?:pre|check|assessment|details|report)|previous\s+(?:pre|check|assessment)|with\s+(?:above|precheck|pre-?check)/i.test(userMessage);
+      if (itsmType === "change_request" && isUpgradeRelated) {
+        // 1) Try to run a fresh preflight if we can determine a target version
+        try {
+          const versionMatch = userMessage.match(/(\d+\.\d+\.\d+)/g);
+          let targetVer = "";
+          let currentVer = "";
+          if (versionMatch && versionMatch.length >= 2) {
+            currentVer = versionMatch[0];
+            targetVer = versionMatch[1];
+          } else if (versionMatch && versionMatch.length === 1) {
+            targetVer = versionMatch[0];
+          } else if (itsmCtx.cluster?.availableUpdates?.length) {
+            targetVer = itsmCtx.cluster.availableUpdates[0];
+          }
+          if (targetVer) {
+            preflightReport = await runPreflightChecks(targetVer, currentVer || undefined);
+            cachePreflightReport(conversationId, preflightReport);
+            const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(preflightReport).replace(/@@/g, "@ @")}@@`;
+            preflightSection = `${reportToken}\n\n---\n\n`;
+          }
+        } catch { /* preflight failed gracefully — continue with CR form */ }
+        // 2) Fall back to cached preflight from earlier in this conversation
+        if (!preflightReport) {
+          preflightReport = getCachedPreflightReport(conversationId);
+        }
+      }
+
+      const form = buildITSMForm(itsmType, userMessage, itsmCtx, preflightReport);
+      if (preflightReport) {
+        form._preflightReport = preflightReport;
+        form._upgradeInfo = {
+          targetVersion: preflightReport.targetVersion || "",
+          fromVersion: preflightReport.fromVersion || "",
+          conversationId: conversationId || "",
+        };
+      }
+      const formToken = `@@ITSM_FORM|${JSON.stringify(form).replace(/@@/g, "@ @")}@@`;
+
+      const reply = `${preflightSection}### ${label} Form\n\nI've auto-populated the ${label.toLowerCase()} form based on the current cluster context${preflightReport ? " and the 22-point pre-upgrade assessment" : ""}. Review and edit the fields below, then submit.\n\n${formToken}`;
       const provider = "built-in";
       if (conversationId) {
         histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
@@ -4844,13 +5646,184 @@ export async function handleChatAPI(req, res) {
       if (wantsStream) {
         sseStart(res);
         sseSend(res, { stage: "querying" });
+        if (preflightSection) sseSend(res, { stage: "preflight_assessment" });
         sseSend(res, { stage: "generating" });
         sseSend(res, { delta: reply });
         sseSend(res, { done: true, provider, conversationId });
         sseEnd(res);
         return;
       }
-      return json(res, 200, { reply, provider, contextKeys: ["itsm", itsmType], cached: false, conversationId });
+      return json(res, 200, { reply, provider, contextKeys: ["itsm", itsmType, isUpgradeRelated ? "preflight" : null].filter(Boolean), cached: false, conversationId });
+    }
+
+    // ---- CR status check / upgrade execution: "check CR status", "is CR approved",
+    //      "proceed with upgrade", "execute upgrade", "start the upgrade" ----
+    const CR_STATUS_PAT = /\b(?:(?:check|status|track|monitor|poll)\s+(?:cr|change\s*request|ticket|CHG)|(?:cr|change\s*request|CHG)\s+(?:status|approved|rejected|state)|(?:is|has)\s+(?:the\s+)?(?:cr|change\s*request|ticket)\s+(?:been\s+)?(?:approved|rejected)|(?:proceed|execute|start|run|initiate|trigger)\s+(?:(?:the|with)\s+)?(?:(?:the|cluster)\s+)?(?:upgrade|cluster\s+upgrade)|(?:upgrade|go\s+ahead)\s+(?:the\s+)?cluster|CHG\d{7})\b/i;
+    if (CR_STATUS_PAT.test(userMessage)) {
+      const trackedCR = getTrackedCR(conversationId);
+      const crNumberMatch = userMessage.match(/CHG\d{7}/i);
+
+      // If user is asking about CR status (not explicitly asking to execute)
+      const wantsExec = /(?:proceed|execute|start|run|initiate|trigger|go\s+ahead)\s+(?:(?:the|with)\s+)?(?:(?:the|cluster)\s+)?(?:upgrade|cluster)/i.test(userMessage);
+
+      if (trackedCR && trackedCR.sysId) {
+        try {
+          const statusResp = await fetch(`http://localhost:${process.env.PORT || 3001}/api/itsm/cr-status`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sysId: trackedCR.sysId, ticketId: trackedCR.ticketId }),
+          }).then(r => r.json()).catch(() => null);
+
+          if (statusResp) {
+            const pfr = getCachedPreflightReport(conversationId) || trackedCR.preflightReport;
+            const vd = pfr?.versionDelta || {};
+
+            if (statusResp.status === "approved" || wantsExec) {
+              const execData = {
+                ticketId: statusResp.ticketId || trackedCR.ticketId,
+                sysId: trackedCR.sysId,
+                targetVersion: trackedCR.targetVersion || pfr?.targetVersion || "",
+                fromVersion: trackedCR.fromVersion || pfr?.fromVersion || "",
+                upgradeType: pfr?.upgradeType || "",
+                channel: pfr?.channel || "",
+                preflightStatus: pfr?.overallStatus || "UNKNOWN",
+                nodeCount: pfr?.nodeTopology?.total || 0,
+                estimatedDuration: vd.estimatedDuration || "",
+              };
+              const execToken = `@@UPGRADE_EXECUTE|${JSON.stringify(execData).replace(/@@/g, "@ @")}@@`;
+
+              let statusMsg = statusResp.status === "approved"
+                ? `Change Request **${statusResp.ticketId}** has been **approved** in ServiceNow (State: ${statusResp.stateLabel}).`
+                : `Change Request **${statusResp.ticketId}** is currently in **${statusResp.stateLabel}** state (approval: ${statusResp.approval}).`;
+
+              if (statusResp.status === "approved" || wantsExec) {
+                statusMsg += `\n\nYou can now proceed with the cluster upgrade. Choose an option below:`;
+              }
+
+              const reply = `${statusMsg}\n\n${execToken}`;
+              const provider = "built-in";
+              if (conversationId) histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+              if (wantsStream) {
+                sseStart(res);
+                sseSend(res, { stage: "querying" });
+                sseSend(res, { stage: "generating" });
+                sseSend(res, { delta: reply });
+                sseSend(res, { done: true, provider, conversationId });
+                sseEnd(res);
+                return;
+              }
+              return json(res, 200, { reply, provider, contextKeys: ["upgrade", "execute"], cached: false, conversationId });
+            } else {
+              // CR not yet approved — show status
+              const reply = `Change Request **${statusResp.ticketId}** is currently in **${statusResp.stateLabel}** state (approval: ${statusResp.approval}).\n\nI'll continue monitoring. Ask me again or say "proceed with upgrade" once it's approved.`;
+              const provider = "built-in";
+              if (conversationId) histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+              if (wantsStream) {
+                sseStart(res);
+                sseSend(res, { stage: "querying" });
+                sseSend(res, { delta: reply });
+                sseSend(res, { done: true, provider, conversationId });
+                sseEnd(res);
+                return;
+              }
+              return json(res, 200, { reply, provider, contextKeys: ["itsm", "cr-status"], cached: false, conversationId });
+            }
+          }
+        } catch { /* fall through to LLM */ }
+      } else if (wantsExec) {
+        // User wants to execute but we have no tracked CR — build exec card from cluster state
+        try {
+          const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+          const currentVer = cv?.status?.desired?.version || "";
+          const available = (cv?.status?.availableUpdates || []).map(u => u.version);
+          const versionMatch = userMessage.match(/(\d+\.\d+\.\d+)/);
+          const targetVer = versionMatch ? versionMatch[1] : (available.length > 0 ? available[0] : "");
+          const pfr = getCachedPreflightReport(conversationId);
+
+          if (targetVer) {
+            const execData = {
+              ticketId: crNumberMatch ? crNumberMatch[0] : "Direct",
+              sysId: "",
+              targetVersion: targetVer,
+              fromVersion: currentVer,
+              upgradeType: pfr?.upgradeType || "",
+              channel: cv?.spec?.channel || "",
+              preflightStatus: pfr?.overallStatus || "UNKNOWN",
+              nodeCount: pfr?.nodeTopology?.total || 0,
+              estimatedDuration: pfr?.versionDelta?.estimatedDuration || "",
+            };
+            const execToken = `@@UPGRADE_EXECUTE|${JSON.stringify(execData).replace(/@@/g, "@ @")}@@`;
+            const reply = `Ready to upgrade cluster from **${currentVer}** to **${targetVer}**. Choose an option below:\n\n${execToken}`;
+            const provider = "built-in";
+            if (conversationId) histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+            if (wantsStream) {
+              sseStart(res);
+              sseSend(res, { stage: "querying" });
+              sseSend(res, { delta: reply });
+              sseSend(res, { done: true, provider, conversationId });
+              sseEnd(res);
+              return;
+            }
+            return json(res, 200, { reply, provider, contextKeys: ["upgrade", "execute"], cached: false, conversationId });
+          }
+        } catch { /* fall through */ }
+      }
+    }
+
+    // ---- Upgrade preflight: "precheck upgrade", "cluster upgrade precheck", etc. ----
+    const UPGRADE_PREFLIGHT_PAT = /\b(?:pre-?(?:check|flight|upgrade)|upgrade.*(?:pre-?check|assessment|readiness|compatible|compatibility)|check.*(?:before|prior).*upgrade|upgrade\s+cluster.*(?:from|to)\s+\d+\.\d+|cluster\s+(?:upgrade\s+)?pre-?check)\b/i;
+    if (UPGRADE_PREFLIGHT_PAT.test(userMessage)) {
+      try {
+        const versionMatch = userMessage.match(/(\d+\.\d+\.\d+)/g);
+        let targetVer = "";
+        let currentVer = "";
+        if (versionMatch && versionMatch.length >= 2) {
+          currentVer = versionMatch[0];
+          targetVer = versionMatch[1];
+        } else if (versionMatch && versionMatch.length === 1) {
+          targetVer = versionMatch[0];
+        }
+
+        // If no target version specified, auto-detect from cluster
+        if (!targetVer) {
+          try {
+            const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+            currentVer = cv.status?.desired?.version || "";
+            const updates = cv.status?.availableUpdates || [];
+            if (updates.length > 0) {
+              const sorted = [...updates].sort((a, b) => {
+                const pa = (a.version || "").split(".").map(Number);
+                const pb = (b.version || "").split(".").map(Number);
+                for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0); }
+                return 0;
+              });
+              targetVer = sorted[0].version;
+            }
+          } catch { /* ignore — will fall through */ }
+        }
+
+        if (targetVer) {
+          const preflightReport = await runPreflightChecks(targetVer, currentVer || undefined);
+          cachePreflightReport(conversationId, preflightReport);
+          const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(preflightReport).replace(/@@/g, "@ @")}@@`;
+          const reply = reportToken;
+          const provider = "built-in";
+          if (conversationId) {
+            histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+          }
+          if (wantsStream) {
+            sseStart(res);
+            sseSend(res, { stage: "querying" });
+            sseSend(res, { stage: "preflight_assessment" });
+            sseSend(res, { stage: "generating" });
+            sseSend(res, { delta: reply });
+            sseSend(res, { done: true, provider, conversationId });
+            sseEnd(res);
+            return;
+          }
+          return json(res, 200, { reply, provider, contextKeys: ["preflight", "upgrade"], cached: false, conversationId });
+        }
+      } catch { /* fall through on failure */ }
     }
 
     // Try direct command handler first (for specific CRUD operations)

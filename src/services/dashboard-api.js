@@ -3,7 +3,8 @@
  * These endpoints query the OpenShift API and return JSON.
  */
 
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { ocpGet, ocpFetch } from "../utils/openshift-client.js";
 import { callLLM } from "./llm.js";
 import { query as dbQuery, isEnabled as dbEnabled } from "../utils/db.js";
@@ -188,6 +189,163 @@ export async function handleLLMSettingsTest(req, res) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// ServiceNow Settings — GET / POST / test
+// ---------------------------------------------------------------------------
+const SNOW_SETTINGS_DB_KEY = "servicenow_settings";
+const SNOW_SETTINGS_PATH = process.env.SNOW_SETTINGS_PATH || "/data/mcp-servicenow-settings.json";
+
+/**
+ * Load ServiceNow settings from DB → file → env vars. Returns null if nothing
+ * found. Called on startup to restore process.env and by the GET handler.
+ */
+async function loadSnowSettings() {
+  // 1. Try DB
+  try {
+    if (await dbEnabled()) {
+      const result = await dbQuery("SELECT value FROM kv_store WHERE key = $1", [SNOW_SETTINGS_DB_KEY]);
+      if (result?.rows?.length) {
+        let val = result.rows[0].value;
+        if (typeof val === "string") { try { val = JSON.parse(val); } catch { val = null; } }
+        if (val && val.instance && val.username && val.password) {
+          return { ...val, _storage: "database" };
+        }
+      }
+    }
+  } catch { /* fall through */ }
+  // 2. Try file
+  try {
+    const raw = await readFile(SNOW_SETTINGS_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.instance && parsed.username && parsed.password) {
+      return { ...parsed, _storage: "file" };
+    }
+  } catch { /* fall through */ }
+  // 3. Env vars (not persisted, just runtime)
+  const instance = process.env.SERVICENOW_INSTANCE || "";
+  const username = process.env.SERVICENOW_USERNAME || "";
+  const password = process.env.SERVICENOW_PASSWORD || "";
+  if (instance && username && password) {
+    return { instance, username, password, enabled: true, _storage: "environment" };
+  }
+  return null;
+}
+
+/**
+ * Restore ServiceNow credentials into process.env on startup so the
+ * ServiceNow client picks them up immediately. Call this once from init.
+ */
+export async function restoreServiceNowSettings() {
+  const settings = await loadSnowSettings();
+  if (settings && settings.instance && settings.username && settings.password) {
+    process.env.SERVICENOW_INSTANCE = settings.instance;
+    process.env.SERVICENOW_USERNAME = settings.username;
+    process.env.SERVICENOW_PASSWORD = settings.password;
+    console.log(`[servicenow-settings] restored from ${settings._storage} — instance=${settings.instance}, user=${settings.username}`);
+    return true;
+  }
+  return false;
+}
+
+export async function handleServiceNowSettingsGet(req, res) {
+  const settings = await loadSnowSettings();
+  if (settings) {
+    return json(res, 200, {
+      instance: settings.instance || "",
+      username: settings.username || "",
+      password: settings.password ? "••••••••" : "",
+      enabled: Boolean(settings.instance && settings.username && settings.password),
+      _storage: settings._storage || "unknown",
+    });
+  }
+  return json(res, 200, {
+    instance: "",
+    username: "",
+    password: "",
+    enabled: false,
+    _storage: "none",
+  });
+}
+
+export async function handleServiceNowSettingsPost(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const { instance, username, password } = body;
+    if (!instance || !username || !password) {
+      return json(res, 400, { error: "All fields are required: instance, username, password" });
+    }
+    const normalizedInstance = instance.replace(/\/+$/, "");
+    // Save to env immediately
+    process.env.SERVICENOW_INSTANCE = normalizedInstance;
+    process.env.SERVICENOW_USERNAME = username;
+    process.env.SERVICENOW_PASSWORD = password;
+    const settings = { instance: normalizedInstance, username, password, enabled: true };
+
+    // Persist to DB
+    let savedToDB = false;
+    try {
+      if (await dbEnabled()) {
+        await dbQuery(
+          `INSERT INTO kv_store (key, value, updated_at) VALUES ($1, $2, NOW())
+           ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+          [SNOW_SETTINGS_DB_KEY, JSON.stringify(settings)]
+        );
+        savedToDB = true;
+      }
+    } catch { /* DB optional */ }
+
+    // Persist to file (always, as fallback for pod restarts without DB)
+    let savedToFile = false;
+    try {
+      await mkdir(dirname(SNOW_SETTINGS_PATH), { recursive: true }).catch(() => {});
+      await writeFile(SNOW_SETTINGS_PATH, JSON.stringify(settings, null, 2), "utf8");
+      savedToFile = true;
+    } catch { /* file write optional */ }
+
+    const storage = savedToDB ? "database" : savedToFile ? "file" : "process";
+    console.log(`[servicenow-settings] saved — instance=${normalizedInstance}, user=${username}, db=${savedToDB}, file=${savedToFile}`);
+    return json(res, 200, { success: true, enabled: true, storage });
+  } catch (err) {
+    return json(res, 500, { error: err.message });
+  }
+}
+
+export async function handleServiceNowSettingsTest(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const instance = (body.instance || process.env.SERVICENOW_INSTANCE || "").replace(/\/+$/, "");
+    const username = body.username || process.env.SERVICENOW_USERNAME || "";
+    const password = body.password || process.env.SERVICENOW_PASSWORD || "";
+    if (!instance || !username || !password) {
+      return json(res, 200, { success: false, error: "Instance URL, username, and password are required." });
+    }
+    const startMs = Date.now();
+    const testUrl = `${instance}/api/now/table/sys_properties?sysparm_limit=1`;
+    let resp;
+    try {
+      resp = await fetch(testUrl, {
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`,
+          Accept: "application/json",
+        },
+      });
+    } catch (e) {
+      return json(res, 200, { success: false, error: `Cannot connect to ${instance}: ${e.message}` });
+    }
+    const durationMs = Date.now() - startMs;
+    if (resp.status === 401 || resp.status === 403) {
+      return json(res, 200, { success: false, error: `Authentication failed (${resp.status}). Check username and password.`, durationMs });
+    }
+    if (!resp.ok) {
+      const text = await resp.text();
+      return json(res, 200, { success: false, error: `ServiceNow returned ${resp.status}: ${text.substring(0, 200)}`, durationMs });
+    }
+    return json(res, 200, { success: true, message: `Connected to ${instance}`, durationMs });
+  } catch (err) {
+    return json(res, 200, { success: false, error: err.message });
+  }
+}
+
 function parseCpu(s) {
   if (!s) return 0;
   if (typeof s === "number") return s;
@@ -290,6 +448,31 @@ export async function handleDashboardAPI(pathname, req, res) {
         break;
       }
 
+      // ---- Cluster Operators with individual health ----
+      case "/api/cluster/operators": {
+        const operators = await ocpGet("/apis/config.openshift.io/v1/clusteroperators");
+        const result = (operators.items || []).map((op) => {
+          const conditions = (op.status?.conditions || []).reduce(
+            (acc, c) => { acc[c.type] = { status: c.status, message: c.message || "", reason: c.reason || "" }; return acc; }, {}
+          );
+          const available = conditions.Available?.status === "True";
+          const degraded = conditions.Degraded?.status === "True";
+          const progressing = conditions.Progressing?.status === "True";
+          const health = degraded ? "degraded" : !available ? "unavailable" : progressing ? "progressing" : "available";
+          return {
+            name: op.metadata.name,
+            health,
+            available,
+            degraded,
+            progressing,
+            version: (op.status?.versions || []).find(v => v.name === "operator")?.version || "",
+            message: degraded ? conditions.Degraded.message : progressing ? conditions.Progressing.message : "",
+          };
+        });
+        json(res, 200, result);
+        break;
+      }
+
       // ---- Node list ----
       case "/api/nodes": {
         const nodes = await ocpGet("/api/v1/nodes");
@@ -316,9 +499,13 @@ export async function handleDashboardAPI(pathname, req, res) {
               name,
               roles,
               ready: conditions.Ready === "True",
+              memoryPressure: conditions.MemoryPressure === "True",
+              diskPressure: conditions.DiskPressure === "True",
+              pidPressure: conditions.PIDPressure === "True",
               cpu: node.status?.capacity?.cpu || "0",
               memory: node.status?.capacity?.memory || "0",
               pods: podCount,
+              maxPods: parseInt(node.status?.allocatable?.pods || "110", 10),
               kubeletVersion: node.status?.nodeInfo?.kubeletVersion,
               osImage: node.status?.nodeInfo?.osImage,
             };
@@ -346,6 +533,7 @@ export async function handleDashboardAPI(pathname, req, res) {
           })
           .map((p) => {
             const cs = p.status?.containerStatuses || [];
+            const ics = p.status?.initContainerStatuses || [];
             const problems = cs
               .filter(
                 (c) =>
@@ -353,19 +541,42 @@ export async function handleDashboardAPI(pathname, req, res) {
                   c.lastState?.terminated?.reason === "OOMKilled" ||
                   c.restartCount > 10
               )
-              .map((c) => ({
-                container: c.name,
-                reason:
-                  c.state?.waiting?.reason ||
-                  c.lastState?.terminated?.reason ||
-                  `${c.restartCount} restarts`,
-                restarts: c.restartCount,
-              }));
+              .map((c) => {
+                const memLimit = (p.spec?.containers || []).find(
+                  (sc) => sc.name === c.name
+                )?.resources?.limits?.memory || "";
+                const memReq = (p.spec?.containers || []).find(
+                  (sc) => sc.name === c.name
+                )?.resources?.requests?.memory || "";
+                return {
+                  container: c.name,
+                  reason:
+                    c.state?.waiting?.reason ||
+                    c.lastState?.terminated?.reason ||
+                    `${c.restartCount} restarts`,
+                  restarts: c.restartCount,
+                  ready: c.ready || false,
+                  started: c.started || false,
+                  lastTerminatedAt: c.lastState?.terminated?.finishedAt || "",
+                  lastExitCode: c.lastState?.terminated?.exitCode ?? null,
+                  memLimit,
+                  memReq,
+                };
+              });
+            const podAge = p.metadata?.creationTimestamp
+              ? Math.round((Date.now() - new Date(p.metadata.creationTimestamp).getTime()) / 3600000)
+              : 0;
+            const ownerKind = p.metadata?.ownerReferences?.[0]?.kind || "";
+            const ownerName = p.metadata?.ownerReferences?.[0]?.name || "";
             return {
               name: p.metadata.name,
               namespace: p.metadata.namespace,
               phase: p.status?.phase,
               node: p.spec?.nodeName,
+              qosClass: p.status?.qosClass || "",
+              podAgeHours: podAge,
+              ownerKind,
+              ownerName,
               issues: problems,
             };
           });
@@ -374,9 +585,30 @@ export async function handleDashboardAPI(pathname, req, res) {
         break;
       }
 
-      // ---- Namespaces with workload counts ----
+      // ---- Namespaces with workload counts and health ----
       case "/api/namespaces": {
-        const namespaces = await ocpGet("/api/v1/namespaces");
+        const [namespaces, allPods] = await Promise.all([
+          ocpGet("/api/v1/namespaces"),
+          ocpGet("/api/v1/pods"),
+        ]);
+
+        const podsByNs = {};
+        for (const pod of (allPods.items || [])) {
+          const ns = pod.metadata?.namespace || "";
+          if (!podsByNs[ns]) podsByNs[ns] = { total: 0, running: 0, failed: 0, pending: 0, warning: 0 };
+          podsByNs[ns].total++;
+          const phase = pod.status?.phase || "";
+          if (phase === "Running" || phase === "Succeeded") {
+            const restarts = (pod.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0);
+            if (restarts > 10) podsByNs[ns].warning++;
+            else podsByNs[ns].running++;
+          } else if (phase === "Failed") {
+            podsByNs[ns].failed++;
+          } else {
+            podsByNs[ns].pending++;
+          }
+        }
+
         const nsList = (namespaces.items || [])
           .filter(
             (ns) =>
@@ -385,11 +617,28 @@ export async function handleDashboardAPI(pathname, req, res) {
               ns.metadata.name !== "default" &&
               ns.metadata.name !== "openshift"
           )
-          .map((ns) => ({
-            name: ns.metadata.name,
-            status: ns.status?.phase,
-            created: ns.metadata.creationTimestamp,
-          }));
+          .map((ns) => {
+            const name = ns.metadata.name;
+            const counts = podsByNs[name] || { total: 0, running: 0, failed: 0, pending: 0, warning: 0 };
+            let health = "idle";
+            if (counts.total > 0) {
+              if (counts.failed > 0) health = "critical";
+              else if (counts.warning > 0) health = "warning";
+              else if (counts.pending > 0) health = "pending";
+              else health = "healthy";
+            }
+            return {
+              name,
+              status: ns.status?.phase,
+              created: ns.metadata.creationTimestamp,
+              podCount: counts.total,
+              running: counts.running,
+              failed: counts.failed,
+              pending: counts.pending,
+              warning: counts.warning,
+              health,
+            };
+          });
 
         json(res, 200, nsList);
         break;
@@ -941,4 +1190,191 @@ export function handleUpgradeStatus(req, res) {
 
   // Fire first poll immediately
   poll();
+}
+
+// ---------------------------------------------------------------------------
+// Upgrade dry-run — validates without applying
+// ---------------------------------------------------------------------------
+export async function handleUpgradeDryRun(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const { version, channel } = body;
+    if (!version) return json(res, 400, { error: "Missing 'version' field" });
+
+    const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+    const currentVersion = cv?.status?.desired?.version || "unknown";
+    const currentChannel = cv?.spec?.channel || "";
+    const available = (cv?.status?.availableUpdates || []).map(u => u.version);
+
+    const details = [];
+    details.push(`Current version : ${currentVersion}`);
+    details.push(`Target version  : ${version}`);
+    details.push(`Current channel : ${currentChannel}`);
+    if (channel && channel !== currentChannel) {
+      details.push(`Channel change  : ${currentChannel} → ${channel}`);
+    }
+    details.push(`Available updates: ${available.length > 0 ? available.join(", ") : "none"}`);
+    details.push(``);
+
+    // Check if upgrade is already in progress
+    const progressing = (cv?.status?.conditions || []).find(c => c.type === "Progressing");
+    if (progressing?.status === "True" && (progressing?.message || "").includes("working towards")) {
+      return json(res, 200, { success: false, error: `Upgrade already in progress: ${progressing.message}`, details: details.join("\n") });
+    }
+
+    // Check version availability
+    if (!available.includes(version)) {
+      details.push(`[FAIL] Version ${version} is NOT in available updates.`);
+      details.push(`       Available: ${available.join(", ") || "none"}`);
+      if (channel && channel !== currentChannel) {
+        details.push(`       A channel switch to '${channel}' may make it available — try switching first.`);
+      }
+      return json(res, 200, { success: false, error: `Version ${version} not available`, details: details.join("\n") });
+    }
+
+    // Validate operators
+    const ops = await ocpGet("/apis/config.openshift.io/v1/clusteroperators");
+    const degraded = (ops?.items || []).filter(o =>
+      (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True")
+    );
+    const unavailable = (ops?.items || []).filter(o =>
+      !(o.status?.conditions || []).some(c => c.type === "Available" && c.status === "True")
+    );
+
+    details.push(`[PASS] Version ${version} is in available updates`);
+    details.push(`[PASS] Cluster version operator is healthy`);
+
+    if (degraded.length > 0) {
+      details.push(`[WARN] ${degraded.length} degraded operator(s): ${degraded.map(o => o.metadata.name).join(", ")}`);
+    } else {
+      details.push(`[PASS] No degraded operators`);
+    }
+    if (unavailable.length > 0) {
+      details.push(`[WARN] ${unavailable.length} unavailable operator(s): ${unavailable.map(o => o.metadata.name).join(", ")}`);
+    } else {
+      details.push(`[PASS] All operators available`);
+    }
+
+    // Check nodes
+    const nodes = await ocpGet("/api/v1/nodes");
+    const notReady = (nodes?.items || []).filter(n =>
+      !(n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True")
+    );
+    if (notReady.length > 0) {
+      details.push(`[WARN] ${notReady.length} node(s) NOT ready: ${notReady.map(n => n.metadata.name).join(", ")}`);
+    } else {
+      details.push(`[PASS] All ${(nodes?.items || []).length} nodes ready`);
+    }
+
+    // Check MCP
+    try {
+      const mcps = await ocpGet("/apis/machineconfiguration.openshift.io/v1/machineconfigpools");
+      const mcpUpdating = (mcps?.items || []).filter(m =>
+        (m.status?.conditions || []).some(c => c.type === "Updating" && c.status === "True")
+      );
+      if (mcpUpdating.length > 0) {
+        details.push(`[WARN] ${mcpUpdating.length} MachineConfigPool(s) currently updating`);
+      } else {
+        details.push(`[PASS] No MachineConfigPools updating`);
+      }
+    } catch { details.push(`[INFO] MachineConfigPools not available`); }
+
+    details.push(``);
+    const hasWarn = details.some(d => d.includes("[WARN]"));
+    details.push(hasWarn
+      ? `DRY RUN RESULT: PASSED WITH WARNINGS — review warnings before proceeding`
+      : `DRY RUN RESULT: PASSED — safe to proceed with upgrade to ${version}`);
+
+    return json(res, 200, { success: true, details: details.join("\n"), warnings: hasWarn });
+  } catch (err) {
+    return json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Channel switch — change OCP update channel
+// ---------------------------------------------------------------------------
+export async function handleUpgradeChannel(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const { channel } = body;
+    if (!channel) return json(res, 400, { error: "Missing 'channel' field" });
+
+    await ocpFetch("/apis/config.openshift.io/v1/clusterversions/version", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/merge-patch+json" },
+      body: JSON.stringify({ spec: { channel } }),
+    });
+
+    json(res, 200, { success: true, channel, message: `Channel switched to ${channel}` });
+  } catch (err) {
+    json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ServiceNow CR approval polling
+// ---------------------------------------------------------------------------
+export async function handleCRStatusCheck(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const { sysId, ticketId } = body;
+    if (!sysId) return json(res, 400, { error: "Missing 'sysId'" });
+
+    const { getRecord } = await import("../utils/servicenow-client.js");
+    const resp = await getRecord("change_request", sysId);
+    const record = resp?.result || {};
+    const state = record.state || "";
+    const approval = record.approval || "";
+
+    // ServiceNow change states: -5=new, -4=assess, -3=authorize, -2=scheduled,
+    // -1=implement, 0=review, 3=closed, 4=cancelled
+    const stateLabels = { "-5": "New", "-4": "Assess", "-3": "Authorize", "-2": "Scheduled", "-1": "Implement", "0": "Review", "3": "Closed", "4": "Cancelled" };
+    const stateLabel = stateLabels[state] || state;
+
+    let status = "pending";
+    if (approval === "approved" || state === "-1" || state === "-2") {
+      status = "approved";
+    } else if (approval === "rejected" || state === "4") {
+      status = "rejected";
+    } else if (state === "3") {
+      status = "closed";
+    }
+
+    // Record approval/rejection in audit trail (once per ticket)
+    if ((status === "approved" || status === "rejected") && await dbEnabled()) {
+      const tid = ticketId || record.number || sysId;
+      try {
+        const existing = await dbQuery(
+          `SELECT id FROM executed_actions WHERE action = $1 AND target = $2 LIMIT 1`,
+          [status === "approved" ? "cr_approved" : "cr_rejected", tid]
+        );
+        if (!existing?.rows?.length) {
+          await dbQuery(
+            `INSERT INTO executed_actions (action, target, namespace, success, result)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+              status === "approved" ? "cr_approved" : "cr_rejected",
+              tid,
+              "servicenow",
+              status === "approved",
+              JSON.stringify({ ticketId: tid, sysId, stateLabel, shortDescription: record.short_description || "" }),
+            ]
+          );
+        }
+      } catch {}
+    }
+
+    return json(res, 200, {
+      ticketId: ticketId || record.number || "",
+      sysId,
+      status,
+      state,
+      stateLabel,
+      approval: approval || "requested",
+      shortDescription: record.short_description || "",
+    });
+  } catch (err) {
+    return json(res, 200, { status: "error", error: err.message });
+  }
 }

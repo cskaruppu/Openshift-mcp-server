@@ -72,7 +72,8 @@ const RESOURCE_API_PATHS = {
 };
 
 function tokenize(cmd) {
-  // Simple shell tokenizer — handles quoted strings
+  // Strip shell line-continuation (backslash + newline)
+  cmd = cmd.replace(/\\\s*\n/g, " ");
   const tokens = [];
   let current = "";
   let quote = null;
@@ -85,11 +86,14 @@ function tokenize(cmd) {
       quote = c;
     } else if (c === " " || c === "\t" || c === "\n") {
       if (current) { tokens.push(current); current = ""; }
+    } else if (c === "\\" && i + 1 < cmd.length && (cmd[i + 1] === " " || cmd[i + 1] === "\n")) {
+      // Lone backslash before whitespace — skip it (line continuation)
+      continue;
     } else {
       current += c;
     }
   }
-  if (current) tokens.push(current);
+  if (current && current !== "\\") tokens.push(current);
   return tokens;
 }
 
@@ -208,10 +212,36 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
       return result;
     }
 
+    // Extract flags that appear before the verb (e.g. oc -n my-ns get pods)
+    const preFlags = {};
+    while (tokens.length > 0 && tokens[0].startsWith("-")) {
+      const t = tokens.shift();
+      if (t.startsWith("--")) {
+        const eq = t.indexOf("=");
+        if (eq !== -1) {
+          const key = t.slice(2, eq);
+          preFlags[key] = t.slice(eq + 1);
+        } else if (tokens.length > 0 && !tokens[0].startsWith("-")) {
+          preFlags[t.slice(2)] = tokens.shift();
+        } else {
+          preFlags[t.slice(2)] = true;
+        }
+      } else if (t.length === 2) {
+        const key = { n: "namespace", l: "selector", o: "output", f: "filename", c: "container" }[t[1]];
+        if (key && tokens.length > 0 && !tokens[0].startsWith("-")) {
+          preFlags[key] = tokens.shift();
+        } else {
+          preFlags[t.slice(1)] = true;
+        }
+      }
+    }
+
     const verb = tokens.shift();
     if (!verb) { result.stderr = "Missing verb"; return result; }
 
-    const { flags, positional } = parseFlags(tokens);
+    const { flags: postFlags, positional } = parseFlags(tokens);
+    // Merge pre-verb flags into post-verb flags (post-verb wins on conflict)
+    const flags = Object.assign({}, preFlags, postFlags);
     const namespace = flags.namespace || flags.n || "";
 
     // ===== Read-only verbs =====
@@ -291,6 +321,132 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
       const items = (resp.items || []).slice(-30).reverse();
       result.success = true;
       result.stdout = items.map((e) => `${(e.lastTimestamp || e.eventTime || "").slice(11, 19)} ${e.type.padEnd(8)} ${e.reason.padEnd(24)} ${e.involvedObject?.name || ""}: ${e.message}`).join("\n") || "No events";
+      return result;
+    }
+
+    // ===== oc adm subcommands =====
+    // "oc adm" is a prefix for many subcommands. Re-route known ones to
+    // their native handlers; for the rest, return a helpful message.
+    if (verb === "adm") {
+      const subVerb = positional.shift();
+      if (!subVerb) { result.stderr = "Missing adm subcommand"; return result; }
+
+      // oc adm top → reuse the existing "top" handler
+      if (subVerb === "top") {
+        const subj = positional[0];
+        const target = positional[1] || "";
+        if (subj === "pod" || subj === "pods") {
+          if (!namespace) { result.stderr = "Namespace required (-n <ns>)"; return result; }
+          const path = target
+            ? `/apis/metrics.k8s.io/v1beta1/namespaces/${namespace}/pods/${target}`
+            : `/apis/metrics.k8s.io/v1beta1/namespaces/${namespace}/pods`;
+          const resp = await ocpGet(path);
+          if (resp.items) {
+            result.stdout = "POD                              CPU       MEMORY\n" +
+              resp.items.map((p) => {
+                const cpu = (p.containers || []).reduce((sum, c) => sum + (c.usage?.cpu || "0"), "");
+                const mem = (p.containers || []).reduce((sum, c) => sum + (c.usage?.memory || "0"), "");
+                return `${(p.metadata?.name || "").padEnd(32)} ${cpu.padEnd(10)} ${mem}`;
+              }).join("\n");
+          } else {
+            result.stdout = JSON.stringify(resp, null, 2);
+          }
+          result.success = true;
+          return result;
+        }
+        if (subj === "node" || subj === "nodes") {
+          const path = target ? `/apis/metrics.k8s.io/v1beta1/nodes/${target}` : `/apis/metrics.k8s.io/v1beta1/nodes`;
+          const resp = await ocpGet(path);
+          if (resp.items) {
+            result.stdout = "NODE                             CPU       MEMORY\n" +
+              resp.items.map((n) => {
+                return `${(n.metadata?.name || "").padEnd(32)} ${(n.usage?.cpu || "0").padEnd(10)} ${n.usage?.memory || "0"}`;
+              }).join("\n");
+          } else if (resp.metadata?.name) {
+            result.stdout = `${resp.metadata.name}: CPU=${resp.usage?.cpu || "?"}, Memory=${resp.usage?.memory || "?"}`;
+          } else {
+            result.stdout = JSON.stringify(resp, null, 2).slice(0, 4000);
+          }
+          result.success = true;
+          return result;
+        }
+        result.stderr = `Usage: oc adm top <node|pod> [name] [-n namespace]`;
+        return result;
+      }
+
+      // oc adm upgrade
+      if (subVerb === "upgrade") {
+        const targetVersion = flags.to;
+        const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+        const currentVersion = cv.status?.desired?.version || "unknown";
+        const channel = cv.spec?.channel || "unknown";
+        const updates = cv.status?.availableUpdates || [];
+        const conditions = cv.status?.conditions || [];
+        const progressing = conditions.find(c => c.type === "Progressing");
+
+        if (!targetVersion) {
+          const lines = [`Cluster version is ${currentVersion}`, `Channel: ${channel}`];
+          if (progressing?.status === "True") {
+            lines.push(`Upgrade in progress: ${progressing.message}`);
+          }
+          if (updates.length > 0) {
+            lines.push(`\nAvailable updates:`);
+            updates.slice(0, 15).forEach(u => lines.push(`  ${u.version}`));
+          } else {
+            lines.push(`No updates available in channel ${channel}`);
+          }
+          result.success = true;
+          result.stdout = lines.join("\n");
+          return result;
+        }
+
+        if (dryRun) {
+          const available = updates.some(u => u.version === targetVersion);
+          result.success = true;
+          result.stdout = `[DRY RUN] Would upgrade cluster from ${currentVersion} to ${targetVersion}\n` +
+            `Channel: ${channel}\n` +
+            `Target available: ${available ? "YES" : "NO — version not in available updates"}\n` +
+            (progressing?.status === "True" ? `WARNING: Upgrade already in progress\n` : "");
+          return result;
+        }
+
+        const body = { spec: { desiredUpdate: { version: targetVersion } } };
+        await ocpPatch("/apis/config.openshift.io/v1/clusterversions/version", body);
+        result.success = true;
+        result.stdout = `Upgrade initiated: ${currentVersion} → ${targetVersion}\nMonitor with: oc get clusterversion`;
+        return result;
+      }
+
+      // oc adm node-logs → read-only, fetch node logs
+      if (subVerb === "node-logs") {
+        const nodeName = positional[0];
+        if (!nodeName) { result.stderr = "Usage: oc adm node-logs <node-name> [--path=kubelet]"; return result; }
+        const logPath = flags.path || "kubelet";
+        try {
+          const resp = await ocpFetch(`/api/v1/nodes/${nodeName}/proxy/logs/${logPath}`, { headers: { Accept: "text/plain" } });
+          const text = typeof resp === "string" ? resp : JSON.stringify(resp);
+          const lines = text.split("\n");
+          result.success = true;
+          result.stdout = lines.slice(-200).join("\n") || "(no logs)";
+        } catch (e) {
+          result.stderr = `Failed to get node logs: ${e.message}. The service account may need nodes/proxy permission.`;
+        }
+        return result;
+      }
+
+      // oc adm inspect, must-gather, release info → informational, not executable here
+      if (["inspect", "must-gather", "release", "policy", "groups", "prune", "certificate"].includes(subVerb)) {
+        result.stderr = `'oc adm ${subVerb}' requires direct CLI access. Run it in your terminal:\n  oc adm ${subVerb} ${positional.join(" ")}`;
+        return result;
+      }
+
+      // oc adm cordon/drain/uncordon/taint → blocked by safety
+      if (["cordon", "uncordon", "drain", "taint"].includes(subVerb)) {
+        result.stderr = `'oc adm ${subVerb}' is blocked for safety. Run it manually after review.`;
+        return result;
+      }
+
+      result.stderr = `'oc adm ${subVerb}' is not supported via this runner. Run it directly:\n  oc adm ${subVerb} ${positional.join(" ")} ${Object.entries(flags).map(([k, v]) => v === true ? "--" + k : "--" + k + "=" + v).join(" ")}`.trim();
       return result;
     }
 
@@ -403,8 +559,158 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
       return result;
     }
 
+    if (verb === "set") {
+      const subVerb = positional.shift();
+      if (subVerb === "resources") {
+        // oc set resources deployment/loadgenerator --containers=main --requests=memory=512Mi --limits=memory=1Gi -n ns
+        const target = positional[0];
+        if (!target) { result.stderr = `Usage: ${cli} set resources <resource>/<name> --containers=<c> --requests=<r> --limits=<l> -n <ns>`; return result; }
+        if (!namespace) { result.stderr = "Namespace required (-n <ns>)"; return result; }
+        const slashIdx = target.indexOf("/");
+        if (slashIdx === -1) { result.stderr = `Resource must be in format <type>/<name>, got '${target}'`; return result; }
+        const rawResource = target.slice(0, slashIdx);
+        const resName = target.slice(slashIdx + 1);
+        const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
+        if (!["deployments", "daemonsets", "statefulsets"].includes(resource)) {
+          result.stderr = `set resources not supported for '${resource}'. Use deployments, daemonsets, or statefulsets.`;
+          return result;
+        }
+        const containerName = flags.containers || flags.container || "";
+        const reqStr = flags.requests || "";
+        const limStr = flags.limits || "";
+        const resources = {};
+        if (reqStr) {
+          resources.requests = {};
+          reqStr.split(",").forEach(function(kv) { const [k, v] = kv.split("="); if (k && v) resources.requests[k] = v; });
+        }
+        if (limStr) {
+          resources.limits = {};
+          limStr.split(",").forEach(function(kv) { const [k, v] = kv.split("="); if (k && v) resources.limits[k] = v; });
+        }
+        // Build a strategic-merge-patch targeting the named container
+        const current = await ocpGet(buildPath(resource, namespace, resName));
+        const containers = current?.spec?.template?.spec?.containers || [];
+        const targetContainer = containerName
+          ? containers.find(c => c.name === containerName)
+          : containers[0];
+        if (!targetContainer) {
+          result.stderr = containerName
+            ? `Container '${containerName}' not found in ${resource}/${resName}`
+            : `No containers found in ${resource}/${resName}`;
+          return result;
+        }
+        const patchBody = {
+          spec: {
+            template: {
+              spec: {
+                containers: [{
+                  name: targetContainer.name,
+                  resources: resources,
+                }],
+              },
+            },
+          },
+        };
+        const path = buildPath(resource, namespace, resName) + dryRunParam;
+        const resp = await ocpPatch(path, patchBody, "application/strategic-merge-patch+json");
+        const desc = [];
+        if (resources.requests) desc.push("requests=" + Object.entries(resources.requests).map(([k, v]) => k + ":" + v).join(","));
+        if (resources.limits) desc.push("limits=" + Object.entries(resources.limits).map(([k, v]) => k + ":" + v).join(","));
+        result.success = true;
+        result.stdout = (dryRun ? "[DRY RUN] Would set " : "Set ") +
+          `resources on ${resource}/${resName} container '${targetContainer.name}' in ${namespace}\n` +
+          desc.join(", ") +
+          (resp?.metadata?.resourceVersion ? `\n(rv: ${resp.metadata.resourceVersion})` : "");
+        return result;
+      }
+
+      if (subVerb === "image") {
+        // oc set image deployment/name container=image:tag -n ns
+        const target = positional[0];
+        const imageSpec = positional[1];
+        if (!target || !imageSpec) { result.stderr = `Usage: ${cli} set image <resource>/<name> <container>=<image> -n <ns>`; return result; }
+        if (!namespace) { result.stderr = "Namespace required (-n <ns>)"; return result; }
+        const slashIdx = target.indexOf("/");
+        if (slashIdx === -1) { result.stderr = `Resource must be in format <type>/<name>`; return result; }
+        const rawResource = target.slice(0, slashIdx);
+        const resName = target.slice(slashIdx + 1);
+        const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
+        const eqIdx = imageSpec.indexOf("=");
+        if (eqIdx === -1) { result.stderr = `Image spec must be <container>=<image:tag>`; return result; }
+        const cName = imageSpec.slice(0, eqIdx);
+        const cImage = imageSpec.slice(eqIdx + 1);
+        const patchBody = {
+          spec: { template: { spec: { containers: [{ name: cName, image: cImage }] } } },
+        };
+        const path = buildPath(resource, namespace, resName) + dryRunParam;
+        await ocpPatch(path, patchBody, "application/strategic-merge-patch+json");
+        result.success = true;
+        result.stdout = (dryRun ? "[DRY RUN] Would set " : "Set ") + `image on ${resource}/${resName}: ${cName}=${cImage} in ${namespace}`;
+        return result;
+      }
+
+      if (subVerb === "env") {
+        // oc set env deployment/name KEY=VALUE -n ns
+        const target = positional[0];
+        if (!target) { result.stderr = `Usage: ${cli} set env <resource>/<name> KEY=VALUE... -n <ns>`; return result; }
+        if (!namespace) { result.stderr = "Namespace required (-n <ns>)"; return result; }
+        const slashIdx = target.indexOf("/");
+        if (slashIdx === -1) { result.stderr = `Resource must be in format <type>/<name>`; return result; }
+        const rawResource = target.slice(0, slashIdx);
+        const resName = target.slice(slashIdx + 1);
+        const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
+        const envPairs = positional.slice(1).filter(p => p.includes("="));
+        if (envPairs.length === 0) { result.stderr = "No env vars specified. Use KEY=VALUE format."; return result; }
+        const current = await ocpGet(buildPath(resource, namespace, resName));
+        const ctn = flags.containers || flags.container || (current?.spec?.template?.spec?.containers?.[0]?.name) || "";
+        if (!ctn) { result.stderr = "Could not determine container name"; return result; }
+        const existingEnv = (current?.spec?.template?.spec?.containers?.find(c => c.name === ctn)?.env) || [];
+        const newEnv = [...existingEnv];
+        envPairs.forEach(pair => {
+          const [k, ...rest] = pair.split("=");
+          const v = rest.join("=");
+          const idx = newEnv.findIndex(e => e.name === k);
+          if (idx !== -1) newEnv[idx] = { name: k, value: v };
+          else newEnv.push({ name: k, value: v });
+        });
+        const patchBody = { spec: { template: { spec: { containers: [{ name: ctn, env: newEnv }] } } } };
+        const path = buildPath(resource, namespace, resName) + dryRunParam;
+        await ocpPatch(path, patchBody, "application/strategic-merge-patch+json");
+        result.success = true;
+        result.stdout = (dryRun ? "[DRY RUN] Would set " : "Set ") + `env on ${resource}/${resName}: ${envPairs.join(", ")} in ${namespace}`;
+        return result;
+      }
+
+      result.stderr = `'set ${subVerb || ""}' is not supported. Supported: set resources, set image, set env`;
+      return result;
+    }
+
     if (verb === "annotate" || verb === "label") {
-      result.stderr = `'${verb}' execution requires structured input — use the chat interface for this command.`;
+      const rawResource = positional[0];
+      const name = positional[1];
+      if (!rawResource || !name) { result.stderr = `Usage: ${cli} ${verb} <resource> <name> key=value... -n <ns>`; return result; }
+      const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
+      if (!namespace && !["nodes", "namespaces", "clusterversions", "clusteroperators"].includes(resource)) {
+        result.stderr = "Namespace required (-n <ns>)";
+        return result;
+      }
+      const kvPairs = positional.slice(2).filter(p => p.includes("=") || p.endsWith("-"));
+      if (kvPairs.length === 0) { result.stderr = `No ${verb}s specified. Use key=value or key- to remove.`; return result; }
+      const patchData = {};
+      const field = verb === "label" ? "labels" : "annotations";
+      kvPairs.forEach(kv => {
+        if (kv.endsWith("-")) {
+          patchData[kv.slice(0, -1)] = null;
+        } else {
+          const [k, ...rest] = kv.split("=");
+          patchData[k] = rest.join("=");
+        }
+      });
+      const patchBody = { metadata: { [field]: patchData } };
+      const path = buildPath(resource, namespace, name) + dryRunParam;
+      await ocpPatch(path, patchBody, "application/merge-patch+json");
+      result.success = true;
+      result.stdout = (dryRun ? "[DRY RUN] Would " : "") + `${verb} ${resource}/${name}: ${kvPairs.join(", ")}`;
       return result;
     }
 
