@@ -1227,11 +1227,10 @@ tr:hover td{background:#ffffff06}
 .light-theme .uw-header{border-color:#e0e0e6}
 .light-theme .uw-footer{border-color:#e0e0e6}
 .light-theme .uw-phases{border-color:#e0e0e6}
-/* Pending CR Panel */
+/* Pending CR Panel — inside right sidebar */
 .pending-cr-panel {
-  margin: 0 0 16px 0;
-  border: 1px solid color-mix(in srgb, var(--accent2) 25%, transparent);
-  border-radius: 10px;
+  margin: 0;
+  border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--accent2) 5%, var(--bg));
   overflow: hidden;
 }
@@ -1239,7 +1238,7 @@ tr:hover td{background:#ffffff06}
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
+  padding: 10px 12px;
   background: color-mix(in srgb, var(--accent2) 10%, transparent);
   font-size: 12px;
   font-weight: 600;
@@ -1250,9 +1249,9 @@ tr:hover td{background:#ffffff06}
 .pending-cr-panel-header:hover { background: color-mix(in srgb, var(--accent2) 15%, transparent); }
 .pending-cr-item {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
   border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
   font-size: 12px;
 }
@@ -1267,8 +1266,9 @@ tr:hover td{background:#ffffff06}
 .cr-status-badge.approved { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
 .cr-status-badge.submitted { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
 .cr-status-badge.scheduled { background: color-mix(in srgb, var(--accent2) 15%, transparent); color: var(--accent2); }
+.cr-item-header { display: flex; align-items: center; justify-content: space-between; }
 .cr-age { color: var(--text2); font-size: 10px; white-space: nowrap; }
-.cr-actions { display: flex; gap: 4px; margin-left: auto; }
+.cr-actions { display: flex; gap: 4px; }
 .cr-actions button {
   padding: 3px 8px;
   border: 1px solid color-mix(in srgb, var(--accent2) 30%, transparent);
@@ -1818,7 +1818,6 @@ tr:hover td{background:#ffffff06}
 
     <!-- Conversation messages -->
     <div class="chat-conversation" id="chat-conversation">
-      <div id="pending-cr-panel" style="display:none"></div>
       <div class="chat-conv-inner" id="chat-conv-inner">
         <div class="chat-welcome" id="chat-welcome">
           <div style="width:52px;height:52px;border-radius:16px;background:linear-gradient(135deg,#e04040,#a020a0);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:#fff">KN</div>
@@ -1878,6 +1877,7 @@ tr:hover td{background:#ffffff06}
         <span id="snow-badge" class="snow-badge snow-off">ServiceNow: off</span>
       </div>
     </div>
+    <div id="pending-cr-panel" style="display:none"></div>
     <div class="actions-list" id="actions-list">
       <div class="actions-empty">
         No pending actions. Ask to restart, delete or scale a workload and it will appear here for confirmation.
@@ -6392,7 +6392,7 @@ function renderPendingCRPanel(crs) {
   var html = '<div class="pending-cr-panel">' +
     '<div class="pending-cr-panel-header" onclick="togglePendingCRBody()">' +
       '<span>&#x1F4CB;</span>' +
-      '<span>Pending Change Requests (' + count + ')</span>' +
+      '<span>Pending CRs (' + count + ')</span>' +
       '<span style="margin-left:auto;font-size:10px" id="cr-panel-arrow">&#x25BC;</span>' +
     '</div>' +
     '<div id="pending-cr-body">';
@@ -6411,15 +6411,18 @@ function renderPendingCRPanel(crs) {
     }
 
     html += '<div class="pending-cr-item">' +
-      '<div style="flex:1;min-width:0">' +
-        '<div style="font-weight:600;color:var(--text)">' + esc(cr.ticketId) + ' <span class="cr-status-badge ' + statusClass + '">' + esc(cr.status) + '</span>' + schedInfo + '</div>' +
-        '<div style="color:var(--text2);font-size:11px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(cr.title || '') + '</div>' +
-        '<div style="color:var(--text2);font-size:10px;margin-top:2px">' +
-          (cr.fromVersion && cr.targetVersion ? esc(cr.fromVersion) + ' &#x2192; ' + esc(cr.targetVersion) : '') +
-          (cr.channel ? ' &middot; ' + esc(cr.channel) : '') +
-        '</div>' +
+      '<div class="cr-item-header">' +
+        '<span style="font-weight:600;color:var(--text)">' + esc(cr.ticketId) + '</span>' +
+        '<span class="cr-age">' + age + '</span>' +
       '</div>' +
-      '<div class="cr-age">' + age + '</div>' +
+      '<div>' +
+        '<span class="cr-status-badge ' + statusClass + '">' + esc(cr.status) + '</span>' + schedInfo +
+      '</div>' +
+      '<div style="color:var(--text2);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(cr.title || '') + '</div>' +
+      (cr.fromVersion && cr.targetVersion ?
+        '<div style="color:var(--text2);font-size:10px">' + esc(cr.fromVersion) + ' &#x2192; ' + esc(cr.targetVersion) +
+          (cr.channel ? ' &middot; ' + esc(cr.channel) : '') +
+        '</div>' : '') +
       '<div class="cr-actions">' +
         '<button onclick="syncCR(\'' + esc(cr.ticketId) + '\')">&#x1F504; Sync</button>' +
         (cr.status === 'approved' && !cr.scheduledDate ? '<button onclick="scheduleCR(\'' + esc(cr.ticketId) + '\')">&#x1F4C5; Schedule</button>' : '') +
