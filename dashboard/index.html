@@ -3268,6 +3268,18 @@ function md(text) {
       return ph(renderITSMForm(form));
     } catch(e) { return ph('<div style="color:var(--crit)">Failed to render ITSM form: ' + esc(e.message) + '</div>'); }
   });
+  text = text.replace(/@@ITSM_SUBMITTED\|([\s\S]+?)@@/g, function(m, jsonStr) {
+    try {
+      var info = JSON.parse(jsonStr.replace(/@ @/g, '@@'));
+      return ph(renderITSMSubmitted(info));
+    } catch(e) { return ph('<div style="color:var(--crit)">Failed to render ITSM status: ' + esc(e.message) + '</div>'); }
+  });
+  text = text.replace(/@@UPGRADE_EXECUTE\|([\s\S]+?)@@/g, function(m, jsonStr) {
+    try {
+      var data = JSON.parse(jsonStr.replace(/@ @/g, '@@'));
+      return ph(renderUpgradeExecuteCard(data));
+    } catch(e) { return ph('<div style="color:var(--crit)">Failed to render upgrade execute card: ' + esc(e.message) + '</div>'); }
+  });
   text = text.replace(/@@SEC_FIX_CMD\|([^@]+)@@/g, function(m, cmd) {
     var idx = Math.floor(Math.random() * 100000);
     var encodedCmd = btoa(unescape(encodeURIComponent(cmd)));
@@ -3572,6 +3584,22 @@ function renderITSMForm(form) {
   '</div>';
 }
 
+function renderITSMSubmitted(info) {
+  var isCR = info.type === 'change_request';
+  var label = isCR ? 'Change Request' : 'Incident';
+  var icon = isCR ? '&#x1F4CB;' : '&#x1F6A8;';
+  var iconClass = isCR ? 'cr' : 'inc';
+  return '<div class="itsm-form" style="opacity:0.85">' +
+    '<div class="itsm-form-header">' +
+      '<div class="itsm-icon ' + iconClass + '">' + icon + '</div>' +
+      '<div style="flex:1"><h4>' + label + ' Submitted</h4>' +
+      '<div style="font-size:12px;color:var(--ok);margin-top:2px;font-weight:600">' + esc(info.ticketId) + '</div></div>' +
+      '<span class="itsm-badge" style="background:color-mix(in srgb,var(--ok) 20%,transparent);color:var(--ok)">Submitted</span>' +
+    '</div>' +
+    (info.title ? '<div style="padding:8px 16px 12px;font-size:12px;color:var(--text2)">' + esc(info.title) + '</div>' : '') +
+  '</div>';
+}
+
 async function submitITSMForm(formId, type) {
   var form = document.getElementById(formId);
   if (!form) return;
@@ -3602,6 +3630,48 @@ async function submitITSMForm(formId, type) {
       // Disable all form inputs
       inputs = form.querySelectorAll('input,textarea,select');
       for (i = 0; i < inputs.length; i++) { inputs[i].disabled = true; inputs[i].style.opacity = '0.6'; }
+      // Replace @@ITSM_FORM|...@@ token in chat history with @@ITSM_SUBMITTED|...@@
+      // so re-renders show a static "Submitted" card instead of an active form
+      try {
+        var hist = loadChatHistory();
+        var ac = hist.chats.find(function(c) { return c.id === hist.activeId; });
+        if (ac) {
+          var submittedToken = '@@ITSM_SUBMITTED|' + JSON.stringify({
+            type: type,
+            ticketId: data.ticketId,
+            title: fields.short_description || fields.title || ''
+          }) + '@@';
+          for (var mi = ac.messages.length - 1; mi >= 0; mi--) {
+            var mt = ac.messages[mi].text || '';
+            if (mt.indexOf('@@ITSM_FORM|') !== -1) {
+              var fmMatch = /@@ITSM_FORM\|([\s\S]+?)@@/.exec(mt);
+              if (fmMatch) {
+                try {
+                  var pf = JSON.parse(fmMatch[1].replace(/@ @/g, '@@'));
+                  if (pf.type === type) {
+                    ac.messages[mi].text = mt.replace(/@@ITSM_FORM\|[\s\S]+?@@/, submittedToken);
+                    saveChatHistory(hist);
+                    break;
+                  }
+                } catch(pe) {}
+              }
+            }
+          }
+        }
+      } catch(he) {}
+      // Persist ticket info as a separate chat message
+      var crLabel = type === 'change_request' ? 'Change Request' : 'Incident';
+      var confirmMsg = '### \\u2705 ' + crLabel + ' ' + esc(data.ticketId) + ' Created\n\n' +
+        '**Ticket ID:** `' + esc(data.ticketId) + '`\n' +
+        '**Status:** Submitted to ServiceNow\n' +
+        '**Title:** ' + esc(fields.short_description || fields.title || '') + '\n' +
+        (data.attachmentId ? '**Attachment:** Pre-Assessment report attached\n' : '') +
+        (data.sysId && type === 'change_request' ? '\n> Monitoring approval status automatically. Ask "check CR status" or "proceed with upgrade" once approved.' : '');
+      appendAssistantMessage(confirmMsg);
+      // Start auto-polling for CR approval if we have a sysId
+      if (data.sysId && type === 'change_request') {
+        pollCRApproval(data.sysId, data.ticketId, pfr || null, uinfo || null);
+      }
     } else {
       throw new Error(data.error || 'Submission failed');
     }
