@@ -76,6 +76,7 @@ import {
   updateTitle,
   updateMessage,
   replaceMessageContent,
+  addMessage,
   isHistoryEnabled,
 } from "./services/chat-history.js";
 import { initDb, query as dbQuery, isEnabled as dbEnabled } from "./utils/db.js";
@@ -610,6 +611,28 @@ async function handleChatHistoryAPI(url, req, res) {
           return sendJson(res, ok ? 200 : 404, { success: ok });
         }
         return sendJson(res, 400, { error: "No fields to update" });
+      } catch (err) {
+        return sendJson(res, 400, { error: err.message });
+      }
+    }
+    return sendJson(res, 405, { error: "Method not allowed" });
+  }
+
+  // /api/chats/:id/messages  (add a new message to a conversation)
+  const ma = url.pathname.match(/^\/api\/chats\/([^/]+)\/messages$/);
+  if (ma) {
+    const chatId = decodeURIComponent(ma[1]);
+    if (req.method === "POST") {
+      try {
+        const body = await readJsonBody(req);
+        if (!body.role || !body.content) return sendJson(res, 400, { error: "role and content required" });
+        const result = await addMessage(chatId, {
+          role: body.role,
+          content: body.content,
+          html: body.html || null,
+          provider: body.provider || null,
+        });
+        return sendJson(res, result ? 201 : 400, result || { error: "Failed to add message" });
       } catch (err) {
         return sendJson(res, 400, { error: err.message });
       }

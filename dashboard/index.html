@@ -4442,6 +4442,13 @@ function appendAssistantMessage(msgText) {
       activeChat.messages.push({ role: 'ai', text: msgText, provider: 'built-in' });
       activeChat.updatedAt = new Date().toISOString();
       saveChatHistory(history);
+      if (_historyRemote) {
+        fetch(chatApiBase() + '/api/chats/' + encodeURIComponent(history.activeId) + '/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: 'assistant', content: msgText, provider: 'built-in' }),
+        }).catch(function() {});
+      }
     }
   } catch(e) {}
 }
@@ -6212,14 +6219,22 @@ function appendAssistantMessage(text, provider) {
   const history = loadChatHistory();
   const chat = history.chats.find(c => c.id === history.activeId);
   if (!chat) return;
+  const prov = provider || 'built-in';
   chat.messages.push({
     role: 'ai',
     text: text,
     html: md(text),
-    provider: provider || 'built-in',
+    provider: prov,
   });
   chat.updatedAt = new Date().toISOString();
   saveChatHistory(history);
+  if (_historyRemote) {
+    fetch(chatApiBase() + '/api/chats/' + encodeURIComponent(history.activeId) + '/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role: 'assistant', content: text, provider: prov }),
+    }).catch(function() {});
+  }
   renderConversation();
   renderChatHistory();
 }
