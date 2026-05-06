@@ -2878,7 +2878,11 @@ async function loadTopology() {
       '</div>';
     }).join('');
   } catch (e) {
-    canvas.innerHTML = '<div style="padding:20px;text-align:center;color:var(--crit);font-size:12px">Error: ' + esc(e.message) + '</div>';
+    canvas.innerHTML = '<div style="padding:20px;text-align:center;font-size:12px">' +
+      '<div style="color:var(--text2);margin-bottom:6px">Unable to load node topology</div>' +
+      '<div style="color:var(--text2);font-size:11px">Waiting for cluster API connection...</div>' +
+      '</div>';
+    opBar.innerHTML = '';
   }
 }
 
