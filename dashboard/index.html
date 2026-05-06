@@ -4811,6 +4811,12 @@ async function sendMessage() {
           if (payload === '[DONE]') continue;
           try {
             const evt = JSON.parse(payload);
+            if (evt.toolProgress) {
+              var stLabels = thinkingEl.querySelectorAll('.think-stage.active .stage-label');
+              if (stLabels.length) {
+                stLabels[stLabels.length - 1].textContent = evt.toolProgress;
+              }
+            }
             if (evt.delta) {
               if (firstChunk) {
                 advanceThinkingStage(thinkingEl, 'generate');
@@ -6267,14 +6273,14 @@ function sendFeedback(msgIdx, rating) {
   const msg = chat.messages[msgIdx];
   if (msg) msg.feedback = rating;
   saveChatHistory(history);
-  // Send to server (best effort)
-  fetch(MCP_API.replace(/\/api$/, '') + '/api/feedback', {
+  // Send to structured feedback endpoint (positive/negative)
+  fetch(MCP_API.replace(/\/api$/, '') + '/api/chat/feedback', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
       conversationId: history.activeId,
-      messageId: String(msgIdx),
-      rating: rating,
+      messageIndex: msgIdx,
+      rating: rating === 1 ? 'positive' : 'negative',
     }),
   }).catch(() => {});
   renderConversation();
@@ -7445,6 +7451,12 @@ async function sendFullChatStreaming(text) {
             const evt = JSON.parse(payload);
             if (evt.stage) {
               advanceThinkingStage(streamDiv, evt.stage === 'generating' ? 'generate' : 'query');
+            }
+            if (evt.toolProgress) {
+              var stageLabels = streamDiv.querySelectorAll('.think-stage.active .stage-label');
+              if (stageLabels.length) {
+                stageLabels[stageLabels.length - 1].textContent = evt.toolProgress;
+              }
             }
             if (evt.toolCall) {
               if (!toolTracesEl) {
