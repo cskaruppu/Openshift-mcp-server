@@ -110,6 +110,9 @@ function parseFlags(tokens) {
       } else {
         flags[t.slice(2)] = true;
       }
+    } else if (t.startsWith("-") && !t.startsWith("--") && t.length > 2 && t[2] === "=") {
+      const key = { n: "namespace", l: "selector", o: "output", f: "filename", c: "container", w: "watch", p: "patch" }[t[1]];
+      flags[key || t[1]] = t.slice(3);
     } else if (t.startsWith("-") && t.length === 2) {
       const key = { n: "namespace", l: "selector", o: "output", f: "filename", c: "container", w: "watch", p: "patch" }[t[1]];
       if (key && i + 1 < tokens.length && !tokens[i + 1].startsWith("-")) {
