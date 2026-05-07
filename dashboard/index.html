@@ -848,6 +848,7 @@ tr:hover td{background:#ffffff06}
 .sidebar-search{padding:8px 12px}
 .sidebar-search input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:7px 10px 7px 30px;color:var(--text);font-size:12px;outline:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='%23a1a1aa' viewBox='0 0 24 24'%3E%3Cpath d='M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:8px center}
 .sidebar-search input:focus{border-color:var(--accent2)}
+.history-snippet{font-size:11px;color:var(--text2);margin-top:2px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* Score gauge card */
 .score-gauge{display:inline-flex;align-items:center;gap:10px;background:var(--bg-alt);border:1px solid var(--border);border-radius:10px;padding:10px 16px;margin:6px 0;min-width:200px}
 .score-ring{position:relative;width:52px;height:52px;flex-shrink:0}
@@ -8002,15 +8003,100 @@ async function sendFullChatStreaming(text) {
 sendFullChat = sendFullChatStreaming;
 
 // ---------------------------------------------------------------------------
-// Conversation search filter
+// Conversation search filter — server-side full-text + local fallback
 // ---------------------------------------------------------------------------
+var _chatSearchTimer = null;
 function filterChatHistory() {
-  const q = (document.getElementById('chat-search')?.value || '').toLowerCase();
-  const items = document.querySelectorAll('#chat-history-list .history-item');
-  items.forEach(item => {
-    const title = (item.querySelector('.history-title')?.textContent || '').toLowerCase();
-    item.style.display = title.includes(q) ? '' : 'none';
+  var q = (document.getElementById('chat-search')?.value || '').trim();
+  if (_chatSearchTimer) clearTimeout(_chatSearchTimer);
+
+  if (!q) {
+    // Empty query — restore normal list
+    _chatSearchActive = false;
+    renderChatHistory();
+    return;
+  }
+
+  if (_historyRemote) {
+    // Debounce server search
+    _chatSearchTimer = setTimeout(function() { serverSearchChats(q); }, 300);
+  } else {
+    // Local-only: search titles + message text
+    localFilterChats(q.toLowerCase());
+  }
+}
+
+var _chatSearchActive = false;
+
+function localFilterChats(q) {
+  var history = loadChatHistory();
+  var list = document.getElementById('chat-history-list');
+  var matches = history.chats.filter(function(c) {
+    if ((c.title || '').toLowerCase().includes(q)) return true;
+    if (c.messages) {
+      return c.messages.some(function(m) {
+        return (m.text || m.content || '').toLowerCase().includes(q);
+      });
+    }
+    return false;
   });
+  _chatSearchActive = true;
+  renderSearchResults(matches, q, list);
+}
+
+function serverSearchChats(q) {
+  fetch(chatApiBase() + '/api/chats/search?q=' + encodeURIComponent(q))
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(data) {
+      if (!data || !data.results) return;
+      var list = document.getElementById('chat-history-list');
+      _chatSearchActive = true;
+      renderSearchResults(data.results, q, list);
+    })
+    .catch(function() {});
+}
+
+function renderSearchResults(results, q, list) {
+  if (results.length === 0) {
+    list.innerHTML = '<div style="padding:16px;color:var(--text2);font-size:13px;text-align:center">No matches for &ldquo;' + esc(q) + '&rdquo;</div>';
+    return;
+  }
+  var history = loadChatHistory();
+  var ql = q.toLowerCase();
+  list.innerHTML = results.map(function(c) {
+    var active = c.id === history.activeId ? ' active' : '';
+    var starred = c.starred ? ' starred' : '';
+    var time = c.updatedAt ? timeAgo(c.updatedAt) : '';
+    var count = c.messageCount || (c.messages ? c.messages.length : 0) || 0;
+    var snippet = '';
+    if (c.matchedSnippet) {
+      var raw = c.matchedSnippet;
+      var idx = raw.toLowerCase().indexOf(ql);
+      if (idx >= 0) {
+        var start = Math.max(0, idx - 30);
+        var end = Math.min(raw.length, idx + q.length + 30);
+        var s = (start > 0 ? '...' : '') + esc(raw.slice(start, idx)) +
+          '<mark style="background:var(--warn);color:#000;border-radius:2px;padding:0 1px">' + esc(raw.slice(idx, idx + q.length)) + '</mark>' +
+          esc(raw.slice(idx + q.length, end)) + (end < raw.length ? '...' : '');
+        snippet = '<div class="history-snippet">' + s + '</div>';
+      }
+    }
+    return '<div class="history-item' + active + starred + '" data-chat-id="' + c.id + '" onclick="selectChat(\'' + c.id + '\')">' +
+      '<div class="history-title">' + highlightMatch(c.title, ql) + '</div>' +
+      snippet +
+      '<div class="history-meta">' + count + ' messages' + (time ? ' · ' + time : '') + '</div>' +
+      '</div>';
+  }).join('');
+}
+
+function highlightMatch(text, q) {
+  if (!q || !text) return esc(text || '');
+  var tl = text.toLowerCase();
+  var idx = tl.indexOf(q);
+  if (idx < 0) return esc(text);
+  return esc(text.slice(0, idx)) +
+    '<mark style="background:var(--warn);color:#000;border-radius:2px;padding:0 1px">' + esc(text.slice(idx, idx + q.length)) + '</mark>' +
+    esc(text.slice(idx + q.length));
 }
 
 // ---------------------------------------------------------------------------

@@ -188,6 +188,39 @@ export async function updateStarred(id, starred) {
   return r && r.rowCount > 0;
 }
 
+/** Search conversations by title or message content. */
+export async function searchChats(term, limit = 50) {
+  if (!term || !term.trim()) return [];
+  const pattern = `%${term.trim()}%`;
+  const r = await query(
+    `SELECT DISTINCT c.id,
+            c.title,
+            c.starred,
+            c.created_at,
+            c.updated_at,
+            (SELECT COUNT(*) FROM messages m2 WHERE m2.conversation_id = c.id) AS message_count,
+            (SELECT m3.content FROM messages m3
+             WHERE m3.conversation_id = c.id AND m3.content ILIKE $1
+             ORDER BY m3.id LIMIT 1) AS matched_snippet
+       FROM conversations c
+       LEFT JOIN messages m ON m.conversation_id = c.id
+      WHERE c.title ILIKE $1 OR m.content ILIKE $1
+      ORDER BY c.starred DESC, c.updated_at DESC
+      LIMIT $2`,
+    [pattern, limit]
+  );
+  if (!r) return [];
+  return r.rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    starred: row.starred || false,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    messageCount: Number(row.message_count) || 0,
+    matchedSnippet: row.matched_snippet || null,
+  }));
+}
+
 /** Delete a conversation and its messages. */
 export async function deleteChat(id) {
   const r = await query(`DELETE FROM conversations WHERE id = $1`, [id]);

@@ -76,6 +76,7 @@ import {
   deleteChat,
   updateTitle,
   updateStarred,
+  searchChats,
   updateMessage,
   replaceMessageContent,
   addMessage,
@@ -572,6 +573,14 @@ async function handleChatHistoryAPI(url, req, res) {
       error: "Chat history is not enabled. Set DATABASE_URL to persist conversations.",
       enabled: false,
     });
+  }
+
+  // /api/chats/search?q=term
+  if (url.pathname === "/api/chats/search" && req.method === "GET") {
+    const q = url.searchParams.get("q") || "";
+    const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+    const results = await searchChats(q, limit);
+    return sendJson(res, 200, { results });
   }
 
   // /api/chats
