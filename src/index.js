@@ -308,6 +308,18 @@ function generatePreflightHTML(report, ticketNumber, fields) {
     return `<tr><td ${tdSm}>${esc(o.name)}</td><td ${tdSm}>${esc(o.version || "-")}</td><td ${tdSm}>${esc(o.namespace || "-")}</td><td ${tdSm}>${esc(o.channel || o.source || "-")}</td><td ${tdSm}>${esc(o.status || "-")}</td><td ${tdSm}>${compat}</td></tr>`;
   }).join("");
 
+  // Operator upgrade impact — operators that need action before/after upgrade
+  const opsNeedingAction = (report.allOLMOperators || []).filter(o => o.compatible !== "yes");
+  const degradedClusterOps = (report.allClusterOperators || []).filter(o => o.degraded || !o.available);
+  const upgradeImpactRows = [
+    ...degradedClusterOps.map(o => `<tr><td ${tdSm}><strong>${esc(o.name)}</strong></td><td ${tdSm}>Cluster Operator</td><td ${tdSm}>${esc(o.version || "-")}</td><td ${tdSm} style="color:#ef4444;font-weight:600">${o.degraded ? "Degraded" : "Unavailable"}</td><td ${tdSm} style="color:#ef4444">Must resolve before upgrade</td></tr>`),
+    ...opsNeedingAction.map(o => {
+      const iColor = o.compatible === "no" ? "#ef4444" : "#f59e0b";
+      const action = o.compatible === "no" ? "Must upgrade operator first" : "Verify compatibility";
+      return `<tr><td ${tdSm}><strong>${esc(o.name)}</strong></td><td ${tdSm}>OLM Operator</td><td ${tdSm}>${esc(o.version || "-")}</td><td ${tdSm} style="color:${iColor};font-weight:600">${esc(o.issue || (o.compatible === "no" ? "Incompatible" : "Unknown"))}</td><td ${tdSm} style="color:${iColor}">${action}</td></tr>`;
+    }),
+  ].join("");
+
   // Node topology table
   const nodeRows = (nt.nodeDetails || []).map(n => {
     const readyColor = n.ready ? "#22c55e" : "#ef4444";
@@ -405,32 +417,27 @@ function generatePreflightHTML(report, ticketNumber, fields) {
     <div class="ver-sub">Kubernetes ${esc(vd.kubeTo || "N/A")}</div>
   </div>
 </div>
-<div class="info-grid">
-  <div class="info-card">
-    <div class="info-label">Upgrade Type</div>
-    <div class="info-value">${esc(report.upgradeType || "N/A")}</div>
-  </div>
-  <div class="info-card">
-    <div class="info-label">Kubernetes Skew</div>
-    <div class="info-value">${vd.kubeSkew || 0} minor version${(vd.kubeSkew || 0) !== 1 ? "s" : ""} (${esc(vd.kubeFrom || "?")} &rarr; ${esc(vd.kubeTo || "?")})</div>
-  </div>
-  <div class="info-card">
-    <div class="info-label">CRI-O Runtime</div>
-    <div class="info-value">${esc(vd.criO || "matches Kubernetes")}</div>
-  </div>
-  <div class="info-card">
-    <div class="info-label">RHEL Base</div>
-    <div class="info-value">${esc(vd.rhelBase || "RHEL CoreOS")}</div>
-  </div>
-  <div class="info-card">
-    <div class="info-label">Estimated Duration</div>
-    <div class="info-value">${esc(vd.estimatedDuration || "~1-2 hours")}</div>
-  </div>
-  <div class="info-card">
-    <div class="info-label">Overall Readiness</div>
-    <div class="info-value"><span class="status-badge" style="background:${statusColor}">${esc(status)}</span></div>
-  </div>
-</div>
+
+<table style="margin:20px 0">
+  <tr><th style="width:30%">Component</th><th style="width:30%">Present Version</th><th style="width:10%;text-align:center">&#x2192;</th><th style="width:30%">Requested Version</th></tr>
+  <tr><td ${tdS}><strong>OpenShift Container Platform</strong></td><td ${tdS}>${esc(fromVer)}</td><td ${tdS} style="text-align:center;color:#2563eb;font-size:16px">&#x2192;</td><td ${tdS} style="font-weight:700;color:#2563eb">${esc(toVer)}</td></tr>
+  <tr><td ${tdS}><strong>Kubernetes</strong></td><td ${tdS}>${esc(vd.kubeFrom || "N/A")}</td><td ${tdS} style="text-align:center;color:#2563eb;font-size:16px">&#x2192;</td><td ${tdS} style="font-weight:700">${esc(vd.kubeTo || "N/A")}</td></tr>
+  <tr><td ${tdS}><strong>CRI-O Runtime</strong></td><td ${tdS}>${esc(vd.kubeFrom || "N/A")}</td><td ${tdS} style="text-align:center;color:#2563eb;font-size:16px">&#x2192;</td><td ${tdS} style="font-weight:700">${esc(vd.criO || "N/A")}</td></tr>
+  <tr><td ${tdS}><strong>RHEL Base OS</strong></td><td ${tdS} colspan="3">${esc(vd.rhelBase || "RHEL CoreOS")}</td></tr>
+  <tr><td ${tdS}><strong>Upgrade Type</strong></td><td ${tdS} colspan="3">${esc(report.upgradeType || "N/A")}</td></tr>
+  <tr><td ${tdS}><strong>Update Channel</strong></td><td ${tdS} colspan="3">${esc(report.channel || "N/A")}</td></tr>
+  <tr><td ${tdS}><strong>Cluster Nodes</strong></td><td ${tdS} colspan="3">${nt.total || 0} total (${nt.masters || 0} control-plane, ${nt.workers || 0} worker${nt.infra ? ", " + nt.infra + " infra" : ""})</td></tr>
+  <tr><td ${tdS}><strong>Estimated Duration</strong></td><td ${tdS} colspan="3">${esc(vd.estimatedDuration || "~1-2 hours")}</td></tr>
+  <tr><td ${tdS}><strong>Kubernetes Version Skew</strong></td><td ${tdS} colspan="3">${vd.kubeSkew || 0} minor version${(vd.kubeSkew || 0) !== 1 ? "s" : ""}</td></tr>
+  <tr><td ${tdS} style="font-weight:700">Overall Readiness</td><td ${tdS} colspan="3"><span class="status-badge" style="background:${statusColor}">${esc(status)}</span></td></tr>
+</table>
+
+${upgradeImpactRows ? `<!-- ═══ UPGRADE IMPACT ═══ -->
+<h2>&#x26A0;&#xFE0F; Operators Requiring Action (${degradedClusterOps.length + opsNeedingAction.length})</h2>
+<table>
+  <tr><th>Operator</th><th>Type</th><th>Current Version</th><th>Issue</th><th>Required Action</th></tr>
+  ${upgradeImpactRows}
+</table>` : ""}
 
 <!-- ═══ WHAT'S NEW ═══ -->
 ${featuresHTML ? `<h2>&#x2728; What's New Between Versions</h2>${featuresHTML}` : ""}
