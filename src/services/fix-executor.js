@@ -127,6 +127,22 @@ function parseFlags(tokens) {
   return { flags, positional };
 }
 
+/**
+ * Resolve resource type + name from positional args, supporting both formats:
+ *   - "deployment/myapp"  (single token, slash-separated)
+ *   - "deployment myapp"  (two tokens)
+ * Returns { resource, name } where `resource` is the raw type (un-aliased).
+ */
+function resolveResourceTarget(positional, startIdx = 0) {
+  const first = positional[startIdx];
+  if (!first) return { resource: null, name: null };
+  const slashIdx = first.indexOf("/");
+  if (slashIdx > 0) {
+    return { resource: first.slice(0, slashIdx), name: first.slice(slashIdx + 1) };
+  }
+  return { resource: first, name: positional[startIdx + 1] || null };
+}
+
 function buildPath(resource, namespace, name) {
   const info = RESOURCE_API_PATHS[resource];
   if (!info) return null;
@@ -249,10 +265,10 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
 
     // ===== Read-only verbs =====
     if (verb === "get" || verb === "describe") {
-      const rawResource = positional[0];
-      if (!rawResource) { result.stderr = `Usage: ${cli} ${verb} <resource> [name] -n <ns>`; return result; }
+      const { resource: rawResource, name: tgtName } = resolveResourceTarget(positional);
+      if (!rawResource) { result.stderr = `Usage: ${cli} ${verb} <resource>[/name] [name] -n <ns>`; return result; }
       const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
-      const name = positional[1] || "";
+      const name = tgtName || "";
       const path = buildPath(resource, namespace, name);
       if (!path) { result.stderr = `Cannot resolve resource '${resource}'${namespace ? "" : " (namespace required)"}`; return result; }
       const resp = await ocpGet(path);
@@ -262,8 +278,13 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
     }
 
     if (verb === "logs") {
-      const podName = positional[0];
-      if (!podName) { result.stderr = `Usage: ${cli} logs <pod> -n <ns>`; return result; }
+      // Allow "oc logs pod/foo" or "oc logs pods/foo" as well as "oc logs foo"
+      let podName = positional[0];
+      if (podName && podName.includes("/")) {
+        const parts = podName.split("/");
+        podName = parts[parts.length - 1];
+      }
+      if (!podName) { result.stderr = `Usage: ${cli} logs <pod>[/name] -n <ns>`; return result; }
       if (!namespace) { result.stderr = "Namespace required (-n <ns>)"; return result; }
       const tail = flags.tail || "200";
       const previous = flags.previous ? "true" : "false";
@@ -457,9 +478,8 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
     const dryRunParam = dryRun ? "?dryRun=All" : "";
 
     if (verb === "delete") {
-      const rawResource = positional[0];
-      const name = positional[1];
-      if (!rawResource || !name) { result.stderr = `Usage: ${cli} delete <resource> <name> -n <ns>`; return result; }
+      const { resource: rawResource, name } = resolveResourceTarget(positional);
+      if (!rawResource || !name) { result.stderr = `Usage: ${cli} delete <resource>[/name] [name] -n <ns>`; return result; }
       const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
       // Only allow deleting namespaced workload resources
       const allowedDelete = ["pods", "jobs", "replicasets"];
@@ -483,11 +503,10 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
     }
 
     if (verb === "scale") {
-      const rawResource = positional[0];
-      const name = positional[1];
+      const { resource: rawResource, name } = resolveResourceTarget(positional);
       const replicas = parseInt(flags.replicas, 10);
       if (!rawResource || !name || isNaN(replicas)) {
-        result.stderr = `Usage: ${cli} scale <resource> <name> --replicas=N -n <ns>`;
+        result.stderr = `Usage: ${cli} scale <resource>[/name] [name] --replicas=N -n <ns>`;
         return result;
       }
       const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
@@ -505,13 +524,12 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
 
     if (verb === "rollout") {
       const subVerb = positional[0];
-      const rawResource = positional[1];
-      const name = positional[2];
       if (subVerb !== "restart") {
         result.stderr = `Only 'rollout restart' is supported`;
         return result;
       }
-      if (!rawResource || !name) { result.stderr = `Usage: ${cli} rollout restart <resource> <name> -n <ns>`; return result; }
+      const { resource: rawResource, name } = resolveResourceTarget(positional, 1);
+      if (!rawResource || !name) { result.stderr = `Usage: ${cli} rollout restart <resource>[/name] [name] -n <ns>`; return result; }
       const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
       if (!namespace) { result.stderr = "Namespace required (-n <ns>)"; return result; }
       const path = buildPath(resource, namespace, name) + dryRunParam;
@@ -524,10 +542,9 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
     }
 
     if (verb === "patch") {
-      const rawResource = positional[0];
-      const name = positional[1];
+      const { resource: rawResource, name } = resolveResourceTarget(positional);
       if (!rawResource || !name) {
-        result.stderr = `Usage: ${cli} patch <resource> <name> -p '<json>' [--type=merge|strategic|json] -n <ns>`;
+        result.stderr = `Usage: ${cli} patch <resource>[/name] [name] -p '<json>' [--type=merge|strategic|json] -n <ns>`;
         return result;
       }
       const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
@@ -689,15 +706,16 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
     }
 
     if (verb === "annotate" || verb === "label") {
-      const rawResource = positional[0];
-      const name = positional[1];
-      if (!rawResource || !name) { result.stderr = `Usage: ${cli} ${verb} <resource> <name> key=value... -n <ns>`; return result; }
+      const { resource: rawResource, name } = resolveResourceTarget(positional);
+      if (!rawResource || !name) { result.stderr = `Usage: ${cli} ${verb} <resource>[/name] [name] key=value... -n <ns>`; return result; }
       const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
       if (!namespace && !["nodes", "namespaces", "clusterversions", "clusteroperators"].includes(resource)) {
         result.stderr = "Namespace required (-n <ns>)";
         return result;
       }
-      const kvPairs = positional.slice(2).filter(p => p.includes("=") || p.endsWith("-"));
+      // kvPairs are everything after resource+name. If slash format used, they start at idx 1; else at idx 2.
+      const kvStart = positional[0].includes("/") ? 1 : 2;
+      const kvPairs = positional.slice(kvStart).filter(p => p.includes("=") || p.endsWith("-"));
       if (kvPairs.length === 0) { result.stderr = `No ${verb}s specified. Use key=value or key- to remove.`; return result; }
       const patchData = {};
       const field = verb === "label" ? "labels" : "annotations";
