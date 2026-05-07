@@ -51,6 +51,7 @@ import {
   isServiceNowEnabled,
 } from "./action-workflow.js";
 import { callLLM, callLLMStream, llmEnabled } from "./llm.js";
+import { diagnosePod } from "./pod-doctor.js";
 import { runAgent } from "./agent-loop.js";
 import { runOrchestrator } from "./mcp-orchestrator.js";
 import { getConnectionCount } from "./mcp-hub.js";
@@ -2922,13 +2923,22 @@ IMPORTANT: You are given REAL-TIME cluster data as JSON context. This is NOT hyp
 
 ## When diagnosing issues (OOMKilled, CrashLoopBackOff, etc.):
 1. **Identify the specific pod/container** from the context data — use the exact name
-2. **Analyze root cause** using events, container states, exit codes, restart counts, and resource limits
-3. **For OOMKilled**: Compare memory limits vs requests, check if limits are too low, identify the container consuming excessive memory, and suggest appropriate limits based on the workload
-4. **For CrashLoopBackOff**: Check exit codes, last terminated reason, and pod events
-5. **Provide specific oc commands** to fix the issue (e.g., \`oc set resources\`, \`oc rollout restart\`, \`oc adm top pod\`)
-6. **Include YAML patches** when config changes are needed
+2. **Check "_autoDiagnosis" first** — the system has already analyzed the pod and determined the root cause. Use this data, don't repeat generic reasons.
+3. **For OOMKilled**: Compare memory limits vs requests. Quote the exact limit from the data. Explain WHY the process needs more memory if logs reveal it.
+4. **For CrashLoopBackOff**: Quote the exact exit code and meaning. If logs are available, quote the specific error line.
+5. **Never tell the user to "check" or "run" diagnostic commands** — you already have the logs, events, and metrics. Analyze them directly and state findings.
+6. **Always end with a concrete fix** — the system will automatically append interactive fix cards with Apply buttons. Your job is to explain the root cause clearly.
 7. **Assess blast radius** — will the fix affect other services?
-8. **Mention the ServiceNow change request flow** for production changes
+8. **For production changes**, mention the ServiceNow change request flow
+
+## IMPORTANT — Auto-diagnosis data:
+When the context contains "_autoDiagnosis", it includes:
+- **rootCause**: The detected root cause (OOMKilled, CrashLoopBackOff, LivenessProbeFailure, etc.)
+- **diagnosis**: A specific explanation of what's happening
+- **evidence**: Array of specific data points from the cluster
+- **fixes**: Array of proposed fixes with exact commands
+- **logSnippet**: Relevant error lines from the pod logs
+Use this data to provide SPECIFIC analysis. Do NOT give generic advice when this data is available. Explain the root cause in your own words using the evidence, and reference the specific values (exit codes, memory limits, error messages).
 
 ## When listing resources:
 - Use markdown tables for structured data
@@ -2950,6 +2960,8 @@ IMPORTANT: You are given REAL-TIME cluster data as JSON context. This is NOT hyp
 - "_focusPodLogs" contains the actual log output — quote relevant lines when asked for logs or when diagnosing.
 - "_focusPodLogsPrevious" contains previous-container logs (after a crash) — use these for OOMKill / CrashLoop diagnosis.
 - If the pod is healthy, say so. If it has errors, diagnose the exact root cause for that pod.
+- **NEVER** list generic reasons why pods restart. You have the actual data — analyze it and give a SPECIFIC diagnosis.
+- Structure your response as: 1) Root cause headline 2) Evidence from cluster data 3) Brief explanation of the issue. Fix proposals are appended automatically.
 
 ## Conversation continuity:
 - You receive conversation history. Use it to understand follow-up questions.
@@ -3408,6 +3420,18 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
     Object.assign(ctx, focused);
   }
 
+  // Run Pod Doctor auto-diagnosis when we have a focused pod
+  if (ctx.targetPod || ctx._focusPod) {
+    const pod = ctx._focusPod || ctx.targetPod;
+    const autoFix = diagnosePod(pod, {
+      events: ctx._focusPodEvents || ctx.targetPodEvents || [],
+      logs: ctx._focusPodLogs || ctx.targetPodLogs || "",
+      logsPrevious: ctx._focusPodLogsPrevious || ctx.targetPodLogsPrevious || "",
+      metrics: ctx._focusPodMetrics || ctx.targetPodMetrics || null,
+    });
+    ctx._autoDiagnosis = autoFix;
+  }
+
   const contextStr = summarizeContext(ctx);
   const userContent = `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;
 
@@ -3431,10 +3455,21 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
       azureDeployment: opts.azureDeployment,
       azureApiVersion: opts.azureApiVersion,
     });
-    return validateResponse(r.text, clusterContext) || builtInAnalysis(userMessage, clusterContext);
+    let reply = validateResponse(r.text, clusterContext) || builtInAnalysis(userMessage, clusterContext);
+    reply = appendFixProposals(reply, ctx);
+    return reply;
   } catch (err) {
-    return `LLM Error: ${err.message}\n\n---\n\n${builtInAnalysis(userMessage, clusterContext)}`;
+    let reply = `LLM Error: ${err.message}\n\n---\n\n${builtInAnalysis(userMessage, clusterContext)}`;
+    reply = appendFixProposals(reply, clusterContext);
+    return reply;
   }
+}
+
+function appendFixProposals(reply, ctx) {
+  const diag = ctx?._autoDiagnosis;
+  if (!diag || !diag.fixes || diag.fixes.length === 0) return reply;
+  const fixJson = JSON.stringify(diag).replace(/@@/g, "@ @");
+  return reply + `\n\n@@FIX_PROPOSAL|${fixJson}@@`;
 }
 
 // ---------------------------------------------------------------------------
@@ -6412,6 +6447,18 @@ export async function handleChatAPI(req, res) {
             Object.assign(focused, context);
             Object.assign(context, focused);
           }
+          // Run Pod Doctor auto-diagnosis for focused pods
+          if (context.targetPod || context._focusPod) {
+            const pod = context._focusPod || context.targetPod;
+            sseSend(res, { stage: "analyzing", toolProgress: "Diagnosing root cause for " + pod.name + "..." });
+            const autoFix = diagnosePod(pod, {
+              events: context._focusPodEvents || context.targetPodEvents || [],
+              logs: context._focusPodLogs || context.targetPodLogs || "",
+              logsPrevious: context._focusPodLogsPrevious || context.targetPodLogsPrevious || "",
+              metrics: context._focusPodMetrics || context.targetPodMetrics || null,
+            });
+            context._autoDiagnosis = autoFix;
+          }
           const contextStr = summarizeContext(context);
           const userContent = `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;
           const priorMessages = historyToMessages(llmOpts.history);
@@ -6443,12 +6490,16 @@ export async function handleChatAPI(req, res) {
           const pb = suggestPlaybook(topCause.likelyCause, { pod: topCause.pod, namespace: topCause.namespace });
           if (pb) sseSend(res, { delta: "\n" + renderPlaybookMarkdown(pb) });
         }
+        // Append interactive fix proposals from Pod Doctor diagnosis
+        const fixBlock = appendFixProposals("", context);
+        if (fixBlock) sseSend(res, { delta: fixBlock });
         const traceMd = renderTraceMarkdown(sseTrace);
         if (traceMd) sseSend(res, { delta: "\n" + traceMd });
         sseSend(res, { done: true, provider: activeProvider, conversationId });
         sseEnd(res);
         if (conversationId) {
-          histAddMessage(conversationId, { role: "assistant", content: sseTraced.fullText, provider: activeProvider }).catch(() => {});
+          const savedText = sseTraced.fullText + (fixBlock || "");
+          histAddMessage(conversationId, { role: "assistant", content: savedText, provider: activeProvider }).catch(() => {});
         }
         updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
         observeHistogram("mcp_chat_latency_seconds", { provider: activeProvider }, (Date.now() - startedAt) / 1000);
@@ -7189,6 +7240,26 @@ export async function handleExecuteAPI(req, res) {
       );
       success = true;
       resultPayload = { message: `Deployment '${dep}' scaled to ${rep} replicas in '${namespace}'.` };
+      return json(res, 200, { success: true, message: resultPayload.message });
+    }
+
+    if (action === "set_resources") {
+      const dep = deployment || pod;
+      const patchBody = body.patchBody || body.options?.patchBody;
+      const resourceType = body.resourceType || "deployments";
+      if (!dep) return json(res, 400, { success: false, error: "Missing deployment/resource name" });
+      if (!patchBody) return json(res, 400, { success: false, error: "Missing patch body" });
+      let patch;
+      try { patch = typeof patchBody === "string" ? JSON.parse(patchBody) : patchBody; }
+      catch { return json(res, 400, { success: false, error: "Invalid JSON in patch body" }); }
+      const apiPath = resourceType === "statefulsets"
+        ? `/apis/apps/v1/namespaces/${namespace}/statefulsets/${dep}`
+        : resourceType === "daemonsets"
+          ? `/apis/apps/v1/namespaces/${namespace}/daemonsets/${dep}`
+          : `/apis/apps/v1/namespaces/${namespace}/deployments/${dep}`;
+      await ocpPatch(apiPath, patch);
+      success = true;
+      resultPayload = { message: `Resource limits updated for '${dep}' in '${namespace}'. Pods will be rolled out with new limits.` };
       return json(res, 200, { success: true, message: resultPayload.message });
     }
 

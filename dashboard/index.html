@@ -1281,6 +1281,37 @@ tr:hover td{background:#ffffff06}
 .cr-actions button:hover { background: color-mix(in srgb, var(--accent2) 15%, transparent); }
 .cr-actions button.execute { border-color: color-mix(in srgb, var(--ok) 40%, transparent); color: var(--ok); }
 .cr-actions button.execute:hover { background: color-mix(in srgb, var(--ok) 15%, transparent); }
+/* Fix Proposal Cards */
+.fix-proposal { margin: 16px 0; border: 1px solid color-mix(in srgb, var(--accent2) 30%, var(--border)); border-radius: 12px; overflow: hidden; background: var(--card); }
+.fix-proposal-header { display:flex; align-items:center; gap:10px; padding:14px 16px; background: color-mix(in srgb, var(--accent2) 8%, transparent); border-bottom:1px solid color-mix(in srgb, var(--border) 50%, transparent); }
+.fix-proposal-header .fp-icon { font-size:22px; }
+.fix-proposal-header .fp-title { font-weight:700; font-size:14px; color:var(--text); flex:1; }
+.fix-proposal-header .fp-severity { padding:3px 10px; border-radius:8px; font-size:10px; font-weight:700; text-transform:uppercase; }
+.fp-severity.critical { background: color-mix(in srgb, var(--crit) 15%, transparent); color: var(--crit); }
+.fp-severity.warning { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+.fp-severity.info { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+.fix-proposal-body { padding:14px 16px; }
+.fp-diagnosis { font-size:13px; color:var(--text); line-height:1.5; margin-bottom:12px; }
+.fp-evidence { margin:10px 0; padding:10px 14px; background: color-mix(in srgb, var(--text2) 5%, transparent); border-radius:8px; border-left:3px solid var(--accent2); }
+.fp-evidence-title { font-size:11px; font-weight:600; color:var(--accent2); text-transform:uppercase; margin-bottom:6px; }
+.fp-evidence ul { margin:0; padding:0 0 0 16px; font-size:12px; color:var(--text2); }
+.fp-evidence li { margin:2px 0; }
+.fp-log-snippet { margin:10px 0; padding:8px 12px; background:var(--bg); border:1px solid var(--border); border-radius:6px; font-family:var(--mono); font-size:11px; color:var(--crit); max-height:120px; overflow-y:auto; white-space:pre-wrap; word-break:break-all; }
+.fp-fixes { margin-top:14px; display:flex; flex-direction:column; gap:10px; }
+.fp-fix-card { padding:12px 14px; border:1px solid var(--border); border-radius:8px; background: color-mix(in srgb, var(--ok) 3%, var(--card)); }
+.fp-fix-title { font-weight:600; font-size:13px; color:var(--text); margin-bottom:4px; }
+.fp-fix-desc { font-size:12px; color:var(--text2); margin-bottom:8px; }
+.fp-fix-cmd { padding:6px 10px; background:var(--bg); border:1px solid var(--border); border-radius:6px; font-family:var(--mono); font-size:11px; color:var(--accent2); margin-bottom:8px; word-break:break-all; }
+.fp-fix-actions { display:flex; gap:8px; align-items:center; }
+.fp-fix-actions button { padding:6px 16px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; border:none; transition: all 0.15s; }
+.fp-fix-actions .fp-apply { background:var(--ok); color:#fff; }
+.fp-fix-actions .fp-apply:hover { filter: brightness(1.1); }
+.fp-fix-actions .fp-dryrun { background:transparent; border:1.5px solid var(--warn); color:var(--warn); }
+.fp-fix-actions .fp-dryrun:hover { background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.fp-fix-actions .fp-risk { font-size:10px; color:var(--text2); margin-left:auto; }
+.fp-fix-result { margin-top:6px; font-size:12px; padding:6px 10px; border-radius:6px; }
+.fp-fix-result.ok { background: color-mix(in srgb, var(--ok) 10%, transparent); color:var(--ok); }
+.fp-fix-result.err { background: color-mix(in srgb, var(--crit) 10%, transparent); color:var(--crit); }
 </style>
 </head>
 <body>
@@ -3813,6 +3844,12 @@ function md(text) {
       return ph(renderUpgradeExecuteCard(data));
     } catch(e) { return ph('<div style="color:var(--crit)">Failed to render upgrade execute card: ' + esc(e.message) + '</div>'); }
   });
+  text = text.replace(/@@FIX_PROPOSAL\|([\s\S]+?)@@/g, function(m, jsonStr) {
+    try {
+      var diag = JSON.parse(jsonStr.replace(/@ @/g, '@@'));
+      return ph(renderFixProposal(diag));
+    } catch(e) { return ph('<div style="color:var(--crit)">Failed to render fix proposal: ' + esc(e.message) + '</div>'); }
+  });
   text = text.replace(/@@SEC_FIX_CMD\|([^@]+)@@/g, function(m, cmd) {
     var idx = Math.floor(Math.random() * 100000);
     var encodedCmd = btoa(unescape(encodeURIComponent(cmd)));
@@ -4082,6 +4119,114 @@ function _syntaxHL(code, lang) {
   escaped = escaped.replace(/\b(oc|kubectl|docker|podman|helm|git|curl|grep|awk|sed|cat|echo|export|sudo|apt|yum|dnf|pip|npm|cd|ls|mkdir|rm|cp|mv|chmod|chown)\b/g, function(m) { return tok('<span class="kw">' + m + '</span>'); });
   escaped = escaped.replace(/\s(--?[\w-]+)/g, function(m, flag) { return ' ' + tok('<span class="flag">' + flag + '</span>'); });
   return restore(escaped);
+}
+
+// ---------------------------------------------------------------------------
+// Fix Proposal Card — Pod Doctor automated diagnosis + actionable fix
+// ---------------------------------------------------------------------------
+function renderFixProposal(diag) {
+  var sevClass = diag.severity || 'info';
+  var sevIcon = sevClass === 'critical' ? '&#x1F6A8;' : sevClass === 'warning' ? '&#x26A0;' : '&#x1F50D;';
+  var rootCauseLabel = (diag.rootCause || 'Analysis').replace(/([A-Z])/g, ' $1').trim();
+
+  var html = '<div class="fix-proposal">';
+  html += '<div class="fix-proposal-header">' +
+    '<span class="fp-icon">' + sevIcon + '</span>' +
+    '<span class="fp-title">Root Cause: ' + esc(rootCauseLabel) + '</span>' +
+    '<span class="fp-severity ' + sevClass + '">' + esc(sevClass) + '</span>' +
+  '</div>';
+
+  html += '<div class="fix-proposal-body">';
+  html += '<div class="fp-diagnosis">' + esc(diag.diagnosis || '') + '</div>';
+
+  if (diag.evidence && diag.evidence.length > 0) {
+    html += '<div class="fp-evidence">' +
+      '<div class="fp-evidence-title">Evidence from cluster</div><ul>';
+    diag.evidence.forEach(function(e) {
+      html += '<li>' + esc(e) + '</li>';
+    });
+    html += '</ul></div>';
+  }
+
+  if (diag.logSnippet) {
+    html += '<div class="fp-log-snippet">' + esc(diag.logSnippet) + '</div>';
+  }
+
+  if (diag.fixes && diag.fixes.length > 0) {
+    html += '<div class="fp-fixes">';
+    diag.fixes.forEach(function(fix, idx) {
+      var fixId = 'fp-fix-' + Math.random().toString(36).substr(2, 8);
+      var fixDataAttr = btoa(unescape(encodeURIComponent(JSON.stringify(fix))));
+      html += '<div class="fp-fix-card">' +
+        '<div class="fp-fix-title">' + esc(fix.title) + '</div>' +
+        '<div class="fp-fix-desc">' + esc(fix.description || '') + '</div>' +
+        '<div class="fp-fix-cmd"><code>' + esc(fix.command) + '</code></div>' +
+        '<div class="fp-fix-actions">' +
+          '<button class="fp-dryrun" onclick="applyFixProposal(\'' + fixId + '\',\'' + fixDataAttr + '\',true)">&#x1F50D; Dry Run</button>' +
+          '<button class="fp-apply" onclick="applyFixProposal(\'' + fixId + '\',\'' + fixDataAttr + '\',false)">&#x2705; Apply Fix</button>' +
+          '<span class="fp-risk">Risk: ' + esc(fix.risk || 'low') + '</span>' +
+        '</div>' +
+        '<div id="' + fixId + '-result"></div>' +
+      '</div>';
+    });
+    html += '</div>';
+  }
+
+  html += '</div></div>';
+  return html;
+}
+
+async function applyFixProposal(fixId, fixDataB64, isDryRun) {
+  var resultEl = document.getElementById(fixId + '-result');
+  var fix;
+  try {
+    fix = JSON.parse(decodeURIComponent(escape(atob(fixDataB64))));
+  } catch(e) {
+    if (resultEl) resultEl.innerHTML = '<div class="fp-fix-result err">Failed to parse fix data</div>';
+    return;
+  }
+
+  if (resultEl) resultEl.innerHTML = '<div class="fp-fix-result" style="background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent)">' +
+    (isDryRun ? '&#x1F50D; Running dry run...' : '&#x2699; Applying fix...') + '</div>';
+
+  try {
+    if (isDryRun) {
+      var cmd = fix.command;
+      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/execute-fix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: cmd, dryRun: true }),
+      });
+      var data = await resp.json();
+      if (data.success) {
+        resultEl.innerHTML = '<div class="fp-fix-result ok">&#x2705; Dry run succeeded: ' + esc(data.stdout || 'OK') + '</div>';
+      } else {
+        resultEl.innerHTML = '<div class="fp-fix-result err">&#x274C; Dry run failed: ' + esc(data.stderr || data.error || 'Unknown error') + '</div>';
+      }
+    } else {
+      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: fix.action,
+          pod: fix.resource,
+          deployment: fix.deploymentName || fix.resource,
+          namespace: fix.namespace,
+          resourceType: fix.resourceType,
+          patchBody: fix.patchBody,
+        }),
+      });
+      var data = await resp.json();
+      if (data.success) {
+        resultEl.innerHTML = '<div class="fp-fix-result ok">&#x2705; ' + esc(data.message) + '</div>';
+        setTimeout(refreshAll, 3000);
+      } else {
+        resultEl.innerHTML = '<div class="fp-fix-result err">&#x274C; ' + esc(data.error || 'Failed') + '</div>';
+      }
+    }
+  } catch(e) {
+    if (resultEl) resultEl.innerHTML = '<div class="fp-fix-result err">&#x274C; Error: ' + esc(e.message) + '</div>';
+  }
 }
 
 // ---------------------------------------------------------------------------
