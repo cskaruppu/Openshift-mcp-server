@@ -849,6 +849,43 @@ tr:hover td{background:#ffffff06}
 .sidebar-search input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:7px 10px 7px 30px;color:var(--text);font-size:12px;outline:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='%23a1a1aa' viewBox='0 0 24 24'%3E%3Cpath d='M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:8px center}
 .sidebar-search input:focus{border-color:var(--accent2)}
 .history-snippet{font-size:11px;color:var(--text2);margin-top:2px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lock-badge{display:inline-block;margin-right:4px;font-size:11px;opacity:0.9;vertical-align:middle}
+.history-item.locked{border-left:2px solid #f59e0b}
+.history-item.locked.starred{border-left:2px solid #f59e0b}
+/* Delete confirmation modal */
+.delete-confirm-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:9999;animation:dcFade 0.18s ease-out}
+@keyframes dcFade{from{opacity:0}to{opacity:1}}
+.delete-confirm-box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px 22px;min-width:380px;max-width:440px;box-shadow:0 20px 50px rgba(0,0,0,0.4);animation:dcSlide 0.2s ease-out}
+@keyframes dcSlide{from{transform:translateY(-8px) scale(0.97);opacity:0}to{transform:translateY(0) scale(1);opacity:1}}
+.dc-header{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.dc-icon{font-size:22px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:50%}
+.dc-icon.warn{background:color-mix(in srgb,var(--warn) 15%,transparent)}
+.dc-icon.locked{background:color-mix(in srgb,#f59e0b 18%,transparent)}
+.dc-title{font-size:16px;font-weight:600;color:var(--text)}
+.dc-body{font-size:13px;color:var(--text);line-height:1.5}
+.dc-chat-name{padding:8px 12px;background:var(--bg);border-radius:6px;border:1px solid var(--border);margin-bottom:12px;font-weight:600;color:var(--accent2);word-break:break-word}
+.dc-warn{color:var(--text2);margin-bottom:12px}
+.dc-warn strong{color:var(--text)}
+.dc-warn code{background:var(--bg);padding:1px 6px;border-radius:3px;color:var(--crit);font-family:monospace;font-size:12px}
+.dc-input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:13px;outline:none;font-family:monospace;letter-spacing:1px;box-sizing:border-box}
+.dc-input:focus{border-color:var(--crit)}
+.dc-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap}
+.dc-btn{padding:7px 14px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:6px;font-size:13px;cursor:pointer;transition:all 0.15s}
+.dc-btn:hover:not(:disabled){background:var(--card)}
+.dc-btn:disabled{opacity:0.4;cursor:not-allowed}
+.dc-cancel{}
+.dc-unlock{border-color:#f59e0b;color:#f59e0b}
+.dc-unlock:hover{background:color-mix(in srgb,#f59e0b 12%,transparent)}
+.dc-delete{background:var(--crit);border-color:var(--crit);color:#fff;font-weight:600}
+.dc-delete:hover:not(:disabled){background:color-mix(in srgb,var(--crit) 85%,#000)}
+.dc-delete:disabled{background:color-mix(in srgb,var(--crit) 30%,transparent);border-color:transparent}
+/* Toast notifications */
+.toast-stack{position:fixed;bottom:24px;right:24px;display:flex;flex-direction:column;gap:8px;z-index:10000;pointer-events:none}
+.toast{background:var(--card);border:1px solid var(--border);border-left:3px solid var(--accent2);color:var(--text);padding:10px 16px;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.3);font-size:13px;opacity:0;transform:translateX(20px);transition:all 0.25s ease-out;max-width:340px;pointer-events:auto}
+.toast.show{opacity:1;transform:translateX(0)}
+.toast.ok{border-left-color:var(--ok)}
+.toast.err{border-left-color:var(--crit)}
+.toast.warn{border-left-color:var(--warn)}
 /* Score gauge card */
 .score-gauge{display:inline-flex;align-items:center;gap:10px;background:var(--bg-alt);border:1px solid var(--border);border-radius:10px;padding:10px 16px;margin:6px 0;min-width:200px}
 .score-ring{position:relative;width:52px;height:52px;flex-shrink:0}
@@ -5272,6 +5309,7 @@ async function detectHistoryBackend() {
         id: c.id,
         title: c.title,
         starred: c.starred || false,
+        locked: c.locked || false,
         messages: [], // lazy-loaded on select
         messageCount: c.messageCount || 0,
         updatedAt: c.updatedAt,
@@ -5436,6 +5474,7 @@ async function selectChat(id) {
           const full = await resp.json();
           chat.title = full.title || chat.title;
           if (typeof full.starred === 'boolean') chat.starred = full.starred;
+          if (typeof full.locked === 'boolean') chat.locked = full.locked;
           chat.messages = (full.messages || []).map(m => ({
             dbId: m.id,
             role: m.role === 'assistant' ? 'ai' : m.role,
@@ -5497,6 +5536,25 @@ function starChat(id, ev) {
   }
 }
 
+function lockChat(id, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  closeAllChatMenus();
+  var history = loadChatHistory();
+  var chat = history.chats.find(function(c) { return c.id === id; });
+  if (!chat) return;
+  chat.locked = !chat.locked;
+  saveChatHistory(history);
+  renderChatHistory();
+  showToast(chat.locked ? 'Chat locked — protected from accidental deletion' : 'Chat unlocked', chat.locked ? 'ok' : '');
+  if (_historyRemote) {
+    fetch(chatApiBase() + '/api/chats/' + encodeURIComponent(id), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ locked: chat.locked }),
+    }).catch(function() {});
+  }
+}
+
 function renameChat(id, ev) {
   if (ev) { ev.stopPropagation(); ev.preventDefault(); }
   closeAllChatMenus();
@@ -5539,6 +5597,98 @@ async function deleteChat(id, ev) {
   closeAllChatMenus();
   await detectHistoryBackend();
   const history = loadChatHistory();
+  const chat = history.chats.find(function(c) { return c.id === id; });
+  if (!chat) return;
+  // Open confirmation modal — strict for locked chats
+  openDeleteConfirmModal(chat);
+}
+
+function openDeleteConfirmModal(chat) {
+  // Create modal container if not present
+  var existing = document.getElementById('delete-confirm-modal');
+  if (existing) existing.remove();
+  var locked = !!chat.locked;
+  var modal = document.createElement('div');
+  modal.id = 'delete-confirm-modal';
+  modal.className = 'delete-confirm-overlay';
+  var title = esc(chat.title || 'Untitled chat');
+  modal.innerHTML =
+    '<div class="delete-confirm-box">' +
+      '<div class="dc-header">' +
+        '<span class="dc-icon ' + (locked ? 'locked' : 'warn') + '">' + (locked ? '🔒' : '⚠️') + '</span>' +
+        '<span class="dc-title">' + (locked ? 'Delete LOCKED conversation?' : 'Delete this conversation?') + '</span>' +
+      '</div>' +
+      '<div class="dc-body">' +
+        '<div class="dc-chat-name">' + title + '</div>' +
+        '<div class="dc-warn">' +
+          (locked
+            ? 'This chat is <strong>locked</strong> and protected from accidental deletion. ' +
+              'Deletion is permanent and removes all messages, attachments, and stars. ' +
+              'To proceed, type <code>DELETE</code> below to confirm.'
+            : 'This will permanently remove the conversation and all its messages. This action cannot be undone.') +
+        '</div>' +
+        (locked
+          ? '<input type="text" id="dc-confirm-input" class="dc-input" placeholder="Type DELETE to confirm" oninput="onDeleteConfirmInput()" autocomplete="off">'
+          : '') +
+      '</div>' +
+      '<div class="dc-actions">' +
+        '<button class="dc-btn dc-cancel" onclick="closeDeleteConfirmModal()">Cancel</button>' +
+        (locked
+          ? '<button class="dc-btn dc-unlock" onclick="unlockFromDeleteModal(\'' + chat.id + '\')">🔓 Unlock instead</button>'
+          : '') +
+        '<button class="dc-btn dc-delete" id="dc-confirm-btn" ' +
+          (locked ? 'disabled' : '') +
+          ' onclick="confirmDeleteChat(\'' + chat.id + '\', ' + (locked ? 'true' : 'false') + ')">' +
+          (locked ? 'Delete permanently' : 'Delete') +
+        '</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(modal);
+  // Click outside to cancel (but not when locked, to avoid accidental click-through)
+  if (!locked) {
+    modal.addEventListener('click', function(e) {
+      if (e.target === modal) closeDeleteConfirmModal();
+    });
+  }
+  // Escape to cancel
+  var escHandler = function(e) {
+    if (e.key === 'Escape') { closeDeleteConfirmModal(); document.removeEventListener('keydown', escHandler); }
+  };
+  document.addEventListener('keydown', escHandler);
+  modal._escHandler = escHandler;
+  setTimeout(function() {
+    var inp = document.getElementById('dc-confirm-input');
+    if (inp) inp.focus();
+  }, 50);
+}
+
+function onDeleteConfirmInput() {
+  var inp = document.getElementById('dc-confirm-input');
+  var btn = document.getElementById('dc-confirm-btn');
+  if (!inp || !btn) return;
+  btn.disabled = inp.value.trim() !== 'DELETE';
+}
+
+function closeDeleteConfirmModal() {
+  var modal = document.getElementById('delete-confirm-modal');
+  if (!modal) return;
+  if (modal._escHandler) document.removeEventListener('keydown', modal._escHandler);
+  modal.remove();
+}
+
+function unlockFromDeleteModal(chatId) {
+  closeDeleteConfirmModal();
+  lockChat(chatId);
+}
+
+async function confirmDeleteChat(id, isLocked) {
+  if (isLocked) {
+    var inp = document.getElementById('dc-confirm-input');
+    if (!inp || inp.value.trim() !== 'DELETE') return;
+  }
+  closeDeleteConfirmModal();
+
+  const history = loadChatHistory();
   history.chats = history.chats.filter(c => c.id !== id);
   if (history.activeId === id) {
     history.activeId = history.chats.length > 0 ? history.chats[0].id : null;
@@ -5546,13 +5696,32 @@ async function deleteChat(id, ev) {
   saveChatHistory(history);
 
   if (_historyRemote) {
-    fetch(chatApiBase() + '/api/chats/' + encodeURIComponent(id), {
-      method: 'DELETE',
-    }).catch(() => {});
+    var url = chatApiBase() + '/api/chats/' + encodeURIComponent(id) + (isLocked ? '?force=true' : '');
+    fetch(url, { method: 'DELETE' }).catch(function() {});
   }
 
   renderChatHistory();
   renderConversation();
+  showToast('Conversation deleted', 'ok');
+}
+
+function showToast(message, kind) {
+  var existing = document.getElementById('toast-stack');
+  if (!existing) {
+    existing = document.createElement('div');
+    existing.id = 'toast-stack';
+    existing.className = 'toast-stack';
+    document.body.appendChild(existing);
+  }
+  var t = document.createElement('div');
+  t.className = 'toast ' + (kind || '');
+  t.textContent = message;
+  existing.appendChild(t);
+  setTimeout(function() { t.classList.add('show'); }, 10);
+  setTimeout(function() {
+    t.classList.remove('show');
+    setTimeout(function() { t.remove(); if (!existing.children.length) existing.remove(); }, 250);
+  }, 2800);
 }
 
 function renderChatHistory() {
@@ -5588,12 +5757,15 @@ function renderChatHistory() {
     const time = c.updatedAt ? timeAgo(c.updatedAt) : '';
     const count = (c.messages && c.messages.length) || c.messageCount || 0;
     const starred = c.starred ? ' starred' : '';
-    return '<div class="history-item' + active + starred + '" data-chat-id="' + c.id + '" onclick="selectChat(\'' + c.id + '\')">' +
-      '<div class="history-title">' + esc(c.title) + '</div>' +
+    const locked = c.locked ? ' locked' : '';
+    const lockBadge = c.locked ? '<span class="lock-badge" title="Locked \u2014 protected from deletion">\ud83d\udd12</span>' : '';
+    return '<div class="history-item' + active + starred + locked + '" data-chat-id="' + c.id + '" onclick="selectChat(\'' + c.id + '\')">' +
+      '<div class="history-title">' + lockBadge + esc(c.title) + '</div>' +
       '<div class="history-meta">' + count + ' messages' + (time ? ' \u00b7 ' + time : '') + '</div>' +
       '<button class="history-menu-btn" onclick="toggleChatMenu(\'' + c.id + '\', event)" title="Options">\u22ef</button>' +
       '<div class="history-dropdown" id="chat-menu-' + c.id + '">' +
         '<button onclick="starChat(\'' + c.id + '\', event)">' + (c.starred ? '\u2605 Unstar' : '\u2606 Star') + '</button>' +
+        '<button onclick="lockChat(\'' + c.id + '\', event)">' + (c.locked ? '\ud83d\udd13 Unlock' : '\ud83d\udd12 Lock') + '</button>' +
         '<button onclick="renameChat(\'' + c.id + '\', event)">\u270e Rename</button>' +
         '<div class="dropdown-sep"></div>' +
         '<button class="danger" onclick="deleteChat(\'' + c.id + '\', event)">\ud83d\uddd1 Delete</button>' +
@@ -8081,8 +8253,10 @@ function renderSearchResults(results, q, list) {
         snippet = '<div class="history-snippet">' + s + '</div>';
       }
     }
-    return '<div class="history-item' + active + starred + '" data-chat-id="' + c.id + '" onclick="selectChat(\'' + c.id + '\')">' +
-      '<div class="history-title">' + highlightMatch(c.title, ql) + '</div>' +
+    var locked = c.locked ? ' locked' : '';
+    var lockBadge = c.locked ? '<span class="lock-badge" title="Locked">🔒</span>' : '';
+    return '<div class="history-item' + active + starred + locked + '" data-chat-id="' + c.id + '" onclick="selectChat(\'' + c.id + '\')">' +
+      '<div class="history-title">' + lockBadge + highlightMatch(c.title, ql) + '</div>' +
       snippet +
       '<div class="history-meta">' + count + ' messages' + (time ? ' · ' + time : '') + '</div>' +
       '</div>';

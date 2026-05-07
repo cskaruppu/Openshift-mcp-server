@@ -25,6 +25,7 @@ export async function listChats(limit = 100) {
     `SELECT c.id,
             c.title,
             c.starred,
+            c.locked,
             c.created_at,
             c.updated_at,
             (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count
@@ -38,6 +39,7 @@ export async function listChats(limit = 100) {
     id: row.id,
     title: row.title,
     starred: row.starred || false,
+    locked: row.locked || false,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     messageCount: Number(row.message_count) || 0,
@@ -47,7 +49,7 @@ export async function listChats(limit = 100) {
 /** Get a single conversation with its messages. */
 export async function getChat(id) {
   const conv = await query(
-    `SELECT id, title, starred, created_at, updated_at FROM conversations WHERE id = $1`,
+    `SELECT id, title, starred, locked, created_at, updated_at FROM conversations WHERE id = $1`,
     [id]
   );
   if (!conv || conv.rowCount === 0) return null;
@@ -63,6 +65,7 @@ export async function getChat(id) {
     id: c.id,
     title: c.title,
     starred: c.starred || false,
+    locked: c.locked || false,
     createdAt: c.created_at,
     updatedAt: c.updated_at,
     messages: (msgs?.rows || []).map((m) => ({
@@ -188,6 +191,23 @@ export async function updateStarred(id, starred) {
   return r && r.rowCount > 0;
 }
 
+/** Toggle or set the locked flag on a conversation. */
+export async function updateLocked(id, locked) {
+  const r = await query(
+    `UPDATE conversations SET locked = $2, updated_at = NOW() WHERE id = $1
+     RETURNING id, locked`,
+    [id, Boolean(locked)]
+  );
+  return r && r.rowCount > 0;
+}
+
+/** Check if a chat is locked. Returns null if chat not found. */
+export async function isLocked(id) {
+  const r = await query(`SELECT locked FROM conversations WHERE id = $1`, [id]);
+  if (!r || r.rowCount === 0) return null;
+  return Boolean(r.rows[0].locked);
+}
+
 /** Search conversations by title or message content. */
 export async function searchChats(term, limit = 50) {
   if (!term || !term.trim()) return [];
@@ -196,6 +216,7 @@ export async function searchChats(term, limit = 50) {
     `SELECT DISTINCT c.id,
             c.title,
             c.starred,
+            c.locked,
             c.created_at,
             c.updated_at,
             (SELECT COUNT(*) FROM messages m2 WHERE m2.conversation_id = c.id) AS message_count,
@@ -214,6 +235,7 @@ export async function searchChats(term, limit = 50) {
     id: row.id,
     title: row.title,
     starred: row.starred || false,
+    locked: row.locked || false,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     messageCount: Number(row.message_count) || 0,

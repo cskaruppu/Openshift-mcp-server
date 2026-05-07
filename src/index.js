@@ -76,6 +76,8 @@ import {
   deleteChat,
   updateTitle,
   updateStarred,
+  updateLocked,
+  isLocked,
   searchChats,
   updateMessage,
   replaceMessageContent,
@@ -612,6 +614,14 @@ async function handleChatHistoryAPI(url, req, res) {
       return sendJson(res, 200, chat);
     }
     if (req.method === "DELETE") {
+      const force = url.searchParams.get("force") === "true";
+      const locked = await isLocked(id);
+      if (locked && !force) {
+        return sendJson(res, 423, {
+          error: "Chat is locked. Pass ?force=true to delete a locked chat.",
+          locked: true,
+        });
+      }
       const ok = await deleteChat(id);
       return sendJson(res, ok ? 200 : 404, { success: ok });
     }
@@ -625,6 +635,10 @@ async function handleChatHistoryAPI(url, req, res) {
         if (typeof body.starred === "boolean") {
           const ok = await updateStarred(id, body.starred);
           return sendJson(res, ok ? 200 : 404, { success: ok, starred: body.starred });
+        }
+        if (typeof body.locked === "boolean") {
+          const ok = await updateLocked(id, body.locked);
+          return sendJson(res, ok ? 200 : 404, { success: ok, locked: body.locked });
         }
         return sendJson(res, 400, { error: "No fields to update" });
       } catch (err) {

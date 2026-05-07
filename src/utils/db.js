@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL DEFAULT 'New chat',
   starred BOOLEAN NOT NULL DEFAULT FALSE,
+  locked BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -196,6 +197,9 @@ async function ensureSchema() {
     await _pool.query(SCHEMA_SQL);
     await _pool.query(`
       ALTER TABLE conversations ADD COLUMN IF NOT EXISTS starred BOOLEAN NOT NULL DEFAULT FALSE
+    `).catch(() => {});
+    await _pool.query(`
+      ALTER TABLE conversations ADD COLUMN IF NOT EXISTS locked BOOLEAN NOT NULL DEFAULT FALSE
     `).catch(() => {});
     console.log("[db] schema ensured");
   } catch (err) {
