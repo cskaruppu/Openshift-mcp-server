@@ -128,6 +128,22 @@ tr:hover td{background:#ffffff06}
 .pf-badge.pf-pass{background:#22c55e22;color:var(--ok)}
 .pf-badge.pf-warn{background:#f59e0b22;color:var(--warn)}
 .pf-badge.pf-fail{background:#ef444422;color:var(--crit)}
+.pf-version-compare{padding:14px 18px;border-bottom:1px solid var(--border)}
+.pf-version-compare table{width:100%;border-collapse:collapse;font-size:12px}
+.pf-version-compare th{text-align:left;padding:7px 10px;font-weight:600;color:var(--text);opacity:0.6;text-transform:uppercase;font-size:10px;letter-spacing:.3px;border-bottom:2px solid var(--border)}
+.pf-version-compare td{padding:7px 10px;border-bottom:1px solid color-mix(in srgb, var(--border) 50%, transparent);color:var(--text)}
+.pf-version-compare td:first-child{font-weight:600;white-space:nowrap;color:var(--accent2);width:30%}
+.pf-version-compare .pf-val-from{opacity:0.7}
+.pf-version-compare .pf-val-to{font-weight:600}
+.pf-version-compare .pf-arrow-cell{text-align:center;color:var(--text2);font-size:14px;width:30px;padding:7px 4px}
+.pf-version-compare tr:hover td{background:rgba(59,130,246,0.04)}
+.pf-features-list{padding:10px 18px;border-bottom:1px solid var(--border)}
+.pf-features-list summary{font-size:12px;font-weight:600;color:var(--accent2);cursor:pointer;padding:4px 0}
+.pf-features-list ul{margin:6px 0 0;padding:0 0 0 18px;font-size:11px;color:var(--text);line-height:1.6}
+.pf-features-list .pf-feat-ver{font-weight:700;color:var(--text);margin-top:6px}
+.pf-api-removals{color:var(--crit);font-size:11px;padding:8px 18px;border-bottom:1px solid var(--border)}
+.pf-api-removals summary{font-weight:600;cursor:pointer;padding:4px 0}
+.pf-api-removals ul{margin:6px 0 0;padding:0 0 0 18px;line-height:1.6}
 .preflight-checks{padding:10px 18px}
 .pf-check{margin:6px 0;padding:10px 14px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.02)}
 .pf-check-pass{border-left:3px solid var(--ok)}
@@ -4329,6 +4345,59 @@ function renderPreflightReport(report) {
   html += '<span class="pf-badge pf-warn">' + report.summary.warning + ' Warnings</span>';
   html += '<span class="pf-badge pf-fail">' + report.summary.fail + ' Failed</span>';
   html += '</div>';
+
+  // Version comparison table
+  var vd = report.versionDelta || {};
+  html += '<div class="pf-version-compare">';
+  html += '<table><thead><tr><th>Component</th><th>Current</th><th></th><th>After Upgrade</th></tr></thead><tbody>';
+  html += '<tr><td>OpenShift</td><td class="pf-val-from">' + esc(report.fromVersion) + '</td><td class="pf-arrow-cell">&#x2192;</td><td class="pf-val-to">' + esc(report.targetVersion) + '</td></tr>';
+  if (vd.kubeFrom && vd.kubeTo) {
+    html += '<tr><td>Kubernetes</td><td class="pf-val-from">' + esc(vd.kubeFrom) + '</td><td class="pf-arrow-cell">&#x2192;</td><td class="pf-val-to">' + esc(vd.kubeTo) + '</td></tr>';
+  }
+  if (vd.rhelBase) {
+    html += '<tr><td>RHEL Base</td><td class="pf-val-from" colspan="3">' + esc(vd.rhelBase) + '</td></tr>';
+  }
+  if (vd.criO) {
+    html += '<tr><td>CRI-O Runtime</td><td class="pf-val-from">' + esc(vd.kubeFrom || '-') + '</td><td class="pf-arrow-cell">&#x2192;</td><td class="pf-val-to">' + esc(vd.criO) + '</td></tr>';
+  }
+  html += '<tr><td>Upgrade Type</td><td class="pf-val-from" colspan="3">' + esc(report.upgradeType || '-') + '</td></tr>';
+  html += '<tr><td>Channel</td><td class="pf-val-from" colspan="3">' + esc(report.channel || '-') + '</td></tr>';
+  if (vd.estimatedDuration) {
+    html += '<tr><td>Est. Duration</td><td class="pf-val-from" colspan="3">' + esc(vd.estimatedDuration) + '</td></tr>';
+  }
+  var nt = report.nodeTopology;
+  if (nt) {
+    html += '<tr><td>Cluster Nodes</td><td class="pf-val-from" colspan="3">' +
+      nt.total + ' total (' + nt.masters + ' control-plane, ' + nt.workers + ' worker' + (nt.infra ? ', ' + nt.infra + ' infra' : '') + ')</td></tr>';
+  }
+  html += '</tbody></table>';
+  html += '</div>';
+
+  // Feature highlights across versions
+  var feats = vd.featureHighlights || [];
+  if (feats.length > 0) {
+    html += '<div class="pf-features-list"><details><summary>&#x2728; What\'s New in This Upgrade (' + feats.length + ' version(s))</summary>';
+    for (var fi = 0; fi < feats.length; fi++) {
+      html += '<div class="pf-feat-ver">' + esc(feats[fi].version) + '</div><ul>';
+      var flist = feats[fi].features || [];
+      for (var fj = 0; fj < flist.length; fj++) {
+        html += '<li>' + esc(flist[fj]) + '</li>';
+      }
+      html += '</ul>';
+    }
+    html += '</details></div>';
+  }
+
+  // API removals/deprecations
+  var apiRems = vd.apiRemovals || [];
+  if (apiRems.length > 0) {
+    html += '<div class="pf-api-removals"><details><summary>&#x26A0;&#xFE0F; API Removals / Deprecations (' + apiRems.length + ')</summary><ul>';
+    for (var ai = 0; ai < apiRems.length; ai++) {
+      var apir = apiRems[ai];
+      html += '<li>' + esc(apir.name || apir.api || apir) + (apir.message ? ' — ' + esc(apir.message) : '') + '</li>';
+    }
+    html += '</ul></details></div>';
+  }
 
   // Check items
   html += '<div class="preflight-checks">';
