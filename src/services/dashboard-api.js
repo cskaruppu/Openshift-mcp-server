@@ -4,6 +4,7 @@
  */
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { gzipSync } from "node:zlib";
 import { dirname } from "node:path";
 import { ocpGet, ocpFetch } from "../utils/openshift-client.js";
 import { callLLM } from "./llm.js";
@@ -34,8 +35,16 @@ const DEFAULT_LLM_SETTINGS = {
 const PROVIDERS_REQUIRING_KEY = new Set(["openai", "anthropic", "azure", "google", "bedrock"]);
 
 function json(res, status, data) {
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(data));
+  const body = JSON.stringify(data);
+  const acceptGzip = (res._req_accept_encoding || "").includes("gzip");
+  if (acceptGzip && body.length > 1024) {
+    const gz = gzipSync(body, { level: 1 });
+    res.writeHead(status, { "Content-Type": "application/json", "Content-Encoding": "gzip", "Vary": "Accept-Encoding" });
+    res.end(gz);
+  } else {
+    res.writeHead(status, { "Content-Type": "application/json" });
+    res.end(body);
+  }
 }
 
 function readJsonBody(req) {

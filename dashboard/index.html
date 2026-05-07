@@ -2582,7 +2582,7 @@ tr:hover td{background:#ffffff06}
 const MCP_API = window.MCP_API_URL || '/api';
 
 // Auto-refresh interval (ms)
-const REFRESH_INTERVAL = 30000;
+const REFRESH_INTERVAL = 45000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2608,7 +2608,16 @@ function formatMem(memStr) {
   return memStr;
 }
 
+var _apiFetchInflight = new Map();
 async function apiFetch(path, timeoutMs) {
+  // Deduplicate concurrent requests for the same path
+  if (_apiFetchInflight.has(path)) return _apiFetchInflight.get(path);
+  var p = _apiFetchInner(path, timeoutMs);
+  _apiFetchInflight.set(path, p);
+  p.finally(function() { _apiFetchInflight.delete(path); });
+  return p;
+}
+async function _apiFetchInner(path, timeoutMs) {
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), timeoutMs || 12000);
   try {
@@ -5734,18 +5743,15 @@ async function sendFullChat(text) {
       const clusterCtx = clusterSel && clusterSel.value !== 'local' ? clusterSel.value : undefined;
       const chatBody = { message: msg, conversationId: history.activeId, history: chatHistory, ...providerOpts };
       if (clusterCtx) chatBody.cluster = clusterCtx;
-      // Attach pending CR context if relevant
-      try {
-        var pendingCrs = await fetchPendingCRs();
-        if (pendingCrs && pendingCrs.length > 0) {
-          chatBody.pendingCRs = pendingCrs;
-        }
-      } catch(e) {}
-      const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat', {
+      // Fire pending CR fetch and chat request in parallel
+      var crPromise = fetchPendingCRs().catch(function() { return []; });
+      var chatPromise = fetch(MCP_API.replace(/\/api$/, '') + '/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(chatBody),
       });
+      var results = await Promise.all([crPromise, chatPromise]);
+      var resp = results[1];
       const data = await resp.json();
       data.durationMs = Date.now() - startMs;
       data.tokenEstimate = Math.ceil((data.reply || '').length / 4);
@@ -6337,7 +6343,7 @@ async function refreshActionsPanel() {
 function startActionsPolling() {
   stopActionsPolling();
   refreshActionsPanel();
-  _actionsPollTimer = setInterval(refreshActionsPanel, 5000);
+  _actionsPollTimer = setInterval(refreshActionsPanel, 15000);
 }
 function stopActionsPolling() {
   if (_actionsPollTimer) { clearInterval(_actionsPollTimer); _actionsPollTimer = null; }

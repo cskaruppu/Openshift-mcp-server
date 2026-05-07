@@ -1,6 +1,6 @@
 /**
  * OpenShift / Kubernetes API client utility.
- * Uses the native fetch API (Node 18+) to talk to the cluster API server.
+ * Uses undici with persistent connection pooling for low-latency K8s API calls.
  *
  * Trace support: callers can push a `trace` array into AsyncLocalStorage via
  * `runWithTrace()`. Every ocpFetch() call records an entry the response
@@ -9,6 +9,15 @@
 
 import { readFile } from "node:fs/promises";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { Agent, fetch as undiciFetch } from "undici";
+
+const ocpAgent = new Agent({
+  connect: { rejectUnauthorized: false, timeout: 15_000 },
+  keepAliveTimeout: 30_000,
+  keepAliveMaxTimeout: 60_000,
+  pipelining: 1,
+  connections: 20,
+});
 
 const OPENSHIFT_API_URL =
   process.env.OPENSHIFT_API_URL ||
@@ -175,9 +184,10 @@ export async function ocpFetch(path, options = {}) {
   const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || OCP_FETCH_TIMEOUT_MS);
   let resp;
   try {
-    resp = await fetch(url, {
+    resp = await undiciFetch(url, {
       ...options,
       signal: controller.signal,
+      dispatcher: ocpAgent,
       headers: {
         Authorization: `Bearer ${tk}`,
         Accept: acceptsText ? "text/plain" : "application/json",
@@ -205,9 +215,26 @@ export async function ocpFetch(path, options = {}) {
   return resp.json();
 }
 
-/** Shorthand GET */
+// Short-lived GET cache for frequently-queried, slow-changing endpoints.
+// Avoids redundant cluster API calls when multiple concurrent chat requests
+// or dashboard panels fetch the same data within a few seconds.
+const _getCache = new Map();
+const GET_CACHE_TTL_MS = 5_000;
+
+/** Shorthand GET with short-lived cache */
 export async function ocpGet(path) {
-  return ocpFetch(path);
+  const now = Date.now();
+  const cached = _getCache.get(path);
+  if (cached && now - cached.ts < GET_CACHE_TTL_MS) return cached.data;
+  const data = await ocpFetch(path);
+  _getCache.set(path, { data, ts: now });
+  // Evict stale entries periodically
+  if (_getCache.size > 200) {
+    for (const [k, v] of _getCache) {
+      if (now - v.ts > GET_CACHE_TTL_MS) _getCache.delete(k);
+    }
+  }
+  return data;
 }
 
 /** Shorthand PATCH (strategic merge by default) */

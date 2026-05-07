@@ -17,6 +17,7 @@
  *   - "none"       — Built-in rule-based analysis (no external LLM)
  */
 
+import { gzipSync } from "node:zlib";
 import {
   ocpGet,
   ocpDelete,
@@ -402,8 +403,16 @@ function readBody(req) {
 }
 
 function json(res, status, data) {
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(data));
+  const body = JSON.stringify(data);
+  const acceptGzip = (res._req_accept_encoding || "").includes("gzip");
+  if (acceptGzip && body.length > 1024) {
+    const gz = gzipSync(body, { level: 1 });
+    res.writeHead(status, { "Content-Type": "application/json", "Content-Encoding": "gzip", "Vary": "Accept-Encoding" });
+    res.end(gz);
+  } else {
+    res.writeHead(status, { "Content-Type": "application/json" });
+    res.end(body);
+  }
 }
 
 /** Fetch pod logs (plain text, not JSON) */
@@ -2449,109 +2458,113 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
     );
   }
 
-  // Specific pod — fetch full details, events, and metrics for a named pod
+  // Specific pod — fetch details, events, logs, and metrics in parallel
   if (context.intents.includes("specific_pod") && context.targetPodName) {
     const podName = context.targetPodName;
+    const wantsLogs = /\b(log|logs|tail|describe|why|diagnose|debug|investigate|fail|error|crash|wrong|issue|problem|inspect|details?)\b/i.test(userMessage);
     tasks.push(
-      ocpGet("/api/v1/pods").then((d) => {
-        const pod = (d.items || []).find((p) => p.metadata.name === podName);
-        if (pod) {
-          const ns = pod.metadata.namespace;
-          context.targetPod = {
-            name: pod.metadata.name,
-            namespace: ns,
-            phase: pod.status?.phase,
-            node: pod.spec?.nodeName,
-            ownerKind: pod.metadata?.ownerReferences?.[0]?.kind,
-            ownerName: pod.metadata?.ownerReferences?.[0]?.name,
-            startTime: pod.status?.startTime,
-            images: (pod.spec?.containers || []).map((c) => c.image),
-            resourceLimits: (pod.spec?.containers || []).map((c) => ({
-              name: c.name,
-              memRequest: c.resources?.requests?.memory,
-              memLimit: c.resources?.limits?.memory,
-              cpuRequest: c.resources?.requests?.cpu,
-              cpuLimit: c.resources?.limits?.cpu,
-            })),
-            containers: (pod.status?.containerStatuses || []).map((c) => ({
-              name: c.name,
-              ready: c.ready,
-              started: c.started,
-              restarts: c.restartCount,
-              state: c.state?.waiting?.reason || c.state?.terminated?.reason || (c.state?.running ? "Running" : "Unknown"),
-              exitCode: c.state?.terminated?.exitCode,
-              signal: c.state?.terminated?.signal,
-              lastState: c.lastState?.terminated ? {
-                reason: c.lastState.terminated.reason,
-                exitCode: c.lastState.terminated.exitCode,
-                signal: c.lastState.terminated.signal,
-                finishedAt: c.lastState.terminated.finishedAt,
-              } : null,
-            })),
-            conditions: (pod.status?.conditions || []).map((c) => ({
-              type: c.type, status: c.status, reason: c.reason, message: c.message,
-            })),
-          };
-          // Fetch events for this pod
-          return ocpGet(`/api/v1/namespaces/${ns}/events?fieldSelector=involvedObject.name=${podName}`).then((ev) => {
+      (async () => {
+        // Single pod lookup using fieldSelector instead of fetching ALL pods
+        let pod = null;
+        let ns = null;
+        try {
+          const d = await ocpGet(`/api/v1/pods?fieldSelector=metadata.name=${podName}`);
+          pod = (d.items || [])[0];
+        } catch {
+          // Fallback: some clusters don't support name field selector on pods
+          try {
+            const d = await ocpGet("/api/v1/pods");
+            pod = (d.items || []).find((p) => p.metadata.name === podName);
+          } catch { return; }
+        }
+        if (!pod) return;
+        ns = pod.metadata.namespace;
+        context.targetPod = {
+          name: pod.metadata.name,
+          namespace: ns,
+          phase: pod.status?.phase,
+          node: pod.spec?.nodeName,
+          ownerKind: pod.metadata?.ownerReferences?.[0]?.kind,
+          ownerName: pod.metadata?.ownerReferences?.[0]?.name,
+          startTime: pod.status?.startTime,
+          images: (pod.spec?.containers || []).map((c) => c.image),
+          resourceLimits: (pod.spec?.containers || []).map((c) => ({
+            name: c.name,
+            memRequest: c.resources?.requests?.memory,
+            memLimit: c.resources?.limits?.memory,
+            cpuRequest: c.resources?.requests?.cpu,
+            cpuLimit: c.resources?.limits?.cpu,
+          })),
+          containers: (pod.status?.containerStatuses || []).map((c) => ({
+            name: c.name,
+            ready: c.ready,
+            started: c.started,
+            restarts: c.restartCount,
+            state: c.state?.waiting?.reason || c.state?.terminated?.reason || (c.state?.running ? "Running" : "Unknown"),
+            exitCode: c.state?.terminated?.exitCode,
+            signal: c.state?.terminated?.signal,
+            lastState: c.lastState?.terminated ? {
+              reason: c.lastState.terminated.reason,
+              exitCode: c.lastState.terminated.exitCode,
+              signal: c.lastState.terminated.signal,
+              finishedAt: c.lastState.terminated.finishedAt,
+            } : null,
+          })),
+          conditions: (pod.status?.conditions || []).map((c) => ({
+            type: c.type, status: c.status, reason: c.reason, message: c.message,
+          })),
+        };
+        // Parallel: events + logs + metrics for the found pod
+        const subTasks = [];
+        subTasks.push(
+          ocpGet(`/api/v1/namespaces/${ns}/events?fieldSelector=involvedObject.name=${podName}`).then((ev) => {
             context.targetPodEvents = (ev.items || [])
               .sort((a, b) => new Date(b.lastTimestamp || 0) - new Date(a.lastTimestamp || 0))
               .slice(0, 20)
               .map((e) => ({
-                type: e.type,
-                reason: e.reason,
-                message: e.message,
-                count: e.count,
-                lastSeen: e.lastTimestamp,
+                type: e.type, reason: e.reason, message: e.message, count: e.count, lastSeen: e.lastTimestamp,
               }));
-          }).catch(() => {});
-        }
-      }).catch(() => {})
-    );
-    // Also fetch logs for this pod when the user asks about logs/describe/diagnose
-    const wantsLogs = /\b(log|logs|tail|describe|why|diagnose|debug|investigate|fail|error|crash|wrong|issue|problem|inspect|details?)\b/i.test(userMessage);
-    if (wantsLogs) {
-      tasks.push(
-        ocpGet("/api/v1/pods").then(async (d) => {
-          const pod = (d.items || []).find((p) => p.metadata.name === podName);
-          if (!pod) return;
-          const ns = pod.metadata.namespace;
-          try {
-            const txt = await fetchPodLogs(ns, podName, 80);
-            context.targetPodLogs = String(txt || "").slice(0, 6000);
-          } catch (err) {
-            context.targetPodLogsError = err.message;
-            // Try previous container logs if current failed
-            try {
-              const prevPath = `/api/v1/namespaces/${ns}/pods/${podName}/log?tailLines=80&previous=true`;
-              let prevTxt;
+          }).catch(() => {})
+        );
+        if (wantsLogs) {
+          subTasks.push(
+            (async () => {
               try {
-                prevTxt = await ocpFetch(prevPath, { headers: { Accept: "text/plain" } });
-              } catch (e2) {
-                if (e2.message && e2.message.includes("406")) {
-                  prevTxt = await ocpFetch(prevPath, { headers: { Accept: "*/*" } });
-                }
+                const txt = await fetchPodLogs(ns, podName, 80);
+                context.targetPodLogs = String(txt || "").slice(0, 6000);
+              } catch (err) {
+                context.targetPodLogsError = err.message;
+                try {
+                  const prevPath = `/api/v1/namespaces/${ns}/pods/${podName}/log?tailLines=80&previous=true`;
+                  let prevTxt;
+                  try {
+                    prevTxt = await ocpFetch(prevPath, { headers: { Accept: "text/plain" } });
+                  } catch (e2) {
+                    if (e2.message && e2.message.includes("406")) {
+                      prevTxt = await ocpFetch(prevPath, { headers: { Accept: "*/*" } });
+                    }
+                  }
+                  if (prevTxt) context.targetPodLogsPrevious = String(prevTxt).slice(0, 6000);
+                } catch { /* swallow */ }
               }
-              if (prevTxt) context.targetPodLogsPrevious = String(prevTxt).slice(0, 6000);
-            } catch { /* swallow */ }
-          }
-        }).catch(() => {})
-      );
-    }
-    // Also fetch metrics for this pod if available
-    tasks.push(
-      ocpGet("/apis/metrics.k8s.io/v1beta1/pods").then((d) => {
-        const m = (d.items || []).find((p) => p.metadata.name === podName);
-        if (m) {
-          context.targetPodMetrics = {
-            name: m.metadata.name,
-            namespace: m.metadata.namespace,
-            containers: (m.containers || []).map((c) => ({
-              name: c.name, cpu: c.usage?.cpu, memory: c.usage?.memory,
-            })),
-          };
+            })()
+          );
         }
-      }).catch(() => {})
+        subTasks.push(
+          ocpGet(`/apis/metrics.k8s.io/v1beta1/namespaces/${ns}/pods/${podName}`).then((m) => {
+            if (m) {
+              context.targetPodMetrics = {
+                name: m.metadata.name,
+                namespace: m.metadata.namespace,
+                containers: (m.containers || []).map((c) => ({
+                  name: c.name, cpu: c.usage?.cpu, memory: c.usage?.memory,
+                })),
+              };
+            }
+          }).catch(() => {})
+        );
+        await Promise.all(subTasks);
+      })()
     );
   }
 

@@ -7,6 +7,7 @@
  */
 
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve, extname } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -896,6 +897,9 @@ async function startSSE() {
 
   const httpServer = createServer(async (req, res) => {
    try {
+    // Stash accept-encoding so downstream json() helpers can gzip responses
+    res._req_accept_encoding = req.headers["accept-encoding"] || "";
+
     // CORS headers for browser-based clients
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -2074,14 +2078,19 @@ async function startSSE() {
         if (acceptGzip && COMPRESSIBLE.has(ext)) {
           let cached = gzCache.get(full);
           if (!cached || cached.srcLen !== data.length) {
-            cached = { gz: gzipSync(data, { level: 6 }), srcLen: data.length };
+            const gz = gzipSync(data, { level: 6 });
+            cached = { gz, srcLen: data.length, etag: '"' + createHash("md5").update(gz).digest("hex") + '"' };
             gzCache.set(full, cached);
+          }
+          if (req.headers["if-none-match"] === cached.etag) {
+            res.writeHead(304); res.end(); return;
           }
           res.writeHead(200, {
             "Content-Type": ct,
             "Content-Encoding": "gzip",
             "Cache-Control": ext === ".html" ? "no-cache, must-revalidate" : "public, max-age=86400",
             "Vary": "Accept-Encoding",
+            "ETag": cached.etag,
           });
           res.end(cached.gz);
         } else {
@@ -2100,10 +2109,14 @@ async function startSSE() {
           if (acceptGzip) {
             let cached = gzCache.get(full);
             if (!cached || cached.srcLen !== data.length) {
-              cached = { gz: gzipSync(data, { level: 6 }), srcLen: data.length };
+              const gz = gzipSync(data, { level: 6 });
+              cached = { gz, srcLen: data.length, etag: '"' + createHash("md5").update(gz).digest("hex") + '"' };
               gzCache.set(full, cached);
             }
-            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Encoding": "gzip", "Cache-Control": "no-cache, must-revalidate", "Vary": "Accept-Encoding" });
+            if (req.headers["if-none-match"] === cached.etag) {
+              res.writeHead(304); res.end(); return;
+            }
+            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Encoding": "gzip", "Cache-Control": "no-cache, must-revalidate", "Vary": "Accept-Encoding", "ETag": cached.etag });
             res.end(cached.gz);
           } else {
             res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache, must-revalidate" });
