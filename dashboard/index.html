@@ -4208,14 +4208,17 @@ function renderFixProposal(diag) {
     diag.fixes.forEach(function(fix, idx) {
       var fixId = 'fp-fix-' + Math.random().toString(36).substr(2, 8);
       var fixDataAttr = btoa(unescape(encodeURIComponent(JSON.stringify(fix))));
+      var isReadOnly = /^(describe|logs|get|inspect|view)$/.test(fix.action || '');
       html += '<div class="fp-fix-card">' +
         '<div class="fp-fix-title">' + esc(fix.title) + '</div>' +
         '<div class="fp-fix-desc">' + esc(fix.description || '') + '</div>' +
         '<div class="fp-fix-cmd"><code>' + esc(fix.command) + '</code></div>' +
         '<div class="fp-fix-actions">' +
-          '<button class="fp-dryrun" onclick="applyFixProposal(\'' + fixId + '\',\'' + fixDataAttr + '\',true)">&#x1F50D; Dry Run</button>' +
-          '<button class="fp-apply" onclick="applyFixProposal(\'' + fixId + '\',\'' + fixDataAttr + '\',false)">&#x2705; Apply Fix</button>' +
-          '<span class="fp-risk">Risk: ' + esc(fix.risk || 'low') + '</span>' +
+          (isReadOnly
+            ? '<button class="fp-apply" style="background:var(--accent2)" onclick="applyFixProposal(\'' + fixId + '\',\'' + fixDataAttr + '\',true)">&#x25B6; Run</button>'
+            : '<button class="fp-dryrun" onclick="applyFixProposal(\'' + fixId + '\',\'' + fixDataAttr + '\',true)">&#x1F50D; Dry Run</button>' +
+              '<button class="fp-apply" onclick="applyFixProposal(\'' + fixId + '\',\'' + fixDataAttr + '\',false)">&#x2705; Apply Fix</button>') +
+          '<span class="fp-risk">' + (fix.risk === 'none' ? 'Read-only' : 'Risk: ' + esc(fix.risk || 'low')) + '</span>' +
         '</div>' +
         '<div id="' + fixId + '-result"></div>' +
       '</div>';
@@ -4241,18 +4244,27 @@ async function applyFixProposal(fixId, fixDataB64, isDryRun) {
     (isDryRun ? '&#x1F50D; Running dry run...' : '&#x2699; Applying fix...') + '</div>';
 
   try {
-    if (isDryRun) {
+    var isReadOnly = /^(describe|logs|get|inspect|view)$/.test(fix.action || '');
+    if (isDryRun || isReadOnly) {
+      // Read-only actions and dry runs go through the fix-executor
       var cmd = fix.command;
       var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/execute-fix', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: cmd, dryRun: true }),
+        body: JSON.stringify({ command: cmd, dryRun: !isReadOnly }),
       });
       var data = await resp.json();
       if (data.success) {
-        resultEl.innerHTML = '<div class="fp-fix-result ok">&#x2705; Dry run succeeded: ' + esc(data.stdout || 'OK') + '</div>';
+        var output = (data.stdout || 'OK').trim();
+        var isLong = output.length > 300 || output.split('\n').length > 6;
+        resultEl.innerHTML = '<div class="fp-fix-result ok">' +
+          (isReadOnly ? '' : '&#x2705; Dry run succeeded: ') +
+          (isLong
+            ? '<details><summary>' + (isReadOnly ? '&#x2705; Output (' + output.split('\\n').length + ' lines)' : 'Show output') + '</summary><pre style="white-space:pre-wrap;max-height:300px;overflow:auto;margin:6px 0;font-size:11px">' + esc(output) + '</pre></details>'
+            : '<pre style="white-space:pre-wrap;margin:4px 0;font-size:11px">' + esc(output) + '</pre>') +
+          '</div>';
       } else {
-        resultEl.innerHTML = '<div class="fp-fix-result err">&#x274C; Dry run failed: ' + esc(data.stderr || data.error || 'Unknown error') + '</div>';
+        resultEl.innerHTML = '<div class="fp-fix-result err">&#x274C; ' + (isDryRun ? 'Dry run failed: ' : 'Failed: ') + esc(data.stderr || data.error || 'Unknown error') + '</div>';
       }
     } else {
       var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/execute', {
