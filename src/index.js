@@ -75,6 +75,7 @@ import {
   createChat,
   deleteChat,
   updateTitle,
+  updateStarred,
   updateMessage,
   replaceMessageContent,
   addMessage,
@@ -611,6 +612,10 @@ async function handleChatHistoryAPI(url, req, res) {
         if (body.title) {
           const ok = await updateTitle(id, body.title);
           return sendJson(res, ok ? 200 : 404, { success: ok });
+        }
+        if (typeof body.starred === "boolean") {
+          const ok = await updateStarred(id, body.starred);
+          return sendJson(res, ok ? 200 : 404, { success: ok, starred: body.starred });
         }
         return sendJson(res, 400, { error: "No fields to update" });
       } catch (err) {

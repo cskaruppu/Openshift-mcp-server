@@ -5257,6 +5257,7 @@ async function detectHistoryBackend() {
       _historyCache.chats = (data.chats || []).map(c => ({
         id: c.id,
         title: c.title,
+        starred: c.starred || false,
         messages: [], // lazy-loaded on select
         messageCount: c.messageCount || 0,
         updatedAt: c.updatedAt,
@@ -5420,6 +5421,7 @@ async function selectChat(id) {
         if (resp.ok) {
           const full = await resp.json();
           chat.title = full.title || chat.title;
+          if (typeof full.starred === 'boolean') chat.starred = full.starred;
           chat.messages = (full.messages || []).map(m => ({
             dbId: m.id,
             role: m.role === 'assistant' ? 'ai' : m.role,
@@ -5472,6 +5474,13 @@ function starChat(id, ev) {
   });
   saveChatHistory(history);
   renderChatHistory();
+  if (_historyRemote) {
+    fetch(chatApiBase() + '/api/chats/' + encodeURIComponent(id), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ starred: chat.starred }),
+    }).catch(function() {});
+  }
 }
 
 function renameChat(id, ev) {

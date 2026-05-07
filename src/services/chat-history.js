@@ -24,11 +24,12 @@ export async function listChats(limit = 100) {
   const r = await query(
     `SELECT c.id,
             c.title,
+            c.starred,
             c.created_at,
             c.updated_at,
             (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count
        FROM conversations c
-      ORDER BY c.updated_at DESC
+      ORDER BY c.starred DESC, c.updated_at DESC
       LIMIT $1`,
     [limit]
   );
@@ -36,6 +37,7 @@ export async function listChats(limit = 100) {
   return r.rows.map((row) => ({
     id: row.id,
     title: row.title,
+    starred: row.starred || false,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     messageCount: Number(row.message_count) || 0,
@@ -45,7 +47,7 @@ export async function listChats(limit = 100) {
 /** Get a single conversation with its messages. */
 export async function getChat(id) {
   const conv = await query(
-    `SELECT id, title, created_at, updated_at FROM conversations WHERE id = $1`,
+    `SELECT id, title, starred, created_at, updated_at FROM conversations WHERE id = $1`,
     [id]
   );
   if (!conv || conv.rowCount === 0) return null;
@@ -60,6 +62,7 @@ export async function getChat(id) {
   return {
     id: c.id,
     title: c.title,
+    starred: c.starred || false,
     createdAt: c.created_at,
     updatedAt: c.updated_at,
     messages: (msgs?.rows || []).map((m) => ({
@@ -171,6 +174,16 @@ export async function updateTitle(id, title) {
     `UPDATE conversations SET title = $2, updated_at = NOW() WHERE id = $1
      RETURNING id, title`,
     [id, truncateTitle(title)]
+  );
+  return r && r.rowCount > 0;
+}
+
+/** Toggle or set the starred flag on a conversation. */
+export async function updateStarred(id, starred) {
+  const r = await query(
+    `UPDATE conversations SET starred = $2, updated_at = NOW() WHERE id = $1
+     RETURNING id, starred`,
+    [id, Boolean(starred)]
   );
   return r && r.rowCount > 0;
 }
