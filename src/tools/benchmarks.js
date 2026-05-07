@@ -338,7 +338,7 @@ async function ensureNamespace(ns) {
   } catch {
     await ocpPost("/api/v1/namespaces", {
       apiVersion: "v1", kind: "Namespace",
-      metadata: { name: ns, labels: { "app.kubernetes.io/managed-by": "kubenexus-benchmark" } },
+      metadata: { name: ns, labels: { "app.kubernetes.io/managed-by": "tcs-agentic-benchmark" } },
     });
   }
 }

@@ -63,7 +63,7 @@ export async function connectServer(config) {
   }
 
   const client = new Client(
-    { name: "tcs-kubenexus-hub", version: "1.0.0" },
+    { name: "tcs-agentic-hub", version: "1.0.0" },
     { capabilities: {} }
   );
 

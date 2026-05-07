@@ -3,7 +3,7 @@
  * cluster, detects anomalies, and generates AI-powered insights WITHOUT
  * waiting for the user to ask.
  *
- * This is what separates KubeNexus AI from Claude Desktop / Cursor:
+ * This is what separates TCS Agentic AI from Claude Desktop / Cursor:
  * the platform thinks for itself.
  *
  * Capabilities:

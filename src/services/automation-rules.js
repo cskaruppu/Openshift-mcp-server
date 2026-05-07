@@ -225,7 +225,7 @@ async function executeSlackAction(rule, insight, config) {
     if (!notifCfg.webhookUrl) return { ok: false, message: "No Slack webhook configured" };
 
     const payload = {
-      text: `*[KubeNexus AI — Automation]*\nRule: ${rule.name}\n${insight.title}\n${insight.detail}\n*Action:* ${insight.recommendation}`,
+      text: `*[TCS Agentic AI — Automation]*\nRule: ${rule.name}\n${insight.title}\n${insight.detail}\n*Action:* ${insight.recommendation}`,
       channel: notifCfg.channel || undefined,
     };
     await fetch(notifCfg.webhookUrl, {

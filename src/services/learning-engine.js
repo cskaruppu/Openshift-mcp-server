@@ -1,5 +1,5 @@
 /**
- * Learning Engine — gives KubeNexus AI institutional memory.
+ * Learning Engine — gives TCS Agentic AI institutional memory.
  *
  * Two main capabilities:
  *

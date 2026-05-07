@@ -5,7 +5,7 @@
  * (symptoms, root cause, fix). When a similar issue recurs, the KB finds
  * matching past resolutions and provides them as context to the LLM.
  *
- * This gives KubeNexus AI a "memory" that improves over time —
+ * This gives TCS Agentic AI a "memory" that improves over time —
  * something no competitor has.
  *
  * Storage: PostgreSQL (primary), in-memory fallback.

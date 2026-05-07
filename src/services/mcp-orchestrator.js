@@ -2,7 +2,7 @@
  * MCP Orchestrator — unified agent loop that routes tool calls
  * across all connected MCP servers (built-in + external).
  *
- * This is the brain of the KubeNexus AI platform:
+ * This is the brain of the TCS Agentic AI platform:
  *   1. Collects tools from all connected MCP servers via the Hub
  *   2. Sends user message + tool definitions to the chosen LLM
  *   3. When LLM returns tool_calls, dispatches them to the correct MCP server
@@ -16,7 +16,7 @@ const MAX_STEPS = parseInt(process.env.ORCHESTRATOR_MAX_STEPS || "10", 10);
 const MAX_TOOLS_PER_STEP = parseInt(process.env.ORCHESTRATOR_MAX_TOOLS_PER_STEP || "6", 10);
 
 function buildSystemPrompt(serverSummary) {
-  return `You are KubeNexus AI — a powerful enterprise platform for OpenShift cluster management, diagnostics, and automation.
+  return `You are TCS Agentic AI — a powerful enterprise platform for OpenShift cluster management, diagnostics, and automation.
 
 You have access to tools from multiple connected MCP servers. Use them to investigate, diagnose, and solve problems.
 

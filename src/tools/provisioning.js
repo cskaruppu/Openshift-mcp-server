@@ -30,7 +30,7 @@ export function registerProvisioningTools(server) {
           metadata: {
             name,
             namespace,
-            labels: { app: name, "managed-by": "kubenexus" },
+            labels: { app: name, "managed-by": "tcs-agentic-ai" },
           },
           spec: {
             replicas,
@@ -135,7 +135,7 @@ export function registerProvisioningTools(server) {
           const pvc = {
             apiVersion: "v1",
             kind: "PersistentVolumeClaim",
-            metadata: { name: `${name}-pvc`, namespace, labels: { app: name, "managed-by": "kubenexus" } },
+            metadata: { name: `${name}-pvc`, namespace, labels: { app: name, "managed-by": "tcs-agentic-ai" } },
             spec: {
               accessModes: ["ReadWriteOnce"],
               resources: { requests: { storage: storageSize } },
@@ -148,7 +148,7 @@ export function registerProvisioningTools(server) {
         const deployment = {
           apiVersion: "apps/v1",
           kind: "Deployment",
-          metadata: { name, namespace, labels: { app: name, "db-type": dbType, "managed-by": "kubenexus" } },
+          metadata: { name, namespace, labels: { app: name, "db-type": dbType, "managed-by": "tcs-agentic-ai" } },
           spec: {
             replicas: 1,
             selector: { matchLabels: { app: name } },
@@ -178,7 +178,7 @@ export function registerProvisioningTools(server) {
         const svc = {
           apiVersion: "v1",
           kind: "Service",
-          metadata: { name: `${name}-svc`, namespace, labels: { app: name, "managed-by": "kubenexus" } },
+          metadata: { name: `${name}-svc`, namespace, labels: { app: name, "managed-by": "tcs-agentic-ai" } },
           spec: {
             selector: { app: name },
             ports: [{ port: cfg.port, targetPort: cfg.port, protocol: "TCP" }],
@@ -220,7 +220,7 @@ export function registerProvisioningTools(server) {
           metadata: {
             name: `${targetDeployment}-hpa`,
             namespace,
-            labels: { app: targetDeployment, "managed-by": "kubenexus" },
+            labels: { app: targetDeployment, "managed-by": "tcs-agentic-ai" },
           },
           spec: {
             scaleTargetRef: { apiVersion: "apps/v1", kind: "Deployment", name: targetDeployment },
@@ -268,7 +268,7 @@ export function registerProvisioningTools(server) {
         const svc = {
           apiVersion: "v1",
           kind: "Service",
-          metadata: { name, namespace, labels: { "managed-by": "kubenexus" } },
+          metadata: { name, namespace, labels: { "managed-by": "tcs-agentic-ai" } },
           spec: {
             type: serviceType,
             selector,
@@ -359,7 +359,7 @@ export function registerProvisioningTools(server) {
         const netpol = {
           apiVersion: "networking.k8s.io/v1",
           kind: "NetworkPolicy",
-          metadata: { name, namespace, labels: { "managed-by": "kubenexus" } },
+          metadata: { name, namespace, labels: { "managed-by": "tcs-agentic-ai" } },
           spec,
         };
 
@@ -386,7 +386,7 @@ async function ensureNamespace(ns) {
     await ocpPost("/api/v1/namespaces", {
       apiVersion: "v1",
       kind: "Namespace",
-      metadata: { name: ns, labels: { "app.kubernetes.io/managed-by": "kubenexus" } },
+      metadata: { name: ns, labels: { "app.kubernetes.io/managed-by": "tcs-agentic-ai" } },
     });
   }
 }
