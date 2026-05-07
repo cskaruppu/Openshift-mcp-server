@@ -176,15 +176,27 @@ function diagnoseContainer(container, pod, events, logs, logsPrevious, metrics) 
       diag.logSnippet = errorLines.join("\n");
       diag.evidence.push(`Error in logs: ${errorLines[0].substring(0, 150)}`);
 
-      if (exitCode === 1) {
-        diag.diagnosis += ` The application is crashing on startup. `;
+      if (exitCode === 1 || exitCode === 2 || exitCode === 126 || exitCode === 127) {
+        diag.diagnosis += exitCode === 2
+          ? ` The process is rejecting its command-line arguments or configuration. `
+          : exitCode === 127
+            ? ` The container entrypoint command was not found. `
+            : ` The application is crashing on startup. `;
         const configIssue = detectConfigIssue(errorLines, events);
         if (configIssue) {
           diag.diagnosis += configIssue.description;
           diag.rootCause = configIssue.type;
           if (configIssue.fix) diag.fixes.push(configIssue.fix);
+        } else if (exitCode === 2) {
+          diag.diagnosis += `Relevant log lines: "${errorLines[0].substring(0, 200)}". ` +
+            `Check the container args, command, and config files — restarting alone will not resolve a misconfiguration.`;
+          diag.rootCause = "BadArgs";
         }
       }
+    } else if (exitCode === 2) {
+      diag.diagnosis += ` Exit code 2 indicates bad arguments or misconfiguration, but no error lines were found in the available logs. ` +
+        `Check the container command/args in the deployment spec and verify that all required config (ConfigMaps, Secrets, volumes) is mounted correctly.`;
+      diag.rootCause = "BadArgs";
     }
 
     // Liveness probe failure causing restarts
@@ -216,6 +228,29 @@ function diagnoseContainer(container, pod, events, logs, logsPrevious, metrics) 
     }
 
     const deployRes = resolveDeploymentResource(ownerKind, ownerName, pod.namespace);
+
+    // For config-related exit codes, add an inspect fix BEFORE restart
+    if (exitCode === 2 || exitCode === 126 || exitCode === 127 || diag.rootCause === "BadArgs" || diag.rootCause === "BadFlag" || diag.rootCause === "MissingRequiredArg" || diag.rootCause === "ConfigParseError") {
+      diag.fixes.push({
+        title: `Inspect ${deployRes.kind}/${deployRes.name} spec (args, env, mounts)`,
+        action: "describe",
+        resource: deployRes.name,
+        namespace: pod.namespace,
+        command: `oc get ${deployRes.kind}/${deployRes.name} -n ${pod.namespace} -o yaml`,
+        risk: "none",
+        description: "View the deployment spec to check container command, args, environment variables, and volume mounts. Fix the misconfiguration before restarting.",
+      });
+      diag.fixes.push({
+        title: `View previous container logs for ${container.name}`,
+        action: "logs",
+        resource: pod.name,
+        namespace: pod.namespace,
+        command: `oc logs ${pod.name} -c ${container.name} -n ${pod.namespace} --previous`,
+        risk: "none",
+        description: "Fetch the full previous-container logs to identify the exact startup error.",
+      });
+    }
+
     diag.fixes.push({
       title: "Restart the pod to clear crash state",
       action: "delete_pod",
@@ -223,7 +258,9 @@ function diagnoseContainer(container, pod, events, logs, logsPrevious, metrics) 
       namespace: pod.namespace,
       command: `oc delete pod ${pod.name} -n ${pod.namespace}`,
       risk: "low",
-      description: "Deletes and recreates the pod. Useful after fixing the underlying issue.",
+      description: exitCode === 2
+        ? "Deletes and recreates the pod. Note: restart alone will NOT fix a misconfiguration — fix the args/config first."
+        : "Deletes and recreates the pod. Useful after fixing the underlying issue.",
     });
 
     if (ownerKind === "ReplicaSet" || ownerKind === "Deployment") {
@@ -375,6 +412,42 @@ function detectConfigIssue(errorLines, events) {
     return {
       type: "MissingFile",
       description: "The application cannot find a required file or mount. Check volume mounts, ConfigMap mounts, and Secret mounts.",
+      fix: null,
+    };
+  }
+
+  if (/unknown flag|unknown option|unrecognized|invalid.*(?:flag|option|argument)|bad.*(?:flag|argument)|illegal option/i.test(combined)) {
+    const match = combined.match(/unknown (?:flag|option)[:\s]+['"]?([^\s'"]+)/i)
+      || combined.match(/invalid (?:flag|option|argument)[:\s]+['"]?([^\s'"]+)/i);
+    return {
+      type: "BadFlag",
+      description: `The container is started with an invalid command-line flag${match ? " (" + match[1] + ")" : ""}. Check the deployment spec 'args' and 'command' fields, and verify they match the expected version of the binary.`,
+      fix: null,
+    };
+  }
+
+  if (/missing required|required flag|must specify|must provide|--\S+ is required/i.test(combined)) {
+    const match = combined.match(/(?:required flag|must specify|must provide|missing required)[:\s]+['"]?([^\s'"]+)/i)
+      || combined.match(/(--\S+) is required/i);
+    return {
+      type: "MissingRequiredArg",
+      description: `The process requires a flag or argument that is not provided${match ? " (" + match[1] + ")" : ""}. Check the deployment's container args/command and ensure all required parameters are set.`,
+      fix: null,
+    };
+  }
+
+  if (/syntax error|parse error|invalid.*(?:yaml|json|config|toml)|malformed|unmarshal/i.test(combined)) {
+    return {
+      type: "ConfigParseError",
+      description: "The application cannot parse its configuration file. Check ConfigMap/Secret contents for syntax errors (invalid YAML, JSON, or other formats).",
+      fix: null,
+    };
+  }
+
+  if (/port.*(?:already|in use|bind)|address already in use|eaddrinuse/i.test(combined)) {
+    return {
+      type: "PortConflict",
+      description: "The application cannot bind to its port because it is already in use. Check if another container in the same pod uses the same port, or if the pod has stale connections from a previous crash.",
       fix: null,
     };
   }

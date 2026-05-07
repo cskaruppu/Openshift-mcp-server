@@ -3415,6 +3415,12 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
         (p) => p.name === ctx.targetPodName
       );
     }
+    // Also filter correlations to the target pod's namespace only
+    if (Array.isArray(ctx.correlations) && ctx.targetPod) {
+      ctx.correlations = ctx.correlations.filter(
+        (c) => c.namespace === ctx.targetPod.namespace
+      );
+    }
     // Merge focused data first so it appears at the top of the JSON
     Object.assign(focused, ctx);
     Object.assign(ctx, focused);
@@ -6442,6 +6448,11 @@ export async function handleChatAPI(req, res) {
             if (Array.isArray(context.problemPods)) {
               context.problemPods = context.problemPods.filter(
                 (p) => p.name === context.targetPodName
+              );
+            }
+            if (Array.isArray(context.correlations) && context.targetPod) {
+              context.correlations = context.correlations.filter(
+                (c) => c.namespace === context.targetPod.namespace
               );
             }
             Object.assign(focused, context);
