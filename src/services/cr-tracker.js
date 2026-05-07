@@ -168,11 +168,19 @@ export async function syncCRFromServiceNow(ticketId) {
   try {
     const response = await getRecord("change_request", cr.sysId);
     snowRecord = response?.result;
-  } catch {
+  } catch (err) {
+    const status = err?.status || err?.statusCode;
+    if (status === 404 || (err?.message && /404|not found/i.test(err.message))) {
+      await updateCRStatus(ticketId, "cancelled", { metadata: { cancelReason: "Deleted from ServiceNow" } });
+      return { cr: { ...cr, status: "cancelled" }, changed: true, snowState: { state: "deleted", approval: "" } };
+    }
     return null;
   }
 
-  if (!snowRecord) return null;
+  if (!snowRecord) {
+    await updateCRStatus(ticketId, "cancelled", { metadata: { cancelReason: "Not found in ServiceNow" } });
+    return { cr: { ...cr, status: "cancelled" }, changed: true, snowState: { state: "deleted", approval: "" } };
+  }
 
   const newStatus = mapSnowStateToStatus(snowRecord, cr.status);
   const changed = newStatus !== cr.status;
@@ -208,6 +216,25 @@ export async function syncAllPendingCRs() {
   }
 
   return results;
+}
+
+export async function dismissCR(ticketId) {
+  if (!(await dbEnabled())) return false;
+  const result = await query(
+    `UPDATE change_requests SET status = 'cancelled', updated_at = NOW()
+     WHERE (ticket_id = $1 OR id = $1) AND status = ANY($2)`,
+    [ticketId, PENDING_STATUSES]
+  );
+  return (result?.rowCount || 0) > 0;
+}
+
+export async function deleteCR(ticketId) {
+  if (!(await dbEnabled())) return false;
+  const result = await query(
+    `DELETE FROM change_requests WHERE ticket_id = $1 OR id = $1`,
+    [ticketId]
+  );
+  return (result?.rowCount || 0) > 0;
 }
 
 export async function cleanupOldCRs(daysOld = 90) {

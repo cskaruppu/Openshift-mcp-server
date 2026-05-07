@@ -1322,6 +1322,17 @@ tr:hover td{background:#ffffff06}
 .cr-actions button:hover { background: color-mix(in srgb, var(--accent2) 15%, transparent); }
 .cr-actions button.execute { border-color: color-mix(in srgb, var(--ok) 40%, transparent); color: var(--ok); }
 .cr-actions button.execute:hover { background: color-mix(in srgb, var(--ok) 15%, transparent); }
+.cr-actions button.dismiss { border-color: color-mix(in srgb, var(--crit) 30%, transparent); color: var(--crit); }
+.cr-actions button.dismiss:hover { background: color-mix(in srgb, var(--crit) 12%, transparent); }
+.cr-panel-toolbar { display:flex; align-items:center; gap:6px; padding:4px 12px 8px; }
+.cr-panel-toolbar button { padding:3px 8px; border:1px solid color-mix(in srgb, var(--accent2) 30%, transparent); border-radius:6px; background:transparent; color:var(--accent2); font-size:10px; cursor:pointer; }
+.cr-panel-toolbar button:hover { background:color-mix(in srgb, var(--accent2) 15%, transparent); }
+.cr-panel-toolbar .cr-last-sync { font-size:9px; color:var(--text2); margin-left:auto; }
+.cr-item-dismiss { position:absolute; top:6px; right:8px; width:18px; height:18px; border:none; background:transparent; color:var(--text2); font-size:14px; cursor:pointer; border-radius:50%; display:flex; align-items:center; justify-content:center; line-height:1; }
+.cr-item-dismiss:hover { background:color-mix(in srgb, var(--crit) 15%, transparent); color:var(--crit); }
+.pending-cr-item { position:relative; }
+.cr-syncing { opacity:0.5; pointer-events:none; }
+.cr-empty-state { padding:16px 12px; text-align:center; font-size:11px; color:var(--text2); }
 /* Fix Proposal Cards */
 .fix-proposal { margin: 16px 0; border: 1px solid color-mix(in srgb, var(--accent2) 30%, var(--border)); border-radius: 12px; overflow: hidden; background: var(--card); }
 .fix-proposal-header { display:flex; align-items:center; gap:10px; padding:14px 16px; background: color-mix(in srgb, var(--accent2) 8%, transparent); border-bottom:1px solid color-mix(in srgb, var(--border) 50%, transparent); }
@@ -6740,22 +6751,34 @@ function formatCRAge(dateStr) {
   return days + 'd ago';
 }
 
+var _crLastSyncTime = null;
+
 function renderPendingCRPanel(crs) {
   var panel = document.getElementById('pending-cr-panel');
   if (!panel) return;
-  if (!crs || crs.length === 0) { panel.style.display = 'none'; return; }
 
   panel.style.display = 'block';
-  var count = crs.length;
+  var count = crs ? crs.length : 0;
+  var lastSyncLabel = _crLastSyncTime ? formatCRAge(_crLastSyncTime.toISOString()) : 'never';
+
   var html = '<div class="pending-cr-panel">' +
     '<div class="pending-cr-panel-header" onclick="togglePendingCRBody()">' +
       '<span>&#x1F4CB;</span>' +
       '<span>Pending CRs (' + count + ')</span>' +
       '<span style="margin-left:auto;font-size:10px" id="cr-panel-arrow">&#x25BC;</span>' +
     '</div>' +
-    '<div id="pending-cr-body">';
+    '<div id="pending-cr-body">' +
+    '<div class="cr-panel-toolbar">' +
+      '<button onclick="syncAllCRs()" title="Sync all pending CRs with ServiceNow">&#x1F504; Sync All</button>' +
+      '<button onclick="refreshPendingCRs()" title="Refresh list">&#x21BB; Refresh</button>' +
+      '<span class="cr-last-sync">Last synced: ' + esc(lastSyncLabel) + '</span>' +
+    '</div>';
 
-  crs.forEach(function(cr) {
+  if (count === 0) {
+    html += '<div class="cr-empty-state">No pending change requests.</div>';
+  }
+
+  (crs || []).forEach(function(cr) {
     var statusClass = cr.status || 'submitted';
     var age = formatCRAge(cr.createdAt);
     var schedInfo = '';
@@ -6768,7 +6791,8 @@ function renderPendingCRPanel(crs) {
       else schedInfo = '<span style="color:var(--crit);font-size:10px"> (' + Math.abs(daysUntil) + 'd overdue)</span>';
     }
 
-    html += '<div class="pending-cr-item">' +
+    html += '<div class="pending-cr-item" id="cr-card-' + esc(cr.ticketId) + '">' +
+      '<button class="cr-item-dismiss" onclick="dismissCR(\'' + esc(cr.ticketId) + '\')" title="Dismiss this CR">&times;</button>' +
       '<div class="cr-item-header">' +
         '<span style="font-weight:600;color:var(--text)">' + esc(cr.ticketId) + '</span>' +
         '<span class="cr-age">' + age + '</span>' +
@@ -6785,6 +6809,7 @@ function renderPendingCRPanel(crs) {
         '<button onclick="syncCR(\'' + esc(cr.ticketId) + '\')">&#x1F504; Sync</button>' +
         (cr.status === 'approved' && !cr.scheduledDate ? '<button onclick="scheduleCR(\'' + esc(cr.ticketId) + '\')">&#x1F4C5; Schedule</button>' : '') +
         (cr.status === 'approved' ? '<button class="execute" onclick="executePendingCR(\'' + esc(cr.ticketId) + '\')">&#x25B6; Execute</button>' : '') +
+        '<button class="dismiss" onclick="dismissCR(\'' + esc(cr.ticketId) + '\')">&#x2715; Dismiss</button>' +
       '</div>' +
     '</div>';
   });
@@ -6804,13 +6829,61 @@ function togglePendingCRBody() {
 }
 
 async function syncCR(ticketId) {
+  var card = document.getElementById('cr-card-' + ticketId);
+  if (card) card.classList.add('cr-syncing');
   try {
     var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/cr/' + encodeURIComponent(ticketId) + '/sync', { method: 'POST' });
     var data = await resp.json();
+    _crLastSyncTime = new Date();
     if (data.changed) {
+      showToast(ticketId + ' updated: ' + (data.cr && data.cr.status || 'synced'), 'ok');
       refreshPendingCRs();
+    } else {
+      if (card) card.classList.remove('cr-syncing');
+      showToast(ticketId + ' is up to date', '');
     }
-  } catch(e) {}
+  } catch(e) {
+    if (card) card.classList.remove('cr-syncing');
+    showToast('Failed to sync ' + ticketId, 'warn');
+  }
+}
+
+async function dismissCR(ticketId) {
+  if (!confirm('Dismiss CR ' + ticketId + '? This will mark it as cancelled.')) return;
+  var card = document.getElementById('cr-card-' + ticketId);
+  if (card) card.classList.add('cr-syncing');
+  try {
+    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/cr/' + encodeURIComponent(ticketId), { method: 'DELETE' });
+    var data = await resp.json();
+    if (data.success) {
+      showToast(ticketId + ' dismissed', 'ok');
+      refreshPendingCRs();
+    } else {
+      if (card) card.classList.remove('cr-syncing');
+      showToast('Could not dismiss ' + ticketId, 'warn');
+    }
+  } catch(e) {
+    if (card) card.classList.remove('cr-syncing');
+    showToast('Failed to dismiss ' + ticketId, 'warn');
+  }
+}
+
+async function syncAllCRs() {
+  showToast('Syncing all pending CRs...', '');
+  try {
+    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/cr/sync-all', { method: 'POST' });
+    var data = await resp.json();
+    _crLastSyncTime = new Date();
+    var changed = (data.results || []).filter(function(r){ return r.changed; });
+    if (changed.length > 0) {
+      showToast(changed.length + ' CR(s) updated from ServiceNow', 'ok');
+    } else {
+      showToast('All CRs are up to date', 'ok');
+    }
+    refreshPendingCRs();
+  } catch(e) {
+    showToast('Sync failed — check ServiceNow connection', 'warn');
+  }
 }
 
 async function executePendingCR(ticketId) {
@@ -6837,6 +6910,7 @@ async function scheduleCR(ticketId) {
 
 async function refreshPendingCRs() {
   var crs = await fetchPendingCRs();
+  _crLastSyncTime = new Date();
   renderPendingCRPanel(crs);
 }
 
@@ -6894,10 +6968,13 @@ async function checkPendingCRNotifications() {
 // Periodically refresh pending CRs every 5 minutes
 setInterval(refreshPendingCRs, 5 * 60 * 1000);
 
-// Fire an initial pending CR check shortly after page load
-setTimeout(function() {
+// Fire an initial pending CR check shortly after page load, with auto-sync
+setTimeout(async function() {
   var cv = document.getElementById('view-chat');
-  if (cv && cv.style.display !== 'none') checkPendingCRNotifications();
+  if (cv && cv.style.display !== 'none') {
+    await checkPendingCRNotifications();
+    syncAllCRs();
+  }
 }, 4000);
 
 // ---------------------------------------------------------------------------

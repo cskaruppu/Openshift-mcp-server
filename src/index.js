@@ -150,7 +150,7 @@ import {
   getPredictions,
   getTrends,
 } from "./services/predictive-intel.js";
-import { trackCR, getCR, listCRs, getPendingCRs, updateCRStatus, syncCRFromServiceNow, syncAllPendingCRs, cleanupOldCRs, backfillFromAuditTrail } from "./services/cr-tracker.js";
+import { trackCR, getCR, listCRs, getPendingCRs, updateCRStatus, syncCRFromServiceNow, syncAllPendingCRs, cleanupOldCRs, backfillFromAuditTrail, dismissCR, deleteCR } from "./services/cr-tracker.js";
 
 const silencedAlerts = new Map();
 
@@ -762,6 +762,18 @@ async function handleCRTrackingAPI(url, req, res) {
       const cr = await getCR(ticketId);
       if (!cr) return sendJson(res, 404, { error: "CR not found" });
       return sendJson(res, 200, { cr });
+    } catch (e) {
+      return sendJson(res, 500, { error: e.message });
+    }
+  }
+
+  // DELETE /api/cr/:ticketId — dismiss/remove a CR
+  if (idMatch && req.method === "DELETE") {
+    try {
+      const ticketId = decodeURIComponent(idMatch[1]);
+      const permanent = url.searchParams.get("permanent") === "true";
+      const ok = permanent ? await deleteCR(ticketId) : await dismissCR(ticketId);
+      return sendJson(res, ok ? 200 : 404, { success: ok });
     } catch (e) {
       return sendJson(res, 500, { error: e.message });
     }
