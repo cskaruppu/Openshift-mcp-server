@@ -13,12 +13,12 @@
 body{font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
 .header{background:linear-gradient(135deg,#0a0e1a 0%,#1a1040 40%,#2a1520 100%);border-bottom:2px solid transparent;border-image:linear-gradient(90deg,#e04040,#3b82f6,#10b981) 1;padding:16px 32px;display:flex;align-items:center;justify-content:space-between}
 .header .logo{display:flex;align-items:center;gap:14px}
-.header .logo svg{width:40px;height:40px}
+.header .logo svg{width:44px;height:44px}
 .header .brand{display:flex;flex-direction:column;line-height:1.2}
 .header .brand-name{font-size:22px;font-weight:700;letter-spacing:0.5px}
-
-.header .brand-name .cn{color:#e04040}
-.header .brand-name .ai{color:#10b981}
+.header .brand-name .tcs{color:#ffffff;font-weight:800;letter-spacing:1.5px;font-size:24px}
+.header .brand-name .agentic{color:#60a5fa;font-weight:600}
+.header .brand-name .ai{background:linear-gradient(135deg,#f59e0b,#ef4444,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;font-weight:800;letter-spacing:1.5px}
 .header .brand-sub{font-size:11px;color:var(--text2);letter-spacing:1.5px;text-transform:uppercase;font-weight:400}
 .header h1{font-size:20px;font-weight:600}
 .header h1 span{color:var(--accent)}
@@ -1318,15 +1318,25 @@ tr:hover td{background:#ffffff06}
 
 <div class="header">
   <div class="logo">
-    <svg viewBox="0 0 40 40" fill="none">
-      <defs><linearGradient id="lg1" x1="0" y1="0" x2="40" y2="40"><stop offset="0%" stop-color="#0052cc"/><stop offset="50%" stop-color="#1a8cff"/><stop offset="100%" stop-color="#00b8d9"/></linearGradient></defs>
-      <circle cx="20" cy="20" r="18" stroke="url(#lg1)" stroke-width="2.5"/>
-      <path d="M12 20c0-4.4 3.6-8 8-8m0 16c4.4 0 8-3.6 8-8" stroke="#0052cc" stroke-width="2" stroke-linecap="round"/>
-      <path d="M20 12c4.4 0 8 3.6 8 8m-16 0c0 4.4 3.6 8 8 8" stroke="#1a8cff" stroke-width="2" stroke-linecap="round"/>
-      <circle cx="20" cy="20" r="3" fill="#00b8d9"/>
+    <svg viewBox="0 0 44 44" fill="none">
+      <defs>
+        <clipPath id="cCircle"><circle cx="22" cy="22" r="16"/></clipPath>
+        <linearGradient id="stripe1" x1="0" y1="0" x2="44" y2="44"><stop offset="0%" stop-color="#ef4444"/><stop offset="20%" stop-color="#f59e0b"/><stop offset="40%" stop-color="#22c55e"/><stop offset="60%" stop-color="#3b82f6"/><stop offset="80%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#ec4899"/></linearGradient>
+      </defs>
+      <circle cx="22" cy="22" r="20" stroke="rgba(255,255,255,0.12)" stroke-width="1.5" fill="none"/>
+      <g clip-path="url(#cCircle)" opacity="0.85">
+        <line x1="6" y1="2" x2="18" y2="42" stroke="#ef4444" stroke-width="3.2"/>
+        <line x1="11" y1="2" x2="23" y2="42" stroke="#f97316" stroke-width="3.2"/>
+        <line x1="16" y1="2" x2="28" y2="42" stroke="#facc15" stroke-width="3.2"/>
+        <line x1="21" y1="2" x2="33" y2="42" stroke="#22c55e" stroke-width="3.2"/>
+        <line x1="26" y1="2" x2="38" y2="42" stroke="#3b82f6" stroke-width="3.2"/>
+        <line x1="31" y1="2" x2="43" y2="42" stroke="#8b5cf6" stroke-width="3.2"/>
+        <line x1="36" y1="2" x2="48" y2="42" stroke="#ec4899" stroke-width="3.2"/>
+      </g>
+      <circle cx="22" cy="22" r="16" stroke="rgba(255,255,255,0.25)" stroke-width="1.8" fill="none"/>
     </svg>
     <div class="brand">
-      <span class="brand-name"><span class="cn">TCS Agentic</span> <span class="ai">AI</span></span>
+      <span class="brand-name"><span class="tcs">TCS</span> <span class="agentic">Agentic</span> <span class="ai">AI</span></span>
       <span class="brand-sub">Enterprise Intelligence Platform</span>
     </div>
   </div>
