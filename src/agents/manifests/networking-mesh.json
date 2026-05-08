@@ -1,0 +1,41 @@
+{
+  "id": "networking-mesh",
+  "name": "Networking & Service Mesh Agent",
+  "version": "1.0.0",
+  "description": "Network policies, routes, ingress, CoreDNS, service connectivity checks, and Istio / OpenShift Service Mesh management.",
+  "category": "Platform",
+  "icon": "network",
+  "color": "#06b6d4",
+  "tools": [
+    "net_check_endpoints",
+    "net_get_routes",
+    "net_get_ingresses",
+    "net_get_networkpolicies",
+    "net_get_coredns_config",
+    "net_check_service",
+    "net_get_route_detail",
+    "ossm_mesh_graph",
+    "ossm_istio_config_read",
+    "ossm_istio_config_write",
+    "ossm_get_resource_details",
+    "ossm_get_metrics",
+    "ossm_get_traces",
+    "ossm_workload_logs"
+  ],
+  "services": [],
+  "capabilities": [
+    "Service endpoint reachability testing",
+    "Routes and ingress inventory and detail inspection",
+    "Network policy listing and gap analysis",
+    "CoreDNS configuration inspection",
+    "End-to-end service connectivity diagnostics",
+    "Istio / OSSM mesh graph visualisation",
+    "VirtualService, DestinationRule, Gateway management",
+    "Mesh metrics, traces, and workload logs"
+  ],
+  "requires": ["core"],
+  "protocols": ["mcp", "rest", "a2a"],
+  "selectable": true,
+  "mcpEndpoint": "/mcp/networking-mesh",
+  "tags": ["network", "routes", "ingress", "istio", "ossm", "mesh"]
+}

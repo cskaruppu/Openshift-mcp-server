@@ -1,0 +1,31 @@
+{
+  "id": "multi-cluster-acm",
+  "name": "Multi-Cluster & ACM Agent",
+  "version": "1.0.0",
+  "description": "Red Hat Advanced Cluster Management (ACM) for managed clusters, governance policies, federated search, and emergency cross-cluster response.",
+  "category": "Governance",
+  "icon": "globe",
+  "color": "#0891b2",
+  "tools": [
+    "list_managed_clusters",
+    "get_managed_cluster_details",
+    "list_acm_policies",
+    "search_across_clusters",
+    "emergency_fix",
+    "approved_fix"
+  ],
+  "services": ["multi-cluster"],
+  "capabilities": [
+    "ACM ManagedCluster inventory across hub and spokes",
+    "Per-cluster detail with health, version, capacity",
+    "ACM governance policy listing and compliance state",
+    "Federated search across all managed clusters",
+    "Emergency fix with two-person approval rule",
+    "Approved emergency action execution with audit trail"
+  ],
+  "requires": ["core"],
+  "protocols": ["mcp", "rest", "a2a"],
+  "selectable": true,
+  "mcpEndpoint": "/mcp/multi-cluster-acm",
+  "tags": ["acm", "multi-cluster", "fleet", "governance", "emergency"]
+}

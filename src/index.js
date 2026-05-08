@@ -93,6 +93,8 @@ import { listFiringAlerts } from "./services/alertmanager.js";
 import { initSafety, getSafetyMode } from "./services/safety.js";
 import { redactIfEnabled } from "./services/redaction.js";
 import { loadKubeconfig, registerMultiClusterTools } from "./services/multi-cluster.js";
+import { handleAgentRoutes as handleAgentRegistryRoutes, loadAgents } from "./agents/registry.js";
+import { handleAgentMcpRoutes } from "./agents/mcp-router.js";
 import { loadConfig } from "./utils/config.js";
 import { ocpGet } from "./utils/openshift-client.js";
 import {
@@ -987,6 +989,39 @@ async function startSSE() {
         })
       );
       return;
+    }
+
+    // Agent Registry & A2A discovery (additive — works with any framework).
+    // Routes: /.well-known/agent.json, /api/agents, /api/agents/:id, /api/agents/:id/tools
+    if (
+      url.pathname === "/.well-known/agent.json" ||
+      url.pathname === "/api/agents" ||
+      url.pathname.startsWith("/api/agents/")
+    ) {
+      const handled = await handleAgentRegistryRoutes(req, res, url);
+      if (handled) return;
+    }
+
+    // OpenAPI 3.1 spec — serves the standards-compliant API description.
+    if (req.method === "GET" && (url.pathname === "/openapi.yaml" || url.pathname === "/openapi.json")) {
+      try {
+        const specPath = resolve(process.cwd(), "adapters/rest-api/openapi.yaml");
+        const data = await readFile(specPath);
+        const ct = url.pathname.endsWith(".json") ? "application/json" : "application/yaml";
+        res.writeHead(200, { "Content-Type": ct, "Cache-Control": "public, max-age=300" });
+        res.end(data);
+        return;
+      } catch {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "OpenAPI spec not found" }));
+        return;
+      }
+    }
+
+    // Per-agent MCP endpoints — /mcp/<agent-id>/sse and /mcp/<agent-id>/message
+    if (url.pathname.startsWith("/mcp/")) {
+      const handled = await handleAgentMcpRoutes(req, res, url);
+      if (handled) return;
     }
 
     // Diagnostic endpoint — checks K8s API connectivity, token, auth mode
@@ -2186,11 +2221,20 @@ async function startSSE() {
    }
   });
 
+  // Warm-load the Agent Registry so /.well-known/agent.json is fast on first hit.
+  loadAgents().then((list) => {
+    console.error(`  Agent Registry:   ${list.length} agents loaded`);
+  }).catch(() => {});
+
   httpServer.listen(PORT, "0.0.0.0", () => {
     console.error(`TCS Agentic AI — Enterprise Intelligence Platform`);
     console.error(`  Server running on http://0.0.0.0:${PORT}`);
-    console.error(`  MCP SSE:          GET  /sse`);
+    console.error(`  MCP SSE (full):   GET  /sse`);
     console.error(`  MCP Message:      POST /message?sessionId=<id>`);
+    console.error(`  Per-agent MCP:    GET  /mcp/<agent-id>/sse`);
+    console.error(`  Agent discovery:  GET  /.well-known/agent.json`);
+    console.error(`  Agent registry:   GET  /api/agents`);
+    console.error(`  OpenAPI spec:     GET  /openapi.yaml`);
     console.error(`  MCP Hub:          GET  /api/hub/servers`);
     console.error(`  Hub Tools:        GET  /api/hub/tools`);
     console.error(`  Orchestrator:     POST /api/hub/orchestrate`);

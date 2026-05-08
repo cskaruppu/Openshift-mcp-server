@@ -1,0 +1,42 @@
+{
+  "id": "security-compliance",
+  "name": "Security & Compliance Agent",
+  "version": "1.0.0",
+  "description": "RBAC audit, Pod Security Standards, network policy audit, image scanning, secret rotation analysis, SCC advisor, compliance scanning, and policy generation.",
+  "category": "Governance",
+  "icon": "shield-check",
+  "color": "#dc2626",
+  "tools": [
+    "security_rbac_audit",
+    "security_rbac_who_can",
+    "security_pod_security_audit",
+    "security_network_policy_audit",
+    "security_image_audit",
+    "security_secret_audit",
+    "security_compliance_score",
+    "compliance_check",
+    "scc_explain",
+    "scc_audit",
+    "generate_policy",
+    "generate_networkpolicy",
+    "generate_scc"
+  ],
+  "services": ["safety", "redaction"],
+  "capabilities": [
+    "RBAC audit across ClusterRoles and RoleBindings",
+    "Reverse RBAC: 'who can do X on resource Y'",
+    "Pod Security Standards compliance check (privileged, hostPath, root)",
+    "Network policy gap analysis (namespaces without isolation)",
+    "Container image audit (latest tags, registry, signature)",
+    "Secret rotation and exposure analysis",
+    "OpenSCAP compliance scoring and reports",
+    "SCC (Security Context Constraints) explainer and audit",
+    "Auto-generation of NetworkPolicies, SCCs, and Pod policies",
+    "Read-only and disable-destructive safety modes"
+  ],
+  "requires": ["core"],
+  "protocols": ["mcp", "rest", "a2a"],
+  "selectable": true,
+  "mcpEndpoint": "/mcp/security-compliance",
+  "tags": ["security", "rbac", "compliance", "scc", "policy"]
+}

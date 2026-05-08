@@ -1,0 +1,31 @@
+{
+  "id": "upgrade-lifecycle",
+  "name": "Upgrade & Lifecycle Agent",
+  "version": "1.0.0",
+  "description": "22-point pre-upgrade cluster assessment with version comparison, channel validation, operator compatibility, certificate expiry, deprecated API detection, and node topology analysis.",
+  "category": "Lifecycle",
+  "icon": "arrow-up-circle",
+  "color": "#10b981",
+  "tools": [
+    "upgrade_preflight_check",
+    "upgrade_readiness",
+    "certificate_check"
+  ],
+  "services": [],
+  "capabilities": [
+    "22-point industry-standard pre-upgrade assessment",
+    "Side-by-side current vs target version comparison (OCP, Kubernetes, CRI-O, RHEL)",
+    "Upgrade path validation against channel availability",
+    "Cluster operator readiness check (Available / Degraded / Progressing)",
+    "OLM operator compatibility (maxOpenShiftVersion, minKubeVersion, channel alignment)",
+    "Certificate expiry detection (90-day window)",
+    "Deprecated and removed API detection across version skew",
+    "Node topology analysis with upgrade duration estimation",
+    "Feature highlights summary across version delta"
+  ],
+  "requires": ["core"],
+  "protocols": ["mcp", "rest", "a2a"],
+  "selectable": true,
+  "mcpEndpoint": "/mcp/upgrade-lifecycle",
+  "tags": ["upgrade", "preflight", "lifecycle", "version", "compatibility"]
+}

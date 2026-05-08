@@ -1349,6 +1349,52 @@ tr:hover td{background:#ffffff06}
 .pending-cr-item { position:relative; }
 .cr-syncing { opacity:0.5; pointer-events:none; }
 .cr-empty-state { padding:16px 12px; text-align:center; font-size:11px; color:var(--text2); }
+/* Agent Registry */
+.agents-hero{background:linear-gradient(135deg,#0f172a 0%,#1e3a8a 50%,#0f172a 100%);border:1px solid #334155;border-radius:14px;padding:22px 26px;color:#fff}
+.agents-hero-inner{display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap}
+.agents-hero-title{font-size:24px;font-weight:800;letter-spacing:-.3px;color:#fff}
+.agents-hero-sub{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.agents-hero-badge{padding:4px 10px;border-radius:12px;background:rgba(255,255,255,0.12);color:#dbeafe;font-size:11px;font-weight:600;border:1px solid rgba(255,255,255,0.18)}
+.agents-hero-stats{display:flex;gap:16px}
+.agents-stat{text-align:center;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:12px 18px;min-width:84px}
+.agents-stat-num{font-size:26px;font-weight:800;color:#fff}
+.agents-stat-lbl{font-size:10px;color:#cbd5e1;text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+.agents-endpoints-title{font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px;opacity:0.8}
+.agents-endpoints-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.agents-endpoint{padding:10px 12px;background:color-mix(in srgb,var(--accent2) 5%,transparent);border:1px solid color-mix(in srgb,var(--accent2) 25%,var(--border));border-radius:8px}
+.agents-endpoint-label{font-size:10px;text-transform:uppercase;color:var(--text2);font-weight:600;letter-spacing:.4px;margin-bottom:4px}
+.agents-endpoint-url{display:block;font-size:12px;color:var(--accent2);word-break:break-all;font-family:'SFMono-Regular',Consolas,monospace}
+.agents-frameworks{margin-top:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:10px;border-top:1px dashed var(--border)}
+.agents-frameworks-label{font-size:11px;color:var(--text2);font-weight:600}
+.agents-framework-pill{padding:3px 10px;border-radius:10px;background:color-mix(in srgb,var(--ok) 15%,transparent);color:var(--ok);font-size:11px;font-weight:600;border:1px solid color-mix(in srgb,var(--ok) 25%,transparent)}
+.agents-category-title{font-size:13px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 10px;padding-bottom:6px;border-bottom:2px solid color-mix(in srgb,var(--accent2) 30%,var(--border))}
+.agents-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.agent-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;cursor:pointer;transition:all 0.18s ease;position:relative;overflow:hidden}
+.agent-card:hover{border-color:var(--accent2);transform:translateY(-2px);box-shadow:0 6px 16px rgba(59,130,246,0.1)}
+.agent-card::before{content:'';position:absolute;top:0;left:0;width:4px;height:100%;background:var(--agent-color,var(--accent2));border-radius:0 2px 2px 0}
+.agent-card-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.agent-card-icon{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;background:color-mix(in srgb,var(--agent-color,var(--accent2)) 15%,transparent);color:var(--agent-color,var(--accent2))}
+.agent-card-name{font-size:14px;font-weight:700;color:var(--text);flex:1;line-height:1.2}
+.agent-card-status{padding:2px 8px;border-radius:8px;background:color-mix(in srgb,var(--ok) 15%,transparent);color:var(--ok);font-size:10px;font-weight:700;text-transform:uppercase}
+.agent-card-desc{font-size:12px;color:var(--text2);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:10px}
+.agent-card-meta{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--text2);padding-top:8px;border-top:1px solid var(--border)}
+.agent-card-tools{font-weight:600;color:var(--accent2)}
+.agent-card-cat{padding:2px 7px;border-radius:6px;background:color-mix(in srgb,var(--text2) 10%,transparent);font-size:10px;text-transform:uppercase;letter-spacing:.4px}
+.agent-detail-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;justify-content:flex-end;backdrop-filter:blur(2px)}
+.agent-detail{width:520px;max-width:100%;height:100%;background:var(--bg);border-left:1px solid var(--border);overflow-y:auto;padding:24px;position:relative;animation:agentDetailIn 0.18s ease-out}
+@keyframes agentDetailIn{from{transform:translateX(20px);opacity:0}to{transform:translateX(0);opacity:1}}
+.agent-detail-close{position:absolute;top:14px;right:16px;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--text2);cursor:pointer;background:var(--card)}
+.agent-detail-close:hover{background:color-mix(in srgb,var(--crit) 15%,transparent);color:var(--crit)}
+.agent-detail h3{font-size:18px;font-weight:700;color:var(--text);margin-bottom:6px}
+.agent-detail-cat{display:inline-block;padding:3px 10px;border-radius:8px;background:color-mix(in srgb,var(--accent2) 15%,transparent);color:var(--accent2);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;margin-bottom:12px}
+.agent-detail h4{font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 8px;opacity:0.7}
+.agent-detail p{font-size:13px;color:var(--text);line-height:1.6;margin-bottom:8px}
+.agent-detail ul{margin:0;padding-left:18px;font-size:12px;color:var(--text2);line-height:1.7}
+.agent-detail-mcp{padding:10px 14px;background:color-mix(in srgb,var(--accent2) 8%,transparent);border:1px solid color-mix(in srgb,var(--accent2) 25%,var(--border));border-radius:8px;font-family:'SFMono-Regular',Consolas,monospace;font-size:12px;color:var(--accent2);word-break:break-all}
+.agent-detail-tool-list{display:flex;flex-wrap:wrap;gap:5px}
+.agent-detail-tool{padding:3px 8px;background:color-mix(in srgb,var(--accent2) 10%,transparent);border:1px solid color-mix(in srgb,var(--accent2) 20%,transparent);border-radius:6px;font-family:'SFMono-Regular',Consolas,monospace;font-size:11px;color:var(--text)}
+.agent-detail-protos{display:flex;gap:6px;margin-top:6px}
+.agent-detail-proto{padding:3px 9px;border-radius:6px;background:color-mix(in srgb,var(--ok) 12%,transparent);color:var(--ok);font-size:11px;font-weight:600;text-transform:uppercase}
 /* Fix Proposal Cards */
 .fix-proposal { margin: 16px 0; border: 1px solid color-mix(in srgb, var(--accent2) 30%, var(--border)); border-radius: 12px; overflow: hidden; background: var(--card); }
 .fix-proposal-header { display:flex; align-items:center; gap:10px; padding:14px 16px; background: color-mix(in srgb, var(--accent2) 8%, transparent); border-bottom:1px solid color-mix(in srgb, var(--border) 50%, transparent); }
@@ -1411,6 +1457,7 @@ tr:hover td{background:#ffffff06}
   <div class="nav-tabs">
     <button class="nav-tab active" data-view="dashboard" onclick="showView('dashboard')">Dashboard</button>
     <button class="nav-tab" data-view="chat" onclick="showView('chat')">AI Chat</button>
+    <button class="nav-tab" data-view="agents" onclick="showView('agents')">Agents <span class="alerts-badge" id="agents-badge" style="background:#3b82f6">12</span></button>
     <button class="nav-tab" data-view="audit" onclick="showView('audit')">Audit</button>
     <button class="nav-tab" data-view="hub" onclick="showView('hub')">AI Hub</button>
     <button class="nav-tab" data-view="intelligence" onclick="showView('intelligence')">AI Intelligence <span class="alerts-badge" id="intel-badge" style="background:#6366f1">0</span><span class="alerts-badge" id="alerts-badge" style="display:none">0</span></button>
@@ -2673,6 +2720,69 @@ tr:hover td{background:#ffffff06}
     <div id="intel-kb-count">0</div>
     <div id="intel-monitor-status"></div>
     <div id="intel-insights-list"></div>
+  </div>
+</div>
+
+<!-- Agent Registry View — global standard, MCP-native, framework-agnostic -->
+<div id="view-agents" class="container" style="display:none">
+  <div class="agents-hero">
+    <div class="agents-hero-inner">
+      <div>
+        <div class="agents-hero-title">Agent Registry</div>
+        <div class="agents-hero-sub">
+          <span class="agents-hero-badge">MCP-native</span>
+          <span class="agents-hero-badge">Framework-agnostic</span>
+          <span class="agents-hero-badge">A2A discovery</span>
+          <span class="agents-hero-badge">OpenAPI 3.1</span>
+        </div>
+      </div>
+      <div class="agents-hero-stats">
+        <div class="agents-stat"><div class="agents-stat-num" id="agents-total">--</div><div class="agents-stat-lbl">Agents</div></div>
+        <div class="agents-stat"><div class="agents-stat-num" id="agents-tools-total">--</div><div class="agents-stat-lbl">MCP Tools</div></div>
+        <div class="agents-stat"><div class="agents-stat-num">15</div><div class="agents-stat-lbl">Services</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="agents-endpoints card" style="margin-top:14px">
+    <div class="agents-endpoints-title">Integration Endpoints</div>
+    <div class="agents-endpoints-grid">
+      <div class="agents-endpoint">
+        <div class="agents-endpoint-label">A2A Discovery</div>
+        <code class="agents-endpoint-url" id="ep-discovery">/.well-known/agent.json</code>
+      </div>
+      <div class="agents-endpoint">
+        <div class="agents-endpoint-label">Agent Registry</div>
+        <code class="agents-endpoint-url" id="ep-registry">/api/agents</code>
+      </div>
+      <div class="agents-endpoint">
+        <div class="agents-endpoint-label">OpenAPI Spec</div>
+        <code class="agents-endpoint-url" id="ep-openapi">/openapi.yaml</code>
+      </div>
+      <div class="agents-endpoint">
+        <div class="agents-endpoint-label">Full MCP Server</div>
+        <code class="agents-endpoint-url" id="ep-mcp">/sse</code>
+      </div>
+    </div>
+    <div class="agents-frameworks">
+      <span class="agents-frameworks-label">Compatible:</span>
+      <span class="agents-framework-pill">Microsoft Agent Framework</span>
+      <span class="agents-framework-pill">Anthropic Claude</span>
+      <span class="agents-framework-pill">LangChain</span>
+      <span class="agents-framework-pill">Any MCP client</span>
+    </div>
+  </div>
+
+  <div id="agents-categories-container" style="margin-top:18px">
+    <div class="loading">Loading agents...</div>
+  </div>
+
+  <!-- Agent detail drawer -->
+  <div id="agent-detail-overlay" class="agent-detail-overlay" style="display:none" onclick="closeAgentDetail(event)">
+    <div class="agent-detail" onclick="event.stopPropagation()">
+      <div class="agent-detail-close" onclick="closeAgentDetail()">&times;</div>
+      <div id="agent-detail-content"></div>
+    </div>
   </div>
 </div>
 
@@ -5348,7 +5458,7 @@ function showView(view) {
   // Alerts is now merged into AI Intelligence
   if (view === 'alerts-view' || view === 'alerts') view = 'intelligence';
   _currentView = view;
-  const views = ['dashboard', 'chat', 'audit', 'settings', 'hub', 'intelligence'];
+  const views = ['dashboard', 'chat', 'audit', 'settings', 'hub', 'intelligence', 'agents'];
   const tabs = document.querySelectorAll('.nav-tab');
   tabs.forEach(t => t.classList.toggle('active', t.dataset.view === view));
 
@@ -5377,6 +5487,8 @@ function showView(view) {
     loadHubView();
   } else if (view === 'intelligence') {
     loadIntelligenceView();
+  } else if (view === 'agents') {
+    loadAgentRegistry();
   }
 }
 
@@ -9693,6 +9805,152 @@ async function loadHubView() {
     console.error('Hub load error:', e);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Agent Registry — discoverable, framework-agnostic agent catalogue
+// ---------------------------------------------------------------------------
+var _agentRegistry = null;
+
+async function loadAgentRegistry() {
+  var container = document.getElementById('agents-categories-container');
+  if (!container) return;
+
+  try {
+    var base = MCP_API.replace(/\/api$/, '');
+    var [card, byCat] = await Promise.all([
+      fetch(base + '/.well-known/agent.json').then(function(r) { return r.json(); }).catch(function() { return null; }),
+      fetch(base + '/api/agents/categories').then(function(r) { return r.json(); }).catch(function() { return { categories: [] }; }),
+    ]);
+
+    _agentRegistry = card;
+
+    if (card) {
+      var totalEl = document.getElementById('agents-total');
+      if (totalEl) totalEl.textContent = card.capabilities && card.capabilities.agents != null ? card.capabilities.agents : '12';
+      var toolsEl = document.getElementById('agents-tools-total');
+      if (toolsEl) toolsEl.textContent = card.capabilities && card.capabilities.tools != null ? card.capabilities.tools : '162';
+      var ep = card.endpoints || {};
+      var setEp = function(id, val) { var e = document.getElementById(id); if (e && val) e.textContent = val; };
+      setEp('ep-discovery', base + '/.well-known/agent.json');
+      setEp('ep-registry', ep.agents || (base + '/api/agents'));
+      setEp('ep-openapi', ep.openapi || (base + '/openapi.yaml'));
+      setEp('ep-mcp', ep.mcp || (base + '/sse'));
+      var badge = document.getElementById('agents-badge');
+      if (badge && card.capabilities && card.capabilities.agents != null) badge.textContent = card.capabilities.agents;
+    }
+
+    var groups = (byCat && byCat.categories) || [];
+    if (groups.length === 0) {
+      container.innerHTML = '<div class="card" style="text-align:center;padding:30px;color:var(--text2)">No agents registered. Check that <code>src/agents/manifests/</code> contains agent manifest files.</div>';
+      return;
+    }
+
+    var html = '';
+    var categoryOrder = ['Operations', 'Lifecycle', 'Platform', 'Governance', 'Intelligence'];
+    groups.sort(function(a, b) {
+      var ai = categoryOrder.indexOf(a.category); if (ai === -1) ai = 999;
+      var bi = categoryOrder.indexOf(b.category); if (bi === -1) bi = 999;
+      return ai - bi;
+    });
+
+    for (var gi = 0; gi < groups.length; gi++) {
+      var g = groups[gi];
+      html += '<div class="agents-category-title">' + esc(g.category) + ' (' + g.agents.length + ')</div>';
+      html += '<div class="agents-grid">';
+      for (var ai = 0; ai < g.agents.length; ai++) {
+        html += renderAgentCard(g.agents[ai]);
+      }
+      html += '</div>';
+    }
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = '<div class="card" style="color:var(--crit);padding:20px">Failed to load Agent Registry: ' + esc(e.message) + '</div>';
+  }
+}
+
+function renderAgentCard(a) {
+  var color = a.color || '#3b82f6';
+  var emoji = agentEmojiFor(a.icon);
+  return '<div class="agent-card" style="--agent-color:' + esc(color) + '" onclick="showAgentDetail(\'' + esc(a.id) + '\')">' +
+    '<div class="agent-card-head">' +
+      '<div class="agent-card-icon" style="--agent-color:' + esc(color) + '">' + emoji + '</div>' +
+      '<div class="agent-card-name">' + esc(a.name) + '</div>' +
+      '<div class="agent-card-status">Active</div>' +
+    '</div>' +
+    '<div class="agent-card-desc">' + esc(a.description || '') + '</div>' +
+    '<div class="agent-card-meta">' +
+      '<span class="agent-card-tools">' + ((a.tools && a.tools.length) || 0) + ' tools</span>' +
+      '<span class="agent-card-cat">' + esc(a.category || '') + '</span>' +
+    '</div>' +
+    '</div>';
+}
+
+function agentEmojiFor(icon) {
+  var map = {
+    'server': '\u{1F5A5}\u{FE0F}', 'package': '\u{1F4E6}', 'stethoscope': '\u{1FA7A}',
+    'arrow-up-circle': '\u{2B06}\u{FE0F}', 'clipboard-check': '\u{1F4CB}', 'shield-check': '\u{1F512}',
+    'network': '\u{1F310}', 'git-branch': '\u{1F500}', 'activity': '\u{1F4C8}',
+    'monitor': '\u{1F5A5}\u{FE0F}', 'brain': '\u{1F9E0}', 'globe': '\u{1F30D}',
+  };
+  return map[icon] || '\u{1F916}';
+}
+
+async function showAgentDetail(agentId) {
+  var overlay = document.getElementById('agent-detail-overlay');
+  var content = document.getElementById('agent-detail-content');
+  if (!overlay || !content) return;
+
+  content.innerHTML = '<div class="loading">Loading...</div>';
+  overlay.style.display = 'flex';
+
+  try {
+    var base = MCP_API.replace(/\/api$/, '');
+    var resp = await fetch(base + '/api/agents/' + encodeURIComponent(agentId));
+    if (!resp.ok) throw new Error('Agent not found');
+    var a = await resp.json();
+
+    var emoji = agentEmojiFor(a.icon);
+    var color = a.color || '#3b82f6';
+    var mcpUrl = base + (a.mcpEndpoint || ('/mcp/' + a.id)) + '/sse';
+
+    var caps = (a.capabilities || []).map(function(c) { return '<li>' + esc(c) + '</li>'; }).join('');
+    var tools = (a.tools || []).map(function(t) { return '<span class="agent-detail-tool">' + esc(t) + '</span>'; }).join('');
+    var protos = (a.protocols || []).map(function(p) { return '<span class="agent-detail-proto">' + esc(p) + '</span>'; }).join('');
+    var services = a.services && a.services.length ? '<ul>' + a.services.map(function(s) { return '<li>' + esc(s) + '.js</li>'; }).join('') + '</ul>' : '<p style="color:var(--text2);font-size:12px">None — uses MCP tools directly.</p>';
+
+    content.innerHTML =
+      '<div class="agent-card-icon" style="--agent-color:' + esc(color) + ';width:48px;height:48px;font-size:24px;margin-bottom:10px">' + emoji + '</div>' +
+      '<h3>' + esc(a.name) + '</h3>' +
+      '<div class="agent-detail-cat">' + esc(a.category || '') + ' &middot; v' + esc(a.version || '1.0.0') + '</div>' +
+      '<p>' + esc(a.description || '') + '</p>' +
+      '<h4>Capabilities (' + (a.capabilities || []).length + ')</h4>' +
+      '<ul>' + caps + '</ul>' +
+      '<h4>MCP Endpoint</h4>' +
+      '<div class="agent-detail-mcp">' + esc(mcpUrl) + '</div>' +
+      '<div class="agent-detail-protos">' + protos + '</div>' +
+      '<h4>Intelligence Services</h4>' +
+      services +
+      '<h4>MCP Tools (' + (a.tools || []).length + ')</h4>' +
+      '<div class="agent-detail-tool-list">' + tools + '</div>' +
+      '<h4>Connect from Your AI Framework</h4>' +
+      '<div class="agent-detail-mcp" style="margin-bottom:6px;color:var(--text)"># Microsoft Agent Framework (Python)</div>' +
+      '<div class="agent-detail-mcp">client.get_mcp_tool(name="' + esc(a.name) + '", url="' + esc(mcpUrl) + '")</div>' +
+      '<div class="agent-detail-mcp" style="margin-top:8px;margin-bottom:6px;color:var(--text)"># Anthropic Claude Agent SDK</div>' +
+      '<div class="agent-detail-mcp">new SSEClientTransport(new URL("' + esc(mcpUrl) + '"))</div>';
+  } catch (e) {
+    content.innerHTML = '<div style="color:var(--crit);padding:20px">' + esc(e.message) + '</div>';
+  }
+}
+
+function closeAgentDetail(ev) {
+  if (ev && ev.target && ev.target.id !== 'agent-detail-overlay') return;
+  var overlay = document.getElementById('agent-detail-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeAgentDetail();
+});
 
 function buildKebabMenu(clusterId, clusterName, platform, isBuiltin, source) {
   var menuId = 'kebab-' + clusterId.replace(/[^a-zA-Z0-9]/g, '_');

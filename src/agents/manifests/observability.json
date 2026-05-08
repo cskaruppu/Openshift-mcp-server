@@ -1,0 +1,31 @@
+{
+  "id": "observability",
+  "name": "Observability & Monitoring Agent",
+  "version": "1.0.0",
+  "description": "Prometheus PromQL queries, Alertmanager firing alerts, top metrics for pods and nodes, and dashboard summary aggregation.",
+  "category": "Platform",
+  "icon": "activity",
+  "color": "#0ea5e9",
+  "tools": [
+    "prometheus_query",
+    "prometheus_query_range",
+    "alertmanager_query",
+    "pods_top",
+    "nodes_top",
+    "get_dashboard_summary"
+  ],
+  "services": ["prometheus", "alertmanager", "metrics"],
+  "capabilities": [
+    "Instant Prometheus PromQL queries",
+    "Range Prometheus queries with step interval",
+    "Alertmanager firing alerts query and routing",
+    "Top CPU/memory pods with sorting and namespace filter",
+    "Top CPU/memory nodes with sorting",
+    "Aggregated dashboard summary (cluster, alerts, ops, OLM, recent CRs)"
+  ],
+  "requires": ["core"],
+  "protocols": ["mcp", "rest", "a2a"],
+  "selectable": true,
+  "mcpEndpoint": "/mcp/observability",
+  "tags": ["prometheus", "metrics", "alerts", "monitoring", "observability"]
+}

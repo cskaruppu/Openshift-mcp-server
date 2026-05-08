@@ -1,0 +1,41 @@
+{
+  "id": "cicd-gitops",
+  "name": "CI/CD & GitOps Agent",
+  "version": "1.0.0",
+  "description": "Tekton pipelines and tasks management, ArgoCD applications, GitOps sync, drift remediation, and pipeline run history.",
+  "category": "Platform",
+  "icon": "git-branch",
+  "color": "#a855f7",
+  "tools": [
+    "tekton_list_pipelines",
+    "tekton_list_pipelineruns",
+    "tekton_get_pipelinerun",
+    "tekton_start_pipeline",
+    "tekton_list_tasks",
+    "tekton_pipelinerun_restart",
+    "tekton_start_task",
+    "tekton_taskrun_restart",
+    "tekton_get_taskrun_logs",
+    "gitops_list_applications",
+    "gitops_get_application",
+    "gitops_sync_application",
+    "gitops_app_diff",
+    "gitops_list_appprojects",
+    "gitops_application_rollback"
+  ],
+  "services": [],
+  "capabilities": [
+    "Tekton pipeline and task inventory",
+    "Start, restart, and inspect pipeline runs",
+    "TaskRun log streaming and analysis",
+    "ArgoCD Application listing and sync",
+    "Application drift detection (live vs desired state)",
+    "GitOps rollback to last healthy revision",
+    "AppProject inventory and policy"
+  ],
+  "requires": ["core"],
+  "protocols": ["mcp", "rest", "a2a"],
+  "selectable": true,
+  "mcpEndpoint": "/mcp/cicd-gitops",
+  "tags": ["tekton", "argocd", "gitops", "pipelines", "ci-cd"]
+}

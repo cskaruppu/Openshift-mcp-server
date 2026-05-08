@@ -1,0 +1,36 @@
+{
+  "id": "diagnostics-healing",
+  "name": "Diagnostics & Healing Agent",
+  "version": "1.0.0",
+  "description": "Root cause analysis with exit code mapping, log pattern matching across 15+ failure signatures, automated fix proposals with approval gates, curated remediation playbooks, and must-gather collection for Red Hat support.",
+  "category": "Operations",
+  "icon": "stethoscope",
+  "color": "#ef4444",
+  "tools": [
+    "diagnose_pod_issues",
+    "diagnose_namespace_health",
+    "cluster_health_check",
+    "operator_health",
+    "operator_upgrade_check",
+    "mustgather_cluster_snapshot",
+    "mustgather_namespace_dump",
+    "mustgather_etcd_health",
+    "mustgather_certificate_check",
+    "mustgather_resource_quotas"
+  ],
+  "services": ["pod-doctor", "fix-executor", "playbooks", "knowledge-base", "learning-engine"],
+  "capabilities": [
+    "Pod root cause analysis with deep exit code mapping (0, 1, 2, 126, 127, 137, 139)",
+    "Log pattern matching for OOMKilled, CrashLoopBackOff, ImagePullBackOff, ConfigError, BadFlag, MissingArg, PortConflict, ParseError",
+    "Curated remediation playbooks for known failure signatures",
+    "Automated fix proposals routed through approval workflow",
+    "Cross-incident learning — matches new issues to historical resolutions",
+    "Must-gather collection for Red Hat case attachment",
+    "Operator health and upgrade compatibility diagnostics"
+  ],
+  "requires": ["core"],
+  "protocols": ["mcp", "rest", "a2a"],
+  "selectable": true,
+  "mcpEndpoint": "/mcp/diagnostics-healing",
+  "tags": ["diagnostics", "rca", "healing", "must-gather", "playbooks"]
+}

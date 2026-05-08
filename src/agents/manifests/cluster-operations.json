@@ -1,0 +1,41 @@
+{
+  "id": "cluster-operations",
+  "name": "Cluster Operations Agent",
+  "version": "1.0.0",
+  "description": "Cluster-wide operations including cluster info, node health, namespace management, and generic Kubernetes resource operations.",
+  "category": "Operations",
+  "icon": "server",
+  "color": "#3b82f6",
+  "tools": [
+    "get_cluster_info",
+    "get_cluster_events",
+    "get_cluster_resource_usage",
+    "list_nodes",
+    "get_node_details",
+    "nodes_log",
+    "check_kubelet_status",
+    "check_crio_status",
+    "nodes_stats_summary",
+    "list_namespaces",
+    "get_namespace_details",
+    "generic_get",
+    "generic_list",
+    "generic_create",
+    "generic_delete",
+    "generic_scale",
+    "generic_apply"
+  ],
+  "services": [],
+  "capabilities": [
+    "Cluster-level inventory and health visibility",
+    "Node health, kubelet & CRI-O status, log retrieval",
+    "Namespace listing and detail inspection",
+    "Generic Kubernetes resource CRUD operations",
+    "Cluster events and resource utilisation"
+  ],
+  "requires": ["core"],
+  "protocols": ["mcp", "rest", "a2a"],
+  "selectable": true,
+  "mcpEndpoint": "/mcp/cluster-operations",
+  "tags": ["cluster", "node", "namespace", "kubernetes"]
+}

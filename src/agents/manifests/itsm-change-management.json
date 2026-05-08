@@ -1,0 +1,32 @@
+{
+  "id": "itsm-change-management",
+  "name": "ITSM & Change Management Agent",
+  "version": "1.0.0",
+  "description": "ServiceNow integration for change request lifecycle, incident creation, approval polling, and audit-ready execution of approved changes.",
+  "category": "Lifecycle",
+  "icon": "clipboard-check",
+  "color": "#f59e0b",
+  "tools": [
+    "create_servicenow_incident",
+    "create_change_request",
+    "check_approval_status",
+    "query_servicenow",
+    "update_servicenow_record"
+  ],
+  "services": ["cr-tracker", "action-workflow"],
+  "capabilities": [
+    "Auto-create ServiceNow change requests for upgrades and remediations",
+    "Auto-create ServiceNow incidents from proactive alerts",
+    "Periodic approval status polling with proactive notifications",
+    "ITIL-aligned change lifecycle (submitted → approved → scheduled → executed)",
+    "Auto-cancel CRs deleted from ServiceNow (404 handling)",
+    "HTML pre-assessment report attachment to CRs",
+    "Pending CR panel with dismiss, sync-all, last-synced indicator",
+    "ServiceNow record query and update via natural language"
+  ],
+  "requires": ["core"],
+  "protocols": ["mcp", "rest", "a2a"],
+  "selectable": true,
+  "mcpEndpoint": "/mcp/itsm-change-management",
+  "tags": ["servicenow", "itsm", "change-request", "approval", "itil"]
+}

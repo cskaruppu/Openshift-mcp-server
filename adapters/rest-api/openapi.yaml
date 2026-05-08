@@ -1,0 +1,380 @@
+openapi: 3.1.0
+info:
+  title: TCS Agentic AI — Enterprise OpenShift Platform
+  description: |
+    MCP-native, framework-agnostic AI agent platform for OpenShift cluster
+    management. Compatible with Microsoft Agent Framework, Anthropic Claude
+    Agent SDK, LangChain, and any MCP-aware client.
+
+    - 12 specialised AI agents
+    - 162+ MCP tools
+    - 15 intelligence services (proactive monitoring, learning, predictive analytics)
+    - ServiceNow ITSM integration
+    - Multi-cluster (ACM) support
+    - Enterprise audit, RBAC, approval workflows
+  version: 2.0.0
+  contact:
+    name: TCS
+    url: https://www.tcs.com
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://mcp-server-openshift-mcp.apps.openshift.caaslab.local
+    description: On-prem OpenShift cluster
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: Discovery
+    description: Agent and capability discovery (A2A, OpenAPI)
+  - name: Agents
+    description: Per-agent metadata, tools, and selection
+  - name: Chat
+    description: Conversational AI interface (orchestrator)
+  - name: Cluster
+    description: Cluster diagnostics and operations
+  - name: ITSM
+    description: ServiceNow Change Request lifecycle
+  - name: Alerts
+    description: Alerts, fixes, and remediation
+  - name: MCP
+    description: Model Context Protocol endpoints (per agent + full)
+
+paths:
+  /.well-known/agent.json:
+    get:
+      tags: [Discovery]
+      summary: Agent card (A2A discovery)
+      description: |
+        Returns an A2A-compatible agent card describing this platform's
+        capabilities, agents, endpoints, and supported protocols. Any
+        MCP-aware client can discover this server by GET-ing this URL.
+      responses:
+        '200':
+          description: Agent card
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentCard'
+
+  /openapi.yaml:
+    get:
+      tags: [Discovery]
+      summary: This OpenAPI specification
+      responses:
+        '200':
+          description: OpenAPI 3.1 spec (YAML)
+          content:
+            application/yaml: {}
+
+  /api/agents:
+    get:
+      tags: [Agents]
+      summary: List all available agents
+      responses:
+        '200':
+          description: Agent list with tool counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer, example: 12 }
+                  totalTools: { type: integer, example: 162 }
+                  agents:
+                    type: array
+                    items: { $ref: '#/components/schemas/Agent' }
+
+  /api/agents/categories:
+    get:
+      tags: [Agents]
+      summary: Agents grouped by category
+      responses:
+        '200':
+          description: Agents organised by category (Operations, Lifecycle, Platform, Governance, Intelligence)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  categories:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        category: { type: string }
+                        agents:
+                          type: array
+                          items: { $ref: '#/components/schemas/Agent' }
+
+  /api/agents/{id}:
+    get:
+      tags: [Agents]
+      summary: Get a single agent's manifest
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          example: diagnostics-healing
+      responses:
+        '200':
+          description: Agent manifest
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Agent' }
+        '404':
+          description: Agent not found
+
+  /api/agents/{id}/tools:
+    get:
+      tags: [Agents]
+      summary: List the tools owned by an agent
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Tool list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  tools:
+                    type: array
+                    items: { type: string }
+
+  /sse:
+    get:
+      tags: [MCP]
+      summary: Full MCP server (all 162 tools) — SSE transport
+      description: |
+        Standard MCP SSE endpoint. Connect with any MCP-aware client.
+        Use this when you need access to all tools across all agents.
+      responses:
+        '200':
+          description: Server-Sent Events stream
+
+  /mcp/{agentId}/sse:
+    get:
+      tags: [MCP]
+      summary: Per-agent MCP server — only that agent's tools
+      description: |
+        Connect to this endpoint to expose ONLY the tools owned by the
+        named agent. Use this with frameworks that benefit from a focused
+        tool surface (e.g. Microsoft Agent Framework specialist agents).
+      parameters:
+        - in: path
+          name: agentId
+          required: true
+          schema: { type: string }
+          example: diagnostics-healing
+      responses:
+        '200':
+          description: Per-agent SSE stream
+        '404':
+          description: Agent not found
+
+  /api/chat:
+    post:
+      tags: [Chat]
+      summary: Conversational AI orchestrator
+      description: |
+        Send a natural-language message; the orchestrator routes it to the
+        appropriate specialist agent(s) and returns a streaming or full
+        response. SSE streaming via Accept: text/event-stream.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: { type: string }
+                conversationId: { type: string }
+                stream: { type: boolean, default: true }
+      responses:
+        '200':
+          description: Chat response (JSON or SSE stream)
+
+  /api/cr/pending:
+    get:
+      tags: [ITSM]
+      summary: List pending Change Requests
+      responses:
+        '200':
+          description: Pending CRs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  crs:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChangeRequest' }
+
+  /api/cr/sync-all:
+    post:
+      tags: [ITSM]
+      summary: Reconcile all pending CRs against ServiceNow
+      responses:
+        '200':
+          description: Sync results
+
+  /api/cr/{ticketId}:
+    delete:
+      tags: [ITSM]
+      summary: Dismiss / cancel a CR
+      parameters:
+        - in: path
+          name: ticketId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: permanent
+          schema: { type: boolean }
+          description: When true, removes the row from the database; otherwise marks cancelled.
+      responses:
+        '200': { description: Success }
+        '404': { description: Not found }
+
+  /api/cr/{ticketId}/sync:
+    post:
+      tags: [ITSM]
+      summary: Sync a single CR with ServiceNow
+      parameters:
+        - in: path
+          name: ticketId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Updated CR state
+
+  /api/alerts/active:
+    get:
+      tags: [Alerts]
+      summary: Currently firing alerts
+      responses:
+        '200':
+          description: Alert list
+
+  /api/alerts/execute-fix:
+    post:
+      tags: [Alerts]
+      summary: Execute a proposed fix command
+      description: |
+        Routes the command through the fix-executor with safety guardrails
+        and namespace scoping. Used by the dashboard's fix proposal cards.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [command]
+              properties:
+                command: { type: string }
+                ticketId: { type: string }
+      responses:
+        '200':
+          description: Execution result
+
+  /healthz:
+    get:
+      tags: [Discovery]
+      summary: Liveness / readiness probe
+      responses:
+        '200': { description: Healthy }
+
+components:
+  schemas:
+    AgentCard:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        version: { type: string }
+        protocols:
+          type: array
+          items: { type: string, enum: [mcp, rest, a2a] }
+        capabilities:
+          type: object
+          properties:
+            agents: { type: integer }
+            tools: { type: integer }
+            streaming: { type: boolean }
+            humanInTheLoop: { type: boolean }
+            multiCluster: { type: boolean }
+            autonomous: { type: boolean }
+        endpoints:
+          type: object
+          additionalProperties: { type: string }
+        agents:
+          type: array
+          items: { $ref: '#/components/schemas/Agent' }
+
+    Agent:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        version: { type: string }
+        description: { type: string }
+        category: { type: string, enum: [Operations, Lifecycle, Platform, Governance, Intelligence] }
+        icon: { type: string }
+        color: { type: string }
+        tools:
+          type: array
+          items: { type: string }
+        capabilities:
+          type: array
+          items: { type: string }
+        protocols:
+          type: array
+          items: { type: string }
+        mcpEndpoint: { type: string }
+        selectable: { type: boolean }
+        tags:
+          type: array
+          items: { type: string }
+
+    ChangeRequest:
+      type: object
+      properties:
+        ticketId: { type: string }
+        sysId: { type: string }
+        status: { type: string, enum: [submitted, approved, scheduled, executed, cancelled, rejected, failed] }
+        title: { type: string }
+        targetVersion: { type: string }
+        fromVersion: { type: string }
+        channel: { type: string }
+        upgradeType: { type: string }
+        scheduledDate: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+    OAuth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: /api/auth/login
+          tokenUrl: /api/auth/token
+          scopes:
+            mcp:read: Read MCP tools
+            mcp:write: Execute MCP tools
+
+security:
+  - BearerAuth: []
+  - OAuth2: [mcp:read, mcp:write]
