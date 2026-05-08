@@ -37,6 +37,10 @@ body{font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;backgroun
 .grid-4{grid-template-columns:repeat(4,1fr)}
 .grid-3{grid-template-columns:repeat(3,1fr)}
 .grid-2{grid-template-columns:repeat(2,1fr)}
+.dash-quad{display:grid;grid-template-columns:repeat(2,1fr);grid-template-rows:minmax(260px,1fr) minmax(260px,1fr);gap:20px;margin-bottom:8px}
+.dash-quad>.card{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.dash-quad>.card>h3{flex-shrink:0}
+.dash-quad>.card>.card-scroll{flex:1;overflow-y:auto;min-height:0;padding-right:2px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;transition:border-color .2s}
 .card:hover{border-color:var(--border2)}
 .card h3{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:12px}
@@ -506,7 +510,11 @@ tr:hover td{background:#ffffff06}
 .cmd-bar-item .cb-shortcut{font-size:10px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;color:var(--text2)}
 .cmd-bar-hint{padding:8px 20px;font-size:10px;color:var(--text2);border-top:1px solid var(--border);display:flex;gap:12px}
 @media(max-width:1200px){.grid-4{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:768px){.grid-4,.grid-3,.grid-2{grid-template-columns:1fr}.header{flex-direction:column;gap:12px}}
+@media(max-width:768px){.grid-4,.grid-3,.grid-2,.dash-quad{grid-template-columns:1fr}.dash-quad{grid-template-rows:auto}.header{flex-direction:column;gap:12px}}
+.card-scroll::-webkit-scrollbar{width:4px}
+.card-scroll::-webkit-scrollbar-track{background:transparent}
+.card-scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.card-scroll::-webkit-scrollbar-thumb:hover{background:var(--text2)}
 /* Navigation tabs */
 .nav-tabs{display:flex;gap:4px}
 .nav-tab{background:none;border:1px solid var(--border);border-radius:6px;padding:6px 16px;color:var(--text2);cursor:pointer;font-size:13px;font-weight:500;transition:all .2s}
@@ -1922,11 +1930,12 @@ tr:hover td{background:#ffffff06}
   </div>
 
   <!-- Command Center: 2x2 grid -->
-  <div class="grid grid-2" style="margin-bottom:8px">
+  <div class="dash-quad">
 
     <!-- Security Posture -->
     <div class="card" id="widget-security">
       <h3>&#x1F6E1; Security Posture</h3>
+      <div class="card-scroll">
       <div style="display:flex;align-items:center;gap:20px;margin-bottom:12px">
         <div style="position:relative;width:80px;height:80px;flex-shrink:0">
           <svg width="80" height="80" viewBox="0 0 80 80"><circle cx="40" cy="40" r="34" fill="none" stroke="var(--border)" stroke-width="8"/><circle id="sec-ring" cx="40" cy="40" r="34" fill="none" stroke="var(--ok)" stroke-width="8" stroke-linecap="round" stroke-dasharray="213.6" stroke-dashoffset="213.6" style="transform:rotate(-90deg);transform-origin:center;transition:stroke-dashoffset .8s ease,stroke .3s"/></svg>
@@ -1942,11 +1951,13 @@ tr:hover td{background:#ffffff06}
       </div>
       <div id="sec-findings" style="display:flex;flex-direction:column;gap:4px;font-size:12px"></div>
       <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="openNewChatWithCommand('/security','Security Audit')">View Full Security Audit &#x2192;</button></div>
+      </div><!-- /card-scroll -->
     </div>
 
     <!-- GitOps Sync Status -->
     <div class="card" id="widget-gitops">
       <h3>&#x1F500; GitOps Sync Status</h3>
+      <div class="card-scroll">
       <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap" id="gitops-metrics">
         <div style="text-align:center;flex:1;min-width:60px"><div class="metric ok" style="font-size:28px" id="gitops-synced">--</div><div class="metric-label">Synced</div></div>
         <div style="text-align:center;flex:1;min-width:60px"><div class="metric warn" style="font-size:28px" id="gitops-outofsync">--</div><div class="metric-label">Out of Sync</div></div>
@@ -1955,11 +1966,13 @@ tr:hover td{background:#ffffff06}
       </div>
       <div id="gitops-apps" style="display:flex;flex-direction:column;gap:4px;font-size:12px;max-height:120px;overflow-y:auto"></div>
       <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="openNewChatWithCommand('/gitops','GitOps Applications')">View All Applications &#x2192;</button></div>
+      </div><!-- /card-scroll -->
     </div>
 
     <!-- DR Readiness -->
     <div class="card" id="widget-dr">
       <h3>&#x1F4BE; DR Readiness</h3>
+      <div class="card-scroll">
       <div style="display:flex;align-items:center;gap:20px;margin-bottom:12px">
         <div style="position:relative;width:80px;height:80px;flex-shrink:0">
           <svg width="80" height="80" viewBox="0 0 80 80"><circle cx="40" cy="40" r="34" fill="none" stroke="var(--border)" stroke-width="8"/><circle id="dr-ring" cx="40" cy="40" r="34" fill="none" stroke="var(--ok)" stroke-width="8" stroke-linecap="round" stroke-dasharray="213.6" stroke-dashoffset="213.6" style="transform:rotate(-90deg);transform-origin:center;transition:stroke-dashoffset .8s ease,stroke .3s"/></svg>
@@ -1975,11 +1988,13 @@ tr:hover td{background:#ffffff06}
       </div>
       <div id="dr-details" style="display:flex;flex-direction:column;gap:4px;font-size:12px"></div>
       <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="openNewChatWithCommand('/dr','DR Assessment')">Full DR Assessment &#x2192;</button></div>
+      </div><!-- /card-scroll -->
     </div>
 
     <!-- Resource Optimization -->
     <div class="card" id="widget-optimization">
       <h3>&#x2699; Resource Optimization</h3>
+      <div class="card-scroll">
 
       <!-- Efficiency Score + Cost Savings -->
       <div class="opt-header">
@@ -2103,6 +2118,7 @@ tr:hover td{background:#ffffff06}
       </div>
 
       <div style="margin-top:12px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="openNewChatWithCommand('/recommendations','Resource Optimization')">Full Optimization Report &#x2192;</button></div>
+      </div><!-- /card-scroll -->
     </div>
   </div>
 
