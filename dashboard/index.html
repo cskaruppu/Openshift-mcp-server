@@ -1401,6 +1401,56 @@ tr:hover td{background:#ffffff06}
 .agent-detail-tool{padding:3px 8px;background:color-mix(in srgb,var(--accent2) 10%,transparent);border:1px solid color-mix(in srgb,var(--accent2) 20%,transparent);border-radius:6px;font-family:'SFMono-Regular',Consolas,monospace;font-size:11px;color:var(--text)}
 .agent-detail-protos{display:flex;gap:6px;margin-top:6px}
 .agent-detail-proto{padding:3px 9px;border-radius:6px;background:color-mix(in srgb,var(--ok) 12%,transparent);color:var(--ok);font-size:11px;font-weight:600;text-transform:uppercase}
+/* Agent Trace Timeline (Phase 1 — Chat) */
+.agent-trace{margin-top:10px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--card)}
+.agent-trace-header{display:flex;align-items:center;gap:8px;padding:8px 12px;background:color-mix(in srgb,var(--accent2) 6%,transparent);cursor:pointer;user-select:none;font-size:12px;font-weight:600;color:var(--text2);border-bottom:1px solid transparent;transition:all .2s}
+.agent-trace-header:hover{background:color-mix(in srgb,var(--accent2) 10%,transparent);color:var(--text)}
+.agent-trace-header svg{width:14px;height:14px;flex-shrink:0;color:var(--accent2)}
+.agent-trace-header .at-chevron{transition:transform .2s;margin-left:auto}
+.agent-trace-header.open .at-chevron{transform:rotate(180deg)}
+.agent-trace-header.open{border-bottom-color:var(--border)}
+.agent-trace-body{max-height:0;overflow:hidden;transition:max-height .3s ease}
+.agent-trace-body.open{max-height:600px;overflow-y:auto}
+.at-flow{display:flex;flex-direction:column;align-items:center;padding:12px 16px;gap:0}
+.at-node{display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:8px;font-size:12px;width:100%;max-width:420px;position:relative}
+.at-node-user{background:color-mix(in srgb,var(--accent) 8%,transparent);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);color:var(--accent);font-weight:600}
+.at-node-orch{background:color-mix(in srgb,var(--accent2) 8%,transparent);border:1px solid color-mix(in srgb,var(--accent2) 30%,transparent);color:var(--accent2);font-weight:600}
+.at-node-agent{border:1px solid var(--border);background:var(--card);transition:all .3s}
+.at-node-agent.active{border-color:var(--ok);background:color-mix(in srgb,var(--ok) 6%,transparent)}
+.at-node-agent.consulted{border-color:color-mix(in srgb,var(--accent2) 40%,var(--border));background:color-mix(in srgb,var(--accent2) 4%,transparent)}
+.at-node-icon{width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0}
+.at-node-info{flex:1;min-width:0}
+.at-node-name{font-weight:600;font-size:11px;color:var(--text)}
+.at-node-tools{font-size:10px;color:var(--text2);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.at-node-status{font-size:9px;font-weight:700;padding:2px 7px;border-radius:6px;text-transform:uppercase;flex-shrink:0}
+.at-node-status.active{background:color-mix(in srgb,var(--ok) 15%,transparent);color:var(--ok)}
+.at-node-status.consulted{background:color-mix(in srgb,var(--accent2) 12%,transparent);color:var(--accent2)}
+.at-connector{width:2px;height:14px;background:var(--border);position:relative}
+.at-connector::after{content:'';position:absolute;bottom:-3px;left:-3px;width:8px;height:8px;border-left:2px solid var(--border);border-bottom:2px solid var(--border);transform:rotate(-45deg)}
+.at-fanout{display:flex;align-items:flex-start;gap:8px;width:100%;max-width:420px;flex-wrap:wrap;justify-content:center}
+.at-merge{font-size:10px;color:var(--text2);padding:4px 12px;border:1px dashed var(--border);border-radius:6px;text-align:center}
+.at-count{font-size:10px;color:var(--text2);text-align:center;padding:2px 0}
+/* Agent Flow Diagram (Phase 2 — Agents tab) */
+.flow-container{position:relative;width:100%;min-height:520px;background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;margin:16px 0}
+.flow-svg{width:100%;height:100%;min-height:520px}
+.flow-node{cursor:pointer;transition:all .3s}
+.flow-node:hover .flow-node-bg{filter:brightness(1.1);stroke-width:2.5}
+.flow-node-bg{transition:all .3s}
+.flow-node-text{font-size:11px;font-weight:600;fill:var(--text);text-anchor:middle;pointer-events:none}
+.flow-node-sub{font-size:9px;fill:var(--text2);text-anchor:middle;pointer-events:none}
+.flow-edge{stroke:var(--border);stroke-width:1.5;fill:none;transition:stroke .3s}
+.flow-edge.active{stroke:var(--ok);stroke-width:2}
+.flow-pulse{fill:var(--ok);opacity:0}
+@keyframes flowPulse{0%{opacity:1;r:3}100%{opacity:0;r:8}}
+.flow-legend{position:absolute;bottom:12px;right:12px;display:flex;gap:12px;font-size:10px;color:var(--text2);background:color-mix(in srgb,var(--card) 90%,transparent);backdrop-filter:blur(4px);padding:6px 12px;border-radius:8px;border:1px solid var(--border)}
+.flow-legend-dot{width:8px;height:8px;border-radius:50%;display:inline-block;vertical-align:middle;margin-right:4px}
+.flow-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.flow-toolbar button{padding:5px 14px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text2);font-size:11px;cursor:pointer;transition:all .2s}
+.flow-toolbar button:hover{border-color:var(--accent2);color:var(--accent2)}
+.flow-toolbar button.active{background:var(--accent2);color:#fff;border-color:var(--accent2)}
+.flow-sim-status{font-size:11px;color:var(--text2);margin-left:auto;display:flex;align-items:center;gap:6px}
+.flow-sim-dot{width:8px;height:8px;border-radius:50%;background:var(--ok);animation:blink 1s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 /* Fix Proposal Cards */
 .fix-proposal { margin: 16px 0; border: 1px solid color-mix(in srgb, var(--accent2) 30%, var(--border)); border-radius: 12px; overflow: hidden; background: var(--card); }
 .fix-proposal-header { display:flex; align-items:center; gap:10px; padding:14px 16px; background: color-mix(in srgb, var(--accent2) 8%, transparent); border-bottom:1px solid color-mix(in srgb, var(--border) 50%, transparent); }
@@ -2783,6 +2833,27 @@ tr:hover td{background:#ffffff06}
       <span class="agents-framework-pill">Anthropic Claude</span>
       <span class="agents-framework-pill">LangChain</span>
       <span class="agents-framework-pill">Any MCP client</span>
+    </div>
+  </div>
+
+  <!-- Agent Orchestration Flow Diagram -->
+  <div class="card" style="margin-top:14px">
+    <div class="flow-toolbar">
+      <button class="active" id="flow-btn-all" onclick="flowFilter('all')">All Agents</button>
+      <button id="flow-btn-ops" onclick="flowFilter('Operations')">Operations</button>
+      <button id="flow-btn-life" onclick="flowFilter('Lifecycle')">Lifecycle</button>
+      <button id="flow-btn-plat" onclick="flowFilter('Platform')">Platform</button>
+      <button id="flow-btn-gov" onclick="flowFilter('Governance')">Governance</button>
+      <button id="flow-btn-sim" onclick="toggleFlowSim()">Simulate Query</button>
+      <div class="flow-sim-status" id="flow-sim-status" style="display:none"><div class="flow-sim-dot"></div> Simulation active</div>
+    </div>
+    <div class="flow-container" id="flow-container">
+      <svg class="flow-svg" id="flow-svg" viewBox="0 0 820 540"></svg>
+      <div class="flow-legend">
+        <span><span class="flow-legend-dot" style="background:#22c55e"></span> Active</span>
+        <span><span class="flow-legend-dot" style="background:#3b82f6"></span> Idle</span>
+        <span><span class="flow-legend-dot" style="background:#6366f1"></span> Orchestrator</span>
+      </div>
     </div>
   </div>
 
@@ -6042,10 +6113,15 @@ function renderConversation() {
             return '<code style="background:color-mix(in srgb,var(--accent2) 10%,transparent);color:var(--accent2);padding:2px 6px;border-radius:4px;font-size:10px">' + esc(t) + '</code>';
           }).join('') + '</div>';
       }
+      var traceBlock = '';
+      if (msg.agentTrace && msg.agentTrace.length) {
+        traceBlock = renderAgentTrace({ agentTrace: msg.agentTrace, toolsUsed: msg.toolsUsed, provider: msg.provider });
+      }
       html += '<div class="conv-msg ai">' +
         '<div class="conv-header"><div class="conv-avatar">TA</div><span class="conv-name">TCS Agentic AI</span>' + providerTag + '</div>' +
         toolsBlock +
-        '<div class="conv-body">' + md(msg.text || '') + '</div></div>';
+        '<div class="conv-body">' + (msg.html || md(msg.text || '')) + '</div>' +
+        traceBlock + '</div>';
     }
   }
   inner.innerHTML = html;
@@ -6316,12 +6392,12 @@ async function sendFullChat(text) {
       data.tokenEstimate = Math.ceil((data.reply || '').length / 4);
 
       const replyText = data.reply || data.error || 'No response';
-      const replyHtml = md(replyText) + renderExplainability(data);
+      const replyHtml = md(replyText) + renderAgentTrace(data) + renderExplainability(data);
 
       history = loadChatHistory();
       const activeChat = history.chats.find(c => c.id === history.activeId);
       if (activeChat) {
-        activeChat.messages.push({ role: 'ai', text: replyText, html: replyHtml, provider: data.provider || providerOpts.provider || 'none', toolsUsed: data.toolsUsed || [] });
+        activeChat.messages.push({ role: 'ai', text: replyText, html: replyHtml, provider: data.provider || providerOpts.provider || 'none', toolsUsed: data.toolsUsed || [], agentTrace: data.agentTrace || [] });
         activeChat.updatedAt = new Date().toISOString();
         saveChatHistory(history);
       }
@@ -9966,6 +10042,241 @@ function closeAgentDetail(ev) {
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') closeAgentDetail();
 });
+
+// =========================================================================
+// Phase 1 — Agent Trace Timeline (in Chat responses)
+// =========================================================================
+function renderAgentTrace(data) {
+  var agentTrace = data.agentTrace;
+  if ((!agentTrace || agentTrace.length === 0) && (!data.toolsUsed || data.toolsUsed.length === 0)) return '';
+  var id = 'at-' + Math.random().toString(36).substr(2, 8);
+  var activeCount = 0;
+  var totalTools = 0;
+  if (agentTrace && agentTrace.length) {
+    for (var i = 0; i < agentTrace.length; i++) {
+      if (agentTrace[i].status === 'active') activeCount++;
+      totalTools += (agentTrace[i].toolsCalled || []).length;
+    }
+  }
+  var summaryText = agentTrace && agentTrace.length
+    ? agentTrace.length + ' agent' + (agentTrace.length > 1 ? 's' : '') + ' involved' + (activeCount ? ' · ' + totalTools + ' tool call' + (totalTools !== 1 ? 's' : '') : '')
+    : (data.toolsUsed ? data.toolsUsed.length + ' tools used' : '');
+  var html = '<div class="agent-trace">';
+  html += '<div class="agent-trace-header" onclick="toggleAgentTrace(\'' + id + '\',this)">';
+  html += '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="7" r="3"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><line x1="12" y1="10" x2="5" y2="15.5"/><line x1="12" y1="10" x2="19" y2="15.5"/></svg>';
+  html += ' Agent Orchestration Flow &middot; <span style="font-weight:400;opacity:.7">' + summaryText + '</span>';
+  html += '<svg class="at-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>';
+  html += '</div>';
+  html += '<div class="agent-trace-body" id="' + id + '">';
+  html += '<div class="at-flow">';
+  html += '<div class="at-node at-node-user"><span style="font-size:14px">&#x1F464;</span> <span>User Query</span></div>';
+  html += '<div class="at-connector"></div>';
+  html += '<div class="at-node at-node-orch"><span style="font-size:14px">&#x1F9E0;</span> <span>AI Orchestrator</span> <span style="font-size:10px;opacity:.6;margin-left:auto">' + esc(data.provider || '') + '</span></div>';
+  html += '<div class="at-connector"></div>';
+  if (agentTrace && agentTrace.length > 0) {
+    html += '<div class="at-count">' + agentTrace.length + ' specialist agent' + (agentTrace.length > 1 ? 's' : '') + ' activated</div>';
+    for (var i = 0; i < agentTrace.length; i++) {
+      var ag = agentTrace[i];
+      var emoji = agentEmojiFor(ag.icon);
+      var toolStr = (ag.toolsCalled || []).join(', ') || 'context analysis';
+      html += '<div class="at-node at-node-agent ' + esc(ag.status || 'consulted') + '">';
+      html += '<div class="at-node-icon" style="background:' + esc(ag.color || '#3b82f6') + '20;color:' + esc(ag.color || '#3b82f6') + '">' + emoji + '</div>';
+      html += '<div class="at-node-info"><div class="at-node-name">' + esc(ag.agentName) + '</div><div class="at-node-tools">' + esc(toolStr) + '</div></div>';
+      html += '<span class="at-node-status ' + esc(ag.status || 'consulted') + '">' + esc(ag.status || 'consulted') + '</span>';
+      html += '</div>';
+      if (i < agentTrace.length - 1) html += '<div class="at-connector" style="height:8px"></div>';
+    }
+    html += '<div class="at-connector"></div>';
+    html += '<div class="at-merge">Results merged &rarr; Final Answer</div>';
+  } else if (data.toolsUsed && data.toolsUsed.length) {
+    html += '<div class="at-count">' + data.toolsUsed.length + ' MCP tool' + (data.toolsUsed.length > 1 ? 's' : '') + ' called directly</div>';
+    for (var i = 0; i < data.toolsUsed.length && i < 8; i++) {
+      html += '<div class="at-node at-node-agent active">';
+      html += '<div class="at-node-icon" style="background:#3b82f620;color:#3b82f6">&#x1F527;</div>';
+      html += '<div class="at-node-info"><div class="at-node-name">' + esc(data.toolsUsed[i]) + '</div></div>';
+      html += '<span class="at-node-status active">called</span></div>';
+    }
+    if (data.toolsUsed.length > 8) html += '<div class="at-count">+ ' + (data.toolsUsed.length - 8) + ' more</div>';
+  }
+  html += '</div></div></div>';
+  return html;
+}
+
+function toggleAgentTrace(id, headerEl) {
+  var body = document.getElementById(id);
+  if (!body) return;
+  var isOpen = body.classList.contains('open');
+  body.classList.toggle('open');
+  if (headerEl) headerEl.classList.toggle('open');
+}
+
+// =========================================================================
+// Phase 2 — Interactive Flow Diagram (Agents tab)
+// =========================================================================
+var _flowData = null;
+var _flowFilter = 'all';
+var _flowSimInterval = null;
+
+async function loadFlowDiagram() {
+  var svg = document.getElementById('flow-svg');
+  if (!svg) return;
+  try {
+    var base = MCP_API.replace(/\/api$/, '');
+    var resp = await fetch(base + '/api/agents/flow');
+    _flowData = await resp.json();
+    renderFlowDiagram(_flowData, 'all');
+  } catch (e) {
+    svg.innerHTML = '<text x="410" y="270" text-anchor="middle" fill="var(--text2)" font-size="13">Failed to load flow diagram: ' + esc(e.message) + '</text>';
+  }
+}
+
+function renderFlowDiagram(data, filterCategory) {
+  var svg = document.getElementById('flow-svg');
+  if (!svg || !data) return;
+  var nodes = data.nodes || [];
+  var edges = data.edges || [];
+
+  var agents = nodes.filter(function(n) { return n.type === 'agent'; });
+  if (filterCategory && filterCategory !== 'all') {
+    agents = agents.filter(function(n) { return n.category === filterCategory; });
+  }
+
+  var userNode = nodes.find(function(n) { return n.type === 'user'; });
+  var orchNode = nodes.find(function(n) { return n.type === 'orchestrator'; });
+
+  var svgW = 820;
+  var topY = 30;
+  var orchY = 110;
+  var agentStartY = 200;
+  var cols = Math.min(agents.length, 4);
+  var rows = Math.ceil(agents.length / cols);
+  var colW = svgW / (cols + 1);
+  var rowH = 80;
+  var svgH = agentStartY + rows * rowH + 60;
+  svg.setAttribute('viewBox', '0 0 ' + svgW + ' ' + svgH);
+  svg.parentElement.style.minHeight = svgH + 'px';
+
+  var h = '';
+  // Defs for arrow markers and gradient
+  h += '<defs>';
+  h += '<marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="var(--text2)" opacity="0.5"/></marker>';
+  h += '<linearGradient id="orchGrad" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient>';
+  h += '<linearGradient id="userGrad" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#3b82f6"/><stop offset="100%" stop-color="#06b6d4"/></linearGradient>';
+  h += '</defs>';
+
+  var centerX = svgW / 2;
+
+  // User node
+  h += '<g class="flow-node" onclick="void(0)">';
+  h += '<rect class="flow-node-bg" x="' + (centerX - 65) + '" y="' + topY + '" width="130" height="36" rx="18" fill="url(#userGrad)" stroke="#3b82f6" stroke-width="1.5" opacity="0.9"/>';
+  h += '<text class="flow-node-text" x="' + centerX + '" y="' + (topY + 22) + '" fill="#fff" font-size="12">&#x1F464; User Query</text>';
+  h += '</g>';
+
+  // Edge: user → orchestrator
+  h += '<line x1="' + centerX + '" y1="' + (topY + 36) + '" x2="' + centerX + '" y2="' + orchY + '" class="flow-edge" marker-end="url(#arrow)"/>';
+
+  // Orchestrator node
+  h += '<g class="flow-node">';
+  h += '<rect class="flow-node-bg" x="' + (centerX - 100) + '" y="' + orchY + '" width="200" height="44" rx="12" fill="url(#orchGrad)" stroke="#6366f1" stroke-width="2" opacity="0.9"/>';
+  h += '<text class="flow-node-text" x="' + centerX + '" y="' + (orchY + 20) + '" fill="#fff" font-size="12">&#x1F9E0; AI Orchestrator</text>';
+  h += '<text class="flow-node-sub" x="' + centerX + '" y="' + (orchY + 34) + '" fill="#ddd" font-size="9">LLM Router · Intent Classification</text>';
+  h += '</g>';
+
+  // Agent nodes
+  for (var i = 0; i < agents.length; i++) {
+    var ag = agents[i];
+    var col = i % cols;
+    var row = Math.floor(i / cols);
+    var ax = colW * (col + 1);
+    var ay = agentStartY + row * rowH;
+    var nodeW = 150;
+    var nodeH = 50;
+    var emoji = agentEmojiFor(ag.icon);
+    var agColor = ag.color || '#3b82f6';
+
+    // Edge: orchestrator → agent
+    h += '<path d="M' + centerX + ',' + (orchY + 44) + ' C' + centerX + ',' + (orchY + 70) + ' ' + ax + ',' + (ay - 20) + ' ' + ax + ',' + ay + '" class="flow-edge" id="edge-' + esc(ag.id) + '" marker-end="url(#arrow)"/>';
+
+    // Pulse circle (hidden, for simulation)
+    h += '<circle class="flow-pulse" id="pulse-' + esc(ag.id) + '" cx="' + ax + '" cy="' + ay + '" r="3" fill="' + agColor + '"/>';
+
+    // Agent box
+    h += '<g class="flow-node" id="fnode-' + esc(ag.id) + '" onclick="showAgentDetail(\'' + esc(ag.id) + '\')">';
+    h += '<rect class="flow-node-bg" x="' + (ax - nodeW / 2) + '" y="' + ay + '" width="' + nodeW + '" height="' + nodeH + '" rx="10" fill="var(--card)" stroke="' + agColor + '" stroke-width="1.5" opacity="0.95"/>';
+    h += '<text x="' + (ax - nodeW / 2 + 12) + '" y="' + (ay + 20) + '" font-size="13">' + emoji + '</text>';
+    h += '<text class="flow-node-text" x="' + (ax + 4) + '" y="' + (ay + 20) + '" font-size="10" text-anchor="start">' + esc(ag.label.replace(/ Agent$/, '').substring(0, 18)) + '</text>';
+    h += '<text class="flow-node-sub" x="' + ax + '" y="' + (ay + 36) + '" font-size="9">' + ag.toolCount + ' tools · ' + esc(ag.category || '') + '</text>';
+    // Status indicator
+    h += '<circle id="status-' + esc(ag.id) + '" cx="' + (ax + nodeW / 2 - 10) + '" cy="' + (ay + 10) + '" r="4" fill="#3b82f6" opacity="0.5"/>';
+    h += '</g>';
+  }
+
+  svg.innerHTML = h;
+}
+
+function flowFilter(category) {
+  _flowFilter = category;
+  var btns = document.querySelectorAll('.flow-toolbar button');
+  var map = { 'all': 'flow-btn-all', 'Operations': 'flow-btn-ops', 'Lifecycle': 'flow-btn-life', 'Platform': 'flow-btn-plat', 'Governance': 'flow-btn-gov' };
+  btns.forEach(function(b) { b.classList.remove('active'); });
+  var activeBtn = document.getElementById(map[category]);
+  if (activeBtn) activeBtn.classList.add('active');
+  if (_flowData) renderFlowDiagram(_flowData, category);
+}
+
+function toggleFlowSim() {
+  var btn = document.getElementById('flow-btn-sim');
+  var status = document.getElementById('flow-sim-status');
+  if (_flowSimInterval) {
+    clearInterval(_flowSimInterval);
+    _flowSimInterval = null;
+    if (btn) btn.classList.remove('active');
+    if (status) status.style.display = 'none';
+    resetFlowNodes();
+    return;
+  }
+  if (btn) btn.classList.add('active');
+  if (status) status.style.display = 'flex';
+  runFlowSimStep();
+  _flowSimInterval = setInterval(runFlowSimStep, 3000);
+}
+
+function runFlowSimStep() {
+  if (!_flowData) return;
+  resetFlowNodes();
+  var agents = (_flowData.nodes || []).filter(function(n) { return n.type === 'agent'; });
+  if (_flowFilter !== 'all') agents = agents.filter(function(n) { return n.category === _flowFilter; });
+  var count = Math.max(1, Math.floor(Math.random() * 4) + 1);
+  var shuffled = agents.slice().sort(function() { return Math.random() - 0.5; });
+  for (var i = 0; i < Math.min(count, shuffled.length); i++) {
+    activateFlowNode(shuffled[i].id);
+  }
+}
+
+function activateFlowNode(agentId) {
+  var statusDot = document.getElementById('status-' + agentId);
+  if (statusDot) { statusDot.setAttribute('fill', '#22c55e'); statusDot.setAttribute('opacity', '1'); }
+  var edge = document.getElementById('edge-' + agentId);
+  if (edge) { edge.classList.add('active'); }
+  var pulse = document.getElementById('pulse-' + agentId);
+  if (pulse) {
+    pulse.style.animation = 'flowPulse 1s ease-out';
+    pulse.style.opacity = '1';
+    setTimeout(function() { pulse.style.animation = ''; pulse.style.opacity = '0'; }, 1000);
+  }
+}
+
+function resetFlowNodes() {
+  document.querySelectorAll('[id^="status-"]').forEach(function(dot) { dot.setAttribute('fill', '#3b82f6'); dot.setAttribute('opacity', '0.5'); });
+  document.querySelectorAll('.flow-edge.active').forEach(function(e) { e.classList.remove('active'); });
+}
+
+// Patch loadAgentRegistry to also load the flow diagram
+var _origLoadAgentRegistry = loadAgentRegistry;
+loadAgentRegistry = async function() {
+  await _origLoadAgentRegistry();
+  await loadFlowDiagram();
+};
 
 function buildKebabMenu(clusterId, clusterName, platform, isBuiltin, source) {
   var menuId = 'kebab-' + clusterId.replace(/[^a-zA-Z0-9]/g, '_');

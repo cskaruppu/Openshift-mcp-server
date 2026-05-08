@@ -55,6 +55,7 @@ import { diagnosePod } from "./pod-doctor.js";
 import { runAgent } from "./agent-loop.js";
 import { runOrchestrator } from "./mcp-orchestrator.js";
 import { getConnectionCount } from "./mcp-hub.js";
+import { getAgentsByTool, getAgents } from "../agents/registry.js";
 import { findSimilar as kbFindSimilar, buildKBContext, recordResolution } from "./knowledge-base.js";
 import {
   buildSignature as leBuildSignature,
@@ -70,6 +71,64 @@ import { findResource } from "./resource-index.js";
 import { incCounter, observeHistogram } from "./metrics.js";
 import { enforce as enforceRateLimit } from "./rate-limit.js";
 import { runPreflightChecks, formatPreflightReport } from "../tools/upgrade-preflight.js";
+
+// Build agent trace: maps tools used in a chat response back to their owning agents.
+async function buildAgentTrace(toolsUsed, contextKeys, durationMs) {
+  if (!toolsUsed || toolsUsed.length === 0) {
+    const allAgents = await getAgents().catch(() => []);
+    const relevant = inferAgentsFromContext(allAgents, contextKeys || []);
+    return relevant.map((a) => ({
+      agentId: a.id,
+      agentName: a.name,
+      icon: a.icon,
+      color: a.color,
+      category: a.category,
+      toolsCalled: [],
+      status: "consulted",
+    }));
+  }
+  const agentMap = new Map();
+  for (const toolName of toolsUsed) {
+    const agents = await getAgentsByTool(toolName).catch(() => []);
+    for (const a of agents) {
+      if (!agentMap.has(a.id)) {
+        agentMap.set(a.id, {
+          agentId: a.id,
+          agentName: a.name,
+          icon: a.icon,
+          color: a.color,
+          category: a.category,
+          toolsCalled: [],
+          status: "active",
+        });
+      }
+      agentMap.get(a.id).toolsCalled.push(toolName);
+    }
+  }
+  return Array.from(agentMap.values());
+}
+
+function inferAgentsFromContext(agents, contextKeys) {
+  const keyStr = contextKeys.join(" ").toLowerCase();
+  const hints = {
+    "diagnostics-healing": /pod|crash|error|event|diagnos|health/,
+    "cluster-operations": /node|cluster|version|health|capacity/,
+    "upgrade-lifecycle": /upgrade|preflight|channel|version/,
+    "workload-management": /deploy|replica|scale|workload|hpa/,
+    "networking-mesh": /network|service|route|ingress|mesh/,
+    "security-compliance": /security|rbac|scc|policy|compliance/,
+    "observability": /metric|alert|prometheus|monitor|log/,
+    "itsm-change-management": /servicenow|change|incident|cr|itsm/,
+    "cicd-gitops": /git|argocd|pipeline|tekton|cicd/,
+    "multi-cluster-acm": /acm|multi.?cluster|hub|managed/,
+    "infrastructure-virtualization": /vm|kubevirt|virtual|storage/,
+    "proactive-intelligence": /proactive|recommend|intelligence|forecast/,
+  };
+  return agents.filter((a) => {
+    const re = hints[a.id];
+    return re && re.test(keyStr);
+  });
+}
 
 // In-memory cache: conversationId → most recent preflight report.
 // Allows "raise a CR with above precheck details" to retrieve the report
@@ -6616,6 +6675,12 @@ export async function handleChatAPI(req, res) {
     const traceMd = renderTraceMarkdown(trace);
     if (traceMd) reply += "\n" + traceMd;
 
+    const agentTrace = await buildAgentTrace(
+      toolsUsed || [],
+      Object.keys(context || {}),
+      Date.now() - startedAt,
+    ).catch(() => []);
+
     const payload = {
       reply,
       provider: activeProvider,
@@ -6623,6 +6688,7 @@ export async function handleChatAPI(req, res) {
       correlations: context?.correlations || [],
       trace: trace.slice(0, 20),
       toolsUsed: toolsUsed || [],
+      agentTrace,
     };
     cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
     if (conversationId) {

@@ -116,6 +116,47 @@ export async function handleAgentRoutes(req, res, url) {
     return true;
   }
 
+  if (url.pathname === "/api/agents/flow") {
+    const agents = await getAgents();
+    const nodes = [
+      { id: "user", type: "user", label: "User", x: 400, y: 20 },
+      { id: "orchestrator", type: "orchestrator", label: "AI Orchestrator (LLM)", x: 400, y: 120 },
+    ];
+    const edges = [
+      { from: "user", to: "orchestrator", label: "Query" },
+      { from: "orchestrator", to: "user", label: "Answer", dashed: true },
+    ];
+    const categoryPositions = { Operations: 0, Lifecycle: 1, Platform: 2, Governance: 3, Intelligence: 4 };
+    const byCategory = new Map();
+    for (const a of agents) {
+      const cat = a.category || "Other";
+      if (!byCategory.has(cat)) byCategory.set(cat, []);
+      byCategory.get(cat).push(a);
+    }
+    let catIdx = 0;
+    for (const [cat, group] of byCategory) {
+      const baseX = 80 + catIdx * 160;
+      for (let i = 0; i < group.length; i++) {
+        const a = group[i];
+        nodes.push({
+          id: a.id,
+          type: "agent",
+          label: a.name,
+          icon: a.icon,
+          color: a.color,
+          category: cat,
+          toolCount: a.tools?.length || 0,
+          x: baseX,
+          y: 260 + i * 90,
+        });
+        edges.push({ from: "orchestrator", to: a.id, label: "" });
+      }
+      catIdx++;
+    }
+    sendJson(res, 200, { nodes, edges, totalAgents: agents.length });
+    return true;
+  }
+
   const idMatch = url.pathname.match(/^\/api\/agents\/([^/]+)$/);
   if (idMatch) {
     const agent = await getAgentById(idMatch[1]);
