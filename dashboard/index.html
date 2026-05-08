@@ -3211,7 +3211,7 @@ async function loadTopology() {
 
     canvas.innerHTML = nodes.map(function(n) {
       var issues = issuePodsByNode[n.name] || [];
-      var health = !n.ready ? 'critical' : issues.length > 0 ? 'warning' : 'healthy';
+      var health = !n.ready ? 'critical' : 'healthy';
       var roleLabel = (n.roles || []).join(', ') || 'worker';
       var icon = roleLabel.includes('master') || roleLabel.includes('control') ? '&#x1F3DB;' : '&#x2699;';
       var podCount = n.pods || 0;
