@@ -263,6 +263,67 @@ tr:hover td{background:#ffffff06}
 .chat-input button:hover{opacity:.9}
 .progress-bar{height:4px;background:var(--border);border-radius:2px;overflow:hidden;margin-top:8px}
 .progress-fill{height:100%;border-radius:2px;transition:width .5s}
+/* Resource Optimization — Industry Standard Layout */
+.opt-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
+.opt-score-ring{position:relative;width:72px;height:72px;flex-shrink:0}
+.opt-score-ring svg{transform:rotate(-90deg);width:72px;height:72px}
+.opt-score-ring circle{fill:none;stroke-width:7;stroke-linecap:round}
+.opt-score-ring .ring-bg{stroke:var(--border)}
+.opt-score-ring .ring-fg{stroke:var(--ok);transition:stroke-dashoffset .8s ease,stroke .3s}
+.opt-score-text{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:700}
+.opt-score-text .grade{font-size:22px;line-height:1;color:var(--text)}
+.opt-score-text .pct{font-size:9px;color:var(--text2);margin-top:1px;font-weight:500}
+.opt-savings{flex:1;text-align:right}
+.opt-savings-num{font-size:22px;font-weight:800;color:var(--ok)}
+.opt-savings-lbl{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px}
+.opt-stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+.opt-stat-card{padding:10px 8px;border-radius:8px;background:var(--card-deep);border:1px solid var(--border);text-align:center;transition:all .2s}
+.opt-stat-card:hover{transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.opt-stat-card.over{border-left:3px solid var(--warn)}
+.opt-stat-card.under{border-left:3px solid var(--crit)}
+.opt-stat-card.nolim{border-left:3px solid var(--text2)}
+.opt-stat-num{font-size:22px;font-weight:700;line-height:1.1}
+.opt-stat-num.over{color:var(--warn)}
+.opt-stat-num.under{color:var(--crit)}
+.opt-stat-num.nolim{color:var(--text2)}
+.opt-stat-lbl{font-size:9.5px;color:var(--text2);text-transform:uppercase;letter-spacing:.3px;margin-top:3px;font-weight:600}
+.opt-stat-sub{font-size:9px;color:var(--text2);margin-top:1px;opacity:.75}
+.opt-gauge{margin-bottom:10px}
+.opt-gauge-row{display:flex;justify-content:space-between;align-items:center;font-size:11.5px;margin-bottom:4px}
+.opt-gauge-label{font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px}
+.opt-gauge-label::before{content:'';width:8px;height:8px;border-radius:2px;background:var(--ok)}
+.opt-gauge-label.cpu::before{background:#3b82f6}
+.opt-gauge-label.mem::before{background:#8b5cf6}
+.opt-gauge-pct{font-family:'SFMono-Regular',Consolas,monospace;font-weight:700;color:var(--text)}
+.opt-gauge-bar{position:relative;height:8px;background:var(--border);border-radius:4px;overflow:hidden}
+.opt-gauge-fill{height:100%;border-radius:4px;transition:width .8s ease,background .3s}
+.opt-gauge-marks{position:absolute;inset:0;display:flex;justify-content:space-between;pointer-events:none}
+.opt-gauge-marks span{width:1px;background:rgba(255,255,255,0.25)}
+.opt-section-title{font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin:14px 0 6px;display:flex;align-items:center;gap:6px}
+.opt-section-title .opt-section-count{font-weight:600;color:var(--text2);background:var(--card-deep);border:1px solid var(--border);border-radius:8px;padding:1px 8px;font-size:9px;margin-left:auto}
+.opt-offenders{display:flex;flex-direction:column;gap:4px;max-height:140px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px;background:var(--card-deep)}
+.opt-offender{display:grid;grid-template-columns:auto 1fr auto auto;gap:8px;align-items:center;padding:5px 8px;border-radius:6px;font-size:11px;transition:background .15s}
+.opt-offender:hover{background:color-mix(in srgb,var(--accent2) 6%,transparent)}
+.opt-offender-tag{font-size:8.5px;font-weight:700;padding:2px 6px;border-radius:4px;letter-spacing:.3px;text-transform:uppercase;flex-shrink:0}
+.opt-offender-tag.over{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+.opt-offender-tag.under{background:color-mix(in srgb,var(--crit) 18%,transparent);color:var(--crit)}
+.opt-offender-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;color:var(--text)}
+.opt-offender-name .ns{color:var(--text2);font-size:10px}
+.opt-offender-stat{font-family:'SFMono-Regular',Consolas,monospace;font-size:10px;color:var(--text2);text-align:right;flex-shrink:0}
+.opt-offender-stat .used{color:var(--text);font-weight:600}
+.opt-offender-rec{font-size:9px;color:var(--ok);font-family:'SFMono-Regular',Consolas,monospace;flex-shrink:0;background:color-mix(in srgb,var(--ok) 12%,transparent);padding:1px 6px;border-radius:4px}
+.opt-pvc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px}
+.opt-pvc-stat{text-align:center;padding:6px 4px;background:var(--card-deep);border:1px solid var(--border);border-radius:6px}
+.opt-pvc-num{font-size:16px;font-weight:700;color:var(--text);line-height:1.1}
+.opt-pvc-num.warn{color:var(--warn)}
+.opt-pvc-num.crit{color:var(--crit)}
+.opt-pvc-lbl{font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.3px;margin-top:2px;font-weight:600}
+.opt-pvc-orphaned{display:flex;flex-direction:column;gap:3px;font-size:10.5px}
+.opt-pvc-orphaned-item{display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:color-mix(in srgb,var(--warn) 6%,transparent);border:1px solid color-mix(in srgb,var(--warn) 25%,var(--border));border-radius:6px}
+.opt-pvc-orphaned-name{color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.opt-pvc-orphaned-name .ns{color:var(--text2);font-size:9.5px;margin-right:4px}
+.opt-pvc-orphaned-size{color:var(--warn);font-family:'SFMono-Regular',Consolas,monospace;font-weight:700;font-size:10px;flex-shrink:0;margin-left:8px}
+.opt-empty{font-size:11px;color:var(--text2);text-align:center;padding:8px;font-style:italic}
 .workflow-step{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px}
 .workflow-step .step-num{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}
 .workflow-step .step-num.done{background:var(--ok);color:#fff}
@@ -1868,21 +1929,93 @@ tr:hover td{background:#ffffff06}
     <!-- Resource Optimization -->
     <div class="card" id="widget-optimization">
       <h3>&#x2699; Resource Optimization</h3>
-      <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">
-        <div style="text-align:center;flex:1;min-width:60px"><div class="metric warn" style="font-size:28px" id="opt-over">--</div><div class="metric-label">Over-provisioned</div></div>
-        <div style="text-align:center;flex:1;min-width:60px"><div class="metric crit" style="font-size:28px" id="opt-under">--</div><div class="metric-label">Under-provisioned</div></div>
-        <div style="text-align:center;flex:1;min-width:60px"><div class="metric" style="font-size:28px;color:var(--text2)" id="opt-nolimits">--</div><div class="metric-label">No Limits</div></div>
+
+      <!-- Efficiency Score + Cost Savings -->
+      <div class="opt-header">
+        <div class="opt-score-ring" title="Cluster efficiency score (0-100)">
+          <svg viewBox="0 0 72 72">
+            <circle class="ring-bg" cx="36" cy="36" r="30"/>
+            <circle class="ring-fg" id="opt-score-circle" cx="36" cy="36" r="30" stroke-dasharray="188.5" stroke-dashoffset="188.5"/>
+          </svg>
+          <div class="opt-score-text">
+            <span class="grade" id="opt-grade">--</span>
+            <span class="pct" id="opt-score-pct">--/100</span>
+          </div>
+        </div>
+        <div style="flex:1;text-align:center">
+          <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;font-weight:600">Efficiency Score</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:4px" id="opt-pods-summary">Analyzing workloads...</div>
+        </div>
+        <div class="opt-savings" title="Estimated monthly cost savings if recommendations applied">
+          <div class="opt-savings-num"><span id="opt-savings">$0</span></div>
+          <div class="opt-savings-lbl">Est. Monthly Savings</div>
+        </div>
       </div>
-      <div style="margin-bottom:8px">
-        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>CPU Headroom</span><span id="opt-cpu-pct">--%</span></div>
-        <div class="progress-bar"><div class="progress-fill" id="opt-cpu-bar" style="width:0%;background:var(--ok)"></div></div>
+
+      <!-- Stat Cards -->
+      <div class="opt-stat-grid">
+        <div class="opt-stat-card over">
+          <div class="opt-stat-num over" id="opt-over">--</div>
+          <div class="opt-stat-lbl">Over-provisioned</div>
+          <div class="opt-stat-sub" id="opt-over-sub">Wasted capacity</div>
+        </div>
+        <div class="opt-stat-card under">
+          <div class="opt-stat-num under" id="opt-under">--</div>
+          <div class="opt-stat-lbl">Under-provisioned</div>
+          <div class="opt-stat-sub">Throttling risk</div>
+        </div>
+        <div class="opt-stat-card nolim">
+          <div class="opt-stat-num nolim" id="opt-nolimits">--</div>
+          <div class="opt-stat-lbl">No Limits Set</div>
+          <div class="opt-stat-sub">Compliance gap</div>
+        </div>
       </div>
-      <div style="margin-bottom:8px">
-        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>Memory Headroom</span><span id="opt-mem-pct">--%</span></div>
-        <div class="progress-bar"><div class="progress-fill" id="opt-mem-bar" style="width:0%;background:var(--ok)"></div></div>
+
+      <!-- Headroom Gauges -->
+      <div class="opt-gauge">
+        <div class="opt-gauge-row">
+          <span class="opt-gauge-label cpu">CPU Headroom</span>
+          <span class="opt-gauge-pct" id="opt-cpu-pct">--%</span>
+        </div>
+        <div class="opt-gauge-bar">
+          <div class="opt-gauge-fill" id="opt-cpu-bar" style="width:0%;background:linear-gradient(90deg,#3b82f6,#06b6d4)"></div>
+          <div class="opt-gauge-marks"><span></span><span></span><span></span><span></span></div>
+        </div>
       </div>
-      <div id="opt-problems" style="display:flex;flex-direction:column;gap:3px;font-size:11px;max-height:80px;overflow-y:auto"></div>
-      <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="openNewChatWithCommand('/recommendations','Resource Optimization')">Full Optimization Report &#x2192;</button></div>
+      <div class="opt-gauge">
+        <div class="opt-gauge-row">
+          <span class="opt-gauge-label mem">Memory Headroom</span>
+          <span class="opt-gauge-pct" id="opt-mem-pct">--%</span>
+        </div>
+        <div class="opt-gauge-bar">
+          <div class="opt-gauge-fill" id="opt-mem-bar" style="width:0%;background:linear-gradient(90deg,#8b5cf6,#ec4899)"></div>
+          <div class="opt-gauge-marks"><span></span><span></span><span></span><span></span></div>
+        </div>
+      </div>
+
+      <!-- Top Offenders Table -->
+      <div class="opt-section-title">
+        <span>&#x1F4C9;</span> Top Right-Sizing Opportunities
+        <span class="opt-section-count" id="opt-offenders-count">0</span>
+      </div>
+      <div class="opt-offenders" id="opt-offenders">
+        <div class="opt-empty">No issues detected</div>
+      </div>
+
+      <!-- PVC / Storage Section -->
+      <div class="opt-section-title" style="margin-top:14px">
+        <span>&#x1F4BE;</span> Storage (PVCs)
+        <span class="opt-section-count" id="opt-pvc-total">0</span>
+      </div>
+      <div class="opt-pvc-grid">
+        <div class="opt-pvc-stat"><div class="opt-pvc-num" id="opt-pvc-bound">--</div><div class="opt-pvc-lbl">Bound</div></div>
+        <div class="opt-pvc-stat"><div class="opt-pvc-num warn" id="opt-pvc-pending">--</div><div class="opt-pvc-lbl">Pending</div></div>
+        <div class="opt-pvc-stat"><div class="opt-pvc-num warn" id="opt-pvc-orphaned">--</div><div class="opt-pvc-lbl">Orphaned</div></div>
+        <div class="opt-pvc-stat"><div class="opt-pvc-num" id="opt-pvc-cap">--</div><div class="opt-pvc-lbl">Total GiB</div></div>
+      </div>
+      <div class="opt-pvc-orphaned" id="opt-pvc-orphaned-list"></div>
+
+      <div style="margin-top:12px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="openNewChatWithCommand('/recommendations','Resource Optimization')">Full Optimization Report &#x2192;</button></div>
     </div>
   </div>
 
@@ -3941,24 +4074,118 @@ async function loadDRWidget() {
 async function loadOptimizationWidget() {
   try {
     const d = await apiFetch('/api/dashboard/optimization');
+
+    // Efficiency Score Ring
+    var score = Math.max(0, Math.min(100, d.efficiencyScore || 0));
+    var circumference = 2 * Math.PI * 30; // 188.5
+    var offset = circumference * (1 - score / 100);
+    var ring = document.getElementById('opt-score-circle');
+    if (ring) {
+      ring.setAttribute('stroke-dasharray', circumference);
+      ring.setAttribute('stroke-dashoffset', offset);
+      var ringColor = score >= 80 ? 'var(--ok)' : score >= 60 ? 'var(--warn)' : 'var(--crit)';
+      ring.style.stroke = ringColor;
+    }
+    var gradeEl = document.getElementById('opt-grade');
+    if (gradeEl) {
+      gradeEl.textContent = d.grade || '?';
+      gradeEl.style.color = score >= 80 ? 'var(--ok)' : score >= 60 ? 'var(--warn)' : 'var(--crit)';
+    }
+    var pctEl = document.getElementById('opt-score-pct');
+    if (pctEl) pctEl.textContent = score + '/100';
+
+    // Pods summary
+    var podsSum = document.getElementById('opt-pods-summary');
+    if (podsSum) podsSum.textContent = (d.totalPods || 0) + ' workloads analyzed';
+
+    // Cost savings
+    var savEl = document.getElementById('opt-savings');
+    if (savEl) {
+      var sav = d.monthlySavings || 0;
+      savEl.textContent = sav >= 1000 ? '$' + (sav / 1000).toFixed(1) + 'k' : '$' + sav;
+    }
+
+    // Stat cards
     document.getElementById('opt-over').textContent = d.overProvisioned;
     document.getElementById('opt-under').textContent = d.underProvisioned;
     document.getElementById('opt-nolimits').textContent = d.noLimits;
+    var overSub = document.getElementById('opt-over-sub');
+    if (overSub && d.wastedCpuMillicores) {
+      overSub.textContent = d.wastedCpuMillicores + 'm CPU · ' + (d.wastedMemGi || 0) + 'Gi';
+    }
+
+    // Headroom Gauges
     const cpuH = Math.max(0, Math.min(100, d.cpuHeadroom));
     const memH = Math.max(0, Math.min(100, d.memHeadroom));
-    document.getElementById('opt-cpu-pct').textContent = cpuH + '%';
-    document.getElementById('opt-cpu-bar').style.width = cpuH + '%';
-    document.getElementById('opt-cpu-bar').style.background = cpuH > 30 ? 'var(--ok)' : cpuH > 15 ? 'var(--warn)' : 'var(--crit)';
-    document.getElementById('opt-mem-pct').textContent = memH + '%';
-    document.getElementById('opt-mem-bar').style.width = memH + '%';
-    document.getElementById('opt-mem-bar').style.background = memH > 30 ? 'var(--ok)' : memH > 15 ? 'var(--warn)' : 'var(--crit)';
-    document.getElementById('opt-problems').innerHTML = (d.topProblems || []).map(p =>
-      '<div style="display:flex;gap:4px;align-items:baseline"><span class="badge ' + (p.type === 'over' ? 'badge-warn' : 'badge-crit') + '">' + (p.type === 'over' ? 'OVER' : 'UNDER') + '</span>' +
-      '<span style="color:var(--text2)">' + esc(p.ns) + '/</span>' + esc(p.name) + '</div>'
-    ).join('');
+    var cpuPctEl = document.getElementById('opt-cpu-pct');
+    var cpuBarEl = document.getElementById('opt-cpu-bar');
+    var memPctEl = document.getElementById('opt-mem-pct');
+    var memBarEl = document.getElementById('opt-mem-bar');
+    if (cpuPctEl) cpuPctEl.textContent = cpuH + '%';
+    if (cpuBarEl) {
+      cpuBarEl.style.width = cpuH + '%';
+      var cpuColor = cpuH > 30 ? 'linear-gradient(90deg,#22c55e,#10b981)' : cpuH > 15 ? 'linear-gradient(90deg,#f59e0b,#f97316)' : 'linear-gradient(90deg,#ef4444,#dc2626)';
+      cpuBarEl.style.background = cpuColor;
+    }
+    if (memPctEl) memPctEl.textContent = memH + '%';
+    if (memBarEl) {
+      memBarEl.style.width = memH + '%';
+      var memColor = memH > 30 ? 'linear-gradient(90deg,#22c55e,#10b981)' : memH > 15 ? 'linear-gradient(90deg,#f59e0b,#f97316)' : 'linear-gradient(90deg,#ef4444,#dc2626)';
+      memBarEl.style.background = memColor;
+    }
+
+    // Top Offenders Table
+    var offenders = d.topProblems || [];
+    var offendersEl = document.getElementById('opt-offenders');
+    var offCount = document.getElementById('opt-offenders-count');
+    if (offCount) offCount.textContent = offenders.length;
+    if (offendersEl) {
+      if (offenders.length === 0) {
+        offendersEl.innerHTML = '<div class="opt-empty">All workloads are right-sized &#x2713;</div>';
+      } else {
+        offendersEl.innerHTML = offenders.map(function(p) {
+          var tag = p.type === 'over' ? 'OVER' : 'UNDER';
+          var stat = '';
+          if (p.cpuUsed != null && p.cpuReq != null) {
+            stat = '<span class="used">' + p.cpuUsed + 'm</span>/' + p.cpuReq + 'm';
+          }
+          var rec = p.cpuRecommend ? '&#x2192; ' + p.cpuRecommend + 'm' : '';
+          var displayName = (p.name || '').length > 32 ? (p.name || '').slice(0, 30) + '...' : (p.name || '');
+          return '<div class="opt-offender" title="' + esc(p.ns + '/' + p.name) + ': ' + esc(p.detail || '') + '" onclick="openNewChatWithCommand(\'describe pod ' + esc(p.name) + ' in namespace ' + esc(p.ns) + '\',\'Pod: ' + esc(p.name) + '\')">' +
+            '<span class="opt-offender-tag ' + p.type + '">' + tag + '</span>' +
+            '<span class="opt-offender-name"><span class="ns">' + esc(p.ns) + '/</span>' + esc(displayName) + '</span>' +
+            '<span class="opt-offender-stat">' + stat + '</span>' +
+            (rec ? '<span class="opt-offender-rec">' + rec + '</span>' : '<span></span>') +
+            '</div>';
+        }).join('');
+      }
+    }
+
+    // PVC Storage Section
+    var pvc = d.pvc || { total: 0, bound: 0, pending: 0, lost: 0, orphaned: 0, totalCapacityGi: 0, orphanedList: [] };
+    var setText = function(id, val) { var e = document.getElementById(id); if (e) e.textContent = val; };
+    setText('opt-pvc-total', pvc.total + ' total');
+    setText('opt-pvc-bound', pvc.bound);
+    setText('opt-pvc-pending', pvc.pending);
+    setText('opt-pvc-orphaned', pvc.orphaned);
+    setText('opt-pvc-cap', pvc.totalCapacityGi);
+    var orphList = document.getElementById('opt-pvc-orphaned-list');
+    if (orphList) {
+      if ((pvc.orphanedList || []).length === 0) {
+        orphList.innerHTML = pvc.total > 0 ? '<div class="opt-empty">No orphaned PVCs &#x2713;</div>' : '';
+      } else {
+        orphList.innerHTML = pvc.orphanedList.map(function(p) {
+          var displayName = (p.name || '').length > 30 ? (p.name || '').slice(0, 28) + '...' : (p.name || '');
+          return '<div class="opt-pvc-orphaned-item" title="' + esc(p.ns + '/' + p.name) + ' · ' + esc(p.storageClass || 'default') + '">' +
+            '<span class="opt-pvc-orphaned-name"><span class="ns">' + esc(p.ns) + '/</span>' + esc(displayName) + '</span>' +
+            '<span class="opt-pvc-orphaned-size">' + esc(p.size || '?') + '</span>' +
+            '</div>';
+        }).join('');
+      }
+    }
   } catch (e) {
-    document.getElementById('opt-over').textContent = '?';
-    document.getElementById('opt-under').textContent = '?';
+    var setErr = function(id) { var el = document.getElementById(id); if (el) el.textContent = '?'; };
+    setErr('opt-over'); setErr('opt-under'); setErr('opt-nolimits'); setErr('opt-grade');
   }
 }
 

@@ -802,10 +802,12 @@ export async function handleDashboardAPI(pathname, req, res) {
       // ---- Resource optimization widget ----
       case "/api/dashboard/optimization": {
         try {
-          const [pods, metricsData, nodes] = await Promise.all([
+          const [pods, metricsData, nodes, pvcs, pvs] = await Promise.all([
             ocpGet("/api/v1/pods"),
             ocpGet("/apis/metrics.k8s.io/v1beta1/pods").catch(() => ({ items: [] })),
             ocpGet("/api/v1/nodes"),
+            ocpGet("/api/v1/persistentvolumeclaims").catch(() => ({ items: [] })),
+            ocpGet("/api/v1/persistentvolumes").catch(() => ({ items: [] })),
           ]);
           const podItems = (pods.items || []).filter(
             (p) => p.status?.phase === "Running" && !p.metadata.namespace?.startsWith("openshift-") && !p.metadata.namespace?.startsWith("kube-")
@@ -823,25 +825,54 @@ export async function handleDashboardAPI(pathname, req, res) {
           }
 
           let overProvisioned = 0, underProvisioned = 0, noLimits = 0;
+          let wastedCpu = 0, wastedMem = 0;
           const topProblems = [];
           for (const p of podItems) {
             const key = `${p.metadata.namespace}/${p.metadata.name}`;
             const usage = metricsMap[key];
-            let reqCpu = 0, reqMem = 0, haslim = false;
+            let reqCpu = 0, reqMem = 0, limCpu = 0, limMem = 0, haslim = false;
             for (const c of (p.spec?.containers || [])) {
               reqCpu += parseCpu(c.resources?.requests?.cpu);
               reqMem += parseMem(c.resources?.requests?.memory);
+              limCpu += parseCpu(c.resources?.limits?.cpu);
+              limMem += parseMem(c.resources?.limits?.memory);
               if (c.resources?.limits?.cpu || c.resources?.limits?.memory) haslim = true;
             }
             if (!haslim) { noLimits++; continue; }
             if (!usage) continue;
             if (reqCpu > 0 && usage.cpu < reqCpu * 0.1 && reqCpu >= 0.1) {
               overProvisioned++;
-              topProblems.push({ name: p.metadata.name, ns: p.metadata.namespace, type: "over", detail: `CPU: using ${(usage.cpu * 1000).toFixed(0)}m, requested ${(reqCpu * 1000).toFixed(0)}m` });
+              const wastedCpuPod = reqCpu - usage.cpu;
+              const wastedMemPod = Math.max(0, reqMem - usage.mem);
+              wastedCpu += wastedCpuPod;
+              wastedMem += wastedMemPod;
+              topProblems.push({
+                name: p.metadata.name,
+                ns: p.metadata.namespace,
+                type: "over",
+                cpuReq: Math.round(reqCpu * 1000),
+                cpuUsed: Math.round(usage.cpu * 1000),
+                memReq: Math.round(reqMem / (1024 * 1024)),
+                memUsed: Math.round(usage.mem / (1024 * 1024)),
+                cpuRecommend: Math.max(50, Math.round(usage.cpu * 1300)),
+                memRecommend: Math.max(64, Math.round((usage.mem * 1.3) / (1024 * 1024))),
+                detail: `CPU: using ${(usage.cpu * 1000).toFixed(0)}m, requested ${(reqCpu * 1000).toFixed(0)}m`,
+              });
             }
             if (reqCpu > 0 && usage.cpu > reqCpu * 1.5) {
               underProvisioned++;
-              topProblems.push({ name: p.metadata.name, ns: p.metadata.namespace, type: "under", detail: `CPU: using ${(usage.cpu * 1000).toFixed(0)}m, requested ${(reqCpu * 1000).toFixed(0)}m` });
+              topProblems.push({
+                name: p.metadata.name,
+                ns: p.metadata.namespace,
+                type: "under",
+                cpuReq: Math.round(reqCpu * 1000),
+                cpuUsed: Math.round(usage.cpu * 1000),
+                memReq: Math.round(reqMem / (1024 * 1024)),
+                memUsed: Math.round(usage.mem / (1024 * 1024)),
+                cpuRecommend: Math.max(50, Math.round(usage.cpu * 1300)),
+                memRecommend: Math.max(64, Math.round((usage.mem * 1.3) / (1024 * 1024))),
+                detail: `CPU: using ${(usage.cpu * 1000).toFixed(0)}m, requested ${(reqCpu * 1000).toFixed(0)}m`,
+              });
             }
           }
 
@@ -860,14 +891,97 @@ export async function handleDashboardAPI(pathname, req, res) {
           const cpuHeadroom = totalAllocCpu > 0 ? Math.round(((totalAllocCpu - totalReqCpu) / totalAllocCpu) * 100) : 0;
           const memHeadroom = totalAllocMem > 0 ? Math.round(((totalAllocMem - totalReqMem) / totalAllocMem) * 100) : 0;
 
+          // ---- PVC / Storage analysis ----
+          const pvcItems = pvcs.items || [];
+          const pvItems = pvs.items || [];
+          const usedPvcs = new Set();
+          for (const p of (pods.items || [])) {
+            for (const v of (p.spec?.volumes || [])) {
+              if (v.persistentVolumeClaim?.claimName) {
+                usedPvcs.add(`${p.metadata.namespace}/${v.persistentVolumeClaim.claimName}`);
+              }
+            }
+          }
+          let pvcBound = 0, pvcPending = 0, pvcLost = 0, pvcOrphaned = 0, totalPvcGi = 0;
+          const orphanedPvcs = [];
+          for (const pvc of pvcItems) {
+            const phase = pvc.status?.phase;
+            if (phase === "Bound") pvcBound++;
+            else if (phase === "Pending") pvcPending++;
+            else if (phase === "Lost") pvcLost++;
+            const cap = parseMem(pvc.status?.capacity?.storage || pvc.spec?.resources?.requests?.storage || "0");
+            totalPvcGi += cap / (1024 * 1024 * 1024);
+            const key = `${pvc.metadata.namespace}/${pvc.metadata.name}`;
+            if (phase === "Bound" && !usedPvcs.has(key)) {
+              pvcOrphaned++;
+              orphanedPvcs.push({
+                name: pvc.metadata.name,
+                ns: pvc.metadata.namespace,
+                size: pvc.status?.capacity?.storage || pvc.spec?.resources?.requests?.storage || "?",
+                storageClass: pvc.spec?.storageClassName || "default",
+                age: pvc.metadata?.creationTimestamp,
+              });
+            }
+          }
+          let pvAvailable = 0, pvReleased = 0;
+          for (const pv of pvItems) {
+            const ph = pv.status?.phase;
+            if (ph === "Available") pvAvailable++;
+            else if (ph === "Released") pvReleased++;
+          }
+
+          // ---- Cost estimate ----
+          // Industry cloud-neutral averages (per hour): CPU=$0.04/core, Memory=$0.005/GB
+          // Storage: $0.08/GB-month (gp3-equivalent average)
+          const HOURS_PER_MONTH = 730;
+          const cpuMonthlyWaste = wastedCpu * 0.04 * HOURS_PER_MONTH;
+          const memMonthlyWaste = (wastedMem / (1024 * 1024 * 1024)) * 0.005 * HOURS_PER_MONTH;
+          const storageMonthlyWaste = orphanedPvcs.reduce((s, p) => {
+            return s + (parseMem(p.size) / (1024 * 1024 * 1024)) * 0.08;
+          }, 0);
+          const monthlySavings = Math.round(cpuMonthlyWaste + memMonthlyWaste + storageMonthlyWaste);
+
+          // ---- Efficiency score (0-100) ----
+          // Based on: % pods properly sized, headroom utilization, no-limits ratio, PVC efficiency
+          const totalSized = podItems.length;
+          const issues = overProvisioned + underProvisioned;
+          const sizingScore = totalSized > 0 ? Math.max(0, 100 - (issues / totalSized) * 100) : 100;
+          const limitsScore = totalSized > 0 ? Math.max(0, 100 - (noLimits / totalSized) * 100) : 100;
+          const headroomScore = Math.min(100, ((cpuHeadroom + memHeadroom) / 2) * 2.5);
+          const pvcScore = pvcItems.length > 0 ? Math.max(0, 100 - (pvcOrphaned / pvcItems.length) * 100) : 100;
+          const efficiencyScore = Math.round((sizingScore * 0.4) + (limitsScore * 0.25) + (headroomScore * 0.2) + (pvcScore * 0.15));
+          const grade = efficiencyScore >= 90 ? "A" : efficiencyScore >= 80 ? "B" : efficiencyScore >= 70 ? "C" : efficiencyScore >= 60 ? "D" : "F";
+
           json(res, 200, {
             overProvisioned, underProvisioned, noLimits,
             cpuHeadroom, memHeadroom,
             totalPods: podItems.length,
-            topProblems: topProblems.slice(0, 5),
+            topProblems: topProblems.slice(0, 8),
+            efficiencyScore,
+            grade,
+            monthlySavings,
+            wastedCpuMillicores: Math.round(wastedCpu * 1000),
+            wastedMemGi: Math.round((wastedMem / (1024 * 1024 * 1024)) * 10) / 10,
+            pvc: {
+              total: pvcItems.length,
+              bound: pvcBound,
+              pending: pvcPending,
+              lost: pvcLost,
+              orphaned: pvcOrphaned,
+              totalCapacityGi: Math.round(totalPvcGi),
+              orphanedList: orphanedPvcs.slice(0, 5),
+              pvAvailable,
+              pvReleased,
+            },
           });
         } catch (err) {
-          json(res, 200, { overProvisioned: 0, underProvisioned: 0, noLimits: 0, cpuHeadroom: 0, memHeadroom: 0, totalPods: 0, topProblems: [], error: err.message });
+          json(res, 200, {
+            overProvisioned: 0, underProvisioned: 0, noLimits: 0,
+            cpuHeadroom: 0, memHeadroom: 0, totalPods: 0, topProblems: [],
+            efficiencyScore: 0, grade: "?", monthlySavings: 0,
+            pvc: { total: 0, bound: 0, pending: 0, lost: 0, orphaned: 0, totalCapacityGi: 0, orphanedList: [], pvAvailable: 0, pvReleased: 0 },
+            error: err.message,
+          });
         }
         break;
       }
