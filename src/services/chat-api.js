@@ -548,7 +548,14 @@ const AMBIGUITY_PATTERNS = [
     ],
   },
   {
-    test: (msg, p) => p.intent !== "unknown" && p.resource && p.name && !p.namespace && /\b(describe|get|detail|info|inspect|explain)\b/i.test(msg) && !/(all|every|across)\s*(namespace|ns)/i.test(msg),
+    test: (msg, p) => {
+      if (p.intent === "unknown" || !p.resource || !p.name || p.namespace) return false;
+      if (!/\b(describe|get|detail|info|inspect|explain)\b/i.test(msg)) return false;
+      if (/(all|every|across)\s*(namespace|ns)/i.test(msg)) return false;
+      const ri = RESOURCE_MAP[p.resource];
+      if (ri && !ri.namespaced) return false;
+      return true;
+    },
     question: `Which namespace is "${msg => msg}" in?`,
     dynamicQuestion: (msg, p) => `I found a request for ${p.resource} "${p.name}", but which namespace?`,
     context: "I need the namespace to look up this specific resource.",
@@ -1496,7 +1503,13 @@ async function handleListCommand(message, preParsed, opts = {}) {
   // When the user wants a specific resource (describe/get) and we have an
   // LLM available, return null so the LLM can gather richer context (events,
   // logs, related resources) instead of a generic list.
-  if (llmAvailable && cmd.operation === "get" && cmd.resourceName) return null;
+  // Exception: cluster-scoped resources (nodes, PVs) are handled directly
+  // because the built-in handler returns accurate live data while the LLM
+  // may hallucinate status fields it can't observe.
+  if (llmAvailable && cmd.operation === "get" && cmd.resourceName) {
+    const ri = RESOURCE_MAP[cmd.resourceType];
+    if (!ri || ri.namespaced) return null;
+  }
   // Issue/health questions go through the intent-driven analysis path
   // (gatherClusterContext) — but only when there's no explicit list verb,
   // so "list crashloopbackoff pods" still returns a focused list.
@@ -6008,7 +6021,7 @@ export async function handleChatAPI(req, res) {
       // Require a namespace for namespaced resources — prompt the user
       // rather than silently queueing a half-specified action.
       // Cluster-scoped resources (namespace, project) don't need a namespace.
-      const clusterScopedTypes = new Set(["namespace", "project"]);
+      const clusterScopedTypes = new Set(["namespace", "project", "node", "nodes", "pv", "pvs", "persistentvolume", "clusteroperator", "clusterrole", "clusterrolebinding"]);
       if (!actionIntent.namespace && !clusterScopedTypes.has(actionIntent.resourceType)) {
         const reply = [
           `### ${actionIntent.action} ${actionIntent.resourceType}`,
