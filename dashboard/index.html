@@ -284,8 +284,13 @@ tr:hover td{background:#ffffff06}
 .topo-op-pill.degraded .op-dot{background:var(--crit)}
 .topo-op-pill.progressing .op-dot{background:var(--accent2);animation:topo-pulse 1.5s infinite}
 @keyframes topo-pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.topo-canvas{display:flex;flex-wrap:wrap;gap:10px;padding:14px 18px}
-.topo-node{display:flex;align-items:center;gap:12px;flex:1;min-width:220px;max-width:100%;padding:12px 14px;background:var(--card-deep);border:1.5px solid var(--border);border-radius:10px;cursor:pointer;transition:all .2s}
+.topo-canvas{display:flex;flex-direction:column;gap:14px;padding:14px 18px}
+.topo-role-group{display:flex;flex-direction:column;gap:6px}
+.topo-role-header{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;padding:0 2px}
+.topo-role-header .trh-icon{font-size:14px}
+.topo-role-header .trh-count{font-size:10px;font-weight:600;color:var(--text2);background:var(--card-deep);border:1px solid var(--border);border-radius:10px;padding:1px 8px;margin-left:4px}
+.topo-role-nodes{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.topo-node{display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--card-deep);border:1.5px solid var(--border);border-radius:10px;cursor:pointer;transition:all .2s}
 .topo-node:hover{border-color:var(--accent2);box-shadow:0 2px 10px rgba(0,0,0,.15)}
 .topo-node.healthy{border-color:var(--ok)}
 .topo-node.warning{border-color:var(--warn)}
@@ -1736,8 +1741,10 @@ tr:hover td{background:#ffffff06}
       </div>
       <div class="topo-legend">
         <span><i style="background:var(--ok)"></i> Ready</span>
-        <span><i style="background:var(--warn)"></i> Warning</span>
         <span><i style="background:var(--crit)"></i> NotReady</span>
+        <span>&#x1F3DB; Control Plane</span>
+        <span>&#x2699; Worker</span>
+        <span>&#x1F4E1; Infra</span>
       </div>
     </div>
     <!-- Cluster Health Timeline -->
@@ -3209,16 +3216,32 @@ async function loadTopology() {
       issuePodsByNode[node].push(p);
     });
 
-    canvas.innerHTML = nodes.map(function(n) {
+    // Group nodes by role category
+    var roleGroups = { 'Control Plane': [], 'Worker': [], 'Infrastructure': [], 'Other': [] };
+    var roleIcons = { 'Control Plane': '&#x1F3DB;', 'Worker': '&#x2699;', 'Infrastructure': '&#x1F4E1;', 'Other': '&#x1F4E6;' };
+    nodes.forEach(function(n) {
+      var roles = (n.roles || []).map(function(r) { return r.toLowerCase(); });
+      if (roles.indexOf('master') >= 0 || roles.indexOf('control-plane') >= 0) {
+        roleGroups['Control Plane'].push(n);
+      } else if (roles.indexOf('infra') >= 0 || roles.indexOf('infrastructure') >= 0) {
+        roleGroups['Infrastructure'].push(n);
+      } else if (roles.indexOf('worker') >= 0 || roles.length === 0) {
+        roleGroups['Worker'].push(n);
+      } else {
+        roleGroups['Other'].push(n);
+      }
+    });
+
+    function renderNodeCard(n) {
       var issues = issuePodsByNode[n.name] || [];
       var health = !n.ready ? 'critical' : 'healthy';
       var roleLabel = (n.roles || []).join(', ') || 'worker';
-      var icon = roleLabel.includes('master') || roleLabel.includes('control') ? '&#x1F3DB;' : '&#x2699;';
+      var roleLC = roleLabel.toLowerCase();
+      var icon = (roleLC.indexOf('master') >= 0 || roleLC.indexOf('control') >= 0) ? '&#x1F3DB;' : roleLC.indexOf('infra') >= 0 ? '&#x1F4E1;' : '&#x2699;';
       var podCount = n.pods || 0;
       var maxPods = n.maxPods || 110;
       var podPct = maxPods > 0 ? Math.round((podCount / maxPods) * 100) : 0;
 
-      // Pod dots — compact, max 20
       var dotCount = Math.min(podCount, 20);
       var critCount = issues.filter(function(p) { return p.phase === 'Failed'; }).length;
       var warnCount = issues.length - critCount;
@@ -3244,7 +3267,25 @@ async function loadTopology() {
         '</div>' +
         (dots ? '<div class="topo-node-pods">' + dots + '</div>' : '') +
       '</div>';
-    }).join('');
+    }
+
+    var html = '';
+    var groupOrder = ['Control Plane', 'Worker', 'Infrastructure', 'Other'];
+    groupOrder.forEach(function(groupName) {
+      var groupNodes = roleGroups[groupName];
+      if (!groupNodes || groupNodes.length === 0) return;
+      var readyInGroup = groupNodes.filter(function(n) { return n.ready; }).length;
+      html += '<div class="topo-role-group">';
+      html += '<div class="topo-role-header">';
+      html += '<span class="trh-icon">' + roleIcons[groupName] + '</span> ';
+      html += esc(groupName);
+      html += '<span class="trh-count">' + readyInGroup + '/' + groupNodes.length + ' ready</span>';
+      html += '</div>';
+      html += '<div class="topo-role-nodes">';
+      groupNodes.forEach(function(n) { html += renderNodeCard(n); });
+      html += '</div></div>';
+    });
+    canvas.innerHTML = html;
   } catch (e) {
     canvas.innerHTML = '<div style="padding:20px;text-align:center;font-size:12px">' +
       '<div style="color:var(--text2);margin-bottom:6px">Unable to load node topology</div>' +
