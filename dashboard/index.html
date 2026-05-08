@@ -273,9 +273,12 @@ tr:hover td{background:#ffffff06}
 .opt-score-text{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:700}
 .opt-score-text .grade{font-size:22px;line-height:1;color:var(--text)}
 .opt-score-text .pct{font-size:9px;color:var(--text2);margin-top:1px;font-weight:500}
-.opt-savings{flex:1;text-align:right}
-.opt-savings-num{font-size:22px;font-weight:800;color:var(--ok)}
-.opt-savings-lbl{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px}
+.opt-reclaim{flex:1;text-align:right}
+.opt-reclaim-items{display:flex;flex-direction:column;gap:2px;align-items:flex-end}
+.opt-reclaim-row{font-size:11px;display:flex;align-items:center;gap:4px}
+.opt-reclaim-val{font-weight:700;font-family:'SFMono-Regular',Consolas,monospace;color:var(--ok)}
+.opt-reclaim-unit{color:var(--text2);font-size:9.5px}
+.opt-reclaim-lbl{font-size:9.5px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:2px}
 .opt-stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
 .opt-stat-card{padding:10px 8px;border-radius:8px;background:var(--card-deep);border:1px solid var(--border);text-align:center;transition:all .2s}
 .opt-stat-card:hover{transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,.08)}
@@ -312,17 +315,65 @@ tr:hover td{background:#ffffff06}
 .opt-offender-stat{font-family:'SFMono-Regular',Consolas,monospace;font-size:10px;color:var(--text2);text-align:right;flex-shrink:0}
 .opt-offender-stat .used{color:var(--text);font-weight:600}
 .opt-offender-rec{font-size:9px;color:var(--ok);font-family:'SFMono-Regular',Consolas,monospace;flex-shrink:0;background:color-mix(in srgb,var(--ok) 12%,transparent);padding:1px 6px;border-radius:4px}
-.opt-pvc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px}
-.opt-pvc-stat{text-align:center;padding:6px 4px;background:var(--card-deep);border:1px solid var(--border);border-radius:6px}
-.opt-pvc-num{font-size:16px;font-weight:700;color:var(--text);line-height:1.1}
-.opt-pvc-num.warn{color:var(--warn)}
-.opt-pvc-num.crit{color:var(--crit)}
-.opt-pvc-lbl{font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.3px;margin-top:2px;font-weight:600}
-.opt-pvc-orphaned{display:flex;flex-direction:column;gap:3px;font-size:10.5px}
-.opt-pvc-orphaned-item{display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:color-mix(in srgb,var(--warn) 6%,transparent);border:1px solid color-mix(in srgb,var(--warn) 25%,var(--border));border-radius:6px}
-.opt-pvc-orphaned-name{color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
-.opt-pvc-orphaned-name .ns{color:var(--text2);font-size:9.5px;margin-right:4px}
-.opt-pvc-orphaned-size{color:var(--warn);font-family:'SFMono-Regular',Consolas,monospace;font-weight:700;font-size:10px;flex-shrink:0;margin-left:8px}
+.opt-storage-overview{position:relative;height:22px;border-radius:6px;overflow:hidden;background:var(--border);margin-bottom:10px;display:flex}
+.opt-storage-seg{height:100%;display:flex;align-items:center;justify-content:center;font-size:8.5px;font-weight:700;color:#fff;transition:width .8s ease;min-width:0;overflow:hidden;white-space:nowrap}
+.opt-storage-seg.used{background:linear-gradient(90deg,#22c55e,#10b981)}
+.opt-storage-seg.unused{background:linear-gradient(90deg,#3b82f6,#06b6d4)}
+.opt-storage-seg.orphan{background:linear-gradient(90deg,#f59e0b,#f97316)}
+.opt-storage-legend{display:flex;gap:14px;margin-bottom:10px;flex-wrap:wrap}
+.opt-storage-legend-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--text2)}
+.opt-storage-legend-dot{width:8px;height:8px;border-radius:2px;flex-shrink:0}
+.opt-pvc-table-wrap{max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:var(--card-deep);margin-bottom:10px}
+.opt-pvc-table{width:100%;border-collapse:collapse;font-size:11px}
+.opt-pvc-table th{position:sticky;top:0;background:var(--bg-alt);padding:6px 8px;font-size:9.5px;text-transform:uppercase;letter-spacing:.3px;color:var(--text2);font-weight:600;border-bottom:1px solid var(--border);text-align:left;z-index:1}
+.opt-pvc-table td{padding:5px 8px;border-bottom:1px solid var(--border);color:var(--text);white-space:nowrap}
+.opt-pvc-table tr:hover td{background:color-mix(in srgb,var(--accent2) 4%,transparent)}
+.opt-pvc-util{display:inline-flex;align-items:center;gap:4px}
+.opt-pvc-util-bar{width:40px;height:6px;border-radius:3px;background:var(--border);overflow:hidden;display:inline-block}
+.opt-pvc-util-fill{height:100%;border-radius:3px;transition:width .5s}
+.opt-pvc-util.green .opt-pvc-util-fill{background:var(--ok)}
+.opt-pvc-util.amber .opt-pvc-util-fill{background:var(--warn)}
+.opt-pvc-util.red .opt-pvc-util-fill{background:var(--crit)}
+.opt-pvc-rec{font-size:9px;padding:1px 6px;border-radius:4px;font-weight:600}
+.opt-pvc-rec.healthy{background:color-mix(in srgb,var(--ok) 12%,transparent);color:var(--ok)}
+.opt-pvc-rec.resize{background:color-mix(in srgb,var(--warn) 12%,transparent);color:var(--warn)}
+.opt-pvc-rec.remove{background:color-mix(in srgb,var(--crit) 12%,transparent);color:var(--crit)}
+.opt-orphan-section{border:1px solid color-mix(in srgb,var(--warn) 30%,var(--border));border-radius:8px;overflow:hidden;margin-bottom:10px}
+.opt-orphan-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:color-mix(in srgb,var(--warn) 6%,transparent);cursor:pointer;user-select:none}
+.opt-orphan-header:hover{background:color-mix(in srgb,var(--warn) 10%,transparent)}
+.opt-orphan-title{font-size:11px;font-weight:700;color:var(--warn);display:flex;align-items:center;gap:6px}
+.opt-orphan-badge{background:var(--warn);color:#000;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px}
+.opt-orphan-body{padding:6px;max-height:200px;overflow-y:auto;display:none}
+.opt-orphan-body.open{display:block}
+.opt-orphan-item{display:grid;grid-template-columns:24px 1fr auto auto auto;gap:6px;align-items:center;padding:5px 8px;border-radius:6px;font-size:11px;border:1px solid var(--border);margin-bottom:4px;background:var(--card-deep);transition:all .15s}
+.opt-orphan-item:hover{border-color:color-mix(in srgb,var(--warn) 40%,var(--border))}
+.opt-orphan-item.old{border-left:3px solid var(--crit)}
+.opt-orphan-cb{width:14px;height:14px;accent-color:var(--warn);cursor:pointer}
+.opt-orphan-name{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.opt-orphan-name .ns{color:var(--text2);font-size:9.5px}
+.opt-orphan-meta{font-size:9.5px;color:var(--text2);font-family:'SFMono-Regular',Consolas,monospace;flex-shrink:0}
+.opt-orphan-size{font-weight:700;color:var(--warn);font-family:'SFMono-Regular',Consolas,monospace;font-size:10px;flex-shrink:0}
+.opt-orphan-actions{display:flex;gap:6px;align-items:center;flex-shrink:0}
+.opt-orphan-del{background:none;border:1px solid color-mix(in srgb,var(--crit) 40%,var(--border));color:var(--crit);font-size:9.5px;font-weight:600;padding:2px 8px;border-radius:4px;cursor:pointer;transition:all .15s}
+.opt-orphan-del:hover{background:var(--crit);color:#fff;border-color:var(--crit)}
+.opt-orphan-bulk{display:flex;align-items:center;gap:8px;padding:6px 12px;border-top:1px solid var(--border);background:color-mix(in srgb,var(--warn) 4%,transparent)}
+.opt-orphan-bulk-btn{background:var(--crit);color:#fff;border:none;font-size:10px;font-weight:600;padding:4px 12px;border-radius:4px;cursor:pointer;transition:opacity .15s}
+.opt-orphan-bulk-btn:hover{opacity:.85}
+.opt-orphan-bulk-btn:disabled{opacity:.4;cursor:not-allowed}
+.opt-orphan-selcount{font-size:10px;color:var(--text2)}
+.opt-reclaim-summary{font-size:11px;color:var(--text2);margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.opt-reclaim-summary strong{color:var(--ok);font-weight:700}
+.opt-confirm-modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999}
+.opt-confirm-box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:400px;width:90%}
+.opt-confirm-box h4{font-size:14px;margin-bottom:8px;color:var(--crit)}
+.opt-confirm-box p{font-size:12px;color:var(--text2);margin-bottom:16px;line-height:1.6}
+.opt-confirm-box code{background:var(--card-deep);padding:2px 6px;border-radius:4px;font-size:11px}
+.opt-confirm-btns{display:flex;gap:8px;justify-content:flex-end}
+.opt-confirm-btns button{padding:6px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--border);transition:all .15s}
+.opt-confirm-btns .cancel{background:var(--card-deep);color:var(--text)}
+.opt-confirm-btns .cancel:hover{border-color:var(--text2)}
+.opt-confirm-btns .confirm{background:var(--crit);color:#fff;border-color:var(--crit)}
+.opt-confirm-btns .confirm:hover{opacity:.85}
 .opt-empty{font-size:11px;color:var(--text2);text-align:center;padding:8px;font-style:italic}
 .workflow-step{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px}
 .workflow-step .step-num{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}
@@ -1946,9 +1997,13 @@ tr:hover td{background:#ffffff06}
           <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;font-weight:600">Efficiency Score</div>
           <div style="font-size:11px;color:var(--text2);margin-top:4px" id="opt-pods-summary">Analyzing workloads...</div>
         </div>
-        <div class="opt-savings" title="Estimated monthly cost savings if recommendations applied">
-          <div class="opt-savings-num"><span id="opt-savings">$0</span></div>
-          <div class="opt-savings-lbl">Est. Monthly Savings</div>
+        <div class="opt-reclaim" title="Reclaimable resources if recommendations applied">
+          <div class="opt-reclaim-lbl">Reclaim Potential</div>
+          <div class="opt-reclaim-items">
+            <div class="opt-reclaim-row"><span class="opt-reclaim-val" id="opt-reclaim-cpu">--</span><span class="opt-reclaim-unit">cores</span></div>
+            <div class="opt-reclaim-row"><span class="opt-reclaim-val" id="opt-reclaim-mem">--</span><span class="opt-reclaim-unit">GiB mem</span></div>
+            <div class="opt-reclaim-row"><span class="opt-reclaim-val" id="opt-reclaim-storage">--</span><span class="opt-reclaim-unit">GiB storage</span></div>
+          </div>
         </div>
       </div>
 
@@ -2002,18 +2057,50 @@ tr:hover td{background:#ffffff06}
         <div class="opt-empty">No issues detected</div>
       </div>
 
-      <!-- PVC / Storage Section -->
-      <div class="opt-section-title" style="margin-top:14px">
-        <span>&#x1F4BE;</span> Storage (PVCs)
-        <span class="opt-section-count" id="opt-pvc-total">0</span>
+      <!-- Storage Efficiency Section (full width) -->
+      <div class="opt-section-title" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+        <span>&#x1F4BE;</span> Storage Efficiency
+        <span class="opt-section-count" id="opt-pvc-total">0 PVCs</span>
       </div>
-      <div class="opt-pvc-grid">
-        <div class="opt-pvc-stat"><div class="opt-pvc-num" id="opt-pvc-bound">--</div><div class="opt-pvc-lbl">Bound</div></div>
-        <div class="opt-pvc-stat"><div class="opt-pvc-num warn" id="opt-pvc-pending">--</div><div class="opt-pvc-lbl">Pending</div></div>
-        <div class="opt-pvc-stat"><div class="opt-pvc-num warn" id="opt-pvc-orphaned">--</div><div class="opt-pvc-lbl">Orphaned</div></div>
-        <div class="opt-pvc-stat"><div class="opt-pvc-num" id="opt-pvc-cap">--</div><div class="opt-pvc-lbl">Total GiB</div></div>
+
+      <!-- Storage Overview Bar -->
+      <div class="opt-storage-overview" id="opt-storage-bar">
+        <div class="opt-storage-seg used" id="opt-stor-used" style="width:0%"></div>
+        <div class="opt-storage-seg unused" id="opt-stor-unused" style="width:0%"></div>
+        <div class="opt-storage-seg orphan" id="opt-stor-orphan" style="width:0%"></div>
       </div>
-      <div class="opt-pvc-orphaned" id="opt-pvc-orphaned-list"></div>
+      <div class="opt-storage-legend">
+        <div class="opt-storage-legend-item"><span class="opt-storage-legend-dot" style="background:#22c55e"></span>Used <span id="opt-stor-used-gi" style="font-weight:600;color:var(--text)">--</span> GiB</div>
+        <div class="opt-storage-legend-item"><span class="opt-storage-legend-dot" style="background:#3b82f6"></span>Allocated unused <span id="opt-stor-unused-gi" style="font-weight:600;color:var(--text)">--</span> GiB</div>
+        <div class="opt-storage-legend-item"><span class="opt-storage-legend-dot" style="background:#f59e0b"></span>Orphaned <span id="opt-stor-orphan-gi" style="font-weight:600;color:var(--text)">--</span> GiB</div>
+      </div>
+
+      <!-- Reclaim Summary -->
+      <div class="opt-reclaim-summary" id="opt-pvc-reclaim-summary"></div>
+
+      <!-- PVC Table -->
+      <div class="opt-pvc-table-wrap" id="opt-pvc-table-wrap">
+        <table class="opt-pvc-table">
+          <thead><tr><th>Name</th><th>Namespace</th><th>Size</th><th>Used%</th><th>Class</th><th>Status</th><th>Recommendation</th></tr></thead>
+          <tbody id="opt-pvc-table-body">
+            <tr><td colspan="7" style="text-align:center;color:var(--text2);padding:12px">Loading PVC data...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Orphaned PVCs (collapsible) -->
+      <div class="opt-orphan-section" id="opt-orphan-section" style="display:none">
+        <div class="opt-orphan-header" onclick="toggleOrphanSection()">
+          <div class="opt-orphan-title">&#x26A0; Orphaned PVCs <span class="opt-orphan-badge" id="opt-orphan-count">0</span></div>
+          <span id="opt-orphan-chevron" style="color:var(--text2);font-size:12px">&#x25BC;</span>
+        </div>
+        <div class="opt-orphan-body" id="opt-orphan-body"></div>
+        <div class="opt-orphan-bulk" id="opt-orphan-bulk" style="display:none">
+          <input type="checkbox" class="opt-orphan-cb" id="opt-orphan-selectall" onchange="toggleOrphanSelectAll(this.checked)">
+          <span class="opt-orphan-selcount"><span id="opt-orphan-selcount">0</span> selected</span>
+          <button class="opt-orphan-bulk-btn" id="opt-orphan-bulk-btn" disabled onclick="deleteSelectedOrphans()">Remove Selected</button>
+        </div>
+      </div>
 
       <div style="margin-top:12px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="openNewChatWithCommand('/recommendations','Resource Optimization')">Full Optimization Report &#x2192;</button></div>
     </div>
@@ -4071,20 +4158,31 @@ async function loadDRWidget() {
   }
 }
 
+var _orphanedPvcData = [];
+
 async function loadOptimizationWidget() {
   try {
     const d = await apiFetch('/api/dashboard/optimization');
 
-    // Efficiency Score Ring
+    // Efficiency Score Ring with animated count-up
     var score = Math.max(0, Math.min(100, d.efficiencyScore || 0));
-    var circumference = 2 * Math.PI * 30; // 188.5
-    var offset = circumference * (1 - score / 100);
+    var circumference = 2 * Math.PI * 30;
     var ring = document.getElementById('opt-score-circle');
     if (ring) {
       ring.setAttribute('stroke-dasharray', circumference);
-      ring.setAttribute('stroke-dashoffset', offset);
       var ringColor = score >= 80 ? 'var(--ok)' : score >= 60 ? 'var(--warn)' : 'var(--crit)';
       ring.style.stroke = ringColor;
+      var startOffset = circumference;
+      var endOffset = circumference * (1 - score / 100);
+      var dur = 800, startTime = null;
+      function animateRing(ts) {
+        if (!startTime) startTime = ts;
+        var prog = Math.min((ts - startTime) / dur, 1);
+        var eased = 1 - Math.pow(1 - prog, 3);
+        ring.setAttribute('stroke-dashoffset', startOffset + (endOffset - startOffset) * eased);
+        if (prog < 1) requestAnimationFrame(animateRing);
+      }
+      requestAnimationFrame(animateRing);
     }
     var gradeEl = document.getElementById('opt-grade');
     if (gradeEl) {
@@ -4098,20 +4196,21 @@ async function loadOptimizationWidget() {
     var podsSum = document.getElementById('opt-pods-summary');
     if (podsSum) podsSum.textContent = (d.totalPods || 0) + ' workloads analyzed';
 
-    // Cost savings
-    var savEl = document.getElementById('opt-savings');
-    if (savEl) {
-      var sav = d.monthlySavings || 0;
-      savEl.textContent = sav >= 1000 ? '$' + (sav / 1000).toFixed(1) + 'k' : '$' + sav;
-    }
+    // Reclaim Potential
+    var rCpu = document.getElementById('opt-reclaim-cpu');
+    var rMem = document.getElementById('opt-reclaim-mem');
+    var rStor = document.getElementById('opt-reclaim-storage');
+    if (rCpu) rCpu.textContent = ((d.reclaimCpu || 0) / 1000).toFixed(1);
+    if (rMem) rMem.textContent = d.reclaimMemGi || 0;
+    if (rStor) rStor.textContent = d.reclaimStorageGi || 0;
 
     // Stat cards
     document.getElementById('opt-over').textContent = d.overProvisioned;
     document.getElementById('opt-under').textContent = d.underProvisioned;
     document.getElementById('opt-nolimits').textContent = d.noLimits;
     var overSub = document.getElementById('opt-over-sub');
-    if (overSub && d.wastedCpuMillicores) {
-      overSub.textContent = d.wastedCpuMillicores + 'm CPU · ' + (d.wastedMemGi || 0) + 'Gi';
+    if (overSub && d.reclaimCpu) {
+      overSub.textContent = d.reclaimCpu + 'm CPU · ' + (d.reclaimMemGi || 0) + 'Gi';
     }
 
     // Headroom Gauges
@@ -4124,17 +4223,15 @@ async function loadOptimizationWidget() {
     if (cpuPctEl) cpuPctEl.textContent = cpuH + '%';
     if (cpuBarEl) {
       cpuBarEl.style.width = cpuH + '%';
-      var cpuColor = cpuH > 30 ? 'linear-gradient(90deg,#22c55e,#10b981)' : cpuH > 15 ? 'linear-gradient(90deg,#f59e0b,#f97316)' : 'linear-gradient(90deg,#ef4444,#dc2626)';
-      cpuBarEl.style.background = cpuColor;
+      cpuBarEl.style.background = cpuH > 30 ? 'linear-gradient(90deg,#22c55e,#10b981)' : cpuH > 15 ? 'linear-gradient(90deg,#f59e0b,#f97316)' : 'linear-gradient(90deg,#ef4444,#dc2626)';
     }
     if (memPctEl) memPctEl.textContent = memH + '%';
     if (memBarEl) {
       memBarEl.style.width = memH + '%';
-      var memColor = memH > 30 ? 'linear-gradient(90deg,#22c55e,#10b981)' : memH > 15 ? 'linear-gradient(90deg,#f59e0b,#f97316)' : 'linear-gradient(90deg,#ef4444,#dc2626)';
-      memBarEl.style.background = memColor;
+      memBarEl.style.background = memH > 30 ? 'linear-gradient(90deg,#22c55e,#10b981)' : memH > 15 ? 'linear-gradient(90deg,#f59e0b,#f97316)' : 'linear-gradient(90deg,#ef4444,#dc2626)';
     }
 
-    // Top Offenders Table
+    // Top Offenders
     var offenders = d.topProblems || [];
     var offendersEl = document.getElementById('opt-offenders');
     var offCount = document.getElementById('opt-offenders-count');
@@ -4146,9 +4243,7 @@ async function loadOptimizationWidget() {
         offendersEl.innerHTML = offenders.map(function(p) {
           var tag = p.type === 'over' ? 'OVER' : 'UNDER';
           var stat = '';
-          if (p.cpuUsed != null && p.cpuReq != null) {
-            stat = '<span class="used">' + p.cpuUsed + 'm</span>/' + p.cpuReq + 'm';
-          }
+          if (p.cpuUsed != null && p.cpuReq != null) stat = '<span class="used">' + p.cpuUsed + 'm</span>/' + p.cpuReq + 'm';
           var rec = p.cpuRecommend ? '&#x2192; ' + p.cpuRecommend + 'm' : '';
           var displayName = (p.name || '').length > 32 ? (p.name || '').slice(0, 30) + '...' : (p.name || '');
           return '<div class="opt-offender" title="' + esc(p.ns + '/' + p.name) + ': ' + esc(p.detail || '') + '" onclick="openNewChatWithCommand(\'describe pod ' + esc(p.name) + ' in namespace ' + esc(p.ns) + '\',\'Pod: ' + esc(p.name) + '\')">' +
@@ -4161,32 +4256,207 @@ async function loadOptimizationWidget() {
       }
     }
 
-    // PVC Storage Section
-    var pvc = d.pvc || { total: 0, bound: 0, pending: 0, lost: 0, orphaned: 0, totalCapacityGi: 0, orphanedList: [] };
+    // ---- Storage Efficiency Section ----
+    var pvc = d.pvc || { total: 0, bound: 0, pending: 0, lost: 0, orphaned: 0, totalCapacityGi: 0, usedStorageGi: 0, allocatedUnusedGi: 0, orphanedStorageGi: 0, orphanedList: [], pvcDetails: [] };
+    var totalGi = pvc.totalCapacityGi || 1;
+    var usedGi = pvc.usedStorageGi || 0;
+    var unusedGi = pvc.allocatedUnusedGi || 0;
+    var orphGi = pvc.orphanedStorageGi || 0;
+
+    // Section header
+    var pvcTotalEl = document.getElementById('opt-pvc-total');
+    if (pvcTotalEl) pvcTotalEl.textContent = pvc.total + ' PVCs · ' + totalGi + ' GiB';
+
+    // Storage overview bar
+    var usedPct = Math.round((usedGi / totalGi) * 100) || 0;
+    var unusedPct = Math.round((unusedGi / totalGi) * 100) || 0;
+    var orphPct = Math.max(0, 100 - usedPct - unusedPct);
+    var usedBar = document.getElementById('opt-stor-used');
+    var unusedBar = document.getElementById('opt-stor-unused');
+    var orphBar = document.getElementById('opt-stor-orphan');
+    if (usedBar) { usedBar.style.width = usedPct + '%'; usedBar.textContent = usedPct > 8 ? usedPct + '%' : ''; }
+    if (unusedBar) { unusedBar.style.width = unusedPct + '%'; unusedBar.textContent = unusedPct > 8 ? unusedPct + '%' : ''; }
+    if (orphBar) { orphBar.style.width = orphPct + '%'; orphBar.textContent = orphPct > 8 ? orphPct + '%' : ''; }
+
+    // Legend
     var setText = function(id, val) { var e = document.getElementById(id); if (e) e.textContent = val; };
-    setText('opt-pvc-total', pvc.total + ' total');
-    setText('opt-pvc-bound', pvc.bound);
-    setText('opt-pvc-pending', pvc.pending);
-    setText('opt-pvc-orphaned', pvc.orphaned);
-    setText('opt-pvc-cap', pvc.totalCapacityGi);
-    var orphList = document.getElementById('opt-pvc-orphaned-list');
-    if (orphList) {
-      if ((pvc.orphanedList || []).length === 0) {
-        orphList.innerHTML = pvc.total > 0 ? '<div class="opt-empty">No orphaned PVCs &#x2713;</div>' : '';
+    setText('opt-stor-used-gi', usedGi.toFixed(1));
+    setText('opt-stor-unused-gi', unusedGi.toFixed ? unusedGi.toFixed(1) : unusedGi);
+    setText('opt-stor-orphan-gi', orphGi.toFixed(1));
+
+    // Reclaim summary
+    var reclaimSumEl = document.getElementById('opt-pvc-reclaim-summary');
+    var reclaimTotal = Math.round((unusedGi + orphGi) * 10) / 10;
+    var reclaimPvcCount = (pvc.pvcDetails || []).filter(function(p) { return p.recommendation !== 'Healthy'; }).length;
+    if (reclaimSumEl) {
+      if (reclaimTotal > 0) {
+        reclaimSumEl.innerHTML = '<strong>' + reclaimTotal + ' GiB</strong> reclaimable across <strong>' + reclaimPvcCount + '</strong> PVCs';
       } else {
-        orphList.innerHTML = pvc.orphanedList.map(function(p) {
-          var displayName = (p.name || '').length > 30 ? (p.name || '').slice(0, 28) + '...' : (p.name || '');
-          return '<div class="opt-pvc-orphaned-item" title="' + esc(p.ns + '/' + p.name) + ' · ' + esc(p.storageClass || 'default') + '">' +
-            '<span class="opt-pvc-orphaned-name"><span class="ns">' + esc(p.ns) + '/</span>' + esc(displayName) + '</span>' +
-            '<span class="opt-pvc-orphaned-size">' + esc(p.size || '?') + '</span>' +
-            '</div>';
+        reclaimSumEl.innerHTML = 'All storage is efficiently utilized &#x2713;';
+      }
+    }
+
+    // PVC Table
+    var pvcTableBody = document.getElementById('opt-pvc-table-body');
+    if (pvcTableBody) {
+      var details = pvc.pvcDetails || [];
+      if (details.length === 0) {
+        pvcTableBody.innerHTML = '<tr><td colspan="7" class="opt-empty">No PVCs found</td></tr>';
+      } else {
+        pvcTableBody.innerHTML = details.map(function(p) {
+          var utilHtml = '';
+          if (p.usedPct != null) {
+            var utilClass = p.usedPct >= 60 ? 'green' : p.usedPct >= 20 ? 'amber' : 'red';
+            utilHtml = '<span class="opt-pvc-util ' + utilClass + '"><span class="opt-pvc-util-bar"><span class="opt-pvc-util-fill" style="width:' + p.usedPct + '%"></span></span> ' + p.usedPct + '%</span>';
+          } else {
+            utilHtml = '<span style="color:var(--text2)">N/A</span>';
+          }
+          var recClass = p.recommendation === 'Healthy' ? 'healthy' : (p.recommendation.startsWith('Remove') ? 'remove' : 'resize');
+          var statusBadge = p.orphaned ? '<span class="badge badge-warn">Orphaned</span>' : p.phase === 'Pending' ? '<span class="badge badge-crit">Pending</span>' : '<span class="badge badge-ok">Bound</span>';
+          var displayName = (p.name || '').length > 24 ? (p.name || '').slice(0, 22) + '...' : (p.name || '');
+          return '<tr title="' + esc(p.ns + '/' + p.name) + '">' +
+            '<td style="font-weight:500">' + esc(displayName) + '</td>' +
+            '<td style="color:var(--text2);font-size:10px">' + esc(p.ns) + '</td>' +
+            '<td style="font-family:monospace;font-weight:600">' + esc(p.size) + '</td>' +
+            '<td>' + utilHtml + '</td>' +
+            '<td style="font-size:10px;color:var(--text2)">' + esc(p.storageClass) + '</td>' +
+            '<td>' + statusBadge + '</td>' +
+            '<td><span class="opt-pvc-rec ' + recClass + '">' + esc(p.recommendation) + '</span></td>' +
+            '</tr>';
         }).join('');
+      }
+    }
+
+    // Orphaned PVCs Section
+    _orphanedPvcData = pvc.orphanedList || [];
+    var orphSection = document.getElementById('opt-orphan-section');
+    var orphCountEl = document.getElementById('opt-orphan-count');
+    var orphBody = document.getElementById('opt-orphan-body');
+    var orphBulk = document.getElementById('opt-orphan-bulk');
+    if (orphSection) {
+      if (_orphanedPvcData.length > 0) {
+        orphSection.style.display = '';
+        if (orphCountEl) orphCountEl.textContent = _orphanedPvcData.length;
+        if (orphBody) {
+          var hasOld = false;
+          orphBody.innerHTML = _orphanedPvcData.map(function(p, i) {
+            var isOld = (p.ageDays || 0) > 30;
+            if (isOld) hasOld = true;
+            var displayName = (p.name || '').length > 28 ? (p.name || '').slice(0, 26) + '...' : (p.name || '');
+            return '<div class="opt-orphan-item' + (isOld ? ' old' : '') + '" data-ns="' + esc(p.ns) + '" data-name="' + esc(p.name) + '">' +
+              '<input type="checkbox" class="opt-orphan-cb orphan-cb-item" data-idx="' + i + '" onchange="updateOrphanSelection()">' +
+              '<span class="opt-orphan-name"><span class="ns">' + esc(p.ns) + '/</span>' + esc(displayName) + '</span>' +
+              '<span class="opt-orphan-meta">' + esc(p.storageClass) + (isOld ? ' · ' + p.ageDays + 'd' : '') + '</span>' +
+              '<span class="opt-orphan-size">' + esc(p.size) + '</span>' +
+              '<span class="opt-orphan-actions"><button class="opt-orphan-del" onclick="confirmDeletePvc(\'' + esc(p.ns) + '\',\'' + esc(p.name) + '\')">Remove</button></span>' +
+              '</div>';
+          }).join('');
+          if (hasOld) {
+            orphBody.insertAdjacentHTML('afterbegin', '<div style="font-size:9.5px;color:var(--crit);padding:4px 8px;margin-bottom:4px">&#x26A0; PVCs older than 30 days are highlighted</div>');
+          }
+        }
+        if (orphBulk) orphBulk.style.display = '';
+      } else {
+        orphSection.style.display = 'none';
       }
     }
   } catch (e) {
     var setErr = function(id) { var el = document.getElementById(id); if (el) el.textContent = '?'; };
     setErr('opt-over'); setErr('opt-under'); setErr('opt-nolimits'); setErr('opt-grade');
   }
+}
+
+function toggleOrphanSection() {
+  var body = document.getElementById('opt-orphan-body');
+  var chevron = document.getElementById('opt-orphan-chevron');
+  if (body) {
+    var open = body.classList.toggle('open');
+    if (chevron) chevron.innerHTML = open ? '&#x25B2;' : '&#x25BC;';
+  }
+}
+
+function updateOrphanSelection() {
+  var cbs = document.querySelectorAll('.orphan-cb-item');
+  var count = 0;
+  cbs.forEach(function(cb) { if (cb.checked) count++; });
+  var countEl = document.getElementById('opt-orphan-selcount');
+  var bulkBtn = document.getElementById('opt-orphan-bulk-btn');
+  if (countEl) countEl.textContent = count;
+  if (bulkBtn) bulkBtn.disabled = count === 0;
+}
+
+function toggleOrphanSelectAll(checked) {
+  var cbs = document.querySelectorAll('.orphan-cb-item');
+  cbs.forEach(function(cb) { cb.checked = checked; });
+  updateOrphanSelection();
+}
+
+function confirmDeletePvc(ns, name) {
+  var modal = document.createElement('div');
+  modal.className = 'opt-confirm-modal';
+  modal.innerHTML = '<div class="opt-confirm-box">' +
+    '<h4>&#x26A0; Delete PVC</h4>' +
+    '<p>Are you sure you want to delete PVC <code>' + esc(ns) + '/' + esc(name) + '</code>?<br>This action is <strong>irreversible</strong>. The persistent volume claim and its data will be permanently removed.</p>' +
+    '<div class="opt-confirm-btns">' +
+    '<button class="cancel" onclick="this.closest(\'.opt-confirm-modal\').remove()">Cancel</button>' +
+    '<button class="confirm" id="confirm-del-btn">Delete PVC</button>' +
+    '</div></div>';
+  document.body.appendChild(modal);
+  modal.querySelector('.cancel').focus();
+  modal.addEventListener('click', function(e) { if (e.target === modal) modal.remove(); });
+  document.getElementById('confirm-del-btn').addEventListener('click', async function() {
+    this.disabled = true;
+    this.textContent = 'Deleting...';
+    try {
+      var resp = await fetch('/api/pvc/' + encodeURIComponent(ns) + '/' + encodeURIComponent(name), { method: 'DELETE' });
+      var result = await resp.json();
+      if (result.ok) {
+        modal.remove();
+        loadOptimizationWidget();
+      } else {
+        this.textContent = 'Failed: ' + (result.error || 'Unknown error');
+        setTimeout(function() { modal.remove(); }, 2000);
+      }
+    } catch (err) {
+      this.textContent = 'Error';
+      setTimeout(function() { modal.remove(); }, 2000);
+    }
+  });
+}
+
+async function deleteSelectedOrphans() {
+  var cbs = document.querySelectorAll('.orphan-cb-item:checked');
+  if (cbs.length === 0) return;
+  var names = [];
+  cbs.forEach(function(cb) {
+    var idx = parseInt(cb.dataset.idx);
+    if (_orphanedPvcData[idx]) names.push(_orphanedPvcData[idx].ns + '/' + _orphanedPvcData[idx].name);
+  });
+  var modal = document.createElement('div');
+  modal.className = 'opt-confirm-modal';
+  modal.innerHTML = '<div class="opt-confirm-box">' +
+    '<h4>&#x26A0; Bulk Delete PVCs</h4>' +
+    '<p>Delete <strong>' + names.length + '</strong> orphaned PVC(s)?<br><code>' + names.map(esc).join('</code>, <code>') + '</code><br><br>This action is <strong>irreversible</strong>.</p>' +
+    '<div class="opt-confirm-btns">' +
+    '<button class="cancel" onclick="this.closest(\'.opt-confirm-modal\').remove()">Cancel</button>' +
+    '<button class="confirm" id="confirm-bulk-del-btn">Delete All</button>' +
+    '</div></div>';
+  document.body.appendChild(modal);
+  modal.addEventListener('click', function(e) { if (e.target === modal) modal.remove(); });
+  document.getElementById('confirm-bulk-del-btn').addEventListener('click', async function() {
+    this.disabled = true;
+    this.textContent = 'Deleting...';
+    var toDelete = [];
+    cbs.forEach(function(cb) {
+      var idx = parseInt(cb.dataset.idx);
+      if (_orphanedPvcData[idx]) toDelete.push(_orphanedPvcData[idx]);
+    });
+    var results = await Promise.allSettled(toDelete.map(function(p) {
+      return fetch('/api/pvc/' + encodeURIComponent(p.ns) + '/' + encodeURIComponent(p.name), { method: 'DELETE' }).then(function(r) { return r.json(); });
+    }));
+    modal.remove();
+    loadOptimizationWidget();
+  });
 }
 
 async function loadAIActivityFeed() {
