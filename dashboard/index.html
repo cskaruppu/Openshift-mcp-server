@@ -116,6 +116,13 @@ tr:hover td{background:#ffffff06}
 .msg .apply-btn:disabled{background:#555;cursor:not-allowed;transform:none}
 .msg .apply-btn.success{background:var(--ok)}
 .msg .apply-btn.failed{background:var(--crit)}
+.msg .view-more-bar,.conv-body .view-more-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 4px;padding:10px 14px;background:color-mix(in srgb,var(--accent2) 8%,var(--card-deep));border:1px solid color-mix(in srgb,var(--accent2) 25%,transparent);border-radius:8px}
+.msg .view-more-info,.conv-body .view-more-info{font-size:12px;color:var(--text2);font-weight:500;flex:1;min-width:120px}
+.msg .view-more-btn,.conv-body .view-more-btn{display:inline-flex;align-items:center;gap:5px;background:var(--accent2);color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;white-space:nowrap}
+.msg .view-more-btn:hover,.conv-body .view-more-btn:hover{filter:brightness(1.15);transform:translateY(-1px)}
+.msg .view-more-btn.view-more-all,.conv-body .view-more-btn.view-more-all{background:color-mix(in srgb,var(--accent2) 60%,var(--card));color:var(--text)}
+.msg .view-more-btn.view-more-all:hover,.conv-body .view-more-btn.view-more-all:hover{background:color-mix(in srgb,var(--accent2) 80%,var(--card))}
+.msg .view-more-icon,.conv-body .view-more-icon{font-size:10px}
 .msg .apply-result{font-size:11px;padding:4px 8px;margin:2px 0 6px;border-radius:4px;display:inline-block}
 .msg .apply-result.ok{background:#22c55e22;color:var(--ok)}
 .msg .apply-result.err{background:#ef444422;color:var(--crit)}
@@ -4722,6 +4729,35 @@ function md(text) {
     } catch(e) { return ''; }
   });
 
+  // View-more pagination buttons for truncated resource lists
+  text = text.replace(/@@VIEW_MORE\|([^|]*)\|([^|]*)\|(\d+)\|(\d+)@@/g, function(m, resType, ns, shownStr, totalStr) {
+    var shown = parseInt(shownStr, 10);
+    var total = parseInt(totalStr, 10);
+    var remaining = total - shown;
+    if (remaining <= 0) return '';
+    var label = resType.replace(/s$/, '');
+    var nextBatch = Math.min(remaining, 50);
+    var nextLabel = nextBatch < remaining
+      ? 'Show next ' + nextBatch + ' ' + resType
+      : 'Show remaining ' + remaining + ' ' + resType;
+    var allLabel = 'Show all ' + remaining + ' remaining';
+    var nsEsc = ns.replace(/'/g, "\\'");
+    var typeEsc = resType.replace(/'/g, "\\'");
+    return ph(
+      '<div class="view-more-bar">' +
+        '<span class="view-more-info">' + remaining + ' more ' + label + (remaining > 1 ? 's' : '') + ' not shown</span>' +
+        '<button class="view-more-btn" onclick="sendFullChat(\'__viewmore__ ' + typeEsc + ' ' + nsEsc + ' ' + shown + ' ' + nextBatch + '\')">' +
+          '<span class="view-more-icon">&#x25BC;</span> ' + nextLabel +
+        '</button>' +
+        (remaining > nextBatch
+          ? '<button class="view-more-btn view-more-all" onclick="sendFullChat(\'__viewmore__ ' + typeEsc + ' ' + nsEsc + ' ' + shown + ' ' + remaining + '\')">' +
+            '<span class="view-more-icon">&#x21F3;</span> ' + allLabel +
+          '</button>'
+          : '') +
+      '</div>'
+    );
+  });
+
   // Extract inline code BEFORE escaping
   text = text.replace(/`([^`\n]+)`/g, function(m, c) { return ph('<code>' + esc(c) + '</code>'); });
 
@@ -6654,7 +6690,10 @@ function renderConversation() {
   let html = '';
   for (const msg of chat.messages) {
     if (msg.role === 'user') {
-      html += '<div class="conv-msg user"><div class="conv-bubble">' + esc(msg.text) + '</div></div>';
+      var userDisplay = msg.text;
+      var vmMatch = msg.text.match(/^__viewmore__\s+(\S+)\s+\S+\s+(\d+)\s+(\d+)$/);
+      if (vmMatch) userDisplay = 'Show more ' + vmMatch[1] + ' (' + vmMatch[2] + '–' + (parseInt(vmMatch[2],10)+parseInt(vmMatch[3],10)) + ')';
+      html += '<div class="conv-msg user"><div class="conv-bubble">' + esc(userDisplay) + '</div></div>';
     } else {
       const providerTag = msg.provider && msg.provider !== 'none'
         ? '<span class="conv-provider-tag">' + esc(msg.provider) + '</span>' : '';
@@ -7840,7 +7879,10 @@ renderConversation = function() {
   let html = '';
   chat.messages.forEach((msg, idx) => {
     if (msg.role === 'user') {
-      html += '<div class="conv-msg user"><div class="conv-bubble">' + esc(msg.text) + '</div></div>';
+      var userDisplay = msg.text;
+      var vmMatch = msg.text.match(/^__viewmore__\s+(\S+)\s+\S+\s+(\d+)\s+(\d+)$/);
+      if (vmMatch) userDisplay = 'Show more ' + vmMatch[1] + ' (' + vmMatch[2] + '–' + (parseInt(vmMatch[2],10)+parseInt(vmMatch[3],10)) + ')';
+      html += '<div class="conv-msg user"><div class="conv-bubble">' + esc(userDisplay) + '</div></div>';
     } else {
       const providerTag = msg.provider && msg.provider !== 'none'
         ? '<span class="conv-provider-tag">' + esc(msg.provider) + '</span>' : '';

@@ -1035,7 +1035,7 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
           const cDetail = cCount > 1 ? `${cCount} containers` : containers[0]?.name || "1";
           parts.push(`| \`${p.metadata.name}\` | ${p.metadata.namespace} | ${totalCpuFmt} | ${totalMemFmt} | ${cDetail} |`);
         });
-        if (items.length > 30) parts.push(`\n... and ${items.length - 30} more pods`);
+        if (items.length > 30) parts.push(`\n@@VIEW_MORE|podmetrics|${cmd.namespace || '_all'}|30|${items.length}@@`);
       }
     } catch (err) {
       // 404 NotFound usually means the parser misidentified a word as the pod
@@ -1490,6 +1490,226 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// View-more pagination — returns the next page of a resource listing
+// ---------------------------------------------------------------------------
+function formatResourceRows(resourceType, items) {
+  const parts = [];
+  if (resourceType === "podmetrics") {
+    parts.push(`| Pod | Namespace | CPU | Memory | Containers |`);
+    parts.push(`| --- | --- | --- | --- | --- |`);
+    const podMetrics = items.map((p) => {
+      const containers = (p.containers || []).map((c) => ({
+        name: c.name,
+        cpuRaw: parseCpuNano(c.usage?.cpu),
+        memRaw: parseMemBytes(c.usage?.memory),
+      }));
+      const totalCpu = containers.reduce((s, c) => s + c.cpuRaw, 0);
+      const totalMem = containers.reduce((s, c) => s + c.memRaw, 0);
+      return { pod: p, containers, totalCpu, totalMem, totalCpuFmt: fmtCpu(String(totalCpu) + "n"), totalMemFmt: fmtMem(String(Math.round(totalMem / 1024)) + "Ki") };
+    });
+    podMetrics.sort((a, b) => b.totalCpu - a.totalCpu);
+    podMetrics.forEach(({ pod: p, containers, totalCpuFmt, totalMemFmt }) => {
+      const cCount = containers.length;
+      const cDetail = cCount > 1 ? `${cCount} containers` : containers[0]?.name || "1";
+      parts.push(`| \`${p.metadata.name}\` | ${p.metadata.namespace} | ${totalCpuFmt} | ${totalMemFmt} | ${cDetail} |`);
+    });
+  } else if (resourceType === "event" || resourceType === "events") {
+    parts.push(`| Type | Reason | Resource | Namespace | Message | Count | Last Seen |`);
+    parts.push(`| --- | --- | --- | --- | --- | --- | --- |`);
+    items.forEach((e) => {
+      const icon = e.type === "Warning" ? "[WARNING]" : "[OK]";
+      const age = e.lastTimestamp ? new Date(e.lastTimestamp).toLocaleString() : "—";
+      const msg = (e.message || "").substring(0, 80).replace(/\|/g, "/");
+      parts.push(`| ${icon} | **${e.reason}** | ${e.involvedObject?.kind || "?"}/${e.involvedObject?.name || "?"} | ${e.metadata?.namespace || "—"} | ${msg} | ${e.count > 1 ? `x${e.count}` : "1"} | ${age} |`);
+    });
+  } else if (resourceType === "pod" || resourceType === "pods") {
+    parts.push(`| Status | Pod | Namespace | Phase | Restarts |`);
+    parts.push(`| --- | --- | --- | --- | --- |`);
+    items.forEach((p) => {
+      const phase = p.status?.phase || "Unknown";
+      const restarts = (p.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0);
+      const icon = phase === "Running" ? "[OK]" : phase === "Succeeded" ? "[OK]" : "[CRITICAL]";
+      parts.push(`| ${icon} | \`${p.metadata.name}\` | ${p.metadata.namespace} | ${phase} | ${restarts} |`);
+    });
+  } else if (["deployment", "deployments", "deploy"].includes(resourceType)) {
+    parts.push(`| Status | Deployment | Namespace | Ready |`);
+    parts.push(`| --- | --- | --- | --- |`);
+    items.forEach((d) => {
+      const ready = d.status?.readyReplicas ?? 0;
+      const desired = d.spec?.replicas ?? 0;
+      const icon = ready === desired ? "[OK]" : "[CRITICAL]";
+      parts.push(`| ${icon} | **${d.metadata.name}** | ${d.metadata.namespace} | ${ready}/${desired} |`);
+    });
+  } else if (["service", "services", "svc"].includes(resourceType)) {
+    parts.push(`| Service | Namespace | Type | Cluster IP | Ports |`);
+    parts.push(`| --- | --- | --- | --- | --- |`);
+    items.forEach((s) => {
+      const ports = (s.spec?.ports || []).map((p) => `${p.port}/${p.protocol}`).join(", ");
+      parts.push(`| **${s.metadata.name}** | ${s.metadata.namespace} | ${s.spec?.type} | ${s.spec?.clusterIP} | ${ports} |`);
+    });
+  } else if (["route", "routes"].includes(resourceType)) {
+    parts.push(`| Route | Namespace | Host | Target |`);
+    parts.push(`| --- | --- | --- | --- |`);
+    items.forEach((r) => {
+      parts.push(`| **${r.metadata.name}** | ${r.metadata.namespace} | ${r.spec?.host || "?"} | ${r.spec?.to?.name || "?"} |`);
+    });
+  } else if (["configmap", "configmaps", "cm"].includes(resourceType)) {
+    parts.push(`| ConfigMap | Namespace | Keys |`);
+    parts.push(`| --- | --- | --- |`);
+    items.forEach((c) => {
+      const keys = Object.keys(c.data || {}).length;
+      parts.push(`| **${c.metadata.name}** | ${c.metadata.namespace} | ${keys} |`);
+    });
+  } else if (["secret", "secrets"].includes(resourceType)) {
+    parts.push(`| Secret | Namespace | Type | Keys |`);
+    parts.push(`| --- | --- | --- | --- |`);
+    items.forEach((s) => {
+      const keys = Object.keys(s.data || {}).length;
+      parts.push(`| **${s.metadata.name}** | ${s.metadata.namespace} | ${s.type} | ${keys} |`);
+    });
+  } else if (["pvc", "pvcs", "persistentvolumeclaim"].includes(resourceType)) {
+    parts.push(`| Status | PVC | Namespace | Phase | Storage | Class |`);
+    parts.push(`| --- | --- | --- | --- | --- | --- |`);
+    items.forEach((p) => {
+      const icon = p.status?.phase === "Bound" ? "[OK]" : "[WARNING]";
+      parts.push(`| ${icon} | **${p.metadata.name}** | ${p.metadata.namespace} | ${p.status?.phase} | ${p.spec?.resources?.requests?.storage || "?"} | ${p.spec?.storageClassName || "default"} |`);
+    });
+  } else if (["virtualmachine", "vm", "vms", "virtualmachines"].includes(resourceType)) {
+    parts.push(`| Status | VM | Namespace | State | CPU | Memory |`);
+    parts.push(`| --- | --- | --- | --- | --- | --- |`);
+    items.forEach((v) => {
+      const ready = v.status?.ready;
+      const printable = v.status?.printableStatus || (ready ? "Running" : "Stopped");
+      const icon = ready ? "[OK]" : "[WARNING]";
+      const cpu = v.spec?.template?.spec?.domain?.cpu?.cores || "?";
+      const mem = v.spec?.template?.spec?.domain?.resources?.requests?.memory || "?";
+      parts.push(`| ${icon} | **${v.metadata.name}** | ${v.metadata.namespace} | ${printable} | ${cpu} | ${mem} |`);
+    });
+  } else if (["virtualmachineinstance", "vmi", "vmis"].includes(resourceType)) {
+    parts.push(`| Status | VMI | Namespace | Phase | Node | IP |`);
+    parts.push(`| --- | --- | --- | --- | --- | --- |`);
+    items.forEach((v) => {
+      const phase = v.status?.phase || "Unknown";
+      const icon = phase === "Running" ? "[OK]" : "[WARNING]";
+      const node = v.status?.nodeName || "unassigned";
+      const ip = (v.status?.interfaces || [])[0]?.ipAddress || "none";
+      parts.push(`| ${icon} | **${v.metadata.name}** | ${v.metadata.namespace} | ${phase} | ${node} | ${ip} |`);
+    });
+  } else if (["pipeline", "pipelines"].includes(resourceType)) {
+    parts.push(`| Pipeline | Namespace | Tasks |`);
+    parts.push(`| --- | --- | --- |`);
+    items.forEach((p) => {
+      const taskCount = p.spec?.tasks?.length || 0;
+      parts.push(`| **${p.metadata.name}** | ${p.metadata.namespace} | ${taskCount} |`);
+    });
+  } else if (["pipelinerun", "pipelineruns"].includes(resourceType)) {
+    parts.push(`| Status | PipelineRun | Namespace | Result | Pipeline | Started |`);
+    parts.push(`| --- | --- | --- | --- | --- | --- |`);
+    items.forEach((p) => {
+      const succeeded = (p.status?.conditions || []).find(c => c.type === "Succeeded");
+      const status = succeeded ? (succeeded.status === "True" ? "Succeeded" : succeeded.status === "False" ? "Failed" : "Running") : "Pending";
+      const icon = status === "Succeeded" ? "[OK]" : status === "Failed" ? "[CRITICAL]" : "[WARNING]";
+      const pipeline = p.spec?.pipelineRef?.name || "inline";
+      const start = p.status?.startTime ? new Date(p.status.startTime).toLocaleString() : "?";
+      parts.push(`| ${icon} | **${p.metadata.name}** | ${p.metadata.namespace} | ${status} | ${pipeline} | ${start} |`);
+    });
+  } else if (["task", "tasks"].includes(resourceType)) {
+    parts.push(`| Task | Namespace | Steps |`);
+    parts.push(`| --- | --- | --- |`);
+    items.forEach((t) => {
+      const stepCount = t.spec?.steps?.length || 0;
+      parts.push(`| **${t.metadata.name}** | ${t.metadata.namespace} | ${stepCount} |`);
+    });
+  } else if (["taskrun", "taskruns"].includes(resourceType)) {
+    parts.push(`| Status | TaskRun | Namespace | Result | Task |`);
+    parts.push(`| --- | --- | --- | --- | --- |`);
+    items.forEach((t) => {
+      const succeeded = (t.status?.conditions || []).find(c => c.type === "Succeeded");
+      const status = succeeded ? (succeeded.status === "True" ? "Succeeded" : succeeded.status === "False" ? "Failed" : "Running") : "Pending";
+      const icon = status === "Succeeded" ? "[OK]" : status === "Failed" ? "[CRITICAL]" : "[WARNING]";
+      const taskName = t.spec?.taskRef?.name || "inline";
+      parts.push(`| ${icon} | **${t.metadata.name}** | ${t.metadata.namespace} | ${status} | ${taskName} |`);
+    });
+  } else if (["machine", "machines"].includes(resourceType)) {
+    parts.push(`| Status | Machine | Namespace | Phase | Node | Type |`);
+    parts.push(`| --- | --- | --- | --- | --- | --- |`);
+    items.forEach((m) => {
+      const phase = m.status?.phase || "Unknown";
+      const icon = phase === "Running" ? "[OK]" : "[WARNING]";
+      const nodeRef = m.status?.nodeRef?.name || "unassigned";
+      const instanceType = m.spec?.providerSpec?.value?.instanceType || m.spec?.providerSpec?.value?.vmSize || "?";
+      parts.push(`| ${icon} | **${m.metadata.name}** | ${m.metadata.namespace} | ${phase} | ${nodeRef} | ${instanceType} |`);
+    });
+  } else if (["machineset", "machinesets"].includes(resourceType)) {
+    parts.push(`| Status | MachineSet | Namespace | Ready |`);
+    parts.push(`| --- | --- | --- | --- |`);
+    items.forEach((ms) => {
+      const desired = ms.spec?.replicas ?? 0;
+      const ready = ms.status?.readyReplicas ?? 0;
+      const icon = ready === desired ? "[OK]" : "[WARNING]";
+      parts.push(`| ${icon} | **${ms.metadata.name}** | ${ms.metadata.namespace} | ${ready}/${desired} |`);
+    });
+  } else {
+    parts.push(`| Name | Namespace |`);
+    parts.push(`| --- | --- |`);
+    items.forEach((item) => {
+      const ns = item.metadata?.namespace || "—";
+      parts.push(`| **${item.metadata?.name}** | ${ns} |`);
+    });
+  }
+  return parts;
+}
+
+async function handleViewMore(resourceType, namespace, offset, limit) {
+  const isPodMetrics = resourceType === "podmetrics";
+  const lookupType = isPodMetrics ? "pod" : resourceType;
+  const resInfo = RESOURCE_MAP[lookupType];
+  if (!resInfo) return `### Error\n[WARNING] Unknown resource type: \`${resourceType}\``;
+
+  try {
+    const ns = namespace === "_all" ? null : namespace;
+    let data, allItems;
+    if (isPodMetrics) {
+      const metricsPath = ns
+        ? `/apis/metrics.k8s.io/v1beta1/namespaces/${ns}/pods`
+        : `/apis/metrics.k8s.io/v1beta1/pods`;
+      data = await ocpGet(metricsPath);
+      allItems = data.items || [];
+    } else {
+      const path = (resInfo.namespaced && ns)
+        ? `${resInfo.api}/namespaces/${ns}/${resInfo.resource}`
+        : `${resInfo.api}/${resInfo.resource}`;
+      data = await ocpGet(path);
+      allItems = data.items || [];
+    }
+    if (resourceType === "event" || resourceType === "events") {
+      allItems.sort((a, b) => new Date(b.lastTimestamp || 0) - new Date(a.lastTimestamp || 0));
+    }
+    const total = allItems.length;
+
+    if (offset >= total) {
+      return `### ${resInfo.resource}\nNo more items to show (${total} total).`;
+    }
+
+    const pageItems = allItems.slice(offset, offset + limit);
+    const end = Math.min(offset + limit, total);
+    const label = ns ? `in \`${ns}\`` : "(all namespaces)";
+    const parts = [`### ${resInfo.resource} ${label} — showing ${offset + 1}–${end} of ${total}`];
+
+    parts.push(...formatResourceRows(resourceType, pageItems));
+
+    const remaining = total - end;
+    if (remaining > 0) {
+      parts.push(`\n@@VIEW_MORE|${resourceType}|${namespace}|${end}|${total}@@`);
+    }
+
+    return parts.join("\n");
+  } catch (err) {
+    return `### ${resInfo.resource}\n[CRITICAL] ${err.message}`;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // List resources — handles "list/show X" queries
 // ---------------------------------------------------------------------------
 async function handleListCommand(message, preParsed, opts = {}) {
@@ -1548,11 +1768,11 @@ async function handleListCommand(message, preParsed, opts = {}) {
         ? `/api/v1/namespaces/${cmd.namespace}/events`
         : "/api/v1/events";
       const data = await ocpGet(path);
-      const items = (data.items || [])
-        .sort((a, b) => new Date(b.lastTimestamp || 0) - new Date(a.lastTimestamp || 0))
-        .slice(0, 25);
+      const allEvents = (data.items || [])
+        .sort((a, b) => new Date(b.lastTimestamp || 0) - new Date(a.lastTimestamp || 0));
+      const items = allEvents.slice(0, 25);
       const label = cmd.namespace ? `in \`${cmd.namespace}\`` : "(all namespaces)";
-      const parts = [`### Events ${label} (showing ${items.length})`];
+      const parts = [`### Events ${label} (showing ${items.length} of ${allEvents.length})`];
       parts.push(`| Type | Reason | Resource | Namespace | Message | Count | Last Seen |`);
       parts.push(`| --- | --- | --- | --- | --- | --- | --- |`);
       items.forEach((e) => {
@@ -1561,6 +1781,9 @@ async function handleListCommand(message, preParsed, opts = {}) {
         const msg = (e.message || "").substring(0, 80).replace(/\|/g, "/");
         parts.push(`| ${icon} | **${e.reason}** | ${e.involvedObject.kind}/${e.involvedObject.name} | ${e.metadata.namespace} | ${msg} | ${e.count > 1 ? `x${e.count}` : "1"} | ${age} |`);
       });
+      if (allEvents.length > 25) {
+        parts.push(`\n@@VIEW_MORE|event|${cmd.namespace || '_all'}|25|${allEvents.length}@@`);
+      }
       return parts.join("\n");
     } catch (err) {
       return `### Events\n[CRITICAL] ${err.message}`;
@@ -1762,8 +1985,9 @@ async function handleListCommand(message, preParsed, opts = {}) {
       });
     }
 
-    if (items.length > 40) {
-      parts.push(`\n... showing first 40 of ${items.length} total`);
+    const displayLimit = (cmd.resourceType === "pod" || cmd.resourceType === "pods") ? 40 : 30;
+    if (items.length > displayLimit) {
+      parts.push(`\n@@VIEW_MORE|${cmd.resourceType}|${cmd.namespace || '_all'}|${displayLimit}|${items.length}@@`);
     }
     return parts.join("\n");
   } catch (err) {
@@ -6037,6 +6261,26 @@ export async function handleChatAPI(req, res) {
     if (body.model) llmOpts.model = body.model;
     if (body.azureDeployment) llmOpts.azureDeployment = body.azureDeployment;
     if (body.azureApiVersion) llmOpts.azureApiVersion = body.azureApiVersion;
+
+    // ---- View-more pagination handler ----
+    const viewMoreMatch = userMessage.match(/^__viewmore__\s+(\S+)\s+(\S+)\s+(\d+)\s+(\d+)$/);
+    if (viewMoreMatch) {
+      const vmReply = await handleViewMore(viewMoreMatch[1], viewMoreMatch[2], parseInt(viewMoreMatch[3], 10), parseInt(viewMoreMatch[4], 10));
+      const provider = "built-in";
+      if (conversationId) {
+        histAddMessage(conversationId, { role: "assistant", content: vmReply, provider }).catch(() => {});
+      }
+      const wantsStreamVM = body.stream === true || (req.headers.accept || "").includes("text/event-stream");
+      if (wantsStreamVM) {
+        sseStart(res);
+        sseSend(res, { stage: "querying" });
+        sseSend(res, { delta: vmReply });
+        sseSend(res, { done: true, provider, conversationId });
+        sseEnd(res);
+        return;
+      }
+      return json(res, 200, { reply: vmReply, provider, contextKeys: ["viewMore"], cached: false, conversationId });
+    }
 
     const slashReply = await maybeHandleSlashCommand(userMessage, conversationId, llmOpts);
     if (slashReply) {
