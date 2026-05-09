@@ -9755,13 +9755,21 @@ async function loadSmartSuggestions() {
 function getConfidenceHTML(text) {
   let score = 'high';
   const lower = (text || '').toLowerCase();
-  if (lower.includes('not sure') || lower.includes('may not') || lower.includes('unable to determine') || lower.includes('could not') || lower.includes('error') || lower.includes('failed to')) {
+  // Strip grounding notices and correlation sections before checking confidence —
+  // these are system-generated and should not affect the diagnosis confidence.
+  var mainText = lower
+    .replace(/grounding notice:.*$/gm, '')
+    .replace(/root cause correlations[\s\S]*$/m, '')
+    .replace(/playbook:[\s\S]*$/m, '');
+  // High confidence when response contains concrete evidence from cluster data
+  var hasEvidence = /evidence from cluster|desired replicas|spec\.replicas|conditions:|deployment conditions|ready\/available/i.test(mainText);
+  if (!hasEvidence && (mainText.includes('not sure') || mainText.includes('unable to determine') || mainText.includes('failed to'))) {
     score = 'low';
-  } else if (lower.includes('might') || lower.includes('possibly') || lower.includes('appears to') || lower.includes('likely') || lower.includes('unclear')) {
+  } else if (!hasEvidence && (mainText.includes('might') || mainText.includes('possibly') || mainText.includes('unclear'))) {
     score = 'med';
   }
-  const labels = { high: 'High confidence', med: 'Medium confidence', low: 'Low confidence' };
-  const colors = { high: 'var(--ok)', med: 'var(--warn)', low: 'var(--crit)' };
+  var labels = { high: 'High confidence', med: 'Medium confidence', low: 'Low confidence' };
+  var colors = { high: 'var(--ok)', med: 'var(--warn)', low: 'var(--crit)' };
   return '<span class="confidence-meter confidence-' + score + '" title="AI confidence level">' +
     '<span style="color:' + colors[score] + '">' + labels[score] + '</span>' +
     '<span class="cm-bar"><span class="cm-fill"></span></span></span>';

@@ -2344,8 +2344,11 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
     context.intents.push("pod_issues");
   }
 
-  // Intent: nodes
-  if (lower.match(/\bnode\b|worker|master|control.?plane/)) {
+  // Intent: nodes — only when user is asking about nodes/workers/control-plane,
+  // not when "master" appears as part of a resource name (e.g. "queue-master")
+  if (lower.match(/\bnode\b|\bnodes\b|control.?plane/) ||
+      (lower.match(/\bworker\b/) && !context.targetResourceName?.includes("worker")) ||
+      (lower.match(/\bmaster\b/) && !context.targetResourceName?.includes("master") && !lower.match(/[a-z0-9]-master/))) {
     context.intents.push("nodes");
   }
 
@@ -3054,6 +3057,33 @@ function correlateRootCauses(ctx) {
   return out;
 }
 
+/**
+ * Filter correlations to only include entries relevant to the user's question.
+ * When the user asks about a specific deployment or pod, cluster-wide problem
+ * pods (e.g. mlflow-server CrashLoopBackOff) are irrelevant noise.
+ */
+function filterRelevantCorrelations(correlations, ctx) {
+  if (!correlations || correlations.length === 0) return [];
+
+  const targetNs = ctx.targetDeployment?.namespace ||
+                   ctx.targetPod?.namespace ||
+                   ctx._focusPod?.namespace ||
+                   ctx.targetNamespaceFromMemory;
+  const targetName = ctx.targetDeployment?.name ||
+                     ctx.targetResourceName ||
+                     ctx.targetPodName;
+
+  return correlations.filter((c) => {
+    // Keep correlations in the same namespace as the target
+    if (targetNs && c.namespace === targetNs) return true;
+    // Keep correlations whose pod name contains the target resource name
+    if (targetName && c.pod?.includes(targetName)) return true;
+    // Keep correlations whose owner matches the target deployment
+    if (targetName && c.ownerName?.includes(targetName)) return true;
+    return false;
+  });
+}
+
 /** Render the correlations block as markdown. */
 function renderCorrelationsMarkdown(correlations) {
   if (!correlations || correlations.length === 0) return "";
@@ -3610,9 +3640,26 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
     return builtInAnalysis(userMessage, clusterContext);
   }
 
-  // When a specific pod is the target, restructure the context so the LLM
-  // sees it first and doesn't get distracted by the broader problemPods list.
+  // When a specific resource is the target, filter out unrelated cluster-wide
+  // data so the LLM focuses on the relevant resource.
   const ctx = { ...clusterContext };
+
+  // For deployment-specific queries: remove unrelated problem pods and correlations
+  if (ctx.targetDeployment) {
+    const depNs = ctx.targetDeployment.namespace;
+    const depName = ctx.targetDeployment.name;
+    if (Array.isArray(ctx.problemPods)) {
+      ctx.problemPods = ctx.problemPods.filter(
+        (p) => p.namespace === depNs && (p.ownerName?.includes(depName) || p.name?.includes(depName))
+      );
+    }
+    if (Array.isArray(ctx.correlations)) {
+      ctx.correlations = ctx.correlations.filter(
+        (c) => c.namespace === depNs && (c.ownerName?.includes(depName) || c.pod?.includes(depName))
+      );
+    }
+  }
+
   if (ctx.targetPod) {
     // Move targetPod + events + metrics + logs to the top-level focus keys
     const focused = {
@@ -6649,6 +6696,21 @@ export async function handleChatAPI(req, res) {
         sseSend(res, { stage: "querying", toolProgress: "Fetching cluster data..." });
         const { result: sseTraced, trace: sseTrace } = await runWithTrace(async () => {
           let context = await gatherClusterContext(userMessage, parsed);
+          // Filter unrelated cluster-wide data for deployment-specific queries
+          if (context.targetDeployment) {
+            const depNs = context.targetDeployment.namespace;
+            const depName = context.targetDeployment.name;
+            if (Array.isArray(context.problemPods)) {
+              context.problemPods = context.problemPods.filter(
+                (p) => p.namespace === depNs && (p.ownerName?.includes(depName) || p.name?.includes(depName))
+              );
+            }
+            if (Array.isArray(context.correlations)) {
+              context.correlations = context.correlations.filter(
+                (c) => c.namespace === depNs && (c.ownerName?.includes(depName) || c.pod?.includes(depName))
+              );
+            }
+          }
           sseSend(res, { stage: "analyzing", toolProgress: "Analyzing " + (context.problemPods?.length || 0) + " problem pods, " + (context.nodes?.length || 0) + " nodes..." });
           sseSend(res, { stage: "generating", toolProgress: "Generating response with " + activeProvider + "..." });
           if (context.targetPod) {
@@ -6709,9 +6771,16 @@ export async function handleChatAPI(req, res) {
           const groundingDisclaimer = validatedFull.slice(fullText.length);
           sseSend(res, { delta: groundingDisclaimer });
         }
-        const correlationsBlock = renderCorrelationsMarkdown(context?.correlations || []);
+        // Only append correlations/playbooks when they're relevant to the question.
+        // Skip for deployment-specific or resource-specific queries where the
+        // correlations are about unrelated cluster-wide problem pods.
+        const hasSpecificTarget = context?.targetDeployment || context?.targetPod || context?._focusPod;
+        const relevantCorrelations = hasSpecificTarget
+          ? filterRelevantCorrelations(context?.correlations || [], context)
+          : (context?.correlations || []);
+        const correlationsBlock = renderCorrelationsMarkdown(relevantCorrelations);
         if (correlationsBlock) sseSend(res, { delta: "\n" + correlationsBlock });
-        const topCause = context?.correlations?.[0];
+        const topCause = relevantCorrelations?.[0];
         if (topCause?.likelyCause) {
           const pb = suggestPlaybook(topCause.likelyCause, { pod: topCause.pod, namespace: topCause.namespace });
           if (pb) sseSend(res, { delta: "\n" + renderPlaybookMarkdown(pb) });
@@ -6753,7 +6822,7 @@ export async function handleChatAPI(req, res) {
       const hubActive = getConnectionCount() > 0;
       const wantsDiagnose =
         llmEnabled(llmOpts) &&
-        /\b(diagnose|root\s*cause|why\s+is|what'?s\s+wrong|troubleshoot)\b/i.test(userMessage);
+        /\b(diagnose|root\s*cause|why\b|what'?s\s+wrong|troubleshoot)\b/i.test(userMessage);
       let replyText;
       let toolsUsed = [];
 
@@ -6816,10 +6885,15 @@ export async function handleChatAPI(req, res) {
     reply = validateResponse(reply, context);
     intentsForLog = Array.isArray(context?.intents) ? context.intents : Object.keys(context || {});
 
-    const correlationsBlock = renderCorrelationsMarkdown(context?.correlations || []);
+    // Only append correlations/playbooks when relevant to the question asked.
+    const hasSpecificTarget = context?.targetDeployment || context?.targetPod || context?._focusPod;
+    const relevantCorrelations = hasSpecificTarget
+      ? filterRelevantCorrelations(context?.correlations || [], context)
+      : (context?.correlations || []);
+    const correlationsBlock = renderCorrelationsMarkdown(relevantCorrelations);
     if (correlationsBlock) reply += "\n" + correlationsBlock;
 
-    const topCause = context?.correlations?.[0];
+    const topCause = relevantCorrelations?.[0];
     if (topCause?.likelyCause) {
       const pb = suggestPlaybook(topCause.likelyCause, {
         pod: topCause.pod,
