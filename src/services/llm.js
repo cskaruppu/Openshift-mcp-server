@@ -372,7 +372,7 @@ async function callAnthropic(messages, o, stream, hooks = {}) {
   // Anthropic expects system separate and only user/assistant messages
   const amsgs = messages.filter((m) => m.role === "user" || m.role === "assistant");
   const body = {
-    model: o.model && o.model !== "gpt-4" ? o.model : "claude-sonnet-4-20250514",
+    model: o.model && o.model !== "gpt-4" ? o.model : "claude-opus-4-7",
     system: o.system || undefined,
     messages: amsgs,
     max_tokens: o.maxTokens,
