@@ -70,7 +70,7 @@ import { suggestPlaybook, renderPlaybookMarkdown } from "./playbooks.js";
 import { findResource } from "./resource-index.js";
 import { incCounter, observeHistogram } from "./metrics.js";
 import { enforce as enforceRateLimit } from "./rate-limit.js";
-import { runPreflightChecks, formatPreflightReport } from "../tools/upgrade-preflight.js";
+import { runPreflightChecks, formatPreflightReport, checkCertificateExpiry } from "../tools/upgrade-preflight.js";
 
 // Build agent trace: maps tools used in a chat response back to their owning agents.
 async function buildAgentTrace(toolsUsed, contextKeys, durationMs) {
@@ -2621,6 +2621,11 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
     context.intents.push("cluster_upgrade");
   }
 
+  // Intent: certificate expiry / TLS / CSR
+  if (lower.match(/\bcertif|\btls\b|\bcsr\b|\bexpir.*cert|cert.*expir|\brotate.*cert|cert.*rotat|\bcert.*renew|renew.*cert/)) {
+    context.intents.push("certificate_expiry");
+  }
+
   // Intent: machines / machinesets
   if (lower.match(/\bmachineset|\bmachine\b/) && !lower.match(/virtual/)) {
     context.intents.push("machines");
@@ -2647,6 +2652,9 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
       if (!context.intents.includes("nodes")) {
         context.intents.push("nodes");
       }
+    } else if (context.intents.includes("certificate_expiry") || context.intents.includes("cluster_upgrade")) {
+      // Infrastructure-specific questions — don't flood with cluster_health
+      // data; the specific intent handler already fetches targeted data.
     } else if (!context.intents.includes("pod_issues") && !context.intents.includes("nodes")) {
       context.intents.push("cluster_health");
     }
@@ -3184,6 +3192,30 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
     );
   }
 
+  // Certificate expiry — fetch actual certificate data from cluster secrets
+  if (context.intents.includes("certificate_expiry")) {
+    tasks.push(
+      checkCertificateExpiry().then((result) => {
+        context.certificateExpiry = result.expiring || [];
+      }).catch(() => { context.certificateExpiry = []; })
+    );
+    // Also fetch pending CSRs
+    tasks.push(
+      ocpGet("/apis/certificates.k8s.io/v1/certificatesigningrequests").then((d) => {
+        const csrs = (d.items || []);
+        context.pendingCSRs = csrs.filter((c) => {
+          const approved = (c.status?.conditions || []).some((cond) => cond.type === "Approved");
+          return !approved;
+        }).map((c) => ({
+          name: c.metadata.name,
+          requestor: c.spec?.username,
+          created: c.metadata.creationTimestamp,
+          signerName: c.spec?.signerName,
+        }));
+      }).catch(() => { context.pendingCSRs = []; })
+    );
+  }
+
   await Promise.all(tasks);
 
   // Secondary pass: fetch events for problem pods to understand root causes
@@ -3373,6 +3405,7 @@ Use this data to provide SPECIFIC analysis. Do NOT give generic advice when this
 - For SCC issues, suggest \`oc adm policy\` commands
 - For operator issues, check ClusterOperator status conditions
 - For upgrade issues, reference MachineConfigPool status and ClusterVersion
+- For certificate expiry questions: when "Certificate Expiry" data is in the cluster context, report the EXACT certificates and their days-remaining. Never give a generic textbook explanation when actual cert data is available. Include the fix command: \`oc get csr\` to check pending CSRs, \`oc adm certificate approve <csr>\` for pending ones, and note that OpenShift auto-rotates most certs via cert-manager operators.
 
 ## CRITICAL — Specific pod/resource focus:
 - When the cluster data contains "_focusPod" or "targetPod", the user is asking about THAT SPECIFIC pod. Your ENTIRE response must be about that pod only.
@@ -3546,6 +3579,8 @@ function validateResponse(reply, clusterContext) {
   if (clusterContext.targetDeployment?.name) knownNames.add(clusterContext.targetDeployment.name);
   addNames(clusterContext.targetDeploymentPods);
   addNames(clusterContext.targetDeploymentReplicaSets);
+  addNames(clusterContext.certificateExpiry);
+  addNames(clusterContext.pendingCSRs);
 
   // Extract pod-like names from the reply
   const podPattern = /\b([a-z][-a-z0-9]*(?:-[a-z0-9]{4,10}){1,2})\b/g;
@@ -3730,6 +3765,26 @@ function summarizeContext(ctx) {
     sections.push(`## Operators\n- ${opLine}`);
   }
 
+  // --- Certificate Expiry ---
+  if (Array.isArray(ctx.certificateExpiry) && ctx.certificateExpiry.length > 0) {
+    const lines = [`${ctx.certificateExpiry.length} certificate(s) expiring within 90 days:`];
+    const sorted = [...ctx.certificateExpiry].sort((a, b) => a.daysLeft - b.daysLeft);
+    for (const cert of sorted) {
+      const urgency = cert.daysLeft <= 7 ? "CRITICAL" : cert.daysLeft <= 30 ? "WARNING" : "INFO";
+      lines.push(`  - **${cert.name}** — expires in **${cert.daysLeft} days** [${urgency}]`);
+    }
+    sections.push(`## Certificate Expiry\n${lines.join("\n")}`);
+  } else if (ctx.intents?.includes("certificate_expiry")) {
+    sections.push(`## Certificate Expiry\n- No certificates expiring within 90 days (all healthy)`);
+  }
+  if (Array.isArray(ctx.pendingCSRs) && ctx.pendingCSRs.length > 0) {
+    const lines = [`${ctx.pendingCSRs.length} pending CSR(s):`];
+    for (const csr of ctx.pendingCSRs.slice(0, 10)) {
+      lines.push(`  - **${csr.name}** — requestor: ${csr.requestor || "unknown"}, signer: ${csr.signerName || "?"}, created: ${csr.created || "?"}`);
+    }
+    sections.push(`## Pending CSRs\n${lines.join("\n")}`);
+  }
+
   // --- Focused deployment (when user asks about a specific deployment) ---
   if (ctx.targetDeployment) {
     const dep = ctx.targetDeployment;
@@ -3836,6 +3891,7 @@ function summarizeContext(ctx) {
     "targetDeployment", "targetDeploymentPods",
     "targetDeploymentReplicaSets", "targetDeploymentEvents",
     "targetResourceName", "targetResourceType",
+    "certificateExpiry", "pendingCSRs",
   ]);
   const remaining = {};
   for (const [key, value] of Object.entries(ctx)) {
@@ -4505,6 +4561,51 @@ function builtInAnalysis(userMessage, ctx) {
   }
 
   // --- Machines ---
+  // --- Certificate Expiry ---
+  if (intents.includes("certificate_expiry")) {
+    if (Array.isArray(ctx.certificateExpiry) && ctx.certificateExpiry.length > 0) {
+      const sorted = [...ctx.certificateExpiry].sort((a, b) => a.daysLeft - b.daysLeft);
+      const critical = sorted.filter((c) => c.daysLeft <= 7);
+      const warning = sorted.filter((c) => c.daysLeft > 7 && c.daysLeft <= 30);
+      const info = sorted.filter((c) => c.daysLeft > 30);
+      parts.push(`### Certificate Expiry — ${sorted.length} certificate(s) expiring`);
+      if (critical.length > 0) {
+        parts.push(`\n**[CRITICAL] ${critical.length} certificate(s) expiring within 7 days:**`);
+        critical.forEach((c) => parts.push(`  - **${c.name}** — expires in **${c.daysLeft} days**`));
+      }
+      if (warning.length > 0) {
+        parts.push(`\n**[WARNING] ${warning.length} certificate(s) expiring within 30 days:**`);
+        warning.forEach((c) => parts.push(`  - **${c.name}** — expires in **${c.daysLeft} days**`));
+      }
+      if (info.length > 0) {
+        parts.push(`\n${info.length} certificate(s) expiring within 90 days:`);
+        info.forEach((c) => parts.push(`  - **${c.name}** — expires in **${c.daysLeft} days**`));
+      }
+      parts.push(`\n#### What to do`);
+      parts.push(`1. Check pending CSRs: \`oc get csr\``);
+      parts.push(`2. Approve pending CSRs: \`oc adm certificate approve <csr-name>\``);
+      parts.push(`3. OpenShift auto-rotates most certificates. If certs are not rotating, check:`);
+      parts.push(`   - \`oc get co kube-apiserver -o yaml\` — look for cert rotation conditions`);
+      parts.push(`   - \`oc get co ingress -o yaml\` — check ingress operator status`);
+      parts.push(`4. For custom certificates, manually renew before expiry`);
+      if (critical.length > 0) {
+        parts.push(`\n> **Immediate action required** — certificates expiring in ≤7 days will cause API server or ingress failures if not renewed.`);
+      }
+    } else {
+      parts.push(`### Certificate Expiry`);
+      parts.push(`All certificates are healthy — no certificates expiring within 90 days.`);
+      parts.push(`\nTo check manually: \`oc get csr\``);
+    }
+    if (Array.isArray(ctx.pendingCSRs) && ctx.pendingCSRs.length > 0) {
+      parts.push(`\n### Pending Certificate Signing Requests (${ctx.pendingCSRs.length})`);
+      ctx.pendingCSRs.slice(0, 10).forEach((csr) => {
+        parts.push(`  - **${csr.name}** — requestor: ${csr.requestor || "unknown"}, signer: ${csr.signerName || "?"}`);
+      });
+      parts.push(`\nApprove with: \`oc adm certificate approve <csr-name>\``);
+    }
+    return parts.join("\n");
+  }
+
   if (intents.includes("machines") && ctx.machines) {
     parts.push(`### Machines (${ctx.machines.length})`);
     ctx.machines.forEach((m) => {
@@ -7016,11 +7117,16 @@ export async function handleChatAPI(req, res) {
           sseSend(res, { delta: groundingDisclaimer });
         }
         // Only append correlations/playbooks when they're relevant to the question.
-        // Skip for deployment-specific or resource-specific queries where the
-        // correlations are about unrelated cluster-wide problem pods.
+        // Skip for: (a) deployment/pod-specific queries where correlations are about
+        // unrelated cluster-wide problem pods, and (b) infrastructure queries
+        // (certificates, upgrades, operators, capacity) where pod CrashLoopBackOff
+        // correlations are completely irrelevant noise.
+        const INFRA_INTENTS = new Set(["certificate_expiry", "cluster_upgrade", "operators", "machines", "namespaces", "services"]);
+        const isInfraQuery = context?.intents?.some(i => INFRA_INTENTS.has(i)) &&
+          !context?.intents?.some(i => i === "pod_issues" || i === "specific_pod");
         const hasSpecificTarget = context?.targetDeployment || context?.targetPod || context?._focusPod;
-        const relevantCorrelations = hasSpecificTarget
-          ? filterRelevantCorrelations(context?.correlations || [], context)
+        const relevantCorrelations = (hasSpecificTarget || isInfraQuery)
+          ? (hasSpecificTarget ? filterRelevantCorrelations(context?.correlations || [], context) : [])
           : (context?.correlations || []);
         const correlationsBlock = renderCorrelationsMarkdown(relevantCorrelations);
         if (correlationsBlock) sseSend(res, { delta: "\n" + correlationsBlock });
@@ -7130,9 +7236,13 @@ export async function handleChatAPI(req, res) {
     intentsForLog = Array.isArray(context?.intents) ? context.intents : Object.keys(context || {});
 
     // Only append correlations/playbooks when relevant to the question asked.
+    // Skip for infrastructure queries where pod failure correlations are noise.
+    const INFRA_INTENTS_NS = new Set(["certificate_expiry", "cluster_upgrade", "operators", "machines", "namespaces", "services"]);
+    const isInfraQueryNS = context?.intents?.some(i => INFRA_INTENTS_NS.has(i)) &&
+      !context?.intents?.some(i => i === "pod_issues" || i === "specific_pod");
     const hasSpecificTarget = context?.targetDeployment || context?.targetPod || context?._focusPod;
-    const relevantCorrelations = hasSpecificTarget
-      ? filterRelevantCorrelations(context?.correlations || [], context)
+    const relevantCorrelations = (hasSpecificTarget || isInfraQueryNS)
+      ? (hasSpecificTarget ? filterRelevantCorrelations(context?.correlations || [], context) : [])
       : (context?.correlations || []);
     const correlationsBlock = renderCorrelationsMarkdown(relevantCorrelations);
     if (correlationsBlock) reply += "\n" + correlationsBlock;

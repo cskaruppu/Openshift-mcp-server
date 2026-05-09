@@ -941,7 +941,7 @@ function ocpToKube(ocpVersion) {
   return `1.${minor + 13}.0`;
 }
 
-async function checkCertificateExpiry() {
+export async function checkCertificateExpiry() {
   const expiring = [];
   // Check kube-apiserver, ingress, and CSR-related secrets in well-known namespaces
   const targets = [
