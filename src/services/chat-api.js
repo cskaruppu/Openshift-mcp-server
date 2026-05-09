@@ -2405,13 +2405,20 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
   }
 
   // Intent: diagnose / troubleshoot
-  if (lower.match(/diagnos|troubleshoot|debug|investig|analyz|analyse|check/)) {
+  if (lower.match(/diagnos|troubleshoot|debug|investig|analyz|analyse|check|why/)) {
     if (context.intents.includes("specific_pod")) {
       // User wants to analyse a specific pod — add pod_issues to fetch
       // supporting data but NOT cluster_health (which floods the context
       // with unrelated pods and confuses the LLM).
       if (!context.intents.includes("pod_issues")) {
         context.intents.push("pod_issues");
+      }
+    } else if (context.targetResourceType === "deployment" && context.targetResourceName) {
+      // User asks about a specific deployment (e.g. "why deployment X is 0/0")
+      // — focused deployment data is already gathered separately, fetch nodes
+      // for scheduling context but skip full cluster_health to avoid noise.
+      if (!context.intents.includes("nodes")) {
+        context.intents.push("nodes");
       }
     } else if (!context.intents.includes("pod_issues") && !context.intents.includes("nodes")) {
       context.intents.push("cluster_health");
@@ -2700,6 +2707,86 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
           available: dep.status?.availableReplicas || 0,
         }));
       }).catch(() => {})
+    );
+  }
+
+  // Focused deployment — when user asks about a specific deployment by name
+  if (context.targetResourceType === "deployment" && context.targetResourceName) {
+    const depName = context.targetResourceName;
+    tasks.push(
+      (async () => {
+        let dep = null;
+        try {
+          const d = await ocpGet("/apis/apps/v1/deployments");
+          dep = (d.items || []).find((item) =>
+            item.metadata.name === depName || item.metadata.name.includes(depName)
+          );
+        } catch { return; }
+        if (!dep) return;
+        const ns = dep.metadata.namespace;
+        context.targetDeployment = {
+          name: dep.metadata.name,
+          namespace: ns,
+          replicas: dep.spec?.replicas,
+          readyReplicas: dep.status?.readyReplicas || 0,
+          availableReplicas: dep.status?.availableReplicas || 0,
+          unavailableReplicas: dep.status?.unavailableReplicas || 0,
+          updatedReplicas: dep.status?.updatedReplicas || 0,
+          strategy: dep.spec?.strategy?.type,
+          image: dep.spec?.template?.spec?.containers?.[0]?.image,
+          conditions: (dep.status?.conditions || []).map((c) => ({
+            type: c.type, status: c.status, reason: c.reason, message: c.message,
+          })),
+          selector: dep.spec?.selector?.matchLabels,
+        };
+        const subTasks = [];
+        // Fetch events for this deployment
+        subTasks.push(
+          ocpGet(`/api/v1/namespaces/${ns}/events?fieldSelector=involvedObject.name=${dep.metadata.name}`).then((ev) => {
+            context.targetDeploymentEvents = (ev.items || [])
+              .sort((a, b) => new Date(b.lastTimestamp || 0) - new Date(a.lastTimestamp || 0))
+              .slice(0, 15)
+              .map((e) => ({
+                type: e.type, reason: e.reason, message: e.message, count: e.count, lastSeen: e.lastTimestamp,
+              }));
+          }).catch(() => {})
+        );
+        // Fetch pods belonging to this deployment (by label selector)
+        const labelSelector = Object.entries(dep.spec?.selector?.matchLabels || {})
+          .map(([k, v]) => `${k}=${v}`).join(",");
+        if (labelSelector) {
+          subTasks.push(
+            ocpGet(`/api/v1/namespaces/${ns}/pods?labelSelector=${encodeURIComponent(labelSelector)}`).then((pd) => {
+              context.targetDeploymentPods = (pd.items || []).map((p) => ({
+                name: p.metadata.name,
+                phase: p.status?.phase,
+                node: p.spec?.nodeName,
+                containers: (p.status?.containerStatuses || []).map((c) => ({
+                  name: c.name, ready: c.ready, restarts: c.restartCount,
+                  state: c.state?.waiting?.reason || c.state?.terminated?.reason || (c.state?.running ? "Running" : "Unknown"),
+                })),
+                conditions: (p.status?.conditions || []).filter((c) => c.status !== "True").map((c) => ({
+                  type: c.type, reason: c.reason, message: c.message,
+                })),
+              }));
+            }).catch(() => {})
+          );
+        }
+        // Fetch ReplicaSets for this deployment
+        subTasks.push(
+          ocpGet(`/apis/apps/v1/namespaces/${ns}/replicasets`).then((rs) => {
+            context.targetDeploymentReplicaSets = (rs.items || [])
+              .filter((r) => (r.metadata?.ownerReferences || []).some((o) => o.name === dep.metadata.name && o.kind === "Deployment"))
+              .map((r) => ({
+                name: r.metadata.name,
+                replicas: r.spec?.replicas,
+                ready: r.status?.readyReplicas || 0,
+                available: r.status?.availableReplicas || 0,
+              }));
+          }).catch(() => {})
+        );
+        await Promise.all(subTasks);
+      })()
     );
   }
 
@@ -3003,6 +3090,14 @@ IMPORTANT: You are given REAL-TIME cluster data as JSON context. This is NOT hyp
 7. **Assess blast radius** — will the fix affect other services?
 8. **For production changes**, mention the ServiceNow change request flow
 
+## When diagnosing deployment issues (0/0, unavailable replicas, etc.):
+- If the context contains "Target Deployment", focus your analysis on THAT specific deployment first.
+- Check the deployment's conditions, events, pods, and ReplicaSets from the data provided.
+- Common causes of 0/0: spec.replicas is set to 0 (intentional scale-down), no matching ReplicaSet, failed rollout, resource quota exceeded, or scheduling failures.
+- Only mention node NotReady if the nodes section in the data ACTUALLY shows NotReady nodes. Do NOT assume nodes are NotReady.
+- If the deployment has 0 desired replicas (spec.replicas=0), explain that it's scaled to zero, not a node issue.
+- Quote specific conditions, events, and pod states from the data — never fabricate or assume.
+
 ## IMPORTANT — Auto-diagnosis data:
 When the context contains "_autoDiagnosis", it includes:
 - **rootCause**: The detected root cause (OOMKilled, CrashLoopBackOff, LivenessProbeFailure, etc.)
@@ -3138,7 +3233,8 @@ function groundingCheck(reply, ctx) {
           }
         });
       }
-      if (n.status === "NotReady") conditions.add("NotReady");
+      if (n.status === "NotReady" || n.ready === false) conditions.add("NotReady");
+      if (n.ready === true) conditions.add("Ready");
       if (name) nodeMap.set(name, conditions);
     });
   }
@@ -3192,6 +3288,10 @@ function validateResponse(reply, clusterContext) {
   if (clusterContext.targetPodName) knownNames.add(clusterContext.targetPodName);
   if (clusterContext.targetPod?.name) knownNames.add(clusterContext.targetPod.name);
   if (clusterContext.targetPod?.metadata?.name) knownNames.add(clusterContext.targetPod.metadata.name);
+  if (clusterContext.targetResourceName) knownNames.add(clusterContext.targetResourceName);
+  if (clusterContext.targetDeployment?.name) knownNames.add(clusterContext.targetDeployment.name);
+  addNames(clusterContext.targetDeploymentPods);
+  addNames(clusterContext.targetDeploymentReplicaSets);
 
   // Extract pod-like names from the reply
   const podPattern = /\b([a-z][-a-z0-9]*(?:-[a-z0-9]{4,10}){1,2})\b/g;
@@ -3315,12 +3415,9 @@ function summarizeContext(ctx) {
 
   // --- Nodes ---
   if (Array.isArray(ctx.nodes) && ctx.nodes.length > 0) {
-    const readyCount = ctx.nodes.filter(
-      (n) => n.status === "Ready" || n.conditions?.some?.((c) => c.type === "Ready" && c.status === "True")
-    ).length;
-    const notReady = ctx.nodes.filter(
-      (n) => n.status !== "Ready" && !(n.conditions?.some?.((c) => c.type === "Ready" && c.status === "True"))
-    );
+    const isReady = (n) => n.ready === true || n.status === "Ready" || n.conditions?.some?.((c) => c.type === "Ready" && c.status === "True");
+    const readyCount = ctx.nodes.filter(isReady).length;
+    const notReady = ctx.nodes.filter((n) => !isReady(n));
     let nodeLine = `${ctx.nodes.length} nodes (${readyCount} Ready`;
     if (notReady.length > 0) {
       const details = notReady
@@ -3377,6 +3474,49 @@ function summarizeContext(ctx) {
       opLine += " (all available)";
     }
     sections.push(`## Operators\n- ${opLine}`);
+  }
+
+  // --- Focused deployment (when user asks about a specific deployment) ---
+  if (ctx.targetDeployment) {
+    const dep = ctx.targetDeployment;
+    const lines = [
+      `**${dep.name}** in namespace \`${dep.namespace}\``,
+      `- Desired replicas: ${dep.replicas}`,
+      `- Ready: ${dep.readyReplicas}, Available: ${dep.availableReplicas}, Unavailable: ${dep.unavailableReplicas || 0}`,
+      `- Strategy: ${dep.strategy || "unknown"}`,
+      `- Image: \`${dep.image || "unknown"}\``,
+    ];
+    if (Array.isArray(dep.conditions) && dep.conditions.length > 0) {
+      lines.push("- Conditions:");
+      for (const c of dep.conditions) {
+        lines.push(`  - ${c.type}: ${c.status}${c.reason ? ` (${c.reason})` : ""}${c.message ? ` — ${c.message}` : ""}`);
+      }
+    }
+    if (Array.isArray(ctx.targetDeploymentPods)) {
+      if (ctx.targetDeploymentPods.length === 0) {
+        lines.push("- **No pods found** for this deployment");
+      } else {
+        lines.push(`- Pods (${ctx.targetDeploymentPods.length}):`);
+        for (const p of ctx.targetDeploymentPods.slice(0, 10)) {
+          const containers = p.containers?.map((c) => `${c.name}:${c.state}${c.restarts ? `(${c.restarts} restarts)` : ""}`).join(", ") || "?";
+          const failConds = (p.conditions || []).map((c) => `${c.type}:${c.reason || c.message || ""}`).join(", ");
+          lines.push(`  - ${p.name}: phase=${p.phase || "?"}, containers=[${containers}]${failConds ? `, issues=[${failConds}]` : ""}`);
+        }
+      }
+    }
+    if (Array.isArray(ctx.targetDeploymentReplicaSets) && ctx.targetDeploymentReplicaSets.length > 0) {
+      lines.push("- ReplicaSets:");
+      for (const rs of ctx.targetDeploymentReplicaSets) {
+        lines.push(`  - ${rs.name}: ${rs.ready}/${rs.replicas} ready`);
+      }
+    }
+    if (Array.isArray(ctx.targetDeploymentEvents) && ctx.targetDeploymentEvents.length > 0) {
+      lines.push("- Recent events:");
+      for (const e of ctx.targetDeploymentEvents.slice(0, 8)) {
+        lines.push(`  - [${e.type}] ${e.reason}: ${(e.message || "").substring(0, 150)}`);
+      }
+    }
+    sections.push(`## Target Deployment\n${lines.join("\n")}`);
   }
 
   // --- Focus pod (keep as structured JSON for detailed diagnosis) ---
@@ -3439,6 +3579,9 @@ function summarizeContext(ctx) {
     "targetPod", "targetPodName", "targetPodLogs",
     "targetPodLogsPrevious", "targetPodLogsError",
     "targetPodEvents", "targetPodMetrics", "queryFilter",
+    "targetDeployment", "targetDeploymentPods",
+    "targetDeploymentReplicaSets", "targetDeploymentEvents",
+    "targetResourceName", "targetResourceType",
   ]);
   const remaining = {};
   for (const [key, value] of Object.entries(ctx)) {
