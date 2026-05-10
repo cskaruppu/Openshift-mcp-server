@@ -6975,9 +6975,14 @@ function populateGlobalClusterDropdown() {
   }
   inner.innerHTML = items.map(function(item) {
     var dotColor = (item.status === 'live' || item.status === 'connected') ? 'var(--ok)' :
-                   item.status === 'registered' ? 'var(--warn)' : 'var(--crit)';
+                   (item.status === 'auth-error' || item.status === 'stale' || item.status === 'registered') ? 'var(--warn)' :
+                   item.status === 'unreachable' || item.status === 'error' ? 'var(--crit)' : 'var(--accent2)';
+    var statusText = (item.status === 'live' || item.status === 'connected') ? '' :
+                     item.status === 'auth-error' ? 'Auth error' :
+                     item.status === 'unreachable' ? 'Unreachable' :
+                     item.status === 'registered' ? 'Not verified' : '';
     var active = item.name === _globalActiveCluster ? ' active' : '';
-    var meta = [item.platform === 'openshift' ? 'OpenShift' : item.platform, item.version, item.nodes ? item.nodes + ' nodes' : ''].filter(Boolean).join(' · ');
+    var meta = [item.platform === 'openshift' ? 'OpenShift' : item.platform, item.version, item.nodes ? item.nodes + ' nodes' : '', statusText].filter(Boolean).join(' · ');
     var checkSvg = active ? '<svg class="gcs-item-check" viewBox="0 0 16 16" width="14" height="14"><path d="M3 8l3 3 7-7" stroke="currentColor" stroke-width="2" fill="none"/></svg>' : '';
     return '<div class="gcs-item' + active + '" onclick="switchGlobalCluster(\'' + esc(item.name).replace(/'/g, "\\'") + '\')">' +
       '<span class="gcs-item-dot" style="background:' + dotColor + '"></span>' +
@@ -10605,6 +10610,22 @@ async function hubConnectCluster() {
 
 var _activeChatCluster = null;
 
+async function verifyClusterHealth(clusterName) {
+  try {
+    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/hub/clusters/' + encodeURIComponent(clusterName) + '/health');
+    var data = await resp.json();
+    _remoteAgents[clusterName] = Object.assign(_remoteAgents[clusterName] || {}, {
+      status: data.status,
+      lastHealthCheck: data.checkedAt,
+      lastHealthResult: data.healthCheck,
+    });
+    updateGlobalClusterTrigger();
+    renderHubServers();
+  } catch (e) {
+    console.error('Health check failed:', e);
+  }
+}
+
 function hubChatWithCluster(clusterId, clusterName, platform) {
   _activeChatCluster = { id: clusterId, name: clusterName, platform: platform || 'openshift' };
   showView('chat');
@@ -11153,8 +11174,14 @@ async function hubCheckStatus(clusterName, source) {
   var s = _hubServers.find(function(sv) { return sv.name === clusterName; });
   var info = a || s || {};
   var pInfo = K8S_PLATFORMS[info.platform || 'k8s'] || K8S_PLATFORMS['k8s'];
-  var statusColor = (info.status === 'connected' || info.status === 'live') ? 'var(--ok)' : info.status === 'registered' ? 'var(--accent2)' : 'var(--crit)';
-  var statusLabel = (info.status === 'connected' || info.status === 'live') ? 'Live' : info.status === 'registered' ? 'Registered' : info.status || 'Unknown';
+  var statusColor = (info.status === 'connected' || info.status === 'live') ? 'var(--ok)' :
+    (info.status === 'auth-error' || info.status === 'stale' || info.status === 'registered') ? 'var(--warn)' :
+    (info.status === 'unreachable' || info.status === 'error') ? 'var(--crit)' : 'var(--accent2)';
+  var statusLabel = (info.status === 'connected' || info.status === 'live') ? 'Live' :
+    info.status === 'auth-error' ? 'Auth Error' :
+    info.status === 'unreachable' ? 'Unreachable' :
+    info.status === 'registered' ? 'Registered' :
+    info.status === 'stale' ? 'Stale' : info.status || 'Unknown';
   statusDialog.innerHTML =
     '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:420px;max-height:80vh;overflow-y:auto;padding:24px">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">' +
@@ -11281,7 +11308,7 @@ function renderHubServers() {
       name: s.name,
       platform: platform,
       isBuiltin: isBuiltin,
-      status: agent ? (agent.status === 'live' ? 'live' : agent.status) : s.status === 'connected' ? 'live' : s.status,
+      status: agent ? agent.status : s.status === 'connected' ? 'live' : s.status,
       toolCount: s.toolCount,
       tools: s.tools,
       url: s.url,
@@ -11290,6 +11317,8 @@ function renderHubServers() {
       source: agent ? agent.source : 'hub',
       registeredAt: agent ? agent.registeredAt : null,
       lastReportTime: agent ? agent.lastReportTime : null,
+      lastHealthCheck: agent ? agent.lastHealthCheck : null,
+      lastHealthResult: agent ? agent.lastHealthResult : null,
     });
     seenNames.add(s.name);
   });
@@ -11311,6 +11340,8 @@ function renderHubServers() {
       source: a.source || 'agent',
       registeredAt: a.registeredAt,
       lastReportTime: a.lastReportTime,
+      lastHealthCheck: a.lastHealthCheck || null,
+      lastHealthResult: a.lastHealthResult || null,
     });
   }
 
@@ -11324,14 +11355,20 @@ function renderHubServers() {
     var statusColor, statusLabel, statusPulse;
     if (c.status === 'live' || c.status === 'connected') {
       statusColor = 'var(--ok)'; statusLabel = 'Live'; statusPulse = 'animation:pulse 2s infinite';
-    } else if (c.status === 'connecting' || c.status === 'registered') {
-      statusColor = c.status === 'connecting' ? 'var(--warn)' : 'var(--accent2)';
-      statusLabel = c.status === 'connecting' ? 'Connecting' : 'Registered';
-      statusPulse = c.status === 'connecting' ? 'animation:pulse 1s infinite' : '';
+    } else if (c.status === 'connecting') {
+      statusColor = 'var(--warn)'; statusLabel = 'Connecting'; statusPulse = 'animation:pulse 1s infinite';
+    } else if (c.status === 'registered') {
+      statusColor = 'var(--accent2)'; statusLabel = 'Registered'; statusPulse = '';
+    } else if (c.status === 'auth-error') {
+      statusColor = 'var(--warn)'; statusLabel = 'Auth Error'; statusPulse = '';
+    } else if (c.status === 'unreachable') {
+      statusColor = 'var(--crit)'; statusLabel = 'Unreachable'; statusPulse = '';
     } else if (c.status === 'stale') {
       statusColor = 'var(--warn)'; statusLabel = 'Stale'; statusPulse = '';
+    } else if (c.status === 'error') {
+      statusColor = 'var(--crit)'; statusLabel = 'Error'; statusPulse = '';
     } else {
-      statusColor = 'var(--crit)'; statusLabel = 'Failed'; statusPulse = '';
+      statusColor = 'var(--crit)'; statusLabel = c.status || 'Unknown'; statusPulse = '';
     }
 
     var summaryHtml = '';
@@ -11381,8 +11418,14 @@ function renderHubServers() {
         (c.tools || []).slice(0, 5).map(function(t) { return '<code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:9px">' + esc(t.name) + '</code>'; }).join(' ') +
         (c.toolCount > 5 ? ' <span style="opacity:.5">+' + (c.toolCount - 5) + ' more</span>' : '') +
       '</div>' : '') +
+      (c.lastHealthCheck && !c.isBuiltin ? '<div style="font-size:10px;color:var(--text2);margin-bottom:8px">' +
+        'Last verified: ' + timeAgo(c.lastHealthCheck) +
+        (c.lastHealthResult && !c.lastHealthResult.reachable ? ' &mdash; <span style="color:var(--crit)">' + esc(c.lastHealthResult.error || 'Connection failed') + '</span>' : '') +
+        (c.lastHealthResult && c.lastHealthResult.authError ? ' &mdash; <span style="color:var(--warn)">Token expired or invalid (HTTP ' + c.lastHealthResult.status + ')</span>' : '') +
+      '</div>' : '') +
       '<div style="display:flex;gap:6px;border-top:1px solid var(--border);padding-top:10px">' +
         '<button onclick="hubChatWithCluster(\'' + esc(c.id) + '\',\'' + esc(c.name) + '\',\'' + esc(c.platform) + '\')" style="background:linear-gradient(135deg,' + pInfo.color + ',' + pInfo.color + 'cc);color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px;transition:opacity .15s" onmouseover="this.style.opacity=\'0.9\'" onmouseout="this.style.opacity=\'1\'" title="Open AI Chat for this cluster">&#x1F4AC; AI Chat</button>' +
+        (!c.isBuiltin ? '<button onclick="verifyClusterHealth(\'' + esc(c.name).replace(/'/g, "\\'") + '\')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:11px;font-weight:500;color:var(--text2);display:flex;align-items:center;gap:4px;transition:all .15s" onmouseover="this.style.borderColor=\'var(--accent2)\';this.style.color=\'var(--text)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.color=\'var(--text2)\'" title="Verify cluster connectivity">&#x1F50D; Verify</button>' : '') +
       '</div>' +
     '</div>';
   }).join('');

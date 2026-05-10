@@ -957,6 +957,59 @@ async function startSSE() {
     console.warn("[startup] health-check scheduler failed:", err.message);
   }
 
+  // Periodic cluster connectivity probe — checks all registered clusters every 60s
+  async function probeClusterHealth(agent) {
+    if (!agent.apiUrl) return { reachable: false, error: "No API URL" };
+    try {
+      const resp = await fetch(`${agent.apiUrl}/api/v1/namespaces?limit=1`, {
+        headers: {
+          ...(agent.token ? { Authorization: `Bearer ${agent.token}` } : {}),
+          Accept: "application/json",
+        },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (resp.ok) {
+        return { reachable: true, status: resp.status, latencyMs: 0 };
+      }
+      const errText = await resp.text().catch(() => "");
+      if (resp.status === 401 || resp.status === 403) {
+        return { reachable: true, authError: true, status: resp.status, message: errText.slice(0, 200) };
+      }
+      return { reachable: false, status: resp.status, message: errText.slice(0, 200) };
+    } catch (err) {
+      return { reachable: false, error: err.message };
+    }
+  }
+
+  async function runClusterHealthProbes() {
+    for (const [name, agent] of _connectedAgents) {
+      if (!agent.apiUrl) continue;
+      // Skip agent-sourced clusters that report in regularly
+      if (agent.source === "agent" && agent.lastReportTime) {
+        const elapsed = (Date.now() - new Date(agent.lastReportTime).getTime()) / 1000;
+        if (elapsed < 300) continue; // Agent reported recently, trust it
+      }
+      try {
+        const result = await probeClusterHealth(agent);
+        agent.lastHealthCheck = new Date().toISOString();
+        agent.lastHealthResult = result;
+        if (result.reachable && !result.authError) {
+          agent.status = "live";
+        } else if (result.reachable && result.authError) {
+          agent.status = "auth-error";
+        } else {
+          agent.status = "unreachable";
+        }
+        _connectedAgents.set(name, agent);
+      } catch { /* ignore probe errors */ }
+    }
+    saveClustersToDB().catch(() => {});
+  }
+
+  // Run probes on startup after a brief delay, then every 60s
+  setTimeout(() => runClusterHealthProbes().catch(() => {}), 5000);
+  setInterval(() => runClusterHealthProbes().catch(() => {}), 60000);
+
   // Track active transports so each SSE session gets its own MCP server
   // instance (the SDK ties one transport to one server).
   const sessions = new Map();
@@ -1395,17 +1448,43 @@ async function startSSE() {
     if (url.pathname === "/api/hub/clusters" && req.method === "GET") {
       const clusters = [];
       for (const [, agent] of _connectedAgents) {
-        const elapsed = agent.lastReportTime
+        // Determine real status from multiple signals
+        const agentReportElapsed = agent.lastReportTime
           ? (Date.now() - new Date(agent.lastReportTime).getTime()) / 1000
           : null;
+        const healthCheckElapsed = agent.lastHealthCheck
+          ? (Date.now() - new Date(agent.lastHealthCheck).getTime()) / 1000
+          : null;
+
+        let status;
+        if (agentReportElapsed !== null && agentReportElapsed < 300) {
+          status = "live"; // Agent reported recently — trust it
+        } else if (agent.lastHealthResult) {
+          // Use most recent health probe result
+          if (agent.lastHealthResult.reachable && !agent.lastHealthResult.authError) {
+            status = "live";
+          } else if (agent.lastHealthResult.reachable && agent.lastHealthResult.authError) {
+            status = "auth-error";
+          } else {
+            status = "unreachable";
+          }
+        } else if (agent.connectionTest) {
+          // Fall back to initial connection test
+          status = agent.connectionTest.ok ? "registered" : "error";
+        } else {
+          status = "registered";
+        }
+
         clusters.push({
           name: agent.clusterName,
           platform: agent.platform,
           apiUrl: agent.apiUrl,
           hasToken: !!agent.token,
-          status: elapsed !== null && elapsed < 300 ? "live" : agent.status || "registered",
+          status,
           registeredAt: agent.registeredAt,
           lastReportTime: agent.lastReportTime,
+          lastHealthCheck: agent.lastHealthCheck || null,
+          lastHealthResult: agent.lastHealthResult || null,
           source: agent.source || "agent",
           summary: agent.lastReport ? {
             nodes: `${agent.lastReport.nodes?.ready || 0}/${agent.lastReport.nodes?.total || 0}`,
@@ -1416,6 +1495,26 @@ async function startSSE() {
         });
       }
       return sendJson(res, 200, { clusters });
+    }
+
+    // On-demand cluster health check
+    if (url.pathname.match(/^\/api\/hub\/clusters\/[^/]+\/health$/) && req.method === "GET") {
+      const name = decodeURIComponent(url.pathname.split("/api/hub/clusters/")[1].replace("/health", ""));
+      const agent = _connectedAgents.get(name);
+      if (!agent) return sendJson(res, 404, { error: "Cluster not found" });
+      const result = await probeClusterHealth(agent);
+      agent.lastHealthCheck = new Date().toISOString();
+      agent.lastHealthResult = result;
+      if (result.reachable && !result.authError) {
+        agent.status = "live";
+      } else if (result.reachable && result.authError) {
+        agent.status = "auth-error";
+      } else {
+        agent.status = "unreachable";
+      }
+      _connectedAgents.set(name, agent);
+      saveClustersToDB().catch(() => {});
+      return sendJson(res, 200, { name, status: agent.status, healthCheck: result, checkedAt: agent.lastHealthCheck });
     }
 
     if (url.pathname.startsWith("/api/hub/clusters/") && req.method === "DELETE") {
