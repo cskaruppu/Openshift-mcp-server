@@ -96,7 +96,7 @@ import { loadKubeconfig, registerMultiClusterTools } from "./services/multi-clus
 import { handleAgentRoutes as handleAgentRegistryRoutes, loadAgents } from "./agents/registry.js";
 import { handleAgentMcpRoutes } from "./agents/mcp-router.js";
 import { loadConfig } from "./utils/config.js";
-import { ocpGet } from "./utils/openshift-client.js";
+import { ocpGet, setRemoteCluster, clearRemoteCluster } from "./utils/openshift-client.js";
 import {
   connectServer as hubConnect,
   disconnectServer as hubDisconnect,
@@ -276,6 +276,23 @@ async function loadClustersFromDB() {
 function sendJson(res, status, body) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
+}
+
+async function withClusterContext(url, handler) {
+  const clusterName = url.searchParams.get("cluster");
+  if (clusterName && clusterName !== "local") {
+    const agent = _connectedAgents.get(clusterName);
+    if (!agent || !agent.apiUrl) {
+      throw Object.assign(new Error(`Unknown cluster: ${clusterName}`), { status: 404 });
+    }
+    setRemoteCluster(agent.apiUrl, agent.token);
+    try {
+      return await handler();
+    } finally {
+      clearRemoteCluster();
+    }
+  }
+  return handler();
 }
 
 function esc(s) { return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
@@ -1301,6 +1318,30 @@ async function startSSE() {
     }
 
     // -----------------------------------------------------------------------
+    // Cluster info — lightweight version/node summary for the global selector
+    // -----------------------------------------------------------------------
+    if (req.method === "GET" && url.pathname === "/api/cluster-info") {
+      try {
+        const info = await withClusterContext(url, async () => {
+          const [cv, nodes] = await Promise.allSettled([
+            ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
+            ocpGet("/api/v1/nodes"),
+          ]);
+          const version = cv.status === "fulfilled"
+            ? (cv.value?.status?.desired?.version || cv.value?.status?.history?.[0]?.version || "unknown")
+            : "unknown";
+          const nodeList = nodes.status === "fulfilled" ? (nodes.value?.items || []) : [];
+          const readyNodes = nodeList.filter(n =>
+            (n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True"));
+          return { version, nodeCount: nodeList.length, readyNodes: readyNodes.length, platform: "openshift" };
+        });
+        return sendJson(res, 200, info);
+      } catch (err) {
+        return sendJson(res, err.status || 200, err.status ? { error: err.message } : { version: "unknown", nodeCount: 0, readyNodes: 0, error: err.message });
+      }
+    }
+
+    // -----------------------------------------------------------------------
     // Cluster Registration — add K8s clusters via dashboard (direct API)
     // -----------------------------------------------------------------------
     if (url.pathname === "/api/hub/clusters" && req.method === "POST") {
@@ -1832,10 +1873,10 @@ async function startSSE() {
     // GET /api/alerts — unified: Alertmanager + K8s warning events
     if (req.method === "GET" && url.pathname === "/api/alerts") {
       try {
-        const [promAlerts, eventsResp] = await Promise.allSettled([
+        const [promAlerts, eventsResp] = await withClusterContext(url, () => Promise.allSettled([
           listFiringAlerts(),
           ocpGet("/api/v1/events"),
-        ]);
+        ]));
 
         const unified = [];
 
@@ -1960,7 +2001,7 @@ async function startSSE() {
         for (let i = 23; i >= 0; i--) {
           buckets.push({ hour: new Date(now - i * 3600000).toISOString().slice(11, 13) + ":00", critical: 0, warning: 0, info: 0 });
         }
-        const events = await ocpGet("/api/v1/events").catch(() => ({ items: [] }));
+        const events = await withClusterContext(url, () => ocpGet("/api/v1/events")).catch(() => ({ items: [] }));
         for (const e of (events.items || [])) {
           if (e.type !== "Warning") continue;
           const ts = new Date(e.lastTimestamp || e.metadata.creationTimestamp).getTime();
@@ -2046,7 +2087,7 @@ async function startSSE() {
     // Upgrade workflow — /api/upgrade/*
     if (req.method === "GET" && url.pathname === "/api/cluster/version") {
       try {
-        const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+        const cv = await withClusterContext(url, () => ocpGet("/apis/config.openshift.io/v1/clusterversions/version"));
         const current = cv?.status?.desired?.version || cv?.status?.history?.[0]?.version || "";
         const channel = cv?.spec?.channel || "";
         const available = (cv?.status?.availableUpdates || []).map(u => u.version);
@@ -2108,7 +2149,7 @@ async function startSSE() {
 
     // Dashboard REST API — /api/...
     if (url.pathname.startsWith("/api/")) {
-      await handleDashboardAPI(url.pathname, req, res);
+      await withClusterContext(url, () => handleDashboardAPI(url.pathname, req, res));
       return;
     }
 

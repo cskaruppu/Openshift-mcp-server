@@ -1609,6 +1609,66 @@ tr:hover td{background:#ffffff06}
 .fp-fix-result { margin-top:6px; font-size:12px; padding:6px 10px; border-radius:6px; }
 .fp-fix-result.ok { background: color-mix(in srgb, var(--ok) 10%, transparent); color:var(--ok); }
 .fp-fix-result.err { background: color-mix(in srgb, var(--crit) 10%, transparent); color:var(--crit); }
+
+/* Global Cluster Selector */
+.global-cluster-selector { position:relative; display:inline-flex; }
+.gcs-trigger {
+  display:flex; align-items:center; gap:6px; background:none; border:1px solid transparent;
+  border-radius:8px; padding:4px 10px; color:var(--text); font-size:13px;
+  cursor:pointer; transition:all 0.2s; font-family:inherit; white-space:nowrap;
+}
+.gcs-trigger:hover { border-color:var(--border); background:var(--hover); }
+.gcs-trigger.open { border-color:var(--accent2); background:var(--card); }
+.gcs-trigger.single { cursor:default; }
+.gcs-trigger.single:hover { border-color:transparent; background:none; }
+.gcs-trigger.single .gcs-caret { display:none; }
+.gcs-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; background:var(--ok); }
+.gcs-label { font-weight:600; }
+.gcs-version { color:var(--text2); font-size:11px; }
+.gcs-caret { color:var(--text2); transition:transform 0.2s; }
+.gcs-trigger.open .gcs-caret { transform:rotate(180deg); }
+.gcs-dropdown {
+  display:none; position:absolute; top:calc(100% + 6px); right:0;
+  background:var(--card); border:1px solid var(--border); border-radius:10px;
+  min-width:300px; max-height:380px; overflow-y:auto;
+  box-shadow:0 8px 32px rgba(0,0,0,0.4); z-index:9999;
+}
+.gcs-dropdown.open { display:block; animation:gcs-fadeIn 0.15s ease; }
+@keyframes gcs-fadeIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
+.gcs-dropdown-header { padding:10px 14px 6px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:var(--text2); }
+.gcs-item {
+  display:flex; align-items:center; gap:10px; padding:10px 14px;
+  cursor:pointer; transition:background 0.15s; font-size:13px;
+}
+.gcs-item:hover { background:var(--hover); }
+.gcs-item.active { background:color-mix(in srgb, var(--accent2) 10%, transparent); }
+.gcs-item-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.gcs-item-info { flex:1; min-width:0; }
+.gcs-item-name { font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.gcs-item-meta { font-size:11px; color:var(--text2); margin-top:2px; }
+.gcs-item-check { color:var(--accent2); flex-shrink:0; }
+.gcs-add {
+  display:flex; align-items:center; gap:8px; padding:10px 14px;
+  border-top:1px solid var(--border); color:var(--accent2);
+  cursor:pointer; font-size:12px; font-weight:500;
+}
+.gcs-add:hover { background:var(--hover); }
+
+/* Cluster Context Banner */
+.cluster-context-banner {
+  display:flex; align-items:center; gap:10px; padding:6px 32px; font-size:12px;
+  background:color-mix(in srgb, var(--accent2) 8%, var(--bg));
+  border-bottom:1px solid color-mix(in srgb, var(--accent2) 25%, var(--border));
+  color:var(--text2);
+}
+.ccb-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+.ccb-back {
+  margin-left:auto; background:none; border:1px solid var(--border);
+  border-radius:6px; padding:2px 10px; color:var(--text2);
+  font-size:11px; cursor:pointer; font-family:inherit;
+}
+.ccb-back:hover { border-color:var(--accent2); color:var(--text); }
+.light-theme .gcs-dropdown { box-shadow:0 8px 32px rgba(0,0,0,0.12); }
 </style>
 </head>
 <body>
@@ -1648,7 +1708,22 @@ tr:hover td{background:#ffffff06}
     <div class="dot" id="conn-dot"></div>
     <span id="conn-label">Connecting...</span>
     &nbsp;|&nbsp;
-    <span id="cluster-name">Cluster: loading...</span>
+    <div class="global-cluster-selector" id="global-cluster-selector">
+      <button class="gcs-trigger single" id="gcs-trigger" onclick="toggleGlobalClusterDropdown(event)">
+        <span class="gcs-dot" id="gcs-dot"></span>
+        <span class="gcs-label" id="gcs-label">Local Cluster</span>
+        <span class="gcs-version" id="gcs-version"></span>
+        <svg class="gcs-caret" viewBox="0 0 10 6" width="10" height="6"><path d="M0 0l5 6 5-6z" fill="currentColor"/></svg>
+      </button>
+      <div class="gcs-dropdown" id="gcs-dropdown">
+        <div class="gcs-dropdown-header">Switch Cluster</div>
+        <div class="gcs-dropdown-inner" id="gcs-dropdown-inner"></div>
+        <div class="gcs-add" onclick="showView('hub')">
+          <svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+          Add Cluster
+        </div>
+      </div>
+    </div>
     &nbsp;|&nbsp;
     <span class="last-updated" id="last-updated"></span>
     &nbsp;
@@ -1667,6 +1742,13 @@ tr:hover td{background:#ffffff06}
       <span class="agents-icon-badge" id="agents-badge">12</span>
     </button>
   </div>
+</div>
+
+<!-- Cluster Context Banner (shown when viewing a remote cluster) -->
+<div class="cluster-context-banner" id="cluster-context-banner" style="display:none">
+  <span class="ccb-dot" id="ccb-dot"></span>
+  <span>Viewing: <strong id="ccb-name"></strong> &mdash; <span id="ccb-version"></span></span>
+  <button class="ccb-back" onclick="switchGlobalCluster('local')">&#x2190; Switch to local</button>
 </div>
 
 <!-- Settings slide-out panel -->
@@ -3160,20 +3242,30 @@ function formatMem(memStr) {
   return memStr;
 }
 
+var _globalActiveCluster = 'local';
+var _globalClusterInfo = {};
+
+function clusterUrl(url) {
+  if (!_globalActiveCluster || _globalActiveCluster === 'local') return url;
+  var sep = url.indexOf('?') >= 0 ? '&' : '?';
+  return url + sep + 'cluster=' + encodeURIComponent(_globalActiveCluster);
+}
+
 var _apiFetchInflight = new Map();
 async function apiFetch(path, timeoutMs) {
-  // Deduplicate concurrent requests for the same path
-  if (_apiFetchInflight.has(path)) return _apiFetchInflight.get(path);
+  var key = path + '|' + _globalActiveCluster;
+  if (_apiFetchInflight.has(key)) return _apiFetchInflight.get(key);
   var p = _apiFetchInner(path, timeoutMs);
-  _apiFetchInflight.set(path, p);
-  p.finally(function() { _apiFetchInflight.delete(path); });
+  _apiFetchInflight.set(key, p);
+  p.finally(function() { _apiFetchInflight.delete(key); });
   return p;
 }
 async function _apiFetchInner(path, timeoutMs) {
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), timeoutMs || 12000);
   try {
-    const res = await fetch(MCP_API.replace(/\/api$/, '') + path, { signal: controller.signal });
+    var fetchUrl = clusterUrl(MCP_API.replace(/\/api$/, '') + path);
+    const res = await fetch(fetchUrl, { signal: controller.signal });
     clearTimeout(tid);
     if (!res.ok) {
       const body = await res.text().catch(() => '');
@@ -3261,9 +3353,11 @@ async function loadSummary() {
         ? 'All operators available'
         : d.operators.degraded + ' degraded: ' + d.operators.degradedNames.join(', ');
 
-    // Cluster name in header
-    document.getElementById('cluster-name').innerHTML =
-      'Cluster: <strong>' + esc(d.cluster.version) + '</strong>';
+    // Update global cluster selector with version
+    if (_globalActiveCluster === 'local') {
+      var gcsVer = document.getElementById('gcs-version');
+      if (gcsVer) gcsVer.textContent = 'OCP ' + d.cluster.version;
+    }
 
   } catch (err) {
     setConnected(false, 'Error: ' + err.message);
@@ -5529,7 +5623,7 @@ function pollCRApproval(sysId, ticketId, preflightReport, upgradeInfo) {
         var fromVer = upgradeInfo?.fromVersion || preflightReport?.fromVersion || fallbackFrom;
         if (!targetVer || !fromVer) {
           try {
-            var clResp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/cluster/version');
+            var clResp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/cluster/version'));
             var clData = await clResp.json();
             if (!fromVer && clData.current) fromVer = clData.current;
             if (!targetVer && clData.available && clData.available.length) targetVer = clData.available[0];
@@ -6147,6 +6241,8 @@ function showView(view) {
   if (view === 'chat') {
     loadEnabledProviders();
     populateChatClusterDropdown();
+    var chatSel = document.getElementById('ctx-cluster-select');
+    if (chatSel && chatSel.value !== _globalActiveCluster) chatSel.value = _globalActiveCluster;
     detectHistoryBackend().then(() => {
       renderChatHistory();
       renderConversation();
@@ -6788,7 +6884,7 @@ function updateModelPill() {
   const color = colors[provider] || '#6b7280';
   pill.innerHTML = '<span class="pill-dot" style="background:' + color + '"></span>' + esc(displayName);
 }
-// Close flyout when clicking outside
+// Close flyout / dropdowns when clicking outside
 document.addEventListener('click', function(e) {
   const flyout = document.getElementById('chat-tools-flyout');
   if (flyout && flyout.classList.contains('open') && !e.target.closest('.chat-tools-flyout') && !e.target.closest('#tools-toggle-btn')) {
@@ -6796,6 +6892,12 @@ document.addEventListener('click', function(e) {
   }
   const menu = document.getElementById('runbook-menu');
   if (menu && !e.target.closest('.runbook-dropdown')) menu.style.display = 'none';
+  var gcsDropdown = document.getElementById('gcs-dropdown');
+  var gcsTrigger = document.getElementById('gcs-trigger');
+  if (gcsDropdown && gcsDropdown.classList.contains('open') && !e.target.closest('.global-cluster-selector')) {
+    gcsDropdown.classList.remove('open');
+    if (gcsTrigger) gcsTrigger.classList.remove('open');
+  }
 });
 
 function populateChatClusterDropdown() {
@@ -6819,6 +6921,10 @@ function populateChatClusterDropdown() {
 }
 
 function onClusterSwitch() {
+  var sel = document.getElementById('ctx-cluster-select');
+  if (sel && sel.value !== _globalActiveCluster) {
+    switchGlobalCluster(sel.value);
+  }
   updateClusterDot();
 }
 
@@ -6835,6 +6941,137 @@ function updateClusterDot() {
     var info = agent || srv || {};
     dot.style.background = (info.status === 'connected' || info.status === 'live') ? 'var(--ok)' : 'var(--accent2)';
   }
+}
+
+// -------------------------------------------------------------------------
+// Global Cluster Selector
+// -------------------------------------------------------------------------
+function toggleGlobalClusterDropdown(e) {
+  e.stopPropagation();
+  var trigger = document.getElementById('gcs-trigger');
+  var dropdown = document.getElementById('gcs-dropdown');
+  if (!trigger || !dropdown) return;
+  if (trigger.classList.contains('single')) return;
+  var isOpen = dropdown.classList.contains('open');
+  dropdown.classList.toggle('open', !isOpen);
+  trigger.classList.toggle('open', !isOpen);
+  if (!isOpen) populateGlobalClusterDropdown();
+}
+
+function populateGlobalClusterDropdown() {
+  var inner = document.getElementById('gcs-dropdown-inner');
+  if (!inner) return;
+  var items = [{ name: 'local', label: 'Local Cluster', status: 'live', version: document.getElementById('gcs-version')?.textContent || '' }];
+  for (var name in (_remoteAgents || {})) {
+    var a = _remoteAgents[name];
+    items.push({
+      name: name,
+      label: a.name || name,
+      status: a.status || 'registered',
+      version: a.summary ? '' : '',
+      nodes: a.summary ? a.summary.nodes : '',
+      platform: a.platform || 'k8s',
+    });
+  }
+  inner.innerHTML = items.map(function(item) {
+    var dotColor = (item.status === 'live' || item.status === 'connected') ? 'var(--ok)' :
+                   item.status === 'registered' ? 'var(--warn)' : 'var(--crit)';
+    var active = item.name === _globalActiveCluster ? ' active' : '';
+    var meta = [item.platform === 'openshift' ? 'OpenShift' : item.platform, item.version, item.nodes ? item.nodes + ' nodes' : ''].filter(Boolean).join(' · ');
+    var checkSvg = active ? '<svg class="gcs-item-check" viewBox="0 0 16 16" width="14" height="14"><path d="M3 8l3 3 7-7" stroke="currentColor" stroke-width="2" fill="none"/></svg>' : '';
+    return '<div class="gcs-item' + active + '" onclick="switchGlobalCluster(\'' + esc(item.name).replace(/'/g, "\\'") + '\')">' +
+      '<span class="gcs-item-dot" style="background:' + dotColor + '"></span>' +
+      '<div class="gcs-item-info"><div class="gcs-item-name">' + esc(item.label) + '</div>' +
+      (meta ? '<div class="gcs-item-meta">' + esc(meta) + '</div>' : '') + '</div>' +
+      checkSvg + '</div>';
+  }).join('');
+}
+
+async function switchGlobalCluster(name) {
+  var dropdown = document.getElementById('gcs-dropdown');
+  var trigger = document.getElementById('gcs-trigger');
+  if (dropdown) dropdown.classList.remove('open');
+  if (trigger) trigger.classList.remove('open');
+
+  if (name === _globalActiveCluster) return;
+  _globalActiveCluster = name;
+
+  var label = document.getElementById('gcs-label');
+  var ver = document.getElementById('gcs-version');
+  if (name === 'local') {
+    if (label) label.textContent = 'Local Cluster';
+    if (ver) ver.textContent = '';
+  } else {
+    if (label) label.textContent = name;
+    if (ver) ver.textContent = 'connecting...';
+  }
+
+  updateClusterContextBanner();
+  updateGlobalClusterDot();
+
+  var chatSel = document.getElementById('ctx-cluster-select');
+  if (chatSel) { chatSel.value = name; updateClusterDot(); }
+
+  if (name !== 'local') {
+    try {
+      var info = await apiFetch('/api/cluster-info?cluster=' + encodeURIComponent(name), 10000);
+      _globalClusterInfo = info;
+      if (ver) ver.textContent = info.version && info.version !== 'unknown' ? 'OCP ' + info.version : '';
+      updateClusterContextBanner();
+    } catch(e) {
+      _globalClusterInfo = {};
+      if (ver) ver.textContent = 'unreachable';
+    }
+  } else {
+    _globalClusterInfo = {};
+  }
+
+  reloadCurrentView();
+}
+
+function reloadCurrentView() {
+  if (_currentView === 'dashboard') { refreshAll(); }
+  else if (_currentView === 'audit') { if (typeof loadAuditView === 'function') loadAuditView(); }
+  else if (_currentView === 'intelligence') { if (typeof loadIntelligenceView === 'function') loadIntelligenceView(); }
+}
+
+function updateClusterContextBanner() {
+  var banner = document.getElementById('cluster-context-banner');
+  if (!banner) return;
+  if (_globalActiveCluster === 'local') {
+    banner.style.display = 'none';
+    return;
+  }
+  banner.style.display = 'flex';
+  var nameEl = document.getElementById('ccb-name');
+  var verEl = document.getElementById('ccb-version');
+  var dotEl = document.getElementById('ccb-dot');
+  if (nameEl) nameEl.textContent = _globalActiveCluster;
+  if (verEl) verEl.textContent = _globalClusterInfo.version && _globalClusterInfo.version !== 'unknown'
+    ? 'OCP ' + _globalClusterInfo.version + ' · ' + (_globalClusterInfo.readyNodes || 0) + '/' + (_globalClusterInfo.nodeCount || 0) + ' nodes ready'
+    : 'connecting...';
+  var agent = (_remoteAgents || {})[_globalActiveCluster] || {};
+  var color = (agent.status === 'live' || agent.status === 'connected') ? 'var(--ok)' : 'var(--warn)';
+  if (dotEl) dotEl.style.background = color;
+}
+
+function updateGlobalClusterDot() {
+  var dot = document.getElementById('gcs-dot');
+  if (!dot) return;
+  if (_globalActiveCluster === 'local') {
+    dot.style.background = 'var(--ok)';
+  } else {
+    var agent = (_remoteAgents || {})[_globalActiveCluster] || {};
+    dot.style.background = (agent.status === 'live' || agent.status === 'connected') ? 'var(--ok)' : 'var(--warn)';
+  }
+}
+
+function updateGlobalClusterTrigger() {
+  var trigger = document.getElementById('gcs-trigger');
+  if (!trigger) return;
+  var hasRemote = Object.keys(_remoteAgents || {}).length > 0;
+  trigger.classList.toggle('single', !hasRemote);
+  updateGlobalClusterDot();
 }
 
 function getProviderConfig() {
@@ -8070,7 +8307,7 @@ function renderAuditTimeline() {
 
 async function loadAuditView() {
   try {
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/audit');
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/audit'));
     _auditData = await resp.json();
     var executed = _auditData.executed || [];
     var pending = _auditData.pending || [];
@@ -8223,7 +8460,7 @@ async function loadAlertsView() {
 async function loadUnifiedAlerts() {
   try {
     const [alertsResp] = await Promise.all([
-      fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts').then(r => r.json()),
+      fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/alerts')).then(r => r.json()),
       loadSilences(),
       loadAlertsTrends(),
     ]);
@@ -8240,7 +8477,7 @@ async function loadUnifiedAlerts() {
     if (elW) elW.textContent = summary.warning;
 
     // Fetch team playbook stats (continuous learning loop)
-    fetch(MCP_API.replace(/\/api$/, '') + '/api/intelligence/playbook?limit=1&sinceDays=90')
+    fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/intelligence/playbook?limit=1&sinceDays=90'))
       .then(function(r) { return r.json(); })
       .then(function(data) {
         var learned = (data?.stats?.unique_patterns) || 0;
@@ -8413,7 +8650,7 @@ function aicProcessQueue() {
     if (indicatorEl) indicatorEl.textContent = _aicActive + _aicQueue.length;
 
     var opts = (typeof getActiveProviderOpts === 'function') ? getActiveProviderOpts() : { provider: 'none' };
-    fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/analyze', {
+    fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/alerts/analyze'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ alert: item.alert, llmOpts: opts }),
     })
@@ -8622,7 +8859,7 @@ function resetAlertsCountdown() {
 // Poll alerts badge every 60s — deferred to avoid competing with initial load
 setTimeout(function() {
   setInterval(() => {
-    fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts')
+    fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/alerts'))
       .then(r => r.json())
       .then(d => updateAlertsBadge((d.alerts || []).filter(a => !a.silenced).length))
       .catch(() => {});
@@ -8630,7 +8867,7 @@ setTimeout(function() {
 }, 10000);
 // Initial fetch
 setTimeout(() => {
-  fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts')
+  fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/alerts'))
     .then(r => r.json())
     .then(d => updateAlertsBadge((d.alerts || []).filter(a => !a.silenced).length))
     .catch(() => {});
@@ -8643,7 +8880,7 @@ async function loadAlertsTrends() {
   const chart = document.getElementById('aic-trends-mini');
   if (!chart) return;
   try {
-    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/history');
+    const resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/alerts/history'));
     const data = await resp.json();
     const buckets = data.buckets || [];
     if (buckets.length === 0) { chart.innerHTML = ''; return; }
@@ -8665,7 +8902,7 @@ let _silencedSet = new Set();
 
 async function loadSilences() {
   try {
-    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/silences');
+    const resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/alerts/silences'));
     const data = await resp.json();
     _silencedSet = new Set((data.silences || []).map(s => s.name + '|' + s.namespace));
   } catch { /* ignore */ }
@@ -9423,8 +9660,9 @@ function updateClusterCtxWidget() {
     const healthEl = document.getElementById('m-health');
     const nodesEl = document.getElementById('m-nodes');
     const nsEl = document.getElementById('m-ns');
-    const clusterEl = document.getElementById('cluster-name');
-    document.getElementById('ctx-cluster-name').textContent = clusterEl?.textContent?.replace('Cluster: ', '') || 'Unknown';
+    var gcsLabel = document.getElementById('gcs-label');
+    var gcsVersion = document.getElementById('gcs-version');
+    document.getElementById('ctx-cluster-name').textContent = (gcsLabel?.textContent || 'Local Cluster') + (gcsVersion?.textContent ? ' ' + gcsVersion.textContent : '');
     document.getElementById('ctx-version').textContent = document.getElementById('m-health-label')?.textContent || '--';
     document.getElementById('ctx-nodes').textContent = nodesEl?.textContent || '--';
     document.getElementById('ctx-ns').textContent = nsEl?.textContent || '--';
@@ -10495,6 +10733,7 @@ async function loadHubView() {
     renderHubTools();
     populateHubToolFilter();
     populateChatClusterDropdown();
+    updateGlobalClusterTrigger();
   } catch (e) {
     console.error('Hub load error:', e);
   }
@@ -11260,7 +11499,7 @@ async function loadIntelligenceView() {
   loadUnifiedAlerts();
 
   try {
-    var resp = await fetch(MCP_API + '/intelligence/dashboard');
+    var resp = await fetch(clusterUrl(MCP_API + '/intelligence/dashboard'));
     var data = await resp.json();
 
     var elPred = document.getElementById('aic-predictions');
