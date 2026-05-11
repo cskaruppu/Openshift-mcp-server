@@ -276,6 +276,14 @@ export async function queryPrometheus(promql, { range, step } = {}) {
 // ---------------------------------------------------------------------------
 
 export async function notifyAll({ title, text, severity, namespace, cluster, customDetails }) {
+  // Feature flag: master switch for outbound notifications
+  try {
+    const ff = await import("./feature-flags.js");
+    if (!ff.flags.pillar5Notifications()) {
+      return { disabled: true, reason: "Pillar 5 notifications disabled via feature flag" };
+    }
+  } catch { /* feature flags unavailable, allow */ }
+
   const results = {};
   await Promise.all([
     sendSlackMessage({ title, text, severity, namespace, cluster }).then((r) => { results.slack = r; }),

@@ -196,6 +196,7 @@ import {
   queryPrometheus,
 } from "./services/integrations.js";
 import { getRecentTraces } from "./services/reasoning.js";
+import { flags as featureFlags, snapshot as flagSnapshot } from "./services/feature-flags.js";
 
 const silencedAlerts = new Map();
 
@@ -2003,6 +2004,13 @@ async function startSSE() {
     }
 
     // -----------------------------------------------------------------------
+    // Feature Flags — runtime state of each pillar
+    // -----------------------------------------------------------------------
+    if (url.pathname === "/api/feature-flags" && req.method === "GET") {
+      return sendJson(res, 200, { flags: flagSnapshot() });
+    }
+
+    // -----------------------------------------------------------------------
     // Reasoning Traces (Pillar 2)
     // -----------------------------------------------------------------------
     if (url.pathname === "/api/reasoning/traces" && req.method === "GET") {
@@ -2040,55 +2048,61 @@ async function startSSE() {
         command = body.command || "";
         dryRun = !!body.dryRun;
 
-        // Pillar 7: Guardrails preflight check
-        preflight = preflightCheck(command, {
-          dryRun,
-          confirmationToken: body.confirmationToken || null,
-          userId: body.userId || null,
-        });
+        // Pillar 7: Guardrails preflight check (only if enabled)
+        if (featureFlags.pillar7Guardrails()) {
+          preflight = preflightCheck(command, {
+            dryRun,
+            confirmationToken: body.confirmationToken || null,
+            userId: body.userId || null,
+          });
 
-        if (!preflight.allow) {
-          // Audit the blocked attempt
+          if (!preflight.allow) {
+            // Audit the blocked attempt
+            if (featureFlags.pillar7AuditLog()) {
+              logAuditEvent({
+                userId: body.userId || null,
+                conversationId: body.conversationId || null,
+                command,
+                dryRun,
+                classification: preflight.classification,
+                allowed: false,
+                blockReason: preflight.reason,
+                durationMs: Date.now() - auditStart,
+                ipAddress: req.socket?.remoteAddress || null,
+              }).catch(() => {});
+            }
+            return sendJson(res, 403, {
+              success: false,
+              blocked: true,
+              classification: preflight.classification,
+              reason: preflight.reason,
+              suggestion: preflight.suggestion,
+              needsConfirmation: !!preflight.needsConfirmation,
+              stderr: preflight.reason,
+            });
+          }
+        }
+
+        const result = await executeFixCommand(command, { dryRun });
+
+        // Audit the executed command (only if enabled)
+        if (featureFlags.pillar7AuditLog()) {
           logAuditEvent({
             userId: body.userId || null,
             conversationId: body.conversationId || null,
             command,
             dryRun,
-            classification: preflight.classification,
-            allowed: false,
-            blockReason: preflight.reason,
+            classification: preflight?.classification,
+            allowed: true,
+            success: !!result.success,
+            exitCode: result.exitCode,
+            stdoutPreview: result.stdout,
+            stderrPreview: result.stderr,
             durationMs: Date.now() - auditStart,
+            clusterName: body.cluster || process.env.CLUSTER_NAME || null,
             ipAddress: req.socket?.remoteAddress || null,
           }).catch(() => {});
-          return sendJson(res, 403, {
-            success: false,
-            blocked: true,
-            classification: preflight.classification,
-            reason: preflight.reason,
-            suggestion: preflight.suggestion,
-            needsConfirmation: !!preflight.needsConfirmation,
-            stderr: preflight.reason,
-          });
         }
-
-        const result = await executeFixCommand(command, { dryRun });
-
-        // Audit the executed command
-        logAuditEvent({
-          userId: body.userId || null,
-          conversationId: body.conversationId || null,
-          command,
-          dryRun,
-          classification: preflight.classification,
-          allowed: true,
-          success: !!result.success,
-          exitCode: result.exitCode,
-          stdoutPreview: result.stdout,
-          stderrPreview: result.stderr,
-          durationMs: Date.now() - auditStart,
-          clusterName: body.cluster || process.env.CLUSTER_NAME || null,
-          ipAddress: req.socket?.remoteAddress || null,
-        }).catch(() => {});
 
         // Learning loop: record this fix outcome so future similar issues can
         // surface the team's proven approach. Skip dry-runs (no real change).
@@ -2105,9 +2119,9 @@ async function startSSE() {
             user: body.user || body.conversationId || "",
           }).catch(() => {});
         }
-        return sendJson(res, 200, { ...result, classification: preflight.classification });
+        return sendJson(res, 200, { ...result, classification: preflight?.classification });
       } catch (e) {
-        logAuditEvent({
+        if (featureFlags.pillar7AuditLog()) logAuditEvent({
           command,
           dryRun,
           classification: preflight?.classification,

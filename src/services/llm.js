@@ -138,6 +138,8 @@ export async function callLLMStream({ messages, onDelta, onToolCall, ...opts }) 
 // Lightweight telemetry hook — best-effort, never throws.
 async function _recordTelemetry(params) {
   try {
+    const ff = await import("./feature-flags.js");
+    if (!ff.flags.pillar6Telemetry()) return;
     const tel = await import("./telemetry.js");
     tel.recordLLMCall({
       provider: params.provider,
