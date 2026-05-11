@@ -6729,19 +6729,32 @@ export async function handleChatAPI(req, res) {
     const slashReply = await maybeHandleSlashCommand(userMessage, conversationId, llmOpts);
     if (slashReply) {
       const slashProvider = slashReply.provider || "built-in";
+      // Pillar 2: append reasoning trace tag if available
+      let finalReply = slashReply.reply;
+      const slashCmdName = (userMessage.match(/^\/(\w+)/) || [])[1] || "unknown";
+      if (reasoningTrace) {
+        reasoningTrace.add({ kind: "decide", summary: `Matched slash command: /${slashCmdName}`, confidence: 0.95 });
+        reasoningTrace.setDecisionPath(`slash:/${slashCmdName}`);
+        reasoningTrace.setFinalConfidence(0.95);
+        if (body.includeReasoning === true) {
+          finalReply = finalReply + "\n\n" + reasoningTrace.toTag();
+        }
+        reasoningTrace.persist().catch(() => {});
+      }
       if (conversationId) {
         histAddMessage(conversationId, {
           role: "assistant",
-          content: slashReply.reply,
+          content: finalReply,
           provider: slashProvider,
         }).catch(() => {});
       }
       return json(res, 200, {
-        reply: slashReply.reply,
+        reply: finalReply,
         provider: slashProvider,
         contextKeys: slashReply.contextKeys || ["slash"],
         cached: false,
         conversationId,
+        reasoning: reasoningTrace ? reasoningTrace.toJSON() : null,
       });
     }
 
@@ -6764,6 +6777,16 @@ export async function handleChatAPI(req, res) {
     const parsed = nluParse(userMessage, memory);
     intentsForLog = [parsed.intent, parsed.resource, parsed.scope]
       .filter(Boolean);
+
+    // Pillar 2: Build reasoning trace from the parse result. Persisted at
+    // end of request so the UI can show the chain-of-thought.
+    let reasoningTrace = null;
+    if (body.reasoning !== false && body.reasoning !== "off") {
+      try {
+        const r = await import("./reasoning.js");
+        reasoningTrace = r.traceFromNluParse(parsed, userMessage, conversationId);
+      } catch { /* silent */ }
+    }
 
     // Persist user message (best effort, no-op if DB not configured)
     if (conversationId) {

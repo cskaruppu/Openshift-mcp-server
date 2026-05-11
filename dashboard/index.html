@@ -1246,6 +1246,30 @@ tr:hover td{background:#ffffff06}
 .plan-btn:hover{border-color:var(--accent2)}
 .plan-btn.primary{background:var(--accent2);color:#fff;border-color:var(--accent2)}
 .plan-btn.warn{background:var(--warn);color:#fff;border-color:var(--warn)}
+/* Pillar 2: Reasoning trace card */
+.reason-card{background:var(--card);border:1px solid var(--border);border-radius:8px;margin:6px 0;overflow:hidden}
+.reason-head{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;font-size:11px;color:var(--text);background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 4%,var(--card)),var(--card));user-select:none}
+.reason-head:hover{background:color-mix(in srgb,var(--accent) 8%,var(--card))}
+.reason-icon{font-size:14px}
+.reason-title{font-weight:600;font-size:11px}
+.reason-conf{font-size:10px;font-weight:700;margin-left:6px}
+.reason-meta{font-size:10px;color:var(--text2);margin-left:auto}
+.reason-chevron{font-size:9px;color:var(--text2);transition:transform .2s}
+.reason-body{display:none;padding:8px 12px;border-top:1px solid var(--border);max-height:400px;overflow-y:auto}
+.reason-body.open{display:block}
+.reason-card .reason-body.open ~ .reason-head .reason-chevron,
+.reason-head:has(+ .reason-body.open) .reason-chevron{transform:rotate(180deg)}
+.reason-step{display:flex;gap:8px;padding:6px 0;border-bottom:1px dashed var(--border)}
+.reason-step:last-child{border-bottom:none}
+.reason-step-icon{font-size:13px;width:18px;flex-shrink:0;text-align:center;margin-top:1px}
+.reason-step-body{flex:1;min-width:0;font-size:11px}
+.reason-step-head{color:var(--text);font-weight:500;line-height:1.4}
+.reason-step-kind{display:inline-block;padding:1px 5px;border-radius:8px;background:var(--bg);color:var(--text2);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-right:4px}
+.reason-step-conf{font-size:9px;color:var(--text2);font-weight:600;margin-left:4px}
+.reason-step-detail{color:var(--text2);font-size:10px;margin-top:2px;line-height:1.4}
+.reason-step-evidence{margin-top:3px;font-size:10px}
+.reason-step-evidence summary{cursor:pointer;color:var(--accent2);font-size:10px}
+.reason-step-evidence pre{font-family:monospace;font-size:10px;background:var(--bg);padding:4px 6px;border-radius:4px;overflow-x:auto;margin-top:3px;color:var(--text2)}
 .hub-panel-head{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border);background:linear-gradient(135deg,var(--card),var(--bg))}
 .hub-panel-head h3{font-size:13px;font-weight:700;margin:0;color:var(--text)}
 .hub-panel-body{padding:10px}
@@ -4906,6 +4930,13 @@ function md(text) {
       return ph(renderPlanCard(plan));
     } catch(e) { return ph('<div style="color:var(--crit)">Failed to render plan: ' + esc(e.message) + '</div>'); }
   });
+  // Pillar 2: Reasoning trace (chain-of-thought transparency)
+  text = text.replace(/@@REASONING\|([\s\S]+?)@@/g, function(m, jsonStr) {
+    try {
+      var trace = JSON.parse(jsonStr.replace(/@ @/g, '@@'));
+      return ph(renderReasoningTrace(trace));
+    } catch(e) { return ph('<div style="color:var(--crit)">Failed to render reasoning: ' + esc(e.message) + '</div>'); }
+  });
   text = text.replace(/@@SEC_FIX_CMD\|([^@]+)@@/g, function(m, cmd) {
     var idx = Math.floor(Math.random() * 100000);
     var encodedCmd = btoa(unescape(encodeURIComponent(cmd)));
@@ -5232,6 +5263,45 @@ function _syntaxHL(code, lang) {
   escaped = escaped.replace(/\b(oc|kubectl|docker|podman|helm|git|curl|grep|awk|sed|cat|echo|export|sudo|apt|yum|dnf|pip|npm|cd|ls|mkdir|rm|cp|mv|chmod|chown)\b/g, function(m) { return tok('<span class="kw">' + m + '</span>'); });
   escaped = escaped.replace(/\s(--?[\w-]+)/g, function(m, flag) { return ' ' + tok('<span class="flag">' + flag + '</span>'); });
   return restore(escaped);
+}
+
+// ---------------------------------------------------------------------------
+// Pillar 2: Reasoning Trace card — collapsible chain-of-thought transparency
+// ---------------------------------------------------------------------------
+function renderReasoningTrace(trace) {
+  if (!trace || !trace.steps) return '';
+  var conf = trace.finalConfidence;
+  var confLabel = '';
+  var confColor = 'var(--text2)';
+  if (typeof conf === 'number') {
+    var pct = Math.round(conf * 100);
+    confLabel = pct + '% confidence';
+    confColor = conf >= 0.7 ? 'var(--ok)' : conf >= 0.4 ? 'var(--warn)' : 'var(--crit)';
+  }
+  var stepsHtml = trace.steps.map(function(s, i) {
+    var icon = { observe: '&#x1F441;', decide: '&#x1F4A1;', tool: '&#x1F527;', compose: '&#x270D;', verify: '&#x2714;' }[s.kind] || '&#x2022;';
+    var sconf = typeof s.confidence === 'number' ? ' <span class="reason-step-conf">' + Math.round(s.confidence * 100) + '%</span>' : '';
+    var detail = s.detail ? '<div class="reason-step-detail">' + esc(s.detail) + '</div>' : '';
+    var evidence = s.evidence ? '<details class="reason-step-evidence"><summary>evidence</summary><pre>' + esc(JSON.stringify(s.evidence, null, 2)) + '</pre></details>' : '';
+    return '<div class="reason-step">' +
+      '<div class="reason-step-icon">' + icon + '</div>' +
+      '<div class="reason-step-body">' +
+        '<div class="reason-step-head"><span class="reason-step-kind">' + esc(s.kind) + '</span> ' + esc(s.summary) + sconf + '</div>' +
+        detail + evidence +
+      '</div></div>';
+  }).join('');
+
+  var tid = 'rt-' + Math.random().toString(36).slice(2, 8);
+  return '<div class="reason-card">' +
+    '<div class="reason-head" onclick="document.getElementById(\'' + tid + '\').classList.toggle(\'open\')">' +
+      '<span class="reason-icon">&#x1F9E0;</span>' +
+      '<span class="reason-title">How I thought about this</span>' +
+      (confLabel ? '<span class="reason-conf" style="color:' + confColor + '">' + confLabel + '</span>' : '') +
+      '<span class="reason-meta">' + trace.steps.length + ' steps · ' + (trace.durationMs || 0) + 'ms · ' + esc(trace.decisionPath || 'auto') + '</span>' +
+      '<span class="reason-chevron">&#x25BC;</span>' +
+    '</div>' +
+    '<div id="' + tid + '" class="reason-body">' + stepsHtml + '</div>' +
+  '</div>';
 }
 
 // ---------------------------------------------------------------------------

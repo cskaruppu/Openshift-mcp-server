@@ -195,6 +195,7 @@ import {
   notifyAll,
   queryPrometheus,
 } from "./services/integrations.js";
+import { getRecentTraces } from "./services/reasoning.js";
 
 const silencedAlerts = new Map();
 
@@ -1999,6 +2000,16 @@ async function startSSE() {
       } catch (e) {
         return sendJson(res, 500, { error: e.message });
       }
+    }
+
+    // -----------------------------------------------------------------------
+    // Reasoning Traces (Pillar 2)
+    // -----------------------------------------------------------------------
+    if (url.pathname === "/api/reasoning/traces" && req.method === "GET") {
+      const conversationId = url.searchParams.get("conversationId") || undefined;
+      const limit = parseInt(url.searchParams.get("limit") || "20", 10);
+      const traces = await getRecentTraces({ conversationId, limit });
+      return sendJson(res, 200, { traces });
     }
 
     // GET /api/audit-log — paginated audit history for Pillar 7 audit viewer
