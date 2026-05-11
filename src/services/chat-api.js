@@ -5212,6 +5212,28 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
     return { reply: "```\n" + renderMetrics().slice(0, 3000) + "\n```", contextKeys: ["slash", "metrics"] };
   }
 
+  // --- Plan: decompose a goal into executable steps (Pillar 4) ---
+  if (cmd === "plan") {
+    const goal = rest.join(" ").trim();
+    if (!goal) {
+      return {
+        reply: "## Task Planner\n\nUse `/plan <goal>` to decompose a complex task into executable steps.\n\n**Examples:**\n- `/plan migrate namespace dev to prod`\n- `/plan upgrade cluster to 4.16`\n- `/plan right-size workloads`\n- `/plan backup all critical apps`\n- `/plan security audit`\n- `/plan scale deployment my-app to 5`\n\nThe planner will generate a step-by-step plan with dry-run commands, rollback steps, and approval gates for critical actions.",
+        contextKeys: ["slash", "plan"],
+      };
+    }
+    try {
+      const planner = await import("./task-planner.js");
+      const plan = planner.createPlan(goal, { conversationId });
+      const tag = planner.renderPlanTag(plan);
+      return {
+        reply: `## Task Plan: ${goal}\n\nGenerated a ${plan.steps.length}-step plan. Review each step below — you can Dry Run safe operations to preview, then Execute or Mark Done as you progress.\n\n${tag}\n\nTip: Click **Approve Plan** to mark it as approved. Use **Rollback** if anything goes wrong — completed steps with rollback commands will be reverted in reverse order.`,
+        contextKeys: ["slash", "plan"],
+      };
+    } catch (e) {
+      return { reply: `[ERROR] Plan creation failed: ${e.message}`, contextKeys: ["slash", "plan"] };
+    }
+  }
+
   // --- Security audit ---
   if (cmd === "security") {
     try {

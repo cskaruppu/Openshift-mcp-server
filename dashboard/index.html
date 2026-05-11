@@ -1204,6 +1204,48 @@ tr:hover td{background:#ffffff06}
 .perf-pill.ok{background:color-mix(in srgb,var(--ok) 20%,transparent);color:var(--ok)}
 .perf-pill.warn{background:color-mix(in srgb,var(--warn) 20%,transparent);color:var(--warn)}
 .perf-pill.err{background:color-mix(in srgb,var(--crit) 20%,transparent);color:var(--crit)}
+/* Pillar 4: Task Plan card */
+.plan-card{background:var(--card);border:1px solid var(--border);border-radius:10px;margin:8px 0;overflow:hidden}
+.plan-head{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border);background:linear-gradient(135deg,color-mix(in srgb,var(--accent2) 6%,var(--card)),var(--card))}
+.plan-icon{font-size:22px;flex-shrink:0;margin-top:2px}
+.plan-title-block{flex:1;min-width:0}
+.plan-title{font-size:14px;font-weight:700;color:var(--text);line-height:1.3;margin-bottom:3px}
+.plan-meta{font-size:11px;color:var(--text2)}
+.plan-meta code{font-family:monospace;font-size:10px;background:var(--bg);padding:1px 4px;border-radius:3px}
+.plan-status{font-weight:700;font-size:10px;letter-spacing:.5px}
+.plan-progress-wrap{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.plan-progress-bar{width:80px;height:6px;background:var(--border);border-radius:3px;overflow:hidden}
+.plan-progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--ok));border-radius:3px;transition:width .3s}
+.plan-progress-text{font-size:11px;color:var(--text2);font-variant-numeric:tabular-nums}
+.plan-steps{padding:6px 0}
+.plan-step{display:flex;gap:12px;padding:10px 16px;border-bottom:1px solid var(--border)}
+.plan-step:last-child{border-bottom:none}
+.plan-step.running{background:color-mix(in srgb,var(--warn) 8%,transparent)}
+.plan-step.completed{background:color-mix(in srgb,var(--ok) 4%,transparent)}
+.plan-step.failed{background:color-mix(in srgb,var(--crit) 8%,transparent)}
+.plan-step.skipped{opacity:.5}
+.plan-step-icon{font-size:18px;line-height:1;width:20px;flex-shrink:0;text-align:center;margin-top:2px}
+.plan-step-body{flex:1;min-width:0}
+.plan-step-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px}
+.plan-step-num{color:var(--text2);font-size:11px;font-weight:600}
+.plan-step-title{color:var(--text);font-weight:600;font-size:13px}
+.plan-step-desc{color:var(--text2);font-size:11px;line-height:1.4;margin-bottom:5px}
+.plan-step-cmd{background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:5px 8px;margin:4px 0;overflow-x:auto}
+.plan-step-cmd code{font-family:monospace;font-size:11px;color:var(--text);white-space:pre}
+.plan-step-actions{display:flex;gap:5px;margin-top:5px}
+.plan-step-btn{background:var(--bg);border:1px solid var(--border);color:var(--text);font-size:10px;padding:3px 8px;border-radius:4px;cursor:pointer;font-weight:500}
+.plan-step-btn:hover{background:var(--card);border-color:var(--accent2)}
+.plan-step-btn.primary{background:var(--accent2);color:#fff;border-color:var(--accent2)}
+.plan-step-btn.primary:hover{filter:brightness(1.15)}
+.plan-tag{display:inline-block;padding:1px 5px;border-radius:8px;font-size:9px;font-weight:700;letter-spacing:.4px}
+.plan-tag.crit{background:color-mix(in srgb,var(--crit) 20%,transparent);color:var(--crit)}
+.plan-tag.warn{background:color-mix(in srgb,var(--warn) 20%,transparent);color:var(--warn)}
+.plan-tag.rb{background:color-mix(in srgb,var(--accent2) 20%,transparent);color:var(--accent2)}
+.plan-actions{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--border);background:var(--bg)}
+.plan-btn{background:var(--card);border:1px solid var(--border);color:var(--text);font-size:11px;font-weight:600;padding:5px 10px;border-radius:5px;cursor:pointer}
+.plan-btn:hover{border-color:var(--accent2)}
+.plan-btn.primary{background:var(--accent2);color:#fff;border-color:var(--accent2)}
+.plan-btn.warn{background:var(--warn);color:#fff;border-color:var(--warn)}
 .hub-panel-head{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border);background:linear-gradient(135deg,var(--card),var(--bg))}
 .hub-panel-head h3{font-size:13px;font-weight:700;margin:0;color:var(--text)}
 .hub-panel-body{padding:10px}
@@ -4857,6 +4899,13 @@ function md(text) {
       return ph(renderFixProposal(diag));
     } catch(e) { return ph('<div style="color:var(--crit)">Failed to render fix proposal: ' + esc(e.message) + '</div>'); }
   });
+  // Pillar 4: Task plan with step progress UI
+  text = text.replace(/@@PLAN\|([\s\S]+?)@@/g, function(m, jsonStr) {
+    try {
+      var plan = JSON.parse(jsonStr.replace(/@ @/g, '@@'));
+      return ph(renderPlanCard(plan));
+    } catch(e) { return ph('<div style="color:var(--crit)">Failed to render plan: ' + esc(e.message) + '</div>'); }
+  });
   text = text.replace(/@@SEC_FIX_CMD\|([^@]+)@@/g, function(m, cmd) {
     var idx = Math.floor(Math.random() * 100000);
     var encodedCmd = btoa(unescape(encodeURIComponent(cmd)));
@@ -5183,6 +5232,151 @@ function _syntaxHL(code, lang) {
   escaped = escaped.replace(/\b(oc|kubectl|docker|podman|helm|git|curl|grep|awk|sed|cat|echo|export|sudo|apt|yum|dnf|pip|npm|cd|ls|mkdir|rm|cp|mv|chmod|chown)\b/g, function(m) { return tok('<span class="kw">' + m + '</span>'); });
   escaped = escaped.replace(/\s(--?[\w-]+)/g, function(m, flag) { return ' ' + tok('<span class="flag">' + flag + '</span>'); });
   return restore(escaped);
+}
+
+// ---------------------------------------------------------------------------
+// Pillar 4: Task Plan card with step-by-step progress UI
+// ---------------------------------------------------------------------------
+function renderPlanCard(plan) {
+  if (!plan) return '';
+  var statusColor = {
+    draft: 'var(--text2)', approved: 'var(--accent2)', executing: 'var(--warn)',
+    completed: 'var(--ok)', failed: 'var(--crit)', rolled_back: 'var(--text2)',
+  }[plan.status] || 'var(--text2)';
+
+  var stepsHtml = (plan.steps || []).map(function(s, i) {
+    var icon = '○'; // pending circle
+    var color = 'var(--text2)';
+    if (s.status === 'running') { icon = '◐'; color = 'var(--warn)'; }
+    else if (s.status === 'completed') { icon = '✔'; color = 'var(--ok)'; }
+    else if (s.status === 'failed') { icon = '✖'; color = 'var(--crit)'; }
+    else if (s.status === 'skipped') { icon = '…'; color = 'var(--text2)'; }
+    var critTag = s.critical ? '<span class="plan-tag crit">CRITICAL</span>' : '';
+    var apprTag = s.requiresExplicitApproval ? '<span class="plan-tag warn">APPROVAL</span>' : '';
+    var rbTag = s.hasRollback ? '<span class="plan-tag rb">ROLLBACK</span>' : '';
+    var cmdHtml = s.command ? '<div class="plan-step-cmd"><code>' + esc(s.command) + '</code></div>' : '';
+    var actBtn = '';
+    if (s.status === 'pending' && s.command) {
+      actBtn = '<button class="plan-step-btn" onclick="planExecuteStep(\'' + plan.id + '\',\'' + s.id + '\',true)">Dry Run</button>' +
+               '<button class="plan-step-btn primary" onclick="planExecuteStep(\'' + plan.id + '\',\'' + s.id + '\',false)">Execute</button>';
+    } else if (s.status === 'pending') {
+      actBtn = '<button class="plan-step-btn" onclick="planMarkStep(\'' + plan.id + '\',\'' + s.id + '\',\'completed\')">Mark Done</button>';
+    }
+    return '<div class="plan-step ' + s.status + '" id="plan-' + plan.id + '-step-' + s.id + '">' +
+      '<div class="plan-step-icon" style="color:' + color + '">' + icon + '</div>' +
+      '<div class="plan-step-body">' +
+        '<div class="plan-step-head">' +
+          '<span class="plan-step-num">' + (i + 1) + '.</span>' +
+          '<span class="plan-step-title">' + esc(s.title) + '</span>' +
+          critTag + apprTag + rbTag +
+        '</div>' +
+        '<div class="plan-step-desc">' + esc(s.description || '') + '</div>' +
+        cmdHtml +
+        '<div class="plan-step-actions">' + actBtn + '</div>' +
+      '</div></div>';
+  }).join('');
+
+  var doneCount = (plan.steps || []).filter(function(s) { return s.status === 'completed'; }).length;
+  var totalCount = (plan.steps || []).length;
+  var pctDone = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
+
+  return '<div class="plan-card" data-plan-id="' + plan.id + '">' +
+    '<div class="plan-head">' +
+      '<div class="plan-icon">&#x1F4CB;</div>' +
+      '<div class="plan-title-block">' +
+        '<div class="plan-title">' + esc(plan.goal) + '</div>' +
+        '<div class="plan-meta">Plan ID: <code>' + plan.id + '</code> · Template: ' + esc(plan.template || 'generic') +
+          ' · <span class="plan-status" style="color:' + statusColor + '">' + plan.status.toUpperCase() + '</span></div>' +
+      '</div>' +
+      '<div class="plan-progress-wrap">' +
+        '<div class="plan-progress-bar"><div class="plan-progress-fill" style="width:' + pctDone + '%"></div></div>' +
+        '<div class="plan-progress-text">' + doneCount + '/' + totalCount + ' (' + pctDone + '%)</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="plan-steps">' + stepsHtml + '</div>' +
+    '<div class="plan-actions">' +
+      (plan.status === 'draft' ? '<button class="plan-btn primary" onclick="planApprove(\'' + plan.id + '\')">&#x2714; Approve Plan</button>' : '') +
+      (plan.status === 'completed' || plan.status === 'failed' ? '<button class="plan-btn warn" onclick="planRollback(\'' + plan.id + '\')">&#x21BA; Rollback</button>' : '') +
+      '<button class="plan-btn" onclick="planRefresh(\'' + plan.id + '\')">&#x21BB; Refresh</button>' +
+    '</div>' +
+  '</div>';
+}
+
+async function planExecuteStep(planId, stepId, dryRun) {
+  var stepEl = document.getElementById('plan-' + planId + '-step-' + stepId);
+  if (!stepEl) return;
+  // Find the step's command from rendered code element
+  var cmdEl = stepEl.querySelector('.plan-step-cmd code');
+  if (!cmdEl) return;
+  var cmd = cmdEl.textContent;
+
+  // Mark running
+  await fetch(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/steps/' + stepId, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'running' }),
+  });
+  stepEl.classList.remove('pending'); stepEl.classList.add('running');
+
+  // Execute via existing fix endpoint (gets guardrails for free)
+  try {
+    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/execute-fix', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: cmd, dryRun: !!dryRun }),
+    });
+    var data = await resp.json();
+    var newStatus = data.success ? 'completed' : 'failed';
+    if (dryRun && data.success) newStatus = 'pending'; // Reset to pending so user can hit Execute next
+    await fetch(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/steps/' + stepId, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        status: newStatus,
+        output: data.stdout, error: data.stderr,
+      }),
+    });
+  } catch (e) {
+    await fetch(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/steps/' + stepId, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'failed', error: e.message }),
+    });
+  }
+  planRefresh(planId);
+}
+
+async function planMarkStep(planId, stepId, status) {
+  await fetch(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/steps/' + stepId, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: status }),
+  });
+  planRefresh(planId);
+}
+
+async function planApprove(planId) {
+  await fetch(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/approve', { method: 'POST' });
+  planRefresh(planId);
+}
+
+async function planRollback(planId) {
+  if (!confirm('Rollback all completed steps in reverse order? This will run rollback commands.')) return;
+  var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/rollback', { method: 'POST' });
+  var data = await resp.json();
+  if (data.rollbackSteps) {
+    alert('Rollback initiated. ' + data.rollbackSteps.length + ' rollback commands queued. Re-execute them manually if needed.');
+  }
+  planRefresh(planId);
+}
+
+async function planRefresh(planId) {
+  var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId);
+  if (!resp.ok) return;
+  var data = await resp.json();
+  if (!data.plan) return;
+  var newHtml = renderPlanCard(data.plan);
+  var oldEl = document.querySelector('.plan-card[data-plan-id="' + planId + '"]');
+  if (oldEl) {
+    var tmp = document.createElement('div');
+    tmp.innerHTML = newHtml;
+    oldEl.parentNode.replaceChild(tmp.firstChild, oldEl);
+  }
 }
 
 // ---------------------------------------------------------------------------

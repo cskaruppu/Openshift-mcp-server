@@ -178,6 +178,15 @@ import {
   searchTeamKnowledge,
   getUserIdFromRequest,
 } from "./services/persistent-memory.js";
+import {
+  createPlan,
+  getPlan,
+  listPlans,
+  approvePlan,
+  markStepStatus,
+  rollbackPlan,
+  renderPlanTag,
+} from "./services/task-planner.js";
 
 const silencedAlerts = new Map();
 
@@ -1885,6 +1894,63 @@ async function startSSE() {
       const limit = Math.min(50, parseInt(url.searchParams.get("limit") || "10", 10));
       const results = await searchTeamKnowledge(search, limit);
       return sendJson(res, 200, { results });
+    }
+
+    // -----------------------------------------------------------------------
+    // Task Planner (Pillar 4)
+    // -----------------------------------------------------------------------
+    if (url.pathname === "/api/plans" && req.method === "POST") {
+      try {
+        const body = await readJsonBody(req);
+        if (!body.goal) return sendJson(res, 400, { error: "goal required" });
+        const plan = createPlan(body.goal, {
+          userId: getUserIdFromRequest(req) || body.userId,
+          conversationId: body.conversationId,
+          ...body.context,
+        });
+        return sendJson(res, 201, { plan, planTag: renderPlanTag(plan) });
+      } catch (e) {
+        return sendJson(res, 500, { error: e.message });
+      }
+    }
+    if (url.pathname === "/api/plans" && req.method === "GET") {
+      const userId = getUserIdFromRequest(req) || url.searchParams.get("userId");
+      const status = url.searchParams.get("status");
+      const plans = listPlans({ userId, status, limit: 30 });
+      return sendJson(res, 200, { plans });
+    }
+    if (url.pathname.startsWith("/api/plans/") && req.method === "GET") {
+      const planId = url.pathname.split("/")[3];
+      const plan = getPlan(planId);
+      if (!plan) return sendJson(res, 404, { error: "Plan not found" });
+      return sendJson(res, 200, { plan, planTag: renderPlanTag(plan) });
+    }
+    if (url.pathname.match(/^\/api\/plans\/[^/]+\/approve$/) && req.method === "POST") {
+      const planId = url.pathname.split("/")[3];
+      const plan = await approvePlan(planId);
+      if (!plan) return sendJson(res, 404, { error: "Plan not found" });
+      return sendJson(res, 200, { plan });
+    }
+    if (url.pathname.match(/^\/api\/plans\/[^/]+\/rollback$/) && req.method === "POST") {
+      const planId = url.pathname.split("/")[3];
+      const result = await rollbackPlan(planId);
+      if (!result) return sendJson(res, 404, { error: "Plan not found" });
+      return sendJson(res, 200, result);
+    }
+    if (url.pathname.match(/^\/api\/plans\/[^/]+\/steps\/[^/]+$/) && req.method === "PATCH") {
+      try {
+        const parts = url.pathname.split("/");
+        const planId = parts[3];
+        const stepId = parts[5];
+        const body = await readJsonBody(req);
+        const plan = await markStepStatus(planId, stepId, body.status, {
+          output: body.output, error: body.error, exitCode: body.exitCode,
+        });
+        if (!plan) return sendJson(res, 404, { error: "Plan or step not found" });
+        return sendJson(res, 200, { plan });
+      } catch (e) {
+        return sendJson(res, 500, { error: e.message });
+      }
     }
 
     // GET /api/audit-log — paginated audit history for Pillar 7 audit viewer
