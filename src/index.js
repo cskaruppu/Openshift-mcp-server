@@ -187,6 +187,14 @@ import {
   rollbackPlan,
   renderPlanTag,
 } from "./services/task-planner.js";
+import {
+  getIntegrationsConfig,
+  setIntegrationsConfig,
+  redactConfig,
+  testConnection,
+  notifyAll,
+  queryPrometheus,
+} from "./services/integrations.js";
 
 const silencedAlerts = new Map();
 
@@ -1948,6 +1956,46 @@ async function startSSE() {
         });
         if (!plan) return sendJson(res, 404, { error: "Plan or step not found" });
         return sendJson(res, 200, { plan });
+      } catch (e) {
+        return sendJson(res, 500, { error: e.message });
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Integrations (Pillar 5) — Slack, Teams, PagerDuty, Webhook, Prometheus
+    // -----------------------------------------------------------------------
+    if (url.pathname === "/api/integrations" && req.method === "GET") {
+      const cfg = await getIntegrationsConfig();
+      return sendJson(res, 200, { config: redactConfig(cfg) });
+    }
+    if (url.pathname === "/api/integrations" && req.method === "POST") {
+      try {
+        const body = await readJsonBody(req);
+        const updated = await setIntegrationsConfig(body || {});
+        return sendJson(res, 200, { config: redactConfig(updated) });
+      } catch (e) {
+        return sendJson(res, 500, { error: e.message });
+      }
+    }
+    if (url.pathname.match(/^\/api\/integrations\/test\/[^/]+$/) && req.method === "POST") {
+      const type = url.pathname.split("/").pop();
+      const result = await testConnection(type);
+      return sendJson(res, 200, { type, result });
+    }
+    if (url.pathname === "/api/integrations/notify" && req.method === "POST") {
+      try {
+        const body = await readJsonBody(req);
+        const results = await notifyAll(body);
+        return sendJson(res, 200, { results });
+      } catch (e) {
+        return sendJson(res, 500, { error: e.message });
+      }
+    }
+    if (url.pathname === "/api/integrations/prometheus" && req.method === "POST") {
+      try {
+        const body = await readJsonBody(req);
+        const result = await queryPrometheus(body.query, body);
+        return sendJson(res, 200, result);
       } catch (e) {
         return sendJson(res, 500, { error: e.message });
       }
