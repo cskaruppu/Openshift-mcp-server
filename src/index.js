@@ -153,6 +153,14 @@ import {
   getTrends,
 } from "./services/predictive-intel.js";
 import { trackCR, getCR, listCRs, getPendingCRs, updateCRStatus, syncCRFromServiceNow, syncAllPendingCRs, cleanupOldCRs, backfillFromAuditTrail, dismissCR, deleteCR } from "./services/cr-tracker.js";
+import {
+  getMetricsSummary,
+  getTimeSeries,
+  getTopIntents,
+  getProviderBreakdown,
+  getErrorBreakdown,
+  getRecentEvents,
+} from "./services/telemetry.js";
 
 const silencedAlerts = new Map();
 
@@ -1522,6 +1530,30 @@ async function startSSE() {
       _connectedAgents.delete(name);
       saveClustersToDB().catch(() => {});
       return sendJson(res, 200, { ok: true, deleted: name });
+    }
+
+    // -----------------------------------------------------------------------
+    // AI Hub Performance / Monitoring (Pillar 6)
+    // -----------------------------------------------------------------------
+    if (url.pathname === "/api/hub/performance" && req.method === "GET") {
+      const hours = Math.min(168, Math.max(1, parseInt(url.searchParams.get("hours") || "24", 10)));
+      const [summary, series, intents, providers, errors, recent] = await Promise.all([
+        getMetricsSummary(hours).catch(() => null),
+        getTimeSeries(hours).catch(() => []),
+        getTopIntents(hours, 8).catch(() => []),
+        getProviderBreakdown(hours).catch(() => []),
+        getErrorBreakdown(hours).catch(() => []),
+        getRecentEvents(15).catch(() => []),
+      ]);
+      return sendJson(res, 200, {
+        windowHours: hours,
+        summary,
+        timeSeries: series,
+        topIntents: intents,
+        providers,
+        errors,
+        recentEvents: recent,
+      });
     }
 
     // -----------------------------------------------------------------------

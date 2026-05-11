@@ -92,11 +92,22 @@ function resolveOpts(opts = {}) {
 // ---------------------------------------------------------------------------
 export async function callLLM({ messages, ...opts }) {
   const o = resolveOpts(opts);
-  if (o.provider === "azure") return callAzureOpenAI(messages, o, false);
-  if (o.provider === "openai") return callOpenAI(messages, o, false);
-  if (o.provider === "anthropic") return callAnthropic(messages, o, false);
-  if (o.provider === "ollama") return callOllama(messages, o, false);
-  return { text: "", toolCalls: [] };
+  const t0 = Date.now();
+  let provider = o.provider;
+  let model = o.azureDeployment || o.model || null;
+  try {
+    let result;
+    if (o.provider === "azure") result = await callAzureOpenAI(messages, o, false);
+    else if (o.provider === "openai") result = await callOpenAI(messages, o, false);
+    else if (o.provider === "anthropic") result = await callAnthropic(messages, o, false);
+    else if (o.provider === "ollama") result = await callOllama(messages, o, false);
+    else result = { text: "", toolCalls: [] };
+    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: result?.usage, conversationId: opts.conversationId });
+    return result;
+  } catch (err) {
+    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: false, errorClass: _classifyErr(err), conversationId: opts.conversationId, errMsg: err?.message });
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -106,11 +117,49 @@ export async function callLLM({ messages, ...opts }) {
 export async function callLLMStream({ messages, onDelta, onToolCall, ...opts }) {
   const o = resolveOpts(opts);
   const hooks = { onDelta, onToolCall };
-  if (o.provider === "azure") return callAzureOpenAI(messages, o, true, hooks);
-  if (o.provider === "openai") return callOpenAI(messages, o, true, hooks);
-  if (o.provider === "anthropic") return callAnthropic(messages, o, true, hooks);
-  if (o.provider === "ollama") return callOllama(messages, o, true, hooks);
-  return { text: "", toolCalls: [] };
+  const t0 = Date.now();
+  let provider = o.provider;
+  let model = o.azureDeployment || o.model || null;
+  try {
+    let result;
+    if (o.provider === "azure") result = await callAzureOpenAI(messages, o, true, hooks);
+    else if (o.provider === "openai") result = await callOpenAI(messages, o, true, hooks);
+    else if (o.provider === "anthropic") result = await callAnthropic(messages, o, true, hooks);
+    else if (o.provider === "ollama") result = await callOllama(messages, o, true, hooks);
+    else result = { text: "", toolCalls: [] };
+    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: result?.usage, conversationId: opts.conversationId, streaming: true });
+    return result;
+  } catch (err) {
+    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: false, errorClass: _classifyErr(err), conversationId: opts.conversationId, errMsg: err?.message, streaming: true });
+    throw err;
+  }
+}
+
+// Lightweight telemetry hook — best-effort, never throws.
+async function _recordTelemetry(params) {
+  try {
+    const tel = await import("./telemetry.js");
+    tel.recordLLMCall({
+      provider: params.provider,
+      model: params.model,
+      conversationId: params.conversationId,
+      durationMs: params.durationMs,
+      success: params.success,
+      usage: params.usage,
+      errorClass: params.errorClass,
+      metadata: params.errMsg ? { error: String(params.errMsg).slice(0, 200), streaming: params.streaming || false } : (params.streaming ? { streaming: true } : null),
+    }).catch(() => {});
+  } catch { /* telemetry unavailable */ }
+}
+
+function _classifyErr(err) {
+  const msg = String(err?.message || err).toLowerCase();
+  if (msg.includes("timeout") || msg.includes("etimedout")) return "timeout";
+  if (msg.includes("rate") || msg.includes("429")) return "rate_limit";
+  if (msg.includes("auth") || msg.includes("401") || msg.includes("403")) return "auth";
+  if (msg.includes("network") || msg.includes("econnref") || msg.includes("enotfound")) return "network";
+  if (msg.includes("500") || msg.includes("502") || msg.includes("503")) return "server";
+  return "other";
 }
 
 // ---------------------------------------------------------------------------

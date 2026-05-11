@@ -1186,7 +1186,24 @@ tr:hover td{background:#ffffff06}
 @keyframes hubDataFlow{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
 .hub-grid{display:grid;grid-template-columns:320px 1fr;gap:16px;margin-bottom:20px}
 @media(max-width:900px){.hub-grid{grid-template-columns:1fr}}
-.hub-panel{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.hub-panel{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-top:14px}
+.perf-kpi{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:2px}
+.perf-kpi-label{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px}
+.perf-kpi-value{font-size:22px;font-weight:700;color:var(--text);line-height:1.1}
+.perf-kpi-sub{font-size:10px;color:var(--text2)}
+.perf-kpi.good{border-left:3px solid var(--ok)}
+.perf-kpi.warn{border-left:3px solid var(--warn)}
+.perf-kpi.bad{border-left:3px solid var(--crit)}
+.perf-bar{height:6px;background:var(--border);border-radius:3px;overflow:hidden;margin-top:3px}
+.perf-bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:3px}
+.perf-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px dashed var(--border)}
+.perf-row:last-child{border-bottom:none}
+.perf-row-label{color:var(--text);font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.perf-row-val{color:var(--text2);font-variant-numeric:tabular-nums;margin-left:8px}
+.perf-pill{display:inline-block;padding:1px 6px;border-radius:10px;font-size:9px;font-weight:600;text-transform:uppercase}
+.perf-pill.ok{background:color-mix(in srgb,var(--ok) 20%,transparent);color:var(--ok)}
+.perf-pill.warn{background:color-mix(in srgb,var(--warn) 20%,transparent);color:var(--warn)}
+.perf-pill.err{background:color-mix(in srgb,var(--crit) 20%,transparent);color:var(--crit)}
 .hub-panel-head{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border);background:linear-gradient(135deg,var(--card),var(--bg))}
 .hub-panel-head h3{font-size:13px;font-weight:700;margin:0;color:var(--text)}
 .hub-panel-body{padding:10px}
@@ -2974,6 +2991,69 @@ tr:hover td{background:#ffffff06}
         </div>
         <div id="hub-tools-list" style="max-height:260px;overflow-y:auto">
           <div style="padding:16px;text-align:center;color:var(--text2);font-size:11px">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI Performance & Observability (Pillar 6) -->
+    <div class="hub-panel" id="hub-perf-panel">
+      <div class="hub-panel-head" style="cursor:pointer" onclick="var b=document.getElementById('hub-perf-body');b.style.display=b.style.display==='none'?'block':'none';this.querySelector('.hub-chevron').textContent=b.style.display==='none'?'▶':'▼';if(b.style.display!=='none')loadHubPerformance()">
+        <span style="font-size:14px">&#x1F4CA;</span>
+        <h3>AI Performance &amp; Observability</h3>
+        <span id="hub-perf-status" style="font-size:10px;color:var(--text2);margin-left:8px"></span>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+          <select id="hub-perf-window" onchange="loadHubPerformance()" onclick="event.stopPropagation()" style="background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:4px 8px;color:var(--text);font-size:11px;outline:none">
+            <option value="1">Last 1h</option>
+            <option value="6">Last 6h</option>
+            <option value="24" selected>Last 24h</option>
+            <option value="168">Last 7d</option>
+          </select>
+          <button onclick="event.stopPropagation();loadHubPerformance()" style="background:var(--accent2);color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:11px;cursor:pointer">Refresh</button>
+          <span class="hub-chevron" style="font-size:10px;color:var(--text2)">&#x25BC;</span>
+        </div>
+      </div>
+      <div id="hub-perf-body" style="padding:14px">
+        <div id="hub-perf-loading" style="text-align:center;color:var(--text2);font-size:12px;padding:20px">Loading AI performance metrics...</div>
+        <div id="hub-perf-content" style="display:none">
+          <!-- KPI Cards -->
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:16px">
+            <div class="perf-kpi" id="perf-kpi-calls"></div>
+            <div class="perf-kpi" id="perf-kpi-latency"></div>
+            <div class="perf-kpi" id="perf-kpi-error"></div>
+            <div class="perf-kpi" id="perf-kpi-tokens"></div>
+            <div class="perf-kpi" id="perf-kpi-cache"></div>
+            <div class="perf-kpi" id="perf-kpi-actions"></div>
+          </div>
+          <!-- Time series sparkline -->
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+              <div style="font-size:12px;font-weight:600;color:var(--text)">LLM Calls Over Time</div>
+              <div id="perf-series-summary" style="font-size:10px;color:var(--text2)"></div>
+            </div>
+            <svg id="perf-chart" width="100%" height="120" style="display:block"></svg>
+          </div>
+          <!-- Breakdown grids -->
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px">
+              <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:8px">Provider Breakdown</div>
+              <div id="perf-providers" style="font-size:11px"></div>
+            </div>
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px">
+              <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:8px">Top Intents</div>
+              <div id="perf-intents" style="font-size:11px"></div>
+            </div>
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px">
+              <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:8px">Error Classes</div>
+              <div id="perf-errors" style="font-size:11px"></div>
+            </div>
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px">
+              <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:8px">Recent Events</div>
+              <div id="perf-recent" style="font-size:11px;max-height:200px;overflow-y:auto"></div>
+            </div>
+          </div>
+          <div style="margin-top:10px;font-size:10px;color:var(--text2);text-align:right">
+            Industry benchmarks: P95 &lt; 3000ms, error rate &lt; 1%, cache hit rate &gt; 30%
+          </div>
         </div>
       </div>
     </div>
@@ -6285,6 +6365,7 @@ function showView(view) {
     loadSettings();
   } else if (view === 'hub') {
     loadHubView();
+    if (typeof loadHubPerformance === 'function') loadHubPerformance();
   } else if (view === 'intelligence') {
     loadIntelligenceView();
   } else if (view === 'agents') {
@@ -10761,6 +10842,193 @@ function hubSwitchChatLLM(provider) {
 }
 
 var _remoteAgents = {};
+
+// ---- AI Performance & Observability (Pillar 6) ----
+async function loadHubPerformance() {
+  var loadingEl = document.getElementById('hub-perf-loading');
+  var contentEl = document.getElementById('hub-perf-content');
+  var statusEl = document.getElementById('hub-perf-status');
+  if (!loadingEl || !contentEl) return;
+  loadingEl.style.display = 'block';
+  loadingEl.textContent = 'Loading AI performance metrics...';
+  contentEl.style.display = 'none';
+  var hours = parseInt(document.getElementById('hub-perf-window').value || '24', 10);
+  try {
+    var r = await fetch(MCP_API + '/hub/performance?hours=' + hours);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var data = await r.json();
+    renderHubPerformance(data);
+    loadingEl.style.display = 'none';
+    contentEl.style.display = 'block';
+    if (statusEl) statusEl.textContent = '· last refreshed ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    loadingEl.textContent = 'Failed to load metrics: ' + (e.message || e) + '. Telemetry may not be configured yet — metrics will appear as the AI is used.';
+  }
+}
+
+function renderHubPerformance(data) {
+  var s = (data && data.summary) || {};
+  var llm = s.llm || {};
+  var act = s.actions || {};
+  var qs = s.queries || {};
+
+  // KPI cards
+  var kpi = function(id, label, value, sub, grade) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.className = 'perf-kpi' + (grade ? ' ' + grade : '');
+    el.innerHTML = '<div class="perf-kpi-label">' + label + '</div>' +
+      '<div class="perf-kpi-value">' + value + '</div>' +
+      (sub ? '<div class="perf-kpi-sub">' + sub + '</div>' : '');
+  };
+
+  var avgGrade = llm.avgMs > 5000 ? 'bad' : llm.avgMs > 3000 ? 'warn' : 'good';
+  var errGrade = llm.errorRatePct > 5 ? 'bad' : llm.errorRatePct > 1 ? 'warn' : 'good';
+  var cacheGrade = qs.cacheHitRatePct >= 30 ? 'good' : qs.cacheHitRatePct >= 15 ? 'warn' : 'bad';
+
+  kpi('perf-kpi-calls', 'LLM Calls', _fmtNum(llm.total || 0), (llm.success || 0) + ' OK · ' + (llm.errors || 0) + ' err', '');
+  kpi('perf-kpi-latency', 'Avg Latency', (llm.avgMs || 0) + 'ms', 'p95 ' + (llm.p95Ms || 0) + 'ms · p99 ' + (llm.p99Ms || 0) + 'ms', avgGrade);
+  kpi('perf-kpi-error', 'Error Rate', (llm.errorRatePct || 0) + '%', 'target: < 1%', errGrade);
+  kpi('perf-kpi-tokens', 'Tokens Used', _fmtNum(llm.totalTokens || 0), 'in window', '');
+  kpi('perf-kpi-cache', 'Cache Hit Rate', (qs.cacheHitRatePct || 0) + '%', _fmtNum(qs.cacheHits || 0) + '/' + _fmtNum(qs.total || 0) + ' queries', cacheGrade);
+  kpi('perf-kpi-actions', 'Actions', _fmtNum(act.total || 0), (act.dryRuns || 0) + ' dry-run · ' + (act.errors || 0) + ' failed', '');
+
+  // Time series sparkline
+  renderPerfChart(data.timeSeries || []);
+
+  // Provider breakdown
+  var pEl = document.getElementById('perf-providers');
+  if (pEl) {
+    var providers = data.providers || [];
+    if (!providers.length) {
+      pEl.innerHTML = '<div style="color:var(--text2);font-size:11px;padding:8px 0">No LLM calls in this window.</div>';
+    } else {
+      pEl.innerHTML = providers.map(function(p) {
+        var cls = p.errorRatePct > 5 ? 'err' : p.errorRatePct > 1 ? 'warn' : 'ok';
+        return '<div class="perf-row"><div class="perf-row-label">' + _esc(p.provider) + '</div>' +
+          '<div class="perf-row-val">' + p.total + ' calls · ' + p.avgMs + 'ms · ' +
+          '<span class="perf-pill ' + cls + '">' + p.errorRatePct + '% err</span></div></div>';
+      }).join('');
+    }
+  }
+
+  // Top intents
+  var iEl = document.getElementById('perf-intents');
+  if (iEl) {
+    var intents = data.topIntents || [];
+    if (!intents.length) {
+      iEl.innerHTML = '<div style="color:var(--text2);font-size:11px;padding:8px 0">No tracked intents yet.</div>';
+    } else {
+      var maxCount = Math.max.apply(null, intents.map(function(x) { return x.count; }));
+      iEl.innerHTML = intents.map(function(it) {
+        var pct = Math.round((it.count / maxCount) * 100);
+        return '<div class="perf-row"><div class="perf-row-label">' + _esc(it.intent) + '</div>' +
+          '<div class="perf-row-val">' + it.count + ' · ' + (it.avgMs || 0) + 'ms</div></div>' +
+          '<div class="perf-bar"><div class="perf-bar-fill" style="width:' + pct + '%"></div></div>';
+      }).join('');
+    }
+  }
+
+  // Errors
+  var eEl = document.getElementById('perf-errors');
+  if (eEl) {
+    var errs = data.errors || [];
+    if (!errs.length) {
+      eEl.innerHTML = '<div style="color:var(--ok);font-size:11px;padding:8px 0">No errors in this window.</div>';
+    } else {
+      eEl.innerHTML = errs.map(function(er) {
+        return '<div class="perf-row"><div class="perf-row-label">' + _esc(er.errorClass) + '</div>' +
+          '<div class="perf-row-val"><span class="perf-pill err">' + er.count + '</span></div></div>';
+      }).join('');
+    }
+  }
+
+  // Recent events
+  var rEl = document.getElementById('perf-recent');
+  if (rEl) {
+    var recent = data.recentEvents || [];
+    if (!recent.length) {
+      rEl.innerHTML = '<div style="color:var(--text2);font-size:11px;padding:8px 0">No recent events.</div>';
+    } else {
+      rEl.innerHTML = recent.map(function(ev) {
+        var ts = ev.created_at ? new Date(ev.created_at).toLocaleTimeString() : (ev.ts ? new Date(ev.ts).toLocaleTimeString() : '');
+        var ok = ev.success === true;
+        var cls = ev.success === false ? 'err' : (ev.success === true ? 'ok' : 'warn');
+        var label = (ev.event_type || 'event') + (ev.provider ? ' · ' + ev.provider : '');
+        return '<div class="perf-row"><div class="perf-row-label" style="font-size:10px">' +
+          '<span class="perf-pill ' + cls + '">' + (ok ? 'OK' : (ev.success === false ? 'ERR' : '...')) + '</span> ' +
+          _esc(label) + '</div>' +
+          '<div class="perf-row-val" style="font-size:10px">' + (ev.duration_ms ? ev.duration_ms + 'ms · ' : '') + ts + '</div></div>';
+      }).join('');
+    }
+  }
+
+  // Summary line under chart
+  var sEl = document.getElementById('perf-series-summary');
+  if (sEl) {
+    var pts = data.timeSeries || [];
+    var totalCalls = pts.reduce(function(s, p) { return s + (p.calls || 0); }, 0);
+    sEl.textContent = pts.length + ' hourly buckets · ' + totalCalls + ' calls';
+  }
+}
+
+function renderPerfChart(points) {
+  var svg = document.getElementById('perf-chart');
+  if (!svg) return;
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  if (!points || !points.length) {
+    var t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t.setAttribute('x', '50%'); t.setAttribute('y', '50%'); t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('fill', 'var(--text2)'); t.setAttribute('font-size', '11');
+    t.textContent = 'No data in this window — chart will appear as AI is used.';
+    svg.appendChild(t);
+    return;
+  }
+  var w = svg.clientWidth || 800;
+  var h = 120;
+  var pad = { l: 32, r: 8, t: 8, b: 18 };
+  var maxCalls = Math.max.apply(null, points.map(function(p) { return p.calls; }));
+  if (maxCalls === 0) maxCalls = 1;
+  var stepX = (w - pad.l - pad.r) / Math.max(points.length - 1, 1);
+  var area = '';
+  var line = '';
+  var errPoints = '';
+  points.forEach(function(p, i) {
+    var x = pad.l + i * stepX;
+    var y = h - pad.b - ((p.calls / maxCalls) * (h - pad.t - pad.b));
+    line += (i === 0 ? 'M' : 'L') + x + ',' + y;
+    area += (i === 0 ? 'M' + x + ',' + (h - pad.b) + ' L' : ' L') + x + ',' + y;
+    if (p.errors > 0) {
+      errPoints += '<circle cx="' + x + '" cy="' + y + '" r="3" fill="var(--crit)"/>';
+    }
+  });
+  area += ' L' + (pad.l + (points.length - 1) * stepX) + ',' + (h - pad.b) + ' Z';
+
+  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+  svg.innerHTML =
+    '<defs><linearGradient id="perf-grad" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="var(--accent2)" stop-opacity="0.5"/><stop offset="100%" stop-color="var(--accent2)" stop-opacity="0"/></linearGradient></defs>' +
+    '<path d="' + area + '" fill="url(#perf-grad)"/>' +
+    '<path d="' + line + '" stroke="var(--accent2)" stroke-width="2" fill="none"/>' +
+    errPoints +
+    '<text x="' + pad.l + '" y="' + (h - 4) + '" fill="var(--text2)" font-size="10">' + (points[0].bucket ? new Date(points[0].bucket).toLocaleString() : '') + '</text>' +
+    '<text x="' + (w - pad.r) + '" y="' + (h - 4) + '" text-anchor="end" fill="var(--text2)" font-size="10">' + (points[points.length - 1].bucket ? new Date(points[points.length - 1].bucket).toLocaleString() : '') + '</text>' +
+    '<text x="2" y="14" fill="var(--text2)" font-size="10">' + maxCalls + '</text>' +
+    '<text x="2" y="' + (h - pad.b) + '" fill="var(--text2)" font-size="10">0</text>';
+}
+
+function _fmtNum(n) {
+  n = Number(n) || 0;
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+  return String(n);
+}
+
+function _esc(s) {
+  return String(s == null ? '' : s).replace(/[<>&"]/g, function(c) {
+    return { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c];
+  });
+}
 
 async function loadHubView() {
   try {
