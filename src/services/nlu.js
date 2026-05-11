@@ -581,10 +581,102 @@ export function parse(message, memory = {}) {
   if (filter) confidence += 0.1;
   if (confidence > 1) confidence = 1;
 
+  // Pillar 1: Extract constraints (maintenance window, change freeze, urgency)
+  const constraints = extractConstraints(lower);
+  // Pillar 1: Detect persona signals (security/dev/manager language patterns)
+  const personaHint = detectPersona(lower);
+  // Pillar 1: Detect goal intent (multi-step goals like "migrate", "audit", "prepare for")
+  const goalHint = detectGoal(lower);
+
   return makeResult({
     intent, resource, name, namespace, filter, allNs, scope, options,
-    confidence, raw,
+    confidence, raw, constraints, personaHint, goalHint,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Pillar 1: Constraint extraction (maintenance windows, change freeze, urgency)
+// ---------------------------------------------------------------------------
+function extractConstraints(lower) {
+  const c = {};
+
+  // Urgency
+  if (/\b(urgent|asap|now|immediately|critical|emergency|p0|p1)\b/.test(lower)) {
+    c.urgency = "critical";
+  } else if (/\b(soon|today|priority|important)\b/.test(lower)) {
+    c.urgency = "high";
+  } else if (/\b(no rush|whenever|low priority|when possible)\b/.test(lower)) {
+    c.urgency = "low";
+  }
+
+  // Maintenance / change window
+  const mwMatch = lower.match(/\b(?:during|in|within|after|before)\s+(?:the\s+)?(?:maintenance|change|deployment)\s+(?:window|slot)\b/);
+  if (mwMatch) c.maintenanceWindow = true;
+  if (/\b(?:maintenance|change|deploy(?:ment)?)\s+window\b/.test(lower)) c.maintenanceWindow = true;
+
+  // Change freeze
+  if (/\b(?:change|deploy(?:ment)?|code)\s+freeze\b|\bdo not deploy\b|\bdnd\b/.test(lower)) {
+    c.changeFreeze = true;
+  }
+
+  // Production vs non-prod
+  if (/\b(?:production|prod|live)\b/.test(lower)) c.environment = "production";
+  else if (/\b(?:staging|stage|preprod|uat)\b/.test(lower)) c.environment = "staging";
+  else if (/\b(?:dev(?:elopment)?|test|qa|sandbox)\b/.test(lower)) c.environment = "development";
+
+  // Approval / review constraints
+  if (/\b(?:requires?|needs?|with)\s+approval\b|\bcab\s+approved\b|\bafter\s+review\b/.test(lower)) {
+    c.requiresApproval = true;
+  }
+
+  // Dry-run preference
+  if (/\bdry[\s-]?run\b|\bsimulate\b|\bpreview\b|\bwhat[- ]if\b/.test(lower)) {
+    c.preferDryRun = true;
+  }
+
+  // Time-of-day constraint
+  const todMatch = lower.match(/\b(after|before|at|by)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm|hours?|hrs)?\b/);
+  if (todMatch) c.timeConstraint = todMatch[0];
+
+  return Object.keys(c).length > 0 ? c : null;
+}
+
+// ---------------------------------------------------------------------------
+// Pillar 1: Persona detection from language patterns
+// ---------------------------------------------------------------------------
+function detectPersona(lower) {
+  // Security persona: talks about CVEs, RBAC, compliance, audit, policies
+  if (/\b(cve|vulnerab|exploit|security audit|cis benchmark|nist|hipaa|pci|soc2|rbac|policy|policies|complian|threat)\b/.test(lower)) {
+    return "security";
+  }
+  // Developer persona: talks about deployments, code, builds, environment vars
+  if (/\b(my app|deploy(?:ed)?|build|pipeline|env(?:ironment)? var|configmap|secret value|image tag|dockerfile|helm|chart)\b/.test(lower)) {
+    return "developer";
+  }
+  // Manager persona: asks about costs, summaries, headcount, reports
+  if (/\b(cost|spend|budget|monthly|quarterly|report|summary|executive|how many people|headcount|sla|slo)\b/.test(lower)) {
+    return "manager";
+  }
+  // SRE / Platform default: ops/health/performance/scaling/incidents
+  if (/\b(sre|incident|p0|p1|p2|capacity|scale|throughput|latency|sli|slo|toil|postmortem|root cause)\b/.test(lower)) {
+    return "sre";
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Pillar 1: Goal-oriented intent detection (for the planner in Pillar 4)
+// ---------------------------------------------------------------------------
+function detectGoal(lower) {
+  if (/\b(migrate|migration|move|relocate)\b/.test(lower)) return "migration";
+  if (/\b(prepare|ready|harden|production[- ]ize)\b/.test(lower)) return "prepare_production";
+  if (/\b(audit|review|inventory|stocktake)\b/.test(lower)) return "audit";
+  if (/\b(troubleshoot|debug|investigate|root cause|why\s+is)\b/.test(lower)) return "troubleshoot";
+  if (/\b(optimize|right[- ]size|reduce|cleanup|clean up)\b/.test(lower)) return "optimize";
+  if (/\b(upgrade|update|patch)\b/.test(lower)) return "upgrade";
+  if (/\b(backup|restore|disaster recovery|dr\s+test)\b/.test(lower)) return "backup_restore";
+  if (/\b(scale|grow|expand|capacity\s+plan)\b/.test(lower)) return "scale";
+  return null;
 }
 
 function makeResult(partial) {
@@ -599,6 +691,9 @@ function makeResult(partial) {
     options: partial.options || {},
     confidence: typeof partial.confidence === "number" ? partial.confidence : 0,
     raw: partial.raw || "",
+    constraints: partial.constraints || null,
+    personaHint: partial.personaHint || null,
+    goalHint: partial.goalHint || null,
   };
 }
 
