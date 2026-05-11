@@ -6842,11 +6842,6 @@ export async function handleChatAPI(req, res) {
       llmOpts.history = body.history;
     }
 
-    // Pillar 1 + 3: Inject parsed NLU + user identity for context augmentation
-    llmOpts.parsed = parsed;
-    llmOpts.userId = body.userId || req.headers["x-user-id"] || null;
-    llmOpts.conversationId = conversationId;
-
     activeProvider = llmOpts.provider || LLM_PROVIDER;
 
     // ---- NLU: parse the message once, with conversation memory for
@@ -6855,6 +6850,11 @@ export async function handleChatAPI(req, res) {
     const parsed = nluParse(userMessage, memory);
     intentsForLog = [parsed.intent, parsed.resource, parsed.scope]
       .filter(Boolean);
+
+    // Pillar 1 + 3: Inject parsed NLU + user identity for context augmentation
+    llmOpts.parsed = parsed;
+    llmOpts.userId = body.userId || req.headers["x-user-id"] || null;
+    llmOpts.conversationId = conversationId;
 
     // Pillar 2: Build reasoning trace from the parse result. Persisted at
     // end of request so the UI can show the chain-of-thought.
