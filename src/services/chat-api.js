@@ -3492,6 +3492,65 @@ Use this data to provide SPECIFIC analysis. Do NOT give generic advice when this
 - Run \`oc -n sock-shop logs user-db-7f8d9c --previous\` to see pre-crash output`;
 
 // ---------------------------------------------------------------------------
+// Pillar 1 + 3: Augment the system prompt with NLU-detected context
+// (persona, constraints, goal hint) AND persistent user memory
+// (preferences, learned facts). Both pillars share this injection point.
+// Controlled by PILLAR_1_INJECT_CONTEXT and PILLAR_3_AUTO_MEMORY env vars.
+// ---------------------------------------------------------------------------
+async function augmentSystemPrompt(basePrompt, { parsed, userId, conversationId } = {}) {
+  try {
+    const ff = await import("./feature-flags.js");
+    const additions = [];
+
+    // Pillar 1: persona / constraints / goals from NLU
+    if (parsed && ff.flags.pillar1InjectContext()) {
+      const p1 = [];
+      if (parsed.personaHint) {
+        const tone = {
+          security: "Tailor responses for a security engineer — emphasize CVEs, RBAC, compliance, and remediation severity.",
+          developer: "Tailor responses for a developer — focus on deployment, config, and application-level concerns.",
+          manager: "Tailor responses for a manager — provide high-level summaries, status, and timelines (no dollar amounts).",
+          sre: "Tailor responses for an SRE — focus on reliability, capacity, latency, and incident response.",
+        }[parsed.personaHint];
+        if (tone) p1.push(`PERSONA: ${tone}`);
+      }
+      if (parsed.constraints) {
+        const c = parsed.constraints;
+        const constraintLines = [];
+        if (c.urgency === "critical") constraintLines.push("URGENT request — prioritize speed and direct answers; skip preamble.");
+        else if (c.urgency === "low") constraintLines.push("Non-urgent — thorough analysis welcomed.");
+        if (c.environment === "production") constraintLines.push("PRODUCTION environment — be conservative, prefer dry-run, recommend approval workflows.");
+        if (c.changeFreeze) constraintLines.push("CHANGE FREEZE active — do NOT recommend immediate mutating operations; suggest scheduling for after freeze.");
+        if (c.maintenanceWindow) constraintLines.push("Operating within maintenance window — disruptive changes acceptable.");
+        if (c.requiresApproval) constraintLines.push("User indicated this requires approval — guide them toward ServiceNow CR creation.");
+        if (c.preferDryRun) constraintLines.push("User prefers dry-run/preview before applying changes.");
+        if (constraintLines.length) p1.push("CONSTRAINTS:\n" + constraintLines.map((l) => "  - " + l).join("\n"));
+      }
+      if (parsed.goalHint) {
+        p1.push(`GOAL HINT: This appears to be a multi-step ${parsed.goalHint} goal. If the user wants a structured plan, suggest the \`/plan ${parsed.goalHint}\` slash command.`);
+      }
+      if (p1.length) additions.push("## Request Context (Pillar 1)\n" + p1.join("\n\n"));
+    }
+
+    // Pillar 3: persistent user memory
+    if (userId && ff.flags.pillar3AutoMemory()) {
+      try {
+        const mem = await import("./persistent-memory.js");
+        const ctxString = await mem.buildUserContextString(userId);
+        if (ctxString && ctxString.trim()) {
+          additions.push("## User Profile (Pillar 3)\n" + ctxString.trim());
+        }
+      } catch { /* memory unavailable */ }
+    }
+
+    if (additions.length === 0) return basePrompt;
+    return basePrompt + "\n\n---\n\n" + additions.join("\n\n");
+  } catch {
+    return basePrompt;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Post-response grounding check — verify numbers, namespaces, and node
 // conditions mentioned by the LLM against the actual cluster context.
 // ---------------------------------------------------------------------------
@@ -4014,9 +4073,14 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
   ];
 
   try {
+    const augmentedSystem = await augmentSystemPrompt(SYSTEM_PROMPT, {
+      parsed: opts.parsed || null,
+      userId: opts.userId || null,
+      conversationId: opts.conversationId || null,
+    });
     const r = await callLLM({
       messages,
-      system: SYSTEM_PROMPT,
+      system: augmentedSystem,
       maxTokens: 2000,
       temperature: 0.3,
       provider: opts.provider,
@@ -6769,6 +6833,11 @@ export async function handleChatAPI(req, res) {
       llmOpts.history = body.history;
     }
 
+    // Pillar 1 + 3: Inject parsed NLU + user identity for context augmentation
+    llmOpts.parsed = parsed;
+    llmOpts.userId = body.userId || req.headers["x-user-id"] || null;
+    llmOpts.conversationId = conversationId;
+
     activeProvider = llmOpts.provider || LLM_PROVIDER;
 
     // ---- NLU: parse the message once, with conversation memory for
@@ -7461,10 +7530,13 @@ export async function handleChatAPI(req, res) {
           const contextStr = summarizeContext(context);
           const userContent = `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;
           const priorMessages = historyToMessages(llmOpts.history);
+          const augmentedSystem = await augmentSystemPrompt(SYSTEM_PROMPT, {
+            parsed, userId: body.userId || null, conversationId,
+          });
           let fullText = "";
           await callLLMStream({
             messages: [...priorMessages, { role: "user", content: userContent }],
-            system: SYSTEM_PROMPT,
+            system: augmentedSystem,
             maxTokens: 2000,
             temperature: 0.3,
             ...llmOpts,
