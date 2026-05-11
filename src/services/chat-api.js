@@ -198,6 +198,23 @@ function nluToCommand(p) {
   else if (p.intent === "start") operation = "start";
   else if (p.intent === "stop") operation = "stop";
   else if (p.intent === "upgrade") operation = "upgrade";
+  // Tier 1 new verbs — map to operation strings used by directives below
+  else if (p.intent === "drain") operation = "drain";
+  else if (p.intent === "cordon") operation = "cordon";
+  else if (p.intent === "uncordon") operation = "uncordon";
+  else if (p.intent === "taint") operation = "taint";
+  else if (p.intent === "untaint") operation = "untaint";
+  else if (p.intent === "label") operation = "label";
+  else if (p.intent === "annotate") operation = "annotate";
+  else if (p.intent === "evict") operation = "evict";
+  else if (p.intent === "rollback") operation = "rollback";
+  else if (p.intent === "rollout") operation = "rollout";
+  else if (p.intent === "rbac") operation = "rbac";
+  else if (p.intent === "approve") operation = "approve";
+  else if (p.intent === "export") operation = "export";
+  else if (p.intent === "compare") operation = "compare";
+  else if (p.intent === "snapshot") operation = "snapshot";
+  else if (p.intent === "resize") operation = "resize";
   return {
     operation,
     resourceType: p.resource,
@@ -209,6 +226,8 @@ function nluToCommand(p) {
     options: p.options,
     confidence: p.confidence,
     intent: p.intent,
+    raw: p.raw,
+    advFilters: p.advFilters || null,
   };
 }
 
@@ -356,6 +375,33 @@ function buildHelpMessage() {
     "  - `/playbook` — your team's learned patterns from past resolutions",
     "  - `/audit` — recent executed actions audit trail",
     "",
+    "**OpenShift-native slash commands** (Tier 1)",
+    "  - `/builds [ns]` — BuildConfigs & Build status",
+    "  - `/imagestreams [ns]` — ImageStream inventory",
+    "  - `/operators [ns]` — Subscriptions, InstallPlans, CSVs (OLM)",
+    "  - `/machineconfigs` — MachineConfig & MachineConfigPool health",
+    "  - `/scc` — SecurityContextConstraints inventory",
+    "  - `/rbac [ns]` — Roles, RoleBindings, cluster-admin audit",
+    "  - `/quotas [ns]` — ResourceQuotas, LimitRanges, PDBs",
+    "  - `/certs` — Pending CertificateSigningRequests",
+    "",
+    "**Advanced slash commands** (Tier 2-3)",
+    "  - `/export <resource> [ns] as yaml|json|csv` — dump resources in any format",
+    "  - `/mesh` — Istio / OpenShift Service Mesh resources",
+    "  - `/egress` — EgressIPs and Egress NetworkPolicies",
+    "  - `/oauth` — OAuth clients, users, groups",
+    "  - `/etcd` — etcd cluster health and member status",
+    "  - `/plan <goal>` — decompose complex tasks into executable steps",
+    "",
+    "**Advanced phrases I now understand** (Tier 2)",
+    "  - `which pod uses the most CPU?` / `largest PVC` / `oldest pod`",
+    "  - `pods stuck in Terminating` / `pods pending for more than 1 hour`",
+    "  - `find pods without limits` / `deployments without PDB`",
+    "  - `drain node X` / `cordon node X` / `taint node X`",
+    "  - `rollback deployment X` / `rollout status of X`",
+    "  - `who has cluster-admin?` / `permissions for user X`",
+    "  - `compare namespace dev and prod`",
+    "",
     "Type any of the above naturally — punctuation, casing, and word order don't matter.",
   ].join("\n");
 }
@@ -445,6 +491,134 @@ const RESOURCE_MAP = {
   machineset:            { api: "/apis/machine.openshift.io/v1beta1", resource: "machinesets", namespaced: true },
   machinesets:           { api: "/apis/machine.openshift.io/v1beta1", resource: "machinesets", namespaced: true },
   helmrelease:           { api: "/apis/helm.openshift.io/v1beta1", resource: "helmchartrepositories", namespaced: false },
+
+  // ---- Tier 1: OpenShift-native builds & images ----
+  buildconfig:           { api: "/apis/build.openshift.io/v1", resource: "buildconfigs", namespaced: true },
+  buildconfigs:          { api: "/apis/build.openshift.io/v1", resource: "buildconfigs", namespaced: true },
+  bc:                    { api: "/apis/build.openshift.io/v1", resource: "buildconfigs", namespaced: true },
+  build:                 { api: "/apis/build.openshift.io/v1", resource: "builds", namespaced: true },
+  builds:                { api: "/apis/build.openshift.io/v1", resource: "builds", namespaced: true },
+  imagestream:           { api: "/apis/image.openshift.io/v1", resource: "imagestreams", namespaced: true },
+  imagestreams:          { api: "/apis/image.openshift.io/v1", resource: "imagestreams", namespaced: true },
+  is:                    { api: "/apis/image.openshift.io/v1", resource: "imagestreams", namespaced: true },
+  imagestreamtag:        { api: "/apis/image.openshift.io/v1", resource: "imagestreamtags", namespaced: true },
+  imagestreamtags:       { api: "/apis/image.openshift.io/v1", resource: "imagestreamtags", namespaced: true },
+  istag:                 { api: "/apis/image.openshift.io/v1", resource: "imagestreamtags", namespaced: true },
+  deploymentconfig:      { api: "/apis/apps.openshift.io/v1", resource: "deploymentconfigs", namespaced: true },
+  deploymentconfigs:     { api: "/apis/apps.openshift.io/v1", resource: "deploymentconfigs", namespaced: true },
+  dc:                    { api: "/apis/apps.openshift.io/v1", resource: "deploymentconfigs", namespaced: true },
+
+  // ---- Tier 1: OLM (operator lifecycle) ----
+  subscription:          { api: "/apis/operators.coreos.com/v1alpha1", resource: "subscriptions", namespaced: true },
+  subscriptions:         { api: "/apis/operators.coreos.com/v1alpha1", resource: "subscriptions", namespaced: true },
+  subs:                  { api: "/apis/operators.coreos.com/v1alpha1", resource: "subscriptions", namespaced: true },
+  installplan:           { api: "/apis/operators.coreos.com/v1alpha1", resource: "installplans", namespaced: true },
+  installplans:          { api: "/apis/operators.coreos.com/v1alpha1", resource: "installplans", namespaced: true },
+  ip:                    { api: "/apis/operators.coreos.com/v1alpha1", resource: "installplans", namespaced: true },
+  operatorgroup:         { api: "/apis/operators.coreos.com/v1", resource: "operatorgroups", namespaced: true },
+  operatorgroups:        { api: "/apis/operators.coreos.com/v1", resource: "operatorgroups", namespaced: true },
+  og:                    { api: "/apis/operators.coreos.com/v1", resource: "operatorgroups", namespaced: true },
+  clusterserviceversion: { api: "/apis/operators.coreos.com/v1alpha1", resource: "clusterserviceversions", namespaced: true },
+  clusterserviceversions:{ api: "/apis/operators.coreos.com/v1alpha1", resource: "clusterserviceversions", namespaced: true },
+  csv:                   { api: "/apis/operators.coreos.com/v1alpha1", resource: "clusterserviceversions", namespaced: true },
+  csvs:                  { api: "/apis/operators.coreos.com/v1alpha1", resource: "clusterserviceversions", namespaced: true },
+
+  // ---- Tier 1: MachineConfig ----
+  machineconfig:         { api: "/apis/machineconfiguration.openshift.io/v1", resource: "machineconfigs", namespaced: false },
+  machineconfigs:        { api: "/apis/machineconfiguration.openshift.io/v1", resource: "machineconfigs", namespaced: false },
+  mc:                    { api: "/apis/machineconfiguration.openshift.io/v1", resource: "machineconfigs", namespaced: false },
+  machineconfigpool:     { api: "/apis/machineconfiguration.openshift.io/v1", resource: "machineconfigpools", namespaced: false },
+  machineconfigpools:    { api: "/apis/machineconfiguration.openshift.io/v1", resource: "machineconfigpools", namespaced: false },
+  mcp:                   { api: "/apis/machineconfiguration.openshift.io/v1", resource: "machineconfigpools", namespaced: false },
+  machinehealthcheck:    { api: "/apis/machine.openshift.io/v1beta1", resource: "machinehealthchecks", namespaced: true },
+  machinehealthchecks:   { api: "/apis/machine.openshift.io/v1beta1", resource: "machinehealthchecks", namespaced: true },
+  mhc:                   { api: "/apis/machine.openshift.io/v1beta1", resource: "machinehealthchecks", namespaced: true },
+
+  // ---- Tier 1: Security ----
+  scc:                   { api: "/apis/security.openshift.io/v1", resource: "securitycontextconstraints", namespaced: false },
+  sccs:                  { api: "/apis/security.openshift.io/v1", resource: "securitycontextconstraints", namespaced: false },
+  securitycontextconstraint:  { api: "/apis/security.openshift.io/v1", resource: "securitycontextconstraints", namespaced: false },
+  securitycontextconstraints: { api: "/apis/security.openshift.io/v1", resource: "securitycontextconstraints", namespaced: false },
+
+  // ---- Tier 1: RBAC ----
+  role:                  { api: "/apis/rbac.authorization.k8s.io/v1", resource: "roles", namespaced: true },
+  roles:                 { api: "/apis/rbac.authorization.k8s.io/v1", resource: "roles", namespaced: true },
+  rolebinding:           { api: "/apis/rbac.authorization.k8s.io/v1", resource: "rolebindings", namespaced: true },
+  rolebindings:          { api: "/apis/rbac.authorization.k8s.io/v1", resource: "rolebindings", namespaced: true },
+  clusterrole:           { api: "/apis/rbac.authorization.k8s.io/v1", resource: "clusterroles", namespaced: false },
+  clusterroles:          { api: "/apis/rbac.authorization.k8s.io/v1", resource: "clusterroles", namespaced: false },
+  clusterrolebinding:    { api: "/apis/rbac.authorization.k8s.io/v1", resource: "clusterrolebindings", namespaced: false },
+  clusterrolebindings:   { api: "/apis/rbac.authorization.k8s.io/v1", resource: "clusterrolebindings", namespaced: false },
+  user:                  { api: "/apis/user.openshift.io/v1", resource: "users", namespaced: false },
+  users:                 { api: "/apis/user.openshift.io/v1", resource: "users", namespaced: false },
+  group:                 { api: "/apis/user.openshift.io/v1", resource: "groups", namespaced: false },
+  groups:                { api: "/apis/user.openshift.io/v1", resource: "groups", namespaced: false },
+  identity:              { api: "/apis/user.openshift.io/v1", resource: "identities", namespaced: false },
+  identities:            { api: "/apis/user.openshift.io/v1", resource: "identities", namespaced: false },
+
+  // ---- Tier 1: Quota / governance ----
+  resourcequota:         { api: "/api/v1", resource: "resourcequotas", namespaced: true },
+  resourcequotas:        { api: "/api/v1", resource: "resourcequotas", namespaced: true },
+  quota:                 { api: "/api/v1", resource: "resourcequotas", namespaced: true },
+  quotas:                { api: "/api/v1", resource: "resourcequotas", namespaced: true },
+  clusterresourcequota:  { api: "/apis/quota.openshift.io/v1", resource: "clusterresourcequotas", namespaced: false },
+  clusterresourcequotas: { api: "/apis/quota.openshift.io/v1", resource: "clusterresourcequotas", namespaced: false },
+  crq:                   { api: "/apis/quota.openshift.io/v1", resource: "clusterresourcequotas", namespaced: false },
+  limitrange:            { api: "/api/v1", resource: "limitranges", namespaced: true },
+  limitranges:           { api: "/api/v1", resource: "limitranges", namespaced: true },
+  poddisruptionbudget:   { api: "/apis/policy/v1", resource: "poddisruptionbudgets", namespaced: true },
+  poddisruptionbudgets:  { api: "/apis/policy/v1", resource: "poddisruptionbudgets", namespaced: true },
+  pdb:                   { api: "/apis/policy/v1", resource: "poddisruptionbudgets", namespaced: true },
+  pdbs:                  { api: "/apis/policy/v1", resource: "poddisruptionbudgets", namespaced: true },
+
+  // ---- Tier 1: CRDs / certificates / priority ----
+  customresourcedefinition:  { api: "/apis/apiextensions.k8s.io/v1", resource: "customresourcedefinitions", namespaced: false },
+  customresourcedefinitions: { api: "/apis/apiextensions.k8s.io/v1", resource: "customresourcedefinitions", namespaced: false },
+  crd:                       { api: "/apis/apiextensions.k8s.io/v1", resource: "customresourcedefinitions", namespaced: false },
+  crds:                      { api: "/apis/apiextensions.k8s.io/v1", resource: "customresourcedefinitions", namespaced: false },
+  certificatesigningrequest:  { api: "/apis/certificates.k8s.io/v1", resource: "certificatesigningrequests", namespaced: false },
+  certificatesigningrequests: { api: "/apis/certificates.k8s.io/v1", resource: "certificatesigningrequests", namespaced: false },
+  csr:                       { api: "/apis/certificates.k8s.io/v1", resource: "certificatesigningrequests", namespaced: false },
+  csrs:                      { api: "/apis/certificates.k8s.io/v1", resource: "certificatesigningrequests", namespaced: false },
+  priorityclass:             { api: "/apis/scheduling.k8s.io/v1", resource: "priorityclasses", namespaced: false },
+  priorityclasses:           { api: "/apis/scheduling.k8s.io/v1", resource: "priorityclasses", namespaced: false },
+
+  // ---- Tier 2: Snapshots / CSI ----
+  volumesnapshot:        { api: "/apis/snapshot.storage.k8s.io/v1", resource: "volumesnapshots", namespaced: true },
+  volumesnapshots:       { api: "/apis/snapshot.storage.k8s.io/v1", resource: "volumesnapshots", namespaced: true },
+  volumesnapshotclass:   { api: "/apis/snapshot.storage.k8s.io/v1", resource: "volumesnapshotclasses", namespaced: false },
+  volumesnapshotclasses: { api: "/apis/snapshot.storage.k8s.io/v1", resource: "volumesnapshotclasses", namespaced: false },
+  csidriver:             { api: "/apis/storage.k8s.io/v1", resource: "csidrivers", namespaced: false },
+  csidrivers:            { api: "/apis/storage.k8s.io/v1", resource: "csidrivers", namespaced: false },
+
+  // ---- Tier 3: Service mesh / networking ----
+  virtualservice:        { api: "/apis/networking.istio.io/v1beta1", resource: "virtualservices", namespaced: true },
+  virtualservices:       { api: "/apis/networking.istio.io/v1beta1", resource: "virtualservices", namespaced: true },
+  destinationrule:       { api: "/apis/networking.istio.io/v1beta1", resource: "destinationrules", namespaced: true },
+  destinationrules:      { api: "/apis/networking.istio.io/v1beta1", resource: "destinationrules", namespaced: true },
+  gateway:               { api: "/apis/networking.istio.io/v1beta1", resource: "gateways", namespaced: true },
+  gateways:              { api: "/apis/networking.istio.io/v1beta1", resource: "gateways", namespaced: true },
+  egressip:              { api: "/apis/k8s.ovn.org/v1", resource: "egressips", namespaced: false },
+  egressips:             { api: "/apis/k8s.ovn.org/v1", resource: "egressips", namespaced: false },
+  egressnetworkpolicy:   { api: "/apis/network.openshift.io/v1", resource: "egressnetworkpolicies", namespaced: true },
+  egressnetworkpolicies: { api: "/apis/network.openshift.io/v1", resource: "egressnetworkpolicies", namespaced: true },
+  networkattachmentdefinition: { api: "/apis/k8s.cni.cncf.io/v1", resource: "network-attachment-definitions", namespaced: true },
+  nad:                          { api: "/apis/k8s.cni.cncf.io/v1", resource: "network-attachment-definitions", namespaced: true },
+
+  // ---- Tier 3: OAuth ----
+  oauthclient:           { api: "/apis/oauth.openshift.io/v1", resource: "oauthclients", namespaced: false },
+  oauthclients:          { api: "/apis/oauth.openshift.io/v1", resource: "oauthclients", namespaced: false },
+
+  // ---- HPA / storage / network policy (top-level coverage) ----
+  hpa:                   { api: "/apis/autoscaling/v2", resource: "horizontalpodautoscalers", namespaced: true },
+  horizontalpodautoscaler:  { api: "/apis/autoscaling/v2", resource: "horizontalpodautoscalers", namespaced: true },
+  horizontalpodautoscalers: { api: "/apis/autoscaling/v2", resource: "horizontalpodautoscalers", namespaced: true },
+  storageclass:          { api: "/apis/storage.k8s.io/v1", resource: "storageclasses", namespaced: false },
+  storageclasses:        { api: "/apis/storage.k8s.io/v1", resource: "storageclasses", namespaced: false },
+  sc:                    { api: "/apis/storage.k8s.io/v1", resource: "storageclasses", namespaced: false },
+  networkpolicy:         { api: "/apis/networking.k8s.io/v1", resource: "networkpolicies", namespaced: true },
+  networkpolicies:       { api: "/apis/networking.k8s.io/v1", resource: "networkpolicies", namespaced: true },
+  netpol:                { api: "/apis/networking.k8s.io/v1", resource: "networkpolicies", namespaced: true },
 };
 
 // ---------------------------------------------------------------------------
@@ -1484,6 +1658,302 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
       }
       return parts.join("\n");
     }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 1: NODE LIFECYCLE — drain / cordon / uncordon / taint
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "cordon" || cmd.operation === "uncordon") {
+    const target = cmd.resourceName;
+    if (!target) {
+      parts.push(`### ${cmd.operation === "cordon" ? "Cordon" : "Uncordon"} Node`);
+      parts.push(`[WARNING] Please specify a node name.`);
+      parts.push(`\n**Example:** \`${cmd.operation} node worker-3\``);
+      return parts.join("\n");
+    }
+    const unschedulable = cmd.operation === "cordon";
+    try {
+      await ocpPatch(`/api/v1/nodes/${target}`, { spec: { unschedulable } });
+      parts.push(`### Node ${cmd.operation === "cordon" ? "Cordoned" : "Uncordoned"}`);
+      parts.push(`[OK] Node \`${target}\` is now \`spec.unschedulable=${unschedulable}\`.`);
+      parts.push(``);
+      parts.push(`**Verify:** \`oc get node ${target}\``);
+      parts.push(``);
+      parts.push(`@@SEC_FIX_CMD|oc adm ${cmd.operation} ${target}@@`);
+    } catch (err) {
+      parts.push(`### ${cmd.operation === "cordon" ? "Cordon" : "Uncordon"} Failed`);
+      parts.push(`[CRITICAL] ${err.message}`);
+    }
+    return parts.join("\n");
+  }
+
+  if (cmd.operation === "drain") {
+    const target = cmd.resourceName;
+    if (!target) {
+      parts.push(`### Drain Node`);
+      parts.push(`[WARNING] Please specify a node name.`);
+      parts.push(`\n**Example:** \`drain node worker-3\``);
+      return parts.join("\n");
+    }
+    parts.push(`### Drain Node \`${target}\``);
+    parts.push(``);
+    parts.push(`[INFO] Drain is a multi-step operation. Recommended sequence:`);
+    parts.push(``);
+    parts.push(`  1. Cordon (mark unschedulable):`);
+    parts.push(`@@SEC_FIX_CMD|oc adm cordon ${target}@@`);
+    parts.push(`  2. Drain (evict pods):`);
+    parts.push(`@@SEC_FIX_CMD|oc adm drain ${target} --ignore-daemonsets --delete-emptydir-data --force --grace-period=120@@`);
+    parts.push(``);
+    parts.push(`**Caution:** Drain blocks until all evictable pods are removed. Workloads must have PodDisruptionBudgets and multiple replicas to drain safely.`);
+    parts.push(``);
+    parts.push(`Check PDB coverage first: \`/quotas\``);
+    return parts.join("\n");
+  }
+
+  if (cmd.operation === "taint" || cmd.operation === "untaint") {
+    const target = cmd.resourceName;
+    if (!target) {
+      parts.push(`### ${cmd.operation === "taint" ? "Taint" : "Untaint"} Node`);
+      parts.push(`[WARNING] Please specify a node name.`);
+      return parts.join("\n");
+    }
+    parts.push(`### ${cmd.operation === "taint" ? "Taint" : "Untaint"} Node \`${target}\``);
+    parts.push(``);
+    parts.push(`[INFO] Taints control which pods can be scheduled to this node.`);
+    parts.push(``);
+    parts.push(`**Apply taint (NoSchedule):**`);
+    parts.push(`@@SEC_FIX_CMD|oc adm taint nodes ${target} key=value:NoSchedule@@`);
+    parts.push(``);
+    parts.push(`**Remove taint:**`);
+    parts.push(`@@SEC_FIX_CMD|oc adm taint nodes ${target} key-@@`);
+    parts.push(``);
+    parts.push(`**View current taints:** \`oc describe node ${target} | grep Taints\``);
+    return parts.join("\n");
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 1: ROLLBACK / ROLLOUT — deployment lifecycle
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "rollback") {
+    const resource = cmd.resourceType || "deployment";
+    const name = cmd.resourceName;
+    const ns = cmd.namespace;
+    if (!name || !ns) {
+      parts.push(`### Rollback ${resource}`);
+      parts.push(`[WARNING] Please specify both name and namespace.`);
+      parts.push(`\n**Example:** \`rollback deployment my-app in production\``);
+      return parts.join("\n");
+    }
+    parts.push(`### Rollback \`${resource}/${name}\` in \`${ns}\``);
+    parts.push(``);
+    if (resource === "deploymentconfig" || resource === "dc") {
+      parts.push(`**Rollback last DeploymentConfig:**`);
+      parts.push(`@@SEC_FIX_CMD|oc rollback dc/${name} -n ${ns}@@`);
+    } else {
+      parts.push(`**View revision history:**`);
+      parts.push(`@@SEC_FIX_CMD|oc rollout history ${resource}/${name} -n ${ns}@@`);
+      parts.push(``);
+      parts.push(`**Rollback to previous revision:**`);
+      parts.push(`@@SEC_FIX_CMD|oc rollout undo ${resource}/${name} -n ${ns}@@`);
+      parts.push(``);
+      parts.push(`**Rollback to specific revision (e.g., 3):**`);
+      parts.push(`@@SEC_FIX_CMD|oc rollout undo ${resource}/${name} -n ${ns} --to-revision=3@@`);
+    }
+    parts.push(``);
+    parts.push(`**Verify after rollback:**`);
+    parts.push(`@@SEC_FIX_CMD|oc rollout status ${resource}/${name} -n ${ns}@@`);
+    return parts.join("\n");
+  }
+
+  if (cmd.operation === "rollout") {
+    const resource = cmd.resourceType || "deployment";
+    const name = cmd.resourceName;
+    const ns = cmd.namespace;
+    if (!name) {
+      parts.push(`### Rollout Status`);
+      parts.push(`[WARNING] Please specify a ${resource} name.`);
+      return parts.join("\n");
+    }
+    try {
+      const path = `/apis/apps/v1/namespaces/${ns}/deployments/${name}`;
+      const d = await ocpGet(path);
+      const desired = d.spec?.replicas ?? "?";
+      const available = d.status?.availableReplicas ?? 0;
+      const ready = d.status?.readyReplicas ?? 0;
+      const updated = d.status?.updatedReplicas ?? 0;
+      const conds = d.status?.conditions || [];
+      parts.push(`### Rollout Status — \`${name}\` in \`${ns}\``);
+      parts.push(``);
+      parts.push(`| Metric | Value |`);
+      parts.push(`|---|---|`);
+      parts.push(`| Desired | ${desired} |`);
+      parts.push(`| Ready | ${ready} |`);
+      parts.push(`| Available | ${available} |`);
+      parts.push(`| Updated | ${updated} |`);
+      parts.push(`| Generation | ${d.metadata?.generation || "-"} / Observed ${d.status?.observedGeneration || "-"} |`);
+      parts.push(``);
+      for (const c of conds) {
+        parts.push(`- **${c.type}**: ${c.status} — ${c.message || c.reason || ""}`);
+      }
+      parts.push(``);
+      parts.push(`**Continue watching:**`);
+      parts.push(`@@SEC_FIX_CMD|oc rollout status ${resource}/${name} -n ${ns} --watch@@`);
+    } catch (err) {
+      parts.push(`### Rollout Status Failed`);
+      parts.push(`[CRITICAL] ${err.message}`);
+    }
+    return parts.join("\n");
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 1: APPROVE — CSR / InstallPlan approval
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "approve") {
+    const r = cmd.resourceType;
+    const n = cmd.resourceName;
+    if (!n) {
+      parts.push(`### Approve`);
+      parts.push(`[WARNING] Please specify a resource name (CSR or InstallPlan).`);
+      parts.push(`\n**Examples:** \`approve csr csr-abc123\`, \`approve installplan install-xxx in operators\``);
+      return parts.join("\n");
+    }
+    if (r === "csr" || r === "certificatesigningrequest") {
+      parts.push(`### Approve CSR \`${n}\``);
+      parts.push(``);
+      parts.push(`@@SEC_FIX_CMD|oc adm certificate approve ${n}@@`);
+      return parts.join("\n");
+    }
+    if (r === "installplan" || r === "ip") {
+      const ns = cmd.namespace || "openshift-operators";
+      parts.push(`### Approve InstallPlan \`${n}\` in \`${ns}\``);
+      parts.push(``);
+      parts.push(`@@SEC_FIX_CMD|oc patch installplan ${n} -n ${ns} --type=merge -p '{"spec":{"approved":true}}'@@`);
+      return parts.join("\n");
+    }
+    parts.push(`### Approve`);
+    parts.push(`[INFO] Approve action is supported for CSRs and InstallPlans only.`);
+    return parts.join("\n");
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 1: RBAC — "who has X access?", "permissions for user Y"
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "rbac") {
+    parts.push(`### RBAC Query`);
+    parts.push(``);
+    parts.push(`Use \`/rbac [namespace]\` for a full RBAC audit, or these commands for specific queries:`);
+    parts.push(``);
+    parts.push(`**Who can perform a verb on a resource?**`);
+    parts.push(`@@SEC_FIX_CMD|oc adm policy who-can get pods -n <namespace>@@`);
+    parts.push(``);
+    parts.push(`**What can a user do?**`);
+    parts.push(`@@SEC_FIX_CMD|oc auth can-i --list --as=<user>@@`);
+    parts.push(``);
+    parts.push(`**List cluster-admin bindings:**`);
+    parts.push(`@@SEC_FIX_CMD|oc get clusterrolebindings -o json | jq '.items[] | select(.roleRef.name=="cluster-admin") | .subjects'@@`);
+    return parts.join("\n");
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 2: RESIZE — PVC expansion
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "resize") {
+    const resource = cmd.resourceType || "pvc";
+    const name = cmd.resourceName;
+    const ns = cmd.namespace;
+    if (!name || !ns) {
+      parts.push(`### Resize PVC`);
+      parts.push(`[WARNING] Please specify PVC name and namespace.`);
+      parts.push(`\n**Example:** \`resize pvc data-pvc to 50Gi in app-ns\``);
+      return parts.join("\n");
+    }
+    const sizeMatch = /\b(\d+)\s*(gi|mi|ti)\b/i.exec(cmd.raw || "");
+    const newSize = sizeMatch ? `${sizeMatch[1]}${sizeMatch[2][0].toUpperCase()}${sizeMatch[2][1]}` : "50Gi";
+    parts.push(`### Resize PVC \`${name}\` in \`${ns}\` → ${newSize}`);
+    parts.push(``);
+    parts.push(`**Pre-flight:** The StorageClass must have \`allowVolumeExpansion: true\`. Verify:`);
+    parts.push(`@@SEC_FIX_CMD|oc get sc $(oc get pvc ${name} -n ${ns} -o jsonpath='{.spec.storageClassName}') -o jsonpath='{.allowVolumeExpansion}'@@`);
+    parts.push(``);
+    parts.push(`**Apply expansion:**`);
+    parts.push(`@@SEC_FIX_CMD|oc patch pvc ${name} -n ${ns} --type=merge -p '{"spec":{"resources":{"requests":{"storage":"${newSize}"}}}}'@@`);
+    parts.push(``);
+    parts.push(`**Verify:**`);
+    parts.push(`@@SEC_FIX_CMD|oc describe pvc ${name} -n ${ns}@@`);
+    return parts.join("\n");
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 2: SNAPSHOT — VolumeSnapshot creation
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "snapshot") {
+    const name = cmd.resourceName;
+    const ns = cmd.namespace;
+    if (!name || !ns) {
+      parts.push(`### Create Snapshot`);
+      parts.push(`[WARNING] Please specify PVC name and namespace.`);
+      parts.push(`\n**Example:** \`snapshot pvc data-pvc in app-ns\``);
+      return parts.join("\n");
+    }
+    const snapName = `${name}-snap-${Date.now().toString(36)}`;
+    parts.push(`### Create VolumeSnapshot from PVC \`${name}\` in \`${ns}\``);
+    parts.push(``);
+    parts.push(`**Snapshot YAML:**`);
+    parts.push("```yaml");
+    parts.push(`apiVersion: snapshot.storage.k8s.io/v1`);
+    parts.push(`kind: VolumeSnapshot`);
+    parts.push(`metadata:`);
+    parts.push(`  name: ${snapName}`);
+    parts.push(`  namespace: ${ns}`);
+    parts.push(`spec:`);
+    parts.push(`  source:`);
+    parts.push(`    persistentVolumeClaimName: ${name}`);
+    parts.push("```");
+    parts.push(``);
+    parts.push(`**Apply (note: requires a VolumeSnapshotClass and CSI driver with snapshot support):**`);
+    parts.push(`@@SEC_FIX_CMD|cat <<'EOF' | oc apply -f -
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: ${snapName}
+  namespace: ${ns}
+spec:
+  source:
+    persistentVolumeClaimName: ${name}
+EOF@@`);
+    return parts.join("\n");
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 2: COMPARE — cross-namespace diff
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "compare" && cmd.advFilters?.compare) {
+    const { a, b } = cmd.advFilters.compare;
+    parts.push(`### Compare Namespaces: \`${a}\` vs \`${b}\``);
+    parts.push(``);
+    try {
+      const [podsA, podsB, depsA, depsB] = await Promise.all([
+        ocpGet(`/api/v1/namespaces/${a}/pods`).catch(() => ({ items: [] })),
+        ocpGet(`/api/v1/namespaces/${b}/pods`).catch(() => ({ items: [] })),
+        ocpGet(`/apis/apps/v1/namespaces/${a}/deployments`).catch(() => ({ items: [] })),
+        ocpGet(`/apis/apps/v1/namespaces/${b}/deployments`).catch(() => ({ items: [] })),
+      ]);
+      parts.push(`| Metric | ${a} | ${b} |`);
+      parts.push(`|---|---|---|`);
+      parts.push(`| Pods | ${podsA.items?.length || 0} | ${podsB.items?.length || 0} |`);
+      parts.push(`| Deployments | ${depsA.items?.length || 0} | ${depsB.items?.length || 0} |`);
+      const dNamesA = new Set((depsA.items || []).map((d) => d.metadata?.name));
+      const dNamesB = new Set((depsB.items || []).map((d) => d.metadata?.name));
+      const onlyA = [...dNamesA].filter((n) => !dNamesB.has(n));
+      const onlyB = [...dNamesB].filter((n) => !dNamesA.has(n));
+      const both = [...dNamesA].filter((n) => dNamesB.has(n));
+      parts.push(``);
+      parts.push(`**Deployments only in \`${a}\` (${onlyA.length}):** ${onlyA.slice(0, 10).join(", ") || "-"}`);
+      parts.push(`**Deployments only in \`${b}\` (${onlyB.length}):** ${onlyB.slice(0, 10).join(", ") || "-"}`);
+      parts.push(`**Common (${both.length}):** ${both.slice(0, 10).join(", ") || "-"}`);
+    } catch (err) {
+      parts.push(`[ERROR] Compare failed: ${err.message}`);
+    }
+    return parts.join("\n");
   }
 
   return null; // Not a recognized direct command
@@ -6656,7 +7126,580 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
     }
   }
 
+  // ---- Tier 1: /builds — OpenShift Build / BuildConfig status ----
+  if (cmd === "builds" || cmd === "buildconfigs") {
+    const ns = arg || null;
+    try {
+      const bcPath = ns ? `/apis/build.openshift.io/v1/namespaces/${ns}/buildconfigs` : "/apis/build.openshift.io/v1/buildconfigs";
+      const bPath  = ns ? `/apis/build.openshift.io/v1/namespaces/${ns}/builds`       : "/apis/build.openshift.io/v1/builds";
+      const [bcData, bData] = await Promise.all([
+        ocpGet(bcPath).catch(() => ({ items: [] })),
+        ocpGet(bPath).catch(() => ({ items: [] })),
+      ]);
+      const bcs = bcData.items || [];
+      const builds = bData.items || [];
+      if (bcs.length === 0 && builds.length === 0) {
+        return { reply: "### OpenShift Builds\n[INFO] No BuildConfigs or Builds found. (OpenShift Build API may not be installed.)", contextKeys: ["slash", "builds"] };
+      }
+      const failing = builds.filter((b) => ["Failed", "Error", "Cancelled"].includes(b.status?.phase));
+      const running = builds.filter((b) => ["Running", "Pending", "New"].includes(b.status?.phase));
+      const lines = [
+        `### OpenShift Builds${ns ? ` (${ns})` : ""}`,
+        ``,
+        `@@SUMMARY|green:${builds.length - failing.length - running.length} Complete|amber:${running.length} Active|red:${failing.length} Failed@@`,
+        ``,
+        `**BuildConfigs:** ${bcs.length} | **Recent Builds:** ${builds.length}`,
+        ``,
+        `| Build | Namespace | Phase | Strategy | Duration |`,
+        `|---|---|---|---|---|`,
+      ];
+      for (const b of builds.slice(0, 25)) {
+        const phase = b.status?.phase || "Unknown";
+        const strat = b.spec?.strategy?.type || "?";
+        const start = b.status?.startTimestamp;
+        const end   = b.status?.completionTimestamp;
+        const dur = start && end ? Math.round((new Date(end) - new Date(start))/1000) + "s" : (start ? "running" : "-");
+        lines.push(`| ${b.metadata.name} | ${b.metadata.namespace} | ${phase} | ${strat} | ${dur} |`);
+      }
+      if (failing.length > 0) {
+        lines.push(``, `### Recent failures`, ``);
+        for (const b of failing.slice(0, 8)) {
+          const reason = b.status?.message || b.status?.reason || "Unknown";
+          lines.push(`  - **${b.metadata.namespace}/${b.metadata.name}** — ${reason}`);
+        }
+        lines.push(``, `**Diagnose:** \`oc logs build/<name> -n <ns>\``);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "builds"] };
+    } catch (e) {
+      return { reply: `[ERROR] /builds: ${e.message}`, contextKeys: ["slash", "builds"] };
+    }
+  }
+
+  // ---- Tier 1: /imagestreams — OpenShift ImageStream inventory ----
+  if (cmd === "imagestreams" || cmd === "images") {
+    const ns = arg || null;
+    try {
+      const isPath = ns ? `/apis/image.openshift.io/v1/namespaces/${ns}/imagestreams` : "/apis/image.openshift.io/v1/imagestreams";
+      const data = await ocpGet(isPath);
+      const items = data.items || [];
+      if (items.length === 0) return { reply: "### ImageStreams\n[INFO] No ImageStreams found.", contextKeys: ["slash", "imagestreams"] };
+      const lines = [
+        `### ImageStreams${ns ? ` (${ns})` : ""} — ${items.length}`, ``,
+        `| ImageStream | Namespace | Tags | Latest |`,
+        `|---|---|---|---|`,
+      ];
+      for (const is of items.slice(0, 30)) {
+        const tags = is.status?.tags || [];
+        const tagNames = tags.map((t) => t.tag).slice(0, 3).join(", ");
+        const latest = tags[0]?.items?.[0]?.created || "-";
+        lines.push(`| ${is.metadata.name} | ${is.metadata.namespace} | ${tags.length} (${tagNames}) | ${latest} |`);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "imagestreams"] };
+    } catch (e) {
+      return { reply: `[ERROR] /imagestreams: ${e.message}`, contextKeys: ["slash", "imagestreams"] };
+    }
+  }
+
+  // ---- Tier 1: /operators — Operator subscriptions, install plans, CSVs ----
+  if (cmd === "operators" || cmd === "subs" || cmd === "subscriptions") {
+    const ns = arg || null;
+    try {
+      const subPath = ns ? `/apis/operators.coreos.com/v1alpha1/namespaces/${ns}/subscriptions` : "/apis/operators.coreos.com/v1alpha1/subscriptions";
+      const ipPath  = ns ? `/apis/operators.coreos.com/v1alpha1/namespaces/${ns}/installplans` : "/apis/operators.coreos.com/v1alpha1/installplans";
+      const csvPath = ns ? `/apis/operators.coreos.com/v1alpha1/namespaces/${ns}/clusterserviceversions` : "/apis/operators.coreos.com/v1alpha1/clusterserviceversions";
+      const [subsData, ipsData, csvsData] = await Promise.all([
+        ocpGet(subPath).catch(() => ({ items: [] })),
+        ocpGet(ipPath).catch(() => ({ items: [] })),
+        ocpGet(csvPath).catch(() => ({ items: [] })),
+      ]);
+      const subs = subsData.items || [];
+      const ips = ipsData.items || [];
+      const csvs = csvsData.items || [];
+      const failingCsvs = csvs.filter((c) => c.status?.phase !== "Succeeded");
+      const pendingIps = ips.filter((p) => p.spec?.approval === "Manual" && !p.spec?.approved);
+
+      const lines = [
+        `### Operator Lifecycle Manager${ns ? ` (${ns})` : ""}`,
+        ``,
+        `@@SUMMARY|green:${csvs.length - failingCsvs.length} Healthy|amber:${pendingIps.length} Pending Approval|red:${failingCsvs.length} Degraded@@`,
+        ``,
+        `**Subscriptions:** ${subs.length} | **InstallPlans:** ${ips.length} | **CSVs:** ${csvs.length}`,
+        ``,
+      ];
+
+      if (subs.length > 0) {
+        lines.push(`#### Subscriptions`, ``, `| Subscription | Namespace | Channel | Current CSV | State |`, `|---|---|---|---|---|`);
+        for (const s of subs.slice(0, 30)) {
+          const state = s.status?.state || "?";
+          lines.push(`| ${s.metadata.name} | ${s.metadata.namespace} | ${s.spec?.channel || "-"} | ${s.status?.currentCSV || "-"} | ${state} |`);
+        }
+        lines.push(``);
+      }
+
+      if (pendingIps.length > 0) {
+        lines.push(`#### Pending Manual Approval (InstallPlans)`, ``);
+        for (const p of pendingIps.slice(0, 10)) {
+          lines.push(`  - **${p.metadata.namespace}/${p.metadata.name}** — \`oc patch installplan ${p.metadata.name} -n ${p.metadata.namespace} --type=merge -p '{"spec":{"approved":true}}'\``);
+        }
+        lines.push(``);
+      }
+
+      if (failingCsvs.length > 0) {
+        lines.push(`#### Degraded Operators (CSV)`, ``);
+        for (const c of failingCsvs.slice(0, 10)) {
+          lines.push(`  - **${c.metadata.namespace}/${c.metadata.name}** — Phase: ${c.status?.phase || "?"}, Reason: ${c.status?.reason || "-"}`);
+        }
+      }
+
+      if (subs.length === 0 && ips.length === 0 && csvs.length === 0) {
+        return { reply: "### Operators\n[INFO] OLM (Operator Lifecycle Manager) not available on this cluster.", contextKeys: ["slash", "operators"] };
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "operators"] };
+    } catch (e) {
+      return { reply: `[ERROR] /operators: ${e.message}`, contextKeys: ["slash", "operators"] };
+    }
+  }
+
+  // ---- Tier 1: /machineconfigs — MachineConfig and MCP status ----
+  if (cmd === "machineconfigs" || cmd === "mcp" || cmd === "mc") {
+    try {
+      const [mcData, mcpData] = await Promise.all([
+        ocpGet("/apis/machineconfiguration.openshift.io/v1/machineconfigs").catch(() => ({ items: [] })),
+        ocpGet("/apis/machineconfiguration.openshift.io/v1/machineconfigpools").catch(() => ({ items: [] })),
+      ]);
+      const mcs = mcData.items || [];
+      const mcps = mcpData.items || [];
+      if (mcs.length === 0 && mcps.length === 0) {
+        return { reply: "### MachineConfigs\n[INFO] machineconfiguration.openshift.io API not available.", contextKeys: ["slash", "machineconfigs"] };
+      }
+      const degraded = mcps.filter((p) => {
+        const conds = p.status?.conditions || [];
+        return conds.some((c) => (c.type === "Degraded" || c.type === "NodeDegraded" || c.type === "RenderDegraded") && c.status === "True");
+      });
+      const updating = mcps.filter((p) => (p.status?.conditions || []).some((c) => c.type === "Updating" && c.status === "True"));
+      const lines = [
+        `### MachineConfig Pools`,
+        ``,
+        `@@SUMMARY|green:${mcps.length - degraded.length - updating.length} Healthy|amber:${updating.length} Updating|red:${degraded.length} Degraded@@`,
+        ``,
+        `| Pool | Machines (Ready/Total) | Updated | Degraded | Source MCs |`,
+        `|---|---|---|---|---|`,
+      ];
+      for (const p of mcps) {
+        const ready = p.status?.readyMachineCount ?? 0;
+        const total = p.status?.machineCount ?? 0;
+        const upd = p.status?.updatedMachineCount ?? 0;
+        const deg = p.status?.degradedMachineCount ?? 0;
+        const srcCount = (p.status?.configuration?.source || []).length;
+        lines.push(`| ${p.metadata.name} | ${ready}/${total} | ${upd}/${total} | ${deg} | ${srcCount} |`);
+      }
+      if (degraded.length > 0) {
+        lines.push(``, `### Degraded Pools`, ``);
+        for (const p of degraded) {
+          const cond = (p.status?.conditions || []).find((c) => c.status === "True" && /Degraded/.test(c.type));
+          lines.push(`  - **${p.metadata.name}** — ${cond?.reason || "?"}: ${cond?.message || ""}`);
+        }
+      }
+      lines.push(``, `**Total MachineConfigs:** ${mcs.length} (use \`oc get mc\` for full list)`);
+      return { reply: lines.join("\n"), contextKeys: ["slash", "machineconfigs"] };
+    } catch (e) {
+      return { reply: `[ERROR] /machineconfigs: ${e.message}`, contextKeys: ["slash", "machineconfigs"] };
+    }
+  }
+
+  // ---- Tier 1: /scc — SecurityContextConstraints inventory ----
+  if (cmd === "scc" || cmd === "sccs") {
+    try {
+      const data = await ocpGet("/apis/security.openshift.io/v1/securitycontextconstraints");
+      const items = data.items || [];
+      if (items.length === 0) return { reply: "### SCCs\n[INFO] No SecurityContextConstraints found.", contextKeys: ["slash", "scc"] };
+      const lines = [
+        `### Security Context Constraints — ${items.length}`, ``,
+        `| SCC | Priority | AllowPrivileged | AllowHostNet | RunAsUser | Users / Groups |`,
+        `|---|---|---|---|---|---|`,
+      ];
+      for (const s of items) {
+        const users = (s.users || []).slice(0, 2).join(", ");
+        const groups = (s.groups || []).slice(0, 2).join(", ");
+        const combined = [users, groups].filter(Boolean).join(" / ") || "-";
+        lines.push(`| ${s.metadata.name} | ${s.priority ?? "-"} | ${s.allowPrivilegedContainer ? "YES" : "no"} | ${s.allowHostNetwork ? "YES" : "no"} | ${s.runAsUser?.type || "-"} | ${combined} |`);
+      }
+      lines.push(``, `**Note:** SCCs control which Pod security contexts are allowed. Pods are assigned the SCC matching their requested permissions.`);
+      return { reply: lines.join("\n"), contextKeys: ["slash", "scc"] };
+    } catch (e) {
+      return { reply: `[ERROR] /scc: ${e.message}`, contextKeys: ["slash", "scc"] };
+    }
+  }
+
+  // ---- Tier 1: /rbac — Role/RoleBinding/ClusterRoleBinding audit ----
+  if (cmd === "rbac" || cmd === "roles" || cmd === "rolebindings") {
+    const ns = arg || null;
+    try {
+      const [crbData, rbData, crData] = await Promise.all([
+        ocpGet("/apis/rbac.authorization.k8s.io/v1/clusterrolebindings").catch(() => ({ items: [] })),
+        ocpGet(ns ? `/apis/rbac.authorization.k8s.io/v1/namespaces/${ns}/rolebindings` : "/apis/rbac.authorization.k8s.io/v1/rolebindings").catch(() => ({ items: [] })),
+        ocpGet("/apis/rbac.authorization.k8s.io/v1/clusterroles").catch(() => ({ items: [] })),
+      ]);
+      const crbs = crbData.items || [];
+      const rbs = rbData.items || [];
+      const crs = crData.items || [];
+
+      // Find cluster-admins
+      const clusterAdmins = crbs.filter((b) => b.roleRef?.name === "cluster-admin");
+      const adminSubjects = [];
+      for (const b of clusterAdmins) {
+        for (const s of (b.subjects || [])) {
+          adminSubjects.push(`${s.kind}/${s.name}${s.namespace ? ` (${s.namespace})` : ""}`);
+        }
+      }
+      const lines = [
+        `### RBAC Audit${ns ? ` (${ns})` : ""}`, ``,
+        `**ClusterRoles:** ${crs.length} | **ClusterRoleBindings:** ${crbs.length} | **RoleBindings${ns ? " in " + ns : ""}:** ${rbs.length}`,
+        ``,
+        `#### Cluster-Admin Grants (${adminSubjects.length})`, ``,
+      ];
+      if (adminSubjects.length === 0) lines.push("  - *none found*");
+      else for (const a of adminSubjects.slice(0, 30)) lines.push(`  - ${a}`);
+
+      if (rbs.length > 0) {
+        lines.push(``, `#### RoleBindings`, ``, `| Name | Namespace | RoleRef | Subjects |`, `|---|---|---|---|`);
+        for (const rb of rbs.slice(0, 30)) {
+          const subj = (rb.subjects || []).map((s) => `${s.kind}/${s.name}`).slice(0, 3).join(", ");
+          lines.push(`| ${rb.metadata.name} | ${rb.metadata.namespace} | ${rb.roleRef?.kind}/${rb.roleRef?.name} | ${subj || "-"} |`);
+        }
+      }
+      lines.push(``, `**Tip:** Use \`oc adm policy who-can <verb> <resource>\` to audit specific permissions.`);
+      return { reply: lines.join("\n"), contextKeys: ["slash", "rbac"] };
+    } catch (e) {
+      return { reply: `[ERROR] /rbac: ${e.message}`, contextKeys: ["slash", "rbac"] };
+    }
+  }
+
+  // ---- Tier 1: /quotas — ResourceQuota / LimitRange / PDB visibility ----
+  if (cmd === "quotas" || cmd === "quota" || cmd === "limits") {
+    const ns = arg || null;
+    try {
+      const rqPath = ns ? `/api/v1/namespaces/${ns}/resourcequotas` : "/api/v1/resourcequotas";
+      const lrPath = ns ? `/api/v1/namespaces/${ns}/limitranges` : "/api/v1/limitranges";
+      const pdbPath = ns ? `/apis/policy/v1/namespaces/${ns}/poddisruptionbudgets` : "/apis/policy/v1/poddisruptionbudgets";
+      const [rqData, lrData, pdbData] = await Promise.all([
+        ocpGet(rqPath).catch(() => ({ items: [] })),
+        ocpGet(lrPath).catch(() => ({ items: [] })),
+        ocpGet(pdbPath).catch(() => ({ items: [] })),
+      ]);
+      const rqs = rqData.items || [];
+      const lrs = lrData.items || [];
+      const pdbs = pdbData.items || [];
+      const lines = [`### Quotas & Governance${ns ? ` (${ns})` : ""}`, ``];
+
+      lines.push(`**ResourceQuotas:** ${rqs.length} | **LimitRanges:** ${lrs.length} | **PodDisruptionBudgets:** ${pdbs.length}`, ``);
+
+      if (rqs.length > 0) {
+        lines.push(`#### ResourceQuotas`, ``, `| Namespace | Quota | Used / Hard |`, `|---|---|---|`);
+        for (const rq of rqs.slice(0, 30)) {
+          const hard = rq.status?.hard || {};
+          const used = rq.status?.used || {};
+          const summary = Object.keys(hard).slice(0, 3).map((k) => `${k}: ${used[k] || 0}/${hard[k]}`).join("; ") || "-";
+          lines.push(`| ${rq.metadata.namespace} | ${rq.metadata.name} | ${summary} |`);
+        }
+        lines.push(``);
+      }
+
+      if (pdbs.length > 0) {
+        lines.push(`#### PodDisruptionBudgets`, ``, `| Namespace | PDB | Allowed Disruptions | Healthy / Desired |`, `|---|---|---|---|`);
+        for (const p of pdbs.slice(0, 20)) {
+          const allowed = p.status?.disruptionsAllowed ?? "-";
+          const healthy = p.status?.currentHealthy ?? "-";
+          const desired = p.status?.desiredHealthy ?? "-";
+          lines.push(`| ${p.metadata.namespace} | ${p.metadata.name} | ${allowed} | ${healthy}/${desired} |`);
+        }
+      }
+
+      if (rqs.length === 0 && lrs.length === 0 && pdbs.length === 0) {
+        lines.push(`[INFO] No quotas, limit ranges, or PDBs found${ns ? ` in namespace ${ns}` : ""}.`);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "quotas"] };
+    } catch (e) {
+      return { reply: `[ERROR] /quotas: ${e.message}`, contextKeys: ["slash", "quotas"] };
+    }
+  }
+
+  // ---- Tier 1: /certs — CSRs and certificate lifecycle ----
+  if (cmd === "certs" || cmd === "csr" || cmd === "csrs" || cmd === "certificates") {
+    try {
+      const data = await ocpGet("/apis/certificates.k8s.io/v1/certificatesigningrequests");
+      const items = data.items || [];
+      const pending = items.filter((c) => !(c.status?.conditions || []).some((cd) => cd.type === "Approved" || cd.type === "Denied"));
+      const approved = items.filter((c) => (c.status?.conditions || []).some((cd) => cd.type === "Approved" && cd.status === "True"));
+      const denied = items.filter((c) => (c.status?.conditions || []).some((cd) => cd.type === "Denied" && cd.status === "True"));
+      const lines = [
+        `### Certificate Signing Requests`, ``,
+        `@@SUMMARY|green:${approved.length} Approved|amber:${pending.length} Pending|red:${denied.length} Denied@@`, ``,
+      ];
+      if (pending.length > 0) {
+        lines.push(`#### Pending CSRs (need approval)`, ``);
+        for (const c of pending.slice(0, 20)) {
+          lines.push(`  - **${c.metadata.name}** — Signer: \`${c.spec?.signerName || "?"}\``);
+          lines.push(`    Approve: \`oc adm certificate approve ${c.metadata.name}\``);
+        }
+        lines.push(``);
+      }
+      if (pending.length === 0 && items.length > 0) lines.push(`[OK] All CSRs are processed.`);
+      if (items.length === 0) lines.push(`[INFO] No CSRs found.`);
+      return { reply: lines.join("\n"), contextKeys: ["slash", "certs"] };
+    } catch (e) {
+      return { reply: `[ERROR] /certs: ${e.message}`, contextKeys: ["slash", "certs"] };
+    }
+  }
+
+  // ---- Tier 3: /etcd — etcd cluster health and member status ----
+  if (cmd === "etcd") {
+    try {
+      const etcdPods = await ocpGet("/api/v1/namespaces/openshift-etcd/pods?labelSelector=app=etcd").catch(() => ({ items: [] }));
+      const etcd = await ocpGet("/apis/operator.openshift.io/v1/etcds/cluster").catch(() => null);
+      const items = etcdPods.items || [];
+      const ready = items.filter((p) => (p.status?.containerStatuses || []).every((c) => c.ready));
+      const lines = [
+        `### etcd Cluster Health`, ``,
+        `@@SUMMARY|green:${ready.length} Healthy Members|amber:${items.length - ready.length} Not Ready|red:${etcd?.status?.conditions?.find((c) => c.type === "Degraded" && c.status === "True") ? 1 : 0} Degraded@@`, ``,
+      ];
+      if (items.length === 0) {
+        lines.push(`[INFO] etcd pods not directly accessible. Use \`oc rsh -n openshift-etcd <etcd-pod> etcdctl endpoint health\` for member status.`);
+      } else {
+        lines.push(`| Pod | Node | Ready | Restarts | Age |`, `|---|---|---|---|---|`);
+        for (const p of items) {
+          const cs = p.status?.containerStatuses || [];
+          const r = cs.filter((c) => c.ready).length;
+          const rs = cs.reduce((a, c) => a + (c.restartCount || 0), 0);
+          const age = p.status?.startTime || "-";
+          lines.push(`| ${p.metadata.name} | ${p.spec?.nodeName || "-"} | ${r}/${cs.length} | ${rs} | ${age} |`);
+        }
+      }
+      const degraded = (etcd?.status?.conditions || []).filter((c) => c.status === "True" && /Degraded/.test(c.type));
+      if (degraded.length > 0) {
+        lines.push(``, `### Operator Conditions`, ``);
+        for (const c of degraded) lines.push(`  - **${c.type}**: ${c.message || c.reason}`);
+      }
+      lines.push(``, `**Backups:** Check \`/dr\` for etcd snapshot status (CR: EtcdBackup).`);
+      return { reply: lines.join("\n"), contextKeys: ["slash", "etcd"] };
+    } catch (e) {
+      return { reply: `[ERROR] /etcd: ${e.message}`, contextKeys: ["slash", "etcd"] };
+    }
+  }
+
+  // ---- Tier 3: /mesh — Service Mesh (Istio/OSSM) virtual services ----
+  if (cmd === "mesh" || cmd === "servicemesh") {
+    try {
+      const [vsData, drData, gwData] = await Promise.all([
+        ocpGet("/apis/networking.istio.io/v1beta1/virtualservices").catch(() => ({ items: [] })),
+        ocpGet("/apis/networking.istio.io/v1beta1/destinationrules").catch(() => ({ items: [] })),
+        ocpGet("/apis/networking.istio.io/v1beta1/gateways").catch(() => ({ items: [] })),
+      ]);
+      const vs = vsData.items || [];
+      const dr = drData.items || [];
+      const gw = gwData.items || [];
+      if (vs.length === 0 && dr.length === 0 && gw.length === 0) {
+        return { reply: "### Service Mesh\n[INFO] No Istio / OpenShift Service Mesh resources found. Mesh may not be installed.", contextKeys: ["slash", "mesh"] };
+      }
+      const lines = [
+        `### Service Mesh (Istio/OSSM)`, ``,
+        `**VirtualServices:** ${vs.length} | **DestinationRules:** ${dr.length} | **Gateways:** ${gw.length}`, ``,
+      ];
+      if (vs.length > 0) {
+        lines.push(`#### VirtualServices`, ``, `| Name | Namespace | Hosts | Gateways |`, `|---|---|---|---|`);
+        for (const v of vs.slice(0, 20)) {
+          lines.push(`| ${v.metadata.name} | ${v.metadata.namespace} | ${(v.spec?.hosts || []).join(",")} | ${(v.spec?.gateways || []).join(",")} |`);
+        }
+        lines.push(``);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "mesh"] };
+    } catch (e) {
+      return { reply: `[ERROR] /mesh: ${e.message}`, contextKeys: ["slash", "mesh"] };
+    }
+  }
+
+  // ---- Tier 3: /egress — EgressIPs and Egress NetworkPolicies ----
+  if (cmd === "egress" || cmd === "egressip" || cmd === "egressips") {
+    try {
+      const [eipData, enpData] = await Promise.all([
+        ocpGet("/apis/k8s.ovn.org/v1/egressips").catch(() => ({ items: [] })),
+        ocpGet("/apis/network.openshift.io/v1/egressnetworkpolicies").catch(() => ({ items: [] })),
+      ]);
+      const eips = eipData.items || [];
+      const enps = enpData.items || [];
+      if (eips.length === 0 && enps.length === 0) {
+        return { reply: "### Egress\n[INFO] No EgressIPs or EgressNetworkPolicies found.", contextKeys: ["slash", "egress"] };
+      }
+      const lines = [`### Egress Configuration`, ``, `**EgressIPs:** ${eips.length} | **EgressNetworkPolicies:** ${enps.length}`, ``];
+      if (eips.length > 0) {
+        lines.push(`#### EgressIPs`, ``, `| Name | IPs | NamespaceSelector |`, `|---|---|---|`);
+        for (const e of eips.slice(0, 20)) {
+          lines.push(`| ${e.metadata.name} | ${(e.spec?.egressIPs || []).join(",")} | ${JSON.stringify(e.spec?.namespaceSelector || {})} |`);
+        }
+        lines.push(``);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "egress"] };
+    } catch (e) {
+      return { reply: `[ERROR] /egress: ${e.message}`, contextKeys: ["slash", "egress"] };
+    }
+  }
+
+  // ---- Tier 3: /oauth — OAuth clients and login audit ----
+  if (cmd === "oauth" || cmd === "logins") {
+    try {
+      const data = await ocpGet("/apis/oauth.openshift.io/v1/oauthclients").catch(() => ({ items: [] }));
+      const users = await ocpGet("/apis/user.openshift.io/v1/users").catch(() => ({ items: [] }));
+      const groups = await ocpGet("/apis/user.openshift.io/v1/groups").catch(() => ({ items: [] }));
+      const lines = [
+        `### OAuth & Identity`, ``,
+        `**OAuth Clients:** ${(data.items || []).length} | **Users:** ${(users.items || []).length} | **Groups:** ${(groups.items || []).length}`, ``,
+      ];
+      if ((data.items || []).length > 0) {
+        lines.push(`#### OAuth Clients`, ``, `| Client | Grant Method | Redirect URIs |`, `|---|---|---|`);
+        for (const c of (data.items || []).slice(0, 20)) {
+          lines.push(`| ${c.metadata.name} | ${c.grantMethod || "-"} | ${(c.redirectURIs || []).slice(0, 2).join(", ")} |`);
+        }
+        lines.push(``);
+      }
+      if ((users.items || []).length > 0) {
+        lines.push(`#### Users (top 10 by groups)`, ``);
+        const top = (users.items || []).sort((a, b) => (b.groups?.length || 0) - (a.groups?.length || 0)).slice(0, 10);
+        for (const u of top) lines.push(`  - **${u.metadata.name}** — groups: ${(u.groups || []).join(", ") || "(none)"}`);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "oauth"] };
+    } catch (e) {
+      return { reply: `[ERROR] /oauth: ${e.message}`, contextKeys: ["slash", "oauth"] };
+    }
+  }
+
+  // ---- Tier 2: /export — dump resources in YAML/JSON/CSV ----
+  if (cmd === "export") {
+    if (!arg) {
+      return { reply: "### Export\n\nUse `/export <resource> [namespace] [as yaml|json|csv]` to export resources.\n\n**Examples:**\n- `/export deployments my-ns as yaml`\n- `/export pods as csv`\n- `/export configmaps my-ns`", contextKeys: ["slash", "export"] };
+    }
+    try {
+      const tokens = arg.split(/\s+/);
+      const resource = tokens[0];
+      let format = "yaml";
+      let ns = null;
+      for (let i = 1; i < tokens.length; i++) {
+        const t = tokens[i].toLowerCase();
+        if (t === "as" && tokens[i + 1]) { format = tokens[i + 1].toLowerCase(); i++; }
+        else if (t === "yaml" || t === "json" || t === "csv") format = t;
+        else if (!ns) ns = tokens[i];
+      }
+      const apiPath = await resolveResourcePath(resource, ns);
+      if (!apiPath) return { reply: `[ERROR] Unknown resource: ${resource}`, contextKeys: ["slash", "export"] };
+      const data = await ocpGet(apiPath);
+      const items = data.items || [data];
+      let body;
+      if (format === "json") body = JSON.stringify(items, null, 2);
+      else if (format === "csv") body = toCSV(items);
+      else body = toYAML(items);
+      const truncated = body.length > 12000;
+      const out = truncated ? body.slice(0, 12000) + "\n\n... [truncated — full export was " + body.length + " bytes]" : body;
+      return { reply: `### Export: ${resource}${ns ? ` (${ns})` : ""} as ${format}\n\n\`\`\`${format === "csv" ? "" : format}\n${out}\n\`\`\``, contextKeys: ["slash", "export"] };
+    } catch (e) {
+      return { reply: `[ERROR] /export: ${e.message}`, contextKeys: ["slash", "export"] };
+    }
+  }
+
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers for /export — resolve resource to API path, render YAML/CSV
+// ---------------------------------------------------------------------------
+async function resolveResourcePath(resource, ns) {
+  const r = (resource || "").toLowerCase();
+  const map = {
+    pod: ns ? `/api/v1/namespaces/${ns}/pods` : "/api/v1/pods",
+    pods: ns ? `/api/v1/namespaces/${ns}/pods` : "/api/v1/pods",
+    deployment: ns ? `/apis/apps/v1/namespaces/${ns}/deployments` : "/apis/apps/v1/deployments",
+    deployments: ns ? `/apis/apps/v1/namespaces/${ns}/deployments` : "/apis/apps/v1/deployments",
+    service: ns ? `/api/v1/namespaces/${ns}/services` : "/api/v1/services",
+    services: ns ? `/api/v1/namespaces/${ns}/services` : "/api/v1/services",
+    configmap: ns ? `/api/v1/namespaces/${ns}/configmaps` : "/api/v1/configmaps",
+    configmaps: ns ? `/api/v1/namespaces/${ns}/configmaps` : "/api/v1/configmaps",
+    secret: ns ? `/api/v1/namespaces/${ns}/secrets` : "/api/v1/secrets",
+    secrets: ns ? `/api/v1/namespaces/${ns}/secrets` : "/api/v1/secrets",
+    route: ns ? `/apis/route.openshift.io/v1/namespaces/${ns}/routes` : "/apis/route.openshift.io/v1/routes",
+    routes: ns ? `/apis/route.openshift.io/v1/namespaces/${ns}/routes` : "/apis/route.openshift.io/v1/routes",
+    pvc: ns ? `/api/v1/namespaces/${ns}/persistentvolumeclaims` : "/api/v1/persistentvolumeclaims",
+    pvcs: ns ? `/api/v1/namespaces/${ns}/persistentvolumeclaims` : "/api/v1/persistentvolumeclaims",
+    namespace: "/api/v1/namespaces",
+    namespaces: "/api/v1/namespaces",
+    node: "/api/v1/nodes",
+    nodes: "/api/v1/nodes",
+  };
+  return map[r] || null;
+}
+
+function toYAML(items) {
+  const lines = [];
+  for (const it of items) {
+    lines.push("---");
+    lines.push(yamlStringify(it, 0));
+  }
+  return lines.join("\n");
+}
+
+function yamlStringify(obj, indent) {
+  const pad = "  ".repeat(indent);
+  const out = [];
+  if (obj == null) return `${pad}null`;
+  if (typeof obj === "string") return JSON.stringify(obj);
+  if (typeof obj === "number" || typeof obj === "boolean") return String(obj);
+  if (Array.isArray(obj)) {
+    if (obj.length === 0) return "[]";
+    for (const it of obj) {
+      if (typeof it === "object" && it !== null) {
+        out.push(`${pad}-`);
+        out.push(yamlStringify(it, indent + 1));
+      } else {
+        out.push(`${pad}- ${yamlStringify(it, 0)}`);
+      }
+    }
+    return out.join("\n");
+  }
+  if (typeof obj === "object") {
+    for (const [k, v] of Object.entries(obj)) {
+      if (v === undefined) continue;
+      if (typeof v === "object" && v !== null && (Array.isArray(v) ? v.length > 0 : Object.keys(v).length > 0)) {
+        out.push(`${pad}${k}:`);
+        out.push(yamlStringify(v, indent + 1));
+      } else {
+        out.push(`${pad}${k}: ${yamlStringify(v, 0)}`);
+      }
+    }
+    return out.join("\n");
+  }
+  return String(obj);
+}
+
+function toCSV(items) {
+  if (!items || items.length === 0) return "";
+  const rows = [];
+  rows.push(["name", "namespace", "kind", "creationTimestamp", "phase/status", "resourceVersion"].join(","));
+  for (const it of items) {
+    const phase = it.status?.phase || it.status?.conditions?.find((c) => c.type === "Ready")?.status || "-";
+    rows.push([
+      csvEscape(it.metadata?.name),
+      csvEscape(it.metadata?.namespace),
+      csvEscape(it.kind),
+      csvEscape(it.metadata?.creationTimestamp),
+      csvEscape(phase),
+      csvEscape(it.metadata?.resourceVersion),
+    ].join(","));
+  }
+  return rows.join("\n");
+}
+
+function csvEscape(v) {
+  if (v == null) return "";
+  const s = String(v);
+  if (s.includes(",") || s.includes("\"") || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
+  return s;
 }
 
 // ---------------------------------------------------------------------------

@@ -62,6 +62,61 @@ export const RESOURCE_ALIASES = {
   clusterversion:    ["clusterversion", "clusterversions"],
   machine:           ["machine", "machines"],
   machineset:        ["machineset", "machinesets"],
+
+  // ---- Tier 1: OpenShift-native resources ----
+  buildconfig:       ["buildconfig", "buildconfigs", "bc"],
+  build:             ["build", "builds"],
+  imagestream:       ["imagestream", "imagestreams", "is"],
+  imagestreamtag:    ["imagestreamtag", "imagestreamtags", "istag", "istags"],
+  deploymentconfig:  ["deploymentconfig", "deploymentconfigs", "dc"],
+  scc:               ["scc", "sccs", "securitycontextconstraint", "securitycontextconstraints"],
+  subscription:      ["subscription", "subscriptions", "subs"],
+  installplan:       ["installplan", "installplans", "ip"],
+  operatorgroup:     ["operatorgroup", "operatorgroups", "og"],
+  clusterserviceversion: ["clusterserviceversion", "clusterserviceversions", "csv", "csvs"],
+  machineconfig:     ["machineconfig", "machineconfigs", "mc"],
+  machineconfigpool: ["machineconfigpool", "machineconfigpools", "mcp"],
+  machinehealthcheck: ["machinehealthcheck", "machinehealthchecks", "mhc"],
+
+  // ---- Tier 1: RBAC ----
+  role:                ["role", "roles"],
+  rolebinding:         ["rolebinding", "rolebindings"],
+  clusterrole:         ["clusterrole", "clusterroles"],
+  clusterrolebinding:  ["clusterrolebinding", "clusterrolebindings"],
+  user:                ["user", "users"],
+  group:               ["group", "groups"],
+  identity:            ["identity", "identities"],
+
+  // ---- Tier 1: Quota / governance ----
+  resourcequota:       ["resourcequota", "resourcequotas", "quota", "quotas"],
+  clusterresourcequota: ["clusterresourcequota", "clusterresourcequotas", "crq"],
+  limitrange:          ["limitrange", "limitranges", "limits"],
+  poddisruptionbudget: ["poddisruptionbudget", "poddisruptionbudgets", "pdb", "pdbs"],
+
+  // ---- Tier 1: CRDs / certificates ----
+  customresourcedefinition: ["customresourcedefinition", "customresourcedefinitions", "crd", "crds"],
+  certificatesigningrequest: ["certificatesigningrequest", "certificatesigningrequests", "csr", "csrs"],
+  priorityclass:       ["priorityclass", "priorityclasses", "pc"],
+
+  // ---- Tier 2: Storage / certs lifecycle ----
+  volumesnapshot:      ["volumesnapshot", "volumesnapshots", "vs"],
+  volumesnapshotclass: ["volumesnapshotclass", "volumesnapshotclasses", "vsc"],
+  csidriver:           ["csidriver", "csidrivers"],
+
+  // ---- Tier 3: Service mesh / networking ----
+  virtualservice:      ["virtualservice", "virtualservices", "vsvc"],
+  destinationrule:     ["destinationrule", "destinationrules", "dr-rule"],
+  gateway:             ["gateway", "gateways", "gw"],
+  egressip:            ["egressip", "egressips"],
+  egressnetworkpolicy: ["egressnetworkpolicy", "egressnetworkpolicies", "egressnp"],
+  networkattachmentdefinition: ["networkattachmentdefinition", "networkattachmentdefinitions", "nad", "net-attach-def"],
+
+  // ---- Tier 3: OAuth / identity ----
+  oauthclient:         ["oauthclient", "oauthclients"],
+  oauth:               ["oauth"],
+
+  // ---- Tier 3: Etcd / control plane ----
+  etcd:                ["etcd"],
 };
 
 // Build a flat token → canonical map for O(1) lookup.
@@ -143,6 +198,47 @@ const VERB_TABLE = {
   stop:     { intent: "stop",    weight: 85 },
   upgrade:  { intent: "upgrade", weight: 85 },
   migrate:  { intent: "update",  weight: 80 },
+  // ---- Tier 1: node lifecycle ----
+  drain:    { intent: "drain",   weight: 92 },
+  cordon:   { intent: "cordon",  weight: 92 },
+  uncordon: { intent: "uncordon", weight: 92 },
+  taint:    { intent: "taint",   weight: 88 },
+  untaint:  { intent: "untaint", weight: 88 },
+  label:    { intent: "label",   weight: 70 },
+  annotate: { intent: "annotate", weight: 70 },
+  evict:    { intent: "evict",   weight: 85 },
+  // ---- Tier 1: rollout / rollback ----
+  rollback: { intent: "rollback", weight: 92 },
+  rollout:  { intent: "rollout",  weight: 80 },
+  revert:   { intent: "rollback", weight: 88 },
+  undo:     { intent: "rollback", weight: 85 },
+  pause:    { intent: "rollout",  weight: 75 },
+  resume:   { intent: "rollout",  weight: 75 },
+  // ---- Tier 1: RBAC inquiry ----
+  who:      { intent: "rbac",     weight: 60 },
+  permissions: { intent: "rbac",  weight: 75 },
+  access:   { intent: "rbac",     weight: 55 },
+  // ---- Tier 1: approval (CSR / installplan) ----
+  approve:  { intent: "approve",  weight: 88 },
+  reject:   { intent: "delete",   weight: 80 },
+  sign:     { intent: "approve",  weight: 80 },
+  // ---- Tier 2: export / dump ----
+  export:   { intent: "export",   weight: 85 },
+  dump:     { intent: "export",   weight: 80 },
+  yaml:     { intent: "export",   weight: 30 },
+  // ---- Tier 2: compare ----
+  compare:  { intent: "compare",  weight: 80 },
+  diff:     { intent: "compare",  weight: 80 },
+  // ---- Tier 2: snapshot ----
+  snapshot: { intent: "snapshot", weight: 80 },
+  // ---- Tier 2: resize / expand ----
+  resize:   { intent: "resize",   weight: 85 },
+  expand:   { intent: "resize",   weight: 75 },
+  grow:     { intent: "resize",   weight: 60 },
+  // ---- Tier 2: find / search ----
+  find:     { intent: "list",     weight: 30 },
+  search:   { intent: "list",     weight: 30 },
+  filter:   { intent: "list",     weight: 25 },
   // diagnostic — high priority so they win over implicit "list" fallback
   // and bypass handleListCommand/handleDirectCommand → route to LLM
   why:          { intent: "diagnose", weight: 70 },
@@ -177,6 +273,8 @@ const STOP_WORDS = new Set([
   "now", "currently", "today", "right", "actually",
   "all", "any", "each", "every", "none", "some", "few", "lots", "many",
   "running", "pending", "completed", "failed", "succeeded", "ready",
+  "terminating", "containercreating", "imagepullbackoff", "crashloopbackoff",
+  "oomkilled", "evicted", "init", "stuck", "state", "phase",
   "status", "state", "phase", "summary", "detail", "details", "info",
   "version", "image", "images", "containers", "container",
   "cluster", "openshift", "ocp", "kubernetes", "k8s",
@@ -193,6 +291,12 @@ const STOP_WORDS = new Set([
   "use", "using", "via", "with", "without",
   "why", "troubleshoot", "diagnose", "investigate", "analyze", "analyse",
   "debug", "root", "cause", "reason",
+  // Tier 1-3 new verbs
+  "drain", "cordon", "uncordon", "taint", "untaint", "label", "annotate", "evict",
+  "rollback", "rollout", "revert", "undo", "pause", "resume",
+  "who", "permissions", "access", "approve", "reject", "sign",
+  "export", "dump", "yaml", "compare", "diff", "snapshot", "resize", "expand", "grow",
+  "find", "search", "filter",
 ]);
 
 // Filter keywords (issue type). Order matters: most specific first.
@@ -587,11 +691,124 @@ export function parse(message, memory = {}) {
   const personaHint = detectPersona(lower);
   // Pillar 1: Detect goal intent (multi-step goals like "migrate", "audit", "prepare for")
   const goalHint = detectGoal(lower);
+  // Tier 2: Advanced filters — time-based, superlative, status, output format
+  const advFilters = extractAdvancedFilters(lower);
 
   return makeResult({
     intent, resource, name, namespace, filter, allNs, scope, options,
-    confidence, raw, constraints, personaHint, goalHint,
+    confidence, raw, constraints, personaHint, goalHint, advFilters,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Tier 2: Advanced filters — time-based, superlative, output format, status
+//
+// Captures phrases like:
+//   "pods pending for more than 1 hour"  → timeFilter: { op: ">", durationMs }
+//   "which pod uses the most CPU"        → superlative: { op: "max", metric: "cpu" }
+//   "pods stuck in Terminating"          → statusFilter: "Terminating"
+//   "export deployments to yaml"         → outputFormat: "yaml"
+//   "find pods without limits"           → missingFeature: "limits"
+// ---------------------------------------------------------------------------
+function extractAdvancedFilters(lower) {
+  const f = {};
+
+  // --- Time-based filtering ---
+  // "for more than 1 hour", "older than 30 minutes", "in the last 5m"
+  const durationRe = /\b(?:for\s+(?:more|longer)\s+than|older\s+than|>\s*|over\s+|past\s+|last\s+|since\s+|within\s+)\s*(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|wk|week|weeks)\b/;
+  const dm = lower.match(durationRe);
+  if (dm) {
+    const n = parseInt(dm[1], 10);
+    const unit = dm[2];
+    const ms = toMs(n, unit);
+    if (ms != null) {
+      const isPast = /\b(last|past|within|since)\b/.test(dm[0]);
+      f.timeFilter = { op: isPast ? "withinLastMs" : "olderThanMs", ms, raw: dm[0] };
+    }
+  }
+  // "in the last 5 minutes" / "recently"
+  if (!f.timeFilter && /\b(recent(ly)?|just\s+now|moments?\s+ago)\b/.test(lower)) {
+    f.timeFilter = { op: "withinLastMs", ms: 15 * 60_000, raw: "recently" };
+  }
+  // Restart filter ("restarted recently", "restarted in last 30 min")
+  if (/\brestart(ed|ing|s)?\b/.test(lower)) {
+    f.restartFilter = true;
+    if (!f.timeFilter && /\blast\b|\bpast\b|\bwithin\b/.test(lower)) {
+      f.timeFilter = { op: "withinLastMs", ms: 60 * 60_000, raw: "last hour" };
+    }
+  }
+
+  // --- Superlative queries: "which pod uses the most CPU" / "largest PVC" / "oldest pod" ---
+  if (/\b(most|highest|top|biggest|largest|maximum|max)\b/.test(lower)) {
+    let metric = null;
+    if (/\bcpu\b/.test(lower)) metric = "cpu";
+    else if (/\b(memory|mem|ram)\b/.test(lower)) metric = "memory";
+    else if (/\b(storage|disk|size|capacity)\b/.test(lower)) metric = "storage";
+    else if (/\b(restart(s|ed)?)\b/.test(lower)) metric = "restarts";
+    else if (/\b(age|old|oldest)\b/.test(lower)) metric = "age";
+    // Infer metric from resource context when not stated explicitly
+    else if (/\b(pvc|persistentvolumeclaim|persistentvolume|pv)\b/.test(lower)) metric = "storage";
+    else if (/\b(biggest|largest)\b/.test(lower)) metric = "size";
+    if (metric) f.superlative = { op: "max", metric };
+  }
+  if (/\b(least|lowest|smallest|minimum|min)\b/.test(lower)) {
+    let metric = null;
+    if (/\bcpu\b/.test(lower)) metric = "cpu";
+    else if (/\b(memory|mem|ram)\b/.test(lower)) metric = "memory";
+    else if (/\b(age|young|youngest|newest)\b/.test(lower)) metric = "age";
+    else if (/\b(pvc|persistentvolumeclaim|pv)\b/.test(lower)) metric = "storage";
+    if (metric) f.superlative = { op: "min", metric };
+  }
+  // "oldest X" / "newest X" — age superlative
+  if (/\b(oldest)\b/.test(lower)) f.superlative = { op: "max", metric: "age" };
+  if (/\b(newest|youngest|most\s+recent)\b/.test(lower) && !f.superlative) f.superlative = { op: "min", metric: "age" };
+
+  // --- Status filters that aren't in the basic FILTERS table ---
+  if (/\b(terminating|stuck\s+(?:in\s+)?terminat)/i.test(lower)) f.statusFilter = "Terminating";
+  else if (/\bcontainercreating\b/i.test(lower)) f.statusFilter = "ContainerCreating";
+  else if (/\binit(?:\s+|:)|\binit[- ]?error\b/.test(lower)) f.statusFilter = "Init";
+  else if (/\bcompleted\b/.test(lower) && /\bpod/.test(lower)) f.statusFilter = "Completed";
+  else if (/\bunknown\s+state\b|\bphase\s+unknown\b/.test(lower)) f.statusFilter = "Unknown";
+
+  // --- Zero-replica / scale-to-zero filter ---
+  if (/\b(?:no|zero|0)\s+replicas?\b|\bscaled?\s+to\s+0\b|\bscale[- ]to[- ]zero\b/.test(lower)) {
+    f.zeroReplicas = true;
+  }
+
+  // --- Missing-feature filters ("without limits", "no PDB", "missing requests") ---
+  if (/\b(?:without|no|missing|lacking)\s+(?:cpu\s+)?(?:resource\s+)?limits?\b/.test(lower)) f.missingFeature = "limits";
+  else if (/\b(?:without|no|missing)\s+(?:resource\s+)?requests?\b/.test(lower)) f.missingFeature = "requests";
+  else if (/\b(?:without|no|missing)\s+(?:liveness|readiness|startup)\s+probe?\b/.test(lower)) f.missingFeature = "probes";
+  else if (/\b(?:without|no|missing)\s+pdb\b|\bno\s+poddisruption/i.test(lower)) f.missingFeature = "pdb";
+  else if (/\b(?:without|no|missing)\s+networkpolic/i.test(lower)) f.missingFeature = "networkpolicy";
+  else if (/\b(?:without|no|missing)\s+(?:owner|owner\s*ref)/i.test(lower)) f.missingFeature = "ownerRef";
+
+  // --- Output format ---
+  if (/\b(?:as|in|to|export\s+to)\s+yaml\b|\.yaml\b/.test(lower)) f.outputFormat = "yaml";
+  else if (/\b(?:as|in|to|export\s+to)\s+json\b|\.json\b/.test(lower)) f.outputFormat = "json";
+  else if (/\b(?:as|in|to|export\s+to)\s+csv\b|\.csv\b/.test(lower)) f.outputFormat = "csv";
+  else if (/\b(?:as|in|to|export\s+to)\s+(?:table|markdown|md)\b/.test(lower)) f.outputFormat = "table";
+
+  // --- Image tag concerns ---
+  if (/\blatest\s+tag\b|:latest\b/.test(lower)) f.imageTagConcern = "latest";
+
+  // --- Cross-namespace compare ---
+  const compareMatch = lower.match(/\b(?:compare|diff)\s+(?:namespace\s+)?(\S+)\s+(?:and|vs|with|to|against)\s+(?:namespace\s+)?(\S+)\b/);
+  if (compareMatch) {
+    f.compare = { a: compareMatch[1].replace(/[^a-z0-9-_]/g, ""), b: compareMatch[2].replace(/[^a-z0-9-_]/g, "") };
+  }
+
+  return Object.keys(f).length > 0 ? f : null;
+}
+
+function toMs(n, unit) {
+  const u = unit.toLowerCase();
+  if (/^s|sec/.test(u)) return n * 1000;
+  if (/^m($|in)/.test(u)) return n * 60_000;
+  if (/^h/.test(u)) return n * 3_600_000;
+  if (/^d/.test(u)) return n * 86_400_000;
+  if (/^w/.test(u)) return n * 7 * 86_400_000;
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -694,6 +911,7 @@ function makeResult(partial) {
     constraints: partial.constraints || null,
     personaHint: partial.personaHint || null,
     goalHint: partial.goalHint || null,
+    advFilters: partial.advFilters || null,
   };
 }
 
