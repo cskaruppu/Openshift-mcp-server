@@ -169,6 +169,15 @@ import {
   getAuditLog,
   getAuditSummary,
 } from "./services/guardrails.js";
+import {
+  getUserPreferences,
+  setUserPreferences,
+  recordUserFact,
+  getUserFacts,
+  addTeamKnowledge,
+  searchTeamKnowledge,
+  getUserIdFromRequest,
+} from "./services/persistent-memory.js";
 
 const silencedAlerts = new Map();
 
@@ -1830,6 +1839,52 @@ async function startSSE() {
       } catch (e) {
         return sendJson(res, 500, { error: e.message });
       }
+    }
+
+    // -----------------------------------------------------------------------
+    // Persistent Memory & User Preferences (Pillar 3)
+    // -----------------------------------------------------------------------
+    if (url.pathname === "/api/user/preferences" && req.method === "GET") {
+      const userId = getUserIdFromRequest(req) || url.searchParams.get("userId") || "default";
+      const prefs = await getUserPreferences(userId);
+      return sendJson(res, 200, { userId, preferences: prefs });
+    }
+    if (url.pathname === "/api/user/preferences" && req.method === "POST") {
+      try {
+        const body = await readJsonBody(req);
+        const userId = getUserIdFromRequest(req) || body.userId || "default";
+        await setUserPreferences(userId, body.preferences || body);
+        const prefs = await getUserPreferences(userId);
+        return sendJson(res, 200, { userId, preferences: prefs });
+      } catch (e) {
+        return sendJson(res, 500, { error: e.message });
+      }
+    }
+    if (url.pathname === "/api/user/facts" && req.method === "GET") {
+      const userId = getUserIdFromRequest(req) || url.searchParams.get("userId") || "default";
+      const factType = url.searchParams.get("type") || null;
+      const facts = await getUserFacts(userId, factType, 20);
+      return sendJson(res, 200, { userId, facts });
+    }
+    if (url.pathname === "/api/team/knowledge" && req.method === "POST") {
+      try {
+        const body = await readJsonBody(req);
+        const entry = await addTeamKnowledge({
+          topic: body.topic,
+          content: body.content,
+          tags: body.tags,
+          contributedBy: getUserIdFromRequest(req) || body.contributedBy,
+        });
+        return sendJson(res, entry ? 201 : 500, entry || { error: "Failed to add" });
+      } catch (e) {
+        return sendJson(res, 500, { error: e.message });
+      }
+    }
+    if (url.pathname === "/api/team/knowledge" && req.method === "GET") {
+      const search = url.searchParams.get("search") || "";
+      const limit = Math.min(50, parseInt(url.searchParams.get("limit") || "10", 10));
+      const results = await searchTeamKnowledge(search, limit);
+      return sendJson(res, 200, { results });
     }
 
     // GET /api/audit-log — paginated audit history for Pillar 7 audit viewer
