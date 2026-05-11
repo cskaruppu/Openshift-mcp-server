@@ -4657,7 +4657,7 @@ const SECURITY_REMEDIATION_PROMPT = `You are a Kubernetes and OpenShift security
 
 CRITICAL REQUIREMENTS:
 1. For EACH finding, provide the EXACT oc/kubectl commands to fix the specific resources listed (use real namespace, pod, deployment names from the findings).
-2. Wrap each executable command in @@SEC_FIX_CMD|<command>@@ tags so the UI can render Dry Run / Run buttons.
+2. Wrap each executable command in @@SEC_FIX_CMD|<command>@@ tags so the UI can render Dry Run / Run buttons. Place these on their OWN LINE as plain text — NEVER wrap them inside code fences or backtick blocks.
 3. Prioritize by severity — CRITICAL findings first.
 4. For privileged containers: provide oc patch commands to set securityContext.privileged=false on the owning Deployment/DaemonSet/StatefulSet.
 5. For run-as-root: provide oc patch commands to set runAsNonRoot=true and runAsUser=1000.
@@ -4672,7 +4672,7 @@ CRITICAL REQUIREMENTS:
 FORMAT:
 - Use markdown headers (###) for each finding section
 - Use numbered steps for remediation
-- Use @@SEC_FIX_CMD|<exact oc/kubectl command>@@ for executable commands
+- Use @@SEC_FIX_CMD|<exact oc/kubectl command>@@ for executable commands — place on own line as plain text, NEVER inside code fences
 - Add brief explanation before each command
 - Include verification commands after fixes
 
@@ -4791,7 +4791,7 @@ Analyze the cluster optimization findings below and provide DEEP, ACTIONABLE rem
 
 CRITICAL REQUIREMENTS:
 1. For EACH finding, provide EXACT oc/kubectl commands targeting the REAL resource names from the findings.
-2. Wrap each executable command in @@SEC_FIX_CMD|<command>@@ tags so the UI can render Dry Run / Run buttons.
+2. Wrap each executable command in @@SEC_FIX_CMD|<command>@@ tags so the UI can render Dry Run / Run buttons. Place these on their OWN LINE as plain text — NEVER wrap them inside markdown code fences or backtick blocks.
 3. Prioritize by severity — CRITICAL findings first (under-provisioned, capacity warnings).
 4. Quantify impact in resource units (cores, GiB) — do NOT include dollar amounts or cost estimates.
 5. Reference industry benchmarks and compliance standards where applicable.
@@ -4856,7 +4856,7 @@ ADVANCED RECOMMENDATIONS:
 FORMAT:
 - Use markdown headers (###) for each section
 - Use numbered steps within each section
-- Use @@SEC_FIX_CMD|<exact command>@@ for executable commands
+- Use @@SEC_FIX_CMD|<exact command>@@ for executable commands — place these on their OWN LINE as plain text, NEVER inside code fences or backtick blocks
 - Add brief explanation before each command
 - Include verification commands after fixes (e.g., oc get pod -w to watch rollout)
 - End with a "Quick Wins" summary table: action | effort | resource impact

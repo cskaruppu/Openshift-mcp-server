@@ -4674,7 +4674,8 @@ function md(text) {
 
   // Extract fenced code blocks BEFORE escaping
   text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, function(match, lang, code) {
-    var trimmed = code.replace(/^\n+|\n+$/g, '');
+    // Strip @@SEC_FIX_CMD|...@@ wrappers so the oc/kubectl commands are treated natively
+    var trimmed = code.replace(/^\n+|\n+$/g, '').replace(/@@SEC_FIX_CMD\|([^@]+)@@/g, '$1');
     var id = 'cmd-' + Math.random().toString(36).substr(2, 6);
     // Join multi-line commands with backslash continuation; prefer write commands over read-only
     var lines = trimmed.split('\n');
