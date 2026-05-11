@@ -161,6 +161,14 @@ import {
   getErrorBreakdown,
   getRecentEvents,
 } from "./services/telemetry.js";
+import {
+  classifyCommand,
+  preflightCheck,
+  issueConfirmationToken,
+  logAuditEvent,
+  getAuditLog,
+  getAuditSummary,
+} from "./services/guardrails.js";
 
 const silencedAlerts = new Map();
 
@@ -1796,16 +1804,115 @@ async function startSSE() {
       }
     }
 
-    // POST /api/alerts/execute-fix — runs a kubectl/oc command (dry-run or real)
-    if (req.method === "POST" && url.pathname === "/api/alerts/execute-fix") {
+    // POST /api/guardrails/classify — get risk classification for a command
+    if (req.method === "POST" && url.pathname === "/api/guardrails/classify") {
+      try {
+        const body = await readJsonBody(req);
+        const classification = classifyCommand(body.command || "");
+        return sendJson(res, 200, { classification });
+      } catch (e) {
+        return sendJson(res, 500, { error: e.message });
+      }
+    }
+
+    // POST /api/guardrails/confirm — issue a confirmation token for destructive ops
+    if (req.method === "POST" && url.pathname === "/api/guardrails/confirm") {
       try {
         const body = await readJsonBody(req);
         const command = body.command || "";
-        const result = await executeFixCommand(command, { dryRun: !!body.dryRun });
+        if (!command) return sendJson(res, 400, { error: "command required" });
+        const classification = classifyCommand(command);
+        if (classification.level === "blocked") {
+          return sendJson(res, 403, { error: "Command is permanently blocked", classification });
+        }
+        const token = issueConfirmationToken(command, body.userId || null);
+        return sendJson(res, 200, { token, classification, expiresIn: 300 });
+      } catch (e) {
+        return sendJson(res, 500, { error: e.message });
+      }
+    }
+
+    // GET /api/audit-log — paginated audit history for Pillar 7 audit viewer
+    if (req.method === "GET" && url.pathname === "/api/audit-log") {
+      try {
+        const limit = parseInt(url.searchParams.get("limit") || "100", 10);
+        const riskLevel = url.searchParams.get("riskLevel") || undefined;
+        const userId = url.searchParams.get("userId") || undefined;
+        const hours = url.searchParams.get("hours") ? parseInt(url.searchParams.get("hours"), 10) : undefined;
+        const [entries, summary] = await Promise.all([
+          getAuditLog({ limit, riskLevel, userId, hours }),
+          getAuditSummary(hours || 24),
+        ]);
+        return sendJson(res, 200, { entries, summary });
+      } catch (e) {
+        return sendJson(res, 500, { error: e.message });
+      }
+    }
+
+    // POST /api/alerts/execute-fix — runs a kubectl/oc command (dry-run or real)
+    if (req.method === "POST" && url.pathname === "/api/alerts/execute-fix") {
+      const auditStart = Date.now();
+      let preflight = null;
+      let command = "";
+      let dryRun = false;
+      try {
+        const body = await readJsonBody(req);
+        command = body.command || "";
+        dryRun = !!body.dryRun;
+
+        // Pillar 7: Guardrails preflight check
+        preflight = preflightCheck(command, {
+          dryRun,
+          confirmationToken: body.confirmationToken || null,
+          userId: body.userId || null,
+        });
+
+        if (!preflight.allow) {
+          // Audit the blocked attempt
+          logAuditEvent({
+            userId: body.userId || null,
+            conversationId: body.conversationId || null,
+            command,
+            dryRun,
+            classification: preflight.classification,
+            allowed: false,
+            blockReason: preflight.reason,
+            durationMs: Date.now() - auditStart,
+            ipAddress: req.socket?.remoteAddress || null,
+          }).catch(() => {});
+          return sendJson(res, 403, {
+            success: false,
+            blocked: true,
+            classification: preflight.classification,
+            reason: preflight.reason,
+            suggestion: preflight.suggestion,
+            needsConfirmation: !!preflight.needsConfirmation,
+            stderr: preflight.reason,
+          });
+        }
+
+        const result = await executeFixCommand(command, { dryRun });
+
+        // Audit the executed command
+        logAuditEvent({
+          userId: body.userId || null,
+          conversationId: body.conversationId || null,
+          command,
+          dryRun,
+          classification: preflight.classification,
+          allowed: true,
+          success: !!result.success,
+          exitCode: result.exitCode,
+          stdoutPreview: result.stdout,
+          stderrPreview: result.stderr,
+          durationMs: Date.now() - auditStart,
+          clusterName: body.cluster || process.env.CLUSTER_NAME || null,
+          ipAddress: req.socket?.remoteAddress || null,
+        }).catch(() => {});
 
         // Learning loop: record this fix outcome so future similar issues can
         // surface the team's proven approach. Skip dry-runs (no real change).
-        if (!body.dryRun && command) {
+        if (!dryRun && command) {
           const meta = parseCommandTarget(command);
           leRecordResolution({
             cluster: process.env.CLUSTER_NAME || body.cluster || "local",
@@ -1818,8 +1925,17 @@ async function startSSE() {
             user: body.user || body.conversationId || "",
           }).catch(() => {});
         }
-        return sendJson(res, 200, result);
+        return sendJson(res, 200, { ...result, classification: preflight.classification });
       } catch (e) {
+        logAuditEvent({
+          command,
+          dryRun,
+          classification: preflight?.classification,
+          allowed: true,
+          success: false,
+          stderrPreview: e.message,
+          durationMs: Date.now() - auditStart,
+        }).catch(() => {});
         return sendJson(res, 500, { success: false, stderr: e.message });
       }
     }

@@ -8841,13 +8841,48 @@ function aicCopyCmd(btn, encodedCmd) {
   });
 }
 
-async function aicExecuteFix(encodedCmd, idx, dryRun) {
+async function aicExecuteFix(encodedCmd, idx, dryRun, confirmationToken) {
   var cmd = _aicDecode(encodedCmd);
   var resultEl = document.getElementById('aic-fix-result-' + idx);
   if (!resultEl) return;
 
-  if (!dryRun) {
-    if (!confirm('Execute this command on the cluster?\n\n' + cmd + '\n\nThis will make REAL changes. Click OK to proceed.')) return;
+  // Pillar 7: Pre-flight classify the command to decide if we need an
+  // explicit confirmation modal (for destructive commands)
+  if (!dryRun && !confirmationToken) {
+    try {
+      var clsResp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/guardrails/classify', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: cmd }),
+      });
+      var clsData = await clsResp.json();
+      var cls = clsData.classification || {};
+      if (cls.level === 'blocked') {
+        resultEl.className = 'aic-fix-result error';
+        resultEl.innerHTML = '<div class="aic-fix-head"><span style="color:var(--crit)">&#x2716;</span> Blocked by guardrails: ' + esc(cls.reason) + '</div>';
+        return;
+      }
+      if (cls.level === 'destructive' || (cls.level === 'caution' && cls.protectedNs)) {
+        // Get a confirmation token first
+        var tokenResp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/guardrails/confirm', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command: cmd }),
+        });
+        var tokenData = await tokenResp.json();
+        if (!tokenData.token) {
+          resultEl.className = 'aic-fix-result error';
+          resultEl.innerHTML = '<div class="aic-fix-head"><span style="color:var(--crit)">&#x2716;</span> Cannot get confirmation: ' + esc(tokenData.error || 'unknown') + '</div>';
+          return;
+        }
+        if (!confirmGuardrail(cmd, cls)) return;
+        confirmationToken = tokenData.token;
+      } else {
+        // Default browser confirm for cautious / unclassified
+        if (!confirm('Execute this command on the cluster?\n\n' + cmd + '\n\nThis will make REAL changes. Click OK to proceed.')) return;
+      }
+    } catch (e) {
+      // Fall back to simple confirm if classification API fails
+      if (!confirm('Execute this command on the cluster?\n\n' + cmd + '\n\nThis will make REAL changes. Click OK to proceed.')) return;
+    }
   }
 
   resultEl.className = 'aic-fix-result running';
@@ -8859,14 +8894,43 @@ async function aicExecuteFix(encodedCmd, idx, dryRun) {
   try {
     var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/execute-fix', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: cmd, dryRun: !!dryRun }),
+      body: JSON.stringify({ command: cmd, dryRun: !!dryRun, confirmationToken: confirmationToken || null }),
     });
     var data = await resp.json();
+    if (data.blocked) {
+      resultEl.className = 'aic-fix-result error';
+      resultEl.innerHTML = '<div class="aic-fix-head"><span style="color:var(--crit)">&#x2716;</span> Blocked: ' + esc(data.reason || 'unknown') + '</div>' +
+        (data.suggestion ? '<div style="font-size:11px;color:var(--text2);margin-top:6px">' + esc(data.suggestion) + '</div>' : '');
+      return;
+    }
     aicRenderFixResult(resultEl, data, dryRun);
   } catch (e) {
     resultEl.className = 'aic-fix-result error';
     resultEl.innerHTML = '<div class="aic-fix-head"><span style="color:var(--crit)">&#x2718;</span> Network error: ' + esc(e.message) + '</div>';
   }
+}
+
+// Confirmation modal for destructive commands (Pillar 7)
+function confirmGuardrail(command, classification) {
+  var level = classification.level || 'destructive';
+  var severity = classification.severity || 'high';
+  var reason = classification.reason || '';
+  var ns = classification.namespace || '';
+  var protectedNs = classification.protectedNs;
+
+  var icon = severity === 'critical' ? '⚠️⚠️' : '⚠️';
+  var color = severity === 'critical' ? '#dc2626' : severity === 'high' ? '#ea580c' : '#ca8a04';
+
+  var msg = icon + ' ' + (level === 'destructive' ? 'DESTRUCTIVE COMMAND' : 'PROTECTED NAMESPACE') + ' ' + icon + '\n\n' +
+    'Severity: ' + severity.toUpperCase() + '\n' +
+    'Reason: ' + reason + '\n' +
+    (ns ? 'Namespace: ' + ns + (protectedNs ? ' [PROTECTED SYSTEM NAMESPACE]' : '') + '\n' : '') +
+    '\nCommand:\n' + command + '\n\n' +
+    'This action may be IRREVERSIBLE.\n' +
+    'Type \'CONFIRM\' below to proceed.';
+
+  var answer = prompt(msg, '');
+  return answer === 'CONFIRM';
 }
 
 function aicRenderFixResult(el, data, dryRun) {
