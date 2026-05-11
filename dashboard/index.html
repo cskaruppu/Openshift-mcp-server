@@ -4852,6 +4852,34 @@ function md(text) {
     );
   });
 
+  // View-more pagination for /recommendations tables
+  text = text.replace(/@@VIEW_MORE_REC\|([^|]*)\|(\d+)\|(\d+)@@/g, function(m, findingType, shownStr, totalStr) {
+    var shown = parseInt(shownStr, 10);
+    var total = parseInt(totalStr, 10);
+    var remaining = total - shown;
+    if (remaining <= 0) return '';
+    var label = findingType.replace(/-/g, ' ');
+    var nextBatch = Math.min(remaining, 50);
+    var nextLabel = nextBatch < remaining
+      ? 'Show next ' + nextBatch + ' ' + label
+      : 'Show remaining ' + remaining + ' ' + label;
+    var allLabel = 'Show all ' + remaining + ' remaining';
+    var typeEsc = findingType.replace(/'/g, "\\'");
+    return ph(
+      '<div class="view-more-bar">' +
+        '<span class="view-more-info">' + remaining + ' more ' + label + ' not shown</span>' +
+        '<button class="view-more-btn" onclick="sendFullChat(\'__viewmore_rec__ ' + typeEsc + ' ' + shown + ' ' + nextBatch + '\')">' +
+          '<span class="view-more-icon">&#x25BC;</span> ' + nextLabel +
+        '</button>' +
+        (remaining > nextBatch
+          ? '<button class="view-more-btn view-more-all" onclick="sendFullChat(\'__viewmore_rec__ ' + typeEsc + ' ' + shown + ' ' + remaining + '\')">' +
+            '<span class="view-more-icon">&#x21F3;</span> ' + allLabel +
+          '</button>'
+          : '') +
+      '</div>'
+    );
+  });
+
   // Extract inline code BEFORE escaping
   text = text.replace(/`([^`\n]+)`/g, function(m, c) { return ph('<code>' + esc(c) + '</code>'); });
 

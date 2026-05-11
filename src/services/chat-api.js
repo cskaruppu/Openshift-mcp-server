@@ -4787,20 +4787,20 @@ function appendBuiltInRemediation(lines, findings) {
 
 const OPTIMIZATION_REMEDIATION_PROMPT = `You are a senior Kubernetes/OpenShift FinOps and SRE performance architect. You provide production-grade optimization recommendations aligned with industry frameworks (Gartner FinOps, CNCF Best Practices, CIS Kubernetes Benchmark, Google SRE Workbook).
 
-Analyze the cluster optimization findings below and provide DEEP, ACTIONABLE remediation with executable commands and cost-impact analysis.
+Analyze the cluster optimization findings below and provide DEEP, ACTIONABLE remediation with executable commands.
 
 CRITICAL REQUIREMENTS:
 1. For EACH finding, provide EXACT oc/kubectl commands targeting the REAL resource names from the findings.
 2. Wrap each executable command in @@SEC_FIX_CMD|<command>@@ tags so the UI can render Dry Run / Run buttons.
 3. Prioritize by severity — CRITICAL findings first (under-provisioned, capacity warnings).
-4. Include estimated dollar savings per remediation action.
+4. Quantify impact in resource units (cores, GiB) — do NOT include dollar amounts or cost estimates.
 5. Reference industry benchmarks and compliance standards where applicable.
 
 FOR OVER-PROVISIONED PODS:
 - Calculate a right-sized CPU request: P95 actual usage + 25% buffer, rounded to nearest 50m (Gartner right-sizing methodology)
 - Calculate a right-sized memory request: peak usage + 20% buffer, rounded to nearest 32Mi
 - Provide oc patch commands for each pod's owning Deployment/StatefulSet
-- Calculate per-pod monthly savings: (oldRequest - newRequest) * $0.04/core-hr * 730 hrs
+- Quantify reclaim potential in cores and GiB for each pod
 - Suggest VPA (Vertical Pod Autoscaler) with updateMode: "Auto" for namespaces with 5+ over-provisioned pods
 - Recommend Resource Quota enforcement at namespace level
 
@@ -4825,7 +4825,7 @@ FOR PODS WITHOUT RESOURCE LIMITS:
 FOR ORPHANED PVCs AND STORAGE WASTE:
 - Identify PVCs that are bound but unmounted for extended periods
 - Provide oc delete pvc commands with safety verification steps
-- Calculate storage cost savings: orphanedGi * $0.08/GB-month
+- Quantify storage reclaim in GiB
 - Suggest implementing a storage reclaim policy (Delete vs Retain tradeoffs)
 - Recommend adding labels/annotations for ownership tracking
 - Check for Released PVs that can be cleaned up
@@ -4844,7 +4844,7 @@ FOR CLUSTER CAPACITY:
 - Suggest scaling MachineSets with specific replica counts based on headroom deficit
 - Calculate how many nodes needed to reach 25% headroom target
 - Recommend ClusterAutoscaler with min/max bounds
-- Consider spot/preemptible nodes for fault-tolerant workloads (30-60% savings)
+- Consider spot/preemptible nodes for fault-tolerant workloads
 - Reference: Google SRE "target 50% utilization for headroom during incidents"
 
 ADVANCED RECOMMENDATIONS:
@@ -4859,9 +4859,9 @@ FORMAT:
 - Use @@SEC_FIX_CMD|<exact command>@@ for executable commands
 - Add brief explanation before each command
 - Include verification commands after fixes (e.g., oc get pod -w to watch rollout)
-- End with a "Quick Wins" summary table: action | effort | monthly savings
+- End with a "Quick Wins" summary table: action | effort | resource impact
 
-IMPORTANT: Generate REAL commands with ACTUAL resource names from the findings. Do NOT use placeholders like <pod-name>. Calculate real cost savings using provided cluster stats.`;
+IMPORTANT: Generate REAL commands with ACTUAL resource names from the findings. Do NOT use placeholders like <pod-name>. Do NOT include dollar amounts or cost estimates — express impact in resource units (cores, GiB, pod count) only.`;
 
 async function generateOptimizationRemediation(findings, clusterStats, llmOpts) {
   const findingsSummary = findings.map((f) => {
@@ -4907,12 +4907,10 @@ async function generateOptimizationRemediation(findings, clusterStats, llmOpts) 
 - Reclaimable CPU: ${clusterStats.reclaimCores || 0} cores
 - Reclaimable Memory: ${clusterStats.reclaimMemGi || 0} GiB
 - Orphaned Storage: ${clusterStats.orphanedGi || 0} GiB
-- Estimated monthly savings potential: $${clusterStats.totalMonthlySavings || 0}
-- Cost benchmarks used: CPU $0.04/core-hr, Memory $0.005/GB-hr, Storage $0.08/GB-month
 
 ${findingsSummary}${learningContext}
 
-Provide deep, production-grade optimization recommendations with executable oc/kubectl commands for each finding. Use the real resource names listed above. Calculate right-sized values based on actual usage data. Include per-action cost savings estimates. Reference industry standards (CIS, FinOps, SRE) where applicable. End with a Quick Wins summary table.`;
+Provide deep, production-grade optimization recommendations with executable oc/kubectl commands for each finding. Use the real resource names listed above. Calculate right-sized values based on actual usage data. Quantify impact in resource units (cores, GiB) only — do NOT include dollar amounts or cost estimates. Reference industry standards (CIS, FinOps, SRE) where applicable. End with a Quick Wins summary table.`;
 
   const r = await callLLM({
     messages: [{ role: "user", content: userPrompt }],
@@ -4997,6 +4995,126 @@ function appendBuiltInOptimization(lines, findings, fmtCpu, fmtMem, totalAllocCp
         break;
     }
     lines.push(``);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// View-more handler for /recommendations tables
+// ---------------------------------------------------------------------------
+async function handleViewMoreRecommendation(findingType, offset, limit) {
+  const pCpu = (s) => { if (!s) return 0; if (typeof s === "number") return s; if (s.endsWith("n")) return parseInt(s)/1e9; if (s.endsWith("u")) return parseInt(s)/1e6; if (s.endsWith("m")) return parseInt(s)/1e3; return parseFloat(s)||0; };
+  const pMem = (s) => { if (!s) return 0; if (typeof s === "number") return s; if (s.endsWith("Ki")) return parseInt(s)*1024; if (s.endsWith("Mi")) return parseInt(s)*1048576; if (s.endsWith("Gi")) return parseInt(s)*1073741824; return parseInt(s)||0; };
+  const fmtCpu = (v) => v < 0.01 ? Math.round(v * 1000) + "m" : v.toFixed(2);
+  const fmtMem = (v) => v > 1073741824 ? (v / 1073741824).toFixed(1) + "Gi" : (v / 1048576).toFixed(0) + "Mi";
+
+  try {
+    const [pods, metrics, pvcs] = await Promise.all([
+      ocpGet("/api/v1/pods"),
+      ocpGet("/apis/metrics.k8s.io/v1beta1/pods").catch(() => ({ items: [] })),
+      ocpGet("/api/v1/persistentvolumeclaims").catch(() => ({ items: [] })),
+    ]);
+
+    const userPods = (pods.items || []).filter((p) => p.status?.phase === "Running" && !p.metadata.namespace?.startsWith("openshift-") && !p.metadata.namespace?.startsWith("kube-"));
+    const metricsMap = {};
+    for (const m of (metrics.items || [])) {
+      let cpu = 0, mem = 0;
+      for (const c of (m.containers || [])) { cpu += pCpu(c.usage?.cpu); mem += pMem(c.usage?.memory); }
+      metricsMap[`${m.metadata.namespace}/${m.metadata.name}`] = { cpu, mem };
+    }
+
+    let allItems = [];
+    let headers = "";
+    let headerSep = "";
+
+    if (findingType === "over-provisioned") {
+      for (const p of userPods) {
+        const key = `${p.metadata.namespace}/${p.metadata.name}`;
+        const usage = metricsMap[key];
+        let reqCpu = 0, haslim = false;
+        for (const c of (p.spec?.containers || [])) { reqCpu += pCpu(c.resources?.requests?.cpu); if (c.resources?.limits?.cpu || c.resources?.limits?.memory) haslim = true; }
+        if (!haslim || !usage || reqCpu <= 0) continue;
+        if (usage.cpu < reqCpu * 0.1 && reqCpu >= 0.1) {
+          allItems.push({ ns: p.metadata.namespace, pod: p.metadata.name, reqCpu: fmtCpu(reqCpu), usageCpu: fmtCpu(usage.cpu), util: Math.round((usage.cpu / reqCpu) * 100) });
+        }
+      }
+      headers = "| Namespace | Pod | CPU Request | CPU Usage | Utilization |";
+      headerSep = "|---|---|---|---|---|";
+    } else if (findingType === "under-provisioned") {
+      for (const p of userPods) {
+        const key = `${p.metadata.namespace}/${p.metadata.name}`;
+        const usage = metricsMap[key];
+        let reqCpu = 0, haslim = false;
+        for (const c of (p.spec?.containers || [])) { reqCpu += pCpu(c.resources?.requests?.cpu); if (c.resources?.limits?.cpu || c.resources?.limits?.memory) haslim = true; }
+        if (!haslim || !usage || reqCpu <= 0) continue;
+        if (usage.cpu > reqCpu * 1.5) {
+          allItems.push({ ns: p.metadata.namespace, pod: p.metadata.name, reqCpu: fmtCpu(reqCpu), usageCpu: fmtCpu(usage.cpu), util: Math.round((usage.cpu / reqCpu) * 100) });
+        }
+      }
+      headers = "| Namespace | Pod | CPU Request | CPU Usage | Utilization |";
+      headerSep = "|---|---|---|---|---|";
+    } else if (findingType === "no-limits") {
+      for (const p of userPods) {
+        let haslim = false;
+        for (const c of (p.spec?.containers || [])) { if (c.resources?.limits?.cpu || c.resources?.limits?.memory) haslim = true; }
+        if (!haslim) allItems.push({ ns: p.metadata.namespace, pod: p.metadata.name });
+      }
+      headers = "| Namespace | Pod |";
+      headerSep = "|---|---|";
+    } else if (findingType === "high-restarts") {
+      allItems = (pods.items || []).filter((p) => (p.status?.containerStatuses || []).some((c) => c.restartCount > 5))
+        .map((p) => ({ ns: p.metadata.namespace, pod: p.metadata.name, restarts: Math.max(...(p.status?.containerStatuses || []).map((c) => c.restartCount || 0)) }))
+        .sort((a, b) => b.restarts - a.restarts);
+      headers = "| Namespace | Pod | Restarts |";
+      headerSep = "|---|---|---|";
+    } else if (findingType === "orphaned-pvcs") {
+      const usedPvcs = new Set();
+      for (const p of (pods.items || [])) {
+        for (const v of (p.spec?.volumes || [])) {
+          if (v.persistentVolumeClaim?.claimName) usedPvcs.add(`${p.metadata.namespace}/${v.persistentVolumeClaim.claimName}`);
+        }
+      }
+      for (const pvc of (pvcs.items || [])) {
+        const phase = pvc.status?.phase;
+        const key = `${pvc.metadata.namespace}/${pvc.metadata.name}`;
+        if (phase === "Bound" && !usedPvcs.has(key)) {
+          const capBytes = pMem(pvc.status?.capacity?.storage || pvc.spec?.resources?.requests?.storage || "0");
+          const ageDays = pvc.metadata?.creationTimestamp ? Math.round((Date.now() - new Date(pvc.metadata.creationTimestamp).getTime()) / 86400000) : 0;
+          allItems.push({ ns: pvc.metadata.namespace, name: pvc.metadata.name, size: pvc.status?.capacity?.storage || pvc.spec?.resources?.requests?.storage || "?", sc: pvc.spec?.storageClassName || "default", ageDays });
+        }
+      }
+      headers = "| Namespace | PVC Name | Size | Storage Class | Age (days) |";
+      headerSep = "|---|---|---|---|---|";
+    } else {
+      return `### Error\nUnknown recommendation type: \`${findingType}\``;
+    }
+
+    const total = allItems.length;
+    if (offset >= total) return `### ${findingType}\nNo more items to show (${total} total).`;
+
+    const pageItems = allItems.slice(offset, offset + limit);
+    const end = Math.min(offset + limit, total);
+    const label = findingType.replace(/-/g, " ");
+    const parts = [`### ${label} — showing ${offset + 1}–${end} of ${total}`, "", headers, headerSep];
+
+    for (const it of pageItems) {
+      if (findingType === "over-provisioned" || findingType === "under-provisioned") {
+        parts.push(`| ${it.ns} | ${it.pod} | ${it.reqCpu} | ${it.usageCpu} | ${it.util}% |`);
+      } else if (findingType === "no-limits") {
+        parts.push(`| ${it.ns} | ${it.pod} |`);
+      } else if (findingType === "high-restarts") {
+        parts.push(`| ${it.ns} | ${it.pod} | ${it.restarts} |`);
+      } else if (findingType === "orphaned-pvcs") {
+        parts.push(`| ${it.ns} | ${it.name} | ${it.size} | ${it.sc} | ${it.ageDays} |`);
+      }
+    }
+
+    if (end < total) {
+      parts.push(`\n@@VIEW_MORE_REC|${findingType}|${end}|${total}@@`);
+    }
+
+    return parts.join("\n");
+  } catch (err) {
+    return `### Error\n[CRITICAL] Failed to load recommendation data: ${err.message}`;
   }
 }
 
@@ -5723,13 +5841,6 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
       const effScore = Math.round((sizingScore * 0.35) + (limitsScore * 0.25) + (headroomScore * 0.20) + (pvcScore * 0.20));
       const grade = effScore >= 90 ? "A" : effScore >= 80 ? "B" : effScore >= 70 ? "C" : effScore >= 60 ? "D" : "F";
 
-      // ── Cost Estimation (industry cloud-neutral averages) ──
-      const HOURS_PER_MONTH = 730;
-      const cpuWasteCost = Math.round(wastedCpu * 0.04 * HOURS_PER_MONTH);
-      const memWasteCost = Math.round((wastedMem / (1024 * 1024 * 1024)) * 0.005 * HOURS_PER_MONTH);
-      const storageWasteCost = Math.round(orphanedGi * 0.08);
-      const totalMonthlySavings = cpuWasteCost + memWasteCost + storageWasteCost;
-
       // ── Reclaim potential ──
       const reclaimCores = Math.round(wastedCpu * 10) / 10;
       const reclaimMemGi = Math.round((wastedMem / (1024 * 1024 * 1024)) * 10) / 10;
@@ -5766,16 +5877,15 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
         ``,
       ];
 
-      // ── Reclaim & Cost Section ──
+      // ── Reclaim Potential Section ──
       if (reclaimCores > 0 || reclaimMemGi > 0 || orphanedGi > 0) {
-        lines.push(`### Reclaim Potential & Cost Savings`);
+        lines.push(`### Reclaim Potential`);
         lines.push(``);
-        lines.push(`| Resource | Reclaimable | Est. Monthly Savings |`);
+        lines.push(`| Resource | Reclaimable | Impact |`);
         lines.push(`|---|---|---|`);
-        if (reclaimCores > 0) lines.push(`| CPU | ${reclaimCores} cores | ~$${cpuWasteCost}/mo ($0.04/core-hr) |`);
-        if (reclaimMemGi > 0) lines.push(`| Memory | ${reclaimMemGi} GiB | ~$${memWasteCost}/mo ($0.005/GB-hr) |`);
-        if (orphanedGi > 0) lines.push(`| Storage (orphaned PVCs) | ${Math.round(orphanedGi * 10) / 10} GiB | ~$${storageWasteCost}/mo ($0.08/GB-mo) |`);
-        lines.push(`| **Total** | | **~$${totalMonthlySavings}/month (~$${totalMonthlySavings * 12}/year)** |`);
+        if (reclaimCores > 0) lines.push(`| CPU | ${reclaimCores} cores | Free capacity for new workloads |`);
+        if (reclaimMemGi > 0) lines.push(`| Memory | ${reclaimMemGi} GiB | Reduce memory pressure & OOMKill risk |`);
+        if (orphanedGi > 0) lines.push(`| Storage (orphaned PVCs) | ${Math.round(orphanedGi * 10) / 10} GiB | Recover wasted storage capacity |`);
         lines.push(``);
       }
 
@@ -5800,7 +5910,7 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
           lines.push(`| Namespace | PVC Name | Size | Storage Class | Age (days) |`);
           lines.push(`|---|---|---|---|---|`);
           for (const p of orphanedPvcs.slice(0, 15)) lines.push(`| ${p.ns} | ${p.name} | ${p.size} | ${p.sc} | ${p.ageDays} |`);
-          if (orphanedPvcs.length > 15) lines.push(`| … | *${orphanedPvcs.length - 15} more* | | | |`);
+          if (orphanedPvcs.length > 15) lines.push(`\n@@VIEW_MORE_REC|orphaned-pvcs|15|${orphanedPvcs.length}@@`);
           lines.push(``);
         }
       }
@@ -5850,7 +5960,7 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
         recFindings.push({
           severity: "WARNING", type: "orphaned-pvcs",
           title: `${pvcOrphaned} Orphaned PVC(s) (${Math.round(orphanedGi * 10) / 10} GiB)`,
-          description: `These PVCs are bound but unmounted by any pod. Estimated waste: ~$${storageWasteCost}/month.`,
+          description: `These PVCs are bound but unmounted by any pod — consuming ${Math.round(orphanedGi * 10) / 10} GiB of storage with no active workload.`,
           items: orphanedPvcs.slice(0, 10).map((p) => ({ ns: p.ns, name: p.name, size: p.size, sc: p.sc, ageDays: p.ageDays })),
           total: orphanedPvcs.length,
         });
@@ -5876,6 +5986,7 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
       }
 
       // Render data tables for each finding
+      const REC_TABLE_LIMIT = 10;
       for (const f of recFindings) {
         if (f.type === "orphaned-pvcs") continue; // Already rendered above
         lines.push(`---`);
@@ -5887,16 +5998,17 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
           lines.push(`| Namespace | Pod | CPU Request | CPU Usage | Utilization |`);
           lines.push(`|---|---|---|---|---|`);
           for (const it of f.items) lines.push(`| ${it.ns} | ${it.pod} | ${it.reqCpu} | ${it.usageCpu} | ${it.util}% |`);
-          if (f.total > 10) lines.push(`| … | *${f.total - 10} more* | | | |`);
+          if (f.total > REC_TABLE_LIMIT) lines.push(`\n@@VIEW_MORE_REC|${f.type}|${REC_TABLE_LIMIT}|${f.total}@@`);
         } else if (f.type === "no-limits") {
           lines.push(`| Namespace | Pod |`);
           lines.push(`|---|---|`);
           for (const it of f.items) lines.push(`| ${it.ns} | ${it.pod} |`);
-          if (f.total > 10) lines.push(`| … | *${f.total - 10} more* |`);
+          if (f.total > REC_TABLE_LIMIT) lines.push(`\n@@VIEW_MORE_REC|${f.type}|${REC_TABLE_LIMIT}|${f.total}@@`);
         } else if (f.type === "high-restarts") {
           lines.push(`| Namespace | Pod | Restarts |`);
           lines.push(`|---|---|---|`);
           for (const it of f.items) lines.push(`| ${it.ns} | ${it.pod} | ${it.restarts} |`);
+          if (f.total > REC_TABLE_LIMIT) lines.push(`\n@@VIEW_MORE_REC|${f.type}|${REC_TABLE_LIMIT}|${f.total}@@`);
         } else if (f.type === "capacity") {
           if (f.cpuH < 15) lines.push(`  - CPU headroom is very low at **${f.cpuH}%** — industry minimum is 20%`);
           if (f.memH < 15) lines.push(`  - Memory headroom is very low at **${f.memH}%** — risk of OOMKill under load`);
@@ -5907,7 +6019,7 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
       // AI-powered recommendations (Azure OpenAI / any LLM)
       if (hasLLM && recFindings.length > 0) {
         try {
-          const aiRec = await generateOptimizationRemediation(recFindings, { cpuH, memH, totalPods: userPods.length, effScore, grade, reclaimCores, reclaimMemGi, orphanedGi, totalMonthlySavings }, llmOpts);
+          const aiRec = await generateOptimizationRemediation(recFindings, { cpuH, memH, totalPods: userPods.length, effScore, grade, reclaimCores, reclaimMemGi, orphanedGi }, llmOpts);
           if (aiRec) {
             lines.push(`---`);
             lines.push(``);
@@ -5943,14 +6055,10 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
         let priority = 1;
         if (under > 0) { lines.push(`${priority}. **[CRITICAL]** Increase resources for ${under} under-provisioned pod(s) to prevent throttling and OOMKill`); priority++; }
         if (cpuH < 20 || memH < 20) { lines.push(`${priority}. **[CRITICAL]** Address cluster capacity — headroom below safe threshold (CPU: ${cpuH}%, Memory: ${memH}%)`); priority++; }
-        if (over > 0) { lines.push(`${priority}. **[HIGH]** Right-size ${over} over-provisioned pod(s) to reclaim ${reclaimCores} cores / ${reclaimMemGi} GiB (~$${cpuWasteCost + memWasteCost}/mo savings)`); priority++; }
-        if (orphanedPvcs.length > 0) { lines.push(`${priority}. **[HIGH]** Clean up ${pvcOrphaned} orphaned PVC(s) to reclaim ${Math.round(orphanedGi * 10) / 10} GiB (~$${storageWasteCost}/mo savings)`); priority++; }
+        if (over > 0) { lines.push(`${priority}. **[HIGH]** Right-size ${over} over-provisioned pod(s) to reclaim ${reclaimCores} cores / ${reclaimMemGi} GiB`); priority++; }
+        if (orphanedPvcs.length > 0) { lines.push(`${priority}. **[HIGH]** Clean up ${pvcOrphaned} orphaned PVC(s) to reclaim ${Math.round(orphanedGi * 10) / 10} GiB storage`); priority++; }
         if (noLim > 0) { lines.push(`${priority}. **[MEDIUM]** Add resource limits to ${noLim} pod(s) — required for CIS compliance and cluster stability`); priority++; }
         if (restartPods.length > 0) { lines.push(`${priority}. **[MEDIUM]** Investigate ${restartPods.length} pod(s) with excessive restarts`); priority++; }
-        if (totalMonthlySavings > 0) {
-          lines.push(``);
-          lines.push(`**Total estimated savings: ~$${totalMonthlySavings}/month (~$${totalMonthlySavings * 12}/year)**`);
-        }
       }
 
       return {
@@ -6551,6 +6659,26 @@ export async function handleChatAPI(req, res) {
         return;
       }
       return json(res, 200, { reply: vmReply, provider, contextKeys: ["viewMore"], cached: false, conversationId });
+    }
+
+    // ---- View-more pagination for /recommendations tables ----
+    const viewMoreRecMatch = userMessage.match(/^__viewmore_rec__\s+(\S+)\s+(\d+)\s+(\d+)$/);
+    if (viewMoreRecMatch) {
+      const vmrReply = await handleViewMoreRecommendation(viewMoreRecMatch[1], parseInt(viewMoreRecMatch[2], 10), parseInt(viewMoreRecMatch[3], 10));
+      const provider = "built-in";
+      if (conversationId) {
+        histAddMessage(conversationId, { role: "assistant", content: vmrReply, provider }).catch(() => {});
+      }
+      const wantsStreamVMR = body.stream === true || (req.headers.accept || "").includes("text/event-stream");
+      if (wantsStreamVMR) {
+        sseStart(res);
+        sseSend(res, { stage: "querying" });
+        sseSend(res, { delta: vmrReply });
+        sseSend(res, { done: true, provider, conversationId });
+        sseEnd(res);
+        return;
+      }
+      return json(res, 200, { reply: vmrReply, provider, contextKeys: ["viewMore"], cached: false, conversationId });
     }
 
     const slashReply = await maybeHandleSlashCommand(userMessage, conversationId, llmOpts);
