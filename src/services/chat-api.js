@@ -1809,7 +1809,30 @@ async function handleListCommand(message, preParsed, opts = {}) {
     const filterLabel = cmd.filter ? ` matching **${cmd.filter}**` : "";
 
     // ---- Count-scope: user asked "how many", return a single line ----
+    // For deployments with "replica"/"count" queries, show a proper replica summary table
     if (cmd.scope === "count") {
+      if (["deployment", "deployments", "deploy"].includes(cmd.resourceType)) {
+        const parts = [`### Replica Count ${label} (${items.length} deployments)`];
+        parts.push(`| Status | Deployment | Namespace | Ready | Desired | Available |`);
+        parts.push(`| --- | --- | --- | --- | --- | --- |`);
+        let totalReady = 0, totalDesired = 0;
+        const displayItems = items.slice(0, 30);
+        for (const d of displayItems) {
+          const ready = d.status?.readyReplicas ?? 0;
+          const desired = d.spec?.replicas ?? 0;
+          const available = d.status?.availableReplicas ?? 0;
+          totalReady += ready;
+          totalDesired += desired;
+          const icon = ready === desired ? "[OK]" : ready === 0 ? "[CRITICAL]" : "[WARNING]";
+          parts.push(`| ${icon} | **${d.metadata.name}** | ${d.metadata.namespace} | ${ready} | ${desired} | ${available} |`);
+        }
+        if (items.length > 30) {
+          parts.push(`\n@@VIEW_MORE|deployment|${cmd.namespace || '_all'}|30|${items.length}@@`);
+        }
+        parts.push(``);
+        parts.push(`**Total: ${totalReady}/${totalDesired} replicas ready across ${items.length} deployments**`);
+        return parts.join("\n");
+      }
       return `**${items.length}** ${resInfo.resource}${filterLabel} ${label}.`;
     }
 

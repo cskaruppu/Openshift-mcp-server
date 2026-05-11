@@ -30,7 +30,7 @@
 export const RESOURCE_ALIASES = {
   // canonical: [aliases]
   pod:               ["pod", "pods", "po"],
-  deployment:        ["deployment", "deployments", "deploy", "deployments.apps"],
+  deployment:        ["deployment", "deployments", "deploy", "deployments.apps", "replica", "replicas"],
   service:           ["service", "services", "svc"],
   configmap:         ["configmap", "configmaps", "cm"],
   secret:            ["secret", "secrets"],
