@@ -117,6 +117,145 @@ export const RESOURCE_ALIASES = {
 
   // ---- Tier 3: Etcd / control plane ----
   etcd:                ["etcd"],
+
+  // ---- Sprint B: Compliance & Security Operators ----
+  compliancesuite:     ["compliancesuite", "compliancesuites"],
+  compliancescan:      ["compliancescan", "compliancescans"],
+  complianceprofile:   ["complianceprofile", "complianceprofiles", "profilebundle", "profilebundles"],
+  complianceresult:    ["complianceresult", "complianceresults", "compliancecheckresult", "compliancecheckresults"],
+  fileintegrity:       ["fileintegrity", "fileintegrities"],
+  fileintegritynodestatus: ["fileintegritynodestatus", "fileintegritynodestatuses"],
+  // Cert-Manager
+  certificate:         ["certificate", "certificates", "cert", "certs"],
+  certificaterequest:  ["certificaterequest", "certificaterequests"],
+  issuer:              ["issuer", "issuers"],
+  clusterissuer:       ["clusterissuer", "clusterissuers"],
+  // External Secrets / Vault / SealedSecrets
+  externalsecret:      ["externalsecret", "externalsecrets", "es-secret"],
+  secretstore:         ["secretstore", "secretstores"],
+  clustersecretstore:  ["clustersecretstore", "clustersecretstores"],
+  sealedsecret:        ["sealedsecret", "sealedsecrets"],
+  vaultauth:           ["vaultauth", "vaultauths"],
+  vaultstaticsecret:   ["vaultstaticsecret", "vaultstaticsecrets"],
+  // Policy engines
+  constrainttemplate:  ["constrainttemplate", "constrainttemplates"],
+  constraint:          ["constraint", "constraints"],
+  policyreport:        ["policyreport", "policyreports"],
+  clusterpolicyreport: ["clusterpolicyreport", "clusterpolicyreports"],
+  kyvernopolicy:       ["kyvernopolicy", "kyvernopolicies", "clusterpolicy", "clusterpolicies"],
+
+  // ---- Sprint B: Observability Operators ----
+  prometheusrule:      ["prometheusrule", "prometheusrules", "alertrule", "alertrules"],
+  servicemonitor:      ["servicemonitor", "servicemonitors"],
+  podmonitor:          ["podmonitor", "podmonitors"],
+  alertmanagerconfig:  ["alertmanagerconfig", "alertmanagerconfigs"],
+  prometheus:          ["prometheus"],
+  alertmanager:        ["alertmanager"],
+  thanosruler:         ["thanosruler", "thanosrulers"],
+  // Logging
+  clusterlogforwarder: ["clusterlogforwarder", "clusterlogforwarders", "logforwarder"],
+  clusterlogging:      ["clusterlogging", "clusterloggings"],
+  lokistack:           ["lokistack", "lokistacks"],
+  // Tracing
+  jaeger:              ["jaeger", "jaegers"],
+  tempo:               ["tempo", "tempos", "tempostack", "tempostacks"],
+  // Grafana
+  grafana:             ["grafana"],
+  grafanadashboard:    ["grafanadashboard", "grafanadashboards"],
+  grafanadatasource:   ["grafanadatasource", "grafanadatasources"],
+
+  // ---- Sprint B: Storage — ODF / Ceph / Velero ----
+  cephcluster:         ["cephcluster", "cephclusters"],
+  cephblockpool:       ["cephblockpool", "cephblockpools"],
+  cephfilesystem:      ["cephfilesystem", "cephfilesystems"],
+  cephobjectstore:     ["cephobjectstore", "cephobjectstores"],
+  noobaa:              ["noobaa", "noobaas", "objectbucket", "objectbuckets"],
+  storagecluster:      ["storagecluster", "storageclusters"],
+  // Velero
+  backup:              ["backup", "backups"],
+  restore:             ["restore", "restores"],
+  schedule:            ["schedule", "schedules"],
+  backupstoragelocation: ["backupstoragelocation", "backupstoragelocations", "bsl"],
+  volumesnapshotlocation: ["volumesnapshotlocation", "volumesnapshotlocations", "vsl"],
+  podvolumebackup:     ["podvolumebackup", "podvolumebackups"],
+
+  // ---- Sprint B: Multi-Cluster — ACM / Hive / HyperShift ----
+  managedcluster:      ["managedcluster", "managedclusters"],
+  managedclusteraddon: ["managedclusteraddon", "managedclusteraddons"],
+  policy:              ["policy", "policies"],
+  placementrule:       ["placementrule", "placementrules"],
+  placement:           ["placement", "placements"],
+  manifestwork:        ["manifestwork", "manifestworks"],
+  gitopscluster:       ["gitopscluster", "gitopsclusters"],
+  // Hive
+  clusterdeployment:   ["clusterdeployment", "clusterdeployments"],
+  clusterpool:         ["clusterpool", "clusterpools"],
+  clusterclaim:        ["clusterclaim", "clusterclaims"],
+  clusterimageset:     ["clusterimageset", "clusterimagesets"],
+  // HyperShift
+  hostedcluster:       ["hostedcluster", "hostedclusters"],
+  nodepool:            ["nodepool", "nodepools"],
+  // Submariner
+  submariner:          ["submariner", "submariners"],
+
+  // ---- Sprint B: Bare-Metal & Edge ----
+  baremetalhost:       ["baremetalhost", "baremetalhosts", "bmh"],
+  hostfirmwaresettings:["hostfirmwaresettings"],
+  infraenv:            ["infraenv", "infraenvs"],
+  agent:               ["agent", "agents"],
+  agentclusterinstall: ["agentclusterinstall", "agentclusterinstalls"],
+
+  // ---- Sprint B: Performance / Tuning ----
+  performanceprofile:  ["performanceprofile", "performanceprofiles", "perfprofile"],
+  tuned:               ["tuned", "tuneds", "tunedprofile"],
+  nodefeature:         ["nodefeature", "nodefeatures"],
+  nodefeaturediscovery:["nodefeaturediscovery", "nodefeaturediscoveries", "nfd"],
+
+  // ---- Sprint B: OpenShift AI (RHODS) ----
+  datasciencecluster:  ["datasciencecluster", "datascienceclusters", "dsc"],
+  notebook:            ["notebook", "notebooks"],
+  workbench:           ["workbench", "workbenches"],
+  inferenceservice:    ["inferenceservice", "inferenceservices", "isvc"],
+  servingruntime:      ["servingruntime", "servingruntimes"],
+  modelregistry:       ["modelregistry", "modelregistries"],
+
+  // ---- Sprint B: Networking — SR-IOV / MetalLB / DNS / NetObserv ----
+  sriovnetwork:        ["sriovnetwork", "sriovnetworks"],
+  sriovnetworknodepolicy: ["sriovnetworknodepolicy", "sriovnetworknodepolicies"],
+  bgppeer:             ["bgppeer", "bgppeers"],
+  ipaddresspool:       ["ipaddresspool", "ipaddresspools"],
+  l2advertisement:     ["l2advertisement", "l2advertisements"],
+  bgpadvertisement:    ["bgpadvertisement", "bgpadvertisements"],
+  adminnetworkpolicy:  ["adminnetworkpolicy", "adminnetworkpolicies", "anp"],
+  baselineadminnetworkpolicy: ["baselineadminnetworkpolicy", "baselineadminnetworkpolicies", "banp"],
+  flowcollector:       ["flowcollector", "flowcollectors"],
+  dnsoperator:         ["dnsoperator", "dnsoperators"],
+  ingresscontroller:   ["ingresscontroller", "ingresscontrollers", "router"],
+
+  // ---- Sprint B: Tekton Advanced ----
+  eventlistener:       ["eventlistener", "eventlisteners"],
+  triggerbinding:      ["triggerbinding", "triggerbindings"],
+  triggertemplate:     ["triggertemplate", "triggertemplates"],
+  trigger:             ["trigger", "triggers"],
+  pipelineresource:    ["pipelineresource", "pipelineresources"],
+
+  // ---- Sprint B: Admission & API Governance ----
+  mutatingwebhookconfiguration:  ["mutatingwebhookconfiguration", "mutatingwebhookconfigurations", "mwc"],
+  validatingwebhookconfiguration:["validatingwebhookconfiguration", "validatingwebhookconfigurations", "vwc"],
+  apiservice:          ["apiservice", "apiservices"],
+  apirequestcount:     ["apirequestcount", "apirequestcounts"],
+  flowschema:          ["flowschema", "flowschemas"],
+  prioritylevelconfiguration: ["prioritylevelconfiguration", "prioritylevelconfigurations"],
+
+  // ---- Sprint B: ArgoCD / GitOps ----
+  application:         ["application", "applications", "argoapp", "argoapps"],
+  appproject:          ["appproject", "appprojects"],
+  applicationset:      ["applicationset", "applicationsets", "appset"],
+
+  // ---- Sprint B: OpenShift Templates / Catalog ----
+  template:            ["template", "templates"],
+  catalogsource:       ["catalogsource", "catalogsources"],
+  packagemanifest:     ["packagemanifest", "packagemanifests"],
 };
 
 // Build a flat token → canonical map for O(1) lookup.
@@ -239,6 +378,26 @@ const VERB_TABLE = {
   find:     { intent: "list",     weight: 30 },
   search:   { intent: "list",     weight: 30 },
   filter:   { intent: "list",     weight: 25 },
+  // ---- Sprint C: bulk operations ----
+  bulk:     { intent: "bulk",     weight: 80 },
+  cleanup:  { intent: "bulk",     weight: 75 },
+  // ---- Sprint C: change timeline / forecast / kb ----
+  changes:  { intent: "changes",  weight: 70 },
+  changed:  { intent: "changes",  weight: 55 },
+  history:  { intent: "changes",  weight: 60 },
+  timeline: { intent: "changes",  weight: 70 },
+  forecast: { intent: "forecast", weight: 85 },
+  predict:  { intent: "forecast", weight: 80 },
+  project:  { intent: "forecast", weight: 55 },
+  trend:    { intent: "forecast", weight: 70 },
+  trends:   { intent: "forecast", weight: 70 },
+  kb:       { intent: "kb",       weight: 80 },
+  knowledge:{ intent: "kb",       weight: 70 },
+  runbook:  { intent: "kb",       weight: 75 },
+  // ---- Sprint C: self-service provisioning ----
+  provision:{ intent: "provision", weight: 85 },
+  onboard:  { intent: "provision", weight: 75 },
+  setup:    { intent: "provision", weight: 55 },
   // diagnostic — high priority so they win over implicit "list" fallback
   // and bypass handleListCommand/handleDirectCommand → route to LLM
   why:          { intent: "diagnose", weight: 70 },

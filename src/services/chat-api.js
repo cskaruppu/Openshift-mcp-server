@@ -215,6 +215,12 @@ function nluToCommand(p) {
   else if (p.intent === "compare") operation = "compare";
   else if (p.intent === "snapshot") operation = "snapshot";
   else if (p.intent === "resize") operation = "resize";
+  // Sprint C: conversational AI intents
+  else if (p.intent === "bulk") operation = "bulk";
+  else if (p.intent === "changes") operation = "changes";
+  else if (p.intent === "forecast") operation = "forecast";
+  else if (p.intent === "kb") operation = "kb";
+  else if (p.intent === "provision") operation = "provision";
   return {
     operation,
     resourceType: p.resource,
@@ -392,6 +398,31 @@ function buildHelpMessage() {
     "  - `/oauth` — OAuth clients, users, groups",
     "  - `/etcd` — etcd cluster health and member status",
     "  - `/plan <goal>` — decompose complex tasks into executable steps",
+    "",
+    "**Ecosystem operators** (Sprint B)",
+    "  - `/compliance` — Compliance Operator (CIS, NIST, PCI scans)",
+    "  - `/promrules` — PrometheusRule / ServiceMonitor inventory",
+    "  - `/logging` — ClusterLogForwarder / LokiStack",
+    "  - `/odf` — OpenShift Data Foundation / Ceph cluster health",
+    "  - `/acm` — Advanced Cluster Management fleet",
+    "  - `/hypershift` — Hosted Control Planes & NodePools",
+    "  - `/baremetal` — BareMetalHosts & Assisted Installer",
+    "  - `/performance` — PerformanceProfile & Tuned",
+    "  - `/ai` — OpenShift AI (DataScienceCluster, Notebooks, KServe)",
+    "  - `/metallb` — MetalLB IPAddressPool & BGPPeers",
+    "  - `/webhooks` — Admission webhook controllers",
+    "  - `/argocd` — ArgoCD Applications detailed view",
+    "",
+    "**Agentic AI features** (Sprint C+D)",
+    "  - `/bulk <action>` — bulk cleanup (delete evicted, restart crashing)",
+    "  - `/changes [duration]` — change timeline (recent events + audit)",
+    "  - `/forecast` — capacity prediction & saturation runway",
+    "  - `/kb <query>` — knowledge base / runbook search",
+    "  - `/provision namespace X for team Y` — self-service onboarding",
+    "  - `/incidents` — episodic memory of past incidents",
+    "  - `/suggestions` — proactive recommendations ('I noticed X')",
+    "  - `/approvals` — pending approval chain decisions",
+    "  - `/reflect` — verify outcomes of recent actions",
     "",
     "**Advanced phrases I now understand** (Tier 2)",
     "  - `which pod uses the most CPU?` / `largest PVC` / `oldest pod`",
@@ -619,6 +650,198 @@ const RESOURCE_MAP = {
   networkpolicy:         { api: "/apis/networking.k8s.io/v1", resource: "networkpolicies", namespaced: true },
   networkpolicies:       { api: "/apis/networking.k8s.io/v1", resource: "networkpolicies", namespaced: true },
   netpol:                { api: "/apis/networking.k8s.io/v1", resource: "networkpolicies", namespaced: true },
+
+  // ---- Sprint B: Compliance Operator ----
+  compliancesuite:       { api: "/apis/compliance.openshift.io/v1alpha1", resource: "compliancesuites", namespaced: true },
+  compliancesuites:      { api: "/apis/compliance.openshift.io/v1alpha1", resource: "compliancesuites", namespaced: true },
+  compliancescan:        { api: "/apis/compliance.openshift.io/v1alpha1", resource: "compliancescans", namespaced: true },
+  compliancescans:       { api: "/apis/compliance.openshift.io/v1alpha1", resource: "compliancescans", namespaced: true },
+  complianceprofile:     { api: "/apis/compliance.openshift.io/v1alpha1", resource: "profiles", namespaced: true },
+  profilebundle:         { api: "/apis/compliance.openshift.io/v1alpha1", resource: "profilebundles", namespaced: true },
+  compliancecheckresult: { api: "/apis/compliance.openshift.io/v1alpha1", resource: "compliancecheckresults", namespaced: true },
+  fileintegrity:         { api: "/apis/fileintegrity.openshift.io/v1alpha1", resource: "fileintegrities", namespaced: true },
+  fileintegrities:       { api: "/apis/fileintegrity.openshift.io/v1alpha1", resource: "fileintegrities", namespaced: true },
+
+  // ---- Sprint B: Cert-Manager ----
+  certificate:           { api: "/apis/cert-manager.io/v1", resource: "certificates", namespaced: true },
+  certificates:          { api: "/apis/cert-manager.io/v1", resource: "certificates", namespaced: true },
+  certificaterequest:    { api: "/apis/cert-manager.io/v1", resource: "certificaterequests", namespaced: true },
+  certificaterequests:   { api: "/apis/cert-manager.io/v1", resource: "certificaterequests", namespaced: true },
+  issuer:                { api: "/apis/cert-manager.io/v1", resource: "issuers", namespaced: true },
+  issuers:               { api: "/apis/cert-manager.io/v1", resource: "issuers", namespaced: true },
+  clusterissuer:         { api: "/apis/cert-manager.io/v1", resource: "clusterissuers", namespaced: false },
+  clusterissuers:        { api: "/apis/cert-manager.io/v1", resource: "clusterissuers", namespaced: false },
+
+  // ---- Sprint B: External Secrets / Sealed Secrets / Vault ----
+  externalsecret:        { api: "/apis/external-secrets.io/v1beta1", resource: "externalsecrets", namespaced: true },
+  externalsecrets:       { api: "/apis/external-secrets.io/v1beta1", resource: "externalsecrets", namespaced: true },
+  secretstore:           { api: "/apis/external-secrets.io/v1beta1", resource: "secretstores", namespaced: true },
+  secretstores:          { api: "/apis/external-secrets.io/v1beta1", resource: "secretstores", namespaced: true },
+  clustersecretstore:    { api: "/apis/external-secrets.io/v1beta1", resource: "clustersecretstores", namespaced: false },
+  clustersecretstores:   { api: "/apis/external-secrets.io/v1beta1", resource: "clustersecretstores", namespaced: false },
+  sealedsecret:          { api: "/apis/bitnami.com/v1alpha1", resource: "sealedsecrets", namespaced: true },
+  sealedsecrets:         { api: "/apis/bitnami.com/v1alpha1", resource: "sealedsecrets", namespaced: true },
+  vaultauth:             { api: "/apis/secrets.hashicorp.com/v1beta1", resource: "vaultauths", namespaced: true },
+  vaultstaticsecret:     { api: "/apis/secrets.hashicorp.com/v1beta1", resource: "vaultstaticsecrets", namespaced: true },
+
+  // ---- Sprint B: Policy engines ----
+  constrainttemplate:    { api: "/apis/templates.gatekeeper.sh/v1", resource: "constrainttemplates", namespaced: false },
+  constrainttemplates:   { api: "/apis/templates.gatekeeper.sh/v1", resource: "constrainttemplates", namespaced: false },
+  policyreport:          { api: "/apis/wgpolicyk8s.io/v1alpha2", resource: "policyreports", namespaced: true },
+  policyreports:         { api: "/apis/wgpolicyk8s.io/v1alpha2", resource: "policyreports", namespaced: true },
+  clusterpolicyreport:   { api: "/apis/wgpolicyk8s.io/v1alpha2", resource: "clusterpolicyreports", namespaced: false },
+  clusterpolicyreports:  { api: "/apis/wgpolicyk8s.io/v1alpha2", resource: "clusterpolicyreports", namespaced: false },
+  kyvernopolicy:         { api: "/apis/kyverno.io/v1", resource: "policies", namespaced: true },
+  clusterpolicy:         { api: "/apis/kyverno.io/v1", resource: "clusterpolicies", namespaced: false },
+  clusterpolicies:       { api: "/apis/kyverno.io/v1", resource: "clusterpolicies", namespaced: false },
+
+  // ---- Sprint B: Observability — Prometheus Operator ----
+  prometheusrule:        { api: "/apis/monitoring.coreos.com/v1", resource: "prometheusrules", namespaced: true },
+  prometheusrules:       { api: "/apis/monitoring.coreos.com/v1", resource: "prometheusrules", namespaced: true },
+  alertrule:             { api: "/apis/monitoring.coreos.com/v1", resource: "prometheusrules", namespaced: true },
+  alertrules:            { api: "/apis/monitoring.coreos.com/v1", resource: "prometheusrules", namespaced: true },
+  servicemonitor:        { api: "/apis/monitoring.coreos.com/v1", resource: "servicemonitors", namespaced: true },
+  servicemonitors:       { api: "/apis/monitoring.coreos.com/v1", resource: "servicemonitors", namespaced: true },
+  podmonitor:            { api: "/apis/monitoring.coreos.com/v1", resource: "podmonitors", namespaced: true },
+  podmonitors:           { api: "/apis/monitoring.coreos.com/v1", resource: "podmonitors", namespaced: true },
+  alertmanagerconfig:    { api: "/apis/monitoring.coreos.com/v1beta1", resource: "alertmanagerconfigs", namespaced: true },
+  alertmanagerconfigs:   { api: "/apis/monitoring.coreos.com/v1beta1", resource: "alertmanagerconfigs", namespaced: true },
+  prometheus:            { api: "/apis/monitoring.coreos.com/v1", resource: "prometheuses", namespaced: true },
+  alertmanager:          { api: "/apis/monitoring.coreos.com/v1", resource: "alertmanagers", namespaced: true },
+  thanosruler:           { api: "/apis/monitoring.coreos.com/v1", resource: "thanosrulers", namespaced: true },
+
+  // ---- Sprint B: Logging ----
+  clusterlogforwarder:   { api: "/apis/logging.openshift.io/v1", resource: "clusterlogforwarders", namespaced: true },
+  clusterlogforwarders:  { api: "/apis/logging.openshift.io/v1", resource: "clusterlogforwarders", namespaced: true },
+  clusterlogging:        { api: "/apis/logging.openshift.io/v1", resource: "clusterloggings", namespaced: true },
+  clusterloggings:       { api: "/apis/logging.openshift.io/v1", resource: "clusterloggings", namespaced: true },
+  lokistack:             { api: "/apis/loki.grafana.com/v1", resource: "lokistacks", namespaced: true },
+  lokistacks:            { api: "/apis/loki.grafana.com/v1", resource: "lokistacks", namespaced: true },
+
+  // ---- Sprint B: Tracing ----
+  jaeger:                { api: "/apis/jaegertracing.io/v1", resource: "jaegers", namespaced: true },
+  jaegers:               { api: "/apis/jaegertracing.io/v1", resource: "jaegers", namespaced: true },
+  tempo:                 { api: "/apis/tempo.grafana.com/v1alpha1", resource: "tempostacks", namespaced: true },
+  tempostack:            { api: "/apis/tempo.grafana.com/v1alpha1", resource: "tempostacks", namespaced: true },
+
+  // ---- Sprint B: Storage — ODF / Ceph / Velero ----
+  cephcluster:           { api: "/apis/ceph.rook.io/v1", resource: "cephclusters", namespaced: true },
+  cephclusters:          { api: "/apis/ceph.rook.io/v1", resource: "cephclusters", namespaced: true },
+  cephblockpool:         { api: "/apis/ceph.rook.io/v1", resource: "cephblockpools", namespaced: true },
+  cephblockpools:        { api: "/apis/ceph.rook.io/v1", resource: "cephblockpools", namespaced: true },
+  cephfilesystem:        { api: "/apis/ceph.rook.io/v1", resource: "cephfilesystems", namespaced: true },
+  cephfilesystems:       { api: "/apis/ceph.rook.io/v1", resource: "cephfilesystems", namespaced: true },
+  cephobjectstore:       { api: "/apis/ceph.rook.io/v1", resource: "cephobjectstores", namespaced: true },
+  storagecluster:        { api: "/apis/ocs.openshift.io/v1", resource: "storageclusters", namespaced: true },
+  storageclusters:       { api: "/apis/ocs.openshift.io/v1", resource: "storageclusters", namespaced: true },
+  noobaa:                { api: "/apis/noobaa.io/v1alpha1", resource: "noobaas", namespaced: true },
+  noobaas:               { api: "/apis/noobaa.io/v1alpha1", resource: "noobaas", namespaced: true },
+  objectbucket:          { api: "/apis/objectbucket.io/v1alpha1", resource: "objectbuckets", namespaced: false },
+  // Velero
+  backup:                { api: "/apis/velero.io/v1", resource: "backups", namespaced: true },
+  backups:               { api: "/apis/velero.io/v1", resource: "backups", namespaced: true },
+  restore:               { api: "/apis/velero.io/v1", resource: "restores", namespaced: true },
+  restores:              { api: "/apis/velero.io/v1", resource: "restores", namespaced: true },
+  schedule:              { api: "/apis/velero.io/v1", resource: "schedules", namespaced: true },
+  schedules:             { api: "/apis/velero.io/v1", resource: "schedules", namespaced: true },
+  backupstoragelocation: { api: "/apis/velero.io/v1", resource: "backupstoragelocations", namespaced: true },
+  bsl:                   { api: "/apis/velero.io/v1", resource: "backupstoragelocations", namespaced: true },
+  volumesnapshotlocation:{ api: "/apis/velero.io/v1", resource: "volumesnapshotlocations", namespaced: true },
+  vsl:                   { api: "/apis/velero.io/v1", resource: "volumesnapshotlocations", namespaced: true },
+  podvolumebackup:       { api: "/apis/velero.io/v1", resource: "podvolumebackups", namespaced: true },
+
+  // ---- Sprint B: Multi-cluster — ACM / Hive / HyperShift ----
+  managedcluster:        { api: "/apis/cluster.open-cluster-management.io/v1", resource: "managedclusters", namespaced: false },
+  managedclusters:       { api: "/apis/cluster.open-cluster-management.io/v1", resource: "managedclusters", namespaced: false },
+  managedclusteraddon:   { api: "/apis/addon.open-cluster-management.io/v1alpha1", resource: "managedclusteraddons", namespaced: true },
+  policy:                { api: "/apis/policy.open-cluster-management.io/v1", resource: "policies", namespaced: true },
+  policies:              { api: "/apis/policy.open-cluster-management.io/v1", resource: "policies", namespaced: true },
+  placementrule:         { api: "/apis/apps.open-cluster-management.io/v1", resource: "placementrules", namespaced: true },
+  placement:             { api: "/apis/cluster.open-cluster-management.io/v1beta1", resource: "placements", namespaced: true },
+  manifestwork:          { api: "/apis/work.open-cluster-management.io/v1", resource: "manifestworks", namespaced: true },
+  gitopscluster:         { api: "/apis/apps.open-cluster-management.io/v1beta1", resource: "gitopsclusters", namespaced: true },
+  clusterdeployment:     { api: "/apis/hive.openshift.io/v1", resource: "clusterdeployments", namespaced: true },
+  clusterdeployments:    { api: "/apis/hive.openshift.io/v1", resource: "clusterdeployments", namespaced: true },
+  clusterpool:           { api: "/apis/hive.openshift.io/v1", resource: "clusterpools", namespaced: true },
+  clusterpools:          { api: "/apis/hive.openshift.io/v1", resource: "clusterpools", namespaced: true },
+  clusterclaim:          { api: "/apis/hive.openshift.io/v1", resource: "clusterclaims", namespaced: true },
+  clusterimageset:       { api: "/apis/hive.openshift.io/v1", resource: "clusterimagesets", namespaced: false },
+  hostedcluster:         { api: "/apis/hypershift.openshift.io/v1beta1", resource: "hostedclusters", namespaced: true },
+  hostedclusters:        { api: "/apis/hypershift.openshift.io/v1beta1", resource: "hostedclusters", namespaced: true },
+  nodepool:              { api: "/apis/hypershift.openshift.io/v1beta1", resource: "nodepools", namespaced: true },
+  nodepools:             { api: "/apis/hypershift.openshift.io/v1beta1", resource: "nodepools", namespaced: true },
+
+  // ---- Sprint B: Bare-metal & Assisted Installer ----
+  baremetalhost:         { api: "/apis/metal3.io/v1alpha1", resource: "baremetalhosts", namespaced: true },
+  baremetalhosts:        { api: "/apis/metal3.io/v1alpha1", resource: "baremetalhosts", namespaced: true },
+  bmh:                   { api: "/apis/metal3.io/v1alpha1", resource: "baremetalhosts", namespaced: true },
+  hostfirmwaresettings:  { api: "/apis/metal3.io/v1alpha1", resource: "hostfirmwaresettings", namespaced: true },
+  infraenv:              { api: "/apis/agent-install.openshift.io/v1beta1", resource: "infraenvs", namespaced: true },
+  infraenvs:             { api: "/apis/agent-install.openshift.io/v1beta1", resource: "infraenvs", namespaced: true },
+  agent:                 { api: "/apis/agent-install.openshift.io/v1beta1", resource: "agents", namespaced: true },
+  agents:                { api: "/apis/agent-install.openshift.io/v1beta1", resource: "agents", namespaced: true },
+  agentclusterinstall:   { api: "/apis/extensions.hive.openshift.io/v1beta1", resource: "agentclusterinstalls", namespaced: true },
+
+  // ---- Sprint B: Performance / Tuning ----
+  performanceprofile:    { api: "/apis/performance.openshift.io/v2", resource: "performanceprofiles", namespaced: false },
+  performanceprofiles:   { api: "/apis/performance.openshift.io/v2", resource: "performanceprofiles", namespaced: false },
+  tuned:                 { api: "/apis/tuned.openshift.io/v1", resource: "tuneds", namespaced: true },
+  tuneds:                { api: "/apis/tuned.openshift.io/v1", resource: "tuneds", namespaced: true },
+  nodefeaturediscovery:  { api: "/apis/nfd.openshift.io/v1", resource: "nodefeaturediscoveries", namespaced: true },
+  nfd:                   { api: "/apis/nfd.openshift.io/v1", resource: "nodefeaturediscoveries", namespaced: true },
+
+  // ---- Sprint B: OpenShift AI / RHODS ----
+  datasciencecluster:    { api: "/apis/datasciencecluster.opendatahub.io/v1", resource: "datascienceclusters", namespaced: false },
+  datascienceclusters:   { api: "/apis/datasciencecluster.opendatahub.io/v1", resource: "datascienceclusters", namespaced: false },
+  dsc:                   { api: "/apis/datasciencecluster.opendatahub.io/v1", resource: "datascienceclusters", namespaced: false },
+  notebook:              { api: "/apis/kubeflow.org/v1", resource: "notebooks", namespaced: true },
+  notebooks:             { api: "/apis/kubeflow.org/v1", resource: "notebooks", namespaced: true },
+  inferenceservice:      { api: "/apis/serving.kserve.io/v1beta1", resource: "inferenceservices", namespaced: true },
+  inferenceservices:     { api: "/apis/serving.kserve.io/v1beta1", resource: "inferenceservices", namespaced: true },
+  isvc:                  { api: "/apis/serving.kserve.io/v1beta1", resource: "inferenceservices", namespaced: true },
+  servingruntime:        { api: "/apis/serving.kserve.io/v1alpha1", resource: "servingruntimes", namespaced: true },
+
+  // ---- Sprint B: SR-IOV / MetalLB / OVN advanced ----
+  sriovnetwork:          { api: "/apis/sriovnetwork.openshift.io/v1", resource: "sriovnetworks", namespaced: true },
+  sriovnetworknodepolicy:{ api: "/apis/sriovnetwork.openshift.io/v1", resource: "sriovnetworknodepolicies", namespaced: true },
+  bgppeer:               { api: "/apis/metallb.io/v1beta2", resource: "bgppeers", namespaced: true },
+  ipaddresspool:         { api: "/apis/metallb.io/v1beta1", resource: "ipaddresspools", namespaced: true },
+  l2advertisement:       { api: "/apis/metallb.io/v1beta1", resource: "l2advertisements", namespaced: true },
+  bgpadvertisement:      { api: "/apis/metallb.io/v1beta1", resource: "bgpadvertisements", namespaced: true },
+  adminnetworkpolicy:    { api: "/apis/policy.networking.k8s.io/v1alpha1", resource: "adminnetworkpolicies", namespaced: false },
+  baselineadminnetworkpolicy: { api: "/apis/policy.networking.k8s.io/v1alpha1", resource: "baselineadminnetworkpolicies", namespaced: false },
+  flowcollector:         { api: "/apis/flows.netobserv.io/v1beta2", resource: "flowcollectors", namespaced: false },
+  ingresscontroller:     { api: "/apis/operator.openshift.io/v1", resource: "ingresscontrollers", namespaced: true },
+  ingresscontrollers:    { api: "/apis/operator.openshift.io/v1", resource: "ingresscontrollers", namespaced: true },
+
+  // ---- Sprint B: Tekton Advanced (Triggers) ----
+  eventlistener:         { api: "/apis/triggers.tekton.dev/v1beta1", resource: "eventlisteners", namespaced: true },
+  triggerbinding:        { api: "/apis/triggers.tekton.dev/v1beta1", resource: "triggerbindings", namespaced: true },
+  triggertemplate:       { api: "/apis/triggers.tekton.dev/v1beta1", resource: "triggertemplates", namespaced: true },
+  trigger:               { api: "/apis/triggers.tekton.dev/v1beta1", resource: "triggers", namespaced: true },
+
+  // ---- Sprint B: Admission / API governance ----
+  mutatingwebhookconfiguration:  { api: "/apis/admissionregistration.k8s.io/v1", resource: "mutatingwebhookconfigurations", namespaced: false },
+  validatingwebhookconfiguration:{ api: "/apis/admissionregistration.k8s.io/v1", resource: "validatingwebhookconfigurations", namespaced: false },
+  apiservice:            { api: "/apis/apiregistration.k8s.io/v1", resource: "apiservices", namespaced: false },
+  apirequestcount:       { api: "/apis/apiserver.openshift.io/v1", resource: "apirequestcounts", namespaced: false },
+  flowschema:            { api: "/apis/flowcontrol.apiserver.k8s.io/v1", resource: "flowschemas", namespaced: false },
+  prioritylevelconfiguration: { api: "/apis/flowcontrol.apiserver.k8s.io/v1", resource: "prioritylevelconfigurations", namespaced: false },
+
+  // ---- Sprint B: ArgoCD / GitOps ----
+  application:           { api: "/apis/argoproj.io/v1alpha1", resource: "applications", namespaced: true },
+  applications:          { api: "/apis/argoproj.io/v1alpha1", resource: "applications", namespaced: true },
+  appproject:            { api: "/apis/argoproj.io/v1alpha1", resource: "appprojects", namespaced: true },
+  appprojects:           { api: "/apis/argoproj.io/v1alpha1", resource: "appprojects", namespaced: true },
+  applicationset:        { api: "/apis/argoproj.io/v1alpha1", resource: "applicationsets", namespaced: true },
+  appset:                { api: "/apis/argoproj.io/v1alpha1", resource: "applicationsets", namespaced: true },
+
+  // ---- Sprint B: OpenShift Templates / Catalog ----
+  template:              { api: "/apis/template.openshift.io/v1", resource: "templates", namespaced: true },
+  templates:             { api: "/apis/template.openshift.io/v1", resource: "templates", namespaced: true },
+  catalogsource:         { api: "/apis/operators.coreos.com/v1alpha1", resource: "catalogsources", namespaced: true },
+  catalogsources:        { api: "/apis/operators.coreos.com/v1alpha1", resource: "catalogsources", namespaced: true },
+  packagemanifest:       { api: "/apis/packages.operators.coreos.com/v1", resource: "packagemanifests", namespaced: true },
 };
 
 // ---------------------------------------------------------------------------
@@ -7572,6 +7795,821 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
     }
   }
 
+  // ---- Sprint B: /compliance — Compliance Operator scan results ----
+  if (cmd === "compliance" || cmd === "scans") {
+    try {
+      const [suites, scans, results] = await Promise.all([
+        ocpGet("/apis/compliance.openshift.io/v1alpha1/compliancesuites").catch(() => ({ items: [] })),
+        ocpGet("/apis/compliance.openshift.io/v1alpha1/compliancescans").catch(() => ({ items: [] })),
+        ocpGet("/apis/compliance.openshift.io/v1alpha1/compliancecheckresults").catch(() => ({ items: [] })),
+      ]);
+      const allSuites = suites.items || [];
+      const allScans = scans.items || [];
+      const allResults = results.items || [];
+      if (allSuites.length === 0 && allScans.length === 0) {
+        return { reply: "### Compliance\n[INFO] Compliance Operator not installed. Install from OperatorHub to scan against CIS, NIST, PCI-DSS, HIPAA profiles.", contextKeys: ["slash", "compliance"] };
+      }
+      const failed = allResults.filter((r) => r.status === "FAIL");
+      const passed = allResults.filter((r) => r.status === "PASS");
+      const manual = allResults.filter((r) => r.status === "MANUAL");
+      const lines = [
+        `### Compliance & Audit Scans`, ``,
+        `@@SUMMARY|green:${passed.length} Passed|amber:${manual.length} Manual Review|red:${failed.length} Failed@@`, ``,
+        `**Suites:** ${allSuites.length} | **Scans:** ${allScans.length} | **Check Results:** ${allResults.length}`, ``,
+      ];
+      if (allSuites.length > 0) {
+        lines.push(`#### Compliance Suites`, ``, `| Suite | Phase | Result |`, `|---|---|---|`);
+        for (const s of allSuites.slice(0, 10)) {
+          lines.push(`| ${s.metadata.name} | ${s.status?.phase || "-"} | ${s.status?.result || "-"} |`);
+        }
+        lines.push(``);
+      }
+      if (failed.length > 0) {
+        lines.push(`#### Top Failing Checks (${failed.length})`, ``);
+        for (const r of failed.slice(0, 15)) {
+          const sev = r.severity || "medium";
+          lines.push(`  - **[${sev.toUpperCase()}]** ${r.metadata.name} — ${r.description?.slice(0, 120) || "-"}`);
+        }
+      }
+      lines.push(``, `**Remediate:** \`oc apply -f <ComplianceRemediation>\` or run \`/plan remediate compliance\` for AI-assisted fixes.`);
+      return { reply: lines.join("\n"), contextKeys: ["slash", "compliance"] };
+    } catch (e) {
+      return { reply: `[ERROR] /compliance: ${e.message}`, contextKeys: ["slash", "compliance"] };
+    }
+  }
+
+  // ---- Sprint B: /promrules — PrometheusRule / ServiceMonitor ----
+  if (cmd === "promrules" || cmd === "alertrules" || cmd === "promo") {
+    const ns = arg || null;
+    try {
+      const [rulesData, smData] = await Promise.all([
+        ocpGet(ns ? `/apis/monitoring.coreos.com/v1/namespaces/${ns}/prometheusrules` : "/apis/monitoring.coreos.com/v1/prometheusrules").catch(() => ({ items: [] })),
+        ocpGet(ns ? `/apis/monitoring.coreos.com/v1/namespaces/${ns}/servicemonitors` : "/apis/monitoring.coreos.com/v1/servicemonitors").catch(() => ({ items: [] })),
+      ]);
+      const rules = rulesData.items || [];
+      const sms = smData.items || [];
+      if (rules.length === 0 && sms.length === 0) {
+        return { reply: "### Monitoring Rules\n[INFO] No PrometheusRules or ServiceMonitors found. Prometheus Operator may not be installed.", contextKeys: ["slash", "promrules"] };
+      }
+      const allAlerts = [];
+      for (const r of rules) {
+        for (const grp of (r.spec?.groups || [])) {
+          for (const rule of (grp.rules || [])) {
+            if (rule.alert) allAlerts.push({ name: rule.alert, expr: rule.expr, severity: rule.labels?.severity || "info", ns: r.metadata.namespace, file: r.metadata.name });
+          }
+        }
+      }
+      const lines = [
+        `### Prometheus Operator Rules${ns ? ` (${ns})` : ""}`, ``,
+        `**PrometheusRules:** ${rules.length} | **ServiceMonitors:** ${sms.length} | **Alert Rules:** ${allAlerts.length}`, ``,
+      ];
+      if (allAlerts.length > 0) {
+        lines.push(`#### Top Alert Rules`, ``, `| Alert | Severity | Namespace | Source |`, `|---|---|---|---|`);
+        for (const a of allAlerts.slice(0, 25)) {
+          lines.push(`| ${a.name} | ${a.severity} | ${a.ns} | ${a.file} |`);
+        }
+        lines.push(``);
+      }
+      if (sms.length > 0) {
+        lines.push(`#### Service Monitors (${sms.length}) — top 10`, ``, `| Name | Namespace | Endpoints |`, `|---|---|---|`);
+        for (const s of sms.slice(0, 10)) {
+          lines.push(`| ${s.metadata.name} | ${s.metadata.namespace} | ${(s.spec?.endpoints || []).length} |`);
+        }
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "promrules"] };
+    } catch (e) {
+      return { reply: `[ERROR] /promrules: ${e.message}`, contextKeys: ["slash", "promrules"] };
+    }
+  }
+
+  // ---- Sprint B: /logging — ClusterLogForwarder + LokiStack ----
+  if (cmd === "logging" || cmd === "logs-config") {
+    try {
+      const [lfData, clData, lokiData] = await Promise.all([
+        ocpGet("/apis/logging.openshift.io/v1/clusterlogforwarders").catch(() => ({ items: [] })),
+        ocpGet("/apis/logging.openshift.io/v1/clusterloggings").catch(() => ({ items: [] })),
+        ocpGet("/apis/loki.grafana.com/v1/lokistacks").catch(() => ({ items: [] })),
+      ]);
+      const lfs = lfData.items || [];
+      const cls = clData.items || [];
+      const lokis = lokiData.items || [];
+      if (lfs.length === 0 && cls.length === 0 && lokis.length === 0) {
+        return { reply: "### Logging Stack\n[INFO] No OpenShift Logging operators detected. Install ClusterLogging / Loki Operators.", contextKeys: ["slash", "logging"] };
+      }
+      const lines = [`### Logging Stack`, ``, `**ClusterLogging:** ${cls.length} | **ClusterLogForwarders:** ${lfs.length} | **LokiStacks:** ${lokis.length}`, ``];
+      for (const cl of cls) {
+        const phase = cl.status?.conditions?.find((c) => c.type === "Ready")?.status === "True" ? "Ready" : "Degraded";
+        lines.push(`- **ClusterLogging** \`${cl.metadata.name}\` — ${phase} — Collection: ${cl.spec?.collection?.type || "-"}, LogStore: ${cl.spec?.logStore?.type || "-"}`);
+      }
+      for (const lf of lfs) {
+        const inputs = (lf.spec?.inputs || []).length;
+        const outputs = (lf.spec?.outputs || []).length;
+        const pipelines = (lf.spec?.pipelines || []).length;
+        lines.push(`- **LogForwarder** \`${lf.metadata.namespace}/${lf.metadata.name}\` — ${inputs} inputs, ${outputs} outputs, ${pipelines} pipelines`);
+      }
+      for (const l of lokis) {
+        lines.push(`- **LokiStack** \`${l.metadata.namespace}/${l.metadata.name}\` — Size: ${l.spec?.size || "-"}`);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "logging"] };
+    } catch (e) {
+      return { reply: `[ERROR] /logging: ${e.message}`, contextKeys: ["slash", "logging"] };
+    }
+  }
+
+  // ---- Sprint B: /odf — OpenShift Data Foundation / Ceph ----
+  if (cmd === "odf" || cmd === "ceph" || cmd === "storage-ops") {
+    try {
+      const [scData, cephData, noobaaData] = await Promise.all([
+        ocpGet("/apis/ocs.openshift.io/v1/storageclusters").catch(() => ({ items: [] })),
+        ocpGet("/apis/ceph.rook.io/v1/cephclusters").catch(() => ({ items: [] })),
+        ocpGet("/apis/noobaa.io/v1alpha1/noobaas").catch(() => ({ items: [] })),
+      ]);
+      const scs = scData.items || [];
+      const cephs = cephData.items || [];
+      const noobaas = noobaaData.items || [];
+      if (scs.length === 0 && cephs.length === 0) {
+        return { reply: "### ODF / Ceph\n[INFO] OpenShift Data Foundation not installed.", contextKeys: ["slash", "odf"] };
+      }
+      const lines = [`### OpenShift Data Foundation (Ceph)`, ``];
+      for (const sc of scs) {
+        lines.push(`#### StorageCluster \`${sc.metadata.name}\``);
+        lines.push(`- Phase: ${sc.status?.phase || "?"}`);
+        lines.push(`- StorageDeviceSets: ${(sc.spec?.storageDeviceSets || []).length}`);
+      }
+      for (const c of cephs) {
+        const cs = c.status?.ceph || {};
+        lines.push(``, `#### CephCluster \`${c.metadata.name}\``);
+        lines.push(`- Health: ${cs.health || "?"}`);
+        lines.push(`- Capacity used: ${cs.capacity?.bytesUsed ? Math.round(cs.capacity.bytesUsed / (1024**3)) + " GiB" : "-"} / ${cs.capacity?.bytesTotal ? Math.round(cs.capacity.bytesTotal / (1024**3)) + " GiB" : "-"}`);
+        lines.push(`- Mons: ${c.status?.message || "-"}`);
+      }
+      for (const nb of noobaas) {
+        lines.push(``, `#### NooBaa \`${nb.metadata.namespace}/${nb.metadata.name}\` — Phase: ${nb.status?.phase || "-"}`);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "odf"] };
+    } catch (e) {
+      return { reply: `[ERROR] /odf: ${e.message}`, contextKeys: ["slash", "odf"] };
+    }
+  }
+
+  // ---- Sprint B: /acm — Advanced Cluster Management ----
+  if (cmd === "acm" || cmd === "managedclusters" || cmd === "fleet") {
+    try {
+      const [mcData, polData] = await Promise.all([
+        ocpGet("/apis/cluster.open-cluster-management.io/v1/managedclusters").catch(() => ({ items: [] })),
+        ocpGet("/apis/policy.open-cluster-management.io/v1/policies").catch(() => ({ items: [] })),
+      ]);
+      const clusters = mcData.items || [];
+      const policies = polData.items || [];
+      if (clusters.length === 0) {
+        return { reply: "### ACM Fleet\n[INFO] No managed clusters found. ACM hub may not be installed here.", contextKeys: ["slash", "acm"] };
+      }
+      const available = clusters.filter((c) => (c.status?.conditions || []).some((cd) => cd.type === "ManagedClusterConditionAvailable" && cd.status === "True"));
+      const compliant = policies.filter((p) => p.status?.compliant === "Compliant");
+      const nonCompliant = policies.filter((p) => p.status?.compliant === "NonCompliant");
+      const lines = [
+        `### ACM Fleet Overview`, ``,
+        `@@SUMMARY|green:${available.length} Available Clusters|amber:${compliant.length} Compliant Policies|red:${nonCompliant.length} Non-Compliant@@`, ``,
+        `**Managed Clusters:** ${clusters.length} | **Policies:** ${policies.length}`, ``,
+        `#### Clusters`, ``, `| Name | Available | Version | Hub Accepted |`, `|---|---|---|---|`,
+      ];
+      for (const c of clusters.slice(0, 30)) {
+        const avail = (c.status?.conditions || []).find((cd) => cd.type === "ManagedClusterConditionAvailable");
+        const ver = c.status?.version?.kubernetes || "-";
+        const accepted = (c.status?.conditions || []).find((cd) => cd.type === "HubAcceptedManagedCluster")?.status === "True" ? "yes" : "no";
+        lines.push(`| ${c.metadata.name} | ${avail?.status || "?"} | ${ver} | ${accepted} |`);
+      }
+      if (nonCompliant.length > 0) {
+        lines.push(``, `#### Non-Compliant Policies`, ``);
+        for (const p of nonCompliant.slice(0, 10)) {
+          lines.push(`  - **${p.metadata.namespace}/${p.metadata.name}** — ${p.status?.compliant}`);
+        }
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "acm"] };
+    } catch (e) {
+      return { reply: `[ERROR] /acm: ${e.message}`, contextKeys: ["slash", "acm"] };
+    }
+  }
+
+  // ---- Sprint B: /hypershift — Hosted Control Planes ----
+  if (cmd === "hypershift" || cmd === "hcp" || cmd === "hostedclusters") {
+    try {
+      const [hcData, npData] = await Promise.all([
+        ocpGet("/apis/hypershift.openshift.io/v1beta1/hostedclusters").catch(() => ({ items: [] })),
+        ocpGet("/apis/hypershift.openshift.io/v1beta1/nodepools").catch(() => ({ items: [] })),
+      ]);
+      const hcs = hcData.items || [];
+      const nps = npData.items || [];
+      if (hcs.length === 0) {
+        return { reply: "### HyperShift\n[INFO] No HostedClusters found. HyperShift operator may not be installed.", contextKeys: ["slash", "hypershift"] };
+      }
+      const lines = [
+        `### HyperShift — Hosted Control Planes`, ``,
+        `**HostedClusters:** ${hcs.length} | **NodePools:** ${nps.length}`, ``,
+        `| HostedCluster | Namespace | Version | Available |`,
+        `|---|---|---|---|`,
+      ];
+      for (const h of hcs) {
+        const avail = (h.status?.conditions || []).find((c) => c.type === "Available")?.status || "?";
+        lines.push(`| ${h.metadata.name} | ${h.metadata.namespace} | ${h.spec?.release?.image?.split(":").pop() || "-"} | ${avail} |`);
+      }
+      if (nps.length > 0) {
+        lines.push(``, `#### NodePools`, ``, `| NodePool | Cluster | Replicas | Version |`, `|---|---|---|---|`);
+        for (const n of nps.slice(0, 20)) {
+          lines.push(`| ${n.metadata.name} | ${n.spec?.clusterName} | ${n.status?.replicas || 0}/${n.spec?.replicas || 0} | ${n.spec?.release?.image?.split(":").pop() || "-"} |`);
+        }
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "hypershift"] };
+    } catch (e) {
+      return { reply: `[ERROR] /hypershift: ${e.message}`, contextKeys: ["slash", "hypershift"] };
+    }
+  }
+
+  // ---- Sprint B: /baremetal — Bare-Metal hosts & Assisted Installer ----
+  if (cmd === "baremetal" || cmd === "bmh" || cmd === "bm") {
+    try {
+      const [bmData, agData, ieData] = await Promise.all([
+        ocpGet("/apis/metal3.io/v1alpha1/baremetalhosts").catch(() => ({ items: [] })),
+        ocpGet("/apis/agent-install.openshift.io/v1beta1/agents").catch(() => ({ items: [] })),
+        ocpGet("/apis/agent-install.openshift.io/v1beta1/infraenvs").catch(() => ({ items: [] })),
+      ]);
+      const bmhs = bmData.items || [];
+      const agents = agData.items || [];
+      const infraEnvs = ieData.items || [];
+      if (bmhs.length === 0 && agents.length === 0) {
+        return { reply: "### Bare-Metal\n[INFO] No BareMetalHosts or Assisted Installer agents found.", contextKeys: ["slash", "baremetal"] };
+      }
+      const lines = [
+        `### Bare-Metal Hosts`, ``,
+        `**BMHs:** ${bmhs.length} | **Agents:** ${agents.length} | **InfraEnvs:** ${infraEnvs.length}`, ``,
+        `| BMH | Namespace | State | Online | Hardware Profile |`, `|---|---|---|---|---|`,
+      ];
+      for (const b of bmhs.slice(0, 30)) {
+        lines.push(`| ${b.metadata.name} | ${b.metadata.namespace} | ${b.status?.provisioning?.state || "-"} | ${b.status?.poweredOn ? "yes" : "no"} | ${b.spec?.hardwareProfile || "-"} |`);
+      }
+      if (agents.length > 0) {
+        lines.push(``, `#### Assisted Installer Agents`, ``, `| Agent | Cluster | Approved | Stage |`, `|---|---|---|---|`);
+        for (const a of agents.slice(0, 20)) {
+          lines.push(`| ${a.metadata.name} | ${a.spec?.clusterDeploymentName?.name || "-"} | ${a.spec?.approved ? "yes" : "no"} | ${a.status?.progress?.currentStage || "-"} |`);
+        }
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "baremetal"] };
+    } catch (e) {
+      return { reply: `[ERROR] /baremetal: ${e.message}`, contextKeys: ["slash", "baremetal"] };
+    }
+  }
+
+  // ---- Sprint B: /performance — PerformanceProfile / Tuned ----
+  if (cmd === "performance" || cmd === "perf" || cmd === "tuning") {
+    try {
+      const [ppData, tunedData] = await Promise.all([
+        ocpGet("/apis/performance.openshift.io/v2/performanceprofiles").catch(() => ({ items: [] })),
+        ocpGet("/apis/tuned.openshift.io/v1/tuneds").catch(() => ({ items: [] })),
+      ]);
+      const pps = ppData.items || [];
+      const tuneds = tunedData.items || [];
+      if (pps.length === 0 && tuneds.length === 0) {
+        return { reply: "### Performance Tuning\n[INFO] No PerformanceProfiles or Tuneds found.", contextKeys: ["slash", "performance"] };
+      }
+      const lines = [`### Performance Tuning`, ``, `**PerformanceProfiles:** ${pps.length} | **Tuneds:** ${tuneds.length}`, ``];
+      for (const p of pps) {
+        const isolatedCpu = p.spec?.cpu?.isolated || "-";
+        const reservedCpu = p.spec?.cpu?.reserved || "-";
+        const hp = (p.spec?.hugepages?.pages || []).map((h) => `${h.count}x${h.size}`).join(", ") || "-";
+        lines.push(`- **PerformanceProfile** \`${p.metadata.name}\` — Isolated CPU: \`${isolatedCpu}\`, Reserved: \`${reservedCpu}\`, HugePages: ${hp}`);
+      }
+      if (tuneds.length > 0) {
+        lines.push(``, `#### Tuneds (showing first 10)`);
+        for (const t of tuneds.slice(0, 10)) {
+          lines.push(`  - **${t.metadata.name}** — Profiles: ${(t.spec?.profile || []).map((p) => p.name).join(", ") || "-"}`);
+        }
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "performance"] };
+    } catch (e) {
+      return { reply: `[ERROR] /performance: ${e.message}`, contextKeys: ["slash", "performance"] };
+    }
+  }
+
+  // ---- Sprint B: /ai — OpenShift AI / RHODS resources ----
+  if (cmd === "ai" || cmd === "rhods" || cmd === "ml" || cmd === "datascience") {
+    try {
+      const [dscData, nbData, isvcData] = await Promise.all([
+        ocpGet("/apis/datasciencecluster.opendatahub.io/v1/datascienceclusters").catch(() => ({ items: [] })),
+        ocpGet("/apis/kubeflow.org/v1/notebooks").catch(() => ({ items: [] })),
+        ocpGet("/apis/serving.kserve.io/v1beta1/inferenceservices").catch(() => ({ items: [] })),
+      ]);
+      const dscs = dscData.items || [];
+      const notebooks = nbData.items || [];
+      const isvcs = isvcData.items || [];
+      if (dscs.length === 0 && notebooks.length === 0 && isvcs.length === 0) {
+        return { reply: "### OpenShift AI / RHODS\n[INFO] OpenShift AI / RHODS not installed. Install from OperatorHub for Notebooks, Pipelines, KServe model serving.", contextKeys: ["slash", "ai"] };
+      }
+      const lines = [
+        `### OpenShift AI / RHODS`, ``,
+        `**DataScienceClusters:** ${dscs.length} | **Notebooks:** ${notebooks.length} | **InferenceServices:** ${isvcs.length}`, ``,
+      ];
+      for (const d of dscs) lines.push(`- **DSC** \`${d.metadata.name}\` — Phase: ${d.status?.phase || "-"}`);
+      if (notebooks.length > 0) {
+        lines.push(``, `#### Notebooks`, ``, `| Notebook | Namespace | Image |`, `|---|---|---|`);
+        for (const n of notebooks.slice(0, 20)) {
+          const img = n.spec?.template?.spec?.containers?.[0]?.image?.split("/").pop() || "-";
+          lines.push(`| ${n.metadata.name} | ${n.metadata.namespace} | ${img} |`);
+        }
+      }
+      if (isvcs.length > 0) {
+        lines.push(``, `#### Inference Services`, ``, `| Service | Namespace | URL | Ready |`, `|---|---|---|---|`);
+        for (const s of isvcs.slice(0, 20)) {
+          const ready = (s.status?.conditions || []).find((c) => c.type === "Ready")?.status || "?";
+          lines.push(`| ${s.metadata.name} | ${s.metadata.namespace} | ${s.status?.url || "-"} | ${ready} |`);
+        }
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "ai"] };
+    } catch (e) {
+      return { reply: `[ERROR] /ai: ${e.message}`, contextKeys: ["slash", "ai"] };
+    }
+  }
+
+  // ---- Sprint B: /metallb — MetalLB / load-balancer config ----
+  if (cmd === "metallb" || cmd === "lb") {
+    try {
+      const [poolData, peerData] = await Promise.all([
+        ocpGet("/apis/metallb.io/v1beta1/ipaddresspools").catch(() => ({ items: [] })),
+        ocpGet("/apis/metallb.io/v1beta2/bgppeers").catch(() => ({ items: [] })),
+      ]);
+      const pools = poolData.items || [];
+      const peers = peerData.items || [];
+      if (pools.length === 0 && peers.length === 0) {
+        return { reply: "### MetalLB\n[INFO] No MetalLB resources found.", contextKeys: ["slash", "metallb"] };
+      }
+      const lines = [`### MetalLB Configuration`, ``, `**IPAddressPools:** ${pools.length} | **BGPPeers:** ${peers.length}`, ``];
+      if (pools.length > 0) {
+        lines.push(`#### IP Address Pools`, ``, `| Pool | Namespace | Addresses |`, `|---|---|---|`);
+        for (const p of pools) lines.push(`| ${p.metadata.name} | ${p.metadata.namespace} | ${(p.spec?.addresses || []).join(", ")} |`);
+        lines.push(``);
+      }
+      if (peers.length > 0) {
+        lines.push(`#### BGP Peers`, ``, `| Peer | Namespace | ASN | Address |`, `|---|---|---|---|`);
+        for (const p of peers) lines.push(`| ${p.metadata.name} | ${p.metadata.namespace} | ${p.spec?.peerASN || "-"} | ${p.spec?.peerAddress || "-"} |`);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "metallb"] };
+    } catch (e) {
+      return { reply: `[ERROR] /metallb: ${e.message}`, contextKeys: ["slash", "metallb"] };
+    }
+  }
+
+  // ---- Sprint B: /webhooks — admission controllers ----
+  if (cmd === "webhooks" || cmd === "admission") {
+    try {
+      const [mwData, vwData] = await Promise.all([
+        ocpGet("/apis/admissionregistration.k8s.io/v1/mutatingwebhookconfigurations").catch(() => ({ items: [] })),
+        ocpGet("/apis/admissionregistration.k8s.io/v1/validatingwebhookconfigurations").catch(() => ({ items: [] })),
+      ]);
+      const mws = mwData.items || [];
+      const vws = vwData.items || [];
+      const lines = [
+        `### Admission Webhooks`, ``,
+        `**Mutating:** ${mws.length} | **Validating:** ${vws.length}`, ``,
+        `| Type | Name | Webhooks | Failure Policy |`, `|---|---|---|---|`,
+      ];
+      for (const m of mws.slice(0, 30)) {
+        const fp = (m.webhooks || [])[0]?.failurePolicy || "-";
+        lines.push(`| Mutating | ${m.metadata.name} | ${(m.webhooks || []).length} | ${fp} |`);
+      }
+      for (const v of vws.slice(0, 30)) {
+        const fp = (v.webhooks || [])[0]?.failurePolicy || "-";
+        lines.push(`| Validating | ${v.metadata.name} | ${(v.webhooks || []).length} | ${fp} |`);
+      }
+      lines.push(``, `**Caution:** A misconfigured admission webhook can block all writes to the API server.`);
+      return { reply: lines.join("\n"), contextKeys: ["slash", "webhooks"] };
+    } catch (e) {
+      return { reply: `[ERROR] /webhooks: ${e.message}`, contextKeys: ["slash", "webhooks"] };
+    }
+  }
+
+  // ---- Sprint B: /argocd — ArgoCD Applications detailed ----
+  if (cmd === "argocd" || cmd === "apps" || cmd === "argo") {
+    const ns = arg || null;
+    try {
+      const appData = await ocpGet(ns ? `/apis/argoproj.io/v1alpha1/namespaces/${ns}/applications` : "/apis/argoproj.io/v1alpha1/applications").catch(() => ({ items: [] }));
+      const apps = appData.items || [];
+      if (apps.length === 0) {
+        return { reply: "### ArgoCD Applications\n[INFO] No Applications found. ArgoCD / OpenShift GitOps may not be installed.", contextKeys: ["slash", "argocd"] };
+      }
+      const synced = apps.filter((a) => a.status?.sync?.status === "Synced");
+      const oos = apps.filter((a) => a.status?.sync?.status === "OutOfSync");
+      const healthy = apps.filter((a) => a.status?.health?.status === "Healthy");
+      const degraded = apps.filter((a) => a.status?.health?.status === "Degraded");
+      const lines = [
+        `### ArgoCD Applications${ns ? ` (${ns})` : ""}`, ``,
+        `@@SUMMARY|green:${synced.length} Synced|amber:${oos.length} Out-of-Sync|red:${degraded.length} Degraded@@`, ``,
+        `**Apps:** ${apps.length} | **Synced:** ${synced.length} | **Healthy:** ${healthy.length}`, ``,
+        `| App | Namespace | Sync | Health | Repo |`, `|---|---|---|---|---|`,
+      ];
+      for (const a of apps.slice(0, 30)) {
+        const sync = a.status?.sync?.status || "-";
+        const health = a.status?.health?.status || "-";
+        const repo = a.spec?.source?.repoURL?.split("/").slice(-2).join("/") || "-";
+        lines.push(`| ${a.metadata.name} | ${a.metadata.namespace} | ${sync} | ${health} | ${repo} |`);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "argocd"] };
+    } catch (e) {
+      return { reply: `[ERROR] /argocd: ${e.message}`, contextKeys: ["slash", "argocd"] };
+    }
+  }
+
+  // ---- Sprint C: /bulk — bulk operations across many resources ----
+  if (cmd === "bulk" || cmd === "cleanup") {
+    if (!arg) {
+      return {
+        reply: "### Bulk Operations\n\nUse `/bulk <action>` to perform safe, AI-assisted bulk changes.\n\n**Examples:**\n- `/bulk delete evicted pods` — clean up all evicted pods cluster-wide\n- `/bulk delete completed pods` — clean up completed jobs/pods\n- `/bulk delete terminating pods` — force-delete pods stuck in Terminating\n- `/bulk restart crashing pods` — restart all CrashLoopBackOff pods\n- `/bulk delete failed jobs` — clean up failed Job objects\n- `/bulk delete orphaned pvs` — find PVs without matching PVCs",
+        contextKeys: ["slash", "bulk"],
+      };
+    }
+    try {
+      const action = arg.toLowerCase();
+      if (/\bevicted\b/.test(action)) {
+        const data = await ocpGet("/api/v1/pods?fieldSelector=status.phase=Failed");
+        const evicted = (data.items || []).filter((p) => p.status?.reason === "Evicted");
+        if (evicted.length === 0) return { reply: "### Bulk Cleanup\n[OK] No Evicted pods found.", contextKeys: ["slash", "bulk"] };
+        const lines = [`### Bulk Cleanup — ${evicted.length} Evicted Pod(s)`, ``];
+        lines.push(`| Namespace | Pod | Node |`, `|---|---|---|`);
+        for (const p of evicted.slice(0, 50)) {
+          lines.push(`| ${p.metadata.namespace} | ${p.metadata.name} | ${p.spec?.nodeName || "-"} |`);
+        }
+        lines.push(``, `**Delete all Evicted pods (executes ${evicted.length} delete operations):**`);
+        lines.push(`@@SEC_FIX_CMD|oc get pods -A --field-selector=status.phase=Failed -o json | jq -r '.items[] | select(.status.reason=="Evicted") | "oc delete pod " + .metadata.name + " -n " + .metadata.namespace' | sh@@`);
+        return { reply: lines.join("\n"), contextKeys: ["slash", "bulk"] };
+      }
+      if (/\bcompleted\b/.test(action)) {
+        const data = await ocpGet("/api/v1/pods?fieldSelector=status.phase=Succeeded");
+        const items = data.items || [];
+        const lines = [`### Bulk Cleanup — ${items.length} Completed Pod(s)`, ``];
+        if (items.length === 0) return { reply: "### Bulk Cleanup\n[OK] No Completed pods found.", contextKeys: ["slash", "bulk"] };
+        lines.push(`**Delete all completed pods:**`);
+        lines.push(`@@SEC_FIX_CMD|oc delete pods --field-selector=status.phase=Succeeded -A@@`);
+        return { reply: lines.join("\n"), contextKeys: ["slash", "bulk"] };
+      }
+      if (/\bterminating\b/.test(action)) {
+        const pods = await ocpGet("/api/v1/pods");
+        const terminating = (pods.items || []).filter((p) => p.metadata?.deletionTimestamp);
+        const lines = [`### Bulk Cleanup — ${terminating.length} Terminating Pod(s)`, ``];
+        for (const p of terminating.slice(0, 30)) {
+          lines.push(`  - **${p.metadata.namespace}/${p.metadata.name}** — Deletion started: ${p.metadata.deletionTimestamp}`);
+        }
+        lines.push(``, `**Force-delete all stuck-in-Terminating pods (use with caution):**`);
+        lines.push(`@@SEC_FIX_CMD|oc get pods -A -o json | jq -r '.items[] | select(.metadata.deletionTimestamp != null) | "oc delete pod " + .metadata.name + " -n " + .metadata.namespace + " --grace-period=0 --force"' | sh@@`);
+        return { reply: lines.join("\n"), contextKeys: ["slash", "bulk"] };
+      }
+      if (/\bcrash/.test(action) || /\brestart\b/.test(action)) {
+        const data = await ocpGet("/api/v1/pods");
+        const crashing = (data.items || []).filter((p) => (p.status?.containerStatuses || []).some((c) => c.state?.waiting?.reason === "CrashLoopBackOff"));
+        const lines = [`### Bulk Restart — ${crashing.length} CrashLoopBackOff Pod(s)`, ``];
+        if (crashing.length === 0) return { reply: "### Bulk Restart\n[OK] No CrashLoopBackOff pods.", contextKeys: ["slash", "bulk"] };
+        for (const p of crashing.slice(0, 30)) lines.push(`  - ${p.metadata.namespace}/${p.metadata.name}`);
+        lines.push(``, `**Force-recreate all crashing pods (deployments will respawn them with fresh state):**`);
+        lines.push(`@@SEC_FIX_CMD|oc get pods -A -o json | jq -r '.items[] | select(.status.containerStatuses[]?.state.waiting.reason=="CrashLoopBackOff") | "oc delete pod " + .metadata.name + " -n " + .metadata.namespace' | sh@@`);
+        return { reply: lines.join("\n"), contextKeys: ["slash", "bulk"] };
+      }
+      if (/\bfailed\b/.test(action) && /\bjob/.test(action)) {
+        const data = await ocpGet("/apis/batch/v1/jobs");
+        const failed = (data.items || []).filter((j) => (j.status?.conditions || []).some((c) => c.type === "Failed" && c.status === "True"));
+        const lines = [`### Bulk Cleanup — ${failed.length} Failed Job(s)`, ``];
+        if (failed.length === 0) return { reply: "### Bulk Cleanup\n[OK] No failed Jobs.", contextKeys: ["slash", "bulk"] };
+        for (const j of failed.slice(0, 30)) lines.push(`  - ${j.metadata.namespace}/${j.metadata.name}`);
+        lines.push(``, `**Delete all failed jobs:**`);
+        lines.push(`@@SEC_FIX_CMD|oc get jobs -A -o json | jq -r '.items[] | select(.status.conditions[]? | select(.type=="Failed" and .status=="True")) | "oc delete job " + .metadata.name + " -n " + .metadata.namespace' | sh@@`);
+        return { reply: lines.join("\n"), contextKeys: ["slash", "bulk"] };
+      }
+      if (/\borphan/.test(action) && /\bpv\b/.test(action)) {
+        const [pvData, pvcData] = await Promise.all([ocpGet("/api/v1/persistentvolumes"), ocpGet("/api/v1/persistentvolumeclaims")]);
+        const claimedRefs = new Set((pvcData.items || []).map((c) => `${c.metadata.namespace}/${c.metadata.name}`));
+        const orphans = (pvData.items || []).filter((pv) => {
+          const ref = pv.spec?.claimRef;
+          if (!ref) return pv.status?.phase === "Released" || pv.status?.phase === "Available";
+          return !claimedRefs.has(`${ref.namespace}/${ref.name}`);
+        });
+        const lines = [`### Bulk Cleanup — ${orphans.length} Orphaned PV(s)`, ``];
+        if (orphans.length === 0) return { reply: "### Bulk Cleanup\n[OK] No orphaned PVs.", contextKeys: ["slash", "bulk"] };
+        for (const pv of orphans.slice(0, 30)) lines.push(`  - **${pv.metadata.name}** — Phase: ${pv.status?.phase}, Capacity: ${pv.spec?.capacity?.storage || "-"}`);
+        lines.push(``, `**Caution:** Verify each PV before deleting. Some may have ReclaimPolicy=Retain holding important data.`);
+        return { reply: lines.join("\n"), contextKeys: ["slash", "bulk"] };
+      }
+      return { reply: `[INFO] Unknown bulk action: '${arg}'. See \`/bulk\` for examples.`, contextKeys: ["slash", "bulk"] };
+    } catch (e) {
+      return { reply: `[ERROR] /bulk: ${e.message}`, contextKeys: ["slash", "bulk"] };
+    }
+  }
+
+  // ---- Sprint C: /changes — change timeline (recent events + audit) ----
+  if (cmd === "changes" || cmd === "timeline" || cmd === "whatchanged") {
+    try {
+      const since = arg ? parseDuration(arg) : 60 * 60 * 1000;
+      const sinceISO = new Date(Date.now() - since).toISOString();
+      const [eventsData, auditRows] = await Promise.all([
+        ocpGet("/api/v1/events?limit=500").catch(() => ({ items: [] })),
+        (async () => {
+          try {
+            const { query: dbq, isEnabled } = await import("../utils/db.js");
+            if (!(await isEnabled())) return [];
+            const r = await dbq("SELECT action, target, namespace, success, created_at FROM executed_actions WHERE created_at >= $1 ORDER BY id DESC LIMIT 100", [sinceISO]);
+            return r?.rows || [];
+          } catch { return []; }
+        })(),
+      ]);
+      const events = (eventsData.items || []).filter((e) => new Date(e.lastTimestamp || e.eventTime || 0) >= new Date(sinceISO));
+      const lines = [
+        `### Change Timeline (since ${new Date(sinceISO).toLocaleString()})`, ``,
+        `@@SUMMARY|amber:${events.length} Cluster Events|green:${auditRows.length} Executed Actions@@`, ``,
+      ];
+      if (auditRows.length > 0) {
+        lines.push(`#### Executed Actions`, ``, `| Time | Action | Target | Namespace | Result |`, `|---|---|---|---|---|`);
+        for (const r of auditRows.slice(0, 30)) {
+          const t = new Date(r.created_at).toLocaleTimeString();
+          lines.push(`| ${t} | ${r.action} | ${r.target || "-"} | ${r.namespace || "-"} | ${r.success ? "OK" : "FAIL"} |`);
+        }
+        lines.push(``);
+      }
+      const grouped = {};
+      for (const e of events) {
+        const k = `${e.reason}::${e.involvedObject?.kind || "?"}`;
+        (grouped[k] = grouped[k] || []).push(e);
+      }
+      const sortedReasons = Object.entries(grouped).sort((a, b) => b[1].length - a[1].length).slice(0, 12);
+      if (sortedReasons.length > 0) {
+        lines.push(`#### Top Cluster Events`, ``, `| Reason | Kind | Count | Latest Example |`, `|---|---|---|---|`);
+        for (const [k, evs] of sortedReasons) {
+          const [reason, kind] = k.split("::");
+          const latest = evs[evs.length - 1];
+          lines.push(`| ${reason} | ${kind} | ${evs.length} | ${latest.involvedObject?.namespace || ""}/${latest.involvedObject?.name || ""} |`);
+        }
+      }
+      lines.push(``, `**Filter by namespace:** \`/changes <duration> <namespace>\``);
+      lines.push(`**Duration formats:** \`5m\`, \`1h\`, \`24h\`, \`7d\``);
+      return { reply: lines.join("\n"), contextKeys: ["slash", "changes"] };
+    } catch (e) {
+      return { reply: `[ERROR] /changes: ${e.message}`, contextKeys: ["slash", "changes"] };
+    }
+  }
+
+  // ---- Sprint C: /forecast — capacity prediction ----
+  if (cmd === "forecast" || cmd === "predict" || cmd === "capacity") {
+    try {
+      const nodesData = await ocpGet("/api/v1/nodes");
+      const podsData = await ocpGet("/api/v1/pods");
+      const nodes = nodesData.items || [];
+      const pods = podsData.items || [];
+      let totalCpuM = 0, totalMemBytes = 0, requestedCpuM = 0, requestedMemBytes = 0;
+      for (const n of nodes) {
+        totalCpuM += parseCpuToMillicores(n.status?.allocatable?.cpu || "0");
+        totalMemBytes += parseMemToBytes(n.status?.allocatable?.memory || "0");
+      }
+      for (const p of pods) {
+        for (const c of (p.spec?.containers || [])) {
+          requestedCpuM += parseCpuToMillicores(c.resources?.requests?.cpu || "0");
+          requestedMemBytes += parseMemToBytes(c.resources?.requests?.memory || "0");
+        }
+      }
+      const cpuPct = totalCpuM > 0 ? Math.round((requestedCpuM / totalCpuM) * 100) : 0;
+      const memPct = totalMemBytes > 0 ? Math.round((requestedMemBytes / totalMemBytes) * 100) : 0;
+      // Simple linear extrapolation — assumes current growth rate from pod count growth
+      const podCount = pods.length;
+      const growthPodsPerWeek = Math.max(5, Math.round(podCount * 0.05));
+      const cpuPerPodM = podCount > 0 ? Math.round(requestedCpuM / podCount) : 0;
+      const memPerPodM = podCount > 0 ? Math.round(requestedMemBytes / podCount / (1024 * 1024)) : 0;
+      const weeksToCpuExhaust = cpuPerPodM > 0 ? Math.max(0, Math.floor((totalCpuM - requestedCpuM) / (cpuPerPodM * growthPodsPerWeek))) : 999;
+      const weeksToMemExhaust = memPerPodM > 0 ? Math.max(0, Math.floor((totalMemBytes / (1024 * 1024) - requestedMemBytes / (1024 * 1024)) / (memPerPodM * growthPodsPerWeek))) : 999;
+      const lines = [
+        `### Capacity Forecast`, ``,
+        `@@KPI|${cpuPct}%|CPU Requested@@`,
+        `@@KPI|${memPct}%|Memory Requested@@`,
+        `@@KPI|${Math.min(weeksToCpuExhaust, weeksToMemExhaust)}w|Weeks Until Saturation@@`, ``,
+        `**Current state:**`,
+        `  - Total Nodes: ${nodes.length}`,
+        `  - Total Pods: ${podCount}`,
+        `  - CPU: ${Math.round(requestedCpuM/1000)} / ${Math.round(totalCpuM/1000)} cores requested (${cpuPct}%)`,
+        `  - Memory: ${Math.round(requestedMemBytes/(1024**3))} / ${Math.round(totalMemBytes/(1024**3))} GiB requested (${memPct}%)`, ``,
+        `**Forecast (linear, ${growthPodsPerWeek} pods/week growth assumption):**`,
+        `  - CPU exhaustion: ~${weeksToCpuExhaust} weeks`,
+        `  - Memory exhaustion: ~${weeksToMemExhaust} weeks`, ``,
+        `**Recommendation:**`,
+      ];
+      if (Math.min(weeksToCpuExhaust, weeksToMemExhaust) < 4) {
+        lines.push(`  - [CRITICAL] Add capacity within ${Math.min(weeksToCpuExhaust, weeksToMemExhaust)} weeks. Scale MachineSets or add nodes now.`);
+      } else if (Math.min(weeksToCpuExhaust, weeksToMemExhaust) < 12) {
+        lines.push(`  - [WARN] Plan capacity expansion within ${Math.min(weeksToCpuExhaust, weeksToMemExhaust)} weeks. Order hardware or budget cloud capacity.`);
+      } else {
+        lines.push(`  - [OK] Sufficient runway. Re-run forecast monthly to track trend.`);
+      }
+      lines.push(``, `**Note:** This forecast uses linear extrapolation from current resource requests. For more accurate predictions, integrate Prometheus history with \`/kb capacity planning\`.`);
+      return { reply: lines.join("\n"), contextKeys: ["slash", "forecast"] };
+    } catch (e) {
+      return { reply: `[ERROR] /forecast: ${e.message}`, contextKeys: ["slash", "forecast"] };
+    }
+  }
+
+  // ---- Sprint C: /kb — knowledge base / runbook lookup ----
+  if (cmd === "kb" || cmd === "knowledge" || cmd === "runbook" || cmd === "kcs") {
+    if (!arg) {
+      return {
+        reply: "### Knowledge Base\n\nUse `/kb <query>` to search internal runbooks, Red Hat KCS articles, and team playbooks.\n\n**Examples:**\n- `/kb ImagePullBackOff`\n- `/kb etcd recovery`\n- `/kb operator stuck pending`\n- `/kb network policy debugging`\n\nLearned from past resolutions in your cluster and seeded with Red Hat KCS references.",
+        contextKeys: ["slash", "kb"],
+      };
+    }
+    try {
+      const { kbFindSimilar } = await import("./knowledge.js").catch(() => ({}));
+      if (!kbFindSimilar) {
+        return { reply: `### Knowledge Base Lookup: \`${arg}\`\n\n[INFO] Internal KB module unavailable. Search Red Hat Knowledge Centered Service:\n\nhttps://access.redhat.com/search/?q=${encodeURIComponent(arg)}+OpenShift`, contextKeys: ["slash", "kb"] };
+      }
+      const matches = await kbFindSimilar({ symptoms: arg, limit: 5 });
+      if (!matches || matches.length === 0) {
+        return { reply: `### Knowledge Base Lookup: \`${arg}\`\n\n[INFO] No matching entries in internal KB. Try Red Hat KCS: https://access.redhat.com/search/?q=${encodeURIComponent(arg)}+OpenShift`, contextKeys: ["slash", "kb"] };
+      }
+      const lines = [`### Knowledge Base Matches: \`${arg}\``, ``];
+      for (const m of matches) {
+        lines.push(`#### ${m.title || m.kind || "Match"} (relevance ${Math.round((m.score || 0) * 100)}%)`);
+        lines.push(m.summary || m.resolution || "-");
+        lines.push(``);
+        if (m.runbookUrl) lines.push(`Runbook: ${m.runbookUrl}`);
+        lines.push(``);
+      }
+      lines.push(`**Tip:** Run \`/playbook\` to see learned patterns from past resolutions.`);
+      return { reply: lines.join("\n"), contextKeys: ["slash", "kb"] };
+    } catch (e) {
+      return { reply: `[ERROR] /kb: ${e.message}`, contextKeys: ["slash", "kb"] };
+    }
+  }
+
+  // ---- Sprint C: /provision — self-service workflow (namespace + quotas + RBAC) ----
+  if (cmd === "provision" || cmd === "onboard") {
+    if (!arg) {
+      return {
+        reply: "### Self-Service Provisioning\n\nUse `/provision namespace <name> for team <team>` to bootstrap a new namespace with quotas, limit ranges, RBAC, and NetworkPolicy.\n\n**Examples:**\n- `/provision namespace payments-dev for team payments`\n- `/provision app my-app in payments-dev`\n- `/provision quota 8cpu 16Gi for payments-dev`",
+        contextKeys: ["slash", "provision"],
+      };
+    }
+    try {
+      // Parse "namespace X for team Y"
+      const nsMatch = arg.match(/namespace\s+(\S+)(?:\s+for\s+team\s+(\S+))?/i);
+      if (nsMatch) {
+        const ns = nsMatch[1];
+        const team = nsMatch[2] || ns;
+        const yamlBlock = `apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+  labels:
+    team: ${team}
+    managed-by: tcs-agentic-ai
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ${ns}-quota
+  namespace: ${ns}
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    persistentvolumeclaims: "10"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ${ns}-limits
+  namespace: ${ns}
+spec:
+  limits:
+  - type: Container
+    default:
+      cpu: 500m
+      memory: 512Mi
+    defaultRequest:
+      cpu: 100m
+      memory: 128Mi
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ${ns}-default-deny
+  namespace: ${ns}
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress","Egress"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ${ns}-team-admin
+  namespace: ${ns}
+subjects:
+- kind: Group
+  name: ${team}
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: admin
+  apiGroup: rbac.authorization.k8s.io`;
+        return {
+          reply: `### Provision Namespace: \`${ns}\` for team \`${team}\`\n\nThe following bundle creates a namespace with quotas, limit ranges, default-deny NetworkPolicy, and team RoleBinding:\n\n\`\`\`yaml\n${yamlBlock}\n\`\`\`\n\n**Apply:**\n@@SEC_FIX_CMD|cat <<'EOF' | oc apply -f -\n${yamlBlock}\nEOF@@\n\n**Tip:** Customize the quota values before applying for your team's workload size.`,
+          contextKeys: ["slash", "provision"],
+        };
+      }
+      return { reply: "### Provision\n[INFO] Unrecognized provision request. Try `/provision namespace <name> for team <team>`.", contextKeys: ["slash", "provision"] };
+    } catch (e) {
+      return { reply: `[ERROR] /provision: ${e.message}`, contextKeys: ["slash", "provision"] };
+    }
+  }
+
+  // ---- Sprint D: /incidents — episodic memory of past incidents ----
+  if (cmd === "incidents" || cmd === "history") {
+    try {
+      const { listIncidents } = await import("./episodic-memory.js");
+      const limit = Math.min(parseInt(arg, 10) || 20, 100);
+      const incidents = await listIncidents({ limit });
+      if (incidents.length === 0) {
+        return { reply: "### Incident History\n[INFO] No incidents recorded yet. Incidents are auto-captured when CrashLoopBackOff, OOMKilled, or other anomalies are detected.", contextKeys: ["slash", "incidents"] };
+      }
+      const lines = [`### Incident History (last ${incidents.length})`, ``, `| Time | Severity | Resource | Symptom | Resolution |`, `|---|---|---|---|---|`];
+      for (const i of incidents) {
+        const t = new Date(i.created_at).toLocaleString();
+        const r = i.resource_kind && i.resource_name ? `${i.resource_kind}/${i.resource_name}` : "-";
+        const res = i.resolution ? i.resolution.slice(0, 50) : (i.resolved_at ? "resolved" : "open");
+        lines.push(`| ${t} | ${i.severity || "-"} | ${r} | ${(i.symptom || "").slice(0, 40)} | ${res} |`);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "incidents"] };
+    } catch (e) {
+      return { reply: `[ERROR] /incidents: ${e.message}`, contextKeys: ["slash", "incidents"] };
+    }
+  }
+
+  // ---- Sprint D: /suggestions — proactive recommendations ----
+  if (cmd === "suggestions" || cmd === "suggest" || cmd === "proactive") {
+    try {
+      const { generateSuggestions } = await import("./proactive-agent.js");
+      const sugg = await generateSuggestions();
+      if (!sugg || sugg.length === 0) {
+        return { reply: "### Proactive Suggestions\n[OK] No proactive suggestions at this time. Your cluster looks healthy.", contextKeys: ["slash", "suggestions"] };
+      }
+      const lines = [`### Proactive Suggestions (${sugg.length})`, ``];
+      for (const s of sugg) {
+        const sev = s.severity === "critical" ? "[CRITICAL]" : s.severity === "high" ? "[HIGH]" : s.severity === "medium" ? "[MEDIUM]" : "[INFO]";
+        lines.push(`#### ${sev} ${s.title}`);
+        lines.push(s.detail);
+        if (s.action) {
+          lines.push(``, `**Suggested action:**`);
+          lines.push(`@@SEC_FIX_CMD|${s.action}@@`);
+        }
+        lines.push(``);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "suggestions"] };
+    } catch (e) {
+      return { reply: `[ERROR] /suggestions: ${e.message}`, contextKeys: ["slash", "suggestions"] };
+    }
+  }
+
+  // ---- Sprint D: /approvals — approval chain status ----
+  if (cmd === "approvals" || cmd === "pending-approvals") {
+    try {
+      const { listPendingApprovals } = await import("./approval-chains.js");
+      const pending = await listPendingApprovals();
+      if (!pending || pending.length === 0) {
+        return { reply: "### Approvals\n[OK] No pending approvals.", contextKeys: ["slash", "approvals"] };
+      }
+      const lines = [`### Pending Approvals (${pending.length})`, ``, `| ID | Action | Requested By | Approver | Status |`, `|---|---|---|---|---|`];
+      for (const p of pending) {
+        lines.push(`| ${p.id} | ${p.action} | ${p.requested_by || "-"} | ${p.approver_role || "any"} | ${p.status} |`);
+      }
+      lines.push(``, `**Approve:** \`oc patch chatapproval <id> --type=merge -p '{"status":"approved"}'\` or use the dashboard.`);
+      return { reply: lines.join("\n"), contextKeys: ["slash", "approvals"] };
+    } catch (e) {
+      return { reply: `[ERROR] /approvals: ${e.message}`, contextKeys: ["slash", "approvals"] };
+    }
+  }
+
+  // ---- Sprint D: /reflect — verify outcomes of recent actions ----
+  if (cmd === "reflect" || cmd === "verify") {
+    try {
+      const { runReflectionCheck } = await import("./reflection.js");
+      const report = await runReflectionCheck({ lookbackMinutes: parseInt(arg, 10) || 60 });
+      if (!report || report.checked === 0) {
+        return { reply: "### Reflection\n[OK] No recent actions to verify.", contextKeys: ["slash", "reflect"] };
+      }
+      const lines = [
+        `### Action Reflection (last ${report.lookbackMinutes}m)`, ``,
+        `@@SUMMARY|green:${report.confirmed} Confirmed|amber:${report.unknown} Unknown|red:${report.regressed} Regressed@@`, ``,
+      ];
+      for (const item of report.items.slice(0, 20)) {
+        const icon = item.status === "confirmed" ? "[OK]" : item.status === "regressed" ? "[FAIL]" : "[?]";
+        lines.push(`  - ${icon} **${item.action}** on \`${item.target}\` — ${item.verdict}`);
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "reflect"] };
+    } catch (e) {
+      return { reply: `[ERROR] /reflect: ${e.message}`, contextKeys: ["slash", "reflect"] };
+    }
+  }
+
   // ---- Tier 2: /export — dump resources in YAML/JSON/CSV ----
   if (cmd === "export") {
     if (!arg) {
@@ -7700,6 +8738,45 @@ function csvEscape(v) {
   const s = String(v);
   if (s.includes(",") || s.includes("\"") || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
   return s;
+}
+
+// ---------------------------------------------------------------------------
+// Sprint C helpers — duration parsing, CPU/memory conversion
+// ---------------------------------------------------------------------------
+function parseDuration(s) {
+  const m = String(s || "").match(/^(\d+)\s*(s|m|h|d|w)?$/i);
+  if (!m) return 60 * 60 * 1000;
+  const n = parseInt(m[1], 10);
+  const unit = (m[2] || "m").toLowerCase();
+  if (unit === "s") return n * 1000;
+  if (unit === "m") return n * 60_000;
+  if (unit === "h") return n * 3_600_000;
+  if (unit === "d") return n * 86_400_000;
+  if (unit === "w") return n * 7 * 86_400_000;
+  return n * 60_000;
+}
+
+function parseCpuToMillicores(v) {
+  if (!v) return 0;
+  const s = String(v);
+  if (s.endsWith("m")) return parseInt(s.slice(0, -1), 10) || 0;
+  if (s.endsWith("n")) return Math.round((parseInt(s.slice(0, -1), 10) || 0) / 1_000_000);
+  const num = parseFloat(s);
+  return isNaN(num) ? 0 : Math.round(num * 1000);
+}
+
+function parseMemToBytes(v) {
+  if (!v) return 0;
+  const s = String(v).trim();
+  const m = s.match(/^(\d+(?:\.\d+)?)\s*([KMGTPE]?i?)$/);
+  if (!m) {
+    const n = parseFloat(s);
+    return isNaN(n) ? 0 : n;
+  }
+  const n = parseFloat(m[1]);
+  const unit = m[2];
+  const multipliers = { "": 1, K: 1000, Ki: 1024, M: 1e6, Mi: 1024 ** 2, G: 1e9, Gi: 1024 ** 3, T: 1e12, Ti: 1024 ** 4, P: 1e15, Pi: 1024 ** 5, E: 1e18, Ei: 1024 ** 6 };
+  return Math.round(n * (multipliers[unit] || 1));
 }
 
 // ---------------------------------------------------------------------------

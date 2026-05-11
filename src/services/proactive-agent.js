@@ -762,3 +762,152 @@ function extractPodName(res) {
   const m = res.match(/^(?:pod\/)?([^\/\s]+)/);
   return m ? m[1] : "";
 }
+
+// ---------------------------------------------------------------------------
+// Sprint D: Proactive suggestions ("I noticed X, want me to fix?")
+//
+// Surveys the cluster on demand and returns a ranked list of actionable
+// recommendations. Pure read; never mutates. Used by the /suggestions
+// slash command and the proactive panel in the dashboard.
+// ---------------------------------------------------------------------------
+export async function generateSuggestions({ limit = 10 } = {}) {
+  const out = [];
+  await Promise.all([
+    _suggestFromProblemPods(out),
+    _suggestFromPendingPVCs(out),
+    _suggestFromDegradedOperators(out),
+    _suggestFromMissingLimits(out),
+    _suggestFromFailingBuilds(out),
+    _suggestFromRecurringIncidents(out),
+  ]);
+  const sevRank = { critical: 4, high: 3, medium: 2, low: 1 };
+  out.sort((a, b) => (sevRank[b.severity] || 0) - (sevRank[a.severity] || 0));
+  return out.slice(0, limit);
+}
+
+async function _suggestFromProblemPods(out) {
+  try {
+    const { ocpGet } = await import("../utils/ocp.js");
+    const data = await ocpGet("/api/v1/pods?fieldSelector=status.phase!=Running,status.phase!=Succeeded");
+    const pods = data.items || [];
+    const crashing = pods.filter((p) => (p.status?.containerStatuses || []).some((c) => c.state?.waiting?.reason === "CrashLoopBackOff"));
+    const evicted = pods.filter((p) => p.status?.reason === "Evicted");
+    if (crashing.length >= 3) {
+      out.push({
+        category: "pods", severity: "high",
+        title: `${crashing.length} pods in CrashLoopBackOff`,
+        detail: `Affected: ${crashing.slice(0, 5).map((p) => p.metadata.namespace + "/" + p.metadata.name).join(", ")}${crashing.length > 5 ? ` and ${crashing.length - 5} more` : ""}.`,
+        action: `/diagnose ${crashing[0].metadata.name} in ${crashing[0].metadata.namespace}`,
+      });
+    }
+    if (evicted.length >= 5) {
+      out.push({
+        category: "pods", severity: "medium",
+        title: `${evicted.length} Evicted pods cluttering the cluster`,
+        detail: "Evicted pods consume etcd storage. Safe to delete in bulk.",
+        action: `/bulk delete evicted pods`,
+      });
+    }
+  } catch { /* ignore */ }
+}
+
+async function _suggestFromPendingPVCs(out) {
+  try {
+    const { ocpGet } = await import("../utils/ocp.js");
+    const data = await ocpGet("/api/v1/persistentvolumeclaims");
+    const pending = (data.items || []).filter((p) => p.status?.phase === "Pending");
+    if (pending.length > 0) {
+      out.push({
+        category: "storage", severity: pending.length >= 3 ? "high" : "medium",
+        title: `${pending.length} PVC(s) pending`,
+        detail: `Workloads may be stuck. Pending: ${pending.slice(0, 3).map((p) => p.metadata.namespace + "/" + p.metadata.name).join(", ")}`,
+        action: `oc describe pvc ${pending[0].metadata.name} -n ${pending[0].metadata.namespace}`,
+      });
+    }
+  } catch { /* ignore */ }
+}
+
+async function _suggestFromDegradedOperators(out) {
+  try {
+    const { ocpGet } = await import("../utils/ocp.js");
+    const data = await ocpGet("/apis/config.openshift.io/v1/clusteroperators");
+    const degraded = (data.items || []).filter((co) => {
+      const conds = co.status?.conditions || [];
+      return conds.some((c) => (c.type === "Degraded" && c.status === "True") || (c.type === "Available" && c.status === "False"));
+    });
+    if (degraded.length > 0) {
+      out.push({
+        category: "operators", severity: "critical",
+        title: `${degraded.length} ClusterOperator(s) degraded`,
+        detail: `Degraded: ${degraded.map((d) => d.metadata.name).join(", ")}. Upgrades and platform stability are at risk.`,
+        action: `oc get clusteroperators`,
+      });
+    }
+  } catch { /* ignore */ }
+}
+
+async function _suggestFromMissingLimits(out) {
+  try {
+    const { ocpGet } = await import("../utils/ocp.js");
+    const data = await ocpGet("/api/v1/pods");
+    const items = (data.items || []).filter((p) => !p.metadata?.namespace?.startsWith("openshift-") && !p.metadata?.namespace?.startsWith("kube-"));
+    let missing = 0;
+    for (const p of items) {
+      for (const c of (p.spec?.containers || [])) {
+        if (!c.resources?.limits?.cpu || !c.resources?.limits?.memory) missing++;
+      }
+    }
+    if (missing >= 10) {
+      out.push({
+        category: "governance", severity: "medium",
+        title: `${missing} container(s) missing resource limits`,
+        detail: "Apply LimitRange per namespace to enforce defaults and prevent noisy-neighbor outages.",
+        action: `/provision quota for <namespace>`,
+      });
+    }
+  } catch { /* ignore */ }
+}
+
+async function _suggestFromFailingBuilds(out) {
+  try {
+    const { ocpGet } = await import("../utils/ocp.js");
+    const data = await ocpGet("/apis/build.openshift.io/v1/builds").catch(() => ({ items: [] }));
+    const failed = (data.items || []).filter((b) => ["Failed", "Error", "Cancelled"].includes(b.status?.phase));
+    const recent = failed.filter((b) => {
+      const t = b.status?.completionTimestamp || b.metadata?.creationTimestamp;
+      return t && (Date.now() - new Date(t).getTime() < 24 * 60 * 60 * 1000);
+    });
+    if (recent.length >= 3) {
+      out.push({
+        category: "builds", severity: "medium",
+        title: `${recent.length} OpenShift Build(s) failed in the last 24h`,
+        detail: `Recent failures: ${recent.slice(0, 3).map((b) => b.metadata.namespace + "/" + b.metadata.name).join(", ")}`,
+        action: `/builds`,
+      });
+    }
+  } catch { /* ignore */ }
+}
+
+async function _suggestFromRecurringIncidents(out) {
+  try {
+    const { isEnabled, query } = await import("../utils/db.js");
+    if (!(await isEnabled())) return;
+    const r = await query(
+      `SELECT signature, COUNT(*) AS occurrences
+       FROM incidents
+       WHERE created_at >= NOW() - INTERVAL '7 days'
+       GROUP BY signature
+       HAVING COUNT(*) >= 3
+       ORDER BY COUNT(*) DESC LIMIT 5`
+    );
+    const rows = r?.rows || [];
+    if (rows.length > 0) {
+      out.push({
+        category: "patterns", severity: "high",
+        title: `${rows.length} recurring incident pattern(s) in the last 7 days`,
+        detail: rows.map((r) => `\`${(r.signature || "").slice(0, 50)}\` (${r.occurrences}x)`).join("; "),
+        action: `/incidents`,
+      });
+    }
+  } catch { /* ignore */ }
+}

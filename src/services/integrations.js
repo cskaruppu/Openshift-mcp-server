@@ -28,6 +28,12 @@ const DEFAULT_CONFIG = {
   webhook: { enabled: false, url: "", secret: "" },
   prometheus: { enabled: false, url: "", bearerToken: "" },
   pagerduty: { enabled: false, integrationKey: "" },
+  // Sprint D extensions:
+  jira:     { enabled: false, baseUrl: "", email: "", apiToken: "", projectKey: "" },
+  github:   { enabled: false, token: "", owner: "", repo: "" },
+  splunk:   { enabled: false, hecUrl: "", hecToken: "", index: "main", source: "tcs-agentic-ai" },
+  datadog:  { enabled: false, apiKey: "", site: "datadoghq.com" },
+  backstage:{ enabled: false, baseUrl: "", token: "" },
 };
 
 let _cachedConfig = null;
@@ -90,6 +96,11 @@ export function redactConfig(cfg) {
   if (out.webhook?.url) out.webhook.url = redactSecret(out.webhook.url);
   if (out.prometheus?.bearerToken) out.prometheus.bearerToken = "***";
   if (out.pagerduty?.integrationKey) out.pagerduty.integrationKey = "***";
+  if (out.jira?.apiToken) out.jira.apiToken = "***";
+  if (out.github?.token) out.github.token = "***";
+  if (out.splunk?.hecToken) out.splunk.hecToken = "***";
+  if (out.datadog?.apiKey) out.datadog.apiKey = "***";
+  if (out.backstage?.token) out.backstage.token = "***";
   return out;
 }
 
@@ -323,7 +334,180 @@ export async function testConnection(type) {
       return cfg.prometheus.enabled
         ? queryPrometheus("up")
         : { ok: false, error: "Prometheus not enabled" };
+    case "jira":
+      return cfg.jira.enabled ? createJiraIssue({ summary: "TCS Agentic AI Test Issue", description: "Connection test from TCS Agentic AI.", issueType: "Task" })
+        : { sent: false, reason: "JIRA not enabled" };
+    case "github":
+      return cfg.github.enabled ? createGitHubIssue({ title: "[TEST] TCS Agentic AI connection test", body: "This is a connection test." })
+        : { sent: false, reason: "GitHub not enabled" };
+    case "splunk":
+      return cfg.splunk.enabled ? sendToSplunk({ event: { kind: "test", source: "tcs-agentic-ai" } })
+        : { sent: false, reason: "Splunk not enabled" };
+    case "datadog":
+      return cfg.datadog.enabled ? sendToDatadog({ title: "TCS Agentic AI test", text: "Connection test event", alertType: "info" })
+        : { sent: false, reason: "Datadog not enabled" };
+    case "backstage":
+      return cfg.backstage.enabled ? testBackstage() : { sent: false, reason: "Backstage not enabled" };
     default:
       return { error: "Unknown integration type: " + type };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sprint D: JIRA — create issue
+// ---------------------------------------------------------------------------
+export async function createJiraIssue({ summary, description, issueType = "Task", projectKey, labels }) {
+  const cfg = await getIntegrationsConfig();
+  if (!cfg.jira?.enabled || !cfg.jira?.baseUrl || !cfg.jira?.email || !cfg.jira?.apiToken) {
+    return { sent: false, reason: "JIRA not configured" };
+  }
+  const project = projectKey || cfg.jira.projectKey;
+  if (!project) return { sent: false, reason: "JIRA projectKey missing" };
+  const url = cfg.jira.baseUrl.replace(/\/$/, "") + "/rest/api/3/issue";
+  const auth = Buffer.from(`${cfg.jira.email}:${cfg.jira.apiToken}`).toString("base64");
+  const body = {
+    fields: {
+      project: { key: project },
+      summary: summary || "TCS Agentic AI generated issue",
+      description: {
+        type: "doc", version: 1,
+        content: [{ type: "paragraph", content: [{ type: "text", text: description || "" }] }],
+      },
+      issuetype: { name: issueType },
+      ...(labels ? { labels } : {}),
+    },
+  };
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json().catch(() => ({}));
+    return { sent: r.ok, status: r.status, key: data.key, id: data.id, self: data.self };
+  } catch (err) {
+    console.error("[integrations.jira] failed:", err.message);
+    return { sent: false, error: err.message };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sprint D: GitHub — create issue
+// ---------------------------------------------------------------------------
+export async function createGitHubIssue({ title, body, labels, assignees, owner, repo }) {
+  const cfg = await getIntegrationsConfig();
+  if (!cfg.github?.enabled || !cfg.github?.token) {
+    return { sent: false, reason: "GitHub not configured" };
+  }
+  const o = owner || cfg.github.owner;
+  const rp = repo || cfg.github.repo;
+  if (!o || !rp) return { sent: false, reason: "GitHub owner/repo missing" };
+  const url = `https://api.github.com/repos/${encodeURIComponent(o)}/${encodeURIComponent(rp)}/issues`;
+  const payload = { title: title || "TCS Agentic AI issue", body: body || "", ...(labels ? { labels } : {}), ...(assignees ? { assignees } : {}) };
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${cfg.github.token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json().catch(() => ({}));
+    return { sent: r.ok, status: r.status, url: data.html_url, number: data.number };
+  } catch (err) {
+    return { sent: false, error: err.message };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sprint D: Splunk HEC — send event
+// ---------------------------------------------------------------------------
+export async function sendToSplunk({ event, index, source, sourceType }) {
+  const cfg = await getIntegrationsConfig();
+  if (!cfg.splunk?.enabled || !cfg.splunk?.hecUrl || !cfg.splunk?.hecToken) {
+    return { sent: false, reason: "Splunk not configured" };
+  }
+  const url = cfg.splunk.hecUrl.replace(/\/$/, "") + "/services/collector/event";
+  const payload = {
+    event: event || {},
+    index: index || cfg.splunk.index,
+    source: source || cfg.splunk.source,
+    sourcetype: sourceType || "_json",
+    time: Math.floor(Date.now() / 1000),
+  };
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Splunk ${cfg.splunk.hecToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return { sent: r.ok, status: r.status };
+  } catch (err) {
+    return { sent: false, error: err.message };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sprint D: Datadog — send event to Events API
+// ---------------------------------------------------------------------------
+export async function sendToDatadog({ title, text, alertType = "info", tags = [], priority = "normal" }) {
+  const cfg = await getIntegrationsConfig();
+  if (!cfg.datadog?.enabled || !cfg.datadog?.apiKey) {
+    return { sent: false, reason: "Datadog not configured" };
+  }
+  const url = `https://api.${cfg.datadog.site}/api/v1/events`;
+  const payload = {
+    title: title || "TCS Agentic AI Event",
+    text: text || "",
+    alert_type: ["error", "warning", "info", "success"].includes(alertType) ? alertType : "info",
+    priority,
+    tags: ["source:tcs-agentic-ai", ...(Array.isArray(tags) ? tags : [])],
+    source_type_name: "tcs-agentic-ai",
+  };
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "DD-API-KEY": cfg.datadog.apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return { sent: r.ok, status: r.status };
+  } catch (err) {
+    return { sent: false, error: err.message };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sprint D: Backstage — lookup catalog entity / register service
+// ---------------------------------------------------------------------------
+export async function backstageLookup(entityRef) {
+  const cfg = await getIntegrationsConfig();
+  if (!cfg.backstage?.enabled || !cfg.backstage?.baseUrl) {
+    return { ok: false, reason: "Backstage not configured" };
+  }
+  const url = cfg.backstage.baseUrl.replace(/\/$/, "") + "/api/catalog/entities/by-name/" + encodeURIComponent(entityRef);
+  const headers = {};
+  if (cfg.backstage.token) headers.Authorization = `Bearer ${cfg.backstage.token}`;
+  try {
+    const r = await fetch(url, { headers });
+    if (!r.ok) return { ok: false, status: r.status };
+    return { ok: true, entity: await r.json() };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+export async function testBackstage() {
+  const cfg = await getIntegrationsConfig();
+  if (!cfg.backstage?.enabled || !cfg.backstage?.baseUrl) return { sent: false, reason: "Backstage not configured" };
+  try {
+    const r = await fetch(cfg.backstage.baseUrl.replace(/\/$/, "") + "/api/catalog/locations", {
+      headers: cfg.backstage.token ? { Authorization: `Bearer ${cfg.backstage.token}` } : {},
+    });
+    return { sent: r.ok, status: r.status };
+  } catch (err) {
+    return { sent: false, error: err.message };
   }
 }
