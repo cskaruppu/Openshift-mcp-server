@@ -6800,7 +6800,16 @@ export async function handleChatAPI(req, res) {
         reasoningTrace.add({ kind: "decide", summary: `Matched slash command: /${slashCmdName}`, confidence: 0.95 });
         reasoningTrace.setDecisionPath(`slash:/${slashCmdName}`);
         reasoningTrace.setFinalConfidence(0.95);
-        if (body.includeReasoning === true) {
+        // Default behavior controlled by PILLAR_2_REASONING_DEFAULT.
+        // Explicit body.includeReasoning still overrides if provided.
+        let shouldInclude = body.includeReasoning;
+        if (shouldInclude == null) {
+          try {
+            const ff = await import("./feature-flags.js");
+            shouldInclude = ff.flags.pillar2ReasoningDefault();
+          } catch { shouldInclude = false; }
+        }
+        if (shouldInclude) {
           finalReply = finalReply + "\n\n" + reasoningTrace.toTag();
         }
         reasoningTrace.persist().catch(() => {});
