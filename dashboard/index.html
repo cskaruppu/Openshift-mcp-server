@@ -1270,6 +1270,37 @@ tr:hover td{background:#ffffff06}
 .reason-step-evidence{margin-top:3px;font-size:10px}
 .reason-step-evidence summary{cursor:pointer;color:var(--accent2);font-size:10px}
 .reason-step-evidence pre{font-family:monospace;font-size:10px;background:var(--bg);padding:4px 6px;border-radius:4px;overflow-x:auto;margin-top:3px;color:var(--text2)}
+/* Sprint A: Settings UI in AI Hub */
+.settings-tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:14px;padding-bottom:0}
+.settings-tab{background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text2);font-size:12px;font-weight:600;padding:8px 14px;cursor:pointer;transition:all .15s}
+.settings-tab:hover{color:var(--text)}
+.settings-tab.active{color:var(--accent2);border-bottom-color:var(--accent2)}
+.settings-panel{padding:4px 0}
+.settings-row{margin-bottom:12px}
+.settings-label{display:block;font-size:11px;font-weight:600;color:var(--text);margin-bottom:4px}
+.settings-input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:6px 10px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box}
+.settings-input:focus{border-color:var(--accent2)}
+.settings-help{display:block;font-size:10px;color:var(--text2);margin-top:3px;line-height:1.4}
+.settings-checkbox-row{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text)}
+.settings-checkbox-row input{margin:0}
+.settings-actions{display:flex;align-items:center;gap:10px;margin-top:14px;padding-top:10px;border-top:1px solid var(--border)}
+.settings-btn{background:var(--card);border:1px solid var(--border);color:var(--text);font-size:11px;font-weight:600;padding:6px 12px;border-radius:5px;cursor:pointer}
+.settings-btn:hover{border-color:var(--accent2)}
+.settings-btn.primary{background:var(--accent2);color:#fff;border-color:var(--accent2)}
+.settings-test-status{font-size:11px;margin-left:8px}
+.settings-test-status.ok{color:var(--ok)}
+.settings-test-status.err{color:var(--crit)}
+.integration-card{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px}
+.integration-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.integration-icon{font-size:18px}
+.integration-name{font-size:13px;font-weight:700;color:var(--text);flex:1}
+.settings-toggle{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer;user-select:none}
+.flag-row{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:6px}
+.flag-label{font-size:12px;color:var(--text)}
+.flag-pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:.5px}
+.flag-pill.on{background:color-mix(in srgb,var(--ok) 20%,transparent);color:var(--ok)}
+.flag-pill.off{background:color-mix(in srgb,var(--crit) 20%,transparent);color:var(--crit)}
+.flag-env{font-family:monospace;font-size:10px;color:var(--text2);margin-right:8px}
 .hub-panel-head{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border);background:linear-gradient(135deg,var(--card),var(--bg))}
 .hub-panel-head h3{font-size:13px;font-weight:700;margin:0;color:var(--text)}
 .hub-panel-body{padding:10px}
@@ -3057,6 +3088,191 @@ tr:hover td{background:#ffffff06}
         </div>
         <div id="hub-tools-list" style="max-height:260px;overflow-y:auto">
           <div style="padding:16px;text-align:center;color:var(--text2);font-size:11px">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI Settings (Pillars 1, 3, 5, Feature Flags) -->
+    <div class="hub-panel" id="hub-settings-panel">
+      <div class="hub-panel-head" style="cursor:pointer" onclick="var b=document.getElementById('hub-settings-body');b.style.display=b.style.display==='none'?'block':'none';this.querySelector('.hub-chevron').textContent=b.style.display==='none'?'▶':'▼';if(b.style.display!=='none')loadHubSettings()">
+        <span style="font-size:14px">&#x2699;</span>
+        <h3>AI Settings &amp; Integrations</h3>
+        <span style="font-size:10px;color:var(--text2);margin-left:8px">User preferences, integrations, feature flags</span>
+        <span class="hub-chevron" style="font-size:10px;color:var(--text2);margin-left:auto">&#x25BC;</span>
+      </div>
+      <div id="hub-settings-body" style="display:none;padding:14px">
+        <!-- Sub-tab pills -->
+        <div class="settings-tabs">
+          <button class="settings-tab active" data-tab="prefs" onclick="setSettingsTab('prefs')">User Preferences</button>
+          <button class="settings-tab" data-tab="integrations" onclick="setSettingsTab('integrations')">Integrations</button>
+          <button class="settings-tab" data-tab="flags" onclick="setSettingsTab('flags')">Feature Flags</button>
+        </div>
+
+        <!-- User Preferences (Pillars 1+3) -->
+        <div class="settings-panel" id="settings-panel-prefs">
+          <div class="settings-row">
+            <label class="settings-label">User ID</label>
+            <input type="text" id="pref-userId" placeholder="your.user.id" class="settings-input">
+            <small class="settings-help">Identifies your preferences across sessions. Defaults to <code>default</code>.</small>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">Persona</label>
+            <select id="pref-persona" class="settings-input">
+              <option value="sre">SRE / Platform Engineer</option>
+              <option value="security">Security Engineer</option>
+              <option value="developer">Developer</option>
+              <option value="manager">Manager / Executive</option>
+            </select>
+            <small class="settings-help">AI tailors response depth and tone for your role.</small>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">Verbosity</label>
+            <select id="pref-verbosity" class="settings-input">
+              <option value="terse">Terse — quick answers</option>
+              <option value="normal" selected>Normal — balanced</option>
+              <option value="detailed">Detailed — full explanations</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">Default Namespace</label>
+            <input type="text" id="pref-defaultNamespace" placeholder="e.g. production" class="settings-input">
+            <small class="settings-help">AI uses this when you don't specify a namespace.</small>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">Default Cluster</label>
+            <input type="text" id="pref-defaultCluster" placeholder="e.g. prod-east" class="settings-input">
+          </div>
+          <div class="settings-row">
+            <label class="settings-checkbox-row">
+              <input type="checkbox" id="pref-showCosts">
+              <span>Show cost estimates (USD) in recommendations</span>
+            </label>
+          </div>
+          <div class="settings-row">
+            <label class="settings-checkbox-row">
+              <input type="checkbox" id="pref-autoApplyRecommendations">
+              <span>Auto-apply low-risk recommendations after Dry Run succeeds</span>
+            </label>
+          </div>
+          <div class="settings-actions">
+            <button class="settings-btn primary" onclick="savePreferences()">Save Preferences</button>
+            <span id="prefs-save-status" style="font-size:11px;color:var(--text2)"></span>
+          </div>
+        </div>
+
+        <!-- Integrations (Pillar 5) -->
+        <div class="settings-panel" id="settings-panel-integrations" style="display:none">
+          <div class="integration-card">
+            <div class="integration-head">
+              <span class="integration-icon">&#x1F4AC;</span>
+              <span class="integration-name">Slack</span>
+              <label class="settings-toggle">
+                <input type="checkbox" id="int-slack-enabled">
+                <span>Enable</span>
+              </label>
+            </div>
+            <div class="settings-row">
+              <label class="settings-label">Webhook URL</label>
+              <input type="password" id="int-slack-url" placeholder="https://hooks.slack.com/services/..." class="settings-input">
+            </div>
+            <div class="settings-row">
+              <label class="settings-label">Channel</label>
+              <input type="text" id="int-slack-channel" placeholder="#alerts" class="settings-input">
+            </div>
+            <button class="settings-btn" onclick="testIntegration('slack')">Test Connection</button>
+            <span id="int-slack-status" class="settings-test-status"></span>
+          </div>
+
+          <div class="integration-card">
+            <div class="integration-head">
+              <span class="integration-icon">&#x1F4FB;</span>
+              <span class="integration-name">Microsoft Teams</span>
+              <label class="settings-toggle">
+                <input type="checkbox" id="int-teams-enabled">
+                <span>Enable</span>
+              </label>
+            </div>
+            <div class="settings-row">
+              <label class="settings-label">Webhook URL</label>
+              <input type="password" id="int-teams-url" placeholder="https://outlook.office.com/webhook/..." class="settings-input">
+            </div>
+            <button class="settings-btn" onclick="testIntegration('teams')">Test Connection</button>
+            <span id="int-teams-status" class="settings-test-status"></span>
+          </div>
+
+          <div class="integration-card">
+            <div class="integration-head">
+              <span class="integration-icon">&#x1F6A8;</span>
+              <span class="integration-name">PagerDuty</span>
+              <label class="settings-toggle">
+                <input type="checkbox" id="int-pagerduty-enabled">
+                <span>Enable</span>
+              </label>
+            </div>
+            <div class="settings-row">
+              <label class="settings-label">Integration Key</label>
+              <input type="password" id="int-pagerduty-key" placeholder="32-character integration key" class="settings-input">
+            </div>
+            <button class="settings-btn" onclick="testIntegration('pagerduty')">Test Connection</button>
+            <span id="int-pagerduty-status" class="settings-test-status"></span>
+          </div>
+
+          <div class="integration-card">
+            <div class="integration-head">
+              <span class="integration-icon">&#x1F4CA;</span>
+              <span class="integration-name">Prometheus</span>
+              <label class="settings-toggle">
+                <input type="checkbox" id="int-prometheus-enabled">
+                <span>Enable</span>
+              </label>
+            </div>
+            <div class="settings-row">
+              <label class="settings-label">URL</label>
+              <input type="text" id="int-prometheus-url" placeholder="https://prometheus.example.com" class="settings-input">
+            </div>
+            <div class="settings-row">
+              <label class="settings-label">Bearer Token (optional)</label>
+              <input type="password" id="int-prometheus-token" class="settings-input">
+            </div>
+            <button class="settings-btn" onclick="testIntegration('prometheus')">Test Connection</button>
+            <span id="int-prometheus-status" class="settings-test-status"></span>
+          </div>
+
+          <div class="integration-card">
+            <div class="integration-head">
+              <span class="integration-icon">&#x1F517;</span>
+              <span class="integration-name">Generic Webhook</span>
+              <label class="settings-toggle">
+                <input type="checkbox" id="int-webhook-enabled">
+                <span>Enable</span>
+              </label>
+            </div>
+            <div class="settings-row">
+              <label class="settings-label">URL</label>
+              <input type="text" id="int-webhook-url" placeholder="https://your-webhook-endpoint" class="settings-input">
+            </div>
+            <div class="settings-row">
+              <label class="settings-label">HMAC Secret (optional)</label>
+              <input type="password" id="int-webhook-secret" placeholder="For X-Signature-256 header" class="settings-input">
+            </div>
+            <button class="settings-btn" onclick="testIntegration('webhook')">Test Connection</button>
+            <span id="int-webhook-status" class="settings-test-status"></span>
+          </div>
+
+          <div class="settings-actions">
+            <button class="settings-btn primary" onclick="saveIntegrations()">Save Integrations</button>
+            <span id="int-save-status" style="font-size:11px;color:var(--text2)"></span>
+          </div>
+        </div>
+
+        <!-- Feature Flags -->
+        <div class="settings-panel" id="settings-panel-flags" style="display:none">
+          <div style="font-size:11px;color:var(--text2);padding:8px 0;line-height:1.5">
+            Feature flags show the runtime state of each pillar. They can only be modified by setting
+            environment variables (e.g. <code>PILLAR_7_GUARDRAILS=false</code>) and restarting the service.
+            <br>This view is read-only — use it to verify your deployment configuration.
+          </div>
+          <div id="flag-list"></div>
         </div>
       </div>
     </div>
@@ -6389,7 +6605,12 @@ async function sendMessage() {
 
   try {
     // Build request body — include LLM provider settings + enable streaming
-    const chatBody = { message: text, stream: true };
+    // Sprint A: include userId so Pillar 1+3 preferences are injected into LLM
+    const chatBody = {
+      message: text,
+      stream: true,
+      userId: (typeof _currentUserId !== 'undefined' && _currentUserId) ? _currentUserId : (localStorage.getItem('mcp.userId') || 'default'),
+    };
     const selProvider = document.getElementById('llm-provider').value;
     if (selProvider && selProvider !== 'none') {
       chatBody.provider = selProvider;
@@ -11170,6 +11391,188 @@ function hubSwitchChatLLM(provider) {
 }
 
 var _remoteAgents = {};
+
+// ---- AI Settings (Sprint A — Pillars 1, 3, 5, Feature Flags) ----
+var _currentUserId = localStorage.getItem('mcp.userId') || 'default';
+
+function setSettingsTab(tab) {
+  var panels = ['prefs', 'integrations', 'flags'];
+  panels.forEach(function(p) {
+    var el = document.getElementById('settings-panel-' + p);
+    if (el) el.style.display = p === tab ? 'block' : 'none';
+  });
+  document.querySelectorAll('.settings-tab').forEach(function(b) {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+}
+
+async function loadHubSettings() {
+  await loadPreferences();
+  await loadIntegrations();
+  await loadFeatureFlags();
+}
+
+async function loadPreferences() {
+  var userIdEl = document.getElementById('pref-userId');
+  if (userIdEl) userIdEl.value = _currentUserId;
+  try {
+    var r = await fetch(MCP_API + '/user/preferences?userId=' + encodeURIComponent(_currentUserId));
+    var data = await r.json();
+    var p = data.preferences || {};
+    var set = function(id, val) { var el = document.getElementById(id); if (el) { if (el.type === 'checkbox') el.checked = !!val; else el.value = val || ''; } };
+    set('pref-persona', p.persona);
+    set('pref-verbosity', p.verbosity);
+    set('pref-defaultNamespace', p.defaultNamespace);
+    set('pref-defaultCluster', p.defaultCluster);
+    set('pref-showCosts', p.showCosts);
+    set('pref-autoApplyRecommendations', p.autoApplyRecommendations);
+  } catch (e) {
+    console.warn('[settings] load prefs failed', e);
+  }
+}
+
+async function savePreferences() {
+  var get = function(id) { var el = document.getElementById(id); return el ? (el.type === 'checkbox' ? el.checked : el.value) : null; };
+  var userId = get('pref-userId') || 'default';
+  _currentUserId = userId;
+  localStorage.setItem('mcp.userId', userId);
+  var statusEl = document.getElementById('prefs-save-status');
+  if (statusEl) statusEl.textContent = 'Saving...';
+  var payload = {
+    userId: userId,
+    preferences: {
+      persona: get('pref-persona'),
+      verbosity: get('pref-verbosity'),
+      defaultNamespace: get('pref-defaultNamespace'),
+      defaultCluster: get('pref-defaultCluster'),
+      showCosts: get('pref-showCosts'),
+      autoApplyRecommendations: get('pref-autoApplyRecommendations'),
+    },
+  };
+  try {
+    var r = await fetch(MCP_API + '/user/preferences', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (statusEl) statusEl.textContent = r.ok ? '✓ Saved — will apply to next chat' : '✗ Save failed';
+    if (statusEl) statusEl.style.color = r.ok ? 'var(--ok)' : 'var(--crit)';
+    setTimeout(function() { if (statusEl) statusEl.textContent = ''; }, 3000);
+  } catch (e) {
+    if (statusEl) statusEl.textContent = '✗ ' + e.message;
+  }
+}
+
+async function loadIntegrations() {
+  try {
+    var r = await fetch(MCP_API + '/integrations');
+    var data = await r.json();
+    var cfg = data.config || {};
+    var set = function(id, val) { var el = document.getElementById(id); if (el) { if (el.type === 'checkbox') el.checked = !!val; else el.value = val || ''; } };
+    set('int-slack-enabled', cfg.slack?.enabled);
+    // Don't show redacted URLs — leave blank if user hasn't entered fresh value
+    if (cfg.slack?.webhookUrl && !cfg.slack.webhookUrl.includes('***')) set('int-slack-url', cfg.slack.webhookUrl);
+    set('int-slack-channel', cfg.slack?.channel);
+    set('int-teams-enabled', cfg.teams?.enabled);
+    if (cfg.teams?.webhookUrl && !cfg.teams.webhookUrl.includes('***')) set('int-teams-url', cfg.teams.webhookUrl);
+    set('int-pagerduty-enabled', cfg.pagerduty?.enabled);
+    // Integration key is redacted — leave blank
+    set('int-prometheus-enabled', cfg.prometheus?.enabled);
+    set('int-prometheus-url', cfg.prometheus?.url);
+    set('int-webhook-enabled', cfg.webhook?.enabled);
+    if (cfg.webhook?.url && !cfg.webhook.url.includes('***')) set('int-webhook-url', cfg.webhook.url);
+  } catch (e) {
+    console.warn('[settings] load integrations failed', e);
+  }
+}
+
+async function saveIntegrations() {
+  var get = function(id) { var el = document.getElementById(id); return el ? (el.type === 'checkbox' ? el.checked : el.value) : null; };
+  var payload = {};
+  // Only include sections where user enabled or entered a URL — avoid overwriting redacted secrets with blanks
+  if (get('int-slack-enabled') || get('int-slack-url')) {
+    payload.slack = { enabled: get('int-slack-enabled'), channel: get('int-slack-channel') };
+    if (get('int-slack-url')) payload.slack.webhookUrl = get('int-slack-url');
+  }
+  if (get('int-teams-enabled') || get('int-teams-url')) {
+    payload.teams = { enabled: get('int-teams-enabled') };
+    if (get('int-teams-url')) payload.teams.webhookUrl = get('int-teams-url');
+  }
+  if (get('int-pagerduty-enabled') || get('int-pagerduty-key')) {
+    payload.pagerduty = { enabled: get('int-pagerduty-enabled') };
+    if (get('int-pagerduty-key')) payload.pagerduty.integrationKey = get('int-pagerduty-key');
+  }
+  if (get('int-prometheus-enabled') || get('int-prometheus-url')) {
+    payload.prometheus = { enabled: get('int-prometheus-enabled'), url: get('int-prometheus-url') };
+    if (get('int-prometheus-token')) payload.prometheus.bearerToken = get('int-prometheus-token');
+  }
+  if (get('int-webhook-enabled') || get('int-webhook-url')) {
+    payload.webhook = { enabled: get('int-webhook-enabled'), url: get('int-webhook-url') };
+    if (get('int-webhook-secret')) payload.webhook.secret = get('int-webhook-secret');
+  }
+  var statusEl = document.getElementById('int-save-status');
+  if (statusEl) statusEl.textContent = 'Saving...';
+  try {
+    var r = await fetch(MCP_API + '/integrations', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (statusEl) { statusEl.textContent = r.ok ? '✓ Saved' : '✗ Save failed'; statusEl.style.color = r.ok ? 'var(--ok)' : 'var(--crit)'; }
+    setTimeout(function() { if (statusEl) statusEl.textContent = ''; }, 3000);
+  } catch (e) {
+    if (statusEl) statusEl.textContent = '✗ ' + e.message;
+  }
+}
+
+async function testIntegration(type) {
+  var statusEl = document.getElementById('int-' + type + '-status');
+  if (statusEl) { statusEl.textContent = 'Testing...'; statusEl.className = 'settings-test-status'; }
+  // Save first so the test uses current values
+  await saveIntegrations();
+  try {
+    var r = await fetch(MCP_API + '/integrations/test/' + type, { method: 'POST' });
+    var data = await r.json();
+    var ok = data.result && (data.result.sent === true || data.result.ok === true);
+    if (statusEl) {
+      statusEl.className = 'settings-test-status ' + (ok ? 'ok' : 'err');
+      statusEl.textContent = ok ? '✓ ' + (data.result.status ? 'HTTP ' + data.result.status : 'OK') :
+        '✗ ' + (data.result?.reason || data.result?.error || 'Failed');
+    }
+  } catch (e) {
+    if (statusEl) { statusEl.className = 'settings-test-status err'; statusEl.textContent = '✗ ' + e.message; }
+  }
+}
+
+async function loadFeatureFlags() {
+  var listEl = document.getElementById('flag-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div style="color:var(--text2);font-size:11px">Loading...</div>';
+  try {
+    var r = await fetch(MCP_API + '/feature-flags');
+    var data = await r.json();
+    var flags = data.flags || {};
+    var labels = {
+      pillar1_inject_context: ['PILLAR_1_INJECT_CONTEXT', 'Pillar 1 — Inject persona / constraints / goals into LLM'],
+      pillar2_reasoning_default: ['PILLAR_2_REASONING_DEFAULT', 'Pillar 2 — Show reasoning trace by default'],
+      pillar3_auto_memory: ['PILLAR_3_AUTO_MEMORY', 'Pillar 3 — Auto-inject user memory into LLM'],
+      pillar4_ai_plans: ['PILLAR_4_AI_PLANS', 'Pillar 4 — Allow AI-driven plan generation'],
+      pillar5_notifications: ['PILLAR_5_NOTIFICATIONS', 'Pillar 5 — Outbound notifications (Slack/Teams/PD)'],
+      pillar5_ui: ['PILLAR_5_UI_ENABLED', 'Pillar 5 — Integrations settings UI'],
+      pillar6_telemetry: ['PILLAR_6_TELEMETRY', 'Pillar 6 — Record LLM telemetry'],
+      pillar7_guardrails: ['PILLAR_7_GUARDRAILS', 'Pillar 7 — Command classification + confirmation tokens'],
+      pillar7_audit_log: ['PILLAR_7_AUDIT_LOG', 'Pillar 7 — Audit log writes'],
+    };
+    listEl.innerHTML = Object.keys(labels).map(function(k) {
+      var v = flags[k];
+      var info = labels[k];
+      return '<div class="flag-row">' +
+        '<div><span class="flag-env">' + info[0] + '</span><span class="flag-label">' + info[1] + '</span></div>' +
+        '<span class="flag-pill ' + (v ? 'on' : 'off') + '">' + (v ? 'ON' : 'OFF') + '</span>' +
+      '</div>';
+    }).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div style="color:var(--crit);font-size:11px">Failed to load flags: ' + esc(e.message) + '</div>';
+  }
+}
 
 // ---- AI Performance & Observability (Pillar 6) ----
 async function loadHubPerformance() {
