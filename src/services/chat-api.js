@@ -1322,8 +1322,12 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
 
   // Only handle the *specific* CRUD verbs here. List/get queries are
   // routed through handleListCommand so they share one code path.
-  // Exempt operations that don't require a specific resource type (rbac, compare).
-  const OP_NO_RESOURCE_REQUIRED = new Set(["rbac", "compare"]);
+  // Many operations build their own API paths and don't need resInfo from RESOURCE_MAP.
+  const OP_NO_RESOURCE_REQUIRED = new Set([
+    "rbac", "compare", "upgrade",
+    "cordon", "uncordon", "drain", "taint", "untaint",
+    "rollback", "rollout", "approve",
+  ]);
   if (!cmd.operation) return null;
   if (!cmd.resourceType && !OP_NO_RESOURCE_REQUIRED.has(cmd.operation)) return null;
   if (cmd.operation === "list" || cmd.operation === "get") return null;
