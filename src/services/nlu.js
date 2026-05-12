@@ -474,7 +474,7 @@ const STOP_WORDS = new Set([
   "hour", "hours", "minute", "minutes", "second", "seconds",
   "day", "days", "week", "weeks", "month", "months", "ago",
   // Verb forms and operational words
-  "logged", "login", "logins", "taints", "labels", "annotations",
+  "logged", "login", "logins", "taints", "labels", "annotations", "precheck",
   "configured", "installed", "enabled", "disabled", "active",
   "admin", "admins", "administrator",
 ]);

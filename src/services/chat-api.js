@@ -135,6 +135,33 @@ function inferAgentsFromContext(agents, contextKeys) {
 // even though it was generated in a previous chat turn.
 const _preflightCache = new Map();
 const PREFLIGHT_CACHE_MAX = 200;
+
+// Strip heavy arrays from the preflight report before JSON serialization
+// to avoid OOM kills when sending via SSE. The full report is kept in cache.
+function lightPreflightReport(report) {
+  if (!report) return report;
+  const light = { ...report };
+  if (light.allClusterOperators) {
+    light.allClusterOperators = light.allClusterOperators.slice(0, 15);
+  }
+  if (light.allOLMOperators) {
+    light.allOLMOperators = light.allOLMOperators.slice(0, 15);
+  }
+  if (light.nodeTopology?.nodeDetails) {
+    light.nodeTopology = { ...light.nodeTopology, nodeDetails: light.nodeTopology.nodeDetails.slice(0, 10) };
+  }
+  if (light.versionDelta?.apiRemovals) {
+    light.versionDelta = { ...light.versionDelta, apiRemovals: light.versionDelta.apiRemovals.slice(0, 10) };
+  }
+  if (light.checks) {
+    light.checks = light.checks.map(c => ({
+      ...c,
+      items: c.items ? c.items.slice(0, 10) : c.items,
+    }));
+  }
+  return light;
+}
+
 function cachePreflightReport(conversationId, report) {
   if (!conversationId || !report) return;
   _preflightCache.set(conversationId, { report, ts: Date.now() });
@@ -9859,7 +9886,7 @@ export async function handleChatAPI(req, res) {
           if (targetVer) {
             preflightReport = await runPreflightChecks(targetVer, currentVer || undefined);
             cachePreflightReport(conversationId, preflightReport);
-            const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(preflightReport).replace(/@@/g, "@ @")}@@`;
+            const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(lightPreflightReport(preflightReport)).replace(/@@/g, "@ @")}@@`;
             preflightSection = `${reportToken}\n\n---\n\n`;
           }
         } catch { /* preflight failed gracefully — continue with CR form */ }
@@ -10045,9 +10072,15 @@ export async function handleChatAPI(req, res) {
         }
 
         if (targetVer) {
-          const preflightReport = await runPreflightChecks(targetVer, currentVer || undefined);
+          const preflightTimeout = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Preflight check timed out after 45s")), 45000)
+          );
+          const preflightReport = await Promise.race([
+            runPreflightChecks(targetVer, currentVer || undefined),
+            preflightTimeout,
+          ]);
           cachePreflightReport(conversationId, preflightReport);
-          const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(preflightReport).replace(/@@/g, "@ @")}@@`;
+          const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(lightPreflightReport(preflightReport)).replace(/@@/g, "@ @")}@@`;
           const reply = reportToken;
           const provider = "built-in";
           if (conversationId) {
@@ -10065,7 +10098,10 @@ export async function handleChatAPI(req, res) {
           }
           return json(res, 200, { reply, provider, contextKeys: ["preflight", "upgrade"], cached: false, conversationId });
         }
-      } catch { /* fall through on failure */ }
+      } catch (preflightErr) {
+        console.error("[chat-api] preflight check failed:", preflightErr?.message || preflightErr);
+        // Fall through to other handlers
+      }
     }
 
     // Try direct command handler first (for specific CRUD operations)
