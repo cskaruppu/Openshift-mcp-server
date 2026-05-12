@@ -131,6 +131,18 @@ export async function updateRecord(table, sysId, data) {
   });
 }
 
+/** Cancel a change request in ServiceNow.
+ *  Sets state to the configured cancel value (default "4") and adds close notes. */
+export async function cancelChangeRequest(sysId, { reason = "Cancelled by user from AI Hub" } = {}) {
+  const cancelState = process.env.SERVICENOW_CANCEL_STATE || "4";
+  return updateRecord("change_request", sysId, {
+    state: cancelState,
+    close_code: "cancelled",
+    close_notes: reason,
+    work_notes: `[AI Hub] Change request cancelled: ${reason}`,
+  });
+}
+
 /** Attach a file to a ServiceNow record */
 export async function attachFile(table, sysId, fileName, contentType, fileBuffer) {
   const { instance } = getConfig();

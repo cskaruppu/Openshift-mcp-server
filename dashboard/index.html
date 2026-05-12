@@ -8550,14 +8550,20 @@ async function syncCR(ticketId) {
 }
 
 async function dismissCR(ticketId) {
-  if (!confirm('Dismiss CR ' + ticketId + '? This will mark it as cancelled.')) return;
+  if (!confirm('Dismiss & cancel CR ' + ticketId + '?\n\nThis will cancel it locally AND in ServiceNow.')) return;
   var card = document.getElementById('cr-card-' + ticketId);
   if (card) card.classList.add('cr-syncing');
   try {
     var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/cr/' + encodeURIComponent(ticketId), { method: 'DELETE' });
     var data = await resp.json();
     if (data.success) {
-      showToast(ticketId + ' dismissed', 'ok');
+      if (data.snowCancelled) {
+        showToast(ticketId + ' cancelled in ServiceNow and dismissed', 'ok');
+      } else if (data.snowError) {
+        showToast(ticketId + ' dismissed locally. ServiceNow cancel failed: ' + data.snowError, 'warn');
+      } else {
+        showToast(ticketId + ' dismissed (ServiceNow not configured)', 'ok');
+      }
       refreshPendingCRs();
     } else {
       if (card) card.classList.remove('cr-syncing');

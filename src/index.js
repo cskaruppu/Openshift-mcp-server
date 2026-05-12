@@ -842,8 +842,16 @@ async function handleCRTrackingAPI(url, req, res) {
     try {
       const ticketId = decodeURIComponent(idMatch[1]);
       const permanent = url.searchParams.get("permanent") === "true";
-      const ok = permanent ? await deleteCR(ticketId) : await dismissCR(ticketId);
-      return sendJson(res, ok ? 200 : 404, { success: ok });
+      if (permanent) {
+        const ok = await deleteCR(ticketId);
+        return sendJson(res, ok ? 200 : 404, { success: ok });
+      }
+      const result = await dismissCR(ticketId);
+      return sendJson(res, result.ok ? 200 : 404, {
+        success: result.ok,
+        snowCancelled: result.snowCancelled || false,
+        snowError: result.snowError || null,
+      });
     } catch (e) {
       return sendJson(res, 500, { error: e.message });
     }

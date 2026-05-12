@@ -163,6 +163,18 @@ function lightPreflightReport(report) {
   return light;
 }
 
+const PREFLIGHT_TIMEOUT_MS = Number(process.env.PREFLIGHT_TIMEOUT_MS) || 90000;
+
+async function runPreflightWithTimeout(targetVer, currentVer) {
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`Preflight check timed out after ${PREFLIGHT_TIMEOUT_MS / 1000}s`)), PREFLIGHT_TIMEOUT_MS)
+  );
+  return Promise.race([
+    runPreflightChecks(targetVer, currentVer),
+    timeout,
+  ]);
+}
+
 function cachePreflightReport(conversationId, report) {
   if (!conversationId || !report) return;
   _preflightCache.set(conversationId, { report, ts: Date.now() });
@@ -9885,7 +9897,7 @@ export async function handleChatAPI(req, res) {
             targetVer = itsmCtx.cluster.availableUpdates[0];
           }
           if (targetVer) {
-            preflightReport = await runPreflightChecks(targetVer, currentVer || undefined);
+            preflightReport = await runPreflightWithTimeout(targetVer, currentVer || undefined);
             cachePreflightReport(conversationId, preflightReport);
             const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(lightPreflightReport(preflightReport)).replace(/@@/g, "@ @")}@@`;
             preflightSection = `${reportToken}\n\n---\n\n`;
@@ -10073,13 +10085,7 @@ export async function handleChatAPI(req, res) {
         }
 
         if (targetVer) {
-          const preflightTimeout = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("Preflight check timed out after 45s")), 45000)
-          );
-          const preflightReport = await Promise.race([
-            runPreflightChecks(targetVer, currentVer || undefined),
-            preflightTimeout,
-          ]);
+          const preflightReport = await runPreflightWithTimeout(targetVer, currentVer || undefined);
           cachePreflightReport(conversationId, preflightReport);
           const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(lightPreflightReport(preflightReport)).replace(/@@/g, "@ @")}@@`;
           const reply = reportToken;

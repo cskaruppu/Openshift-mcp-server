@@ -1,5 +1,5 @@
 import { query, isEnabled as dbEnabled } from "../utils/db.js";
-import { getRecord } from "../utils/servicenow-client.js";
+import { getRecord, cancelChangeRequest } from "../utils/servicenow-client.js";
 
 const PENDING_STATUSES = ["submitted", "approved", "scheduled"];
 const COMPLETED_STATUSES = ["executed", "cancelled", "rejected", "failed"];
@@ -219,13 +219,33 @@ export async function syncAllPendingCRs() {
 }
 
 export async function dismissCR(ticketId) {
-  if (!(await dbEnabled())) return false;
+  if (!(await dbEnabled())) return { ok: false };
+
+  const cr = await getCR(ticketId);
+  if (!cr || !PENDING_STATUSES.includes(cr.status)) return { ok: false };
+
   const result = await query(
     `UPDATE change_requests SET status = 'cancelled', updated_at = NOW()
      WHERE (ticket_id = $1 OR id = $1) AND status = ANY($2)`,
     [ticketId, PENDING_STATUSES]
   );
-  return (result?.rowCount || 0) > 0;
+  const localOk = (result?.rowCount || 0) > 0;
+
+  let snowCancelled = false;
+  let snowError = null;
+  if (localOk && cr.sysId && process.env.SERVICENOW_INSTANCE) {
+    try {
+      await cancelChangeRequest(cr.sysId, {
+        reason: `Dismissed by user from AI Hub (${ticketId})`,
+      });
+      snowCancelled = true;
+    } catch (err) {
+      snowError = err.message;
+      console.error(`[cr-tracker] ServiceNow cancel failed for ${ticketId}:`, err.message);
+    }
+  }
+
+  return { ok: localOk, snowCancelled, snowError };
 }
 
 export async function deleteCR(ticketId) {
