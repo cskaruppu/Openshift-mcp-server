@@ -136,27 +136,28 @@ function inferAgentsFromContext(agents, contextKeys) {
 const _preflightCache = new Map();
 const PREFLIGHT_CACHE_MAX = 200;
 
-// Strip heavy arrays from the preflight report before JSON serialization
-// to avoid OOM kills when sending via SSE. The full report is kept in cache.
+// Defense-in-depth: cap heavy arrays before JSON serialization. With the
+// current 1Gi pod limit these caps shouldn't trigger for typical clusters,
+// but they protect against pathological cases (e.g., 200+ operators).
 function lightPreflightReport(report) {
   if (!report) return report;
   const light = { ...report };
   if (light.allClusterOperators) {
-    light.allClusterOperators = light.allClusterOperators.slice(0, 15);
+    light.allClusterOperators = light.allClusterOperators.slice(0, 100);
   }
   if (light.allOLMOperators) {
-    light.allOLMOperators = light.allOLMOperators.slice(0, 15);
+    light.allOLMOperators = light.allOLMOperators.slice(0, 100);
   }
   if (light.nodeTopology?.nodeDetails) {
-    light.nodeTopology = { ...light.nodeTopology, nodeDetails: light.nodeTopology.nodeDetails.slice(0, 10) };
+    light.nodeTopology = { ...light.nodeTopology, nodeDetails: light.nodeTopology.nodeDetails.slice(0, 50) };
   }
   if (light.versionDelta?.apiRemovals) {
-    light.versionDelta = { ...light.versionDelta, apiRemovals: light.versionDelta.apiRemovals.slice(0, 10) };
+    light.versionDelta = { ...light.versionDelta, apiRemovals: light.versionDelta.apiRemovals.slice(0, 50) };
   }
   if (light.checks) {
     light.checks = light.checks.map(c => ({
       ...c,
-      items: c.items ? c.items.slice(0, 10) : c.items,
+      items: c.items ? c.items.slice(0, 50) : c.items,
     }));
   }
   return light;

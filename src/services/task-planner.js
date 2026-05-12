@@ -45,8 +45,18 @@ async function ensurePlanSchema() {
   }
 }
 
-// In-memory plan cache for fast access
+// In-memory plan cache for fast access. Capped to prevent unbounded growth;
+// plans are persisted to PostgreSQL so eviction here only affects fast-path access.
 const _plans = new Map();
+const PLANS_MAX = 100;
+
+function rememberPlan(plan) {
+  _plans.set(plan.id, plan);
+  if (_plans.size > PLANS_MAX) {
+    const oldestKey = _plans.keys().next().value;
+    if (oldestKey) _plans.delete(oldestKey);
+  }
+}
 
 function genPlanId() {
   return "plan_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -97,7 +107,7 @@ export function createPlan(goal, context = {}) {
     })),
     metadata: context.metadata || {},
   };
-  _plans.set(plan.id, plan);
+  rememberPlan(plan);
   persistPlan(plan).catch(() => {});
   return plan;
 }

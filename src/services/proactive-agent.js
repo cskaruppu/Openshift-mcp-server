@@ -241,6 +241,9 @@ function detectNodeAnomalies(nodes) {
 }
 
 function detectRestartSpikes(pods) {
+  // Rebuild the baseline each scan from currently-living pods only — this
+  // prevents the map from accumulating dead-pod keys forever.
+  const nextBaseline = {};
   for (const pod of pods) {
     const ns = pod.metadata?.namespace;
     const name = pod.metadata?.name;
@@ -252,7 +255,7 @@ function detectRestartSpikes(pods) {
 
     const key = `${ns}/${name}`;
     const prev = _baseline.podRestarts[key] || 0;
-    _baseline.podRestarts[key] = restarts;
+    nextBaseline[key] = restarts;
 
     if (prev > 0 && restarts - prev >= 3) {
       addInsight({
@@ -266,6 +269,7 @@ function detectRestartSpikes(pods) {
       });
     }
   }
+  _baseline.podRestarts = nextBaseline;
 }
 
 async function detectCertExpiry() {
@@ -626,6 +630,21 @@ export function isMonitorRunning() {
  */
 const _alertAnalysisCache = new Map();
 const ALERT_ANALYSIS_TTL_MS = 10 * 60 * 1000;
+const ALERT_ANALYSIS_CACHE_MAX = 200;
+
+function rememberAlertAnalysis(key, data) {
+  _alertAnalysisCache.set(key, { ts: Date.now(), data });
+  // Drop expired and over-cap entries to prevent unbounded growth.
+  const now = Date.now();
+  for (const [k, v] of _alertAnalysisCache) {
+    if (now - v.ts > ALERT_ANALYSIS_TTL_MS) _alertAnalysisCache.delete(k);
+  }
+  while (_alertAnalysisCache.size > ALERT_ANALYSIS_CACHE_MAX) {
+    const oldest = _alertAnalysisCache.keys().next().value;
+    if (!oldest) break;
+    _alertAnalysisCache.delete(oldest);
+  }
+}
 
 export async function analyzeAlert(alert, llmOpts = {}) {
   if (!alert || !alert.name) return { error: "Invalid alert" };
@@ -637,7 +656,7 @@ export async function analyzeAlert(alert, llmOpts = {}) {
 
   if (!llmEnabled(llmOpts)) {
     const fallback = ruleBasedAlertAnalysis(alert);
-    _alertAnalysisCache.set(key, { ts: Date.now(), data: fallback });
+    rememberAlertAnalysis(key, fallback);
     return fallback;
   }
 
@@ -681,7 +700,7 @@ Respond with this exact JSON shape:
       fixCommand: "",
       preventStrategy: "",
     };
-    _alertAnalysisCache.set(key, { ts: Date.now(), data: analysis });
+    rememberAlertAnalysis(key, analysis);
     return analysis;
   } catch (err) {
     const fallback = ruleBasedAlertAnalysis(alert);

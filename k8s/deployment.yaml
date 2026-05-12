@@ -65,13 +65,15 @@ spec:
                   optional: true
             - name: DATABASE_URL
               value: "postgres://$(PGUSER):$(PGPASSWORD)@mcp-postgres.openshift-mcp.svc.cluster.local:5432/$(PGDATABASE)"
+            - name: NODE_OPTIONS
+              value: "--max-old-space-size=768"
           resources:
             requests:
               cpu: 100m
-              memory: 128Mi
+              memory: 512Mi
             limits:
               cpu: 500m
-              memory: 256Mi
+              memory: 1Gi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
