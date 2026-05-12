@@ -1322,11 +1322,14 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
 
   // Only handle the *specific* CRUD verbs here. List/get queries are
   // routed through handleListCommand so they share one code path.
-  if (!cmd.operation || !cmd.resourceType) return null;
+  // Exempt operations that don't require a specific resource type (rbac, compare).
+  const OP_NO_RESOURCE_REQUIRED = new Set(["rbac", "compare"]);
+  if (!cmd.operation) return null;
+  if (!cmd.resourceType && !OP_NO_RESOURCE_REQUIRED.has(cmd.operation)) return null;
   if (cmd.operation === "list" || cmd.operation === "get") return null;
 
-  const resInfo = RESOURCE_MAP[cmd.resourceType];
-  if (!resInfo) return null;
+  const resInfo = cmd.resourceType ? RESOURCE_MAP[cmd.resourceType] : null;
+  if (!resInfo && !OP_NO_RESOURCE_REQUIRED.has(cmd.operation)) return null;
 
   const parts = [];
 
@@ -2087,18 +2090,176 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
   // Tier 1: RBAC — "who has X access?", "permissions for user Y"
   // -----------------------------------------------------------------------
   if (cmd.operation === "rbac") {
-    parts.push(`### RBAC Query`);
-    parts.push(``);
-    parts.push(`Use \`/rbac [namespace]\` for a full RBAC audit, or these commands for specific queries:`);
-    parts.push(``);
-    parts.push(`**Who can perform a verb on a resource?**`);
-    parts.push(`@@SEC_FIX_CMD|oc adm policy who-can get pods -n <namespace>@@`);
-    parts.push(``);
-    parts.push(`**What can a user do?**`);
-    parts.push(`@@SEC_FIX_CMD|oc auth can-i --list --as=<user>@@`);
-    parts.push(``);
-    parts.push(`**List cluster-admin bindings:**`);
-    parts.push(`@@SEC_FIX_CMD|oc get clusterrolebindings -o json | jq '.items[] | select(.roleRef.name=="cluster-admin") | .subjects'@@`);
+    try {
+      const lower = message.toLowerCase();
+      const crbData = await ocpGet("/apis/rbac.authorization.k8s.io/v1/clusterrolebindings");
+      const crbs = crbData.items || [];
+
+      // Detect if user is asking about a specific role
+      let roleFilter = null;
+      if (lower.match(/cluster[- ]?admin/)) roleFilter = "cluster-admin";
+      else if (lower.match(/\badmin\b/) && !lower.match(/cluster/)) roleFilter = "admin";
+      else if (lower.match(/\bedit\b/)) roleFilter = "edit";
+      else if (lower.match(/\bview\b/)) roleFilter = "view";
+
+      // Detect if user is asking about a specific user/service account
+      const userMatch = lower.match(/(?:user|for|about)\s+["']?([a-z0-9][-a-z0-9:._@]*)["']?/);
+      const specificUser = userMatch?.[1];
+
+      // Key cluster-wide roles to show
+      const importantRoles = roleFilter
+        ? [roleFilter]
+        : ["cluster-admin", "admin", "edit", "view", "self-provisioner"];
+
+      const bindings = [];
+      for (const crb of crbs) {
+        const role = crb.roleRef?.name || "";
+        const subjects = crb.subjects || [];
+        if (subjects.length === 0) continue;
+
+        const matchesRole = importantRoles.some(r => role === r || role.includes(r));
+        const matchesUser = specificUser
+          ? subjects.some(s => (s.name || "").toLowerCase().includes(specificUser))
+          : false;
+
+        if (matchesRole || matchesUser) {
+          for (const s of subjects) {
+            if (specificUser && !(s.name || "").toLowerCase().includes(specificUser)) continue;
+            bindings.push({
+              role,
+              binding: crb.metadata.name,
+              subjectKind: s.kind,
+              subjectName: s.name,
+              subjectNamespace: s.namespace || "—",
+            });
+          }
+        }
+      }
+
+      // Also fetch namespace-scoped RoleBindings if a namespace is specified
+      let nsBindings = [];
+      if (cmd.namespace) {
+        try {
+          const rbData = await ocpGet(`/apis/rbac.authorization.k8s.io/v1/namespaces/${cmd.namespace}/rolebindings`);
+          for (const rb of (rbData.items || [])) {
+            const role = rb.roleRef?.name || "";
+            for (const s of (rb.subjects || [])) {
+              if (specificUser && !(s.name || "").toLowerCase().includes(specificUser)) continue;
+              nsBindings.push({
+                role,
+                binding: rb.metadata.name,
+                subjectKind: s.kind,
+                subjectName: s.name,
+                subjectNamespace: s.namespace || "—",
+              });
+            }
+          }
+        } catch {}
+      }
+
+      // Fetch OpenShift Users & Groups for enrichment
+      let users = [], groups = [];
+      try {
+        const uData = await ocpGet("/apis/user.openshift.io/v1/users");
+        users = (uData.items || []).map(u => ({
+          name: u.metadata.name,
+          fullName: u.fullName || "",
+          identities: (u.identities || []).join(", "),
+        }));
+        if (specificUser) {
+          users = users.filter(u => u.name.toLowerCase().includes(specificUser));
+        }
+      } catch {}
+      try {
+        const gData = await ocpGet("/apis/user.openshift.io/v1/groups");
+        groups = (gData.items || []).map(g => ({
+          name: g.metadata.name,
+          members: (g.users || []),
+        }));
+        if (specificUser) {
+          groups = groups.filter(g => g.members.some(m => m.toLowerCase().includes(specificUser)));
+        }
+      } catch {}
+
+      // Build response
+      const label = specificUser ? ` for \`${specificUser}\`` : "";
+      parts.push(`### Cluster RBAC Access${label}`);
+      parts.push(``);
+
+      // Cluster-admin summary
+      const clusterAdmins = bindings.filter(b => b.role === "cluster-admin");
+      if (!roleFilter || roleFilter === "cluster-admin") {
+        parts.push(`**Cluster Admins** (${clusterAdmins.length} bindings):`);
+        parts.push(`| Type | Name | Namespace | Binding |`);
+        parts.push(`| --- | --- | --- | --- |`);
+        if (clusterAdmins.length === 0) {
+          parts.push(`| — | No cluster-admin bindings found | — | — |`);
+        } else {
+          for (const b of clusterAdmins.slice(0, 30)) {
+            parts.push(`| ${b.subjectKind} | \`${b.subjectName}\` | ${b.subjectNamespace} | ${b.binding} |`);
+          }
+        }
+        parts.push(``);
+      }
+
+      // Other key roles
+      const otherBindings = bindings.filter(b => b.role !== "cluster-admin");
+      if (otherBindings.length > 0) {
+        parts.push(`**Other Key Roles** (${otherBindings.length} bindings):`);
+        parts.push(`| Role | Type | Name | Namespace |`);
+        parts.push(`| --- | --- | --- | --- |`);
+        for (const b of otherBindings.slice(0, 30)) {
+          parts.push(`| ${b.role} | ${b.subjectKind} | \`${b.subjectName}\` | ${b.subjectNamespace} |`);
+        }
+        parts.push(``);
+      }
+
+      // Namespace-scoped bindings
+      if (nsBindings.length > 0) {
+        parts.push(`**Namespace \`${cmd.namespace}\` Bindings** (${nsBindings.length}):`);
+        parts.push(`| Role | Type | Name |`);
+        parts.push(`| --- | --- | --- |`);
+        for (const b of nsBindings.slice(0, 20)) {
+          parts.push(`| ${b.role} | ${b.subjectKind} | \`${b.subjectName}\` |`);
+        }
+        parts.push(``);
+      }
+
+      // OpenShift Users
+      if (users.length > 0) {
+        parts.push(`**OpenShift Users** (${users.length}):`);
+        parts.push(`| User | Full Name | Identity Provider |`);
+        parts.push(`| --- | --- | --- |`);
+        for (const u of users.slice(0, 20)) {
+          parts.push(`| \`${u.name}\` | ${u.fullName || "—"} | ${u.identities || "—"} |`);
+        }
+        parts.push(``);
+      }
+
+      // Groups
+      if (groups.length > 0) {
+        parts.push(`**Groups** (${groups.length}):`);
+        parts.push(`| Group | Members |`);
+        parts.push(`| --- | --- |`);
+        for (const g of groups.slice(0, 15)) {
+          const memberList = g.members.length <= 5
+            ? g.members.map(m => `\`${m}\``).join(", ")
+            : g.members.slice(0, 5).map(m => `\`${m}\``).join(", ") + ` +${g.members.length - 5} more`;
+          parts.push(`| **${g.name}** | ${memberList || "—"} |`);
+        }
+        parts.push(``);
+      }
+
+      // Summary counts
+      const totalSubjects = new Set(bindings.map(b => `${b.subjectKind}:${b.subjectName}`));
+      parts.push(`**Summary:** ${totalSubjects.size} unique principals across ${bindings.length} cluster-level bindings` +
+        (users.length ? `, ${users.length} OpenShift users` : "") +
+        (groups.length ? `, ${groups.length} groups` : ""));
+
+    } catch (err) {
+      parts.push(`### RBAC Query`);
+      parts.push(formatApiError(err, "clusterrolebindings"));
+    }
     return parts.join("\n");
   }
 
@@ -3337,6 +3498,11 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
     context.intents.push("events");
   }
 
+  // Intent: RBAC / access / permissions
+  if (lower.match(/\brbac\b|\baccess\b|\bpermission|\bwho\s+(has|can|is)\b|\bwho-can\b|\brole\s*bind|\bcluster.?admin/)) {
+    context.intents.push("rbac");
+  }
+
   // Intent: operators
   if (lower.match(/operator|degrad/)) {
     context.intents.push("operators");
@@ -3800,6 +3966,41 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
           };
         });
       }).catch(() => {})
+    );
+  }
+
+  // RBAC / Access — who has access, permissions
+  if (context.intents.includes("rbac")) {
+    tasks.push(
+      ocpGet("/apis/rbac.authorization.k8s.io/v1/clusterrolebindings").then((d) => {
+        const crbs = d.items || [];
+        const keyRoles = ["cluster-admin", "admin", "edit", "view", "self-provisioner"];
+        context.rbacBindings = [];
+        for (const crb of crbs) {
+          const role = crb.roleRef?.name || "";
+          if (!keyRoles.some(r => role === r || role.includes(r))) continue;
+          for (const s of (crb.subjects || [])) {
+            context.rbacBindings.push({ role, kind: s.kind, name: s.name, ns: s.namespace || "" });
+          }
+        }
+      }).catch(() => {})
+    );
+    tasks.push(
+      ocpGet("/apis/user.openshift.io/v1/users").then((d) => {
+        context.ocpUsers = (d.items || []).map(u => ({
+          name: u.metadata.name,
+          fullName: u.fullName || "",
+          identities: (u.identities || []),
+        }));
+      }).catch(() => { context.ocpUsers = []; })
+    );
+    tasks.push(
+      ocpGet("/apis/user.openshift.io/v1/groups").then((d) => {
+        context.ocpGroups = (d.items || []).map(g => ({
+          name: g.metadata.name,
+          members: g.users || [],
+        }));
+      }).catch(() => { context.ocpGroups = []; })
     );
   }
 
@@ -4679,6 +4880,28 @@ function summarizeContext(ctx) {
     }
   }
 
+  // --- RBAC / Access ---
+  if (Array.isArray(ctx.rbacBindings) && ctx.rbacBindings.length > 0) {
+    const byRole = {};
+    for (const b of ctx.rbacBindings) {
+      if (!byRole[b.role]) byRole[b.role] = [];
+      byRole[b.role].push(`${b.kind}/${b.name}${b.ns ? " (" + b.ns + ")" : ""}`);
+    }
+    const lines = [];
+    for (const [role, subjects] of Object.entries(byRole)) {
+      lines.push(`- **${role}**: ${subjects.slice(0, 10).join(", ")}${subjects.length > 10 ? ` (+${subjects.length - 10} more)` : ""}`);
+    }
+    sections.push(`## RBAC Bindings\n${lines.join("\n")}`);
+  }
+  if (Array.isArray(ctx.ocpUsers) && ctx.ocpUsers.length > 0) {
+    const userLines = ctx.ocpUsers.slice(0, 15).map(u => `- ${u.name}${u.fullName ? ` (${u.fullName})` : ""}${u.identities?.length ? ` — ${u.identities.join(", ")}` : ""}`);
+    sections.push(`## OpenShift Users (${ctx.ocpUsers.length})\n${userLines.join("\n")}`);
+  }
+  if (Array.isArray(ctx.ocpGroups) && ctx.ocpGroups.length > 0) {
+    const groupLines = ctx.ocpGroups.slice(0, 10).map(g => `- **${g.name}**: ${g.members?.slice(0, 5).join(", ") || "empty"}${g.members?.length > 5 ? ` (+${g.members.length - 5})` : ""}`);
+    sections.push(`## OpenShift Groups (${ctx.ocpGroups.length})\n${groupLines.join("\n")}`);
+  }
+
   // --- Any remaining top-level keys that might carry useful data ---
   const summarizedKeys = new Set([
     "clusterVersion", "nodes", "problemPods", "operators",
@@ -4692,6 +4915,7 @@ function summarizeContext(ctx) {
     "targetDeploymentReplicaSets", "targetDeploymentEvents",
     "targetResourceName", "targetResourceType",
     "certificateExpiry", "pendingCSRs",
+    "rbacBindings", "ocpUsers", "ocpGroups",
   ]);
   const remaining = {};
   for (const [key, value] of Object.entries(ctx)) {
