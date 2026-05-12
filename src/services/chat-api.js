@@ -9444,6 +9444,94 @@ export async function handleChatAPI(req, res) {
       }
     }
 
+    // ---- Greeting handler: professional welcome with live cluster context ----
+    const GREETING_PAT = /^\s*(hi|hello|hey|howdy|greetings|good\s*(morning|afternoon|evening|day)|yo|sup|what'?s\s*up|hola|bonjour)\s*[.!?]*\s*$/i;
+    if (GREETING_PAT.test(userMessage)) {
+      let clusterVersion = "unknown";
+      let clusterChannel = "";
+      let nodeCount = 0;
+      let readyNodes = 0;
+      let operatorCount = 0;
+      let degradedCount = 0;
+      let healthStatus = "Unknown";
+
+      try {
+        const [cvRes, nodesRes, opsRes] = await Promise.allSettled([
+          ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
+          ocpGet("/api/v1/nodes"),
+          ocpGet("/apis/config.openshift.io/v1/clusteroperators"),
+        ]);
+        if (cvRes.status === "fulfilled") {
+          clusterVersion = cvRes.value.status?.desired?.version || "unknown";
+          clusterChannel = cvRes.value.spec?.channel || "";
+        }
+        if (nodesRes.status === "fulfilled") {
+          const items = nodesRes.value.items || [];
+          nodeCount = items.length;
+          readyNodes = items.filter(n =>
+            (n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True")
+          ).length;
+        }
+        if (opsRes.status === "fulfilled") {
+          const items = opsRes.value.items || [];
+          operatorCount = items.length;
+          degradedCount = items.filter(o =>
+            (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True")
+          ).length;
+        }
+        healthStatus = degradedCount > 0 ? "Degraded" : readyNodes < nodeCount ? "Warning" : "Healthy";
+      } catch { /* best effort */ }
+
+      const healthIcon = healthStatus === "Healthy" ? "[OK]" : healthStatus === "Degraded" ? "[CRITICAL]" : "[WARNING]";
+
+      const reply = [
+        `### Welcome to TCS Agentic AI`,
+        ``,
+        `You are connected to **OpenShift ${clusterVersion}**${clusterChannel ? ` (${clusterChannel})` : ""}.`,
+        ``,
+        `| Property | Status |`,
+        `| --- | --- |`,
+        `| Cluster Health | ${healthIcon} **${healthStatus}** |`,
+        `| Nodes | ${readyNodes}/${nodeCount} Ready |`,
+        `| Cluster Operators | ${operatorCount - degradedCount}/${operatorCount} Available${degradedCount > 0 ? ` (${degradedCount} degraded)` : ""} |`,
+        ``,
+        `I can help you manage, troubleshoot, and monitor your cluster. Here are some things you can try:`,
+        ``,
+        `**Quick actions:**`,
+        `  - \`check cluster health\` — overall cluster status and issues`,
+        `  - \`show pods with issues\` — pods in error states`,
+        `  - \`list deployments\` — all deployments across namespaces`,
+        `  - \`who has access to cluster\` — RBAC and access audit`,
+        ``,
+        `**Diagnostics:**`,
+        `  - \`why is pod <name> failing?\` — deep diagnosis with root cause`,
+        `  - \`show events in <namespace>\` — recent cluster events`,
+        `  - \`show crashloopbackoff pods\` — filter by issue type`,
+        ``,
+        `**Operations:**`,
+        `  - \`/security\` — security & compliance audit`,
+        `  - \`/operators\` — operator lifecycle status`,
+        `  - \`/builds\` — build pipeline status`,
+        `  - \`/recommendations\` — optimization suggestions`,
+        ``,
+        `Type \`help\` to see the full list of supported commands.`,
+      ].join("\n");
+
+      const provider = "built-in";
+      if (conversationId) {
+        histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+      }
+      if (wantsStream) {
+        sseStart(res);
+        sseSend(res, { stage: "querying" });
+        sseSend(res, { delta: reply });
+        sseSend(res, { done: true, provider, conversationId });
+        sseEnd(res);
+        return;
+      }
+      return json(res, 200, { reply, provider, contextKeys: ["greeting"], cached: false, conversationId });
+    }
+
     // ---- Smart disambiguation: ask clarifying question when intent is ambiguous ----
     // Only triggers for short/vague queries with low NLU confidence and no
     // conversation history that would resolve the ambiguity.
