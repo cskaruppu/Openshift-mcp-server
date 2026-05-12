@@ -2762,6 +2762,15 @@ const mode =
   process.env.MCP_TRANSPORT ||
   (process.env.KUBERNETES_SERVICE_HOST ? "sse" : "stdio");
 
+process.on("uncaughtException", (err) => {
+  console.error("[FATAL] Uncaught exception:", err.message);
+  console.error(err.stack);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[FATAL] Unhandled promise rejection:", reason instanceof Error ? reason.message : reason);
+  if (reason instanceof Error) console.error(reason.stack);
+});
+
 if (mode === "sse") {
   startSSE().catch((err) => {
     console.error("Fatal error starting MCP server (SSE):", err);
