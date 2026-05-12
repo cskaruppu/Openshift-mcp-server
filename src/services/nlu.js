@@ -66,7 +66,7 @@ export const RESOURCE_ALIASES = {
   // ---- Tier 1: OpenShift-native resources ----
   buildconfig:       ["buildconfig", "buildconfigs", "bc"],
   build:             ["build", "builds"],
-  imagestream:       ["imagestream", "imagestreams", "is"],
+  imagestream:       ["imagestream", "imagestreams"],
   imagestreamtag:    ["imagestreamtag", "imagestreamtags", "istag", "istags"],
   deploymentconfig:  ["deploymentconfig", "deploymentconfigs", "dc"],
   scc:               ["scc", "sccs", "securitycontextconstraint", "securitycontextconstraints"],
@@ -456,6 +456,27 @@ const STOP_WORDS = new Set([
   "who", "permissions", "access", "approve", "reject", "sign",
   "export", "dump", "yaml", "compare", "diff", "snapshot", "resize", "expand", "grow",
   "find", "search", "filter",
+  // Common English adjectives/adverbs that appear in follow-up queries and must
+  // never be treated as Kubernetes resource names.
+  "detailed", "brief", "full", "complete", "quick", "more", "less", "latest",
+  "previous", "recent", "current", "next", "last", "first", "new", "old",
+  "specific", "particular", "exact", "same", "other", "another", "above",
+  "below", "existing", "available", "overall", "total", "entire", "whole",
+  "continue", "continued", "also", "still", "just", "only", "even",
+  "check", "give", "tell", "want", "need", "like", "know", "think",
+  "look", "looking", "try", "trying", "going", "work", "working",
+  "correct", "proper", "good", "bad", "better", "best", "worse", "worst",
+  "history", "timeline", "changelog", "overview", "audit", "report",
+  "everything", "anything", "something", "nothing",
+  "resource", "resources", "limits", "requests", "probes", "upgrades",
+  "clients", "servers", "providers", "rules", "policies",
+  // Time-related words that appear in advanced filter queries
+  "hour", "hours", "minute", "minutes", "second", "seconds",
+  "day", "days", "week", "weeks", "month", "months", "ago",
+  // Verb forms and operational words
+  "logged", "login", "logins", "taints", "labels", "annotations",
+  "configured", "installed", "enabled", "disabled", "active",
+  "admin", "admins", "administrator",
 ]);
 
 // Filter keywords (issue type). Order matters: most specific first.
@@ -530,6 +551,31 @@ const COMPOUND_TERMS = [
   [/\bhelm\s+releases?\b/gi, "helmrelease"],
   [/\bcluster\s+versions?\b/gi, "clusterversion"],
   [/\bmachine\s+sets?\b/gi, "machineset"],
+  [/\boauth\s+clients?\b/gi, "oauthclient"],
+  [/\bcluster\s+roles?\s*bindings?\b/gi, "clusterrolebinding"],
+  [/\bcluster\s+roles?\b/gi, "clusterrole"],
+  [/\brole\s*bindings?\b/gi, "rolebinding"],
+  [/\bservice\s+accounts?\b/gi, "serviceaccount"],
+  [/\bstorage\s+class(?:es)?\b/gi, "storageclass"],
+  [/\bnetwork\s+polic(?:y|ies)\b/gi, "networkpolicy"],
+  [/\bbuild\s+configs?\b/gi, "buildconfig"],
+  [/\bimage\s+streams?\b/gi, "imagestream"],
+  [/\bdeployment\s+configs?\b/gi, "deploymentconfig"],
+  [/\bconfig\s+maps?\b/gi, "configmap"],
+  [/\bstateful\s+sets?\b/gi, "statefulset"],
+  [/\bdaemon\s+sets?\b/gi, "daemonset"],
+  [/\breplica\s+sets?\b/gi, "replicaset"],
+  [/\bcron\s+jobs?\b/gi, "cronjob"],
+  [/\bcluster\s+operators?\b/gi, "clusteroperator"],
+  [/\bresource\s+quotas?\b/gi, "resourcequota"],
+  [/\blimit\s+ranges?\b/gi, "limitrange"],
+  [/\bpod\s+disruption\s+budgets?\b/gi, "poddisruptionbudget"],
+  [/\bmachine\s+configs?\b/gi, "machineconfig"],
+  [/\bmachine\s+config\s+pools?\b/gi, "machineconfigpool"],
+  [/\bmachine\s+health\s+checks?\b/gi, "machinehealthcheck"],
+  [/\binstall\s+plans?\b/gi, "installplan"],
+  [/\boperator\s+groups?\b/gi, "operatorgroup"],
+  [/\bingress\s+controllers?\b/gi, "ingresscontroller"],
 ];
 
 function normalizeCompounds(text) {
@@ -583,6 +629,9 @@ export function parse(message, memory = {}) {
   } else if (/\b(list|show|display|view|enumerate)\b/.test(lower)) {
     intent = intent || "list";
     scope = "list";
+  } else if (/\b(history|timeline|changelog)\b/.test(lower)) {
+    intent = intent || "list";
+    scope = "history";
   } else if (/\b(describe|inspect|details?|info|explain|tell\s+me\s+about)\b/.test(lower)) {
     intent = intent || "get";
     scope = "detail";
@@ -793,7 +842,18 @@ export function parse(message, memory = {}) {
   }
 
   // ---- 9. Special: bare cluster health questions ----
-  if (!resource && (scope === "health" || /\b(cluster|overview|status)\b/.test(lower))) {
+  // Only activate for generic intents (list/get/null). Specific intents like
+  // "rbac", "rollout", "drain", etc. have their own handlers and must NOT be
+  // hijacked just because the message contains the word "cluster".
+  const SPECIFIC_INTENTS = new Set([
+    "rbac", "rollout", "rollback", "drain", "cordon", "uncordon",
+    "taint", "untaint", "approve", "compare", "export", "snapshot",
+    "resize", "bulk", "changes", "forecast", "kb", "provision",
+    "logs", "top", "exec", "delete", "create", "update", "start", "stop",
+    "label", "annotate", "evict", "run",
+  ]);
+  if (!resource && !SPECIFIC_INTENTS.has(intent) &&
+      (scope === "health" || /\b(cluster|overview|status)\b/.test(lower))) {
     intent = intent || "list";
     return makeResult({
       intent, resource: "cluster", scope: "health", raw, confidence: 0.7,
@@ -824,8 +884,22 @@ export function parse(message, memory = {}) {
   }
 
   // Inherit resource from memory if we have a name but no resource type.
+  // Guard: don't inherit if the current intent implies a different resource
+  // domain (e.g. intent=rollout shouldn't inherit resource=clusterversion).
+  const INTENT_RESOURCE_COMPAT = {
+    rollout: new Set(["deployment", "deploymentconfig", "statefulset", "daemonset"]),
+    rollback: new Set(["deployment", "deploymentconfig"]),
+    cordon: new Set(["node"]),
+    uncordon: new Set(["node"]),
+    drain: new Set(["node"]),
+    taint: new Set(["node"]),
+    untaint: new Set(["node"]),
+  };
   if (name && !resource && memory.resource) {
-    resource = memory.resource;
+    const compat = INTENT_RESOURCE_COMPAT[intent];
+    if (!compat || compat.has(memory.resource)) {
+      resource = memory.resource;
+    }
   }
 
   // If we have a namespace-targeted intent but no name, and the same namespace

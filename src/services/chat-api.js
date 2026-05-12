@@ -1177,6 +1177,64 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
   const llmAvailable = !!opts.llmAvailable;
 
   // -----------------------------------------------------------------------
+  // CLUSTER VERSION HISTORY — "cluster version history", "upgrade history",
+  // "rollout history previous upgrades", "previous upgrades", "past upgrades"
+  // -----------------------------------------------------------------------
+  const VERSION_HISTORY_PAT = /\b(?:(?:cluster|upgrade|version|rollout)\s+history|previous\s+(?:upgrades?|versions?)|past\s+(?:upgrades?|versions?)|upgrade\s+(?:log|timeline)|version\s+(?:log|timeline)|show.*(?:upgrade|version)\s+history)\b/i;
+  if (VERSION_HISTORY_PAT.test(lower) || (cmd.resourceType === "clusterversion" && /\bhistory\b/i.test(lower))) {
+    try {
+      const cvResp = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+      const currentVersion = cvResp.status?.desired?.version || "unknown";
+      const channel = cvResp.spec?.channel || "unknown";
+      const history = cvResp.status?.history || [];
+      const conditions = cvResp.status?.conditions || [];
+      const parts = [];
+      parts.push(`### OpenShift Cluster Version History`);
+      parts.push(``);
+      parts.push(`Your cluster is currently running **OpenShift ${currentVersion}** on the \`${channel}\` channel.`);
+      parts.push(``);
+      parts.push(`**Current Cluster Version Status**`);
+      parts.push(`| Condition Type | Status | Message |`);
+      parts.push(`|---|---|---|`);
+      for (const c of conditions) {
+        parts.push(`| ${c.type} | ${c.status} | ${c.message || c.reason || "—"} |`);
+      }
+      parts.push(``);
+      if (history.length > 0) {
+        parts.push(`**Version History** (${history.length} entries):`);
+        parts.push(`| Version | State | Started | Completed |`);
+        parts.push(`|---------|-------|---------|-----------|`);
+        for (const h of history) {
+          const started = h.startedTime ? new Date(h.startedTime).toLocaleString() : "—";
+          const completed = h.completionTime ? new Date(h.completionTime).toLocaleString() : "—";
+          parts.push(`| \`${h.version}\` | ${h.state} | ${started} | ${completed} |`);
+        }
+        parts.push(``);
+      }
+      const updates = cvResp.status?.availableUpdates || [];
+      if (updates.length > 0) {
+        const sorted = [...updates].sort((a, b) => (b.version || "").localeCompare(a.version || ""));
+        parts.push(`**Available Upgrades** (${updates.length} versions):`);
+        for (const u of sorted.slice(0, 10)) {
+          parts.push(`- \`${u.version}\``);
+        }
+        if (sorted.length > 10) parts.push(`- ... and ${sorted.length - 10} more`);
+        parts.push(``);
+      }
+      parts.push(`**Next Steps:**`);
+      parts.push(`- Run a pre-upgrade assessment: \`precheck upgrade\``);
+      parts.push(`- Compare upgrade paths: \`compare upgrade versions\``);
+      if (updates.length > 0) {
+        const latest = [...updates].sort((a, b) => (b.version || "").localeCompare(a.version || ""))[0];
+        parts.push(`- Start upgrade: \`upgrade to ${latest.version}\``);
+      }
+      return parts.join("\n");
+    } catch (err) {
+      return `### Cluster Version History\n\n${formatApiError(err, "clusterversion")}`;
+    }
+  }
+
+  // -----------------------------------------------------------------------
   // UPGRADE COMPARISON — "difference between current and upgrade version"
   // Handles natural-language queries about version differences, available
   // upgrades, and what changes between versions.
@@ -1921,9 +1979,30 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
   if (cmd.operation === "cordon" || cmd.operation === "uncordon") {
     const target = cmd.resourceName;
     if (!target) {
-      parts.push(`### ${cmd.operation === "cordon" ? "Cordon" : "Uncordon"} Node`);
+      const label = cmd.operation === "cordon" ? "Cordon" : "Uncordon";
+      parts.push(`### ${label} Node`);
       parts.push(`[WARNING] Please specify a node name.`);
-      parts.push(`\n**Example:** \`${cmd.operation} node worker-3\``);
+      parts.push(``);
+      try {
+        const nodesData = await ocpGet("/api/v1/nodes");
+        const nodes = (nodesData.items || []);
+        if (nodes.length > 0) {
+          parts.push(`**Available Nodes:**`);
+          parts.push(`| Node | Roles | Status | Schedulable |`);
+          parts.push(`| --- | --- | --- | --- |`);
+          for (const n of nodes) {
+            const roles = Object.keys(n.metadata?.labels || {})
+              .filter(l => l.startsWith("node-role.kubernetes.io/"))
+              .map(l => l.replace("node-role.kubernetes.io/", ""))
+              .join(", ") || "worker";
+            const ready = (n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True");
+            const unschedulable = n.spec?.unschedulable ? "No" : "Yes";
+            parts.push(`| \`${n.metadata.name}\` | ${roles} | ${ready ? "[OK] Ready" : "[WARNING] NotReady"} | ${unschedulable} |`);
+          }
+          parts.push(``);
+        }
+      } catch {}
+      parts.push(`**Example:** \`${cmd.operation} node <node-name>\``);
       return parts.join("\n");
     }
     const unschedulable = cmd.operation === "cordon";
@@ -1947,7 +2026,23 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
     if (!target) {
       parts.push(`### Drain Node`);
       parts.push(`[WARNING] Please specify a node name.`);
-      parts.push(`\n**Example:** \`drain node worker-3\``);
+      parts.push(``);
+      try {
+        const nodesData = await ocpGet("/api/v1/nodes");
+        const nodes = (nodesData.items || []);
+        if (nodes.length > 0) {
+          parts.push(`**Available Nodes:**`);
+          for (const n of nodes) {
+            const roles = Object.keys(n.metadata?.labels || {})
+              .filter(l => l.startsWith("node-role.kubernetes.io/"))
+              .map(l => l.replace("node-role.kubernetes.io/", ""))
+              .join(", ") || "worker";
+            parts.push(`- \`${n.metadata.name}\` (${roles})`);
+          }
+          parts.push(``);
+        }
+      } catch {}
+      parts.push(`**Example:** \`drain node <node-name>\``);
       return parts.join("\n");
     }
     parts.push(`### Drain Node \`${target}\``);
@@ -2021,12 +2116,69 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
   }
 
   if (cmd.operation === "rollout") {
+    // If resourceType is clusterversion or the message is about cluster/upgrade
+    // history, redirect to the cluster version history handler instead.
+    if (cmd.resourceType === "clusterversion" || /\b(cluster|upgrade|version)\s*(version|history|rollout|update)/i.test(lower)) {
+      try {
+        const cvResp = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+        const currentVersion = cvResp.status?.desired?.version || "unknown";
+        const channel = cvResp.spec?.channel || "unknown";
+        const history = cvResp.status?.history || [];
+        const conditions = cvResp.status?.conditions || [];
+        parts.push(`### Cluster Version Rollout History`);
+        parts.push(``);
+        parts.push(`| Property | Value |`);
+        parts.push(`|----------|-------|`);
+        parts.push(`| Current Version | \`${currentVersion}\` |`);
+        parts.push(`| Channel | \`${channel}\` |`);
+        parts.push(``);
+        if (history.length > 0) {
+          parts.push(`**Upgrade History** (${history.length} entries):`);
+          parts.push(`| Version | State | Started | Completed |`);
+          parts.push(`|---------|-------|---------|-----------|`);
+          for (const h of history) {
+            const started = h.startedTime ? new Date(h.startedTime).toLocaleString() : "—";
+            const completed = h.completionTime ? new Date(h.completionTime).toLocaleString() : "—";
+            parts.push(`| \`${h.version}\` | ${h.state} | ${started} | ${completed} |`);
+          }
+          parts.push(``);
+        }
+        if (conditions.length > 0) {
+          parts.push(`**Current Conditions:**`);
+          for (const c of conditions) {
+            parts.push(`- **${c.type}**: ${c.status} — ${c.message || c.reason || ""}`);
+          }
+          parts.push(``);
+        }
+        const updates = cvResp.status?.availableUpdates || [];
+        if (updates.length > 0) {
+          const latest = [...updates].sort((a, b) => (b.version || "").localeCompare(a.version || ""))[0];
+          parts.push(`**Next Steps:**`);
+          parts.push(`- Latest available upgrade: \`${latest.version}\``);
+          parts.push(`- Run pre-upgrade check: \`precheck upgrade to ${latest.version}\``);
+          parts.push(`- Start upgrade: \`upgrade to ${latest.version}\``);
+        }
+        return parts.join("\n");
+      } catch (err) {
+        parts.push(`### Cluster Version History`);
+        parts.push(formatApiError(err, "clusterversion"));
+        return parts.join("\n");
+      }
+    }
+
     const resource = cmd.resourceType || "deployment";
     const name = cmd.resourceName;
     const ns = cmd.namespace;
     if (!name) {
       parts.push(`### Rollout Status`);
       parts.push(`[WARNING] Please specify a ${resource} name.`);
+      parts.push(`\n**Example:** "rollout status my-deployment in namespace my-ns"`);
+      return parts.join("\n");
+    }
+    if (!ns) {
+      parts.push(`### Rollout Status`);
+      parts.push(`[WARNING] Please specify the namespace.`);
+      parts.push(`\n**Example:** "rollout status ${name} in namespace my-ns"`);
       return parts.join("\n");
     }
     try {
@@ -2688,8 +2840,64 @@ async function handleListCommand(message, preParsed, opts = {}) {
       items = items.filter((p) => p.status?.phase !== "Running" && p.status?.phase !== "Succeeded");
     }
 
+    // Advanced filter: missingFeature — "pods without limits", "pods without probes"
+    const adv = cmd.advFilters || {};
+    let advFilterLabel = "";
+    if (adv.missingFeature && (cmd.resourceType === "pod" || cmd.resourceType === "pods")) {
+      const feat = adv.missingFeature;
+      if (feat === "limits") {
+        items = items.filter(p => {
+          const containers = p.spec?.containers || [];
+          return containers.some(c => !c.resources?.limits || (!c.resources.limits.cpu && !c.resources.limits.memory));
+        });
+        advFilterLabel = " **without resource limits**";
+      } else if (feat === "requests") {
+        items = items.filter(p => {
+          const containers = p.spec?.containers || [];
+          return containers.some(c => !c.resources?.requests || (!c.resources.requests.cpu && !c.resources.requests.memory));
+        });
+        advFilterLabel = " **without resource requests**";
+      } else if (feat === "probes") {
+        items = items.filter(p => {
+          const containers = p.spec?.containers || [];
+          return containers.some(c => !c.livenessProbe && !c.readinessProbe);
+        });
+        advFilterLabel = " **without liveness/readiness probes**";
+      }
+    }
+    if (adv.missingFeature && (cmd.resourceType === "deployment" || cmd.resourceType === "deployments")) {
+      const feat = adv.missingFeature;
+      if (feat === "pdb") {
+        advFilterLabel = " **without PodDisruptionBudget**";
+      } else if (feat === "networkpolicy") {
+        advFilterLabel = " **without NetworkPolicy**";
+      }
+    }
+
+    // Advanced filter: statusFilter — "pods in Terminating", "stuck pods"
+    if (adv.statusFilter && (cmd.resourceType === "pod" || cmd.resourceType === "pods")) {
+      const sf = adv.statusFilter;
+      items = items.filter(p => {
+        const phase = p.status?.phase || "";
+        const deleting = !!p.metadata?.deletionTimestamp;
+        if (sf === "Terminating") return deleting;
+        if (sf === "ContainerCreating") return (p.status?.containerStatuses || []).some(c => c.state?.waiting?.reason === "ContainerCreating");
+        if (sf === "Init") return (p.status?.initContainerStatuses || []).some(c => c.state?.waiting || c.state?.terminated);
+        if (sf === "Completed") return phase === "Succeeded";
+        if (sf === "Unknown") return phase === "Unknown";
+        return phase === sf;
+      });
+      advFilterLabel = advFilterLabel || ` in **${adv.statusFilter}** state`;
+    }
+
+    // Advanced filter: zeroReplicas — "deployments with 0 replicas"
+    if (adv.zeroReplicas && (cmd.resourceType === "deployment" || cmd.resourceType === "deployments")) {
+      items = items.filter(d => (d.spec?.replicas ?? 1) === 0);
+      advFilterLabel = " **scaled to zero**";
+    }
+
     const label = cmd.namespace ? `in \`${cmd.namespace}\`` : "(all namespaces)";
-    const filterLabel = cmd.filter ? ` matching **${cmd.filter}**` : "";
+    const filterLabel = (cmd.filter ? ` matching **${cmd.filter}**` : "") + advFilterLabel;
 
     // ---- Count-scope: user asked "how many", return a single line ----
     // For deployments with "replica"/"count" queries, show a proper replica summary table
@@ -9244,9 +9452,15 @@ export async function handleChatAPI(req, res) {
     }
 
     // ---- Redis cache lookup ----
-    // Mutating intents (delete / update / exec / run) always bypass the
-    // cache so they hit the live cluster.
-    const isMutating = ["delete", "update", "exec", "run", "create", "start", "stop", "upgrade"].includes(parsed.intent);
+    // Mutating intents and intents with dedicated direct-handlers always
+    // bypass the cache so they hit the live cluster and return real data.
+    const CACHE_BYPASS_INTENTS = new Set([
+      "delete", "update", "exec", "run", "create", "start", "stop", "upgrade",
+      "rbac", "rollout", "rollback", "drain", "cordon", "uncordon",
+      "taint", "untaint", "approve", "compare", "export", "snapshot", "resize",
+      "label", "annotate", "evict",
+    ]);
+    const isMutating = CACHE_BYPASS_INTENTS.has(parsed.intent);
     const cacheKey = cacheKeyForChat(userMessage, activeProvider);
 
     if (!isMutating) {
