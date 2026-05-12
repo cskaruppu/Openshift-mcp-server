@@ -9162,27 +9162,7 @@ export async function handleChatAPI(req, res) {
     const slashReply = await maybeHandleSlashCommand(userMessage, conversationId, llmOpts);
     if (slashReply) {
       const slashProvider = slashReply.provider || "built-in";
-      // Pillar 2: append reasoning trace tag if available
       let finalReply = slashReply.reply;
-      const slashCmdName = (userMessage.match(/^\/(\w+)/) || [])[1] || "unknown";
-      if (reasoningTrace) {
-        reasoningTrace.add({ kind: "decide", summary: `Matched slash command: /${slashCmdName}`, confidence: 0.95 });
-        reasoningTrace.setDecisionPath(`slash:/${slashCmdName}`);
-        reasoningTrace.setFinalConfidence(0.95);
-        // Default behavior controlled by PILLAR_2_REASONING_DEFAULT.
-        // Explicit body.includeReasoning still overrides if provided.
-        let shouldInclude = body.includeReasoning;
-        if (shouldInclude == null) {
-          try {
-            const ff = await import("./feature-flags.js");
-            shouldInclude = ff.flags.pillar2ReasoningDefault();
-          } catch { shouldInclude = false; }
-        }
-        if (shouldInclude) {
-          finalReply = finalReply + "\n\n" + reasoningTrace.toTag();
-        }
-        reasoningTrace.persist().catch(() => {});
-      }
       if (conversationId) {
         histAddMessage(conversationId, {
           role: "assistant",
@@ -9190,13 +9170,22 @@ export async function handleChatAPI(req, res) {
           provider: slashProvider,
         }).catch(() => {});
       }
+      // Support SSE streaming for slash commands — the UI may request streaming
+      const wantsStreamSlash = body.stream === true || (req.headers.accept || "").includes("text/event-stream");
+      if (wantsStreamSlash) {
+        sseStart(res);
+        sseSend(res, { stage: "querying" });
+        sseSend(res, { delta: finalReply });
+        sseSend(res, { done: true, provider: slashProvider, conversationId });
+        sseEnd(res);
+        return;
+      }
       return json(res, 200, {
         reply: finalReply,
         provider: slashProvider,
         contextKeys: slashReply.contextKeys || ["slash"],
         cached: false,
         conversationId,
-        reasoning: reasoningTrace ? reasoningTrace.toJSON() : null,
       });
     }
 
