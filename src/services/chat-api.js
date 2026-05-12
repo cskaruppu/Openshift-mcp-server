@@ -885,6 +885,31 @@ async function fetchPodLogs(namespace, podName, tailLines = 80) {
   }
 }
 
+/**
+ * Format OCP API errors for chat display.
+ * Turns raw 403/404 JSON blobs into human-readable messages with fix guidance.
+ */
+function formatApiError(err, resourceType) {
+  const msg = err.message || String(err);
+  if (msg.includes("OCP API 403") || msg.includes("Forbidden")) {
+    const resLabel = resourceType || "resource";
+    const apiGroupMatch = msg.match(/"([a-z0-9.-]+)" at the cluster/);
+    const groupMatch = msg.match(/"group":"([^"]+)"/);
+    const apiGroup = apiGroupMatch?.[1] || groupMatch?.[1] || "";
+    const groupHint = apiGroup ? ` (\`${apiGroup}\`)` : "";
+    return `[WARNING] **Permission Denied** — The MCP server service account does not have access to \`${resLabel}\`${groupHint}.\n\n` +
+      `**To fix**, apply the updated RBAC manifest:\n` +
+      `SEC_FIX_CMD:::oc apply -f k8s/serviceaccount.yaml\n\n` +
+      `Or grant access manually:\n` +
+      `SEC_FIX_CMD:::oc adm policy add-cluster-role-to-user mcp-server-reader system:serviceaccount:openshift-mcp:mcp-server`;
+  }
+  if (msg.includes("OCP API 404") || msg.includes("the server doesn't have a resource type")) {
+    const resLabel = resourceType || "resource";
+    return `[WARNING] **Resource Not Found** — \`${resLabel}\` API is not available on this cluster. The corresponding operator or CRD may not be installed.`;
+  }
+  return `[CRITICAL] ${msg}`;
+}
+
 // ---------------------------------------------------------------------------
 // Smart disambiguation — detect ambiguous queries and generate clarification
 // cards with clickable options (similar to ChatGPT / Copilot / Google Assistant).
@@ -1606,7 +1631,7 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
     } catch (err) {
       if (llmAvailable) return null;
       parts.push(`### Error`);
-      parts.push(`[CRITICAL] Failed to get ${cmd.resourceType} \`${cmd.resourceName}\`: ${err.message}`);
+      parts.push(formatApiError(err, cmd.resourceType));
     }
     return parts.join("\n");
   }
@@ -1905,7 +1930,7 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
       parts.push(`@@SEC_FIX_CMD|oc adm ${cmd.operation} ${target}@@`);
     } catch (err) {
       parts.push(`### ${cmd.operation === "cordon" ? "Cordon" : "Uncordon"} Failed`);
-      parts.push(`[CRITICAL] ${err.message}`);
+      parts.push(formatApiError(err, "nodes"));
     }
     return parts.join("\n");
   }
@@ -2023,7 +2048,7 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
       parts.push(`@@SEC_FIX_CMD|oc rollout status ${resource}/${name} -n ${ns} --watch@@`);
     } catch (err) {
       parts.push(`### Rollout Status Failed`);
-      parts.push(`[CRITICAL] ${err.message}`);
+      parts.push(formatApiError(err, cmd.resourceType || "deployment"));
     }
     return parts.join("\n");
   }
@@ -2398,7 +2423,7 @@ async function handleViewMore(resourceType, namespace, offset, limit) {
 
     return parts.join("\n");
   } catch (err) {
-    return `### ${resInfo.resource}\n[CRITICAL] ${err.message}`;
+    return `### ${resInfo.resource}\n${formatApiError(err, resInfo.resource)}`;
   }
 }
 
@@ -2450,7 +2475,7 @@ async function handleListCommand(message, preParsed, opts = {}) {
       });
       return parts.join("\n");
     } catch (err) {
-      return `### Projects\n[CRITICAL] ${err.message}`;
+      return `### Projects\n${formatApiError(err, "projects")}`;
     }
   }
 
@@ -2479,7 +2504,7 @@ async function handleListCommand(message, preParsed, opts = {}) {
       }
       return parts.join("\n");
     } catch (err) {
-      return `### Events\n[CRITICAL] ${err.message}`;
+      return `### Events\n${formatApiError(err, "events")}`;
     }
   }
 
@@ -2707,7 +2732,7 @@ async function handleListCommand(message, preParsed, opts = {}) {
     }
     return parts.join("\n");
   } catch (err) {
-    return `### ${resInfo.resource}\n[CRITICAL] ${err.message}`;
+    return `### ${resInfo.resource}\n${formatApiError(err, resInfo.resource)}`;
   }
 }
 
