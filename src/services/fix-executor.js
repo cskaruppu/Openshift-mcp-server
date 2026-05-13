@@ -15,6 +15,8 @@
 
 import { ocpGet, ocpDelete, ocpPatch, ocpPost, ocpFetch, canI } from "../utils/openshift-client.js";
 
+const ENRICHABLE = new Set(["deployments", "statefulsets", "daemonsets"]);
+
 const BLOCKED_PATTERNS = [
   /\bdelete\s+(?:namespace|ns|crd|customresourcedefinition|node|nodes|clusterrole|clusterrolebinding|persistentvolume|pv)\b/i,
   /\b(?:cordon|drain|uncordon)\b/i,
@@ -193,6 +195,53 @@ function summarizeSingleResponse(resp) {
     });
   }
   return lines.join("\n");
+}
+
+export async function fetchPodStatus(namespace, labelSelector) {
+  const podsResp = await ocpGet(`/api/v1/namespaces/${namespace}/pods?labelSelector=${encodeURIComponent(labelSelector)}`);
+  const pods = (podsResp?.items || []).slice(0, 20);
+  let metrics = [];
+  try {
+    const mr = await ocpGet(`/apis/metrics.k8s.io/v1beta1/namespaces/${namespace}/pods?labelSelector=${encodeURIComponent(labelSelector)}`);
+    metrics = mr?.items || [];
+  } catch { /* metrics API may not be available */ }
+  return pods.map(p => {
+    const meta = p.metadata || {};
+    const st = p.status || {};
+    const cs = st.containerStatuses || [];
+    const pm = metrics.find(m => m.metadata?.name === meta.name);
+    return {
+      name: meta.name,
+      phase: st.phase || "Unknown",
+      ready: cs.length > 0 && cs.every(c => c.ready),
+      restarts: cs.reduce((s, c) => s + (c.restartCount || 0), 0),
+      cpu: pm ? (pm.containers || []).map(c => c.usage?.cpu || "0").join(" + ") : "n/a",
+      memory: pm ? (pm.containers || []).map(c => c.usage?.memory || "0").join(" + ") : "n/a",
+    };
+  });
+}
+
+async function gatherPodContext(resource, namespace, name) {
+  try {
+    const dep = await ocpGet(buildPath(resource, namespace, name));
+    const selector = dep?.spec?.selector?.matchLabels || {};
+    const labelSelector = Object.entries(selector).map(([k, v]) => `${k}=${v}`).join(",");
+    if (!labelSelector) return null;
+    const specContainers = (dep?.spec?.template?.spec?.containers || []).map(c => ({
+      name: c.name,
+      limits: c.resources?.limits || {},
+      requests: c.resources?.requests || {},
+    }));
+    const pods = await fetchPodStatus(namespace, labelSelector);
+    return {
+      resourceSpec: specContainers,
+      replicas: dep?.spec?.replicas,
+      readyReplicas: dep?.status?.readyReplicas ?? 0,
+      namespace,
+      labelSelector,
+      pods,
+    };
+  } catch { return null; }
 }
 
 /**
@@ -519,6 +568,7 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
       const resp = await ocpPatch(path, { spec: { replicas } });
       result.success = true;
       result.stdout = (dryRun ? "[DRY RUN] Would scale " : "Scaled ") + `${resource}/${name} to ${replicas} replicas in ${namespace}`;
+      if (ENRICHABLE.has(resource)) try { result.context = await gatherPodContext(resource, namespace, name); } catch { /* best effort */ }
       return result;
     }
 
@@ -538,6 +588,7 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
       });
       result.success = true;
       result.stdout = (dryRun ? "[DRY RUN] Would restart " : "Restarted ") + `${resource}/${name} in ${namespace}`;
+      if (ENRICHABLE.has(resource)) try { result.context = await gatherPodContext(resource, namespace, name); } catch { /* best effort */ }
       return result;
     }
 
@@ -576,6 +627,7 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
       result.stdout = (dryRun ? "[DRY RUN] Would patch " : "Patched ") +
         `${resource}/${name} in ${namespace}` +
         (resp?.metadata?.resourceVersion ? ` (rv: ${resp.metadata.resourceVersion})` : "");
+      if (ENRICHABLE.has(resource)) try { result.context = await gatherPodContext(resource, namespace, name); } catch { /* best effort */ }
       return result;
     }
 
@@ -619,6 +671,11 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
             : `No containers found in ${resource}/${resName}`;
           return result;
         }
+        result.preContext = {
+          container: targetContainer.name,
+          currentLimits: targetContainer.resources?.limits || {},
+          currentRequests: targetContainer.resources?.requests || {},
+        };
         const patchBody = {
           spec: {
             template: {
@@ -641,6 +698,7 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
           `resources on ${resource}/${resName} container '${targetContainer.name}' in ${namespace}\n` +
           desc.join(", ") +
           (resp?.metadata?.resourceVersion ? `\n(rv: ${resp.metadata.resourceVersion})` : "");
+        try { result.context = await gatherPodContext(resource, namespace, resName); } catch { /* best effort */ }
         return result;
       }
 
@@ -666,6 +724,7 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
         await ocpPatch(path, patchBody, "application/strategic-merge-patch+json");
         result.success = true;
         result.stdout = (dryRun ? "[DRY RUN] Would set " : "Set ") + `image on ${resource}/${resName}: ${cName}=${cImage} in ${namespace}`;
+        if (ENRICHABLE.has(resource)) try { result.context = await gatherPodContext(resource, namespace, resName); } catch { /* best effort */ }
         return result;
       }
 
@@ -698,6 +757,7 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
         await ocpPatch(path, patchBody, "application/strategic-merge-patch+json");
         result.success = true;
         result.stdout = (dryRun ? "[DRY RUN] Would set " : "Set ") + `env on ${resource}/${resName}: ${envPairs.join(", ")} in ${namespace}`;
+        if (ENRICHABLE.has(resource)) try { result.context = await gatherPodContext(resource, namespace, resName); } catch { /* best effort */ }
         return result;
       }
 

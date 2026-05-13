@@ -886,6 +886,18 @@ tr:hover td{background:#ffffff06}
 .aic-fix-promote:hover{background:#16a34a}
 .aic-fix-out{margin:0;padding:10px 12px;background:var(--card-deep);color:var(--text-code);font-family:'SF Mono','Cascadia Code',monospace;font-size:11px;line-height:1.5;white-space:pre-wrap;max-height:240px;overflow:auto;border-top:1px solid var(--border)}
 .aic-fix-err{margin:0;padding:10px 12px;background:color-mix(in srgb,var(--crit) 12%,var(--card-deep));color:color-mix(in srgb,var(--crit) 70%,var(--text));font-family:'SF Mono','Cascadia Code',monospace;font-size:11px;line-height:1.5;white-space:pre-wrap;max-height:240px;overflow:auto;border-top:1px solid var(--border)}
+/* Pod context enrichment */
+.aic-fix-context{padding:10px 12px;border-top:1px solid var(--border);font-size:11px;line-height:1.5}
+.aic-fix-context .aic-ctx-pre,.aic-fix-context .aic-ctx-spec{margin-bottom:6px;color:var(--text2);font-family:'SF Mono','Cascadia Code',monospace}
+.aic-fix-context .aic-ctx-label{margin-bottom:6px;font-size:12px}
+.aic-fix-context table{width:100%;border-collapse:collapse;font-family:'SF Mono','Cascadia Code',monospace;font-size:11px}
+.aic-fix-context th{text-align:left;padding:4px 8px;border-bottom:1px solid var(--border);color:var(--text2);font-weight:600;white-space:nowrap}
+.aic-fix-context td{padding:4px 8px;border-bottom:1px solid var(--border);white-space:nowrap}
+.aic-fix-context .phase-running{color:var(--ok);font-weight:600}
+.aic-fix-context .phase-pending{color:var(--warn);font-weight:600}
+.aic-fix-context .phase-other{color:var(--crit);font-weight:600}
+.aic-fix-context .ctx-refresh{margin-top:8px;padding:4px 14px;font-size:11px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:transparent;color:var(--text);font-weight:600}
+.aic-fix-context .ctx-refresh:hover{background:var(--hover);border-color:var(--accent2)}
 /* Notification config */
 .notif-section{margin-top:24px;padding-top:20px;border-top:1px solid var(--border)}
 .notif-section h3{margin:0 0 12px}
@@ -979,6 +991,8 @@ tr:hover td{background:#ffffff06}
 .light-theme .aic-fix-out{background:#f0fdf4;color:#14532d;border-color:#bbf7d0}
 .light-theme .aic-fix-err{background:#fef2f2;color:#991b1b}
 .light-theme .aic-fix-promote button{background:#2563eb;color:#fff}
+.light-theme .aic-fix-context{border-color:#d0d7de}
+.light-theme .aic-fix-context th,.light-theme .aic-fix-context td{border-color:#d0d7de}
 /* Light-theme: AI Hub quick-bar and dropdowns */
 .light-theme .hub-quick-bar{background:linear-gradient(135deg,#f0f2f6,#e8e4f0,#f0f2f6);border-color:#d0d7de}
 .light-theme .hub-quick-select-wrap{background:#fff;border-color:#d0d7de}
@@ -9439,9 +9453,16 @@ function aicRenderFixResult(el, data, dryRun) {
   var bodyParts = [];
   if (data.stdout) bodyParts.push('<pre class="aic-fix-out">' + esc(data.stdout) + '</pre>');
   if (data.stderr) bodyParts.push('<pre class="aic-fix-err">' + esc(data.stderr) + '</pre>');
+  if (data.context && data.context.pods && data.context.pods.length > 0) {
+    bodyParts.push(renderPodContext(data.context, data.preContext));
+  }
   el.innerHTML = '<div class="aic-fix-head">' + icon + ' ' + label + dur +
     (dryRun && ok ? ' <button class="aic-fix-promote" onclick="aicPromoteToReal(this)">&#x25B6; Run for real</button>' : '') +
     '</div>' + bodyParts.join('');
+  if (data.context && data.context.namespace && data.context.labelSelector) {
+    el.dataset.ns = data.context.namespace;
+    el.dataset.ls = data.context.labelSelector;
+  }
   // Stash original cmd for promote button
   if (dryRun && ok) {
     var fixCmd = el.parentNode?.querySelector('.aic-ai-fix-cmd code')?.textContent || '';
@@ -9458,6 +9479,64 @@ function aicPromoteToReal(btn) {
   if (!cmd) return;
   var encoded = btoa(unescape(encodeURIComponent(cmd)));
   aicExecuteFix(encoded, parseInt(idx, 10), false);
+}
+
+function renderPodContext(ctx, preCtx) {
+  var html = '<div class="aic-fix-context">';
+  if (preCtx) {
+    var before = [];
+    if (Object.keys(preCtx.currentRequests).length) before.push('requests: ' + Object.entries(preCtx.currentRequests).map(function(e) { return e[0] + '=' + e[1]; }).join(', '));
+    if (Object.keys(preCtx.currentLimits).length) before.push('limits: ' + Object.entries(preCtx.currentLimits).map(function(e) { return e[0] + '=' + e[1]; }).join(', '));
+    html += '<div class="aic-ctx-pre"><strong>Before:</strong> ' + esc(preCtx.container) + ' &mdash; ' + esc(before.join(' | ') || 'none') + '</div>';
+  }
+  if (ctx.resourceSpec && ctx.resourceSpec.length) {
+    html += '<div class="aic-ctx-spec"><strong>Current Spec:</strong> ';
+    ctx.resourceSpec.forEach(function(c) {
+      var parts = [];
+      if (Object.keys(c.requests).length) parts.push('requests: ' + Object.entries(c.requests).map(function(e) { return e[0] + '=' + e[1]; }).join(', '));
+      if (Object.keys(c.limits).length) parts.push('limits: ' + Object.entries(c.limits).map(function(e) { return e[0] + '=' + e[1]; }).join(', '));
+      html += esc(c.name) + ' &mdash; ' + esc(parts.join(' | ') || 'none');
+    });
+    html += '</div>';
+  }
+  html += '<div class="aic-ctx-label"><strong>Pod Status</strong> (Replicas: ' + (ctx.readyReplicas || 0) + '/' + (ctx.replicas || 0) + ' ready)</div>';
+  html += '<table><thead><tr><th>Pod</th><th>Status</th><th>Ready</th><th>Restarts</th><th>CPU</th><th>Memory</th></tr></thead><tbody>';
+  ctx.pods.forEach(function(p) {
+    var cls = p.phase === 'Running' ? 'phase-running' : (p.phase === 'Pending' ? 'phase-pending' : 'phase-other');
+    html += '<tr><td>' + esc(p.name) + '</td><td class="' + cls + '">' + esc(p.phase) + '</td><td>' + (p.ready ? '&#x2714;' : '&#x2718;') + '</td><td>' + p.restarts + '</td><td>' + esc(p.cpu) + '</td><td>' + esc(p.memory) + '</td></tr>';
+  });
+  html += '</tbody></table>';
+  html += '<button class="ctx-refresh" onclick="aicRefreshPodStatus(this)">&#x21BB; Refresh Status</button>';
+  html += '</div>';
+  return html;
+}
+
+async function aicRefreshPodStatus(btn) {
+  var resultEl = btn.closest('.aic-fix-result');
+  if (!resultEl) return;
+  var ns = resultEl.dataset.ns;
+  var ls = resultEl.dataset.ls;
+  if (!ns || !ls) return;
+  btn.textContent = 'Refreshing...';
+  btn.disabled = true;
+  try {
+    var resp = await fetch('/api/pod-status?namespace=' + encodeURIComponent(ns) + '&labelSelector=' + encodeURIComponent(ls));
+    var data = await resp.json();
+    if (data.pods && data.pods.length > 0) {
+      var ctx = btn.closest('.aic-fix-context');
+      var tbody = ctx.querySelector('tbody');
+      if (tbody) {
+        var rows = '';
+        data.pods.forEach(function(p) {
+          var cls = p.phase === 'Running' ? 'phase-running' : (p.phase === 'Pending' ? 'phase-pending' : 'phase-other');
+          rows += '<tr><td>' + esc(p.name) + '</td><td class="' + cls + '">' + esc(p.phase) + '</td><td>' + (p.ready ? '&#x2714;' : '&#x2718;') + '</td><td>' + p.restarts + '</td><td>' + esc(p.cpu) + '</td><td>' + esc(p.memory) + '</td></tr>';
+        });
+        tbody.innerHTML = rows;
+      }
+    }
+  } catch (e) { console.error('Pod status refresh failed:', e); }
+  btn.textContent = '↻ Refresh Status';
+  btn.disabled = false;
 }
 
 function aicReinvestigate(idx) {

@@ -117,7 +117,7 @@ import {
   analyzeAlert,
   isMonitorRunning,
 } from "./services/proactive-agent.js";
-import { executeFixCommand } from "./services/fix-executor.js";
+import { executeFixCommand, fetchPodStatus } from "./services/fix-executor.js";
 import {
   initKnowledgeBase,
   recordResolution,
@@ -2139,6 +2139,21 @@ async function startSSE() {
           durationMs: Date.now() - auditStart,
         }).catch(() => {});
         return sendJson(res, 500, { success: false, stderr: e.message });
+      }
+    }
+
+    // GET /api/pod-status — refresh pod status + metrics for a label selector
+    if (req.method === "GET" && url.pathname === "/api/pod-status") {
+      try {
+        const namespace = url.searchParams.get("namespace");
+        const labelSelector = url.searchParams.get("labelSelector");
+        if (!namespace || !labelSelector) {
+          return sendJson(res, 400, { error: "namespace and labelSelector required" });
+        }
+        const pods = await fetchPodStatus(namespace, labelSelector);
+        return sendJson(res, 200, { pods });
+      } catch (e) {
+        return sendJson(res, 500, { error: e.message });
       }
     }
 
