@@ -7468,8 +7468,8 @@ function restoreCachedFixResults(container) {
       aicRenderFixResult(resultEl, data, false);
     }
   });
-  container.querySelectorAll('.fix-proposal').forEach(function(fp) {
-    var cmdEl = fp.querySelector('.fp-cmd code');
+  container.querySelectorAll('.fp-fix-card').forEach(function(card) {
+    var cmdEl = card.querySelector('.fp-fix-cmd code');
     if (!cmdEl) return;
     var cmd = cmdEl.textContent.trim();
     var cached;
@@ -7477,7 +7477,7 @@ function restoreCachedFixResults(container) {
     if (!cached) return;
     var data;
     try { data = JSON.parse(cached); } catch { return; }
-    var resultEl = fp.querySelector('[id$="-result"]');
+    var resultEl = card.querySelector('[id$="-result"]');
     if (resultEl && !resultEl.innerHTML.trim()) {
       var ctxHtml = '';
       if (data.context && data.context.pods && data.context.pods.length > 0) {
@@ -8815,7 +8815,7 @@ renderConversation = function() {
       const downClass = msg.feedback === -1 ? ' voted' : '';
       html += '<div class="conv-msg ai">' +
         '<div class="conv-header"><div class="conv-avatar">TA</div><span class="conv-name">TCS Agentic AI</span>' + providerTag + confidenceTag + '</div>' +
-        '<div class="conv-body">' + md(msg.text || '') + '</div>' +
+        '<div class="conv-body">' + (msg.html || md(msg.text || '')) + '</div>' +
         '<div class="conv-feedback">' +
           '<button class="' + upClass + '" onclick="sendFeedback(' + idx + ',1)" title="Helpful">&#x1F44D;</button>' +
           '<button class="' + downClass + '" onclick="sendFeedback(' + idx + ',-1)" title="Not helpful">&#x1F44E;</button>' +
@@ -10202,7 +10202,7 @@ async function sendFullChatStreaming(text) {
   history = loadChatHistory();
   const activeChat = history.chats.find(c => c.id === history.activeId);
   if (activeChat) {
-    activeChat.messages.push({ role: 'ai', text: fullText, provider: streamProvider, toolsUsed: toolTraces.map(function(t) { return t.name; }) });
+    activeChat.messages.push({ role: 'ai', text: fullText, html: md(fullText), provider: streamProvider, toolsUsed: toolTraces.map(function(t) { return t.name; }) });
     activeChat.updatedAt = new Date().toISOString();
     saveChatHistory(history);
   }
