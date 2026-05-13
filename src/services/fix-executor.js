@@ -537,9 +537,25 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
         return result;
       }
       if (!namespace) { result.stderr = "Namespace required (-n <ns>)"; return result; }
-      const path = buildPath(resource, namespace, name) + dryRunParam;
+      let ownerDep = null;
+      if (resource === "pods" && !dryRun) {
+        try {
+          const podObj = await ocpGet(buildPath(resource, namespace, name));
+          const rsOwner = (podObj?.metadata?.ownerReferences || []).find(o => o.kind === "ReplicaSet");
+          if (rsOwner) {
+            const rs = await ocpGet(buildPath("replicasets", namespace, rsOwner.name));
+            const depOwner = (rs?.metadata?.ownerReferences || []).find(o => o.kind === "Deployment");
+            if (depOwner) ownerDep = { name: depOwner.name, type: "deployments" };
+          }
+          if (!ownerDep) {
+            const ssOwner = (podObj?.metadata?.ownerReferences || []).find(o => o.kind === "StatefulSet");
+            if (ssOwner) ownerDep = { name: ssOwner.name, type: "statefulsets" };
+            const dsOwner = (podObj?.metadata?.ownerReferences || []).find(o => o.kind === "DaemonSet");
+            if (!ownerDep && dsOwner) ownerDep = { name: dsOwner.name, type: "daemonsets" };
+          }
+        } catch { /* best effort */ }
+      }
       if (dryRun) {
-        // K8s DELETE doesn't accept dryRun in path the same way — use the deleteOptions body
         const resp = await ocpDelete(buildPath(resource, namespace, name) + "?dryRun=All");
         result.success = true;
         result.stdout = `[DRY RUN] Would delete ${resource}/${name} in ${namespace}\n` + summarizeSingleResponse(resp);
@@ -547,6 +563,9 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
         await ocpDelete(buildPath(resource, namespace, name));
         result.success = true;
         result.stdout = `${resource}/${name} deleted from ${namespace}`;
+        if (ownerDep) {
+          try { result.context = await gatherPodContext(ownerDep.type, namespace, ownerDep.name); } catch { /* best effort */ }
+        }
       }
       return result;
     }

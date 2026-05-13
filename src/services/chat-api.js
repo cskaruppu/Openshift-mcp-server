@@ -11076,13 +11076,30 @@ export async function handleExecuteAPI(req, res) {
 
     if (action === "delete_pod") {
       if (!pod) return json(res, 400, { success: false, error: "Missing pod name" });
+      let ownerDep = null;
+      try {
+        const podObj = await ocpGet(`/api/v1/namespaces/${namespace}/pods/${pod}`);
+        const rsOwner = (podObj?.metadata?.ownerReferences || []).find(o => o.kind === "ReplicaSet");
+        if (rsOwner) {
+          const rs = await ocpGet(`/apis/apps/v1/namespaces/${namespace}/replicasets/${rsOwner.name}`);
+          const depOwner = (rs?.metadata?.ownerReferences || []).find(o => o.kind === "Deployment");
+          if (depOwner) ownerDep = { name: depOwner.name, type: "deployments" };
+        }
+        if (!ownerDep) {
+          const ssOwner = (podObj?.metadata?.ownerReferences || []).find(o => o.kind === "StatefulSet");
+          if (ssOwner) ownerDep = { name: ssOwner.name, type: "statefulsets" };
+          const dsOwner = (podObj?.metadata?.ownerReferences || []).find(o => o.kind === "DaemonSet");
+          if (!ownerDep && dsOwner) ownerDep = { name: dsOwner.name, type: "daemonsets" };
+        }
+      } catch { /* best effort */ }
       await ocpDelete(`/api/v1/namespaces/${namespace}/pods/${pod}`);
       success = true;
       resultPayload = { message: `Pod '${pod}' deleted in '${namespace}'. The owning controller will recreate it.` };
-      return json(res, 200, {
-        success: true,
-        message: resultPayload.message,
-      });
+      let context = null;
+      if (ownerDep) {
+        context = await gatherDeployContext(namespace, ownerDep.name, ownerDep.type);
+      }
+      return json(res, 200, { success: true, message: resultPayload.message, context });
     }
 
     if (action === "restart_deployment") {
