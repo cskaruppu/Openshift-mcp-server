@@ -68,6 +68,7 @@ import { maybeEnhance as nluEnhanceWithLLM } from "./nlu-llm.js";
 import { summarizeIfNeeded } from "./summarizer.js";
 import { suggestPlaybook, renderPlaybookMarkdown } from "./playbooks.js";
 import { findResource } from "./resource-index.js";
+import { fetchPodStatus } from "./fix-executor.js";
 import { incCounter, observeHistogram } from "./metrics.js";
 import { enforce as enforceRateLimit } from "./rate-limit.js";
 import { runPreflightChecks, formatPreflightReport, checkCertificateExpiry } from "../tools/upgrade-preflight.js";
@@ -11034,6 +11035,25 @@ export async function handleChatRunbookAPI(req, res) {
   }
 }
 
+async function gatherDeployContext(namespace, depName, resourceType = "deployments") {
+  try {
+    const apiBase = `/apis/apps/v1/namespaces/${namespace}`;
+    const apiPath = resourceType === "statefulsets" ? `${apiBase}/statefulsets/${depName}`
+      : resourceType === "daemonsets" ? `${apiBase}/daemonsets/${depName}`
+      : `${apiBase}/deployments/${depName}`;
+    const dep = await ocpGet(apiPath);
+    const selector = dep?.spec?.selector?.matchLabels || {};
+    const labelSelector = Object.entries(selector).map(([k, v]) => `${k}=${v}`).join(",");
+    if (!labelSelector) return null;
+    const specContainers = (dep?.spec?.template?.spec?.containers || []).map(c => ({
+      name: c.name, limits: c.resources?.limits || {}, requests: c.resources?.requests || {},
+    }));
+    const pods = await fetchPodStatus(namespace, labelSelector);
+    return { resourceSpec: specContainers, replicas: dep?.spec?.replicas,
+      readyReplicas: dep?.status?.readyReplicas ?? 0, namespace, labelSelector, pods };
+  } catch { return null; }
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/execute — apply fixes directly on the cluster
 // Supports: delete_pod, restart_deployment, scale_deployment
@@ -11083,8 +11103,9 @@ export async function handleExecuteAPI(req, res) {
         }
       );
       success = true;
+      const context = await gatherDeployContext(namespace, dep);
       resultPayload = { message: `Deployment '${dep}' restarted in '${namespace}'. New pods will be rolled out.` };
-      return json(res, 200, { success: true, message: resultPayload.message });
+      return json(res, 200, { success: true, message: resultPayload.message, context });
     }
 
     if (action === "scale_deployment") {
@@ -11096,8 +11117,9 @@ export async function handleExecuteAPI(req, res) {
         { spec: { replicas: rep } }
       );
       success = true;
+      const context = await gatherDeployContext(namespace, dep);
       resultPayload = { message: `Deployment '${dep}' scaled to ${rep} replicas in '${namespace}'.` };
-      return json(res, 200, { success: true, message: resultPayload.message });
+      return json(res, 200, { success: true, message: resultPayload.message, context });
     }
 
     if (action === "set_resources") {
@@ -11109,15 +11131,21 @@ export async function handleExecuteAPI(req, res) {
       let patch;
       try { patch = typeof patchBody === "string" ? JSON.parse(patchBody) : patchBody; }
       catch { return json(res, 400, { success: false, error: "Invalid JSON in patch body" }); }
-      const apiPath = resourceType === "statefulsets"
-        ? `/apis/apps/v1/namespaces/${namespace}/statefulsets/${dep}`
-        : resourceType === "daemonsets"
-          ? `/apis/apps/v1/namespaces/${namespace}/daemonsets/${dep}`
-          : `/apis/apps/v1/namespaces/${namespace}/deployments/${dep}`;
+      const apiBase = `/apis/apps/v1/namespaces/${namespace}`;
+      const apiPath = resourceType === "statefulsets" ? `${apiBase}/statefulsets/${dep}`
+        : resourceType === "daemonsets" ? `${apiBase}/daemonsets/${dep}`
+        : `${apiBase}/deployments/${dep}`;
+      let preContext = null;
+      try {
+        const current = await ocpGet(apiPath);
+        const c = current?.spec?.template?.spec?.containers?.[0];
+        if (c) preContext = { container: c.name, currentLimits: c.resources?.limits || {}, currentRequests: c.resources?.requests || {} };
+      } catch { /* best effort */ }
       await ocpPatch(apiPath, patch);
       success = true;
+      const context = await gatherDeployContext(namespace, dep, resourceType);
       resultPayload = { message: `Resource limits updated for '${dep}' in '${namespace}'. Pods will be rolled out with new limits.` };
-      return json(res, 200, { success: true, message: resultPayload.message });
+      return json(res, 200, { success: true, message: resultPayload.message, preContext, context });
     }
 
     if (action === "patch_deployment" || action === "patch") {
@@ -11133,8 +11161,9 @@ export async function handleExecuteAPI(req, res) {
         patch
       );
       success = true;
+      const context = await gatherDeployContext(namespace, dep);
       resultPayload = { message: `Deployment '${dep}' patched in '${namespace}'.` };
-      return json(res, 200, { success: true, message: resultPayload.message });
+      return json(res, 200, { success: true, message: resultPayload.message, context });
     }
 
     json(res, 400, { success: false, error: `Unknown action: ${action}` });

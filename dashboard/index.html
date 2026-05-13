@@ -5788,7 +5788,16 @@ async function applyFixProposal(fixId, fixDataB64, isDryRun) {
       });
       var data = await resp.json();
       if (data.success) {
-        resultEl.innerHTML = '<div class="fp-fix-result ok">&#x2705; ' + esc(data.message) + '</div>';
+        var ctxHtml = '';
+        if (data.context && data.context.pods && data.context.pods.length > 0) {
+          ctxHtml = renderPodContext(data.context, data.preContext);
+        }
+        resultEl.innerHTML = '<div class="fp-fix-result ok">&#x2705; ' + esc(data.message) + '</div>' + ctxHtml;
+        if (data.context && data.context.namespace && data.context.labelSelector) {
+          resultEl.dataset.ns = data.context.namespace;
+          resultEl.dataset.ls = data.context.labelSelector;
+        }
+        aicAutoPollPodStatus(resultEl);
         setTimeout(refreshAll, 3000);
       } else {
         resultEl.innerHTML = '<div class="fp-fix-result err">&#x274C; ' + esc(data.error || 'Failed') + '</div>';
@@ -6583,7 +6592,18 @@ async function applyFix(btnId, action, name, ns) {
     if (data.success) {
       btn.textContent = 'Applied!';
       btn.className = 'apply-btn success';
-      if (resultEl) resultEl.innerHTML = '<span class="apply-result ok">' + esc(data.message) + '</span>';
+      if (resultEl) {
+        var ctxHtml = '';
+        if (data.context && data.context.pods && data.context.pods.length > 0) {
+          ctxHtml = renderPodContext(data.context, data.preContext);
+        }
+        resultEl.innerHTML = '<span class="apply-result ok">' + esc(data.message) + '</span>' + ctxHtml;
+        if (data.context && data.context.namespace && data.context.labelSelector) {
+          resultEl.dataset.ns = data.context.namespace;
+          resultEl.dataset.ls = data.context.labelSelector;
+        }
+        aicAutoPollPodStatus(resultEl);
+      }
       // Refresh dashboard data after fix
       setTimeout(refreshAll, 3000);
     } else {
@@ -9469,6 +9489,7 @@ function aicRenderFixResult(el, data, dryRun) {
     el.dataset.cmd = fixCmd;
     el.dataset.idx = el.id.replace('aic-fix-result-', '');
   }
+  if (!dryRun && ok) aicAutoPollPodStatus(el);
 }
 
 function aicPromoteToReal(btn) {
@@ -9511,20 +9532,21 @@ function renderPodContext(ctx, preCtx) {
   return html;
 }
 
-async function aicRefreshPodStatus(btn) {
-  var resultEl = btn.closest('.aic-fix-result');
-  if (!resultEl) return;
-  var ns = resultEl.dataset.ns;
-  var ls = resultEl.dataset.ls;
-  if (!ns || !ls) return;
-  btn.textContent = 'Refreshing...';
-  btn.disabled = true;
+function _aicFindContextParent(el) {
+  return el.closest('.aic-fix-result') || el.closest('[data-ns]') || el.parentElement?.closest('[data-ns]');
+}
+
+async function _aicFetchAndRenderPods(container) {
+  var parent = _aicFindContextParent(container);
+  var ns = parent?.dataset?.ns;
+  var ls = parent?.dataset?.ls;
+  if (!ns || !ls) return false;
   try {
     var resp = await fetch('/api/pod-status?namespace=' + encodeURIComponent(ns) + '&labelSelector=' + encodeURIComponent(ls));
     var data = await resp.json();
     if (data.pods && data.pods.length > 0) {
-      var ctx = btn.closest('.aic-fix-context');
-      var tbody = ctx.querySelector('tbody');
+      var ctx = container.closest('.aic-fix-context') || parent.querySelector('.aic-fix-context');
+      var tbody = ctx?.querySelector('tbody');
       if (tbody) {
         var rows = '';
         data.pods.forEach(function(p) {
@@ -9533,10 +9555,44 @@ async function aicRefreshPodStatus(btn) {
         });
         tbody.innerHTML = rows;
       }
+      return data.pods.every(function(p) { return p.phase === 'Running' && p.ready; });
     }
   } catch (e) { console.error('Pod status refresh failed:', e); }
+  return false;
+}
+
+async function aicRefreshPodStatus(btn) {
+  btn.textContent = 'Refreshing...';
+  btn.disabled = true;
+  await _aicFetchAndRenderPods(btn);
   btn.textContent = '↻ Refresh Status';
   btn.disabled = false;
+}
+
+function aicAutoPollPodStatus(parentEl) {
+  if (!parentEl?.dataset?.ns || !parentEl?.dataset?.ls) return;
+  var ctx = parentEl.querySelector('.aic-fix-context');
+  if (!ctx) return;
+  var attempts = 0;
+  var maxAttempts = 12;
+  var intervalMs = 5000;
+  var refreshBtn = ctx.querySelector('.ctx-refresh');
+  function tick() {
+    attempts++;
+    if (refreshBtn) refreshBtn.textContent = 'Auto-checking... (' + attempts + '/' + maxAttempts + ')';
+    _aicFetchAndRenderPods(ctx).then(function(allRunning) {
+      if (allRunning) {
+        if (refreshBtn) { refreshBtn.textContent = '✔ All pods running'; refreshBtn.disabled = false; refreshBtn.onclick = function() { aicRefreshPodStatus(refreshBtn); }; }
+        return;
+      }
+      if (attempts < maxAttempts) {
+        setTimeout(tick, intervalMs);
+      } else {
+        if (refreshBtn) { refreshBtn.textContent = '↻ Refresh Status'; refreshBtn.disabled = false; refreshBtn.onclick = function() { aicRefreshPodStatus(refreshBtn); }; }
+      }
+    });
+  }
+  setTimeout(tick, intervalMs);
 }
 
 function aicReinvestigate(idx) {
