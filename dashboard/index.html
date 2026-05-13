@@ -5797,6 +5797,7 @@ async function applyFixProposal(fixId, fixDataB64, isDryRun) {
           resultEl.dataset.ns = data.context.namespace;
           resultEl.dataset.ls = data.context.labelSelector;
         }
+        if (fix.command) try { sessionStorage.setItem('mcp-fix:' + fix.command, JSON.stringify(data)); } catch {}
         aicAutoPollPodStatus(resultEl);
         setTimeout(refreshAll, 3000);
       } else {
@@ -6604,6 +6605,7 @@ async function applyFix(btnId, action, name, ns) {
         }
         aicAutoPollPodStatus(resultEl);
       }
+      try { sessionStorage.setItem('mcp-fix-exec:' + action + ':' + ns + ':' + name, JSON.stringify(data)); } catch {}
       // Refresh dashboard data after fix
       setTimeout(refreshAll, 3000);
     } else {
@@ -7447,7 +7449,47 @@ function renderConversation() {
     }
   }
   inner.innerHTML = html;
+  restoreCachedFixResults(inner);
   scrollConversation();
+}
+
+function restoreCachedFixResults(container) {
+  container.querySelectorAll('.sec-fix-cmd, .aic-ai-fix-cmd').forEach(function(cmdEl) {
+    var codeEl = cmdEl.querySelector('code');
+    if (!codeEl) return;
+    var cmd = codeEl.textContent.trim();
+    var cached;
+    try { cached = sessionStorage.getItem('mcp-fix:' + cmd); } catch { return; }
+    if (!cached) return;
+    var data;
+    try { data = JSON.parse(cached); } catch { return; }
+    var resultEl = cmdEl.querySelector('.aic-fix-result');
+    if (resultEl && !resultEl.innerHTML.trim()) {
+      aicRenderFixResult(resultEl, data, false);
+    }
+  });
+  container.querySelectorAll('.fix-proposal').forEach(function(fp) {
+    var cmdEl = fp.querySelector('.fp-cmd code');
+    if (!cmdEl) return;
+    var cmd = cmdEl.textContent.trim();
+    var cached;
+    try { cached = sessionStorage.getItem('mcp-fix:' + cmd); } catch { return; }
+    if (!cached) return;
+    var data;
+    try { data = JSON.parse(cached); } catch { return; }
+    var resultEl = fp.querySelector('[id$="-result"]');
+    if (resultEl && !resultEl.innerHTML.trim()) {
+      var ctxHtml = '';
+      if (data.context && data.context.pods && data.context.pods.length > 0) {
+        ctxHtml = renderPodContext(data.context, data.preContext);
+      }
+      resultEl.innerHTML = '<div class="fp-fix-result ok">&#x2705; ' + esc(data.message || 'Applied') + '</div>' + ctxHtml;
+      if (data.context && data.context.namespace && data.context.labelSelector) {
+        resultEl.dataset.ns = data.context.namespace;
+        resultEl.dataset.ls = data.context.labelSelector;
+      }
+    }
+  });
 }
 
 function createWelcomeEl() {
@@ -8783,6 +8825,7 @@ renderConversation = function() {
     }
   });
   inner.innerHTML = html;
+  restoreCachedFixResults(inner);
   scrollConversation();
 };
 
@@ -9434,6 +9477,9 @@ async function aicExecuteFix(encodedCmd, idx, dryRun, confirmationToken) {
       return;
     }
     aicRenderFixResult(resultEl, data, dryRun);
+    if (!dryRun && data.success) {
+      try { sessionStorage.setItem('mcp-fix:' + cmd, JSON.stringify(data)); } catch {}
+    }
   } catch (e) {
     resultEl.className = 'aic-fix-result error';
     resultEl.innerHTML = '<div class="aic-fix-head"><span style="color:var(--crit)">&#x2718;</span> Network error: ' + esc(e.message) + '</div>';
