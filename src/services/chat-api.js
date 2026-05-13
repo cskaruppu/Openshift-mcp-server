@@ -9874,7 +9874,6 @@ export async function handleChatAPI(req, res) {
     // ---- ITSM: detect "raise change request" / "create incident" ----
     const itsmType = await detectITSMIntent(userMessage);
     if (itsmType) {
-      const itsmCtx = await gatherITSMContext(userMessage);
       const label = itsmType === "change_request" ? "Change Request" : "Incident";
 
       // Auto-run preflight assessment for upgrade-related Change Requests
@@ -9882,31 +9881,57 @@ export async function handleChatAPI(req, res) {
       let preflightSection = "";
       let preflightReport = null;
       const isUpgradeRelated = /upgrade|pre-?(?:check|flight)|above\s+(?:pre|check|assessment|details|report)|previous\s+(?:pre|check|assessment)|with\s+(?:above|precheck|pre-?check)/i.test(userMessage);
+
+      // Run ITSM context gather and preflight IN PARALLEL — they're independent.
+      // This saves ~20-30s compared to running them sequentially.
+      let itsmCtx;
       if (itsmType === "change_request" && isUpgradeRelated) {
-        // 1) Try to run a fresh preflight if we can determine a target version
-        try {
-          const versionMatch = userMessage.match(/(\d+\.\d+\.\d+)/g);
-          let targetVer = "";
-          let currentVer = "";
-          if (versionMatch && versionMatch.length >= 2) {
-            currentVer = versionMatch[0];
-            targetVer = versionMatch[1];
-          } else if (versionMatch && versionMatch.length === 1) {
-            targetVer = versionMatch[0];
-          } else if (itsmCtx.cluster?.availableUpdates?.length) {
-            targetVer = itsmCtx.cluster.availableUpdates[0];
-          }
-          if (targetVer) {
-            preflightReport = await runPreflightWithTimeout(targetVer, currentVer || undefined);
+        const versionMatch = userMessage.match(/(\d+\.\d+\.\d+)/g);
+        let targetVer = "";
+        let currentVer = "";
+        if (versionMatch && versionMatch.length >= 2) {
+          currentVer = versionMatch[0];
+          targetVer = versionMatch[1];
+        } else if (versionMatch && versionMatch.length === 1) {
+          targetVer = versionMatch[0];
+        }
+
+        const [itsmResult, preflightResult] = await Promise.allSettled([
+          gatherITSMContext(userMessage),
+          targetVer
+            ? runPreflightWithTimeout(targetVer, currentVer || undefined)
+            : Promise.resolve(null),
+        ]);
+
+        itsmCtx = itsmResult.status === "fulfilled" ? itsmResult.value : {};
+        if (preflightResult.status === "fulfilled" && preflightResult.value) {
+          preflightReport = preflightResult.value;
+          cachePreflightReport(conversationId, preflightReport);
+          const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(lightPreflightReport(preflightReport)).replace(/@@/g, "@ @")}@@`;
+          preflightSection = `${reportToken}\n\n---\n\n`;
+        } else if (preflightResult.status === "rejected") {
+          console.error("[chat-api] preflight in ITSM path failed:", preflightResult.reason?.message || preflightResult.reason);
+        }
+
+        // If no target version was found from user input, try from cluster context
+        if (!targetVer && !preflightReport && itsmCtx.cluster?.availableUpdates?.length) {
+          targetVer = itsmCtx.cluster.availableUpdates[0];
+          try {
+            preflightReport = await runPreflightWithTimeout(targetVer);
             cachePreflightReport(conversationId, preflightReport);
             const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(lightPreflightReport(preflightReport)).replace(/@@/g, "@ @")}@@`;
             preflightSection = `${reportToken}\n\n---\n\n`;
+          } catch (err) {
+            console.error("[chat-api] preflight fallback failed:", err.message);
           }
-        } catch { /* preflight failed gracefully — continue with CR form */ }
-        // 2) Fall back to cached preflight from earlier in this conversation
+        }
+
+        // Fall back to cached preflight from earlier in this conversation
         if (!preflightReport) {
           preflightReport = getCachedPreflightReport(conversationId);
         }
+      } else {
+        itsmCtx = await gatherITSMContext(userMessage);
       }
 
       const form = buildITSMForm(itsmType, userMessage, itsmCtx, preflightReport);

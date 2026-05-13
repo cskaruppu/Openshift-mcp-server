@@ -10,6 +10,17 @@
 import { z } from "zod";
 import { ocpGet } from "../utils/openshift-client.js";
 
+const PER_CALL_TIMEOUT_MS = Number(process.env.PREFLIGHT_PER_CALL_TIMEOUT_MS) || 15000;
+
+function ocpGetWithTimeout(path) {
+  return Promise.race([
+    ocpGet(path),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`API call timed out after ${PER_CALL_TIMEOUT_MS / 1000}s: ${path}`)), PER_CALL_TIMEOUT_MS)
+    ),
+  ]);
+}
+
 export function registerPreflightTools(server) {
   server.tool(
     "upgrade_preflight_check",
@@ -50,25 +61,25 @@ export async function runPreflightChecks(targetVersion, currentVersion) {
     adminAcksResp, vwhResp, mwhResp, csiDriversResp, mhcResp,
     networkResp, registryResp, catSrcResp, ipResp,
   ] = await Promise.allSettled([
-    ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
-    ocpGet("/apis/config.openshift.io/v1/clusteroperators"),
-    ocpGet("/api/v1/nodes"),
-    ocpGet("/apis/machineconfiguration.openshift.io/v1/machineconfigpools"),
-    ocpGet("/api/v1/namespaces/openshift-etcd/pods?labelSelector=app=etcd"),
-    ocpGet("/apis/operators.coreos.com/v1alpha1/subscriptions"),
-    ocpGet("/apis/operators.coreos.com/v1alpha1/clusterserviceversions"),
-    ocpGet("/apis/policy/v1/poddisruptionbudgets"),
-    ocpGet("/api/v1/persistentvolumes"),
-    ocpGet("/api/v1/namespaces/openshift-monitoring/pods?labelSelector=app.kubernetes.io/name=alertmanager"),
-    ocpGet("/api/v1/namespaces/openshift-config-managed/configmaps/admin-acks"),
-    ocpGet("/apis/admissionregistration.k8s.io/v1/validatingwebhookconfigurations"),
-    ocpGet("/apis/admissionregistration.k8s.io/v1/mutatingwebhookconfigurations"),
-    ocpGet("/apis/storage.k8s.io/v1/csidrivers"),
-    ocpGet("/apis/machine.openshift.io/v1beta1/machinehealthchecks"),
-    ocpGet("/apis/config.openshift.io/v1/networks/cluster"),
-    ocpGet("/apis/imageregistry.operator.openshift.io/v1/configs/cluster"),
-    ocpGet("/apis/operators.coreos.com/v1alpha1/catalogsources"),
-    ocpGet("/apis/operators.coreos.com/v1alpha1/installplans"),
+    ocpGetWithTimeout("/apis/config.openshift.io/v1/clusterversions/version"),
+    ocpGetWithTimeout("/apis/config.openshift.io/v1/clusteroperators"),
+    ocpGetWithTimeout("/api/v1/nodes"),
+    ocpGetWithTimeout("/apis/machineconfiguration.openshift.io/v1/machineconfigpools"),
+    ocpGetWithTimeout("/api/v1/namespaces/openshift-etcd/pods?labelSelector=app=etcd"),
+    ocpGetWithTimeout("/apis/operators.coreos.com/v1alpha1/subscriptions"),
+    ocpGetWithTimeout("/apis/operators.coreos.com/v1alpha1/clusterserviceversions"),
+    ocpGetWithTimeout("/apis/policy/v1/poddisruptionbudgets"),
+    ocpGetWithTimeout("/api/v1/persistentvolumes"),
+    ocpGetWithTimeout("/api/v1/namespaces/openshift-monitoring/pods?labelSelector=app.kubernetes.io/name=alertmanager"),
+    ocpGetWithTimeout("/api/v1/namespaces/openshift-config-managed/configmaps/admin-acks"),
+    ocpGetWithTimeout("/apis/admissionregistration.k8s.io/v1/validatingwebhookconfigurations"),
+    ocpGetWithTimeout("/apis/admissionregistration.k8s.io/v1/mutatingwebhookconfigurations"),
+    ocpGetWithTimeout("/apis/storage.k8s.io/v1/csidrivers"),
+    ocpGetWithTimeout("/apis/machine.openshift.io/v1beta1/machinehealthchecks"),
+    ocpGetWithTimeout("/apis/config.openshift.io/v1/networks/cluster"),
+    ocpGetWithTimeout("/apis/imageregistry.operator.openshift.io/v1/configs/cluster"),
+    ocpGetWithTimeout("/apis/operators.coreos.com/v1alpha1/catalogsources"),
+    ocpGetWithTimeout("/apis/operators.coreos.com/v1alpha1/installplans"),
   ]);
 
   const cv = cvResp.status === "fulfilled" ? cvResp.value : null;
@@ -88,23 +99,21 @@ export async function runPreflightChecks(targetVersion, currentVersion) {
   const catalogSources = catSrcResp.status === "fulfilled" ? (catSrcResp.value.items || []) : [];
   const installPlans = ipResp.status === "fulfilled" ? (ipResp.value.items || []) : [];
 
-  // Fallback: if cluster-wide CSV query returned empty, try specific OLM namespaces
+  // Fallback: if cluster-wide CSV query returned empty, try specific OLM namespaces IN PARALLEL
   if (olmCsvs.length === 0) {
     const olmNamespaces = ["openshift-operators", "openshift-operator-lifecycle-manager", "operators"];
-    for (const ns of olmNamespaces) {
-      try {
-        const resp = await ocpGet(`/apis/operators.coreos.com/v1alpha1/namespaces/${ns}/clusterserviceversions`);
-        if (resp.items && resp.items.length > 0) {
-          olmCsvs = olmCsvs.concat(resp.items);
-        }
-      } catch { /* namespace may not exist */ }
+    const fallbackResults = await Promise.allSettled(
+      olmNamespaces.map(ns => ocpGetWithTimeout(`/apis/operators.coreos.com/v1alpha1/namespaces/${ns}/clusterserviceversions`))
+    );
+    for (const r of fallbackResults) {
+      if (r.status === "fulfilled" && r.value.items?.length > 0) {
+        olmCsvs = olmCsvs.concat(r.value.items);
+      }
     }
   }
-  // Also try to detect operators from ClusterOperator versions for compatibility info
   if (olmCsvs.length === 0 && olmSubs.length === 0) {
-    // No OLM operators — build list from subscriptions in well-known namespaces
     try {
-      const subResp = await ocpGet("/apis/operators.coreos.com/v1alpha1/namespaces/openshift-operators/subscriptions");
+      const subResp = await ocpGetWithTimeout("/apis/operators.coreos.com/v1alpha1/namespaces/openshift-operators/subscriptions");
       if (subResp.items) olmSubs = subResp.items;
     } catch { /* ignore */ }
   }
