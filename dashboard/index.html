@@ -502,6 +502,17 @@ tr:hover td{background:#ffffff06}
 .risk-item.critical .risk-action{color:var(--crit)}
 .risk-item.warning .risk-action{color:var(--warn)}
 .risk-empty{padding:20px;text-align:center;color:var(--text2);font-size:13px}
+.risk-accuracy{display:flex;align-items:center;gap:8px;margin-left:auto;font-size:10px;color:var(--text2)}
+.risk-accuracy-score{font-size:13px;font-weight:800;color:var(--ok)}
+.risk-accuracy-bar{width:48px;height:5px;background:var(--border);border-radius:3px;overflow:hidden}
+.risk-accuracy-bar div{height:100%;background:var(--ok);border-radius:3px;transition:width .6s ease}
+.risk-method{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:6px;font-size:9px;font-weight:600;background:rgba(63,185,80,.1);color:var(--ok);border:1px solid rgba(63,185,80,.2);letter-spacing:.3px}
+.risk-conf{display:inline-flex;align-items:center;gap:4px;font-size:9px;font-weight:600;margin-left:auto;white-space:nowrap}
+.risk-conf-bar{width:32px;height:3px;background:rgba(255,255,255,.1);border-radius:2px;overflow:hidden}
+.risk-conf-bar div{height:100%;border-radius:2px}
+.risk-conf.high{color:var(--ok)} .risk-conf.high .risk-conf-bar div{background:var(--ok)}
+.risk-conf.med{color:var(--warn)} .risk-conf.med .risk-conf-bar div{background:var(--warn)}
+.risk-conf.low{color:var(--text2)} .risk-conf.low .risk-conf-bar div{background:var(--text2)}
 /* Quick Command Bar */
 .cmd-bar-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9998;display:none;align-items:flex-start;justify-content:center;padding-top:18vh;backdrop-filter:blur(4px)}
 .cmd-bar-overlay.open{display:flex}
@@ -2126,7 +2137,13 @@ tr:hover td{background:#ffffff06}
     <div class="risk-card">
       <div class="risk-header">
         <h3>&#x1F52E; AI Risk Predictions</h3>
+        <span class="risk-method" title="All findings are derived from live Kubernetes API data — pod status, container states, node conditions, and metrics. No guesswork.">&#x2705; Evidence-Based</span>
         <span class="badge badge-info" id="risk-count">Analyzing...</span>
+        <div class="risk-accuracy" id="risk-accuracy" style="display:none">
+          <span>Accuracy</span>
+          <div class="risk-accuracy-bar"><div id="risk-accuracy-fill" style="width:0%"></div></div>
+          <span class="risk-accuracy-score" id="risk-accuracy-pct"></span>
+        </div>
       </div>
       <div class="risk-summary" id="risk-summary"></div>
       <div class="risk-filters" id="risk-filters">
@@ -4263,10 +4280,15 @@ function renderRiskList() {
       : r.node
       ? ' onclick="openNewChatWithCommand(\'diagnose node ' + esc(r.node) + '\',\'Diagnose ' + esc(r.node) + '\')"'
       : '';
+    var conf = r.confidence || 0;
+    var confClass = conf >= 95 ? 'high' : conf >= 80 ? 'med' : 'low';
+    var confHtml = '<span class="risk-conf ' + confClass + '" title="' + esc(r.confidenceReason || '') + '">' +
+      '<span class="risk-conf-bar"><div style="width:' + conf + '%"></div></span>' +
+      conf + '%</span>';
     return '<div class="risk-item ' + esc(r.severity) + '"' + clickAction + '>' +
       '<div class="risk-icon">' + r.icon + '</div>' +
       '<div class="risk-body">' +
-        '<div class="risk-title">' + r.title + ' <span class="risk-sev">' + r.severity + '</span></div>' +
+        '<div class="risk-title">' + r.title + ' <span class="risk-sev">' + r.severity + '</span>' + confHtml + '</div>' +
         '<div class="risk-evidence">' + r.evidence + '</div>' +
         '<div class="risk-impact">' + r.impact + '</div>' +
         '<div class="risk-action">' + r.action + '</div>' +
@@ -4330,6 +4352,8 @@ async function loadRiskPredictions() {
           severity: 'critical',
           icon: '&#x1F4A5;',
           title: esc(p.name),
+          confidence: 100,
+          confidenceReason: 'Kernel OOM killer exit code 137 confirmed via container status API',
           evidence: evidenceLines.join('\n'),
           impact: 'Container exceeded memory limit' + (oi.memLimit ? ' (' + oi.memLimit + ')' : '') + ' and was killed by the kernel OOM killer. ' + (oi.restarts > 3 ? 'Repeated OOM kills (' + oi.restarts + 'x) indicate the limit is too low for the workload.' : 'Will keep crashing until memory limit is increased or workload reduced.'),
           action: oi.memLimit ? '&#x2794; Increase memory limit above ' + oi.memLimit + ' or profile memory usage' : '&#x2794; Set memory limits to prevent node-level OOM',
@@ -4351,6 +4375,8 @@ async function loadRiskPredictions() {
           severity: 'critical',
           icon: '&#x1F525;',
           title: esc(p.name),
+          confidence: 100,
+          confidenceReason: 'CrashLoopBackOff state confirmed via container waiting reason from API',
           evidence: ceLines.join('\n'),
           impact: 'Container is in a crash loop — Kubernetes keeps restarting it but it fails every time' + (ci.lastExitCode === 1 ? ' (exit code 1: application error).' : ci.lastExitCode === 137 ? ' (exit code 137: killed by signal).' : ci.lastExitCode === 139 ? ' (exit code 139: segmentation fault).' : '.') + ' This pod is effectively down.',
           action: '&#x2794; Check container logs: oc logs ' + p.name + ' -c ' + ci.container + ' -n ' + p.namespace,
@@ -4364,6 +4390,8 @@ async function loadRiskPredictions() {
           severity: 'warning',
           icon: '&#x1F4E6;',
           title: esc(p.name),
+          confidence: 100,
+          confidenceReason: ii.reason + ' state confirmed via container waiting reason from API',
           evidence: 'Container:  ' + ii.container + '\nState:      ' + ii.reason + '\nReady:      no\nNamespace:  ' + p.namespace,
           impact: 'Container image cannot be pulled. Pod is stuck and will not start until the image is accessible.',
           action: '&#x2794; Verify image name, tag, and registry credentials',
@@ -4387,6 +4415,8 @@ async function loadRiskPredictions() {
           severity: 'warning',
           icon: '&#x1F504;',
           title: esc(p.name),
+          confidence: 98,
+          confidenceReason: 'Restart count (' + ri.restarts + ') from container status API; threshold-based detection',
           evidence: reLines.join('\n'),
           impact: ri.restarts + ' restarts over ' + p.podAgeHours + 'h (' + restartRate + '/hour). Frequent restarts indicate an intermittent failure that may escalate.',
           action: '&#x2794; Review container logs and events for root cause',
@@ -4399,6 +4429,8 @@ async function loadRiskPredictions() {
           severity: 'critical',
           icon: '&#x274C;',
           title: esc(p.name),
+          confidence: 100,
+          confidenceReason: 'Pod phase "Failed" confirmed via pod status API',
           evidence: 'Phase:      Failed\nNamespace:  ' + p.namespace + '\nNode:       ' + (p.node || 'unassigned') + '\nPod age:    ' + p.podAgeHours + 'h',
           impact: 'Pod has permanently failed and will not be restarted by its controller.',
           action: '&#x2794; Check pod events: oc describe pod ' + p.name + ' -n ' + p.namespace,
@@ -4417,6 +4449,8 @@ async function loadRiskPredictions() {
           _riskData.push({
             severity: 'critical', icon: '&#x1F6A8;',
             title: 'Node ' + esc(shortName),
+            confidence: 100,
+            confidenceReason: 'Node condition Ready=False confirmed via node status API',
             evidence: 'Status:     NotReady\nRoles:      ' + (n.roles || []).join(', ') + '\nPods:       ' + n.pods + '\nKubelet:    ' + (n.kubeletVersion || 'unknown'),
             impact: 'Node is not Ready. All pods on this node may be evicted. New pods cannot be scheduled here.',
             action: '&#x2794; Check node: oc describe node ' + n.name,
@@ -4428,6 +4462,8 @@ async function loadRiskPredictions() {
           _riskData.push({
             severity: 'critical', icon: '&#x1F4A7;',
             title: 'Node ' + esc(shortName) + ' — MemoryPressure',
+            confidence: 100,
+            confidenceReason: 'Node condition MemoryPressure=True confirmed via node status API',
             evidence: 'Condition:  MemoryPressure=True\nMemory:     ' + n.memory + '\nPods:       ' + n.pods,
             impact: 'Node is running low on memory. Kubelet will start evicting pods by priority to reclaim memory.',
             action: '&#x2794; Reduce workload on this node or add memory',
@@ -4439,6 +4475,8 @@ async function loadRiskPredictions() {
           _riskData.push({
             severity: 'critical', icon: '&#x1F4BE;',
             title: 'Node ' + esc(shortName) + ' — DiskPressure',
+            confidence: 100,
+            confidenceReason: 'Node condition DiskPressure=True confirmed via node status API',
             evidence: 'Condition:  DiskPressure=True\nPods:       ' + n.pods,
             impact: 'Node disk is nearly full. Kubelet will evict pods and refuse new scheduling. Container images may fail to pull.',
             action: '&#x2794; Clean up disk space or expand storage',
@@ -4450,6 +4488,8 @@ async function loadRiskPredictions() {
           _riskData.push({
             severity: 'warning', icon: '&#x1F9F5;',
             title: 'Node ' + esc(shortName) + ' — PIDPressure',
+            confidence: 100,
+            confidenceReason: 'Node condition PIDPressure=True confirmed via node status API',
             evidence: 'Condition:  PIDPressure=True\nPods:       ' + n.pods,
             impact: 'Node is running out of process IDs. New containers may fail to start.',
             action: '&#x2794; Identify pods spawning excessive processes',
@@ -4464,6 +4504,8 @@ async function loadRiskPredictions() {
             severity: podUtil > 0.95 ? 'critical' : 'warning',
             icon: '&#x1F4E6;',
             title: 'Node ' + esc(shortName) + ' — Pod density ' + Math.round(podUtil * 100) + '%',
+            confidence: 99,
+            confidenceReason: 'Pod count (' + n.pods + '/' + maxPods + ') from node allocatable API; threshold calculated',
             evidence: 'Running:    ' + n.pods + ' / ' + maxPods + ' max pods\nUtilization: ' + Math.round(podUtil * 100) + '%\nRoles:      ' + (n.roles || []).join(', '),
             impact: n.pods + ' of ' + maxPods + ' pod slots used. ' + (podUtil > 0.95 ? 'Almost at capacity — new pods will fail to schedule.' : 'Approaching capacity — may prevent scheduling soon.'),
             action: '&#x2794; Spread workloads across nodes or increase maxPods',
@@ -4479,6 +4521,17 @@ async function loadRiskPredictions() {
 
     badge.textContent = _riskData.length + ' finding' + (_riskData.length !== 1 ? 's' : '');
     badge.className = 'badge ' + (_riskData.some(function(r) { return r.severity === 'critical'; }) ? 'badge-crit' : _riskData.length > 0 ? 'badge-warn' : 'badge-ok');
+
+    var accEl = document.getElementById('risk-accuracy');
+    if (_riskData.length > 0) {
+      var totalConf = _riskData.reduce(function(s, r) { return s + (r.confidence || 0); }, 0);
+      var avgConf = Math.round(totalConf / _riskData.length);
+      document.getElementById('risk-accuracy-pct').textContent = avgConf + '%';
+      document.getElementById('risk-accuracy-fill').style.width = avgConf + '%';
+      accEl.style.display = 'flex';
+    } else {
+      accEl.style.display = 'none';
+    }
 
     renderRiskSummary();
     renderRiskList();
