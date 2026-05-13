@@ -319,6 +319,8 @@ async function callAzureOpenAI(messages, o, stream, hooks = {}) {
     max_tokens: o.maxTokens,
     temperature: o.temperature,
     stream: !!stream,
+    // Stable seed helps Azure's automatic prompt caching match prefixes
+    seed: 42,
   };
   if (o.tools && o.tools.length) {
     body.tools = o.tools.map((t) => ({
@@ -422,9 +424,22 @@ async function callAnthropic(messages, o, stream, hooks = {}) {
   const url = `${o.apiUrl.replace(/\/$/, "") || "https://api.anthropic.com"}/v1/messages`;
   // Anthropic expects system separate and only user/assistant messages
   const amsgs = messages.filter((m) => m.role === "user" || m.role === "assistant");
+
+  // Use structured system format with cache_control for prompt caching.
+  // Anthropic caches the system prompt prefix for 5 min, reducing input
+  // token cost and first-token latency on subsequent requests.
+  let systemPayload;
+  if (o.system) {
+    systemPayload = [{
+      type: "text",
+      text: o.system,
+      cache_control: { type: "ephemeral" },
+    }];
+  }
+
   const body = {
     model: o.model && o.model !== "gpt-4" ? o.model : "claude-opus-4-7",
-    system: o.system || undefined,
+    system: systemPayload || undefined,
     messages: amsgs,
     max_tokens: o.maxTokens,
     temperature: o.temperature,

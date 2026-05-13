@@ -6671,8 +6671,13 @@ async function sendMessage() {
                 firstChunk = false;
               }
               fullText += evt.delta;
-              thinkingEl.innerHTML = md(fullText);
-              messages.scrollTop = messages.scrollHeight;
+              if (!thinkingEl._mdTimer) {
+                thinkingEl._mdTimer = setTimeout(function() {
+                  thinkingEl.innerHTML = md(fullText);
+                  messages.scrollTop = messages.scrollHeight;
+                  thinkingEl._mdTimer = null;
+                }, 80);
+              }
             }
             if (evt.done) provider = evt.provider || provider;
             if (evt.error) fullText += '\n\nError: ' + evt.error;
@@ -9980,8 +9985,13 @@ async function sendFullChatStreaming(text) {
                 firstChunk = false;
               }
               fullText += evt.delta;
-              body.innerHTML = md(fullText);
-              scrollConversation();
+              if (!body._mdTimer) {
+                body._mdTimer = setTimeout(function() {
+                  body.innerHTML = md(fullText);
+                  scrollConversation();
+                  body._mdTimer = null;
+                }, 80);
+              }
             }
             if (evt.done) {
               streamProvider = evt.provider || streamProvider;
