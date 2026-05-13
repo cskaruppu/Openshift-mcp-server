@@ -132,9 +132,14 @@ function diagnoseContainer(container, pod, events, logs, logsPrevious, metrics) 
     }
 
     const currentLimit = parseMemory(limits.memLimit);
-    const suggestedLimit = currentLimit ? formatMemory(Math.ceil(currentLimit * 2)) : "512Mi";
-    const suggestedRequest = currentLimit ? formatMemory(Math.ceil(currentLimit * 1.2)) : "256Mi";
+    let currentUsage = null;
+    if (metrics) {
+      const mc = (metrics.containers || []).find((c) => c.name === container.name);
+      if (mc?.memory) currentUsage = parseMemory(mc.memory);
+    }
+    const smart = calculateSmartMemoryLimit(currentLimit, currentUsage, restarts);
     const deployRes = resolveDeploymentResource(ownerKind, ownerName, pod.namespace);
+    diag.evidence.push(`Recommendation: ${smart.reasoning}`);
 
     diag.fixes.push({
       title: `Increase memory limits for ${container.name}`,
@@ -142,10 +147,10 @@ function diagnoseContainer(container, pod, events, logs, logsPrevious, metrics) 
       resource: deployRes.name,
       resourceType: deployRes.kind,
       namespace: pod.namespace,
-      command: `oc -n ${pod.namespace} set resources ${deployRes.kind}/${deployRes.name} --containers=${container.name} --limits=memory=${suggestedLimit} --requests=memory=${suggestedRequest}`,
+      command: `oc -n ${pod.namespace} set resources ${deployRes.kind}/${deployRes.name} --containers=${container.name} --limits=memory=${smart.limit} --requests=memory=${smart.request}`,
       risk: "low",
-      description: `Doubles the memory limit from ${limits.memLimit || "default"} to ${suggestedLimit}. This triggers a rolling restart of the pods.`,
-      patchBody: buildResourcePatch(container.name, { memLimit: suggestedLimit, memRequest: suggestedRequest }),
+      description: `Increases memory limit from ${limits.memLimit || "default"} to ${smart.limit} (request: ${smart.request}). ${smart.reasoning}. This triggers a rolling restart of the pods.`,
+      patchBody: buildResourcePatch(container.name, { memLimit: smart.limit, memRequest: smart.request }),
       deploymentName: deployRes.name,
     });
 
@@ -329,11 +334,16 @@ function diagnoseContainer(container, pod, events, logs, logsPrevious, metrics) 
 
     if (exitCode === 137) {
       const currentLimit = parseMemory(limits.memLimit);
-      const suggestedLimit = currentLimit ? formatMemory(Math.ceil(currentLimit * 2)) : "512Mi";
-      const suggestedRequest = currentLimit ? formatMemory(Math.ceil(currentLimit * 1.2)) : "256Mi";
+      let currentUsage = null;
+      if (metrics) {
+        const mc = (metrics.containers || []).find((c) => c.name === container.name);
+        if (mc?.memory) currentUsage = parseMemory(mc.memory);
+      }
+      const smart = calculateSmartMemoryLimit(currentLimit, currentUsage, restarts);
       const deployRes = resolveDeploymentResource(ownerKind, ownerName, pod.namespace);
       diag.rootCause = "OOMKilled";
       diag.diagnosis = `Container "${container.name}" has been OOM-killed ${restarts} times. The process periodically exceeds its memory limit${limits.memLimit ? " of " + limits.memLimit : ""}.`;
+      diag.evidence.push(`Recommendation: ${smart.reasoning}`);
 
       diag.fixes.push({
         title: `Increase memory limits for ${container.name}`,
@@ -341,10 +351,10 @@ function diagnoseContainer(container, pod, events, logs, logsPrevious, metrics) 
         resource: deployRes.name,
         resourceType: deployRes.kind,
         namespace: pod.namespace,
-        command: `oc -n ${pod.namespace} set resources ${deployRes.kind}/${deployRes.name} --containers=${container.name} --limits=memory=${suggestedLimit} --requests=memory=${suggestedRequest}`,
+        command: `oc -n ${pod.namespace} set resources ${deployRes.kind}/${deployRes.name} --containers=${container.name} --limits=memory=${smart.limit} --requests=memory=${smart.request}`,
         risk: "low",
-        description: `Doubles the memory limit to ${suggestedLimit}. Triggers a rolling restart.`,
-        patchBody: buildResourcePatch(container.name, { memLimit: suggestedLimit, memRequest: suggestedRequest }),
+        description: `Increases memory limit from ${limits.memLimit || "default"} to ${smart.limit} (request: ${smart.request}). ${smart.reasoning}.`,
+        patchBody: buildResourcePatch(container.name, { memLimit: smart.limit, memRequest: smart.request }),
         deploymentName: deployRes.name,
       });
     }
@@ -483,10 +493,60 @@ function parseMemory(memStr) {
 }
 
 function formatMemory(bytes) {
-  if (bytes >= 1073741824) return Math.ceil(bytes / 1073741824) + "Gi";
+  if (bytes >= 1073741824) {
+    const gi = bytes / 1073741824;
+    if (Number.isInteger(gi)) return gi + "Gi";
+    if (Number.isInteger(gi * 2)) return gi + "Gi";
+    return Math.ceil(bytes / 1048576) + "Mi";
+  }
   if (bytes >= 1048576) return Math.ceil(bytes / 1048576) + "Mi";
   if (bytes >= 1024) return Math.ceil(bytes / 1024) + "Ki";
   return bytes + "";
+}
+
+function roundToNiceMemory(bytes) {
+  const Mi = 1048576;
+  const Gi = 1073741824;
+  const niceMi = [128, 256, 384, 512, 768];
+  const niceGi = [1, 1.5, 2, 3, 4, 6, 8];
+  if (bytes >= Gi) {
+    const gv = bytes / Gi;
+    for (const n of niceGi) { if (n >= gv) return n * Gi; }
+    return 8 * Gi;
+  }
+  const mv = bytes / Mi;
+  for (const n of niceMi) { if (n >= mv) return n * Mi; }
+  return Gi;
+}
+
+function calculateSmartMemoryLimit(currentLimitBytes, currentUsageBytes, restartCount) {
+  if (!currentLimitBytes) return { limit: "512Mi", request: "256Mi", reasoning: "No current limit found; using safe default" };
+  let multiplier;
+  if (restartCount <= 2) multiplier = 2;
+  else if (restartCount <= 5) multiplier = 3;
+  else if (restartCount <= 10) multiplier = 4;
+  else multiplier = 5;
+  let recommended = currentLimitBytes * multiplier;
+  let reasoning = `${multiplier}x current limit based on ${restartCount} OOM restart(s)`;
+  if (currentUsageBytes) {
+    const usageBased = currentUsageBytes * 2.5;
+    if (usageBased > recommended) {
+      recommended = usageBased;
+      reasoning = `2.5x current usage (${formatMemory(currentUsageBytes)}) which exceeds ${multiplier}x limit`;
+    }
+    if (currentUsageBytes > currentLimitBytes * 0.5) {
+      const highUsage = currentUsageBytes * 3;
+      if (highUsage > recommended) {
+        recommended = highUsage;
+        reasoning = `3x current usage (${formatMemory(currentUsageBytes)}) — already at ${Math.round(currentUsageBytes / currentLimitBytes * 100)}% of limit after restart`;
+      }
+    }
+  }
+  recommended = roundToNiceMemory(recommended);
+  recommended = Math.max(recommended, 128 * 1048576);
+  recommended = Math.min(recommended, 8 * 1073741824);
+  const requestBytes = Math.ceil(recommended * 0.75);
+  return { limit: formatMemory(recommended), request: formatMemory(requestBytes), reasoning };
 }
 
 function buildResourcePatch(containerName, { memLimit, memRequest, cpuLimit, cpuRequest } = {}) {
