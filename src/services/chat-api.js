@@ -11247,6 +11247,188 @@ export async function handleFeedbackAPI(req, res) {
 // ---------------------------------------------------------------------------
 // GET /api/chat/feedback/stats — aggregate feedback statistics
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// POST /api/risk-analysis — LLM-powered deep risk analysis (hybrid layer)
+// ---------------------------------------------------------------------------
+export async function handleRiskAnalysisAPI(req, res) {
+  try {
+    const body = await readBody(req);
+    const llmOpts = body.llmOpts || {};
+    const provider = llmOpts.provider || LLM_PROVIDER;
+
+    if (!provider || provider === "none") {
+      return json(res, 200, { findings: [], error: "No LLM provider configured. Configure a provider in Settings to enable AI deep analysis." });
+    }
+
+    const clusterData = {};
+    const tasks = [];
+
+    tasks.push(
+      ocpGet("/api/v1/pods?limit=500").then(r => {
+        clusterData.allPods = (r?.items || []).map(p => ({
+          name: p.metadata?.name,
+          namespace: p.metadata?.namespace,
+          phase: p.status?.phase,
+          restarts: (p.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0),
+          containers: (p.status?.containerStatuses || []).map(c => ({
+            name: c.name,
+            ready: c.ready,
+            state: Object.keys(c.state || {})[0] || "unknown",
+            reason: c.state?.waiting?.reason || c.state?.terminated?.reason || null,
+            restarts: c.restartCount || 0,
+          })),
+          age: p.metadata?.creationTimestamp,
+          node: p.spec?.nodeName,
+          ownerKind: (p.metadata?.ownerReferences || [])[0]?.kind,
+          ownerName: (p.metadata?.ownerReferences || [])[0]?.name,
+        }));
+      }).catch(() => { clusterData.allPods = []; })
+    );
+
+    tasks.push(
+      ocpGet("/api/v1/nodes").then(r => {
+        clusterData.nodes = (r?.items || []).map(n => {
+          const conds = {};
+          (n.status?.conditions || []).forEach(c => { conds[c.type] = c.status; });
+          return {
+            name: n.metadata?.name,
+            ready: conds.Ready === "True",
+            memoryPressure: conds.MemoryPressure === "True",
+            diskPressure: conds.DiskPressure === "True",
+            pidPressure: conds.PIDPressure === "True",
+            cpu: n.status?.allocatable?.cpu,
+            memory: n.status?.allocatable?.memory,
+            pods: n.status?.allocatable?.pods,
+            roles: Object.keys(n.metadata?.labels || {}).filter(l => l.startsWith("node-role.kubernetes.io/")).map(l => l.split("/")[1]),
+            kubeletVersion: n.status?.nodeInfo?.kubeletVersion,
+          };
+        });
+      }).catch(() => { clusterData.nodes = []; })
+    );
+
+    tasks.push(
+      ocpGet("/api/v1/events?limit=200&fieldSelector=type!=Normal").then(r => {
+        clusterData.warningEvents = (r?.items || []).slice(-100).map(e => ({
+          reason: e.reason,
+          message: (e.message || "").substring(0, 200),
+          namespace: e.metadata?.namespace,
+          involvedObject: e.involvedObject?.kind + "/" + e.involvedObject?.name,
+          count: e.count || 1,
+          lastSeen: e.lastTimestamp || e.eventTime,
+        }));
+      }).catch(() => { clusterData.warningEvents = []; })
+    );
+
+    tasks.push(
+      ocpGet("/apis/apps/v1/deployments?limit=200").then(r => {
+        clusterData.deployments = (r?.items || []).map(d => ({
+          name: d.metadata?.name,
+          namespace: d.metadata?.namespace,
+          replicas: d.spec?.replicas,
+          readyReplicas: d.status?.readyReplicas || 0,
+          updatedReplicas: d.status?.updatedReplicas || 0,
+          unavailableReplicas: d.status?.unavailableReplicas || 0,
+          conditions: (d.status?.conditions || []).map(c => ({ type: c.type, status: c.status, reason: c.reason })),
+        }));
+      }).catch(() => { clusterData.deployments = []; })
+    );
+
+    await Promise.all(tasks);
+
+    const problemSummary = {
+      totalPods: clusterData.allPods.length,
+      crashingPods: clusterData.allPods.filter(p => p.containers.some(c => c.reason === "CrashLoopBackOff")).length,
+      oomPods: clusterData.allPods.filter(p => p.containers.some(c => c.reason === "OOMKilled")).length,
+      pendingPods: clusterData.allPods.filter(p => p.phase === "Pending").length,
+      failedPods: clusterData.allPods.filter(p => p.phase === "Failed").length,
+      highRestartPods: clusterData.allPods.filter(p => p.restarts > 10).length,
+      unhealthyNodes: clusterData.nodes.filter(n => !n.ready).length,
+      totalNodes: clusterData.nodes.length,
+      degradedDeployments: clusterData.deployments.filter(d => d.unavailableReplicas > 0 || d.readyReplicas < d.replicas).length,
+    };
+
+    const prompt = `You are a Kubernetes/OpenShift SRE risk analyst. Analyze the cluster state below and identify risks that go BEYOND simple status checks. Focus on:
+
+1. **Correlated failures** — multiple pods/deployments failing in the same namespace or node (blast radius)
+2. **Cascade risks** — a failing component that could take down dependent services
+3. **Capacity trends** — nodes approaching resource limits, scheduling pressure
+4. **Single points of failure** — deployments with replicas=1 that are unhealthy
+5. **Stale deployments** — deployments with unavailable replicas for extended periods
+6. **Security signals** — unusual restart patterns, privilege escalation indicators
+7. **Namespace health** — namespaces with disproportionate issues
+
+CLUSTER STATE:
+${JSON.stringify(problemSummary, null, 1)}
+
+PROBLEM PODS (first 30):
+${JSON.stringify(clusterData.allPods.filter(p => p.phase !== "Running" || p.restarts > 5 || p.containers.some(c => !c.ready)).slice(0, 30), null, 1)}
+
+NODES:
+${JSON.stringify(clusterData.nodes, null, 1)}
+
+WARNING EVENTS (last 50):
+${JSON.stringify((clusterData.warningEvents || []).slice(0, 50), null, 1)}
+
+DEGRADED DEPLOYMENTS:
+${JSON.stringify(clusterData.deployments.filter(d => d.unavailableReplicas > 0 || d.readyReplicas < d.replicas).slice(0, 20), null, 1)}
+
+Respond ONLY with a JSON array of risk findings. Each finding must have:
+- "severity": "critical" | "warning" | "info"
+- "title": short title (max 80 chars)
+- "evidence": specific data points from the cluster state that support this finding
+- "impact": what could go wrong if this is not addressed
+- "action": specific recommended action
+- "confidence": number 70-99 (your confidence in this finding)
+- "confidenceReason": why you are confident (cite specific data)
+- "category": "correlation" | "cascade" | "capacity" | "spof" | "stale" | "security" | "namespace_health" | "pattern"
+
+Return ONLY the JSON array, no markdown, no explanation. If no additional risks found, return [].`;
+
+    const r = await callLLM({
+      messages: [{ role: "user", content: prompt }],
+      system: "You are a precise Kubernetes risk analyst. Output only valid JSON arrays. Never include markdown code fences or explanation text.",
+      maxTokens: 2000,
+      temperature: 0.2,
+      provider: llmOpts.provider,
+      apiUrl: llmOpts.apiUrl,
+      apiKey: llmOpts.apiKey,
+      model: llmOpts.model,
+      azureDeployment: llmOpts.azureDeployment,
+      azureApiVersion: llmOpts.azureApiVersion,
+    });
+
+    let findings = [];
+    try {
+      let text = (r.text || "").trim();
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (jsonMatch) text = jsonMatch[0];
+      findings = JSON.parse(text);
+      if (!Array.isArray(findings)) findings = [];
+      findings = findings.filter(f => f.severity && f.title && f.evidence).map(f => ({
+        severity: ["critical", "warning", "info"].includes(f.severity) ? f.severity : "info",
+        title: String(f.title).substring(0, 100),
+        evidence: String(f.evidence).substring(0, 500),
+        impact: String(f.impact || "").substring(0, 500),
+        action: String(f.action || "").substring(0, 300),
+        confidence: Math.min(99, Math.max(70, parseInt(f.confidence) || 85)),
+        confidenceReason: String(f.confidenceReason || "LLM pattern analysis").substring(0, 200),
+        category: f.category || "pattern",
+        llm: true,
+      }));
+    } catch {
+      return json(res, 200, { findings: [], error: "Failed to parse LLM response" });
+    }
+
+    json(res, 200, { findings, provider: r.provider || provider });
+  } catch (err) {
+    console.error("Risk analysis error:", err);
+    json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/chat/feedback/stats — aggregate feedback statistics
+// ---------------------------------------------------------------------------
 export async function handleFeedbackStatsAPI(req, res) {
   try {
     let stats = { total: 0, positive: 0, negative: 0, recentNegative: [] };

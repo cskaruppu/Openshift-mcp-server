@@ -513,6 +513,17 @@ tr:hover td{background:#ffffff06}
 .risk-conf.high{color:var(--ok)} .risk-conf.high .risk-conf-bar div{background:var(--ok)}
 .risk-conf.med{color:var(--warn)} .risk-conf.med .risk-conf-bar div{background:var(--warn)}
 .risk-conf.low{color:var(--text2)} .risk-conf.low .risk-conf-bar div{background:var(--text2)}
+.risk-method-llm{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:6px;font-size:9px;font-weight:600;background:rgba(130,80,223,.1);color:#a371f7;border:1px solid rgba(130,80,223,.2);letter-spacing:.3px}
+.risk-deep-btn{padding:4px 12px;border-radius:6px;font-size:10px;font-weight:600;border:1px solid rgba(130,80,223,.3);background:rgba(130,80,223,.08);color:#a371f7;cursor:pointer;transition:all .15s;margin-left:auto}
+.risk-deep-btn:hover{background:rgba(130,80,223,.18);border-color:#a371f7}
+.risk-deep-btn:disabled{opacity:.5;cursor:not-allowed}
+.risk-deep-btn.loading{animation:risk-pulse 1.2s infinite}
+@keyframes risk-pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.risk-llm-divider{display:flex;align-items:center;gap:8px;padding:8px 0;font-size:10px;color:#a371f7;font-weight:600}
+.risk-llm-divider::before,.risk-llm-divider::after{content:'';flex:1;height:1px;background:rgba(130,80,223,.2)}
+.risk-item.llm-finding{border-left-color:#a371f7}
+.risk-item.llm-finding .risk-sev{background:rgba(130,80,223,.15);color:#a371f7}
+.risk-cat{font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(130,80,223,.1);color:#a371f7;font-weight:600;text-transform:uppercase;letter-spacing:.3px;margin-left:4px}
 /* Quick Command Bar */
 .cmd-bar-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9998;display:none;align-items:flex-start;justify-content:center;padding-top:18vh;backdrop-filter:blur(4px)}
 .cmd-bar-overlay.open{display:flex}
@@ -2144,6 +2155,7 @@ tr:hover td{background:#ffffff06}
           <div class="risk-accuracy-bar"><div id="risk-accuracy-fill" style="width:0%"></div></div>
           <span class="risk-accuracy-score" id="risk-accuracy-pct"></span>
         </div>
+        <button class="risk-deep-btn" id="risk-deep-btn" onclick="runLLMRiskAnalysis()" title="Use AI to find correlated failures, cascade risks, capacity trends, and hidden patterns">&#x1F9E0; Deep Analysis</button>
       </div>
       <div class="risk-summary" id="risk-summary"></div>
       <div class="risk-filters" id="risk-filters">
@@ -4274,6 +4286,9 @@ function renderRiskList() {
     list.innerHTML = '<div class="risk-empty">&#x2705; ' + (_riskFilter === 'all' ? 'No risks detected — cluster is healthy' : 'No ' + _riskFilter + ' risks') + '</div>';
     return;
   }
+  var hasLLM = filtered.some(function(r) { return r.llm; });
+  var hasEvidence = filtered.some(function(r) { return !r.llm; });
+  var showedDivider = false;
   list.innerHTML = filtered.map(function(r) {
     var clickAction = r.ns && r.pod
       ? ' onclick="openNewChatWithCommand(\'troubleshoot pod ' + esc(r.pod) + ' in namespace ' + esc(r.ns) + '\',\'Troubleshoot ' + esc(r.pod) + '\')"'
@@ -4285,10 +4300,17 @@ function renderRiskList() {
     var confHtml = '<span class="risk-conf ' + confClass + '" title="' + esc(r.confidenceReason || '') + '">' +
       '<span class="risk-conf-bar"><div style="width:' + conf + '%"></div></span>' +
       conf + '%</span>';
-    return '<div class="risk-item ' + esc(r.severity) + '"' + clickAction + '>' +
+    var catTag = r.llm && r.category ? '<span class="risk-cat">' + esc(r.category.replace(/_/g, ' ')) + '</span>' : '';
+    var divider = '';
+    if (r.llm && !showedDivider && hasEvidence && hasLLM) {
+      showedDivider = true;
+      divider = '<div class="risk-llm-divider">&#x1F9E0; AI Deep Analysis Findings</div>';
+    }
+    var itemClass = 'risk-item ' + esc(r.severity) + (r.llm ? ' llm-finding' : '');
+    return divider + '<div class="' + itemClass + '"' + clickAction + '>' +
       '<div class="risk-icon">' + r.icon + '</div>' +
       '<div class="risk-body">' +
-        '<div class="risk-title">' + r.title + ' <span class="risk-sev">' + r.severity + '</span>' + confHtml + '</div>' +
+        '<div class="risk-title">' + r.title + ' <span class="risk-sev">' + r.severity + '</span>' + catTag + confHtml + '</div>' +
         '<div class="risk-evidence">' + r.evidence + '</div>' +
         '<div class="risk-impact">' + r.impact + '</div>' +
         '<div class="risk-action">' + r.action + '</div>' +
@@ -4522,22 +4544,101 @@ async function loadRiskPredictions() {
     badge.textContent = _riskData.length + ' finding' + (_riskData.length !== 1 ? 's' : '');
     badge.className = 'badge ' + (_riskData.some(function(r) { return r.severity === 'critical'; }) ? 'badge-crit' : _riskData.length > 0 ? 'badge-warn' : 'badge-ok');
 
-    var accEl = document.getElementById('risk-accuracy');
-    if (_riskData.length > 0) {
-      var totalConf = _riskData.reduce(function(s, r) { return s + (r.confidence || 0); }, 0);
-      var avgConf = Math.round(totalConf / _riskData.length);
-      document.getElementById('risk-accuracy-pct').textContent = avgConf + '%';
-      document.getElementById('risk-accuracy-fill').style.width = avgConf + '%';
-      accEl.style.display = 'flex';
-    } else {
-      accEl.style.display = 'none';
+    if (_llmRiskFindings.length > 0) {
+      _riskData = _riskData.concat(_llmRiskFindings);
+      _riskData.sort(function(a, b) {
+        if (a.llm !== b.llm) return a.llm ? 1 : -1;
+        var sevOrder = { critical: 0, warning: 1, info: 2 };
+        return (sevOrder[a.severity] || 9) - (sevOrder[b.severity] || 9);
+      });
     }
 
+    updateRiskAccuracy();
     renderRiskSummary();
     renderRiskList();
   } catch (e) {
     list.innerHTML = '<div class="risk-empty" style="color:var(--crit)">Error: ' + esc(e.message) + '</div>';
     badge.textContent = 'Error';
+  }
+}
+
+var _llmRiskFindings = [];
+
+async function runLLMRiskAnalysis() {
+  var btn = document.getElementById('risk-deep-btn');
+  if (!btn) return;
+  var opts = (typeof getActiveProviderOpts === 'function') ? getActiveProviderOpts() : { provider: 'none' };
+  if (!opts.provider || opts.provider === 'none') {
+    btn.textContent = 'No LLM configured';
+    btn.style.color = 'var(--crit)';
+    setTimeout(function() { btn.textContent = '\u{1F9E0} Deep Analysis'; btn.style.color = ''; }, 3000);
+    return;
+  }
+  btn.disabled = true;
+  btn.classList.add('loading');
+  btn.textContent = '\u{1F9E0} Analyzing...';
+  try {
+    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/risk-analysis', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ llmOpts: opts }),
+    });
+    var data = await resp.json();
+    if (data.error && (!data.findings || data.findings.length === 0)) {
+      btn.textContent = esc(data.error).substring(0, 40);
+      btn.style.color = 'var(--crit)';
+      setTimeout(function() { btn.textContent = '\u{1F9E0} Deep Analysis'; btn.style.color = ''; btn.disabled = false; btn.classList.remove('loading'); }, 4000);
+      return;
+    }
+    _llmRiskFindings = (data.findings || []).map(function(f) {
+      var catIcons = { correlation: '\u{1F517}', cascade: '\u{1F4A5}', capacity: '\u{1F4CA}', spof: '\u{26A0}', stale: '\u{23F3}', security: '\u{1F512}', namespace_health: '\u{1F4C1}', pattern: '\u{1F50D}' };
+      return {
+        severity: f.severity,
+        icon: catIcons[f.category] || '\u{1F9E0}',
+        title: esc(f.title),
+        confidence: f.confidence,
+        confidenceReason: f.confidenceReason || 'LLM pattern analysis',
+        evidence: f.evidence,
+        impact: f.impact,
+        action: '\u{2794} ' + f.action,
+        category: f.category,
+        llm: true,
+        ns: null, pod: null, node: null,
+      };
+    });
+    _riskData = _riskData.filter(function(r) { return !r.llm; });
+    _riskData = _riskData.concat(_llmRiskFindings);
+    var sevOrder = { critical: 0, warning: 1, info: 2 };
+    _riskData.sort(function(a, b) {
+      if (a.llm !== b.llm) return a.llm ? 1 : -1;
+      return (sevOrder[a.severity] || 9) - (sevOrder[b.severity] || 9);
+    });
+    var badge = document.getElementById('risk-count');
+    badge.textContent = _riskData.length + ' finding' + (_riskData.length !== 1 ? 's' : '');
+    badge.className = 'badge ' + (_riskData.some(function(r) { return r.severity === 'critical'; }) ? 'badge-crit' : _riskData.length > 0 ? 'badge-warn' : 'badge-ok');
+    updateRiskAccuracy();
+    renderRiskSummary();
+    renderRiskList();
+    btn.textContent = '\u{2705} ' + _llmRiskFindings.length + ' AI findings';
+    btn.style.color = 'var(--ok)';
+    setTimeout(function() { btn.textContent = '\u{1F9E0} Deep Analysis'; btn.style.color = ''; btn.disabled = false; btn.classList.remove('loading'); }, 5000);
+  } catch (e) {
+    btn.textContent = 'Error: ' + e.message.substring(0, 25);
+    btn.style.color = 'var(--crit)';
+    setTimeout(function() { btn.textContent = '\u{1F9E0} Deep Analysis'; btn.style.color = ''; btn.disabled = false; btn.classList.remove('loading'); }, 4000);
+  }
+}
+
+function updateRiskAccuracy() {
+  var accEl = document.getElementById('risk-accuracy');
+  if (_riskData.length > 0) {
+    var totalConf = _riskData.reduce(function(s, r) { return s + (r.confidence || 0); }, 0);
+    var avgConf = Math.round(totalConf / _riskData.length);
+    document.getElementById('risk-accuracy-pct').textContent = avgConf + '%';
+    document.getElementById('risk-accuracy-fill').style.width = avgConf + '%';
+    accEl.style.display = 'flex';
+  } else {
+    accEl.style.display = 'none';
   }
 }
 

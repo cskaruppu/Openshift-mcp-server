@@ -54,7 +54,7 @@ import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode } from "./services/auth.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
-import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, trackSubmittedCR } from "./services/chat-api.js";
+import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, trackSubmittedCR } from "./services/chat-api.js";
 import {
   listActions,
   getAction,
@@ -1735,6 +1735,13 @@ async function startSSE() {
     if (req.method === "POST" && url.pathname === "/api/execute") {
       if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.2 })) return;
       await handleExecuteAPI(req, res);
+      return;
+    }
+
+    // LLM risk analysis — /api/risk-analysis (POST)
+    if (req.method === "POST" && url.pathname === "/api/risk-analysis") {
+      if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
+      await handleRiskAnalysisAPI(req, res);
       return;
     }
 
