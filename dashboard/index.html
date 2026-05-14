@@ -3425,7 +3425,7 @@ tr:hover td{background:#ffffff06}
         <div class="ai-cmd-pulse"><span></span></div>
         <div>
           <div class="ai-cmd-name">AI Intelligence Command Center</div>
-          <div class="ai-cmd-sub">Risk predictions &middot; Live cluster status &middot; AI-investigated alerts &middot; One-click remediation</div>
+          <div class="ai-cmd-sub">Live cluster health &middot; Risk findings &middot; AI-investigated alerts &middot; One-click remediation</div>
         </div>
       </div>
       <div class="ai-cmd-stats">
@@ -3434,7 +3434,7 @@ tr:hover td{background:#ffffff06}
         <div class="ai-cmd-stat" style="--c:#6366f1"><div class="v" id="aic-predictions">0</div><div class="l">Predicted</div></div>
         <div class="ai-cmd-stat" style="--c:#22c55e"><div class="v" id="aic-resolved">0</div><div class="l">Auto-Fixed</div></div>
         <div class="ai-cmd-stat" style="--c:#a855f7"><div class="v" id="aic-investigating">0</div><div class="l">Investigating</div></div>
-        <div class="ai-cmd-stat" style="--c:#0ea5e9" title="Patterns your team has resolved before — used as AI context for new issues" onclick="openNewChatWithCommand('/playbook','Team Playbook')" style="cursor:pointer"><div class="v" id="aic-learned">0</div><div class="l">Learned</div></div>
+        <div class="ai-cmd-stat" style="--c:#0ea5e9" title="Patterns resolved — used as AI context" onclick="openNewChatWithCommand('/playbook','Team Playbook')" style="cursor:pointer"><div class="v" id="aic-learned">0</div><div class="l">Learned</div></div>
       </div>
       <div class="ai-cmd-status">
         <span id="aic-monitor-status">Initializing...</span>
@@ -3447,170 +3447,142 @@ tr:hover td{background:#ffffff06}
     </div>
   </div>
 
-  <!-- Situational Awareness — what's happening NOW -->
-  <div class="ai-grid-2">
-    <!-- Risk Predictions -->
-    <div class="ai-section">
-      <div class="ai-section-head">
-        <div class="ai-section-title">
-          <span class="ai-section-icon" style="background:linear-gradient(135deg,#ef4444,#f97316)">&#x1F52E;</span>
-          <div>
-            <div class="ai-section-name">Risk Predictions</div>
-            <div class="ai-section-sub">Evidence-based + AI deep analysis</div>
-          </div>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span class="risk-method" title="Findings from live Kubernetes API data">&#x2705; Evidence-Based</span>
-          <span id="intel-risk-accuracy" style="font-size:11px;font-weight:700;color:var(--ok)"></span>
-          <button class="risk-deep-btn" onclick="runLLMRiskAnalysis();renderIntelRiskList()" title="AI deep pattern analysis">&#x1F9E0; Deep Analysis</button>
-        </div>
+  <!-- 1. Compact Live Cluster Status Bar -->
+  <div class="ai-section" style="padding:12px 20px;margin-bottom:12px">
+    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <span id="live-pulse" class="live-pulse" title="SSE connection status" style="margin-right:0">&#x25CF; Connecting...</span>
+      <div id="live-cluster-stats" class="live-stats" style="margin-bottom:0;gap:8px;flex:1">
+        <div class="live-stat" style="padding:6px 10px;min-width:70px"><div class="live-stat-v" id="live-pods" style="font-size:16px">--</div><div class="live-stat-l">Pods</div></div>
+        <div class="live-stat" style="padding:6px 10px;min-width:70px"><div class="live-stat-v" id="live-problem-pods" style="font-size:16px;color:var(--crit)">--</div><div class="live-stat-l">Issues</div></div>
+        <div class="live-stat" style="padding:6px 10px;min-width:70px"><div class="live-stat-v" id="live-nodes" style="font-size:16px">--</div><div class="live-stat-l">Nodes</div></div>
+        <div class="live-stat" style="padding:6px 10px;min-width:70px"><div class="live-stat-v" id="live-ops" style="font-size:16px">--</div><div class="live-stat-l">Operators</div></div>
+        <div class="live-stat" style="padding:6px 10px;min-width:70px"><div class="live-stat-v" id="live-events" style="font-size:16px;color:var(--warn)">--</div><div class="live-stat-l">Events</div></div>
       </div>
-      <div class="aic-pills" style="border:none;padding:4px 0">
-        <button class="aic-pill active" onclick="filterIntelRisks('all',this)"><span>All</span><span class="ct" id="intel-risk-all">0</span></button>
-        <button class="aic-pill crit" onclick="filterIntelRisks('critical',this)"><span>Critical</span><span class="ct" id="intel-risk-crit">0</span></button>
-        <button class="aic-pill warn" onclick="filterIntelRisks('warning',this)"><span>Warning</span><span class="ct" id="intel-risk-warn">0</span></button>
-        <button class="aic-pill info" onclick="filterIntelRisks('info',this)"><span>Info</span><span class="ct" id="intel-risk-info">0</span></button>
-      </div>
-      <div id="intel-risk-list" class="aic-alerts-list" style="max-height:400px;overflow-y:auto"></div>
-    </div>
-
-    <!-- Live Cluster Status — SSE-powered -->
-    <div class="ai-section">
-      <div class="ai-section-head">
-        <div class="ai-section-title">
-          <span class="ai-section-icon" style="background:linear-gradient(135deg,#22c55e,#0ea5e9)">&#x1F4E1;</span>
-          <div>
-            <div class="ai-section-name">Live Cluster Status</div>
-            <div class="ai-section-sub">Real-time streaming from cluster API</div>
-          </div>
-        </div>
-        <span id="live-pulse" class="live-pulse" title="SSE connection status">&#x25CF; Connecting...</span>
-      </div>
-      <div id="live-cluster-stats" class="live-stats">
-        <div class="live-stat"><div class="live-stat-v" id="live-pods">--</div><div class="live-stat-l">Pods</div></div>
-        <div class="live-stat"><div class="live-stat-v" id="live-problem-pods">--</div><div class="live-stat-l">Issues</div></div>
-        <div class="live-stat"><div class="live-stat-v" id="live-nodes">--</div><div class="live-stat-l">Nodes</div></div>
-        <div class="live-stat"><div class="live-stat-v" id="live-ops">--</div><div class="live-stat-l">Operators</div></div>
-        <div class="live-stat"><div class="live-stat-v" id="live-events">--</div><div class="live-stat-l">Events</div></div>
-      </div>
-      <div id="live-nodes-list" style="max-height:180px;overflow-y:auto;margin-bottom:8px"></div>
-      <div id="live-events-list" style="max-height:200px;overflow-y:auto"></div>
-      <div style="margin-top:6px;font-size:9px;color:var(--text2)" id="live-updated">Last update: --</div>
+      <div id="live-nodes-list" style="display:flex;gap:6px;flex-wrap:wrap;font-size:11px"></div>
+      <span style="font-size:9px;color:var(--text2);margin-left:auto" id="live-updated">Last update: --</span>
     </div>
   </div>
 
-  <!-- Alert Investigation Queue -->
-  <div class="ai-section">
-    <div class="ai-section-head">
-      <div class="ai-section-title">
-        <span class="ai-section-icon" style="background:linear-gradient(135deg,#ef4444,#f59e0b)">&#x26A1;</span>
-        <div>
-          <div class="ai-section-name">Live Alert Feed</div>
-          <div class="ai-section-sub">Each alert is automatically investigated by AI within seconds</div>
+  <!-- 2. Unified Findings — Tabbed: Risk Findings | Live Alerts -->
+  <div class="ai-section" style="padding:0;overflow:hidden">
+    <!-- Tab bar -->
+    <div style="display:flex;border-bottom:2px solid var(--border);background:var(--bg)">
+      <button class="intel-tab active" id="intel-tab-btn-risks" onclick="switchIntelTab('risks')" style="flex:1;padding:12px 20px;border:none;background:none;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;border-bottom:2px solid var(--accent);margin-bottom:-2px;transition:all .2s">
+        &#x1F52E; Risk Findings <span id="intel-tab-risk-ct" style="font-size:11px;color:var(--text2);font-weight:400">(0)</span>
+      </button>
+      <button class="intel-tab" id="intel-tab-btn-alerts" onclick="switchIntelTab('alerts')" style="flex:1;padding:12px 20px;border:none;background:none;font-size:13px;font-weight:700;color:var(--text2);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .2s">
+        &#x26A1; Live Alerts <span id="intel-tab-alert-ct" style="font-size:11px;color:var(--text2);font-weight:400">(0)</span>
+      </button>
+    </div>
+
+    <!-- Risk Findings Tab Content -->
+    <div id="intel-tab-risks" style="padding:16px 20px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+        <div class="aic-pills" style="border:none;padding:0;flex:1">
+          <button class="aic-pill active" onclick="filterIntelRisks('all',this)"><span>All</span><span class="ct" id="intel-risk-all">0</span></button>
+          <button class="aic-pill crit" onclick="filterIntelRisks('critical',this)"><span>Critical</span><span class="ct" id="intel-risk-crit">0</span></button>
+          <button class="aic-pill warn" onclick="filterIntelRisks('warning',this)"><span>Warning</span><span class="ct" id="intel-risk-warn">0</span></button>
+          <button class="aic-pill info" onclick="filterIntelRisks('info',this)"><span>Info</span><span class="ct" id="intel-risk-info">0</span></button>
+        </div>
+        <span class="risk-method" title="Findings from live Kubernetes API data">&#x2705; Evidence-Based</span>
+        <span id="intel-risk-accuracy" style="font-size:11px;font-weight:700;color:var(--ok)"></span>
+        <button class="risk-deep-btn" onclick="runLLMRiskAnalysis();renderIntelRiskList()" title="AI deep pattern analysis">&#x1F9E0; Deep Analysis</button>
+      </div>
+      <div id="intel-risk-list" class="aic-alerts-list" style="max-height:600px;overflow-y:auto"></div>
+    </div>
+
+    <!-- Live Alerts Tab Content -->
+    <div id="intel-tab-alerts" style="padding:16px 20px;display:none">
+      <div class="aic-pills" style="border:none;padding:0;margin-bottom:12px">
+        <button class="aic-pill active" data-sev="all" onclick="aicSetSeverityFilter('all')"><span>All</span><span class="ct" id="aic-pill-all">0</span></button>
+        <button class="aic-pill crit" data-sev="critical" onclick="aicSetSeverityFilter('critical')"><span>&#x1F534; Critical</span><span class="ct" id="aic-pill-crit">0</span></button>
+        <button class="aic-pill warn" data-sev="warning" onclick="aicSetSeverityFilter('warning')"><span>&#x1F7E0; Warning</span><span class="ct" id="aic-pill-warn">0</span></button>
+        <button class="aic-pill info" data-sev="info" onclick="aicSetSeverityFilter('info')"><span>&#x1F535; Info</span><span class="ct" id="aic-pill-info">0</span></button>
+        <div class="aic-search-wrap">
+          <input type="text" id="aic-search" placeholder="Search alerts, namespaces, resources..." oninput="renderUnifiedAlerts()">
+          <select id="aic-cluster-filter" onchange="renderUnifiedAlerts()" title="Filter by cluster">
+            <option value="all">All Clusters</option>
+          </select>
+          <select id="aic-ns-filter" onchange="renderUnifiedAlerts()" title="Filter by namespace">
+            <option value="all">All Namespaces</option>
+          </select>
+          <label class="aic-toggle" title="Group alerts by root cause">
+            <input type="checkbox" id="aic-group-toggle" onchange="renderUnifiedAlerts()"> Group similar
+          </label>
         </div>
       </div>
-      <div class="ai-section-actions">
-        <span id="aic-trends-mini" class="aic-trends-mini" title="24h trend"></span>
+      <div id="aic-alerts-list" class="aic-alerts-list">
+        <div class="aic-empty">Loading alerts...</div>
       </div>
-    </div>
-
-    <!-- Severity pills (filters) -->
-    <div class="aic-pills">
-      <button class="aic-pill active" data-sev="all" onclick="aicSetSeverityFilter('all')"><span>All</span><span class="ct" id="aic-pill-all">0</span></button>
-      <button class="aic-pill crit" data-sev="critical" onclick="aicSetSeverityFilter('critical')"><span>&#x1F534; Critical</span><span class="ct" id="aic-pill-crit">0</span></button>
-      <button class="aic-pill warn" data-sev="warning" onclick="aicSetSeverityFilter('warning')"><span>&#x1F7E0; Warning</span><span class="ct" id="aic-pill-warn">0</span></button>
-      <button class="aic-pill info" data-sev="info" onclick="aicSetSeverityFilter('info')"><span>&#x1F535; Info</span><span class="ct" id="aic-pill-info">0</span></button>
-      <div class="aic-search-wrap">
-        <input type="text" id="aic-search" placeholder="Search alerts, namespaces, resources..." oninput="renderUnifiedAlerts()">
-        <select id="aic-cluster-filter" onchange="renderUnifiedAlerts()" title="Filter by cluster">
-          <option value="all">All Clusters</option>
-        </select>
-        <select id="aic-ns-filter" onchange="renderUnifiedAlerts()" title="Filter by namespace">
-          <option value="all">All Namespaces</option>
-        </select>
-        <label class="aic-toggle" title="Group alerts by root cause">
-          <input type="checkbox" id="aic-group-toggle" onchange="renderUnifiedAlerts()"> Group similar
-        </label>
-      </div>
-    </div>
-
-    <!-- Alert cards -->
-    <div id="aic-alerts-list" class="aic-alerts-list">
-      <div class="aic-empty">Loading alerts...</div>
     </div>
   </div>
 
-  <!-- Root Cause Analysis -->
-  <div class="ai-section">
+  <!-- 3. Root Cause Analysis — collapsible, hidden when empty -->
+  <div class="ai-section" id="rca-section" style="display:none">
     <div class="ai-section-head">
       <div class="ai-section-title">
         <span class="ai-section-icon" style="background:linear-gradient(135deg,#f59e0b,#ef4444)">&#x1F50D;</span>
         <div>
           <div class="ai-section-name">Root Cause Analysis</div>
-          <div class="ai-section-sub">AI-powered causal chain investigation — click any risk finding to trigger RCA</div>
+          <div class="ai-section-sub">AI-powered causal chain investigation</div>
         </div>
       </div>
     </div>
-    <div id="rca-panel">
-      <div style="text-align:center;color:var(--text2);padding:24px;font-size:12px">
-        <div style="font-size:24px;margin-bottom:8px">&#x1F50D;</div>
-        Click <strong>"Root Cause"</strong> on any risk finding above to trigger an AI-powered investigation.<br>
-        The AI will correlate logs, events, metrics, and node conditions to identify the causal chain.
-      </div>
-    </div>
+    <div id="rca-panel"></div>
   </div>
 
-  <!-- Predictive Intelligence + Automation -->
-  <div class="ai-grid-2">
-    <div class="ai-section">
-      <div class="ai-section-head">
-        <div class="ai-section-title">
-          <span class="ai-section-icon" style="background:linear-gradient(135deg,#6366f1,#a855f7)">&#x1F52E;</span>
-          <div>
-            <div class="ai-section-name">Predictive Intelligence</div>
-            <div class="ai-section-sub">Forecasted issues based on trend analysis</div>
+  <!-- 4. Advanced: Predictive Intelligence + Automation + KB — auto-hidden when empty -->
+  <div id="intel-advanced-sections">
+    <div class="ai-grid-2" id="intel-pred-auto-row">
+      <div class="ai-section" id="intel-pred-section">
+        <div class="ai-section-head">
+          <div class="ai-section-title">
+            <span class="ai-section-icon" style="background:linear-gradient(135deg,#6366f1,#a855f7)">&#x1F52E;</span>
+            <div>
+              <div class="ai-section-name">Predictive Intelligence</div>
+              <div class="ai-section-sub">Forecasted issues based on trend analysis</div>
+            </div>
+          </div>
+          <button class="ai-cmd-btn" onclick="runPredictions()">Analyze Now</button>
+        </div>
+        <div id="intel-predictions-list" class="aic-predictions"></div>
+      </div>
+
+      <div class="ai-section" id="intel-auto-section">
+        <div class="ai-section-head">
+          <div class="ai-section-title">
+            <span class="ai-section-icon" style="background:linear-gradient(135deg,#22c55e,#10b981)">&#x1F916;</span>
+            <div>
+              <div class="ai-section-name">Automation Rules</div>
+              <div class="ai-section-sub">"When X happens, do Y"</div>
+            </div>
           </div>
         </div>
-        <button class="ai-cmd-btn" onclick="runPredictions()">Analyze Now</button>
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <input type="text" id="intel-rule-input" placeholder='e.g. "When a pod OOMKills in production, notify Slack"' style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:12px;outline:none" onkeydown="if(event.key==='Enter')createAutomationRule()">
+          <button onclick="createAutomationRule()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 16px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap">Create</button>
+        </div>
+        <div id="intel-rule-status" style="font-size:12px;margin-bottom:8px"></div>
+        <div id="intel-rules-list"></div>
       </div>
-      <div id="intel-predictions-list" class="aic-predictions"></div>
     </div>
 
-    <div class="ai-section">
+    <div class="ai-section" id="intel-kb-section">
       <div class="ai-section-head">
         <div class="ai-section-title">
-          <span class="ai-section-icon" style="background:linear-gradient(135deg,#22c55e,#10b981)">&#x1F916;</span>
+          <span class="ai-section-icon" style="background:linear-gradient(135deg,#0ea5e9,#06b6d4)">&#x1F4DA;</span>
           <div>
-            <div class="ai-section-name">Automation Rules</div>
-            <div class="ai-section-sub">Natural language triggers — "When X, do Y"</div>
+            <div class="ai-section-name">Knowledge Base</div>
+            <div class="ai-section-sub">Learned resolutions from past incidents</div>
           </div>
         </div>
+        <span style="font-size:11px;color:var(--text2)" id="intel-kb-stats"></span>
       </div>
-      <div style="display:flex;gap:8px;margin-bottom:12px">
-        <input type="text" id="intel-rule-input" placeholder='e.g. "When a pod OOMKills in production, notify Slack"' style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:12px;outline:none" onkeydown="if(event.key==='Enter')createAutomationRule()">
-        <button onclick="createAutomationRule()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 16px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap">Create</button>
-      </div>
-      <div id="intel-rule-status" style="font-size:12px;margin-bottom:8px"></div>
-      <div id="intel-rules-list"></div>
+      <div id="intel-kb-list" class="aic-kb-list"></div>
     </div>
   </div>
 
-  <!-- Knowledge Base -->
-  <div class="ai-section">
-    <div class="ai-section-head">
-      <div class="ai-section-title">
-        <span class="ai-section-icon" style="background:linear-gradient(135deg,#0ea5e9,#06b6d4)">&#x1F4DA;</span>
-        <div>
-          <div class="ai-section-name">Knowledge Base</div>
-          <div class="ai-section-sub">Learned resolutions from past incidents</div>
-        </div>
-      </div>
-      <span style="font-size:11px;color:var(--text2)" id="intel-kb-stats"></span>
-    </div>
-    <div id="intel-kb-list" class="aic-kb-list"></div>
-  </div>
-
-  <!-- Hidden compatibility shims for old IDs (referenced by legacy code) -->
+  <!-- Hidden compatibility shims -->
   <div style="display:none">
     <div id="intel-critical">0</div>
     <div id="intel-warnings">0</div>
@@ -3618,6 +3590,8 @@ tr:hover td{background:#ffffff06}
     <div id="intel-kb-count">0</div>
     <div id="intel-monitor-status"></div>
     <div id="intel-insights-list"></div>
+    <!-- Keep removed events list container for JS compat -->
+    <div id="live-events-list"></div>
   </div>
 </div>
 
@@ -9523,6 +9497,10 @@ async function loadUnifiedAlerts() {
       })
       .catch(function() {});
 
+    // Update tab count
+    var tabAlertCt = document.getElementById('intel-tab-alert-ct');
+    if (tabAlertCt) tabAlertCt.textContent = '(' + _alertsData.length + ')';
+
     // Update severity pills
     var pAll = document.getElementById('aic-pill-all');
     var pCrit = document.getElementById('aic-pill-crit');
@@ -13109,6 +13087,29 @@ async function runHubOrchestrator() {
 }
 
 // ---------------------------------------------------------------------------
+// Tab switching for unified findings
+// ---------------------------------------------------------------------------
+var _intelActiveTab = 'risks';
+
+function switchIntelTab(tab) {
+  _intelActiveTab = tab;
+  var risksPanel = document.getElementById('intel-tab-risks');
+  var alertsPanel = document.getElementById('intel-tab-alerts');
+  var risksBtn = document.getElementById('intel-tab-btn-risks');
+  var alertsBtn = document.getElementById('intel-tab-btn-alerts');
+  if (risksPanel) risksPanel.style.display = tab === 'risks' ? '' : 'none';
+  if (alertsPanel) alertsPanel.style.display = tab === 'alerts' ? '' : 'none';
+  if (risksBtn) {
+    risksBtn.style.color = tab === 'risks' ? 'var(--text)' : 'var(--text2)';
+    risksBtn.style.borderBottomColor = tab === 'risks' ? 'var(--accent)' : 'transparent';
+  }
+  if (alertsBtn) {
+    alertsBtn.style.color = tab === 'alerts' ? 'var(--text)' : 'var(--text2)';
+    alertsBtn.style.borderBottomColor = tab === 'alerts' ? 'var(--accent)' : 'transparent';
+  }
+}
+
+// ---------------------------------------------------------------------------
 // AI Intelligence View
 // ---------------------------------------------------------------------------
 async function loadIntelligenceView() {
@@ -13277,13 +13278,15 @@ function renderIntelRiskList() {
   var cc = document.getElementById('intel-risk-crit'); if (cc) cc.textContent = counts.critical;
   var wc = document.getElementById('intel-risk-warn'); if (wc) wc.textContent = counts.warning;
   var ic = document.getElementById('intel-risk-info'); if (ic) ic.textContent = counts.info || 0;
+  var tabCt = document.getElementById('intel-tab-risk-ct');
+  if (tabCt) tabCt.textContent = '(' + _riskData.length + ')';
   var accEl = document.getElementById('intel-risk-accuracy');
   if (accEl && _riskData.length > 0) {
     var total = _riskData.reduce(function(s, r) { return s + (r.confidence || 0); }, 0);
     accEl.textContent = Math.round(total / _riskData.length) + '% accuracy';
   }
   if (!filtered.length) {
-    el.innerHTML = '<div style="text-align:center;color:var(--text2);padding:20px;font-size:12px">✅ No risks detected</div>';
+    el.innerHTML = '<div style="text-align:center;color:var(--text2);padding:20px;font-size:12px">No risks detected</div>';
     return;
   }
   var hasLLM = filtered.some(function(r) { return r.llm; });
@@ -13295,13 +13298,20 @@ function renderIntelRiskList() {
     var confHtml = '<span class="risk-conf ' + confClass + '" title="' + esc(r.confidenceReason || '') + '"><span class="risk-conf-bar"><div style="width:' + conf + '%"></div></span>' + conf + '%</span>';
     var catTag = r.llm && r.category ? '<span class="risk-cat">' + esc(r.category.replace(/_/g, ' ')) + '</span>' : '';
     var rcaBtn = '<button class="risk-rca-btn" onclick="event.stopPropagation();triggerRCA(' + idx + ')" title="Run root cause analysis">\u{1F50D} Root Cause</button>';
+    var chatBtn = '';
+    if (r.ns && r.pod) {
+      chatBtn = '<button class="risk-rca-btn" onclick="event.stopPropagation();openNewChatWithCommand(\'troubleshoot pod ' + esc(r.pod) + ' in namespace ' + esc(r.ns) + '\',\'Troubleshoot ' + esc(r.pod) + '\')" title="Troubleshoot in AI Chat" style="background:#3b82f620;color:#3b82f6;border-color:#3b82f640">\u{1F4AC} Troubleshoot</button>';
+    } else if (r.node) {
+      chatBtn = '<button class="risk-rca-btn" onclick="event.stopPropagation();openNewChatWithCommand(\'diagnose node ' + esc(r.node) + '\',\'Diagnose ' + esc(r.node) + '\')" title="Diagnose in AI Chat" style="background:#3b82f620;color:#3b82f6;border-color:#3b82f640">\u{1F4AC} Diagnose</button>';
+    }
     var divider = '';
     if (r.llm && !showedDivider && hasEvidence && hasLLM) { showedDivider = true; divider = '<div class="risk-llm-divider">\u{1F9E0} AI Deep Analysis</div>'; }
     var cls = 'risk-item ' + esc(r.severity) + (r.llm ? ' llm-finding' : '');
-    return divider + '<div class="' + cls + '">' +
+    var clickAttr = (r.ns && r.pod) ? ' style="cursor:pointer" onclick="openNewChatWithCommand(\'troubleshoot pod ' + esc(r.pod) + ' in namespace ' + esc(r.ns) + '\',\'Troubleshoot ' + esc(r.pod) + '\')"' : (r.node ? ' style="cursor:pointer" onclick="openNewChatWithCommand(\'diagnose node ' + esc(r.node) + '\',\'Diagnose ' + esc(r.node) + '\')"' : '');
+    return divider + '<div class="' + cls + '"' + clickAttr + '>' +
       '<div class="risk-icon">' + (r.icon || '⚠') + '</div>' +
       '<div class="risk-body">' +
-        '<div class="risk-title">' + (r.title || '') + ' <span class="risk-sev">' + r.severity + '</span>' + catTag + rcaBtn + confHtml + '</div>' +
+        '<div class="risk-title">' + (r.title || '') + ' <span class="risk-sev">' + r.severity + '</span>' + catTag + rcaBtn + chatBtn + confHtml + '</div>' +
         '<div class="risk-evidence">' + esc(r.evidence || '') + '</div>' +
         '<div class="risk-impact">' + (r.impact || '') + '</div>' +
         '<div class="risk-action">' + (r.action || '') + '</div>' +
@@ -13315,10 +13325,12 @@ function renderIntelRiskList() {
 async function triggerRCA(riskIdx) {
   var risk = _riskData[riskIdx];
   if (!risk) return;
+  var section = document.getElementById('rca-section');
+  if (section) section.style.display = '';
   var panel = document.getElementById('rca-panel');
   if (!panel) return;
   panel.innerHTML = '<div class="rca-loading">\u{1F50D} Investigating root cause for <strong>' + (risk.title || 'Unknown') + '</strong>...<br><span style="font-size:10px;color:var(--text2)">Correlating pods, events, node conditions, and metrics</span></div>';
-  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
   var opts = (typeof getActiveProviderOpts === 'function') ? getActiveProviderOpts() : { provider: 'none' };
   if (!opts.provider || opts.provider === 'none') {
