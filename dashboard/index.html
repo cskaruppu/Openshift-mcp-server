@@ -3425,7 +3425,7 @@ tr:hover td{background:#ffffff06}
         <div class="ai-cmd-pulse"><span></span></div>
         <div>
           <div class="ai-cmd-name">AI Intelligence Command Center</div>
-          <div class="ai-cmd-sub">Real-time alerts &middot; Auto-investigated by AI &middot; One-click remediation</div>
+          <div class="ai-cmd-sub">Risk predictions &middot; Live cluster status &middot; AI-investigated alerts &middot; One-click remediation</div>
         </div>
       </div>
       <div class="ai-cmd-stats">
@@ -3447,50 +3447,9 @@ tr:hover td{background:#ffffff06}
     </div>
   </div>
 
-  <!-- Alert Triage — main feature -->
-  <div class="ai-section">
-    <div class="ai-section-head">
-      <div class="ai-section-title">
-        <span class="ai-section-icon" style="background:linear-gradient(135deg,#ef4444,#f59e0b)">&#x26A1;</span>
-        <div>
-          <div class="ai-section-name">Live Alert Feed</div>
-          <div class="ai-section-sub">Each alert is automatically investigated by AI within seconds</div>
-        </div>
-      </div>
-      <div class="ai-section-actions">
-        <span id="aic-trends-mini" class="aic-trends-mini" title="24h trend"></span>
-      </div>
-    </div>
-
-    <!-- Severity pills (filters) -->
-    <div class="aic-pills">
-      <button class="aic-pill active" data-sev="all" onclick="aicSetSeverityFilter('all')"><span>All</span><span class="ct" id="aic-pill-all">0</span></button>
-      <button class="aic-pill crit" data-sev="critical" onclick="aicSetSeverityFilter('critical')"><span>&#x1F534; Critical</span><span class="ct" id="aic-pill-crit">0</span></button>
-      <button class="aic-pill warn" data-sev="warning" onclick="aicSetSeverityFilter('warning')"><span>&#x1F7E0; Warning</span><span class="ct" id="aic-pill-warn">0</span></button>
-      <button class="aic-pill info" data-sev="info" onclick="aicSetSeverityFilter('info')"><span>&#x1F535; Info</span><span class="ct" id="aic-pill-info">0</span></button>
-      <div class="aic-search-wrap">
-        <input type="text" id="aic-search" placeholder="Search alerts, namespaces, resources..." oninput="renderUnifiedAlerts()">
-        <select id="aic-cluster-filter" onchange="renderUnifiedAlerts()" title="Filter by cluster">
-          <option value="all">All Clusters</option>
-        </select>
-        <select id="aic-ns-filter" onchange="renderUnifiedAlerts()" title="Filter by namespace">
-          <option value="all">All Namespaces</option>
-        </select>
-        <label class="aic-toggle" title="Group alerts by root cause">
-          <input type="checkbox" id="aic-group-toggle" onchange="renderUnifiedAlerts()"> Group similar
-        </label>
-      </div>
-    </div>
-
-    <!-- Alert cards -->
-    <div id="aic-alerts-list" class="aic-alerts-list">
-      <div class="aic-empty">Loading alerts...</div>
-    </div>
-  </div>
-
-  <!-- Live Cluster Observability — SSE-powered -->
+  <!-- Situational Awareness — what's happening NOW -->
   <div class="ai-grid-2">
-    <!-- Risk Predictions (merged from dashboard) -->
+    <!-- Risk Predictions -->
     <div class="ai-section">
       <div class="ai-section-head">
         <div class="ai-section-title">
@@ -3537,6 +3496,47 @@ tr:hover td{background:#ffffff06}
       <div id="live-nodes-list" style="max-height:180px;overflow-y:auto;margin-bottom:8px"></div>
       <div id="live-events-list" style="max-height:200px;overflow-y:auto"></div>
       <div style="margin-top:6px;font-size:9px;color:var(--text2)" id="live-updated">Last update: --</div>
+    </div>
+  </div>
+
+  <!-- Alert Investigation Queue -->
+  <div class="ai-section">
+    <div class="ai-section-head">
+      <div class="ai-section-title">
+        <span class="ai-section-icon" style="background:linear-gradient(135deg,#ef4444,#f59e0b)">&#x26A1;</span>
+        <div>
+          <div class="ai-section-name">Live Alert Feed</div>
+          <div class="ai-section-sub">Each alert is automatically investigated by AI within seconds</div>
+        </div>
+      </div>
+      <div class="ai-section-actions">
+        <span id="aic-trends-mini" class="aic-trends-mini" title="24h trend"></span>
+      </div>
+    </div>
+
+    <!-- Severity pills (filters) -->
+    <div class="aic-pills">
+      <button class="aic-pill active" data-sev="all" onclick="aicSetSeverityFilter('all')"><span>All</span><span class="ct" id="aic-pill-all">0</span></button>
+      <button class="aic-pill crit" data-sev="critical" onclick="aicSetSeverityFilter('critical')"><span>&#x1F534; Critical</span><span class="ct" id="aic-pill-crit">0</span></button>
+      <button class="aic-pill warn" data-sev="warning" onclick="aicSetSeverityFilter('warning')"><span>&#x1F7E0; Warning</span><span class="ct" id="aic-pill-warn">0</span></button>
+      <button class="aic-pill info" data-sev="info" onclick="aicSetSeverityFilter('info')"><span>&#x1F535; Info</span><span class="ct" id="aic-pill-info">0</span></button>
+      <div class="aic-search-wrap">
+        <input type="text" id="aic-search" placeholder="Search alerts, namespaces, resources..." oninput="renderUnifiedAlerts()">
+        <select id="aic-cluster-filter" onchange="renderUnifiedAlerts()" title="Filter by cluster">
+          <option value="all">All Clusters</option>
+        </select>
+        <select id="aic-ns-filter" onchange="renderUnifiedAlerts()" title="Filter by namespace">
+          <option value="all">All Namespaces</option>
+        </select>
+        <label class="aic-toggle" title="Group alerts by root cause">
+          <input type="checkbox" id="aic-group-toggle" onchange="renderUnifiedAlerts()"> Group similar
+        </label>
+      </div>
+    </div>
+
+    <!-- Alert cards -->
+    <div id="aic-alerts-list" class="aic-alerts-list">
+      <div class="aic-empty">Loading alerts...</div>
     </div>
   </div>
 
