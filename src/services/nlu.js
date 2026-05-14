@@ -414,6 +414,22 @@ const VERB_TABLE = {
   root:         { intent: "diagnose", weight: 50 },
   cause:        { intent: "diagnose", weight: 50 },
   reason:       { intent: "diagnose", weight: 55 },
+  // Additional "top" / metrics verbs
+  consumed:     { intent: "top", weight: 60 },
+  eating:       { intent: "top", weight: 55 },
+  hogging:      { intent: "top", weight: 55 },
+  // Additional "get" / detail verbs
+  status:       { intent: "get", weight: 35 },
+  health:       { intent: "get", weight: 35 },
+  configuration:{ intent: "get", weight: 40 },
+  config:       { intent: "get", weight: 40 },
+  summary:      { intent: "list", weight: 30 },
+  overview:     { intent: "list", weight: 30 },
+  // Additional "list" verbs for natural phrases
+  across:       { intent: "list", weight: 10 },
+  identify:     { intent: "list", weight: 35 },
+  locate:       { intent: "list", weight: 35 },
+  report:       { intent: "list", weight: 25 },
 };
 
 // Backwards-compatible flat lookup for callers that just want the intent.
@@ -460,6 +476,14 @@ const STOP_WORDS = new Set([
   "who", "permissions", "access", "approve", "reject", "sign",
   "export", "dump", "yaml", "compare", "diff", "snapshot", "resize", "expand", "grow",
   "find", "search", "filter",
+  // Adjectives describing metrics/load — never resource names
+  "high", "low", "heavy", "light", "idle", "busy", "slow", "fast",
+  "big", "small", "large", "huge", "tiny", "biggest", "smallest",
+  "most", "least", "highest", "lowest", "maximum", "minimum", "max", "min",
+  "top", "bottom", "excessive", "insufficient", "saturated", "overloaded",
+  "underutilized", "elevated", "spike", "spikes", "spiking",
+  "normal", "abnormal", "healthy", "unhealthy", "degraded",
+  "critical", "warning", "warn", "severe", "minor", "major",
   // Common English adjectives/adverbs that appear in follow-up queries and must
   // never be treated as Kubernetes resource names.
   "detailed", "brief", "full", "complete", "quick", "more", "less", "latest",
@@ -1002,6 +1026,25 @@ function extractAdvancedFilters(lower) {
   // "oldest X" / "newest X" — age superlative
   if (/\b(oldest)\b/.test(lower)) f.superlative = { op: "max", metric: "age" };
   if (/\b(newest|youngest|most\s+recent)\b/.test(lower) && !f.superlative) f.superlative = { op: "min", metric: "age" };
+
+  // --- Adjective+metric patterns: "high cpu", "low memory", "heavy usage" ---
+  // These should also trigger metrics/top queries
+  if (!f.superlative) {
+    if (/\b(high|heavy|excessive|elevated)\s*(cpu|memory|mem|ram|resource)\b/.test(lower) ||
+        /\b(cpu|memory|mem|ram)\s*(high|heavy|excessive|spike|spik)\b/.test(lower)) {
+      let metric = /\bcpu\b/.test(lower) ? "cpu" : null;
+      if (!metric && /\b(memory|mem|ram)\b/.test(lower)) metric = "memory";
+      if (metric) f.superlative = { op: "max", metric };
+      else f.superlative = { op: "max", metric: "cpu" };
+    }
+    if (/\b(low|idle|underutiliz|minimal)\s*(cpu|memory|mem|ram|resource)\b/.test(lower) ||
+        /\b(cpu|memory|mem|ram)\s*(low|idle|free|underutiliz)\b/.test(lower)) {
+      let metric = /\bcpu\b/.test(lower) ? "cpu" : null;
+      if (!metric && /\b(memory|mem|ram)\b/.test(lower)) metric = "memory";
+      if (metric) f.superlative = { op: "min", metric };
+      else f.superlative = { op: "min", metric: "cpu" };
+    }
+  }
 
   // --- Status filters that aren't in the basic FILTERS table ---
   if (/\b(terminating|stuck\s+(?:in\s+)?terminat)/i.test(lower)) f.statusFilter = "Terminating";

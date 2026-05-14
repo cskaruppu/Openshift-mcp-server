@@ -212,13 +212,35 @@ function getTrackedCR(conversationId) {
 // when the user pastes a tool description ("a specific pod in the specified
 // namespace"). Reject them so we don't fire bogus 404 lookups.
 const NLU_BAD_NAMES = new Set([
+  // Pronouns & determiners
   "specific", "specified", "all", "some", "any", "each", "every",
-  "the", "this", "that", "those", "these", "an",
+  "the", "this", "that", "those", "these", "an", "a",
   "which", "what", "where", "when", "how", "why", "who",
-  "here", "there", "now", "then", "your", "their", "our",
+  "here", "there", "now", "then", "your", "their", "our", "my", "its",
   "current", "given", "selected", "chosen", "available",
-  "running", "pending", "failed", "completed",
-  "name", "names", "value", "values",
+  // Status words (also valid as filters, not names)
+  "running", "pending", "failed", "completed", "terminating", "evicted",
+  "healthy", "unhealthy", "degraded", "ready", "notready",
+  // Adjectives that describe metrics/state (never resource names)
+  "high", "low", "heavy", "light", "idle", "busy", "slow", "fast",
+  "big", "small", "large", "huge", "tiny", "biggest", "smallest",
+  "most", "least", "highest", "lowest", "maximum", "minimum",
+  "top", "bottom", "best", "worst", "more", "less", "fewer",
+  "old", "new", "oldest", "newest", "recent", "latest", "first", "last",
+  "total", "overall", "average", "mean", "median",
+  "critical", "warning", "info", "normal", "abnormal",
+  "excessive", "insufficient", "saturated", "overloaded", "underutilized",
+  // Common nouns that aren't resource names
+  "name", "names", "value", "values", "status", "state", "phase",
+  "usage", "consumption", "utilization", "resource", "resources",
+  "cpu", "memory", "mem", "ram", "disk", "storage", "network",
+  "cluster", "clusters", "overview", "summary", "report", "detail", "details",
+  // Prepositions & conjunctions
+  "in", "on", "at", "to", "for", "from", "with", "without", "by",
+  "and", "or", "not", "but", "of", "about", "above", "below",
+  // Verbs that might get captured as names
+  "show", "list", "get", "find", "check", "see", "display", "view",
+  "using", "consuming", "utilizing", "running", "having", "taking",
 ]);
 function _sanitizeNluName(name) {
   if (!name) return null;
@@ -1509,7 +1531,7 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
     // Reject common English words that the parser sometimes mistakes for resource
     // names ("specific", "specified", "all", etc.) — these come from the user
     // pasting a tool description like "top gets metrics for a specific pod".
-    const englishWordRe = /^(specific|specified|all|some|any|each|every|the|this|that|those|these|a|an|which|what|where|when|how|why|who|here|there|now|then)$/i;
+    const englishWordRe = /^(specific|specified|all|some|any|each|every|the|this|that|those|these|a|an|which|what|where|when|how|why|who|here|there|now|then|high|low|heavy|idle|busy|most|least|highest|lowest|big|small|large|top|total|overall|cpu|memory|mem|ram|usage|show|list|get|find|check|using|consuming|my|your|its|current|more|less)$/i;
     if (cmd.resourceName && englishWordRe.test(cmd.resourceName)) {
       if (llmAvailable) return null;
       parts.push(`### Top — Resource Usage`);
@@ -3836,6 +3858,11 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
     context.intents.push("namespaces");
   }
 
+  // Intent: resource metrics / CPU / memory usage
+  if (lower.match(/\bcpu\b|\bmemory\b|\bmem\b|\bram\b|\busage\b|\bmetrics?\b|\btop\b|\bresource\s+usage|\bhigh\s+(cpu|mem|resource)|\b(cpu|mem).*high\b|\bconsumption/)) {
+    context.intents.push("metrics");
+  }
+
   // Intent: deployments
   if (lower.match(/deploy|scale|replica|rollout|redeploy/)) {
     context.intents.push("deployments");
@@ -4280,6 +4307,48 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
     );
   }
 
+  // Pod/Node metrics (CPU/memory usage) — fetched when user asks about resources
+  if (context.intents.includes("metrics")) {
+    const metricsNs = context.targetNamespaceFromMemory || (nsMatch ? nsMatch[1] : null);
+    const podMetricsPath = metricsNs
+      ? `/apis/metrics.k8s.io/v1beta1/namespaces/${metricsNs}/pods`
+      : `/apis/metrics.k8s.io/v1beta1/pods`;
+    tasks.push(
+      ocpGet(podMetricsPath).then((d) => {
+        const pods = (d.items || []).map((p) => {
+          const containers = (p.containers || []).map((c) => ({
+            name: c.name,
+            cpu: c.usage?.cpu,
+            memory: c.usage?.memory,
+          }));
+          const totalCpuNano = containers.reduce((s, c) => s + parseCpuNano(c.cpu), 0);
+          const totalMemBytes = containers.reduce((s, c) => s + parseMemBytes(c.memory), 0);
+          return {
+            pod: p.metadata.name,
+            namespace: p.metadata.namespace,
+            cpu: fmtCpu(String(totalCpuNano) + "n"),
+            memory: fmtMem(String(Math.round(totalMemBytes / 1024)) + "Ki"),
+            cpuNano: totalCpuNano,
+            memBytes: totalMemBytes,
+          };
+        });
+        pods.sort((a, b) => b.cpuNano - a.cpuNano);
+        context.podMetrics = pods.slice(0, 30);
+        context.podMetricsTotal = pods.length;
+        context.podMetricsNamespace = metricsNs || "all";
+      }).catch(() => {})
+    );
+    tasks.push(
+      ocpGet("/apis/metrics.k8s.io/v1beta1/nodes").then((d) => {
+        context.nodeMetrics = (d.items || []).map((n) => ({
+          node: n.metadata.name,
+          cpu: fmtCpu(n.usage?.cpu),
+          memory: fmtMem(n.usage?.memory),
+        }));
+      }).catch(() => {})
+    );
+  }
+
   // Events (warnings)
   if (context.intents.includes("events") || context.intents.includes("cluster_health")) {
     tasks.push(
@@ -4670,12 +4739,19 @@ IMPORTANT: You are given REAL-TIME cluster data as JSON context from the user's 
 - For operator issues: check ClusterOperator status conditions
 - For upgrade issues: MachineConfigPool status and ClusterVersion
 
+## CRITICAL RULE — NEVER tell users to run commands to get information:
+- You have LIVE cluster data in the context below. ALWAYS analyze it directly.
+- NEVER say "run this command to check" or "use oc top pods" — YOU must provide the answer from the data you have.
+- NEVER say "I do not see direct metrics" — if metrics data is in your context, analyze it; if not, say what you CAN tell from the pod/node status data you have.
+- If the user asks about CPU/memory usage and you have pod resource requests/limits in context, analyze THOSE. Show requests vs limits, identify pods close to limits.
+- Only include \`oc\` commands as REMEDIATION steps (to fix a problem), never as diagnostic steps.
+
 ## Response style:
 - Be specific to THIS cluster's data — never generic advice when you have real data
 - Start with a clear diagnosis, then remediation steps
 - Use markdown: headers, code blocks, tables
 - Keep responses focused and actionable
-- Always include exact \`oc\` commands the user can copy-paste
+- Include \`oc\` commands only for FIXES and remediation — never for "go check this yourself"
 - If risky (upgrade, delete, scale down), warn about impact and suggest precheck/dry-run
 - Never show raw image SHA hashes or internal registry URLs
 - Never dump raw technical data without analysis — summarize, compare, recommend
@@ -4727,6 +4803,17 @@ const PROMPT_SUPPLEMENT_CERTS = `
 - Fix commands: \`oc get csr\` for pending CSRs, \`oc adm certificate approve <csr>\`
 - Note: OpenShift auto-rotates most certs via cert-manager operators`;
 
+const PROMPT_SUPPLEMENT_METRICS = `
+
+## Resource usage / metrics queries:
+- The context includes LIVE pod metrics (CPU and memory) from metrics.k8s.io API
+- Present the data in a markdown TABLE sorted by the requested metric
+- Include columns: Pod Name, Namespace, CPU, Memory
+- Highlight the TOP consumers — the user is asking about HIGH usage, show them which pods are using the most
+- NEVER say "I do not see metrics" or "run oc top" — the metrics ARE in your context as podMetrics/nodeMetrics
+- If the user asks about "high cpu", show pods sorted by CPU descending with the highest ones first
+- Compare actual usage against resource requests/limits if available`;
+
 const PROMPT_SUPPLEMENT_AMBIGUITY = `
 
 ## Missing information / ambiguity:
@@ -4747,6 +4834,10 @@ function buildSystemPrompt(userMessage, context) {
 
   if (/list|show|get|describe|all\s|how\s+many|count|overview|status|health/i.test(lower)) {
     prompt += PROMPT_SUPPLEMENT_LIST;
+  }
+
+  if (/\bcpu\b|\bmemory\b|\bmem\b|\bram\b|\busage\b|\bmetrics?\b|\btop\b|\bhigh\b|\bresource\s+usage|\bconsumption/i.test(lower)) {
+    prompt += PROMPT_SUPPLEMENT_METRICS;
   }
 
   if (/cert|certificate|expir|tls|csr/i.test(lower)) {
