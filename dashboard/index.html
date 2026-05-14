@@ -2174,28 +2174,26 @@ tr:hover td{background:#ffffff06}
       </div>
       <div class="hm-tooltip" id="hm-tooltip"></div>
     </div>
-    <!-- AI Risk Prediction -->
-    <div class="risk-card">
-      <div class="risk-header">
-        <h3>&#x1F52E; AI Risk Predictions</h3>
-        <span class="risk-method" title="All findings are derived from live Kubernetes API data — pod status, container states, node conditions, and metrics. No guesswork.">&#x2705; Evidence-Based</span>
-        <span class="badge badge-info" id="risk-count">Analyzing...</span>
-        <div class="risk-accuracy" id="risk-accuracy" style="display:none">
-          <span>Accuracy</span>
-          <div class="risk-accuracy-bar"><div id="risk-accuracy-fill" style="width:0%"></div></div>
-          <span class="risk-accuracy-score" id="risk-accuracy-pct"></span>
+    <!-- AI Risk Predictions — KPI Scorecard (detail in AI Intelligence) -->
+    <div class="card" style="cursor:pointer" onclick="showView('intelligence')">
+      <h3 style="display:flex;align-items:center;gap:8px">&#x1F52E; AI Risk Predictions
+        <span class="risk-method" title="All findings from live Kubernetes API data" style="font-size:10px">&#x2705; Evidence-Based</span>
+        <span style="font-size:10px;color:var(--accent2);font-weight:400;margin-left:auto">Open in AI Intelligence &#8594;</span>
+      </h3>
+      <div style="display:flex;align-items:center;gap:20px;margin-top:12px">
+        <div style="text-align:center">
+          <div id="dash-risk-total" style="font-size:32px;font-weight:800;color:var(--text)">--</div>
+          <div style="font-size:11px;color:var(--text2)">Findings</div>
         </div>
-        <button class="risk-deep-btn" id="risk-deep-btn" onclick="runLLMRiskAnalysis()" title="Use AI to find correlated failures, cascade risks, capacity trends, and hidden patterns">&#x1F9E0; Deep Analysis</button>
-      </div>
-      <div class="risk-summary" id="risk-summary"></div>
-      <div class="risk-filters" id="risk-filters">
-        <button class="risk-filter-btn active" onclick="filterRisks('all')">All</button>
-        <button class="risk-filter-btn" onclick="filterRisks('critical')">Critical</button>
-        <button class="risk-filter-btn" onclick="filterRisks('warning')">Warning</button>
-        <button class="risk-filter-btn" onclick="filterRisks('info')">Info</button>
-      </div>
-      <div class="risk-list" id="risk-list">
-        <div style="padding:20px;text-align:center;color:var(--text2);font-size:13px">Analyzing cluster patterns...</div>
+        <div style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:var(--crit);display:inline-block"></span><span id="dash-risk-crit" style="font-weight:700">0</span> Critical</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:var(--warn);display:inline-block"></span><span id="dash-risk-warn" style="font-weight:700">0</span> Warning</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:var(--accent2);display:inline-block"></span><span id="dash-risk-info" style="font-weight:700">0</span> Info</span>
+        </div>
+        <div style="margin-left:auto;text-align:center">
+          <div id="dash-risk-acc" style="font-size:24px;font-weight:800;color:var(--ok)">--%</div>
+          <div style="font-size:11px;color:var(--text2)">Accuracy</div>
+        </div>
       </div>
     </div>
   </div>
@@ -2404,32 +2402,32 @@ tr:hover td{background:#ffffff06}
           </tbody>
         </table>
       </div>
-
-      <div class="section-title" style="margin-top:24px">
-        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
-        Active Alerts <span id="alert-count" style="font-size:12px;color:var(--text2);font-weight:400"></span>
-      </div>
-      <div id="alert-widget" class="card" style="cursor:pointer;padding:16px" onclick="showView('intelligence')">
-        <div style="text-align:center;color:var(--text2);font-size:13px">Loading alerts...</div>
-      </div>
     </div>
   </div>
 
-  <!-- Bottom Section: Summary Cards + ACM -->
-  <div class="grid grid-3" style="margin-top:8px">
+  <!-- Bottom Section: Operational KPIs + ACM -->
+  <div class="grid grid-4" style="margin-top:8px">
 
-    <!-- Pods with Issues — compact summary card -->
-    <div class="card" style="cursor:pointer" onclick="showView('intelligence')">
-      <h3>Pods with Issues <span style="font-size:10px;color:var(--accent2);font-weight:400;margin-left:auto">View in AI Intelligence &#8594;</span></h3>
-      <div id="pod-issues" style="display:flex;align-items:center;gap:16px;padding:4px 0">
-        <div class="loading">Loading...</div>
-      </div>
+    <!-- Active Alerts KPI -->
+    <div class="card" style="cursor:pointer;text-align:center" onclick="showView('intelligence')">
+      <h3>Active Alerts</h3>
+      <div id="dash-alert-count" style="font-size:32px;font-weight:800;color:var(--crit)">--</div>
+      <div id="dash-alert-breakdown" style="font-size:11px;color:var(--text2);margin-top:4px">Loading...</div>
+      <div style="font-size:10px;color:var(--accent2);margin-top:8px">View in AI Intelligence &#8594;</div>
+    </div>
+
+    <!-- Pods with Issues KPI -->
+    <div class="card" style="cursor:pointer;text-align:center" onclick="showView('intelligence')">
+      <h3>Pods at Risk</h3>
+      <div id="dash-pod-issues" style="font-size:32px;font-weight:800;color:var(--warn)">--</div>
+      <div id="dash-pod-breakdown" style="font-size:11px;color:var(--text2);margin-top:4px">Loading...</div>
+      <div style="font-size:10px;color:var(--accent2);margin-top:8px">View in AI Intelligence &#8594;</div>
     </div>
 
     <!-- AI Insights Feed -->
     <div class="card">
-      <h3>&#x1F4AC; AI Insights Feed</h3>
-      <div id="ai-activity-feed" style="display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto">
+      <h3>AI Insights</h3>
+      <div id="ai-activity-feed" style="display:flex;flex-direction:column;gap:8px;max-height:200px;overflow-y:auto">
         <div class="loading">Gathering insights...</div>
       </div>
       <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="showView('chat')">Open AI Chat &#x2192;</button></div>
@@ -2437,7 +2435,7 @@ tr:hover td{background:#ffffff06}
 
     <!-- Multi-Cluster (ACM) -->
     <div class="card">
-      <h3>Multi-Cluster Management (ACM)</h3>
+      <h3>Multi-Cluster (ACM)</h3>
       <div id="acm-clusters" style="display:flex;flex-direction:column;gap:10px">
         <div class="loading">Loading...</div>
       </div>
@@ -3895,73 +3893,68 @@ async function loadNodes() {
 }
 
 async function loadAlerts() {
-  const widget = document.getElementById('alert-widget');
-  const countEl = document.getElementById('alert-count');
   try {
     const data = await apiFetch('/api/alerts');
     const alerts = (data.alerts || []).filter(a => !a.silenced);
     const summary = data.summary || {};
     updateAlertsBadge(alerts.length);
-    countEl.textContent = alerts.length > 0 ? '(' + alerts.length + ')' : '';
-    if (alerts.length === 0) {
-      widget.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:8px;color:var(--ok)">' +
-        '<svg viewBox="0 0 20 20" fill="currentColor" style="width:18px;height:18px"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>' +
-        '<span style="font-weight:600">All clear</span>' +
-        '<span style="color:var(--text2);font-size:12px">No active alerts</span></div>';
-      return;
+    var countEl = document.getElementById('dash-alert-count');
+    var breakEl = document.getElementById('dash-alert-breakdown');
+    if (countEl) {
+      countEl.textContent = alerts.length;
+      countEl.style.color = alerts.length > 0 ? 'var(--crit)' : 'var(--ok)';
     }
-    const critCount = summary.critical || 0;
-    const warnCount = summary.warning || 0;
-    const infoCount = summary.info || 0;
-    widget.innerHTML = '<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">' +
-      '<div style="font-size:28px;font-weight:700;color:var(--text)">' + alerts.length + '</div>' +
-      '<div style="display:flex;flex-direction:column;gap:4px;font-size:13px">' +
-        (critCount > 0 ? '<span style="color:var(--crit);font-weight:600">' + critCount + ' Critical</span>' : '') +
-        (warnCount > 0 ? '<span style="color:var(--warn);font-weight:600">' + warnCount + ' Warning</span>' : '') +
-        (infoCount > 0 ? '<span style="color:var(--accent2);font-weight:500">' + infoCount + ' Info</span>' : '') +
-      '</div>' +
-      '<span style="margin-left:auto;font-size:12px;color:var(--accent2);font-weight:500">View in AI Intelligence &#8594;</span>' +
-    '</div>';
+    if (breakEl) {
+      if (alerts.length === 0) {
+        breakEl.innerHTML = '<span style="color:var(--ok)">All clear</span>';
+      } else {
+        var parts = [];
+        if (summary.critical > 0) parts.push('<span style="color:var(--crit)">' + summary.critical + ' critical</span>');
+        if (summary.warning > 0) parts.push('<span style="color:var(--warn)">' + summary.warning + ' warning</span>');
+        if (summary.info > 0) parts.push(summary.info + ' info');
+        breakEl.innerHTML = parts.join(' &middot; ');
+      }
+    }
   } catch (err) {
-    widget.innerHTML = '<div style="padding:8px;color:var(--crit);font-size:13px">Error loading alerts: ' + esc(err.message) + '</div>';
+    var el = document.getElementById('dash-alert-breakdown');
+    if (el) el.innerHTML = '<span style="color:var(--crit)">Error loading</span>';
   }
 }
 
 async function loadPodIssues() {
-  const container = document.getElementById('pod-issues');
   try {
     const pods = await apiFetch('/api/pods/issues');
-    if (pods.length === 0) {
-      container.innerHTML = '<div style="color:var(--ok);font-size:13px">No pod issues detected</div>';
-      return;
+    var countEl = document.getElementById('dash-pod-issues');
+    var breakEl = document.getElementById('dash-pod-breakdown');
+    if (countEl) {
+      countEl.textContent = pods.length;
+      countEl.style.color = pods.length > 0 ? 'var(--warn)' : 'var(--ok)';
     }
-    var oom = 0, crash = 0, imgErr = 0, other = 0;
-    pods.forEach(function(p) {
-      p.issues.forEach(function(i) {
-        var r = (i.reason || '').toLowerCase();
-        if (r.includes('oomkill')) oom++;
-        else if (r.includes('crashloop')) crash++;
-        else if (r.includes('image') || r.includes('errimagepull')) imgErr++;
-        else other++;
-      });
-    });
-    var nsList = {};
-    pods.forEach(function(p) { nsList[p.namespace] = (nsList[p.namespace] || 0) + 1; });
-    var topNs = Object.entries(nsList).sort(function(a,b) { return b[1] - a[1]; }).slice(0, 3);
-
-    container.innerHTML =
-      '<div style="font-size:28px;font-weight:700;color:var(--crit)">' + pods.length + '</div>' +
-      '<div style="display:flex;flex-direction:column;gap:3px;font-size:12px">' +
-        (crash > 0 ? '<span style="color:var(--crit)">' + crash + ' CrashLoopBackOff</span>' : '') +
-        (oom > 0 ? '<span style="color:var(--crit)">' + oom + ' OOMKilled</span>' : '') +
-        (imgErr > 0 ? '<span style="color:var(--warn)">' + imgErr + ' ImagePullErr</span>' : '') +
-        (other > 0 ? '<span style="color:var(--text2)">' + other + ' Other</span>' : '') +
-      '</div>' +
-      '<div style="margin-left:auto;display:flex;flex-direction:column;gap:2px;font-size:11px;color:var(--text2);text-align:right">' +
-        topNs.map(function(ns) { return '<span>' + esc(ns[0]) + ': ' + ns[1] + '</span>'; }).join('') +
-      '</div>';
+    if (breakEl) {
+      if (pods.length === 0) {
+        breakEl.innerHTML = '<span style="color:var(--ok)">All healthy</span>';
+      } else {
+        var oom = 0, crash = 0, imgErr = 0, other = 0;
+        pods.forEach(function(p) {
+          p.issues.forEach(function(i) {
+            var r = (i.reason || '').toLowerCase();
+            if (r.includes('oomkill')) oom++;
+            else if (r.includes('crashloop')) crash++;
+            else if (r.includes('image') || r.includes('errimagepull')) imgErr++;
+            else other++;
+          });
+        });
+        var parts = [];
+        if (crash > 0) parts.push(crash + ' crash');
+        if (oom > 0) parts.push(oom + ' OOM');
+        if (imgErr > 0) parts.push(imgErr + ' image');
+        if (other > 0) parts.push(other + ' other');
+        breakEl.textContent = parts.join(' · ');
+      }
+    }
   } catch (err) {
-    container.innerHTML = '<div class="loading">Error: ' + esc(err.message) + '</div>';
+    var el = document.getElementById('dash-pod-breakdown');
+    if (el) el.innerHTML = '<span style="color:var(--crit)">Error loading</span>';
   }
 }
 
@@ -4383,61 +4376,32 @@ function filterRisks(filter) {
 }
 
 function renderRiskList() {
-  var list = document.getElementById('risk-list');
-  var filtered = _riskFilter === 'all' ? _riskData : _riskData.filter(function(r) { return r.severity === _riskFilter; });
-  if (filtered.length === 0) {
-    list.innerHTML = '<div class="risk-empty">&#x2705; ' + (_riskFilter === 'all' ? 'No risks detected — cluster is healthy' : 'No ' + _riskFilter + ' risks') + '</div>';
-    return;
-  }
-  var hasLLM = filtered.some(function(r) { return r.llm; });
-  var hasEvidence = filtered.some(function(r) { return !r.llm; });
-  var showedDivider = false;
-  list.innerHTML = filtered.map(function(r) {
-    var clickAction = r.ns && r.pod
-      ? ' onclick="openNewChatWithCommand(\'troubleshoot pod ' + esc(r.pod) + ' in namespace ' + esc(r.ns) + '\',\'Troubleshoot ' + esc(r.pod) + '\')"'
-      : r.node
-      ? ' onclick="openNewChatWithCommand(\'diagnose node ' + esc(r.node) + '\',\'Diagnose ' + esc(r.node) + '\')"'
-      : '';
-    var conf = r.confidence || 0;
-    var confClass = conf >= 95 ? 'high' : conf >= 80 ? 'med' : 'low';
-    var confHtml = '<span class="risk-conf ' + confClass + '" title="' + esc(r.confidenceReason || '') + '">' +
-      '<span class="risk-conf-bar"><div style="width:' + conf + '%"></div></span>' +
-      conf + '%</span>';
-    var catTag = r.llm && r.category ? '<span class="risk-cat">' + esc(r.category.replace(/_/g, ' ')) + '</span>' : '';
-    var divider = '';
-    if (r.llm && !showedDivider && hasEvidence && hasLLM) {
-      showedDivider = true;
-      divider = '<div class="risk-llm-divider">&#x1F9E0; AI Deep Analysis Findings</div>';
-    }
-    var itemClass = 'risk-item ' + esc(r.severity) + (r.llm ? ' llm-finding' : '');
-    return divider + '<div class="' + itemClass + '"' + clickAction + '>' +
-      '<div class="risk-icon">' + r.icon + '</div>' +
-      '<div class="risk-body">' +
-        '<div class="risk-title">' + r.title + ' <span class="risk-sev">' + r.severity + '</span>' + catTag + confHtml + '</div>' +
-        '<div class="risk-evidence">' + r.evidence + '</div>' +
-        '<div class="risk-impact">' + r.impact + '</div>' +
-        '<div class="risk-action">' + r.action + '</div>' +
-      '</div>' +
-    '</div>';
-  }).join('');
+  renderIntelRiskList();
 }
 
 function renderRiskSummary() {
-  var el = document.getElementById('risk-summary');
   var counts = { critical: 0, warning: 0, info: 0 };
   _riskData.forEach(function(r) { counts[r.severity] = (counts[r.severity] || 0) + 1; });
-  var colors = { critical: 'var(--crit)', warning: 'var(--warn)', info: 'var(--accent2)' };
-  el.innerHTML = Object.keys(counts).map(function(k) {
-    return '<div class="risk-stat' + (_riskFilter === k ? ' active' : '') + '" onclick="filterRisks(\'' + k + '\')">' +
-      '<span class="rs-dot" style="background:' + colors[k] + '"></span>' +
-      '<span class="rs-num">' + counts[k] + '</span> ' + k +
-    '</div>';
-  }).join('');
+  updateDashRiskKPI(counts);
+}
+
+function updateDashRiskKPI(counts) {
+  var t = document.getElementById('dash-risk-total');
+  var c = document.getElementById('dash-risk-crit');
+  var w = document.getElementById('dash-risk-warn');
+  var i = document.getElementById('dash-risk-info');
+  var a = document.getElementById('dash-risk-acc');
+  if (t) t.textContent = _riskData.length;
+  if (c) c.textContent = counts.critical || 0;
+  if (w) w.textContent = counts.warning || 0;
+  if (i) i.textContent = counts.info || 0;
+  if (a && _riskData.length > 0) {
+    var total = _riskData.reduce(function(s, r) { return s + (r.confidence || 0); }, 0);
+    a.textContent = Math.round(total / _riskData.length) + '%';
+  }
 }
 
 async function loadRiskPredictions() {
-  var list = document.getElementById('risk-list');
-  var badge = document.getElementById('risk-count');
   try {
     _riskData = [];
     var seen = {};
@@ -4781,15 +4745,12 @@ async function loadRiskPredictions() {
     var sevOrder = { critical: 0, warning: 1, info: 2 };
     _riskData.sort(function(a, b) { return (sevOrder[a.severity] || 9) - (sevOrder[b.severity] || 9); });
 
-    badge.textContent = _riskData.length + ' finding' + (_riskData.length !== 1 ? 's' : '');
-    badge.className = 'badge ' + (_riskData.some(function(r) { return r.severity === 'critical'; }) ? 'badge-crit' : _riskData.length > 0 ? 'badge-warn' : 'badge-ok');
-
     if (_llmRiskFindings.length > 0) {
       _riskData = _riskData.concat(_llmRiskFindings);
       _riskData.sort(function(a, b) {
         if (a.llm !== b.llm) return a.llm ? 1 : -1;
-        var sevOrder = { critical: 0, warning: 1, info: 2 };
-        return (sevOrder[a.severity] || 9) - (sevOrder[b.severity] || 9);
+        var sevOrder2 = { critical: 0, warning: 1, info: 2 };
+        return (sevOrder2[a.severity] || 9) - (sevOrder2[b.severity] || 9);
       });
     }
 
@@ -4797,8 +4758,8 @@ async function loadRiskPredictions() {
     renderRiskSummary();
     renderRiskList();
   } catch (e) {
-    list.innerHTML = '<div class="risk-empty" style="color:var(--crit)">Error: ' + esc(e.message) + '</div>';
-    badge.textContent = 'Error';
+    var t = document.getElementById('dash-risk-total');
+    if (t) t.textContent = '!';
   }
 }
 
@@ -4853,9 +4814,6 @@ async function runLLMRiskAnalysis() {
       if (a.llm !== b.llm) return a.llm ? 1 : -1;
       return (sevOrder[a.severity] || 9) - (sevOrder[b.severity] || 9);
     });
-    var badge = document.getElementById('risk-count');
-    badge.textContent = _riskData.length + ' finding' + (_riskData.length !== 1 ? 's' : '');
-    badge.className = 'badge ' + (_riskData.some(function(r) { return r.severity === 'critical'; }) ? 'badge-crit' : _riskData.length > 0 ? 'badge-warn' : 'badge-ok');
     updateRiskAccuracy();
     renderRiskSummary();
     renderRiskList();
@@ -4870,15 +4828,11 @@ async function runLLMRiskAnalysis() {
 }
 
 function updateRiskAccuracy() {
-  var accEl = document.getElementById('risk-accuracy');
   if (_riskData.length > 0) {
     var totalConf = _riskData.reduce(function(s, r) { return s + (r.confidence || 0); }, 0);
     var avgConf = Math.round(totalConf / _riskData.length);
-    document.getElementById('risk-accuracy-pct').textContent = avgConf + '%';
-    document.getElementById('risk-accuracy-fill').style.width = avgConf + '%';
-    accEl.style.display = 'flex';
-  } else {
-    accEl.style.display = 'none';
+    var a = document.getElementById('dash-risk-acc');
+    if (a) a.textContent = avgConf + '%';
   }
 }
 
