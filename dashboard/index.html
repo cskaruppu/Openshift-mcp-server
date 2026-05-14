@@ -2722,6 +2722,54 @@ tr:hover td{background:#ffffff06}
                 <button onclick="sendFullChat('Show resource quotas')">Resource quotas</button>
               </div>
             </div>
+
+            <div class="wcat" onclick="this.classList.toggle('open')">
+              <div class="wcat-head">
+                <span class="wcat-icon" style="background:linear-gradient(135deg,#f43f5e,#e11d48)">&#x1F514;</span>
+                <span class="wcat-title">Observability</span>
+                <span class="wcat-arrow">&#x25B8;</span>
+              </div>
+              <div class="wcat-body">
+                <button onclick="sendFullChat('Show firing alerts')">Firing alerts</button>
+                <button onclick="sendFullChat('Show silenced alerts')">Silenced alerts</button>
+                <button onclick="sendFullChat('Show ArgoCD sync status')">GitOps app sync status</button>
+                <button onclick="sendFullChat('Show image vulnerabilities')">Image vulnerabilities</button>
+                <button onclick="sendFullChat('Show warning events in the cluster')">Cluster events</button>
+                <button onclick="sendFullChat('Show resource optimization')">Resource optimization</button>
+              </div>
+            </div>
+
+            <div class="wcat" onclick="this.classList.toggle('open')">
+              <div class="wcat-head">
+                <span class="wcat-icon" style="background:linear-gradient(135deg,#14b8a6,#0d9488)">&#x1F4BE;</span>
+                <span class="wcat-title">Backup &amp; DR</span>
+                <span class="wcat-arrow">&#x25B8;</span>
+              </div>
+              <div class="wcat-body">
+                <button onclick="sendFullChat('Show backup status')">Backup status</button>
+                <button onclick="sendFullChat('Show velero backups')">Velero backups</button>
+                <button onclick="sendFullChat('Show etcd health')">etcd health</button>
+                <button onclick="sendFullChat('collect must-gather')">Must-gather diagnostics</button>
+                <button onclick="sendFullChat('Show network overview egress')">Network diagnostics</button>
+                <button onclick="sendFullChat('Show oauth identity config')">Identity &amp; OAuth</button>
+              </div>
+            </div>
+
+            <div class="wcat" onclick="this.classList.toggle('open')">
+              <div class="wcat-head">
+                <span class="wcat-icon" style="background:linear-gradient(135deg,#8b5cf6,#7c3aed)">&#x1F30D;</span>
+                <span class="wcat-title">Multi-Cluster</span>
+                <span class="wcat-arrow">&#x25B8;</span>
+              </div>
+              <div class="wcat-body">
+                <button onclick="sendFullChat('Show fleet status')">Fleet / managed clusters</button>
+                <button onclick="sendFullChat('Show compliance status')">Compliance status</button>
+                <button onclick="sendFullChat('Show policy violations')">Policy violations</button>
+                <button onclick="sendFullChat('Show automation status')">Ansible automation</button>
+                <button onclick="sendFullChat('Show cluster operators')">Cluster operators</button>
+                <button onclick="sendFullChat('Show certificate rotation status')">Certificate lifecycle</button>
+              </div>
+            </div>
           </div>
 
           <div class="welcome-tip">
@@ -8174,10 +8222,43 @@ function createWelcomeEl() {
         '<div class="wcat-body">' +
           '<button onclick="sendFullChat(\'Show top pods by memory usage\')">Top memory consumers</button>' +
           '<button onclick="sendFullChat(\'Show PVC usage\')">PVC / Storage usage</button>' +
-          '<button onclick="sendFullChat(\'Show routes and services\')">Routes &amp; Services</button>' +
-          '<button onclick="sendFullChat(\'List configmaps in namespace\')">ConfigMaps</button>' +
-          '<button onclick="sendFullChat(\'List secrets in namespace\')">Secrets overview</button>' +
+          '<button onclick="sendFullChat(\'List routes\')">Routes &amp; Services</button>' +
+          '<button onclick="sendFullChat(\'List configmaps\')">ConfigMaps</button>' +
+          '<button onclick="sendFullChat(\'List secrets\')">Secrets overview</button>' +
           '<button onclick="sendFullChat(\'Show resource quotas\')">Resource quotas</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
+        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#f43f5e,#e11d48)">&#x1F514;</span><span class="wcat-title">Observability</span><span class="wcat-arrow">&#x25B8;</span></div>' +
+        '<div class="wcat-body">' +
+          '<button onclick="sendFullChat(\'Show firing alerts\')">Firing alerts</button>' +
+          '<button onclick="sendFullChat(\'Show silenced alerts\')">Silenced alerts</button>' +
+          '<button onclick="sendFullChat(\'Show ArgoCD sync status\')">GitOps app sync</button>' +
+          '<button onclick="sendFullChat(\'Show image vulnerabilities\')">Image vulnerabilities</button>' +
+          '<button onclick="sendFullChat(\'Show warning events in the cluster\')">Cluster events</button>' +
+          '<button onclick="sendFullChat(\'Show resource optimization\')">Resource optimization</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
+        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#14b8a6,#0d9488)">&#x1F4BE;</span><span class="wcat-title">Backup &amp; DR</span><span class="wcat-arrow">&#x25B8;</span></div>' +
+        '<div class="wcat-body">' +
+          '<button onclick="sendFullChat(\'Show backup status\')">Backup status</button>' +
+          '<button onclick="sendFullChat(\'Show velero backups\')">Velero backups</button>' +
+          '<button onclick="sendFullChat(\'Show etcd health\')">etcd health</button>' +
+          '<button onclick="sendFullChat(\'Show must-gather options\')">Must-gather diagnostics</button>' +
+          '<button onclick="sendFullChat(\'Show network diagnostics\')">Network diagnostics</button>' +
+          '<button onclick="sendFullChat(\'Show identity providers\')">Identity &amp; OAuth</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
+        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#8b5cf6,#7c3aed)">&#x1F30D;</span><span class="wcat-title">Multi-Cluster</span><span class="wcat-arrow">&#x25B8;</span></div>' +
+        '<div class="wcat-body">' +
+          '<button onclick="sendFullChat(\'Show fleet status\')">Fleet / managed clusters</button>' +
+          '<button onclick="sendFullChat(\'Show compliance status\')">Compliance status</button>' +
+          '<button onclick="sendFullChat(\'Show policy violations\')">Policy violations</button>' +
+          '<button onclick="sendFullChat(\'Show automation status\')">Ansible automation</button>' +
+          '<button onclick="sendFullChat(\'Show cluster operators\')">Cluster operators</button>' +
+          '<button onclick="sendFullChat(\'Show certificate lifecycle\')">Certificate lifecycle</button>' +
         '</div>' +
       '</div>' +
     '</div>' +

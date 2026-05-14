@@ -288,6 +288,19 @@ function nluToCommand(p) {
   else if (p.intent === "forecast") operation = "forecast";
   else if (p.intent === "kb") operation = "kb";
   else if (p.intent === "provision") operation = "provision";
+  // Tier 5-8: expanded MCP intents
+  else if (p.intent === "alerts") operation = "alerts";
+  else if (p.intent === "gitops") operation = "gitops";
+  else if (p.intent === "imagescan") operation = "imagescan";
+  else if (p.intent === "backup") operation = "backup";
+  else if (p.intent === "mustgather") operation = "mustgather";
+  else if (p.intent === "fleet") operation = "fleet";
+  else if (p.intent === "compliance") operation = "compliance";
+  else if (p.intent === "automation") operation = "automation";
+  else if (p.intent === "optimize") operation = "optimize";
+  else if (p.intent === "network") operation = "network";
+  else if (p.intent === "identity") operation = "identity";
+  else if (p.intent === "certlife") operation = "certlife";
   // Superlative queries about cpu/memory should use the "top" handler which
   // fetches real metrics from metrics.k8s.io and sorts.  The NLU may classify
   // "which pod uses the most CPU" as intent:"list" (because of "which"), but
@@ -2679,6 +2692,601 @@ EOF@@`);
     return parts.join("\n");
   }
 
+  // -----------------------------------------------------------------------
+  // Tier 5: ALERTS — query AlertManager / Prometheus alerts
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "alerts") {
+    try {
+      const [alertsResp, rulesResp] = await Promise.all([
+        ocpGet("/api/v1/namespaces/openshift-monitoring/services/alertmanager-main:web/proxy/api/v2/alerts").catch(() => null),
+        ocpGet("/api/v1/namespaces/openshift-monitoring/services/prometheus-k8s:web/proxy/api/v1/rules?type=alert").catch(() => null),
+      ]);
+      const alerts = Array.isArray(alertsResp) ? alertsResp : (alertsResp?.data || []);
+      const firing = alerts.filter(a => a.status?.state === "active" || a.status?.state === "firing");
+      const silenced = alerts.filter(a => a.status?.state === "suppressed" || a.status?.silencedBy?.length > 0);
+      parts.push(`### Cluster Alerts`);
+      parts.push(`**Firing:** ${firing.length} | **Silenced:** ${silenced.length} | **Total:** ${alerts.length}`);
+      parts.push("");
+      if (firing.length > 0) {
+        parts.push(`| Severity | Alert | Namespace | State | Since |`);
+        parts.push(`| --- | --- | --- | --- | --- |`);
+        firing.slice(0, 30).forEach(a => {
+          const labels = a.labels || {};
+          const sev = labels.severity || "unknown";
+          const icon = sev === "critical" ? "[CRITICAL]" : sev === "warning" ? "[WARNING]" : "[INFO]";
+          const since = a.startsAt ? new Date(a.startsAt).toLocaleString() : "—";
+          parts.push(`| ${icon} | **${labels.alertname || "?"}** | ${labels.namespace || "—"} | ${a.status?.state || "?"} | ${since} |`);
+        });
+      } else {
+        parts.push(`[OK] No firing alerts. Cluster alerting is healthy.`);
+      }
+      if (silenced.length > 0) {
+        parts.push("");
+        parts.push(`**Silenced alerts (${silenced.length}):** ${silenced.slice(0, 5).map(a => a.labels?.alertname).filter(Boolean).join(", ")}${silenced.length > 5 ? "…" : ""}`);
+      }
+      const rules = rulesResp?.data?.groups || [];
+      const totalRules = rules.reduce((s, g) => s + (g.rules || []).length, 0);
+      if (totalRules > 0) parts.push(`\n**Alert rules configured:** ${totalRules} across ${rules.length} groups`);
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Alerts`);
+      parts.push(`[WARNING] Could not query AlertManager. Monitoring stack may not be accessible.`);
+      parts.push(`Error: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 5: GITOPS — ArgoCD / OpenShift GitOps application status
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "gitops") {
+    try {
+      const [apps, appsets] = await Promise.all([
+        ocpGet("/apis/argoproj.io/v1alpha1/applications").catch(() => ({ items: [] })),
+        ocpGet("/apis/argoproj.io/v1alpha1/applicationsets").catch(() => ({ items: [] })),
+      ]);
+      const appItems = apps.items || [];
+      parts.push(`### GitOps Application Status`);
+      parts.push(`**Total applications:** ${appItems.length} | **ApplicationSets:** ${(appsets.items || []).length}`);
+      parts.push("");
+      if (appItems.length === 0) {
+        parts.push(`[WARNING] No ArgoCD/GitOps applications found. OpenShift GitOps operator may not be installed.`);
+      } else {
+        const synced = appItems.filter(a => a.status?.sync?.status === "Synced");
+        const outOfSync = appItems.filter(a => a.status?.sync?.status === "OutOfSync");
+        const degraded = appItems.filter(a => a.status?.health?.status === "Degraded");
+        const unknown = appItems.filter(a => !a.status?.sync?.status);
+        parts.push(`**Sync Status:** [OK] Synced: ${synced.length} | [WARNING] OutOfSync: ${outOfSync.length} | Unknown: ${unknown.length}`);
+        parts.push(`**Health:** Healthy: ${appItems.filter(a => a.status?.health?.status === "Healthy").length} | [CRITICAL] Degraded: ${degraded.length}`);
+        parts.push("");
+        parts.push(`| Status | Application | Namespace | Sync | Health | Repo |`);
+        parts.push(`| --- | --- | --- | --- | --- | --- |`);
+        appItems.forEach(a => {
+          const syncStatus = a.status?.sync?.status || "Unknown";
+          const healthStatus = a.status?.health?.status || "Unknown";
+          const icon = syncStatus === "Synced" && healthStatus === "Healthy" ? "[OK]" : syncStatus === "OutOfSync" ? "[WARNING]" : "[CRITICAL]";
+          const repo = (a.spec?.source?.repoURL || "—").replace(/https?:\/\//, "").substring(0, 40);
+          parts.push(`| ${icon} | **${a.metadata.name}** | ${a.metadata.namespace || "—"} | ${syncStatus} | ${healthStatus} | ${repo} |`);
+        });
+        if (outOfSync.length > 0) {
+          parts.push("");
+          parts.push(`**Recommendation:** ${outOfSync.length} app(s) are out of sync. Review drift and sync manually or enable auto-sync.`);
+        }
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### GitOps Status`);
+      parts.push(`[WARNING] Could not query ArgoCD applications. GitOps operator may not be installed.`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 5: IMAGE SCAN — vulnerability / CVE reporting
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "imagescan") {
+    try {
+      const [vulnReports, imgStreams] = await Promise.all([
+        ocpGet("/apis/aquasecurity.github.io/v1alpha1/vulnerabilityreports").catch(() =>
+          ocpGet("/apis/quay.redhat.com/v1/imagevulnerabilities").catch(() => ({ items: [] }))
+        ),
+        ocpGet("/apis/image.openshift.io/v1/imagestreams").catch(() => ({ items: [] })),
+      ]);
+      const vulns = vulnReports.items || [];
+      parts.push(`### Image Vulnerability Report`);
+      if (vulns.length > 0) {
+        let critCount = 0, highCount = 0, medCount = 0, lowCount = 0;
+        vulns.forEach(v => {
+          const summary = v.report?.summary || {};
+          critCount += summary.criticalCount || 0;
+          highCount += summary.highCount || 0;
+          medCount += summary.mediumCount || 0;
+          lowCount += summary.lowCount || 0;
+        });
+        parts.push(`**Scanned images:** ${vulns.length}`);
+        parts.push(`**Vulnerabilities:** [CRITICAL] Critical: ${critCount} | [WARNING] High: ${highCount} | Medium: ${medCount} | Low: ${lowCount}`);
+        parts.push("");
+        parts.push(`| Image | Namespace | Critical | High | Medium | Low |`);
+        parts.push(`| --- | --- | --- | --- | --- | --- |`);
+        vulns.slice(0, 20).forEach(v => {
+          const s = v.report?.summary || {};
+          const name = v.metadata?.name || "—";
+          const ns = v.metadata?.namespace || "—";
+          const icon = (s.criticalCount || 0) > 0 ? "[CRITICAL]" : (s.highCount || 0) > 0 ? "[WARNING]" : "[OK]";
+          parts.push(`| ${icon} ${name.substring(0, 40)} | ${ns} | ${s.criticalCount || 0} | ${s.highCount || 0} | ${s.mediumCount || 0} | ${s.lowCount || 0} |`);
+        });
+      } else {
+        parts.push(`**Image streams found:** ${(imgStreams.items || []).length}`);
+        parts.push(`[WARNING] No vulnerability reports found. Image scanning operator (Trivy, Clair, or Quay) may not be installed.`);
+        parts.push(`\n**To enable image scanning:**`);
+        parts.push(`  - Install the ACS (Stackrox) or Trivy operator`);
+        parts.push(`  - Or use Quay with built-in Clair scanning`);
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Image Scanning`);
+      parts.push(`[WARNING] Could not query vulnerability reports: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 5: BACKUP — Velero / etcd backup status
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "backup") {
+    try {
+      const [veleroBackups, veleroSchedules, etcdPods] = await Promise.all([
+        ocpGet("/apis/velero.io/v1/backups").catch(() => ({ items: [] })),
+        ocpGet("/apis/velero.io/v1/schedules").catch(() => ({ items: [] })),
+        ocpGet("/api/v1/namespaces/openshift-etcd/pods?labelSelector=app=etcd").catch(() => ({ items: [] })),
+      ]);
+      const backups = veleroBackups.items || [];
+      const schedules = veleroSchedules.items || [];
+      const etcdPodItems = etcdPods.items || [];
+      parts.push(`### Backup & Disaster Recovery Status`);
+      parts.push("");
+      parts.push(`**etcd Status:**`);
+      if (etcdPodItems.length > 0) {
+        const healthy = etcdPodItems.filter(p => p.status?.phase === "Running");
+        parts.push(`  [${healthy.length === etcdPodItems.length ? "OK" : "WARNING"}] ${healthy.length}/${etcdPodItems.length} etcd pods running`);
+      } else {
+        parts.push(`  [WARNING] Could not query etcd pods`);
+      }
+      parts.push("");
+      if (backups.length > 0 || schedules.length > 0) {
+        parts.push(`**Velero Backup Status:**`);
+        parts.push(`  Backups: ${backups.length} | Schedules: ${schedules.length}`);
+        parts.push("");
+        if (backups.length > 0) {
+          const sorted = [...backups].sort((a, b) => new Date(b.status?.completionTimestamp || 0) - new Date(a.status?.completionTimestamp || 0));
+          parts.push(`| Status | Backup | Phase | Started | Completed | Items |`);
+          parts.push(`| --- | --- | --- | --- | --- | --- |`);
+          sorted.slice(0, 15).forEach(b => {
+            const phase = b.status?.phase || "Unknown";
+            const icon = phase === "Completed" ? "[OK]" : phase === "Failed" ? "[CRITICAL]" : "[WARNING]";
+            const started = b.status?.startTimestamp ? new Date(b.status.startTimestamp).toLocaleString() : "—";
+            const completed = b.status?.completionTimestamp ? new Date(b.status.completionTimestamp).toLocaleString() : "—";
+            const items = b.status?.progress?.totalItems || "—";
+            parts.push(`| ${icon} | **${b.metadata.name}** | ${phase} | ${started} | ${completed} | ${items} |`);
+          });
+        }
+        if (schedules.length > 0) {
+          parts.push("");
+          parts.push(`**Scheduled Backups:**`);
+          schedules.forEach(s => {
+            const lastBackup = s.status?.lastBackup ? new Date(s.status.lastBackup).toLocaleString() : "never";
+            parts.push(`  - **${s.metadata.name}**: \`${s.spec?.schedule || "—"}\` (last: ${lastBackup})`);
+          });
+        }
+      } else {
+        parts.push(`[WARNING] **Velero is not installed.** No backup operator found.`);
+        parts.push(`\n**Recommendation:** Install Velero or OADP (OpenShift API for Data Protection) for cluster backups.`);
+        parts.push(`  - For etcd backup: \`etcd snapshot save\``);
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Backup Status`);
+      parts.push(`[WARNING] Could not query backup resources: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 5: MUST-GATHER — diagnostics collection
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "mustgather") {
+    parts.push(`### Diagnostics Collection`);
+    parts.push("");
+    parts.push(`**Must-Gather** collects cluster diagnostics for Red Hat support cases.`);
+    parts.push("");
+    parts.push(`**Quick Collection:**`);
+    parts.push(`@@SEC_FIX_CMD|oc adm must-gather@@`);
+    parts.push("");
+    parts.push(`**Targeted Collection (faster):**`);
+    parts.push(`@@SEC_FIX_CMD|oc adm must-gather --image=registry.redhat.io/openshift4/ose-must-gather:latest -- /usr/bin/gather_audit_logs@@`);
+    parts.push("");
+    parts.push(`**Network diagnostics:**`);
+    parts.push(`@@SEC_FIX_CMD|oc adm must-gather --image=registry.redhat.io/openshift4/network-tools-rhel8@@`);
+    parts.push("");
+    parts.push(`**Available must-gather images:**`);
+    parts.push(`  - **Default:** \`ose-must-gather\` — general cluster state`);
+    parts.push(`  - **Network:** \`network-tools-rhel8\` — SDN/OVN diagnostics`);
+    parts.push(`  - **Storage:** \`ocs-must-gather\` — ODF/Ceph diagnostics`);
+    parts.push(`  - **Logging:** \`cluster-logging-operator\` — logging stack`);
+    parts.push(`  - **GPU:** \`gpu-operator-must-gather\` — GPU/NVIDIA diagnostics`);
+    return parts.join("\n");
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 6: FLEET — multi-cluster / ACM managed clusters
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "fleet") {
+    try {
+      const [clusters, policies, placements] = await Promise.all([
+        ocpGet("/apis/cluster.open-cluster-management.io/v1/managedclusters").catch(() => ({ items: [] })),
+        ocpGet("/apis/policy.open-cluster-management.io/v1/policies").catch(() => ({ items: [] })),
+        ocpGet("/apis/cluster.open-cluster-management.io/v1beta1/placements").catch(() => ({ items: [] })),
+      ]);
+      const clusterItems = clusters.items || [];
+      const policyItems = policies.items || [];
+      parts.push(`### Multi-Cluster Fleet Status (ACM)`);
+      parts.push("");
+      if (clusterItems.length === 0) {
+        parts.push(`[WARNING] No managed clusters found. ACM (Advanced Cluster Management) may not be installed.`);
+        parts.push(`\n**To enable multi-cluster management:**`);
+        parts.push(`  - Install the ACM operator from OperatorHub`);
+        parts.push(`  - Import or create managed clusters`);
+      } else {
+        const online = clusterItems.filter(c => {
+          const conds = c.status?.conditions || [];
+          return conds.some(cd => cd.type === "ManagedClusterConditionAvailable" && cd.status === "True");
+        });
+        parts.push(`**Managed Clusters:** ${clusterItems.length} total | [OK] Online: ${online.length} | [CRITICAL] Offline: ${clusterItems.length - online.length}`);
+        parts.push("");
+        parts.push(`| Status | Cluster | Version | Hub | Joined |`);
+        parts.push(`| --- | --- | --- | --- | --- |`);
+        clusterItems.forEach(c => {
+          const available = c.status?.conditions?.find(cd => cd.type === "ManagedClusterConditionAvailable");
+          const icon = available?.status === "True" ? "[OK]" : "[CRITICAL]";
+          const version = c.status?.version?.kubernetes || c.metadata.labels?.openshiftVersion || "—";
+          const isHub = c.metadata.labels?.["local-cluster"] === "true" ? "Hub" : "Spoke";
+          const joined = c.metadata.creationTimestamp ? new Date(c.metadata.creationTimestamp).toLocaleDateString() : "—";
+          parts.push(`| ${icon} | **${c.metadata.name}** | ${version} | ${isHub} | ${joined} |`);
+        });
+        if (policyItems.length > 0) {
+          const compliant = policyItems.filter(p => p.status?.compliant === "Compliant");
+          const nonCompliant = policyItems.filter(p => p.status?.compliant === "NonCompliant");
+          parts.push("");
+          parts.push(`**Governance Policies:** ${policyItems.length} total | [OK] Compliant: ${compliant.length} | [CRITICAL] NonCompliant: ${nonCompliant.length}`);
+          if (nonCompliant.length > 0) {
+            nonCompliant.slice(0, 5).forEach(p => {
+              parts.push(`  - [CRITICAL] **${p.metadata.name}** (${p.metadata.namespace})`);
+            });
+          }
+        }
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Fleet Status`);
+      parts.push(`[WARNING] Could not query ACM resources: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 6: COMPLIANCE — policy violations / governance
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "compliance") {
+    try {
+      const [compSuites, compScans, acmPolicies] = await Promise.all([
+        ocpGet("/apis/compliance.openshift.io/v1alpha1/compliancesuites").catch(() => ({ items: [] })),
+        ocpGet("/apis/compliance.openshift.io/v1alpha1/compliancescans").catch(() => ({ items: [] })),
+        ocpGet("/apis/policy.open-cluster-management.io/v1/policies").catch(() => ({ items: [] })),
+      ]);
+      const suites = compSuites.items || [];
+      const scans = compScans.items || [];
+      const policies = acmPolicies.items || [];
+      parts.push(`### Compliance & Governance Status`);
+      parts.push("");
+      if (suites.length > 0 || scans.length > 0) {
+        parts.push(`**Compliance Operator:**`);
+        parts.push(`  Suites: ${suites.length} | Scans: ${scans.length}`);
+        parts.push("");
+        if (suites.length > 0) {
+          parts.push(`| Status | Suite | Profile | Phase | Result |`);
+          parts.push(`| --- | --- | --- | --- | --- |`);
+          suites.forEach(s => {
+            const phase = s.status?.phase || "Unknown";
+            const result = s.status?.result || "—";
+            const icon = result === "COMPLIANT" ? "[OK]" : result === "NON-COMPLIANT" ? "[CRITICAL]" : "[WARNING]";
+            parts.push(`| ${icon} | **${s.metadata.name}** | ${s.spec?.profileBundleName || "—"} | ${phase} | ${result} |`);
+          });
+        }
+      }
+      if (policies.length > 0) {
+        parts.push("");
+        parts.push(`**ACM Governance Policies:**`);
+        const compliant = policies.filter(p => p.status?.compliant === "Compliant");
+        const nonComp = policies.filter(p => p.status?.compliant === "NonCompliant");
+        parts.push(`  [OK] Compliant: ${compliant.length} | [CRITICAL] NonCompliant: ${nonComp.length} | Total: ${policies.length}`);
+        if (nonComp.length > 0) {
+          parts.push("");
+          nonComp.slice(0, 10).forEach(p => {
+            parts.push(`  - [CRITICAL] **${p.metadata.name}** in ${p.metadata.namespace}`);
+          });
+        }
+      }
+      if (suites.length === 0 && scans.length === 0 && policies.length === 0) {
+        parts.push(`[WARNING] No compliance data found. Install the Compliance Operator or ACM Governance.`);
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Compliance`);
+      parts.push(`[WARNING] Could not query compliance data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 6: AUTOMATION — Ansible / ServiceNow integration status
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "automation") {
+    try {
+      const [ansibleJobs, aap] = await Promise.all([
+        ocpGet("/apis/tower.ansible.com/v1alpha1/ansiblejobs").catch(() =>
+          ocpGet("/apis/batch/v1/jobs?labelSelector=ansible").catch(() => ({ items: [] }))
+        ),
+        ocpGet("/apis/automationcontroller.ansible.com/v1beta1/automationcontrollers").catch(() => ({ items: [] })),
+      ]);
+      const jobs = ansibleJobs.items || [];
+      const controllers = aap.items || [];
+      parts.push(`### Automation & ITSM Status`);
+      parts.push("");
+      if (controllers.length > 0) {
+        parts.push(`**Ansible Automation Platform:**`);
+        controllers.forEach(c => {
+          const status = c.status?.conditions?.find(cd => cd.type === "Running");
+          const icon = status?.status === "True" ? "[OK]" : "[WARNING]";
+          parts.push(`  ${icon} **${c.metadata.name}** in ${c.metadata.namespace}`);
+        });
+        parts.push("");
+      }
+      if (jobs.length > 0) {
+        const succeeded = jobs.filter(j => j.status?.ansibleJobResult?.status === "successful" || j.status?.succeeded > 0);
+        const failed = jobs.filter(j => j.status?.ansibleJobResult?.status === "failed" || j.status?.failed > 0);
+        parts.push(`**Ansible Jobs:** ${jobs.length} total | [OK] Succeeded: ${succeeded.length} | [CRITICAL] Failed: ${failed.length}`);
+        parts.push("");
+        const recent = [...jobs].sort((a, b) => new Date(b.metadata.creationTimestamp || 0) - new Date(a.metadata.creationTimestamp || 0));
+        parts.push(`| Status | Job | Namespace | Result | Created |`);
+        parts.push(`| --- | --- | --- | --- | --- |`);
+        recent.slice(0, 10).forEach(j => {
+          const result = j.status?.ansibleJobResult?.status || j.status?.conditions?.[0]?.type || "—";
+          const icon = result === "successful" || j.status?.succeeded > 0 ? "[OK]" : "[CRITICAL]";
+          parts.push(`| ${icon} | **${j.metadata.name}** | ${j.metadata.namespace} | ${result} | ${new Date(j.metadata.creationTimestamp).toLocaleString()} |`);
+        });
+      } else if (controllers.length === 0) {
+        parts.push(`[WARNING] No Ansible Automation Platform or automation jobs found.`);
+        parts.push(`\n**To enable automation:** Install the AAP operator from OperatorHub.`);
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Automation Status`);
+      parts.push(`[WARNING] Could not query automation resources: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 7: OPTIMIZE — right-sizing / resource optimization
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "optimize") {
+    try {
+      const [pods, metrics] = await Promise.all([
+        ocpGet("/api/v1/pods?fieldSelector=status.phase=Running").catch(() => ({ items: [] })),
+        ocpGet("/apis/metrics.k8s.io/v1beta1/pods").catch(() => ({ items: [] })),
+      ]);
+      const podItems = pods.items || [];
+      const metricItems = metrics.items || [];
+      const metricMap = {};
+      metricItems.forEach(m => {
+        const key = m.metadata.namespace + "/" + m.metadata.name;
+        const totalCpu = (m.containers || []).reduce((s, c) => s + parseCpuNano(c.usage?.cpu), 0);
+        const totalMem = (m.containers || []).reduce((s, c) => s + parseMemBytes(c.usage?.memory), 0);
+        metricMap[key] = { cpu: totalCpu, mem: totalMem };
+      });
+      const noLimits = [];
+      const noRequests = [];
+      const overprovisioned = [];
+      podItems.forEach(p => {
+        const key = p.metadata.namespace + "/" + p.metadata.name;
+        const actual = metricMap[key];
+        (p.spec?.containers || []).forEach(c => {
+          const limCpu = c.resources?.limits?.cpu;
+          const reqCpu = c.resources?.requests?.cpu;
+          const limMem = c.resources?.limits?.memory;
+          const reqMem = c.resources?.requests?.memory;
+          if (!limCpu && !limMem) noLimits.push(p);
+          if (!reqCpu && !reqMem) noRequests.push(p);
+          if (actual && limCpu) {
+            const limNano = parseCpuNano(limCpu);
+            if (limNano > 0 && actual.cpu < limNano * 0.1) {
+              overprovisioned.push({ pod: p, usage: actual.cpu, limit: limNano });
+            }
+          }
+        });
+      });
+      parts.push(`### Resource Optimization Analysis`);
+      parts.push(`**Total running pods:** ${podItems.length} | **With metrics:** ${metricItems.length}`);
+      parts.push("");
+      parts.push(`**Findings:**`);
+      parts.push(`  - [${noLimits.length > 0 ? "WARNING" : "OK"}] **Pods without resource limits:** ${noLimits.length}`);
+      parts.push(`  - [${noRequests.length > 0 ? "WARNING" : "OK"}] **Pods without resource requests:** ${noRequests.length}`);
+      parts.push(`  - [${overprovisioned.length > 0 ? "WARNING" : "OK"}] **Overprovisioned pods** (using <10% of CPU limit): ${overprovisioned.length}`);
+      parts.push("");
+      if (overprovisioned.length > 0) {
+        parts.push(`**Top overprovisioned pods (right-sizing candidates):**`);
+        parts.push(`| Pod | Namespace | CPU Usage | CPU Limit | Utilization |`);
+        parts.push(`| --- | --- | --- | --- | --- |`);
+        overprovisioned.sort((a, b) => (a.usage / a.limit) - (b.usage / b.limit));
+        overprovisioned.slice(0, 15).forEach(o => {
+          const pct = ((o.usage / o.limit) * 100).toFixed(1);
+          parts.push(`| **${o.pod.metadata.name}** | ${o.pod.metadata.namespace} | ${fmtCpu(String(o.usage) + "n")} | ${fmtCpu(String(o.limit) + "n")} | ${pct}% |`);
+        });
+        parts.push("");
+        parts.push(`**Recommendation:** Review the overprovisioned pods above and adjust their CPU/memory limits to match actual usage patterns.`);
+      }
+      if (noLimits.length > 0) {
+        parts.push("");
+        const grouped = {};
+        noLimits.forEach(p => { const ns = p.metadata.namespace; grouped[ns] = (grouped[ns] || 0) + 1; });
+        parts.push(`**Pods without limits by namespace:**`);
+        Object.entries(grouped).sort((a, b) => b[1] - a[1]).slice(0, 10).forEach(([ns, cnt]) => {
+          parts.push(`  - **${ns}**: ${cnt} pods`);
+        });
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Resource Optimization`);
+      parts.push(`[WARNING] Could not analyze resource usage: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 7: NETWORK — network diagnostics, DNS, egress, connectivity
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "network") {
+    try {
+      const [netPolicies, egressIPs, services, routes, ingressCtrl] = await Promise.all([
+        ocpGet("/apis/networking.k8s.io/v1/networkpolicies").catch(() => ({ items: [] })),
+        ocpGet("/apis/k8s.ovn.org/v1/egressips").catch(() => ({ items: [] })),
+        ocpGet("/api/v1/services").catch(() => ({ items: [] })),
+        ocpGet("/apis/route.openshift.io/v1/routes").catch(() => ({ items: [] })),
+        ocpGet("/apis/operator.openshift.io/v1/ingresscontrollers").catch(() =>
+          ocpGet("/apis/operator.openshift.io/v1/namespaces/openshift-ingress-operator/ingresscontrollers").catch(() => ({ items: [] }))
+        ),
+      ]);
+      parts.push(`### Network Diagnostics`);
+      parts.push("");
+      parts.push(`**Overview:**`);
+      parts.push(`  - Network Policies: ${(netPolicies.items || []).length}`);
+      parts.push(`  - Egress IPs: ${(egressIPs.items || []).length}`);
+      parts.push(`  - Services: ${(services.items || []).length}`);
+      parts.push(`  - Routes: ${(routes.items || []).length}`);
+      parts.push("");
+      const controllers = ingressCtrl.items || [];
+      if (controllers.length > 0) {
+        parts.push(`**Ingress Controllers:**`);
+        controllers.forEach(ic => {
+          const avail = ic.status?.conditions?.find(c => c.type === "Available");
+          const icon = avail?.status === "True" ? "[OK]" : "[CRITICAL]";
+          parts.push(`  ${icon} **${ic.metadata.name}** — replicas: ${ic.status?.availableReplicas || 0}/${ic.spec?.replicas || "auto"}`);
+        });
+        parts.push("");
+      }
+      const nsByPolicy = {};
+      (netPolicies.items || []).forEach(np => {
+        const ns = np.metadata.namespace;
+        nsByPolicy[ns] = (nsByPolicy[ns] || 0) + 1;
+      });
+      const nsWithPolicy = Object.keys(nsByPolicy).length;
+      const svcItems = services.items || [];
+      const svcNoEndpoints = svcItems.filter(s => s.spec?.type === "ClusterIP" && s.spec?.selector && Object.keys(s.spec.selector).length > 0);
+      parts.push(`**Network Policy Coverage:**`);
+      parts.push(`  ${nsWithPolicy} namespace(s) have network policies | ${Object.entries(nsByPolicy).reduce((s, [, v]) => s + v, 0)} total policies`);
+      if (nsWithPolicy > 0) {
+        Object.entries(nsByPolicy).sort((a, b) => b[1] - a[1]).slice(0, 8).forEach(([ns, cnt]) => {
+          parts.push(`  - **${ns}**: ${cnt} policies`);
+        });
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Network Diagnostics`);
+      parts.push(`[WARNING] Could not query network resources: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 8: IDENTITY — OAuth / LDAP / token / access management
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "identity") {
+    try {
+      const [oauthConfig, oauthClients, users, groups, identities] = await Promise.all([
+        ocpGet("/apis/config.openshift.io/v1/oauths/cluster").catch(() => null),
+        ocpGet("/apis/oauth.openshift.io/v1/oauthclients").catch(() => ({ items: [] })),
+        ocpGet("/apis/user.openshift.io/v1/users").catch(() => ({ items: [] })),
+        ocpGet("/apis/user.openshift.io/v1/groups").catch(() => ({ items: [] })),
+        ocpGet("/apis/user.openshift.io/v1/identities").catch(() => ({ items: [] })),
+      ]);
+      parts.push(`### Identity & Access Management`);
+      parts.push("");
+      if (oauthConfig) {
+        const providers = oauthConfig.spec?.identityProviders || [];
+        parts.push(`**Identity Providers (${providers.length}):**`);
+        if (providers.length > 0) {
+          providers.forEach(p => {
+            const type = p.type || Object.keys(p).find(k => k !== "name" && k !== "mappingMethod" && k !== "type") || "unknown";
+            parts.push(`  - [OK] **${p.name}** — type: ${type}, mapping: ${p.mappingMethod || "claim"}`);
+          });
+        } else {
+          parts.push(`  [WARNING] No identity providers configured — only kubeadmin can log in`);
+        }
+        parts.push("");
+      }
+      parts.push(`**Users:** ${(users.items || []).length} | **Groups:** ${(groups.items || []).length} | **Identities:** ${(identities.items || []).length}`);
+      parts.push(`**OAuth Clients:** ${(oauthClients.items || []).length}`);
+      parts.push("");
+      const grpItems = groups.items || [];
+      if (grpItems.length > 0) {
+        parts.push(`**Groups:**`);
+        grpItems.slice(0, 10).forEach(g => {
+          const members = g.users || [];
+          parts.push(`  - **${g.metadata.name}**: ${members.length} member(s)`);
+        });
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Identity & Access`);
+      parts.push(`[WARNING] Could not query identity resources: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 8: CERTLIFE — certificate lifecycle, rotation, mTLS
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "certlife") {
+    if (llmAvailable) return null;
+    parts.push(`### Certificate Lifecycle Management`);
+    parts.push("");
+    parts.push(`**Check certificate expiry:**`);
+    parts.push(`> Ask me: *"/cert-check"*`);
+    parts.push("");
+    parts.push(`**Rotate certificates manually:**`);
+    parts.push(`@@SEC_FIX_CMD|oc get csr -o wide@@`);
+    parts.push("");
+    parts.push(`**Approve pending CSRs:**`);
+    parts.push(`@@SEC_FIX_CMD|oc get csr -o go-template='{{range .items}}{{if not .status}}{{.metadata.name}} {{end}}{{end}}' | xargs oc adm certificate approve@@`);
+    parts.push("");
+    parts.push(`**Check CA bundle:**`);
+    parts.push(`@@SEC_FIX_CMD|oc get configmap kube-root-ca.crt -n openshift-config -o yaml@@`);
+    parts.push("");
+    parts.push(`**Cert-Manager certificates (if installed):**`);
+    parts.push(`@@SEC_FIX_CMD|oc get certificates --all-namespaces@@`);
+    return parts.join("\n");
+  }
+
   return null; // Not a recognized direct command
 }
 
@@ -2933,6 +3541,34 @@ async function handleListCommand(message, preParsed, opts = {}) {
 
   const resInfo = RESOURCE_MAP[cmd.resourceType];
   if (!resInfo) return null;
+
+  // Validate namespace exists before querying — prevents misleading
+  // "0 results" when the user misspells or uses a non-existent namespace.
+  if (cmd.namespace && resInfo.namespaced) {
+    try {
+      await ocpGet(`/api/v1/namespaces/${cmd.namespace}`);
+    } catch (nsErr) {
+      const status = nsErr?.statusCode || nsErr?.status || 0;
+      if (status === 404 || (nsErr.message && nsErr.message.includes("not found"))) {
+        const parts = [`### Namespace Not Found`];
+        parts.push(`[WARNING] Namespace \`${cmd.namespace}\` does not exist on this cluster.`);
+        parts.push("");
+        try {
+          const allNs = await ocpGet("/api/v1/namespaces");
+          const nsNames = (allNs.items || []).map(n => n.metadata.name).sort();
+          const similar = nsNames.filter(n => n.includes(cmd.namespace.replace(/s$/, "")) || cmd.namespace.includes(n.replace(/-/g, "")));
+          if (similar.length > 0 && similar.length <= 5) {
+            parts.push(`**Did you mean:** ${similar.map(n => `\`${n}\``).join(", ")}?`);
+            parts.push("");
+          }
+          parts.push(`**Available namespaces (${nsNames.length}):** ${nsNames.slice(0, 20).map(n => `\`${n}\``).join(", ")}${nsNames.length > 20 ? "…" : ""}`);
+        } catch (_) {
+          parts.push(`Verify namespace name and try again.`);
+        }
+        return parts.join("\n");
+      }
+    }
+  }
 
   // Special handling for projects
   if (cmd.resourceType === "project") {
@@ -4002,6 +4638,66 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
     }
   }
 
+  // Intent: alerts / alertmanager / prometheus
+  if (lower.match(/\balert|\bfiring|\bsilence|\bprometheus|\balertmanager/)) {
+    context.intents.push("alerts");
+  }
+
+  // Intent: GitOps / ArgoCD / sync / drift
+  if (lower.match(/\bgitops|\bargocd|\bargo\b|\bsync\b|\bdrift\b|\bout.of.sync|\breconcil/)) {
+    context.intents.push("gitops");
+  }
+
+  // Intent: image scanning / CVE / vulnerability
+  if (lower.match(/\bcve|\bvulnerab|\bimage.scan|\bscan.*image|\btrivy|\bclair|\bstackrox|\bacs\b/)) {
+    context.intents.push("imagescan");
+  }
+
+  // Intent: backup / DR / velero / etcd backup
+  if (lower.match(/\bbackup|\bvelero|\brestore|\bdisaster.recov|\betcd.backup|\boadp\b/)) {
+    context.intents.push("backup");
+  }
+
+  // Intent: must-gather / diagnostics / sosreport
+  if (lower.match(/\bmust.gather|\bsosreport|\bdiagnostic.collect|\bcollect.diagnostic/)) {
+    context.intents.push("mustgather");
+  }
+
+  // Intent: fleet / multi-cluster / ACM
+  if (lower.match(/\bfleet|\bmanaged.cluster|\bacm\b|\badvanced.cluster|\bmulti.cluster/)) {
+    context.intents.push("fleet");
+  }
+
+  // Intent: compliance / governance / policy violations
+  if (lower.match(/\bcomplian|\bgovernance|\bpolicy.violat|\bnon.compliant|\baudit.log/)) {
+    context.intents.push("compliance");
+  }
+
+  // Intent: automation / ansible / playbook / ServiceNow
+  if (lower.match(/\bansible|\bplaybook|\bautomation|\bservicenow|\bjob.template|\baap\b/)) {
+    context.intents.push("automation");
+  }
+
+  // Intent: right-sizing / optimization / overprovisioned
+  if (lower.match(/\bright.siz|\boptimiz|\boverprovision|\bunderutiliz|\bidle.workload|\bwasted?\b|\bresource.efficien/)) {
+    context.intents.push("optimize");
+  }
+
+  // Intent: network diagnostics / egress / DNS / connectivity
+  if (lower.match(/\begress|\bdns\b|\blatency|\bthroughput|\bbottleneck|\bconnectiv|\bnetwork.diag|\bovn\b|\bsdn\b/)) {
+    context.intents.push("network");
+  }
+
+  // Intent: identity / OAuth / LDAP / token
+  if (lower.match(/\boauth|\bldap\b|\bidentity.provider|\btoken.expir|\bwho.has.access/)) {
+    context.intents.push("identity");
+  }
+
+  // Intent: cert lifecycle / rotation / mTLS
+  if (lower.match(/\brotate.*cert|\bcert.*rotat|\bmtls\b|\bcert.*renew|\bca.trust|\bcert.lifecycle/)) {
+    context.intents.push("certlife");
+  }
+
   // If no intent detected, default to a help response
   if (context.intents.length === 0) {
     context.intents.push("help");
@@ -4874,6 +5570,54 @@ const PROMPT_SUPPLEMENT_METRICS = `
 - If the user asks about "high cpu", show pods sorted by CPU descending with the highest ones first
 - Compare actual usage against resource requests/limits if available`;
 
+const PROMPT_SUPPLEMENT_ALERTS = `
+
+## Alerts / Monitoring queries:
+- Present firing alerts in a TABLE with severity, name, namespace, and duration
+- Group by severity (critical first, then warning, then info)
+- For silenced alerts, mention they exist but don't list unless asked
+- Suggest remediation steps for common alerts (KubePodCrashLooping, KubeMemoryOvercommit, etc.)
+- Never say "check Prometheus" — analyze the alert data directly`;
+
+const PROMPT_SUPPLEMENT_GITOPS = `
+
+## GitOps / ArgoCD queries:
+- Present applications in a TABLE with sync status, health, and repo info
+- Highlight OutOfSync and Degraded applications prominently
+- For drift questions, explain what resources have drifted and why
+- Suggest sync or remediation actions for out-of-sync apps`;
+
+const PROMPT_SUPPLEMENT_BACKUP = `
+
+## Backup / DR queries:
+- Report etcd health alongside Velero backup status
+- Highlight any failed or partial backups with timestamps
+- Show backup schedules and last successful backup time
+- For DR readiness, assess etcd health + backup recency + replica count`;
+
+const PROMPT_SUPPLEMENT_FLEET = `
+
+## Multi-cluster / Fleet queries:
+- Present managed clusters in a TABLE with status, version, and role
+- Highlight offline or unavailable clusters prominently
+- Show policy compliance across the fleet
+- Group by hub vs spoke clusters`;
+
+const PROMPT_SUPPLEMENT_OPTIMIZE = `
+
+## Resource Optimization queries:
+- Focus on overprovisioned pods (using <10% of limits) and pods without limits
+- Present findings as actionable right-sizing recommendations
+- Group by namespace for better visibility
+- NEVER mention dollar amounts or cost savings — focus on resource efficiency and cluster capacity`;
+
+const PROMPT_SUPPLEMENT_NETWORK = `
+
+## Network Diagnostics queries:
+- Report on ingress controller health, network policies, and egress configuration
+- For connectivity issues, check service endpoints and network policies
+- Highlight namespaces without network policies as security gaps`;
+
 const PROMPT_SUPPLEMENT_AMBIGUITY = `
 
 ## Missing information / ambiguity:
@@ -4906,6 +5650,30 @@ function buildSystemPrompt(userMessage, context) {
 
   if (/upgrade|version|compare|ambig/i.test(lower) || context?.intents?.includes("knowledge")) {
     prompt += PROMPT_SUPPLEMENT_AMBIGUITY;
+  }
+
+  if (/\balert|\bfiring|\bsilence|\bprometheus|\balertmanager/i.test(lower)) {
+    prompt += PROMPT_SUPPLEMENT_ALERTS;
+  }
+
+  if (/\bgitops|\bargocd|\bargo\b|\bsync\b|\bdrift\b|\breconcil/i.test(lower)) {
+    prompt += PROMPT_SUPPLEMENT_GITOPS;
+  }
+
+  if (/\bbackup|\bvelero|\brestore|\bdisaster.recov|\betcd.backup/i.test(lower)) {
+    prompt += PROMPT_SUPPLEMENT_BACKUP;
+  }
+
+  if (/\bfleet|\bmanaged.cluster|\bacm\b|\bmulti.cluster/i.test(lower)) {
+    prompt += PROMPT_SUPPLEMENT_FLEET;
+  }
+
+  if (/\bright.siz|\boptimiz|\boverprovision|\bunderutiliz|\bidle|\bwasted?\b/i.test(lower)) {
+    prompt += PROMPT_SUPPLEMENT_OPTIMIZE;
+  }
+
+  if (/\begress|\bdns\b|\blatency|\bnetwork.diag|\bconnectiv/i.test(lower)) {
+    prompt += PROMPT_SUPPLEMENT_NETWORK;
   }
 
   return prompt;

@@ -430,6 +430,82 @@ const VERB_TABLE = {
   identify:     { intent: "list", weight: 35 },
   locate:       { intent: "list", weight: 35 },
   report:       { intent: "list", weight: 25 },
+  // ---- Tier 5: Observability & Alerting ----
+  alerts:       { intent: "alerts",    weight: 80 },
+  alert:        { intent: "alerts",    weight: 75 },
+  firing:       { intent: "alerts",    weight: 85 },
+  silenced:     { intent: "alerts",    weight: 75 },
+  silence:      { intent: "alerts",    weight: 70 },
+  acknowledge:  { intent: "alerts",    weight: 70 },
+  // ---- Tier 5: GitOps / ArgoCD ----
+  sync:         { intent: "gitops",    weight: 80 },
+  synced:       { intent: "gitops",    weight: 75 },
+  syncing:      { intent: "gitops",    weight: 75 },
+  drift:        { intent: "gitops",    weight: 80 },
+  drifted:      { intent: "gitops",    weight: 75 },
+  reconcile:    { intent: "gitops",    weight: 75 },
+  // ---- Tier 5: Image Security ----
+  vulnerabilities: { intent: "imagescan", weight: 80 },
+  vulnerability:   { intent: "imagescan", weight: 80 },
+  cve:          { intent: "imagescan", weight: 85 },
+  cves:         { intent: "imagescan", weight: 85 },
+  scan:         { intent: "imagescan", weight: 70 },
+  scanning:     { intent: "imagescan", weight: 70 },
+  // ---- Tier 5: Backup & DR ----
+  backup:       { intent: "backup",    weight: 80 },
+  backups:      { intent: "backup",    weight: 80 },
+  restore:      { intent: "backup",    weight: 75 },
+  recovery:     { intent: "backup",    weight: 70 },
+  velero:       { intent: "backup",    weight: 75 },
+  // ---- Tier 5: Must-Gather / Diagnostics ----
+  gather:       { intent: "mustgather", weight: 70 },
+  sosreport:    { intent: "mustgather", weight: 80 },
+  diagnostics:  { intent: "mustgather", weight: 75 },
+  diagnostic:   { intent: "mustgather", weight: 75 },
+  collect:      { intent: "mustgather", weight: 60 },
+  // ---- Tier 6: Fleet / Multi-cluster ----
+  fleet:        { intent: "fleet",     weight: 80 },
+  managed:      { intent: "fleet",     weight: 50 },
+  governance:   { intent: "compliance", weight: 75 },
+  violations:   { intent: "compliance", weight: 80 },
+  violation:    { intent: "compliance", weight: 80 },
+  compliant:    { intent: "compliance", weight: 70 },
+  noncompliant: { intent: "compliance", weight: 80 },
+  compliance:   { intent: "compliance", weight: 80 },
+  // ---- Tier 6: Automation / ITSM ----
+  ansible:      { intent: "automation", weight: 75 },
+  playbook:     { intent: "automation", weight: 75 },
+  automation:   { intent: "automation", weight: 70 },
+  servicenow:   { intent: "automation", weight: 70 },
+  ticket:       { intent: "automation", weight: 60 },
+  tickets:      { intent: "automation", weight: 60 },
+  // ---- Tier 7: Right-sizing / Optimization ----
+  overprovisioned: { intent: "optimize", weight: 80 },
+  underutilized:   { intent: "optimize", weight: 75 },
+  rightsize:       { intent: "optimize", weight: 85 },
+  optimize:        { intent: "optimize", weight: 80 },
+  optimization:    { intent: "optimize", weight: 75 },
+  wasted:          { intent: "optimize", weight: 70 },
+  waste:           { intent: "optimize", weight: 65 },
+  // ---- Tier 7: Network Diagnostics ----
+  egress:       { intent: "network",   weight: 70 },
+  ingress:      { intent: "list",      weight: 30 },
+  dns:          { intent: "network",   weight: 75 },
+  latency:      { intent: "network",   weight: 70 },
+  throughput:   { intent: "network",   weight: 70 },
+  bottleneck:   { intent: "network",   weight: 70 },
+  connectivity: { intent: "network",   weight: 70 },
+  // ---- Tier 8: Identity / Access ----
+  oauth:        { intent: "identity",  weight: 70 },
+  ldap:         { intent: "identity",  weight: 75 },
+  token:        { intent: "identity",  weight: 55 },
+  tokens:       { intent: "identity",  weight: 55 },
+  // ---- Tier 8: Cert Lifecycle ----
+  rotate:       { intent: "certlife",  weight: 75 },
+  rotation:     { intent: "certlife",  weight: 75 },
+  renew:        { intent: "certlife",  weight: 75 },
+  renewal:      { intent: "certlife",  weight: 70 },
+  mtls:         { intent: "certlife",  weight: 80 },
 };
 
 // Backwards-compatible flat lookup for callers that just want the intent.
@@ -505,6 +581,20 @@ const STOP_WORDS = new Set([
   "logged", "login", "logins", "taints", "labels", "annotations", "precheck",
   "configured", "installed", "enabled", "disabled", "active",
   "admin", "admins", "administrator",
+  // Tier 5-8: new intent verbs — must never be resource names
+  "alerts", "alert", "firing", "silenced", "silence", "acknowledge",
+  "sync", "synced", "syncing", "drift", "drifted", "reconcile",
+  "vulnerabilities", "vulnerability", "cve", "cves", "scan", "scanning",
+  "backup", "backups", "restore", "recovery", "velero",
+  "gather", "sosreport", "diagnostics", "diagnostic", "collect",
+  "fleet", "managed", "governance", "violations", "violation",
+  "compliant", "noncompliant", "compliance",
+  "ansible", "playbook", "automation", "servicenow", "ticket", "tickets",
+  "overprovisioned", "underutilized", "rightsize", "optimize", "optimization",
+  "wasted", "waste", "idle",
+  "egress", "dns", "latency", "throughput", "bottleneck", "connectivity",
+  "oauth", "ldap", "token", "tokens", "rotate", "rotation", "renew",
+  "renewal", "mtls", "expiry", "expiring", "expired",
 ]);
 
 // Filter keywords (issue type). Order matters: most specific first.
