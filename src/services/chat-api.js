@@ -233,6 +233,10 @@ const NLU_BAD_NAMES = new Set([
   // Common nouns that aren't resource names
   "name", "names", "value", "values", "status", "state", "phase",
   "usage", "consumption", "utilization", "resource", "resources",
+  "expiry", "expiring", "expired", "expiration", "renewal", "validity",
+  "readiness", "assessment", "forecast", "capacity", "paths", "history",
+  "restarts", "restart", "count", "available", "unavailable", "ready",
+  "healthy", "unhealthy", "degraded", "failing", "failed", "issues",
   "cpu", "memory", "mem", "ram", "disk", "storage", "network",
   "cluster", "clusters", "overview", "summary", "report", "detail", "details",
   // Prepositions & conjunctions
@@ -1254,6 +1258,15 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
   const llmAvailable = !!opts.llmAvailable;
 
   // -----------------------------------------------------------------------
+  // Certificate expiry queries — route to LLM which has certificate_expiry
+  // intent handling, instead of trying to list cert-manager CRD resources.
+  // -----------------------------------------------------------------------
+  if (cmd.resourceType === "certificate" &&
+      /\b(expir|renew|rotat|check|valid|tls)\b/i.test(lower)) {
+    return null;
+  }
+
+  // -----------------------------------------------------------------------
   // CLUSTER VERSION HISTORY — "cluster version history", "upgrade history",
   // "rollout history previous upgrades", "previous upgrades", "past upgrades"
   // -----------------------------------------------------------------------
@@ -1974,6 +1987,45 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
           const isZStream = curParts[0] === tgtParts[0] && curParts[1] === tgtParts[1];
           const upgradeType = isZStream ? "Z-stream (patch)" : "Minor version";
 
+          // Check if requested version is a downgrade
+          const isDowngrade = (tgtParts[0] < curParts[0]) ||
+            (tgtParts[0] === curParts[0] && tgtParts[1] < curParts[1]) ||
+            (tgtParts[0] === curParts[0] && tgtParts[1] === curParts[1] && tgtParts[2] <= curParts[2]);
+          const isSameVersion = requestedVersion === currentVersion;
+
+          if (isSameVersion) {
+            parts.push(`### Upgrade Not Required`);
+            parts.push(`**Current version:** ${currentVersion}`);
+            parts.push(`**Requested version:** ${requestedVersion}`);
+            parts.push("");
+            parts.push(`[WARNING] Your cluster is **already running version ${currentVersion}**. No upgrade is needed.`);
+            parts.push("");
+            if (sorted.length > 0) {
+              parts.push(`**Available upgrades from ${currentVersion}:**`);
+              sorted.slice(0, 8).forEach(u => parts.push(`  - **${u.version}**`));
+              parts.push("");
+              parts.push(`To upgrade, try: \`upgrade to ${sorted[0].version}\``);
+            }
+            return parts.join("\n");
+          }
+
+          if (isDowngrade) {
+            parts.push(`### Downgrade Not Supported`);
+            parts.push(`**Current version:** ${currentVersion}`);
+            parts.push(`**Requested version:** ${requestedVersion}`);
+            parts.push("");
+            parts.push(`[CRITICAL] **Version ${requestedVersion} is lower than your current version ${currentVersion}.** OpenShift does not support downgrading clusters.`);
+            parts.push("");
+            if (sorted.length > 0) {
+              parts.push(`**Available upgrades from ${currentVersion}:**`);
+              sorted.slice(0, 8).forEach(u => parts.push(`  - **${u.version}**`));
+              parts.push("");
+              parts.push(`**Recommendation:** Upgrade to **${sorted[0].version}** (latest available).`);
+              parts.push(`> Ask me: *"upgrade to ${sorted[0].version}"*`);
+            }
+            return parts.join("\n");
+          }
+
           parts.push(`### Upgrade Analysis: ${currentVersion} → ${requestedVersion}`);
           parts.push(`**Current version:** ${currentVersion}`);
           parts.push(`**Target version:** ${requestedVersion}`);
@@ -2007,15 +2059,23 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
             parts.push(`**Recommended:** Run a pre-upgrade assessment first:`);
             parts.push(`> Ask me: *"precheck upgrade to ${requestedVersion}"*`);
           } else {
-            parts.push(`[CRITICAL] **Version ${requestedVersion} is NOT available** in channel \`${channel}\`.`);
+            parts.push(`[CRITICAL] **Version ${requestedVersion} is NOT available** for upgrade from ${currentVersion} in channel \`${channel}\`.`);
+            parts.push("");
+            parts.push(`This version is not listed in the available updates for your cluster. This could mean:`);
+            parts.push(`  - The version does not exist in the \`${channel}\` channel`);
+            parts.push(`  - The version may be in a different channel (e.g., \`fast-4.x\` or \`candidate-4.x\`)`);
+            parts.push(`  - The upgrade path from ${currentVersion} to ${requestedVersion} is not supported`);
             parts.push("");
             if (sorted.length > 0) {
-              parts.push(`Available versions:`);
-              sorted.slice(0, 5).forEach(u => {
+              parts.push(`**Available versions you can upgrade to (${sorted.length} total):**`);
+              sorted.forEach(u => {
                 parts.push(`  - **${u.version}**`);
               });
               parts.push("");
-              parts.push(`Did you mean **${sorted[0].version}** (latest) or check if ${requestedVersion} is in a different channel?`);
+              parts.push(`**Recommendation:** Upgrade to **${sorted[0].version}** (latest available patch).`);
+              parts.push(`> Ask me: *"upgrade to ${sorted[0].version}"*`);
+            } else {
+              parts.push(`No available updates found in channel \`${channel}\`. Your cluster may already be at the latest version.`);
             }
           }
         } else {

@@ -719,6 +719,16 @@ export function parse(message, memory = {}) {
     }
   }
 
+  // Guard: "top" intent only makes sense for pod/node (metrics.k8s.io).
+  // If the resource is something else (pvc, route, configmap, etc.) and the
+  // query doesn't explicitly mention cpu/memory, downgrade intent to "list".
+  if (intent === "top" && resource &&
+      resource !== "pod" && resource !== "node" &&
+      !/\b(cpu|memory|mem|ram)\b/.test(lower)) {
+    intent = "list";
+    scope = scope || "list";
+  }
+
   // ---- 3. Namespace extraction ----
   let namespace = null;
 

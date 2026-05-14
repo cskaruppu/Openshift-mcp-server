@@ -2635,7 +2635,7 @@ tr:hover td{background:#ffffff06}
               </div>
               <div class="wcat-body">
                 <button onclick="sendFullChat('Check cluster health')">How healthy is my cluster?</button>
-                <button onclick="sendFullChat('Show node CPU and memory utilization')">Show node resource usage</button>
+                <button onclick="sendFullChat('top nodes')">Show node resource usage</button>
                 <button onclick="sendFullChat('Show me all pods with issues')">Which pods have issues?</button>
                 <button onclick="sendFullChat('Show top pods by CPU usage')">Top CPU consuming pods</button>
                 <button onclick="sendFullChat('Are there any degraded operators?')">Any degraded operators?</button>
@@ -2653,9 +2653,9 @@ tr:hover td{background:#ffffff06}
                 <button onclick="sendFullChat('Show CrashLoopBackOff pods')">Find CrashLoopBackOff pods</button>
                 <button onclick="sendFullChat('Show OOMKilled pods')">Find OOMKilled pods</button>
                 <button onclick="sendFullChat('Show ImagePullBackOff pods')">Find ImagePullBackOff pods</button>
-                <button onclick="sendFullChat('Show pods with high restart count')">Pods with high restarts</button>
+                <button onclick="sendFullChat('Show pods with high restarts')">Pods with high restarts</button>
                 <button onclick="sendFullChat('Show pending pods')">Stuck pending pods</button>
-                <button onclick="sendFullChat('Why is my deployment not available?')">Deployment not ready?</button>
+                <button onclick="sendFullChat('Show deployments not available')">Deployment not ready?</button>
               </div>
             </div>
 
@@ -2670,8 +2670,8 @@ tr:hover td{background:#ffffff06}
                 <button onclick="sendFullChat('Show pods in default namespace')">Pods in a namespace</button>
                 <button onclick="sendFullChat('Show statefulsets')">StatefulSets status</button>
                 <button onclick="sendFullChat('Show daemonsets')">DaemonSets status</button>
-                <button onclick="sendFullChat('List jobs and cronjobs')">Jobs &amp; CronJobs</button>
-                <button onclick="sendFullChat('Show pods without resource limits')">Pods without limits</button>
+                <button onclick="sendFullChat('List jobs')">Jobs &amp; CronJobs</button>
+                <button onclick="sendFullChat('Show pods without limits')">Pods without limits</button>
               </div>
             </div>
 
@@ -2700,10 +2700,10 @@ tr:hover td{background:#ffffff06}
               <div class="wcat-body">
                 <button onclick="sendFullChat('/upgrade-check')">Upgrade readiness assessment</button>
                 <button onclick="sendFullChat('Show cluster version and upgrade history')">Current version &amp; history</button>
-                <button onclick="sendFullChat('Compare upgrade paths')">Compare upgrade paths</button>
-                <button onclick="sendFullChat('Check certificate expiry')">Certificate expiry</button>
+                <button onclick="sendFullChat('Show cluster version and upgrade history')">Compare upgrade paths</button>
+                <button onclick="sendFullChat('/cert-check')">Certificate expiry</button>
                 <button onclick="sendFullChat('/operator-health')">Operator health check</button>
-                <button onclick="sendFullChat('Show cluster capacity forecast')">Capacity forecast</button>
+                <button onclick="sendFullChat('top nodes')">Capacity forecast</button>
               </div>
             </div>
 
@@ -2715,10 +2715,10 @@ tr:hover td{background:#ffffff06}
               </div>
               <div class="wcat-body">
                 <button onclick="sendFullChat('Show top pods by memory usage')">Top memory consumers</button>
-                <button onclick="sendFullChat('Show PVC usage')">PVC / Storage usage</button>
-                <button onclick="sendFullChat('Show routes and services')">Routes &amp; Services</button>
-                <button onclick="sendFullChat('List configmaps in namespace')">ConfigMaps</button>
-                <button onclick="sendFullChat('List secrets in namespace')">Secrets overview</button>
+                <button onclick="sendFullChat('List PVCs')">PVC / Storage usage</button>
+                <button onclick="sendFullChat('List routes')">Routes &amp; Services</button>
+                <button onclick="sendFullChat('List configmaps')">ConfigMaps</button>
+                <button onclick="sendFullChat('List secrets')">Secrets overview</button>
                 <button onclick="sendFullChat('Show resource quotas')">Resource quotas</button>
               </div>
             </div>
