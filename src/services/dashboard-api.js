@@ -537,6 +537,53 @@ export async function handleDashboardAPI(pathname, req, res) {
         break;
       }
 
+      // ---- Node metrics (CPU/memory utilization) ----
+      case "/api/node-metrics": {
+        try {
+          const [metricsResp, nodesResp] = await Promise.all([
+            ocpGet("/apis/metrics.k8s.io/v1beta1/nodes"),
+            ocpGet("/api/v1/nodes"),
+          ]);
+          const capMap = {};
+          for (const n of (nodesResp.items || [])) {
+            const cpuCap = parseInt(n.status?.capacity?.cpu || "0", 10);
+            const memStr = n.status?.capacity?.memory || "0";
+            let memBytes = 0;
+            if (memStr.endsWith("Ki")) memBytes = parseInt(memStr) * 1024;
+            else if (memStr.endsWith("Mi")) memBytes = parseInt(memStr) * 1024 * 1024;
+            else if (memStr.endsWith("Gi")) memBytes = parseInt(memStr) * 1024 * 1024 * 1024;
+            else memBytes = parseInt(memStr) || 0;
+            capMap[n.metadata.name] = { cpuCores: cpuCap, memBytes };
+          }
+          const result = (metricsResp.items || []).map(m => {
+            const name = m.metadata.name;
+            const cap = capMap[name] || { cpuCores: 1, memBytes: 1 };
+            const cpuUsage = m.usage?.cpu || "0";
+            const memUsage = m.usage?.memory || "0";
+            let cpuNano = 0;
+            if (cpuUsage.endsWith("n")) cpuNano = parseInt(cpuUsage);
+            else if (cpuUsage.endsWith("m")) cpuNano = parseInt(cpuUsage) * 1e6;
+            else cpuNano = parseFloat(cpuUsage) * 1e9;
+            let memBytes = 0;
+            if (memUsage.endsWith("Ki")) memBytes = parseInt(memUsage) * 1024;
+            else if (memUsage.endsWith("Mi")) memBytes = parseInt(memUsage) * 1024 * 1024;
+            else if (memUsage.endsWith("Gi")) memBytes = parseInt(memUsage) * 1024 * 1024 * 1024;
+            else memBytes = parseInt(memUsage) || 0;
+            return {
+              name,
+              cpuUsage: (cpuNano / 1e9).toFixed(2) + ' cores',
+              cpuPercent: cap.cpuCores > 0 ? Math.round((cpuNano / 1e9 / cap.cpuCores) * 100) : 0,
+              memoryUsage: (memBytes / (1024 * 1024 * 1024)).toFixed(1) + ' Gi',
+              memoryPercent: cap.memBytes > 0 ? Math.round((memBytes / cap.memBytes) * 100) : 0,
+            };
+          });
+          json(res, 200, result);
+        } catch (e) {
+          json(res, 200, []);
+        }
+        break;
+      }
+
       // ---- Pods with issues ----
       case "/api/pods/issues": {
         const pods = await ocpGet("/api/v1/pods");

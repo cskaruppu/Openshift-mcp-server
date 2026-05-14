@@ -4537,6 +4537,143 @@ async function loadRiskPredictions() {
       });
     } catch {}
 
+    // Node resource utilization from metrics API
+    try {
+      var nodeMetrics = await apiFetch('/api/node-metrics');
+      var nodesByName = {};
+      (nodes || []).forEach(function(n) { nodesByName[n.name] = n; });
+      (nodeMetrics || []).forEach(function(nm) {
+        var shortName = (nm.name || '').split('.')[0];
+        var node = nodesByName[nm.name];
+        if (!node) return;
+        var cpuPct = nm.cpuPercent || 0;
+        var memPct = nm.memoryPercent || 0;
+        if (cpuPct > 85) {
+          _riskData.push({
+            severity: cpuPct > 95 ? 'critical' : 'warning',
+            icon: '&#x1F525;',
+            title: 'Node ' + esc(shortName) + ' — CPU ' + Math.round(cpuPct) + '%',
+            confidence: 99,
+            confidenceReason: 'CPU usage from metrics.k8s.io API; ' + (nm.cpuUsage || '?') + ' of ' + (node.cpu || '?') + ' cores',
+            evidence: 'CPU usage:  ' + Math.round(cpuPct) + '%\nCPU used:   ' + (nm.cpuUsage || 'N/A') + '\nCPU total:  ' + (node.cpu || 'N/A') + ' cores\nPods:       ' + node.pods,
+            impact: (cpuPct > 95 ? 'Node is near CPU saturation. ' : 'Node CPU is heavily loaded. ') + 'Pods may experience throttling and degraded performance.',
+            action: '&#x2794; Redistribute workloads or add CPU resources',
+            node: nm.name,
+          });
+        }
+        if (memPct > 85) {
+          _riskData.push({
+            severity: memPct > 95 ? 'critical' : 'warning',
+            icon: '&#x1F4A7;',
+            title: 'Node ' + esc(shortName) + ' — Memory ' + Math.round(memPct) + '%',
+            confidence: 99,
+            confidenceReason: 'Memory usage from metrics.k8s.io API; ' + (nm.memoryUsage || '?') + ' of ' + (node.memory || '?'),
+            evidence: 'Memory usage: ' + Math.round(memPct) + '%\nMem used:     ' + (nm.memoryUsage || 'N/A') + '\nMem total:    ' + (node.memory || 'N/A') + '\nPods:         ' + node.pods,
+            impact: (memPct > 95 ? 'Node memory nearly exhausted. OOM kills imminent.' : 'Node memory is heavily used. ') + ' Kubelet may begin evicting pods.',
+            action: '&#x2794; Reduce workload or increase node memory',
+            node: nm.name,
+          });
+        }
+      });
+    } catch {}
+
+    // Kubelet version mismatch detection
+    try {
+      var kubeletVersions = {};
+      (nodes || []).forEach(function(n) {
+        var v = n.kubeletVersion || 'unknown';
+        if (!kubeletVersions[v]) kubeletVersions[v] = [];
+        kubeletVersions[v].push(n.name.split('.')[0]);
+      });
+      var versionKeys = Object.keys(kubeletVersions);
+      if (versionKeys.length > 1) {
+        var majorVersion = versionKeys[0];
+        var majorCount = kubeletVersions[majorVersion].length;
+        versionKeys.forEach(function(v) {
+          if (kubeletVersions[v].length > majorCount) { majorVersion = v; majorCount = kubeletVersions[v].length; }
+        });
+        versionKeys.forEach(function(v) {
+          if (v === majorVersion) return;
+          kubeletVersions[v].forEach(function(shortName) {
+            _riskData.push({
+              severity: 'warning',
+              icon: '&#x26A0;',
+              title: 'Node ' + esc(shortName) + ' — kubelet version skew',
+              confidence: 100,
+              confidenceReason: 'Kubelet version from node status API; compared against cluster majority',
+              evidence: 'Node version: ' + v + '\nMajority:     ' + majorVersion + ' (' + majorCount + ' nodes)\nThis node:    ' + v,
+              impact: 'Version skew can cause API incompatibilities and unexpected behavior. Kubernetes supports max 1 minor version difference between kubelet and control plane.',
+              action: '&#x2794; Update kubelet on this node to ' + majorVersion,
+              node: shortName,
+            });
+          });
+        });
+      }
+    } catch {}
+
+    // Cluster operators — degraded or unavailable
+    try {
+      var operators = await apiFetch('/api/cluster/operators');
+      (operators || []).forEach(function(op) {
+        if (op.health === 'degraded') {
+          _riskData.push({
+            severity: 'critical',
+            icon: '&#x2699;',
+            title: 'Operator ' + esc(op.name) + ' — Degraded',
+            confidence: 100,
+            confidenceReason: 'ClusterOperator Degraded=True confirmed via config.openshift.io API',
+            evidence: 'Operator:   ' + op.name + '\nHealth:     Degraded\nVersion:    ' + (op.version || 'N/A') + '\nMessage:    ' + (op.message || 'none').substring(0, 200),
+            impact: 'Cluster operator is degraded. Core platform functionality (' + op.name + ') may not work correctly. This can affect workloads and cluster stability.',
+            action: '&#x2794; Investigate: oc describe clusteroperator ' + op.name,
+          });
+        } else if (op.health === 'unavailable') {
+          _riskData.push({
+            severity: 'critical',
+            icon: '&#x1F6A8;',
+            title: 'Operator ' + esc(op.name) + ' — Unavailable',
+            confidence: 100,
+            confidenceReason: 'ClusterOperator Available=False confirmed via config.openshift.io API',
+            evidence: 'Operator:   ' + op.name + '\nHealth:     Unavailable\nVersion:    ' + (op.version || 'N/A') + '\nMessage:    ' + (op.message || 'none').substring(0, 200),
+            impact: 'Cluster operator is unavailable. The ' + op.name + ' component is down. Immediate attention required.',
+            action: '&#x2794; Investigate: oc describe clusteroperator ' + op.name,
+          });
+        } else if (op.health === 'progressing') {
+          _riskData.push({
+            severity: 'info',
+            icon: '&#x1F504;',
+            title: 'Operator ' + esc(op.name) + ' — Progressing',
+            confidence: 100,
+            confidenceReason: 'ClusterOperator Progressing=True confirmed via config.openshift.io API',
+            evidence: 'Operator:   ' + op.name + '\nHealth:     Progressing\nVersion:    ' + (op.version || 'N/A') + '\nMessage:    ' + (op.message || 'none').substring(0, 200),
+            impact: 'Operator is currently updating or reconciling. This is usually normal during upgrades but should complete within a reasonable time.',
+            action: '&#x2794; Monitor: oc get clusteroperator ' + op.name + ' -w',
+          });
+        }
+      });
+    } catch {}
+
+    // Pending pods — stuck scheduling
+    try {
+      var pendingPods = (pods || []).filter(function(p) { return p.phase === 'Pending'; });
+      pendingPods.forEach(function(p) {
+        if (seen[p.namespace + '/' + p.name]) return;
+        seen[p.namespace + '/' + p.name] = true;
+        var ageH = p.podAgeHours || 0;
+        if (ageH < 0.1) return;
+        _riskData.push({
+          severity: ageH > 1 ? 'critical' : 'warning',
+          icon: '&#x23F3;',
+          title: esc(p.name),
+          confidence: 100,
+          confidenceReason: 'Pod phase "Pending" confirmed via pod status API; age ' + ageH + 'h',
+          evidence: 'Phase:      Pending\nNamespace:  ' + p.namespace + '\nAge:        ' + ageH + 'h\nNode:       ' + (p.node || 'unassigned'),
+          impact: 'Pod has been pending for ' + ageH + 'h. ' + (ageH > 1 ? 'This indicates a scheduling failure — insufficient resources, node affinity, or taints preventing placement.' : 'May be waiting for resources to become available.'),
+          action: '&#x2794; Check events: oc describe pod ' + p.name + ' -n ' + p.namespace,
+          ns: p.namespace, pod: p.name,
+        });
+      });
+    } catch {}
+
     // Sort: critical first, then warning, then info
     var sevOrder = { critical: 0, warning: 1, info: 2 };
     _riskData.sort(function(a, b) { return (sevOrder[a.severity] || 9) - (sevOrder[b.severity] || 9); });
