@@ -1745,6 +1745,123 @@ async function startSSE() {
       return;
     }
 
+    // SSE live cluster stream — /api/live-stream (GET)
+    if (req.method === "GET" && url.pathname === "/api/live-stream") {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Access-Control-Allow-Origin": "*",
+      });
+      res.write("data: {\"type\":\"connected\"}\n\n");
+
+      let closed = false;
+      req.on("close", () => { closed = true; });
+
+      const sendEvent = (type, payload) => {
+        if (closed) return;
+        try { res.write(`data: ${JSON.stringify({ type, ...payload })}\n\n`); } catch { closed = true; }
+      };
+
+      const gather = async () => {
+        if (closed) return;
+        try {
+          const [podsResp, nodesResp, eventsResp, opsResp] = await Promise.all([
+            ocpGet("/api/v1/pods").catch(() => ({ items: [] })),
+            ocpGet("/api/v1/nodes").catch(() => ({ items: [] })),
+            ocpGet("/api/v1/events?limit=100&fieldSelector=type!=Normal").catch(() => ({ items: [] })),
+            ocpGet("/apis/config.openshift.io/v1/clusteroperators").catch(() => ({ items: [] })),
+          ]);
+
+          // Problem pods
+          const problemPods = (podsResp.items || []).filter(p => {
+            const phase = p.status?.phase;
+            if (phase === "Failed" || phase === "Pending") return true;
+            return (p.status?.containerStatuses || []).some(c =>
+              c.state?.waiting?.reason === "CrashLoopBackOff" ||
+              c.state?.waiting?.reason === "OOMKilled" ||
+              c.state?.waiting?.reason === "ImagePullBackOff" ||
+              c.state?.waiting?.reason === "ErrImagePull" ||
+              c.state?.terminated?.reason === "OOMKilled" ||
+              (c.restartCount || 0) > 10
+            );
+          }).slice(0, 50).map(p => ({
+            name: p.metadata?.name,
+            namespace: p.metadata?.namespace,
+            phase: p.status?.phase,
+            node: p.spec?.nodeName,
+            containers: (p.status?.containerStatuses || []).map(c => ({
+              name: c.name, ready: c.ready, restarts: c.restartCount || 0,
+              state: Object.keys(c.state || {})[0] || "unknown",
+              reason: c.state?.waiting?.reason || c.state?.terminated?.reason || null,
+            })),
+          }));
+
+          // Nodes
+          const nodes = (nodesResp.items || []).map(n => {
+            const conds = {};
+            (n.status?.conditions || []).forEach(c => { conds[c.type] = c.status; });
+            return {
+              name: n.metadata?.name,
+              ready: conds.Ready === "True",
+              memoryPressure: conds.MemoryPressure === "True",
+              diskPressure: conds.DiskPressure === "True",
+              pidPressure: conds.PIDPressure === "True",
+              cpu: n.status?.capacity?.cpu,
+              memory: n.status?.capacity?.memory,
+            };
+          });
+
+          // Recent warning events
+          const events = (eventsResp.items || []).slice(-30).map(e => ({
+            reason: e.reason,
+            message: (e.message || "").substring(0, 150),
+            namespace: e.metadata?.namespace,
+            object: (e.involvedObject?.kind || "") + "/" + (e.involvedObject?.name || ""),
+            count: e.count || 1,
+            lastSeen: e.lastTimestamp || e.eventTime,
+          }));
+
+          // Operators
+          const operators = (opsResp.items || []).map(op => {
+            const conds = (op.status?.conditions || []).reduce((a, c) => { a[c.type] = { status: c.status, message: c.message || "" }; return a; }, {});
+            return {
+              name: op.metadata?.name,
+              degraded: conds.Degraded?.status === "True",
+              available: conds.Available?.status === "True",
+              progressing: conds.Progressing?.status === "True",
+              message: conds.Degraded?.status === "True" ? (conds.Degraded.message || "").substring(0, 150) : "",
+            };
+          });
+
+          const totalPods = (podsResp.items || []).length;
+          const runningPods = (podsResp.items || []).filter(p => p.status?.phase === "Running").length;
+
+          sendEvent("cluster-state", {
+            ts: Date.now(),
+            summary: {
+              totalPods, runningPods, problemPods: problemPods.length,
+              totalNodes: nodes.length, readyNodes: nodes.filter(n => n.ready).length,
+              degradedOps: operators.filter(o => o.degraded).length,
+              totalOps: operators.length,
+              warningEvents: events.length,
+            },
+            problemPods,
+            nodes,
+            events,
+            operators: operators.filter(o => o.degraded || o.progressing || !o.available),
+          });
+        } catch (err) {
+          sendEvent("error", { message: err.message });
+        }
+      };
+
+      await gather();
+      const interval = setInterval(gather, 15000);
+      req.on("close", () => clearInterval(interval));
+      return;
+    }
+
     // CR tracking — /api/cr
     if (url.pathname === "/api/cr" || url.pathname.startsWith("/api/cr/")) {
       await handleCRTrackingAPI(url, req, res);

@@ -524,6 +524,36 @@ tr:hover td{background:#ffffff06}
 .risk-item.llm-finding{border-left-color:#a371f7}
 .risk-item.llm-finding .risk-sev{background:rgba(130,80,223,.15);color:#a371f7}
 .risk-cat{font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(130,80,223,.1);color:#a371f7;font-weight:600;text-transform:uppercase;letter-spacing:.3px;margin-left:4px}
+/* Live cluster status */
+.live-pulse{font-size:11px;font-weight:600;transition:color .3s}
+.live-pulse.connected{color:var(--ok)} .live-pulse.disconnected{color:var(--crit)} .live-pulse.connecting{color:var(--warn)}
+.live-stats{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+.live-stat{flex:1;min-width:60px;text-align:center;padding:8px 6px;background:var(--bg);border-radius:8px;border:1px solid var(--border)}
+.live-stat-v{font-size:18px;font-weight:800;color:var(--text)}
+.live-stat-l{font-size:9px;color:var(--text2);margin-top:2px;text-transform:uppercase;letter-spacing:.5px}
+.live-node-row{display:flex;align-items:center;gap:8px;padding:5px 8px;font-size:11px;border-bottom:1px solid var(--border)}
+.live-node-row:last-child{border-bottom:none}
+.live-node-name{font-weight:600;min-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.live-node-badge{padding:1px 6px;border-radius:4px;font-size:9px;font-weight:700}
+.live-node-badge.ok{background:rgba(63,185,80,.12);color:var(--ok)}
+.live-node-badge.err{background:rgba(248,81,73,.12);color:var(--crit)}
+.live-event-row{padding:5px 8px;font-size:10px;border-bottom:1px solid var(--border);display:flex;gap:6px;align-items:flex-start}
+.live-event-row:last-child{border-bottom:none}
+.live-event-reason{font-weight:700;min-width:80px;flex-shrink:0}
+.live-event-msg{color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* RCA panel */
+.rca-timeline{padding:0 12px}
+.rca-step{display:flex;gap:12px;padding:10px 0;border-left:2px solid var(--border);margin-left:12px;padding-left:16px;position:relative}
+.rca-step::before{content:'';position:absolute;left:-5px;top:14px;width:8px;height:8px;border-radius:50%;background:var(--accent2);border:2px solid var(--card)}
+.rca-step.root::before{background:var(--crit)}
+.rca-step.effect::before{background:var(--warn)}
+.rca-step-title{font-size:12px;font-weight:700;color:var(--text)}
+.rca-step-detail{font-size:11px;color:var(--text2);margin-top:2px}
+.rca-step-evidence{font-size:10px;font-family:var(--mono);background:var(--bg);padding:4px 8px;border-radius:4px;margin-top:4px;color:var(--accent2)}
+.rca-conclusion{margin-top:12px;padding:12px;background:rgba(248,81,73,.06);border:1px solid rgba(248,81,73,.15);border-radius:8px;font-size:12px}
+.rca-loading{text-align:center;padding:20px;font-size:12px;color:var(--text2)}
+.risk-rca-btn{padding:2px 8px;border-radius:4px;font-size:9px;font-weight:600;border:1px solid rgba(248,81,73,.3);background:rgba(248,81,73,.06);color:var(--crit);cursor:pointer;transition:all .15s;margin-left:4px}
+.risk-rca-btn:hover{background:rgba(248,81,73,.15)}
 /* Quick Command Bar */
 .cmd-bar-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9998;display:none;align-items:flex-start;justify-content:center;padding-top:18vh;backdrop-filter:blur(4px)}
 .cmd-bar-overlay.open{display:flex}
@@ -2386,24 +2416,24 @@ tr:hover td{background:#ffffff06}
     </div>
   </div>
 
-  <!-- Bottom Section: ITSM + Pods with Issues + ACM -->
+  <!-- Bottom Section: Summary Cards + ACM -->
   <div class="grid grid-3" style="margin-top:8px">
 
-    <!-- AI Activity Feed -->
+    <!-- Pods with Issues — compact summary -->
+    <div class="card" style="cursor:pointer" onclick="showView('intelligence')">
+      <h3>&#x1F4E6; Pods with Issues <span style="font-size:10px;color:var(--accent2);font-weight:400;margin-left:auto">View in AI Intelligence &#8594;</span></h3>
+      <div id="pod-issues" style="display:flex;flex-direction:column;gap:10px">
+        <div class="loading">Loading...</div>
+      </div>
+    </div>
+
+    <!-- AI Insights Feed -->
     <div class="card">
       <h3>&#x1F4AC; AI Insights Feed</h3>
       <div id="ai-activity-feed" style="display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto">
         <div class="loading">Gathering insights...</div>
       </div>
       <div style="margin-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="showView('chat')">Open AI Chat &#x2192;</button></div>
-    </div>
-
-    <!-- Pods with Issues (LIVE) -->
-    <div class="card">
-      <h3>Pods with Issues (Live)</h3>
-      <div id="pod-issues" style="display:flex;flex-direction:column;gap:10px">
-        <div class="loading">Loading...</div>
-      </div>
     </div>
 
     <!-- Multi-Cluster (ACM) -->
@@ -3458,6 +3488,78 @@ tr:hover td{background:#ffffff06}
     <!-- Alert cards -->
     <div id="aic-alerts-list" class="aic-alerts-list">
       <div class="aic-empty">Loading alerts...</div>
+    </div>
+  </div>
+
+  <!-- Live Cluster Observability — SSE-powered -->
+  <div class="ai-grid-2">
+    <!-- Risk Predictions (merged from dashboard) -->
+    <div class="ai-section">
+      <div class="ai-section-head">
+        <div class="ai-section-title">
+          <span class="ai-section-icon" style="background:linear-gradient(135deg,#ef4444,#f97316)">&#x1F52E;</span>
+          <div>
+            <div class="ai-section-name">Risk Predictions</div>
+            <div class="ai-section-sub">Evidence-based + AI deep analysis</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="risk-method" title="Findings from live Kubernetes API data">&#x2705; Evidence-Based</span>
+          <span id="intel-risk-accuracy" style="font-size:11px;font-weight:700;color:var(--ok)"></span>
+          <button class="risk-deep-btn" onclick="runLLMRiskAnalysis();renderIntelRiskList()" title="AI deep pattern analysis">&#x1F9E0; Deep Analysis</button>
+        </div>
+      </div>
+      <div class="aic-pills" style="border:none;padding:4px 0">
+        <button class="aic-pill active" onclick="filterIntelRisks('all',this)"><span>All</span><span class="ct" id="intel-risk-all">0</span></button>
+        <button class="aic-pill crit" onclick="filterIntelRisks('critical',this)"><span>Critical</span><span class="ct" id="intel-risk-crit">0</span></button>
+        <button class="aic-pill warn" onclick="filterIntelRisks('warning',this)"><span>Warning</span><span class="ct" id="intel-risk-warn">0</span></button>
+        <button class="aic-pill info" onclick="filterIntelRisks('info',this)"><span>Info</span><span class="ct" id="intel-risk-info">0</span></button>
+      </div>
+      <div id="intel-risk-list" class="aic-alerts-list" style="max-height:400px;overflow-y:auto"></div>
+    </div>
+
+    <!-- Live Cluster Status — SSE-powered -->
+    <div class="ai-section">
+      <div class="ai-section-head">
+        <div class="ai-section-title">
+          <span class="ai-section-icon" style="background:linear-gradient(135deg,#22c55e,#0ea5e9)">&#x1F4E1;</span>
+          <div>
+            <div class="ai-section-name">Live Cluster Status</div>
+            <div class="ai-section-sub">Real-time streaming from cluster API</div>
+          </div>
+        </div>
+        <span id="live-pulse" class="live-pulse" title="SSE connection status">&#x25CF; Connecting...</span>
+      </div>
+      <div id="live-cluster-stats" class="live-stats">
+        <div class="live-stat"><div class="live-stat-v" id="live-pods">--</div><div class="live-stat-l">Pods</div></div>
+        <div class="live-stat"><div class="live-stat-v" id="live-problem-pods">--</div><div class="live-stat-l">Issues</div></div>
+        <div class="live-stat"><div class="live-stat-v" id="live-nodes">--</div><div class="live-stat-l">Nodes</div></div>
+        <div class="live-stat"><div class="live-stat-v" id="live-ops">--</div><div class="live-stat-l">Operators</div></div>
+        <div class="live-stat"><div class="live-stat-v" id="live-events">--</div><div class="live-stat-l">Events</div></div>
+      </div>
+      <div id="live-nodes-list" style="max-height:180px;overflow-y:auto;margin-bottom:8px"></div>
+      <div id="live-events-list" style="max-height:200px;overflow-y:auto"></div>
+      <div style="margin-top:6px;font-size:9px;color:var(--text2)" id="live-updated">Last update: --</div>
+    </div>
+  </div>
+
+  <!-- Root Cause Analysis -->
+  <div class="ai-section">
+    <div class="ai-section-head">
+      <div class="ai-section-title">
+        <span class="ai-section-icon" style="background:linear-gradient(135deg,#f59e0b,#ef4444)">&#x1F50D;</span>
+        <div>
+          <div class="ai-section-name">Root Cause Analysis</div>
+          <div class="ai-section-sub">AI-powered causal chain investigation — click any risk finding to trigger RCA</div>
+        </div>
+      </div>
+    </div>
+    <div id="rca-panel">
+      <div style="text-align:center;color:var(--text2);padding:24px;font-size:12px">
+        <div style="font-size:24px;margin-bottom:8px">&#x1F50D;</div>
+        Click <strong>"Root Cause"</strong> on any risk finding above to trigger an AI-powered investigation.<br>
+        The AI will correlate logs, events, metrics, and node conditions to identify the causal chain.
+      </div>
     </div>
   </div>
 
@@ -7188,6 +7290,7 @@ function showView(view) {
   } else if (view === 'agents') {
     loadAgentRegistry();
   }
+  if (view !== 'intelligence' && _liveSSE) { _liveSSE.close(); _liveSSE = null; }
 }
 
 // ---------------------------------------------------------------------------
@@ -13093,6 +13196,221 @@ async function loadIntelligenceView() {
     loadKBEntries();
   } catch (e) {
     console.error('Intelligence load error:', e);
+  }
+  renderIntelRiskList();
+  connectLiveStream();
+}
+
+// ---------------------------------------------------------------------------
+// SSE Live Cluster Stream
+// ---------------------------------------------------------------------------
+var _liveSSE = null;
+var _liveState = null;
+
+function connectLiveStream() {
+  if (_liveSSE) { _liveSSE.close(); _liveSSE = null; }
+  var pulse = document.getElementById('live-pulse');
+  if (pulse) { pulse.textContent = '● Connecting...'; pulse.className = 'live-pulse connecting'; }
+  try {
+    _liveSSE = new EventSource(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/live-stream'));
+  } catch { return; }
+  _liveSSE.onopen = function() {
+    if (pulse) { pulse.textContent = '● Live'; pulse.className = 'live-pulse connected'; }
+  };
+  _liveSSE.onmessage = function(e) {
+    try {
+      var data = JSON.parse(e.data);
+      if (data.type === 'connected') {
+        if (pulse) { pulse.textContent = '● Live'; pulse.className = 'live-pulse connected'; }
+        return;
+      }
+      if (data.type === 'cluster-state') {
+        _liveState = data;
+        renderLiveCluster(data);
+      }
+    } catch {}
+  };
+  _liveSSE.onerror = function() {
+    if (pulse) { pulse.textContent = '● Reconnecting...'; pulse.className = 'live-pulse disconnected'; }
+    if (_liveSSE) { _liveSSE.close(); _liveSSE = null; }
+    setTimeout(function() { if (_currentView === 'intelligence') connectLiveStream(); }, 5000);
+  };
+}
+
+function renderLiveCluster(data) {
+  var s = data.summary || {};
+  var el = function(id, v) { var e = document.getElementById(id); if (e) e.textContent = v; };
+  el('live-pods', s.runningPods + '/' + s.totalPods);
+  el('live-problem-pods', s.problemPods);
+  el('live-nodes', s.readyNodes + '/' + s.totalNodes);
+  el('live-ops', (s.totalOps - s.degradedOps) + '/' + s.totalOps);
+  el('live-events', s.warningEvents);
+  // Color problem counts
+  var ppEl = document.getElementById('live-problem-pods');
+  if (ppEl) ppEl.style.color = s.problemPods > 0 ? 'var(--crit)' : 'var(--ok)';
+  var opsEl = document.getElementById('live-ops');
+  if (opsEl) opsEl.style.color = s.degradedOps > 0 ? 'var(--crit)' : 'var(--ok)';
+
+  // Nodes list
+  var nodesEl = document.getElementById('live-nodes-list');
+  if (nodesEl && data.nodes) {
+    nodesEl.innerHTML = '<div style="font-size:10px;font-weight:700;color:var(--text2);padding:4px 8px;text-transform:uppercase;letter-spacing:.5px">Nodes</div>' +
+      data.nodes.map(function(n) {
+        var shortName = (n.name || '').split('.')[0];
+        var status = n.ready ? 'Ready' : 'NotReady';
+        var cls = n.ready ? 'ok' : 'err';
+        var pressure = [];
+        if (n.memoryPressure) pressure.push('MemPressure');
+        if (n.diskPressure) pressure.push('DiskPressure');
+        if (n.pidPressure) pressure.push('PIDPressure');
+        return '<div class="live-node-row">' +
+          '<span class="live-node-name">' + esc(shortName) + '</span>' +
+          '<span class="live-node-badge ' + cls + '">' + status + '</span>' +
+          (pressure.length ? '<span style="font-size:9px;color:var(--crit)">' + pressure.join(', ') + '</span>' : '') +
+          '<span style="font-size:9px;color:var(--text2);margin-left:auto">' + (n.cpu || '?') + ' CPU / ' + (n.memory || '?') + '</span>' +
+        '</div>';
+      }).join('');
+  }
+
+  // Events list
+  var evtEl = document.getElementById('live-events-list');
+  if (evtEl && data.events && data.events.length > 0) {
+    evtEl.innerHTML = '<div style="font-size:10px;font-weight:700;color:var(--text2);padding:4px 8px;text-transform:uppercase;letter-spacing:.5px">Warning Events (Live)</div>' +
+      data.events.slice(-15).reverse().map(function(e) {
+        var ago = e.lastSeen ? timeAgo(new Date(e.lastSeen)) : '';
+        return '<div class="live-event-row">' +
+          '<span class="live-event-reason" style="color:var(--crit)">' + esc(e.reason || '') + '</span>' +
+          '<span class="live-event-msg" title="' + esc(e.message || '') + '">' + esc(e.object || '') + ' — ' + esc((e.message || '').substring(0, 100)) + '</span>' +
+          '<span style="font-size:9px;color:var(--text2);white-space:nowrap">' + (e.count > 1 ? 'x' + e.count + ' ' : '') + ago + '</span>' +
+        '</div>';
+      }).join('');
+  }
+
+  var updEl = document.getElementById('live-updated');
+  if (updEl) updEl.textContent = 'Last update: ' + new Date(data.ts).toLocaleTimeString();
+}
+
+function timeAgo(date) {
+  var s = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
+
+// ---------------------------------------------------------------------------
+// Risk Predictions in Intelligence view
+// ---------------------------------------------------------------------------
+var _intelRiskFilter = 'all';
+
+function filterIntelRisks(sev, btn) {
+  _intelRiskFilter = sev;
+  if (btn) {
+    btn.closest('.aic-pills').querySelectorAll('.aic-pill').forEach(function(b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+  }
+  renderIntelRiskList();
+}
+
+function renderIntelRiskList() {
+  var el = document.getElementById('intel-risk-list');
+  if (!el) return;
+  var filtered = _intelRiskFilter === 'all' ? _riskData : _riskData.filter(function(r) { return r.severity === _intelRiskFilter; });
+  var counts = { critical: 0, warning: 0, info: 0 };
+  _riskData.forEach(function(r) { counts[r.severity] = (counts[r.severity] || 0) + 1; });
+  var ac = document.getElementById('intel-risk-all'); if (ac) ac.textContent = _riskData.length;
+  var cc = document.getElementById('intel-risk-crit'); if (cc) cc.textContent = counts.critical;
+  var wc = document.getElementById('intel-risk-warn'); if (wc) wc.textContent = counts.warning;
+  var ic = document.getElementById('intel-risk-info'); if (ic) ic.textContent = counts.info || 0;
+  var accEl = document.getElementById('intel-risk-accuracy');
+  if (accEl && _riskData.length > 0) {
+    var total = _riskData.reduce(function(s, r) { return s + (r.confidence || 0); }, 0);
+    accEl.textContent = Math.round(total / _riskData.length) + '% accuracy';
+  }
+  if (!filtered.length) {
+    el.innerHTML = '<div style="text-align:center;color:var(--text2);padding:20px;font-size:12px">✅ No risks detected</div>';
+    return;
+  }
+  var hasLLM = filtered.some(function(r) { return r.llm; });
+  var hasEvidence = filtered.some(function(r) { return !r.llm; });
+  var showedDivider = false;
+  el.innerHTML = filtered.map(function(r, idx) {
+    var conf = r.confidence || 0;
+    var confClass = conf >= 95 ? 'high' : conf >= 80 ? 'med' : 'low';
+    var confHtml = '<span class="risk-conf ' + confClass + '" title="' + esc(r.confidenceReason || '') + '"><span class="risk-conf-bar"><div style="width:' + conf + '%"></div></span>' + conf + '%</span>';
+    var catTag = r.llm && r.category ? '<span class="risk-cat">' + esc(r.category.replace(/_/g, ' ')) + '</span>' : '';
+    var rcaBtn = '<button class="risk-rca-btn" onclick="event.stopPropagation();triggerRCA(' + idx + ')" title="Run root cause analysis">\u{1F50D} Root Cause</button>';
+    var divider = '';
+    if (r.llm && !showedDivider && hasEvidence && hasLLM) { showedDivider = true; divider = '<div class="risk-llm-divider">\u{1F9E0} AI Deep Analysis</div>'; }
+    var cls = 'risk-item ' + esc(r.severity) + (r.llm ? ' llm-finding' : '');
+    return divider + '<div class="' + cls + '">' +
+      '<div class="risk-icon">' + (r.icon || '⚠') + '</div>' +
+      '<div class="risk-body">' +
+        '<div class="risk-title">' + (r.title || '') + ' <span class="risk-sev">' + r.severity + '</span>' + catTag + rcaBtn + confHtml + '</div>' +
+        '<div class="risk-evidence">' + esc(r.evidence || '') + '</div>' +
+        '<div class="risk-impact">' + (r.impact || '') + '</div>' +
+        '<div class="risk-action">' + (r.action || '') + '</div>' +
+      '</div></div>';
+  }).join('');
+}
+
+// ---------------------------------------------------------------------------
+// Root Cause Analysis
+// ---------------------------------------------------------------------------
+async function triggerRCA(riskIdx) {
+  var risk = _riskData[riskIdx];
+  if (!risk) return;
+  var panel = document.getElementById('rca-panel');
+  if (!panel) return;
+  panel.innerHTML = '<div class="rca-loading">\u{1F50D} Investigating root cause for <strong>' + (risk.title || 'Unknown') + '</strong>...<br><span style="font-size:10px;color:var(--text2)">Correlating pods, events, node conditions, and metrics</span></div>';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  var opts = (typeof getActiveProviderOpts === 'function') ? getActiveProviderOpts() : { provider: 'none' };
+  if (!opts.provider || opts.provider === 'none') {
+    panel.innerHTML = '<div class="rca-loading" style="color:var(--crit)">No LLM provider configured. Set a provider in Settings to enable RCA.</div>';
+    return;
+  }
+
+  var clusterContext = '';
+  if (_liveState) {
+    clusterContext = '\n\nLIVE CLUSTER STATE:\n' +
+      'Problem pods: ' + JSON.stringify((_liveState.problemPods || []).slice(0, 15)) + '\n' +
+      'Nodes: ' + JSON.stringify(_liveState.nodes || []) + '\n' +
+      'Recent events: ' + JSON.stringify((_liveState.events || []).slice(0, 20)) + '\n' +
+      'Degraded operators: ' + JSON.stringify((_liveState.operators || []));
+  }
+
+  try {
+    var resp = await fetch(clusterUrl(MCP_API), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: 'Perform a root cause analysis for this issue. Build a timeline and causal chain.\n\n' +
+          'FINDING:\n' +
+          'Severity: ' + risk.severity + '\n' +
+          'Title: ' + (risk.title || '') + '\n' +
+          'Evidence: ' + (risk.evidence || '') + '\n' +
+          'Impact: ' + (risk.impact || '') + '\n' +
+          (risk.ns ? 'Namespace: ' + risk.ns + '\n' : '') +
+          (risk.pod ? 'Pod: ' + risk.pod + '\n' : '') +
+          (risk.node ? 'Node: ' + risk.node + '\n' : '') +
+          clusterContext +
+          '\n\nRespond with:\n1. TIMELINE — ordered list of what happened (earliest first)\n2. ROOT CAUSE — the single underlying cause\n3. CAUSAL CHAIN — how the root cause led to the observed symptoms\n4. RECOMMENDED FIX — specific action to resolve',
+        ...opts,
+      }),
+    });
+    var data = await resp.json();
+    var reply = data.reply || data.error || 'No response';
+    panel.innerHTML = '<div style="padding:12px">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
+        '<span style="font-size:16px">\u{1F50D}</span>' +
+        '<div><div style="font-weight:700;font-size:13px">RCA: ' + esc((risk.title || '').replace(/<[^>]*>/g, '')) + '</div>' +
+        '<div style="font-size:10px;color:var(--text2)">' + risk.severity.toUpperCase() + (risk.ns ? ' • ' + risk.ns : '') + (risk.pod ? ' • ' + risk.pod : '') + '</div></div>' +
+      '</div>' +
+      '<div class="rca-body">' + md(reply) + '</div>' +
+    '</div>';
+  } catch (e) {
+    panel.innerHTML = '<div class="rca-loading" style="color:var(--crit)">RCA failed: ' + esc(e.message) + '</div>';
   }
 }
 
