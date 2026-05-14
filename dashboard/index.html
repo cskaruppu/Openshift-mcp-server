@@ -8105,20 +8105,84 @@ function restoreCachedFixResults(container) {
 }
 
 function createWelcomeEl() {
-  const div = document.createElement('div');
+  var div = document.createElement('div');
   div.className = 'chat-welcome';
   div.id = 'chat-welcome';
-  div.innerHTML = '<div style="width:52px;height:52px;border-radius:16px;background:linear-gradient(135deg,#0052cc,#1a8cff);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:#fff">TA</div>' +
-    '<h2>What can I help you with?</h2>' +
-    '<p>Ask about pods, deployments, nodes, security, or anything in your Kubernetes cluster.</p>' +
-    '<div class="welcome-suggestions">' +
-    '<button onclick="sendFullChat(\'Show me all pods with issues\')">Show pods with issues</button>' +
-    '<button onclick="sendFullChat(\'Check cluster health\')">Check cluster health</button>' +
-    '<button onclick="sendFullChat(\'\/security\')">Run security audit</button>' +
-    '<button onclick="sendFullChat(\'Show CrashLoopBackOff pods\')">Find CrashLoopBackOff pods</button>' +
-    '<button onclick="sendFullChat(\'Check upgrade readiness\')">Check upgrade readiness</button>' +
-    '<button onclick="sendFullChat(\'What if I scale nginx to 10 replicas?\')">What-if analysis</button>' +
-    '</div>';
+  div.innerHTML =
+    '<div style="width:52px;height:52px;border-radius:16px;background:linear-gradient(135deg,#0052cc,#1a8cff);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:#fff">TA</div>' +
+    '<h2>TCS KubeNexus AI</h2>' +
+    '<p>Ask anything about your OpenShift cluster in plain English. I have live access to your cluster data.</p>' +
+    '<div class="welcome-live-bar" id="welcome-live-bar"></div>' +
+    '<div class="welcome-categories">' +
+      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
+        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#22c55e,#10b981)">&#x2764;</span><span class="wcat-title">Cluster Health</span><span class="wcat-arrow">&#x25B8;</span></div>' +
+        '<div class="wcat-body">' +
+          '<button onclick="sendFullChat(\'Check cluster health\')">How healthy is my cluster?</button>' +
+          '<button onclick="sendFullChat(\'Show node CPU and memory utilization\')">Show node resource usage</button>' +
+          '<button onclick="sendFullChat(\'Show me all pods with issues\')">Which pods have issues?</button>' +
+          '<button onclick="sendFullChat(\'Show top pods by CPU usage\')">Top CPU consuming pods</button>' +
+          '<button onclick="sendFullChat(\'Are there any degraded operators?\')">Any degraded operators?</button>' +
+          '<button onclick="sendFullChat(\'Show warning events in the cluster\')">Recent warning events</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
+        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#ef4444,#f97316)">&#x1F527;</span><span class="wcat-title">Troubleshoot</span><span class="wcat-arrow">&#x25B8;</span></div>' +
+        '<div class="wcat-body">' +
+          '<button onclick="sendFullChat(\'Show CrashLoopBackOff pods\')">Find CrashLoopBackOff pods</button>' +
+          '<button onclick="sendFullChat(\'Show OOMKilled pods\')">Find OOMKilled pods</button>' +
+          '<button onclick="sendFullChat(\'Show ImagePullBackOff pods\')">Find ImagePullBackOff pods</button>' +
+          '<button onclick="sendFullChat(\'Show pods with high restart count\')">Pods with high restarts</button>' +
+          '<button onclick="sendFullChat(\'Show pending pods\')">Stuck pending pods</button>' +
+          '<button onclick="sendFullChat(\'Why is my deployment not available?\')">Deployment not ready?</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
+        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#3b82f6,#6366f1)">&#x1F4E6;</span><span class="wcat-title">Workloads</span><span class="wcat-arrow">&#x25B8;</span></div>' +
+        '<div class="wcat-body">' +
+          '<button onclick="sendFullChat(\'List deployments\')">List all deployments</button>' +
+          '<button onclick="sendFullChat(\'Show pods in default namespace\')">Pods in a namespace</button>' +
+          '<button onclick="sendFullChat(\'Show statefulsets\')">StatefulSets status</button>' +
+          '<button onclick="sendFullChat(\'Show daemonsets\')">DaemonSets status</button>' +
+          '<button onclick="sendFullChat(\'List jobs and cronjobs\')">Jobs &amp; CronJobs</button>' +
+          '<button onclick="sendFullChat(\'Show pods without resource limits\')">Pods without limits</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
+        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#a855f7,#ec4899)">&#x1F6E1;</span><span class="wcat-title">Security</span><span class="wcat-arrow">&#x25B8;</span></div>' +
+        '<div class="wcat-body">' +
+          '<button onclick="sendFullChat(\'/security\')">Full security audit</button>' +
+          '<button onclick="sendFullChat(\'Find pods using privileged SCC\')">Privileged pods</button>' +
+          '<button onclick="sendFullChat(\'/cert-check\')">Certificate expiry check</button>' +
+          '<button onclick="sendFullChat(\'/compliance\')">Compliance check</button>' +
+          '<button onclick="sendFullChat(\'Show RBAC for namespace\')">RBAC permissions</button>' +
+          '<button onclick="sendFullChat(\'Show network policies\')">Network policies</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
+        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#f59e0b,#eab308)">&#x2B06;</span><span class="wcat-title">Upgrade &amp; Lifecycle</span><span class="wcat-arrow">&#x25B8;</span></div>' +
+        '<div class="wcat-body">' +
+          '<button onclick="sendFullChat(\'/upgrade-check\')">Upgrade readiness assessment</button>' +
+          '<button onclick="sendFullChat(\'Show cluster version and upgrade history\')">Current version &amp; history</button>' +
+          '<button onclick="sendFullChat(\'Compare upgrade paths\')">Compare upgrade paths</button>' +
+          '<button onclick="sendFullChat(\'Check certificate expiry\')">Certificate expiry</button>' +
+          '<button onclick="sendFullChat(\'/operator-health\')">Operator health check</button>' +
+          '<button onclick="sendFullChat(\'Show cluster capacity forecast\')">Capacity forecast</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
+        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#0ea5e9,#06b6d4)">&#x1F4CA;</span><span class="wcat-title">Resources &amp; Metrics</span><span class="wcat-arrow">&#x25B8;</span></div>' +
+        '<div class="wcat-body">' +
+          '<button onclick="sendFullChat(\'Show top pods by memory usage\')">Top memory consumers</button>' +
+          '<button onclick="sendFullChat(\'Show PVC usage\')">PVC / Storage usage</button>' +
+          '<button onclick="sendFullChat(\'Show routes and services\')">Routes &amp; Services</button>' +
+          '<button onclick="sendFullChat(\'List configmaps in namespace\')">ConfigMaps</button>' +
+          '<button onclick="sendFullChat(\'List secrets in namespace\')">Secrets overview</button>' +
+          '<button onclick="sendFullChat(\'Show resource quotas\')">Resource quotas</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="welcome-tip"><span>&#x1F4A1;</span> Tip: Just type your question in plain English — no need to know Kubernetes commands. I\'ll fetch the data directly from your cluster.</div>';
+  populateWelcomeLiveBar();
   return div;
 }
 
