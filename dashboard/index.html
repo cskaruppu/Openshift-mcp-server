@@ -552,8 +552,37 @@ tr:hover td{background:#ffffff06}
 .rca-step-evidence{font-size:10px;font-family:var(--mono);background:var(--bg);padding:4px 8px;border-radius:4px;margin-top:4px;color:var(--accent2)}
 .rca-conclusion{margin-top:12px;padding:12px;background:rgba(248,81,73,.06);border:1px solid rgba(248,81,73,.15);border-radius:8px;font-size:12px}
 .rca-loading{text-align:center;padding:20px;font-size:12px;color:var(--text2)}
+.rca-body{font-size:12px;line-height:1.7;color:var(--text)}
+.rca-body h1,.rca-body h2,.rca-body h3{margin:16px 0 8px;color:var(--text);font-size:13px;border-bottom:1px solid var(--border);padding-bottom:4px}
+.rca-body h1{font-size:15px}
+.rca-body ul,.rca-body ol{padding-left:20px;margin:6px 0}
+.rca-body li{margin:4px 0}
+.rca-body code{font-family:var(--mono);font-size:11px;background:var(--bg);padding:1px 5px;border-radius:4px;color:var(--accent2)}
+.rca-body pre{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;overflow-x:auto;font-size:11px;margin:8px 0}
+.rca-body pre code{background:none;padding:0}
+.rca-body blockquote{border-left:3px solid var(--accent);padding:4px 12px;margin:8px 0;color:var(--text2);background:rgba(56,139,253,.04)}
+.rca-body strong{color:var(--text)}
+.rca-body table{width:100%;border-collapse:collapse;margin:8px 0;font-size:11px}
+.rca-body th,.rca-body td{padding:6px 10px;border:1px solid var(--border);text-align:left}
+.rca-body th{background:var(--bg);font-weight:700}
+.rca-header{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--bg)}
+.rca-header-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px}
+.rca-header-sev{display:inline-block;padding:2px 8px;border-radius:4px;font-size:9px;font-weight:700;text-transform:uppercase}
+.rca-header-sev.critical{background:rgba(248,81,73,.12);color:var(--crit)}
+.rca-header-sev.warning{background:rgba(227,179,65,.12);color:var(--warn)}
+.rca-header-sev.info{background:rgba(56,139,253,.12);color:var(--accent)}
+.rca-sections{display:grid;gap:12px;padding:16px}
+.rca-card{border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.rca-card-head{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--bg);font-size:12px;font-weight:700;color:var(--text);border-bottom:1px solid var(--border)}
+.rca-card-body{padding:12px 14px;font-size:12px;line-height:1.7}
 .risk-rca-btn{padding:2px 8px;border-radius:4px;font-size:9px;font-weight:600;border:1px solid rgba(248,81,73,.3);background:rgba(248,81,73,.06);color:var(--crit);cursor:pointer;transition:all .15s;margin-left:4px}
 .risk-rca-btn:hover{background:rgba(248,81,73,.15)}
+.risk-scope{display:inline-block;padding:1px 6px;border-radius:3px;font-size:8px;font-weight:700;text-transform:uppercase;margin-left:4px}
+.risk-scope-pod{background:rgba(56,139,253,.1);color:#58a6ff}
+.risk-scope-node{background:rgba(139,92,246,.1);color:#a371f7}
+.risk-scope-cluster{background:rgba(227,179,65,.1);color:#e3b341}
+.risk-scope-namespace{background:rgba(34,197,94,.1);color:#3fb950}
+.risk-scope-operator{background:rgba(248,81,73,.1);color:#f85149}
 /* Quick Command Bar */
 .cmd-bar-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9998;display:none;align-items:flex-start;justify-content:center;padding-top:18vh;backdrop-filter:blur(4px)}
 .cmd-bar-overlay.open{display:flex}
@@ -3486,7 +3515,7 @@ tr:hover td{background:#ffffff06}
         </div>
         <span class="risk-method" title="Findings from live Kubernetes API data">&#x2705; Evidence-Based</span>
         <span id="intel-risk-accuracy" style="font-size:11px;font-weight:700;color:var(--ok)"></span>
-        <button class="risk-deep-btn" onclick="runLLMRiskAnalysis();renderIntelRiskList()" title="AI deep pattern analysis">&#x1F9E0; Deep Analysis</button>
+        <button class="risk-deep-btn" id="risk-deep-btn" onclick="runLLMRiskAnalysis();renderIntelRiskList()" title="AI deep pattern analysis">&#x1F9E0; Deep Analysis</button>
       </div>
       <div id="intel-risk-list" class="aic-alerts-list" style="max-height:600px;overflow-y:auto"></div>
     </div>
@@ -4420,7 +4449,7 @@ async function loadRiskPredictions() {
           evidence: evidenceLines.join('\n'),
           impact: 'Container exceeded memory limit' + (oi.memLimit ? ' (' + oi.memLimit + ')' : '') + ' and was killed by the kernel OOM killer. ' + (oi.restarts > 3 ? 'Repeated OOM kills (' + oi.restarts + 'x) indicate the limit is too low for the workload.' : 'Will keep crashing until memory limit is increased or workload reduced.'),
           action: oi.memLimit ? '&#x2794; Increase memory limit above ' + oi.memLimit + ' or profile memory usage' : '&#x2794; Set memory limits to prevent node-level OOM',
-          ns: p.namespace, pod: p.name,
+          scope: 'pod', ns: p.namespace, pod: p.name,
         });
       }
 
@@ -4443,7 +4472,7 @@ async function loadRiskPredictions() {
           evidence: ceLines.join('\n'),
           impact: 'Container is in a crash loop — Kubernetes keeps restarting it but it fails every time' + (ci.lastExitCode === 1 ? ' (exit code 1: application error).' : ci.lastExitCode === 137 ? ' (exit code 137: killed by signal).' : ci.lastExitCode === 139 ? ' (exit code 139: segmentation fault).' : '.') + ' This pod is effectively down.',
           action: '&#x2794; Check container logs: oc logs ' + p.name + ' -c ' + ci.container + ' -n ' + p.namespace,
-          ns: p.namespace, pod: p.name,
+          scope: 'pod', ns: p.namespace, pod: p.name,
         });
       }
 
@@ -4458,7 +4487,7 @@ async function loadRiskPredictions() {
           evidence: 'Container:  ' + ii.container + '\nState:      ' + ii.reason + '\nReady:      no\nNamespace:  ' + p.namespace,
           impact: 'Container image cannot be pulled. Pod is stuck and will not start until the image is accessible.',
           action: '&#x2794; Verify image name, tag, and registry credentials',
-          ns: p.namespace, pod: p.name,
+          scope: 'pod', ns: p.namespace, pod: p.name,
         });
       }
 
@@ -4483,7 +4512,7 @@ async function loadRiskPredictions() {
           evidence: reLines.join('\n'),
           impact: ri.restarts + ' restarts over ' + p.podAgeHours + 'h (' + restartRate + '/hour). Frequent restarts indicate an intermittent failure that may escalate.',
           action: '&#x2794; Review container logs and events for root cause',
-          ns: p.namespace, pod: p.name,
+          scope: 'pod', ns: p.namespace, pod: p.name,
         });
       }
 
@@ -4497,7 +4526,7 @@ async function loadRiskPredictions() {
           evidence: 'Phase:      Failed\nNamespace:  ' + p.namespace + '\nNode:       ' + (p.node || 'unassigned') + '\nPod age:    ' + p.podAgeHours + 'h',
           impact: 'Pod has permanently failed and will not be restarted by its controller.',
           action: '&#x2794; Check pod events: oc describe pod ' + p.name + ' -n ' + p.namespace,
-          ns: p.namespace, pod: p.name,
+          scope: 'pod', ns: p.namespace, pod: p.name,
         });
       }
     });
@@ -4517,7 +4546,7 @@ async function loadRiskPredictions() {
             evidence: 'Status:     NotReady\nRoles:      ' + (n.roles || []).join(', ') + '\nPods:       ' + n.pods + '\nKubelet:    ' + (n.kubeletVersion || 'unknown'),
             impact: 'Node is not Ready. All pods on this node may be evicted. New pods cannot be scheduled here.',
             action: '&#x2794; Check node: oc describe node ' + n.name,
-            node: n.name,
+            scope: 'node', node: n.name,
           });
         }
 
@@ -4530,7 +4559,7 @@ async function loadRiskPredictions() {
             evidence: 'Condition:  MemoryPressure=True\nMemory:     ' + n.memory + '\nPods:       ' + n.pods,
             impact: 'Node is running low on memory. Kubelet will start evicting pods by priority to reclaim memory.',
             action: '&#x2794; Reduce workload on this node or add memory',
-            node: n.name,
+            scope: 'node', node: n.name,
           });
         }
 
@@ -4543,7 +4572,7 @@ async function loadRiskPredictions() {
             evidence: 'Condition:  DiskPressure=True\nPods:       ' + n.pods,
             impact: 'Node disk is nearly full. Kubelet will evict pods and refuse new scheduling. Container images may fail to pull.',
             action: '&#x2794; Clean up disk space or expand storage',
-            node: n.name,
+            scope: 'node', node: n.name,
           });
         }
 
@@ -4556,7 +4585,7 @@ async function loadRiskPredictions() {
             evidence: 'Condition:  PIDPressure=True\nPods:       ' + n.pods,
             impact: 'Node is running out of process IDs. New containers may fail to start.',
             action: '&#x2794; Identify pods spawning excessive processes',
-            node: n.name,
+            scope: 'node', node: n.name,
           });
         }
 
@@ -4572,7 +4601,7 @@ async function loadRiskPredictions() {
             evidence: 'Running:    ' + n.pods + ' / ' + maxPods + ' max pods\nUtilization: ' + Math.round(podUtil * 100) + '%\nRoles:      ' + (n.roles || []).join(', '),
             impact: n.pods + ' of ' + maxPods + ' pod slots used. ' + (podUtil > 0.95 ? 'Almost at capacity — new pods will fail to schedule.' : 'Approaching capacity — may prevent scheduling soon.'),
             action: '&#x2794; Spread workloads across nodes or increase maxPods',
-            node: n.name,
+            scope: 'node', node: n.name,
           });
         }
       });
@@ -4599,7 +4628,7 @@ async function loadRiskPredictions() {
             evidence: 'CPU usage:  ' + Math.round(cpuPct) + '%\nCPU used:   ' + (nm.cpuUsage || 'N/A') + '\nCPU total:  ' + (node.cpu || 'N/A') + ' cores\nPods:       ' + node.pods,
             impact: (cpuPct > 95 ? 'Node is near CPU saturation. ' : 'Node CPU is heavily loaded. ') + 'Pods may experience throttling and degraded performance.',
             action: '&#x2794; Redistribute workloads or add CPU resources',
-            node: nm.name,
+            scope: 'node', node: nm.name,
           });
         }
         if (memPct > 85) {
@@ -4612,7 +4641,7 @@ async function loadRiskPredictions() {
             evidence: 'Memory usage: ' + Math.round(memPct) + '%\nMem used:     ' + (nm.memoryUsage || 'N/A') + '\nMem total:    ' + (node.memory || 'N/A') + '\nPods:         ' + node.pods,
             impact: (memPct > 95 ? 'Node memory nearly exhausted. OOM kills imminent.' : 'Node memory is heavily used. ') + ' Kubelet may begin evicting pods.',
             action: '&#x2794; Reduce workload or increase node memory',
-            node: nm.name,
+            scope: 'node', node: nm.name,
           });
         }
       });
@@ -4645,7 +4674,7 @@ async function loadRiskPredictions() {
               evidence: 'Node version: ' + v + '\nMajority:     ' + majorVersion + ' (' + majorCount + ' nodes)\nThis node:    ' + v,
               impact: 'Version skew can cause API incompatibilities and unexpected behavior. Kubernetes supports max 1 minor version difference between kubelet and control plane.',
               action: '&#x2794; Update kubelet on this node to ' + majorVersion,
-              node: shortName,
+              scope: 'node', node: shortName,
             });
           });
         });
@@ -4666,6 +4695,7 @@ async function loadRiskPredictions() {
             evidence: 'Operator:   ' + op.name + '\nHealth:     Degraded\nVersion:    ' + (op.version || 'N/A') + '\nMessage:    ' + (op.message || 'none').substring(0, 200),
             impact: 'Cluster operator is degraded. Core platform functionality (' + op.name + ') may not work correctly. This can affect workloads and cluster stability.',
             action: '&#x2794; Investigate: oc describe clusteroperator ' + op.name,
+            scope: 'operator',
           });
         } else if (op.health === 'unavailable') {
           _riskData.push({
@@ -4677,6 +4707,7 @@ async function loadRiskPredictions() {
             evidence: 'Operator:   ' + op.name + '\nHealth:     Unavailable\nVersion:    ' + (op.version || 'N/A') + '\nMessage:    ' + (op.message || 'none').substring(0, 200),
             impact: 'Cluster operator is unavailable. The ' + op.name + ' component is down. Immediate attention required.',
             action: '&#x2794; Investigate: oc describe clusteroperator ' + op.name,
+            scope: 'operator',
           });
         } else if (op.health === 'progressing') {
           _riskData.push({
@@ -4688,6 +4719,7 @@ async function loadRiskPredictions() {
             evidence: 'Operator:   ' + op.name + '\nHealth:     Progressing\nVersion:    ' + (op.version || 'N/A') + '\nMessage:    ' + (op.message || 'none').substring(0, 200),
             impact: 'Operator is currently updating or reconciling. This is usually normal during upgrades but should complete within a reasonable time.',
             action: '&#x2794; Monitor: oc get clusteroperator ' + op.name + ' -w',
+            scope: 'operator',
           });
         }
       });
@@ -4710,8 +4742,122 @@ async function loadRiskPredictions() {
           evidence: 'Phase:      Pending\nNamespace:  ' + p.namespace + '\nAge:        ' + ageH + 'h\nNode:       ' + (p.node || 'unassigned'),
           impact: 'Pod has been pending for ' + ageH + 'h. ' + (ageH > 1 ? 'This indicates a scheduling failure — insufficient resources, node affinity, or taints preventing placement.' : 'May be waiting for resources to become available.'),
           action: '&#x2794; Check events: oc describe pod ' + p.name + ' -n ' + p.namespace,
-          ns: p.namespace, pod: p.name,
+          scope: 'pod', ns: p.namespace, pod: p.name,
         });
+      });
+    } catch {}
+
+    // Namespace-level health aggregation
+    try {
+      var nsCounts = {};
+      _riskData.forEach(function(r) {
+        if (r.ns) {
+          if (!nsCounts[r.ns]) nsCounts[r.ns] = { total: 0, critical: 0, warning: 0, pods: [] };
+          nsCounts[r.ns].total++;
+          if (r.severity === 'critical') nsCounts[r.ns].critical++;
+          else if (r.severity === 'warning') nsCounts[r.ns].warning++;
+          if (r.pod) nsCounts[r.ns].pods.push(r.pod);
+        }
+      });
+      Object.keys(nsCounts).forEach(function(ns) {
+        var c = nsCounts[ns];
+        if (c.total >= 3) {
+          _riskData.push({
+            severity: c.critical >= 3 ? 'critical' : 'warning',
+            icon: '&#x1F4C1;',
+            title: 'Namespace ' + esc(ns) + ' — ' + c.total + ' issues detected',
+            confidence: 100,
+            confidenceReason: 'Aggregated from ' + c.total + ' individual findings in namespace ' + ns,
+            evidence: 'Namespace:  ' + ns + '\nTotal issues: ' + c.total + '\nCritical:   ' + c.critical + '\nWarning:    ' + c.warning + '\nAffected pods: ' + c.pods.slice(0, 5).join(', ') + (c.pods.length > 5 ? ' (+' + (c.pods.length - 5) + ' more)' : ''),
+            impact: 'Multiple issues detected in namespace ' + ns + '. ' + (c.critical >= 3 ? 'Concentrated critical failures suggest a systemic problem — shared config, resource quota, or image registry issue.' : 'Several warnings indicate degraded health in this namespace.'),
+            action: '&#x2794; Investigate namespace: oc get events -n ' + ns + ' --sort-by=.lastTimestamp',
+            scope: 'namespace', ns: ns,
+          });
+        }
+      });
+    } catch {}
+
+    // Warning events analysis — detect repeated event patterns from live state
+    try {
+      var liveEvents = (_liveState && _liveState.events) ? _liveState.events : [];
+      if (liveEvents.length > 0) {
+        var evtReasons = {};
+        liveEvents.forEach(function(e) {
+          var key = e.reason || 'Unknown';
+          if (!evtReasons[key]) evtReasons[key] = { count: 0, namespaces: {}, objects: [], message: e.message || '' };
+          evtReasons[key].count++;
+          if (e.namespace) evtReasons[key].namespaces[e.namespace] = true;
+          if (e.name && evtReasons[key].objects.length < 5) evtReasons[key].objects.push(e.name);
+        });
+        Object.keys(evtReasons).forEach(function(reason) {
+          var ev = evtReasons[reason];
+          if (ev.count < 3) return;
+          var nsArr = Object.keys(ev.namespaces);
+          _riskData.push({
+            severity: ev.count >= 10 ? 'warning' : 'info',
+            icon: '&#x26A0;',
+            title: 'Event pattern: ' + esc(reason) + ' (' + ev.count + 'x)',
+            confidence: 100,
+            confidenceReason: ev.count + ' warning events with reason ' + reason + ' from live cluster stream',
+            evidence: 'Event type: Warning\nReason:     ' + reason + '\nOccurrences: ' + ev.count + '\nNamespaces: ' + nsArr.slice(0, 5).join(', ') + '\nSample:     ' + (ev.message || '').substring(0, 150) + '\nObjects:    ' + ev.objects.join(', '),
+            impact: ev.count + ' warning events with reason "' + reason + '" across ' + nsArr.length + ' namespace(s). ' + (ev.count >= 10 ? 'High frequency indicates an active cluster issue requiring attention.' : 'Moderate frequency — worth monitoring.'),
+            action: '&#x2794; Review events: oc get events -A --field-selector reason=' + reason,
+            scope: 'cluster',
+          });
+        });
+      }
+    } catch {}
+
+    // Workload health — pods grouped by owner (deployment/statefulset/daemonset)
+    try {
+      var ownerIssues = {};
+      (pods || []).forEach(function(p) {
+        if (!p.ownerKind || !p.ownerName) return;
+        var key = (p.namespace || '') + '/' + p.ownerKind + '/' + p.ownerName;
+        if (!ownerIssues[key]) ownerIssues[key] = { kind: p.ownerKind, name: p.ownerName, ns: p.namespace, total: 0, issues: 0, pods: [] };
+        ownerIssues[key].total++;
+        var hasIssue = (p.issues && p.issues.length > 0) || p.phase === 'Failed' || p.phase === 'Pending';
+        if (hasIssue) {
+          ownerIssues[key].issues++;
+          if (ownerIssues[key].pods.length < 5) ownerIssues[key].pods.push(p.name);
+        }
+      });
+      Object.keys(ownerIssues).forEach(function(key) {
+        var o = ownerIssues[key];
+        if (o.issues < 2) return;
+        var pct = Math.round(o.issues / o.total * 100);
+        _riskData.push({
+          severity: o.issues === o.total ? 'critical' : pct >= 50 ? 'warning' : 'info',
+          icon: o.issues === o.total ? '&#x1F6A8;' : '&#x26A0;',
+          title: o.kind + ' ' + esc(o.name) + ' — ' + o.issues + '/' + o.total + ' pods unhealthy',
+          confidence: 100,
+          confidenceReason: 'Pod status aggregated by owner from pod API; ' + o.issues + ' of ' + o.total + ' pods have issues',
+          evidence: o.kind + ':   ' + o.name + '\nNamespace:  ' + o.ns + '\nUnhealthy:  ' + o.issues + '/' + o.total + ' (' + pct + '%)\nAffected:   ' + o.pods.join(', '),
+          impact: (o.issues === o.total ? 'All replicas are unhealthy — service is completely down.' : pct + '% of replicas unhealthy — service is degraded.') + (o.total === 1 ? ' Single-replica workload with no redundancy.' : ''),
+          action: '&#x2794; Check workload: oc describe ' + o.kind.toLowerCase() + ' ' + o.name + ' -n ' + o.ns,
+          scope: 'namespace', ns: o.ns,
+        });
+      });
+    } catch {}
+
+    // Cluster-wide summary finding — always show overall health
+    try {
+      var critCount = _riskData.filter(function(r) { return r.severity === 'critical'; }).length;
+      var warnCount = _riskData.filter(function(r) { return r.severity === 'warning'; }).length;
+      var nodeCount = (nodes || []).length;
+      var readyNodes = (nodes || []).filter(function(n) { return n.ready; }).length;
+      var totalPods = pods.length;
+      var problemPods = _riskData.filter(function(r) { return r.scope === 'pod'; }).length;
+      _riskData.push({
+        severity: critCount > 0 ? 'warning' : 'info',
+        icon: critCount > 0 ? '&#x1F4CA;' : '&#x2705;',
+        title: 'Cluster Health Summary',
+        confidence: 100,
+        confidenceReason: 'Aggregated from all evidence-based findings across cluster resources',
+        evidence: 'Nodes:      ' + readyNodes + '/' + nodeCount + ' ready\nPod issues: ' + problemPods + ' of ' + totalPods + ' total\nCritical:   ' + critCount + '\nWarning:    ' + warnCount + '\nOperators:  checked via config.openshift.io API',
+        impact: critCount > 0 ? critCount + ' critical and ' + warnCount + ' warning findings detected. Cluster requires attention.' : warnCount > 0 ? warnCount + ' warning findings detected. Cluster is functional but has issues to address.' : 'No critical or warning issues. Cluster is healthy.',
+        action: critCount > 0 ? '&#x2794; Address critical findings first, then warnings' : '&#x2794; Continue monitoring — no immediate action required',
+        scope: 'cluster',
       });
     } catch {}
 
@@ -13292,12 +13438,14 @@ function renderIntelRiskList() {
   var hasLLM = filtered.some(function(r) { return r.llm; });
   var hasEvidence = filtered.some(function(r) { return !r.llm; });
   var showedDivider = false;
-  el.innerHTML = filtered.map(function(r, idx) {
+  el.innerHTML = filtered.map(function(r) {
+    var realIdx = _riskData.indexOf(r);
     var conf = r.confidence || 0;
     var confClass = conf >= 95 ? 'high' : conf >= 80 ? 'med' : 'low';
     var confHtml = '<span class="risk-conf ' + confClass + '" title="' + esc(r.confidenceReason || '') + '"><span class="risk-conf-bar"><div style="width:' + conf + '%"></div></span>' + conf + '%</span>';
     var catTag = r.llm && r.category ? '<span class="risk-cat">' + esc(r.category.replace(/_/g, ' ')) + '</span>' : '';
-    var rcaBtn = '<button class="risk-rca-btn" onclick="event.stopPropagation();triggerRCA(' + idx + ')" title="Run root cause analysis">\u{1F50D} Root Cause</button>';
+    var scopeTag = r.scope ? '<span class="risk-scope risk-scope-' + r.scope + '">' + r.scope + '</span>' : '';
+    var rcaBtn = '<button class="risk-rca-btn" onclick="event.stopPropagation();triggerRCA(' + realIdx + ')" title="Run root cause analysis">\u{1F50D} Root Cause</button>';
     var chatBtn = '';
     if (r.ns && r.pod) {
       chatBtn = '<button class="risk-rca-btn" onclick="event.stopPropagation();openNewChatWithCommand(\'troubleshoot pod ' + esc(r.pod) + ' in namespace ' + esc(r.ns) + '\',\'Troubleshoot ' + esc(r.pod) + '\')" title="Troubleshoot in AI Chat" style="background:#3b82f620;color:#3b82f6;border-color:#3b82f640">\u{1F4AC} Troubleshoot</button>';
@@ -13311,7 +13459,7 @@ function renderIntelRiskList() {
     return divider + '<div class="' + cls + '"' + clickAttr + '>' +
       '<div class="risk-icon">' + (r.icon || '⚠') + '</div>' +
       '<div class="risk-body">' +
-        '<div class="risk-title">' + (r.title || '') + ' <span class="risk-sev">' + r.severity + '</span>' + catTag + rcaBtn + chatBtn + confHtml + '</div>' +
+        '<div class="risk-title">' + (r.title || '') + ' <span class="risk-sev">' + r.severity + '</span>' + scopeTag + catTag + rcaBtn + chatBtn + confHtml + '</div>' +
         '<div class="risk-evidence">' + esc(r.evidence || '') + '</div>' +
         '<div class="risk-impact">' + (r.impact || '') + '</div>' +
         '<div class="risk-action">' + (r.action || '') + '</div>' +
@@ -13329,12 +13477,28 @@ async function triggerRCA(riskIdx) {
   if (section) section.style.display = '';
   var panel = document.getElementById('rca-panel');
   if (!panel) return;
-  panel.innerHTML = '<div class="rca-loading">\u{1F50D} Investigating root cause for <strong>' + (risk.title || 'Unknown') + '</strong>...<br><span style="font-size:10px;color:var(--text2)">Correlating pods, events, node conditions, and metrics</span></div>';
+  var titleClean = (risk.title || 'Unknown').replace(/<[^>]*>/g, '');
+  panel.innerHTML = '<div class="rca-header">' +
+    '<div class="rca-header-icon" style="background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff">\u{1F50D}</div>' +
+    '<div style="flex:1"><div style="font-weight:700;font-size:14px">Root Cause Analysis</div>' +
+    '<div style="font-size:11px;color:var(--text2)">' + esc(titleClean) + '</div></div>' +
+    '<span class="rca-header-sev ' + risk.severity + '">' + risk.severity + '</span>' +
+    '</div>' +
+    '<div class="rca-sections"><div class="rca-card"><div class="rca-card-head">\u{1F50D} Investigating...</div>' +
+    '<div class="rca-card-body" style="text-align:center;padding:30px;color:var(--text2)">' +
+    '<div style="font-size:20px;margin-bottom:8px;animation:risk-pulse 1.2s infinite">\u{2699}</div>' +
+    'Correlating pods, events, node conditions, and metrics...<br>' +
+    '<span style="font-size:10px">This may take 10-30 seconds depending on LLM provider</span>' +
+    '</div></div></div>';
   section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
   var opts = (typeof getActiveProviderOpts === 'function') ? getActiveProviderOpts() : { provider: 'none' };
   if (!opts.provider || opts.provider === 'none') {
-    panel.innerHTML = '<div class="rca-loading" style="color:var(--crit)">No LLM provider configured. Set a provider in Settings to enable RCA.</div>';
+    panel.innerHTML = '<div class="rca-header">' +
+      '<div class="rca-header-icon" style="background:var(--crit);color:#fff">\u{26A0}</div>' +
+      '<div style="flex:1"><div style="font-weight:700;font-size:14px;color:var(--crit)">LLM Provider Required</div>' +
+      '<div style="font-size:11px;color:var(--text2)">Configure a provider in Settings to enable AI-powered RCA</div></div>' +
+      '</div>';
     return;
   }
 
@@ -13352,32 +13516,52 @@ async function triggerRCA(riskIdx) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        message: 'Perform a root cause analysis for this issue. Build a timeline and causal chain.\n\n' +
+        message: 'You are an expert Kubernetes/OpenShift SRE performing a root cause analysis. Analyze this issue using the live cluster data provided.\n\n' +
           'FINDING:\n' +
           'Severity: ' + risk.severity + '\n' +
-          'Title: ' + (risk.title || '') + '\n' +
+          'Title: ' + titleClean + '\n' +
           'Evidence: ' + (risk.evidence || '') + '\n' +
           'Impact: ' + (risk.impact || '') + '\n' +
           (risk.ns ? 'Namespace: ' + risk.ns + '\n' : '') +
           (risk.pod ? 'Pod: ' + risk.pod + '\n' : '') +
           (risk.node ? 'Node: ' + risk.node + '\n' : '') +
+          (risk.scope ? 'Scope: ' + risk.scope + '\n' : '') +
           clusterContext +
-          '\n\nRespond with:\n1. TIMELINE — ordered list of what happened (earliest first)\n2. ROOT CAUSE — the single underlying cause\n3. CAUSAL CHAIN — how the root cause led to the observed symptoms\n4. RECOMMENDED FIX — specific action to resolve',
+          '\n\nProvide your analysis in EXACTLY this markdown structure:\n\n' +
+          '## Root Cause\nOne clear sentence identifying the root cause.\n\n' +
+          '## Timeline\nNumbered list of events in chronological order. Each entry should be: timestamp/phase - what happened.\n\n' +
+          '## Causal Chain\nShow how the root cause led to symptoms. Use: A -> B -> C format or numbered steps.\n\n' +
+          '## Impact Assessment\nWhat is affected and blast radius (pods, services, users).\n\n' +
+          '## Recommended Fix\nSpecific remediation steps as a numbered list. Include exact oc/kubectl commands where applicable. Do NOT wrap commands in code fences if they contain SEC_FIX_CMD tags.\n\n' +
+          '## Prevention\nHow to prevent this from recurring (resource limits, alerts, policies).',
         ...opts,
       }),
     });
     var data = await resp.json();
     var reply = data.reply || data.error || 'No response';
-    panel.innerHTML = '<div style="padding:12px">' +
-      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
-        '<span style="font-size:16px">\u{1F50D}</span>' +
-        '<div><div style="font-weight:700;font-size:13px">RCA: ' + esc((risk.title || '').replace(/<[^>]*>/g, '')) + '</div>' +
-        '<div style="font-size:10px;color:var(--text2)">' + risk.severity.toUpperCase() + (risk.ns ? ' • ' + risk.ns : '') + (risk.pod ? ' • ' + risk.pod : '') + '</div></div>' +
+    var scopeLabel = risk.scope ? risk.scope.charAt(0).toUpperCase() + risk.scope.slice(1) : 'Resource';
+    var metaItems = [scopeLabel];
+    if (risk.ns) metaItems.push(risk.ns);
+    if (risk.pod) metaItems.push(risk.pod);
+    if (risk.node) metaItems.push(risk.node);
+    panel.innerHTML = '<div class="rca-header">' +
+      '<div class="rca-header-icon" style="background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff">\u{1F50D}</div>' +
+      '<div style="flex:1">' +
+        '<div style="font-weight:700;font-size:14px">Root Cause Analysis</div>' +
+        '<div style="font-size:11px;color:var(--text2)">' + esc(titleClean) + '</div>' +
       '</div>' +
-      '<div class="rca-body">' + md(reply) + '</div>' +
-    '</div>';
+      '<div style="display:flex;gap:6px;align-items:center">' +
+        '<span class="rca-header-sev ' + risk.severity + '">' + risk.severity + '</span>' +
+        '<span style="font-size:9px;color:var(--text2)">' + esc(metaItems.join(' \u{2022} ')) + '</span>' +
+      '</div>' +
+    '</div>' +
+    '<div style="padding:16px"><div class="rca-body">' + md(reply) + '</div></div>';
   } catch (e) {
-    panel.innerHTML = '<div class="rca-loading" style="color:var(--crit)">RCA failed: ' + esc(e.message) + '</div>';
+    panel.innerHTML = '<div class="rca-header">' +
+      '<div class="rca-header-icon" style="background:var(--crit);color:#fff">\u{26A0}</div>' +
+      '<div style="flex:1"><div style="font-weight:700;font-size:14px;color:var(--crit)">RCA Failed</div>' +
+      '<div style="font-size:11px;color:var(--text2)">' + esc(e.message) + '</div></div>' +
+      '</div>';
   }
 }
 
