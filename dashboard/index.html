@@ -598,7 +598,8 @@ tr:hover td{background:#ffffff06}
 .cmd-bar-hint{padding:8px 20px;font-size:10px;color:var(--text2);border-top:1px solid var(--border);display:flex;gap:12px}
 @media(max-width:1200px){.grid-4{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:900px){.dash-top3{grid-template-columns:1fr}}
-@media(max-width:768px){.grid-4,.grid-3,.grid-2{grid-template-columns:1fr}.header{flex-direction:column;gap:12px}#widget-optimization .opt-inner-grid{grid-template-columns:1fr !important}}/* Navigation tabs */
+@media(max-width:768px){.grid-4,.grid-3,.grid-2{grid-template-columns:1fr}.header{flex-direction:column;gap:12px}#widget-optimization .opt-inner-grid{grid-template-columns:1fr !important}.welcome-categories{grid-template-columns:repeat(2,1fr)}.smart-suggestions{flex-wrap:wrap}}
+@media(max-width:480px){.welcome-categories{grid-template-columns:1fr}}/* Navigation tabs */
 .nav-tabs{display:flex;gap:4px}
 .nav-tab{background:none;border:1px solid var(--border);border-radius:6px;padding:6px 16px;color:var(--text2);cursor:pointer;font-size:13px;font-weight:500;transition:all .2s}
 .nav-tab:hover{border-color:var(--accent);color:var(--text)}
@@ -710,12 +711,47 @@ tr:hover td{background:#ffffff06}
 .conv-body hr{border:none;border-top:1px solid var(--border2);margin:14px 0}
 .conv-body a{color:var(--accent2);text-decoration:none;border-bottom:1px solid transparent}
 .conv-body a:hover{border-bottom-color:var(--accent2)}
-.chat-welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;text-align:center;color:var(--text2);padding:60px 20px}
+.chat-welcome{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;text-align:center;color:var(--text2);padding:40px 20px 80px}
 .chat-welcome h2{font-size:32px;font-weight:700;color:var(--text);margin:24px 0 6px;letter-spacing:-.5px}
 .chat-welcome p{font-size:14px;margin-bottom:36px;max-width:460px;color:var(--text2);line-height:1.6}
 .welcome-suggestions{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;max-width:560px;width:100%}
 .welcome-suggestions button{background:transparent;border:1px solid var(--border);border-radius:14px;padding:14px 18px;color:var(--text2);font-size:13px;cursor:pointer;transition:all .2s;text-align:left;line-height:1.4}
 .welcome-suggestions button:hover{border-color:color-mix(in srgb,var(--accent2) 50%,transparent);color:var(--text);background:var(--card)}
+/* Welcome categories — guided quick-start cards */
+.welcome-categories{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:720px;width:100%;margin-top:8px}
+.wcat{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;transition:border-color .2s,box-shadow .2s;cursor:pointer;text-align:left}
+.wcat:hover{border-color:var(--accent2);box-shadow:0 0 0 1px color-mix(in srgb,var(--accent2) 25%,transparent)}
+.wcat-head{display:flex;align-items:center;gap:10px;padding:12px 14px;user-select:none}
+.wcat-icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;color:#fff}
+.wcat-title{font-size:13px;font-weight:600;color:var(--text);flex:1}
+.wcat-arrow{font-size:12px;color:var(--text2);transition:transform .25s;flex-shrink:0}
+.wcat.open .wcat-arrow{transform:rotate(90deg)}
+.wcat-body{max-height:0;overflow:hidden;transition:max-height .3s ease;padding:0 14px}
+.wcat.open .wcat-body{max-height:320px;padding:0 14px 12px}
+.wcat-body button{display:block;width:100%;background:transparent;border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text2);font-size:12px;cursor:pointer;transition:all .15s;text-align:left;margin-top:6px;line-height:1.4}
+.wcat-body button:hover{border-color:var(--accent2);color:var(--text);background:color-mix(in srgb,var(--accent2) 8%,transparent)}
+/* Welcome live bar — dynamic cluster alerts */
+.welcome-live-bar{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:720px;width:100%;margin-bottom:12px;min-height:0}
+.welcome-live-bar:empty{display:none}
+.wlb-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid;cursor:pointer;transition:all .2s;animation:wlb-in .3s ease}
+.wlb-chip:hover{filter:brightness(1.2);transform:translateY(-1px)}
+.wlb-chip.crit{background:color-mix(in srgb,var(--crit) 12%,transparent);border-color:color-mix(in srgb,var(--crit) 40%,transparent);color:var(--crit)}
+.wlb-chip.warn{background:color-mix(in srgb,var(--warn) 12%,transparent);border-color:color-mix(in srgb,var(--warn) 40%,transparent);color:var(--warn)}
+.wlb-chip.info{background:color-mix(in srgb,var(--accent2) 12%,transparent);border-color:color-mix(in srgb,var(--accent2) 40%,transparent);color:var(--accent2)}
+.wlb-chip.ok{background:color-mix(in srgb,var(--ok) 12%,transparent);border-color:color-mix(in srgb,var(--ok) 40%,transparent);color:var(--ok)}
+@keyframes wlb-in{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}
+/* Welcome tip */
+.welcome-tip{font-size:12px;color:var(--text2);margin-top:16px;max-width:520px;line-height:1.5;opacity:.75}
+/* Smart suggestions bar — above input */
+.smart-suggestions{display:flex;flex-wrap:wrap;gap:6px;padding:8px 0 4px;justify-content:center}
+.smart-suggestions:empty{display:none;padding:0}
+.smart-suggestion{display:inline-flex;align-items:center;gap:4px;padding:5px 12px;border-radius:20px;background:color-mix(in srgb,var(--accent2) 8%,transparent);border:1px solid color-mix(in srgb,var(--accent2) 25%,transparent);color:var(--text2);font-size:11px;cursor:pointer;transition:all .2s;white-space:nowrap}
+.smart-suggestion:hover{background:color-mix(in srgb,var(--accent2) 18%,transparent);color:var(--text);border-color:var(--accent2)}
+.smart-suggestion .ss-icon{font-size:13px}
+.smart-suggestion.ss-crit{background:color-mix(in srgb,var(--crit) 8%,transparent);border-color:color-mix(in srgb,var(--crit) 30%,transparent);color:var(--crit)}
+.smart-suggestion.ss-crit:hover{background:color-mix(in srgb,var(--crit) 18%,transparent);color:#ff6b6b}
+.smart-suggestion.ss-warn{background:color-mix(in srgb,var(--warn) 8%,transparent);border-color:color-mix(in srgb,var(--warn) 30%,transparent);color:var(--warn)}
+.smart-suggestion.ss-warn:hover{background:color-mix(in srgb,var(--warn) 18%,transparent);color:#fbbf24}
 .chat-bottom-bar{position:absolute;bottom:0;left:0;right:0;padding:0 24px 16px;background:linear-gradient(to top,var(--bg-deep) 70%,transparent);pointer-events:none;z-index:10}
 .chat-bottom-inner{max-width:780px;margin:0 auto;pointer-events:auto}
 .chat-controls-row{display:none}
@@ -1043,6 +1079,14 @@ tr:hover td{background:#ffffff06}
 .light-theme .chat-welcome p{color:#9ca3af}
 .light-theme .welcome-suggestions button{background:transparent;border-color:#e0e0e6;color:#6b6b80}
 .light-theme .welcome-suggestions button:hover{border-color:#2563eb80;color:#1a1a2e;background:#f6f8fa}
+.light-theme .wcat{background:#fff;border-color:#e0e0e6}
+.light-theme .wcat:hover{border-color:#2563eb}
+.light-theme .wcat-title{color:#1a1a2e}
+.light-theme .wcat-body button{border-color:#e0e0e6;color:#6b6b80}
+.light-theme .wcat-body button:hover{border-color:#2563eb80;color:#1a1a2e;background:#f0f4ff}
+.light-theme .welcome-tip{color:#9ca3af}
+.light-theme .smart-suggestion{background:#f0f4ff;border-color:#bfdbfe;color:#4b5563}
+.light-theme .smart-suggestion:hover{background:#dbeafe;color:#1a1a2e}
 .light-theme .conv-msg.user .conv-bubble{background:#f0f2f6;color:#1a1a2e}
 .light-theme .conv-body{color:#374151}
 .light-theme .conv-body .chat-heading{color:#1a1a2e;border-color:#e0e0e6}
@@ -1525,8 +1569,7 @@ tr:hover td{background:#ffffff06}
 .pin-card .pin-remove:hover{color:var(--crit)}
 .pin-btn{background:none;border:none;color:var(--text2);cursor:pointer;font-size:12px;padding:2px 6px;border-radius:4px;transition:all .2s}
 .pin-btn:hover{color:var(--accent);background:#e0404015}
-/* Smart suggestions & memory bar — hidden in new design */
-.smart-suggestions{display:none}
+/* Memory bar — hidden in new design */
 .memory-bar{display:none}
 /* Confidence meter */
 .confidence-meter{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;margin-left:8px}
@@ -2576,15 +2619,113 @@ tr:hover td{background:#ffffff06}
       <div class="chat-conv-inner" id="chat-conv-inner">
         <div class="chat-welcome" id="chat-welcome">
           <div style="width:52px;height:52px;border-radius:16px;background:linear-gradient(135deg,#0052cc,#1a8cff);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:#fff">TA</div>
-          <h2>What can I help you with?</h2>
-          <p>Ask about pods, deployments, nodes, security, or anything in your Kubernetes cluster.</p>
-          <div class="welcome-suggestions">
-            <button onclick="sendFullChat('Show me all pods with issues')">Show pods with issues</button>
-            <button onclick="sendFullChat('Check cluster health')">Check cluster health</button>
-            <button onclick="sendFullChat('/security')">Run security audit</button>
-            <button onclick="sendFullChat('Show CrashLoopBackOff pods')">Find CrashLoopBackOff pods</button>
-            <button onclick="sendFullChat('Check upgrade readiness')">Check upgrade readiness</button>
-            <button onclick="sendFullChat('What if I scale nginx to 10 replicas?')">What-if analysis</button>
+          <h2>TCS KubeNexus AI</h2>
+          <p>Ask anything about your OpenShift cluster in plain English. I have live access to your cluster data.</p>
+
+          <!-- Dynamic cluster alerts bar -->
+          <div class="welcome-live-bar" id="welcome-live-bar"></div>
+
+          <!-- Guided categories -->
+          <div class="welcome-categories">
+            <div class="wcat" onclick="this.classList.toggle('open')">
+              <div class="wcat-head">
+                <span class="wcat-icon" style="background:linear-gradient(135deg,#22c55e,#10b981)">&#x2764;</span>
+                <span class="wcat-title">Cluster Health</span>
+                <span class="wcat-arrow">&#x25B8;</span>
+              </div>
+              <div class="wcat-body">
+                <button onclick="sendFullChat('Check cluster health')">How healthy is my cluster?</button>
+                <button onclick="sendFullChat('Show node CPU and memory utilization')">Show node resource usage</button>
+                <button onclick="sendFullChat('Show me all pods with issues')">Which pods have issues?</button>
+                <button onclick="sendFullChat('Show top pods by CPU usage')">Top CPU consuming pods</button>
+                <button onclick="sendFullChat('Are there any degraded operators?')">Any degraded operators?</button>
+                <button onclick="sendFullChat('Show warning events in the cluster')">Recent warning events</button>
+              </div>
+            </div>
+
+            <div class="wcat" onclick="this.classList.toggle('open')">
+              <div class="wcat-head">
+                <span class="wcat-icon" style="background:linear-gradient(135deg,#ef4444,#f97316)">&#x1F527;</span>
+                <span class="wcat-title">Troubleshoot</span>
+                <span class="wcat-arrow">&#x25B8;</span>
+              </div>
+              <div class="wcat-body">
+                <button onclick="sendFullChat('Show CrashLoopBackOff pods')">Find CrashLoopBackOff pods</button>
+                <button onclick="sendFullChat('Show OOMKilled pods')">Find OOMKilled pods</button>
+                <button onclick="sendFullChat('Show ImagePullBackOff pods')">Find ImagePullBackOff pods</button>
+                <button onclick="sendFullChat('Show pods with high restart count')">Pods with high restarts</button>
+                <button onclick="sendFullChat('Show pending pods')">Stuck pending pods</button>
+                <button onclick="sendFullChat('Why is my deployment not available?')">Deployment not ready?</button>
+              </div>
+            </div>
+
+            <div class="wcat" onclick="this.classList.toggle('open')">
+              <div class="wcat-head">
+                <span class="wcat-icon" style="background:linear-gradient(135deg,#3b82f6,#6366f1)">&#x1F4E6;</span>
+                <span class="wcat-title">Workloads</span>
+                <span class="wcat-arrow">&#x25B8;</span>
+              </div>
+              <div class="wcat-body">
+                <button onclick="sendFullChat('List deployments')">List all deployments</button>
+                <button onclick="sendFullChat('Show pods in default namespace')">Pods in a namespace</button>
+                <button onclick="sendFullChat('Show statefulsets')">StatefulSets status</button>
+                <button onclick="sendFullChat('Show daemonsets')">DaemonSets status</button>
+                <button onclick="sendFullChat('List jobs and cronjobs')">Jobs &amp; CronJobs</button>
+                <button onclick="sendFullChat('Show pods without resource limits')">Pods without limits</button>
+              </div>
+            </div>
+
+            <div class="wcat" onclick="this.classList.toggle('open')">
+              <div class="wcat-head">
+                <span class="wcat-icon" style="background:linear-gradient(135deg,#a855f7,#ec4899)">&#x1F6E1;</span>
+                <span class="wcat-title">Security</span>
+                <span class="wcat-arrow">&#x25B8;</span>
+              </div>
+              <div class="wcat-body">
+                <button onclick="sendFullChat('/security')">Full security audit</button>
+                <button onclick="sendFullChat('Find pods using privileged SCC')">Privileged pods</button>
+                <button onclick="sendFullChat('/cert-check')">Certificate expiry check</button>
+                <button onclick="sendFullChat('/compliance')">Compliance check</button>
+                <button onclick="sendFullChat('Show RBAC for namespace')">RBAC permissions</button>
+                <button onclick="sendFullChat('Show network policies')">Network policies</button>
+              </div>
+            </div>
+
+            <div class="wcat" onclick="this.classList.toggle('open')">
+              <div class="wcat-head">
+                <span class="wcat-icon" style="background:linear-gradient(135deg,#f59e0b,#eab308)">&#x2B06;</span>
+                <span class="wcat-title">Upgrade &amp; Lifecycle</span>
+                <span class="wcat-arrow">&#x25B8;</span>
+              </div>
+              <div class="wcat-body">
+                <button onclick="sendFullChat('/upgrade-check')">Upgrade readiness assessment</button>
+                <button onclick="sendFullChat('Show cluster version and upgrade history')">Current version &amp; history</button>
+                <button onclick="sendFullChat('Compare upgrade paths')">Compare upgrade paths</button>
+                <button onclick="sendFullChat('Check certificate expiry')">Certificate expiry</button>
+                <button onclick="sendFullChat('/operator-health')">Operator health check</button>
+                <button onclick="sendFullChat('Show cluster capacity forecast')">Capacity forecast</button>
+              </div>
+            </div>
+
+            <div class="wcat" onclick="this.classList.toggle('open')">
+              <div class="wcat-head">
+                <span class="wcat-icon" style="background:linear-gradient(135deg,#0ea5e9,#06b6d4)">&#x1F4CA;</span>
+                <span class="wcat-title">Resources &amp; Metrics</span>
+                <span class="wcat-arrow">&#x25B8;</span>
+              </div>
+              <div class="wcat-body">
+                <button onclick="sendFullChat('Show top pods by memory usage')">Top memory consumers</button>
+                <button onclick="sendFullChat('Show PVC usage')">PVC / Storage usage</button>
+                <button onclick="sendFullChat('Show routes and services')">Routes &amp; Services</button>
+                <button onclick="sendFullChat('List configmaps in namespace')">ConfigMaps</button>
+                <button onclick="sendFullChat('List secrets in namespace')">Secrets overview</button>
+                <button onclick="sendFullChat('Show resource quotas')">Resource quotas</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="welcome-tip">
+            <span>&#x1F4A1;</span> Tip: Just type your question in plain English — no need to know Kubernetes commands. I'll fetch the data directly from your cluster.
           </div>
         </div>
       </div>
@@ -4380,6 +4521,8 @@ function filterRisks(filter) {
 
 function renderRiskList() {
   renderIntelRiskList();
+  populateWelcomeLiveBar();
+  loadSmartSuggestions();
 }
 
 function renderRiskSummary() {
@@ -11351,24 +11494,151 @@ const PERSONA_SUGGESTIONS = {
   ],
 };
 
-async function loadSmartSuggestions() {
-  const container = document.getElementById('smart-suggestions');
-  if (!container) return;
-  const persona = getActivePersona();
-  const suggestions = PERSONA_SUGGESTIONS[persona] || PERSONA_SUGGESTIONS.sre;
+function buildDynamicSuggestions() {
+  var items = [];
+  var pods = (_liveState && _liveState.pods) ? _liveState.pods : [];
+  var nodes = (_liveState && _liveState.nodes) ? _liveState.nodes : [];
+  var events = (_liveState && _liveState.events) ? _liveState.events : [];
+  var risks = _riskData || [];
 
-  const alertCount = parseInt(document.getElementById('alerts-badge')?.textContent || '0');
-  const dynamic = [];
-  if (alertCount > 0) {
-    dynamic.push({ icon: '&#x1F6A8;', text: alertCount + ' active alerts', query: '/alerts' });
+  var crashPods = pods.filter(function(p) {
+    return (p.status || '').indexOf('CrashLoop') !== -1;
+  });
+  if (crashPods.length > 0) {
+    items.push({ icon: '\u{1F534}', text: crashPods.length + ' CrashLoopBackOff pod' + (crashPods.length > 1 ? 's' : ''),
+      query: 'Show CrashLoopBackOff pods', cls: 'ss-crit' });
   }
 
-  const all = [...dynamic, ...suggestions].slice(0, 7);
-  container.innerHTML = all.map(s =>
-    '<button class="smart-suggestion" onclick="sendFullChat(\'' + s.query.replace(/'/g, "\\'") + '\')">' +
-      '<span class="ss-icon">' + s.icon + '</span>' + s.text +
-    '</button>'
-  ).join('');
+  var oomPods = pods.filter(function(p) {
+    return (p.reason || '').indexOf('OOMKilled') !== -1;
+  });
+  if (oomPods.length > 0) {
+    items.push({ icon: '\u{1F4A5}', text: oomPods.length + ' OOMKilled pod' + (oomPods.length > 1 ? 's' : ''),
+      query: 'Show OOMKilled pods', cls: 'ss-crit' });
+  }
+
+  var pendingPods = pods.filter(function(p) {
+    return (p.status || '').toLowerCase() === 'pending';
+  });
+  if (pendingPods.length > 0) {
+    items.push({ icon: '⏳', text: pendingPods.length + ' pending pod' + (pendingPods.length > 1 ? 's' : ''),
+      query: 'Show pending pods', cls: 'ss-warn' });
+  }
+
+  var highRestart = pods.filter(function(p) { return (p.restarts || 0) >= 5; });
+  if (highRestart.length > 0) {
+    items.push({ icon: '\u{1F504}', text: highRestart.length + ' pod' + (highRestart.length > 1 ? 's' : '') + ' with high restarts',
+      query: 'Show pods with high restart count', cls: 'ss-warn' });
+  }
+
+  var notReadyNodes = nodes.filter(function(n) {
+    return (n.status || '').toLowerCase() !== 'ready';
+  });
+  if (notReadyNodes.length > 0) {
+    items.push({ icon: '\u{1F5A5}', text: notReadyNodes.length + ' node' + (notReadyNodes.length > 1 ? 's' : '') + ' not ready',
+      query: 'Show node status', cls: 'ss-crit' });
+  }
+
+  var critRisks = risks.filter(function(r) { return r.severity === 'critical'; });
+  if (critRisks.length > 0) {
+    items.push({ icon: '⚠', text: critRisks.length + ' critical risk' + (critRisks.length > 1 ? 's' : '') + ' detected',
+      query: 'Show me all pods with issues', cls: 'ss-crit' });
+  }
+
+  var warningEvents = events.filter(function(e) {
+    return (e.type || '').toLowerCase() === 'warning';
+  });
+  if (warningEvents.length > 3) {
+    items.push({ icon: '\u{1F4CB}', text: warningEvents.length + ' warning events',
+      query: 'Show warning events in the cluster', cls: 'ss-warn' });
+  }
+
+  var nsByIssue = {};
+  pods.forEach(function(p) {
+    if ((p.status || '').indexOf('CrashLoop') !== -1 || (p.reason || '').indexOf('OOMKilled') !== -1 ||
+        (p.status || '').toLowerCase() === 'pending' || (p.restarts || 0) >= 5) {
+      var ns = p.namespace || 'default';
+      nsByIssue[ns] = (nsByIssue[ns] || 0) + 1;
+    }
+  });
+  Object.keys(nsByIssue).forEach(function(ns) {
+    if (nsByIssue[ns] >= 2) {
+      items.push({ icon: '\u{1F4C1}', text: nsByIssue[ns] + ' issues in ' + ns,
+        query: 'Show pods in ' + ns + ' namespace', cls: 'ss-warn' });
+    }
+  });
+
+  if (items.length === 0) {
+    items.push({ icon: '❤', text: 'Check cluster health', query: 'Check cluster health', cls: '' });
+    items.push({ icon: '\u{1F4CA}', text: 'Node resources', query: 'Show node CPU and memory utilization', cls: '' });
+    items.push({ icon: '\u{1F50D}', text: 'Security audit', query: '/security', cls: '' });
+    items.push({ icon: '⬆', text: 'Upgrade readiness', query: '/upgrade-check', cls: '' });
+  }
+
+  return items.slice(0, 8);
+}
+
+function loadSmartSuggestions() {
+  var container = document.getElementById('smart-suggestions');
+  if (!container) return;
+  var items = buildDynamicSuggestions();
+  container.innerHTML = items.map(function(s) {
+    var cls = 'smart-suggestion' + (s.cls ? ' ' + s.cls : '');
+    return '<button class="' + cls + '" onclick="sendFullChat(\'' + s.query.replace(/'/g, "\\'") + '\')">' +
+      '<span class="ss-icon">' + s.icon + '</span>' + s.text + '</button>';
+  }).join('');
+}
+
+function populateWelcomeLiveBar() {
+  var bar = document.getElementById('welcome-live-bar');
+  if (!bar) return;
+  var chips = [];
+  var pods = (_liveState && _liveState.pods) ? _liveState.pods : [];
+  var nodes = (_liveState && _liveState.nodes) ? _liveState.nodes : [];
+  var risks = _riskData || [];
+
+  var totalPods = pods.length;
+  var runningPods = pods.filter(function(p) { return (p.status || '').toLowerCase() === 'running' || (p.status || '').toLowerCase() === 'succeeded'; }).length;
+  var failedPods = totalPods - runningPods;
+
+  if (totalPods > 0) {
+    if (failedPods > 0) {
+      chips.push({ text: failedPods + '/' + totalPods + ' pods unhealthy', cls: 'crit',
+        query: 'Show me all pods with issues' });
+    } else {
+      chips.push({ text: totalPods + ' pods healthy', cls: 'ok',
+        query: 'Check cluster health' });
+    }
+  }
+
+  var totalNodes = nodes.length;
+  var readyNodes = nodes.filter(function(n) { return (n.status || '').toLowerCase() === 'ready'; }).length;
+  if (totalNodes > 0) {
+    if (readyNodes < totalNodes) {
+      chips.push({ text: (totalNodes - readyNodes) + '/' + totalNodes + ' nodes not ready', cls: 'crit',
+        query: 'Show node status' });
+    } else {
+      chips.push({ text: totalNodes + ' nodes ready', cls: 'ok',
+        query: 'Show node CPU and memory utilization' });
+    }
+  }
+
+  var critCount = risks.filter(function(r) { return r.severity === 'critical'; }).length;
+  var warnCount = risks.filter(function(r) { return r.severity === 'warning' || r.severity === 'medium'; }).length;
+  if (critCount > 0) {
+    chips.push({ text: critCount + ' critical risk' + (critCount > 1 ? 's' : ''), cls: 'crit',
+      query: 'Show me all pods with issues' });
+  } else if (warnCount > 0) {
+    chips.push({ text: warnCount + ' warning' + (warnCount > 1 ? 's' : ''), cls: 'warn',
+      query: 'Show warning events in the cluster' });
+  } else if (totalPods > 0) {
+    chips.push({ text: 'No active risks', cls: 'ok', query: 'Check cluster health' });
+  }
+
+  bar.innerHTML = chips.map(function(c) {
+    return '<span class="wlb-chip ' + c.cls + '" onclick="sendFullChat(\'' + c.query.replace(/'/g, "\\'") + '\')">' +
+      c.text + '</span>';
+  }).join('');
 }
 
 // ---------------------------------------------------------------------------
@@ -13329,6 +13599,8 @@ function connectLiveStream() {
       if (data.type === 'cluster-state') {
         _liveState = data;
         renderLiveCluster(data);
+        populateWelcomeLiveBar();
+        loadSmartSuggestions();
       }
     } catch {}
   };
