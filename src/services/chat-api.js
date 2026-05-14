@@ -262,6 +262,20 @@ function nluToCommand(p) {
   else if (p.intent === "forecast") operation = "forecast";
   else if (p.intent === "kb") operation = "kb";
   else if (p.intent === "provision") operation = "provision";
+  // Superlative queries about cpu/memory should use the "top" handler which
+  // fetches real metrics from metrics.k8s.io and sorts.  The NLU may classify
+  // "which pod uses the most CPU" as intent:"list" (because of "which"), but
+  // the right handler is "top".  Also clear the resource name since superlative
+  // queries want all pods sorted, not a specific pod by name.
+  const adv = p.advFilters || {};
+  if (adv.superlative && (adv.superlative.metric === "cpu" || adv.superlative.metric === "memory")) {
+    const rt = p.resource;
+    if (!rt || rt === "pod" || rt === "pods" || rt === "node" || rt === "nodes") {
+      operation = "top";
+      p.name = null;
+    }
+  }
+
   return {
     operation,
     resourceType: p.resource,
@@ -1531,17 +1545,34 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
       }
 
       if (cmd.resourceType === "node") {
-        parts.push(`### Node Resource Usage`);
-        parts.push(`| Node | CPU | Memory |`);
-        parts.push(`| --- | --- | --- |`);
-        items.forEach((n) => {
-          const cpu = fmtCpu(n.usage?.cpu);
-          const mem = fmtMem(n.usage?.memory);
-          parts.push(`| **${n.metadata.name}** | ${cpu} | ${mem} |`);
+        const nSup = cmd.advFilters?.superlative;
+        const nSortMetric = nSup?.metric || "cpu";
+        const nSortDir = nSup?.op === "min" ? "asc" : "desc";
+        const nodeMetrics = items.map(n => ({
+          node: n,
+          cpuRaw: parseCpuNano(n.usage?.cpu),
+          memRaw: parseMemBytes(n.usage?.memory),
+          cpu: fmtCpu(n.usage?.cpu),
+          mem: fmtMem(n.usage?.memory),
+        }));
+        if (nSortMetric === "memory") {
+          nodeMetrics.sort((a, b) => nSortDir === "desc" ? b.memRaw - a.memRaw : a.memRaw - b.memRaw);
+        } else {
+          nodeMetrics.sort((a, b) => nSortDir === "desc" ? b.cpuRaw - a.cpuRaw : a.cpuRaw - b.cpuRaw);
+        }
+        parts.push(`### Node Resource Usage — sorted by ${nSortMetric === "memory" ? "Memory" : "CPU"}`);
+        parts.push(`| # | Node | CPU | Memory |`);
+        parts.push(`| --- | --- | --- | --- |`);
+        nodeMetrics.forEach(({ node: n, cpu, mem }, idx) => {
+          parts.push(`| ${idx + 1} | **${n.metadata.name}** | ${cpu} | ${mem} |`);
         });
       } else {
         const label = cmd.namespace ? `in \`${cmd.namespace}\`` : "(all namespaces)";
-        parts.push(`### Pod Resource Usage ${label}`);
+        const sup = cmd.advFilters?.superlative;
+        const sortMetric = sup?.metric || "cpu";
+        const sortDir = sup?.op === "min" ? "asc" : "desc";
+        const sortLabel = sortMetric === "memory" ? "Memory" : "CPU";
+        parts.push(`### Pod Resource Usage — sorted by ${sortLabel} ${label}`);
         // Compute totals per pod for sorting
         const podMetrics = items.slice(0, 30).map((p) => {
           const containers = (p.containers || []).map((c) => ({
@@ -1555,13 +1586,17 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
           const totalMem = containers.reduce((s, c) => s + c.memRaw, 0);
           return { pod: p, containers, totalCpu, totalMem, totalCpuFmt: fmtCpu(String(totalCpu) + "n"), totalMemFmt: fmtMem(String(Math.round(totalMem / 1024)) + "Ki") };
         });
-        podMetrics.sort((a, b) => b.totalCpu - a.totalCpu);
-        parts.push(`| Pod | Namespace | CPU | Memory | Containers |`);
-        parts.push(`| --- | --- | --- | --- | --- |`);
-        podMetrics.forEach(({ pod: p, containers, totalCpuFmt, totalMemFmt }) => {
+        if (sortMetric === "memory") {
+          podMetrics.sort((a, b) => sortDir === "desc" ? b.totalMem - a.totalMem : a.totalMem - b.totalMem);
+        } else {
+          podMetrics.sort((a, b) => sortDir === "desc" ? b.totalCpu - a.totalCpu : a.totalCpu - b.totalCpu);
+        }
+        parts.push(`| # | Pod | Namespace | CPU | Memory | Containers |`);
+        parts.push(`| --- | --- | --- | --- | --- | --- |`);
+        podMetrics.forEach(({ pod: p, containers, totalCpuFmt, totalMemFmt }, idx) => {
           const cCount = containers.length;
           const cDetail = cCount > 1 ? `${cCount} containers` : containers[0]?.name || "1";
-          parts.push(`| \`${p.metadata.name}\` | ${p.metadata.namespace} | ${totalCpuFmt} | ${totalMemFmt} | ${cDetail} |`);
+          parts.push(`| ${idx + 1} | \`${p.metadata.name}\` | ${p.metadata.namespace} | ${totalCpuFmt} | ${totalMemFmt} | ${cDetail} |`);
         });
         if (items.length > 30) parts.push(`\n@@VIEW_MORE|podmetrics|${cmd.namespace || '_all'}|30|${items.length}@@`);
       }
@@ -2935,6 +2970,66 @@ async function handleListCommand(message, preParsed, opts = {}) {
     if (adv.zeroReplicas && (cmd.resourceType === "deployment" || cmd.resourceType === "deployments")) {
       items = items.filter(d => (d.spec?.replicas ?? 1) === 0);
       advFilterLabel = " **scaled to zero**";
+    }
+
+    // Advanced filter: superlative — "pod with most restarts", "oldest pod", etc.
+    // CPU/memory superlatives are handled by the "top" handler, but restarts and
+    // age can be resolved from the pod status without metrics API.
+    if (adv.superlative && (cmd.resourceType === "pod" || cmd.resourceType === "pods")) {
+      const sup = adv.superlative;
+      if (sup.metric === "restarts") {
+        items.sort((a, b) => {
+          const rA = (a.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0);
+          const rB = (b.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0);
+          return sup.op === "max" ? rB - rA : rA - rB;
+        });
+        advFilterLabel = sup.op === "max" ? " **with most restarts**" : " **with fewest restarts**";
+      } else if (sup.metric === "age") {
+        items.sort((a, b) => {
+          const tA = new Date(a.metadata?.creationTimestamp || 0).getTime();
+          const tB = new Date(b.metadata?.creationTimestamp || 0).getTime();
+          return sup.op === "max" ? tA - tB : tB - tA;
+        });
+        advFilterLabel = sup.op === "max" ? " **oldest first**" : " **newest first**";
+      } else if (sup.metric === "cpu" || sup.metric === "memory") {
+        // Shouldn't reach here (nluToCommand redirects to "top"), but as safety
+        // net, fetch metrics and sort inline.
+        try {
+          const mPath = cmd.namespace
+            ? `/apis/metrics.k8s.io/v1beta1/namespaces/${cmd.namespace}/pods`
+            : `/apis/metrics.k8s.io/v1beta1/pods`;
+          const mData = await ocpGet(mPath);
+          const mItems = mData.items || [];
+          const mMap = {};
+          for (const m of mItems) {
+            const total = (m.containers || []).reduce((s, c) => {
+              return s + (sup.metric === "cpu" ? parseCpuNano(c.usage?.cpu) : parseMemBytes(c.usage?.memory));
+            }, 0);
+            mMap[m.metadata.namespace + "/" + m.metadata.name] = total;
+          }
+          items.sort((a, b) => {
+            const vA = mMap[a.metadata.namespace + "/" + a.metadata.name] || 0;
+            const vB = mMap[b.metadata.namespace + "/" + b.metadata.name] || 0;
+            return sup.op === "max" ? vB - vA : vA - vB;
+          });
+          // Return a proper metrics table instead of the generic pod table
+          const metricLabel = sup.metric === "cpu" ? "CPU" : "Memory";
+          const dirLabel = sup.op === "max" ? "highest" : "lowest";
+          const topN = items.slice(0, 20);
+          const parts = [`### Pods by ${metricLabel} usage — ${dirLabel} first ${cmd.namespace ? `in \`${cmd.namespace}\`` : "(all namespaces)"} (${items.length} total)`];
+          parts.push(`| # | Pod | Namespace | ${metricLabel} | Phase |`);
+          parts.push(`| --- | --- | --- | --- | --- |`);
+          topN.forEach((p, i) => {
+            const key = p.metadata.namespace + "/" + p.metadata.name;
+            const val = mMap[key] || 0;
+            const fmt = sup.metric === "cpu" ? fmtCpu(String(val) + "n") : fmtMem(String(Math.round(val / 1024)) + "Ki");
+            parts.push(`| ${i + 1} | \`${p.metadata.name}\` | ${p.metadata.namespace} | **${fmt}** | ${p.status?.phase || "Unknown"} |`);
+          });
+          return parts.join("\n");
+        } catch (_e) {
+          advFilterLabel = ` **by ${sup.metric}** (metrics unavailable — showing all)`;
+        }
+      }
     }
 
     const label = cmd.namespace ? `in \`${cmd.namespace}\`` : "(all namespaces)";

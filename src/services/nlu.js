@@ -279,6 +279,10 @@ const VERB_TABLE = {
   metrics:     { intent: "top", weight: 85 },
   usage:       { intent: "top", weight: 70 },
   consumption: { intent: "top", weight: 70 },
+  consuming:   { intent: "top", weight: 65 },
+  consumes:    { intent: "top", weight: 65 },
+  uses:        { intent: "top", weight: 50 },
+  utilizing:   { intent: "top", weight: 65 },
   exec:    { intent: "exec", weight: 95 },
   execute: { intent: "exec", weight: 90 },
   shell:   { intent: "exec", weight: 80 },
@@ -621,9 +625,12 @@ export function parse(message, memory = {}) {
     }
   }
 
-  // "how many" / "count" → list with scope=count
+  // "how much CPU/memory" → metrics query, not a count
   let scope = null;
-  if (/\b(how\s+many|how\s+much|count|number\s+of|total)\b/.test(lower)) {
+  if (/\bhow\s+much\s+(cpu|memory|mem|ram)\b/.test(lower)) {
+    intent = "top";
+    scope = "metrics";
+  } else if (/\b(how\s+many|how\s+much|count|number\s+of|total)\b/.test(lower)) {
     intent = intent || "list";
     scope = "count";
   } else if (/\b(list|show|display|view|enumerate)\b/.test(lower)) {
