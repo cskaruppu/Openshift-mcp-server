@@ -301,6 +301,26 @@ function nluToCommand(p) {
   else if (p.intent === "network") operation = "network";
   else if (p.intent === "identity") operation = "identity";
   else if (p.intent === "certlife") operation = "certlife";
+  // Tier 9-12: global industry standard intents
+  else if (p.intent === "slo") operation = "slo";
+  else if (p.intent === "saturation") operation = "saturation";
+  else if (p.intent === "incident") operation = "incident";
+  else if (p.intent === "postmortem") operation = "postmortem";
+  else if (p.intent === "impact") operation = "impact";
+  else if (p.intent === "deprecated") operation = "deprecated";
+  else if (p.intent === "webhook") operation = "webhook";
+  else if (p.intent === "supplychain") operation = "supplychain";
+  else if (p.intent === "imagestale") operation = "imagestale";
+  else if (p.intent === "hardening") operation = "hardening";
+  else if (p.intent === "podsecurity") operation = "podsecurity";
+  else if (p.intent === "capacity") operation = "capacity";
+  else if (p.intent === "mcpdrift") operation = "mcpdrift";
+  else if (p.intent === "pdb") operation = "pdb";
+  else if (p.intent === "topology") operation = "topology";
+  else if (p.intent === "probes") operation = "probes";
+  else if (p.intent === "hpa") operation = "hpa";
+  else if (p.intent === "orphaned") operation = "orphaned";
+  else if (p.intent === "governance") operation = "governance";
   // Superlative queries about cpu/memory should use the "top" handler which
   // fetches real metrics from metrics.k8s.io and sorts.  The NLU may classify
   // "which pod uses the most CPU" as intent:"list" (because of "which"), but
@@ -3287,6 +3307,914 @@ EOF@@`);
     return parts.join("\n");
   }
 
+  // -----------------------------------------------------------------------
+  // Tier 9: SLO — SLO/SLI/error-budget tracking
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "slo") {
+    try {
+      const [prometheusRules, serviceMonitors, podMonitors] = await Promise.all([
+        ocpGet("/apis/monitoring.coreos.com/v1/prometheusrules").catch(() => ({ items: [] })),
+        ocpGet("/apis/monitoring.coreos.com/v1/servicemonitors").catch(() => ({ items: [] })),
+        ocpGet("/apis/monitoring.coreos.com/v1/podmonitors").catch(() => ({ items: [] })),
+      ]);
+      const rules = prometheusRules.items || [];
+      const sloRules = rules.filter(r => {
+        const yaml = JSON.stringify(r.spec || {}).toLowerCase();
+        return yaml.includes("slo") || yaml.includes("error_budget") || yaml.includes("burn_rate") || yaml.includes("availability");
+      });
+      parts.push(`### SLO / SLI / Error Budget Status`);
+      parts.push("");
+      parts.push(`**PrometheusRules:** ${rules.length} total | **SLO-related rules:** ${sloRules.length}`);
+      parts.push(`**ServiceMonitors:** ${(serviceMonitors.items || []).length} | **PodMonitors:** ${(podMonitors.items || []).length}`);
+      parts.push("");
+      if (sloRules.length > 0) {
+        parts.push(`| Rule | Namespace | Groups | SLO Indicators |`);
+        parts.push(`| --- | --- | --- | --- |`);
+        sloRules.slice(0, 15).forEach(r => {
+          const groups = (r.spec?.groups || []).length;
+          const indicators = (r.spec?.groups || []).flatMap(g => g.rules || []).filter(rl => {
+            const expr = (rl.expr || "").toLowerCase();
+            return expr.includes("slo") || expr.includes("error_budget") || expr.includes("burn_rate");
+          }).length;
+          parts.push(`| \`${r.metadata.name}\` | ${r.metadata.namespace} | ${groups} | ${indicators} |`);
+        });
+      } else {
+        parts.push(`[WARNING] No SLO-specific PrometheusRules found. Consider implementing SLO alerting with burn-rate windows.`);
+        parts.push("");
+        parts.push(`**Recommended setup:**`);
+        parts.push(`- Use Sloth or pyrra for SLO definition generation`);
+        parts.push(`- Define availability SLOs (99.9%, 99.95%) per service`);
+        parts.push(`- Configure multi-window burn-rate alerts (5m, 30m, 1h, 6h)`);
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### SLO / SLI Status`);
+      parts.push(`[WARNING] Could not query SLO resources: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 9: SATURATION — resource pressure, throttling, saturation signals
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "saturation") {
+    try {
+      const [nodeMetrics, nodes, pods] = await Promise.all([
+        ocpGet("/apis/metrics.k8s.io/v1beta1/nodes").catch(() => ({ items: [] })),
+        ocpGet("/api/v1/nodes"),
+        ocpGet("/api/v1/pods?fieldSelector=status.phase=Running&limit=500"),
+      ]);
+      const nodeItems = nodes.items || [];
+      const metricItems = nodeMetrics.items || [];
+      parts.push(`### Resource Saturation & Pressure Analysis`);
+      parts.push("");
+      parts.push(`| Node | CPU Allocatable | CPU Used | CPU % | Memory Allocatable | Memory Used | Mem % | Pressure |`);
+      parts.push(`| --- | --- | --- | --- | --- | --- | --- | --- |`);
+      nodeItems.forEach(n => {
+        const metric = metricItems.find(m => m.metadata.name === n.metadata.name);
+        const cpuAlloc = parseCpuNano(n.status?.allocatable?.cpu || "0");
+        const memAlloc = parseMemBytes(n.status?.allocatable?.memory || "0");
+        const cpuUsed = metric ? parseCpuNano(metric.usage?.cpu || "0") : 0;
+        const memUsed = metric ? parseMemBytes(metric.usage?.memory || "0") : 0;
+        const cpuPct = cpuAlloc > 0 ? ((cpuUsed / cpuAlloc) * 100).toFixed(1) : "?";
+        const memPct = memAlloc > 0 ? ((memUsed / memAlloc) * 100).toFixed(1) : "?";
+        const conditions = (n.status?.conditions || []);
+        const pressures = conditions.filter(c => c.status === "True" && c.type !== "Ready").map(c => c.type);
+        const pressureStr = pressures.length > 0 ? pressures.join(", ") : "None";
+        const cpuIcon = parseFloat(cpuPct) > 80 ? "[CRITICAL]" : parseFloat(cpuPct) > 60 ? "[WARNING]" : "[OK]";
+        const memIcon = parseFloat(memPct) > 85 ? "[CRITICAL]" : parseFloat(memPct) > 70 ? "[WARNING]" : "[OK]";
+        parts.push(`| \`${n.metadata.name}\` | ${fmtCpu(n.status?.allocatable?.cpu)} | ${fmtCpu(metric?.usage?.cpu || "0")} | ${cpuIcon} ${cpuPct}% | ${fmtMem(n.status?.allocatable?.memory)} | ${fmtMem(metric?.usage?.memory || "0")} | ${memIcon} ${memPct}% | ${pressureStr} |`);
+      });
+      parts.push("");
+      const throttledPods = (pods.items || []).filter(p => {
+        const statuses = p.status?.containerStatuses || [];
+        return statuses.some(cs => (cs.restartCount || 0) > 5);
+      });
+      if (throttledPods.length > 0) {
+        parts.push(`**High-restart pods (possible throttling):** ${throttledPods.length}`);
+        throttledPods.slice(0, 10).forEach(p => {
+          const maxRestarts = Math.max(...(p.status?.containerStatuses || []).map(cs => cs.restartCount || 0));
+          parts.push(`  - \`${p.metadata.name}\` (${p.metadata.namespace}) — ${maxRestarts} restarts`);
+        });
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Resource Saturation`);
+      parts.push(`[WARNING] Could not query saturation data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 9: INCIDENT — active incident detection from cluster signals
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "incident") {
+    try {
+      const [events, nodes, pods] = await Promise.all([
+        ocpGet("/api/v1/events?fieldSelector=type=Warning&limit=200"),
+        ocpGet("/api/v1/nodes"),
+        ocpGet("/api/v1/pods?limit=500"),
+      ]);
+      const warningEvents = (events.items || []).sort((a, b) => new Date(b.lastTimestamp || 0) - new Date(a.lastTimestamp || 0));
+      const notReadyNodes = (nodes.items || []).filter(n => {
+        const ready = (n.status?.conditions || []).find(c => c.type === "Ready");
+        return !ready || ready.status !== "True";
+      });
+      const crashPods = (pods.items || []).filter(p => {
+        const statuses = p.status?.containerStatuses || [];
+        return statuses.some(cs => cs.state?.waiting?.reason === "CrashLoopBackOff");
+      });
+      const pendingPods = (pods.items || []).filter(p => p.status?.phase === "Pending");
+      parts.push(`### Active Incident Summary`);
+      parts.push("");
+      const severity = (notReadyNodes.length > 0 || crashPods.length > 10) ? "[CRITICAL]" : (crashPods.length > 0 || pendingPods.length > 5) ? "[WARNING]" : "[OK]";
+      parts.push(`**Cluster Severity:** ${severity}`);
+      parts.push("");
+      parts.push(`| Signal | Count | Status |`);
+      parts.push(`| --- | --- | --- |`);
+      parts.push(`| NotReady Nodes | ${notReadyNodes.length} | ${notReadyNodes.length > 0 ? "[CRITICAL]" : "[OK]"} |`);
+      parts.push(`| CrashLoopBackOff Pods | ${crashPods.length} | ${crashPods.length > 0 ? "[WARNING]" : "[OK]"} |`);
+      parts.push(`| Pending Pods | ${pendingPods.length} | ${pendingPods.length > 5 ? "[WARNING]" : "[OK]"} |`);
+      parts.push(`| Warning Events (recent) | ${warningEvents.length} | ${warningEvents.length > 50 ? "[WARNING]" : "[OK]"} |`);
+      parts.push("");
+      if (notReadyNodes.length > 0) {
+        parts.push(`**NotReady Nodes:**`);
+        notReadyNodes.forEach(n => parts.push(`  - [CRITICAL] \`${n.metadata.name}\``));
+        parts.push("");
+      }
+      if (crashPods.length > 0) {
+        parts.push(`**CrashLoopBackOff Pods:**`);
+        crashPods.slice(0, 10).forEach(p => parts.push(`  - [WARNING] \`${p.metadata.name}\` (${p.metadata.namespace})`));
+        parts.push("");
+      }
+      if (warningEvents.length > 0) {
+        parts.push(`**Top Warning Events:**`);
+        const grouped = {};
+        warningEvents.forEach(e => {
+          const key = e.reason || "Unknown";
+          grouped[key] = (grouped[key] || 0) + 1;
+        });
+        Object.entries(grouped).sort((a, b) => b[1] - a[1]).slice(0, 10).forEach(([reason, count]) => {
+          parts.push(`  - **${reason}**: ${count} occurrences`);
+        });
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Incident Summary`);
+      parts.push(`[WARNING] Could not gather incident data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 9: POSTMORTEM — post-incident analysis and timeline
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "postmortem") {
+    try {
+      const [events, pods] = await Promise.all([
+        ocpGet("/api/v1/events?limit=500"),
+        ocpGet("/api/v1/pods?limit=500"),
+      ]);
+      const allEvents = (events.items || []).sort((a, b) => new Date(a.lastTimestamp || 0) - new Date(b.lastTimestamp || 0));
+      const warningEvents = allEvents.filter(e => e.type === "Warning");
+      parts.push(`### Post-Incident Analysis / Postmortem Data`);
+      parts.push("");
+      parts.push(`**Total Events:** ${allEvents.length} | **Warning Events:** ${warningEvents.length}`);
+      parts.push("");
+      if (warningEvents.length > 0) {
+        parts.push(`**Event Timeline (chronological):**`);
+        parts.push(`| Time | Type | Reason | Object | Message |`);
+        parts.push(`| --- | --- | --- | --- | --- |`);
+        warningEvents.slice(-20).forEach(e => {
+          const time = e.lastTimestamp ? new Date(e.lastTimestamp).toISOString().replace("T", " ").slice(0, 19) : "—";
+          const obj = `${e.involvedObject?.kind || "?"}/${e.involvedObject?.name || "?"}`;
+          const msg = (e.message || "").substring(0, 80).replace(/\|/g, "/");
+          parts.push(`| ${time} | ${e.type} | ${e.reason} | ${obj} | ${msg} |`);
+        });
+        parts.push("");
+      }
+      const failedPods = (pods.items || []).filter(p => p.status?.phase === "Failed" || (p.status?.containerStatuses || []).some(cs => cs.state?.terminated?.exitCode !== 0 && cs.state?.terminated));
+      if (failedPods.length > 0) {
+        parts.push(`**Failed/Terminated Pods:** ${failedPods.length}`);
+        failedPods.slice(0, 10).forEach(p => {
+          const reason = (p.status?.containerStatuses || []).map(cs => cs.state?.terminated?.reason || cs.state?.waiting?.reason).filter(Boolean).join(", ") || p.status?.phase;
+          parts.push(`  - \`${p.metadata.name}\` (${p.metadata.namespace}) — ${reason}`);
+        });
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Postmortem Data`);
+      parts.push(`[WARNING] Could not gather postmortem data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 9: IMPACT — blast radius / impact analysis
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "impact") {
+    try {
+      const [pods, services, deploys, events] = await Promise.all([
+        ocpGet("/api/v1/pods?limit=500"),
+        ocpGet("/api/v1/services?limit=500"),
+        ocpGet("/apis/apps/v1/deployments?limit=500"),
+        ocpGet("/api/v1/events?fieldSelector=type=Warning&limit=200"),
+      ]);
+      const crashPods = (pods.items || []).filter(p => (p.status?.containerStatuses || []).some(cs => cs.state?.waiting?.reason === "CrashLoopBackOff" || cs.state?.waiting?.reason === "ImagePullBackOff"));
+      const affectedNs = [...new Set(crashPods.map(p => p.metadata.namespace))];
+      const affectedDeploys = (deploys.items || []).filter(d => {
+        const unavail = (d.status?.unavailableReplicas || 0);
+        return unavail > 0;
+      });
+      parts.push(`### Blast Radius / Impact Analysis`);
+      parts.push("");
+      parts.push(`| Metric | Count |`);
+      parts.push(`| --- | --- |`);
+      parts.push(`| Affected Pods (CrashLoop/ImagePull) | ${crashPods.length} |`);
+      parts.push(`| Affected Namespaces | ${affectedNs.length} |`);
+      parts.push(`| Degraded Deployments | ${affectedDeploys.length} |`);
+      parts.push(`| Warning Events | ${(events.items || []).length} |`);
+      parts.push("");
+      if (affectedNs.length > 0) {
+        parts.push(`**Affected Namespaces:** ${affectedNs.join(", ")}`);
+        parts.push("");
+      }
+      if (affectedDeploys.length > 0) {
+        parts.push(`**Degraded Deployments:**`);
+        affectedDeploys.slice(0, 10).forEach(d => {
+          parts.push(`  - [WARNING] \`${d.metadata.name}\` (${d.metadata.namespace}) — ${d.status?.unavailableReplicas} unavailable / ${d.spec?.replicas} desired`);
+        });
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Impact Analysis`);
+      parts.push(`[WARNING] Could not gather impact data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 9: DEPRECATED — deprecated API usage detection
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "deprecated") {
+    try {
+      const [events, apiResources] = await Promise.all([
+        ocpGet("/api/v1/events?limit=500"),
+        ocpGet("/apis").catch(() => ({ groups: [] })),
+      ]);
+      const deprecationEvents = (events.items || []).filter(e => {
+        const msg = (e.message || "").toLowerCase();
+        return msg.includes("deprecated") || msg.includes("removed") || e.reason === "DeprecatedAPIVersion";
+      });
+      parts.push(`### Deprecated API Usage Detection`);
+      parts.push("");
+      if (deprecationEvents.length > 0) {
+        parts.push(`[WARNING] **${deprecationEvents.length} deprecation events found:**`);
+        parts.push("");
+        parts.push(`| Time | Reason | Object | Message |`);
+        parts.push(`| --- | --- | --- | --- |`);
+        deprecationEvents.slice(0, 20).forEach(e => {
+          const time = e.lastTimestamp ? new Date(e.lastTimestamp).toISOString().slice(0, 19) : "—";
+          const obj = `${e.involvedObject?.kind || "?"}/${e.involvedObject?.name || "?"}`;
+          const msg = (e.message || "").substring(0, 100).replace(/\|/g, "/");
+          parts.push(`| ${time} | ${e.reason} | ${obj} | ${msg} |`);
+        });
+      } else {
+        parts.push(`[OK] No deprecation warning events found in recent cluster events.`);
+      }
+      parts.push("");
+      parts.push(`**Check for deprecated API usage:**`);
+      parts.push(`@@SEC_FIX_CMD|oc get apirequestcounts -o jsonpath='{range .items[?(@.status.removedInRelease!="")]}{.metadata.name}{" removed in "}{.status.removedInRelease}{"\\n"}{end}'@@`);
+      parts.push("");
+      parts.push(`**Audit deprecated API requests:**`);
+      parts.push(`@@SEC_FIX_CMD|oc get apirequestcounts -o wide@@`);
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Deprecated API Detection`);
+      parts.push(`[WARNING] Could not query deprecation data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 9: WEBHOOK — admission webhook analysis
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "webhook") {
+    try {
+      const [validating, mutating] = await Promise.all([
+        ocpGet("/apis/admissionregistration.k8s.io/v1/validatingwebhookconfigurations"),
+        ocpGet("/apis/admissionregistration.k8s.io/v1/mutatingwebhookconfigurations"),
+      ]);
+      const vItems = validating.items || [];
+      const mItems = mutating.items || [];
+      parts.push(`### Admission Webhooks`);
+      parts.push("");
+      parts.push(`**Validating Webhooks:** ${vItems.length} | **Mutating Webhooks:** ${mItems.length}`);
+      parts.push("");
+      if (vItems.length > 0) {
+        parts.push(`**Validating Webhook Configurations:**`);
+        parts.push(`| Name | Webhooks | Failure Policy |`);
+        parts.push(`| --- | --- | --- |`);
+        vItems.forEach(v => {
+          const wh = v.webhooks || [];
+          const policies = [...new Set(wh.map(w => w.failurePolicy || "Fail"))].join(", ");
+          parts.push(`| \`${v.metadata.name}\` | ${wh.length} | ${policies} |`);
+        });
+        parts.push("");
+      }
+      if (mItems.length > 0) {
+        parts.push(`**Mutating Webhook Configurations:**`);
+        parts.push(`| Name | Webhooks | Failure Policy |`);
+        parts.push(`| --- | --- | --- |`);
+        mItems.forEach(m => {
+          const wh = m.webhooks || [];
+          const policies = [...new Set(wh.map(w => w.failurePolicy || "Fail"))].join(", ");
+          parts.push(`| \`${m.metadata.name}\` | ${wh.length} | ${policies} |`);
+        });
+      }
+      const failClosed = [...vItems, ...mItems].filter(c => (c.webhooks || []).some(w => w.failurePolicy === "Fail"));
+      if (failClosed.length > 0) {
+        parts.push("");
+        parts.push(`[WARNING] **${failClosed.length} webhook(s) with failurePolicy=Fail** — could block cluster operations if webhook service is down`);
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Admission Webhooks`);
+      parts.push(`[WARNING] Could not query webhook data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 10: SUPPLYCHAIN — supply chain security (SBOM, signing, provenance)
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "supplychain") {
+    try {
+      const [pods, imageSignPolicies, clusterImagePolicies] = await Promise.all([
+        ocpGet("/api/v1/pods?limit=300"),
+        ocpGet("/apis/image.openshift.io/v1/imagesignatures").catch(() => ({ items: [] })),
+        ocpGet("/apis/config.openshift.io/v1/images/cluster").catch(() => null),
+      ]);
+      const allImages = new Set();
+      (pods.items || []).forEach(p => {
+        (p.spec?.containers || []).forEach(c => allImages.add(c.image));
+        (p.spec?.initContainers || []).forEach(c => allImages.add(c.image));
+      });
+      const unsigned = [...allImages].filter(img => !img.includes("@sha256:"));
+      parts.push(`### Supply Chain Security Assessment`);
+      parts.push("");
+      parts.push(`**Total Unique Images:** ${allImages.size}`);
+      parts.push(`**Images without digest (tag-only):** ${unsigned.length > 0 ? `[WARNING] ${unsigned.length}` : `[OK] 0`}`);
+      parts.push("");
+      if (unsigned.length > 0) {
+        parts.push(`**Tag-only images (no provenance guarantee):**`);
+        unsigned.slice(0, 15).forEach(img => parts.push(`  - [WARNING] \`${img}\``));
+        parts.push("");
+      }
+      if (clusterImagePolicies) {
+        const registrySources = clusterImagePolicies.spec?.registrySources || {};
+        if (registrySources.allowedRegistries?.length > 0) {
+          parts.push(`**Allowed Registries:** ${registrySources.allowedRegistries.join(", ")}`);
+        }
+        if (registrySources.blockedRegistries?.length > 0) {
+          parts.push(`**Blocked Registries:** ${registrySources.blockedRegistries.join(", ")}`);
+        }
+      }
+      parts.push("");
+      parts.push(`**Verify image signatures:**`);
+      parts.push(`@@SEC_FIX_CMD|oc get imagesignatures --all-namespaces 2>/dev/null || echo "No image signatures found"@@`);
+      parts.push("");
+      parts.push(`**Check cosign verification:**`);
+      parts.push(`@@SEC_FIX_CMD|oc get clusterimagepolicies.policy.sigstore.dev 2>/dev/null || echo "No Sigstore policies found"@@`);
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Supply Chain Security`);
+      parts.push(`[WARNING] Could not query supply chain data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 10: IMAGESTALE — stale/outdated image detection
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "imagestale") {
+    try {
+      const pods = await ocpGet("/api/v1/pods?limit=500");
+      const imageMap = {};
+      (pods.items || []).forEach(p => {
+        (p.spec?.containers || []).forEach(c => {
+          const img = c.image || "";
+          if (!imageMap[img]) imageMap[img] = { namespaces: new Set(), count: 0 };
+          imageMap[img].namespaces.add(p.metadata.namespace);
+          imageMap[img].count++;
+        });
+      });
+      const tagPattern = /:([a-zA-Z0-9._-]+)$/;
+      const staleIndicators = ["latest", "dev", "test", "debug", "snapshot", "nightly"];
+      parts.push(`### Stale / Outdated Image Detection`);
+      parts.push("");
+      parts.push(`**Total Unique Images:** ${Object.keys(imageMap).length}`);
+      parts.push("");
+      const staleImages = Object.entries(imageMap).filter(([img]) => {
+        const match = img.match(tagPattern);
+        return match && staleIndicators.some(s => match[1].toLowerCase().includes(s));
+      });
+      const noTagImages = Object.entries(imageMap).filter(([img]) => !img.includes(":") || img.endsWith(":latest"));
+      if (staleImages.length > 0 || noTagImages.length > 0) {
+        parts.push(`[WARNING] **Potentially stale images:**`);
+        parts.push(`| Image | Tag | Pods | Namespaces |`);
+        parts.push(`| --- | --- | --- | --- |`);
+        [...staleImages, ...noTagImages].slice(0, 20).forEach(([img, data]) => {
+          const match = img.match(tagPattern);
+          const tag = match ? match[1] : "latest (implicit)";
+          const nsList = [...data.namespaces].slice(0, 3).join(", ");
+          parts.push(`| \`${img.substring(0, 80)}\` | ${tag} | ${data.count} | ${nsList} |`);
+        });
+      } else {
+        parts.push(`[OK] No obviously stale images detected. All images use versioned tags.`);
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Stale Image Detection`);
+      parts.push(`[WARNING] Could not query image data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 10: HARDENING — CIS benchmark / cluster hardening assessment
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "hardening") {
+    try {
+      const [sccs, complianceScans, namespaces, networkPolicies] = await Promise.all([
+        ocpGet("/apis/security.openshift.io/v1/securitycontextconstraints"),
+        ocpGet("/apis/compliance.openshift.io/v1alpha1/compliancescans").catch(() => ({ items: [] })),
+        ocpGet("/api/v1/namespaces"),
+        ocpGet("/apis/networking.k8s.io/v1/networkpolicies").catch(() => ({ items: [] })),
+      ]);
+      const sccItems = sccs.items || [];
+      const scanItems = complianceScans.items || [];
+      const nsItems = (namespaces.items || []).filter(n => !n.metadata.name.startsWith("openshift-") && !n.metadata.name.startsWith("kube-") && n.metadata.name !== "default");
+      const npNs = new Set((networkPolicies.items || []).map(np => np.metadata.namespace));
+      const nsWithoutNP = nsItems.filter(n => !npNs.has(n.metadata.name));
+      parts.push(`### Cluster Hardening Assessment`);
+      parts.push("");
+      parts.push(`| Check | Status | Details |`);
+      parts.push(`| --- | --- | --- |`);
+      const privilegedSCC = sccItems.filter(s => s.allowPrivilegedContainer);
+      parts.push(`| SCCs (Total) | ${sccItems.length} | ${privilegedSCC.length} allow privileged containers |`);
+      parts.push(`| Compliance Scans | ${scanItems.length > 0 ? "[OK]" : "[WARNING]"} | ${scanItems.length} scan(s) configured |`);
+      parts.push(`| NetworkPolicy Coverage | ${nsWithoutNP.length === 0 ? "[OK]" : "[WARNING]"} | ${nsWithoutNP.length} user namespace(s) without NetworkPolicy |`);
+      parts.push("");
+      if (nsWithoutNP.length > 0) {
+        parts.push(`**Namespaces without NetworkPolicy:**`);
+        nsWithoutNP.slice(0, 10).forEach(n => parts.push(`  - [WARNING] \`${n.metadata.name}\``));
+        parts.push("");
+      }
+      if (scanItems.length > 0) {
+        parts.push(`**Compliance Scans:**`);
+        scanItems.forEach(s => {
+          const status = s.status?.phase || "Unknown";
+          const icon = status === "DONE" ? "[OK]" : "[WARNING]";
+          parts.push(`  - ${icon} \`${s.metadata.name}\` — ${status} (${s.spec?.profile || "?"})`);
+        });
+      } else {
+        parts.push(`**Run CIS benchmark scan:**`);
+        parts.push(`@@SEC_FIX_CMD|oc get compliancescans --all-namespaces 2>/dev/null || echo "Compliance Operator not installed — install via OperatorHub"@@`);
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Cluster Hardening`);
+      parts.push(`[WARNING] Could not query hardening data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 10: PODSECURITY — Pod Security Admission / Standards
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "podsecurity") {
+    try {
+      const namespaces = await ocpGet("/api/v1/namespaces");
+      const nsItems = (namespaces.items || []).filter(n => !n.metadata.name.startsWith("openshift-") && !n.metadata.name.startsWith("kube-") && n.metadata.name !== "default");
+      parts.push(`### Pod Security Admission (PSA) Status`);
+      parts.push("");
+      parts.push(`| Namespace | Enforce | Audit | Warn |`);
+      parts.push(`| --- | --- | --- | --- |`);
+      let noLabels = 0;
+      nsItems.forEach(n => {
+        const labels = n.metadata.labels || {};
+        const enforce = labels["pod-security.kubernetes.io/enforce"] || "—";
+        const audit = labels["pod-security.kubernetes.io/audit"] || "—";
+        const warn = labels["pod-security.kubernetes.io/warn"] || "—";
+        if (enforce === "—" && audit === "—" && warn === "—") {
+          noLabels++;
+        } else {
+          parts.push(`| \`${n.metadata.name}\` | ${enforce} | ${audit} | ${warn} |`);
+        }
+      });
+      if (noLabels > 0) {
+        parts.push("");
+        parts.push(`[WARNING] **${noLabels} user namespace(s) have no PSA labels** — running with default (privileged) security`);
+      }
+      parts.push("");
+      parts.push(`**Apply restricted PSA to a namespace:**`);
+      parts.push(`@@SEC_FIX_CMD|oc label namespace <NAMESPACE> pod-security.kubernetes.io/enforce=restricted pod-security.kubernetes.io/warn=restricted --overwrite@@`);
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Pod Security Admission`);
+      parts.push(`[WARNING] Could not query PSA data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 11: CAPACITY — capacity planning / runway / headroom
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "capacity") {
+    try {
+      const [nodes, nodeMetrics, pods] = await Promise.all([
+        ocpGet("/api/v1/nodes"),
+        ocpGet("/apis/metrics.k8s.io/v1beta1/nodes").catch(() => ({ items: [] })),
+        ocpGet("/api/v1/pods?fieldSelector=status.phase=Running&limit=1000"),
+      ]);
+      const nodeItems = nodes.items || [];
+      const metricItems = nodeMetrics.items || [];
+      let totalCpuAlloc = 0, totalMemAlloc = 0, totalCpuUsed = 0, totalMemUsed = 0;
+      let totalCpuReq = 0, totalMemReq = 0;
+      nodeItems.forEach(n => {
+        const cpuA = parseCpuNano(n.status?.allocatable?.cpu || "0");
+        const memA = parseMemBytes(n.status?.allocatable?.memory || "0");
+        totalCpuAlloc += cpuA;
+        totalMemAlloc += memA;
+        const metric = metricItems.find(m => m.metadata.name === n.metadata.name);
+        if (metric) {
+          totalCpuUsed += parseCpuNano(metric.usage?.cpu || "0");
+          totalMemUsed += parseMemBytes(metric.usage?.memory || "0");
+        }
+      });
+      (pods.items || []).forEach(p => {
+        (p.spec?.containers || []).forEach(c => {
+          totalCpuReq += parseCpuNano(c.resources?.requests?.cpu || "0");
+          totalMemReq += parseMemBytes(c.resources?.requests?.memory || "0");
+        });
+      });
+      const cpuUsedPct = totalCpuAlloc > 0 ? ((totalCpuUsed / totalCpuAlloc) * 100).toFixed(1) : "?";
+      const memUsedPct = totalMemAlloc > 0 ? ((totalMemUsed / totalMemAlloc) * 100).toFixed(1) : "?";
+      const cpuReqPct = totalCpuAlloc > 0 ? ((totalCpuReq / totalCpuAlloc) * 100).toFixed(1) : "?";
+      const memReqPct = totalMemAlloc > 0 ? ((totalMemReq / totalMemAlloc) * 100).toFixed(1) : "?";
+      parts.push(`### Capacity Planning & Headroom Analysis`);
+      parts.push("");
+      parts.push(`**Cluster:** ${nodeItems.length} nodes`);
+      parts.push("");
+      parts.push(`| Resource | Allocatable | Requested | Used | Req % | Used % | Headroom |`);
+      parts.push(`| --- | --- | --- | --- | --- | --- | --- |`);
+      parts.push(`| CPU | ${fmtCpu(String(totalCpuAlloc) + "n")} | ${fmtCpu(String(totalCpuReq) + "n")} | ${fmtCpu(String(totalCpuUsed) + "n")} | ${cpuReqPct}% | ${cpuUsedPct}% | ${(100 - parseFloat(cpuReqPct)).toFixed(1)}% |`);
+      parts.push(`| Memory | ${fmtMem(String(Math.round(totalMemAlloc / 1024)) + "Ki")} | ${fmtMem(String(Math.round(totalMemReq / 1024)) + "Ki")} | ${fmtMem(String(Math.round(totalMemUsed / 1024)) + "Ki")} | ${memReqPct}% | ${memUsedPct}% | ${(100 - parseFloat(memReqPct)).toFixed(1)}% |`);
+      parts.push("");
+      const cpuFree = parseFloat(cpuReqPct);
+      const memFree = parseFloat(memReqPct);
+      if (cpuFree > 80 || memFree > 80) {
+        parts.push(`[CRITICAL] **Cluster is running hot!** Consider adding nodes or right-sizing workloads.`);
+      } else if (cpuFree > 60 || memFree > 60) {
+        parts.push(`[WARNING] **Moderate utilization** — monitor trends for capacity exhaustion.`);
+      } else {
+        parts.push(`[OK] **Healthy headroom** — cluster has sufficient capacity for growth.`);
+      }
+      parts.push("");
+      parts.push(`**Pods Running:** ${(pods.items || []).length}`);
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Capacity Planning`);
+      parts.push(`[WARNING] Could not gather capacity data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 11: MCPDRIFT — MachineConfigPool drift / rendering issues
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "mcpdrift") {
+    try {
+      const [mcps, mcs] = await Promise.all([
+        ocpGet("/apis/machineconfiguration.openshift.io/v1/machineconfigpools"),
+        ocpGet("/apis/machineconfiguration.openshift.io/v1/machineconfigs").catch(() => ({ items: [] })),
+      ]);
+      const mcpItems = mcps.items || [];
+      parts.push(`### MachineConfigPool Drift & Rendering Status`);
+      parts.push("");
+      parts.push(`| Pool | Ready | Updated | Degraded | Machine Count | Current Config |`);
+      parts.push(`| --- | --- | --- | --- | --- | --- |`);
+      mcpItems.forEach(p => {
+        const conds = p.status?.conditions || [];
+        const updated = conds.find(c => c.type === "Updated")?.status === "True" ? "[OK]" : "[WARNING]";
+        const degraded = conds.find(c => c.type === "Degraded")?.status === "True" ? "[CRITICAL]" : "[OK]";
+        const ready = conds.find(c => c.type === "RenderDegraded")?.status === "True" ? "[CRITICAL]" : "[OK]";
+        const count = p.status?.machineCount || 0;
+        const current = p.status?.configuration?.name || "—";
+        parts.push(`| \`${p.metadata.name}\` | ${ready} | ${updated} | ${degraded} | ${count} | \`${current}\` |`);
+      });
+      parts.push("");
+      const degradedPools = mcpItems.filter(p => (p.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True"));
+      if (degradedPools.length > 0) {
+        parts.push(`[CRITICAL] **Degraded Pools:**`);
+        degradedPools.forEach(p => {
+          const degradedCond = (p.status?.conditions || []).find(c => c.type === "Degraded");
+          parts.push(`  - \`${p.metadata.name}\`: ${degradedCond?.message || "Unknown reason"}`);
+        });
+      }
+      parts.push("");
+      parts.push(`**Total MachineConfigs:** ${(mcs.items || []).length}`);
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### MachineConfigPool Status`);
+      parts.push(`[WARNING] Could not query MCP data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 12: PDB — PodDisruptionBudget analysis
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "pdb") {
+    try {
+      const pdbs = await ocpGet("/apis/policy/v1/poddisruptionbudgets");
+      const pdbItems = pdbs.items || [];
+      parts.push(`### PodDisruptionBudget (PDB) Analysis`);
+      parts.push("");
+      if (pdbItems.length > 0) {
+        parts.push(`| PDB | Namespace | Min Available | Max Unavailable | Current Healthy | Disruptions Allowed |`);
+        parts.push(`| --- | --- | --- | --- | --- | --- |`);
+        pdbItems.forEach(p => {
+          const minAvail = p.spec?.minAvailable ?? "—";
+          const maxUnavail = p.spec?.maxUnavailable ?? "—";
+          const healthy = p.status?.currentHealthy ?? "?";
+          const allowed = p.status?.disruptionsAllowed ?? "?";
+          const icon = allowed === 0 ? "[CRITICAL]" : "[OK]";
+          parts.push(`| ${icon} \`${p.metadata.name}\` | ${p.metadata.namespace} | ${minAvail} | ${maxUnavail} | ${healthy} | ${allowed} |`);
+        });
+        const blocked = pdbItems.filter(p => p.status?.disruptionsAllowed === 0);
+        if (blocked.length > 0) {
+          parts.push("");
+          parts.push(`[CRITICAL] **${blocked.length} PDB(s) blocking disruptions** — these will prevent node drains and upgrades`);
+        }
+      } else {
+        parts.push(`[WARNING] No PodDisruptionBudgets found. Consider adding PDBs for critical workloads.`);
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### PDB Analysis`);
+      parts.push(`[WARNING] Could not query PDB data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 12: TOPOLOGY — affinity / topology spread / scheduling
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "topology") {
+    try {
+      const [pods, nodes] = await Promise.all([
+        ocpGet("/api/v1/pods?fieldSelector=status.phase=Running&limit=500"),
+        ocpGet("/api/v1/nodes"),
+      ]);
+      const podItems = pods.items || [];
+      const nodeItems = nodes.items || [];
+      const podsWithAffinity = podItems.filter(p => p.spec?.affinity);
+      const podsWithSpread = podItems.filter(p => p.spec?.topologySpreadConstraints?.length > 0);
+      const nodesZones = {};
+      nodeItems.forEach(n => {
+        const zone = n.metadata.labels?.["topology.kubernetes.io/zone"] || n.metadata.labels?.["failure-domain.beta.kubernetes.io/zone"] || "unknown";
+        nodesZones[zone] = (nodesZones[zone] || 0) + 1;
+      });
+      parts.push(`### Topology & Scheduling Analysis`);
+      parts.push("");
+      parts.push(`**Nodes:** ${nodeItems.length} | **Zones:** ${Object.keys(nodesZones).length}`);
+      parts.push("");
+      parts.push(`| Zone | Nodes |`);
+      parts.push(`| --- | --- |`);
+      Object.entries(nodesZones).forEach(([zone, count]) => {
+        parts.push(`| ${zone} | ${count} |`);
+      });
+      parts.push("");
+      parts.push(`**Scheduling Constraints:**`);
+      parts.push(`  - Pods with affinity rules: ${podsWithAffinity.length}`);
+      parts.push(`  - Pods with topology spread constraints: ${podsWithSpread.length}`);
+      parts.push(`  - Pods without any scheduling constraints: ${podItems.length - podsWithAffinity.length - podsWithSpread.length}`);
+      if (Object.keys(nodesZones).length < 2) {
+        parts.push("");
+        parts.push(`[WARNING] Only ${Object.keys(nodesZones).length} zone(s) detected — consider multi-zone deployment for HA`);
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Topology Analysis`);
+      parts.push(`[WARNING] Could not query topology data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 12: PROBES — liveness/readiness/startup probe analysis
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "probes") {
+    try {
+      const pods = await ocpGet("/api/v1/pods?fieldSelector=status.phase=Running&limit=500");
+      const podItems = pods.items || [];
+      let noLiveness = 0, noReadiness = 0, noStartup = 0, total = 0;
+      const missingProbes = [];
+      podItems.forEach(p => {
+        if (p.metadata.namespace?.startsWith("openshift-") || p.metadata.namespace?.startsWith("kube-")) return;
+        (p.spec?.containers || []).forEach(c => {
+          total++;
+          const missing = [];
+          if (!c.livenessProbe) { noLiveness++; missing.push("liveness"); }
+          if (!c.readinessProbe) { noReadiness++; missing.push("readiness"); }
+          if (!c.startupProbe) { noStartup++; missing.push("startup"); }
+          if (missing.length > 0) {
+            missingProbes.push({ pod: p.metadata.name, ns: p.metadata.namespace, container: c.name, missing });
+          }
+        });
+      });
+      parts.push(`### Health Probe Analysis (User Workloads)`);
+      parts.push("");
+      parts.push(`**Total Containers:** ${total}`);
+      parts.push("");
+      parts.push(`| Probe Type | Missing | Coverage |`);
+      parts.push(`| --- | --- | --- |`);
+      parts.push(`| Liveness | ${noLiveness > 0 ? `[WARNING] ${noLiveness}` : `[OK] 0`} | ${total > 0 ? ((1 - noLiveness / total) * 100).toFixed(0) : 0}% |`);
+      parts.push(`| Readiness | ${noReadiness > 0 ? `[WARNING] ${noReadiness}` : `[OK] 0`} | ${total > 0 ? ((1 - noReadiness / total) * 100).toFixed(0) : 0}% |`);
+      parts.push(`| Startup | ${noStartup} | ${total > 0 ? ((1 - noStartup / total) * 100).toFixed(0) : 0}% |`);
+      if (missingProbes.length > 0) {
+        parts.push("");
+        parts.push(`**Containers missing probes:**`);
+        missingProbes.slice(0, 15).forEach(m => {
+          parts.push(`  - [WARNING] \`${m.pod}\` / \`${m.container}\` (${m.ns}) — missing: ${m.missing.join(", ")}`);
+        });
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Probe Analysis`);
+      parts.push(`[WARNING] Could not query probe data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 12: HPA — HorizontalPodAutoscaler status
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "hpa") {
+    try {
+      const hpas = await ocpGet("/apis/autoscaling/v2/horizontalpodautoscalers").catch(() =>
+        ocpGet("/apis/autoscaling/v1/horizontalpodautoscalers")
+      );
+      const hpaItems = hpas.items || [];
+      parts.push(`### HorizontalPodAutoscaler (HPA) Status`);
+      parts.push("");
+      if (hpaItems.length > 0) {
+        parts.push(`| HPA | Namespace | Target | Min | Max | Current | Desired |`);
+        parts.push(`| --- | --- | --- | --- | --- | --- | --- |`);
+        hpaItems.forEach(h => {
+          const target = h.spec?.scaleTargetRef?.name || "?";
+          const min = h.spec?.minReplicas ?? "?";
+          const max = h.spec?.maxReplicas ?? "?";
+          const current = h.status?.currentReplicas ?? "?";
+          const desired = h.status?.desiredReplicas ?? "?";
+          const icon = current === max ? "[WARNING]" : "[OK]";
+          parts.push(`| ${icon} \`${h.metadata.name}\` | ${h.metadata.namespace} | ${target} | ${min} | ${max} | ${current} | ${desired} |`);
+        });
+        const maxedOut = hpaItems.filter(h => h.status?.currentReplicas >= h.spec?.maxReplicas);
+        if (maxedOut.length > 0) {
+          parts.push("");
+          parts.push(`[WARNING] **${maxedOut.length} HPA(s) at maximum replicas** — may need higher maxReplicas or resource optimization`);
+        }
+      } else {
+        parts.push(`[WARNING] No HPAs found. Consider adding autoscaling for variable workloads.`);
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### HPA Status`);
+      parts.push(`[WARNING] Could not query HPA data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 12: ORPHANED — orphaned/dangling/unused resources
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "orphaned") {
+    try {
+      const [cms, secrets, pvcs, services, pods] = await Promise.all([
+        ocpGet("/api/v1/configmaps?limit=500"),
+        ocpGet("/api/v1/secrets?limit=500"),
+        ocpGet("/api/v1/persistentvolumeclaims"),
+        ocpGet("/api/v1/services?limit=500"),
+        ocpGet("/api/v1/pods?limit=500"),
+      ]);
+      const runningPodSpecs = (pods.items || []).map(p => JSON.stringify(p.spec || {}));
+      const unusedCMs = (cms.items || []).filter(cm => {
+        if (cm.metadata.namespace?.startsWith("openshift-") || cm.metadata.namespace?.startsWith("kube-")) return false;
+        if (cm.metadata.name === "kube-root-ca.crt") return false;
+        return !runningPodSpecs.some(spec => spec.includes(cm.metadata.name));
+      });
+      const unusedSecrets = (secrets.items || []).filter(s => {
+        if (s.metadata.namespace?.startsWith("openshift-") || s.metadata.namespace?.startsWith("kube-")) return false;
+        if (s.type === "kubernetes.io/service-account-token") return false;
+        return !runningPodSpecs.some(spec => spec.includes(s.metadata.name));
+      });
+      const unboundPVCs = (pvcs.items || []).filter(p => p.status?.phase !== "Bound");
+      const noEndpointSvcs = (services.items || []).filter(svc => {
+        if (svc.metadata.namespace?.startsWith("openshift-") || svc.metadata.namespace?.startsWith("kube-")) return false;
+        if (svc.spec?.type === "ExternalName") return false;
+        return !svc.spec?.selector || Object.keys(svc.spec.selector).length === 0;
+      });
+      parts.push(`### Orphaned / Unused Resource Detection`);
+      parts.push("");
+      parts.push(`| Resource Type | Potentially Unused | Status |`);
+      parts.push(`| --- | --- | --- |`);
+      parts.push(`| ConfigMaps (unreferenced) | ${unusedCMs.length} | ${unusedCMs.length > 10 ? "[WARNING]" : "[OK]"} |`);
+      parts.push(`| Secrets (unreferenced) | ${unusedSecrets.length} | ${unusedSecrets.length > 10 ? "[WARNING]" : "[OK]"} |`);
+      parts.push(`| PVCs (unbound) | ${unboundPVCs.length} | ${unboundPVCs.length > 0 ? "[WARNING]" : "[OK]"} |`);
+      parts.push(`| Services (no selector) | ${noEndpointSvcs.length} | ${noEndpointSvcs.length > 0 ? "[WARNING]" : "[OK]"} |`);
+      if (unboundPVCs.length > 0) {
+        parts.push("");
+        parts.push(`**Unbound PVCs:**`);
+        unboundPVCs.slice(0, 10).forEach(p => parts.push(`  - [WARNING] \`${p.metadata.name}\` (${p.metadata.namespace}) — ${p.status?.phase}`));
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Orphaned Resources`);
+      parts.push(`[WARNING] Could not detect orphaned resources: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tier 12: GOVERNANCE — tenant governance / resource quotas / limit ranges
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "governance") {
+    try {
+      const [quotas, limitRanges, namespaces] = await Promise.all([
+        ocpGet("/api/v1/resourcequotas"),
+        ocpGet("/api/v1/limitranges"),
+        ocpGet("/api/v1/namespaces"),
+      ]);
+      const quotaItems = quotas.items || [];
+      const lrItems = limitRanges.items || [];
+      const nsItems = (namespaces.items || []).filter(n => !n.metadata.name.startsWith("openshift-") && !n.metadata.name.startsWith("kube-") && n.metadata.name !== "default");
+      const nsWithQuota = new Set(quotaItems.map(q => q.metadata.namespace));
+      const nsWithLR = new Set(lrItems.map(l => l.metadata.namespace));
+      const nsWithoutQuota = nsItems.filter(n => !nsWithQuota.has(n.metadata.name));
+      parts.push(`### Tenant Governance & Resource Quotas`);
+      parts.push("");
+      parts.push(`**User Namespaces:** ${nsItems.length} | **With Quotas:** ${nsWithQuota.size} | **With LimitRanges:** ${nsWithLR.size}`);
+      parts.push("");
+      parts.push(`| Check | Status | Details |`);
+      parts.push(`| --- | --- | --- |`);
+      parts.push(`| ResourceQuota Coverage | ${nsWithoutQuota.length === 0 ? "[OK]" : "[WARNING]"} | ${nsWithoutQuota.length} namespace(s) without quota |`);
+      parts.push(`| LimitRange Coverage | ${nsItems.length - nsWithLR.size === 0 ? "[OK]" : "[WARNING]"} | ${nsItems.length - nsWithLR.size} namespace(s) without LimitRange |`);
+      if (quotaItems.length > 0) {
+        parts.push("");
+        parts.push(`**ResourceQuotas:**`);
+        parts.push(`| Namespace | Quota | CPU Limit | Memory Limit | Used CPU | Used Memory |`);
+        parts.push(`| --- | --- | --- | --- | --- | --- |`);
+        quotaItems.slice(0, 15).forEach(q => {
+          const hard = q.status?.hard || {};
+          const used = q.status?.used || {};
+          parts.push(`| ${q.metadata.namespace} | \`${q.metadata.name}\` | ${hard["limits.cpu"] || "—"} | ${hard["limits.memory"] || "—"} | ${used["limits.cpu"] || "—"} | ${used["limits.memory"] || "—"} |`);
+        });
+      }
+      if (nsWithoutQuota.length > 0) {
+        parts.push("");
+        parts.push(`**Namespaces without ResourceQuota:**`);
+        nsWithoutQuota.slice(0, 10).forEach(n => parts.push(`  - [WARNING] \`${n.metadata.name}\``));
+      }
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Governance`);
+      parts.push(`[WARNING] Could not query governance data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
   return null; // Not a recognized direct command
 }
 
@@ -4698,6 +5626,101 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
     context.intents.push("certlife");
   }
 
+  // Intent: SLO / SLI / error budget
+  if (lower.match(/\bslo\b|\bsli\b|\bsla\b|\berror.budget|\bburn.rate|\bavailability.target|\bservice.level/)) {
+    context.intents.push("slo");
+  }
+
+  // Intent: resource saturation / pressure / throttling
+  if (lower.match(/\bsaturation|\bpressure|\bthrottl|\bbottleneck|\bresource.exhaust|\bpacking/)) {
+    context.intents.push("saturation");
+  }
+
+  // Intent: incident / active incidents
+  if (lower.match(/\bincident|\boutage|\bsev.?[12]\b|\bseverity|\bactive.incident|\bdowntime/)) {
+    context.intents.push("incident");
+  }
+
+  // Intent: postmortem / post-incident / timeline
+  if (lower.match(/\bpostmortem|\bpost.mortem|\btimeline|\broot.cause.analys|\bincident.review/)) {
+    context.intents.push("postmortem");
+  }
+
+  // Intent: blast radius / impact analysis
+  if (lower.match(/\bblast.radius|\bimpact.analys|\baffected|\bimpact.assess|\bfailure.domain/)) {
+    context.intents.push("impact");
+  }
+
+  // Intent: deprecated APIs / API lifecycle
+  if (lower.match(/\bdeprecat|\bapi.?request.?count|\bremoved.?api|\bapi.lifecycle|\bapi.compat/)) {
+    context.intents.push("deprecated");
+  }
+
+  // Intent: admission webhooks
+  if (lower.match(/\bwebhook|\badmission|\bvalidat.*webhook|\bmutat.*webhook/)) {
+    context.intents.push("webhook");
+  }
+
+  // Intent: supply chain security / SBOM / signing
+  if (lower.match(/\bsbom|\bprovenance|\bcosign|\bsigstore|\bsupply.chain|\bimage.sign|\bunsigned/)) {
+    context.intents.push("supplychain");
+  }
+
+  // Intent: stale/outdated images
+  if (lower.match(/\bstale.image|\boutdated.image|\bimage.age|\bold.image|\bimage.fresh/)) {
+    context.intents.push("imagestale");
+  }
+
+  // Intent: CIS benchmarks / hardening
+  if (lower.match(/\bcis.bench|\bhardening|\bsecurity.bench|\bkube.bench|\bcompliance.scan|\bstig\b/)) {
+    context.intents.push("hardening");
+  }
+
+  // Intent: pod security admission / PSA / pod security standards
+  if (lower.match(/\bpsa\b|\bpod.security.admis|\bpod.security.stand|\brestricted.profile|\bbaseline.profile/)) {
+    context.intents.push("podsecurity");
+  }
+
+  // Intent: capacity planning / runway / headroom
+  if (lower.match(/\bcapacity.plan|\brunway|\bheadroom|\bexhaustion|\bpacking.dens|\bcapacity.forecast/)) {
+    context.intents.push("capacity");
+  }
+
+  // Intent: MachineConfigPool drift / rendering
+  if (lower.match(/\bmachineconfig.?pool|\bmcp.drift|\bmc.render|\bmachine.config.drift/)) {
+    context.intents.push("mcpdrift");
+  }
+
+  // Intent: PDB / disruption budget / eviction
+  if (lower.match(/\bpdb\b|\bpod.disruption|\bdisruption.budget|\beviction|\bdrain.block/)) {
+    context.intents.push("pdb");
+  }
+
+  // Intent: topology / affinity / spread constraints
+  if (lower.match(/\btopology.spread|\baffinity|\banti.affinity|\bzone.spread|\bscheduling.constraint|\bpod.spread/)) {
+    context.intents.push("topology");
+  }
+
+  // Intent: probes / liveness / readiness / startup
+  if (lower.match(/\bhealth.probe|\bliveness.probe|\breadiness.probe|\bstartup.probe|\bprobe.config|\bmissing.probe/)) {
+    context.intents.push("probes");
+  }
+
+  // Intent: HPA / autoscaler
+  if (lower.match(/\bhpa\b|\bhorizontal.pod.auto|\bautoscal|\bscale.up|\bscale.down|\bscaling.policy/)) {
+    context.intents.push("hpa");
+  }
+
+  // Intent: orphaned / dangling / unused resources
+  if (lower.match(/\borphan|\bdangling|\bunused.resource|\bunused.secret|\bunused.config|\bstale.resource|\bcleanup.resource/)) {
+    context.intents.push("orphaned");
+  }
+
+  // Intent: governance / tenancy / quotas / chargeback
+  if (lower.match(/\btenant|\bchargeback|\bresource.quota|\blimit.range|\bnamespace.governance|\bmulti.tenant/)) {
+    context.intents.push("governance");
+  }
+
   // If no intent detected, default to a help response
   if (context.intents.length === 0) {
     context.intents.push("help");
@@ -5618,6 +6641,46 @@ const PROMPT_SUPPLEMENT_NETWORK = `
 - For connectivity issues, check service endpoints and network policies
 - Highlight namespaces without network policies as security gaps`;
 
+const PROMPT_SUPPLEMENT_SLO = `
+
+## SLO / SLI / Error Budget queries:
+- Present SLO compliance data in tables with availability targets vs actual
+- Explain burn-rate windows (5m, 30m, 1h, 6h) if relevant
+- Recommend SLO tooling (Sloth, Pyrra) if no SLOs are defined
+- Never tell users to "check Grafana" — analyze the data directly`;
+
+const PROMPT_SUPPLEMENT_INCIDENT = `
+
+## Incident / Postmortem queries:
+- Present a clear incident timeline with severity indicators
+- Quantify the blast radius: affected pods, namespaces, services
+- Group signals by severity (CRITICAL > WARNING > INFO)
+- For postmortems, present events chronologically and identify root cause patterns`;
+
+const PROMPT_SUPPLEMENT_SECURITY = `
+
+## Supply Chain / Hardening / Security queries:
+- Present findings in severity order with actionable remediation
+- Highlight unsigned images, missing PSA labels, permissive SCCs
+- For CIS benchmarks, show pass/fail/skip counts
+- Never expose sensitive data (tokens, keys) in responses`;
+
+const PROMPT_SUPPLEMENT_CAPACITY = `
+
+## Capacity / Topology / Scheduling queries:
+- Present resource headroom as percentages with clear thresholds
+- Show CPU and memory separately — they often have different pressure points
+- For topology, include zone distribution and scheduling constraints
+- NEVER mention dollar amounts — focus on resource efficiency and operational risk`;
+
+const PROMPT_SUPPLEMENT_WORKLOAD = `
+
+## Workload Resilience / Day-2 Ops queries:
+- Report PDB, HPA, probe coverage as percentages
+- Highlight workloads that could block node drains or upgrades
+- For orphaned resources, filter out system namespaces
+- Present findings as actionable cleanup recommendations`;
+
 const PROMPT_SUPPLEMENT_AMBIGUITY = `
 
 ## Missing information / ambiguity:
@@ -5674,6 +6737,26 @@ function buildSystemPrompt(userMessage, context) {
 
   if (/\begress|\bdns\b|\blatency|\bnetwork.diag|\bconnectiv/i.test(lower)) {
     prompt += PROMPT_SUPPLEMENT_NETWORK;
+  }
+
+  if (/\bslo\b|\bsli\b|\bsla\b|\berror.budget|\bburn.rate|\bservice.level/i.test(lower)) {
+    prompt += PROMPT_SUPPLEMENT_SLO;
+  }
+
+  if (/\bincident|\bpostmortem|\btimeline|\bblast.radius|\bimpact/i.test(lower)) {
+    prompt += PROMPT_SUPPLEMENT_INCIDENT;
+  }
+
+  if (/\bsbom|\bprovenance|\bhardening|\bcis.bench|\bpsa\b|\bpod.security|\bsupply.chain|\bunsigned/i.test(lower)) {
+    prompt += PROMPT_SUPPLEMENT_SECURITY;
+  }
+
+  if (/\bcapacity|\brunway|\bheadroom|\btopology|\bzone|\baffinity|\bschedul/i.test(lower)) {
+    prompt += PROMPT_SUPPLEMENT_CAPACITY;
+  }
+
+  if (/\bpdb\b|\bdisruption|\bhpa\b|\bautoscal|\bprobe|\bliveness|\breadiness|\borphan|\bunused|\bgovernance|\btenant|\bquota/i.test(lower)) {
+    prompt += PROMPT_SUPPLEMENT_WORKLOAD;
   }
 
   return prompt;

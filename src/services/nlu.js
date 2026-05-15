@@ -506,6 +506,76 @@ const VERB_TABLE = {
   renew:        { intent: "certlife",  weight: 75 },
   renewal:      { intent: "certlife",  weight: 70 },
   mtls:         { intent: "certlife",  weight: 80 },
+  // ---- Tier 9: SRE Golden Signals ----
+  slo:          { intent: "slo",       weight: 80 },
+  sli:          { intent: "slo",       weight: 80 },
+  sla:          { intent: "slo",       weight: 75 },
+  budget:       { intent: "slo",       weight: 55 },
+  saturation:   { intent: "saturation", weight: 80 },
+  pressure:     { intent: "saturation", weight: 75 },
+  throttling:   { intent: "saturation", weight: 70 },
+  // ---- Tier 9: Incident Management ----
+  incident:     { intent: "incident",  weight: 80 },
+  postmortem:   { intent: "postmortem", weight: 85 },
+  blast:        { intent: "impact",    weight: 75 },
+  impact:       { intent: "impact",    weight: 75 },
+  affected:     { intent: "impact",    weight: 60 },
+  downstream:   { intent: "impact",    weight: 65 },
+  // ---- Tier 9: API Lifecycle ----
+  deprecated:   { intent: "deprecated", weight: 85 },
+  deprecation:  { intent: "deprecated", weight: 80 },
+  webhook:      { intent: "webhook",   weight: 75 },
+  webhooks:     { intent: "webhook",   weight: 75 },
+  admission:    { intent: "webhook",   weight: 65 },
+  // ---- Tier 10: Supply Chain Security ----
+  sbom:         { intent: "supplychain", weight: 85 },
+  provenance:   { intent: "supplychain", weight: 80 },
+  signature:    { intent: "supplychain", weight: 70 },
+  signatures:   { intent: "supplychain", weight: 70 },
+  signed:       { intent: "supplychain", weight: 65 },
+  unsigned:     { intent: "supplychain", weight: 75 },
+  cosign:       { intent: "supplychain", weight: 80 },
+  stale:        { intent: "imagestale", weight: 65 },
+  outdated:     { intent: "imagestale", weight: 65 },
+  // ---- Tier 10: Cluster Hardening ----
+  cis:          { intent: "hardening",  weight: 80 },
+  benchmark:    { intent: "hardening",  weight: 70 },
+  hardening:    { intent: "hardening",  weight: 80 },
+  posture:      { intent: "hardening",  weight: 65 },
+  psa:          { intent: "podsecurity", weight: 80 },
+  // ---- Tier 11: Capacity Planning ----
+  runway:       { intent: "capacity",  weight: 75 },
+  headroom:     { intent: "capacity",  weight: 75 },
+  exhaustion:   { intent: "capacity",  weight: 70 },
+  fragmented:   { intent: "capacity",  weight: 65 },
+  packing:      { intent: "capacity",  weight: 70 },
+  // ---- Tier 11: Day-2 Operations ----
+  mcp:          { intent: "mcpdrift",  weight: 55 },
+  rendering:    { intent: "mcpdrift",  weight: 50 },
+  // ---- Tier 12: Workload Resilience ----
+  pdb:          { intent: "pdb",       weight: 80 },
+  disruption:   { intent: "pdb",       weight: 70 },
+  eviction:     { intent: "pdb",       weight: 65 },
+  affinity:     { intent: "topology",  weight: 70 },
+  topology:     { intent: "topology",  weight: 75 },
+  spread:       { intent: "topology",  weight: 65 },
+  probes:       { intent: "probes",    weight: 75 },
+  probe:        { intent: "probes",    weight: 75 },
+  liveness:     { intent: "probes",    weight: 80 },
+  readiness:    { intent: "probes",    weight: 80 },
+  hpa:          { intent: "hpa",       weight: 80 },
+  autoscaler:   { intent: "hpa",       weight: 75 },
+  autoscaling:  { intent: "hpa",       weight: 70 },
+  // ---- Tier 12: Storage & Cleanup ----
+  orphaned:     { intent: "orphaned",  weight: 75 },
+  orphan:       { intent: "orphaned",  weight: 75 },
+  dangling:     { intent: "orphaned",  weight: 70 },
+  unused:       { intent: "orphaned",  weight: 60 },
+  cleanup:      { intent: "orphaned",  weight: 65 },
+  // ---- Tier 12: Governance ----
+  tenant:       { intent: "governance", weight: 65 },
+  chargeback:   { intent: "governance", weight: 75 },
+  attribution:  { intent: "governance", weight: 70 },
 };
 
 // Backwards-compatible flat lookup for callers that just want the intent.
@@ -595,6 +665,18 @@ const STOP_WORDS = new Set([
   "egress", "dns", "latency", "throughput", "bottleneck", "connectivity",
   "oauth", "ldap", "token", "tokens", "rotate", "rotation", "renew",
   "renewal", "mtls", "expiry", "expiring", "expired",
+  // Tier 9-12: expanded intent verbs
+  "slo", "sli", "sla", "budget", "saturation", "pressure", "throttling",
+  "incident", "postmortem", "blast", "impact", "affected", "downstream",
+  "deprecated", "deprecation", "webhook", "webhooks", "admission",
+  "sbom", "provenance", "signature", "signatures", "signed", "unsigned", "cosign",
+  "stale", "outdated", "cis", "benchmark", "hardening", "posture", "psa",
+  "runway", "headroom", "exhaustion", "fragmented", "packing",
+  "mcp", "rendering", "pdb", "disruption", "eviction",
+  "affinity", "topology", "spread", "probes", "probe", "liveness", "readiness",
+  "hpa", "autoscaler", "autoscaling",
+  "orphaned", "orphan", "dangling", "unused",
+  "tenant", "chargeback", "attribution",
 ]);
 
 // Filter keywords (issue type). Order matters: most specific first.

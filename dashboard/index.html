@@ -2770,6 +2770,65 @@ tr:hover td{background:#ffffff06}
                 <button onclick="sendFullChat('Show certificate rotation status')">Certificate lifecycle</button>
               </div>
             </div>
+
+            <div class="wcat" onclick="this.classList.toggle('open')">
+              <div class="wcat-head">
+                <span class="wcat-icon" style="background:linear-gradient(135deg,#f43f5e,#dc2626)">&#x1F6A8;</span>
+                <span class="wcat-title">Incident & SRE</span>
+                <span class="wcat-arrow">&#x25B8;</span>
+              </div>
+              <div class="wcat-body">
+                <button onclick="sendFullChat('Show active incidents')">Active incidents</button>
+                <button onclick="sendFullChat('Show SLO status')">SLO / error budget</button>
+                <button onclick="sendFullChat('Show resource saturation')">Resource saturation</button>
+                <button onclick="sendFullChat('Show blast radius analysis')">Blast radius / impact</button>
+                <button onclick="sendFullChat('Show postmortem timeline')">Postmortem timeline</button>
+              </div>
+            </div>
+
+            <div class="wcat" onclick="this.classList.toggle('open')">
+              <div class="wcat-head">
+                <span class="wcat-icon" style="background:linear-gradient(135deg,#0891b2,#0e7490)">&#x1F50F;</span>
+                <span class="wcat-title">Supply Chain & Hardening</span>
+                <span class="wcat-arrow">&#x25B8;</span>
+              </div>
+              <div class="wcat-body">
+                <button onclick="sendFullChat('Show supply chain security')">Supply chain security</button>
+                <button onclick="sendFullChat('Show stale images')">Stale / outdated images</button>
+                <button onclick="sendFullChat('Show cluster hardening status')">CIS benchmark / hardening</button>
+                <button onclick="sendFullChat('Show pod security admission status')">Pod security admission</button>
+                <button onclick="sendFullChat('Show admission webhooks')">Admission webhooks</button>
+                <button onclick="sendFullChat('Show deprecated API usage')">Deprecated APIs</button>
+              </div>
+            </div>
+
+            <div class="wcat" onclick="this.classList.toggle('open')">
+              <div class="wcat-head">
+                <span class="wcat-icon" style="background:linear-gradient(135deg,#059669,#047857)">&#x1F4C8;</span>
+                <span class="wcat-title">Capacity & Governance</span>
+                <span class="wcat-arrow">&#x25B8;</span>
+              </div>
+              <div class="wcat-body">
+                <button onclick="sendFullChat('Show capacity planning')">Capacity planning</button>
+                <button onclick="sendFullChat('Show MachineConfigPool status')">MCP drift / rendering</button>
+                <button onclick="sendFullChat('Show tenant governance')">Tenant governance / quotas</button>
+                <button onclick="sendFullChat('Show orphaned resources')">Orphaned resources</button>
+              </div>
+            </div>
+
+            <div class="wcat" onclick="this.classList.toggle('open')">
+              <div class="wcat-head">
+                <span class="wcat-icon" style="background:linear-gradient(135deg,#7c3aed,#6d28d9)">&#x1F6E0;</span>
+                <span class="wcat-title">Workload Resilience</span>
+                <span class="wcat-arrow">&#x25B8;</span>
+              </div>
+              <div class="wcat-body">
+                <button onclick="sendFullChat('Show PDB analysis')">PodDisruptionBudgets</button>
+                <button onclick="sendFullChat('Show HPA status')">HPA / autoscalers</button>
+                <button onclick="sendFullChat('Show health probe analysis')">Health probe coverage</button>
+                <button onclick="sendFullChat('Show topology analysis')">Topology / affinity</button>
+              </div>
+            </div>
           </div>
 
           <div class="welcome-tip">
@@ -8259,6 +8318,45 @@ function createWelcomeEl() {
           '<button onclick="sendFullChat(\'Show automation status\')">Ansible automation</button>' +
           '<button onclick="sendFullChat(\'Show cluster operators\')">Cluster operators</button>' +
           '<button onclick="sendFullChat(\'Show certificate lifecycle\')">Certificate lifecycle</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
+        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#f43f5e,#dc2626)">&#x1F6A8;</span><span class="wcat-title">Incident &amp; SRE</span><span class="wcat-arrow">&#x25B8;</span></div>' +
+        '<div class="wcat-body">' +
+          '<button onclick="sendFullChat(\'Show active incidents\')">Active incidents</button>' +
+          '<button onclick="sendFullChat(\'Show SLO status\')">SLO / error budget</button>' +
+          '<button onclick="sendFullChat(\'Show resource saturation\')">Resource saturation</button>' +
+          '<button onclick="sendFullChat(\'Show blast radius analysis\')">Blast radius / impact</button>' +
+          '<button onclick="sendFullChat(\'Show postmortem timeline\')">Postmortem timeline</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
+        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#0891b2,#0e7490)">&#x1F50F;</span><span class="wcat-title">Supply Chain &amp; Hardening</span><span class="wcat-arrow">&#x25B8;</span></div>' +
+        '<div class="wcat-body">' +
+          '<button onclick="sendFullChat(\'Show supply chain security\')">Supply chain security</button>' +
+          '<button onclick="sendFullChat(\'Show stale images\')">Stale / outdated images</button>' +
+          '<button onclick="sendFullChat(\'Show cluster hardening status\')">CIS benchmark / hardening</button>' +
+          '<button onclick="sendFullChat(\'Show pod security admission status\')">Pod security admission</button>' +
+          '<button onclick="sendFullChat(\'Show admission webhooks\')">Admission webhooks</button>' +
+          '<button onclick="sendFullChat(\'Show deprecated API usage\')">Deprecated APIs</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
+        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#059669,#047857)">&#x1F4C8;</span><span class="wcat-title">Capacity &amp; Governance</span><span class="wcat-arrow">&#x25B8;</span></div>' +
+        '<div class="wcat-body">' +
+          '<button onclick="sendFullChat(\'Show capacity planning\')">Capacity planning</button>' +
+          '<button onclick="sendFullChat(\'Show MachineConfigPool status\')">MCP drift / rendering</button>' +
+          '<button onclick="sendFullChat(\'Show tenant governance\')">Tenant governance / quotas</button>' +
+          '<button onclick="sendFullChat(\'Show orphaned resources\')">Orphaned resources</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
+        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#7c3aed,#6d28d9)">&#x1F6E0;</span><span class="wcat-title">Workload Resilience</span><span class="wcat-arrow">&#x25B8;</span></div>' +
+        '<div class="wcat-body">' +
+          '<button onclick="sendFullChat(\'Show PDB analysis\')">PodDisruptionBudgets</button>' +
+          '<button onclick="sendFullChat(\'Show HPA status\')">HPA / autoscalers</button>' +
+          '<button onclick="sendFullChat(\'Show health probe analysis\')">Health probe coverage</button>' +
+          '<button onclick="sendFullChat(\'Show topology analysis\')">Topology / affinity</button>' +
         '</div>' +
       '</div>' +
     '</div>' +
