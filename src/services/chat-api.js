@@ -321,6 +321,7 @@ function nluToCommand(p) {
   else if (p.intent === "hpa") operation = "hpa";
   else if (p.intent === "orphaned") operation = "orphaned";
   else if (p.intent === "governance") operation = "governance";
+  else if (p.intent === "diagnose") operation = "diagnose";
   // Superlative queries about cpu/memory should use the "top" handler which
   // fetches real metrics from metrics.k8s.io and sorts.  The NLU may classify
   // "which pod uses the most CPU" as intent:"list" (because of "which"), but
@@ -1138,7 +1139,7 @@ function detectAmbiguity(userMessage, parsed, memory = {}) {
   const lower = userMessage.toLowerCase().trim();
   if (lower.length > 120) return null;
   if (/^(help|\/\w)/.test(lower)) return null;
-  if (parsed.intent === "diagnose") return null;
+  if (parsed.intent === "diagnose") return null; // diagnose handled by handleListCommand, skip ambiguity
   if (memory.resource && memory.name && parsed.resource === memory.resource) return null;
 
   for (const pattern of AMBIGUITY_PATTERNS) {
@@ -1508,6 +1509,13 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
     "rbac", "compare", "upgrade",
     "cordon", "uncordon", "drain", "taint", "untaint",
     "rollback", "rollout", "approve",
+    "diagnose", "mustgather",
+    "alerts", "gitops", "imagescan", "backup", "fleet",
+    "compliance", "automation", "optimize", "network", "identity", "certlife",
+    "slo", "saturation", "incident", "postmortem", "impact",
+    "deprecated", "webhook", "supplychain", "imagestale", "hardening",
+    "podsecurity", "capacity", "mcpdrift", "pdb", "topology",
+    "probes", "hpa", "orphaned", "governance",
   ]);
   if (!cmd.operation) return null;
   if (!cmd.resourceType && !OP_NO_RESOURCE_REQUIRED.has(cmd.operation)) return null;
@@ -2916,28 +2924,128 @@ EOF@@`);
   }
 
   // -----------------------------------------------------------------------
-  // Tier 5: MUST-GATHER — diagnostics collection
+  // Tier 5: MUST-GATHER — live cluster diagnostics (fetched from API)
   // -----------------------------------------------------------------------
   if (cmd.operation === "mustgather") {
-    parts.push(`### Diagnostics Collection`);
-    parts.push("");
-    parts.push(`**Must-Gather** collects cluster diagnostics for Red Hat support cases.`);
-    parts.push("");
-    parts.push(`**Quick Collection:**`);
-    parts.push(`@@SEC_FIX_CMD|oc adm must-gather@@`);
-    parts.push("");
-    parts.push(`**Targeted Collection (faster):**`);
-    parts.push(`@@SEC_FIX_CMD|oc adm must-gather --image=registry.redhat.io/openshift4/ose-must-gather:latest -- /usr/bin/gather_audit_logs@@`);
-    parts.push("");
-    parts.push(`**Network diagnostics:**`);
-    parts.push(`@@SEC_FIX_CMD|oc adm must-gather --image=registry.redhat.io/openshift4/network-tools-rhel8@@`);
-    parts.push("");
-    parts.push(`**Available must-gather images:**`);
-    parts.push(`  - **Default:** \`ose-must-gather\` — general cluster state`);
-    parts.push(`  - **Network:** \`network-tools-rhel8\` — SDN/OVN diagnostics`);
-    parts.push(`  - **Storage:** \`ocs-must-gather\` — ODF/Ceph diagnostics`);
-    parts.push(`  - **Logging:** \`cluster-logging-operator\` — logging stack`);
-    parts.push(`  - **GPU:** \`gpu-operator-must-gather\` — GPU/NVIDIA diagnostics`);
+    try {
+      const [nodesData, clvData, opsData, eventsData, podsData, csrsData, mcsData] = await Promise.all([
+        ocpGet("/api/v1/nodes").catch(() => ({ items: [] })),
+        ocpGet("/apis/config.openshift.io/v1/clusterversions/version").catch(() => null),
+        ocpGet("/apis/config.openshift.io/v1/clusteroperators").catch(() => ({ items: [] })),
+        ocpGet("/api/v1/events?fieldSelector=type=Warning&limit=50").catch(() => ({ items: [] })),
+        ocpGet("/api/v1/pods?fieldSelector=status.phase!=Running,status.phase!=Succeeded&limit=100").catch(() => ({ items: [] })),
+        ocpGet("/apis/certificates.k8s.io/v1/certificatesigningrequests").catch(() => ({ items: [] })),
+        ocpGet("/apis/machineconfiguration.openshift.io/v1/machineconfigpools").catch(() => ({ items: [] })),
+      ]);
+
+      parts.push(`### Cluster Diagnostics Report`);
+      parts.push("");
+
+      // Cluster version
+      if (clvData) {
+        const ver = clvData.status?.desired?.version || "unknown";
+        const channel = clvData.spec?.channel || "unknown";
+        const progressing = (clvData.status?.conditions || []).find(c => c.type === "Progressing");
+        parts.push(`**Cluster Version:** ${ver} (channel: ${channel})`);
+        if (progressing && progressing.status === "True") parts.push(`  ⚠ Upgrade in progress: ${progressing.message || ""}`);
+        parts.push("");
+      }
+
+      // Node health
+      const nodeItems = nodesData.items || [];
+      const notReady = nodeItems.filter(n => !(n.status?.conditions || []).find(c => c.type === "Ready" && c.status === "True"));
+      const pressureNodes = nodeItems.filter(n => (n.status?.conditions || []).some(c => ["MemoryPressure", "DiskPressure", "PIDPressure"].includes(c.type) && c.status === "True"));
+      parts.push(`**Nodes:** ${nodeItems.length} total, ${nodeItems.length - notReady.length} ready, ${notReady.length} not-ready`);
+      notReady.forEach(n => parts.push(`  ⛔ \`${n.metadata.name}\` — NotReady`));
+      pressureNodes.forEach(n => {
+        const pTypes = (n.status?.conditions || []).filter(c => ["MemoryPressure", "DiskPressure", "PIDPressure"].includes(c.type) && c.status === "True").map(c => c.type);
+        parts.push(`  ⚠ \`${n.metadata.name}\` — ${pTypes.join(", ")}`);
+      });
+      parts.push("");
+
+      // Degraded operators
+      const opItems = opsData.items || [];
+      const degradedOps = opItems.filter(o => (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True"));
+      const unavailOps = opItems.filter(o => (o.status?.conditions || []).some(c => c.type === "Available" && c.status === "False"));
+      parts.push(`**Cluster Operators:** ${opItems.length} total, ${degradedOps.length} degraded, ${unavailOps.length} unavailable`);
+      degradedOps.forEach(o => {
+        const msg = (o.status?.conditions || []).find(c => c.type === "Degraded")?.message || "";
+        parts.push(`  ⛔ \`${o.metadata.name}\` — Degraded: ${msg.slice(0, 120)}`);
+      });
+      unavailOps.forEach(o => {
+        if (!degradedOps.find(d => d.metadata.name === o.metadata.name)) {
+          parts.push(`  ⚠ \`${o.metadata.name}\` — Unavailable`);
+        }
+      });
+      parts.push("");
+
+      // Problem pods
+      const podItems = (podsData.items || []).filter(p => p.status?.phase !== "Succeeded");
+      const crashPods = podItems.filter(p => (p.status?.containerStatuses || []).some(c => c.state?.waiting?.reason === "CrashLoopBackOff"));
+      const oomPods = podItems.filter(p => (p.status?.containerStatuses || []).some(c => c.lastState?.terminated?.reason === "OOMKilled"));
+      const imgPods = podItems.filter(p => (p.status?.containerStatuses || []).some(c => c.state?.waiting?.reason === "ImagePullBackOff" || c.state?.waiting?.reason === "ErrImagePull"));
+      const pendingPods = podItems.filter(p => p.status?.phase === "Pending");
+      parts.push(`**Problem Pods:** ${podItems.length} non-running`);
+      if (crashPods.length) parts.push(`  ⛔ ${crashPods.length} in CrashLoopBackOff`);
+      if (oomPods.length) parts.push(`  ⛔ ${oomPods.length} OOMKilled`);
+      if (imgPods.length) parts.push(`  ⚠ ${imgPods.length} ImagePullBackOff`);
+      if (pendingPods.length) parts.push(`  ⚠ ${pendingPods.length} Pending`);
+      if (crashPods.length > 0) {
+        parts.push("");
+        parts.push("**CrashLoopBackOff Pods:**");
+        crashPods.slice(0, 10).forEach(p => {
+          const restarts = (p.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0);
+          parts.push(`  - \`${p.metadata.name}\` in \`${p.metadata.namespace}\` (${restarts} restarts)`);
+        });
+      }
+      parts.push("");
+
+      // Warning events summary
+      const evtItems = eventsData.items || [];
+      const evtReasons = {};
+      evtItems.forEach(e => { evtReasons[e.reason] = (evtReasons[e.reason] || 0) + (e.count || 1); });
+      const topReasons = Object.entries(evtReasons).sort((a, b) => b[1] - a[1]).slice(0, 8);
+      parts.push(`**Warning Events:** ${evtItems.length} recent`);
+      topReasons.forEach(([reason, count]) => parts.push(`  - ${reason}: ${count} occurrences`));
+      parts.push("");
+
+      // MachineConfigPool status
+      const mcpItems = mcsData.items || [];
+      if (mcpItems.length > 0) {
+        const degradedMcps = mcpItems.filter(m => (m.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True"));
+        const updatingMcps = mcpItems.filter(m => (m.status?.conditions || []).some(c => c.type === "Updating" && c.status === "True"));
+        parts.push(`**MachineConfigPools:** ${mcpItems.length} total`);
+        degradedMcps.forEach(m => parts.push(`  ⛔ \`${m.metadata.name}\` — Degraded`));
+        updatingMcps.forEach(m => parts.push(`  ⚠ \`${m.metadata.name}\` — Updating (${m.status?.machineCount - (m.status?.updatedMachineCount || 0)} machines pending)`));
+        parts.push("");
+      }
+
+      // Pending CSRs
+      const pendingCsrs = (csrsData.items || []).filter(c => !(c.status?.conditions || []).some(co => co.type === "Approved"));
+      if (pendingCsrs.length > 0) {
+        parts.push(`**Pending CSRs:** ${pendingCsrs.length}`);
+        pendingCsrs.slice(0, 5).forEach(c => parts.push(`  - \`${c.metadata.name}\` (${c.spec?.signerName || "unknown signer"})`));
+        parts.push("");
+      }
+
+      // Troubleshooting commands
+      parts.push("**Investigate further:**");
+      parts.push(`@@SEC_FIX_CMD|oc get nodes -o wide@@`);
+      parts.push(`@@SEC_FIX_CMD|oc get clusteroperators@@`);
+      parts.push(`@@SEC_FIX_CMD|oc get events --all-namespaces --sort-by=.lastTimestamp@@`);
+      if (notReady.length > 0) {
+        parts.push(`@@SEC_FIX_CMD|oc describe node ${notReady[0].metadata.name}@@`);
+      }
+      if (degradedOps.length > 0) {
+        parts.push(`@@SEC_FIX_CMD|oc describe clusteroperator ${degradedOps[0].metadata.name}@@`);
+      }
+      if (crashPods.length > 0) {
+        parts.push(`@@SEC_FIX_CMD|oc logs ${crashPods[0].metadata.name} -n ${crashPods[0].metadata.namespace} --tail=50@@`);
+      }
+    } catch (e) {
+      parts.push(`### Diagnostics Collection`);
+      parts.push(`[WARNING] Could not gather cluster diagnostics: ${e.message}`);
+    }
     return parts.join("\n");
   }
 
@@ -4211,6 +4319,229 @@ EOF@@`);
       if (llmAvailable) return null;
       parts.push(`### Governance`);
       parts.push(`[WARNING] Could not query governance data: ${e.message}`);
+      return parts.join("\n");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // DIAGNOSE — cluster-level and node-level troubleshooting
+  // -----------------------------------------------------------------------
+  if (cmd.operation === "diagnose") {
+    const diagLower = (cmd.raw || message || "").toLowerCase();
+    const isNodeFocused = cmd.resourceType === "node" || /\bnode\b|\bnodes\b|\bworker\b|\bmaster\b|\bcontrol.?plane\b/.test(diagLower);
+    const isClusterFocused = !isNodeFocused || /\bcluster\b/.test(diagLower);
+
+    try {
+      if (isNodeFocused) {
+        // --- Node-level troubleshooting ---
+        const [nodesData, nodeMetrics, eventsData] = await Promise.all([
+          ocpGet("/api/v1/nodes"),
+          ocpGet("/apis/metrics.k8s.io/v1beta1/nodes").catch(() => ({ items: [] })),
+          ocpGet("/api/v1/events?fieldSelector=involvedObject.kind=Node,type=Warning&limit=50").catch(() => ({ items: [] })),
+        ]);
+        const nodeItems = nodesData.items || [];
+        const metricItems = nodeMetrics.items || [];
+        const metricMap = {};
+        metricItems.forEach(m => { metricMap[m.metadata.name] = m; });
+
+        // If user specified a node name, focus on it
+        const targetNode = cmd.resourceName ? nodeItems.find(n => n.metadata.name.includes(cmd.resourceName)) : null;
+
+        parts.push(`### Node Troubleshooting Report`);
+        parts.push("");
+        parts.push(`| Node | Status | Role | CPU Used | CPU Capacity | Memory Used | Memory Capacity | Conditions |`);
+        parts.push(`| --- | --- | --- | --- | --- | --- | --- | --- |`);
+
+        const displayNodes = targetNode ? [targetNode] : nodeItems;
+        displayNodes.forEach(n => {
+          const name = n.metadata.name;
+          const conditions = n.status?.conditions || [];
+          const ready = conditions.find(c => c.type === "Ready");
+          const status = ready?.status === "True" ? "[OK]" : "[CRITICAL]";
+          const roles = Object.keys(n.metadata.labels || {}).filter(l => l.startsWith("node-role.kubernetes.io/")).map(l => l.split("/")[1]).join(", ") || "worker";
+          const cpuCap = n.status?.capacity?.cpu || "—";
+          const memCap = n.status?.capacity?.memory || "—";
+          const metric = metricMap[name];
+          const cpuUsed = metric ? fmtCpu(metric.usage?.cpu) : "—";
+          const memUsed = metric ? fmtMem(metric.usage?.memory) : "—";
+          const problemConditions = conditions.filter(c => c.type !== "Ready" && c.status === "True").map(c => c.type);
+          const condStr = problemConditions.length > 0 ? problemConditions.join(", ") : "healthy";
+          parts.push(`| \`${name}\` | ${status} | ${roles} | ${cpuUsed} | ${cpuCap} | ${memUsed} | ${memCap} | ${condStr} |`);
+        });
+
+        // Problem nodes detail
+        const problemNodes = nodeItems.filter(n => {
+          const conds = n.status?.conditions || [];
+          return !conds.find(c => c.type === "Ready" && c.status === "True") ||
+            conds.some(c => ["MemoryPressure", "DiskPressure", "PIDPressure"].includes(c.type) && c.status === "True");
+        });
+        if (problemNodes.length > 0) {
+          parts.push("");
+          parts.push(`**Problem Nodes (${problemNodes.length}):**`);
+          problemNodes.forEach(n => {
+            const conds = n.status?.conditions || [];
+            const readyCond = conds.find(c => c.type === "Ready");
+            const issues = [];
+            if (readyCond?.status !== "True") issues.push(`NotReady: ${readyCond?.message || "unknown"}`);
+            conds.filter(c => ["MemoryPressure", "DiskPressure", "PIDPressure"].includes(c.type) && c.status === "True").forEach(c => issues.push(`${c.type}: ${c.message || ""}`));
+            parts.push(`  ⛔ **\`${n.metadata.name}\`**`);
+            issues.forEach(i => parts.push(`    - ${i.slice(0, 150)}`));
+          });
+        }
+
+        // Node events
+        const nodeEvents = eventsData.items || [];
+        if (nodeEvents.length > 0) {
+          parts.push("");
+          parts.push(`**Recent Node Warning Events:**`);
+          const shown = targetNode ? nodeEvents.filter(e => (e.involvedObject?.name || "") === targetNode.metadata.name).slice(0, 10) : nodeEvents.slice(0, 10);
+          shown.forEach(e => {
+            parts.push(`  - **${e.reason}** on \`${e.involvedObject?.name || "?"}\`: ${(e.message || "").slice(0, 120)} (×${e.count || 1})`);
+          });
+        }
+
+        // Troubleshoot commands
+        parts.push("");
+        parts.push("**Investigate further:**");
+        parts.push(`@@SEC_FIX_CMD|oc get nodes -o wide@@`);
+        parts.push(`@@SEC_FIX_CMD|oc adm top nodes@@`);
+        if (targetNode) {
+          parts.push(`@@SEC_FIX_CMD|oc describe node ${targetNode.metadata.name}@@`);
+          parts.push(`@@SEC_FIX_CMD|oc adm top node ${targetNode.metadata.name}@@`);
+          parts.push(`@@SEC_FIX_CMD|oc get pods --all-namespaces --field-selector=spec.nodeName=${targetNode.metadata.name}@@`);
+        } else if (problemNodes.length > 0) {
+          parts.push(`@@SEC_FIX_CMD|oc describe node ${problemNodes[0].metadata.name}@@`);
+          parts.push(`@@SEC_FIX_CMD|oc get events --field-selector involvedObject.kind=Node --sort-by=.lastTimestamp@@`);
+        }
+        return parts.join("\n");
+      }
+
+      if (isClusterFocused) {
+        // --- Cluster-level troubleshooting ---
+        const [nodesData, clvData, opsData, eventsData, podsData, mcsData, pvcsData] = await Promise.all([
+          ocpGet("/api/v1/nodes"),
+          ocpGet("/apis/config.openshift.io/v1/clusterversions/version").catch(() => null),
+          ocpGet("/apis/config.openshift.io/v1/clusteroperators").catch(() => ({ items: [] })),
+          ocpGet("/api/v1/events?fieldSelector=type=Warning&limit=80").catch(() => ({ items: [] })),
+          ocpGet("/api/v1/pods?fieldSelector=status.phase!=Running,status.phase!=Succeeded&limit=100").catch(() => ({ items: [] })),
+          ocpGet("/apis/machineconfiguration.openshift.io/v1/machineconfigpools").catch(() => ({ items: [] })),
+          ocpGet("/api/v1/persistentvolumeclaims").catch(() => ({ items: [] })),
+        ]);
+
+        parts.push(`### Cluster Troubleshooting Report`);
+        parts.push("");
+
+        // Cluster version & upgrade status
+        if (clvData) {
+          const ver = clvData.status?.desired?.version || "unknown";
+          const channel = clvData.spec?.channel || "unknown";
+          const conditions = clvData.status?.conditions || [];
+          const progressing = conditions.find(c => c.type === "Progressing");
+          const degraded = conditions.find(c => c.type === "Degraded");
+          const avail = conditions.find(c => c.type === "Available");
+          parts.push(`**Cluster Version:** ${ver} | Channel: ${channel}`);
+          parts.push(`  - Available: ${avail?.status === "True" ? "[OK]" : "[WARNING] " + (avail?.message || "").slice(0, 100)}`);
+          if (degraded?.status === "True") parts.push(`  - ⛔ Degraded: ${(degraded.message || "").slice(0, 120)}`);
+          if (progressing?.status === "True") parts.push(`  - ⚠ Upgrading: ${(progressing.message || "").slice(0, 120)}`);
+          parts.push("");
+        }
+
+        // Nodes summary
+        const nodeItems = nodesData.items || [];
+        const notReady = nodeItems.filter(n => !(n.status?.conditions || []).find(c => c.type === "Ready" && c.status === "True"));
+        const pressure = nodeItems.filter(n => (n.status?.conditions || []).some(c => ["MemoryPressure", "DiskPressure", "PIDPressure"].includes(c.type) && c.status === "True"));
+        parts.push(`**Nodes:** ${nodeItems.length} total | ${nodeItems.length - notReady.length} ready | ${notReady.length} not-ready | ${pressure.length} under pressure`);
+        notReady.forEach(n => parts.push(`  ⛔ \`${n.metadata.name}\` — NotReady`));
+        pressure.forEach(n => {
+          const pTypes = (n.status?.conditions || []).filter(c => ["MemoryPressure", "DiskPressure", "PIDPressure"].includes(c.type) && c.status === "True").map(c => c.type);
+          parts.push(`  ⚠ \`${n.metadata.name}\` — ${pTypes.join(", ")}`);
+        });
+        parts.push("");
+
+        // Operators
+        const opItems = opsData.items || [];
+        const degradedOps = opItems.filter(o => (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True"));
+        const unavailOps = opItems.filter(o => (o.status?.conditions || []).some(c => c.type === "Available" && c.status === "False"));
+        const progressOps = opItems.filter(o => (o.status?.conditions || []).some(c => c.type === "Progressing" && c.status === "True"));
+        parts.push(`**Cluster Operators:** ${opItems.length} total | ${degradedOps.length} degraded | ${unavailOps.length} unavailable | ${progressOps.length} progressing`);
+        degradedOps.forEach(o => {
+          const msg = (o.status?.conditions || []).find(c => c.type === "Degraded")?.message || "";
+          parts.push(`  ⛔ \`${o.metadata.name}\` — Degraded: ${msg.slice(0, 120)}`);
+        });
+        unavailOps.filter(o => !degradedOps.find(d => d.metadata.name === o.metadata.name)).forEach(o => {
+          parts.push(`  ⚠ \`${o.metadata.name}\` — Unavailable`);
+        });
+        parts.push("");
+
+        // Problem pods grouped by issue
+        const podItems = (podsData.items || []).filter(p => p.status?.phase !== "Succeeded");
+        const crashPods = podItems.filter(p => (p.status?.containerStatuses || []).some(c => c.state?.waiting?.reason === "CrashLoopBackOff"));
+        const oomPods = podItems.filter(p => (p.status?.containerStatuses || []).some(c => c.lastState?.terminated?.reason === "OOMKilled"));
+        const imgPods = podItems.filter(p => (p.status?.containerStatuses || []).some(c => c.state?.waiting?.reason === "ImagePullBackOff" || c.state?.waiting?.reason === "ErrImagePull"));
+        const pendingPods = podItems.filter(p => p.status?.phase === "Pending");
+        parts.push(`**Problem Pods:** ${podItems.length} non-running`);
+        parts.push(`| Issue | Count | Top Affected |`);
+        parts.push(`| --- | --- | --- |`);
+        if (crashPods.length) parts.push(`| ⛔ CrashLoopBackOff | ${crashPods.length} | ${crashPods.slice(0, 3).map(p => `\`${p.metadata.namespace}/${p.metadata.name}\``).join(", ")} |`);
+        if (oomPods.length) parts.push(`| ⛔ OOMKilled | ${oomPods.length} | ${oomPods.slice(0, 3).map(p => `\`${p.metadata.namespace}/${p.metadata.name}\``).join(", ")} |`);
+        if (imgPods.length) parts.push(`| ⚠ ImagePullBackOff | ${imgPods.length} | ${imgPods.slice(0, 3).map(p => `\`${p.metadata.namespace}/${p.metadata.name}\``).join(", ")} |`);
+        if (pendingPods.length) parts.push(`| ⚠ Pending | ${pendingPods.length} | ${pendingPods.slice(0, 3).map(p => `\`${p.metadata.namespace}/${p.metadata.name}\``).join(", ")} |`);
+        parts.push("");
+
+        // PVC issues
+        const pvcItems = pvcsData.items || [];
+        const pendingPvcs = pvcItems.filter(p => p.status?.phase === "Pending");
+        const lostPvcs = pvcItems.filter(p => p.status?.phase === "Lost");
+        if (pendingPvcs.length > 0 || lostPvcs.length > 0) {
+          parts.push(`**Storage Issues:**`);
+          if (pendingPvcs.length) parts.push(`  ⚠ ${pendingPvcs.length} PVC(s) Pending: ${pendingPvcs.slice(0, 3).map(p => `\`${p.metadata.namespace}/${p.metadata.name}\``).join(", ")}`);
+          if (lostPvcs.length) parts.push(`  ⛔ ${lostPvcs.length} PVC(s) Lost: ${lostPvcs.slice(0, 3).map(p => `\`${p.metadata.namespace}/${p.metadata.name}\``).join(", ")}`);
+          parts.push("");
+        }
+
+        // MachineConfigPool
+        const mcpItems = mcsData.items || [];
+        const degradedMcps = mcpItems.filter(m => (m.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True"));
+        if (mcpItems.length > 0) {
+          parts.push(`**MachineConfigPools:** ${mcpItems.length}`);
+          degradedMcps.forEach(m => parts.push(`  ⛔ \`${m.metadata.name}\` — Degraded`));
+          if (degradedMcps.length === 0) parts.push(`  All pools healthy`);
+          parts.push("");
+        }
+
+        // Event storm detection
+        const evtItems = eventsData.items || [];
+        const evtReasons = {};
+        evtItems.forEach(e => { evtReasons[e.reason] = (evtReasons[e.reason] || 0) + (e.count || 1); });
+        const topReasons = Object.entries(evtReasons).sort((a, b) => b[1] - a[1]).slice(0, 10);
+        parts.push(`**Warning Event Summary:** ${evtItems.length} events`);
+        parts.push(`| Reason | Count |`);
+        parts.push(`| --- | --- |`);
+        topReasons.forEach(([reason, count]) => parts.push(`| ${reason} | ${count} |`));
+        parts.push("");
+
+        // Troubleshoot commands
+        parts.push("**Investigate further:**");
+        parts.push(`@@SEC_FIX_CMD|oc get clusterversion@@`);
+        parts.push(`@@SEC_FIX_CMD|oc get clusteroperators@@`);
+        parts.push(`@@SEC_FIX_CMD|oc get nodes -o wide@@`);
+        parts.push(`@@SEC_FIX_CMD|oc get events --all-namespaces --sort-by=.lastTimestamp@@`);
+        if (degradedOps.length > 0) {
+          parts.push(`@@SEC_FIX_CMD|oc describe clusteroperator ${degradedOps[0].metadata.name}@@`);
+        }
+        if (notReady.length > 0) {
+          parts.push(`@@SEC_FIX_CMD|oc describe node ${notReady[0].metadata.name}@@`);
+        }
+        if (crashPods.length > 0) {
+          parts.push(`@@SEC_FIX_CMD|oc logs ${crashPods[0].metadata.name} -n ${crashPods[0].metadata.namespace} --tail=50@@`);
+          parts.push(`@@SEC_FIX_CMD|oc describe pod ${crashPods[0].metadata.name} -n ${crashPods[0].metadata.namespace}@@`);
+        }
+        return parts.join("\n");
+      }
+    } catch (e) {
+      if (llmAvailable) return null;
+      parts.push(`### Troubleshooting Report`);
+      parts.push(`[WARNING] Could not gather diagnostics: ${e.message}`);
       return parts.join("\n");
     }
   }
@@ -5587,7 +5918,7 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
   }
 
   // Intent: must-gather / diagnostics / sosreport
-  if (lower.match(/\bmust.gather|\bsosreport|\bdiagnostic.collect|\bcollect.diagnostic/)) {
+  if (lower.match(/\bmust.gather|\bsosreport|\bdiagnostic.collect|\bcollect.diagnostic|\bgather.diagnostic|\bcluster.diagnostic|\bdiagnostic.report/)) {
     context.intents.push("mustgather");
   }
 
