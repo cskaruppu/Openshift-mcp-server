@@ -575,8 +575,10 @@ tr:hover td{background:#ffffff06}
 .rca-card{border:1px solid var(--border);border-radius:8px;overflow:hidden}
 .rca-card-head{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--bg);font-size:12px;font-weight:700;color:var(--text);border-bottom:1px solid var(--border)}
 .rca-card-body{padding:12px 14px;font-size:12px;line-height:1.7}
-.risk-rca-btn{padding:2px 8px;border-radius:4px;font-size:9px;font-weight:600;border:1px solid rgba(248,81,73,.3);background:rgba(248,81,73,.06);color:var(--crit);cursor:pointer;transition:all .15s;margin-left:4px}
-.risk-rca-btn:hover{background:rgba(248,81,73,.15)}
+.risk-actions-row{display:flex;align-items:center;gap:6px;margin-top:6px;position:relative;z-index:2}
+.risk-rca-btn{padding:5px 12px;border-radius:6px;font-size:11px;font-weight:600;border:1px solid rgba(248,81,73,.3);background:rgba(248,81,73,.08);color:var(--crit);cursor:pointer;transition:all .15s;position:relative;z-index:2}
+.risk-rca-btn:hover{background:rgba(248,81,73,.2);transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,.15)}
+.risk-rca-btn:active{transform:translateY(0)}
 .risk-scope{display:inline-block;padding:1px 6px;border-radius:3px;font-size:8px;font-weight:700;text-transform:uppercase;margin-left:4px}
 .risk-scope-pod{background:rgba(56,139,253,.1);color:#58a6ff}
 .risk-scope-node{background:rgba(139,92,246,.1);color:#a371f7}
@@ -1085,6 +1087,8 @@ tr:hover td{background:#ffffff06}
 .light-theme .wcat-body button{border-color:#e0e0e6;color:#6b6b80}
 .light-theme .wcat-body button:hover{border-color:#2563eb80;color:#1a1a2e;background:#f0f4ff}
 .light-theme .welcome-tip{color:#9ca3af}
+.light-theme .risk-rca-btn{background:#fef2f2;border-color:#fca5a5;color:#dc2626}
+.light-theme .risk-rca-btn:hover{background:#fee2e2;box-shadow:0 2px 6px rgba(0,0,0,.08)}
 .light-theme .smart-suggestion{background:#f0f4ff;border-color:#bfdbfe;color:#4b5563}
 .light-theme .smart-suggestion:hover{background:#dbeafe;color:#1a1a2e}
 .light-theme .conv-msg.user .conv-bubble{background:#f0f2f6;color:#1a1a2e}
@@ -13974,10 +13978,11 @@ function renderIntelRiskList() {
     return divider + '<div class="' + cls + '"' + clickAttr + '>' +
       '<div class="risk-icon">' + (r.icon || '⚠') + '</div>' +
       '<div class="risk-body">' +
-        '<div class="risk-title">' + (r.title || '') + ' <span class="risk-sev">' + r.severity + '</span>' + scopeTag + catTag + rcaBtn + chatBtn + confHtml + '</div>' +
+        '<div class="risk-title">' + (r.title || '') + ' <span class="risk-sev">' + r.severity + '</span>' + scopeTag + catTag + confHtml + '</div>' +
         '<div class="risk-evidence">' + esc(r.evidence || '') + '</div>' +
         '<div class="risk-impact">' + (r.impact || '') + '</div>' +
         '<div class="risk-action">' + (r.action || '') + '</div>' +
+        '<div class="risk-actions-row">' + rcaBtn + chatBtn + '</div>' +
       '</div></div>';
   }).join('');
 }
