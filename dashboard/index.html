@@ -13998,6 +13998,69 @@ async function triggerRCA(riskIdx) {
   var panel = document.getElementById('rca-panel');
   if (!panel) return;
   var titleClean = (risk.title || 'Unknown').replace(/<[^>]*>/g, '');
+
+  // Build structured RCA from existing risk data (always available)
+  function buildBuiltInRCA() {
+    var parts = [];
+    parts.push('## Root Cause');
+    if (risk.evidence) {
+      parts.push(risk.evidence);
+    } else {
+      parts.push(titleClean);
+    }
+    parts.push('');
+    parts.push('## Evidence');
+    if (risk.pod) parts.push('**Pod:** `' + risk.pod + '`');
+    if (risk.ns) parts.push('**Namespace:** `' + risk.ns + '`');
+    if (risk.node) parts.push('**Node:** `' + risk.node + '`');
+    if (risk.severity) parts.push('**Severity:** ' + risk.severity);
+    if (risk.evidence) parts.push('**Detail:** ' + risk.evidence);
+    parts.push('');
+    parts.push('## Impact Assessment');
+    parts.push(risk.impact || 'Potential service disruption if not addressed.');
+    parts.push('');
+    parts.push('## Recommended Action');
+    if (risk.action) {
+      parts.push(risk.action.replace(/^→\s*/, ''));
+    }
+    if (risk.pod && risk.ns) {
+      parts.push('');
+      parts.push('**Investigate further:**');
+      parts.push('@@SEC_FIX_CMD|oc logs ' + risk.pod + ' -n ' + risk.ns + ' --tail=100@@');
+      parts.push('@@SEC_FIX_CMD|oc describe pod ' + risk.pod + ' -n ' + risk.ns + '@@');
+      parts.push('@@SEC_FIX_CMD|oc get events -n ' + risk.ns + ' --sort-by=.lastTimestamp@@');
+    }
+    if (risk.node) {
+      parts.push('');
+      parts.push('**Investigate node:**');
+      parts.push('@@SEC_FIX_CMD|oc describe node ' + risk.node + '@@');
+      parts.push('@@SEC_FIX_CMD|oc adm top node ' + risk.node + '@@');
+    }
+    return parts.join('\n');
+  }
+
+  var scopeLabel = risk.scope ? risk.scope.charAt(0).toUpperCase() + risk.scope.slice(1) : 'Resource';
+  var metaItems = [scopeLabel];
+  if (risk.ns) metaItems.push(risk.ns);
+  if (risk.pod) metaItems.push(risk.pod);
+  if (risk.node) metaItems.push(risk.node);
+
+  function renderRCAPanel(content, isAI) {
+    panel.innerHTML = '<div class="rca-header">' +
+      '<div class="rca-header-icon" style="background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff">\u{1F50D}</div>' +
+      '<div style="flex:1">' +
+        '<div style="font-weight:700;font-size:14px">Root Cause Analysis' + (isAI ? ' <span style="font-size:10px;color:var(--accent2)">(AI-enhanced)</span>' : '') + '</div>' +
+        '<div style="font-size:11px;color:var(--text2)">' + esc(titleClean) + '</div>' +
+      '</div>' +
+      '<div style="display:flex;gap:6px;align-items:center">' +
+        '<span class="rca-header-sev ' + risk.severity + '">' + risk.severity + '</span>' +
+        '<span style="font-size:9px;color:var(--text2)">' + esc(metaItems.join(' \u{2022} ')) + '</span>' +
+      '</div>' +
+    '</div>' +
+    '<div style="padding:16px"><div class="rca-body">' + md(content) + '</div></div>';
+  }
+
+  // Show loading state
   panel.innerHTML = '<div class="rca-header">' +
     '<div class="rca-header-icon" style="background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff">\u{1F50D}</div>' +
     '<div style="flex:1"><div style="font-weight:700;font-size:14px">Root Cause Analysis</div>' +
@@ -14014,11 +14077,8 @@ async function triggerRCA(riskIdx) {
 
   var opts = (typeof getActiveProviderOpts === 'function') ? getActiveProviderOpts() : { provider: 'none' };
   if (!opts.provider || opts.provider === 'none') {
-    panel.innerHTML = '<div class="rca-header">' +
-      '<div class="rca-header-icon" style="background:var(--crit);color:#fff">\u{26A0}</div>' +
-      '<div style="flex:1"><div style="font-weight:700;font-size:14px;color:var(--crit)">LLM Provider Required</div>' +
-      '<div style="font-size:11px;color:var(--text2)">Configure a provider in Settings to enable AI-powered RCA</div></div>' +
-      '</div>';
+    // No LLM — show built-in RCA from risk data
+    renderRCAPanel(buildBuiltInRCA(), false);
     return;
   }
 
@@ -14058,30 +14118,16 @@ async function triggerRCA(riskIdx) {
       }),
     });
     var data = await resp.json();
-    var reply = data.reply || data.error || 'No response';
-    var scopeLabel = risk.scope ? risk.scope.charAt(0).toUpperCase() + risk.scope.slice(1) : 'Resource';
-    var metaItems = [scopeLabel];
-    if (risk.ns) metaItems.push(risk.ns);
-    if (risk.pod) metaItems.push(risk.pod);
-    if (risk.node) metaItems.push(risk.node);
-    panel.innerHTML = '<div class="rca-header">' +
-      '<div class="rca-header-icon" style="background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff">\u{1F50D}</div>' +
-      '<div style="flex:1">' +
-        '<div style="font-weight:700;font-size:14px">Root Cause Analysis</div>' +
-        '<div style="font-size:11px;color:var(--text2)">' + esc(titleClean) + '</div>' +
-      '</div>' +
-      '<div style="display:flex;gap:6px;align-items:center">' +
-        '<span class="rca-header-sev ' + risk.severity + '">' + risk.severity + '</span>' +
-        '<span style="font-size:9px;color:var(--text2)">' + esc(metaItems.join(' \u{2022} ')) + '</span>' +
-      '</div>' +
-    '</div>' +
-    '<div style="padding:16px"><div class="rca-body">' + md(reply) + '</div></div>';
+    var reply = data.reply || '';
+    // If the LLM returned empty, error, or unhelpful response, fall back to built-in
+    if (!reply || reply.length < 30 || /^(not found|error|no response|resource not found)/i.test(reply.trim())) {
+      renderRCAPanel(buildBuiltInRCA(), false);
+    } else {
+      renderRCAPanel(reply, true);
+    }
   } catch (e) {
-    panel.innerHTML = '<div class="rca-header">' +
-      '<div class="rca-header-icon" style="background:var(--crit);color:#fff">\u{26A0}</div>' +
-      '<div style="flex:1"><div style="font-weight:700;font-size:14px;color:var(--crit)">RCA Failed</div>' +
-      '<div style="font-size:11px;color:var(--text2)">' + esc(e.message) + '</div></div>' +
-      '</div>';
+    // LLM call failed — show built-in RCA instead of an error
+    renderRCAPanel(buildBuiltInRCA(), false);
   }
 }
 
