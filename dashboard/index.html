@@ -2463,24 +2463,6 @@ tr:hover td{background:#ffffff06}
     </div>
   </div>
 
-  <!-- Middle section: Node Overview + Active Alerts -->
-  <div class="grid grid-2">
-    <div>
-      <div class="section-title">
-        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm0 5a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V9zm0 5a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1v-2z"/></svg>
-        Node Overview
-      </div>
-      <div class="card" style="padding:0;overflow:hidden">
-        <table>
-          <thead><tr><th>Node</th><th>Role</th><th>Status</th><th>CPU</th><th>Memory</th><th>Pods</th></tr></thead>
-          <tbody id="node-table">
-            <tr><td colspan="6" class="loading">Loading nodes...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
   <!-- Bottom Section: Operational KPIs + ACM -->
   <div class="grid grid-4" style="margin-top:8px">
 
@@ -4124,29 +4106,6 @@ async function loadSummary() {
   }
 }
 
-async function loadNodes() {
-  const tbody = document.getElementById('node-table');
-  try {
-    const nodes = await apiFetch('/api/nodes');
-    if (nodes.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty-row">No nodes found</td></tr>';
-      return;
-    }
-    tbody.innerHTML = nodes.map(n => `
-      <tr>
-        <td>${esc(n.name)}</td>
-        <td>${n.roles.join(', ') || 'worker'}</td>
-        <td><span class="badge ${n.ready ? 'badge-ok' : 'badge-crit'}">${n.ready ? 'Ready' : 'NotReady'}</span></td>
-        <td>${esc(n.cpu)}</td>
-        <td>${formatMem(n.memory)}</td>
-        <td>${n.pods}</td>
-      </tr>
-    `).join('');
-  } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="6" class="loading">Error loading nodes: ' + esc(err.message) + '</td></tr>';
-  }
-}
-
 async function loadAlerts() {
   try {
     const data = await apiFetch('/api/alerts');
@@ -5719,7 +5678,6 @@ async function refreshAll() {
   document.getElementById('last-updated').textContent = 'Refreshing...';
   var results = await Promise.allSettled([
     loadSummary(),
-    loadNodes(),
     loadAlerts(),
     loadPodIssues(),
     loadACMClusters(),
