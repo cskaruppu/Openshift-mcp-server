@@ -1,3 +1,5 @@
+import { validateCommand as _validateInjection } from "../security/command-validator.js";
+
 /**
  * Guardrails & Safety Service (Pillar 7).
  *
@@ -84,6 +86,12 @@ export function classifyCommand(command) {
 
   if (!cmd) {
     return { level: "blocked", reason: "Empty command", requiresApproval: false, allowedAfterApproval: false };
+  }
+
+  // Command injection prevention — validate before any classification
+  const injection = _validateInjection(cmd);
+  if (!injection.valid) {
+    return { level: "blocked", reason: injection.reason, requiresApproval: false, allowedAfterApproval: false };
   }
 
   // Blocked first — never run these

@@ -1,0 +1,18 @@
+apiVersion: v2
+name: tcs-agentic-ai
+description: TCS Agentic AI — Enterprise Intelligence Solution for OpenShift/Kubernetes cluster management with MCP Hub, multi-server orchestration, and enterprise integrations
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - mcp
+  - openshift
+  - kubernetes
+  - agentic-ai
+  - enterprise
+  - intelligence
+maintainers:
+  - name: TCS
+home: https://github.com/cskaruppu/openshift-mcp-server
+sources:
+  - https://github.com/cskaruppu/openshift-mcp-server

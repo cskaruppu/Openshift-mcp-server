@@ -96,6 +96,9 @@ import { loadKubeconfig, registerMultiClusterTools } from "./services/multi-clus
 import { handleAgentRoutes as handleAgentRegistryRoutes, loadAgents } from "./agents/registry.js";
 import { handleAgentMcpRoutes } from "./agents/mcp-router.js";
 import { loadConfig } from "./utils/config.js";
+import { validateCommand, getAccessLevel, isToolAllowed } from "./security/command-validator.js";
+import { initComponents, isToolRegistrationEnabled, getComponentCatalog, getComponentSummary } from "./security/component-registry.js";
+import { initTelemetry, shutdownTelemetry, startSpan, traceChatRequest, traceToolCall, getTelemetryStatus } from "./utils/telemetry-otel.js";
 import { ocpGet, setRemoteCluster, clearRemoteCluster } from "./utils/openshift-client.js";
 import {
   connectServer as hubConnect,
@@ -208,44 +211,64 @@ function createMcpServer() {
       "TCS Agentic AI — Enterprise Intelligence Platform with MCP Hub, multi-server orchestration, diagnostics, ITSM integration, and automated remediation.",
   });
 
-  // Register all tool groups
-  registerClusterTools(server);
-  registerNodeTools(server);
-  registerPodTools(server);
-  registerNamespaceTools(server);
-  registerDiagnosticTools(server);
-  registerServiceNowTools(server);
-  registerAnsibleTools(server);
-  registerEmergencyTools(server);
-  registerACMTools(server);
-  registerDashboardTools(server);
-  registerWorkloadTools(server);
-  registerHelmTools(server);
-  registerTektonTools(server);
-  registerKubeVirtTools(server);
-  registerNetworkTools(server);
-  registerGenericTools(server);
-  registerMustGatherTools(server);
+  initComponents();
+
+  const toolGroups = [
+    ["registerClusterTools",        registerClusterTools],
+    ["registerNodeTools",           registerNodeTools],
+    ["registerPodTools",            registerPodTools],
+    ["registerNamespaceTools",      registerNamespaceTools],
+    ["registerDiagnosticTools",     registerDiagnosticTools],
+    ["registerServiceNowTools",     registerServiceNowTools],
+    ["registerAnsibleTools",        registerAnsibleTools],
+    ["registerEmergencyTools",      registerEmergencyTools],
+    ["registerACMTools",            registerACMTools],
+    ["registerDashboardTools",      registerDashboardTools],
+    ["registerWorkloadTools",       registerWorkloadTools],
+    ["registerHelmTools",           registerHelmTools],
+    ["registerTektonTools",         registerTektonTools],
+    ["registerKubeVirtTools",       registerKubeVirtTools],
+    ["registerNetworkTools",        registerNetworkTools],
+    ["registerGenericTools",        registerGenericTools],
+    ["registerMustGatherTools",     registerMustGatherTools],
+    ["registerMetricsTopTools",     registerMetricsTopTools],
+    ["registerPrometheusTools",     registerPrometheusTools],
+    ["registerOSSMTools",           registerOSSMTools],
+    ["registerGitOpsTools",         registerGitOpsTools],
+    ["registerSecurityTools",       registerSecurityTools],
+    ["registerRecommendationTools", registerRecommendationTools],
+    ["registerNotificationTools",   registerNotificationTools],
+    ["registerVeleroTools",         registerVeleroTools],
+    ["registerComplianceTools",     registerComplianceTools],
+    ["registerDriftTools",          registerDriftTools],
+    ["registerImpactTools",         registerImpactTools],
+    ["registerOperatorDiagTools",   registerOperatorDiagTools],
+    ["registerPolicyGenTools",      registerPolicyGenTools],
+    ["registerSCCAdvisorTools",     registerSCCAdvisorTools],
+    ["registerTimelineTools",       registerTimelineTools],
+    ["registerUpgradeAdvisorTools", registerUpgradeAdvisorTools],
+    ["registerBenchmarkTools",      registerBenchmarkTools],
+    ["registerProvisioningTools",   registerProvisioningTools],
+    ["registerPreflightTools",      registerPreflightTools],
+  ];
+
+  let registered = 0;
+  let skipped = 0;
+  for (const [name, fn] of toolGroups) {
+    if (isToolRegistrationEnabled(name)) {
+      fn(server);
+      registered++;
+    } else {
+      skipped++;
+    }
+  }
+
+  // Multi-cluster is always registered (not component-gated)
   registerMultiClusterTools(server);
-  registerMetricsTopTools(server);
-  registerPrometheusTools(server);
-  registerOSSMTools(server);
-  registerGitOpsTools(server);
-  registerSecurityTools(server);
-  registerRecommendationTools(server);
-  registerNotificationTools(server);
-  registerVeleroTools(server);
-  registerComplianceTools(server);
-  registerDriftTools(server);
-  registerImpactTools(server);
-  registerOperatorDiagTools(server);
-  registerPolicyGenTools(server);
-  registerSCCAdvisorTools(server);
-  registerTimelineTools(server);
-  registerUpgradeAdvisorTools(server);
-  registerBenchmarkTools(server);
-  registerProvisioningTools(server);
-  registerPreflightTools(server);
+
+  if (skipped > 0) {
+    console.log(`[components] registered ${registered} tool groups, skipped ${skipped} (disabled)`);
+  }
 
   return server;
 }
@@ -958,6 +981,9 @@ async function startSSE() {
   // Load configuration, safety flags, and multi-cluster context
   try { loadConfig(); } catch (e) { console.warn("[startup] config load:", e.message); }
   initSafety();
+  initTelemetry();
+  console.log(`[startup] access level: ${getAccessLevel()}`);
+  console.log(`[startup] ${getComponentSummary()}`);
   try { await loadKubeconfig(); } catch (e) { console.warn("[startup] kubeconfig:", e.message); }
 
   // Initialize optional persistence layers (graceful fallback if not configured)
@@ -1234,6 +1260,33 @@ async function startSSE() {
       }
       diag.nodeTlsRejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED || "(not set)";
       sendJson(res, 200, diag);
+      return;
+    }
+
+    // ── Security & Governance APIs ────────────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/access-level") {
+      sendJson(res, 200, { accessLevel: getAccessLevel() });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/validate-command") {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body);
+      const result = validateCommand(parsed.command, {
+        accessLevel: parsed.accessLevel,
+        allowedNamespaces: parsed.allowedNamespaces,
+      });
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/components") {
+      sendJson(res, 200, getComponentCatalog());
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/telemetry-status") {
+      sendJson(res, 200, getTelemetryStatus());
       return;
     }
 

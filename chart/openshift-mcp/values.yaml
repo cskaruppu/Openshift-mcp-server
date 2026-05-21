@@ -1,0 +1,168 @@
+# TCS Agentic AI — Helm Values
+# All values have safe defaults. Override only what you need.
+
+replicaCount: 1
+
+image:
+  repository: tcs-agentic-ai
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# ── Service Configuration ────────────────────────────────────────────────────
+
+service:
+  type: ClusterIP
+  port: 3000
+
+# ── OpenShift Route (optional) ───────────────────────────────────────────────
+
+route:
+  enabled: false
+  host: ""
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+
+# ── Ingress (for non-OpenShift clusters) ─────────────────────────────────────
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: tcs-agentic-ai.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# ── MCP Server Settings ─────────────────────────────────────────────────────
+
+mcp:
+  transport: sse
+  serverPort: 3000
+  logLevel: info
+
+# ── Access Control ───────────────────────────────────────────────────────────
+# readonly  — read-only operations only (get, describe, logs, top, etc.)
+# readwrite — read + mutating operations (create, patch, scale, etc.)
+# admin     — all operations including administrative commands
+
+accessLevel: admin
+
+# ── Component Toggles ───────────────────────────────────────────────────────
+# Comma-separated list of components to enable.
+# Set to "all" or leave empty to enable everything.
+# Available: core, observability, security, networking, itsm, lifecycle, upgrade, advanced
+
+enabledComponents: "all"
+
+# ── Allowed Namespaces ───────────────────────────────────────────────────────
+# Restrict operations to specific namespaces (comma-separated).
+# Leave empty to allow all namespaces.
+
+allowedNamespaces: ""
+
+# ── OpenShift Connection ─────────────────────────────────────────────────────
+
+openshift:
+  # When deployed in-cluster, the service account token is used automatically.
+  # Set these only for out-of-cluster or cross-cluster access.
+  apiUrl: ""
+  token: ""
+
+# ── LLM Configuration ───────────────────────────────────────────────────────
+
+llm:
+  provider: "none"
+  apiKey: ""
+  model: ""
+  apiUrl: ""
+
+# ── Database (PostgreSQL) ───────────────────────────────────────────────────
+
+database:
+  # Set to enable persistent chat history, audit logs, and learning engine.
+  url: ""
+
+# ── Cache (Redis) ───────────────────────────────────────────────────────────
+
+redis:
+  url: ""
+
+# ── ServiceNow ITSM Integration ─────────────────────────────────────────────
+
+servicenow:
+  instance: ""
+  username: ""
+  password: ""
+
+# ── Ansible Automation Platform ──────────────────────────────────────────────
+
+ansible:
+  controllerUrl: ""
+  controllerToken: ""
+
+# ── OpenTelemetry ────────────────────────────────────────────────────────────
+# Set endpoint to enable OTLP trace export.
+# Compatible with Jaeger, Grafana Tempo, Datadog, Dynatrace, etc.
+
+otel:
+  endpoint: ""
+  headers: ""
+  serviceName: "tcs-agentic-ai"
+
+# ── Resources ────────────────────────────────────────────────────────────────
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# ── Service Account ─────────────────────────────────────────────────────────
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# ── Security Context ────────────────────────────────────────────────────────
+
+podSecurityContext:
+  runAsNonRoot: true
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+# ── Health Checks ───────────────────────────────────────────────────────────
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+# ── Node Scheduling ─────────────────────────────────────────────────────────
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
