@@ -12191,8 +12191,16 @@ export async function handleChatAPI(req, res) {
       "rbac", "rollout", "rollback", "drain", "cordon", "uncordon",
       "taint", "untaint", "approve", "compare", "export", "snapshot", "resize",
       "label", "annotate", "evict",
+      "diagnose", "mustgather",
+      "slo", "saturation", "incident", "postmortem", "impact",
+      "deprecated", "webhook", "supplychain", "imagestale", "hardening",
+      "podsecurity", "capacity", "mcpdrift", "pdb", "topology",
+      "probes", "hpa", "orphaned", "governance",
+      "alerts", "gitops", "imagescan", "backup", "fleet",
+      "compliance", "automation", "optimize", "network", "identity", "certlife",
     ]);
-    const isMutating = CACHE_BYPASS_INTENTS.has(parsed.intent);
+    const isHealthScope = parsed.scope === "health" || /\bhealth\b|\bstatus\b|\bdiagnos|\btroubleshoot/.test(userMessage.toLowerCase());
+    const isMutating = CACHE_BYPASS_INTENTS.has(parsed.intent) || isHealthScope;
     const cacheKey = cacheKeyForChat(userMessage, activeProvider);
 
     if (!isMutating) {
