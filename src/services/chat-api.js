@@ -1317,6 +1317,152 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
   }
 
   // -----------------------------------------------------------------------
+  // CLUSTER STATUS / HEALTH — "cluster status", "cluster health", "cluster overview"
+  // Per OpenShift docs: cluster status = version + operators + nodes + pods + events
+  // -----------------------------------------------------------------------
+  if ((cmd.resourceType === "cluster" || (!cmd.resourceType && /\bcluster\b/.test(lower))) &&
+      (cmd.scope === "health" || /\bhealth\b|\bstatus\b|\bcheck\b|\boverview\b/.test(lower))) {
+    try {
+      const [clvData, opsData, nodesData, podsData, eventsData, infra, mcsData] = await Promise.all([
+        ocpGet("/apis/config.openshift.io/v1/clusterversions/version").catch(() => null),
+        ocpGet("/apis/config.openshift.io/v1/clusteroperators").catch(() => ({ items: [] })),
+        ocpGet("/api/v1/nodes").catch(() => ({ items: [] })),
+        ocpGet("/api/v1/pods").catch(() => ({ items: [] })),
+        ocpGet("/api/v1/events?fieldSelector=type=Warning&limit=40").catch(() => ({ items: [] })),
+        ocpGet("/apis/config.openshift.io/v1/infrastructures/cluster").catch(() => null),
+        ocpGet("/apis/machineconfiguration.openshift.io/v1/machineconfigpools").catch(() => ({ items: [] })),
+      ]);
+      const parts = [];
+
+      // --- Cluster Identity ---
+      parts.push(`### Cluster Status Overview`);
+      parts.push("");
+      if (clvData) {
+        const ver = clvData.status?.desired?.version || "unknown";
+        const channel = clvData.spec?.channel || "unknown";
+        const clusterID = clvData.spec?.clusterID || "—";
+        const conditions = clvData.status?.conditions || [];
+        const available = conditions.find(c => c.type === "Available");
+        const progressing = conditions.find(c => c.type === "Progressing");
+        const degraded = conditions.find(c => c.type === "Degraded");
+        const platformType = infra?.status?.platformStatus?.type || infra?.status?.platform || "—";
+        const apiURL = infra?.status?.apiServerURL || "—";
+
+        parts.push(`| Property | Value |`);
+        parts.push(`| --- | --- |`);
+        parts.push(`| **OpenShift Version** | ${ver} |`);
+        parts.push(`| **Channel** | ${channel} |`);
+        parts.push(`| **Platform** | ${platformType} |`);
+        parts.push(`| **Cluster ID** | \`${clusterID}\` |`);
+        parts.push(`| **API Server** | ${apiURL} |`);
+        parts.push(`| **Available** | ${available?.status === "True" ? "[OK] Yes" : "[CRITICAL] No — " + (available?.message || "").slice(0, 100)} |`);
+        if (degraded?.status === "True") {
+          parts.push(`| **Degraded** | [CRITICAL] Yes — ${(degraded.message || "").slice(0, 100)} |`);
+        } else {
+          parts.push(`| **Degraded** | [OK] No |`);
+        }
+        if (progressing?.status === "True") {
+          parts.push(`| **Upgrade In Progress** | ⚠ ${(progressing.message || "").slice(0, 100)} |`);
+        }
+        parts.push("");
+      }
+
+      // --- Cluster Operators ---
+      const opItems = opsData.items || [];
+      const degradedOps = opItems.filter(o => (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True"));
+      const unavailOps = opItems.filter(o => (o.status?.conditions || []).some(c => c.type === "Available" && c.status === "False"));
+      const progressOps = opItems.filter(o => (o.status?.conditions || []).some(c => c.type === "Progressing" && c.status === "True"));
+      const healthyOps = opItems.length - degradedOps.length - unavailOps.filter(o => !degradedOps.find(d => d.metadata.name === o.metadata.name)).length;
+      parts.push(`**Cluster Operators:** ${opItems.length} total | ${healthyOps} healthy | ${degradedOps.length} degraded | ${unavailOps.length} unavailable | ${progressOps.length} progressing`);
+      if (degradedOps.length > 0) {
+        parts.push("");
+        parts.push(`| Operator | Status | Message |`);
+        parts.push(`| --- | --- | --- |`);
+        degradedOps.forEach(o => {
+          const msg = (o.status?.conditions || []).find(c => c.type === "Degraded")?.message || "";
+          parts.push(`| \`${o.metadata.name}\` | [CRITICAL] Degraded | ${msg.slice(0, 100)} |`);
+        });
+        unavailOps.filter(o => !degradedOps.find(d => d.metadata.name === o.metadata.name)).forEach(o => {
+          parts.push(`| \`${o.metadata.name}\` | [WARNING] Unavailable | — |`);
+        });
+      }
+      parts.push("");
+
+      // --- Nodes Summary ---
+      const nodeItems = nodesData.items || [];
+      const readyNodes = nodeItems.filter(n => (n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True"));
+      const notReadyNodes = nodeItems.filter(n => !(n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True"));
+      const controlPlane = nodeItems.filter(n => Object.keys(n.metadata?.labels || {}).some(l => l.includes("master") || l.includes("control-plane")));
+      const workers = nodeItems.filter(n => !Object.keys(n.metadata?.labels || {}).some(l => l.includes("master") || l.includes("control-plane")));
+      const pressureNodes = nodeItems.filter(n => (n.status?.conditions || []).some(c => ["MemoryPressure", "DiskPressure", "PIDPressure"].includes(c.type) && c.status === "True"));
+      parts.push(`**Nodes:** ${nodeItems.length} total | ${readyNodes.length} ready | ${notReadyNodes.length} not-ready | ${controlPlane.length} control-plane | ${workers.length} worker`);
+      if (notReadyNodes.length > 0) {
+        notReadyNodes.forEach(n => parts.push(`  ⛔ \`${n.metadata.name}\` — NotReady`));
+      }
+      if (pressureNodes.length > 0) {
+        pressureNodes.forEach(n => {
+          const pTypes = (n.status?.conditions || []).filter(c => ["MemoryPressure", "DiskPressure", "PIDPressure"].includes(c.type) && c.status === "True").map(c => c.type);
+          parts.push(`  ⚠ \`${n.metadata.name}\` — ${pTypes.join(", ")}`);
+        });
+      }
+      parts.push("");
+
+      // --- Pods Summary ---
+      const allPods = podsData.items || [];
+      const podsByPhase = {};
+      allPods.forEach(p => { const ph = p.status?.phase || "Unknown"; podsByPhase[ph] = (podsByPhase[ph] || 0) + 1; });
+      const crashPods = allPods.filter(p => (p.status?.containerStatuses || []).some(c => c.state?.waiting?.reason === "CrashLoopBackOff"));
+      const oomPods = allPods.filter(p => (p.status?.containerStatuses || []).some(c => c.lastState?.terminated?.reason === "OOMKilled"));
+      const imgPods = allPods.filter(p => (p.status?.containerStatuses || []).some(c => c.state?.waiting?.reason === "ImagePullBackOff" || c.state?.waiting?.reason === "ErrImagePull"));
+      parts.push(`**Pods:** ${allPods.length} total | ${podsByPhase["Running"] || 0} running | ${podsByPhase["Succeeded"] || 0} completed | ${podsByPhase["Pending"] || 0} pending | ${podsByPhase["Failed"] || 0} failed`);
+      if (crashPods.length > 0) parts.push(`  ⛔ ${crashPods.length} pod(s) in CrashLoopBackOff`);
+      if (oomPods.length > 0) parts.push(`  ⛔ ${oomPods.length} pod(s) OOMKilled`);
+      if (imgPods.length > 0) parts.push(`  ⚠ ${imgPods.length} pod(s) ImagePullBackOff`);
+      parts.push("");
+
+      // --- MachineConfigPools ---
+      const mcpItems = mcsData.items || [];
+      if (mcpItems.length > 0) {
+        const degradedMcps = mcpItems.filter(m => (m.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True"));
+        const updatingMcps = mcpItems.filter(m => (m.status?.conditions || []).some(c => c.type === "Updating" && c.status === "True"));
+        parts.push(`**MachineConfigPools:** ${mcpItems.length} total | ${degradedMcps.length} degraded | ${updatingMcps.length} updating`);
+        degradedMcps.forEach(m => parts.push(`  ⛔ \`${m.metadata.name}\` — Degraded`));
+        updatingMcps.forEach(m => {
+          const pending = (m.status?.machineCount || 0) - (m.status?.updatedMachineCount || 0);
+          parts.push(`  ⚠ \`${m.metadata.name}\` — Updating (${pending} machine(s) pending)`);
+        });
+        parts.push("");
+      }
+
+      // --- Warning Events ---
+      const evtItems = eventsData.items || [];
+      if (evtItems.length > 0) {
+        const evtReasons = {};
+        evtItems.forEach(e => { evtReasons[e.reason] = (evtReasons[e.reason] || 0) + (e.count || 1); });
+        const topReasons = Object.entries(evtReasons).sort((a, b) => b[1] - a[1]).slice(0, 8);
+        parts.push(`**Warning Events:** ${evtItems.length} recent`);
+        topReasons.forEach(([reason, count]) => parts.push(`  - ${reason}: ${count}`));
+        parts.push("");
+      }
+
+      // --- Commands ---
+      parts.push("**Investigate further:**");
+      parts.push(`@@SEC_FIX_CMD|oc get clusterversion@@`);
+      parts.push(`@@SEC_FIX_CMD|oc get clusteroperators@@`);
+      parts.push(`@@SEC_FIX_CMD|oc get nodes -o wide@@`);
+      parts.push(`@@SEC_FIX_CMD|oc get pods --all-namespaces --field-selector=status.phase!=Running,status.phase!=Succeeded@@`);
+      if (degradedOps.length > 0) {
+        parts.push(`@@SEC_FIX_CMD|oc describe clusteroperator ${degradedOps[0].metadata.name}@@`);
+      }
+      parts.push(`@@SEC_FIX_CMD|oc get events --all-namespaces --sort-by=.lastTimestamp@@`);
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      return `### Cluster Status\n[WARNING] Could not fetch cluster data: ${e.message}`;
+    }
+  }
+
+  // -----------------------------------------------------------------------
   // NODE HEALTH — "node health", "show node status", "check nodes"
   // -----------------------------------------------------------------------
   if (cmd.resourceType === "node" && (cmd.scope === "health" || /\bhealth\b|\bstatus\b|\bcheck\b|\boverview\b|\btroubleshoot\b|\bdiagnos/.test(lower))) {
