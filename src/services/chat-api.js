@@ -393,6 +393,22 @@ function fmtMem(v) {
   return "<1Mi";
 }
 
+function _formatAge(date) {
+  const ms = Date.now() - date.getTime();
+  const secs = Math.floor(ms / 1000);
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo`;
+  const years = Math.floor(days / 365);
+  return `${years}y`;
+}
+
 // ---------------------------------------------------------------------------
 // Cache config — TTL in seconds for cached chat replies / cluster context
 // ---------------------------------------------------------------------------
@@ -1298,6 +1314,102 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
   if (cmd.resourceType === "certificate" &&
       /\b(expir|renew|rotat|check|valid|tls)\b/i.test(lower)) {
     return null;
+  }
+
+  // -----------------------------------------------------------------------
+  // NODE HEALTH — "node health", "show node status", "check nodes"
+  // -----------------------------------------------------------------------
+  if (cmd.resourceType === "node" && (cmd.scope === "health" || /\bhealth\b|\bstatus\b|\bcheck\b|\boverview\b|\btroubleshoot\b|\bdiagnos/.test(lower))) {
+    try {
+      const [nodesData, nodeMetrics, eventsData] = await Promise.all([
+        ocpGet("/api/v1/nodes"),
+        ocpGet("/apis/metrics.k8s.io/v1beta1/nodes").catch(() => ({ items: [] })),
+        ocpGet("/api/v1/events?fieldSelector=involvedObject.kind=Node,type=Warning&limit=30").catch(() => ({ items: [] })),
+      ]);
+      const nodeItems = nodesData.items || [];
+      const metricMap = {};
+      (nodeMetrics.items || []).forEach(m => { metricMap[m.metadata.name] = m; });
+
+      const parts = [];
+      parts.push(`### Node Health Overview`);
+      parts.push("");
+
+      const ready = nodeItems.filter(n => (n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True"));
+      const notReady = nodeItems.filter(n => !(n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True"));
+      parts.push(`Your cluster has **${nodeItems.length} node(s)**: ${ready.length} Ready, ${notReady.length} NotReady`);
+      parts.push("");
+
+      parts.push(`| Status | Node | Roles | Age | CPU (used/capacity) | Memory (used/capacity) | Conditions |`);
+      parts.push(`| --- | --- | --- | --- | --- | --- | --- |`);
+      nodeItems.forEach(n => {
+        const name = n.metadata.name;
+        const conditions = n.status?.conditions || [];
+        const readyCond = conditions.find(c => c.type === "Ready");
+        const isReady = readyCond?.status === "True";
+        const icon = isReady ? "[OK]" : "[CRITICAL]";
+        const roles = Object.keys(n.metadata.labels || {})
+          .filter(l => l.startsWith("node-role.kubernetes.io/"))
+          .map(l => l.split("/")[1]).join(", ") || "worker";
+        const created = n.metadata.creationTimestamp;
+        const age = created ? _formatAge(new Date(created)) : "—";
+        const cpuCap = n.status?.capacity?.cpu || "—";
+        const memCap = n.status?.capacity?.memory || "—";
+        const metric = metricMap[name];
+        const cpuUsed = metric ? fmtCpu(metric.usage?.cpu) : "—";
+        const memUsed = metric ? fmtMem(metric.usage?.memory) : "—";
+        const memCapFmt = memCap !== "—" ? fmtMem(memCap) : "—";
+        const problemConds = conditions.filter(c => c.type !== "Ready" && c.status === "True").map(c => c.type);
+        const condStr = problemConds.length > 0 ? problemConds.join(", ") : "Healthy";
+        parts.push(`| ${icon} | \`${name}\` | ${roles} | ${age} | ${cpuUsed} / ${cpuCap} | ${memUsed} / ${memCapFmt} | ${condStr} |`);
+      });
+      parts.push("");
+
+      // Summary stats
+      parts.push(`- **Total nodes:** ${nodeItems.length}`);
+      parts.push(`- **Ready nodes:** ${ready.length}`);
+      parts.push(`- **NotReady nodes:** ${notReady.length}`);
+
+      // Problem nodes detail
+      const pressureNodes = nodeItems.filter(n => (n.status?.conditions || []).some(c => ["MemoryPressure", "DiskPressure", "PIDPressure"].includes(c.type) && c.status === "True"));
+      if (notReady.length > 0 || pressureNodes.length > 0) {
+        parts.push("");
+        parts.push(`**Issues Detected:**`);
+        notReady.forEach(n => {
+          const msg = (n.status?.conditions || []).find(c => c.type === "Ready")?.message || "";
+          parts.push(`  ⛔ \`${n.metadata.name}\` — NotReady: ${msg.slice(0, 150)}`);
+        });
+        pressureNodes.forEach(n => {
+          const pTypes = (n.status?.conditions || []).filter(c => ["MemoryPressure", "DiskPressure", "PIDPressure"].includes(c.type) && c.status === "True").map(c => c.type);
+          parts.push(`  ⚠ \`${n.metadata.name}\` — ${pTypes.join(", ")}`);
+        });
+      }
+
+      // Recent node events
+      const nodeEvents = eventsData.items || [];
+      if (nodeEvents.length > 0) {
+        parts.push("");
+        parts.push(`**Recent Node Events (${nodeEvents.length}):**`);
+        nodeEvents.slice(0, 8).forEach(e => {
+          parts.push(`  - **${e.reason}** on \`${e.involvedObject?.name || "?"}\`: ${(e.message || "").slice(0, 100)} (×${e.count || 1})`);
+        });
+      }
+
+      // Troubleshoot commands
+      parts.push("");
+      parts.push("**Investigate further:**");
+      parts.push(`@@SEC_FIX_CMD|oc get nodes -o wide@@`);
+      parts.push(`@@SEC_FIX_CMD|oc adm top nodes@@`);
+      if (notReady.length > 0) {
+        parts.push(`@@SEC_FIX_CMD|oc describe node ${notReady[0].metadata.name}@@`);
+      } else if (nodeItems.length > 0) {
+        parts.push(`@@SEC_FIX_CMD|oc describe node ${nodeItems[0].metadata.name}@@`);
+      }
+      parts.push(`@@SEC_FIX_CMD|oc get events --field-selector involvedObject.kind=Node --sort-by=.lastTimestamp@@`);
+      return parts.join("\n");
+    } catch (e) {
+      if (llmAvailable) return null;
+      return `### Node Health\n[WARNING] Could not fetch node data: ${e.message}`;
+    }
   }
 
   // -----------------------------------------------------------------------
