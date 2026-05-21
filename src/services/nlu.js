@@ -886,8 +886,13 @@ export function parse(message, memory = {}) {
     if (intent === "upgrade" && /\b(cluster|openshift|ocp)\b/.test(lower)) resource = "clusterversion";
     // For describe/get/delete/restart without explicit resource: inherit
     // from memory if available; otherwise default to pod (most common).
+    // Exception: when the query mentions "cluster" in a health/status context,
+    // don't default — let section 9 set resource="cluster" instead.
     if (!resource && (intent === "describe" || intent === "get" || intent === "delete" || intent === "restart")) {
-      resource = memory.resource || "pod";
+      const isClusterQuery = /\b(cluster|overview)\b/.test(lower) && /\b(health|status|check|overview|troubleshoot|diagnos)\b/.test(lower);
+      if (!isClusterQuery) {
+        resource = memory.resource || "pod";
+      }
     }
   }
 
