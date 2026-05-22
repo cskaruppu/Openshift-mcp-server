@@ -5054,7 +5054,7 @@ async function handleListCommand(message, preParsed, opts = {}) {
   if (cmd.filter && !["list", "get"].includes(cmd.operation)) return null;
   // Diagnostic / analytical questions should go to the LLM, not be
   // handled as a simple resource listing.
-  if (lower.match(/\bwhy\b|\bhealth\b|\bdiagnos|\bwhat.*wrong\b|\boverview\b|\btroubleshoot|\banalyz|\banalyse|\binvestigat|\bdebug|\breason|\bcause|\bexplain\b|\bpending\s+state|\bfailing\b|\broot\s+cause/)) return null;
+  if (lower.match(/\bwhy\b|\bhealth\b|\bdiagnos|\bwhat.*wrong\b|\boverview\b|\btroubleshoot|\banalyz|\banalyse|\binvestigat|\bdebug|\breason|\bcause|\bexplain\b|\bpending\s+state|\broot\s+cause/)) return null;
 
   const resInfo = RESOURCE_MAP[cmd.resourceType];
   if (!resInfo) return null;
@@ -13029,7 +13029,13 @@ export async function handleChatAPI(req, res) {
         updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
         observeHistogram("mcp_chat_latency_seconds", { provider: activeProvider }, (Date.now() - startedAt) / 1000);
       } catch (sseErr) {
-        sseSend(res, { error: sseErr.message });
+        const isNet = /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ECONNRESET|network error|fetch failed/i.test(sseErr.message);
+        if (isNet) {
+          sseSend(res, { delta: `### LLM Service Unavailable\n\nThe AI analysis service is currently unreachable. Try direct queries like \`list pods\`, \`node status\`, \`cluster status\` which work without LLM.\n\nCheck your LLM provider configuration or set \`LLM_PROVIDER=none\` to use built-in analysis.` });
+          sseSend(res, { done: true, provider: "built-in", error: "llm_unreachable" });
+        } else {
+          sseSend(res, { error: sseErr.message });
+        }
         sseEnd(res);
       } finally {
         clearInterval(heartbeat);
@@ -13179,7 +13185,13 @@ export async function handleChatAPI(req, res) {
     json(res, 200, { ...payload, cached: false, conversationId });
   } catch (err) {
     console.error("Chat API error:", err);
-    json(res, 500, { error: err.message });
+    const isNetworkError = /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ECONNRESET|network error|fetch failed/i.test(err.message);
+    if (isNetworkError) {
+      const fallbackReply = `### LLM Service Unavailable\n\nThe AI analysis service is currently unreachable. Your query **"${userMessage}"** requires LLM processing but the configured provider could not be contacted.\n\n**What you can try:**\n- Use direct queries like \`list pods\`, \`node status\`, \`cluster status\` (these work without LLM)\n- Check your LLM provider configuration (\`LLM_PROVIDER\`, \`LLM_API_URL\`, \`LLM_API_KEY\`)\n- Verify network connectivity from the pod to the LLM endpoint\n- Set \`LLM_PROVIDER=none\` to use built-in analysis`;
+      json(res, 200, { reply: fallbackReply, provider: "built-in", error: "llm_unreachable", conversationId });
+    } else {
+      json(res, 500, { error: err.message });
+    }
   } finally {
     clearRemoteCluster();
     histLogQuery({
