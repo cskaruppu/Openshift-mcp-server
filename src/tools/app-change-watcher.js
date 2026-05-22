@@ -29,6 +29,8 @@ const _persistedNamespaces = loadPersistedNamespaces();
 const _watchedNamespaces = new Set([..._envNamespaces, ..._persistedNamespaces]);
 const _baselines = new Map();
 const _changeLog = [];
+const _resolvedIds = new Set();
+const _dismissedKeys = new Map();
 const MAX_CHANGES = 500;
 
 const _gitopsDriftCache = new Map();
@@ -80,8 +82,21 @@ export async function initNamespaceBaselines(nsList) {
 export function acknowledgeChange(changeId) {
   const entry = _changeLog.find(e => e.id === changeId);
   if (!entry) return { found: false };
-  entry.acknowledged = true;
-  return { found: true, id: changeId, action: "acknowledged" };
+  _resolvedIds.add(changeId);
+  const idx = _changeLog.indexOf(entry);
+  if (idx >= 0) _changeLog.splice(idx, 1);
+  return { found: true, id: changeId, action: "acknowledged", resolved: true };
+}
+
+export function agreeChange(changeId) {
+  const entry = _changeLog.find(e => e.id === changeId);
+  if (!entry) return { found: false };
+  _resolvedIds.add(changeId);
+  const key = workloadKey(entry.namespace, entry.kind, entry.name);
+  if (entry.currentSpec) _baselines.set(key, entry.currentSpec);
+  const idx = _changeLog.indexOf(entry);
+  if (idx >= 0) _changeLog.splice(idx, 1);
+  return { found: true, id: changeId, action: "agreed", resolved: true };
 }
 
 export async function dismissChange(changeId) {
@@ -111,8 +126,10 @@ export async function dismissChange(changeId) {
   await ocpPatch(apiPath, patch, "application/strategic-merge-patch+json");
   const key = workloadKey(entry.namespace, entry.kind, entry.name);
   _baselines.set(key, baselineSpec);
-  entry.acknowledged = true;
-  return { found: true, id: changeId, action: "dismissed", rolledBack: true };
+  _dismissedKeys.set(key, { baseline: baselineSpec, dismissedAt: Date.now(), followUpCount: 0 });
+  const idx = _changeLog.indexOf(entry);
+  if (idx >= 0) _changeLog.splice(idx, 1);
+  return { found: true, id: changeId, action: "dismissed", rolledBack: true, resolved: true };
 }
 
 export function getWorkloadsByNamespace() {
@@ -339,6 +356,14 @@ export async function scanForChanges() {
         const diffs = diffSpecs(baseline, current, w.kind, w.metadata.name, ns);
         if (diffs.length > 0) {
           const changeType = classifyChangeType(diffs);
+          const dismissed = _dismissedKeys.get(key);
+          let followUp = false;
+          let followUpCount = 0;
+          if (dismissed) {
+            followUp = true;
+            dismissed.followUpCount++;
+            followUpCount = dismissed.followUpCount;
+          }
           const entry = {
             id: `chg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             namespace: ns,
@@ -351,11 +376,16 @@ export async function scanForChanges() {
             currentSpec: current,
             severity: diffs.some(d => d.severity === "critical") ? "critical" : diffs.some(d => d.severity === "warning") ? "warning" : "info",
             acknowledged: false,
+            followUp,
+            followUpCount,
           };
           recordChange(entry);
           results.push(entry);
         }
         _baselines.set(key, current);
+        if (!_dismissedKeys.has(key) || diffs.length === 0) {
+          _dismissedKeys.delete(key);
+        }
       }
     } catch (e) {
       console.warn(`[app-watcher] Error scanning namespace ${ns}:`, e.message);

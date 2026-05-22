@@ -5924,21 +5924,38 @@ async function acwChangeAction(changeId, action) {
     var result = await actResp.json();
     var rowEl = document.getElementById('acw-row-' + changeId.replace(/[^a-z0-9]/g, ''));
     if (rowEl) {
+      var msg, color;
       if (action === 'dismiss') {
-        rowEl.style.background = 'color-mix(in srgb,var(--crit) 8%,var(--bg))';
-        rowEl.innerHTML = '<div style="text-align:center;padding:6px;color:var(--crit);font-weight:600;font-size:11px">&#x274C; Dismissed — rolling back to previous state</div>';
+        msg = '&#x274C; Rolling back to previous state...';
+        color = 'var(--crit)';
+        acwToast('Change dismissed — reverting to previous configuration');
       } else if (action === 'agree') {
-        rowEl.style.background = 'color-mix(in srgb,var(--ok) 8%,var(--bg))';
-        rowEl.innerHTML = '<div style="text-align:center;padding:6px;color:var(--ok);font-weight:600;font-size:11px">&#x2714; Agreed — changes accepted</div>';
+        msg = '&#x2714; Thank you — changes accepted';
+        color = 'var(--ok)';
+        acwToast('Change accepted — new baseline set');
       } else {
-        rowEl.style.background = 'color-mix(in srgb,var(--accent2) 8%,var(--bg))';
-        rowEl.innerHTML = '<div style="text-align:center;padding:6px;color:var(--accent2);font-weight:600;font-size:11px">&#x1F514; Acknowledged — alert silenced</div>';
+        msg = '&#x2714; Thank you — alert acknowledged';
+        color = 'var(--accent2)';
+        acwToast('Change acknowledged — removed from queue');
       }
-      setTimeout(function() { loadAppChangesWidget(); }, 2000);
+      rowEl.innerHTML = '<div style="text-align:center;padding:8px;color:' + color + ';font-weight:600;font-size:11px">' + msg + '</div>';
+      rowEl.style.background = 'color-mix(in srgb,' + color + ' 8%,var(--bg))';
+      rowEl.style.transition = 'opacity 0.5s ease, max-height 0.5s ease, padding 0.5s ease, margin 0.5s ease';
+      setTimeout(function() {
+        rowEl.style.opacity = '0';
+        rowEl.style.maxHeight = '0';
+        rowEl.style.padding = '0';
+        rowEl.style.margin = '0';
+        rowEl.style.overflow = 'hidden';
+        setTimeout(function() {
+          rowEl.remove();
+          loadAppChangesWidget();
+        }, 500);
+      }, 1500);
     }
   } catch (e) {
     if (btnEl) btnEl.style.opacity = '1';
-    alert('Action failed: ' + e.message);
+    acwToast('Action failed: ' + e.message);
   }
 }
 
@@ -6023,36 +6040,41 @@ async function loadAppChangesWidget() {
       }).join('');
     }
 
-    // Timeline list with action buttons
+    // Timeline list with action buttons (only unresolved changes)
     _acwWatchedNs = d.watchedNamespaces;
     var list = document.getElementById('acw-changes-list');
     if (list) {
-      if (d.recentChanges.length === 0) {
-        list.innerHTML = '<div style="color:var(--text2);text-align:center;padding:12px">' +
-          (d.watchedNamespaces.length === 0 ? 'Configure namespaces to start watching' : 'No changes detected &#x2714;') + '</div>';
+      var pending = d.recentChanges;
+      if (pending.length === 0) {
+        list.innerHTML = '<div style="color:var(--text2);text-align:center;padding:16px;font-size:11px">' +
+          (d.watchedNamespaces.length === 0
+            ? '<div style="font-size:18px;margin-bottom:4px">&#x1F4E5;</div>Configure namespaces to start watching'
+            : '<div style="font-size:18px;margin-bottom:4px">&#x2705;</div>All clear — no pending changes') + '</div>';
       } else {
-        list.innerHTML = d.recentChanges.map(function(c) {
+        list.innerHTML = pending.map(function(c) {
           var sevColor = c.severity === 'critical' ? 'var(--crit)' : c.severity === 'warning' ? 'var(--warn)' : 'var(--accent2)';
           var safeId = c.id.replace(/[^a-z0-9]/g, '');
           var detailId = 'acw-detail-' + safeId;
-          var isAcked = c.acknowledged;
-          var actionBtns = isAcked
-            ? '<div style="padding:4px 0;text-align:center;color:var(--ok);font-size:10px;font-weight:600">&#x2714; Acknowledged</div>'
-            : '<div style="display:flex;gap:4px;padding:6px 0 2px" id="acw-btn-' + safeId + '">' +
-                '<button onclick="event.stopPropagation();acwChangeAction(\'' + esc(c.id) + '\',\'agree\')" style="flex:1;padding:4px 6px;font-size:9px;font-weight:600;border:1px solid var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent);color:var(--ok);border-radius:4px;cursor:pointer" title="Accept changes as-is">&#x2714; Agree</button>' +
-                '<button onclick="event.stopPropagation();acwChangeAction(\'' + esc(c.id) + '\',\'dismiss\')" style="flex:1;padding:4px 6px;font-size:9px;font-weight:600;border:1px solid var(--crit);background:color-mix(in srgb,var(--crit) 12%,transparent);color:var(--crit);border-radius:4px;cursor:pointer" title="Rollback to previous state">&#x274C; Dismiss</button>' +
-                '<button onclick="event.stopPropagation();acwChangeAction(\'' + esc(c.id) + '\',\'acknowledge\')" style="flex:1;padding:4px 6px;font-size:9px;font-weight:600;border:1px solid var(--accent2);background:color-mix(in srgb,var(--accent2) 12%,transparent);color:var(--accent2);border-radius:4px;cursor:pointer" title="Silence this alert">&#x1F514; Ack</button>' +
-              '</div>';
-          return '<div id="acw-row-' + safeId + '" style="padding:5px 8px;background:var(--bg);border-radius:6px;border-left:3px solid ' + sevColor + '">' +
+          var followUpBadge = c.followUp
+            ? '<span style="font-size:8px;font-weight:700;color:var(--crit);background:color-mix(in srgb,var(--crit) 12%,transparent);padding:1px 6px;border-radius:8px;margin-left:4px;animation:acwPulse 1.5s ease-in-out infinite">FOLLOW-UP #' + c.followUpCount + '</span>'
+            : '';
+          var actionBtns =
+            '<div style="display:flex;gap:4px;padding:6px 0 2px" id="acw-btn-' + safeId + '">' +
+              '<button onclick="event.stopPropagation();acwChangeAction(\'' + esc(c.id) + '\',\'agree\')" style="flex:1;padding:5px 6px;font-size:9px;font-weight:600;border:1px solid var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent);color:var(--ok);border-radius:4px;cursor:pointer" title="Accept changes — sets new baseline">&#x2714; Agree</button>' +
+              '<button onclick="event.stopPropagation();acwChangeAction(\'' + esc(c.id) + '\',\'dismiss\')" style="flex:1;padding:5px 6px;font-size:9px;font-weight:600;border:1px solid var(--crit);background:color-mix(in srgb,var(--crit) 12%,transparent);color:var(--crit);border-radius:4px;cursor:pointer" title="Revert to previous state">&#x274C; Dismiss</button>' +
+              '<button onclick="event.stopPropagation();acwChangeAction(\'' + esc(c.id) + '\',\'acknowledge\')" style="flex:1;padding:5px 6px;font-size:9px;font-weight:600;border:1px solid var(--accent2);background:color-mix(in srgb,var(--accent2) 12%,transparent);color:var(--accent2);border-radius:4px;cursor:pointer" title="Remove from queue">&#x1F514; Ack</button>' +
+            '</div>';
+          return '<div id="acw-row-' + safeId + '" style="padding:5px 8px;background:' + (c.followUp ? 'color-mix(in srgb,var(--crit) 5%,var(--bg))' : 'var(--bg)') + ';border-radius:6px;border-left:3px solid ' + sevColor + ';transition:opacity 0.5s,max-height 0.5s,padding 0.5s,margin 0.5s">' +
             '<div style="display:flex;align-items:center;gap:6px;cursor:pointer" onclick="var el=document.getElementById(\'' + detailId + '\');if(el)el.style.display=el.style.display===\'none\'?\'block\':\'none\'">' +
               acwChangeTypeIcon(c.changeType || 'other') +
               '<div style="flex:1;min-width:0">' +
-                '<div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px">' + esc(c.kind) + '/' + esc(c.name) + '</div>' +
+                '<div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px">' + esc(c.kind) + '/' + esc(c.name) + followUpBadge + '</div>' +
                 '<div style="color:var(--text2);font-size:10px">' + esc(c.namespace) + ' &#x2022; ' + acwRelativeTime(c.timestamp) + '</div>' +
               '</div>' +
               '<span class="badge badge-' + (c.severity === 'critical' ? 'crit' : c.severity === 'warning' ? 'warn' : 'info') + '" style="font-size:9px">' + c.severity.toUpperCase() + '</span>' +
             '</div>' +
-            '<div id="' + detailId + '" style="display:none;margin-top:4px;padding:4px 0 0 0;font-size:10px;color:var(--text2);border-top:1px solid var(--border)">' +
+            '<div id="' + detailId + '" style="display:' + (c.followUp ? 'block' : 'none') + ';margin-top:4px;padding:4px 0 0 0;font-size:10px;color:var(--text2);border-top:1px solid var(--border)">' +
+              (c.followUp ? '<div style="padding:4px 0 4px 20px;color:var(--crit);font-weight:600;font-size:10px">This change was previously dismissed but has been re-applied. Please review and take action.</div>' : '') +
               '<div style="padding-left:20px">' +
               c.changes.map(function(ch) {
                 return '<div style="margin:2px 0"><code style="color:var(--accent2)">' + esc(ch.field) + '</code>: <span style="color:var(--crit);text-decoration:line-through">' + esc(String(ch.old)) + '</span> &#x2192; <span style="color:var(--ok)">' + esc(String(ch.new)) + '</span></div>';
@@ -6098,6 +6120,8 @@ async function loadAppChangesWidget() {
     if (m) m.textContent = 'Error: ' + e.message;
   }
 }
+
+setInterval(function() { loadAppChangesWidget(); }, 15000);
 
 var _ivsLastScanTime = null;
 var _ivsTopImagesData = [];

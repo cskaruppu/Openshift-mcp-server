@@ -52,7 +52,7 @@ import { registerUpgradeAdvisorTools } from "./tools/upgrade-advisor.js";
 import { registerBenchmarkTools } from "./tools/benchmarks.js";
 import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
-import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, dismissChange, getWorkloadsByNamespace } from "./tools/app-change-watcher.js";
+import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, agreeChange, dismissChange, getWorkloadsByNamespace } from "./tools/app-change-watcher.js";
 import { registerImageVulnScannerTools, runImageScan, getScanResults, getScanHistory, getComplianceCache, getImageAgeCache } from "./tools/image-vulnerability-scanner.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode } from "./services/auth.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
@@ -2857,10 +2857,12 @@ async function startSSE() {
           changeTypeBreakdown,
           timelineStats,
           gitopsDrift,
-          recentChanges: filtered.slice(0, 30).map(e => ({
+          recentChanges: filtered.filter(e => !e.acknowledged).slice(0, 30).map(e => ({
             id: e.id, namespace: e.namespace, kind: e.kind, name: e.name,
-            severity: e.severity, timestamp: e.timestamp, acknowledged: e.acknowledged,
+            severity: e.severity, timestamp: e.timestamp,
             changeType: e.changeType || "other",
+            followUp: e.followUp || false,
+            followUpCount: e.followUpCount || 0,
             changes: e.changes.map(c => ({ field: c.field, old: c.old, new: c.new, severity: c.severity })),
           })),
         });
@@ -2928,7 +2930,9 @@ async function startSSE() {
         let result;
         if (action === "dismiss") {
           result = await dismissChange(changeId);
-        } else if (action === "acknowledge" || action === "agree") {
+        } else if (action === "agree") {
+          result = agreeChange(changeId);
+        } else if (action === "acknowledge") {
           result = acknowledgeChange(changeId);
         } else {
           result = { found: false, error: "Unknown action. Use: agree, dismiss, acknowledge" };
