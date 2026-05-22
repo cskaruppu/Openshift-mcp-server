@@ -22,6 +22,86 @@ export function getChangeLog() { return _changeLog.slice(); }
 export function getChangeTimeline() { return _changeTimeline.slice(); }
 export function getGitOpsDrift() { return Object.fromEntries(_gitopsDriftCache); }
 
+export function addNamespaces(nsList) {
+  for (const ns of nsList) _watchedNamespaces.add(ns);
+}
+export function removeNamespaces(nsList) {
+  for (const ns of nsList) {
+    _watchedNamespaces.delete(ns);
+    for (const [key] of _baselines) {
+      if (key.startsWith(ns + "/")) _baselines.delete(key);
+    }
+  }
+}
+export async function initNamespaceBaselines(nsList) {
+  for (const ns of nsList) {
+    try {
+      const workloads = await fetchWorkloads(ns);
+      for (const w of workloads) {
+        const key = workloadKey(ns, w.kind, w.metadata.name);
+        _baselines.set(key, extractSpec(w));
+      }
+    } catch {}
+  }
+}
+
+export function acknowledgeChange(changeId) {
+  const entry = _changeLog.find(e => e.id === changeId);
+  if (!entry) return { found: false };
+  entry.acknowledged = true;
+  return { found: true, id: changeId, action: "acknowledged" };
+}
+
+export async function dismissChange(changeId) {
+  const entry = _changeLog.find(e => e.id === changeId);
+  if (!entry) return { found: false };
+  const kindPath = entry.kind === "Deployment" ? "deployments" : entry.kind === "StatefulSet" ? "statefulsets" : "daemonsets";
+  const apiPath = `/apis/apps/v1/namespaces/${entry.namespace}/${kindPath}/${entry.name}`;
+
+  const baselineSpec = entry.baseline;
+  const patch = { spec: { template: { spec: { containers: [] } } } };
+
+  if (baselineSpec.replicas !== undefined && entry.changes.some(c => c.field === "replicas")) {
+    patch.spec.replicas = baselineSpec.replicas;
+  }
+  for (const bc of baselineSpec.containers) {
+    const container = { name: bc.name, image: bc.image };
+    if (bc.env && bc.env.length > 0) {
+      container.env = bc.env.map(e => {
+        if (e.from) return { name: e.name, valueFrom: JSON.parse(e.from) };
+        return { name: e.name, value: e.value };
+      });
+    }
+    if (bc.resources) container.resources = bc.resources;
+    patch.spec.template.spec.containers.push(container);
+  }
+
+  await ocpPatch(apiPath, patch, "application/strategic-merge-patch+json");
+  const key = workloadKey(entry.namespace, entry.kind, entry.name);
+  _baselines.set(key, baselineSpec);
+  entry.acknowledged = true;
+  return { found: true, id: changeId, action: "dismissed", rolledBack: true };
+}
+
+export function getWorkloadsByNamespace() {
+  const byNs = {};
+  for (const [key, spec] of _baselines) {
+    const parts = key.split("/");
+    const ns = parts[0];
+    const kind = parts[1];
+    const name = parts[2];
+    if (!byNs[ns]) byNs[ns] = [];
+    byNs[ns].push({
+      kind,
+      name,
+      replicas: spec.replicas,
+      containers: spec.containers.map(c => ({ name: c.name, image: c.image })),
+      snapshotTime: spec.snapshotTime,
+    });
+  }
+  return byNs;
+}
+
 function workloadKey(ns, kind, name) { return `${ns}/${kind}/${name}`; }
 
 export async function discoverAppNamespaces() {

@@ -52,7 +52,7 @@ import { registerUpgradeAdvisorTools } from "./tools/upgrade-advisor.js";
 import { registerBenchmarkTools } from "./tools/benchmarks.js";
 import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
-import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats } from "./tools/app-change-watcher.js";
+import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, dismissChange, getWorkloadsByNamespace } from "./tools/app-change-watcher.js";
 import { registerImageVulnScannerTools, runImageScan, getScanResults, getScanHistory, getComplianceCache, getImageAgeCache } from "./tools/image-vulnerability-scanner.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode } from "./services/auth.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
@@ -2886,6 +2886,66 @@ async function startSSE() {
       return;
     }
 
+    // ── App Change Watcher — Namespace management ─────────────────
+    if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/namespaces") {
+      try {
+        const body = await readJsonBody(req);
+        const action = body.action;
+        const nsList = body.namespaces || [];
+        if (action === "add" && nsList.length > 0) {
+          addNamespaces(nsList);
+          await initNamespaceBaselines(nsList);
+        } else if (action === "remove" && nsList.length > 0) {
+          removeNamespaces(nsList);
+        }
+        sendJson(res, 200, {
+          watchedNamespaces: getWatchedNamespaces(),
+          trackedWorkloads: Object.keys(getBaselines()).length,
+        });
+      } catch (err) {
+        sendJson(res, 200, { error: err.message });
+      }
+      return;
+    }
+
+    // ── App Change Watcher — Change actions (agree/dismiss/ack) ────
+    if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/action") {
+      try {
+        const body = await readJsonBody(req);
+        const { changeId, action } = body;
+        let result;
+        if (action === "dismiss") {
+          result = await dismissChange(changeId);
+        } else if (action === "acknowledge" || action === "agree") {
+          result = acknowledgeChange(changeId);
+        } else {
+          result = { found: false, error: "Unknown action. Use: agree, dismiss, acknowledge" };
+        }
+        sendJson(res, 200, result);
+      } catch (err) {
+        sendJson(res, 200, { found: false, error: err.message });
+      }
+      return;
+    }
+
+    // ── App Change Watcher — Workload listing ──────────────────────
+    if (req.method === "GET" && url.pathname === "/api/dashboard/app-changes/workloads") {
+      try {
+        const byNs = getWorkloadsByNamespace();
+        sendJson(res, 200, {
+          namespaces: Object.entries(byNs).map(([ns, wl]) => ({
+            namespace: ns,
+            workloads: wl,
+            count: wl.length,
+          })).sort((a, b) => b.count - a.count),
+          total: Object.values(byNs).reduce((s, wl) => s + wl.length, 0),
+        });
+      } catch (err) {
+        sendJson(res, 200, { namespaces: [], total: 0, error: err.message });
+      }
+      return;
+    }
+
     // ── Image Vulnerability Scanner API ──────────────────────────────
     if (req.method === "GET" && url.pathname === "/api/dashboard/image-vulns") {
       try {
@@ -2908,7 +2968,7 @@ async function startSSE() {
           riskScore, grade,
           compliance: scan.compliance || { avgScore: 0, signed: 0, sbom: 0, pinned: 0, trusted: 0, total: 0 },
           ageSummary: scan.ageSummary || { fresh: 0, aging: 0, stale: 0, current: 0, unknown: 0 },
-          topImages: scan.results.slice(0, 10).map(r => ({
+          topImages: scan.results.slice(0, 15).map(r => ({
             image: r.image.length > 60 ? "..." + r.image.slice(-57) : r.image,
             fullImage: r.image,
             namespace: r.namespace,
@@ -2916,11 +2976,14 @@ async function startSSE() {
             fixable: r.fixable, total: r.totalVulns,
             maxCVSS: r.maxCVSS || 0,
             age: r.age || null,
+            pods: r.pods ? r.pods.slice(0, 5).map(p => ({ pod: p.pod, namespace: p.namespace, container: p.container })) : [],
             complianceBadges: r.compliance?.badges || [],
             complianceScore: r.compliance?.score || 0,
-            topVulns: (r.vulnerabilities || []).slice(0, 5).map(v => ({
-              id: v.id, severity: v.severity, package: v.package, fix: v.fixedBy,
-              cvss: v.cvss || 0, link: v.link || null,
+            complianceIssues: r.compliance?.issues || [],
+            vulnerabilities: (r.vulnerabilities || []).slice(0, 20).map(v => ({
+              id: v.id, severity: v.severity, package: v.package || "", version: v.version || "",
+              fix: v.fixedBy, cvss: v.cvss || 0, link: v.link || null,
+              description: (v.description || "").slice(0, 150),
             })),
           })),
           history: getScanHistory().slice(0, 5),

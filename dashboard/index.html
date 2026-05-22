@@ -2337,9 +2337,9 @@ tr:hover td{background:#ffffff06}
     <!-- Application Change Watcher — Enhanced -->
     <div class="card" id="widget-app-changes" style="display:flex;flex-direction:column">
       <h3 style="display:flex;align-items:center;gap:8px">&#x1F50D; Application Change Watcher
-        <span class="badge badge-info" id="acw-ns-badge" style="margin-left:auto">0 namespaces</span>
+        <span class="badge badge-info" id="acw-ns-badge" style="margin-left:auto;cursor:pointer" onclick="acwToggleNsPanel()" title="Click to manage namespaces">0 namespaces</span>
       </h3>
-      <!-- Auto-discovery banner (hidden when namespaces are configured) -->
+      <!-- Auto-discovery banner -->
       <div id="acw-discovery-banner" style="display:none;background:linear-gradient(135deg,color-mix(in srgb,var(--accent2) 12%,var(--bg)),color-mix(in srgb,var(--accent3) 8%,var(--bg)));border:1px solid color-mix(in srgb,var(--accent2) 30%,transparent);border-radius:8px;padding:10px 14px;margin-bottom:10px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
           <div>
@@ -2349,13 +2349,29 @@ tr:hover td{background:#ffffff06}
           <button class="icon-btn" style="font-size:11px;white-space:nowrap;padding:6px 12px;background:var(--accent2);color:#fff;border:none;border-radius:6px;cursor:pointer" id="acw-disco-btn" onclick="acwWatchAll()">Watch All</button>
         </div>
       </div>
+      <!-- Namespace selector panel (collapsible) -->
+      <div id="acw-ns-panel" style="display:none;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;max-height:200px;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:12px;font-weight:600">Manage Namespaces</span>
+          <button class="icon-btn" style="font-size:10px;padding:3px 8px" onclick="acwToggleNsPanel()">&#x2716; Close</button>
+        </div>
+        <div id="acw-ns-list" style="display:flex;flex-direction:column;gap:4px;font-size:11px">Loading...</div>
+      </div>
+      <!-- Workloads viewer (collapsible) -->
+      <div id="acw-workloads-panel" style="display:none;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;max-height:220px;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:12px;font-weight:600">Tracked Workloads</span>
+          <button class="icon-btn" style="font-size:10px;padding:3px 8px" onclick="document.getElementById('acw-workloads-panel').style.display='none'">&#x2716; Close</button>
+        </div>
+        <div id="acw-workloads-list" style="display:flex;flex-direction:column;gap:4px;font-size:11px">Loading...</div>
+      </div>
       <div style="display:flex;align-items:center;gap:16px;margin:8px 0">
         <div style="position:relative;width:64px;height:64px;flex-shrink:0">
           <svg width="64" height="64" viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" fill="none" stroke="var(--border)" stroke-width="6"/><circle id="acw-ring" cx="32" cy="32" r="27" fill="none" stroke="var(--ok)" stroke-width="6" stroke-linecap="round" stroke-dasharray="169.6" stroke-dashoffset="0" style="transform:rotate(-90deg);transform-origin:center;transition:stroke-dashoffset .8s ease,stroke .3s"/></svg>
-          <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800" id="acw-tracked">--</div>
+          <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;cursor:pointer" id="acw-tracked" onclick="acwShowWorkloads()" title="Click to view all workloads">--</div>
         </div>
         <div style="flex:1">
-          <div style="font-size:13px;font-weight:600;margin-bottom:4px">Tracked Workloads</div>
+          <div style="font-size:13px;font-weight:600;margin-bottom:4px;cursor:pointer" onclick="acwShowWorkloads()">Tracked Workloads</div>
           <div style="font-size:11px;color:var(--text2)" id="acw-meta">Scanning...</div>
         </div>
         <div style="text-align:center">
@@ -2372,8 +2388,8 @@ tr:hover td{background:#ffffff06}
       </div>
       <!-- Change velocity mini-bar (24h histogram) -->
       <div id="acw-velocity-bar" style="display:flex;align-items:flex-end;gap:1px;height:28px;margin-bottom:8px;border-radius:4px;overflow:hidden"></div>
-      <!-- Timeline list -->
-      <div id="acw-changes-list" style="display:flex;flex-direction:column;gap:4px;font-size:11px;max-height:140px;overflow-y:auto;flex:1">
+      <!-- Timeline list with action buttons -->
+      <div id="acw-changes-list" style="display:flex;flex-direction:column;gap:4px;font-size:11px;max-height:180px;overflow-y:auto;flex:1">
         <div style="color:var(--text2);text-align:center;padding:12px">No changes detected</div>
       </div>
       <!-- GitOps Drift section -->
@@ -2392,7 +2408,9 @@ tr:hover td{background:#ffffff06}
     <div class="card" id="widget-image-vulns" style="display:flex;flex-direction:column">
       <h3 style="display:flex;align-items:center;gap:8px">&#x1F6E1; Image Vulnerability Scanner
         <span class="badge badge-info" id="ivs-scanner-badge" style="margin-left:auto">--</span>
+        <button class="icon-btn" style="font-size:10px;padding:3px 8px" onclick="ivsRescan()" id="ivs-rescan-btn" title="Trigger a fresh scan">&#x1F504; Scan</button>
       </h3>
+      <div id="ivs-scan-status" style="display:none;font-size:10px;color:var(--accent2);margin-bottom:6px;text-align:center">Scanning in progress...</div>
       <div style="display:flex;align-items:center;gap:16px;margin:8px 0">
         <div style="position:relative;width:64px;height:64px;flex-shrink:0">
           <svg width="64" height="64" viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" fill="none" stroke="var(--border)" stroke-width="6"/><circle id="ivs-ring" cx="32" cy="32" r="27" fill="none" stroke="var(--ok)" stroke-width="6" stroke-linecap="round" stroke-dasharray="169.6" stroke-dashoffset="169.6" style="transform:rotate(-90deg);transform-origin:center;transition:stroke-dashoffset .8s ease,stroke .3s"/></svg>
@@ -2470,8 +2488,8 @@ tr:hover td{background:#ffffff06}
           <div id="ivs-stale-bar" style="background:var(--crit);transition:width .6s" title="Stale"></div>
         </div>
       </div>
-      <!-- Top vulnerable images (expandable) -->
-      <div id="ivs-top-images" style="display:flex;flex-direction:column;gap:4px;font-size:11px;max-height:140px;overflow-y:auto;flex:1">
+      <!-- Top vulnerable images (expandable Trivy-style) -->
+      <div id="ivs-top-images" style="display:flex;flex-direction:column;gap:4px;font-size:11px;max-height:200px;overflow-y:auto;flex:1">
         <div style="color:var(--text2);text-align:center;padding:12px">Scanning...</div>
       </div>
       <div style="margin-top:auto;padding-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="openNewChatWithCommand('/image-vulns','Image Vulnerability Report')">Full Vulnerability Report &#x2192;</button></div>
@@ -5479,6 +5497,8 @@ async function loadDRWidget() {
   }
 }
 
+var _acwWatchedNs = [];
+
 async function acwWatchAll() {
   var btn = document.getElementById('acw-disco-btn');
   if (btn) { btn.textContent = 'Discovering...'; btn.disabled = true; }
@@ -5489,6 +5509,128 @@ async function acwWatchAll() {
     if (btn) btn.textContent = 'Retry';
   }
   if (btn) btn.disabled = false;
+}
+
+function acwToggleNsPanel() {
+  var panel = document.getElementById('acw-ns-panel');
+  if (!panel) return;
+  if (panel.style.display === 'none') {
+    panel.style.display = 'block';
+    acwLoadNsList();
+  } else {
+    panel.style.display = 'none';
+  }
+}
+
+async function acwLoadNsList() {
+  var listEl = document.getElementById('acw-ns-list');
+  if (!listEl) return;
+  try {
+    var disco = await apiFetch('/api/dashboard/app-changes');
+    var watched = disco.watchedNamespaces || [];
+    _acwWatchedNs = watched;
+    var allNs = [];
+    if (disco.discoveredNamespaces) {
+      allNs = disco.discoveredNamespaces.map(function(d) { return d.namespace; });
+    }
+    for (var i = 0; i < watched.length; i++) {
+      if (allNs.indexOf(watched[i]) < 0) allNs.push(watched[i]);
+    }
+    allNs.sort();
+    if (allNs.length === 0) {
+      listEl.innerHTML = '<div style="color:var(--text2);text-align:center;padding:8px">No namespaces found</div>';
+      return;
+    }
+    listEl.innerHTML = allNs.map(function(ns) {
+      var isWatched = watched.indexOf(ns) >= 0;
+      return '<div style="display:flex;align-items:center;gap:8px;padding:4px 6px;background:var(--card);border-radius:4px">' +
+        '<label style="display:flex;align-items:center;gap:6px;flex:1;cursor:pointer;font-size:11px">' +
+          '<input type="checkbox" ' + (isWatched ? 'checked' : '') + ' onchange="acwToggleNs(\'' + esc(ns) + '\',this.checked)" style="accent-color:var(--accent2)">' +
+          '<span style="font-weight:' + (isWatched ? '600' : '400') + '">' + esc(ns) + '</span>' +
+        '</label>' +
+      '</div>';
+    }).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div style="color:var(--crit)">Error: ' + esc(e.message) + '</div>';
+  }
+}
+
+async function acwToggleNs(ns, add) {
+  try {
+    await apiFetch('/api/dashboard/app-changes/namespaces', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: add ? 'add' : 'remove', namespaces: [ns] })
+    });
+    await loadAppChangesWidget();
+  } catch (e) {
+    console.error('Namespace toggle error:', e);
+  }
+}
+
+async function acwShowWorkloads() {
+  var panel = document.getElementById('acw-workloads-panel');
+  if (!panel) return;
+  panel.style.display = 'block';
+  var listEl = document.getElementById('acw-workloads-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div style="color:var(--text2);text-align:center">Loading workloads...</div>';
+  try {
+    var d = await apiFetch('/api/dashboard/app-changes/workloads');
+    if (!d.namespaces || d.namespaces.length === 0) {
+      listEl.innerHTML = '<div style="color:var(--text2);text-align:center;padding:8px">No workloads tracked</div>';
+      return;
+    }
+    listEl.innerHTML = d.namespaces.map(function(nsGroup) {
+      var nsId = 'acw-wl-' + nsGroup.namespace.replace(/[^a-z0-9]/g, '');
+      return '<div style="margin-bottom:6px">' +
+        '<div style="font-weight:600;font-size:11px;color:var(--accent2);cursor:pointer;display:flex;align-items:center;gap:4px;padding:3px 0" onclick="var el=document.getElementById(\'' + nsId + '\');if(el)el.style.display=el.style.display===\'none\'?\'block\':\'none\'">' +
+          '<span style="font-size:8px">&#x25B6;</span> ' + esc(nsGroup.namespace) + ' <span style="color:var(--text2);font-weight:400">(' + nsGroup.count + ')</span>' +
+        '</div>' +
+        '<div id="' + nsId + '" style="display:none;padding-left:12px">' +
+          nsGroup.workloads.map(function(wl) {
+            var imgs = wl.containers.map(function(c) { return c.image.split('/').pop().split('@')[0]; }).join(', ');
+            return '<div style="display:flex;align-items:center;gap:6px;padding:2px 0;border-bottom:1px solid var(--border)">' +
+              '<span style="color:var(--text2);font-size:9px;min-width:60px">' + esc(wl.kind) + '</span>' +
+              '<span style="font-weight:500;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(wl.name) + '</span>' +
+              '<span style="color:var(--text2);font-size:9px">' + esc(imgs) + '</span>' +
+            '</div>';
+          }).join('') +
+        '</div>' +
+      '</div>';
+    }).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div style="color:var(--crit)">Error: ' + esc(e.message) + '</div>';
+  }
+}
+
+async function acwChangeAction(changeId, action) {
+  var btnEl = document.getElementById('acw-btn-' + changeId.replace(/[^a-z0-9]/g, ''));
+  if (btnEl) btnEl.style.opacity = '0.5';
+  try {
+    var result = await apiFetch('/api/dashboard/app-changes/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ changeId: changeId, action: action })
+    });
+    var rowEl = document.getElementById('acw-row-' + changeId.replace(/[^a-z0-9]/g, ''));
+    if (rowEl) {
+      if (action === 'dismiss') {
+        rowEl.style.background = 'color-mix(in srgb,var(--crit) 8%,var(--bg))';
+        rowEl.innerHTML = '<div style="text-align:center;padding:6px;color:var(--crit);font-weight:600;font-size:11px">&#x274C; Dismissed — rolling back to previous state</div>';
+      } else if (action === 'agree') {
+        rowEl.style.background = 'color-mix(in srgb,var(--ok) 8%,var(--bg))';
+        rowEl.innerHTML = '<div style="text-align:center;padding:6px;color:var(--ok);font-weight:600;font-size:11px">&#x2714; Agreed — changes accepted</div>';
+      } else {
+        rowEl.style.background = 'color-mix(in srgb,var(--accent2) 8%,var(--bg))';
+        rowEl.innerHTML = '<div style="text-align:center;padding:6px;color:var(--accent2);font-weight:600;font-size:11px">&#x1F514; Acknowledged — alert silenced</div>';
+      }
+      setTimeout(function() { loadAppChangesWidget(); }, 2000);
+    }
+  } catch (e) {
+    if (btnEl) btnEl.style.opacity = '1';
+    alert('Action failed: ' + e.message);
+  }
 }
 
 function acwChangeTypeIcon(t) {
@@ -5570,7 +5712,8 @@ async function loadAppChangesWidget() {
       }).join('');
     }
 
-    // Timeline list
+    // Timeline list with action buttons
+    _acwWatchedNs = d.watchedNamespaces;
     var list = document.getElementById('acw-changes-list');
     if (list) {
       if (d.recentChanges.length === 0) {
@@ -5579,10 +5722,18 @@ async function loadAppChangesWidget() {
       } else {
         list.innerHTML = d.recentChanges.map(function(c) {
           var sevColor = c.severity === 'critical' ? 'var(--crit)' : c.severity === 'warning' ? 'var(--warn)' : 'var(--accent2)';
-          var fields = c.changes.map(function(ch) { return ch.field; }).join(', ');
-          var detailId = 'acw-detail-' + c.id.replace(/[^a-z0-9]/g, '');
-          return '<div style="padding:5px 8px;background:var(--bg);border-radius:6px;border-left:3px solid ' + sevColor + ';cursor:pointer" onclick="var el=document.getElementById(\'' + detailId + '\');if(el)el.style.display=el.style.display===\'none\'?\'block\':\'none\'">' +
-            '<div style="display:flex;align-items:center;gap:6px">' +
+          var safeId = c.id.replace(/[^a-z0-9]/g, '');
+          var detailId = 'acw-detail-' + safeId;
+          var isAcked = c.acknowledged;
+          var actionBtns = isAcked
+            ? '<div style="padding:4px 0;text-align:center;color:var(--ok);font-size:10px;font-weight:600">&#x2714; Acknowledged</div>'
+            : '<div style="display:flex;gap:4px;padding:6px 0 2px" id="acw-btn-' + safeId + '">' +
+                '<button onclick="event.stopPropagation();acwChangeAction(\'' + esc(c.id) + '\',\'agree\')" style="flex:1;padding:4px 6px;font-size:9px;font-weight:600;border:1px solid var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent);color:var(--ok);border-radius:4px;cursor:pointer" title="Accept changes as-is">&#x2714; Agree</button>' +
+                '<button onclick="event.stopPropagation();acwChangeAction(\'' + esc(c.id) + '\',\'dismiss\')" style="flex:1;padding:4px 6px;font-size:9px;font-weight:600;border:1px solid var(--crit);background:color-mix(in srgb,var(--crit) 12%,transparent);color:var(--crit);border-radius:4px;cursor:pointer" title="Rollback to previous state">&#x274C; Dismiss</button>' +
+                '<button onclick="event.stopPropagation();acwChangeAction(\'' + esc(c.id) + '\',\'acknowledge\')" style="flex:1;padding:4px 6px;font-size:9px;font-weight:600;border:1px solid var(--accent2);background:color-mix(in srgb,var(--accent2) 12%,transparent);color:var(--accent2);border-radius:4px;cursor:pointer" title="Silence this alert">&#x1F514; Ack</button>' +
+              '</div>';
+          return '<div id="acw-row-' + safeId + '" style="padding:5px 8px;background:var(--bg);border-radius:6px;border-left:3px solid ' + sevColor + '">' +
+            '<div style="display:flex;align-items:center;gap:6px;cursor:pointer" onclick="var el=document.getElementById(\'' + detailId + '\');if(el)el.style.display=el.style.display===\'none\'?\'block\':\'none\'">' +
               acwChangeTypeIcon(c.changeType || 'other') +
               '<div style="flex:1;min-width:0">' +
                 '<div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px">' + esc(c.kind) + '/' + esc(c.name) + '</div>' +
@@ -5590,10 +5741,13 @@ async function loadAppChangesWidget() {
               '</div>' +
               '<span class="badge badge-' + (c.severity === 'critical' ? 'crit' : c.severity === 'warning' ? 'warn' : 'info') + '" style="font-size:9px">' + c.severity.toUpperCase() + '</span>' +
             '</div>' +
-            '<div id="' + detailId + '" style="display:none;margin-top:4px;padding:4px 0 0 20px;font-size:10px;color:var(--text2);border-top:1px solid var(--border)">' +
+            '<div id="' + detailId + '" style="display:none;margin-top:4px;padding:4px 0 0 0;font-size:10px;color:var(--text2);border-top:1px solid var(--border)">' +
+              '<div style="padding-left:20px">' +
               c.changes.map(function(ch) {
                 return '<div style="margin:2px 0"><code style="color:var(--accent2)">' + esc(ch.field) + '</code>: <span style="color:var(--crit);text-decoration:line-through">' + esc(String(ch.old)) + '</span> &#x2192; <span style="color:var(--ok)">' + esc(String(ch.new)) + '</span></div>';
               }).join('') +
+              '</div>' +
+              actionBtns +
             '</div>' +
           '</div>';
         }).join('');
@@ -5634,10 +5788,47 @@ async function loadAppChangesWidget() {
   }
 }
 
+var _ivsLastScanTime = null;
+var _ivsTopImagesData = [];
+
+function ivsToggleDetail(idx) {
+  var el = document.getElementById('ivs-img-detail-' + idx);
+  if (!el) return;
+  if (el.style.display === 'none') {
+    el.style.display = 'block';
+    var img = _ivsTopImagesData[idx];
+    if (img) el.innerHTML = ivsTrivyDetail(img, idx);
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+async function ivsRescan() {
+  var btn = document.getElementById('ivs-rescan-btn');
+  var status = document.getElementById('ivs-scan-status');
+  if (btn) { btn.disabled = true; btn.innerHTML = '&#x23F3;'; }
+  if (status) { status.style.display = 'block'; status.textContent = 'Scanning all namespaces...'; }
+  try {
+    await loadImageVulnsWidget();
+    if (status) { status.textContent = 'Scan complete at ' + new Date().toLocaleTimeString(); }
+  } catch (e) {
+    if (status) { status.textContent = 'Scan failed: ' + e.message; status.style.color = 'var(--crit)'; }
+  }
+  if (btn) { btn.disabled = false; btn.innerHTML = '&#x1F504; Scan'; }
+  setTimeout(function() { if (status) status.style.display = 'none'; }, 5000);
+}
+
 function ivsCvssColor(v) {
   if (v >= 9) return 'var(--crit)';
   if (v >= 7) return 'var(--warn)';
   if (v >= 4) return 'var(--accent2)';
+  return 'var(--ok)';
+}
+
+function ivsSevColor(s) {
+  if (s === 'critical') return 'var(--crit)';
+  if (s === 'high') return 'var(--warn)';
+  if (s === 'medium') return 'var(--accent2)';
   return 'var(--ok)';
 }
 
@@ -5658,6 +5849,46 @@ function ivsFreshnessLabel(f) {
   return '<span style="color:var(--text2)">--</span>';
 }
 
+function ivsTrivyDetail(img, idx) {
+  var vulns = img.vulnerabilities || [];
+  if (vulns.length === 0) return '<div style="padding:6px;color:var(--text2)">No vulnerabilities found</div>';
+
+  var header = '<div style="display:flex;gap:12px;padding:6px 0;border-bottom:1px solid var(--border);margin-bottom:4px;flex-wrap:wrap">' +
+    '<div style="font-size:10px"><strong>Image:</strong> ' + esc(img.fullImage || img.image) + '</div>' +
+    (img.age ? '<div style="font-size:10px"><strong>Freshness:</strong> ' + ivsFreshnessLabel(img.age.freshness) + (img.age.ageDays !== null ? ' (' + img.age.ageDays + 'd)' : '') + '</div>' : '') +
+    '<div style="font-size:10px"><strong>Compliance:</strong> ' + (img.complianceScore || 0) + '/100 ' + ivsBadgeIcons(img.complianceBadges || []) + '</div>' +
+  '</div>';
+
+  var pods = '';
+  if (img.pods && img.pods.length > 0) {
+    pods = '<div style="font-size:10px;margin-bottom:4px;color:var(--text2)"><strong>Used by:</strong> ' +
+      img.pods.map(function(p) { return esc(p.pod) + ' (' + esc(p.namespace) + ')'; }).join(', ') + '</div>';
+  }
+
+  var table = '<div style="border:1px solid var(--border);border-radius:4px;overflow:hidden">' +
+    '<div style="display:flex;background:var(--card);padding:4px 8px;font-size:9px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.3px;border-bottom:1px solid var(--border)">' +
+      '<div style="width:50px">CVSS</div>' +
+      '<div style="width:55px">Severity</div>' +
+      '<div style="flex:1;min-width:80px">Vulnerability ID</div>' +
+      '<div style="flex:1;min-width:60px">Package</div>' +
+      '<div style="width:70px">Fix</div>' +
+    '</div>';
+  for (var i = 0; i < vulns.length; i++) {
+    var v = vulns[i];
+    var rowBg = i % 2 === 0 ? 'var(--bg)' : 'var(--card)';
+    table += '<div style="display:flex;align-items:center;padding:3px 8px;font-size:10px;background:' + rowBg + ';border-bottom:1px solid var(--border)">' +
+      '<div style="width:50px;font-weight:700;color:' + ivsCvssColor(v.cvss || 0) + '">' + (v.cvss || 0).toFixed(1) + '</div>' +
+      '<div style="width:55px"><span style="display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:600;background:color-mix(in srgb,' + ivsSevColor(v.severity) + ' 15%,transparent);color:' + ivsSevColor(v.severity) + '">' + (v.severity || '').toUpperCase() + '</span></div>' +
+      '<div style="flex:1;min-width:80px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(v.description || '') + '">' + esc(v.id) + '</div>' +
+      '<div style="flex:1;min-width:60px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(v.package || '') + (v.version ? ' ' + esc(v.version) : '') + '</div>' +
+      '<div style="width:70px">' + (v.fix ? '<span style="color:var(--accent3);font-size:9px" title="' + esc(v.fix) + '">&#x2714; ' + esc(v.fix.length > 10 ? v.fix.slice(0,10) + '..' : v.fix) + '</span>' : '<span style="color:var(--text2);font-size:9px">&#x2014;</span>') + '</div>' +
+    '</div>';
+  }
+  table += '</div>';
+
+  return header + pods + table;
+}
+
 async function loadImageVulnsWidget() {
   try {
     var d = await apiFetch('/api/dashboard/image-vulns');
@@ -5673,8 +5904,12 @@ async function loadImageVulnsWidget() {
     document.getElementById('ivs-score').style.color = color;
     var g = document.getElementById('ivs-grade');
     if (g) { g.textContent = d.grade || '?'; g.style.cssText = gradeStyle(d.grade || '?'); }
+    _ivsLastScanTime = d.timestamp;
     var meta = document.getElementById('ivs-meta');
-    if (meta) meta.textContent = d.totalImages + ' images • ' + d.totalVulns + ' findings • CVSS ' + (d.maxCVSS || 0).toFixed(1);
+    if (meta) {
+      var scanAge = d.timestamp ? acwRelativeTime(d.timestamp) : '';
+      meta.textContent = d.totalImages + ' images • ' + d.totalVulns + ' findings • ' + (scanAge ? 'scanned ' + scanAge : '');
+    }
     document.getElementById('ivs-total-vulns').textContent = d.totalVulns;
     document.getElementById('ivs-total-vulns').style.color = d.totalVulns > 0 ? 'var(--crit)' : 'var(--ok)';
     document.getElementById('ivs-critical').textContent = d.critical;
@@ -5711,7 +5946,8 @@ async function loadImageVulnsWidget() {
       document.getElementById('ivs-freshness-label').innerHTML = '<span style="color:var(--ok)">' + ((age.fresh || 0) + (age.current || 0)) + ' fresh</span> / <span style="color:var(--warn)">' + (age.aging || 0) + ' aging</span> / <span style="color:var(--crit)">' + (age.stale || 0) + ' stale</span>';
     }
 
-    // Top images with expandable CVE details
+    // Top images with Trivy-style expandable CVE table
+    _ivsTopImagesData = d.topImages || [];
     var topEl = document.getElementById('ivs-top-images');
     if (topEl) {
       if ((d.topImages || []).length === 0) {
@@ -5722,17 +5958,10 @@ async function loadImageVulnsWidget() {
           var detailId = 'ivs-img-detail-' + idx;
           var badges = ivsBadgeIcons(img.complianceBadges || []);
           var freshLabel = img.age ? ivsFreshnessLabel(img.age.freshness) : '';
-          var vulnDetails = (img.topVulns || []).map(function(v) {
-            return '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid var(--border)">' +
-              '<span style="font-weight:700;color:' + ivsCvssColor(v.cvss || 0) + ';min-width:30px;font-size:10px">' + (v.cvss || 0).toFixed(1) + '</span>' +
-              '<span style="font-weight:600;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(v.id) + '</span>' +
-              '<span style="color:var(--text2)">' + esc(v.package || '') + '</span>' +
-              (v.fix ? '<span style="color:var(--accent3);font-size:9px" title="Fix: ' + esc(v.fix) + '">&#x1F527;</span>' : '') +
-            '</div>';
-          }).join('');
           return '<div style="background:var(--bg);border-radius:6px;border-left:3px solid ' + sevColor + ';overflow:hidden">' +
-            '<div style="padding:5px 8px;cursor:pointer" onclick="var el=document.getElementById(\'' + detailId + '\');if(el)el.style.display=el.style.display===\'none\'?\'block\':\'none\'">' +
+            '<div style="padding:5px 8px;cursor:pointer" onclick="ivsToggleDetail(' + idx + ')">' +
               '<div style="display:flex;align-items:center;gap:4px">' +
+                '<span style="font-size:9px;color:var(--text2)">&#x25B6;</span>' +
                 '<div style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1" title="' + esc(img.fullImage || img.image) + '">' + esc(img.image) + '</div>' +
                 '<span style="font-size:9px">' + badges + '</span>' +
               '</div>' +
@@ -5743,8 +5972,7 @@ async function loadImageVulnsWidget() {
                 '<span style="color:' + ivsCvssColor(img.maxCVSS || 0) + ';font-weight:700">CVSS ' + (img.maxCVSS || 0).toFixed(1) + '</span>' +
               '</div>' +
             '</div>' +
-            '<div id="' + detailId + '" style="display:none;padding:4px 8px 6px;background:color-mix(in srgb,var(--bg) 80%,var(--card));border-top:1px solid var(--border);font-size:10px">' +
-              vulnDetails +
+            '<div id="' + detailId + '" style="display:none;padding:6px 8px 8px;background:color-mix(in srgb,var(--bg) 80%,var(--card));border-top:1px solid var(--border);font-size:10px;max-height:250px;overflow-y:auto">' +
             '</div>' +
           '</div>';
         }).join('');
