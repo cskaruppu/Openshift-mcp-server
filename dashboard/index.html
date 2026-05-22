@@ -2349,13 +2349,45 @@ tr:hover td{background:#ffffff06}
           <button class="icon-btn" style="font-size:11px;white-space:nowrap;padding:6px 12px;background:var(--accent2);color:#fff;border:none;border-radius:6px;cursor:pointer" id="acw-disco-btn" onclick="acwWatchAll()">Watch All</button>
         </div>
       </div>
-      <!-- Namespace selector panel (collapsible) -->
-      <div id="acw-ns-panel" style="display:none;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;max-height:200px;overflow-y:auto">
+      <!-- Namespace Transfer Panel (dual-panel) -->
+      <div id="acw-ns-panel" style="display:none;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <span style="font-size:12px;font-weight:600">Manage Namespaces</span>
-          <button class="icon-btn" style="font-size:10px;padding:3px 8px" onclick="acwToggleNsPanel()">&#x2716; Close</button>
+          <span style="font-size:13px;font-weight:700">Manage Namespaces</span>
+          <div style="display:flex;gap:6px">
+            <button class="icon-btn" style="font-size:10px;padding:3px 8px;background:var(--accent2);color:#fff;border:none;border-radius:4px;cursor:pointer" onclick="acwTransferAll('add')">Track All &#x00BB;</button>
+            <button class="icon-btn" style="font-size:10px;padding:3px 8px;background:color-mix(in srgb,var(--crit) 20%,var(--bg));color:var(--crit);border:1px solid var(--crit);border-radius:4px;cursor:pointer" onclick="acwTransferAll('remove')">&#x00AB; Remove All</button>
+            <button class="icon-btn" style="font-size:10px;padding:3px 8px" onclick="acwToggleNsPanel()">&#x2716;</button>
+          </div>
         </div>
-        <div id="acw-ns-list" style="display:flex;flex-direction:column;gap:4px;font-size:11px">Loading...</div>
+        <!-- Search bar -->
+        <div style="margin-bottom:8px">
+          <input type="text" id="acw-ns-search" placeholder="Search namespaces..." oninput="acwFilterNsList()" style="width:100%;padding:6px 10px;font-size:11px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);outline:none;box-sizing:border-box">
+        </div>
+        <!-- Dual panel -->
+        <div style="display:flex;gap:8px;height:180px">
+          <!-- Available (left) -->
+          <div style="flex:1;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+            <div style="padding:6px 10px;background:var(--card);border-bottom:1px solid var(--border);font-size:10px;font-weight:600;color:var(--text2);display:flex;justify-content:space-between">
+              <span>AVAILABLE</span>
+              <span id="acw-avail-count" style="color:var(--accent2)">0</span>
+            </div>
+            <div id="acw-ns-available" style="flex:1;overflow-y:auto;padding:4px"></div>
+          </div>
+          <!-- Transfer arrows -->
+          <div style="display:flex;flex-direction:column;justify-content:center;gap:6px;flex-shrink:0">
+            <button onclick="acwTransferSelected('add')" style="padding:6px 8px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--accent2);cursor:pointer;line-height:1" title="Track selected">&#x25B6;</button>
+            <button onclick="acwTransferSelected('remove')" style="padding:6px 8px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--crit);cursor:pointer;line-height:1" title="Remove selected">&#x25C0;</button>
+          </div>
+          <!-- Tracked (right) -->
+          <div style="flex:1;display:flex;flex-direction:column;border:1px solid color-mix(in srgb,var(--accent2) 30%,var(--border));border-radius:8px;overflow:hidden">
+            <div style="padding:6px 10px;background:color-mix(in srgb,var(--accent2) 8%,var(--card));border-bottom:1px solid var(--border);font-size:10px;font-weight:600;color:var(--accent2);display:flex;justify-content:space-between">
+              <span>TRACKED</span>
+              <span id="acw-tracked-count">0</span>
+            </div>
+            <div id="acw-ns-tracked" style="flex:1;overflow-y:auto;padding:4px"></div>
+          </div>
+        </div>
+        <div style="margin-top:6px;font-size:9px;color:var(--text2);text-align:center">Click to select &bull; Shift+click for range &bull; Use arrows or double-click to transfer</div>
       </div>
       <!-- Workloads viewer (collapsible) -->
       <div id="acw-workloads-panel" style="display:none;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;max-height:220px;overflow-y:auto">
@@ -5511,60 +5543,188 @@ async function acwWatchAll() {
   if (btn) btn.disabled = false;
 }
 
+var _acwAllNsData = [];
+var _acwNsSelected = { available: new Set(), tracked: new Set() };
+
 function acwToggleNsPanel() {
   var panel = document.getElementById('acw-ns-panel');
   if (!panel) return;
   if (panel.style.display === 'none') {
     panel.style.display = 'block';
-    acwLoadNsList();
+    acwLoadTransferList();
   } else {
     panel.style.display = 'none';
   }
 }
 
-async function acwLoadNsList() {
-  var listEl = document.getElementById('acw-ns-list');
-  if (!listEl) return;
+async function acwLoadTransferList() {
   try {
     var disco = await apiFetch('/api/dashboard/app-changes');
     var watched = disco.watchedNamespaces || [];
     _acwWatchedNs = watched;
     var allNs = [];
     if (disco.discoveredNamespaces) {
-      allNs = disco.discoveredNamespaces.map(function(d) { return d.namespace; });
+      allNs = disco.discoveredNamespaces.map(function(d) { return { ns: d.namespace, workloads: d.workloads }; });
     }
     for (var i = 0; i < watched.length; i++) {
-      if (allNs.indexOf(watched[i]) < 0) allNs.push(watched[i]);
+      if (!allNs.find(function(n) { return n.ns === watched[i]; })) {
+        allNs.push({ ns: watched[i], workloads: 0 });
+      }
     }
-    allNs.sort();
-    if (allNs.length === 0) {
-      listEl.innerHTML = '<div style="color:var(--text2);text-align:center;padding:8px">No namespaces found</div>';
-      return;
-    }
-    listEl.innerHTML = allNs.map(function(ns) {
-      var isWatched = watched.indexOf(ns) >= 0;
-      return '<div style="display:flex;align-items:center;gap:8px;padding:4px 6px;background:var(--card);border-radius:4px">' +
-        '<label style="display:flex;align-items:center;gap:6px;flex:1;cursor:pointer;font-size:11px">' +
-          '<input type="checkbox" ' + (isWatched ? 'checked' : '') + ' onchange="acwToggleNs(\'' + esc(ns) + '\',this.checked)" style="accent-color:var(--accent2)">' +
-          '<span style="font-weight:' + (isWatched ? '600' : '400') + '">' + esc(ns) + '</span>' +
-        '</label>' +
-      '</div>';
-    }).join('');
+    allNs.sort(function(a, b) { return a.ns.localeCompare(b.ns); });
+    _acwAllNsData = allNs;
+    _acwNsSelected = { available: new Set(), tracked: new Set() };
+    acwRenderTransferLists('');
   } catch (e) {
-    listEl.innerHTML = '<div style="color:var(--crit)">Error: ' + esc(e.message) + '</div>';
+    var avail = document.getElementById('acw-ns-available');
+    if (avail) avail.innerHTML = '<div style="color:var(--crit);padding:8px;font-size:11px">Error: ' + esc(e.message) + '</div>';
   }
 }
 
-async function acwToggleNs(ns, add) {
+function acwRenderTransferLists(filter) {
+  var watched = _acwWatchedNs;
+  var search = (filter || '').toLowerCase();
+  var availableNs = _acwAllNsData.filter(function(n) {
+    return watched.indexOf(n.ns) < 0 && (!search || n.ns.toLowerCase().indexOf(search) >= 0);
+  });
+  var trackedNs = _acwAllNsData.filter(function(n) {
+    return watched.indexOf(n.ns) >= 0 && (!search || n.ns.toLowerCase().indexOf(search) >= 0);
+  });
+
+  var availEl = document.getElementById('acw-ns-available');
+  var trackEl = document.getElementById('acw-ns-tracked');
+  var availCount = document.getElementById('acw-avail-count');
+  var trackCount = document.getElementById('acw-tracked-count');
+
+  if (availCount) availCount.textContent = availableNs.length;
+  if (trackCount) trackCount.textContent = trackedNs.length;
+
+  if (availEl) {
+    if (availableNs.length === 0) {
+      availEl.innerHTML = '<div style="color:var(--text2);text-align:center;padding:12px;font-size:10px">' + (search ? 'No matches' : 'All namespaces tracked') + '</div>';
+    } else {
+      availEl.innerHTML = availableNs.map(function(n) {
+        var sel = _acwNsSelected.available.has(n.ns);
+        return '<div class="acw-ns-item" data-ns="' + esc(n.ns) + '" data-side="available" onclick="acwSelectNs(this)" ondblclick="acwQuickTransfer(\'' + esc(n.ns) + '\',\'add\')" style="display:flex;align-items:center;gap:6px;padding:4px 8px;margin:1px 0;border-radius:4px;cursor:pointer;font-size:11px;background:' + (sel ? 'color-mix(in srgb,var(--accent2) 15%,var(--bg))' : 'transparent') + ';border:1px solid ' + (sel ? 'var(--accent2)' : 'transparent') + ';transition:all .15s">' +
+          '<span style="width:6px;height:6px;border-radius:50%;background:var(--accent3);flex-shrink:0"></span>' +
+          '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(n.ns) + '</span>' +
+          (n.workloads > 0 ? '<span style="font-size:9px;color:var(--text2);background:var(--card);padding:1px 5px;border-radius:8px">' + n.workloads + '</span>' : '') +
+        '</div>';
+      }).join('');
+    }
+  }
+
+  if (trackEl) {
+    if (trackedNs.length === 0) {
+      trackEl.innerHTML = '<div style="color:var(--text2);text-align:center;padding:12px;font-size:10px">' + (search ? 'No matches' : 'No namespaces tracked') + '</div>';
+    } else {
+      trackEl.innerHTML = trackedNs.map(function(n) {
+        var sel = _acwNsSelected.tracked.has(n.ns);
+        return '<div class="acw-ns-item" data-ns="' + esc(n.ns) + '" data-side="tracked" onclick="acwSelectNs(this)" ondblclick="acwQuickTransfer(\'' + esc(n.ns) + '\',\'remove\')" style="display:flex;align-items:center;gap:6px;padding:4px 8px;margin:1px 0;border-radius:4px;cursor:pointer;font-size:11px;background:' + (sel ? 'color-mix(in srgb,var(--accent2) 15%,var(--bg))' : 'transparent') + ';border:1px solid ' + (sel ? 'var(--accent2)' : 'transparent') + ';transition:all .15s">' +
+          '<span style="width:6px;height:6px;border-radius:50%;background:var(--accent2);flex-shrink:0"></span>' +
+          '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">' + esc(n.ns) + '</span>' +
+          (n.workloads > 0 ? '<span style="font-size:9px;color:var(--text2);background:var(--card);padding:1px 5px;border-radius:8px">' + n.workloads + '</span>' : '') +
+        '</div>';
+      }).join('');
+    }
+  }
+}
+
+function acwFilterNsList() {
+  var search = (document.getElementById('acw-ns-search') || {}).value || '';
+  acwRenderTransferLists(search);
+}
+
+function acwSelectNs(el) {
+  var ns = el.getAttribute('data-ns');
+  var side = el.getAttribute('data-side');
+  var set = _acwNsSelected[side];
+  if (set.has(ns)) {
+    set.delete(ns);
+    el.style.background = 'transparent';
+    el.style.borderColor = 'transparent';
+  } else {
+    set.add(ns);
+    el.style.background = 'color-mix(in srgb,var(--accent2) 15%,var(--bg))';
+    el.style.borderColor = 'var(--accent2)';
+  }
+}
+
+async function acwQuickTransfer(ns, action) {
   try {
     await apiFetch('/api/dashboard/app-changes/namespaces', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: add ? 'add' : 'remove', namespaces: [ns] })
+      body: JSON.stringify({ action: action, namespaces: [ns] })
     });
-    await loadAppChangesWidget();
+    if (action === 'add') {
+      _acwWatchedNs.push(ns);
+    } else {
+      _acwWatchedNs = _acwWatchedNs.filter(function(n) { return n !== ns; });
+    }
+    _acwNsSelected.available.delete(ns);
+    _acwNsSelected.tracked.delete(ns);
+    var search = (document.getElementById('acw-ns-search') || {}).value || '';
+    acwRenderTransferLists(search);
+    loadAppChangesWidget();
   } catch (e) {
-    console.error('Namespace toggle error:', e);
+    console.error('Transfer error:', e);
+  }
+}
+
+async function acwTransferSelected(action) {
+  var set = action === 'add' ? _acwNsSelected.available : _acwNsSelected.tracked;
+  var nsList = Array.from(set);
+  if (nsList.length === 0) return;
+  try {
+    await apiFetch('/api/dashboard/app-changes/namespaces', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: action, namespaces: nsList })
+    });
+    if (action === 'add') {
+      for (var i = 0; i < nsList.length; i++) {
+        if (_acwWatchedNs.indexOf(nsList[i]) < 0) _acwWatchedNs.push(nsList[i]);
+      }
+    } else {
+      _acwWatchedNs = _acwWatchedNs.filter(function(n) { return nsList.indexOf(n) < 0; });
+    }
+    _acwNsSelected.available.clear();
+    _acwNsSelected.tracked.clear();
+    var search = (document.getElementById('acw-ns-search') || {}).value || '';
+    acwRenderTransferLists(search);
+    loadAppChangesWidget();
+  } catch (e) {
+    console.error('Transfer error:', e);
+  }
+}
+
+async function acwTransferAll(action) {
+  var nsList;
+  if (action === 'add') {
+    nsList = _acwAllNsData.filter(function(n) { return _acwWatchedNs.indexOf(n.ns) < 0; }).map(function(n) { return n.ns; });
+  } else {
+    nsList = _acwWatchedNs.slice();
+  }
+  if (nsList.length === 0) return;
+  try {
+    await apiFetch('/api/dashboard/app-changes/namespaces', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: action, namespaces: nsList })
+    });
+    if (action === 'add') {
+      _acwWatchedNs = _acwAllNsData.map(function(n) { return n.ns; });
+    } else {
+      _acwWatchedNs = [];
+    }
+    _acwNsSelected.available.clear();
+    _acwNsSelected.tracked.clear();
+    var search = (document.getElementById('acw-ns-search') || {}).value || '';
+    acwRenderTransferLists(search);
+    loadAppChangesWidget();
+  } catch (e) {
+    console.error('Transfer all error:', e);
   }
 }
 

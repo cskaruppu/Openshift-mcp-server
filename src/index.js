@@ -2799,9 +2799,9 @@ async function startSSE() {
         let namespaces = getWatchedNamespaces();
 
         let discoveredNamespaces = null;
-        if (namespaces.length === 0) {
+        try {
           discoveredNamespaces = await discoverAppNamespaces();
-        }
+        } catch {};
 
         const changes = await scanForChanges();
         const log = getChangeLog();
