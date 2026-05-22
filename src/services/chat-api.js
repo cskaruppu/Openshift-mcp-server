@@ -4583,9 +4583,25 @@ EOF@@`);
 
   // -----------------------------------------------------------------------
   // DIAGNOSE — cluster-level and node-level troubleshooting
+  // Skip when user asks about a specific pod or deployment — those are better
+  // handled by gatherClusterContext + LLM (or builtInAnalysis) which fetches
+  // pod details, events, logs, and metrics for the named resource.
   // -----------------------------------------------------------------------
   if (cmd.operation === "diagnose") {
     const diagLower = (cmd.raw || message || "").toLowerCase();
+
+    // Detect if user is asking about a specific pod or deployment
+    const hasPodName = cmd.resourceName && (cmd.resourceType === "pod" || !cmd.resourceType);
+    const podPatternMatch = diagLower.match(/\b([a-z][-a-z0-9]*(?:-[a-z0-9]{4,10}){1,2})\b/);
+    const hasSpecificPod = hasPodName || (cmd.resourceType === "pod" && cmd.resourceName) || podPatternMatch;
+    const hasSpecificDeployment = cmd.resourceType === "deployment" && cmd.resourceName;
+
+    // If query targets a specific pod or deployment, let gatherClusterContext
+    // handle it — return null so the LLM/built-in path can do pod-specific diagnosis.
+    if (hasSpecificPod || hasSpecificDeployment) {
+      return null;
+    }
+
     const isNodeFocused = cmd.resourceType === "node" || /\bnode\b|\bnodes\b|\bworker\b|\bmaster\b|\bcontrol.?plane\b/.test(diagLower);
     const isClusterFocused = !isNodeFocused || /\bcluster\b/.test(diagLower);
 
