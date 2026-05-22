@@ -71,7 +71,7 @@ import { findResource } from "./resource-index.js";
 import { fetchPodStatus } from "./fix-executor.js";
 import { incCounter, observeHistogram } from "./metrics.js";
 import { enforce as enforceRateLimit } from "./rate-limit.js";
-import { runPreflightChecks, formatPreflightReport, checkCertificateExpiry } from "../tools/upgrade-preflight.js";
+import { runPreflightChecks, formatPreflightReport, checkCertificateExpiry, validateUpgradeVersion } from "../tools/upgrade-preflight.js";
 
 // Build agent trace: maps tools used in a chat response back to their owning agents.
 async function buildAgentTrace(toolsUsed, contextKeys, durationMs) {
@@ -12612,6 +12612,69 @@ export async function handleChatAPI(req, res) {
           targetVer = versionMatch[0];
         }
 
+        // --- Upgrade version validation (Red Hat prerequisite enforcement) ---
+        // Fetch cluster version + available updates to validate before creating a CR.
+        if (targetVer) {
+          try {
+            const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+            const clusterCurrentVer = cv?.status?.desired?.version || cv?.status?.history?.[0]?.version || "";
+            const clusterChannel = cv?.spec?.channel || "";
+            const clusterUpdates = cv?.status?.availableUpdates || [];
+            if (!currentVer) currentVer = clusterCurrentVer;
+
+            const validation = validateUpgradeVersion(currentVer, targetVer, clusterUpdates, clusterChannel);
+            if (!validation.valid) {
+              // Build a rejection response with available upgrade paths
+              const lines = [];
+              lines.push(`### Upgrade Validation Failed`);
+              lines.push("");
+              lines.push(`**Current version:** ${currentVer}`);
+              lines.push(`**Requested version:** ${targetVer}`);
+              lines.push(`**Channel:** ${clusterChannel}`);
+              lines.push("");
+              lines.push(`[${validation.severity === "error" ? "CRITICAL" : "WARNING"}] ${validation.reason}`);
+              lines.push("");
+              if (validation.recommendation) {
+                lines.push(`**Recommendation:** ${validation.recommendation}`);
+                lines.push("");
+              }
+              if (validation.suggestedPath?.length) {
+                lines.push(`**Required upgrade path:**`);
+                lines.push(`\`${currentVer}\` → ${validation.suggestedPath.map(s => `\`${s}.z (latest)\``).join(" → ")}`);
+                lines.push("");
+                lines.push(`> Complete each minor version upgrade sequentially. Ask me: *"upgrade to ${validation.suggestedPath[0]}"* to start.`);
+                lines.push("");
+              }
+              if (validation.availableVersions && Object.keys(validation.availableVersions).length > 0) {
+                lines.push(`**Available upgrades from ${currentVer}:**`);
+                for (const [minor, versions] of Object.entries(validation.availableVersions).sort().reverse()) {
+                  lines.push(`  **${minor}.x:** ${versions.slice(0, 6).join(", ")}${versions.length > 6 ? ` (+${versions.length - 6} more)` : ""}`);
+                }
+                lines.push("");
+                const allVers = Object.values(validation.availableVersions).flat();
+                if (allVers.length > 0) {
+                  lines.push(`> Ask me: *"raise change request for upgrade to ${allVers[0]}"* to create a valid CR.`);
+                }
+              }
+              const reply = lines.join("\n");
+              const provider = "built-in";
+              if (conversationId) histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+              if (wantsStream) {
+                sseStart(res);
+                sseSend(res, { stage: "querying" });
+                sseSend(res, { stage: "generating" });
+                sseSend(res, { delta: reply });
+                sseSend(res, { done: true, provider, conversationId });
+                sseEnd(res);
+                return;
+              }
+              return json(res, 200, { reply, provider, contextKeys: ["upgrade", "validation_failed"], cached: false, conversationId });
+            }
+          } catch (err) {
+            console.warn("[chat-api] upgrade validation fetch failed, proceeding:", err.message);
+          }
+        }
+
         const [itsmResult, preflightResult] = await Promise.allSettled([
           gatherITSMContext(userMessage),
           targetVer
@@ -12702,6 +12765,31 @@ export async function handleChatAPI(req, res) {
             const vd = pfr?.versionDelta || {};
 
             if (statusResp.status === "approved" || wantsExec) {
+              // Re-validate before execution — cluster state may have changed since CR creation
+              const crTargetVer = trackedCR.targetVersion || pfr?.targetVersion || "";
+              const crFromVer = trackedCR.fromVersion || pfr?.fromVersion || "";
+              if (crTargetVer) {
+                try {
+                  const cvNow = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+                  const nowVer = cvNow?.status?.desired?.version || crFromVer;
+                  const nowUpdates = cvNow?.status?.availableUpdates || [];
+                  const nowChannel = cvNow?.spec?.channel || "";
+                  const recheck = validateUpgradeVersion(nowVer, crTargetVer, nowUpdates, nowChannel);
+                  if (!recheck.valid) {
+                    const vLines = [`### Upgrade Blocked at Execution`, "", `Change Request **${statusResp.ticketId || trackedCR.ticketId}** was approved, but the upgrade cannot proceed:`, "", `[${recheck.severity === "error" ? "CRITICAL" : "WARNING"}] ${recheck.reason}`];
+                    if (recheck.recommendation) vLines.push("", `**Recommendation:** ${recheck.recommendation}`);
+                    const vReply = vLines.join("\n");
+                    const provider = "built-in";
+                    if (conversationId) histAddMessage(conversationId, { role: "assistant", content: vReply, provider }).catch(() => {});
+                    if (wantsStream) {
+                      sseStart(res); sseSend(res, { stage: "querying" }); sseSend(res, { delta: vReply });
+                      sseSend(res, { done: true, provider, conversationId }); sseEnd(res); return;
+                    }
+                    return json(res, 200, { reply: vReply, provider, contextKeys: ["upgrade", "validation_failed"], cached: false, conversationId });
+                  }
+                } catch { /* validation fetch failed — proceed with caution */ }
+              }
+
               const execData = {
                 ticketId: statusResp.ticketId || trackedCR.ticketId,
                 sysId: trackedCR.sysId,
@@ -12758,12 +12846,37 @@ export async function handleChatAPI(req, res) {
         try {
           const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
           const currentVer = cv?.status?.desired?.version || "";
-          const available = (cv?.status?.availableUpdates || []).map(u => u.version);
+          const clusterUpdates = cv?.status?.availableUpdates || [];
+          const available = clusterUpdates.map(u => u.version);
           const versionMatch = userMessage.match(/(\d+\.\d+\.\d+)/);
           const targetVer = versionMatch ? versionMatch[1] : (available.length > 0 ? available[0] : "");
           const pfr = getCachedPreflightReport(conversationId);
 
           if (targetVer) {
+            // Validate before allowing execution
+            const execValidation = validateUpgradeVersion(currentVer, targetVer, clusterUpdates, cv?.spec?.channel || "");
+            if (!execValidation.valid) {
+              const vLines = [`### Upgrade Blocked`, "", `[${execValidation.severity === "error" ? "CRITICAL" : "WARNING"}] ${execValidation.reason}`];
+              if (execValidation.recommendation) vLines.push("", `**Recommendation:** ${execValidation.recommendation}`);
+              if (execValidation.suggestedPath?.length) {
+                vLines.push("", `**Required path:** \`${currentVer}\` → ${execValidation.suggestedPath.map(s => `\`${s}.z\``).join(" → ")}`);
+              }
+              if (execValidation.availableVersions && Object.keys(execValidation.availableVersions).length > 0) {
+                vLines.push("", `**Available versions:**`);
+                for (const [minor, versions] of Object.entries(execValidation.availableVersions).sort().reverse()) {
+                  vLines.push(`  **${minor}.x:** ${versions.slice(0, 5).join(", ")}`);
+                }
+              }
+              const vReply = vLines.join("\n");
+              const provider = "built-in";
+              if (conversationId) histAddMessage(conversationId, { role: "assistant", content: vReply, provider }).catch(() => {});
+              if (wantsStream) {
+                sseStart(res); sseSend(res, { stage: "querying" }); sseSend(res, { delta: vReply });
+                sseSend(res, { done: true, provider, conversationId }); sseEnd(res); return;
+              }
+              return json(res, 200, { reply: vReply, provider, contextKeys: ["upgrade", "validation_failed"], cached: false, conversationId });
+            }
+
             const execData = {
               ticketId: crNumberMatch ? crNumberMatch[0] : "Direct",
               sysId: "",
@@ -12826,6 +12939,53 @@ export async function handleChatAPI(req, res) {
         }
 
         if (targetVer) {
+          // Validate upgrade version before running full preflight
+          try {
+            const cvForValidation = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+            const clusterCur = cvForValidation?.status?.desired?.version || currentVer || "";
+            const clusterCh = cvForValidation?.spec?.channel || "";
+            const clusterUpd = cvForValidation?.status?.availableUpdates || [];
+            if (!currentVer) currentVer = clusterCur;
+
+            const vResult = validateUpgradeVersion(clusterCur, targetVer, clusterUpd, clusterCh);
+            if (!vResult.valid) {
+              const lines = [];
+              lines.push(`### Upgrade Validation Failed`);
+              lines.push("");
+              lines.push(`**Current version:** ${clusterCur}`);
+              lines.push(`**Requested version:** ${targetVer}`);
+              lines.push(`**Channel:** ${clusterCh}`);
+              lines.push("");
+              lines.push(`[${vResult.severity === "error" ? "CRITICAL" : "WARNING"}] ${vResult.reason}`);
+              if (vResult.recommendation) { lines.push(""); lines.push(`**Recommendation:** ${vResult.recommendation}`); }
+              if (vResult.suggestedPath?.length) {
+                lines.push("");
+                lines.push(`**Required upgrade path:**`);
+                lines.push(`\`${clusterCur}\` → ${vResult.suggestedPath.map(s => `\`${s}.z (latest)\``).join(" → ")}`);
+                lines.push("");
+                lines.push(`> Ask me: *"precheck upgrade to ${vResult.suggestedPath[0]}"* for the first step.`);
+              }
+              if (vResult.availableVersions && Object.keys(vResult.availableVersions).length > 0) {
+                lines.push("");
+                lines.push(`**Available upgrades from ${clusterCur}:**`);
+                for (const [minor, versions] of Object.entries(vResult.availableVersions).sort().reverse()) {
+                  lines.push(`  **${minor}.x:** ${versions.slice(0, 6).join(", ")}${versions.length > 6 ? ` (+${versions.length - 6} more)` : ""}`);
+                }
+              }
+              const vReply = lines.join("\n");
+              const provider = "built-in";
+              if (conversationId) histAddMessage(conversationId, { role: "assistant", content: vReply, provider }).catch(() => {});
+              if (wantsStream) {
+                sseStart(res); sseSend(res, { stage: "querying" }); sseSend(res, { stage: "generating" });
+                sseSend(res, { delta: vReply }); sseSend(res, { done: true, provider, conversationId }); sseEnd(res);
+                return;
+              }
+              return json(res, 200, { reply: vReply, provider, contextKeys: ["upgrade", "validation_failed"], cached: false, conversationId });
+            }
+          } catch (valErr) {
+            console.warn("[chat-api] preflight validation fetch failed, proceeding:", valErr.message);
+          }
+
           const preflightReport = await runPreflightWithTimeout(targetVer, currentVer || undefined);
           cachePreflightReport(conversationId, preflightReport);
           const reportToken = `@@PREFLIGHT_REPORT|${JSON.stringify(lightPreflightReport(preflightReport)).replace(/@@/g, "@ @")}@@`;

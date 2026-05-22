@@ -9,6 +9,7 @@ import { dirname } from "node:path";
 import { ocpGet, ocpFetch, ocpDelete } from "../utils/openshift-client.js";
 import { callLLM } from "./llm.js";
 import { query as dbQuery, isEnabled as dbEnabled } from "../utils/db.js";
+import { validateUpgradeVersion } from "../tools/upgrade-preflight.js";
 
 const LLM_SETTINGS_PATH = process.env.LLM_SETTINGS_PATH || "/data/mcp-llm-settings.json";
 const SETTINGS_DB_KEY = "llm_settings";
@@ -1232,17 +1233,23 @@ export async function handleUpgradeStart(req, res) {
       return json(res, 400, { error: "Missing or invalid 'version' field" });
     }
 
-    // Validate that the requested version is in availableUpdates
+    // Validate upgrade version using Red Hat prerequisite checks
     const clusterVersion = await ocpGet(
       "/apis/config.openshift.io/v1/clusterversions/version"
     );
-    const available = (clusterVersion?.status?.availableUpdates || []).map(
-      (u) => u.version
-    );
-    if (!available.includes(version)) {
+    const currentVersion = clusterVersion?.status?.desired?.version || "";
+    const clusterChannel = clusterVersion?.spec?.channel || "";
+    const availableUpdates = clusterVersion?.status?.availableUpdates || [];
+    const validation = validateUpgradeVersion(currentVersion, version, availableUpdates, clusterChannel);
+    if (!validation.valid) {
       return json(res, 400, {
-        error: `Version "${version}" is not in the list of available updates`,
-        availableUpdates: available,
+        error: validation.reason,
+        severity: validation.severity,
+        recommendation: validation.recommendation || null,
+        suggestedPath: validation.suggestedPath || null,
+        availableVersions: validation.availableVersions || null,
+        currentVersion,
+        channel: clusterChannel,
       });
     }
 

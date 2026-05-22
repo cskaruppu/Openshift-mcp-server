@@ -897,6 +897,186 @@ export function formatPreflightReport(report) {
 }
 
 // ---------------------------------------------------------------------------
+// Upgrade Version Validation — Red Hat OCP upgrade path enforcement
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate an upgrade version against Red Hat's documented prerequisites:
+ *  - Reject same-version "upgrades"
+ *  - Reject downgrades (OCP does not support rollback)
+ *  - Reject multi-minor-version jumps (must step through each minor, e.g.
+ *    4.14→4.15→4.16, not 4.14→4.16 directly) — except EUS-to-EUS paths
+ *  - Validate target is in the cluster's availableUpdates graph
+ *  - Surface recommended intermediate upgrade path when target is not directly reachable
+ *  - Return available updates grouped by minor version for user selection
+ *
+ * @param {string} currentVersion - Currently running OCP version (e.g. "4.19.14")
+ * @param {string} targetVersion  - Requested target version (e.g. "4.19.20")
+ * @param {Array}  availableUpdates - Array of {version, image, ...} from ClusterVersion
+ * @param {string} channel         - Current upgrade channel (e.g. "stable-4.19")
+ * @returns {{valid: boolean, reason?: string, severity?: string, recommendation?: string,
+ *            availableVersions?: object, suggestedPath?: string[]}}
+ */
+export function validateUpgradeVersion(currentVersion, targetVersion, availableUpdates = [], channel = "") {
+  if (!currentVersion || !targetVersion) {
+    return { valid: false, reason: "Current or target version is missing.", severity: "error" };
+  }
+
+  const cur = parseVersion(currentVersion);
+  const tgt = parseVersion(targetVersion);
+  if (!cur || !tgt) {
+    return { valid: false, reason: `Invalid version format: ${!cur ? currentVersion : targetVersion}`, severity: "error" };
+  }
+
+  // 1. Same version — reject
+  if (currentVersion === targetVersion) {
+    const grouped = groupByMinor(availableUpdates);
+    return {
+      valid: false,
+      severity: "warning",
+      reason: `Cluster is already running version ${currentVersion}. No upgrade needed.`,
+      recommendation: availableUpdates.length > 0
+        ? `Available upgrades: ${availableUpdates.slice(0, 5).map(u => u.version).join(", ")}${availableUpdates.length > 5 ? ` (+${availableUpdates.length - 5} more)` : ""}`
+        : `No upgrades are available in channel '${channel}'. Cluster is up to date.`,
+      availableVersions: grouped,
+    };
+  }
+
+  // 2. Downgrade — reject
+  if (versionCompare(tgt, cur) < 0) {
+    const grouped = groupByMinor(availableUpdates);
+    return {
+      valid: false,
+      severity: "error",
+      reason: `Version ${targetVersion} is LOWER than the current version ${currentVersion}. OpenShift does not support cluster downgrades.`,
+      recommendation: availableUpdates.length > 0
+        ? `You can only upgrade forward. Available versions: ${availableUpdates.slice(0, 5).map(u => u.version).join(", ")}`
+        : `No available updates in channel '${channel}'.`,
+      availableVersions: grouped,
+    };
+  }
+
+  // 3. Check if target is in available updates
+  const targetAvailable = availableUpdates.some(u => u.version === targetVersion);
+
+  // 4. Multi-minor-version jump detection
+  //    Red Hat requires sequential minor upgrades: 4.14→4.15→4.16
+  //    Exception: EUS-to-EUS paths (even minor numbers: 4.14→4.16 via EUS channel)
+  const minorDelta = tgt.minor - cur.minor;
+  const majorDelta = tgt.major - cur.major;
+
+  // Major version jump (e.g. 4.x → 5.x) — currently OCP only has major 4
+  if (majorDelta > 0) {
+    return {
+      valid: false,
+      severity: "error",
+      reason: `Major version upgrade from ${cur.major}.x to ${tgt.major}.x is not a standard OpenShift upgrade path.`,
+      recommendation: `OpenShift upgrades are within the same major version. Check Red Hat documentation for migration paths.`,
+      availableVersions: groupByMinor(availableUpdates),
+    };
+  }
+
+  if (minorDelta > 1) {
+    // Check for EUS-to-EUS: both must be even minor numbers (4.14, 4.16, 4.18, etc.)
+    const isEUSSource = cur.minor % 2 === 0;
+    const isEUSTarget = tgt.minor % 2 === 0;
+    const isEUSChannel = /eus/i.test(channel);
+
+    if (isEUSSource && isEUSTarget && minorDelta === 2 && isEUSChannel) {
+      // EUS-to-EUS is allowed (e.g. 4.14→4.16 on eus-4.16 channel)
+      if (!targetAvailable) {
+        return {
+          valid: false,
+          severity: "warning",
+          reason: `EUS-to-EUS upgrade from ${currentVersion} to ${targetVersion} may be supported, but ${targetVersion} is not in the current available updates.`,
+          recommendation: `Ensure you are on the correct EUS channel. Current channel: '${channel}'. You may need to switch to 'eus-${tgt.major}.${tgt.minor}'.`,
+          availableVersions: groupByMinor(availableUpdates),
+        };
+      }
+      // EUS-to-EUS and target is available — valid
+    } else {
+      // Build the recommended sequential path
+      const steps = [];
+      for (let m = cur.minor + 1; m <= tgt.minor; m++) {
+        steps.push(`${cur.major}.${m}`);
+      }
+      const suggestedPath = steps.map(s => `latest ${s}.z`);
+
+      return {
+        valid: false,
+        severity: "error",
+        reason: `Cannot jump from ${currentVersion} (minor ${cur.minor}) directly to ${targetVersion} (minor ${tgt.minor}). OpenShift requires sequential minor version upgrades.`,
+        recommendation: `Upgrade path: ${currentVersion} → ${steps.map(s => s + ".z (latest)").join(" → ")}. Complete each minor version upgrade before proceeding to the next.`,
+        suggestedPath: steps,
+        availableVersions: groupByMinor(availableUpdates),
+      };
+    }
+  }
+
+  // 5. Z-stream or single-minor upgrade — check availability
+  if (!targetAvailable) {
+    const grouped = groupByMinor(availableUpdates);
+    const sameMinorAvailable = availableUpdates
+      .filter(u => { const p = parseVersion(u.version); return p && p.major === tgt.major && p.minor === tgt.minor; })
+      .map(u => u.version);
+
+    return {
+      valid: false,
+      severity: "error",
+      reason: `Version ${targetVersion} is not available for upgrade from ${currentVersion} in channel '${channel}'.`,
+      recommendation: sameMinorAvailable.length > 0
+        ? `Available ${tgt.major}.${tgt.minor}.z versions: ${sameMinorAvailable.join(", ")}. Use one of these instead.`
+        : `No ${tgt.major}.${tgt.minor}.z versions available. You may need to switch channels (e.g., 'fast-${tgt.major}.${tgt.minor}' or 'stable-${tgt.major}.${tgt.minor}').`,
+      availableVersions: grouped,
+    };
+  }
+
+  // 6. Valid upgrade — provide context
+  const isZStream = minorDelta === 0;
+  const upgradeType = isZStream ? "Z-stream (patch)" : "Minor version";
+  const grouped = groupByMinor(availableUpdates);
+
+  return {
+    valid: true,
+    upgradeType,
+    reason: `${upgradeType} upgrade from ${currentVersion} to ${targetVersion} is available and supported.`,
+    availableVersions: grouped,
+  };
+}
+
+function parseVersion(v) {
+  const m = (v || "").match(/^(\d+)\.(\d+)(?:\.(\d+))?/);
+  if (!m) return null;
+  return { major: parseInt(m[1], 10), minor: parseInt(m[2], 10), patch: parseInt(m[3] || "0", 10) };
+}
+
+function versionCompare(a, b) {
+  if (a.major !== b.major) return a.major - b.major;
+  if (a.minor !== b.minor) return a.minor - b.minor;
+  return a.patch - b.patch;
+}
+
+function groupByMinor(updates) {
+  const groups = {};
+  for (const u of updates) {
+    const p = parseVersion(u.version);
+    if (!p) continue;
+    const key = `${p.major}.${p.minor}`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(u.version);
+  }
+  // Sort each group descending
+  for (const key of Object.keys(groups)) {
+    groups[key].sort((a, b) => {
+      const pa = parseVersion(a);
+      const pb = parseVersion(b);
+      return pb.patch - pa.patch;
+    });
+  }
+  return groups;
+}
+
+// ---------------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------------
 
