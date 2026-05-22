@@ -5564,7 +5564,7 @@ async function acwLoadTransferList() {
     _acwWatchedNs = watched;
     var allNs = [];
     if (disco.discoveredNamespaces) {
-      allNs = disco.discoveredNamespaces.map(function(d) { return { ns: d.namespace, workloads: d.workloads }; });
+      allNs = disco.discoveredNamespaces.map(function(d) { return { ns: d.namespace, workloads: d.workloads, breakdown: d.breakdown || {} }; });
     }
     for (var i = 0; i < watched.length; i++) {
       if (!allNs.find(function(n) { return n.ns === watched[i]; })) {
@@ -5579,6 +5579,19 @@ async function acwLoadTransferList() {
     var avail = document.getElementById('acw-ns-available');
     if (avail) avail.innerHTML = '<div style="color:var(--crit);padding:8px;font-size:11px">Error: ' + esc(e.message) + '</div>';
   }
+}
+
+function acwBreakdownBadges(bd) {
+  if (!bd) return '';
+  var tags = [];
+  var badgeStyle = 'font-size:8px;padding:1px 4px;border-radius:6px;white-space:nowrap;';
+  if (bd.pods > 0) tags.push('<span style="' + badgeStyle + 'color:#4fc3f7;background:rgba(79,195,247,0.12)" title="Pods">' + bd.pods + ' Po</span>');
+  if (bd.deployments > 0) tags.push('<span style="' + badgeStyle + 'color:#81c784;background:rgba(129,199,132,0.12)" title="Deployments">' + bd.deployments + ' Dep</span>');
+  if (bd.statefulsets > 0) tags.push('<span style="' + badgeStyle + 'color:#ffb74d;background:rgba(255,183,77,0.12)" title="StatefulSets">' + bd.statefulsets + ' Sts</span>');
+  if (bd.daemonsets > 0) tags.push('<span style="' + badgeStyle + 'color:#ce93d8;background:rgba(206,147,216,0.12)" title="DaemonSets">' + bd.daemonsets + ' Ds</span>');
+  if (bd.replicasets > 0) tags.push('<span style="' + badgeStyle + 'color:#a1887f;background:rgba(161,136,127,0.12)" title="ReplicaSets">' + bd.replicasets + ' Rs</span>');
+  if (tags.length === 0) return '<span style="font-size:8px;color:var(--text2);opacity:0.5">empty</span>';
+  return '<span style="display:flex;gap:2px;flex-shrink:0;flex-wrap:nowrap">' + tags.join('') + '</span>';
 }
 
 function acwRenderTransferLists(filter) {
@@ -5606,9 +5619,9 @@ function acwRenderTransferLists(filter) {
       availEl.innerHTML = availableNs.map(function(n) {
         var sel = _acwNsSelected.available.has(n.ns);
         return '<div class="acw-ns-item" data-ns="' + esc(n.ns) + '" data-side="available" onclick="acwSelectNs(this)" ondblclick="acwQuickTransfer(\'' + esc(n.ns) + '\',\'add\')" style="display:flex;align-items:center;gap:6px;padding:4px 8px;margin:1px 0;border-radius:4px;cursor:pointer;font-size:11px;background:' + (sel ? 'color-mix(in srgb,var(--accent2) 15%,var(--bg))' : 'transparent') + ';border:1px solid ' + (sel ? 'var(--accent2)' : 'transparent') + ';transition:all .15s">' +
-          '<span style="width:6px;height:6px;border-radius:50%;background:var(--accent3);flex-shrink:0"></span>' +
+          '<span style="width:6px;height:6px;border-radius:50%;background:' + (n.workloads > 0 ? 'var(--accent3)' : 'var(--text2)') + ';flex-shrink:0"></span>' +
           '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(n.ns) + '</span>' +
-          (n.workloads > 0 ? '<span style="font-size:9px;color:var(--text2);background:var(--card);padding:1px 5px;border-radius:8px">' + n.workloads + '</span>' : '') +
+          acwBreakdownBadges(n.breakdown) +
         '</div>';
       }).join('');
     }
@@ -5623,7 +5636,7 @@ function acwRenderTransferLists(filter) {
         return '<div class="acw-ns-item" data-ns="' + esc(n.ns) + '" data-side="tracked" onclick="acwSelectNs(this)" ondblclick="acwQuickTransfer(\'' + esc(n.ns) + '\',\'remove\')" style="display:flex;align-items:center;gap:6px;padding:4px 8px;margin:1px 0;border-radius:4px;cursor:pointer;font-size:11px;background:' + (sel ? 'color-mix(in srgb,var(--accent2) 15%,var(--bg))' : 'transparent') + ';border:1px solid ' + (sel ? 'var(--accent2)' : 'transparent') + ';transition:all .15s">' +
           '<span style="width:6px;height:6px;border-radius:50%;background:var(--accent2);flex-shrink:0"></span>' +
           '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">' + esc(n.ns) + '</span>' +
-          (n.workloads > 0 ? '<span style="font-size:9px;color:var(--text2);background:var(--card);padding:1px 5px;border-radius:8px">' + n.workloads + '</span>' : '') +
+          acwBreakdownBadges(n.breakdown) +
         '</div>';
       }).join('');
     }
@@ -5830,7 +5843,9 @@ async function loadAppChangesWidget() {
     if (banner) {
       if (d.watchedNamespaces.length === 0 && d.discoveredNamespaces && d.discoveredNamespaces.length > 0) {
         banner.style.display = 'block';
-        document.getElementById('acw-disco-text').textContent = d.discoveredNamespaces.length + ' app namespace(s) found with ' + d.discoveredNamespaces.reduce(function(s, n) { return s + n.workloads; }, 0) + ' workloads';
+        var nsWithWorkloads = d.discoveredNamespaces.filter(function(n) { return n.workloads > 0; }).length;
+        var totalWorkloads = d.discoveredNamespaces.reduce(function(s, n) { return s + n.workloads; }, 0);
+        document.getElementById('acw-disco-text').textContent = d.discoveredNamespaces.length + ' namespace(s) discovered (' + nsWithWorkloads + ' with workloads, ' + totalWorkloads + ' total resources)';
       } else {
         banner.style.display = 'none';
       }

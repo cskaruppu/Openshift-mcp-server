@@ -12,7 +12,14 @@ const _gitopsDriftCache = new Map();
 const _changeTimeline = [];
 const MAX_TIMELINE = 1000;
 
-const SYSTEM_NS_PREFIXES = ["openshift-", "kube-", "default", "openshift"];
+const SYSTEM_NS_PREFIXES = ["openshift-", "openshift", "kube-", "kube", "default"];
+const SYSTEM_NS_EXACT = new Set([
+  "default", "openshift", "kube-system", "kube-public", "kube-node-lease",
+  "openshift-infra", "openshift-node", "openshift-config",
+  "istio-system", "knative-serving", "knative-eventing",
+  "cert-manager", "ingress-nginx", "metallb-system",
+  "local-path-storage", "cattle-system", "fleet-system",
+]);
 const ARGO_API = "apis/argoproj.io/v1alpha1";
 const GITOPS_NS = process.env.ARGOCD_NAMESPACE || "openshift-gitops";
 
@@ -109,24 +116,40 @@ export async function discoverAppNamespaces() {
     const data = await ocpGet("/api/v1/namespaces");
     const namespaces = (data.items || [])
       .map(ns => ns.metadata.name)
-      .filter(name => !SYSTEM_NS_PREFIXES.some(prefix =>
-        prefix === name || name.startsWith(prefix + (prefix.endsWith("-") ? "" : "-"))
-      ));
+      .filter(name =>
+        !SYSTEM_NS_EXACT.has(name) &&
+        !SYSTEM_NS_PREFIXES.some(prefix => name.startsWith(prefix))
+      );
 
-    const appNamespaces = [];
-    const checks = await Promise.allSettled(
-      namespaces.slice(0, 50).map(async ns => {
-        const deps = await ocpGet(`/apis/apps/v1/namespaces/${ns}/deployments`);
-        const count = (deps.items || []).length;
-        return { ns, count };
-      })
-    );
-    for (const c of checks) {
-      if (c.status === "fulfilled" && c.value.count > 0) {
-        appNamespaces.push(c.value);
+    const BATCH_SIZE = 20;
+    const allResults = [];
+    for (let i = 0; i < namespaces.length; i += BATCH_SIZE) {
+      const batch = namespaces.slice(i, i + BATCH_SIZE);
+      const checks = await Promise.allSettled(
+        batch.map(async ns => {
+          const [deps, sts, ds, rs, pods] = await Promise.allSettled([
+            ocpGet(`/apis/apps/v1/namespaces/${ns}/deployments`),
+            ocpGet(`/apis/apps/v1/namespaces/${ns}/statefulsets`),
+            ocpGet(`/apis/apps/v1/namespaces/${ns}/daemonsets`),
+            ocpGet(`/apis/apps/v1/namespaces/${ns}/replicasets`),
+            ocpGet(`/api/v1/namespaces/${ns}/pods`),
+          ]);
+          const depCount = deps.status === "fulfilled" ? (deps.value.items || []).length : 0;
+          const stsCount = sts.status === "fulfilled" ? (sts.value.items || []).length : 0;
+          const dsCount = ds.status === "fulfilled" ? (ds.value.items || []).length : 0;
+          const rsCount = rs.status === "fulfilled" ? (rs.value.items || []).length : 0;
+          const podCount = pods.status === "fulfilled" ? (pods.value.items || []).length : 0;
+          const count = depCount + stsCount + dsCount + rsCount + podCount;
+          return { ns, count, breakdown: { deployments: depCount, statefulsets: stsCount, daemonsets: dsCount, replicasets: rsCount, pods: podCount } };
+        })
+      );
+      for (const c of checks) {
+        if (c.status === "fulfilled") {
+          allResults.push(c.value);
+        }
       }
     }
-    return appNamespaces.sort((a, b) => b.count - a.count);
+    return allResults.sort((a, b) => b.count - a.count);
   } catch (e) {
     console.warn("[app-watcher] Auto-discovery error:", e.message);
     return [];

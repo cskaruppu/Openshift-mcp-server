@@ -2853,7 +2853,7 @@ async function startSSE() {
           trackedWorkloads: baselines,
           newChanges: changes.length,
           totalChanges, critical, warning, info,
-          discoveredNamespaces: discoveredNamespaces ? discoveredNamespaces.map(d => ({ namespace: d.ns, workloads: d.count })) : null,
+          discoveredNamespaces: discoveredNamespaces ? discoveredNamespaces.map(d => ({ namespace: d.ns, workloads: d.count, breakdown: d.breakdown || {} })) : null,
           changeTypeBreakdown,
           timelineStats,
           gitopsDrift,
