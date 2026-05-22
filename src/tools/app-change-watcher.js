@@ -1,9 +1,32 @@
 import { z } from "zod";
 import { ocpGet, ocpPatch } from "../utils/openshift-client.js";
+import { readFileSync, writeFileSync, mkdirSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 
-const _watchedNamespaces = new Set(
-  (process.env.WATCHED_APP_NAMESPACES || "").split(",").map(s => s.trim()).filter(Boolean)
-);
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PERSIST_DIR = join(__dirname, "..", "..", "data");
+const PERSIST_FILE = join(PERSIST_DIR, "tracked-namespaces.json");
+
+function loadPersistedNamespaces() {
+  try {
+    const data = JSON.parse(readFileSync(PERSIST_FILE, "utf8"));
+    return Array.isArray(data) ? data : [];
+  } catch { return []; }
+}
+
+function persistNamespaces() {
+  try {
+    mkdirSync(PERSIST_DIR, { recursive: true });
+    writeFileSync(PERSIST_FILE, JSON.stringify([..._watchedNamespaces], null, 2));
+  } catch (e) {
+    console.warn("[app-watcher] Failed to persist namespaces:", e.message);
+  }
+}
+
+const _envNamespaces = (process.env.WATCHED_APP_NAMESPACES || "").split(",").map(s => s.trim()).filter(Boolean);
+const _persistedNamespaces = loadPersistedNamespaces();
+const _watchedNamespaces = new Set([..._envNamespaces, ..._persistedNamespaces]);
 const _baselines = new Map();
 const _changeLog = [];
 const MAX_CHANGES = 500;
@@ -31,6 +54,7 @@ export function getGitOpsDrift() { return Object.fromEntries(_gitopsDriftCache);
 
 export function addNamespaces(nsList) {
   for (const ns of nsList) _watchedNamespaces.add(ns);
+  persistNamespaces();
 }
 export function removeNamespaces(nsList) {
   for (const ns of nsList) {
@@ -39,6 +63,7 @@ export function removeNamespaces(nsList) {
       if (key.startsWith(ns + "/")) _baselines.delete(key);
     }
   }
+  persistNamespaces();
 }
 export async function initNamespaceBaselines(nsList) {
   for (const ns of nsList) {

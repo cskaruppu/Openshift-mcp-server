@@ -5569,7 +5569,8 @@ async function acwWatchAll() {
   var btn = document.getElementById('acw-disco-btn');
   if (btn) { btn.textContent = 'Discovering...'; btn.disabled = true; }
   try {
-    await apiFetch('/api/dashboard/app-changes/discover', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    var dUrl = clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/dashboard/app-changes/discover');
+    await fetch(dUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     await loadAppChangesWidget();
   } catch (e) {
     if (btn) btn.textContent = 'Retry';
@@ -5825,11 +5826,15 @@ function acwDrop(ev, targetSide) {
 async function acwDoTransfer(nsList, action) {
   if (!nsList || nsList.length === 0) return;
   try {
-    await apiFetch('/api/dashboard/app-changes/namespaces', {
+    var fetchUrl = clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/dashboard/app-changes/namespaces');
+    var resp = await fetch(fetchUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: action, namespaces: nsList })
     });
+    if (!resp.ok) throw new Error(resp.status + ' ' + resp.statusText);
+    var result = await resp.json();
+    if (result.error) throw new Error(result.error);
     if (action === 'add') {
       for (var i = 0; i < nsList.length; i++) {
         if (_acwWatchedNs.indexOf(nsList[i]) < 0) _acwWatchedNs.push(nsList[i]);
@@ -5910,11 +5915,13 @@ async function acwChangeAction(changeId, action) {
   var btnEl = document.getElementById('acw-btn-' + changeId.replace(/[^a-z0-9]/g, ''));
   if (btnEl) btnEl.style.opacity = '0.5';
   try {
-    var result = await apiFetch('/api/dashboard/app-changes/action', {
+    var actUrl = clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/dashboard/app-changes/action');
+    var actResp = await fetch(actUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ changeId: changeId, action: action })
     });
+    var result = await actResp.json();
     var rowEl = document.getElementById('acw-row-' + changeId.replace(/[^a-z0-9]/g, ''));
     if (rowEl) {
       if (action === 'dismiss') {

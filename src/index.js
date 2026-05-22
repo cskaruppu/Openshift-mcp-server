@@ -2894,14 +2894,26 @@ async function startSSE() {
         const nsList = body.namespaces || [];
         if (action === "add" && nsList.length > 0) {
           addNamespaces(nsList);
-          await initNamespaceBaselines(nsList);
+          sendJson(res, 200, {
+            watchedNamespaces: getWatchedNamespaces(),
+            trackedWorkloads: Object.keys(getBaselines()).length,
+            baselineStatus: "initializing",
+          });
+          initNamespaceBaselines(nsList).catch(e =>
+            console.warn("[app-watcher] Background baseline init error:", e.message)
+          );
         } else if (action === "remove" && nsList.length > 0) {
           removeNamespaces(nsList);
+          sendJson(res, 200, {
+            watchedNamespaces: getWatchedNamespaces(),
+            trackedWorkloads: Object.keys(getBaselines()).length,
+          });
+        } else {
+          sendJson(res, 200, {
+            watchedNamespaces: getWatchedNamespaces(),
+            trackedWorkloads: Object.keys(getBaselines()).length,
+          });
         }
-        sendJson(res, 200, {
-          watchedNamespaces: getWatchedNamespaces(),
-          trackedWorkloads: Object.keys(getBaselines()).length,
-        });
       } catch (err) {
         sendJson(res, 200, { error: err.message });
       }
