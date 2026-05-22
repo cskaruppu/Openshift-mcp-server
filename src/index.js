@@ -52,6 +52,8 @@ import { registerUpgradeAdvisorTools } from "./tools/upgrade-advisor.js";
 import { registerBenchmarkTools } from "./tools/benchmarks.js";
 import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
+import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines } from "./tools/app-change-watcher.js";
+import { registerImageVulnScannerTools, runImageScan, getScanResults, getScanHistory } from "./tools/image-vulnerability-scanner.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode } from "./services/auth.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, trackSubmittedCR } from "./services/chat-api.js";
@@ -250,6 +252,8 @@ function createMcpServer() {
     ["registerBenchmarkTools",      registerBenchmarkTools],
     ["registerProvisioningTools",   registerProvisioningTools],
     ["registerPreflightTools",      registerPreflightTools],
+    ["registerAppChangeWatcherTools", registerAppChangeWatcherTools],
+    ["registerImageVulnScannerTools", registerImageVulnScannerTools],
   ];
 
   let registered = 0;
@@ -2785,6 +2789,70 @@ async function startSSE() {
           await syncCRFromServiceNow(crTicketId);
         }
       } catch (e) {}
+      return;
+    }
+
+    // ── App Change Watcher API ─────────────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/dashboard/app-changes") {
+      try {
+        const ns = url.searchParams.get("namespace") || undefined;
+        const changes = await scanForChanges();
+        const log = getChangeLog();
+        const namespaces = getWatchedNamespaces();
+        const filtered = ns ? log.filter(e => e.namespace === ns) : log;
+        const totalChanges = filtered.length;
+        const critical = filtered.filter(e => e.severity === "critical").length;
+        const warning = filtered.filter(e => e.severity === "warning").length;
+        const info = filtered.filter(e => e.severity === "info").length;
+        const baselines = Object.keys(getBaselines()).length;
+        sendJson(res, 200, {
+          watchedNamespaces: namespaces,
+          trackedWorkloads: baselines,
+          newChanges: changes.length,
+          totalChanges, critical, warning, info,
+          recentChanges: filtered.slice(0, 20).map(e => ({
+            id: e.id, namespace: e.namespace, kind: e.kind, name: e.name,
+            severity: e.severity, timestamp: e.timestamp, acknowledged: e.acknowledged,
+            changes: e.changes.map(c => ({ field: c.field, old: c.old, new: c.new, severity: c.severity })),
+          })),
+        });
+      } catch (err) {
+        sendJson(res, 200, { watchedNamespaces: [], trackedWorkloads: 0, newChanges: 0, totalChanges: 0, critical: 0, warning: 0, info: 0, recentChanges: [], error: err.message });
+      }
+      return;
+    }
+
+    // ── Image Vulnerability Scanner API ──────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/dashboard/image-vulns") {
+      try {
+        const ns = url.searchParams.get("namespace") || undefined;
+        const scan = await runImageScan(ns);
+        const riskScore = Math.max(0, 100 - scan.critical * 15 - scan.high * 8 - scan.medium * 3 - scan.low * 1);
+        const grade = riskScore >= 90 ? "A" : riskScore >= 80 ? "B" : riskScore >= 70 ? "C" : riskScore >= 60 ? "D" : "F";
+        sendJson(res, 200, {
+          scannerType: scan.scannerType,
+          timestamp: scan.timestamp,
+          scope: scan.namespace,
+          totalImages: scan.totalImages,
+          totalVulns: scan.totalVulns,
+          critical: scan.critical,
+          high: scan.high,
+          medium: scan.medium,
+          low: scan.low,
+          fixable: scan.fixable,
+          riskScore, grade,
+          topImages: scan.results.slice(0, 10).map(r => ({
+            image: r.image.length > 60 ? "..." + r.image.slice(-57) : r.image,
+            namespace: r.namespace,
+            critical: r.critical, high: r.high, medium: r.medium, low: r.low,
+            fixable: r.fixable, total: r.totalVulns,
+            topVulns: (r.vulnerabilities || []).slice(0, 3).map(v => ({ id: v.id, severity: v.severity, package: v.package, fix: v.fixedBy })),
+          })),
+          history: getScanHistory().slice(0, 5),
+        });
+      } catch (err) {
+        sendJson(res, 200, { scannerType: "unknown", totalImages: 0, totalVulns: 0, critical: 0, high: 0, medium: 0, low: 0, fixable: 0, riskScore: 0, grade: "?", topImages: [], history: [], error: err.message });
+      }
       return;
     }
 
