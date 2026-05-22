@@ -547,12 +547,7 @@ function parseQuotaValue(v) {
 async function runAppChangeScan() {
   try {
     let namespaces = getWatchedNamespaces();
-    if (namespaces.length === 0) {
-      try {
-        await autoDiscoverAndWatch();
-        namespaces = getWatchedNamespaces();
-      } catch {}
-    }
+    if (namespaces.length === 0) return;
     if (namespaces.length === 0) return;
     const changes = await scanForChanges();
     if (changes.length === 0) return;
