@@ -13082,6 +13082,46 @@ export async function handleChatAPI(req, res) {
       return json(res, 200, { ...payload, cached: false, conversationId });
     }
 
+    // ---- Specific pod early check: if user asks about a named pod, verify
+    // it exists BEFORE entering the expensive LLM path. If the pod is not
+    // found, return a clear built-in response immediately. This prevents
+    // generic "Cluster Troubleshooting Report" fallbacks from the LLM. ----
+    const podNameFromParse = parsed?.name && parsed?.resource === "pod" ? parsed.name : null;
+    const podNameFromRegex = !podNameFromParse ? (userMessage.match(/\b([a-z][-a-z0-9]*(?:-[a-z0-9]{4,10}){1,2})\b/i) || [])[1] : null;
+    const earlyPodName = podNameFromParse || podNameFromRegex;
+    if (earlyPodName && /\b(why|diagnos|troubleshoot|restart|crash|fail|error|wrong|issue|problem|check|analyse|analyze|investig)/i.test(userMessage.toLowerCase())) {
+      try {
+        const podLookup = await ocpGet(`/api/v1/pods?fieldSelector=metadata.name=${earlyPodName}`);
+        const foundPod = (podLookup.items || [])[0];
+        if (!foundPod) {
+          const lines = [];
+          lines.push(`### Pod Not Found: \`${earlyPodName}\``);
+          lines.push(`[WARNING] Could not find pod **${earlyPodName}** in the cluster.`);
+          lines.push(`The pod may have been deleted, evicted, or the name may be incorrect.`);
+          lines.push(``);
+          lines.push(`#### Suggestions`);
+          lines.push(`  - Check if the pod still exists: \`oc get pod ${earlyPodName} --all-namespaces\``);
+          lines.push(`  - List pods in the expected namespace: \`oc get pods -n <namespace>\``);
+          lines.push(`  - Check recent events: \`oc get events --all-namespaces --sort-by=.lastTimestamp | grep ${earlyPodName}\``);
+          const earlyReply = lines.join("\n");
+          const provider = activeProvider || "built-in";
+          if (conversationId) histAddMessage(conversationId, { role: "assistant", content: earlyReply, provider }).catch(() => {});
+          if (wantsStream) {
+            sseStart(res);
+            sseSend(res, { stage: "querying" });
+            sseSend(res, { stage: "generating" });
+            sseSend(res, { delta: earlyReply });
+            sseSend(res, { done: true, provider, conversationId });
+            sseEnd(res);
+            return;
+          }
+          return json(res, 200, { reply: earlyReply, provider, contextKeys: ["specific_pod", "not_found"], cached: false, conversationId });
+        }
+      } catch {
+        // Pod lookup failed (API error, permissions) — fall through to normal LLM path
+      }
+    }
+
     // ---- Streaming SSE path ----
     if (wantsStream && llmEnabled(llmOpts)) {
       sseStart(res);
