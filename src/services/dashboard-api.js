@@ -119,7 +119,26 @@ export async function handleLLMSettingsPost(req, res) {
   try {
     const body = await readJsonBody(req);
 
+    // Load existing settings so we can preserve API keys not resent by the UI
+    let existing = null;
+    try { existing = await loadSettingsFromDB(); } catch {}
+    if (!existing) {
+      try {
+        const raw = await readFile(LLM_SETTINGS_PATH, "utf8");
+        existing = JSON.parse(raw);
+      } catch {}
+    }
+    const existingProviders = existing?.providers || {};
+
     const providers = body.providers || {};
+    // Merge: if the UI sends an empty apiKey but the provider was previously configured,
+    // preserve the existing key so URL-only updates don't break validation.
+    for (const [name, cfg] of Object.entries(providers)) {
+      if (!cfg.apiKey && existingProviders[name]?.apiKey) {
+        cfg.apiKey = existingProviders[name].apiKey;
+      }
+    }
+
     const errors = [];
     for (const [name, cfg] of Object.entries(providers)) {
       if (cfg.enabled && PROVIDERS_REQUIRING_KEY.has(name) && !cfg.apiKey) {

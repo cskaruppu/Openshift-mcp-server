@@ -7701,7 +7701,7 @@ function _hasRealProviders(s) {
 }
 
 function _cacheLLMSettings(settings) {
-  if (!_hasRealProviders(settings)) return false;
+  if (!settings || !settings.providers) return false;
   _llmSettingsCache = settings;
   try { localStorage.setItem('mcp-llm-settings', JSON.stringify(settings)); } catch(e) {}
   return true;
@@ -7713,13 +7713,15 @@ try {
   if (_hasRealProviders(_bootSettings)) _llmSettingsCache = _bootSettings;
 } catch(e) {}
 
-// Then async-fetch from backend, which is authoritative
+// Then async-fetch from backend, which is authoritative — always overwrite localStorage
 (async function syncSettingsFromBackend() {
   try {
     var resp = await (await fetch((typeof MCP_API !== 'undefined' ? MCP_API.replace(/\/api$/, '') : '') + '/api/settings/llm')).json();
-    if (_cacheLLMSettings(resp)) {
+    if (resp && resp.providers) {
+      _cacheLLMSettings(resp);
       if (typeof loadEnabledProviders === 'function') loadEnabledProviders();
       if (typeof hubHighlightActiveLLM === 'function') hubHighlightActiveLLM();
+      if (typeof updateProviderStatus === 'function') updateProviderStatus();
     }
   } catch(e) {}
 })();
@@ -9135,23 +9137,11 @@ function hasAnyProviderConfigured(settings) {
 async function loadSettings() {
   try {
     var resp = await apiFetch('/api/settings/llm');
-    if (hasAnyProviderConfigured(resp)) {
-      // Backend has real settings — use them as authoritative
-      _cacheLLMSettings(resp);
-      applySettingsToUI(resp);
-    } else if (_llmSettingsCache && hasAnyProviderConfigured(_llmSettingsCache)) {
-      // Backend returned defaults but we have cached settings — use cache and push to backend
-      applySettingsToUI(_llmSettingsCache);
-      fetch(MCP_API.replace(/\/api$/, '') + '/api/settings/llm', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(_llmSettingsCache),
-      }).catch(function() {});
-    } else {
-      // No settings anywhere — show defaults (but don't cache them)
-      applySettingsToUI(resp);
-    }
+    // Backend is always authoritative — never push stale localStorage back
+    _cacheLLMSettings(resp);
+    applySettingsToUI(resp);
   } catch (e) {
-    // Network error — use in-memory cache
+    // Network error — fall back to in-memory cache
     if (_llmSettingsCache) {
       applySettingsToUI(_llmSettingsCache);
     }
@@ -9173,10 +9163,13 @@ async function saveSettings() {
       },
       fallbackChain: ['anthropic', 'openai', 'ollama', 'none'],
     };
+    var existingProviders = (_llmSettingsCache && _llmSettingsCache.providers) ? _llmSettingsCache.providers : {};
     ['openai', 'anthropic', 'azure', 'google', 'bedrock', 'ollama'].forEach(function(p) {
+      var formKey = document.getElementById('pc-' + p + '-apikey')?.value || '';
+      var existingKey = (existingProviders[p] && existingProviders[p].apiKey) ? existingProviders[p].apiKey : '';
       settings.providers[p] = {
         enabled: document.getElementById('pc-' + p + '-enabled')?.checked || false,
-        apiKey: document.getElementById('pc-' + p + '-apikey')?.value || '',
+        apiKey: formKey || existingKey,
         apiUrl: document.getElementById('pc-' + p + '-apiurl')?.value || '',
         model: document.getElementById('pc-' + p + '-model')?.value || '',
       };
@@ -11550,7 +11543,7 @@ function updateClusterCtxWidget() {
 function updateProviderStatus() {
   const el = document.getElementById('so-provider-status');
   try {
-    const settings = JSON.parse(localStorage.getItem('mcp-llm-settings'));
+    const settings = _llmSettingsCache || JSON.parse(localStorage.getItem('mcp-llm-settings'));
     if (!settings || !settings.providers) {
       el.innerHTML = '<div style="color:var(--text2)">No LLM providers configured. <a href="#" onclick="showView(\'settings\');toggleSettingsPanel();return false" style="color:var(--accent2)">Configure now</a></div>';
       return;
