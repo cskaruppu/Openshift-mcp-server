@@ -20,14 +20,24 @@ import { callLLM, llmEnabled } from "./llm.js";
 import { query as dbQuery } from "../utils/db.js";
 import { recordIncident as leRecordIncident, signatureForInsight } from "./learning-engine.js";
 import { cacheGet, cacheSet } from "../utils/cache.js";
+import { scanForChanges, getWatchedNamespaces } from "../tools/app-change-watcher.js";
+import { runImageScan } from "../tools/image-vulnerability-scanner.js";
 
 const SCAN_INTERVAL_MS = parseInt(process.env.PROACTIVE_SCAN_INTERVAL || "60000", 10);
+const APP_CHANGE_INTERVAL_MS = parseInt(process.env.APP_CHANGE_SCAN_INTERVAL || "300000", 10);   // 5 min
+const IMAGE_VULN_INTERVAL_MS = parseInt(process.env.IMAGE_VULN_SCAN_INTERVAL || "1800000", 10);  // 30 min
+const APP_CHANGE_COOLDOWN_MS = 30 * 60 * 1000; // 30 min dedup window
+const IMAGE_VULN_COOLDOWN_MS = 60 * 60 * 1000; // 60 min dedup window
 const MAX_INSIGHTS_KEPT = 50;
 
 let _running = false;
 let _timer = null;
+let _appChangeTimer = null;
+let _imageVulnTimer = null;
 const _insights = [];
 const _baseline = { podRestarts: {}, nodeConditions: {}, lastScan: 0 };
+const _appChangeCooldown = new Map();
+const _imageVulnCooldown = new Map();
 
 const SEVERITY_WEIGHTS = {
   OOMKilled: 90,
@@ -49,20 +59,42 @@ const SEVERITY_WEIGHTS = {
   EndpointNotReady: 60,
   QuotaExhausted: 72,
   EventStorm: 70,
+  AppImageChanged: 82,
+  AppConfigChanged: 68,
+  AppReplicaChanged: 55,
+  AppContainerAdded: 80,
+  ImageVulnCritical: 92,
+  ImageVulnHigh: 75,
+  ImageVulnMedium: 55,
 };
 
 export function startProactiveMonitor() {
   if (_running) return;
   _running = true;
   console.error("[proactive] AI monitor started — scanning every " + (SCAN_INTERVAL_MS / 1000) + "s");
+  console.error("[proactive] App change watcher — every " + (APP_CHANGE_INTERVAL_MS / 1000) + "s");
+  console.error("[proactive] Image vuln scanner — every " + (IMAGE_VULN_INTERVAL_MS / 1000) + "s");
   runScan();
   _timer = setInterval(runScan, SCAN_INTERVAL_MS);
+  // Staggered start: app changes after 30s, image vulns after 60s
+  setTimeout(() => {
+    runAppChangeScan();
+    _appChangeTimer = setInterval(runAppChangeScan, APP_CHANGE_INTERVAL_MS);
+  }, 30000);
+  setTimeout(() => {
+    runImageVulnScan();
+    _imageVulnTimer = setInterval(runImageVulnScan, IMAGE_VULN_INTERVAL_MS);
+  }, 60000);
 }
 
 export function stopProactiveMonitor() {
   _running = false;
   if (_timer) clearInterval(_timer);
+  if (_appChangeTimer) clearInterval(_appChangeTimer);
+  if (_imageVulnTimer) clearInterval(_imageVulnTimer);
   _timer = null;
+  _appChangeTimer = null;
+  _imageVulnTimer = null;
 }
 
 export function getInsights() {
@@ -507,6 +539,103 @@ function parseQuotaValue(v) {
   if (s.endsWith("Mi")) return parseInt(s) * 1024 * 1024;
   if (s.endsWith("Gi")) return parseInt(s) * 1024 * 1024 * 1024;
   return parseFloat(s) || 0;
+}
+
+// ---------------------------------------------------------------------------
+// Staggered scanner: Application Change Watcher (every 5 min)
+// ---------------------------------------------------------------------------
+async function runAppChangeScan() {
+  try {
+    const namespaces = getWatchedNamespaces();
+    if (namespaces.length === 0) return;
+    const changes = await scanForChanges();
+    if (changes.length === 0) return;
+
+    const now = Date.now();
+    for (const c of changes) {
+      const dedupKey = `${c.namespace}/${c.kind}/${c.name}`;
+      const lastReported = _appChangeCooldown.get(dedupKey) || 0;
+      if (now - lastReported < APP_CHANGE_COOLDOWN_MS) continue;
+      _appChangeCooldown.set(dedupKey, now);
+
+      const hasImageChange = c.changes.some(d => d.field.includes("/image"));
+      const hasContainerChange = c.changes.some(d => d.field.match(/^container\/[^/]+$/) && (d.new === "added" || d.new === "(removed)"));
+      const hasReplicaChange = c.changes.some(d => d.field === "replicas");
+
+      let type = "AppConfigChanged";
+      let severity = SEVERITY_WEIGHTS.AppConfigChanged;
+      if (hasContainerChange) { type = "AppContainerAdded"; severity = SEVERITY_WEIGHTS.AppContainerAdded; }
+      else if (hasImageChange) { type = "AppImageChanged"; severity = SEVERITY_WEIGHTS.AppImageChanged; }
+      else if (hasReplicaChange) { type = "AppReplicaChanged"; severity = SEVERITY_WEIGHTS.AppReplicaChanged; }
+
+      const changedFields = c.changes.map(d => d.field).join(", ");
+      addInsight({
+        type,
+        resource: `${c.kind}/${c.name}`,
+        namespace: c.namespace,
+        severity,
+        title: `${c.kind} '${c.name}' changed in ${c.namespace}`,
+        detail: `Fields: ${changedFields}. ${c.changes.length} change(s) detected.` +
+          (hasImageChange ? " Image update detected — verify rollout health." : ""),
+        recommendation: hasImageChange
+          ? `Monitor rollout: oc rollout status ${c.kind.toLowerCase()}/${c.name} -n ${c.namespace}. Use app_change_rollback to revert if needed.`
+          : `Review changes: oc describe ${c.kind.toLowerCase()}/${c.name} -n ${c.namespace}`,
+        changeId: c.id,
+      });
+    }
+
+    // Prune cooldown entries older than 2x the cooldown window
+    for (const [k, t] of _appChangeCooldown) {
+      if (now - t > APP_CHANGE_COOLDOWN_MS * 2) _appChangeCooldown.delete(k);
+    }
+  } catch (err) {
+    console.error("[proactive] app-change scan error:", err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Staggered scanner: Image Vulnerability Scanner (every 30 min)
+// ---------------------------------------------------------------------------
+async function runImageVulnScan() {
+  try {
+    const scan = await runImageScan();
+    if (!scan || scan.totalVulns === 0) return;
+
+    const now = Date.now();
+    for (const img of scan.results) {
+      if (img.critical === 0 && img.high === 0) continue;
+
+      const dedupKey = `img:${img.image}`;
+      const lastReported = _imageVulnCooldown.get(dedupKey) || 0;
+      if (now - lastReported < IMAGE_VULN_COOLDOWN_MS) continue;
+      _imageVulnCooldown.set(dedupKey, now);
+
+      const type = img.critical > 0 ? "ImageVulnCritical" : "ImageVulnHigh";
+      const severity = img.critical > 0 ? SEVERITY_WEIGHTS.ImageVulnCritical : SEVERITY_WEIGHTS.ImageVulnHigh;
+      const shortImg = img.image.length > 60 ? "..." + img.image.slice(-57) : img.image;
+      const topVulns = (img.vulnerabilities || []).slice(0, 3).map(v => v.id).join(", ");
+
+      addInsight({
+        type,
+        resource: `image/${shortImg}`,
+        namespace: img.namespace || "cluster",
+        severity,
+        title: `Vulnerable image: ${shortImg}`,
+        detail: `${img.critical}C/${img.high}H/${img.medium}M/${img.low}L findings. ` +
+          `${img.fixable} fixable. Top: ${topVulns || "N/A"}`,
+        recommendation: img.fixable > 0
+          ? `Update image to patched version. ${img.fixable} fix(es) available. Run image_vuln_report for details.`
+          : "No fixes available yet — monitor vendor advisories and consider alternative images.",
+      });
+    }
+
+    // Prune old cooldown entries
+    for (const [k, t] of _imageVulnCooldown) {
+      if (now - t > IMAGE_VULN_COOLDOWN_MS * 2) _imageVulnCooldown.delete(k);
+    }
+  } catch (err) {
+    console.error("[proactive] image-vuln scan error:", err.message);
+  }
 }
 
 function correlateInsights() {
