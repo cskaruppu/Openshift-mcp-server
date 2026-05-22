@@ -2331,15 +2331,25 @@ tr:hover td{background:#ffffff06}
     </div>
   </div>
 
-  <!-- Command Center: Row 2 — App Change Watcher + Image Vulnerability Scanner -->
+  <!-- Command Center: Row 2 — App Change Watcher + Image Vulnerability Scanner (Enhanced) -->
   <div class="grid grid-2" style="margin-bottom:8px">
 
-    <!-- Application Change Watcher -->
+    <!-- Application Change Watcher — Enhanced -->
     <div class="card" id="widget-app-changes" style="display:flex;flex-direction:column">
       <h3 style="display:flex;align-items:center;gap:8px">&#x1F50D; Application Change Watcher
         <span class="badge badge-info" id="acw-ns-badge" style="margin-left:auto">0 namespaces</span>
       </h3>
-      <div style="display:flex;align-items:center;gap:16px;margin:12px 0">
+      <!-- Auto-discovery banner (hidden when namespaces are configured) -->
+      <div id="acw-discovery-banner" style="display:none;background:linear-gradient(135deg,color-mix(in srgb,var(--accent2) 12%,var(--bg)),color-mix(in srgb,var(--accent3) 8%,var(--bg)));border:1px solid color-mix(in srgb,var(--accent2) 30%,transparent);border-radius:8px;padding:10px 14px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--accent2)">&#x2728; Auto-Discovery Available</div>
+            <div style="font-size:11px;color:var(--text2);margin-top:2px" id="acw-disco-text">Scanning for app namespaces...</div>
+          </div>
+          <button class="icon-btn" style="font-size:11px;white-space:nowrap;padding:6px 12px;background:var(--accent2);color:#fff;border:none;border-radius:6px;cursor:pointer" id="acw-disco-btn" onclick="acwWatchAll()">Watch All</button>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:16px;margin:8px 0">
         <div style="position:relative;width:64px;height:64px;flex-shrink:0">
           <svg width="64" height="64" viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" fill="none" stroke="var(--border)" stroke-width="6"/><circle id="acw-ring" cx="32" cy="32" r="27" fill="none" stroke="var(--ok)" stroke-width="6" stroke-linecap="round" stroke-dasharray="169.6" stroke-dashoffset="0" style="transform:rotate(-90deg);transform-origin:center;transition:stroke-dashoffset .8s ease,stroke .3s"/></svg>
           <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800" id="acw-tracked">--</div>
@@ -2353,23 +2363,37 @@ tr:hover td{background:#ffffff06}
           <div style="font-size:10px;color:var(--text2)">Changes</div>
         </div>
       </div>
-      <div style="display:flex;gap:12px;margin-bottom:10px;font-size:12px">
-        <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;background:var(--crit);display:inline-block"></span><span id="acw-crit" style="font-weight:700">0</span> Critical</span>
-        <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;background:var(--warn);display:inline-block"></span><span id="acw-warn" style="font-weight:700">0</span> Warning</span>
-        <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;background:var(--accent2);display:inline-block"></span><span id="acw-info" style="font-weight:700">0</span> Info</span>
+      <!-- Severity + Change Type row -->
+      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <span style="display:flex;align-items:center;gap:4px;font-size:11px"><span style="width:8px;height:8px;border-radius:50%;background:var(--crit);display:inline-block"></span><span id="acw-crit" style="font-weight:700">0</span> Critical</span>
+        <span style="display:flex;align-items:center;gap:4px;font-size:11px"><span style="width:8px;height:8px;border-radius:50%;background:var(--warn);display:inline-block"></span><span id="acw-warn" style="font-weight:700">0</span> Warning</span>
+        <span style="display:flex;align-items:center;gap:4px;font-size:11px"><span style="width:8px;height:8px;border-radius:50%;background:var(--accent2);display:inline-block"></span><span id="acw-info" style="font-weight:700">0</span> Info</span>
+        <span style="margin-left:auto;display:flex;gap:6px;font-size:10px;color:var(--text2)" id="acw-change-types"></span>
       </div>
-      <div id="acw-changes-list" style="display:flex;flex-direction:column;gap:4px;font-size:11px;max-height:150px;overflow-y:auto;flex:1">
+      <!-- Change velocity mini-bar (24h histogram) -->
+      <div id="acw-velocity-bar" style="display:flex;align-items:flex-end;gap:1px;height:28px;margin-bottom:8px;border-radius:4px;overflow:hidden"></div>
+      <!-- Timeline list -->
+      <div id="acw-changes-list" style="display:flex;flex-direction:column;gap:4px;font-size:11px;max-height:140px;overflow-y:auto;flex:1">
         <div style="color:var(--text2);text-align:center;padding:12px">No changes detected</div>
+      </div>
+      <!-- GitOps Drift section -->
+      <div id="acw-gitops-section" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+          <span style="font-size:11px;font-weight:600;color:var(--text2)">GitOps Drift</span>
+          <span id="acw-drift-summary" style="font-size:10px;color:var(--text2);margin-left:auto"></span>
+        </div>
+        <div id="acw-drift-apps" style="display:flex;gap:4px;flex-wrap:wrap"></div>
       </div>
       <div style="margin-top:auto;padding-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="openNewChatWithCommand('/app-changes','Application Changes')">Full Change Report &#x2192;</button></div>
     </div>
 
-    <!-- Image Vulnerability Scanner -->
+    <!-- Image Vulnerability Scanner — Enhanced -->
     <div class="card" id="widget-image-vulns" style="display:flex;flex-direction:column">
       <h3 style="display:flex;align-items:center;gap:8px">&#x1F6E1; Image Vulnerability Scanner
         <span class="badge badge-info" id="ivs-scanner-badge" style="margin-left:auto">--</span>
       </h3>
-      <div style="display:flex;align-items:center;gap:16px;margin:12px 0">
+      <div style="display:flex;align-items:center;gap:16px;margin:8px 0">
         <div style="position:relative;width:64px;height:64px;flex-shrink:0">
           <svg width="64" height="64" viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" fill="none" stroke="var(--border)" stroke-width="6"/><circle id="ivs-ring" cx="32" cy="32" r="27" fill="none" stroke="var(--ok)" stroke-width="6" stroke-linecap="round" stroke-dasharray="169.6" stroke-dashoffset="169.6" style="transform:rotate(-90deg);transform-origin:center;transition:stroke-dashoffset .8s ease,stroke .3s"/></svg>
           <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800" id="ivs-score">--</div>
@@ -2386,29 +2410,68 @@ tr:hover td{background:#ffffff06}
           <div style="font-size:10px;color:var(--text2)">Findings</div>
         </div>
       </div>
-      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
-        <div style="flex:1;min-width:55px;text-align:center;padding:6px;background:color-mix(in srgb,var(--crit) 10%,var(--bg));border-radius:6px;border:1px solid color-mix(in srgb,var(--crit) 25%,transparent)">
-          <div style="font-size:18px;font-weight:800;color:var(--crit)" id="ivs-critical">0</div>
+      <!-- Severity cards row -->
+      <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+        <div style="flex:1;min-width:50px;text-align:center;padding:5px;background:color-mix(in srgb,var(--crit) 10%,var(--bg));border-radius:6px;border:1px solid color-mix(in srgb,var(--crit) 25%,transparent)">
+          <div style="font-size:16px;font-weight:800;color:var(--crit)" id="ivs-critical">0</div>
           <div style="font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.3px">Critical</div>
         </div>
-        <div style="flex:1;min-width:55px;text-align:center;padding:6px;background:color-mix(in srgb,var(--warn) 10%,var(--bg));border-radius:6px;border:1px solid color-mix(in srgb,var(--warn) 25%,transparent)">
-          <div style="font-size:18px;font-weight:800;color:var(--warn)" id="ivs-high">0</div>
+        <div style="flex:1;min-width:50px;text-align:center;padding:5px;background:color-mix(in srgb,var(--warn) 10%,var(--bg));border-radius:6px;border:1px solid color-mix(in srgb,var(--warn) 25%,transparent)">
+          <div style="font-size:16px;font-weight:800;color:var(--warn)" id="ivs-high">0</div>
           <div style="font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.3px">High</div>
         </div>
-        <div style="flex:1;min-width:55px;text-align:center;padding:6px;background:color-mix(in srgb,var(--accent2) 10%,var(--bg));border-radius:6px;border:1px solid color-mix(in srgb,var(--accent2) 25%,transparent)">
-          <div style="font-size:18px;font-weight:800;color:var(--accent2)" id="ivs-medium">0</div>
+        <div style="flex:1;min-width:50px;text-align:center;padding:5px;background:color-mix(in srgb,var(--accent2) 10%,var(--bg));border-radius:6px;border:1px solid color-mix(in srgb,var(--accent2) 25%,transparent)">
+          <div style="font-size:16px;font-weight:800;color:var(--accent2)" id="ivs-medium">0</div>
           <div style="font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.3px">Medium</div>
         </div>
-        <div style="flex:1;min-width:55px;text-align:center;padding:6px;background:color-mix(in srgb,var(--ok) 10%,var(--bg));border-radius:6px;border:1px solid color-mix(in srgb,var(--ok) 25%,transparent)">
-          <div style="font-size:18px;font-weight:800;color:var(--ok)" id="ivs-low">0</div>
+        <div style="flex:1;min-width:50px;text-align:center;padding:5px;background:color-mix(in srgb,var(--ok) 10%,var(--bg));border-radius:6px;border:1px solid color-mix(in srgb,var(--ok) 25%,transparent)">
+          <div style="font-size:16px;font-weight:800;color:var(--ok)" id="ivs-low">0</div>
           <div style="font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.3px">Low</div>
         </div>
       </div>
-      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);margin-bottom:6px">
+      <!-- CVSS + Fixable bar -->
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);margin-bottom:4px">
         <span><span id="ivs-images-count" style="font-weight:600;color:var(--text)">0</span> images scanned</span>
+        <span>Max CVSS: <span id="ivs-max-cvss" style="font-weight:700;color:var(--crit)">0.0</span></span>
         <span><span id="ivs-fixable" style="font-weight:600;color:var(--accent3)">0</span> fixable</span>
       </div>
-      <div id="ivs-top-images" style="display:flex;flex-direction:column;gap:4px;font-size:11px;max-height:120px;overflow-y:auto;flex:1">
+      <!-- Fixable progress bar -->
+      <div style="height:4px;background:var(--border);border-radius:2px;margin-bottom:8px;overflow:hidden">
+        <div id="ivs-fixable-bar" style="height:100%;background:var(--accent3);border-radius:2px;transition:width .6s ease;width:0%"></div>
+      </div>
+      <!-- Compliance badges row -->
+      <div id="ivs-compliance-row" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:4px;padding:3px 8px;background:color-mix(in srgb,var(--accent3) 10%,var(--bg));border-radius:12px;border:1px solid color-mix(in srgb,var(--accent3) 20%,transparent);font-size:10px">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent3)" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <span id="ivs-badge-signed" style="font-weight:600">0</span> signed
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;padding:3px 8px;background:color-mix(in srgb,var(--accent2) 10%,var(--bg));border-radius:12px;border:1px solid color-mix(in srgb,var(--accent2) 20%,transparent);font-size:10px">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span id="ivs-badge-sbom" style="font-weight:600">0</span> SBOM
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;padding:3px 8px;background:color-mix(in srgb,var(--warn) 10%,var(--bg));border-radius:12px;border:1px solid color-mix(in srgb,var(--warn) 20%,transparent);font-size:10px">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span id="ivs-badge-pinned" style="font-weight:600">0</span> pinned
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;padding:3px 8px;background:color-mix(in srgb,var(--ok) 10%,var(--bg));border-radius:12px;border:1px solid color-mix(in srgb,var(--ok) 20%,transparent);font-size:10px">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          <span id="ivs-badge-trusted" style="font-weight:600">0</span> trusted
+        </div>
+      </div>
+      <!-- Image freshness bar -->
+      <div style="margin-bottom:6px">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text2);margin-bottom:3px">
+          <span>Image Freshness</span>
+          <span id="ivs-freshness-label">--</span>
+        </div>
+        <div style="display:flex;height:6px;border-radius:3px;overflow:hidden;background:var(--border)">
+          <div id="ivs-fresh-bar" style="background:var(--ok);transition:width .6s" title="Fresh"></div>
+          <div id="ivs-aging-bar" style="background:var(--warn);transition:width .6s" title="Aging"></div>
+          <div id="ivs-stale-bar" style="background:var(--crit);transition:width .6s" title="Stale"></div>
+        </div>
+      </div>
+      <!-- Top vulnerable images (expandable) -->
+      <div id="ivs-top-images" style="display:flex;flex-direction:column;gap:4px;font-size:11px;max-height:140px;overflow-y:auto;flex:1">
         <div style="color:var(--text2);text-align:center;padding:12px">Scanning...</div>
       </div>
       <div style="margin-top:auto;padding-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="openNewChatWithCommand('/image-vulns','Image Vulnerability Report')">Full Vulnerability Report &#x2192;</button></div>
@@ -5416,6 +5479,34 @@ async function loadDRWidget() {
   }
 }
 
+async function acwWatchAll() {
+  var btn = document.getElementById('acw-disco-btn');
+  if (btn) { btn.textContent = 'Discovering...'; btn.disabled = true; }
+  try {
+    await apiFetch('/api/dashboard/app-changes/discover', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    await loadAppChangesWidget();
+  } catch (e) {
+    if (btn) btn.textContent = 'Retry';
+  }
+  if (btn) btn.disabled = false;
+}
+
+function acwChangeTypeIcon(t) {
+  if (t === 'image-update') return '<span title="Image Update" style="color:var(--crit)">&#x1F4E6;</span>';
+  if (t === 'config-change') return '<span title="Config Change" style="color:var(--warn)">&#x2699;</span>';
+  if (t === 'scale') return '<span title="Scaling" style="color:var(--accent2)">&#x2195;</span>';
+  if (t === 'resource-tune') return '<span title="Resource Tune" style="color:var(--accent3)">&#x1F4CA;</span>';
+  return '<span title="Other" style="color:var(--text2)">&#x1F504;</span>';
+}
+
+function acwRelativeTime(ts) {
+  var diff = (Date.now() - new Date(ts).getTime()) / 1000;
+  if (diff < 60) return Math.floor(diff) + 's ago';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+
 async function loadAppChangesWidget() {
   try {
     var d = await apiFetch('/api/dashboard/app-changes');
@@ -5426,11 +5517,23 @@ async function loadAppChangesWidget() {
     var meta = document.getElementById('acw-meta');
     if (meta) {
       if (d.watchedNamespaces.length === 0) {
-        meta.textContent = 'No namespaces configured. Set WATCHED_APP_NAMESPACES or use app_watch_namespaces tool.';
+        meta.textContent = 'No namespaces configured';
       } else {
-        meta.textContent = d.watchedNamespaces.join(', ');
+        meta.textContent = d.watchedNamespaces.slice(0, 5).join(', ') + (d.watchedNamespaces.length > 5 ? ' +' + (d.watchedNamespaces.length - 5) + ' more' : '');
       }
     }
+
+    // Auto-discovery banner
+    var banner = document.getElementById('acw-discovery-banner');
+    if (banner) {
+      if (d.watchedNamespaces.length === 0 && d.discoveredNamespaces && d.discoveredNamespaces.length > 0) {
+        banner.style.display = 'block';
+        document.getElementById('acw-disco-text').textContent = d.discoveredNamespaces.length + ' app namespace(s) found with ' + d.discoveredNamespaces.reduce(function(s, n) { return s + n.workloads; }, 0) + ' workloads';
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+
     var circ = 2 * Math.PI * 27;
     var ring = document.getElementById('acw-ring');
     if (ring) {
@@ -5445,29 +5548,114 @@ async function loadAppChangesWidget() {
     document.getElementById('acw-crit').textContent = d.critical;
     document.getElementById('acw-warn').textContent = d.warning;
     document.getElementById('acw-info').textContent = d.info;
+
+    // Change type breakdown
+    var typesEl = document.getElementById('acw-change-types');
+    if (typesEl && d.changeTypeBreakdown) {
+      var types = Object.entries(d.changeTypeBreakdown).sort(function(a, b) { return b[1] - a[1]; });
+      typesEl.innerHTML = types.slice(0, 4).map(function(t) {
+        return acwChangeTypeIcon(t[0]) + ' <span style="font-weight:600">' + t[1] + '</span>';
+      }).join(' ');
+    }
+
+    // 24h velocity mini-bar
+    var velBar = document.getElementById('acw-velocity-bar');
+    if (velBar && d.timelineStats && d.timelineStats.hourlyBuckets) {
+      var buckets = d.timelineStats.hourlyBuckets;
+      var maxVal = Math.max(1, Math.max.apply(null, buckets.map(function(b) { return b.total; })));
+      velBar.innerHTML = buckets.map(function(b) {
+        var h = Math.max(2, (b.total / maxVal) * 28);
+        var c = b.critical > 0 ? 'var(--crit)' : b.warning > 0 ? 'var(--warn)' : b.total > 0 ? 'var(--accent2)' : 'var(--border)';
+        return '<div style="flex:1;height:' + h + 'px;background:' + c + ';border-radius:1px;min-width:0" title="' + b.hour + ':00 — ' + b.total + ' change(s)"></div>';
+      }).join('');
+    }
+
+    // Timeline list
     var list = document.getElementById('acw-changes-list');
     if (list) {
       if (d.recentChanges.length === 0) {
         list.innerHTML = '<div style="color:var(--text2);text-align:center;padding:12px">' +
-          (d.watchedNamespaces.length === 0 ? 'Configure namespaces to start watching' : 'No changes detected ✔') + '</div>';
+          (d.watchedNamespaces.length === 0 ? 'Configure namespaces to start watching' : 'No changes detected &#x2714;') + '</div>';
       } else {
         list.innerHTML = d.recentChanges.map(function(c) {
           var sevColor = c.severity === 'critical' ? 'var(--crit)' : c.severity === 'warning' ? 'var(--warn)' : 'var(--accent2)';
           var fields = c.changes.map(function(ch) { return ch.field; }).join(', ');
-          return '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--bg);border-radius:6px;border-left:3px solid ' + sevColor + '">' +
-            '<div style="flex:1;min-width:0">' +
-              '<div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(c.kind) + '/' + esc(c.name) + '</div>' +
-              '<div style="color:var(--text2);font-size:10px">' + esc(c.namespace) + ' • ' + esc(fields) + '</div>' +
+          var detailId = 'acw-detail-' + c.id.replace(/[^a-z0-9]/g, '');
+          return '<div style="padding:5px 8px;background:var(--bg);border-radius:6px;border-left:3px solid ' + sevColor + ';cursor:pointer" onclick="var el=document.getElementById(\'' + detailId + '\');if(el)el.style.display=el.style.display===\'none\'?\'block\':\'none\'">' +
+            '<div style="display:flex;align-items:center;gap:6px">' +
+              acwChangeTypeIcon(c.changeType || 'other') +
+              '<div style="flex:1;min-width:0">' +
+                '<div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px">' + esc(c.kind) + '/' + esc(c.name) + '</div>' +
+                '<div style="color:var(--text2);font-size:10px">' + esc(c.namespace) + ' &#x2022; ' + acwRelativeTime(c.timestamp) + '</div>' +
+              '</div>' +
+              '<span class="badge badge-' + (c.severity === 'critical' ? 'crit' : c.severity === 'warning' ? 'warn' : 'info') + '" style="font-size:9px">' + c.severity.toUpperCase() + '</span>' +
             '</div>' +
-            '<span class="badge badge-' + (c.severity === 'critical' ? 'crit' : c.severity === 'warning' ? 'warn' : 'info') + '">' + c.severity.toUpperCase() + '</span>' +
+            '<div id="' + detailId + '" style="display:none;margin-top:4px;padding:4px 0 0 20px;font-size:10px;color:var(--text2);border-top:1px solid var(--border)">' +
+              c.changes.map(function(ch) {
+                return '<div style="margin:2px 0"><code style="color:var(--accent2)">' + esc(ch.field) + '</code>: <span style="color:var(--crit);text-decoration:line-through">' + esc(String(ch.old)) + '</span> &#x2192; <span style="color:var(--ok)">' + esc(String(ch.new)) + '</span></div>';
+              }).join('') +
+            '</div>' +
           '</div>';
         }).join('');
+      }
+    }
+
+    // GitOps drift section
+    var gitopsSection = document.getElementById('acw-gitops-section');
+    if (gitopsSection) {
+      if (d.gitopsDrift && d.gitopsDrift.argoInstalled) {
+        gitopsSection.style.display = 'block';
+        document.getElementById('acw-drift-summary').textContent = d.gitopsDrift.synced + ' synced / ' + d.gitopsDrift.drifted + ' drifted';
+        var appsEl = document.getElementById('acw-drift-apps');
+        if (appsEl) {
+          appsEl.innerHTML = (d.gitopsDrift.apps || []).map(function(app) {
+            var bg, color, icon;
+            if (app.isDrifted) {
+              bg = app.isHealthy ? 'color-mix(in srgb,var(--warn) 15%,var(--bg))' : 'color-mix(in srgb,var(--crit) 15%,var(--bg))';
+              color = app.isHealthy ? 'var(--warn)' : 'var(--crit)';
+              icon = app.isHealthy ? '&#x26A0;' : '&#x274C;';
+            } else {
+              bg = 'color-mix(in srgb,var(--ok) 12%,var(--bg))';
+              color = 'var(--ok)';
+              icon = '&#x2714;';
+            }
+            var tooltip = app.name + ' → ' + app.targetNamespace + '\nSync: ' + app.syncStatus + ' | Health: ' + app.healthStatus;
+            if (app.outOfSyncCount > 0) tooltip += '\n' + app.outOfSyncCount + ' out-of-sync resource(s)';
+            return '<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;background:' + bg + ';color:' + color + ';border-radius:10px;font-size:10px;font-weight:600;border:1px solid color-mix(in srgb,' + color + ' 30%,transparent);cursor:default" title="' + esc(tooltip) + '">' + icon + ' ' + esc(app.name) + (app.outOfSyncCount > 0 ? ' <span style="opacity:.7">(' + app.outOfSyncCount + ')</span>' : '') + '</span>';
+          }).join('');
+        }
+      } else {
+        gitopsSection.style.display = 'none';
       }
     }
   } catch (e) {
     var m = document.getElementById('acw-meta');
     if (m) m.textContent = 'Error: ' + e.message;
   }
+}
+
+function ivsCvssColor(v) {
+  if (v >= 9) return 'var(--crit)';
+  if (v >= 7) return 'var(--warn)';
+  if (v >= 4) return 'var(--accent2)';
+  return 'var(--ok)';
+}
+
+function ivsBadgeIcons(badges) {
+  var icons = [];
+  if (badges.indexOf('signed') >= 0) icons.push('<span title="Signed" style="color:var(--accent3)">&#x1F6E1;</span>');
+  if (badges.indexOf('sbom') >= 0) icons.push('<span title="SBOM" style="color:var(--accent2)">&#x1F4C4;</span>');
+  if (badges.indexOf('pinned') >= 0) icons.push('<span title="Digest Pinned" style="color:var(--warn)">&#x1F4CC;</span>');
+  if (badges.indexOf('trusted') >= 0) icons.push('<span title="Trusted Registry" style="color:var(--ok)">&#x2714;</span>');
+  return icons.join(' ');
+}
+
+function ivsFreshnessLabel(f) {
+  if (f === 'fresh') return '<span style="color:var(--ok)">Fresh</span>';
+  if (f === 'current') return '<span style="color:var(--ok)">Current</span>';
+  if (f === 'aging') return '<span style="color:var(--warn)">Aging</span>';
+  if (f === 'stale') return '<span style="color:var(--crit)">Stale</span>';
+  return '<span style="color:var(--text2)">--</span>';
 }
 
 async function loadImageVulnsWidget() {
@@ -5486,7 +5674,7 @@ async function loadImageVulnsWidget() {
     var g = document.getElementById('ivs-grade');
     if (g) { g.textContent = d.grade || '?'; g.style.cssText = gradeStyle(d.grade || '?'); }
     var meta = document.getElementById('ivs-meta');
-    if (meta) meta.textContent = d.totalImages + ' images • ' + d.totalVulns + ' findings • ' + d.fixable + ' fixable';
+    if (meta) meta.textContent = d.totalImages + ' images • ' + d.totalVulns + ' findings • CVSS ' + (d.maxCVSS || 0).toFixed(1);
     document.getElementById('ivs-total-vulns').textContent = d.totalVulns;
     document.getElementById('ivs-total-vulns').style.color = d.totalVulns > 0 ? 'var(--crit)' : 'var(--ok)';
     document.getElementById('ivs-critical').textContent = d.critical;
@@ -5495,20 +5683,68 @@ async function loadImageVulnsWidget() {
     document.getElementById('ivs-low').textContent = d.low;
     document.getElementById('ivs-images-count').textContent = d.totalImages;
     document.getElementById('ivs-fixable').textContent = d.fixable;
+    document.getElementById('ivs-max-cvss').textContent = (d.maxCVSS || 0).toFixed(1);
+    document.getElementById('ivs-max-cvss').style.color = ivsCvssColor(d.maxCVSS || 0);
+
+    // Fixable progress bar
+    var fixBar = document.getElementById('ivs-fixable-bar');
+    if (fixBar) fixBar.style.width = (d.totalVulns > 0 ? Math.round(d.fixable / d.totalVulns * 100) : 0) + '%';
+
+    // Compliance badges
+    var comp = d.compliance || {};
+    var el;
+    el = document.getElementById('ivs-badge-signed'); if (el) el.textContent = (comp.signed || 0) + '/' + (comp.total || 0);
+    el = document.getElementById('ivs-badge-sbom'); if (el) el.textContent = (comp.sbom || 0) + '/' + (comp.total || 0);
+    el = document.getElementById('ivs-badge-pinned'); if (el) el.textContent = (comp.pinned || 0) + '/' + (comp.total || 0);
+    el = document.getElementById('ivs-badge-trusted'); if (el) el.textContent = (comp.trusted || 0) + '/' + (comp.total || 0);
+
+    // Image freshness bar
+    var age = d.ageSummary || {};
+    var ageTotal = (age.fresh || 0) + (age.aging || 0) + (age.stale || 0) + (age.current || 0) + (age.unknown || 0);
+    if (ageTotal > 0) {
+      var freshPct = ((age.fresh || 0) + (age.current || 0)) / ageTotal * 100;
+      var agingPct = (age.aging || 0) / ageTotal * 100;
+      var stalePct = (age.stale || 0) / ageTotal * 100;
+      document.getElementById('ivs-fresh-bar').style.width = freshPct + '%';
+      document.getElementById('ivs-aging-bar').style.width = agingPct + '%';
+      document.getElementById('ivs-stale-bar').style.width = stalePct + '%';
+      document.getElementById('ivs-freshness-label').innerHTML = '<span style="color:var(--ok)">' + ((age.fresh || 0) + (age.current || 0)) + ' fresh</span> / <span style="color:var(--warn)">' + (age.aging || 0) + ' aging</span> / <span style="color:var(--crit)">' + (age.stale || 0) + ' stale</span>';
+    }
+
+    // Top images with expandable CVE details
     var topEl = document.getElementById('ivs-top-images');
     if (topEl) {
       if ((d.topImages || []).length === 0) {
-        topEl.innerHTML = '<div style="color:var(--ok);text-align:center;padding:12px;font-weight:600">All images pass security checks ✔</div>';
+        topEl.innerHTML = '<div style="color:var(--ok);text-align:center;padding:12px;font-weight:600">All images pass security checks &#x2714;</div>';
       } else {
-        topEl.innerHTML = d.topImages.map(function(img) {
-          var total = img.critical + img.high + img.medium + img.low;
-          var barWidth = total > 0 ? Math.min(100, (img.critical / Math.max(total, 1)) * 100) : 0;
-          return '<div style="padding:5px 8px;background:var(--bg);border-radius:6px;border-left:3px solid ' +
-            (img.critical > 0 ? 'var(--crit)' : img.high > 0 ? 'var(--warn)' : 'var(--accent2)') + '">' +
-            '<div style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + esc(img.image) + '">' + esc(img.image) + '</div>' +
-            '<div style="display:flex;justify-content:space-between;color:var(--text2);font-size:10px;margin-top:2px">' +
-              '<span>' + esc(img.namespace) + '</span>' +
-              '<span>' + img.critical + 'C/' + img.high + 'H/' + img.medium + 'M/' + img.low + 'L</span>' +
+        topEl.innerHTML = d.topImages.map(function(img, idx) {
+          var sevColor = img.critical > 0 ? 'var(--crit)' : img.high > 0 ? 'var(--warn)' : 'var(--accent2)';
+          var detailId = 'ivs-img-detail-' + idx;
+          var badges = ivsBadgeIcons(img.complianceBadges || []);
+          var freshLabel = img.age ? ivsFreshnessLabel(img.age.freshness) : '';
+          var vulnDetails = (img.topVulns || []).map(function(v) {
+            return '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid var(--border)">' +
+              '<span style="font-weight:700;color:' + ivsCvssColor(v.cvss || 0) + ';min-width:30px;font-size:10px">' + (v.cvss || 0).toFixed(1) + '</span>' +
+              '<span style="font-weight:600;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(v.id) + '</span>' +
+              '<span style="color:var(--text2)">' + esc(v.package || '') + '</span>' +
+              (v.fix ? '<span style="color:var(--accent3);font-size:9px" title="Fix: ' + esc(v.fix) + '">&#x1F527;</span>' : '') +
+            '</div>';
+          }).join('');
+          return '<div style="background:var(--bg);border-radius:6px;border-left:3px solid ' + sevColor + ';overflow:hidden">' +
+            '<div style="padding:5px 8px;cursor:pointer" onclick="var el=document.getElementById(\'' + detailId + '\');if(el)el.style.display=el.style.display===\'none\'?\'block\':\'none\'">' +
+              '<div style="display:flex;align-items:center;gap:4px">' +
+                '<div style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1" title="' + esc(img.fullImage || img.image) + '">' + esc(img.image) + '</div>' +
+                '<span style="font-size:9px">' + badges + '</span>' +
+              '</div>' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;color:var(--text2);font-size:10px;margin-top:2px">' +
+                '<span>' + esc(img.namespace) + '</span>' +
+                '<span>' + freshLabel + '</span>' +
+                '<span style="font-weight:600">' + img.critical + 'C/' + img.high + 'H/' + img.medium + 'M/' + img.low + 'L</span>' +
+                '<span style="color:' + ivsCvssColor(img.maxCVSS || 0) + ';font-weight:700">CVSS ' + (img.maxCVSS || 0).toFixed(1) + '</span>' +
+              '</div>' +
+            '</div>' +
+            '<div id="' + detailId + '" style="display:none;padding:4px 8px 6px;background:color-mix(in srgb,var(--bg) 80%,var(--card));border-top:1px solid var(--border);font-size:10px">' +
+              vulnDetails +
             '</div>' +
           '</div>';
         }).join('');

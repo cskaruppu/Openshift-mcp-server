@@ -20,7 +20,7 @@ import { callLLM, llmEnabled } from "./llm.js";
 import { query as dbQuery } from "../utils/db.js";
 import { recordIncident as leRecordIncident, signatureForInsight } from "./learning-engine.js";
 import { cacheGet, cacheSet } from "../utils/cache.js";
-import { scanForChanges, getWatchedNamespaces } from "../tools/app-change-watcher.js";
+import { scanForChanges, getWatchedNamespaces, autoDiscoverAndWatch } from "../tools/app-change-watcher.js";
 import { runImageScan } from "../tools/image-vulnerability-scanner.js";
 
 const SCAN_INTERVAL_MS = parseInt(process.env.PROACTIVE_SCAN_INTERVAL || "60000", 10);
@@ -546,7 +546,13 @@ function parseQuotaValue(v) {
 // ---------------------------------------------------------------------------
 async function runAppChangeScan() {
   try {
-    const namespaces = getWatchedNamespaces();
+    let namespaces = getWatchedNamespaces();
+    if (namespaces.length === 0) {
+      try {
+        await autoDiscoverAndWatch();
+        namespaces = getWatchedNamespaces();
+      } catch {}
+    }
     if (namespaces.length === 0) return;
     const changes = await scanForChanges();
     if (changes.length === 0) return;

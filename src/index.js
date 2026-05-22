@@ -52,8 +52,8 @@ import { registerUpgradeAdvisorTools } from "./tools/upgrade-advisor.js";
 import { registerBenchmarkTools } from "./tools/benchmarks.js";
 import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
-import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines } from "./tools/app-change-watcher.js";
-import { registerImageVulnScannerTools, runImageScan, getScanResults, getScanHistory } from "./tools/image-vulnerability-scanner.js";
+import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats } from "./tools/app-change-watcher.js";
+import { registerImageVulnScannerTools, runImageScan, getScanResults, getScanHistory, getComplianceCache, getImageAgeCache } from "./tools/image-vulnerability-scanner.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode } from "./services/auth.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, trackSubmittedCR } from "./services/chat-api.js";
@@ -2796,28 +2796,92 @@ async function startSSE() {
     if (req.method === "GET" && url.pathname === "/api/dashboard/app-changes") {
       try {
         const ns = url.searchParams.get("namespace") || undefined;
+        let namespaces = getWatchedNamespaces();
+
+        let discoveredNamespaces = null;
+        if (namespaces.length === 0) {
+          discoveredNamespaces = await discoverAppNamespaces();
+        }
+
         const changes = await scanForChanges();
         const log = getChangeLog();
-        const namespaces = getWatchedNamespaces();
+        namespaces = getWatchedNamespaces();
         const filtered = ns ? log.filter(e => e.namespace === ns) : log;
         const totalChanges = filtered.length;
         const critical = filtered.filter(e => e.severity === "critical").length;
         const warning = filtered.filter(e => e.severity === "warning").length;
         const info = filtered.filter(e => e.severity === "info").length;
         const baselines = Object.keys(getBaselines()).length;
+
+        const timelineStats = getTimelineStats();
+
+        const changeTypeBreakdown = {};
+        for (const e of filtered) {
+          const t = e.changeType || "other";
+          changeTypeBreakdown[t] = (changeTypeBreakdown[t] || 0) + 1;
+        }
+
+        let gitopsDrift = null;
+        try {
+          const driftResults = await scanGitOpsDrift();
+          if (driftResults.length > 0) {
+            const synced = driftResults.filter(d => !d.isDrifted).length;
+            const drifted = driftResults.filter(d => d.isDrifted).length;
+            const unhealthy = driftResults.filter(d => !d.isHealthy).length;
+            gitopsDrift = {
+              argoInstalled: true,
+              totalApps: driftResults.length,
+              synced, drifted, unhealthy,
+              apps: driftResults.slice(0, 20).map(d => ({
+                name: d.appName,
+                targetNamespace: d.targetNamespace,
+                syncStatus: d.syncStatus,
+                healthStatus: d.healthStatus,
+                isDrifted: d.isDrifted,
+                isHealthy: d.isHealthy,
+                driftSeverity: d.driftSeverity,
+                outOfSyncCount: d.outOfSyncResources.length,
+                outOfSyncResources: d.outOfSyncResources.slice(0, 5),
+                lastSynced: d.lastSynced,
+              })),
+            };
+          }
+        } catch {}
+
         sendJson(res, 200, {
           watchedNamespaces: namespaces,
           trackedWorkloads: baselines,
           newChanges: changes.length,
           totalChanges, critical, warning, info,
-          recentChanges: filtered.slice(0, 20).map(e => ({
+          discoveredNamespaces: discoveredNamespaces ? discoveredNamespaces.map(d => ({ namespace: d.ns, workloads: d.count })) : null,
+          changeTypeBreakdown,
+          timelineStats,
+          gitopsDrift,
+          recentChanges: filtered.slice(0, 30).map(e => ({
             id: e.id, namespace: e.namespace, kind: e.kind, name: e.name,
             severity: e.severity, timestamp: e.timestamp, acknowledged: e.acknowledged,
+            changeType: e.changeType || "other",
             changes: e.changes.map(c => ({ field: c.field, old: c.old, new: c.new, severity: c.severity })),
           })),
         });
       } catch (err) {
         sendJson(res, 200, { watchedNamespaces: [], trackedWorkloads: 0, newChanges: 0, totalChanges: 0, critical: 0, warning: 0, info: 0, recentChanges: [], error: err.message });
+      }
+      return;
+    }
+
+    // ── App Change Watcher — Auto-discover + Watch ──────────────────
+    if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/discover") {
+      try {
+        const result = await autoDiscoverAndWatch();
+        sendJson(res, 200, {
+          discovered: result.discovered,
+          added: result.added,
+          total: result.total,
+          namespaces: result.namespaces.map(d => ({ namespace: d.ns, workloads: d.count })),
+        });
+      } catch (err) {
+        sendJson(res, 200, { discovered: 0, added: 0, total: 0, namespaces: [], error: err.message });
       }
       return;
     }
@@ -2840,18 +2904,29 @@ async function startSSE() {
           medium: scan.medium,
           low: scan.low,
           fixable: scan.fixable,
+          maxCVSS: scan.maxCVSS || 0,
           riskScore, grade,
+          compliance: scan.compliance || { avgScore: 0, signed: 0, sbom: 0, pinned: 0, trusted: 0, total: 0 },
+          ageSummary: scan.ageSummary || { fresh: 0, aging: 0, stale: 0, current: 0, unknown: 0 },
           topImages: scan.results.slice(0, 10).map(r => ({
             image: r.image.length > 60 ? "..." + r.image.slice(-57) : r.image,
+            fullImage: r.image,
             namespace: r.namespace,
             critical: r.critical, high: r.high, medium: r.medium, low: r.low,
             fixable: r.fixable, total: r.totalVulns,
-            topVulns: (r.vulnerabilities || []).slice(0, 3).map(v => ({ id: v.id, severity: v.severity, package: v.package, fix: v.fixedBy })),
+            maxCVSS: r.maxCVSS || 0,
+            age: r.age || null,
+            complianceBadges: r.compliance?.badges || [],
+            complianceScore: r.compliance?.score || 0,
+            topVulns: (r.vulnerabilities || []).slice(0, 5).map(v => ({
+              id: v.id, severity: v.severity, package: v.package, fix: v.fixedBy,
+              cvss: v.cvss || 0, link: v.link || null,
+            })),
           })),
           history: getScanHistory().slice(0, 5),
         });
       } catch (err) {
-        sendJson(res, 200, { scannerType: "unknown", totalImages: 0, totalVulns: 0, critical: 0, high: 0, medium: 0, low: 0, fixable: 0, riskScore: 0, grade: "?", topImages: [], history: [], error: err.message });
+        sendJson(res, 200, { scannerType: "unknown", totalImages: 0, totalVulns: 0, critical: 0, high: 0, medium: 0, low: 0, fixable: 0, maxCVSS: 0, riskScore: 0, grade: "?", topImages: [], history: [], compliance: { avgScore: 0, signed: 0, sbom: 0, pinned: 0, trusted: 0, total: 0 }, ageSummary: { fresh: 0, aging: 0, stale: 0, current: 0, unknown: 0 }, error: err.message });
       }
       return;
     }
