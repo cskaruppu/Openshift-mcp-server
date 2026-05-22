@@ -5495,13 +5495,16 @@ async function detectITSMIntent(message) {
       /\b(?:cr|change\s*request|CHG)\b/i.test(lower)) {
     return null;
   }
+  // Strip namespace/resource names (hyphenated compound words like
+  // "snow-incident-resolution") so they don't false-positive on ITSM keywords.
+  const stripped = lower.replace(/[a-z0-9]+-[a-z0-9]+(?:-[a-z0-9]+)*/g, "___");
   for (const [type, pat] of Object.entries(ITSM_PATTERNS)) {
     if (pat.test(message)) return type;
   }
-  if (/\b(?:change\s*request|CR)\b/i.test(lower) && /\b(?:with|for|about|regarding|cluster|upgrade|deployment|service)\b/i.test(lower)) {
+  if (/\b(?:change\s*request|CR)\b/i.test(stripped) && /\b(?:with|for|about|regarding|cluster|upgrade|deployment|service)\b/i.test(stripped)) {
     return "change_request";
   }
-  if (/\b(?:incident)\b/i.test(lower) && /\b(?:with|for|about|regarding|alert|down|issue|failure|outage)\b/i.test(lower)) {
+  if (/\b(?:incident)\b/i.test(stripped) && /\b(?:with|for|about|regarding|alert|down|issue|failure|outage)\b/i.test(stripped)) {
     return "incident";
   }
   return null;
@@ -6226,7 +6229,10 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
   }
 
   // Intent: incident / active incidents
-  if (lower.match(/\bincident|\boutage|\bsev.?[12]\b|\bseverity|\bactive.incident|\bdowntime/)) {
+  // Strip hyphenated compound words (namespace names like "snow-incident-resolution")
+  // so they don't false-positive on ITSM keywords.
+  const lowerStripped = lower.replace(/[a-z0-9]+-[a-z0-9]+(?:-[a-z0-9]+)*/g, "___");
+  if (lowerStripped.match(/\bincident|\boutage|\bsev.?[12]\b|\bseverity|\bactive.incident|\bdowntime/)) {
     context.intents.push("incident");
   }
 
@@ -8142,6 +8148,16 @@ function builtInAnalysis(userMessage, ctx) {
   const intents = ctx.intents || [];
 
   // --- SPECIFIC POD: highest priority when user asks about a named pod ---
+  if (intents.includes("specific_pod") && !ctx.targetPod && ctx.targetPodName) {
+    parts.push(`### Pod Not Found: \`${ctx.targetPodName}\``);
+    parts.push(`[WARNING] Could not find pod **${ctx.targetPodName}** in the cluster.`);
+    parts.push(`The pod may have been deleted, evicted, or the name may be incorrect.`);
+    parts.push(`\n#### Suggestions`);
+    parts.push(`  - Check if the pod still exists: \`oc get pod ${ctx.targetPodName} --all-namespaces\``);
+    parts.push(`  - List pods in the expected namespace: \`oc get pods -n <namespace>\``);
+    parts.push(`  - Check recent events: \`oc get events --all-namespaces --sort-by=.lastTimestamp | grep ${ctx.targetPodName}\``);
+    return parts.join("\n");
+  }
   if (intents.includes("specific_pod") && ctx.targetPod) {
     const tp = ctx.targetPod;
     parts.push(`### Pod: \`${tp.name}\` in \`${tp.namespace}\``);
