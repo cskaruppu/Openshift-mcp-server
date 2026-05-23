@@ -347,18 +347,26 @@ function extractSpec(resource) {
 function classifyChangeType(changes) {
   const fields = changes.map(c => c.field);
   if (fields.some(f => f.includes("/image"))) return "image-update";
+  if (fields.some(f => f.includes("/command") || f.includes("/args"))) return "config-change";
   if (fields.some(f => f.includes("/env/"))) return "config-change";
   if (fields.some(f => f === "replicas")) return "scale";
   if (fields.some(f => f.includes("configMapRef") || f.includes("secretRef"))) return "config-change";
+  if (fields.some(f => f.includes("/ports"))) return "config-change";
   if (fields.some(f => f.includes("/resources"))) return "resource-tune";
   if (fields.some(f => f.includes("container/") && (f.includes("added") || f.includes("removed")))) return "container-change";
+  if (fields.some(f => f === "serviceAccountName")) return "config-change";
   return "other";
+}
+
+function formatPorts(ports) {
+  if (!ports || ports.length === 0) return "";
+  return ports.map(p => `${p.containerPort}/${p.protocol || "TCP"}`).join(",");
 }
 
 function diffSpecs(baseline, current, kind, name, ns) {
   const changes = [];
   if (baseline.replicas !== current.replicas) {
-    changes.push({ field: "replicas", old: baseline.replicas, new: current.replicas, severity: "warning" });
+    changes.push({ field: "replicas", old: String(baseline.replicas), new: String(current.replicas), severity: "warning" });
   }
   const bContainers = new Map(baseline.containers.map(c => [c.name, c]));
   for (const cc of current.containers) {
@@ -367,12 +375,33 @@ function diffSpecs(baseline, current, kind, name, ns) {
     if (bc.image !== cc.image) {
       changes.push({ field: `container/${cc.name}/image`, old: bc.image, new: cc.image, severity: "critical" });
     }
+    const bPorts = formatPorts(bc.ports);
+    const cPorts = formatPorts(cc.ports);
+    if (bPorts !== cPorts) {
+      changes.push({ field: `container/${cc.name}/ports`, old: bPorts || "(none)", new: cPorts || "(none)", severity: "warning" });
+    }
+    const bCmd = JSON.stringify(bc.command || []);
+    const cCmd = JSON.stringify(cc.command || []);
+    if (bCmd !== cCmd) {
+      changes.push({ field: `container/${cc.name}/command`, old: bCmd, new: cCmd, severity: "critical" });
+    }
+    const bArgs = JSON.stringify(bc.args || []);
+    const cArgs = JSON.stringify(cc.args || []);
+    if (bArgs !== cArgs) {
+      changes.push({ field: `container/${cc.name}/args`, old: bArgs, new: cArgs, severity: "warning" });
+    }
     const bcEnvMap = new Map((bc.env || []).map(e => [e.name, e.value || e.from]));
+    const ccEnvMap = new Map((cc.env || []).map(e => [e.name, e.value || e.from]));
     for (const e of cc.env || []) {
       const bVal = bcEnvMap.get(e.name);
       const cVal = e.value || e.from;
       if (bVal === undefined) { changes.push({ field: `container/${cc.name}/env/${e.name}`, old: "(none)", new: cVal, severity: "warning" }); }
       else if (bVal !== cVal) { changes.push({ field: `container/${cc.name}/env/${e.name}`, old: bVal, new: cVal, severity: "warning" }); }
+    }
+    for (const e of bc.env || []) {
+      if (!ccEnvMap.has(e.name)) {
+        changes.push({ field: `container/${cc.name}/env/${e.name}`, old: e.value || e.from, new: "(removed)", severity: "warning" });
+      }
     }
     const bcResStr = JSON.stringify(bc.resources || {});
     const ccResStr = JSON.stringify(cc.resources || {});
@@ -387,8 +416,12 @@ function diffSpecs(baseline, current, kind, name, ns) {
   const removedCMs = baseline.configMaps.filter(c => !current.configMaps.includes(c));
   for (const c of addedCMs) changes.push({ field: "configMapRef", old: "(none)", new: c, severity: "warning" });
   for (const c of removedCMs) changes.push({ field: "configMapRef", old: c, new: "(removed)", severity: "warning" });
+  const addedSecs = current.secrets.filter(c => !baseline.secrets.includes(c));
+  const removedSecs = baseline.secrets.filter(c => !current.secrets.includes(c));
+  for (const c of addedSecs) changes.push({ field: "secretRef", old: "(none)", new: c, severity: "critical" });
+  for (const c of removedSecs) changes.push({ field: "secretRef", old: c, new: "(removed)", severity: "critical" });
   if (baseline.serviceAccountName !== current.serviceAccountName) {
-    changes.push({ field: "serviceAccountName", old: baseline.serviceAccountName, new: current.serviceAccountName, severity: "warning" });
+    changes.push({ field: "serviceAccountName", old: baseline.serviceAccountName || "(default)", new: current.serviceAccountName || "(default)", severity: "warning" });
   }
   return changes;
 }
@@ -438,7 +471,7 @@ export async function scanForChanges() {
           _baselines.set(key, current);
           continue;
         }
-        if (baseline.generation === current.generation) continue;
+        if (baseline.generation === current.generation && baseline.resourceVersion === current.resourceVersion) continue;
         const diffs = diffSpecs(baseline, current, w.kind, w.metadata.name, ns);
         if (diffs.length > 0) {
           const changeType = classifyChangeType(diffs);

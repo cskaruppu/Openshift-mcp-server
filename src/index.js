@@ -2931,6 +2931,39 @@ async function startSSE() {
       return;
     }
 
+    // ── App Change Watcher — Force scan now ────────────────────────
+    if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/scan") {
+      try {
+        const changes = await scanForChanges();
+        const log = getChangeLog().filter(e => !e.acknowledged);
+        sendJson(res, 200, {
+          scanned: true,
+          newChanges: changes.length,
+          pendingChanges: log.length,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        sendJson(res, 200, { scanned: false, error: err.message });
+      }
+      return;
+    }
+
+    // ── App Change Watcher — Reset baselines ─────────────────────
+    if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/reset-baselines") {
+      try {
+        const ns = getWatchedNamespaces();
+        await initNamespaceBaselines(ns);
+        sendJson(res, 200, {
+          reset: true,
+          namespaces: ns.length,
+          baselines: Object.keys(getBaselines()).length,
+        });
+      } catch (err) {
+        sendJson(res, 200, { reset: false, error: err.message });
+      }
+      return;
+    }
+
     // ── App Change Watcher — Change actions (agree/dismiss/ack) ────
     if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/action") {
       try {

@@ -2336,8 +2336,11 @@ tr:hover td{background:#ffffff06}
 
     <!-- Application Change Watcher — Enhanced -->
     <div class="card" id="widget-app-changes" style="display:flex;flex-direction:column">
-      <h3 style="display:flex;align-items:center;gap:8px">&#x1F50D; Application Change Watcher
-        <span class="badge badge-info" id="acw-ns-badge" style="margin-left:auto;cursor:pointer" onclick="acwToggleNsPanel()" title="Click to manage namespaces">0 namespaces</span>
+      <h3 style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">&#x1F50D; Application Change Watcher
+        <div style="margin-left:auto;display:flex;gap:4px;align-items:center">
+          <button id="acw-scan-btn" onclick="acwForceScan()" style="font-size:9px;padding:3px 8px;border:1px solid var(--accent2);background:color-mix(in srgb,var(--accent2) 10%,transparent);color:var(--accent2);border-radius:4px;cursor:pointer;font-weight:600" title="Force immediate scan for changes">&#x1F504; Scan Now</button>
+          <span class="badge badge-info" id="acw-ns-badge" style="cursor:pointer" onclick="acwToggleNsPanel()" title="Click to manage namespaces">0 namespaces</span>
+        </div>
       </h3>
       <!-- Auto-discovery banner -->
       <div id="acw-discovery-banner" style="display:none;background:linear-gradient(135deg,color-mix(in srgb,var(--accent2) 12%,var(--bg)),color-mix(in srgb,var(--accent3) 8%,var(--bg)));border:1px solid color-mix(in srgb,var(--accent2) 30%,transparent);border-radius:8px;padding:10px 14px;margin-bottom:10px">
@@ -5973,6 +5976,25 @@ function acwRelativeTime(ts) {
   if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
   if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
   return Math.floor(diff / 86400) + 'd ago';
+}
+
+async function acwForceScan() {
+  var btn = document.getElementById('acw-scan-btn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '&#x23F3; Scanning...'; }
+  try {
+    var scanUrl = clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/dashboard/app-changes/scan');
+    var resp = await fetch(scanUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    var result = await resp.json();
+    if (result.newChanges > 0) {
+      acwToast(result.newChanges + ' new change(s) detected!');
+    } else {
+      acwToast('Scan complete — no new changes');
+    }
+    await loadAppChangesWidget();
+  } catch (e) {
+    acwToast('Scan failed: ' + e.message);
+  }
+  if (btn) { btn.disabled = false; btn.innerHTML = '&#x1F504; Scan Now'; }
 }
 
 async function loadAppChangesWidget() {
