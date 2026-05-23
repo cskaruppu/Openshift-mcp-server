@@ -52,7 +52,7 @@ import { registerUpgradeAdvisorTools } from "./tools/upgrade-advisor.js";
 import { registerBenchmarkTools } from "./tools/benchmarks.js";
 import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
-import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, agreeChange, dismissChange, getWorkloadsByNamespace } from "./tools/app-change-watcher.js";
+import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, agreeChange, dismissChange, getWorkloadsByNamespace, initTrackedNamespaces } from "./tools/app-change-watcher.js";
 import { registerImageVulnScannerTools, runImageScan, getScanResults, getScanHistory, getComplianceCache, getImageAgeCache } from "./tools/image-vulnerability-scanner.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode } from "./services/auth.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
@@ -999,6 +999,15 @@ async function startSSE() {
     console.log(`[startup] MCP Hub initialized — ${hubGetToolCount()} tools available`);
   } catch (err) {
     console.warn("[startup] MCP Hub init:", err.message);
+  }
+
+  // Restore tracked namespaces from ConfigMap / DB before starting monitors
+  try {
+    await initTrackedNamespaces();
+    const ns = getWatchedNamespaces();
+    if (ns.length > 0) console.log(`[startup] Restored ${ns.length} tracked namespace(s)`);
+  } catch (err) {
+    console.warn("[startup] Tracked namespace restore:", err.message);
   }
 
   // Initialize AI Intelligence features
@@ -2895,7 +2904,7 @@ async function startSSE() {
         const action = body.action;
         const nsList = body.namespaces || [];
         if (action === "add" && nsList.length > 0) {
-          addNamespaces(nsList);
+          await addNamespaces(nsList);
           sendJson(res, 200, {
             watchedNamespaces: getWatchedNamespaces(),
             trackedWorkloads: Object.keys(getBaselines()).length,
@@ -2905,7 +2914,7 @@ async function startSSE() {
             console.warn("[app-watcher] Background baseline init error:", e.message)
           );
         } else if (action === "remove" && nsList.length > 0) {
-          removeNamespaces(nsList);
+          await removeNamespaces(nsList);
           sendJson(res, 200, {
             watchedNamespaces: getWatchedNamespaces(),
             trackedWorkloads: Object.keys(getBaselines()).length,

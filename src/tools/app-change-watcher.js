@@ -1,32 +1,117 @@
 import { z } from "zod";
-import { ocpGet, ocpPatch } from "../utils/openshift-client.js";
+import { ocpGet, ocpPatch, ocpPost } from "../utils/openshift-client.js";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { query as dbQuery } from "../utils/db.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PERSIST_DIR = join(__dirname, "..", "..", "data");
 const PERSIST_FILE = join(PERSIST_DIR, "tracked-namespaces.json");
 
-function loadPersistedNamespaces() {
+const CM_NAME = "mcp-tracked-namespaces";
+const CM_KEY = "namespaces";
+
+function getPodNamespace() {
+  try { return readFileSync("/var/run/secrets/kubernetes.io/serviceaccount/namespace", "utf8").trim(); }
+  catch { return process.env.POD_NAMESPACE || process.env.MCP_NAMESPACE || "openshift-mcp"; }
+}
+
+async function loadFromConfigMap() {
+  try {
+    const ns = getPodNamespace();
+    const cm = await ocpGet(`/api/v1/namespaces/${ns}/configmaps/${CM_NAME}`);
+    const raw = (cm.data && cm.data[CM_KEY]) || "[]";
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return null; }
+}
+
+async function saveToConfigMap(nsList) {
+  const ns = getPodNamespace();
+  const data = { [CM_KEY]: JSON.stringify(nsList) };
+  try {
+    await ocpPatch(`/api/v1/namespaces/${ns}/configmaps/${CM_NAME}`, { data }, "application/merge-patch+json");
+    return true;
+  } catch {
+    try {
+      await ocpPost(`/api/v1/namespaces/${ns}/configmaps`, {
+        apiVersion: "v1", kind: "ConfigMap",
+        metadata: { name: CM_NAME, namespace: ns, labels: { app: "openshift-mcp-server", component: "app-change-watcher" } },
+        data,
+      });
+      return true;
+    } catch (e) {
+      console.warn("[app-watcher] ConfigMap save failed:", e.message);
+      return false;
+    }
+  }
+}
+
+async function loadFromDb() {
+  try {
+    const result = await dbQuery("SELECT value FROM kv_store WHERE key = $1", ["tracked_namespaces"]);
+    if (result && result.rows && result.rows.length > 0) {
+      const val = result.rows[0].value;
+      return Array.isArray(val) ? val : [];
+    }
+  } catch {}
+  return null;
+}
+
+async function saveToDb(nsList) {
+  try {
+    await dbQuery(
+      `INSERT INTO kv_store (key, value, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+      ["tracked_namespaces", JSON.stringify(nsList)]
+    );
+    return true;
+  } catch { return false; }
+}
+
+function loadFromFile() {
   try {
     const data = JSON.parse(readFileSync(PERSIST_FILE, "utf8"));
     return Array.isArray(data) ? data : [];
   } catch { return []; }
 }
 
-function persistNamespaces() {
+function saveToFile(nsList) {
   try {
     mkdirSync(PERSIST_DIR, { recursive: true });
-    writeFileSync(PERSIST_FILE, JSON.stringify([..._watchedNamespaces], null, 2));
-  } catch (e) {
-    console.warn("[app-watcher] Failed to persist namespaces:", e.message);
+    writeFileSync(PERSIST_FILE, JSON.stringify(nsList, null, 2));
+  } catch {}
+}
+
+async function persistNamespaces() {
+  const nsList = [..._watchedNamespaces];
+  const saved = await saveToConfigMap(nsList) || await saveToDb(nsList);
+  saveToFile(nsList);
+  if (saved) console.log("[app-watcher] Tracked namespaces persisted:", nsList.length);
+}
+
+let _persistInitDone = false;
+async function ensurePersistedLoad() {
+  if (_persistInitDone) return;
+  _persistInitDone = true;
+  const cmList = await loadFromConfigMap();
+  if (cmList && cmList.length > 0) {
+    for (const ns of cmList) _watchedNamespaces.add(ns);
+    console.log("[app-watcher] Loaded", cmList.length, "namespaces from ConfigMap");
+    return;
+  }
+  const dbList = await loadFromDb();
+  if (dbList && dbList.length > 0) {
+    for (const ns of dbList) _watchedNamespaces.add(ns);
+    console.log("[app-watcher] Loaded", dbList.length, "namespaces from database");
+    return;
   }
 }
 
 const _envNamespaces = (process.env.WATCHED_APP_NAMESPACES || "").split(",").map(s => s.trim()).filter(Boolean);
-const _persistedNamespaces = loadPersistedNamespaces();
-const _watchedNamespaces = new Set([..._envNamespaces, ..._persistedNamespaces]);
+const _fileNamespaces = loadFromFile();
+const _watchedNamespaces = new Set([..._envNamespaces, ..._fileNamespaces]);
 const _baselines = new Map();
 const _changeLog = [];
 const _resolvedIds = new Set();
@@ -48,24 +133,25 @@ const SYSTEM_NS_EXACT = new Set([
 const ARGO_API = "apis/argoproj.io/v1alpha1";
 const GITOPS_NS = process.env.ARGOCD_NAMESPACE || "openshift-gitops";
 
+export { ensurePersistedLoad as initTrackedNamespaces };
 export function getWatchedNamespaces() { return [..._watchedNamespaces]; }
 export function getBaselines() { return Object.fromEntries(_baselines); }
 export function getChangeLog() { return _changeLog.slice(); }
 export function getChangeTimeline() { return _changeTimeline.slice(); }
 export function getGitOpsDrift() { return Object.fromEntries(_gitopsDriftCache); }
 
-export function addNamespaces(nsList) {
+export async function addNamespaces(nsList) {
   for (const ns of nsList) _watchedNamespaces.add(ns);
-  persistNamespaces();
+  await persistNamespaces();
 }
-export function removeNamespaces(nsList) {
+export async function removeNamespaces(nsList) {
   for (const ns of nsList) {
     _watchedNamespaces.delete(ns);
     for (const [key] of _baselines) {
       if (key.startsWith(ns + "/")) _baselines.delete(key);
     }
   }
-  persistNamespaces();
+  await persistNamespaces();
 }
 export async function initNamespaceBaselines(nsList) {
   for (const ns of nsList) {
