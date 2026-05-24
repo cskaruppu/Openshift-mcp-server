@@ -116,7 +116,11 @@ const _baselines = new Map();
 const _changeLog = [];
 const _resolvedIds = new Set();
 const _dismissedKeys = new Map();
+const _changeHistory = [];
 const MAX_CHANGES = 500;
+const MAX_HISTORY = 200;
+let _lastScanTime = null;
+let _lastChangeTime = null;
 
 const _gitopsDriftCache = new Map();
 const _changeTimeline = [];
@@ -130,6 +134,91 @@ const SYSTEM_NS_EXACT = new Set([
   "cert-manager", "ingress-nginx", "metallb-system",
   "local-path-storage", "cattle-system", "fleet-system",
 ]);
+const RISK_WEIGHTS = {
+  "image-update": 85,
+  "container-change": 90,
+  "config-change": 60,
+  "scale": 30,
+  "resource-tune": 25,
+  "other": 50,
+};
+const RISK_SEVERITY_BOOST = { critical: 15, warning: 5, info: 0 };
+
+const BUSINESS_HOURS = {
+  start: parseInt(process.env.CHANGE_FREEZE_START || "6", 10),
+  end: parseInt(process.env.CHANGE_FREEZE_END || "22", 10),
+  timezone: process.env.CHANGE_FREEZE_TZ || "UTC",
+};
+
+function calculateRiskScore(changeType, severity, followUp, changeCount) {
+  let score = RISK_WEIGHTS[changeType] || 50;
+  score += RISK_SEVERITY_BOOST[severity] || 0;
+  if (followUp) score = Math.min(100, score + 20);
+  if (changeCount > 3) score = Math.min(100, score + 10);
+  return Math.min(100, Math.max(0, score));
+}
+
+function getRiskLevel(score) {
+  if (score >= 80) return "critical";
+  if (score >= 55) return "high";
+  if (score >= 35) return "medium";
+  return "low";
+}
+
+function isOutsideBusinessHours() {
+  const now = new Date();
+  const hour = now.getUTCHours();
+  return hour < BUSINESS_HOURS.start || hour >= BUSINESS_HOURS.end;
+}
+
+function isWeekend() {
+  const day = new Date().getUTCDay();
+  return day === 0 || day === 6;
+}
+
+function extractChangedBy(resource) {
+  const managed = resource.metadata?.managedFields;
+  if (!managed || managed.length === 0) return { user: "unknown", tool: "unknown", time: null };
+  const sorted = managed
+    .filter(f => f.operation === "Update" || f.operation === "Apply")
+    .sort((a, b) => new Date(b.time || 0) - new Date(a.time || 0));
+  const latest = sorted[0] || managed[managed.length - 1];
+  return {
+    user: latest.manager || "unknown",
+    tool: latest.operation || "unknown",
+    time: latest.time || null,
+    apiVersion: latest.apiVersion || null,
+  };
+}
+
+async function correlateWithEvents(ns, kind, name) {
+  try {
+    const fieldSelector = `involvedObject.name=${name},involvedObject.namespace=${ns}`;
+    const data = await ocpGet(`/api/v1/namespaces/${ns}/events?fieldSelector=${encodeURIComponent(fieldSelector)}&limit=10`);
+    const events = (data.items || [])
+      .filter(e => {
+        const age = Date.now() - new Date(e.lastTimestamp || e.metadata.creationTimestamp).getTime();
+        return age < 30 * 60 * 1000;
+      })
+      .map(e => ({
+        type: e.type,
+        reason: e.reason,
+        message: (e.message || "").substring(0, 120),
+        count: e.count || 1,
+        time: e.lastTimestamp || e.metadata.creationTimestamp,
+      }));
+    return events;
+  } catch { return []; }
+}
+
+export function getChangeHistory() { return _changeHistory.slice(); }
+export function getLastScanTime() { return _lastScanTime; }
+export function getLastChangeTime() { return _lastChangeTime; }
+export function getHealthStreak() {
+  if (!_lastChangeTime) return _lastScanTime ? Date.now() - new Date(_lastScanTime).getTime() : 0;
+  return Date.now() - new Date(_lastChangeTime).getTime();
+}
+
 const ARGO_API = "apis/argoproj.io/v1alpha1";
 const GITOPS_NS = process.env.ARGOCD_NAMESPACE || "openshift-gitops";
 
@@ -169,6 +258,7 @@ export function acknowledgeChange(changeId) {
   const entry = _changeLog.find(e => e.id === changeId);
   if (!entry) return { found: false };
   _resolvedIds.add(changeId);
+  recordHistory(entry, "acknowledged");
   const idx = _changeLog.indexOf(entry);
   if (idx >= 0) _changeLog.splice(idx, 1);
   return { found: true, id: changeId, action: "acknowledged", resolved: true };
@@ -178,6 +268,7 @@ export function agreeChange(changeId) {
   const entry = _changeLog.find(e => e.id === changeId);
   if (!entry) return { found: false };
   _resolvedIds.add(changeId);
+  recordHistory(entry, "agreed");
   const key = workloadKey(entry.namespace, entry.kind, entry.name);
   if (entry.currentSpec) _baselines.set(key, entry.currentSpec);
   const idx = _changeLog.indexOf(entry);
@@ -213,6 +304,7 @@ export async function dismissChange(changeId) {
   const key = workloadKey(entry.namespace, entry.kind, entry.name);
   _baselines.set(key, baselineSpec);
   _dismissedKeys.set(key, { baseline: baselineSpec, dismissedAt: Date.now(), followUpCount: 0 });
+  recordHistory(entry, "dismissed");
   const idx = _changeLog.indexOf(entry);
   if (idx >= 0) _changeLog.splice(idx, 1);
   return { found: true, id: changeId, action: "dismissed", rolledBack: true, resolved: true };
@@ -442,8 +534,9 @@ async function fetchWorkloads(namespace) {
 function recordChange(entry) {
   _changeLog.unshift(entry);
   if (_changeLog.length > MAX_CHANGES) _changeLog.length = MAX_CHANGES;
+  _lastChangeTime = entry.timestamp;
 
-  _changeTimeline.push({
+  const timelineEntry = {
     timestamp: entry.timestamp,
     namespace: entry.namespace,
     kind: entry.kind,
@@ -451,14 +544,39 @@ function recordChange(entry) {
     severity: entry.severity,
     changeType: entry.changeType,
     changeCount: entry.changes.length,
-  });
+    riskScore: entry.riskScore,
+    changedBy: entry.changedBy,
+  };
+  _changeTimeline.push(timelineEntry);
   if (_changeTimeline.length > MAX_TIMELINE) _changeTimeline.splice(0, _changeTimeline.length - MAX_TIMELINE);
+}
+
+function recordHistory(entry, action) {
+  _changeHistory.unshift({
+    id: entry.id,
+    namespace: entry.namespace,
+    kind: entry.kind,
+    name: entry.name,
+    timestamp: entry.timestamp,
+    resolvedAt: new Date().toISOString(),
+    action,
+    changeType: entry.changeType,
+    severity: entry.severity,
+    riskScore: entry.riskScore || 0,
+    changedBy: entry.changedBy || { user: "unknown" },
+    changeCount: entry.changes.length,
+    changeSummary: entry.changes.slice(0, 3).map(c => c.field).join(", "),
+  });
+  if (_changeHistory.length > MAX_HISTORY) _changeHistory.length = MAX_HISTORY;
 }
 
 export async function scanForChanges() {
   const results = [];
   const namespaces = [..._watchedNamespaces];
   if (namespaces.length === 0) return results;
+  _lastScanTime = new Date().toISOString();
+  const outsideHours = isOutsideBusinessHours();
+  const weekend = isWeekend();
 
   for (const ns of namespaces) {
     try {
@@ -475,6 +593,7 @@ export async function scanForChanges() {
         const diffs = diffSpecs(baseline, current, w.kind, w.metadata.name, ns);
         if (diffs.length > 0) {
           const changeType = classifyChangeType(diffs);
+          const severity = diffs.some(d => d.severity === "critical") ? "critical" : diffs.some(d => d.severity === "warning") ? "warning" : "info";
           const dismissed = _dismissedKeys.get(key);
           let followUp = false;
           let followUpCount = 0;
@@ -483,6 +602,13 @@ export async function scanForChanges() {
             dismissed.followUpCount++;
             followUpCount = dismissed.followUpCount;
           }
+          const changedBy = extractChangedBy(w);
+          const riskScore = calculateRiskScore(changeType, severity, followUp, diffs.length);
+          const riskLevel = getRiskLevel(riskScore);
+          const changeFreezeViolation = outsideHours || weekend;
+          let correlatedEvents = [];
+          try { correlatedEvents = await correlateWithEvents(ns, w.kind, w.metadata.name); } catch {}
+
           const entry = {
             id: `chg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             namespace: ns,
@@ -493,10 +619,15 @@ export async function scanForChanges() {
             changeType,
             baseline,
             currentSpec: current,
-            severity: diffs.some(d => d.severity === "critical") ? "critical" : diffs.some(d => d.severity === "warning") ? "warning" : "info",
+            severity,
             acknowledged: false,
             followUp,
             followUpCount,
+            changedBy,
+            riskScore,
+            riskLevel,
+            changeFreezeViolation,
+            correlatedEvents,
           };
           recordChange(entry);
           results.push(entry);

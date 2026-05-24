@@ -52,7 +52,7 @@ import { registerUpgradeAdvisorTools } from "./tools/upgrade-advisor.js";
 import { registerBenchmarkTools } from "./tools/benchmarks.js";
 import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
-import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, agreeChange, dismissChange, getWorkloadsByNamespace, initTrackedNamespaces } from "./tools/app-change-watcher.js";
+import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, agreeChange, dismissChange, getWorkloadsByNamespace, initTrackedNamespaces, getChangeHistory, getLastScanTime, getLastChangeTime, getHealthStreak } from "./tools/app-change-watcher.js";
 import { registerImageVulnScannerTools, runImageScan, getScanResults, getScanHistory, getComplianceCache, getImageAgeCache } from "./tools/image-vulnerability-scanner.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode } from "./services/auth.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
@@ -2857,11 +2857,15 @@ async function startSSE() {
           }
         } catch {}
 
+        const history = getChangeHistory();
         sendJson(res, 200, {
           watchedNamespaces: namespaces,
           trackedWorkloads: baselines,
           newChanges: changes.length,
           totalChanges, critical, warning, info,
+          lastScanTime: getLastScanTime(),
+          lastChangeTime: getLastChangeTime(),
+          healthStreakMs: getHealthStreak(),
           discoveredNamespaces: discoveredNamespaces ? discoveredNamespaces.map(d => ({ namespace: d.ns, workloads: d.count, breakdown: d.breakdown || {} })) : null,
           changeTypeBreakdown,
           timelineStats,
@@ -2872,8 +2876,18 @@ async function startSSE() {
             changeType: e.changeType || "other",
             followUp: e.followUp || false,
             followUpCount: e.followUpCount || 0,
+            riskScore: e.riskScore || 0,
+            riskLevel: e.riskLevel || "low",
+            changedBy: e.changedBy || null,
+            changeFreezeViolation: e.changeFreezeViolation || false,
+            correlatedEvents: (e.correlatedEvents || []).slice(0, 5),
             changes: e.changes.map(c => ({ field: c.field, old: c.old, new: c.new, severity: c.severity })),
+            rollbackPreview: e.baseline ? {
+              replicas: e.baseline.replicas,
+              containers: (e.baseline.containers || []).map(c => ({ name: c.name, image: c.image, ports: c.ports })),
+            } : null,
           })),
+          changeHistory: history.slice(0, 50),
         });
       } catch (err) {
         sendJson(res, 200, { watchedNamespaces: [], trackedWorkloads: 0, newChanges: 0, totalChanges: 0, critical: 0, warning: 0, info: 0, recentChanges: [], error: err.message });

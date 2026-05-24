@@ -6068,40 +6068,127 @@ async function loadAppChangesWidget() {
     if (list) {
       var pending = d.recentChanges;
       if (pending.length === 0) {
-        list.innerHTML = '<div style="color:var(--text2);text-align:center;padding:16px;font-size:11px">' +
-          (d.watchedNamespaces.length === 0
-            ? '<div style="font-size:18px;margin-bottom:4px">&#x1F4E5;</div>Configure namespaces to start watching'
-            : '<div style="font-size:18px;margin-bottom:4px">&#x2705;</div>All clear — no pending changes') + '</div>';
+        var streakText = '';
+        if (d.healthStreakMs && d.healthStreakMs > 0) {
+          var hrs = Math.floor(d.healthStreakMs / 3600000);
+          var mins = Math.floor((d.healthStreakMs % 3600000) / 60000);
+          streakText = hrs > 0 ? hrs + 'h ' + mins + 'm' : mins + 'm';
+        }
+        var emptyHtml = '<div style="text-align:center;padding:20px 12px">';
+        if (d.watchedNamespaces.length === 0) {
+          emptyHtml += '<div style="font-size:28px;margin-bottom:6px">&#x1F4E5;</div>' +
+            '<div style="font-size:12px;font-weight:600;color:var(--text)">No Namespaces Configured</div>' +
+            '<div style="font-size:10px;color:var(--text2);margin-top:4px">Click the namespace badge above to start tracking</div>';
+        } else {
+          emptyHtml += '<div style="font-size:28px;margin-bottom:6px">&#x1F6E1;</div>' +
+            '<div style="font-size:12px;font-weight:700;color:var(--ok)">All Clear</div>' +
+            '<div style="font-size:10px;color:var(--text2);margin-top:4px">No pending changes across ' + d.watchedNamespaces.length + ' namespace(s)</div>';
+          if (streakText) {
+            emptyHtml += '<div style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;background:color-mix(in srgb,var(--ok) 8%,var(--bg));border:1px solid color-mix(in srgb,var(--ok) 20%,transparent);border-radius:20px;padding:4px 14px">' +
+              '<span style="font-size:14px">&#x1F525;</span>' +
+              '<span style="font-size:11px;font-weight:600;color:var(--ok)">' + esc(streakText) + ' stability streak</span>' +
+            '</div>';
+          }
+          if (d.lastScanTime) {
+            emptyHtml += '<div style="font-size:9px;color:var(--text2);margin-top:8px;opacity:0.6">Last scan: ' + acwRelativeTime(d.lastScanTime) + '</div>';
+          }
+        }
+        emptyHtml += '</div>';
+        // Change history mini-timeline
+        if (d.changeHistory && d.changeHistory.length > 0) {
+          emptyHtml += '<div style="border-top:1px solid var(--border);margin-top:4px;padding-top:8px">' +
+            '<div style="font-size:10px;font-weight:600;color:var(--text2);margin-bottom:6px;display:flex;align-items:center;gap:4px">&#x1F4DC; Recent History <span style="font-weight:400;opacity:0.6">(' + d.changeHistory.length + ')</span></div>';
+          emptyHtml += d.changeHistory.slice(0, 8).map(function(h) {
+            var actIcon = h.action === 'agreed' ? '<span style="color:var(--ok)">&#x2714;</span>' : h.action === 'dismissed' ? '<span style="color:var(--crit)">&#x274C;</span>' : '<span style="color:var(--accent2)">&#x1F514;</span>';
+            var actLabel = h.action === 'agreed' ? 'Agreed' : h.action === 'dismissed' ? 'Dismissed' : 'Acked';
+            return '<div style="display:flex;align-items:center;gap:6px;padding:2px 0;font-size:10px">' +
+              actIcon +
+              '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)">' + esc(h.kind + '/' + h.name) + '</span>' +
+              '<span style="color:var(--text2);font-size:9px">' + esc(h.namespace) + '</span>' +
+              '<span style="font-size:8px;padding:1px 5px;border-radius:6px;background:var(--card);color:var(--text2)">' + actLabel + '</span>' +
+              '<span style="color:var(--text2);font-size:9px;min-width:40px;text-align:right">' + acwRelativeTime(h.resolvedAt) + '</span>' +
+            '</div>';
+          }).join('');
+          emptyHtml += '</div>';
+        }
+        list.innerHTML = emptyHtml;
       } else {
         list.innerHTML = pending.map(function(c) {
           var sevColor = c.severity === 'critical' ? 'var(--crit)' : c.severity === 'warning' ? 'var(--warn)' : 'var(--accent2)';
           var safeId = c.id.replace(/[^a-z0-9]/g, '');
           var detailId = 'acw-detail-' + safeId;
+          // Risk score badge
+          var riskColor = c.riskLevel === 'critical' ? '#e53935' : c.riskLevel === 'high' ? '#ff9800' : c.riskLevel === 'medium' ? '#ffc107' : '#4caf50';
+          var riskBadge = '<span style="font-size:8px;font-weight:700;color:' + riskColor + ';background:color-mix(in srgb,' + riskColor + ' 12%,transparent);padding:1px 5px;border-radius:8px;margin-left:4px" title="Risk Score: ' + (c.riskScore || 0) + '/100">RISK ' + (c.riskScore || 0) + '</span>';
+          // Follow-up badge
           var followUpBadge = c.followUp
             ? '<span style="font-size:8px;font-weight:700;color:var(--crit);background:color-mix(in srgb,var(--crit) 12%,transparent);padding:1px 6px;border-radius:8px;margin-left:4px;animation:acwPulse 1.5s ease-in-out infinite">FOLLOW-UP #' + c.followUpCount + '</span>'
             : '';
+          // Change freeze violation
+          var freezeBadge = c.changeFreezeViolation
+            ? '<span style="font-size:8px;font-weight:700;color:#ff6f00;background:rgba(255,111,0,0.1);padding:1px 6px;border-radius:8px;margin-left:4px" title="Change detected outside business hours">&#x26A0; OFF-HOURS</span>'
+            : '';
+          // Changed by attribution
+          var changedByHtml = '';
+          if (c.changedBy && c.changedBy.user !== 'unknown') {
+            changedByHtml = '<div style="font-size:9px;color:var(--text2);margin-top:4px;padding-left:20px;display:flex;align-items:center;gap:4px">' +
+              '<span style="font-size:10px">&#x1F464;</span> Changed by <strong style="color:var(--text)">' + esc(c.changedBy.user) + '</strong>' +
+              (c.changedBy.tool ? ' via <em>' + esc(c.changedBy.tool) + '</em>' : '') +
+              (c.changedBy.time ? ' at ' + acwRelativeTime(c.changedBy.time) : '') +
+            '</div>';
+          }
+          // Correlated events
+          var eventsHtml = '';
+          if (c.correlatedEvents && c.correlatedEvents.length > 0) {
+            eventsHtml = '<div style="margin-top:4px;padding-left:20px">' +
+              '<div style="font-size:9px;font-weight:600;color:var(--warn);margin-bottom:2px">&#x26A1; Correlated Events</div>' +
+              c.correlatedEvents.map(function(ev) {
+                var evColor = ev.type === 'Warning' ? 'var(--warn)' : 'var(--text2)';
+                return '<div style="font-size:9px;color:' + evColor + ';padding:1px 0">' +
+                  '<strong>' + esc(ev.reason) + '</strong>' + (ev.count > 1 ? ' (x' + ev.count + ')' : '') + ' — ' + esc(ev.message) +
+                '</div>';
+              }).join('') +
+            '</div>';
+          }
+          // Rollback preview
+          var rollbackHtml = '';
+          if (c.rollbackPreview) {
+            var rp = c.rollbackPreview;
+            rollbackHtml = '<div style="margin-top:6px;padding:6px 8px;background:color-mix(in srgb,var(--crit) 5%,var(--bg));border:1px solid color-mix(in srgb,var(--crit) 15%,transparent);border-radius:4px;font-size:9px">' +
+              '<div style="font-weight:600;color:var(--crit);margin-bottom:3px">&#x1F504; Rollback Preview (if dismissed):</div>';
+            if (rp.replicas !== undefined) rollbackHtml += '<div>Replicas will be set to: <strong>' + rp.replicas + '</strong></div>';
+            rollbackHtml += (rp.containers || []).map(function(rc) {
+              return '<div>Container <strong>' + esc(rc.name) + '</strong>: ' + esc((rc.image || '').split('/').pop()) + '</div>';
+            }).join('');
+            rollbackHtml += '</div>';
+          }
+          // Action buttons
           var actionBtns =
             '<div style="display:flex;gap:4px;padding:6px 0 2px" id="acw-btn-' + safeId + '">' +
               '<button onclick="event.stopPropagation();acwChangeAction(\'' + esc(c.id) + '\',\'agree\')" style="flex:1;padding:5px 6px;font-size:9px;font-weight:600;border:1px solid var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent);color:var(--ok);border-radius:4px;cursor:pointer" title="Accept changes — sets new baseline">&#x2714; Agree</button>' +
               '<button onclick="event.stopPropagation();acwChangeAction(\'' + esc(c.id) + '\',\'dismiss\')" style="flex:1;padding:5px 6px;font-size:9px;font-weight:600;border:1px solid var(--crit);background:color-mix(in srgb,var(--crit) 12%,transparent);color:var(--crit);border-radius:4px;cursor:pointer" title="Revert to previous state">&#x274C; Dismiss</button>' +
               '<button onclick="event.stopPropagation();acwChangeAction(\'' + esc(c.id) + '\',\'acknowledge\')" style="flex:1;padding:5px 6px;font-size:9px;font-weight:600;border:1px solid var(--accent2);background:color-mix(in srgb,var(--accent2) 12%,transparent);color:var(--accent2);border-radius:4px;cursor:pointer" title="Remove from queue">&#x1F514; Ack</button>' +
             '</div>';
-          return '<div id="acw-row-' + safeId + '" style="padding:5px 8px;background:' + (c.followUp ? 'color-mix(in srgb,var(--crit) 5%,var(--bg))' : 'var(--bg)') + ';border-radius:6px;border-left:3px solid ' + sevColor + ';transition:opacity 0.5s,max-height 0.5s,padding 0.5s,margin 0.5s">' +
+          return '<div id="acw-row-' + safeId + '" style="padding:6px 8px;background:' + (c.followUp ? 'color-mix(in srgb,var(--crit) 5%,var(--bg))' : c.changeFreezeViolation ? 'color-mix(in srgb,#ff6f00 3%,var(--bg))' : 'var(--bg)') + ';border-radius:6px;border-left:3px solid ' + sevColor + ';transition:opacity 0.5s,max-height 0.5s,padding 0.5s,margin 0.5s">' +
             '<div style="display:flex;align-items:center;gap:6px;cursor:pointer" onclick="var el=document.getElementById(\'' + detailId + '\');if(el)el.style.display=el.style.display===\'none\'?\'block\':\'none\'">' +
               acwChangeTypeIcon(c.changeType || 'other') +
               '<div style="flex:1;min-width:0">' +
-                '<div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px">' + esc(c.kind) + '/' + esc(c.name) + followUpBadge + '</div>' +
-                '<div style="color:var(--text2);font-size:10px">' + esc(c.namespace) + ' &#x2022; ' + acwRelativeTime(c.timestamp) + '</div>' +
+                '<div style="display:flex;align-items:center;gap:2px;flex-wrap:wrap"><span style="font-weight:600;font-size:11px">' + esc(c.kind) + '/' + esc(c.name) + '</span>' + riskBadge + followUpBadge + freezeBadge + '</div>' +
+                '<div style="color:var(--text2);font-size:10px">' + esc(c.namespace) + ' &#x2022; ' + acwRelativeTime(c.timestamp) + (c.changedBy && c.changedBy.user !== 'unknown' ? ' &#x2022; by ' + esc(c.changedBy.user) : '') + '</div>' +
               '</div>' +
               '<span class="badge badge-' + (c.severity === 'critical' ? 'crit' : c.severity === 'warning' ? 'warn' : 'info') + '" style="font-size:9px">' + c.severity.toUpperCase() + '</span>' +
             '</div>' +
-            '<div id="' + detailId + '" style="display:' + (c.followUp ? 'block' : 'none') + ';margin-top:4px;padding:4px 0 0 0;font-size:10px;color:var(--text2);border-top:1px solid var(--border)">' +
-              (c.followUp ? '<div style="padding:4px 0 4px 20px;color:var(--crit);font-weight:600;font-size:10px">This change was previously dismissed but has been re-applied. Please review and take action.</div>' : '') +
-              '<div style="padding-left:20px">' +
+            '<div id="' + detailId + '" style="display:' + (c.followUp || c.changeFreezeViolation ? 'block' : 'none') + ';margin-top:4px;padding:4px 0 0 0;font-size:10px;color:var(--text2);border-top:1px solid var(--border)">' +
+              (c.followUp ? '<div style="padding:4px 0 4px 20px;color:var(--crit);font-weight:600;font-size:10px">&#x26A0; This change was previously dismissed but has been re-applied. Please review and take action.</div>' : '') +
+              (c.changeFreezeViolation ? '<div style="padding:4px 0 4px 20px;color:#ff6f00;font-weight:600;font-size:10px">&#x23F0; Change detected outside business hours — requires additional review.</div>' : '') +
+              changedByHtml +
+              '<div style="padding-left:20px;margin-top:2px">' +
               c.changes.map(function(ch) {
                 return '<div style="margin:2px 0"><code style="color:var(--accent2)">' + esc(ch.field) + '</code>: <span style="color:var(--crit);text-decoration:line-through">' + esc(String(ch.old)) + '</span> &#x2192; <span style="color:var(--ok)">' + esc(String(ch.new)) + '</span></div>';
               }).join('') +
               '</div>' +
+              eventsHtml +
+              rollbackHtml +
               actionBtns +
             '</div>' +
           '</div>';
