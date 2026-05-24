@@ -6176,7 +6176,6 @@ async function loadAppChangesWidget() {
                 '<div style="display:flex;align-items:center;gap:2px;flex-wrap:wrap"><span style="font-weight:600;font-size:11px">' + esc(c.kind) + '/' + esc(c.name) + '</span>' + riskBadge + followUpBadge + freezeBadge + '</div>' +
                 '<div style="color:var(--text2);font-size:10px">' + esc(c.namespace) + ' &#x2022; ' + acwRelativeTime(c.timestamp) + (c.changedBy && c.changedBy.user !== 'unknown' ? ' &#x2022; by ' + esc(c.changedBy.user) : '') + '</div>' +
               '</div>' +
-              '<span class="badge badge-' + (c.severity === 'critical' ? 'crit' : c.severity === 'warning' ? 'warn' : 'info') + '" style="font-size:9px">' + c.severity.toUpperCase() + '</span>' +
             '</div>' +
             '<div id="' + detailId + '" style="display:' + (c.followUp || c.changeFreezeViolation ? 'block' : 'none') + ';margin-top:4px;padding:4px 0 0 0;font-size:10px;color:var(--text2);border-top:1px solid var(--border)">' +
               (c.followUp ? '<div style="padding:4px 0 4px 20px;color:var(--crit);font-weight:600;font-size:10px">&#x26A0; This change was previously dismissed but has been re-applied. Please review and take action.</div>' : '') +
