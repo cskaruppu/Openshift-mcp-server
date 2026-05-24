@@ -176,13 +176,43 @@ function isWeekend() {
   return day === 0 || day === 6;
 }
 
+const SYSTEM_MANAGERS = new Set([
+  "kube-controller-manager", "kube-scheduler", "kube-apiserver",
+  "endpoint-controller", "endpointslice-controller",
+  "deployment-controller", "replicaset-controller",
+  "daemonset-controller", "statefulset-controller",
+  "job-controller", "cronjob-controller",
+  "node-controller", "service-controller",
+  "attach-detach-controller", "namespace-controller",
+  "clusterrole-aggregation-controller",
+]);
+
+function isSystemManager(name) {
+  if (!name) return false;
+  const lower = name.toLowerCase();
+  if (SYSTEM_MANAGERS.has(lower)) return true;
+  if (lower.startsWith("system:")) return true;
+  if (lower.startsWith("openshift-")) return true;
+  if (lower.includes("controller-manager")) return true;
+  if (lower.includes("operator")) return true;
+  return false;
+}
+
 function extractChangedBy(resource) {
   const managed = resource.metadata?.managedFields;
   if (!managed || managed.length === 0) return { user: "unknown", tool: "unknown", time: null };
-  const sorted = managed
-    .filter(f => f.operation === "Update" || f.operation === "Apply")
-    .sort((a, b) => new Date(b.time || 0) - new Date(a.time || 0));
-  const latest = sorted[0] || managed[managed.length - 1];
+
+  const specEntries = managed.filter(f => {
+    if (f.operation !== "Update" && f.operation !== "Apply") return false;
+    const fields = JSON.stringify(f.fieldsV1 || {});
+    return fields.includes('"f:spec"') || f.subresource === "scale";
+  });
+
+  const candidates = specEntries.length > 0 ? specEntries : managed.filter(f => f.operation === "Update" || f.operation === "Apply");
+  const sorted = candidates.sort((a, b) => new Date(b.time || 0) - new Date(a.time || 0));
+
+  const humanEntry = sorted.find(e => !isSystemManager(e.manager));
+  const latest = humanEntry || sorted[0] || managed[managed.length - 1];
   return {
     user: latest.manager || "unknown",
     tool: latest.operation || "unknown",
