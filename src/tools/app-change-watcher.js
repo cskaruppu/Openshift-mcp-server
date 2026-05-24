@@ -8,6 +8,7 @@ import { query as dbQuery } from "../utils/db.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PERSIST_DIR = join(__dirname, "..", "..", "data");
 const PERSIST_FILE = join(PERSIST_DIR, "tracked-namespaces.json");
+const STATE_FILE = join(PERSIST_DIR, "watcher-state.json");
 
 const CM_NAME = "mcp-tracked-namespaces";
 const CM_KEY = "namespaces";
@@ -91,6 +92,71 @@ async function persistNamespaces() {
   if (saved) console.log("[app-watcher] Tracked namespaces persisted:", nsList.length);
 }
 
+function getWatcherState() {
+  return {
+    changeLog: _changeLog.slice(0, MAX_CHANGES),
+    baselines: Object.fromEntries(_baselines),
+    changeHistory: _changeHistory.slice(0, MAX_HISTORY),
+    resolvedIds: [..._resolvedIds],
+    dismissedKeys: Object.fromEntries(_dismissedKeys),
+    lastScanTime: _lastScanTime,
+    lastChangeTime: _lastChangeTime,
+  };
+}
+
+async function persistWatcherState() {
+  const state = getWatcherState();
+  try {
+    await dbQuery(
+      `INSERT INTO kv_store (key, value, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+      ["watcher_state", JSON.stringify(state)]
+    );
+  } catch {}
+  try {
+    mkdirSync(PERSIST_DIR, { recursive: true });
+    writeFileSync(STATE_FILE, JSON.stringify(state));
+  } catch {}
+}
+
+async function loadWatcherState() {
+  let state = null;
+  try {
+    const result = await dbQuery("SELECT value FROM kv_store WHERE key = $1", ["watcher_state"]);
+    if (result?.rows?.length > 0) {
+      state = typeof result.rows[0].value === "string" ? JSON.parse(result.rows[0].value) : result.rows[0].value;
+    }
+  } catch {}
+  if (!state) {
+    try {
+      state = JSON.parse(readFileSync(STATE_FILE, "utf8"));
+    } catch {}
+  }
+  if (!state) return;
+
+  if (Array.isArray(state.changeLog)) {
+    _changeLog.length = 0;
+    for (const e of state.changeLog) _changeLog.push(e);
+    console.log("[app-watcher] Restored", _changeLog.length, "pending changes");
+  }
+  if (state.baselines && typeof state.baselines === "object") {
+    for (const [k, v] of Object.entries(state.baselines)) _baselines.set(k, v);
+    console.log("[app-watcher] Restored", _baselines.size, "baselines");
+  }
+  if (Array.isArray(state.changeHistory)) {
+    _changeHistory.length = 0;
+    for (const h of state.changeHistory) _changeHistory.push(h);
+  }
+  if (Array.isArray(state.resolvedIds)) {
+    for (const id of state.resolvedIds) _resolvedIds.add(id);
+  }
+  if (state.dismissedKeys && typeof state.dismissedKeys === "object") {
+    for (const [k, v] of Object.entries(state.dismissedKeys)) _dismissedKeys.set(k, v);
+  }
+  if (state.lastScanTime) _lastScanTime = state.lastScanTime;
+  if (state.lastChangeTime) _lastChangeTime = state.lastChangeTime;
+}
+
 let _persistInitDone = false;
 async function ensurePersistedLoad() {
   if (_persistInitDone) return;
@@ -99,14 +165,14 @@ async function ensurePersistedLoad() {
   if (cmList && cmList.length > 0) {
     for (const ns of cmList) _watchedNamespaces.add(ns);
     console.log("[app-watcher] Loaded", cmList.length, "namespaces from ConfigMap");
-    return;
+  } else {
+    const dbList = await loadFromDb();
+    if (dbList && dbList.length > 0) {
+      for (const ns of dbList) _watchedNamespaces.add(ns);
+      console.log("[app-watcher] Loaded", dbList.length, "namespaces from database");
+    }
   }
-  const dbList = await loadFromDb();
-  if (dbList && dbList.length > 0) {
-    for (const ns of dbList) _watchedNamespaces.add(ns);
-    console.log("[app-watcher] Loaded", dbList.length, "namespaces from database");
-    return;
-  }
+  await loadWatcherState();
 }
 
 const _envNamespaces = (process.env.WATCHED_APP_NAMESPACES || "").split(",").map(s => s.trim()).filter(Boolean);
@@ -362,28 +428,34 @@ export async function removeNamespaces(nsList) {
   await persistNamespaces();
 }
 export async function initNamespaceBaselines(nsList) {
+  let newBaselines = 0;
   for (const ns of nsList) {
     try {
       const workloads = await fetchWorkloads(ns);
       for (const w of workloads) {
         const key = workloadKey(ns, w.kind, w.metadata.name);
-        _baselines.set(key, extractSpec(w));
+        if (!_baselines.has(key)) {
+          _baselines.set(key, extractSpec(w));
+          newBaselines++;
+        }
       }
     } catch {}
   }
+  if (newBaselines > 0) persistWatcherState().catch(() => {});
 }
 
-export function acknowledgeChange(changeId) {
+export async function acknowledgeChange(changeId) {
   const entry = _changeLog.find(e => e.id === changeId);
   if (!entry) return { found: false };
   _resolvedIds.add(changeId);
   recordHistory(entry, "acknowledged");
   const idx = _changeLog.indexOf(entry);
   if (idx >= 0) _changeLog.splice(idx, 1);
+  persistWatcherState().catch(() => {});
   return { found: true, id: changeId, action: "acknowledged", resolved: true };
 }
 
-export function agreeChange(changeId) {
+export async function agreeChange(changeId) {
   const entry = _changeLog.find(e => e.id === changeId);
   if (!entry) return { found: false };
   _resolvedIds.add(changeId);
@@ -392,6 +464,7 @@ export function agreeChange(changeId) {
   if (entry.currentSpec) _baselines.set(key, entry.currentSpec);
   const idx = _changeLog.indexOf(entry);
   if (idx >= 0) _changeLog.splice(idx, 1);
+  persistWatcherState().catch(() => {});
   return { found: true, id: changeId, action: "agreed", resolved: true };
 }
 
@@ -426,6 +499,7 @@ export async function dismissChange(changeId) {
   recordHistory(entry, "dismissed");
   const idx = _changeLog.indexOf(entry);
   if (idx >= 0) _changeLog.splice(idx, 1);
+  persistWatcherState().catch(() => {});
   return { found: true, id: changeId, action: "dismissed", rolledBack: true, resolved: true };
 }
 
@@ -761,6 +835,7 @@ export async function scanForChanges() {
       console.warn(`[app-watcher] Error scanning namespace ${ns}:`, e.message);
     }
   }
+  if (results.length > 0) persistWatcherState().catch(() => {});
   return results;
 }
 
