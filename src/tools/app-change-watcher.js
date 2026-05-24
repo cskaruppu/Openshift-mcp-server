@@ -223,12 +223,11 @@ function friendlyMethodName(manager) {
   return manager;
 }
 
-function extractChangedBy(resource) {
+function extractChangedBy(resource, ns, kind, name) {
   const managed = resource.metadata?.managedFields;
   const annotations = resource.metadata?.annotations || {};
 
   const changeCause = annotations["kubernetes.io/change-cause"] || null;
-  const lastAppliedBy = annotations["kubectl.kubernetes.io/last-applied-configuration"] ? "kubectl apply" : null;
 
   if (!managed || managed.length === 0) {
     return { user: "unknown", method: changeCause || "unknown", time: null, tool: null };
@@ -263,6 +262,52 @@ function extractChangedBy(resource) {
     time: latest.time || null,
     apiVersion: latest.apiVersion || null,
   };
+}
+
+async function enrichChangedByWithUser(changedBy, ns, kind, name) {
+  if (changedBy.user !== "unknown") return changedBy;
+  try {
+    const apiGroup = kind === "Deployment" ? "apps" : kind === "StatefulSet" ? "apps" : kind === "DaemonSet" ? "apps" : kind === "ReplicaSet" ? "apps" : "";
+    const resource = kind.toLowerCase() + "s";
+    const apiPath = apiGroup ? `apis/${apiGroup}/v1` : "api/v1";
+    const auditUrl = `/apis/audit.k8s.io/v1/events?fieldSelector=objectRef.name=${name},objectRef.namespace=${ns},objectRef.resource=${resource}&limit=5`;
+    const auditData = await ocpGet(auditUrl);
+    if (auditData?.items?.length > 0) {
+      const recent = auditData.items
+        .filter(e => e.user?.username && !isSystemManager(e.user.username))
+        .sort((a, b) => new Date(b.stageTimestamp || b.requestReceivedTimestamp || 0) - new Date(a.stageTimestamp || a.requestReceivedTimestamp || 0));
+      if (recent.length > 0) {
+        changedBy.user = recent[0].user.username;
+        return changedBy;
+      }
+    }
+  } catch {}
+
+  try {
+    const eventUrl = `/api/v1/namespaces/${ns}/events?fieldSelector=involvedObject.name=${name}&limit=20`;
+    const eventData = await ocpGet(eventUrl);
+    if (eventData?.items?.length > 0) {
+      for (const ev of eventData.items) {
+        const msg = ev.message || "";
+        const annot = ev.metadata?.annotations || {};
+        if (annot["openshift.io/user"]) {
+          changedBy.user = annot["openshift.io/user"];
+          return changedBy;
+        }
+        if (annot["user"]) {
+          changedBy.user = annot["user"];
+          return changedBy;
+        }
+        const userInMsg = msg.match(/by user[: ]+["']?(\S+?)["']?(?:\s|$|,)/i);
+        if (userInMsg) {
+          changedBy.user = userInMsg[1];
+          return changedBy;
+        }
+      }
+    }
+  } catch {}
+
+  return changedBy;
 }
 
 async function correlateWithEvents(ns, kind, name) {
@@ -676,7 +721,8 @@ export async function scanForChanges() {
             dismissed.followUpCount++;
             followUpCount = dismissed.followUpCount;
           }
-          const changedBy = extractChangedBy(w);
+          let changedBy = extractChangedBy(w, ns, w.kind, w.metadata.name);
+          try { changedBy = await enrichChangedByWithUser(changedBy, ns, w.kind, w.metadata.name); } catch {}
           const riskScore = calculateRiskScore(changeType, severity, followUp, diffs.length);
           const riskLevel = getRiskLevel(riskScore);
           const changeFreezeViolation = outsideHours || weekend;
