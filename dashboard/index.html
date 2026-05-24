@@ -6120,11 +6120,19 @@ async function loadAppChangesWidget() {
             : '';
           // Changed by attribution
           var changedByHtml = '';
-          if (c.changedBy && c.changedBy.user !== 'unknown') {
-            changedByHtml = '<div style="font-size:9px;color:var(--text2);margin-top:4px;padding-left:20px;display:flex;align-items:center;gap:4px">' +
-              '<span style="font-size:10px">&#x1F464;</span> Changed by <strong style="color:var(--text)">' + esc(c.changedBy.user) + '</strong>' +
-              (c.changedBy.tool ? ' via <em>' + esc(c.changedBy.tool) + '</em>' : '') +
-              (c.changedBy.time ? ' at ' + acwRelativeTime(c.changedBy.time) : '') +
+          if (c.changedBy && (c.changedBy.method || c.changedBy.user !== 'unknown')) {
+            var cbParts = [];
+            if (c.changedBy.user && c.changedBy.user !== 'unknown') {
+              cbParts.push('<span style="font-size:10px">&#x1F464;</span> <strong style="color:var(--text)">' + esc(c.changedBy.user) + '</strong>');
+            }
+            if (c.changedBy.method) {
+              cbParts.push('<span style="font-size:10px">&#x1F527;</span> via <strong style="color:var(--accent2)">' + esc(c.changedBy.method) + '</strong>');
+            }
+            if (c.changedBy.time) {
+              cbParts.push(acwRelativeTime(c.changedBy.time));
+            }
+            changedByHtml = '<div style="font-size:9px;color:var(--text2);margin-top:4px;padding-left:20px;display:flex;align-items:center;gap:4px;flex-wrap:wrap">' +
+              cbParts.join(' <span style="opacity:0.4">&#x2022;</span> ') +
             '</div>';
           }
           // Correlated events
@@ -6164,7 +6172,7 @@ async function loadAppChangesWidget() {
               acwChangeTypeIcon(c.changeType || 'other') +
               '<div style="flex:1;min-width:0">' +
                 '<div style="display:flex;align-items:center;gap:2px;flex-wrap:wrap"><span style="font-weight:600;font-size:11px">' + esc(c.kind) + '/' + esc(c.name) + '</span>' + riskBadge + followUpBadge + freezeBadge + '</div>' +
-                '<div style="color:var(--text2);font-size:10px">' + esc(c.namespace) + ' &#x2022; ' + acwRelativeTime(c.timestamp) + (c.changedBy && c.changedBy.user !== 'unknown' ? ' &#x2022; by ' + esc(c.changedBy.user) : '') + '</div>' +
+                '<div style="color:var(--text2);font-size:10px">' + esc(c.namespace) + ' &#x2022; ' + acwRelativeTime(c.timestamp) + (c.changedBy && c.changedBy.method ? ' &#x2022; via ' + esc(c.changedBy.method) : '') + '</div>' +
               '</div>' +
             '</div>' +
             '<div id="' + detailId + '" style="display:' + (c.followUp || c.changeFreezeViolation ? 'block' : 'none') + ';margin-top:4px;padding:4px 0 0 0;font-size:10px;color:var(--text2);border-top:1px solid var(--border)">' +

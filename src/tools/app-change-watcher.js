@@ -198,9 +198,41 @@ function isSystemManager(name) {
   return false;
 }
 
+function isKubectlTool(name) {
+  if (!name) return false;
+  const lower = name.toLowerCase();
+  return lower.startsWith("kubectl") || lower.startsWith("oc") || lower === "openshift-web-console" || lower === "console";
+}
+
+function friendlyMethodName(manager) {
+  if (!manager) return null;
+  const m = manager.toLowerCase();
+  if (m === "kubectl-edit" || m === "oc-edit") return "CLI edit";
+  if (m === "kubectl-scale" || m === "oc-scale") return "CLI scale";
+  if (m === "kubectl-rollout" || m === "oc-rollout") return "CLI rollout";
+  if (m === "kubectl-set" || m === "oc-set") return "CLI set";
+  if (m === "kubectl-apply" || m === "oc-apply") return "CLI apply";
+  if (m === "kubectl-patch" || m === "oc-patch") return "CLI patch";
+  if (m === "kubectl-create" || m === "oc-create") return "CLI create";
+  if (m === "kubectl-replace" || m === "oc-replace") return "CLI replace";
+  if (m === "kubectl-client-side-apply") return "CLI apply";
+  if (m.startsWith("kubectl") || m.startsWith("oc")) return "CLI (" + manager + ")";
+  if (m === "openshift-web-console" || m === "console") return "Web Console";
+  if (m.includes("argocd") || m.includes("gitops")) return "GitOps/ArgoCD";
+  if (m.includes("helm")) return "Helm";
+  return manager;
+}
+
 function extractChangedBy(resource) {
   const managed = resource.metadata?.managedFields;
-  if (!managed || managed.length === 0) return { user: "unknown", tool: "unknown", time: null };
+  const annotations = resource.metadata?.annotations || {};
+
+  const changeCause = annotations["kubernetes.io/change-cause"] || null;
+  const lastAppliedBy = annotations["kubectl.kubernetes.io/last-applied-configuration"] ? "kubectl apply" : null;
+
+  if (!managed || managed.length === 0) {
+    return { user: "unknown", method: changeCause || "unknown", time: null, tool: null };
+  }
 
   const specEntries = managed.filter(f => {
     if (f.operation !== "Update" && f.operation !== "Apply") return false;
@@ -213,9 +245,21 @@ function extractChangedBy(resource) {
 
   const humanEntry = sorted.find(e => !isSystemManager(e.manager));
   const latest = humanEntry || sorted[0] || managed[managed.length - 1];
+
+  const rawManager = latest.manager || "unknown";
+  const method = friendlyMethodName(rawManager);
+
+  let user = "unknown";
+  if (changeCause) {
+    const userMatch = changeCause.match(/(?:--as[= ]|by )(\S+)/i);
+    if (userMatch) user = userMatch[1];
+  }
+
   return {
-    user: latest.manager || "unknown",
-    tool: latest.operation || "unknown",
+    user,
+    method,
+    tool: rawManager,
+    operation: latest.operation || "unknown",
     time: latest.time || null,
     apiVersion: latest.apiVersion || null,
   };
