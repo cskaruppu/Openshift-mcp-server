@@ -12058,6 +12058,9 @@ export async function handleChatAPI(req, res) {
   let intentsForLog = null;
   let cacheHit = false;
   let activeProvider = LLM_PROVIDER;
+  let _traceContextKeys = [];
+  let _traceToolsUsed = [];
+  let _traceStatus = "success";
 
   // Rate limit (token bucket per-IP; returns true if limited)
   if (enforceRateLimit(req, res)) {
@@ -13395,24 +13398,8 @@ export async function handleChatAPI(req, res) {
       Date.now() - startedAt,
     ).catch(() => []);
 
-    const traceId = generateTraceId();
-    recordTrace({
-      traceId,
-      conversationId,
-      queryText: userMessage,
-      provider: activeProvider,
-      totalDurationMs: Date.now() - startedAt,
-      status: "success",
-      spans: agentTrace.map((a) => ({
-        agentId: a.agentId,
-        agentName: a.agentName,
-        icon: a.icon,
-        color: a.color,
-        category: a.category,
-        toolsCalled: a.toolsCalled || [],
-        status: a.status || "active",
-      })),
-    }).catch((err) => console.warn("[chat-api] trace recording failed:", err.message));
+    _traceToolsUsed = toolsUsed || [];
+    _traceContextKeys = Object.keys(context || {});
 
     const payload = {
       reply,
@@ -13422,7 +13409,6 @@ export async function handleChatAPI(req, res) {
       trace: trace.slice(0, 20),
       toolsUsed: toolsUsed || [],
       agentTrace,
-      traceId,
     };
     cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
     if (conversationId) {
@@ -13445,6 +13431,7 @@ export async function handleChatAPI(req, res) {
     } else {
       json(res, 500, { error: err.message });
     }
+    _traceStatus = "error";
   } finally {
     clearRemoteCluster();
     histLogQuery({
@@ -13454,6 +13441,35 @@ export async function handleChatAPI(req, res) {
       cacheHit,
       durationMs: Date.now() - startedAt,
     }).catch(() => {});
+
+    if (userMessage) {
+      const ctxKeys = _traceContextKeys.length > 0
+        ? _traceContextKeys
+        : (Array.isArray(intentsForLog) ? intentsForLog : []).filter(Boolean);
+      buildAgentTrace(_traceToolsUsed, ctxKeys, Date.now() - startedAt)
+        .catch(() => [])
+        .then((agentTrace) => {
+          const traceId = generateTraceId();
+          return recordTrace({
+            traceId,
+            conversationId,
+            queryText: userMessage,
+            provider: activeProvider,
+            totalDurationMs: Date.now() - startedAt,
+            status: _traceStatus,
+            spans: (agentTrace || []).map((a) => ({
+              agentId: a.agentId,
+              agentName: a.agentName,
+              icon: a.icon,
+              color: a.color,
+              category: a.category,
+              toolsCalled: a.toolsCalled || [],
+              status: a.status || "active",
+            })),
+          });
+        })
+        .catch((err) => console.warn("[chat-api] trace recording failed:", err.message));
+    }
   }
 }
 
