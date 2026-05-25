@@ -764,7 +764,10 @@ export async function handleDashboardAPI(pathname, req, res) {
         const findings = [];
         let score = 100;
         try {
-          const pods = await ocpGet("/api/v1/pods");
+          const [pods, npData] = await Promise.all([
+            ocpGet("/api/v1/pods"),
+            ocpGet("/apis/networking.k8s.io/v1/networkpolicies").catch(() => ({ items: [] })),
+          ]);
           const items = (pods.items || []).filter(
             (p) => !p.metadata.namespace?.startsWith("openshift-") && !p.metadata.namespace?.startsWith("kube-")
           );
@@ -791,13 +794,8 @@ export async function handleDashboardAPI(pathname, req, res) {
           if (latestTag > 0) { score -= Math.min(10, latestTag); findings.push({ severity: "warning", msg: `${latestTag} image(s) using :latest or untagged` }); }
 
           const nsList = items.map((p) => p.metadata.namespace).filter((v, i, a) => a.indexOf(v) === i);
-          let uncovered = 0;
-          for (const ns of nsList) {
-            try {
-              const np = await ocpGet(`/apis/networking.k8s.io/v1/namespaces/${ns}/networkpolicies`);
-              if (!np.items || np.items.length === 0) uncovered++;
-            } catch { uncovered++; }
-          }
+          const coveredNs = new Set((npData.items || []).map((np) => np.metadata.namespace));
+          const uncovered = nsList.filter((ns) => !coveredNs.has(ns)).length;
           if (uncovered > 0) { score -= Math.min(15, uncovered * 3); findings.push({ severity: "high", msg: `${uncovered} namespace(s) without NetworkPolicy` }); }
 
           score = Math.max(0, Math.round(score));

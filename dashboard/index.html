@@ -15269,11 +15269,21 @@ async function loadCapacityForecast() {
 async function runComplianceScanUI() {
   var btn = document.getElementById('compliance-scan-btn');
   btn.disabled = true; btn.textContent = 'Scanning...';
+  document.getElementById('compliance-findings').innerHTML =
+    '<div style="padding:20px;text-align:center;color:var(--text2)">' +
+    '<div style="display:inline-block;width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent2);border-radius:50%;animation:spin 0.8s linear infinite;margin-bottom:8px"></div>' +
+    '<div style="font-size:12px">Scanning cluster against CIS Kubernetes Benchmark...</div>' +
+    '<div style="font-size:10px;margin-top:4px;color:var(--text2)">This may take a moment on large clusters</div></div>';
   try {
     var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/compliance/scan'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
     });
+    if (!resp.ok) {
+      var errData = await resp.json().catch(function() { return {}; });
+      throw new Error(errData.error || 'Server returned ' + resp.status);
+    }
     var data = await resp.json();
+    if (data.error) throw new Error(data.error);
     renderComplianceResults(data);
   } catch (e) {
     document.getElementById('compliance-findings').innerHTML = '<div style="padding:16px;color:var(--crit)">Scan failed: ' + esc(e.message) + '</div>';

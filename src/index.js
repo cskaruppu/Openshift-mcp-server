@@ -3091,14 +3091,13 @@ async function startSSE() {
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/rca/investigate") {
-      readJsonBody(req, async (body) => {
-        try {
-          const { namespace, pod } = body;
-          if (!namespace) return sendJson(res, 400, { error: "namespace required" });
-          const result = pod ? await runRCA(namespace, pod) : await runNamespaceRCA(namespace);
-          sendJson(res, 200, result);
-        } catch (err) { sendJson(res, 500, { error: err.message }); }
-      });
+      try {
+        const body = await readJsonBody(req);
+        const { namespace, pod } = body;
+        if (!namespace) { sendJson(res, 400, { error: "namespace required" }); return; }
+        const result = pod ? await runRCA(namespace, pod) : await runNamespaceRCA(namespace);
+        sendJson(res, 200, result);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }
 
@@ -3113,12 +3112,11 @@ async function startSSE() {
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/compliance/scan") {
-      readJsonBody(req, async (body) => {
-        try {
-          const results = await runComplianceScan(body || {});
-          sendJson(res, 200, results);
-        } catch (err) { sendJson(res, 500, { error: err.message }); }
-      });
+      try {
+        const body = await readJsonBody(req);
+        const results = await runComplianceScan(body || {});
+        sendJson(res, 200, results);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }
 
@@ -3169,17 +3167,19 @@ async function startSSE() {
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/slo/define") {
-      readJsonBody(req, async (body) => {
-        try { const slo = await defineSLO(body); sendJson(res, 200, slo); }
-        catch (err) { sendJson(res, 500, { error: err.message }); }
-      });
+      try {
+        const body = await readJsonBody(req);
+        const slo = await defineSLO(body);
+        sendJson(res, 200, slo);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/slo/delete") {
-      readJsonBody(req, async (body) => {
-        try { await deleteSLO(body.id); sendJson(res, 200, { ok: true }); }
-        catch (err) { sendJson(res, 500, { error: err.message }); }
-      });
+      try {
+        const body = await readJsonBody(req);
+        await deleteSLO(body.id);
+        sendJson(res, 200, { ok: true });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }
 
@@ -3189,12 +3189,11 @@ async function startSSE() {
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/rbac/assign") {
-      readJsonBody(req, async (body) => {
-        try {
-          const ok = await setUserRole(body.username, body.role);
-          sendJson(res, ok ? 200 : 400, ok ? { ok: true } : { error: "Invalid role" });
-        } catch (err) { sendJson(res, 500, { error: err.message }); }
-      });
+      try {
+        const body = await readJsonBody(req);
+        const ok = await setUserRole(body.username, body.role);
+        sendJson(res, ok ? 200 : 400, ok ? { ok: true } : { error: "Invalid role" });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }
 
