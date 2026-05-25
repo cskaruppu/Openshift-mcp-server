@@ -3296,6 +3296,27 @@ tr:hover td{background:#ffffff06}
     </div>
   </div>
 
+  <!-- Agent Execution Traces -->
+  <div class="card" style="padding:0;overflow:hidden;margin-top:20px">
+    <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:16px">&#x1F50E;</span>
+        <span style="font-size:14px;font-weight:600">Agent Execution Traces</span>
+        <span style="font-size:10px;color:var(--text2)">Which agents handled each query</span>
+      </div>
+      <div style="display:flex;gap:6px">
+        <select id="trace-agent-filter" onchange="loadQueryTraces()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:10px;outline:none">
+          <option value="">All Agents</option>
+        </select>
+        <button onclick="loadQueryTraces()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:10px;cursor:pointer;color:var(--text)">&#x21BB; Refresh</button>
+      </div>
+    </div>
+    <div id="trace-stats-bar" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:12px 18px;border-bottom:1px solid var(--border);font-size:10px"></div>
+    <div id="query-traces-list" style="padding:12px 18px;max-height:500px;overflow-y:auto">
+      <div style="text-align:center;color:var(--text2);font-size:11px;padding:20px">Loading traces...</div>
+    </div>
+  </div>
+
   <!-- Persistent Audit Trail -->
   <div class="card" style="padding:0;overflow:hidden;margin-top:20px">
     <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
@@ -4415,6 +4436,22 @@ tr:hover td{background:#ffffff06}
 
   <div id="agents-categories-container" style="margin-top:18px">
     <div class="loading">Loading agents...</div>
+  </div>
+
+  <!-- Agent Usage Analytics -->
+  <div class="card" style="margin-top:14px;padding:0;overflow:hidden">
+    <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:16px">&#x1F4CA;</span>
+        <span style="font-size:14px;font-weight:600">Agent Usage Analytics</span>
+        <span style="font-size:10px;color:var(--text2)">Last 30 days</span>
+      </div>
+      <button onclick="loadAgentAnalytics()" style="background:var(--accent2);color:#fff;border:none;border-radius:6px;padding:4px 12px;font-size:10px;cursor:pointer">Refresh</button>
+    </div>
+    <div id="agent-analytics-stats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:12px 18px;border-bottom:1px solid var(--border)"></div>
+    <div id="agent-analytics-table" style="padding:0;overflow-x:auto">
+      <div style="text-align:center;color:var(--text2);font-size:11px;padding:20px">Loading analytics...</div>
+    </div>
   </div>
 
   <!-- Agent detail drawer -->
@@ -8940,6 +8977,7 @@ function showView(view) {
     loadAuditView();
     loadComplianceResults();
     loadAuditTrail();
+    loadQueryTraces();
   } else if (view === 'settings') {
     loadSettings();
   } else if (view === 'hub') {
@@ -9493,7 +9531,7 @@ function renderConversation() {
       }
       var traceBlock = '';
       if (msg.agentTrace && msg.agentTrace.length) {
-        traceBlock = renderAgentTrace({ agentTrace: msg.agentTrace, toolsUsed: msg.toolsUsed, provider: msg.provider });
+        traceBlock = renderAgentTrace({ agentTrace: msg.agentTrace, toolsUsed: msg.toolsUsed, provider: msg.provider, traceId: msg.traceId, durationMs: msg.durationMs });
       }
       html += '<div class="conv-msg ai">' +
         '<div class="conv-header"><div class="conv-avatar">TA</div><span class="conv-name">TCS Agentic AI</span>' + providerTag + '</div>' +
@@ -10097,7 +10135,7 @@ async function sendFullChat(text) {
       history = loadChatHistory();
       const activeChat = history.chats.find(c => c.id === history.activeId);
       if (activeChat) {
-        activeChat.messages.push({ role: 'ai', text: replyText, html: replyHtml, provider: data.provider || providerOpts.provider || 'none', toolsUsed: data.toolsUsed || [], agentTrace: data.agentTrace || [] });
+        activeChat.messages.push({ role: 'ai', text: replyText, html: replyHtml, provider: data.provider || providerOpts.provider || 'none', toolsUsed: data.toolsUsed || [], agentTrace: data.agentTrace || [], traceId: data.traceId || null, durationMs: data.durationMs || null });
         activeChat.updatedAt = new Date().toISOString();
         saveChatHistory(history);
       }
@@ -14458,17 +14496,20 @@ function renderAgentTrace(data) {
       totalTools += (agentTrace[i].toolsCalled || []).length;
     }
   }
+  var durationStr = data.durationMs ? ' · ' + data.durationMs + 'ms' : '';
   var summaryText = agentTrace && agentTrace.length
-    ? agentTrace.length + ' agent' + (agentTrace.length > 1 ? 's' : '') + ' involved' + (activeCount ? ' · ' + totalTools + ' tool call' + (totalTools !== 1 ? 's' : '') : '')
-    : (data.toolsUsed ? data.toolsUsed.length + ' tools used' : '');
+    ? agentTrace.length + ' agent' + (agentTrace.length > 1 ? 's' : '') + ' involved' + (activeCount ? ' · ' + totalTools + ' tool call' + (totalTools !== 1 ? 's' : '') : '') + durationStr
+    : (data.toolsUsed ? data.toolsUsed.length + ' tools used' + durationStr : '');
   var html = '<div class="agent-trace">';
   html += '<div class="agent-trace-header" onclick="toggleAgentTrace(\'' + id + '\',this)">';
   html += '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="7" r="3"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><line x1="12" y1="10" x2="5" y2="15.5"/><line x1="12" y1="10" x2="19" y2="15.5"/></svg>';
   html += ' Agent Orchestration Flow &middot; <span style="font-weight:400;opacity:.7">' + summaryText + '</span>';
+  if (data.traceId) html += '<span style="font-size:9px;opacity:.4;margin-left:4px" title="Trace ID: ' + esc(data.traceId) + '">&#x1F50D;</span>';
   html += '<svg class="at-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>';
   html += '</div>';
   html += '<div class="agent-trace-body" id="' + id + '">';
   html += '<div class="at-flow">';
+  if (data.traceId) html += '<div style="font-size:9px;color:var(--text2);margin-bottom:6px;font-family:monospace">Trace: ' + esc(data.traceId) + (data.durationMs ? ' &middot; ' + data.durationMs + 'ms' : '') + '</div>';
   html += '<div class="at-node at-node-user"><span style="font-size:14px">&#x1F464;</span> <span>User Query</span></div>';
   html += '<div class="at-connector"></div>';
   html += '<div class="at-node at-node-orch"><span style="font-size:14px">&#x1F9E0;</span> <span>AI Orchestrator</span> <span style="font-size:10px;opacity:.6;margin-left:auto">' + esc(data.provider || '') + '</span></div>';
@@ -14676,6 +14717,7 @@ var _origLoadAgentRegistry = loadAgentRegistry;
 loadAgentRegistry = async function() {
   await _origLoadAgentRegistry();
   await loadFlowDiagram();
+  loadAgentAnalytics();
 };
 
 function buildKebabMenu(clusterId, clusterName, platform, isBuiltin, source) {
@@ -15889,6 +15931,151 @@ async function loadAuditTrail() {
 
 function exportAuditTrailUI(format) {
   window.open(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/audit-trail/export?format=' + format), '_blank');
+}
+
+// ---------------------------------------------------------------------------
+// Agent Execution Traces (Audit view)
+// ---------------------------------------------------------------------------
+async function loadQueryTraces() {
+  var list = document.getElementById('query-traces-list');
+  var statsBar = document.getElementById('trace-stats-bar');
+  var agentFilter = document.getElementById('trace-agent-filter')?.value || '';
+  if (!list) return;
+  try {
+    var params = 'limit=50';
+    if (agentFilter) params += '&agentId=' + encodeURIComponent(agentFilter);
+    var base = MCP_API.replace(/\/api$/, '');
+    var [tracesResp, statsResp] = await Promise.all([
+      fetch(clusterUrl(base + '/api/traces?' + params)),
+      fetch(clusterUrl(base + '/api/traces/stats?days=30')),
+    ]);
+    var tracesData = await tracesResp.json();
+    var statsData = await statsResp.json();
+
+    if (statsBar) {
+      statsBar.innerHTML =
+        '<div style="text-align:center"><div style="font-size:18px;font-weight:700;color:var(--accent2)">' + (statsData.total_queries || 0) + '</div><div style="color:var(--text2)">Total Queries</div></div>' +
+        '<div style="text-align:center"><div style="font-size:18px;font-weight:700;color:var(--ok)">' + (statsData.avg_agents_per_query || 0) + '</div><div style="color:var(--text2)">Avg Agents/Query</div></div>' +
+        '<div style="text-align:center"><div style="font-size:18px;font-weight:700;color:var(--warn)">' + (statsData.avg_duration_ms || 0) + 'ms</div><div style="color:var(--text2)">Avg Duration</div></div>' +
+        '<div style="text-align:center"><div style="font-size:18px;font-weight:700;color:var(--crit)">' + ((statsData.top_agents || [])[0]?.agent_name || 'N/A') + '</div><div style="color:var(--text2)">Top Agent</div></div>';
+    }
+
+    var filterSelect = document.getElementById('trace-agent-filter');
+    if (filterSelect && filterSelect.options.length <= 1 && statsData.top_agents?.length > 0) {
+      for (var i = 0; i < statsData.top_agents.length; i++) {
+        var opt = document.createElement('option');
+        opt.value = statsData.top_agents[i].agent_name;
+        opt.textContent = statsData.top_agents[i].agent_name + ' (' + statsData.top_agents[i].count + ')';
+        filterSelect.appendChild(opt);
+      }
+    }
+
+    var traces = tracesData.traces || [];
+    if (traces.length === 0) {
+      list.innerHTML = '<div style="text-align:center;color:var(--text2);font-size:11px;padding:20px">No agent execution traces recorded yet. Traces are captured when queries are processed through AI Chat.</div>';
+      return;
+    }
+
+    var html = '';
+    for (var ti = 0; ti < traces.length; ti++) {
+      var t = traces[ti];
+      var spans = t.spans || [];
+      var statusColor = t.status === 'success' ? 'var(--ok)' : 'var(--crit)';
+      var trId = 'qt-' + ti;
+      html += '<div style="border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden">';
+      html += '<div onclick="document.getElementById(\'' + trId + '\').style.display=document.getElementById(\'' + trId + '\').style.display===\'none\'?\'block\':\'none\'" style="padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;background:color-mix(in srgb,var(--card) 50%,transparent)">';
+      html += '<span style="font-size:12px;color:' + statusColor + '">' + (t.status === 'success' ? '&#x2705;' : '&#x274C;') + '</span>';
+      html += '<div style="flex:1;min-width:0">';
+      html += '<div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(t.query_text || t.queryText || '') + '</div>';
+      html += '<div style="font-size:10px;color:var(--text2);margin-top:2px">' + timeAgo(t.created_at) + ' &middot; ' + (t.provider || 'built-in') + ' &middot; ' + (t.total_duration_ms || t.totalDurationMs || 0) + 'ms</div>';
+      html += '</div>';
+      html += '<div style="display:flex;gap:4px;align-items:center;flex-shrink:0">';
+      html += '<span style="background:color-mix(in srgb,var(--accent2) 15%,transparent);color:var(--accent2);padding:2px 8px;border-radius:10px;font-size:10px">' + (t.agent_count || t.agentCount || spans.length) + ' agents</span>';
+      html += '<span style="background:color-mix(in srgb,var(--ok) 15%,transparent);color:var(--ok);padding:2px 8px;border-radius:10px;font-size:10px">' + (t.tool_count || t.toolCount || 0) + ' tools</span>';
+      html += '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text2)"><polyline points="6 9 12 15 18 9"/></svg>';
+      html += '</div></div>';
+      html += '<div id="' + trId + '" style="display:none;padding:10px 14px;border-top:1px solid var(--border)">';
+      if (spans.length > 0) {
+        html += '<div style="display:flex;flex-direction:column;gap:4px">';
+        for (var si = 0; si < spans.length; si++) {
+          var sp = spans[si];
+          var spName = sp.agent_name || sp.agentName || 'Unknown';
+          var spTools = sp.tools_called || sp.toolsCalled || [];
+          var spStatus = sp.status || 'active';
+          var spColor = sp.agent_color || sp.color || '#3b82f6';
+          html += '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:color-mix(in srgb,' + esc(spColor) + ' 8%,transparent);border-radius:6px;font-size:11px">';
+          html += '<span style="width:6px;height:6px;border-radius:50%;background:' + esc(spColor) + ';flex-shrink:0"></span>';
+          html += '<span style="font-weight:500;min-width:120px">' + esc(spName) + '</span>';
+          html += '<span style="color:var(--text2);flex:1">' + (spTools.length > 0 ? spTools.map(function(t) { return '<code style="background:color-mix(in srgb,var(--accent2) 10%,transparent);color:var(--accent2);padding:1px 5px;border-radius:3px;font-size:9px">' + esc(t) + '</code>'; }).join(' ') : '<em>context analysis</em>') + '</span>';
+          html += '<span style="padding:1px 6px;border-radius:8px;font-size:9px;background:' + (spStatus === 'active' ? 'color-mix(in srgb,var(--ok) 15%,transparent);color:var(--ok)' : 'color-mix(in srgb,var(--text2) 15%,transparent);color:var(--text2)') + '">' + esc(spStatus) + '</span>';
+          html += '</div>';
+          if (si < spans.length - 1) html += '<div style="width:1px;height:8px;background:var(--border);margin-left:12px"></div>';
+        }
+        html += '</div>';
+      } else {
+        html += '<div style="font-size:11px;color:var(--text2);padding:8px 0">No agent spans recorded for this trace.</div>';
+      }
+      html += '</div></div>';
+    }
+    list.innerHTML = html;
+  } catch (err) {
+    list.innerHTML = '<div style="text-align:center;color:var(--crit);font-size:11px;padding:20px">Failed to load traces: ' + esc(err.message) + '</div>';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Agent Usage Analytics (Agent Registry view)
+// ---------------------------------------------------------------------------
+async function loadAgentAnalytics() {
+  var statsEl = document.getElementById('agent-analytics-stats');
+  var tableEl = document.getElementById('agent-analytics-table');
+  if (!tableEl) return;
+  try {
+    var base = MCP_API.replace(/\/api$/, '');
+    var [analyticsResp, statsResp] = await Promise.all([
+      fetch(clusterUrl(base + '/api/traces/analytics?days=30')),
+      fetch(clusterUrl(base + '/api/traces/stats?days=30')),
+    ]);
+    var analytics = await analyticsResp.json();
+    var stats = await statsResp.json();
+
+    if (statsEl) {
+      var busiestHour = (stats.busiest_hours || [])[0];
+      statsEl.innerHTML =
+        '<div style="text-align:center"><div style="font-size:18px;font-weight:700;color:var(--accent2)">' + (stats.total_queries || 0) + '</div><div style="font-size:10px;color:var(--text2)">Queries (30d)</div></div>' +
+        '<div style="text-align:center"><div style="font-size:18px;font-weight:700;color:var(--ok)">' + ((analytics.agents || []).length) + '</div><div style="font-size:10px;color:var(--text2)">Active Agents</div></div>' +
+        '<div style="text-align:center"><div style="font-size:18px;font-weight:700;color:var(--warn)">' + (stats.avg_duration_ms || 0) + 'ms</div><div style="font-size:10px;color:var(--text2)">Avg Latency</div></div>' +
+        '<div style="text-align:center"><div style="font-size:18px;font-weight:700;color:var(--crit)">' + (busiestHour ? busiestHour.hour + ':00' : 'N/A') + '</div><div style="font-size:10px;color:var(--text2)">Peak Hour</div></div>';
+    }
+
+    var agents = analytics.agents || [];
+    if (agents.length === 0) {
+      tableEl.innerHTML = '<div style="text-align:center;color:var(--text2);font-size:11px;padding:20px">No agent usage data yet. Analytics are captured when queries are processed through AI Chat.</div>';
+      return;
+    }
+
+    var maxCount = agents.length > 0 ? agents[0].invocation_count : 1;
+    var html = '<table style="width:100%;font-size:11px"><thead><tr><th style="text-align:left;padding:8px 14px">Agent</th><th style="text-align:center">Invocations</th><th style="text-align:left;min-width:120px">Usage</th><th style="text-align:center">Avg Latency</th><th style="text-align:center">Error Rate</th><th style="text-align:left">Top Tools</th><th style="text-align:right;padding-right:14px">Last Used</th></tr></thead><tbody>';
+    for (var i = 0; i < agents.length; i++) {
+      var a = agents[i];
+      var pct = maxCount > 0 ? Math.round(100 * a.invocation_count / maxCount) : 0;
+      var errColor = (a.error_rate || 0) > 5 ? 'var(--crit)' : (a.error_rate || 0) > 0 ? 'var(--warn)' : 'var(--ok)';
+      var tools = (a.most_common_tools || []).slice(0, 3);
+      html += '<tr>';
+      html += '<td style="padding:8px 14px;font-weight:500">' + esc(a.agent_name) + '</td>';
+      html += '<td style="text-align:center;font-weight:600">' + a.invocation_count + '</td>';
+      html += '<td><div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:var(--accent2);border-radius:4px"></div></div></td>';
+      html += '<td style="text-align:center;color:var(--text2)">' + (a.avg_duration_ms || '—') + 'ms</td>';
+      html += '<td style="text-align:center;color:' + errColor + '">' + (a.error_rate || 0) + '%</td>';
+      html += '<td>' + (tools.length > 0 ? tools.map(function(t) { return '<code style="background:color-mix(in srgb,var(--accent2) 10%,transparent);color:var(--accent2);padding:1px 5px;border-radius:3px;font-size:9px">' + esc(t) + '</code>'; }).join(' ') : '<span style="color:var(--text2)">—</span>') + '</td>';
+      html += '<td style="text-align:right;padding-right:14px;color:var(--text2)">' + (a.last_used ? timeAgo(a.last_used) : '—') + '</td>';
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    tableEl.innerHTML = html;
+  } catch (err) {
+    tableEl.innerHTML = '<div style="text-align:center;color:var(--crit);font-size:11px;padding:20px">Failed to load analytics: ' + esc(err.message) + '</div>';
+  }
 }
 
 // ---------------------------------------------------------------------------

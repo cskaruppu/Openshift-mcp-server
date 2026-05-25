@@ -72,6 +72,7 @@ import { fetchPodStatus } from "./fix-executor.js";
 import { incCounter, observeHistogram } from "./metrics.js";
 import { enforce as enforceRateLimit } from "./rate-limit.js";
 import { runPreflightChecks, formatPreflightReport, checkCertificateExpiry, validateUpgradeVersion } from "../tools/upgrade-preflight.js";
+import { generateTraceId, recordTrace } from "./query-tracer.js";
 
 // Build agent trace: maps tools used in a chat response back to their owning agents.
 async function buildAgentTrace(toolsUsed, contextKeys, durationMs) {
@@ -13394,6 +13395,25 @@ export async function handleChatAPI(req, res) {
       Date.now() - startedAt,
     ).catch(() => []);
 
+    const traceId = generateTraceId();
+    recordTrace({
+      traceId,
+      conversationId,
+      queryText: userMessage,
+      provider: activeProvider,
+      totalDurationMs: Date.now() - startedAt,
+      status: "success",
+      spans: agentTrace.map((a) => ({
+        agentId: a.agentId,
+        agentName: a.agentName,
+        icon: a.icon,
+        color: a.color,
+        category: a.category,
+        toolsCalled: a.toolsCalled || [],
+        status: a.status || "active",
+      })),
+    }).catch((err) => console.warn("[chat-api] trace recording failed:", err.message));
+
     const payload = {
       reply,
       provider: activeProvider,
@@ -13402,6 +13422,7 @@ export async function handleChatAPI(req, res) {
       trace: trace.slice(0, 20),
       toolsUsed: toolsUsed || [],
       agentTrace,
+      traceId,
     };
     cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
     if (conversationId) {
@@ -13508,9 +13529,32 @@ export async function handleChatCompareAPI(req, res) {
         : { provider: "unknown", model: "", reply: "", durationMs: 0, tokenEstimate: 0, error: s.reason?.message || "Unknown error" }
     );
 
+    const toolsUsed = [];
+    const contextKeys = context ? Object.keys(context) : [];
+    const traceId = generateTraceId();
+    const agentTrace = await buildAgentTrace(toolsUsed, contextKeys, Date.now() - startedAt).catch(() => []);
+    recordTrace({
+      traceId,
+      conversationId,
+      queryText: message,
+      provider: results.map(r => r.provider).join(","),
+      totalDurationMs: Date.now() - startedAt,
+      status: "success",
+      spans: agentTrace.map((a) => ({
+        agentId: a.agentId,
+        agentName: a.agentName,
+        icon: a.icon,
+        color: a.color,
+        category: a.category,
+        toolsCalled: a.toolsCalled || [],
+        status: a.status || "active",
+      })),
+    }).catch((err) => console.warn("[chat-api] trace recording failed:", err.message));
+
     return json(res, 200, {
       results,
       conversationId: conversationId || null,
+      traceId,
     });
   } catch (err) {
     console.error("[chat-compare] error:", err);
@@ -13590,6 +13634,26 @@ export async function handleChatInvestigateAPI(req, res) {
     // Gather context keys from the context hint
     const contextKeys = contextHint ? Object.keys(contextHint) : [];
 
+    const traceId = generateTraceId();
+    const agentTrace = await buildAgentTrace(toolsUsed, contextKeys, Date.now() - startedAt).catch(() => []);
+    recordTrace({
+      traceId,
+      conversationId,
+      queryText: message,
+      provider: provider || LLM_PROVIDER,
+      totalDurationMs: Date.now() - startedAt,
+      status: "success",
+      spans: agentTrace.map((a) => ({
+        agentId: a.agentId,
+        agentName: a.agentName,
+        icon: a.icon,
+        color: a.color,
+        category: a.category,
+        toolsCalled: a.toolsCalled || [],
+        status: a.status || "active",
+      })),
+    }).catch((err) => console.warn("[chat-api] trace recording failed:", err.message));
+
     return json(res, 200, {
       reply: agentResult.text || "",
       provider: provider || LLM_PROVIDER,
@@ -13598,6 +13662,7 @@ export async function handleChatInvestigateAPI(req, res) {
       durationMs: Date.now() - startedAt,
       contextKeys,
       conversationId: conversationId || null,
+      traceId,
     });
   } catch (err) {
     console.error("[chat-investigate] error:", err);

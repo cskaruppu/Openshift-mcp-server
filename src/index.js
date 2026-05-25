@@ -63,6 +63,7 @@ import { defineSLO, getSLOStatus, getAllSLOs, deleteSLO, calculateErrorBudget, l
 import { loadPolicies, getPolicies, getPolicy, createPolicy, updatePolicy, deletePolicy, evaluatePolicies, getClusterPolicies } from "./tools/policy-engine.js";
 import { loadChannels, getChannels, createChannel, updateChannel, deleteChannel, testChannel, notify, getNotificationHistory } from "./services/notifications.js";
 import { initAuditLog, logAuditEvent as logAuditTrailEvent, queryAuditLog, getAuditStats, exportAuditLog } from "./services/audit-log.js";
+import { initQueryTracer, getTraces, getTrace, getAgentAnalytics, getTraceStats } from "./services/query-tracer.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, trackSubmittedCR } from "./services/chat-api.js";
 import {
@@ -1026,6 +1027,7 @@ async function startSSE() {
     await loadPolicies();
     await loadChannels();
     await initAuditLog();
+    await initQueryTracer();
     captureCapacitySnapshot().catch(() => {});
     setInterval(() => captureCapacitySnapshot().catch(() => {}), 3600000);
     setTimeout(() => {
@@ -3346,6 +3348,48 @@ async function startSSE() {
         } else {
           sendJson(res, 200, typeof data === "string" ? JSON.parse(data) : data);
         }
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── Query Traces API ───────────────────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/traces") {
+      try {
+        const filters = {
+          limit: parseInt(url.searchParams.get("limit") || "50", 10),
+          offset: parseInt(url.searchParams.get("offset") || "0", 10),
+          conversationId: url.searchParams.get("conversationId") || undefined,
+          agentId: url.searchParams.get("agentId") || undefined,
+          fromDate: url.searchParams.get("from") || undefined,
+          toDate: url.searchParams.get("to") || undefined,
+        };
+        const result = await getTraces(filters);
+        sendJson(res, 200, result);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "GET" && url.pathname.startsWith("/api/traces/") && !url.pathname.includes("/stats") && !url.pathname.includes("/analytics")) {
+      try {
+        const traceId = decodeURIComponent(url.pathname.split("/api/traces/")[1]);
+        const trace = await getTrace(traceId);
+        if (!trace) return sendJson(res, 404, { error: "Trace not found" });
+        sendJson(res, 200, trace);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/traces/stats") {
+      try {
+        const days = parseInt(url.searchParams.get("days") || "30", 10);
+        const stats = await getTraceStats({ days });
+        sendJson(res, 200, stats);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/traces/analytics") {
+      try {
+        const days = parseInt(url.searchParams.get("days") || "30", 10);
+        const analytics = await getAgentAnalytics({ days });
+        sendJson(res, 200, analytics);
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }
