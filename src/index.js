@@ -54,7 +54,12 @@ import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
 import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, agreeChange, dismissChange, getWorkloadsByNamespace, initTrackedNamespaces, getChangeHistory, getLastScanTime, getLastChangeTime, getHealthStreak } from "./tools/app-change-watcher.js";
 import { registerImageVulnScannerTools, runImageScan, getScanResults, getScanHistory, getComplianceCache, getImageAgeCache } from "./tools/image-vulnerability-scanner.js";
-import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode } from "./services/auth.js";
+import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode, loadUserRoles, getUserRole, setUserRole, getAllUserRoles, checkPermission, getRoles } from "./services/auth.js";
+import { runRCA, runNamespaceRCA, getActiveInvestigations, getRCAHistory } from "./tools/rca-engine.js";
+import { getNetworkTopology, getClusterTopology, getExposedServices, getUnprotectedNamespaces } from "./tools/network-topology.js";
+import { captureSnapshot as captureCapacitySnapshot, getCapacityForecast, getNamespaceForecasts, getCapacityHistory } from "./tools/capacity-forecast.js";
+import { runComplianceScan, getComplianceResults, getComplianceScore, getComplianceHistory } from "./tools/compliance-scanner.js";
+import { defineSLO, getSLOStatus, getAllSLOs, deleteSLO, calculateErrorBudget, loadSLOs } from "./tools/slo-tracker.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, trackSubmittedCR } from "./services/chat-api.js";
 import {
@@ -204,6 +209,7 @@ import { getRecentTraces } from "./services/reasoning.js";
 import { flags as featureFlags, snapshot as flagSnapshot } from "./services/feature-flags.js";
 
 const silencedAlerts = new Map();
+let _liveState = null;
 
 function createMcpServer() {
   const server = new McpServer({
@@ -1008,6 +1014,17 @@ async function startSSE() {
     if (ns.length > 0) console.log(`[startup] Restored ${ns.length} tracked namespace(s)`);
   } catch (err) {
     console.warn("[startup] Tracked namespace restore:", err.message);
+  }
+
+  // Initialize RBAC, SLO definitions, and capacity tracking
+  try {
+    await loadUserRoles();
+    await loadSLOs();
+    captureCapacitySnapshot().catch(() => {});
+    setInterval(() => captureCapacitySnapshot().catch(() => {}), 3600000);
+    console.log("[startup] RBAC roles, SLO definitions loaded; capacity snapshots active (hourly)");
+  } catch (err) {
+    console.warn("[startup] RBAC/SLO/Capacity init:", err.message);
   }
 
   // Initialize AI Intelligence features
@@ -1903,7 +1920,7 @@ async function startSSE() {
           const totalPods = (podsResp.items || []).length;
           const runningPods = (podsResp.items || []).filter(p => p.status?.phase === "Running").length;
 
-          sendEvent("cluster-state", {
+          const clusterStatePayload = {
             ts: Date.now(),
             summary: {
               totalPods, runningPods, problemPods: problemPods.length,
@@ -1916,7 +1933,9 @@ async function startSSE() {
             nodes,
             events,
             operators: operators.filter(o => o.degraded || o.progressing || !o.available),
-          });
+          };
+          _liveState = clusterStatePayload;
+          sendEvent("cluster-state", clusterStatePayload);
         } catch (err) {
           sendEvent("error", { message: err.message });
         }
@@ -3063,6 +3082,162 @@ async function startSSE() {
       } catch (err) {
         sendJson(res, 200, { scannerType: "unknown", totalImages: 0, totalVulns: 0, critical: 0, high: 0, medium: 0, low: 0, fixable: 0, maxCVSS: 0, riskScore: 0, grade: "?", topImages: [], history: [], compliance: { avgScore: 0, signed: 0, sbom: 0, pinned: 0, trusted: 0, total: 0 }, ageSummary: { fresh: 0, aging: 0, stale: 0, current: 0, unknown: 0 }, error: err.message });
       }
+      return;
+    }
+
+    // ── RCA API ──────────────────────────────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/rca/history") {
+      sendJson(res, 200, { history: getRCAHistory(), active: getActiveInvestigations().length });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/rca/investigate") {
+      readJsonBody(req, async (body) => {
+        try {
+          const { namespace, pod } = body;
+          if (!namespace) return sendJson(res, 400, { error: "namespace required" });
+          const result = pod ? await runRCA(namespace, pod) : await runNamespaceRCA(namespace);
+          sendJson(res, 200, result);
+        } catch (err) { sendJson(res, 500, { error: err.message }); }
+      });
+      return;
+    }
+
+    // ── Compliance API ──────────────────────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/compliance/results") {
+      const results = getComplianceResults();
+      sendJson(res, 200, results || { score: null, message: "No scan run yet. Trigger a scan first." });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/compliance/history") {
+      sendJson(res, 200, { history: getComplianceHistory() });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/compliance/scan") {
+      readJsonBody(req, async (body) => {
+        try {
+          const results = await runComplianceScan(body || {});
+          sendJson(res, 200, results);
+        } catch (err) { sendJson(res, 500, { error: err.message }); }
+      });
+      return;
+    }
+
+    // ── Network Topology API ────────────────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/network/topology") {
+      try {
+        const ns = url.searchParams.get("namespace");
+        const result = ns ? await getNetworkTopology(ns) : await getClusterTopology();
+        sendJson(res, 200, result);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/network/exposed") {
+      try { sendJson(res, 200, { services: await getExposedServices() }); }
+      catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/network/unprotected") {
+      try { sendJson(res, 200, { namespaces: await getUnprotectedNamespaces() }); }
+      catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── Capacity Forecast API ───────────────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/capacity/forecast") {
+      try { sendJson(res, 200, await getCapacityForecast()); }
+      catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/capacity/history") {
+      sendJson(res, 200, { snapshots: getCapacityHistory() });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/capacity/snapshot") {
+      try { const snap = await captureCapacitySnapshot(); sendJson(res, 200, { ok: true, snapshot: snap }); }
+      catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── SLO Tracker API ─────────────────────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/slo/status") {
+      try { sendJson(res, 200, { slos: await getSLOStatus() }); }
+      catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/slo/list") {
+      sendJson(res, 200, { slos: getAllSLOs() });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/slo/define") {
+      readJsonBody(req, async (body) => {
+        try { const slo = await defineSLO(body); sendJson(res, 200, slo); }
+        catch (err) { sendJson(res, 500, { error: err.message }); }
+      });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/slo/delete") {
+      readJsonBody(req, async (body) => {
+        try { await deleteSLO(body.id); sendJson(res, 200, { ok: true }); }
+        catch (err) { sendJson(res, 500, { error: err.message }); }
+      });
+      return;
+    }
+
+    // ── RBAC API ────────────────────────────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/rbac/roles") {
+      sendJson(res, 200, { roles: getRoles(), userRoles: getAllUserRoles() });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/rbac/assign") {
+      readJsonBody(req, async (body) => {
+        try {
+          const ok = await setUserRole(body.username, body.role);
+          sendJson(res, ok ? 200 : 400, ok ? { ok: true } : { error: "Invalid role" });
+        } catch (err) { sendJson(res, 500, { error: err.message }); }
+      });
+      return;
+    }
+
+    // ── Export API ──────────────────────────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/export/report") {
+      try {
+        const type = url.searchParams.get("type") || "summary";
+        const report = {};
+        if (type === "summary" || type === "all") {
+          report.clusterHealth = _liveState?.summary || {};
+          report.appChanges = { watchedNamespaces: getWatchedNamespaces().length, pendingChanges: getChangeLog().filter(e => !e.acknowledged).length };
+          report.changeHistory = getChangeHistory().slice(0, 50);
+        }
+        if (type === "compliance" || type === "all") {
+          report.compliance = getComplianceResults();
+        }
+        if (type === "vulnerabilities" || type === "all") {
+          report.vulnerabilities = getScanHistory().slice(0, 10);
+        }
+        if (type === "capacity" || type === "all") {
+          try { report.capacity = await getCapacityForecast(); } catch {}
+        }
+        if (type === "slo" || type === "all") {
+          try { report.slo = await getSLOStatus(); } catch {}
+        }
+        report.generatedAt = new Date().toISOString();
+        report.reportType = type;
+        const format = url.searchParams.get("format") || "json";
+        if (format === "csv") {
+          const csvLines = ["Section,Key,Value"];
+          const flatten = (obj, prefix) => {
+            for (const [k, v] of Object.entries(obj || {})) {
+              if (v && typeof v === "object" && !Array.isArray(v)) flatten(v, `${prefix}.${k}`);
+              else csvLines.push(`"${prefix}","${k}","${Array.isArray(v) ? v.length + ' items' : v}"`);
+            }
+          };
+          flatten(report, "report");
+          res.writeHead(200, { "Content-Type": "text/csv", "Content-Disposition": `attachment; filename=mcp-report-${type}-${Date.now()}.csv` });
+          res.end(csvLines.join("\n"));
+        } else {
+          sendJson(res, 200, report);
+        }
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }
 

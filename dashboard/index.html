@@ -3132,6 +3132,52 @@ tr:hover td{background:#ffffff06}
         <option value="all" selected>All time</option>
       </select>
       <button onclick="loadAuditView()" style="background:var(--accent2);border:none;border-radius:8px;padding:6px 14px;color:#fff;font-size:12px;font-weight:600;cursor:pointer">Refresh</button>
+      <div style="display:flex;gap:4px;border-left:1px solid var(--border);padding-left:8px;margin-left:4px">
+        <button onclick="exportReport('all','json')" style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-size:11px;cursor:pointer" title="Export JSON report">&#x1F4E5; JSON</button>
+        <button onclick="exportReport('all','csv')" style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-size:11px;cursor:pointer" title="Export CSV report">&#x1F4C4; CSV</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Compliance Posture Section -->
+  <div class="card" style="padding:0;overflow:hidden;margin-bottom:24px">
+    <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:16px">&#x1F6E1;</span>
+        <span style="font-size:14px;font-weight:600">Compliance Posture</span>
+        <span style="font-size:10px;color:var(--text2)">CIS Kubernetes Benchmark</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="compliance-score-badge" style="font-size:18px;font-weight:800;color:var(--text2)">—</span>
+        <button onclick="runComplianceScanUI()" id="compliance-scan-btn" style="background:var(--accent2);border:none;border-radius:6px;padding:5px 12px;color:#fff;font-size:11px;font-weight:600;cursor:pointer">&#x1F50D; Run Scan</button>
+      </div>
+    </div>
+    <div id="compliance-panel" style="padding:16px">
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px" id="compliance-categories">
+        <div class="compliance-cat" data-cat="pod-security" style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;border:1px solid var(--border)">
+          <div style="font-size:20px;margin-bottom:4px">&#x1F512;</div>
+          <div style="font-size:11px;font-weight:600">Pod Security</div>
+          <div style="font-size:9px;color:var(--text2);margin-top:2px" id="comp-cat-pod-security">—</div>
+        </div>
+        <div class="compliance-cat" data-cat="network-security" style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;border:1px solid var(--border)">
+          <div style="font-size:20px;margin-bottom:4px">&#x1F310;</div>
+          <div style="font-size:11px;font-weight:600">Network</div>
+          <div style="font-size:9px;color:var(--text2);margin-top:2px" id="comp-cat-network-security">—</div>
+        </div>
+        <div class="compliance-cat" data-cat="rbac-secrets" style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;border:1px solid var(--border)">
+          <div style="font-size:20px;margin-bottom:4px">&#x1F511;</div>
+          <div style="font-size:11px;font-weight:600">RBAC &amp; Secrets</div>
+          <div style="font-size:9px;color:var(--text2);margin-top:2px" id="comp-cat-rbac-secrets">—</div>
+        </div>
+        <div class="compliance-cat" data-cat="image-security" style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;border:1px solid var(--border)">
+          <div style="font-size:20px;margin-bottom:4px">&#x1F5BC;</div>
+          <div style="font-size:11px;font-weight:600">Image Security</div>
+          <div style="font-size:9px;color:var(--text2);margin-top:2px" id="comp-cat-image-security">—</div>
+        </div>
+      </div>
+      <div id="compliance-findings" style="max-height:400px;overflow-y:auto">
+        <div style="padding:20px;text-align:center;color:var(--text2);font-size:12px">Click "Run Scan" to check compliance posture</div>
+      </div>
     </div>
   </div>
 
@@ -3666,6 +3712,7 @@ tr:hover td{background:#ffffff06}
         <!-- Sub-tab pills -->
         <div class="settings-tabs">
           <button class="settings-tab active" data-tab="prefs" onclick="setSettingsTab('prefs')">User Preferences</button>
+          <button class="settings-tab" data-tab="rbac" onclick="setSettingsTab('rbac');loadRBACPanel()">Access Control</button>
           <button class="settings-tab" data-tab="integrations" onclick="setSettingsTab('integrations')">Integrations</button>
           <button class="settings-tab" data-tab="flags" onclick="setSettingsTab('flags')">Feature Flags</button>
         </div>
@@ -3720,6 +3767,38 @@ tr:hover td{background:#ffffff06}
             <button class="settings-btn primary" onclick="savePreferences()">Save Preferences</button>
             <span id="prefs-save-status" style="font-size:11px;color:var(--text2)"></span>
           </div>
+        </div>
+
+        <!-- RBAC / Access Control -->
+        <div class="settings-panel" id="settings-panel-rbac" style="display:none">
+          <div style="margin-bottom:16px">
+            <div style="font-size:13px;font-weight:700;margin-bottom:8px">Role Definitions</div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+              <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;border-top:3px solid #ef4444">
+                <div style="font-weight:700;font-size:12px;color:#ef4444">Admin</div>
+                <div style="font-size:10px;color:var(--text2);margin-top:4px">Full access: read, write, manage namespaces, configure settings, export reports</div>
+              </div>
+              <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;border-top:3px solid #f59e0b">
+                <div style="font-weight:700;font-size:12px;color:#f59e0b">Operator</div>
+                <div style="font-size:10px;color:var(--text2);margin-top:4px">Operations: read, write (agree/dismiss/ack changes), export reports</div>
+              </div>
+              <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;border-top:3px solid #3b82f6">
+                <div style="font-weight:700;font-size:12px;color:#3b82f6">Viewer</div>
+                <div style="font-size:10px;color:var(--text2);margin-top:4px">Read-only: view dashboards and export reports, no actions</div>
+              </div>
+            </div>
+          </div>
+          <div style="font-size:13px;font-weight:700;margin-bottom:8px">User Role Assignments</div>
+          <div style="display:flex;gap:8px;margin-bottom:12px">
+            <input type="text" id="rbac-username" placeholder="Username" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px;outline:none">
+            <select id="rbac-role-select" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px;outline:none">
+              <option value="viewer">Viewer</option>
+              <option value="operator">Operator</option>
+              <option value="admin">Admin</option>
+            </select>
+            <button onclick="assignRole()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:12px;font-weight:600;cursor:pointer">Assign</button>
+          </div>
+          <div id="rbac-users-list" style="max-height:300px;overflow-y:auto"></div>
         </div>
 
         <!-- Integrations (Pillar 5) -->
@@ -4009,18 +4088,85 @@ tr:hover td{background:#ffffff06}
     </div>
   </div>
 
-  <!-- 3. Root Cause Analysis — collapsible, hidden when empty -->
-  <div class="ai-section" id="rca-section" style="display:none">
+  <!-- 3. Root Cause Analysis — Enhanced with auto-investigate -->
+  <div class="ai-section" id="rca-section">
     <div class="ai-section-head">
       <div class="ai-section-title">
         <span class="ai-section-icon" style="background:linear-gradient(135deg,#f59e0b,#ef4444)">&#x1F50D;</span>
         <div>
           <div class="ai-section-name">Root Cause Analysis</div>
-          <div class="ai-section-sub">AI-powered causal chain investigation</div>
+          <div class="ai-section-sub">Automated investigation of failing pods &amp; workloads</div>
         </div>
       </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" id="rca-ns-input" placeholder="Namespace" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:11px;width:120px;outline:none">
+        <input type="text" id="rca-pod-input" placeholder="Pod (optional)" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:11px;width:140px;outline:none">
+        <button class="ai-cmd-btn" onclick="triggerRCA()" id="rca-investigate-btn">&#x1F50D; Investigate</button>
+      </div>
     </div>
-    <div id="rca-panel"></div>
+    <div id="rca-panel" style="max-height:500px;overflow-y:auto"></div>
+    <div id="rca-history-panel" style="margin-top:8px"></div>
+  </div>
+
+  <!-- 3b. Network Topology — Service Map -->
+  <div class="ai-section" id="network-section">
+    <div class="ai-section-head">
+      <div class="ai-section-title">
+        <span class="ai-section-icon" style="background:linear-gradient(135deg,#0ea5e9,#6366f1)">&#x1F310;</span>
+        <div>
+          <div class="ai-section-name">Network Topology</div>
+          <div class="ai-section-sub">Service connectivity map &amp; network policy posture</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="net-ns-select" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:11px;outline:none" onchange="loadNetworkTopology()">
+          <option value="">Cluster Overview</option>
+        </select>
+        <button class="ai-cmd-btn" onclick="loadNetworkTopology()">&#x21BB; Refresh</button>
+      </div>
+    </div>
+    <div id="network-panel" style="max-height:600px;overflow-y:auto">
+      <div style="padding:20px;text-align:center;color:var(--text2);font-size:12px">Loading network topology...</div>
+    </div>
+  </div>
+
+  <!-- 3c. SLO / Error Budget Tracking -->
+  <div class="ai-section" id="slo-section">
+    <div class="ai-section-head">
+      <div class="ai-section-title">
+        <span class="ai-section-icon" style="background:linear-gradient(135deg,#22c55e,#0ea5e9)">&#x1F3AF;</span>
+        <div>
+          <div class="ai-section-name">SLO / Error Budget</div>
+          <div class="ai-section-sub">Service level objectives &amp; error budget burn rate</div>
+        </div>
+      </div>
+      <button class="ai-cmd-btn" onclick="showSLODialog()">+ Define SLO</button>
+    </div>
+    <div id="slo-panel" style="max-height:500px;overflow-y:auto">
+      <div style="padding:20px;text-align:center;color:var(--text2);font-size:12px">No SLOs defined yet. Click "Define SLO" to start.</div>
+    </div>
+  </div>
+
+  <!-- SLO Define Dialog -->
+  <div id="slo-dialog" style="display:none;position:fixed;inset:0;z-index:9999;background:#000a;overflow-y:auto">
+    <div style="max-width:480px;margin:80px auto;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;box-shadow:0 20px 60px #000a">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <span style="font-weight:700;font-size:16px">Define SLO</span>
+        <button onclick="document.getElementById('slo-dialog').style.display='none'" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:22px">&times;</button>
+      </div>
+      <div style="display:grid;gap:10px">
+        <div><label style="font-size:11px;color:var(--text2)">Service Name</label><input type="text" id="slo-name" placeholder="e.g. payment-api" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box;margin-top:4px"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div><label style="font-size:11px;color:var(--text2)">Namespace</label><input type="text" id="slo-ns" placeholder="e.g. production" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box;margin-top:4px"></div>
+          <div><label style="font-size:11px;color:var(--text2)">Deployment Name</label><input type="text" id="slo-deploy" placeholder="e.g. payment-api" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box;margin-top:4px"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div><label style="font-size:11px;color:var(--text2)">Target Availability (%)</label><input type="number" id="slo-target" value="99.9" step="0.1" min="90" max="100" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box;margin-top:4px"></div>
+          <div><label style="font-size:11px;color:var(--text2)">Window (days)</label><input type="number" id="slo-window" value="30" min="1" max="365" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box;margin-top:4px"></div>
+        </div>
+        <button onclick="createSLO()" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;margin-top:4px">Create SLO</button>
+      </div>
+    </div>
   </div>
 
   <!-- 4. Advanced: Predictive Intelligence + Automation + KB — auto-hidden when empty -->
@@ -14865,6 +15011,372 @@ async function loadIntelligenceView() {
   }
   renderIntelRiskList();
   connectLiveStream();
+  loadRCAHistory();
+  loadNetworkTopology();
+  loadSLOStatus();
+  loadCapacityForecast();
+}
+
+// ---------------------------------------------------------------------------
+// RCA — Root Cause Analysis
+// ---------------------------------------------------------------------------
+async function triggerRCA() {
+  var ns = document.getElementById('rca-ns-input').value.trim();
+  if (!ns) { alert('Please enter a namespace'); return; }
+  var pod = document.getElementById('rca-pod-input').value.trim();
+  var btn = document.getElementById('rca-investigate-btn');
+  btn.disabled = true; btn.textContent = 'Investigating...';
+  var panel = document.getElementById('rca-panel');
+  panel.innerHTML = '<div style="padding:20px;text-align:center;color:var(--accent2)"><div style="font-size:24px;animation:acwPulse 1s infinite">&#x1F50D;</div>Investigating ' + esc(ns) + (pod ? '/' + esc(pod) : '') + '...</div>';
+  try {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/rca/investigate'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ namespace: ns, pod: pod || undefined })
+    });
+    var data = await resp.json();
+    renderRCAResults(data, panel);
+  } catch (e) { panel.innerHTML = '<div style="padding:16px;color:var(--crit)">Investigation failed: ' + esc(e.message) + '</div>'; }
+  btn.disabled = false; btn.textContent = '\u{1F50D} Investigate';
+  loadRCAHistory();
+}
+function renderRCAResults(data, panel) {
+  var items = Array.isArray(data) ? data : data.investigations || [data];
+  if (items.length === 0 || (!items[0].rootCause && !items[0].pod)) {
+    panel.innerHTML = '<div style="padding:20px;text-align:center;color:var(--ok)"><div style="font-size:24px;margin-bottom:6px">&#x2705;</div>No issues found — all pods healthy</div>';
+    return;
+  }
+  panel.innerHTML = items.map(function(r) {
+    var sevColor = r.severity === 'critical' ? '#ef4444' : r.severity === 'warning' ? '#f59e0b' : '#3b82f6';
+    var chain = (r.causalChain || []).map(function(c) {
+      return '<div style="display:flex;align-items:flex-start;gap:8px;padding:4px 0">' +
+        '<div style="width:8px;height:8px;border-radius:50%;background:' + sevColor + ';margin-top:4px;flex-shrink:0"></div>' +
+        '<div><div style="font-size:11px;font-weight:600;color:var(--text)">' + esc(c.cause) + '</div>' +
+        '<div style="font-size:10px;color:var(--text2)">' + esc(c.evidence) + '</div>' +
+        '<div style="font-size:9px;color:var(--accent2)">Confidence: ' + (c.confidence || 0) + '%</div></div></div>';
+    }).join('<div style="border-left:2px solid var(--border);height:8px;margin-left:3px"></div>');
+    return '<div style="background:var(--bg);border:1px solid var(--border);border-left:3px solid ' + sevColor + ';border-radius:8px;padding:14px;margin-bottom:8px">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">' +
+        '<span style="font-size:14px">' + (r.severity === 'critical' ? '&#x1F534;' : r.severity === 'warning' ? '&#x1F7E0;' : '&#x1F535;') + '</span>' +
+        '<div style="flex:1"><div style="font-weight:700;font-size:12px">' + esc(r.pod || 'Unknown') + '</div><div style="font-size:10px;color:var(--text2)">' + esc(r.namespace || '') + '</div></div>' +
+        '<span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:10px;background:' + sevColor + '22;color:' + sevColor + '">' + (r.severity || 'info').toUpperCase() + '</span>' +
+      '</div>' +
+      '<div style="font-size:12px;font-weight:600;color:' + sevColor + ';margin-bottom:8px">Root Cause: ' + esc(r.rootCause || 'Unknown') + '</div>' +
+      (chain ? '<div style="padding-left:4px;margin-bottom:8px">' + chain + '</div>' : '') +
+      (r.recommendation ? '<div style="background:color-mix(in srgb,var(--ok) 8%,var(--bg));border:1px solid color-mix(in srgb,var(--ok) 20%,transparent);border-radius:6px;padding:8px 12px;font-size:11px"><strong style="color:var(--ok)">&#x1F4A1; Recommendation:</strong> ' + esc(r.recommendation) + '</div>' : '') +
+    '</div>';
+  }).join('');
+}
+async function loadRCAHistory() {
+  try {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/rca/history'));
+    var data = await resp.json();
+    var hp = document.getElementById('rca-history-panel');
+    if (!hp || !data.history || data.history.length === 0) return;
+    hp.innerHTML = '<div style="font-size:10px;font-weight:600;color:var(--text2);margin-bottom:4px">Recent Investigations (' + data.history.length + ')</div>' +
+      data.history.slice(0, 5).map(function(h) {
+        var ic = h.severity === 'critical' ? '&#x1F534;' : h.severity === 'warning' ? '&#x1F7E0;' : '&#x2705;';
+        return '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:10px">' + ic +
+          ' <strong>' + esc(h.pod || h.namespace) + '</strong> — ' + esc((h.rootCause || 'Healthy').substring(0, 60)) +
+          '<span style="margin-left:auto;color:var(--text2);font-size:9px">' + (h.investigatedAt ? new Date(h.investigatedAt).toLocaleTimeString() : '') + '</span></div>';
+      }).join('');
+  } catch {}
+}
+
+// ---------------------------------------------------------------------------
+// Network Topology
+// ---------------------------------------------------------------------------
+async function loadNetworkTopology() {
+  var sel = document.getElementById('net-ns-select');
+  var ns = sel ? sel.value : '';
+  var panel = document.getElementById('network-panel');
+  try {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/network/topology' + (ns ? '?namespace=' + encodeURIComponent(ns) : '')));
+    var data = await resp.json();
+    if (Array.isArray(data)) { renderClusterNetworkOverview(data, panel, sel); }
+    else { renderNamespaceTopology(data, panel); }
+  } catch (e) { if (panel) panel.innerHTML = '<div style="padding:16px;color:var(--crit)">Error: ' + esc(e.message) + '</div>'; }
+}
+function renderClusterNetworkOverview(namespaces, panel, sel) {
+  if (sel) {
+    var opts = '<option value="">Cluster Overview</option>';
+    namespaces.forEach(function(n) { opts += '<option value="' + esc(n.namespace) + '">' + esc(n.namespace) + '</option>'; });
+    sel.innerHTML = opts;
+  }
+  var unprotected = namespaces.filter(function(n) { return !n.hasNetworkPolicy && n.serviceCount > 0; });
+  panel.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-bottom:12px">' +
+    '<div style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;border:1px solid var(--border)"><div style="font-size:22px;font-weight:800;color:var(--text)">' + namespaces.length + '</div><div style="font-size:10px;color:var(--text2)">Namespaces</div></div>' +
+    '<div style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;border:1px solid var(--border)"><div style="font-size:22px;font-weight:800;color:var(--accent2)">' + namespaces.reduce(function(a, n) { return a + (n.serviceCount || 0); }, 0) + '</div><div style="font-size:10px;color:var(--text2)">Services</div></div>' +
+    '<div style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;border:1px solid ' + (unprotected.length > 0 ? 'var(--crit)' : 'var(--border)') + '"><div style="font-size:22px;font-weight:800;color:' + (unprotected.length > 0 ? 'var(--crit)' : 'var(--ok)') + '">' + unprotected.length + '</div><div style="font-size:10px;color:var(--text2)">Unprotected</div></div>' +
+    '<div style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;border:1px solid var(--border)"><div style="font-size:22px;font-weight:800;color:var(--ok)">' + namespaces.filter(function(n) { return n.hasNetworkPolicy; }).length + '</div><div style="font-size:10px;color:var(--text2)">Policy Protected</div></div>' +
+  '</div>' +
+  (unprotected.length > 0 ? '<div style="background:color-mix(in srgb,var(--crit) 5%,var(--bg));border:1px solid color-mix(in srgb,var(--crit) 20%,transparent);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:11px"><strong style="color:var(--crit)">&#x26A0; Unprotected namespaces:</strong> ' + unprotected.map(function(n) { return '<code style="background:var(--bg);padding:1px 6px;border-radius:3px;margin:0 2px;cursor:pointer" onclick="document.getElementById(\'net-ns-select\').value=\'' + esc(n.namespace) + '\';loadNetworkTopology()">' + esc(n.namespace) + '</code>'; }).join(', ') + '</div>' : '') +
+  '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px">' +
+  namespaces.map(function(n) {
+    var borderColor = !n.hasNetworkPolicy && n.serviceCount > 0 ? 'var(--crit)' : n.hasNetworkPolicy ? 'var(--ok)' : 'var(--border)';
+    return '<div style="background:var(--bg);border:1px solid ' + borderColor + ';border-radius:6px;padding:8px 10px;cursor:pointer;transition:all .15s;font-size:11px" onclick="document.getElementById(\'net-ns-select\').value=\'' + esc(n.namespace) + '\';loadNetworkTopology()" onmouseover="this.style.borderColor=\'var(--accent)\'" onmouseout="this.style.borderColor=\'' + borderColor + '\'">' +
+      '<div style="font-weight:600">' + esc(n.namespace) + '</div>' +
+      '<div style="display:flex;gap:8px;margin-top:2px;color:var(--text2);font-size:9px">' +
+        '<span>' + (n.serviceCount || 0) + ' svc</span>' +
+        '<span>' + (n.hasNetworkPolicy ? '&#x1F6E1; policy' : '&#x26A0; no policy') + '</span>' +
+        (n.exposedServices?.length ? '<span style="color:var(--warn)">' + n.exposedServices.length + ' exposed</span>' : '') +
+      '</div></div>';
+  }).join('') + '</div>';
+}
+function renderNamespaceTopology(data, panel) {
+  var nodes = data.nodes || [];
+  var edges = data.edges || [];
+  var policies = data.networkPolicies || [];
+  var exposed = data.exposedServices || [];
+  var stats = data.stats || {};
+  panel.innerHTML =
+    '<div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">' +
+      '<div style="background:var(--bg);border-radius:6px;padding:8px 14px;border:1px solid var(--border);font-size:11px"><strong>' + (stats.services || 0) + '</strong> Services</div>' +
+      '<div style="background:var(--bg);border-radius:6px;padding:8px 14px;border:1px solid var(--border);font-size:11px"><strong>' + (stats.endpoints || 0) + '</strong> Endpoints</div>' +
+      '<div style="background:var(--bg);border-radius:6px;padding:8px 14px;border:1px solid ' + (stats.policies > 0 ? 'var(--ok)' : 'var(--crit)') + ';font-size:11px"><strong>' + (stats.policies || 0) + '</strong> Network Policies</div>' +
+      '<div style="background:var(--bg);border-radius:6px;padding:8px 14px;border:1px solid var(--border);font-size:11px"><strong>' + (stats.ingresses || 0) + '</strong> Ingresses</div>' +
+      '<div style="background:var(--bg);border-radius:6px;padding:8px 14px;border:1px solid var(--border);font-size:11px"><strong>' + (stats.routes || 0) + '</strong> Routes</div>' +
+    '</div>' +
+    (exposed.length > 0 ? '<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:600;color:var(--warn);margin-bottom:4px">&#x1F310; Externally Exposed Services</div>' +
+      exposed.map(function(s) {
+        return '<div style="background:color-mix(in srgb,var(--warn) 5%,var(--bg));border:1px solid color-mix(in srgb,var(--warn) 15%,transparent);border-radius:6px;padding:6px 10px;margin-bottom:4px;font-size:10px">' +
+          '<strong>' + esc(s.name) + '</strong> (' + esc(s.type) + ') — ' + (s.ports || []).map(function(p) { return p.port + '/' + p.protocol; }).join(', ') +
+          (s.host ? ' — <code>' + esc(s.host) + '</code>' : '') + '</div>';
+      }).join('') + '</div>' : '') +
+    '<div style="font-size:11px;font-weight:600;margin-bottom:6px">Service Map (' + nodes.length + ' nodes, ' + edges.length + ' connections)</div>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px">' +
+    nodes.map(function(n) {
+      var icon = n.type === 'service' ? '&#x2699;' : n.type === 'ingress' ? '&#x1F310;' : n.type === 'route' ? '&#x1F517;' : '&#x1F4E6;';
+      var conns = edges.filter(function(e) { return e.from === n.id || e.to === n.id; });
+      return '<div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:10px">' +
+        '<div style="display:flex;align-items:center;gap:4px"><span style="font-size:14px">' + icon + '</span><strong>' + esc(n.name) + '</strong></div>' +
+        '<div style="color:var(--text2);margin-top:2px">' + esc(n.type) + (n.port ? ' :' + n.port : '') + '</div>' +
+        (conns.length > 0 ? '<div style="color:var(--accent2);margin-top:2px">' + conns.length + ' connection(s)</div>' : '') +
+      '</div>';
+    }).join('') + '</div>' +
+    (policies.length > 0 ? '<div style="margin-top:12px"><div style="font-size:11px;font-weight:600;margin-bottom:6px">&#x1F6E1; Network Policies</div>' +
+      policies.map(function(p) {
+        return '<div style="background:color-mix(in srgb,var(--ok) 5%,var(--bg));border:1px solid color-mix(in srgb,var(--ok) 15%,transparent);border-radius:6px;padding:6px 10px;margin-bottom:4px;font-size:10px">' +
+          '<strong>' + esc(p.name) + '</strong>' +
+          (p.ingress?.length ? ' — ' + p.ingress.length + ' ingress rule(s)' : '') +
+          (p.egress?.length ? ' — ' + p.egress.length + ' egress rule(s)' : '') + '</div>';
+      }).join('') + '</div>' : '');
+}
+
+// ---------------------------------------------------------------------------
+// SLO / Error Budget
+// ---------------------------------------------------------------------------
+function showSLODialog() { document.getElementById('slo-dialog').style.display = 'block'; }
+async function createSLO() {
+  var body = {
+    name: document.getElementById('slo-name').value.trim(),
+    namespace: document.getElementById('slo-ns').value.trim(),
+    deploymentName: document.getElementById('slo-deploy').value.trim(),
+    targetAvailability: parseFloat(document.getElementById('slo-target').value),
+    windowDays: parseInt(document.getElementById('slo-window').value)
+  };
+  if (!body.name || !body.namespace || !body.deploymentName) { alert('Name, namespace, and deployment are required'); return; }
+  try {
+    await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/slo/define'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    document.getElementById('slo-dialog').style.display = 'none';
+    loadSLOStatus();
+  } catch (e) { alert('Failed: ' + e.message); }
+}
+async function deleteSLOUI(id) {
+  try {
+    await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/slo/delete'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id }) });
+    loadSLOStatus();
+  } catch {}
+}
+async function loadSLOStatus() {
+  var panel = document.getElementById('slo-panel');
+  if (!panel) return;
+  try {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/slo/status'));
+    var data = await resp.json();
+    var slos = data.slos || [];
+    if (slos.length === 0) {
+      panel.innerHTML = '<div style="padding:30px;text-align:center"><div style="font-size:28px;margin-bottom:6px">&#x1F3AF;</div><div style="font-size:12px;color:var(--text2)">No SLOs defined yet. Click "Define SLO" to start tracking.</div></div>';
+      return;
+    }
+    panel.innerHTML = slos.map(function(s) {
+      var statusColor = s.status === 'critical' ? '#ef4444' : s.status === 'warning' ? '#f59e0b' : '#22c55e';
+      var budgetPct = Math.max(0, Math.min(100, s.errorBudgetPct || 0));
+      var budgetColor = budgetPct > 50 ? '#22c55e' : budgetPct > 20 ? '#f59e0b' : '#ef4444';
+      return '<div style="background:var(--bg);border:1px solid var(--border);border-left:3px solid ' + statusColor + ';border-radius:8px;padding:14px;margin-bottom:8px">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">' +
+          '<div style="flex:1"><div style="font-weight:700;font-size:13px">' + esc(s.name) + '</div><div style="font-size:10px;color:var(--text2)">' + esc(s.namespace) + ' / ' + esc(s.deploymentName || '') + '</div></div>' +
+          '<span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:10px;background:' + statusColor + '22;color:' + statusColor + '">' + (s.status || 'unknown').toUpperCase() + '</span>' +
+          '<button onclick="deleteSLOUI(\'' + esc(s.id) + '\')" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:14px" title="Delete SLO">&times;</button>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">' +
+          '<div style="text-align:center"><div style="font-size:18px;font-weight:800;color:var(--text)">' + (s.currentAvailability || 0).toFixed(2) + '%</div><div style="font-size:9px;color:var(--text2)">Current</div></div>' +
+          '<div style="text-align:center"><div style="font-size:18px;font-weight:800;color:var(--accent2)">' + (s.target || 0) + '%</div><div style="font-size:9px;color:var(--text2)">Target</div></div>' +
+          '<div style="text-align:center"><div style="font-size:18px;font-weight:800;color:' + budgetColor + '">' + budgetPct.toFixed(1) + '%</div><div style="font-size:9px;color:var(--text2)">Budget Left</div></div>' +
+          '<div style="text-align:center"><div style="font-size:18px;font-weight:800;color:var(--text)">' + (s.burnRate || 0).toFixed(2) + 'x</div><div style="font-size:9px;color:var(--text2)">Burn Rate</div></div>' +
+        '</div>' +
+        '<div style="margin-top:8px;background:var(--card);border-radius:4px;height:6px;overflow:hidden"><div style="height:100%;background:' + budgetColor + ';border-radius:4px;transition:width .5s" style="width:' + budgetPct + '%"></div></div>' +
+      '</div>';
+    }).join('');
+  } catch (e) { panel.innerHTML = '<div style="padding:16px;color:var(--crit)">Error loading SLOs: ' + esc(e.message) + '</div>'; }
+}
+
+// ---------------------------------------------------------------------------
+// Capacity Forecast
+// ---------------------------------------------------------------------------
+async function loadCapacityForecast() {
+  var predSection = document.getElementById('intel-pred-section');
+  if (!predSection) return;
+  try {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/capacity/forecast'));
+    var data = await resp.json();
+    if (!data || !data.cluster) return;
+    var cluster = data.cluster;
+    var nsList = (data.namespaces || []).filter(function(n) { return n.cpuExhaustionDays !== null || n.memExhaustionDays !== null; }).sort(function(a, b) {
+      var aMin = Math.min(a.cpuExhaustionDays || 999, a.memExhaustionDays || 999);
+      var bMin = Math.min(b.cpuExhaustionDays || 999, b.memExhaustionDays || 999);
+      return aMin - bMin;
+    });
+    var forecastHtml = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px">' +
+      '<div style="font-size:11px;font-weight:600;margin-bottom:6px">&#x1F4CA; Cluster Capacity</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:10px">' +
+        '<div style="text-align:center"><div style="font-size:16px;font-weight:800">' + (cluster.cpuUsedPct || 0).toFixed(0) + '%</div><div style="color:var(--text2)">CPU Used</div></div>' +
+        '<div style="text-align:center"><div style="font-size:16px;font-weight:800">' + (cluster.memUsedPct || 0).toFixed(0) + '%</div><div style="color:var(--text2)">Mem Used</div></div>' +
+        '<div style="text-align:center"><div style="font-size:16px;font-weight:800;color:' + (cluster.cpuExhaustionDays && cluster.cpuExhaustionDays < 30 ? 'var(--crit)' : 'var(--ok)') + '">' + (cluster.cpuExhaustionDays ? cluster.cpuExhaustionDays + 'd' : '&#x221E;') + '</div><div style="color:var(--text2)">CPU Exhaust</div></div>' +
+        '<div style="text-align:center"><div style="font-size:16px;font-weight:800;color:' + (cluster.memExhaustionDays && cluster.memExhaustionDays < 30 ? 'var(--crit)' : 'var(--ok)') + '">' + (cluster.memExhaustionDays ? cluster.memExhaustionDays + 'd' : '&#x221E;') + '</div><div style="color:var(--text2)">Mem Exhaust</div></div>' +
+      '</div></div>';
+    if (nsList.length > 0) {
+      forecastHtml += '<div style="font-size:10px;font-weight:600;color:var(--text2);margin-bottom:4px">Namespaces at Risk</div>';
+      forecastHtml += nsList.slice(0, 8).map(function(n) {
+        var days = Math.min(n.cpuExhaustionDays || 999, n.memExhaustionDays || 999);
+        var color = days < 7 ? 'var(--crit)' : days < 30 ? 'var(--warn)' : 'var(--text2)';
+        return '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:10px">' +
+          '<span style="color:' + color + ';font-weight:700">' + (days < 999 ? days + 'd' : '—') + '</span> ' +
+          '<span style="flex:1">' + esc(n.namespace) + '</span>' +
+          '<span style="color:var(--text2)">' + (n.cpuUsedPct || 0).toFixed(0) + '% CPU / ' + (n.memUsedPct || 0).toFixed(0) + '% Mem</span></div>';
+      }).join('');
+    }
+    var existingPredList = document.getElementById('intel-predictions-list');
+    if (existingPredList) {
+      var capDiv = document.createElement('div');
+      capDiv.innerHTML = forecastHtml;
+      existingPredList.insertBefore(capDiv, existingPredList.firstChild);
+    }
+  } catch {}
+}
+
+// ---------------------------------------------------------------------------
+// Compliance Scanner (Audit page)
+// ---------------------------------------------------------------------------
+async function runComplianceScanUI() {
+  var btn = document.getElementById('compliance-scan-btn');
+  btn.disabled = true; btn.textContent = 'Scanning...';
+  try {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/compliance/scan'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+    });
+    var data = await resp.json();
+    renderComplianceResults(data);
+  } catch (e) {
+    document.getElementById('compliance-findings').innerHTML = '<div style="padding:16px;color:var(--crit)">Scan failed: ' + esc(e.message) + '</div>';
+  }
+  btn.disabled = false; btn.textContent = '\u{1F50D} Run Scan';
+}
+async function loadComplianceResults() {
+  try {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/compliance/results'));
+    var data = await resp.json();
+    if (data.score !== null && data.score !== undefined) renderComplianceResults(data);
+  } catch {}
+}
+function renderComplianceResults(data) {
+  var score = data.score || 0;
+  var badge = document.getElementById('compliance-score-badge');
+  var scoreColor = score >= 80 ? '#22c55e' : score >= 60 ? '#f59e0b' : '#ef4444';
+  if (badge) { badge.textContent = score.toFixed(0) + '%'; badge.style.color = scoreColor; }
+  var summary = data.summary || {};
+  Object.keys(summary).forEach(function(cat) {
+    var el = document.getElementById('comp-cat-' + cat);
+    if (el) {
+      var s = summary[cat];
+      el.innerHTML = '<span style="color:var(--ok)">' + s.pass + ' pass</span> / <span style="color:var(--crit)">' + s.fail + ' fail</span>';
+    }
+  });
+  var findings = data.findings || [];
+  var panel = document.getElementById('compliance-findings');
+  if (findings.length === 0) {
+    panel.innerHTML = '<div style="padding:20px;text-align:center;color:var(--ok)"><div style="font-size:24px;margin-bottom:4px">&#x2705;</div>All checks passed</div>';
+    return;
+  }
+  var fails = findings.filter(function(f) { return f.status === 'FAIL'; });
+  var warns = findings.filter(function(f) { return f.status === 'WARN'; });
+  panel.innerHTML = (fails.length > 0 ? '<div style="font-size:11px;font-weight:600;color:var(--crit);margin-bottom:6px">&#x274C; Failed Checks (' + fails.length + ')</div>' +
+    fails.slice(0, 30).map(function(f) {
+      var sevColor = f.severity === 'critical' ? '#ef4444' : f.severity === 'warning' ? '#f59e0b' : '#3b82f6';
+      return '<div style="background:var(--bg);border:1px solid var(--border);border-left:3px solid ' + sevColor + ';border-radius:6px;padding:8px 10px;margin-bottom:4px;font-size:10px">' +
+        '<div style="display:flex;align-items:center;gap:6px"><code style="color:var(--accent2);font-weight:700">' + esc(f.id) + '</code> <strong>' + esc(f.title) + '</strong>' +
+        '<span style="margin-left:auto;font-size:9px;padding:1px 6px;border-radius:8px;background:' + sevColor + '22;color:' + sevColor + '">' + (f.severity || '').toUpperCase() + '</span></div>' +
+        '<div style="color:var(--text2);margin-top:2px">' + esc(f.resource || '') + (f.namespace ? ' in ' + esc(f.namespace) : '') + '</div>' +
+        '<div style="color:var(--text2);margin-top:2px">' + esc(f.description || '') + '</div>' +
+        (f.remediation ? '<div style="margin-top:4px;color:var(--ok);font-size:9px">&#x1F4A1; ' + esc(f.remediation) + '</div>' : '') +
+      '</div>';
+    }).join('') : '') +
+  (warns.length > 0 ? '<div style="font-size:11px;font-weight:600;color:var(--warn);margin-top:8px;margin-bottom:6px">&#x26A0; Warnings (' + warns.length + ')</div>' +
+    warns.slice(0, 20).map(function(f) {
+      return '<div style="background:var(--bg);border:1px solid var(--border);border-left:3px solid #f59e0b;border-radius:6px;padding:6px 10px;margin-bottom:4px;font-size:10px">' +
+        '<code style="color:var(--accent2)">' + esc(f.id) + '</code> ' + esc(f.title) + ' — ' + esc(f.description || '') + '</div>';
+    }).join('') : '');
+}
+
+// ---------------------------------------------------------------------------
+// RBAC Management
+// ---------------------------------------------------------------------------
+async function loadRBACPanel() {
+  var list = document.getElementById('rbac-users-list');
+  if (!list) return;
+  try {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/rbac/roles'));
+    var data = await resp.json();
+    var userRoles = data.userRoles || {};
+    var entries = Object.entries(userRoles);
+    if (entries.length === 0) {
+      list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text2);font-size:12px">No users assigned yet</div>';
+      return;
+    }
+    var roleColors = { admin: '#ef4444', operator: '#f59e0b', viewer: '#3b82f6' };
+    list.innerHTML = entries.map(function(e) {
+      return '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">' +
+        '<span style="font-size:13px">&#x1F464;</span>' +
+        '<span style="flex:1;font-weight:600;font-size:12px">' + esc(e[0]) + '</span>' +
+        '<span style="font-size:10px;font-weight:700;padding:2px 10px;border-radius:10px;background:' + (roleColors[e[1]] || '#888') + '22;color:' + (roleColors[e[1]] || '#888') + '">' + esc(e[1]).toUpperCase() + '</span>' +
+      '</div>';
+    }).join('');
+  } catch (e) { list.innerHTML = '<div style="padding:8px;color:var(--crit)">Error: ' + esc(e.message) + '</div>'; }
+}
+async function assignRole() {
+  var username = document.getElementById('rbac-username').value.trim();
+  var role = document.getElementById('rbac-role-select').value;
+  if (!username) { alert('Enter a username'); return; }
+  try {
+    await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/rbac/assign'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: username, role: role })
+    });
+    document.getElementById('rbac-username').value = '';
+    loadRBACPanel();
+  } catch (e) { alert('Failed: ' + e.message); }
+}
+
+// ---------------------------------------------------------------------------
+// Export Reports
+// ---------------------------------------------------------------------------
+function exportReport(type, format) {
+  var url = clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/export/report?type=' + type + '&format=' + format);
+  if (format === 'csv') { window.open(url, '_blank'); return; }
+  fetch(url).then(function(r) { return r.json(); }).then(function(data) {
+    var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'mcp-report-' + type + '-' + Date.now() + '.json';
+    a.click();
+  }).catch(function(e) { alert('Export failed: ' + e.message); });
 }
 
 // ---------------------------------------------------------------------------

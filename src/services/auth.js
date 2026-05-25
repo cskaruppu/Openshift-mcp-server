@@ -10,10 +10,10 @@
 
 import { randomBytes, createHash } from "node:crypto";
 import { cacheGet, cacheSet } from "../utils/cache.js";
+import { query as dbQuery } from "../utils/db.js";
 
 const SESSION_TTL = parseInt(process.env.SESSION_TTL || "28800", 10); // 8 hours
 const API_TOKEN = process.env.MCP_API_TOKEN || "";
-// Default to "none" when no token is configured — prevents lockout
 const AUTH_MODE = process.env.AUTH_MODE || (API_TOKEN ? "token" : "none");
 const OAUTH_CLIENT_ID = process.env.OAUTH_CLIENT_ID || "openshift-mcp";
 const OAUTH_CLIENT_SECRET = process.env.OAUTH_CLIENT_SECRET || "";
@@ -21,6 +21,71 @@ const OAUTH_REDIRECT_URI = process.env.OAUTH_REDIRECT_URI || "";
 const OPENSHIFT_OAUTH_URL = process.env.OPENSHIFT_OAUTH_URL || "https://oauth-openshift.apps.cluster.local";
 
 const sessions = new Map();
+
+const ROLES = {
+  admin: { level: 3, label: "Admin", permissions: ["read", "write", "manage", "configure", "export"] },
+  operator: { level: 2, label: "Operator", permissions: ["read", "write", "export"] },
+  viewer: { level: 1, label: "Viewer", permissions: ["read", "export"] },
+};
+
+const _userRoles = new Map();
+let _rolesLoaded = false;
+
+export async function loadUserRoles() {
+  if (_rolesLoaded) return;
+  _rolesLoaded = true;
+  try {
+    const result = await dbQuery("SELECT value FROM kv_store WHERE key = $1", ["user_roles"]);
+    if (result?.rows?.length > 0) {
+      const roles = typeof result.rows[0].value === "string" ? JSON.parse(result.rows[0].value) : result.rows[0].value;
+      if (roles && typeof roles === "object") {
+        for (const [user, role] of Object.entries(roles)) _userRoles.set(user, role);
+      }
+    }
+  } catch {}
+}
+
+async function persistUserRoles() {
+  const roles = Object.fromEntries(_userRoles);
+  try {
+    await dbQuery(
+      `INSERT INTO kv_store (key, value, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+      ["user_roles", JSON.stringify(roles)]
+    );
+  } catch {}
+}
+
+export function getUserRole(username) {
+  return _userRoles.get(username) || "viewer";
+}
+
+export async function setUserRole(username, role) {
+  if (!ROLES[role]) return false;
+  _userRoles.set(username, role);
+  await persistUserRoles();
+  return true;
+}
+
+export function getAllUserRoles() {
+  return Object.fromEntries(_userRoles);
+}
+
+export function hasPermission(username, permission) {
+  const role = getUserRole(username);
+  const roleDef = ROLES[role];
+  return roleDef ? roleDef.permissions.includes(permission) : false;
+}
+
+export function checkPermission(req, permission) {
+  if (AUTH_MODE === "none") return true;
+  const username = req.user?.name || "anonymous";
+  return hasPermission(username, permission);
+}
+
+export function getRoles() {
+  return ROLES;
+}
 
 const PUBLIC_PATHS = new Set([
   "/healthz", "/readyz", "/metrics", "/sse", "/message",
@@ -94,11 +159,18 @@ export function registerAuthRoutes(req, res, url) {
     if (!sessionId) return sendJson(res, 200, { authenticated: false, mode: AUTH_MODE });
     getSession(sessionId).then((session) => {
       if (session && session.expiresAt > Date.now()) {
-        sendJson(res, 200, { authenticated: true, user: session.user, mode: AUTH_MODE });
+        const role = getUserRole(session.user.name);
+        const roleDef = ROLES[role] || ROLES.viewer;
+        sendJson(res, 200, { authenticated: true, user: { ...session.user, role, permissions: roleDef.permissions }, mode: AUTH_MODE });
       } else {
         sendJson(res, 200, { authenticated: false, mode: AUTH_MODE });
       }
     });
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/auth/roles") {
+    sendJson(res, 200, { roles: ROLES, userRoles: getAllUserRoles() });
     return true;
   }
 
@@ -161,6 +233,7 @@ export async function handleTokenLogin(body, res) {
     return;
   }
   if (AUTH_MODE === "token" && token === API_TOKEN) {
+    if (!_userRoles.has("admin")) { _userRoles.set("admin", "admin"); persistUserRoles().catch(() => {}); }
     const session = await createSession({ name: "admin", method: "token" });
     res.writeHead(200, {
       "Content-Type": "application/json",
