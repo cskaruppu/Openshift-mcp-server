@@ -1022,7 +1022,12 @@ async function startSSE() {
     await loadSLOs();
     captureCapacitySnapshot().catch(() => {});
     setInterval(() => captureCapacitySnapshot().catch(() => {}), 3600000);
-    console.log("[startup] RBAC roles, SLO definitions loaded; capacity snapshots active (hourly)");
+    // Initial compliance scan (delayed 15s to let cluster connection stabilize) + periodic rescan every 15 min
+    setTimeout(() => {
+      runComplianceScan().then(() => console.log("[compliance] Initial CIS scan complete")).catch(() => {});
+    }, 15000);
+    setInterval(() => runComplianceScan().catch(() => {}), 900000);
+    console.log("[startup] RBAC roles, SLO definitions loaded; capacity snapshots (hourly), compliance scan (15m)");
   } catch (err) {
     console.warn("[startup] RBAC/SLO/Capacity init:", err.message);
   }

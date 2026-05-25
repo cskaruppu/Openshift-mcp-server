@@ -10,6 +10,7 @@ import { ocpGet, ocpFetch, ocpDelete } from "../utils/openshift-client.js";
 import { callLLM } from "./llm.js";
 import { query as dbQuery, isEnabled as dbEnabled } from "../utils/db.js";
 import { validateUpgradeVersion } from "../tools/upgrade-preflight.js";
+import { getComplianceResults, runComplianceScan } from "../tools/compliance-scanner.js";
 
 const LLM_SETTINGS_PATH = process.env.LLM_SETTINGS_PATH || "/data/mcp-llm-settings.json";
 const SETTINGS_DB_KEY = "llm_settings";
@@ -759,50 +760,39 @@ export async function handleDashboardAPI(pathname, req, res) {
         break;
       }
 
-      // ---- Security posture widget ----
+      // ---- Security / Compliance posture widget (powered by CIS scanner) ----
       case "/api/dashboard/security": {
-        const findings = [];
-        let score = 100;
         try {
-          const [pods, npData] = await Promise.all([
-            ocpGet("/api/v1/pods"),
-            ocpGet("/apis/networking.k8s.io/v1/networkpolicies").catch(() => ({ items: [] })),
-          ]);
-          const items = (pods.items || []).filter(
-            (p) => !p.metadata.namespace?.startsWith("openshift-") && !p.metadata.namespace?.startsWith("kube-")
-          );
-          let privileged = 0;
-          let runAsRoot = 0;
-          let noLimits = 0;
-          let latestTag = 0;
-          let hostNet = 0;
-          for (const p of items) {
-            if (p.spec?.hostNetwork) hostNet++;
-            for (const c of (p.spec?.containers || [])) {
-              const sc = c.securityContext || {};
-              if (sc.privileged) privileged++;
-              if (sc.runAsUser === 0 || (!sc.runAsNonRoot && !p.spec?.securityContext?.runAsNonRoot)) runAsRoot++;
-              if (!c.resources?.limits?.cpu && !c.resources?.limits?.memory) noLimits++;
-              const img = c.image || "";
-              if (img.endsWith(":latest") || !img.includes(":")) latestTag++;
+          let results = getComplianceResults();
+          if (!results) {
+            results = await runComplianceScan();
+          }
+
+          const failFindings = (results.findings || []).filter((f) => f.status === "FAIL");
+          const summary = results.summary || {};
+
+          // Build top-level findings summary for the compact dashboard card
+          const topFindings = [];
+          const catLabels = { "pod-security": "Pod Security", "network-security": "Network", "rbac-secrets": "RBAC & Secrets", "image-security": "Image Security" };
+          for (const [cat, stats] of Object.entries(summary)) {
+            if (stats.fail > 0) {
+              const sev = stats.critical > 0 ? "critical" : stats.warning > 0 ? "warning" : "info";
+              topFindings.push({ severity: sev, msg: `${stats.fail} ${catLabels[cat] || cat} issue(s)` });
             }
           }
-          if (privileged > 0) { score -= Math.min(25, privileged * 5); findings.push({ severity: "critical", msg: `${privileged} privileged container(s)` }); }
-          if (hostNet > 0) { score -= Math.min(10, hostNet * 3); findings.push({ severity: "critical", msg: `${hostNet} pod(s) using hostNetwork` }); }
-          if (runAsRoot > 0) { score -= Math.min(15, runAsRoot * 2); findings.push({ severity: "high", msg: `${runAsRoot} container(s) may run as root` }); }
-          if (noLimits > 0) { score -= Math.min(15, Math.ceil(noLimits / 2)); findings.push({ severity: "warning", msg: `${noLimits} container(s) without resource limits` }); }
-          if (latestTag > 0) { score -= Math.min(10, latestTag); findings.push({ severity: "warning", msg: `${latestTag} image(s) using :latest or untagged` }); }
 
-          const nsList = items.map((p) => p.metadata.namespace).filter((v, i, a) => a.indexOf(v) === i);
-          const coveredNs = new Set((npData.items || []).map((np) => np.metadata.namespace));
-          const uncovered = nsList.filter((ns) => !coveredNs.has(ns)).length;
-          if (uncovered > 0) { score -= Math.min(15, uncovered * 3); findings.push({ severity: "high", msg: `${uncovered} namespace(s) without NetworkPolicy` }); }
-
-          score = Math.max(0, Math.round(score));
-          const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
-          json(res, 200, { score, grade, findings: findings.slice(0, 5), podCount: items.length, namespaceCount: nsList.length });
+          json(res, 200, {
+            score: results.score,
+            grade: results.grade,
+            scanTime: results.scanTime,
+            findings: topFindings.slice(0, 5),
+            summary,
+            totals: results.totals,
+            podCount: failFindings.length,
+            namespaceCount: Object.keys(summary).length,
+          });
         } catch (err) {
-          json(res, 200, { score: 0, grade: "?", findings: [{ severity: "info", msg: "Could not compute: " + err.message }], podCount: 0, namespaceCount: 0 });
+          json(res, 200, { score: 0, grade: "?", findings: [{ severity: "info", msg: "Could not compute: " + err.message }], podCount: 0, namespaceCount: 0, summary: {} });
         }
         break;
       }

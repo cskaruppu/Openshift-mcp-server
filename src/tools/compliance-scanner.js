@@ -634,15 +634,48 @@ async function checkImageSecurity(options = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Score calculation
+// Score calculation — penalty model (consistent with dashboard security widget)
 // ---------------------------------------------------------------------------
 function calculateScore(allFindings) {
-  if (allFindings.length === 0) return 100;
+  const fails = allFindings.filter((f) => f.status === "FAIL");
+  if (fails.length === 0) return 100;
 
-  const passCount = allFindings.filter((f) => f.status === "PASS").length;
-  const totalChecks = allFindings.length;
+  const checkCounts = {};
+  for (const f of fails) {
+    checkCounts[f.id] = (checkCounts[f.id] || 0) + 1;
+  }
 
-  return Math.round((passCount / totalChecks) * 100);
+  let score = 100;
+
+  // Pod Security (max -40)
+  score -= Math.min(15, (checkCounts["CIS-5.2.1"] || 0) * 0.3);
+  score -= Math.min(12, (checkCounts["CIS-5.2.2"] || 0) * 4);
+  score -= Math.min(8, (checkCounts["CIS-5.2.3"] || 0) * 2);
+  score -= Math.min(10, Math.ceil((checkCounts["CIS-5.2.4"] || 0) / 20));
+  score -= Math.min(5, Math.ceil((checkCounts["CIS-5.2.5"] || 0) / 30));
+
+  // Network Security (max -20)
+  score -= Math.min(10, (checkCounts["CIS-5.3.1"] || 0) * 2);
+  score -= Math.min(5, checkCounts["CIS-5.3.2"] || 0);
+  score -= Math.min(5, Math.ceil((checkCounts["CIS-5.3.3"] || 0) / 15));
+
+  // RBAC & Secrets (max -15)
+  score -= Math.min(8, (checkCounts["CIS-5.1.1"] || 0) * 4);
+  score -= Math.min(7, Math.ceil((checkCounts["CIS-5.4.1"] || 0) / 15));
+
+  // Image Security (max -15)
+  score -= Math.min(7, Math.ceil((checkCounts["CIS-5.5.1"] || 0) / 3));
+  score -= Math.min(8, checkCounts["CIS-5.5.2"] || 0);
+
+  return Math.max(0, Math.round(score));
+}
+
+function calculateGrade(score) {
+  if (score >= 90) return "A";
+  if (score >= 80) return "B";
+  if (score >= 70) return "C";
+  if (score >= 60) return "D";
+  return "F";
 }
 
 // ---------------------------------------------------------------------------
@@ -699,11 +732,13 @@ export async function runComplianceScan(options = {}) {
   ];
 
   const score = calculateScore(allFindings);
+  const grade = calculateGrade(score);
   const summary = buildCategorySummary(allFindings);
 
   const results = {
     scanTime,
     score,
+    grade,
     findings: allFindings,
     summary,
     totals: {

@@ -2277,10 +2277,10 @@ tr:hover td{background:#ffffff06}
   <!-- Command Center: Row 1 — 3-column compact status cards -->
   <div class="dash-top3">
 
-    <!-- Security Posture -->
+    <!-- CIS Compliance (unified with Audit page Compliance Posture) -->
     <div class="card" id="widget-security">
-      <h3>&#x1F6E1; Security Posture</h3>
-      <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px">
+      <h3>&#x1F6E1; CIS Compliance</h3>
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:10px">
         <div style="position:relative;width:64px;height:64px;flex-shrink:0">
           <svg width="64" height="64" viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" fill="none" stroke="var(--border)" stroke-width="6"/><circle id="sec-ring" cx="32" cy="32" r="27" fill="none" stroke="var(--ok)" stroke-width="6" stroke-linecap="round" stroke-dasharray="169.6" stroke-dashoffset="169.6" style="transform:rotate(-90deg);transform-origin:center;transition:stroke-dashoffset .8s ease,stroke .3s"/></svg>
           <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800" id="sec-score">--</div>
@@ -2288,13 +2288,31 @@ tr:hover td{background:#ffffff06}
         <div style="flex:1">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
             <span id="sec-grade" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;font-size:14px;font-weight:800;background:#22c55e33;color:#22c55e;border:2px solid #22c55e">?</span>
-            <span style="font-weight:600;font-size:13px" id="sec-grade-label">Compliance Grade</span>
+            <span style="font-weight:600;font-size:13px">Compliance Grade</span>
           </div>
           <div style="font-size:11px;color:var(--text2)" id="sec-meta">Scanning...</div>
         </div>
       </div>
-      <div id="sec-findings" style="display:flex;flex-direction:column;gap:3px;font-size:11px;max-height:100px;overflow-y:auto"></div>
-      <div style="margin-top:auto;padding-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="openNewChatWithCommand('/security','Security Audit')">View Full Security Audit &#x2192;</button></div>
+      <div id="sec-categories" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:8px">
+        <div style="background:var(--bg);border-radius:6px;padding:6px 8px;border:1px solid var(--border)">
+          <div style="font-size:10px;color:var(--text2)">&#x1F512; Pod Security</div>
+          <div style="font-size:11px;font-weight:600" id="sec-cat-pod">—</div>
+        </div>
+        <div style="background:var(--bg);border-radius:6px;padding:6px 8px;border:1px solid var(--border)">
+          <div style="font-size:10px;color:var(--text2)">&#x1F310; Network</div>
+          <div style="font-size:11px;font-weight:600" id="sec-cat-net">—</div>
+        </div>
+        <div style="background:var(--bg);border-radius:6px;padding:6px 8px;border:1px solid var(--border)">
+          <div style="font-size:10px;color:var(--text2)">&#x1F511; RBAC &amp; Secrets</div>
+          <div style="font-size:11px;font-weight:600" id="sec-cat-rbac">—</div>
+        </div>
+        <div style="background:var(--bg);border-radius:6px;padding:6px 8px;border:1px solid var(--border)">
+          <div style="font-size:10px;color:var(--text2)">&#x1F5BC; Image Security</div>
+          <div style="font-size:11px;font-weight:600" id="sec-cat-img">—</div>
+        </div>
+      </div>
+      <div id="sec-findings" style="display:flex;flex-direction:column;gap:3px;font-size:11px;max-height:80px;overflow-y:auto"></div>
+      <div style="margin-top:auto;padding-top:10px"><button class="icon-btn" style="font-size:11px;width:100%;justify-content:center" onclick="showView('audit')">View Full Report &#x2192;</button></div>
     </div>
 
     <!-- GitOps Sync Status -->
@@ -3146,37 +3164,42 @@ tr:hover td{background:#ffffff06}
         <span style="font-size:16px">&#x1F6E1;</span>
         <span style="font-size:14px;font-weight:600">Compliance Posture</span>
         <span style="font-size:10px;color:var(--text2)">CIS Kubernetes Benchmark</span>
+        <span id="compliance-scan-time" style="font-size:9px;color:var(--text2)"></span>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
+        <span id="compliance-grade-badge" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;font-size:14px;font-weight:800;background:var(--bg);color:var(--text2);border:2px solid var(--border)">?</span>
         <span id="compliance-score-badge" style="font-size:18px;font-weight:800;color:var(--text2)">—</span>
-        <button onclick="runComplianceScanUI()" id="compliance-scan-btn" style="background:var(--accent2);border:none;border-radius:6px;padding:5px 12px;color:#fff;font-size:11px;font-weight:600;cursor:pointer">&#x1F50D; Run Scan</button>
+        <button onclick="runComplianceScanUI()" id="compliance-scan-btn" style="background:var(--accent2);border:none;border-radius:6px;padding:5px 12px;color:#fff;font-size:11px;font-weight:600;cursor:pointer">&#x1F504; Re-Scan</button>
       </div>
     </div>
     <div id="compliance-panel" style="padding:16px">
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px" id="compliance-categories">
-        <div class="compliance-cat" data-cat="pod-security" style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;border:1px solid var(--border)">
+        <div class="compliance-cat" data-cat="pod-security" style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;border:1px solid var(--border);cursor:pointer" onclick="filterComplianceCategory('pod-security')">
           <div style="font-size:20px;margin-bottom:4px">&#x1F512;</div>
           <div style="font-size:11px;font-weight:600">Pod Security</div>
           <div style="font-size:9px;color:var(--text2);margin-top:2px" id="comp-cat-pod-security">—</div>
         </div>
-        <div class="compliance-cat" data-cat="network-security" style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;border:1px solid var(--border)">
+        <div class="compliance-cat" data-cat="network-security" style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;border:1px solid var(--border);cursor:pointer" onclick="filterComplianceCategory('network-security')">
           <div style="font-size:20px;margin-bottom:4px">&#x1F310;</div>
           <div style="font-size:11px;font-weight:600">Network</div>
           <div style="font-size:9px;color:var(--text2);margin-top:2px" id="comp-cat-network-security">—</div>
         </div>
-        <div class="compliance-cat" data-cat="rbac-secrets" style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;border:1px solid var(--border)">
+        <div class="compliance-cat" data-cat="rbac-secrets" style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;border:1px solid var(--border);cursor:pointer" onclick="filterComplianceCategory('rbac-secrets')">
           <div style="font-size:20px;margin-bottom:4px">&#x1F511;</div>
           <div style="font-size:11px;font-weight:600">RBAC &amp; Secrets</div>
           <div style="font-size:9px;color:var(--text2);margin-top:2px" id="comp-cat-rbac-secrets">—</div>
         </div>
-        <div class="compliance-cat" data-cat="image-security" style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;border:1px solid var(--border)">
+        <div class="compliance-cat" data-cat="image-security" style="background:var(--bg);border-radius:8px;padding:12px;text-align:center;border:1px solid var(--border);cursor:pointer" onclick="filterComplianceCategory('image-security')">
           <div style="font-size:20px;margin-bottom:4px">&#x1F5BC;</div>
           <div style="font-size:11px;font-weight:600">Image Security</div>
           <div style="font-size:9px;color:var(--text2);margin-top:2px" id="comp-cat-image-security">—</div>
         </div>
       </div>
-      <div id="compliance-findings" style="max-height:400px;overflow-y:auto">
-        <div style="padding:20px;text-align:center;color:var(--text2);font-size:12px">Click "Run Scan" to check compliance posture</div>
+      <div id="compliance-findings" style="max-height:500px;overflow-y:auto">
+        <div style="padding:20px;text-align:center;color:var(--text2);font-size:12px">
+          <div style="display:inline-block;width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent2);border-radius:50%;animation:spin 0.8s linear infinite;margin-bottom:8px"></div>
+          <div>Loading compliance data...</div>
+        </div>
       </div>
     </div>
   </div>
@@ -5633,7 +5656,7 @@ function sevIcon(s) { return s === 'critical' ? '&#x1F534;' : s === 'high' ? '&#
 
 async function loadSecurityWidget() {
   try {
-    const d = await apiFetch('/api/dashboard/security');
+    const d = await apiFetch('/api/dashboard/security', 30000);
     const circ = 2 * Math.PI * 27;
     const offset = circ - (d.score / 100) * circ;
     const color = scoreColor(d.score);
@@ -5641,17 +5664,35 @@ async function loadSecurityWidget() {
     document.getElementById('sec-ring').setAttribute('stroke', color);
     document.getElementById('sec-score').textContent = d.score;
     document.getElementById('sec-score').style.color = color;
-    const g = document.getElementById('sec-grade');
+    var g = document.getElementById('sec-grade');
     g.textContent = d.grade;
     g.style.cssText = gradeStyle(d.grade);
-    document.getElementById('sec-meta').textContent = d.podCount + ' pods scanned across ' + d.namespaceCount + ' namespaces';
-    document.getElementById('sec-findings').innerHTML = (d.findings || []).map(f =>
-      '<div style="display:flex;align-items:center;gap:6px">' + sevIcon(f.severity) + ' <span>' + esc(f.msg) + '</span></div>'
-    ).join('');
+    var scanAge = d.scanTime ? timeAgo(d.scanTime) : '';
+    document.getElementById('sec-meta').textContent = 'CIS Kubernetes Benchmark' + (scanAge ? ' • ' + scanAge : '');
+
+    // Category breakdown
+    var summary = d.summary || {};
+    var catMap = { 'pod-security': 'sec-cat-pod', 'network-security': 'sec-cat-net', 'rbac-secrets': 'sec-cat-rbac', 'image-security': 'sec-cat-img' };
+    for (var cat in catMap) {
+      var el = document.getElementById(catMap[cat]);
+      if (el && summary[cat]) {
+        var s = summary[cat];
+        var catColor = s.fail === 0 ? 'var(--ok)' : s.critical > 0 ? 'var(--crit)' : 'var(--warn)';
+        el.innerHTML = s.fail === 0
+          ? '<span style="color:var(--ok)">All clear</span>'
+          : '<span style="color:' + catColor + '">' + s.fail + ' issue' + (s.fail !== 1 ? 's' : '') + '</span>';
+      }
+    }
+
+    // Top findings
+    document.getElementById('sec-findings').innerHTML = (d.findings || []).map(function(f) {
+      return '<div style="display:flex;align-items:center;gap:6px">' + sevIcon(f.severity) + ' <span>' + esc(f.msg) + '</span></div>';
+    }).join('');
   } catch (e) {
     document.getElementById('sec-meta').textContent = 'Error: ' + e.message;
   }
 }
+
 
 async function loadGitOpsWidget() {
   try {
@@ -8811,6 +8852,7 @@ function showView(view) {
     checkPendingCRNotifications();
   } else if (view === 'audit') {
     loadAuditView();
+    loadComplianceResults();
   } else if (view === 'settings') {
     loadSettings();
   } else if (view === 'hub') {
@@ -15266,6 +15308,9 @@ async function loadCapacityForecast() {
 // ---------------------------------------------------------------------------
 // Compliance Scanner (Audit page)
 // ---------------------------------------------------------------------------
+var _complianceData = null;
+var _complianceCatFilter = null;
+
 async function runComplianceScanUI() {
   var btn = document.getElementById('compliance-scan-btn');
   btn.disabled = true; btn.textContent = 'Scanning...';
@@ -15288,52 +15333,152 @@ async function runComplianceScanUI() {
   } catch (e) {
     document.getElementById('compliance-findings').innerHTML = '<div style="padding:16px;color:var(--crit)">Scan failed: ' + esc(e.message) + '</div>';
   }
-  btn.disabled = false; btn.textContent = '\u{1F50D} Run Scan';
+  btn.disabled = false; btn.innerHTML = '&#x1F504; Re-Scan';
 }
+
 async function loadComplianceResults() {
   try {
     var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/compliance/results'));
     var data = await resp.json();
-    if (data.score !== null && data.score !== undefined) renderComplianceResults(data);
+    if (data && data.score !== null && data.score !== undefined) {
+      renderComplianceResults(data);
+    } else {
+      document.getElementById('compliance-findings').innerHTML =
+        '<div style="padding:20px;text-align:center;color:var(--text2);font-size:12px">' +
+        'No scan results yet. Click "Re-Scan" or wait for the automatic scan to complete.</div>';
+    }
   } catch {}
 }
+
+function filterComplianceCategory(cat) {
+  if (_complianceCatFilter === cat) {
+    _complianceCatFilter = null;
+  } else {
+    _complianceCatFilter = cat;
+  }
+  // Highlight active category card
+  document.querySelectorAll('.compliance-cat').forEach(function(el) {
+    var elCat = el.getAttribute('data-cat');
+    el.style.borderColor = (elCat === _complianceCatFilter) ? 'var(--accent2)' : 'var(--border)';
+    el.style.borderWidth = (elCat === _complianceCatFilter) ? '2px' : '1px';
+  });
+  if (_complianceData) renderComplianceFindings(_complianceData.findings || [], _complianceCatFilter);
+}
+
 function renderComplianceResults(data) {
+  _complianceData = data;
+  _complianceCatFilter = null;
   var score = data.score || 0;
+  var grade = data.grade || '?';
+
+  // Score badge
   var badge = document.getElementById('compliance-score-badge');
-  var scoreColor = score >= 80 ? '#22c55e' : score >= 60 ? '#f59e0b' : '#ef4444';
-  if (badge) { badge.textContent = score.toFixed(0) + '%'; badge.style.color = scoreColor; }
+  var sc = score >= 80 ? '#22c55e' : score >= 60 ? '#f59e0b' : '#ef4444';
+  if (badge) { badge.textContent = score + '/100'; badge.style.color = sc; }
+
+  // Grade badge
+  var gb = document.getElementById('compliance-grade-badge');
+  if (gb) { gb.textContent = grade; gb.style.cssText = gradeStyle(grade); }
+
+  // Scan time
+  var timeEl = document.getElementById('compliance-scan-time');
+  if (timeEl && data.scanTime) { timeEl.textContent = '• scanned ' + timeAgo(data.scanTime); }
+
+  // Category cards
   var summary = data.summary || {};
+  var catNames = { 'pod-security': 'Pod Security', 'network-security': 'Network', 'rbac-secrets': 'RBAC & Secrets', 'image-security': 'Image Security' };
   Object.keys(summary).forEach(function(cat) {
     var el = document.getElementById('comp-cat-' + cat);
     if (el) {
       var s = summary[cat];
-      el.innerHTML = '<span style="color:var(--ok)">' + s.pass + ' pass</span> / <span style="color:var(--crit)">' + s.fail + ' fail</span>';
+      if (s.fail === 0) {
+        el.innerHTML = '<span style="color:var(--ok);font-weight:600">&#x2705; All clear</span>';
+      } else {
+        var catColor = s.critical > 0 ? 'var(--crit)' : 'var(--warn)';
+        el.innerHTML = '<span style="color:' + catColor + ';font-weight:600">' + s.fail + ' issue' + (s.fail !== 1 ? 's' : '') + '</span>' +
+          (s.critical > 0 ? '<br><span style="font-size:8px;color:var(--crit)">' + s.critical + ' critical</span>' : '');
+      }
     }
   });
-  var findings = data.findings || [];
+
+  // Reset category card borders
+  document.querySelectorAll('.compliance-cat').forEach(function(el) {
+    el.style.borderColor = 'var(--border)';
+    el.style.borderWidth = '1px';
+  });
+
+  renderComplianceFindings(data.findings || [], null);
+}
+
+function renderComplianceFindings(allFindings, catFilter) {
   var panel = document.getElementById('compliance-findings');
+  var findings = catFilter ? allFindings.filter(function(f) { return f.category === catFilter; }) : allFindings;
+
   if (findings.length === 0) {
-    panel.innerHTML = '<div style="padding:20px;text-align:center;color:var(--ok)"><div style="font-size:24px;margin-bottom:4px">&#x2705;</div>All checks passed</div>';
+    panel.innerHTML = '<div style="padding:20px;text-align:center;color:var(--ok)"><div style="font-size:24px;margin-bottom:4px">&#x2705;</div>' +
+      (catFilter ? 'No issues in this category' : 'All checks passed') + '</div>';
     return;
   }
-  var fails = findings.filter(function(f) { return f.status === 'FAIL'; });
-  var warns = findings.filter(function(f) { return f.status === 'WARN'; });
-  panel.innerHTML = (fails.length > 0 ? '<div style="font-size:11px;font-weight:600;color:var(--crit);margin-bottom:6px">&#x274C; Failed Checks (' + fails.length + ')</div>' +
-    fails.slice(0, 30).map(function(f) {
-      var sevColor = f.severity === 'critical' ? '#ef4444' : f.severity === 'warning' ? '#f59e0b' : '#3b82f6';
-      return '<div style="background:var(--bg);border:1px solid var(--border);border-left:3px solid ' + sevColor + ';border-radius:6px;padding:8px 10px;margin-bottom:4px;font-size:10px">' +
-        '<div style="display:flex;align-items:center;gap:6px"><code style="color:var(--accent2);font-weight:700">' + esc(f.id) + '</code> <strong>' + esc(f.title) + '</strong>' +
-        '<span style="margin-left:auto;font-size:9px;padding:1px 6px;border-radius:8px;background:' + sevColor + '22;color:' + sevColor + '">' + (f.severity || '').toUpperCase() + '</span></div>' +
-        '<div style="color:var(--text2);margin-top:2px">' + esc(f.resource || '') + (f.namespace ? ' in ' + esc(f.namespace) : '') + '</div>' +
-        '<div style="color:var(--text2);margin-top:2px">' + esc(f.description || '') + '</div>' +
-        (f.remediation ? '<div style="margin-top:4px;color:var(--ok);font-size:9px">&#x1F4A1; ' + esc(f.remediation) + '</div>' : '') +
-      '</div>';
-    }).join('') : '') +
-  (warns.length > 0 ? '<div style="font-size:11px;font-weight:600;color:var(--warn);margin-top:8px;margin-bottom:6px">&#x26A0; Warnings (' + warns.length + ')</div>' +
-    warns.slice(0, 20).map(function(f) {
-      return '<div style="background:var(--bg);border:1px solid var(--border);border-left:3px solid #f59e0b;border-radius:6px;padding:6px 10px;margin-bottom:4px;font-size:10px">' +
-        '<code style="color:var(--accent2)">' + esc(f.id) + '</code> ' + esc(f.title) + ' — ' + esc(f.description || '') + '</div>';
-    }).join('') : '');
+
+  // Group findings by check ID for cleaner display
+  var groups = {};
+  var groupOrder = [];
+  findings.forEach(function(f) {
+    if (f.status !== 'FAIL' && f.status !== 'WARN') return;
+    if (!groups[f.id]) {
+      groups[f.id] = { id: f.id, title: f.title, severity: f.severity, category: f.category, status: f.status, remediation: f.remediation, resources: [] };
+      groupOrder.push(f.id);
+    }
+    if (f.status === 'FAIL') groups[f.id].status = 'FAIL';
+    if (f.severity === 'critical') groups[f.id].severity = 'critical';
+    groups[f.id].resources.push({ resource: f.resource, namespace: f.namespace, description: f.description });
+  });
+
+  // Sort: critical first, then by resource count
+  groupOrder.sort(function(a, b) {
+    var ga = groups[a], gb = groups[b];
+    var sevOrder = { critical: 0, warning: 1, info: 2 };
+    var diff = (sevOrder[ga.severity] || 3) - (sevOrder[gb.severity] || 3);
+    return diff !== 0 ? diff : gb.resources.length - ga.resources.length;
+  });
+
+  var html = '<div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:8px">' +
+    findings.filter(function(f) { return f.status === 'FAIL'; }).length + ' finding(s) across ' +
+    groupOrder.length + ' check type(s)' +
+    (catFilter ? ' <span style="cursor:pointer;color:var(--accent2)" onclick="filterComplianceCategory(null)">[clear filter]</span>' : '') + '</div>';
+
+  groupOrder.forEach(function(id) {
+    var g = groups[id];
+    var sevColor = g.severity === 'critical' ? '#ef4444' : g.severity === 'warning' ? '#f59e0b' : '#3b82f6';
+    var resCount = g.resources.length;
+    var expanded = resCount <= 3;
+    var resHtml = g.resources.slice(0, expanded ? resCount : 3).map(function(r) {
+      return '<div style="padding:2px 0;color:var(--text2);font-size:9px;border-top:1px solid var(--border)">' +
+        '<code style="color:var(--text)">' + esc(r.resource || '') + '</code>' +
+        (r.namespace ? ' <span style="color:var(--text2)">in ' + esc(r.namespace) + '</span>' : '') + '</div>';
+    }).join('');
+    if (!expanded && resCount > 3) {
+      resHtml += '<div style="padding:2px 0;color:var(--accent2);font-size:9px;cursor:pointer" onclick="this.parentElement.querySelector(\'[data-all]\').style.display=\'block\';this.style.display=\'none\'">+ ' + (resCount - 3) + ' more resources...</div>' +
+        '<div data-all style="display:none">' + g.resources.slice(3).map(function(r) {
+          return '<div style="padding:2px 0;color:var(--text2);font-size:9px;border-top:1px solid var(--border)">' +
+            '<code style="color:var(--text)">' + esc(r.resource || '') + '</code>' +
+            (r.namespace ? ' <span style="color:var(--text2)">in ' + esc(r.namespace) + '</span>' : '') + '</div>';
+        }).join('') + '</div>';
+    }
+
+    html += '<div style="background:var(--bg);border:1px solid var(--border);border-left:3px solid ' + sevColor + ';border-radius:6px;padding:10px 12px;margin-bottom:6px">' +
+      '<div style="display:flex;align-items:center;gap:6px;font-size:11px">' +
+        '<code style="color:var(--accent2);font-weight:700;font-size:10px">' + esc(g.id) + '</code>' +
+        '<strong style="flex:1">' + esc(g.title) + '</strong>' +
+        '<span style="font-size:9px;padding:1px 6px;border-radius:8px;background:' + sevColor + '22;color:' + sevColor + ';font-weight:600">' + g.severity.toUpperCase() + '</span>' +
+        '<span style="font-size:10px;font-weight:700;color:' + sevColor + '">' + resCount + '</span>' +
+      '</div>' +
+      '<div style="margin-top:6px">' + resHtml + '</div>' +
+      (g.remediation ? '<div style="margin-top:6px;color:var(--ok);font-size:9px;background:color-mix(in srgb,var(--ok) 5%,transparent);padding:4px 8px;border-radius:4px">&#x1F4A1; ' + esc(g.remediation) + '</div>' : '') +
+    '</div>';
+  });
+
+  panel.innerHTML = html;
 }
 
 // ---------------------------------------------------------------------------
