@@ -54,12 +54,15 @@ import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
 import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, agreeChange, dismissChange, getWorkloadsByNamespace, initTrackedNamespaces, getChangeHistory, getLastScanTime, getLastChangeTime, getHealthStreak } from "./tools/app-change-watcher.js";
 import { registerImageVulnScannerTools, runImageScan, getScanResults, getScanHistory, getComplianceCache, getImageAgeCache } from "./tools/image-vulnerability-scanner.js";
-import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode, loadUserRoles, getUserRole, setUserRole, getAllUserRoles, checkPermission, getRoles } from "./services/auth.js";
+import { authMiddleware, registerAuthRoutes, handleTokenLogin, getAuthMode, loadUserRoles, getUserRole, setUserRole, getAllUserRoles, checkPermission, getRoles, getUserNamespaces, canAccessNamespace, filterByNamespace } from "./services/auth.js";
 import { runRCA, runNamespaceRCA, getActiveInvestigations, getRCAHistory } from "./tools/rca-engine.js";
 import { getNetworkTopology, getClusterTopology, getExposedServices, getUnprotectedNamespaces } from "./tools/network-topology.js";
 import { captureSnapshot as captureCapacitySnapshot, getCapacityForecast, getNamespaceForecasts, getCapacityHistory } from "./tools/capacity-forecast.js";
 import { runComplianceScan, getComplianceResults, getComplianceScore, getComplianceHistory } from "./tools/compliance-scanner.js";
-import { defineSLO, getSLOStatus, getAllSLOs, deleteSLO, calculateErrorBudget, loadSLOs } from "./tools/slo-tracker.js";
+import { defineSLO, getSLOStatus, getAllSLOs, deleteSLO, calculateErrorBudget, loadSLOs, setPrometheusUrl, getPrometheusStatus } from "./tools/slo-tracker.js";
+import { loadPolicies, getPolicies, getPolicy, createPolicy, updatePolicy, deletePolicy, evaluatePolicies, getClusterPolicies } from "./tools/policy-engine.js";
+import { loadChannels, getChannels, createChannel, updateChannel, deleteChannel, testChannel, notify, getNotificationHistory } from "./services/notifications.js";
+import { initAuditLog, logAuditEvent as logAuditTrailEvent, queryAuditLog, getAuditStats, exportAuditLog } from "./services/audit-log.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, trackSubmittedCR } from "./services/chat-api.js";
 import {
@@ -1020,14 +1023,16 @@ async function startSSE() {
   try {
     await loadUserRoles();
     await loadSLOs();
+    await loadPolicies();
+    await loadChannels();
+    await initAuditLog();
     captureCapacitySnapshot().catch(() => {});
     setInterval(() => captureCapacitySnapshot().catch(() => {}), 3600000);
-    // Initial compliance scan (delayed 15s to let cluster connection stabilize) + periodic rescan every 15 min
     setTimeout(() => {
       runComplianceScan().then(() => console.log("[compliance] Initial CIS scan complete")).catch(() => {});
     }, 15000);
     setInterval(() => runComplianceScan().catch(() => {}), 900000);
-    console.log("[startup] RBAC roles, SLO definitions loaded; capacity snapshots (hourly), compliance scan (15m)");
+    console.log("[startup] RBAC, SLOs, policies, notifications, audit loaded; capacity (hourly), compliance (15m)");
   } catch (err) {
     console.warn("[startup] RBAC/SLO/Capacity init:", err.message);
   }
@@ -3188,7 +3193,7 @@ async function startSSE() {
       return;
     }
 
-    // ── RBAC API ────────────────────────────────────────────────────
+    // ── RBAC API (namespace-scoped) ────────────────────────────────
     if (req.method === "GET" && url.pathname === "/api/rbac/roles") {
       sendJson(res, 200, { roles: getRoles(), userRoles: getAllUserRoles() });
       return;
@@ -3196,8 +3201,168 @@ async function startSSE() {
     if (req.method === "POST" && url.pathname === "/api/rbac/assign") {
       try {
         const body = await readJsonBody(req);
-        const ok = await setUserRole(body.username, body.role);
+        const ok = await setUserRole(body.username, body.role, body.namespaces);
         sendJson(res, ok ? 200 : 400, ok ? { ok: true } : { error: "Invalid role" });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── Policy Engine API ───────────────────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/policies") {
+      sendJson(res, 200, { policies: getPolicies() });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/policies") {
+      try {
+        const body = await readJsonBody(req);
+        const policy = await createPolicy(body);
+        logAuditTrailEvent({ type: "config_change", severity: "info", title: `Policy created: ${policy.name}`, details: { policyId: policy.id }, username: req.user?.name }).catch(() => {});
+        sendJson(res, 201, policy);
+      } catch (err) { sendJson(res, 400, { error: err.message }); }
+      return;
+    }
+    {
+      const policyMatch = url.pathname.match(/^\/api\/policies\/([^/]+)$/);
+      if (policyMatch && req.method === "GET") {
+        const p = getPolicy(decodeURIComponent(policyMatch[1]));
+        if (p) sendJson(res, 200, p); else sendJson(res, 404, { error: "Policy not found" });
+        return;
+      }
+      if (policyMatch && req.method === "PUT") {
+        try {
+          const body = await readJsonBody(req);
+          const p = await updatePolicy(decodeURIComponent(policyMatch[1]), body);
+          sendJson(res, 200, p);
+        } catch (err) { sendJson(res, 400, { error: err.message }); }
+        return;
+      }
+      if (policyMatch && req.method === "DELETE") {
+        try {
+          await deletePolicy(decodeURIComponent(policyMatch[1]));
+          sendJson(res, 200, { ok: true });
+        } catch (err) { sendJson(res, 400, { error: err.message }); }
+        return;
+      }
+    }
+    if (req.method === "POST" && url.pathname === "/api/policies/evaluate") {
+      try {
+        const body = await readJsonBody(req);
+        const findings = await evaluatePolicies(body || {});
+        sendJson(res, 200, { findings, count: findings.length });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/policies/cluster") {
+      try {
+        const policies = await getClusterPolicies();
+        sendJson(res, 200, policies);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── Notification Channels API ───────────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/notifications/channels") {
+      sendJson(res, 200, { channels: getChannels() });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/notifications/channels") {
+      try {
+        const body = await readJsonBody(req);
+        const ch = await createChannel(body);
+        logAuditTrailEvent({ type: "config_change", severity: "info", title: `Notification channel created: ${ch.name}`, details: { channelId: ch.id, type: ch.type }, username: req.user?.name }).catch(() => {});
+        sendJson(res, 201, ch);
+      } catch (err) { sendJson(res, 400, { error: err.message }); }
+      return;
+    }
+    {
+      const chMatch = url.pathname.match(/^\/api\/notifications\/channels\/([^/]+)$/);
+      if (chMatch && req.method === "PUT") {
+        try {
+          const body = await readJsonBody(req);
+          const ch = await updateChannel(decodeURIComponent(chMatch[1]), body);
+          sendJson(res, 200, ch);
+        } catch (err) { sendJson(res, 400, { error: err.message }); }
+        return;
+      }
+      if (chMatch && req.method === "DELETE") {
+        try {
+          await deleteChannel(decodeURIComponent(chMatch[1]));
+          sendJson(res, 200, { ok: true });
+        } catch (err) { sendJson(res, 400, { error: err.message }); }
+        return;
+      }
+      const testMatch = url.pathname.match(/^\/api\/notifications\/channels\/([^/]+)\/test$/);
+      if (testMatch && req.method === "POST") {
+        try {
+          const result = await testChannel(decodeURIComponent(testMatch[1]));
+          sendJson(res, 200, result);
+        } catch (err) { sendJson(res, 400, { error: err.message }); }
+        return;
+      }
+    }
+    if (req.method === "GET" && url.pathname === "/api/notifications/history") {
+      sendJson(res, 200, { history: getNotificationHistory() });
+      return;
+    }
+
+    // ── Audit Trail API ─────────────────────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/audit-trail") {
+      try {
+        const filters = {
+          type: url.searchParams.get("type") || undefined,
+          severity: url.searchParams.get("severity") || undefined,
+          namespace: url.searchParams.get("namespace") || undefined,
+          username: url.searchParams.get("username") || undefined,
+          from: url.searchParams.get("from") || undefined,
+          to: url.searchParams.get("to") || undefined,
+          limit: parseInt(url.searchParams.get("limit") || "100", 10),
+          offset: parseInt(url.searchParams.get("offset") || "0", 10),
+        };
+        const result = await queryAuditLog(filters);
+        sendJson(res, 200, result);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/audit-trail/stats") {
+      try {
+        const days = parseInt(url.searchParams.get("days") || "30", 10);
+        const stats = await getAuditStats(days);
+        sendJson(res, 200, stats);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/audit-trail/export") {
+      try {
+        const filters = {
+          type: url.searchParams.get("type") || undefined,
+          from: url.searchParams.get("from") || undefined,
+          to: url.searchParams.get("to") || undefined,
+        };
+        const format = url.searchParams.get("format") || "json";
+        const data = await exportAuditLog(filters, format);
+        if (format === "csv") {
+          res.writeHead(200, { "Content-Type": "text/csv", "Content-Disposition": "attachment; filename=audit-trail.csv" });
+          res.end(data);
+        } else {
+          sendJson(res, 200, typeof data === "string" ? JSON.parse(data) : data);
+        }
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── Prometheus SLO Config API ───────────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/prometheus/status") {
+      try {
+        const status = await getPrometheusStatus();
+        sendJson(res, 200, status);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/prometheus/configure") {
+      try {
+        const body = await readJsonBody(req);
+        const url2 = await setPrometheusUrl(body.url);
+        sendJson(res, 200, { ok: true, url: url2 });
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }

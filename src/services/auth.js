@@ -29,6 +29,7 @@ const ROLES = {
 };
 
 const _userRoles = new Map();
+const _userNamespaces = new Map();
 let _rolesLoaded = false;
 
 export async function loadUserRoles() {
@@ -40,6 +41,15 @@ export async function loadUserRoles() {
       const roles = typeof result.rows[0].value === "string" ? JSON.parse(result.rows[0].value) : result.rows[0].value;
       if (roles && typeof roles === "object") {
         for (const [user, role] of Object.entries(roles)) _userRoles.set(user, role);
+      }
+    }
+  } catch {}
+  try {
+    const result = await dbQuery("SELECT value FROM kv_store WHERE key = $1", ["user_namespaces"]);
+    if (result?.rows?.length > 0) {
+      const nsMap = typeof result.rows[0].value === "string" ? JSON.parse(result.rows[0].value) : result.rows[0].value;
+      if (nsMap && typeof nsMap === "object") {
+        for (const [user, nsList] of Object.entries(nsMap)) _userNamespaces.set(user, nsList);
       }
     }
   } catch {}
@@ -56,19 +66,63 @@ async function persistUserRoles() {
   } catch {}
 }
 
+async function persistUserNamespaces() {
+  const nsMap = Object.fromEntries(_userNamespaces);
+  try {
+    await dbQuery(
+      `INSERT INTO kv_store (key, value, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+      ["user_namespaces", JSON.stringify(nsMap)]
+    );
+  } catch {}
+}
+
 export function getUserRole(username) {
   return _userRoles.get(username) || "viewer";
 }
 
-export async function setUserRole(username, role) {
+export async function setUserRole(username, role, namespaces) {
   if (!ROLES[role]) return false;
   _userRoles.set(username, role);
+  if (namespaces !== undefined) {
+    if (Array.isArray(namespaces) && namespaces.length > 0) {
+      _userNamespaces.set(username, namespaces);
+    } else {
+      _userNamespaces.delete(username);
+    }
+    await persistUserNamespaces();
+  }
   await persistUserRoles();
   return true;
 }
 
+export function getUserNamespaces(username) {
+  return _userNamespaces.get(username) || [];
+}
+
+export function canAccessNamespace(username, namespace) {
+  const role = getUserRole(username);
+  if (ROLES[role]?.level >= 3) return true;
+  const allowed = _userNamespaces.get(username);
+  if (!allowed || allowed.length === 0 || allowed.includes("*")) return true;
+  return allowed.includes(namespace);
+}
+
+export function filterByNamespace(username, items, nsExtractor) {
+  const role = getUserRole(username);
+  if (ROLES[role]?.level >= 3) return items;
+  const allowed = _userNamespaces.get(username);
+  if (!allowed || allowed.length === 0 || allowed.includes("*")) return items;
+  const nsSet = new Set(allowed);
+  return items.filter((item) => nsSet.has(nsExtractor(item)));
+}
+
 export function getAllUserRoles() {
-  return Object.fromEntries(_userRoles);
+  const result = {};
+  for (const [user, role] of _userRoles) {
+    result[user] = { role, namespaces: _userNamespaces.get(user) || [] };
+  }
+  return result;
 }
 
 export function hasPermission(username, permission) {

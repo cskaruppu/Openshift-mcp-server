@@ -3296,6 +3296,33 @@ tr:hover td{background:#ffffff06}
     </div>
   </div>
 
+  <!-- Persistent Audit Trail -->
+  <div class="card" style="padding:0;overflow:hidden;margin-top:20px">
+    <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:16px">&#x1F4DC;</span>
+        <span style="font-size:14px;font-weight:600">Audit Trail</span>
+        <span style="font-size:10px;color:var(--text2)">90-day persistent log</span>
+      </div>
+      <div style="display:flex;gap:6px">
+        <select id="audit-trail-type-filter" onchange="loadAuditTrail()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:10px;outline:none">
+          <option value="">All Events</option>
+          <option value="compliance_scan">Compliance Scans</option>
+          <option value="policy_violation">Policy Violations</option>
+          <option value="change_detected">Changes Detected</option>
+          <option value="action_taken">Actions Taken</option>
+          <option value="slo_breach">SLO Breaches</option>
+          <option value="config_change">Config Changes</option>
+          <option value="login">Logins</option>
+        </select>
+        <button onclick="exportAuditTrailUI('csv')" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:10px;cursor:pointer;color:var(--text)">&#x1F4E5; CSV</button>
+      </div>
+    </div>
+    <div id="audit-trail-stats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:12px 18px;border-bottom:1px solid var(--border);font-size:10px"></div>
+    <div id="audit-trail-list" style="padding:12px 18px;max-height:400px;overflow-y:auto">
+      <div style="text-align:center;color:var(--text2);font-size:11px;padding:20px">Loading audit trail...</div>
+    </div>
+  </div>
 </div>
 
 <!-- Alerts View -->
@@ -3736,6 +3763,9 @@ tr:hover td{background:#ffffff06}
         <div class="settings-tabs">
           <button class="settings-tab active" data-tab="prefs" onclick="setSettingsTab('prefs')">User Preferences</button>
           <button class="settings-tab" data-tab="rbac" onclick="setSettingsTab('rbac');loadRBACPanel()">Access Control</button>
+          <button class="settings-tab" data-tab="policies" onclick="setSettingsTab('policies');loadPoliciesPanel()">Policies</button>
+          <button class="settings-tab" data-tab="notifications" onclick="setSettingsTab('notifications');loadNotificationsPanel()">Notifications</button>
+          <button class="settings-tab" data-tab="prometheus" onclick="setSettingsTab('prometheus');loadPrometheusPanel()">Prometheus</button>
           <button class="settings-tab" data-tab="integrations" onclick="setSettingsTab('integrations')">Integrations</button>
           <button class="settings-tab" data-tab="flags" onclick="setSettingsTab('flags')">Feature Flags</button>
         </div>
@@ -3812,8 +3842,8 @@ tr:hover td{background:#ffffff06}
             </div>
           </div>
           <div style="font-size:13px;font-weight:700;margin-bottom:8px">User Role Assignments</div>
-          <div style="display:flex;gap:8px;margin-bottom:12px">
-            <input type="text" id="rbac-username" placeholder="Username" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px;outline:none">
+          <div style="display:flex;gap:8px;margin-bottom:4px;flex-wrap:wrap">
+            <input type="text" id="rbac-username" placeholder="Username" style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px;outline:none">
             <select id="rbac-role-select" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px;outline:none">
               <option value="viewer">Viewer</option>
               <option value="operator">Operator</option>
@@ -3821,7 +3851,63 @@ tr:hover td{background:#ffffff06}
             </select>
             <button onclick="assignRole()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:12px;font-weight:600;cursor:pointer">Assign</button>
           </div>
+          <div style="margin-bottom:12px">
+            <input type="text" id="rbac-namespaces" placeholder="Allowed namespaces (comma-separated, empty = all)" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:11px;outline:none">
+            <div style="font-size:9px;color:var(--text2);margin-top:2px">Admins always have access to all namespaces. Leave empty for unrestricted access.</div>
+          </div>
           <div id="rbac-users-list" style="max-height:300px;overflow-y:auto"></div>
+        </div>
+
+        <!-- Policies (Policy-as-Code) -->
+        <div class="settings-panel" id="settings-panel-policies" style="display:none">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <div style="font-size:13px;font-weight:700">Custom Compliance Policies</div>
+            <button onclick="showCreatePolicyDialog()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:600;cursor:pointer">+ New Policy</button>
+          </div>
+          <div style="font-size:10px;color:var(--text2);margin-bottom:12px">Define custom rules evaluated against live cluster state. Findings integrate with the CIS Compliance scanner.</div>
+          <div id="policies-list" style="max-height:400px;overflow-y:auto">
+            <div style="text-align:center;color:var(--text2);font-size:11px;padding:20px">Loading policies...</div>
+          </div>
+          <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+            <div style="font-size:12px;font-weight:600;margin-bottom:6px">Cluster Policies (OPA/Gatekeeper &amp; Kyverno)</div>
+            <div id="cluster-policies-list" style="font-size:10px;color:var(--text2)">Click to scan cluster for existing policies...</div>
+            <button onclick="loadClusterPoliciesUI()" style="margin-top:6px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--text);font-size:10px;cursor:pointer">Scan Cluster</button>
+          </div>
+        </div>
+
+        <!-- Notifications -->
+        <div class="settings-panel" id="settings-panel-notifications" style="display:none">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <div style="font-size:13px;font-weight:700">Notification Channels</div>
+            <button onclick="showCreateChannelDialog()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:600;cursor:pointer">+ Add Channel</button>
+          </div>
+          <div style="font-size:10px;color:var(--text2);margin-bottom:12px">Receive alerts via Slack, Microsoft Teams, or webhook when compliance drops, SLOs breach, or changes are detected.</div>
+          <div id="notification-channels-list" style="max-height:300px;overflow-y:auto">
+            <div style="text-align:center;color:var(--text2);font-size:11px;padding:20px">Loading channels...</div>
+          </div>
+          <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+            <div style="font-size:12px;font-weight:600;margin-bottom:6px">Recent Notifications</div>
+            <div id="notification-history-list" style="max-height:200px;overflow-y:auto;font-size:10px;color:var(--text2)">No notifications sent yet</div>
+          </div>
+        </div>
+
+        <!-- Prometheus Configuration -->
+        <div class="settings-panel" id="settings-panel-prometheus" style="display:none">
+          <div style="font-size:13px;font-weight:700;margin-bottom:8px">Prometheus Integration</div>
+          <div style="font-size:10px;color:var(--text2);margin-bottom:12px">Connect to Prometheus for real SLI metrics (request success rate, latency). Without Prometheus, SLOs use pod health as a fallback.</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+            <span id="prom-status-dot" style="width:10px;height:10px;border-radius:50%;background:var(--text2)"></span>
+            <span id="prom-status-label" style="font-size:12px;font-weight:600">Checking...</span>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:12px">
+            <input type="text" id="prom-url-input" placeholder="http://prometheus.monitoring.svc:9090" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px;outline:none">
+            <button onclick="savePrometheusUrl()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 14px;font-size:11px;font-weight:600;cursor:pointer">Save</button>
+          </div>
+          <div style="font-size:10px;color:var(--text2)">Auto-discovery checks: openshift-monitoring/prometheus-k8s, monitoring/prometheus, prometheus/prometheus</div>
+          <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+            <div style="font-size:12px;font-weight:600;margin-bottom:6px">SLO Metrics Source</div>
+            <div id="prom-slo-source" style="font-size:10px;color:var(--text2)">SLOs currently use pod health metrics (fallback mode)</div>
+          </div>
         </div>
 
         <!-- Integrations (Pillar 5) -->
@@ -8853,6 +8939,7 @@ function showView(view) {
   } else if (view === 'audit') {
     loadAuditView();
     loadComplianceResults();
+    loadAuditTrail();
   } else if (view === 'settings') {
     loadSettings();
   } else if (view === 'hub') {
@@ -15498,10 +15585,14 @@ async function loadRBACPanel() {
     }
     var roleColors = { admin: '#ef4444', operator: '#f59e0b', viewer: '#3b82f6' };
     list.innerHTML = entries.map(function(e) {
+      var username = e[0], info = e[1];
+      var role = typeof info === 'string' ? info : info.role;
+      var ns = typeof info === 'object' && info.namespaces && info.namespaces.length > 0 ? info.namespaces : null;
       return '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">' +
         '<span style="font-size:13px">&#x1F464;</span>' +
-        '<span style="flex:1;font-weight:600;font-size:12px">' + esc(e[0]) + '</span>' +
-        '<span style="font-size:10px;font-weight:700;padding:2px 10px;border-radius:10px;background:' + (roleColors[e[1]] || '#888') + '22;color:' + (roleColors[e[1]] || '#888') + '">' + esc(e[1]).toUpperCase() + '</span>' +
+        '<span style="flex:1;min-width:0"><div style="font-weight:600;font-size:12px">' + esc(username) + '</div>' +
+        (ns ? '<div style="font-size:9px;color:var(--text2);margin-top:1px">Namespaces: ' + ns.map(function(n) { return esc(n); }).join(', ') + '</div>' : '') + '</span>' +
+        '<span style="font-size:10px;font-weight:700;padding:2px 10px;border-radius:10px;background:' + (roleColors[role] || '#888') + '22;color:' + (roleColors[role] || '#888') + '">' + esc(role).toUpperCase() + '</span>' +
       '</div>';
     }).join('');
   } catch (e) { list.innerHTML = '<div style="padding:8px;color:var(--crit)">Error: ' + esc(e.message) + '</div>'; }
@@ -15509,14 +15600,295 @@ async function loadRBACPanel() {
 async function assignRole() {
   var username = document.getElementById('rbac-username').value.trim();
   var role = document.getElementById('rbac-role-select').value;
+  var nsInput = document.getElementById('rbac-namespaces').value.trim();
+  var namespaces = nsInput ? nsInput.split(',').map(function(s) { return s.trim(); }).filter(Boolean) : [];
   if (!username) { alert('Enter a username'); return; }
   try {
     await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/rbac/assign'), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: username, role: role })
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: username, role: role, namespaces: namespaces })
     });
     document.getElementById('rbac-username').value = '';
+    document.getElementById('rbac-namespaces').value = '';
     loadRBACPanel();
   } catch (e) { alert('Failed: ' + e.message); }
+}
+
+// ---------------------------------------------------------------------------
+// Policy Engine (Policy-as-Code)
+// ---------------------------------------------------------------------------
+async function loadPoliciesPanel() {
+  var list = document.getElementById('policies-list');
+  try {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/policies'));
+    var data = await resp.json();
+    var policies = data.policies || [];
+    if (policies.length === 0) {
+      list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2);font-size:11px">No custom policies defined. Click "+ New Policy" to create one.</div>';
+      return;
+    }
+    list.innerHTML = policies.map(function(p) {
+      var sevColor = p.severity === 'critical' ? '#ef4444' : p.severity === 'warning' ? '#f59e0b' : '#3b82f6';
+      return '<div style="background:var(--bg);border:1px solid var(--border);border-left:3px solid ' + sevColor + ';border-radius:6px;padding:10px 12px;margin-bottom:6px">' +
+        '<div style="display:flex;align-items:center;gap:8px">' +
+          '<span style="font-weight:600;font-size:12px;flex:1">' + esc(p.name) + '</span>' +
+          '<span style="font-size:9px;padding:1px 6px;border-radius:8px;background:' + sevColor + '22;color:' + sevColor + '">' + esc(p.severity).toUpperCase() + '</span>' +
+          '<span style="font-size:9px;padding:1px 6px;border-radius:8px;background:var(--bg);border:1px solid var(--border)">' + esc(p.ruleType) + '</span>' +
+          '<label style="font-size:10px;cursor:pointer;color:' + (p.enabled ? 'var(--ok)' : 'var(--text2)') + '">' + (p.enabled ? 'Active' : 'Disabled') + '</label>' +
+          '<button onclick="deletePolicyUI(\'' + esc(p.id) + '\')" style="background:none;border:none;color:var(--crit);cursor:pointer;font-size:12px">&#x1F5D1;</button>' +
+        '</div>' +
+        (p.description ? '<div style="font-size:10px;color:var(--text2);margin-top:4px">' + esc(p.description) + '</div>' : '') +
+        '<div style="font-size:9px;color:var(--text2);margin-top:2px">Namespaces: ' + (p.namespaces && p.namespaces.length ? p.namespaces.join(', ') : 'all') + '</div>' +
+      '</div>';
+    }).join('');
+  } catch (e) { list.innerHTML = '<div style="color:var(--crit);font-size:11px">Error: ' + esc(e.message) + '</div>'; }
+}
+
+function showCreatePolicyDialog() {
+  var html = '<div style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center" id="policy-dialog-overlay" onclick="if(event.target===this)this.remove()">' +
+    '<div style="background:var(--card);border-radius:12px;padding:24px;width:480px;max-width:90vw;max-height:90vh;overflow-y:auto">' +
+    '<div style="font-size:16px;font-weight:700;margin-bottom:16px">Create Custom Policy</div>' +
+    '<div style="display:grid;gap:10px">' +
+      '<input id="pol-name" placeholder="Policy name" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px">' +
+      '<input id="pol-desc" placeholder="Description" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px">' +
+      '<select id="pol-type" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px">' +
+        '<option value="required-labels">Required Labels</option>' +
+        '<option value="forbidden-image-registries">Forbidden Image Registries</option>' +
+        '<option value="required-resource-limits">Required Resource Limits</option>' +
+        '<option value="required-probes">Required Probes</option>' +
+        '<option value="max-replicas">Max Replicas</option>' +
+      '</select>' +
+      '<select id="pol-severity" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px"><option value="warning">Warning</option><option value="critical">Critical</option><option value="info">Info</option></select>' +
+      '<input id="pol-ns" placeholder="Namespaces (comma-separated, empty = all)" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px">' +
+      '<input id="pol-config" placeholder="Config JSON (e.g. {&quot;labels&quot;:[&quot;app&quot;]})" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px">' +
+    '</div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
+      '<button onclick="document.getElementById(\'policy-dialog-overlay\').remove()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 16px;color:var(--text);cursor:pointer">Cancel</button>' +
+      '<button onclick="createPolicyUI()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 16px;font-weight:600;cursor:pointer">Create</button>' +
+    '</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function createPolicyUI() {
+  var configStr = document.getElementById('pol-config').value.trim();
+  var config = {};
+  if (configStr) { try { config = JSON.parse(configStr); } catch { alert('Invalid JSON in config'); return; } }
+  var nsStr = document.getElementById('pol-ns').value.trim();
+  var namespaces = nsStr ? nsStr.split(',').map(function(s) { return s.trim(); }) : ['*'];
+  try {
+    await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/policies'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: document.getElementById('pol-name').value, description: document.getElementById('pol-desc').value, ruleType: document.getElementById('pol-type').value, severity: document.getElementById('pol-severity').value, namespaces: namespaces, config: config })
+    });
+    var overlay = document.getElementById('policy-dialog-overlay');
+    if (overlay) overlay.remove();
+    loadPoliciesPanel();
+  } catch (e) { alert('Failed: ' + e.message); }
+}
+
+async function deletePolicyUI(id) {
+  if (!confirm('Delete this policy?')) return;
+  try {
+    await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/policies/' + id), { method: 'DELETE' });
+    loadPoliciesPanel();
+  } catch (e) { alert('Failed: ' + e.message); }
+}
+
+async function loadClusterPoliciesUI() {
+  var el = document.getElementById('cluster-policies-list');
+  el.textContent = 'Scanning...';
+  try {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/policies/cluster'));
+    var data = await resp.json();
+    var gk = data.gatekeeper || [];
+    var kv = data.kyverno || [];
+    if (gk.length === 0 && kv.length === 0) {
+      el.innerHTML = '<span style="color:var(--text2)">No OPA/Gatekeeper or Kyverno policies found in cluster</span>';
+      return;
+    }
+    var html = '';
+    if (gk.length > 0) html += '<div style="font-weight:600;margin-bottom:4px">Gatekeeper (' + gk.length + ')</div>' + gk.map(function(p) { return '<div style="padding:2px 0">&#x1F6E1; ' + esc(p.name || p.metadata?.name || 'unknown') + '</div>'; }).join('');
+    if (kv.length > 0) html += '<div style="font-weight:600;margin-top:6px;margin-bottom:4px">Kyverno (' + kv.length + ')</div>' + kv.map(function(p) { return '<div style="padding:2px 0">&#x1F4CB; ' + esc(p.name || p.metadata?.name || 'unknown') + '</div>'; }).join('');
+    el.innerHTML = html;
+  } catch (e) { el.innerHTML = '<span style="color:var(--crit)">' + esc(e.message) + '</span>'; }
+}
+
+// ---------------------------------------------------------------------------
+// Notification Channels
+// ---------------------------------------------------------------------------
+async function loadNotificationsPanel() {
+  var list = document.getElementById('notification-channels-list');
+  var histList = document.getElementById('notification-history-list');
+  try {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/notifications/channels'));
+    var data = await resp.json();
+    var channels = data.channels || [];
+    if (channels.length === 0) {
+      list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2);font-size:11px">No channels configured. Click "+ Add Channel" to get started.</div>';
+    } else {
+      var typeIcons = { slack: '&#x1F4AC;', teams: '&#x1F4E2;', webhook: '&#x1F517;' };
+      list.innerHTML = channels.map(function(ch) {
+        return '<div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:6px;display:flex;align-items:center;gap:8px">' +
+          '<span style="font-size:16px">' + (typeIcons[ch.type] || '&#x1F514;') + '</span>' +
+          '<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:12px">' + esc(ch.name) + '</div>' +
+          '<div style="font-size:9px;color:var(--text2)">' + esc(ch.type) + ' • ' + (ch.events || []).join(', ') + '</div></div>' +
+          '<span style="font-size:10px;color:' + (ch.enabled ? 'var(--ok)' : 'var(--text2)') + '">' + (ch.enabled ? 'Active' : 'Off') + '</span>' +
+          '<button onclick="testChannelUI(\'' + esc(ch.id) + '\')" style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:9px;cursor:pointer;color:var(--text)">Test</button>' +
+          '<button onclick="deleteChannelUI(\'' + esc(ch.id) + '\')" style="background:none;border:none;color:var(--crit);cursor:pointer;font-size:12px">&#x1F5D1;</button>' +
+        '</div>';
+      }).join('');
+    }
+  } catch (e) { list.innerHTML = '<div style="color:var(--crit);font-size:11px">Error: ' + esc(e.message) + '</div>'; }
+  try {
+    var hResp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/notifications/history'));
+    var hData = await hResp.json();
+    var history = hData.history || [];
+    if (history.length > 0) {
+      histList.innerHTML = history.slice(0, 20).map(function(n) {
+        return '<div style="padding:3px 0;border-bottom:1px solid var(--border)">' + esc(n.title || n.event) + ' → ' + esc(n.channelName || n.channel) + ' <span style="color:var(--text2)">' + (n.sentAt ? timeAgo(n.sentAt) : '') + '</span></div>';
+      }).join('');
+    }
+  } catch {}
+}
+
+function showCreateChannelDialog() {
+  var html = '<div style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center" id="channel-dialog-overlay" onclick="if(event.target===this)this.remove()">' +
+    '<div style="background:var(--card);border-radius:12px;padding:24px;width:480px;max-width:90vw">' +
+    '<div style="font-size:16px;font-weight:700;margin-bottom:16px">Add Notification Channel</div>' +
+    '<div style="display:grid;gap:10px">' +
+      '<input id="ch-name" placeholder="Channel name" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px">' +
+      '<select id="ch-type" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px"><option value="slack">Slack</option><option value="teams">Microsoft Teams</option><option value="webhook">Webhook</option></select>' +
+      '<input id="ch-url" placeholder="Webhook URL" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:12px">' +
+      '<div style="font-size:10px;color:var(--text2)">Events to notify on:</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:6px;font-size:11px" id="ch-events">' +
+        '<label><input type="checkbox" value="compliance_drop" checked> Compliance Drop</label>' +
+        '<label><input type="checkbox" value="slo_breach" checked> SLO Breach</label>' +
+        '<label><input type="checkbox" value="change_detected" checked> Change Detected</label>' +
+        '<label><input type="checkbox" value="rca_critical"> RCA Critical</label>' +
+        '<label><input type="checkbox" value="policy_violation"> Policy Violation</label>' +
+      '</div>' +
+    '</div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
+      '<button onclick="document.getElementById(\'channel-dialog-overlay\').remove()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 16px;color:var(--text);cursor:pointer">Cancel</button>' +
+      '<button onclick="createChannelUI()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 16px;font-weight:600;cursor:pointer">Create</button>' +
+    '</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function createChannelUI() {
+  var events = [];
+  document.querySelectorAll('#ch-events input:checked').forEach(function(cb) { events.push(cb.value); });
+  try {
+    await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/notifications/channels'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: document.getElementById('ch-name').value, type: document.getElementById('ch-type').value, url: document.getElementById('ch-url').value, events: events })
+    });
+    document.getElementById('channel-dialog-overlay').remove();
+    loadNotificationsPanel();
+  } catch (e) { alert('Failed: ' + e.message); }
+}
+
+async function testChannelUI(id) {
+  try {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/notifications/channels/' + id + '/test'), { method: 'POST' });
+    var data = await resp.json();
+    alert(data.success ? 'Test notification sent!' : 'Failed: ' + (data.error || 'Unknown error'));
+  } catch (e) { alert('Failed: ' + e.message); }
+}
+
+async function deleteChannelUI(id) {
+  if (!confirm('Delete this channel?')) return;
+  try {
+    await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/notifications/channels/' + id), { method: 'DELETE' });
+    loadNotificationsPanel();
+  } catch (e) { alert('Failed: ' + e.message); }
+}
+
+// ---------------------------------------------------------------------------
+// Prometheus Configuration
+// ---------------------------------------------------------------------------
+async function loadPrometheusPanel() {
+  try {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/prometheus/status'));
+    var data = await resp.json();
+    var dot = document.getElementById('prom-status-dot');
+    var label = document.getElementById('prom-status-label');
+    var input = document.getElementById('prom-url-input');
+    var source = document.getElementById('prom-slo-source');
+    if (data.connected) {
+      dot.style.background = 'var(--ok)';
+      label.textContent = 'Connected';
+      label.style.color = 'var(--ok)';
+      source.innerHTML = 'SLOs will use <strong>Prometheus metrics</strong> (request success rate, latency) when available';
+    } else if (data.url) {
+      dot.style.background = 'var(--warn)';
+      label.textContent = 'Not reachable';
+      label.style.color = 'var(--warn)';
+      source.textContent = 'Prometheus URL set but not reachable. SLOs using pod health fallback.';
+    } else {
+      dot.style.background = 'var(--text2)';
+      label.textContent = 'Not configured';
+      label.style.color = 'var(--text2)';
+      source.textContent = 'SLOs currently use pod health metrics (fallback mode)';
+    }
+    if (data.url) input.value = data.url;
+  } catch {}
+}
+
+async function savePrometheusUrl() {
+  var url = document.getElementById('prom-url-input').value.trim();
+  try {
+    await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/prometheus/configure'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: url })
+    });
+    loadPrometheusPanel();
+  } catch (e) { alert('Failed: ' + e.message); }
+}
+
+// ---------------------------------------------------------------------------
+// Audit Trail (persistent)
+// ---------------------------------------------------------------------------
+async function loadAuditTrail() {
+  var list = document.getElementById('audit-trail-list');
+  var statsEl = document.getElementById('audit-trail-stats');
+  var typeFilter = document.getElementById('audit-trail-type-filter')?.value || '';
+  try {
+    var params = 'limit=50';
+    if (typeFilter) params += '&type=' + typeFilter;
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/audit-trail?' + params));
+    var data = await resp.json();
+    var events = data.events || [];
+    if (events.length === 0) {
+      list.innerHTML = '<div style="text-align:center;color:var(--text2);font-size:11px;padding:16px">No audit trail events recorded yet</div>';
+    } else {
+      var sevColors = { critical: 'var(--crit)', error: 'var(--crit)', warn: 'var(--warn)', info: 'var(--accent2)' };
+      list.innerHTML = events.map(function(ev) {
+        var color = sevColors[ev.severity] || 'var(--text2)';
+        return '<div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:10px">' +
+          '<span style="color:' + color + ';font-weight:700;min-width:60px">' + esc(ev.severity || 'info').toUpperCase() + '</span>' +
+          '<span style="min-width:100px;color:var(--text2)">' + esc(ev.event_type || ev.type || '') + '</span>' +
+          '<span style="flex:1">' + esc(ev.title || '') + '</span>' +
+          (ev.namespace ? '<code style="font-size:9px;color:var(--accent2)">' + esc(ev.namespace) + '</code>' : '') +
+          '<span style="color:var(--text2);min-width:70px;text-align:right">' + (ev.created_at ? timeAgo(ev.created_at) : '') + '</span>' +
+        '</div>';
+      }).join('');
+    }
+  } catch (e) { list.innerHTML = '<div style="color:var(--crit);font-size:11px">Error: ' + esc(e.message) + '</div>'; }
+  try {
+    var sResp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/audit-trail/stats?days=30'));
+    var stats = await sResp.json();
+    var byType = stats.byType || {};
+    var total = Object.values(byType).reduce(function(a, b) { return a + b; }, 0);
+    var bySev = stats.bySeverity || {};
+    statsEl.innerHTML =
+      '<div style="text-align:center"><div style="font-size:18px;font-weight:800">' + total + '</div><div style="color:var(--text2)">Total (30d)</div></div>' +
+      '<div style="text-align:center"><div style="font-size:18px;font-weight:800;color:var(--crit)">' + (bySev.critical || 0) + '</div><div style="color:var(--text2)">Critical</div></div>' +
+      '<div style="text-align:center"><div style="font-size:18px;font-weight:800;color:var(--warn)">' + (bySev.warn || 0) + '</div><div style="color:var(--text2)">Warnings</div></div>' +
+      '<div style="text-align:center"><div style="font-size:18px;font-weight:800;color:var(--accent2)">' + (bySev.info || 0) + '</div><div style="color:var(--text2)">Info</div></div>';
+  } catch {}
+}
+
+function exportAuditTrailUI(format) {
+  window.open(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/audit-trail/export?format=' + format), '_blank');
 }
 
 // ---------------------------------------------------------------------------
