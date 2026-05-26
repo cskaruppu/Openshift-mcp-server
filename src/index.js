@@ -64,6 +64,10 @@ import { loadPolicies, getPolicies, getPolicy, createPolicy, updatePolicy, delet
 import { loadChannels, getChannels, createChannel, updateChannel, deleteChannel, testChannel, notify, getNotificationHistory } from "./services/notifications.js";
 import { initAuditLog, logAuditEvent as logAuditTrailEvent, queryAuditLog, getAuditStats, exportAuditLog } from "./services/audit-log.js";
 import { initQueryTracer, getTraces, getTrace, getAgentAnalytics, getTraceStats } from "./services/query-tracer.js";
+import { initIncidentManager, declareIncident, updateIncident, addTimelineEvent, getIncident, listIncidents, getIncidentStats as getLifecycleIncidentStats, resolveIncident, closeIncident } from "./services/incident-manager.js";
+import { initChangeTimeline, recordChangeEvent, getTimeline as getChangeTimelineUnified, correlateAroundTime, getTimelineStats as getChangeTimelineStats } from "./services/change-timeline.js";
+import { FRAMEWORKS, getFrameworkList, getFramework, evaluateFramework, evaluateAllFrameworks } from "./tools/compliance-frameworks.js";
+import { handleSlackSlashCommand, handleSlackInteraction, handleTeamsAction, verifySlackSignature } from "./services/chatops.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, trackSubmittedCR } from "./services/chat-api.js";
 import {
@@ -1028,6 +1032,8 @@ async function startSSE() {
     await loadChannels();
     await initAuditLog();
     await initQueryTracer();
+    await initIncidentManager();
+    await initChangeTimeline();
     captureCapacitySnapshot().catch(() => {});
     setInterval(() => captureCapacitySnapshot().catch(() => {}), 3600000);
     setTimeout(() => {
@@ -3390,6 +3396,209 @@ async function startSSE() {
         const days = parseInt(url.searchParams.get("days") || "30", 10);
         const analytics = await getAgentAnalytics({ days });
         sendJson(res, 200, analytics);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── Incident Lifecycle Manager API ──────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/incidents") {
+      try {
+        const filters = {
+          status: url.searchParams.get("status") || undefined,
+          severity: url.searchParams.get("severity") || undefined,
+          assignee: url.searchParams.get("assignee") || undefined,
+          limit: parseInt(url.searchParams.get("limit") || "50", 10),
+          offset: parseInt(url.searchParams.get("offset") || "0", 10),
+        };
+        const result = await listIncidents(filters);
+        sendJson(res, 200, result);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/incidents/stats") {
+      try {
+        const days = parseInt(url.searchParams.get("days") || "30", 10);
+        sendJson(res, 200, await getLifecycleIncidentStats({ days }));
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/incidents") {
+      try {
+        const body = await readJsonBody(req);
+        const incident = await declareIncident({
+          title: body.title,
+          description: body.description,
+          severity: body.severity || "sev3",
+          affectedNamespaces: body.affectedNamespaces || [],
+          affectedServices: body.affectedServices || [],
+          linkedAlerts: body.linkedAlerts || [],
+          declaredBy: body.declaredBy || "dashboard",
+        });
+        sendJson(res, 201, incident);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    const incMatch = url.pathname.match(/^\/api\/incidents\/(INC-[^/]+)$/);
+    if (incMatch && req.method === "GET") {
+      try {
+        const incident = await getIncident(incMatch[1]);
+        if (!incident) return sendJson(res, 404, { error: "Not found" });
+        sendJson(res, 200, incident);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (incMatch && req.method === "PATCH") {
+      try {
+        const body = await readJsonBody(req);
+        const actor = body.actor || "dashboard";
+        const patch = { ...body };
+        delete patch.actor;
+        const updated = await updateIncident(incMatch[1], patch, actor);
+        sendJson(res, 200, updated);
+      } catch (err) { sendJson(res, 400, { error: err.message }); }
+      return;
+    }
+    const incResolveMatch = url.pathname.match(/^\/api\/incidents\/(INC-[^/]+)\/resolve$/);
+    if (incResolveMatch && req.method === "POST") {
+      try {
+        const body = await readJsonBody(req);
+        const updated = await resolveIncident(incResolveMatch[1], {
+          actor: body.actor || "dashboard",
+          resolutionNote: body.resolutionNote,
+          rootCause: body.rootCause,
+        });
+        sendJson(res, 200, updated);
+      } catch (err) { sendJson(res, 400, { error: err.message }); }
+      return;
+    }
+    const incCloseMatch = url.pathname.match(/^\/api\/incidents\/(INC-[^/]+)\/close$/);
+    if (incCloseMatch && req.method === "POST") {
+      try {
+        const body = await readJsonBody(req);
+        const updated = await closeIncident(incCloseMatch[1], {
+          actor: body.actor || "dashboard",
+          postmortem: body.postmortem,
+        });
+        sendJson(res, 200, updated);
+      } catch (err) { sendJson(res, 400, { error: err.message }); }
+      return;
+    }
+    const incTimelineMatch = url.pathname.match(/^\/api\/incidents\/(INC-[^/]+)\/timeline$/);
+    if (incTimelineMatch && req.method === "POST") {
+      try {
+        const body = await readJsonBody(req);
+        const updated = await addTimelineEvent(incTimelineMatch[1], {
+          actor: body.actor || "dashboard",
+          action: body.action || "note",
+          note: body.note || "",
+        });
+        sendJson(res, 200, updated);
+      } catch (err) { sendJson(res, 400, { error: err.message }); }
+      return;
+    }
+
+    // ── Change Timeline API ─────────────────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/change-timeline") {
+      try {
+        const filters = {
+          namespace: url.searchParams.get("namespace") || undefined,
+          sources: url.searchParams.get("sources") ? url.searchParams.get("sources").split(",") : undefined,
+          severity: url.searchParams.get("severity") || undefined,
+          fromDate: url.searchParams.get("from") || undefined,
+          toDate: url.searchParams.get("to") || undefined,
+          limit: parseInt(url.searchParams.get("limit") || "100", 10),
+          offset: parseInt(url.searchParams.get("offset") || "0", 10),
+        };
+        const result = await getChangeTimelineUnified(filters);
+        sendJson(res, 200, result);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/change-timeline/correlate") {
+      try {
+        const ts = url.searchParams.get("ts") || new Date().toISOString();
+        const windowMinutes = parseInt(url.searchParams.get("windowMin") || "15", 10);
+        const result = await correlateAroundTime({ timestamp: ts, windowMinutes });
+        sendJson(res, 200, result);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/change-timeline/stats") {
+      try {
+        const days = parseInt(url.searchParams.get("days") || "7", 10);
+        sendJson(res, 200, await getChangeTimelineStats({ days }));
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── Compliance Framework Profiles API ───────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/compliance/frameworks") {
+      try {
+        sendJson(res, 200, { frameworks: getFrameworkList() });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    const fwMatch = url.pathname.match(/^\/api\/compliance\/frameworks\/([^/]+)$/);
+    if (fwMatch && req.method === "GET") {
+      try {
+        const fw = getFramework(fwMatch[1]);
+        if (!fw) return sendJson(res, 404, { error: "Framework not found" });
+        const cisResults = getComplianceResults();
+        const cisFindings = cisResults?.findings || [];
+        const evaluation = evaluateFramework(fwMatch[1], cisFindings);
+        sendJson(res, 200, { framework: fw, evaluation });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/compliance/frameworks-summary") {
+      try {
+        const cisResults = getComplianceResults();
+        const cisFindings = cisResults?.findings || [];
+        sendJson(res, 200, { results: evaluateAllFrameworks(cisFindings) });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── ChatOps API (inbound Slack/Teams) ──────────────────────────
+    if (req.method === "POST" && url.pathname === "/api/chatops/slack/command") {
+      try {
+        const bodyText = await new Promise((resolve, reject) => {
+          let data = ""; req.on("data", (c) => data += c); req.on("end", () => resolve(data)); req.on("error", reject);
+        });
+        const sig = req.headers["x-slack-signature"];
+        const ts = req.headers["x-slack-request-timestamp"];
+        if (process.env.SLACK_SIGNING_SECRET && !verifySlackSignature(bodyText, sig, ts, process.env.SLACK_SIGNING_SECRET)) {
+          return sendJson(res, 401, { error: "Invalid signature" });
+        }
+        const params = new URLSearchParams(bodyText);
+        const parsedBody = Object.fromEntries(params.entries());
+        const reply = await handleSlackSlashCommand(parsedBody);
+        sendJson(res, 200, reply);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/chatops/slack/interactive") {
+      try {
+        const bodyText = await new Promise((resolve, reject) => {
+          let data = ""; req.on("data", (c) => data += c); req.on("end", () => resolve(data)); req.on("error", reject);
+        });
+        const sig = req.headers["x-slack-signature"];
+        const ts = req.headers["x-slack-request-timestamp"];
+        if (process.env.SLACK_SIGNING_SECRET && !verifySlackSignature(bodyText, sig, ts, process.env.SLACK_SIGNING_SECRET)) {
+          return sendJson(res, 401, { error: "Invalid signature" });
+        }
+        const params = new URLSearchParams(bodyText);
+        const payload = JSON.parse(params.get("payload") || "{}");
+        const reply = await handleSlackInteraction(payload);
+        sendJson(res, 200, reply);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/chatops/teams/action") {
+      try {
+        const body = await readJsonBody(req);
+        const reply = await handleTeamsAction(body);
+        sendJson(res, 200, reply);
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }

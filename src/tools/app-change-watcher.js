@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { query as dbQuery } from "../utils/db.js";
+import { recordChangeEvent as recordTimelineEvent } from "../services/change-timeline.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PERSIST_DIR = join(__dirname, "..", "..", "data");
@@ -742,6 +743,17 @@ function recordChange(entry) {
   };
   _changeTimeline.push(timelineEntry);
   if (_changeTimeline.length > MAX_TIMELINE) _changeTimeline.splice(0, _changeTimeline.length - MAX_TIMELINE);
+
+  recordTimelineEvent({
+    source: entry.kind === "ConfigMap" ? "configmap" : (entry.changeType === "scaling" ? "scaling" : "deployment"),
+    eventType: entry.changeType || "change_detected",
+    namespace: entry.namespace,
+    resourceKind: entry.kind,
+    resourceName: entry.name,
+    title: `${entry.kind}/${entry.name}: ${entry.changes.length} change(s)`,
+    details: { changes: entry.changes, riskScore: entry.riskScore, changedBy: entry.changedBy },
+    severity: entry.severity || "info",
+  }).catch((err) => console.warn("[app-change-watcher] timeline persist failed:", err.message));
 }
 
 function recordHistory(entry, action) {

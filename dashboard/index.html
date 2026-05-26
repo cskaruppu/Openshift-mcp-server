@@ -2157,6 +2157,21 @@ tr:hover td{background:#ffffff06}
 <div id="view-dashboard">
 <div class="container">
 
+  <!-- Dashboard Layout Customization Bar -->
+  <div id="dashboard-customize-bar" style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-bottom:8px">
+    <button id="dash-customize-btn" onclick="toggleDashboardCustomize()" style="background:var(--bg);color:var(--text2);border:1px solid var(--border);border-radius:6px;padding:5px 12px;font-size:10px;cursor:pointer">&#x2699; Customize Layout</button>
+  </div>
+  <div id="dashboard-customize-panel" style="display:none;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <span style="font-size:12px;font-weight:600">Show / Hide Widgets</span>
+      <div style="display:flex;gap:6px">
+        <button onclick="resetDashboardLayout()" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:10px;cursor:pointer">Reset</button>
+        <button onclick="toggleDashboardCustomize()" style="background:var(--accent2);color:#fff;border:none;border-radius:6px;padding:4px 10px;font-size:10px;cursor:pointer">Done</button>
+      </div>
+    </div>
+    <div id="dash-widget-toggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px;font-size:11px"></div>
+  </div>
+
   <!-- Top Metrics -->
   <div class="grid grid-4" style="margin-bottom:8px">
     <div class="card">
@@ -3204,6 +3219,22 @@ tr:hover td{background:#ffffff06}
     </div>
   </div>
 
+  <!-- Compliance Framework Profiles -->
+  <div class="card" style="padding:0;overflow:hidden;margin-bottom:24px">
+    <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:16px">&#x1F4DC;</span>
+        <span style="font-size:14px;font-weight:600">Compliance Framework Profiles</span>
+        <span style="font-size:10px;color:var(--text2)">CIS findings mapped to industry frameworks</span>
+      </div>
+      <button onclick="loadComplianceFrameworks()" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:10px;cursor:pointer">&#x21BB; Refresh</button>
+    </div>
+    <div id="frameworks-summary-grid" style="padding:14px 18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">
+      <div style="text-align:center;color:var(--text2);font-size:11px;padding:20px;grid-column:1/-1">Loading frameworks...</div>
+    </div>
+    <div id="framework-detail-panel" style="display:none;padding:0 18px 18px 18px;border-top:1px solid var(--border)"></div>
+  </div>
+
   <!-- Stats Cards Row -->
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:24px">
     <div class="card" style="padding:16px;text-align:center;position:relative;overflow:hidden">
@@ -4236,6 +4267,95 @@ tr:hover td{background:#ffffff06}
     </div>
     <div id="rca-panel" style="max-height:500px;overflow-y:auto"></div>
     <div id="rca-history-panel" style="margin-top:8px"></div>
+  </div>
+
+  <!-- 3a. Incident Lifecycle Manager -->
+  <div class="ai-section" id="incident-section">
+    <div class="ai-section-head">
+      <div class="ai-section-title">
+        <span class="ai-section-icon" style="background:linear-gradient(135deg,#ef4444,#f59e0b)">&#x1F6A8;</span>
+        <span>Incident Lifecycle Manager</span>
+        <span style="font-size:11px;color:var(--text2);font-weight:400">Declared &rarr; Triaging &rarr; Investigating &rarr; Mitigating &rarr; Resolved &rarr; Closed</span>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button onclick="showDeclareIncidentDialog()" style="background:var(--crit);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer">&#x2795; Declare Incident</button>
+        <button onclick="loadIncidents()" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer">&#x21BB; Refresh</button>
+      </div>
+    </div>
+    <div id="incident-stats-bar" style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:8px 0 12px 0;font-size:10px"></div>
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+      <button class="aic-pill active" data-inc-filter="all" onclick="filterIncidents('all',this)" style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:var(--accent2);color:#fff;cursor:pointer">All Open</button>
+      <button class="aic-pill" data-inc-filter="sev1" onclick="filterIncidents('sev1',this)" style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer">Sev 1</button>
+      <button class="aic-pill" data-inc-filter="sev2" onclick="filterIncidents('sev2',this)" style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer">Sev 2</button>
+      <button class="aic-pill" data-inc-filter="investigating" onclick="filterIncidents('investigating',this)" style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer">Investigating</button>
+      <button class="aic-pill" data-inc-filter="resolved" onclick="filterIncidents('resolved',this)" style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer">Resolved</button>
+      <button class="aic-pill" data-inc-filter="closed" onclick="filterIncidents('closed',this)" style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer">Closed</button>
+    </div>
+    <div id="incidents-list" style="max-height:500px;overflow-y:auto"></div>
+  </div>
+
+  <!-- 3b. Change Timeline — Correlation -->
+  <div class="ai-section" id="changetl-section">
+    <div class="ai-section-head">
+      <div class="ai-section-title">
+        <span class="ai-section-icon" style="background:linear-gradient(135deg,#06b6d4,#8b5cf6)">&#x23F1;</span>
+        <span>Change Timeline</span>
+        <span style="font-size:11px;color:var(--text2);font-weight:400">What changed? Correlate deployments, configs, scaling, and alerts</span>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <select id="changetl-window" onchange="loadChangeTimeline()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:11px;outline:none">
+          <option value="1">Last 1 hour</option>
+          <option value="6">Last 6 hours</option>
+          <option value="24" selected>Last 24 hours</option>
+          <option value="72">Last 3 days</option>
+          <option value="168">Last 7 days</option>
+        </select>
+        <select id="changetl-source-filter" onchange="loadChangeTimeline()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:11px;outline:none">
+          <option value="">All Sources</option>
+          <option value="deployment">Deployments</option>
+          <option value="configmap">ConfigMaps</option>
+          <option value="scaling">Scaling</option>
+          <option value="alert">Alerts</option>
+          <option value="k8s_event">K8s Events</option>
+          <option value="gitops">GitOps</option>
+          <option value="audit_action">Actions</option>
+        </select>
+        <button onclick="loadChangeTimeline()" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer">&#x21BB;</button>
+      </div>
+    </div>
+    <div id="changetl-stats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:8px 0 12px 0;font-size:10px"></div>
+    <div id="changetl-timeline" style="max-height:600px;overflow-y:auto;border-left:2px solid var(--border);padding-left:14px;margin-left:8px"></div>
+  </div>
+
+  <!-- Declare Incident Dialog -->
+  <div id="incident-dialog" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10000;align-items:center;justify-content:center">
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:560px;width:90%;max-height:90vh;overflow-y:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="margin:0;font-size:16px">Declare Incident</h3>
+        <button onclick="document.getElementById('incident-dialog').style.display='none'" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text2)">&times;</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div><label style="font-size:11px;color:var(--text2)">Title *</label><input id="inc-dlg-title" type="text" placeholder="Short description of the incident" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;outline:none;margin-top:4px"></div>
+        <div><label style="font-size:11px;color:var(--text2)">Severity</label>
+          <select id="inc-dlg-severity" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;outline:none;margin-top:4px">
+            <option value="sev1">Sev 1 — Critical / Customer-impacting</option>
+            <option value="sev2">Sev 2 — Major / Service degraded</option>
+            <option value="sev3" selected>Sev 3 — Minor / Internal impact</option>
+            <option value="sev4">Sev 4 — Informational</option>
+          </select>
+        </div>
+        <div><label style="font-size:11px;color:var(--text2)">Description</label><textarea id="inc-dlg-description" placeholder="What's happening, what's affected, initial observations" rows="4" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;outline:none;margin-top:4px;resize:vertical"></textarea></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div><label style="font-size:11px;color:var(--text2)">Affected Namespaces (comma-separated)</label><input id="inc-dlg-namespaces" type="text" placeholder="prod, staging" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;outline:none;margin-top:4px"></div>
+          <div><label style="font-size:11px;color:var(--text2)">Affected Services (comma-separated)</label><input id="inc-dlg-services" type="text" placeholder="api, frontend" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;outline:none;margin-top:4px"></div>
+        </div>
+        <div><label style="font-size:11px;color:var(--text2)">Linked Alerts (comma-separated)</label><input id="inc-dlg-alerts" type="text" placeholder="KubePodCrashLooping, NodeMemoryHigh" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;outline:none;margin-top:4px"></div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
+        <button onclick="document.getElementById('incident-dialog').style.display='none'" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 16px;font-size:12px;cursor:pointer">Cancel</button>
+        <button onclick="submitDeclareIncident()" style="background:var(--crit);color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:12px;font-weight:600;cursor:pointer">Declare</button>
+      </div>
+    </div>
   </div>
 
   <!-- 3b. Network Topology — Service Map -->
@@ -7110,7 +7230,7 @@ async function refreshAll() {
 
 // Initial load — defer so the browser can paint the shell first
 var _currentView = 'dashboard';
-(window.requestIdleCallback || function(cb) { setTimeout(cb, 50); })(function() { refreshAll(); });
+(window.requestIdleCallback || function(cb) { setTimeout(cb, 50); })(function() { refreshAll(); if (typeof applyDashLayoutPrefs === 'function') setTimeout(applyDashLayoutPrefs, 800); });
 
 // View-aware auto-refresh — only poll when the dashboard tab is visible
 var _dashRefreshTimer = null;
@@ -8978,6 +9098,7 @@ function showView(view) {
     loadComplianceResults();
     loadAuditTrail();
     loadQueryTraces();
+    loadComplianceFrameworks();
   } else if (view === 'settings') {
     loadSettings();
   } else if (view === 'hub') {
@@ -15142,6 +15263,8 @@ function switchIntelTab(tab) {
 async function loadIntelligenceView() {
   // Load alerts first (the primary feature) — runs in parallel with intel data
   loadUnifiedAlerts();
+  loadIncidents();
+  loadChangeTimeline();
 
   try {
     var resp = await fetch(clusterUrl(MCP_API + '/intelligence/dashboard'));
@@ -16076,6 +16199,408 @@ async function loadAgentAnalytics() {
   } catch (err) {
     tableEl.innerHTML = '<div style="text-align:center;color:var(--crit);font-size:11px;padding:20px">Failed to load analytics: ' + esc(err.message) + '</div>';
   }
+}
+
+// ---------------------------------------------------------------------------
+// Incident Lifecycle Manager
+// ---------------------------------------------------------------------------
+var _incidentFilter = 'all';
+var _allIncidents = [];
+
+function severityColor(sev) {
+  return { sev1: 'var(--crit)', sev2: '#f59e0b', sev3: '#3b82f6', sev4: 'var(--text2)' }[sev] || 'var(--text2)';
+}
+function statusColor(s) {
+  return { declared: '#f59e0b', triaging: '#3b82f6', investigating: '#8b5cf6', mitigating: '#06b6d4', resolved: 'var(--ok)', postmortem: '#a855f7', closed: 'var(--text2)' }[s] || 'var(--text2)';
+}
+
+async function loadIncidents() {
+  var list = document.getElementById('incidents-list');
+  var statsBar = document.getElementById('incident-stats-bar');
+  if (!list) return;
+  try {
+    var base = MCP_API.replace(/\/api$/, '');
+    var [listResp, statsResp] = await Promise.all([
+      fetch(clusterUrl(base + '/api/incidents?limit=100')),
+      fetch(clusterUrl(base + '/api/incidents/stats?days=30')),
+    ]);
+    var listData = await listResp.json();
+    var stats = await statsResp.json();
+    _allIncidents = listData.incidents || [];
+
+    if (statsBar) {
+      statsBar.innerHTML =
+        '<div style="text-align:center;padding:10px;background:var(--card);border-radius:6px"><div style="font-size:18px;font-weight:700;color:var(--accent2)">' + (stats.total || 0) + '</div><div style="color:var(--text2)">Total (30d)</div></div>' +
+        '<div style="text-align:center;padding:10px;background:var(--card);border-radius:6px"><div style="font-size:18px;font-weight:700;color:var(--warn)">' + (stats.open || 0) + '</div><div style="color:var(--text2)">Open</div></div>' +
+        '<div style="text-align:center;padding:10px;background:var(--card);border-radius:6px"><div style="font-size:18px;font-weight:700;color:var(--crit)">' + ((stats.bySeverity && stats.bySeverity.sev1) || 0) + '</div><div style="color:var(--text2)">Sev 1</div></div>' +
+        '<div style="text-align:center;padding:10px;background:var(--card);border-radius:6px"><div style="font-size:18px;font-weight:700;color:var(--ok)">' + (stats.avgMTTR || 0) + 'min</div><div style="color:var(--text2)">Avg MTTR</div></div>' +
+        '<div style="text-align:center;padding:10px;background:var(--card);border-radius:6px"><div style="font-size:18px;font-weight:700;color:var(--accent2)">' + (stats.incidentsThisWeek || 0) + '</div><div style="color:var(--text2)">This Week</div></div>';
+    }
+
+    renderIncidentList();
+  } catch (err) {
+    list.innerHTML = '<div style="text-align:center;color:var(--crit);font-size:11px;padding:20px">Failed to load incidents: ' + esc(err.message) + '</div>';
+  }
+}
+
+function filterIncidents(filter, btn) {
+  _incidentFilter = filter;
+  document.querySelectorAll('[data-inc-filter]').forEach(function(b) {
+    b.style.background = 'transparent'; b.style.color = 'var(--text2)';
+  });
+  if (btn) { btn.style.background = 'var(--accent2)'; btn.style.color = '#fff'; }
+  renderIncidentList();
+}
+
+function renderIncidentList() {
+  var list = document.getElementById('incidents-list');
+  if (!list) return;
+  var incidents = _allIncidents;
+  if (_incidentFilter === 'all') {
+    incidents = incidents.filter(function(i) { return i.status !== 'closed' && i.status !== 'resolved'; });
+  } else if (_incidentFilter === 'sev1' || _incidentFilter === 'sev2') {
+    incidents = incidents.filter(function(i) { return i.severity === _incidentFilter; });
+  } else {
+    incidents = incidents.filter(function(i) { return i.status === _incidentFilter; });
+  }
+
+  if (incidents.length === 0) {
+    list.innerHTML = '<div style="text-align:center;color:var(--text2);font-size:12px;padding:20px">No incidents matching this filter. ' + (_incidentFilter === 'all' ? 'All clear!' : '') + '</div>';
+    return;
+  }
+
+  var html = '';
+  for (var i = 0; i < incidents.length; i++) {
+    var inc = incidents[i];
+    var sevColor = severityColor(inc.severity);
+    var stColor = statusColor(inc.status);
+    var detailId = 'inc-detail-' + i;
+    html += '<div style="border:1px solid var(--border);border-left:3px solid ' + sevColor + ';border-radius:8px;margin-bottom:10px;overflow:hidden;background:var(--card)">';
+    html += '<div onclick="toggleIncident(\'' + detailId + '\')" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:12px">';
+    html += '<span style="font-family:monospace;font-size:11px;color:var(--text2);min-width:120px">' + esc(inc.incident_id || inc.incidentId) + '</span>';
+    html += '<span style="background:' + sevColor + ';color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;text-transform:uppercase">' + esc(inc.severity) + '</span>';
+    html += '<span style="background:' + stColor + '25;color:' + stColor + ';padding:2px 8px;border-radius:10px;font-size:10px;font-weight:500;text-transform:capitalize">' + esc(inc.status) + '</span>';
+    html += '<div style="flex:1;min-width:0;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(inc.title) + '</div>';
+    html += '<span style="font-size:10px;color:var(--text2);flex-shrink:0">' + timeAgo(inc.created_at || inc.createdAt) + '</span>';
+    html += '</div>';
+    html += '<div id="' + detailId + '" style="display:none;padding:0 14px 14px 14px;border-top:1px solid var(--border);font-size:12px">';
+    if (inc.description) html += '<div style="margin:10px 0"><span style="color:var(--text2)">Description: </span>' + esc(inc.description) + '</div>';
+    if (inc.assignee) html += '<div style="margin:6px 0"><span style="color:var(--text2)">Assignee: </span>' + esc(inc.assignee) + '</div>';
+    if (inc.affected_namespaces && inc.affected_namespaces.length) html += '<div style="margin:6px 0"><span style="color:var(--text2)">Namespaces: </span>' + inc.affected_namespaces.map(function(n) { return '<code style="background:color-mix(in srgb,var(--accent2) 10%,transparent);color:var(--accent2);padding:1px 6px;border-radius:4px;font-size:10px;margin-right:4px">' + esc(n) + '</code>'; }).join('') + '</div>';
+    if (inc.affected_services && inc.affected_services.length) html += '<div style="margin:6px 0"><span style="color:var(--text2)">Services: </span>' + inc.affected_services.map(function(n) { return '<code style="background:color-mix(in srgb,var(--ok) 10%,transparent);color:var(--ok);padding:1px 6px;border-radius:4px;font-size:10px;margin-right:4px">' + esc(n) + '</code>'; }).join('') + '</div>';
+    if (inc.linked_alerts && inc.linked_alerts.length) html += '<div style="margin:6px 0"><span style="color:var(--text2)">Alerts: </span>' + inc.linked_alerts.map(function(n) { return '<code style="background:color-mix(in srgb,var(--crit) 10%,transparent);color:var(--crit);padding:1px 6px;border-radius:4px;font-size:10px;margin-right:4px">' + esc(n) + '</code>'; }).join('') + '</div>';
+    if (inc.root_cause) html += '<div style="margin:6px 0;padding:8px;background:color-mix(in srgb,var(--warn) 8%,transparent);border-radius:4px"><span style="color:var(--warn);font-weight:600">Root Cause: </span>' + esc(inc.root_cause) + '</div>';
+    if (inc.resolution_note) html += '<div style="margin:6px 0;padding:8px;background:color-mix(in srgb,var(--ok) 8%,transparent);border-radius:4px"><span style="color:var(--ok);font-weight:600">Resolution: </span>' + esc(inc.resolution_note) + '</div>';
+    var timeline = inc.timeline || [];
+    if (timeline.length > 0) {
+      html += '<div style="margin-top:10px"><span style="color:var(--text2);font-size:10px;text-transform:uppercase;letter-spacing:.5px">Timeline</span></div>';
+      html += '<div style="margin-top:6px;border-left:2px solid var(--border);padding-left:10px;font-size:11px">';
+      for (var t = 0; t < timeline.length; t++) {
+        var ev = timeline[t];
+        html += '<div style="margin-bottom:4px"><span style="color:var(--text2)">' + timeAgo(ev.ts) + '</span> &middot; <strong>' + esc(ev.actor || 'system') + '</strong> &middot; ' + esc(ev.action) + (ev.note ? ' — ' + esc(ev.note) : '') + '</div>';
+      }
+      html += '</div>';
+    }
+    html += '<div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">';
+    var transitions = { declared: ['triaging'], triaging: ['investigating'], investigating: ['mitigating'], mitigating: ['resolved'], resolved: ['closed', 'postmortem'], postmortem: ['closed'] };
+    var nextStates = transitions[inc.status] || [];
+    for (var ns = 0; ns < nextStates.length; ns++) {
+      var st = nextStates[ns];
+      html += '<button onclick="advanceIncident(\'' + esc(inc.incident_id || inc.incidentId) + '\',\'' + st + '\')" style="background:' + statusColor(st) + ';color:#fff;border:none;border-radius:6px;padding:4px 10px;font-size:10px;cursor:pointer;text-transform:capitalize">&rarr; ' + st + '</button>';
+    }
+    if (inc.status !== 'closed' && inc.status !== 'resolved') {
+      html += '<button onclick="resolveIncidentUI(\'' + esc(inc.incident_id || inc.incidentId) + '\')" style="background:var(--ok);color:#fff;border:none;border-radius:6px;padding:4px 10px;font-size:10px;cursor:pointer">&#x2713; Resolve</button>';
+    }
+    if (inc.status === 'resolved') {
+      html += '<button onclick="closeIncidentUI(\'' + esc(inc.incident_id || inc.incidentId) + '\')" style="background:var(--text2);color:#fff;border:none;border-radius:6px;padding:4px 10px;font-size:10px;cursor:pointer">&#x2713; Close</button>';
+    }
+    html += '</div></div></div>';
+  }
+  list.innerHTML = html;
+}
+
+function toggleIncident(id) {
+  var el = document.getElementById(id);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function showDeclareIncidentDialog() {
+  document.getElementById('inc-dlg-title').value = '';
+  document.getElementById('inc-dlg-description').value = '';
+  document.getElementById('inc-dlg-severity').value = 'sev3';
+  document.getElementById('inc-dlg-namespaces').value = '';
+  document.getElementById('inc-dlg-services').value = '';
+  document.getElementById('inc-dlg-alerts').value = '';
+  var dlg = document.getElementById('incident-dialog');
+  dlg.style.display = 'flex';
+}
+
+async function submitDeclareIncident() {
+  var title = document.getElementById('inc-dlg-title').value.trim();
+  if (!title) { alert('Title is required'); return; }
+  var body = {
+    title: title,
+    description: document.getElementById('inc-dlg-description').value.trim(),
+    severity: document.getElementById('inc-dlg-severity').value,
+    affectedNamespaces: document.getElementById('inc-dlg-namespaces').value.split(',').map(function(s) { return s.trim(); }).filter(Boolean),
+    affectedServices: document.getElementById('inc-dlg-services').value.split(',').map(function(s) { return s.trim(); }).filter(Boolean),
+    linkedAlerts: document.getElementById('inc-dlg-alerts').value.split(',').map(function(s) { return s.trim(); }).filter(Boolean),
+    declaredBy: 'dashboard',
+  };
+  try {
+    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/incidents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (resp.ok) {
+      document.getElementById('incident-dialog').style.display = 'none';
+      loadIncidents();
+    } else {
+      var err = await resp.json();
+      alert('Failed to declare: ' + (err.error || 'Unknown error'));
+    }
+  } catch (e) { alert('Network error: ' + e.message); }
+}
+
+async function advanceIncident(incidentId, newStatus) {
+  try {
+    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/incidents/' + encodeURIComponent(incidentId), {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus, actor: 'dashboard' }),
+    });
+    if (resp.ok) loadIncidents();
+    else { var err = await resp.json(); alert('Failed: ' + (err.error || 'Unknown')); }
+  } catch (e) { alert('Network error: ' + e.message); }
+}
+
+async function resolveIncidentUI(incidentId) {
+  var resolutionNote = prompt('Resolution note (what fixed it?):');
+  if (!resolutionNote) return;
+  var rootCause = prompt('Root cause (optional):') || '';
+  try {
+    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/incidents/' + encodeURIComponent(incidentId) + '/resolve', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resolutionNote: resolutionNote, rootCause: rootCause, actor: 'dashboard' }),
+    });
+    if (resp.ok) loadIncidents();
+    else { var err = await resp.json(); alert('Failed: ' + (err.error || 'Unknown')); }
+  } catch (e) { alert('Network error: ' + e.message); }
+}
+
+async function closeIncidentUI(incidentId) {
+  var postmortem = prompt('Post-mortem summary (optional):') || '';
+  try {
+    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/incidents/' + encodeURIComponent(incidentId) + '/close', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ postmortem: postmortem, actor: 'dashboard' }),
+    });
+    if (resp.ok) loadIncidents();
+    else { var err = await resp.json(); alert('Failed: ' + (err.error || 'Unknown')); }
+  } catch (e) { alert('Network error: ' + e.message); }
+}
+
+// ---------------------------------------------------------------------------
+// Change Timeline
+// ---------------------------------------------------------------------------
+function sourceIcon(source) {
+  return { deployment: '\u{1F680}', configmap: '\u{1F4DD}', scaling: '\u{1F4CF}', alert: '\u{1F6A8}', k8s_event: '\u{1F4CC}', gitops: '\u{1F500}', audit_action: '\u{2699}\u{FE0F}' }[source] || '\u{1F4C4}';
+}
+function sourceColor(source) {
+  return { deployment: '#3b82f6', configmap: '#8b5cf6', scaling: '#06b6d4', alert: 'var(--crit)', k8s_event: '#f59e0b', gitops: '#22c55e', audit_action: 'var(--text2)' }[source] || 'var(--text2)';
+}
+
+async function loadChangeTimeline() {
+  var tl = document.getElementById('changetl-timeline');
+  var statsEl = document.getElementById('changetl-stats');
+  if (!tl) return;
+  try {
+    var hours = parseInt(document.getElementById('changetl-window').value || '24', 10);
+    var source = document.getElementById('changetl-source-filter').value;
+    var fromDate = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+    var params = 'from=' + encodeURIComponent(fromDate) + '&limit=200';
+    if (source) params += '&sources=' + encodeURIComponent(source);
+    var base = MCP_API.replace(/\/api$/, '');
+    var [tlResp, statsResp] = await Promise.all([
+      fetch(clusterUrl(base + '/api/change-timeline?' + params)),
+      fetch(clusterUrl(base + '/api/change-timeline/stats?days=7')),
+    ]);
+    var tlData = await tlResp.json();
+    var stats = await statsResp.json();
+
+    if (statsEl) {
+      var topSrc = Object.entries(stats.bySource || {}).sort(function(a,b) { return b[1]-a[1]; })[0];
+      var topNs = Object.entries(stats.busiestNamespaces || {}).sort(function(a,b) { return b[1]-a[1]; })[0];
+      statsEl.innerHTML =
+        '<div style="text-align:center;padding:10px;background:var(--card);border-radius:6px"><div style="font-size:18px;font-weight:700;color:var(--accent2)">' + (stats.total || 0) + '</div><div style="color:var(--text2)">Events (7d)</div></div>' +
+        '<div style="text-align:center;padding:10px;background:var(--card);border-radius:6px"><div style="font-size:18px;font-weight:700;color:var(--ok)">' + (topSrc ? topSrc[0] : 'N/A') + '</div><div style="color:var(--text2)">Top Source</div></div>' +
+        '<div style="text-align:center;padding:10px;background:var(--card);border-radius:6px"><div style="font-size:18px;font-weight:700;color:var(--warn)">' + (topNs ? topNs[0] : 'N/A') + '</div><div style="color:var(--text2)">Busiest Namespace</div></div>' +
+        '<div style="text-align:center;padding:10px;background:var(--card);border-radius:6px"><div style="font-size:18px;font-weight:700;color:var(--accent2)">' + ((stats.busiestHours || [])[0]?.hour || 'N/A') + (stats.busiestHours && stats.busiestHours[0] ? ':00' : '') + '</div><div style="color:var(--text2)">Peak Hour</div></div>';
+    }
+
+    var events = tlData.events || tlData.timeline || [];
+    if (events.length === 0) {
+      tl.innerHTML = '<div style="text-align:center;color:var(--text2);font-size:12px;padding:20px">No change events recorded in this window.</div>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < events.length; i++) {
+      var ev = events[i];
+      var color = sourceColor(ev.source);
+      var icon = sourceIcon(ev.source);
+      html += '<div style="position:relative;padding-left:24px;margin-bottom:14px">';
+      html += '<div style="position:absolute;left:-22px;top:2px;width:14px;height:14px;border-radius:50%;background:' + color + ';border:2px solid var(--bg);display:flex;align-items:center;justify-content:center;font-size:8px"></div>';
+      html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">';
+      html += '<span style="font-size:14px">' + icon + '</span>';
+      html += '<span style="font-size:10px;color:' + color + ';font-weight:600;text-transform:uppercase">' + esc(ev.source) + '</span>';
+      if (ev.namespace) html += '<code style="background:color-mix(in srgb,var(--accent2) 10%,transparent);color:var(--accent2);padding:1px 6px;border-radius:4px;font-size:10px">' + esc(ev.namespace) + '</code>';
+      if (ev.resource_kind) html += '<span style="font-size:10px;color:var(--text2)">' + esc(ev.resource_kind) + ' &middot; ' + esc(ev.resource_name || '') + '</span>';
+      html += '<span style="margin-left:auto;font-size:10px;color:var(--text2)">' + timeAgo(ev.created_at) + '</span>';
+      html += '</div>';
+      html += '<div style="font-size:12px;margin-left:22px">' + esc(ev.title) + '</div>';
+      html += '</div>';
+    }
+    tl.innerHTML = html;
+  } catch (err) {
+    tl.innerHTML = '<div style="text-align:center;color:var(--crit);font-size:11px;padding:20px">Failed to load timeline: ' + esc(err.message) + '</div>';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Compliance Framework Profiles
+// ---------------------------------------------------------------------------
+async function loadComplianceFrameworks() {
+  var grid = document.getElementById('frameworks-summary-grid');
+  if (!grid) return;
+  try {
+    var base = MCP_API.replace(/\/api$/, '');
+    var resp = await fetch(clusterUrl(base + '/api/compliance/frameworks-summary'));
+    var data = await resp.json();
+    var results = data.results || [];
+    if (results.length === 0) {
+      grid.innerHTML = '<div style="text-align:center;color:var(--text2);font-size:11px;padding:20px;grid-column:1/-1">No framework data. Run a CIS compliance scan first.</div>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < results.length; i++) {
+      var r = results[i];
+      var gradeColor = r.grade === 'A' ? 'var(--ok)' : r.grade === 'B' ? '#22c55e' : r.grade === 'C' ? '#f59e0b' : r.grade === 'D' ? '#f97316' : 'var(--crit)';
+      html += '<div onclick="showFrameworkDetail(\'' + esc(r.frameworkId) + '\')" style="border:1px solid var(--border);border-radius:8px;padding:14px;cursor:pointer;transition:transform .15s;background:var(--card)" onmouseover="this.style.transform=\'translateY(-2px)\'" onmouseout="this.style.transform=\'translateY(0)\'">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+      html += '<div style="font-size:13px;font-weight:600">' + esc(r.frameworkName) + '</div>';
+      html += '<div style="background:' + gradeColor + ';color:#fff;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px">' + esc(r.grade) + '</div>';
+      html += '</div>';
+      html += '<div style="font-size:18px;font-weight:700;color:' + gradeColor + ';margin-bottom:6px">' + r.score + '%</div>';
+      html += '<div style="display:flex;gap:4px;font-size:10px">';
+      html += '<span style="background:color-mix(in srgb,var(--ok) 15%,transparent);color:var(--ok);padding:2px 6px;border-radius:4px">' + r.compliantControls + ' compliant</span>';
+      html += '<span style="background:color-mix(in srgb,var(--warn) 15%,transparent);color:var(--warn);padding:2px 6px;border-radius:4px">' + r.partialControls + ' partial</span>';
+      html += '<span style="background:color-mix(in srgb,var(--crit) 15%,transparent);color:var(--crit);padding:2px 6px;border-radius:4px">' + r.nonCompliantControls + ' failing</span>';
+      html += '</div></div>';
+    }
+    grid.innerHTML = html;
+  } catch (err) {
+    grid.innerHTML = '<div style="text-align:center;color:var(--crit);font-size:11px;padding:20px;grid-column:1/-1">Failed to load frameworks: ' + esc(err.message) + '</div>';
+  }
+}
+
+async function showFrameworkDetail(frameworkId) {
+  var panel = document.getElementById('framework-detail-panel');
+  if (!panel) return;
+  panel.style.display = 'block';
+  panel.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2);font-size:11px">Loading...</div>';
+  try {
+    var base = MCP_API.replace(/\/api$/, '');
+    var resp = await fetch(clusterUrl(base + '/api/compliance/frameworks/' + encodeURIComponent(frameworkId)));
+    var data = await resp.json();
+    var fw = data.framework;
+    var ev = data.evaluation;
+    var controls = ev.controls || [];
+    var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 10px 0"><div><h4 style="margin:0">' + esc(fw.name) + '</h4><div style="font-size:11px;color:var(--text2);margin-top:2px">' + esc(fw.description) + '</div></div><button onclick="document.getElementById(\'framework-detail-panel\').style.display=\'none\'" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:10px;cursor:pointer;color:var(--text)">Close</button></div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:6px;margin-bottom:12px">';
+    var stMap = { compliant: 'var(--ok)', partial: 'var(--warn)', 'non-compliant': 'var(--crit)', 'not-evaluated': 'var(--text2)' };
+    for (var i = 0; i < controls.length; i++) {
+      var c = controls[i];
+      var col = stMap[c.status] || 'var(--text2)';
+      html += '<div title="' + esc(c.title) + '" style="background:color-mix(in srgb,' + col + ' 15%,transparent);border-left:3px solid ' + col + ';padding:8px 10px;border-radius:4px;font-size:10px"><strong>' + esc(c.controlId) + '</strong><div style="color:var(--text2);margin-top:2px">' + esc(c.title) + '</div><div style="margin-top:4px;color:' + col + ';font-size:9px;text-transform:uppercase;font-weight:600">' + esc(c.status) + '</div></div>';
+    }
+    html += '</div>';
+    panel.innerHTML = html;
+  } catch (err) {
+    panel.innerHTML = '<div style="padding:20px;text-align:center;color:var(--crit);font-size:11px">Failed: ' + esc(err.message) + '</div>';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Custom Dashboard Layout (show/hide widgets, persisted in localStorage)
+// ---------------------------------------------------------------------------
+var _dashWidgets = [
+  { sel: '.grid.grid-4', label: 'Top Metrics (Health, Nodes, Namespaces, Operators)' },
+  { sel: '#topo-canvas', label: 'Node Topology', parentCard: true },
+  { sel: '#timeline-svg', label: 'Health Timeline', parentCard: true },
+  { sel: '#heatmap-grid', label: 'Namespace Heatmap', parentCard: true },
+  { sel: '#widget-security', label: 'CIS Compliance' },
+  { sel: '#widget-gitops', label: 'GitOps Sync Status' },
+  { sel: '#widget-dr', label: 'DR Readiness' },
+  { sel: '#widget-app-changes', label: 'Application Change Watcher' },
+  { sel: '#widget-image-vulns', label: 'Image Vulnerability Scanner' },
+  { sel: '#widget-optimization', label: 'Resource Optimization' },
+];
+
+function getDashLayoutPrefs() {
+  try { return JSON.parse(localStorage.getItem('mcp-dash-layout') || '{}'); } catch { return {}; }
+}
+function saveDashLayoutPrefs(prefs) {
+  try { localStorage.setItem('mcp-dash-layout', JSON.stringify(prefs)); } catch {}
+}
+
+function toggleDashboardCustomize() {
+  var panel = document.getElementById('dashboard-customize-panel');
+  if (!panel) return;
+  var open = panel.style.display !== 'none' && panel.style.display !== '';
+  panel.style.display = open ? 'none' : 'block';
+  if (!open) renderDashWidgetToggles();
+}
+
+function findWidgetEl(w) {
+  var el = document.querySelector(w.sel);
+  if (!el) return null;
+  if (w.parentCard) {
+    while (el && !el.classList.contains('card')) el = el.parentElement;
+  }
+  return el;
+}
+
+function renderDashWidgetToggles() {
+  var container = document.getElementById('dash-widget-toggles');
+  if (!container) return;
+  var prefs = getDashLayoutPrefs();
+  var html = '';
+  for (var i = 0; i < _dashWidgets.length; i++) {
+    var w = _dashWidgets[i];
+    var checked = prefs[w.sel] !== false;
+    html += '<label style="display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:var(--bg)"><input type="checkbox" data-widget-sel="' + esc(w.sel) + '" ' + (checked ? 'checked' : '') + ' onchange="setDashWidgetVisible(\'' + esc(w.sel) + '\',this.checked)">' + esc(w.label) + '</label>';
+  }
+  container.innerHTML = html;
+}
+
+function setDashWidgetVisible(sel, visible) {
+  var prefs = getDashLayoutPrefs();
+  prefs[sel] = visible;
+  saveDashLayoutPrefs(prefs);
+  applyDashLayoutPrefs();
+}
+
+function applyDashLayoutPrefs() {
+  var prefs = getDashLayoutPrefs();
+  for (var i = 0; i < _dashWidgets.length; i++) {
+    var w = _dashWidgets[i];
+    var el = findWidgetEl(w);
+    if (!el) continue;
+    var show = prefs[w.sel] !== false;
+    el.style.display = show ? '' : 'none';
+  }
+}
+
+function resetDashboardLayout() {
+  try { localStorage.removeItem('mcp-dash-layout'); } catch {}
+  applyDashLayoutPrefs();
+  renderDashWidgetToggles();
 }
 
 // ---------------------------------------------------------------------------
