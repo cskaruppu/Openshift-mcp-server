@@ -68,6 +68,11 @@ import { initIncidentManager, declareIncident, updateIncident, addTimelineEvent,
 import { initChangeTimeline, recordChangeEvent, getTimeline as getChangeTimelineUnified, correlateAroundTime, getTimelineStats as getChangeTimelineStats } from "./services/change-timeline.js";
 import { FRAMEWORKS, getFrameworkList, getFramework, evaluateFramework, evaluateAllFrameworks } from "./tools/compliance-frameworks.js";
 import { handleSlackSlashCommand, handleSlackInteraction, handleTeamsAction, verifySlackSignature } from "./services/chatops.js";
+import { parseDocx, parseMarkdownText } from "./services/doc-parser.js";
+import { extractAIS } from "./services/ais-extractor.js";
+import { generateManifests, renderYaml, renderSingleYaml } from "./services/manifest-generator.js";
+import { createDeployment, executeDeployment, rollbackDeployment, getDeployment, listDeployments } from "./services/deployment-orchestrator.js";
+import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, trackSubmittedCR } from "./services/chat-api.js";
 import {
@@ -268,6 +273,7 @@ function createMcpServer() {
     ["registerPreflightTools",      registerPreflightTools],
     ["registerAppChangeWatcherTools", registerAppChangeWatcherTools],
     ["registerImageVulnScannerTools", registerImageVulnScannerTools],
+    ["registerDeployFromDocTools",    registerDeployFromDocTools],
   ];
 
   let registered = 0;
@@ -657,6 +663,48 @@ function parseCommandTarget(command) {
 }
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024; // 2 MB
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB for file uploads
+
+async function readRawBody(req, maxBytes = MAX_UPLOAD_BYTES) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", (c) => {
+      size += c.length;
+      if (size > maxBytes) { req.destroy(); return reject(new Error("Upload too large")); }
+      chunks.push(c);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
+function parseMultipart(buffer, contentType) {
+  const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^\s;]+))/);
+  if (!boundaryMatch) throw new Error("No multipart boundary found");
+  const boundary = boundaryMatch[1] || boundaryMatch[2];
+  const sep = Buffer.from("--" + boundary);
+  const parts = [];
+  let start = 0;
+  while (true) {
+    const idx = buffer.indexOf(sep, start);
+    if (idx === -1) break;
+    if (start > 0) {
+      const chunk = buffer.slice(start, idx);
+      const headerEnd = chunk.indexOf("\r\n\r\n");
+      if (headerEnd > 0) {
+        const headerStr = chunk.slice(0, headerEnd).toString();
+        const body = chunk.slice(headerEnd + 4, chunk.length - 2);
+        const nameMatch = headerStr.match(/name="([^"]+)"/);
+        const fileMatch = headerStr.match(/filename="([^"]+)"/);
+        parts.push({ name: nameMatch?.[1], filename: fileMatch?.[1], data: body, headers: headerStr });
+      }
+    }
+    start = idx + sep.length + 2;
+    if (buffer.slice(idx + sep.length, idx + sep.length + 2).toString() === "--") break;
+  }
+  return parts;
+}
 
 async function readJsonBody(req) {
   return new Promise((resolve, reject) => {
@@ -3617,6 +3665,88 @@ async function startSSE() {
         const url2 = await setPrometheusUrl(body.url);
         sendJson(res, 200, { ok: true, url: url2 });
       } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── Document-Driven Deployment API ──────────────────────────────
+    if (req.method === "POST" && url.pathname === "/api/deploy/upload") {
+      try {
+        const ct = req.headers["content-type"] || "";
+        let docBuffer, format;
+        if (ct.includes("multipart/form-data")) {
+          const raw = await readRawBody(req);
+          const parts = parseMultipart(raw, ct);
+          const filePart = parts.find((p) => p.filename);
+          if (!filePart) { sendJson(res, 400, { error: "No file uploaded" }); return; }
+          docBuffer = filePart.data;
+          format = filePart.filename.endsWith(".docx") ? "docx" : "text";
+        } else {
+          const body = await readJsonBody(req);
+          if (body.document) {
+            if (body.format === "docx") {
+              docBuffer = Buffer.from(body.document, "base64");
+              format = "docx";
+            } else {
+              docBuffer = body.document;
+              format = "text";
+            }
+          } else {
+            sendJson(res, 400, { error: "No document provided" });
+            return;
+          }
+        }
+        const parsed = format === "docx" ? await parseDocx(docBuffer) : parseMarkdownText(String(docBuffer));
+        const { intent, missingFields, confidence } = await extractAIS(parsed);
+        sendJson(res, 200, { intent, missingFields, confidence, sectionCount: parsed.sections.length });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/deploy/preview") {
+      try {
+        const body = await readJsonBody(req);
+        if (!body.intent) { sendJson(res, 400, { error: "intent (AIS) is required" }); return; }
+        const { manifests, summary } = generateManifests(body.intent);
+        const yamlStr = renderYaml(manifests);
+        const perTier = manifests.map((m) => ({ kind: m.kind, name: m.name, yaml: renderSingleYaml(m) }));
+        sendJson(res, 200, { summary, manifests: perTier, fullYaml: yamlStr });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/deploy/apply") {
+      try {
+        const body = await readJsonBody(req);
+        if (!body.intent) { sendJson(res, 400, { error: "intent (AIS) is required" }); return; }
+        const { manifests } = generateManifests(body.intent);
+        const deployId = createDeployment(body.intent, manifests);
+        sendJson(res, 202, { deployId, status: "accepted", message: "Deployment queued" });
+        executeDeployment(deployId).catch((err) => console.error("[deploy] execution failed:", err.message));
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/deploy/status") {
+      const deployId = url.searchParams.get("id");
+      if (!deployId) { sendJson(res, 400, { error: "id parameter required" }); return; }
+      const dep = getDeployment(deployId);
+      if (!dep) { sendJson(res, 404, { error: "Deployment not found" }); return; }
+      sendJson(res, 200, dep);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/deploy/rollback") {
+      try {
+        const body = await readJsonBody(req);
+        if (!body.deployId) { sendJson(res, 400, { error: "deployId required" }); return; }
+        const result = await rollbackDeployment(body.deployId);
+        sendJson(res, 200, result);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/deploy/list") {
+      sendJson(res, 200, { deployments: listDeployments().slice(0, 20) });
       return;
     }
 
