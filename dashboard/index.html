@@ -761,9 +761,15 @@ tr:hover td{background:#ffffff06}
 .chat-input-row:focus-within{border-color:color-mix(in srgb,var(--accent2) 50%,transparent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent2) 7%,transparent)}
 .chat-input-full{flex:1;background:transparent;border:none;padding:12px 16px;color:var(--text);font-size:14px;outline:none;font-family:inherit}
 .chat-input-full::placeholder{color:var(--text2)}
-.chat-send-btn{background:var(--text);color:var(--bg-deep);border:none;border-radius:50%;width:36px;height:36px;font-weight:700;cursor:pointer;font-size:16px;transition:all .15s;flex-shrink:0;display:flex;align-items:center;justify-content:center}
-.chat-send-btn:hover{opacity:.85;transform:scale(1.05)}
-.chat-send-btn:disabled{opacity:.2;cursor:not-allowed;transform:none}
+.chat-send-btn{background:var(--text2);color:var(--bg-deep);border:none;border-radius:50%;width:36px;height:36px;cursor:not-allowed;transition:all .2s cubic-bezier(.4,0,.2,1);flex-shrink:0;display:flex;align-items:center;justify-content:center;opacity:.35}
+.chat-send-btn.active{background:var(--accent2);color:#fff;cursor:pointer;opacity:1}
+.chat-send-btn.active:hover{transform:scale(1.08);filter:brightness(1.1)}
+.chat-send-btn.active:active{transform:scale(.95)}
+.chat-send-btn.generating{background:var(--text2);color:var(--bg-deep);cursor:pointer;opacity:.7;animation:sendPulse 1.5s ease-in-out infinite}
+.chat-send-btn.generating:hover{opacity:1;transform:scale(1.08)}
+@keyframes sendPulse{0%,100%{opacity:.7}50%{opacity:1}}
+.chat-send-btn svg{width:18px;height:18px;fill:none;stroke:currentColor}
+.chat-send-btn .stop-icon{width:14px;height:14px;background:currentColor;border-radius:2px}
 .chat-bottom-hint{text-align:center;font-size:11px;color:var(--text2);opacity:.5;margin-top:8px}
 /* Model pill — hidden, kept for JS compat */
 .chat-model-pill{display:none}
@@ -1068,8 +1074,10 @@ tr:hover td{background:#ffffff06}
 .light-theme .chat-bottom-bar{background:linear-gradient(to top,#fff 70%,transparent)}
 .light-theme .chat-input-row{background:#f6f8fa;border-color:#e0e0e6}
 .light-theme .chat-input-row:focus-within{border-color:#2563eb;box-shadow:0 0 0 3px #2563eb12}
-.light-theme .chat-send-btn{background:#1a1a2e;color:#fff}
-.light-theme .chat-send-btn:hover{background:#000}
+.light-theme .chat-send-btn{background:#c0c0c8;color:#fff}
+.light-theme .chat-send-btn.active{background:#2563eb;color:#fff}
+.light-theme .chat-send-btn.active:hover{background:#1d4ed8}
+.light-theme .chat-send-btn.generating{background:#9ca3af;color:#fff}
 .light-theme .chat-tools-flyout{background:#fff;border-color:#e0e0e6;box-shadow:0 -8px 32px #00000012}
 .light-theme .chat-tools-flyout .tool-btn{background:#f6f8fa;border-color:#e0e0e6;color:#6b6b80}
 .light-theme .chat-tools-flyout .tool-btn:hover{background:#eef0f4;border-color:#2563eb;color:#1a1a2e}
@@ -3110,8 +3118,8 @@ tr:hover td{background:#ffffff06}
         <!-- Input row -->
         <div class="chat-input-row">
           <button class="input-action-btn" onclick="toggleToolsFlyout()" title="Tools" id="tools-toggle-btn">&#x2795;</button>
-          <input type="text" class="chat-input-full" id="full-chat-input" placeholder="Message TCS Agentic AI..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendFullChat()}">
-          <button class="chat-send-btn" id="full-chat-send" onclick="sendFullChat()">&#x2191;</button>
+          <input type="text" class="chat-input-full" id="full-chat-input" placeholder="Message TCS Agentic AI..." oninput="updateSendBtnState()" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendFullChat()}">
+          <button class="chat-send-btn" id="full-chat-send" onclick="sendFullChat()" aria-label="Send message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
         </div>
         <div class="chat-bottom-hint">TCS Agentic AI can make mistakes. Verify important cluster operations.</div>
         <span class="chat-model-pill" id="model-pill-display" style="display:none"><span class="pill-dot"></span>Built-in</span>
@@ -5816,7 +5824,7 @@ function updateRiskAccuracy() {
 var _cmdBarOpen = false;
 var _cmdBarIndex = 0;
 var CMD_BAR_COMMANDS = [
-  { icon: '&#x1F4AC;', label: 'Ask AI a question...', action: function(q) { showView('chat'); setTimeout(function() { var inp = document.getElementById('full-chat-input'); if (inp) { inp.value = q || ''; inp.focus(); } }, 200); }},
+  { icon: '&#x1F4AC;', label: 'Ask AI a question...', action: function(q) { showView('chat'); setTimeout(function() { var inp = document.getElementById('full-chat-input'); if (inp) { inp.value = q || ''; inp.focus(); updateSendBtnState(); } }, 200); }},
   { icon: '&#x1F4CA;', label: 'Show cluster health', action: function() { openNewChatWithCommand('cluster health', 'Cluster Health'); }},
   { icon: '&#x1F4E6;', label: 'List pods with issues', action: function() { openNewChatWithCommand('list pods with issues', 'Pod Issues'); }},
   { icon: '&#x1F310;', label: 'List all nodes', action: function() { openNewChatWithCommand('list nodes', 'Node Listing'); }},
@@ -5828,7 +5836,7 @@ var CMD_BAR_COMMANDS = [
   { icon: '&#x1F6A8;', label: 'Create an incident', action: function() { openNewChatWithCommand('create an incident', 'Incident'); }},
   { icon: '&#x1F4C8;', label: 'Show top pod metrics', action: function() { openNewChatWithCommand('top pods', 'Pod Metrics'); }},
   { icon: '&#x1F527;', label: 'List deployments', action: function() { openNewChatWithCommand('list deployments', 'Deployments'); }},
-  { icon: '&#x1F50D;', label: 'Troubleshoot a pod', action: function() { showView('chat'); setTimeout(function() { var inp = document.getElementById('full-chat-input'); if (inp) { inp.value = 'troubleshoot pod '; inp.focus(); } }, 200); }},
+  { icon: '&#x1F50D;', label: 'Troubleshoot a pod', action: function() { showView('chat'); setTimeout(function() { var inp = document.getElementById('full-chat-input'); if (inp) { inp.value = 'troubleshoot pod '; inp.focus(); updateSendBtnState(); } }, 200); }},
   { icon: '&#x2699;', label: 'Open Settings', action: function() { toggleSettingsPanel(); }},
   { icon: '&#x1F4CA;', label: 'Open Dashboard', action: function() { showView('dashboard'); }},
   { icon: '&#x1F4DD;', label: 'Open Audit', action: function() { showView('audit'); }},
@@ -10219,7 +10227,7 @@ async function sendFullChat(text) {
   inner.appendChild(thinkingDiv);
   scrollConversation();
 
-  if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '...'; }
+  setChatGenerating(true);
 
   const startMs = Date.now();
 
@@ -10274,7 +10282,7 @@ async function sendFullChat(text) {
     renderConversation();
   }
 
-  if (sendBtn) { sendBtn.disabled = false; sendBtn.innerHTML = '&#x2191;'; }
+  setChatGenerating(false);
   renderChatHistory();
 }
 
@@ -11248,6 +11256,48 @@ function pickSlash(cmd) {
   if (input) { input.value = cmd; input.focus(); }
   const palette = document.getElementById('slash-palette');
   if (palette) palette.classList.remove('open');
+  updateSendBtnState();
+}
+
+// ---------------------------------------------------------------------------
+// Send button state management (industry-standard UX)
+// ---------------------------------------------------------------------------
+var _chatGenerating = false;
+var _chatAbortCtrl = null;
+const _sendIconSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
+const _stopIconHtml = '<div class="stop-icon"></div>';
+
+function updateSendBtnState() {
+  const btn = document.getElementById('full-chat-send');
+  if (!btn) return;
+  if (_chatGenerating) return;
+  const input = document.getElementById('full-chat-input');
+  const hasText = input && input.value.trim().length > 0;
+  btn.classList.toggle('active', hasText);
+}
+
+function setChatGenerating(active) {
+  _chatGenerating = active;
+  const btn = document.getElementById('full-chat-send');
+  if (!btn) return;
+  if (active) {
+    btn.classList.remove('active');
+    btn.classList.add('generating');
+    btn.innerHTML = _stopIconHtml;
+    btn.title = 'Stop generating';
+    btn.onclick = stopChatGeneration;
+  } else {
+    btn.classList.remove('generating');
+    btn.innerHTML = _sendIconSvg;
+    btn.title = '';
+    btn.onclick = function() { sendFullChat(); };
+    updateSendBtnState();
+  }
+}
+
+function stopChatGeneration() {
+  if (_chatAbortCtrl) { _chatAbortCtrl.abort(); _chatAbortCtrl = null; }
+  setChatGenerating(false);
 }
 
 // ---------------------------------------------------------------------------
@@ -12421,7 +12471,8 @@ async function sendFullChatStreaming(text) {
     '<div class="conv-body" id="stream-body">' + buildThinkingStages() + '</div>';
   inner.appendChild(streamDiv);
   scrollConversation();
-  if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '...'; }
+  setChatGenerating(true);
+  _chatAbortCtrl = new AbortController();
 
   const chatBody = { message: msg, conversationId: history.activeId, stream: true };
   const providerOpts = getActiveProviderOpts();
@@ -12435,6 +12486,7 @@ async function sendFullChatStreaming(text) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
       body: JSON.stringify(chatBody),
+      signal: _chatAbortCtrl ? _chatAbortCtrl.signal : undefined,
     });
 
     // Advance to "querying" stage as soon as we get the response headers
@@ -12538,7 +12590,12 @@ async function sendFullChatStreaming(text) {
       if (!fullText) fullText = 'No response received.';
     }
   } catch (err) {
-    fullText = 'Error: ' + err.message;
+    if (err.name === 'AbortError') {
+      fullText = fullText || '';
+      if (!fullText) fullText = '(Generation stopped)';
+    } else {
+      fullText = 'Error: ' + err.message;
+    }
   }
 
   streamDiv.classList.remove('streaming-text');
@@ -12563,7 +12620,8 @@ async function sendFullChatStreaming(text) {
     }
   }
 
-  if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = 'Send'; }
+  _chatAbortCtrl = null;
+  setChatGenerating(false);
   renderChatHistory();
   renderMemoryBar();
   if (/<!--action:/.test(fullText)) refreshActionsPanel();
@@ -13107,6 +13165,7 @@ function toggleVoiceInput() {
       transcript += e.results[i][0].transcript;
     }
     input.value = transcript;
+    updateSendBtnState();
   };
   _voiceRecognition.onend = function() {
     _voiceActive = false;
