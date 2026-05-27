@@ -128,3 +128,15 @@ export function parseMarkdownText(text) {
 
   return { sections, rawText: text };
 }
+
+export function estimateTokens(section) {
+  let text = section.heading || '';
+  if (section.content) text += ' ' + section.content;
+  for (const table of (section.tables || [])) {
+    for (const h of (table.headers || [])) text += ' ' + h;
+    for (const row of (table.rows || [])) {
+      for (const v of Object.values(row)) text += ' ' + v;
+    }
+  }
+  return Math.ceil(text.split(/\s+/).length * 1.3);
+}

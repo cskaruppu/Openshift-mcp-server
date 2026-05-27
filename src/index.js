@@ -69,7 +69,7 @@ import { initChangeTimeline, recordChangeEvent, getTimeline as getChangeTimeline
 import { FRAMEWORKS, getFrameworkList, getFramework, evaluateFramework, evaluateAllFrameworks } from "./tools/compliance-frameworks.js";
 import { handleSlackSlashCommand, handleSlackInteraction, handleTeamsAction, verifySlackSignature } from "./services/chatops.js";
 import { parseDocx, parseMarkdownText } from "./services/doc-parser.js";
-import { extractAIS } from "./services/ais-extractor.js";
+import { extractAIS, validateAIS, calculateConfidence } from "./services/ais-extractor.js";
 import { generateManifests, renderYaml, renderSingleYaml } from "./services/manifest-generator.js";
 import { createDeployment, executeDeployment, rollbackDeployment, getDeployment, listDeployments } from "./services/deployment-orchestrator.js";
 import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
@@ -3778,6 +3778,98 @@ async function startSSE() {
 
     if (req.method === "GET" && url.pathname === "/api/deploy/list") {
       sendJson(res, 200, { deployments: listDeployments().slice(0, 20) });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/deploy/chat-action") {
+      try {
+        const body = await readJsonBody(req);
+        const { action, parseId, field, value, tierName, corrections } = body;
+        const job = parseId ? _parseJobs.get(parseId) : null;
+
+        if (action === "show-yaml" && job?.intent) {
+          const { manifests, summary } = generateManifests(job.intent);
+          const yamlStr = renderYaml(manifests);
+          const perManifest = manifests.map((m) => ({ kind: m.kind, name: m.name, yaml: renderSingleYaml(m) }));
+          sendJson(res, 200, { action: "show-yaml", yaml: yamlStr, manifests: perManifest, summary });
+          return;
+        }
+
+        if (action === "update-field" && job?.intent) {
+          if (tierName) {
+            const tier = job.intent.tiers?.find((t) => t.name === tierName);
+            if (tier && field) {
+              if (field === "replicas.min") { tier.replicas = tier.replicas || {}; tier.replicas.min = parseInt(value, 10) || 1; }
+              else if (field === "replicas.max") { tier.replicas = tier.replicas || {}; tier.replicas.max = parseInt(value, 10) || 1; }
+              else if (field === "image") tier.image = value;
+              else if (field === "port") tier.port = parseInt(value, 10);
+              else if (field === "role") tier.role = value;
+              else if (field.startsWith("resources.")) { tier.resources = tier.resources || {}; tier.resources[field.split(".")[1]] = value; }
+              else if (field.startsWith("storage.")) { tier.storage = tier.storage || {}; tier.storage[field.split(".")[1]] = value; }
+              else tier[field] = value;
+            }
+          } else {
+            if (field === "appName") job.intent.appName = value;
+            else if (field === "namespace") job.intent.namespace = value;
+            else if (field === "targetPlatform") job.intent.targetPlatform = value;
+            else if (field === "environment") job.intent.environment = value;
+          }
+          const missingFields = validateAIS(job.intent);
+          const confidence = calculateConfidence(job.intent, missingFields);
+          job.missingFields = missingFields;
+          job.confidence = confidence;
+          _parseJobs.set(parseId, job);
+          sendJson(res, 200, { action: "updated", intent: job.intent, missingFields, confidence });
+          return;
+        }
+
+        if (action === "deploy" && job?.intent) {
+          const { manifests } = generateManifests(job.intent);
+          const deployId = createDeployment(job.intent, manifests);
+          sendJson(res, 202, { action: "deploying", deployId, status: "accepted" });
+          executeDeployment(deployId).catch((err) => console.error("[deploy] execution failed:", err.message));
+          return;
+        }
+
+        if (action === "get-intent" && job?.intent) {
+          sendJson(res, 200, { intent: job.intent, missingFields: job.missingFields, confidence: job.confidence });
+          return;
+        }
+
+        sendJson(res, 400, { error: "Invalid action or no active parse job" });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/deploy/re-analyze") {
+      try {
+        const body = await readJsonBody(req);
+        const { parseId, corrections, providerOpts: pOpts } = body;
+        const job = parseId ? _parseJobs.get(parseId) : null;
+        if (!job || !job.intent) { sendJson(res, 400, { error: "No active parse job" }); return; }
+
+        // Apply corrections to the intent
+        if (corrections && typeof corrections === "object") {
+          for (const [key, val] of Object.entries(corrections)) {
+            if (key === "tiers" && Array.isArray(val)) {
+              // Merge tier corrections
+              for (const tc of val) {
+                const existing = job.intent.tiers?.find((t) => t.name === tc.name);
+                if (existing) Object.assign(existing, tc);
+              }
+            } else {
+              job.intent[key] = val;
+            }
+          }
+        }
+
+        const missingFields = validateAIS(job.intent);
+        const confidence = calculateConfidence(job.intent, missingFields);
+        job.missingFields = missingFields;
+        job.confidence = confidence;
+        _parseJobs.set(parseId, job);
+        sendJson(res, 200, { intent: job.intent, missingFields, confidence });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }
 

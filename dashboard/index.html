@@ -10240,6 +10240,13 @@ async function sendFullChat(text) {
   const msg = text || (input ? input.value.trim() : '');
   if (!msg) return;
 
+  // Intercept deploy-related commands when a deploy session is active
+  if (_deployParseId && typeof handleDeployChatCommand === 'function') {
+    if (input) input.value = '';
+    var handled = await handleDeployChatCommand(msg);
+    if (handled) return;
+  }
+
   await detectHistoryBackend();
 
   let history = loadChatHistory();
@@ -12494,6 +12501,13 @@ async function sendFullChatStreaming(text) {
   const msg = text || (input ? input.value.trim() : '');
   if (!msg) return;
 
+  // Intercept deploy-related commands when a deploy session is active
+  if (_deployParseId && typeof handleDeployChatCommand === 'function') {
+    if (input) input.value = '';
+    var handled = await handleDeployChatCommand(msg);
+    if (handled) return;
+  }
+
   await detectHistoryBackend();
   let history = loadChatHistory();
   if (!history.activeId) { await newChat(); history = loadChatHistory(); }
@@ -12678,25 +12692,26 @@ async function sendFullChatStreaming(text) {
 sendFullChat = sendFullChatStreaming;
 
 // ---------------------------------------------------------------------------
-// Document-Driven Deployment — upload, parse, preview, deploy
+// Document-Driven Deployment — conversational chat-based flow
 // ---------------------------------------------------------------------------
-var _pendingDeployIntent = null;
-var _pendingDeployFile = null;
+var _deployParseId = null;
+var _deployDeployId = null;
 
 async function handleDocUpload(event) {
-  const file = event.target.files[0];
+  var file = event.target.files[0];
   if (!file) return;
   event.target.value = '';
 
-  const allowedExt = ['.docx', '.doc', '.md', '.txt'];
-  const ext = '.' + file.name.split('.').pop().toLowerCase();
+  var allowedExt = ['.docx', '.doc', '.md', '.txt'];
+  var ext = '.' + file.name.split('.').pop().toLowerCase();
   if (!allowedExt.includes(ext)) {
-    appendSystemMsg('Unsupported file type. Please upload .docx, .md, or .txt files.');
+    deployChat('system', 'Unsupported file type. Please upload .docx, .md, or .txt files.');
     return;
   }
 
-  _pendingDeployFile = file;
-  appendSystemMsg('Uploading and parsing: ' + file.name + '...');
+  // Show user message with file chip
+  deployChat('user-file', file.name);
+  deployChat('system', 'Uploading and analyzing your document...');
 
   try {
     var formData = new FormData();
@@ -12712,37 +12727,30 @@ async function handleDocUpload(event) {
     if (!resp.ok) {
       var ct = resp.headers.get('content-type') || '';
       if (ct.includes('text/html')) {
-        appendSystemMsg('Parse error: Server returned HTTP ' + resp.status + '. Check route timeout settings.');
+        deployChat('error', 'Server returned HTTP ' + resp.status + '. Check route timeout settings.');
       } else {
         var errBody = await resp.text();
-        try { var ej = JSON.parse(errBody); appendSystemMsg('Parse error: ' + (ej.error || resp.status)); }
-        catch { appendSystemMsg('Parse error: Server returned HTTP ' + resp.status); }
+        try { var ej = JSON.parse(errBody); deployChat('error', ej.error || ('HTTP ' + resp.status)); }
+        catch { deployChat('error', 'Server returned HTTP ' + resp.status); }
       }
       return;
     }
     var data = await resp.json();
-    if (data.error) {
-      appendSystemMsg('Parse error: ' + data.error);
-      return;
-    }
+    if (data.error) { deployChat('error', data.error); return; }
 
-    // Async extraction — poll for result
     if (data.parseId && data.status === 'extracting') {
-      appendSystemMsg('Document parsed (' + (data.sectionCount || '?') + ' sections). AI is extracting deployment intent...');
+      deployChat('system', 'Document parsed (' + (data.sectionCount || '?') + ' sections). Extracting deployment intent...');
       var result = await pollParseJob(data.parseId);
       if (!result) return;
-      if (result.error) {
-        appendSystemMsg('Parse error: ' + result.error);
-        return;
-      }
-      _pendingDeployIntent = result.intent;
-      showDeployPreviewModal(result);
+      if (result.error) { deployChat('error', result.error); return; }
+      _deployParseId = data.parseId;
+      showDeployIntentInChat(result);
     } else if (data.intent) {
-      _pendingDeployIntent = data.intent;
-      showDeployPreviewModal(data);
+      _deployParseId = data.parseId;
+      showDeployIntentInChat(data);
     }
   } catch (err) {
-    appendSystemMsg('Upload failed: ' + err.message);
+    deployChat('error', 'Upload failed: ' + err.message);
   }
 }
 
@@ -12757,150 +12765,241 @@ async function pollParseJob(parseId) {
       var job = await resp.json();
       if (job.status === 'done') return job;
       if (job.status === 'error') return job;
-      if (i === 15) appendSystemMsg('Still extracting... Azure OpenAI may take up to 60s for large documents.');
+      if (i === 10) deployChat('system', 'Still analyzing... large documents may take up to 60s.');
     } catch { /* retry */ }
   }
-  appendSystemMsg('Parse timed out after ' + Math.round(maxPolls * interval / 1000) + 's. Check server logs for errors.');
+  deployChat('error', 'Analysis timed out. Check server logs for errors.');
   return null;
 }
 
-function appendSystemMsg(text) {
-  var history = loadChatHistory();
-  if (!history.activeId) return;
-  var chat = history.chats.find(function(c) { return c.id === history.activeId; });
-  if (!chat) return;
-  chat.messages.push({ role: 'ai', text: text, html: '<div style="color:var(--text2);font-style:italic;font-size:12px">' + esc(text) + '</div>', provider: 'system' });
-  chat.updatedAt = new Date().toISOString();
-  saveChatHistory(history);
-  renderConversation();
-}
-
-function showDeployPreviewModal(data) {
-  var existing = document.getElementById('deploy-overlay');
-  if (existing) existing.remove();
-
+function showDeployIntentInChat(data) {
   var intent = data.intent;
   var missing = data.missingFields || [];
   var confidence = data.confidence || 0;
-
   var confClass = confidence >= 80 ? 'high' : confidence >= 50 ? 'medium' : 'low';
+  var confIcon = confidence >= 80 ? '&#x2705;' : confidence >= 50 ? '&#x26A0;&#xFE0F;' : '&#x274C;';
 
-  var html = '<div class="deploy-overlay" id="deploy-overlay" onclick="if(event.target===this)this.remove()">';
-  html += '<div class="deploy-modal">';
-  html += '<div class="deploy-modal-header"><h3>Deployment Intent Preview</h3>';
-  html += '<span class="deploy-confidence ' + confClass + '">Confidence: ' + confidence + '%</span></div>';
-  html += '<div class="deploy-modal-body">';
+  var html = '<div class="deploy-intent-card" style="border-left:3px solid var(--accent2)">';
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">';
+  html += '<h4 style="margin:0;font-size:14px">I analyzed your document. Here\'s what I found:</h4>';
+  html += '<span class="deploy-confidence ' + confClass + '">' + confIcon + ' ' + confidence + '%</span>';
+  html += '</div>';
 
   // App overview
-  html += '<div class="deploy-intent-card"><h4>Application: ' + esc(intent.appName || 'Unknown') + '</h4>';
-  html += '<div style="display:flex;gap:16px;font-size:12px;color:var(--text2)">';
-  html += '<span>Platform: <strong>' + esc(intent.targetPlatform || '?') + '</strong></span>';
-  html += '<span>Namespace: <strong>' + esc(intent.namespace || '?') + '</strong></span>';
-  html += '<span>Environment: <strong>' + esc(intent.environment || '?') + '</strong></span>';
-  html += '<span>Tiers: <strong>' + (intent.tiers || []).length + '</strong></span>';
-  html += '</div></div>';
-
-  // Missing fields warning
-  if (missing.length > 0) {
-    html += '<div class="deploy-missing"><h4>Missing Fields (' + missing.length + ')</h4><ul>';
-    missing.forEach(function(f) { html += '<li>' + esc(f) + '</li>'; });
-    html += '</ul></div>';
-  }
+  html += '<div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px;font-size:12px">';
+  html += '<span style="background:var(--bg);padding:4px 10px;border-radius:6px">App: <strong>' + esc(intent.appName || '?') + '</strong></span>';
+  html += '<span style="background:var(--bg);padding:4px 10px;border-radius:6px">Platform: <strong>' + esc(intent.targetPlatform || '?') + '</strong></span>';
+  html += '<span style="background:var(--bg);padding:4px 10px;border-radius:6px">Namespace: <strong>' + esc(intent.namespace || '?') + '</strong></span>';
+  html += '<span style="background:var(--bg);padding:4px 10px;border-radius:6px">Environment: <strong>' + esc(intent.environment || '?') + '</strong></span>';
+  html += '</div>';
 
   // Tier cards
+  html += '<div style="font-size:12px;font-weight:600;margin-bottom:6px;color:var(--text2)">TIERS (' + (intent.tiers || []).length + ')</div>';
   html += '<div class="deploy-tier-grid">';
   (intent.tiers || []).forEach(function(tier) {
+    var roleColors = { database: '#a78bfa', app: '#60a5fa', frontend: '#34d399' };
+    var roleColor = roleColors[tier.role] || 'var(--text2)';
     html += '<div class="deploy-tier">';
     html += '<span class="deploy-tier-role ' + (tier.role || '') + '">' + esc(tier.role || 'unknown') + '</span>';
     html += '<div style="font-size:13px;font-weight:600;margin-bottom:4px">' + esc(tier.name) + '</div>';
-    html += '<div style="font-size:11px;color:var(--text2)">';
-    html += 'Image: <code style="font-size:10px">' + esc(tier.image || '?') + '</code><br>';
-    html += 'Port: ' + (tier.port || '?') + ' | Replicas: ' + (tier.replicas?.min || 1);
+    html += '<div style="font-size:11px;color:var(--text2);line-height:1.6">';
+    html += '<span title="Container image">Image: <code style="font-size:10px">' + esc(tier.image || '?') + '</code></span><br>';
+    html += 'Port: ' + (tier.port || '?') + ' &bull; Replicas: ' + (tier.replicas?.min || 1);
     if (tier.replicas?.max > tier.replicas?.min) html += '-' + tier.replicas.max;
-    html += '<br>';
-    if (tier.storage) html += 'Storage: ' + tier.storage.size + '<br>';
-    if (tier.expose) html += 'Exposed: ' + (tier.hostname || 'yes') + '<br>';
-    if (tier.dependsOn?.length) html += 'Depends: ' + tier.dependsOn.join(', ');
+    if (tier.resources?.cpuReq) html += ' &bull; CPU: ' + tier.resources.cpuReq + '/' + (tier.resources.cpuLim || '?');
+    if (tier.resources?.memReq) html += '<br>Memory: ' + tier.resources.memReq + '/' + (tier.resources.memLim || '?');
+    if (tier.storage) html += '<br>Storage: ' + tier.storage.size + ' at ' + (tier.storage.mountPath || '/data');
+    if (tier.expose) html += '<br>Exposed: ' + (tier.hostname || 'yes') + (tier.tls ? ' (' + tier.tls + ')' : '');
+    if (tier.envVars?.length) html += '<br>Env vars: ' + tier.envVars.length;
+    if (tier.probes?.liveness) html += '<br>Probes: liveness + readiness';
+    if (tier.dependsOn?.length) html += '<br>Depends on: ' + tier.dependsOn.join(', ');
     html += '</div></div>';
   });
   html += '</div>';
 
-  // YAML preview button
-  html += '<div style="margin-top:14px"><button class="deploy-btn deploy-btn-ghost" onclick="toggleDeployYaml()">Show Generated YAML</button>';
-  html += '<div id="deploy-yaml-container" style="display:none;margin-top:8px"><div class="deploy-yaml-block" id="deploy-yaml-content">Loading...</div></div></div>';
+  // Shared resources
+  if ((intent.sharedSecrets?.length || 0) > 0 || (intent.configMaps?.length || 0) > 0) {
+    html += '<div style="margin-top:10px;font-size:11px;color:var(--text2)">';
+    if (intent.sharedSecrets?.length) html += 'Secrets: ' + intent.sharedSecrets.map(function(s) { return s.name; }).join(', ') + '<br>';
+    if (intent.configMaps?.length) html += 'ConfigMaps: ' + intent.configMaps.map(function(c) { return c.name; }).join(', ') + '<br>';
+    if (intent.networkPolicies?.length) html += 'Network policies: ' + intent.networkPolicies.length + '<br>';
+    if (intent.deployOrder?.length) html += 'Deploy order: ' + intent.deployOrder.join(' &rarr; ');
+    html += '</div>';
+  }
 
-  html += '</div>'; // modal-body
-
-  // Footer actions
-  html += '<div class="deploy-modal-footer">';
-  html += '<button class="deploy-btn deploy-btn-ghost" onclick="document.getElementById(\'deploy-overlay\').remove()">Cancel</button>';
+  // Missing fields
   if (missing.length > 0) {
-    html += '<button class="deploy-btn deploy-btn-primary" disabled title="Fix missing fields first">Deploy (missing fields)</button>';
+    html += '<div class="deploy-missing"><h4>&#x26A0;&#xFE0F; Missing Fields (' + missing.length + ')</h4><ul>';
+    missing.forEach(function(f) { html += '<li>' + esc(f) + '</li>'; });
+    html += '</ul></div>';
+  }
+
+  html += '</div>';
+
+  // Action buttons
+  html += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">';
+  if (missing.length === 0) {
+    html += '<button class="deploy-btn deploy-btn-primary" onclick="deployAction(\'show-yaml\')">Review YAML</button>';
+    html += '<button class="deploy-btn deploy-btn-primary" onclick="deployAction(\'deploy\')" style="background:#10b981">Deploy to OpenShift</button>';
   } else {
-    html += '<button class="deploy-btn deploy-btn-primary" onclick="startDocDeploy()">Approve &amp; Deploy</button>';
+    html += '<button class="deploy-btn deploy-btn-primary" onclick="deployAction(\'show-yaml\')">Review YAML</button>';
+    html += '<button class="deploy-btn deploy-btn-primary" disabled title="Fix missing fields first" style="opacity:.5">Deploy (fix missing fields first)</button>';
   }
   html += '</div>';
-  html += '</div></div>';
 
-  document.body.insertAdjacentHTML('beforeend', html);
+  // Prompt
+  html += '<div style="margin-top:10px;font-size:12px;color:var(--text2);font-style:italic">';
+  html += 'You can tell me to make changes — e.g. "change app replicas to 4", "use nginx:1.25 for frontend", "show yaml", or "deploy".';
+  html += '</div>';
+
+  deployChat('intent-review', html, true);
 }
 
-async function toggleDeployYaml() {
-  var container = document.getElementById('deploy-yaml-container');
-  if (!container) return;
-  if (container.style.display !== 'none') {
-    container.style.display = 'none';
-    return;
-  }
-  container.style.display = 'block';
-  var content = document.getElementById('deploy-yaml-content');
-  if (content && content.textContent === 'Loading...' && _pendingDeployIntent) {
+async function deployAction(action) {
+  if (!_deployParseId) { deployChat('error', 'No active deployment session. Upload a document first.'); return; }
+
+  if (action === 'show-yaml') {
+    deployChat('user', 'Show me the generated YAML');
+    deployChat('system', 'Generating YAML manifests...');
     try {
-      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/deploy/preview', {
+      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/deploy/chat-action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ intent: _pendingDeployIntent }),
+        body: JSON.stringify({ action: 'show-yaml', parseId: _deployParseId }),
       });
       var data = await resp.json();
-      content.textContent = data.fullYaml || 'No YAML generated';
-    } catch (err) {
-      content.textContent = 'Error: ' + err.message;
-    }
+      if (data.error) { deployChat('error', data.error); return; }
+      var yamlHtml = '<div style="margin-bottom:8px;font-size:12px;font-weight:600">';
+      yamlHtml += 'Generated ' + (data.manifests?.length || 0) + ' manifests';
+      if (data.summary) yamlHtml += ' &bull; ' + (data.summary.hasStorage ? 'PVC' : '') + (data.summary.hasHPA ? ' HPA' : '') + (data.summary.hasNetworkPolicies ? ' NetPol' : '');
+      yamlHtml += '</div>';
+      yamlHtml += '<details style="margin-bottom:8px"><summary style="cursor:pointer;font-size:12px;color:var(--accent2)">View full YAML (' + (data.yaml?.length || 0) + ' chars)</summary>';
+      yamlHtml += '<div class="deploy-yaml-block" style="max-height:400px">' + esc(data.yaml || '') + '</div>';
+      yamlHtml += '</details>';
+      // Per-manifest collapsible sections
+      if (data.manifests?.length) {
+        yamlHtml += '<div style="font-size:11px;color:var(--text2);margin-bottom:6px">Individual manifests:</div>';
+        data.manifests.forEach(function(m) {
+          yamlHtml += '<details style="margin-bottom:4px"><summary style="cursor:pointer;font-size:11px">' + esc(m.kind) + '/' + esc(m.name) + '</summary>';
+          yamlHtml += '<div class="deploy-yaml-block" style="max-height:200px;font-size:10px">' + esc(m.yaml || '') + '</div></details>';
+        });
+      }
+      // Deploy button after YAML review
+      yamlHtml += '<div style="display:flex;gap:8px;margin-top:10px">';
+      yamlHtml += '<button class="deploy-btn deploy-btn-primary" onclick="deployAction(\'deploy\')" style="background:#10b981">Approve &amp; Deploy</button>';
+      yamlHtml += '<button class="deploy-btn deploy-btn-ghost" onclick="deployChat(\'user\',\'Let me make some changes first\')">Make Changes</button>';
+      yamlHtml += '</div>';
+      deployChat('yaml-review', yamlHtml, true);
+    } catch (err) { deployChat('error', 'Failed to generate YAML: ' + err.message); }
+    return;
+  }
+
+  if (action === 'deploy') {
+    deployChat('user', 'Deploy to OpenShift');
+    try {
+      // Get current intent for display
+      var intentResp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/deploy/chat-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'get-intent', parseId: _deployParseId }),
+      });
+      var intentData = await intentResp.json();
+      var appName = intentData.intent?.appName || 'app';
+      var tierCount = (intentData.intent?.tiers || []).length;
+      var ns = intentData.intent?.namespace || 'default';
+
+      deployChat('system', 'Deploying <strong>' + esc(appName) + '</strong> (' + tierCount + ' tiers) to <strong>' + esc(ns) + '</strong>...');
+
+      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/deploy/chat-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'deploy', parseId: _deployParseId }),
+      });
+      var data = await resp.json();
+      if (data.error) { deployChat('error', 'Deployment failed: ' + data.error); return; }
+
+      _deployDeployId = data.deployId;
+      deployChat('system', 'Deployment started (ID: ' + esc(data.deployId) + '). Monitoring progress...');
+      pollDeployStatus(data.deployId, appName);
+    } catch (err) { deployChat('error', 'Deploy request failed: ' + err.message); }
+    return;
   }
 }
 
-async function startDocDeploy() {
-  if (!_pendingDeployIntent) return;
+async function handleDeployChatCommand(userMsg) {
+  if (!_deployParseId) return false;
+  var msg = userMsg.toLowerCase().trim();
 
-  var overlay = document.getElementById('deploy-overlay');
-  if (overlay) overlay.remove();
+  // Show YAML
+  if (msg === 'show yaml' || msg === 'show the yaml' || msg === 'review yaml' || msg === 'yaml') {
+    deployAction('show-yaml');
+    return true;
+  }
+  // Deploy
+  if (msg === 'deploy' || msg === 'deploy it' || msg === 'approve' || msg === 'approve and deploy' || msg.startsWith('deploy to ')) {
+    deployAction('deploy');
+    return true;
+  }
+  // Rollback
+  if (msg === 'rollback' || msg === 'roll back' || msg === 'undo') {
+    if (_deployDeployId) { rollbackDeploy(_deployDeployId); return true; }
+    deployChat('error', 'No active deployment to rollback.');
+    return true;
+  }
 
-  var intent = _pendingDeployIntent;
-  var appName = intent.appName || 'app';
-  var tierCount = (intent.tiers || []).length;
+  // Field changes: "change X to Y", "set X to Y", "use X for Y"
+  var changeMatch = msg.match(/(?:change|set|update)\s+(?:the\s+)?(?:(\w[\w-]*)\s+)?(\w[\w\s.]*?)\s+(?:to|=)\s+(.+)/i);
+  if (!changeMatch) changeMatch = msg.match(/(?:use)\s+(.+?)\s+(?:for|as)\s+(?:the\s+)?(\w[\w-]*?)(?:\s+image|\s+tier)?$/i);
 
-  appendSystemMsg('Starting deployment of ' + appName + ' (' + tierCount + ' tiers) to ' + (intent.targetPlatform || 'openshift') + '/' + (intent.namespace || 'default') + '...');
+  if (changeMatch) {
+    var tierName = null;
+    var field = null;
+    var value = null;
 
-  try {
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/deploy/apply', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ intent: _pendingDeployIntent }),
-    });
-    var data = await resp.json();
-    if (data.error) {
-      appendDeployChatMsg('error', 'Deployment failed to start: ' + data.error);
-      return;
+    if (msg.startsWith('use')) {
+      value = changeMatch[1].trim();
+      tierName = changeMatch[2].trim();
+      field = 'image';
+    } else {
+      tierName = changeMatch[1] ? changeMatch[1].trim() : null;
+      field = changeMatch[2].trim().toLowerCase();
+      value = changeMatch[3].trim();
     }
 
-    var deployId = data.deployId;
-    appendDeployChatMsg('info', 'Deployment accepted: ' + deployId);
+    // Map friendly field names
+    var fieldMap = {
+      'replicas': 'replicas.min', 'min replicas': 'replicas.min', 'max replicas': 'replicas.max',
+      'cpu request': 'resources.cpuReq', 'cpu limit': 'resources.cpuLim',
+      'memory request': 'resources.memReq', 'memory limit': 'resources.memLim',
+      'mem request': 'resources.memReq', 'mem limit': 'resources.memLim',
+      'app name': 'appName', 'application name': 'appName',
+    };
+    if (fieldMap[field]) field = fieldMap[field];
 
-    // Poll for status
-    pollDeployStatus(deployId, appName);
-  } catch (err) {
-    appendDeployChatMsg('error', 'Deployment request failed: ' + err.message);
+    try {
+      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/deploy/chat-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update-field', parseId: _deployParseId, tierName: tierName, field: field, value: value }),
+      });
+      var data = await resp.json();
+      if (data.error) { deployChat('error', data.error); return true; }
+
+      deployChat('system', 'Updated <strong>' + esc(field) + '</strong>' + (tierName ? ' for <strong>' + esc(tierName) + '</strong>' : '') + ' to <strong>' + esc(value) + '</strong>. Confidence: ' + data.confidence + '%');
+
+      // Re-show intent
+      showDeployIntentInChat({ intent: data.intent, missingFields: data.missingFields, confidence: data.confidence });
+      return true;
+    } catch (err) { deployChat('error', err.message); return true; }
   }
+
+  // Add tier: "add a redis cache tier"
+  if (msg.match(/^add\s+(?:a\s+)?(\w+)\s+(?:tier|component|service)/)) {
+    deployChat('system', 'To add a tier, please specify at minimum: name, image, port, and role (database/app/frontend). Example: "set newTier image to redis:7"');
+    return true;
+  }
+
+  return false;
 }
 
 async function pollDeployStatus(deployId, appName) {
@@ -12915,7 +13014,6 @@ async function pollDeployStatus(deployId, appName) {
       var dep = await resp.json();
       if (dep.error) break;
 
-      // Report new steps
       var steps = dep.steps || [];
       for (var s = lastStepCount; s < steps.length; s++) {
         var step = steps[s];
@@ -12923,87 +13021,38 @@ async function pollDeployStatus(deployId, appName) {
           : step.status === 'failed' ? '&#x274C;'
           : step.status === 'deleted' ? '&#x1F5D1;'
           : '&#x23F3;';
-        appendDeployChatMsg('step', icon + ' ' + (step.message || step.kind + '/' + step.name));
+        deployChat('step', icon + ' ' + esc(step.message || step.kind + '/' + step.name));
       }
       lastStepCount = steps.length;
 
       if (dep.status === 'completed') {
-        appendDeployChatMsg('success', 'Deployment complete! ' + appName + ' — ' + (dep.ais?.tiers?.length || 0) + ' tiers, all healthy.');
-        showDeployActions(deployId);
-        _pendingDeployIntent = null;
+        var successHtml = '<div style="font-weight:600;color:#10b981;font-size:13px">&#x2705; Deployment complete!</div>';
+        successHtml += '<div style="font-size:12px;color:var(--text2);margin-top:4px">' + esc(appName) + ' — ' + (dep.ais?.tiers?.length || 0) + ' tiers deployed and healthy.</div>';
+        successHtml += '<div style="display:flex;gap:8px;margin-top:10px">';
+        successHtml += '<button class="deploy-btn deploy-btn-danger" onclick="rollbackDeploy(\'' + esc(deployId) + '\')">Rollback</button>';
+        successHtml += '</div>';
+        deployChat('deploy-complete', successHtml, true);
         return;
       }
       if (dep.status === 'failed') {
-        appendDeployChatMsg('error', 'Deployment failed: ' + (dep.error || 'unknown error'));
-        showDeployRollbackAction(deployId);
-        _pendingDeployIntent = null;
+        var failHtml = '<div style="font-weight:600;color:var(--crit);font-size:13px">&#x274C; Deployment failed</div>';
+        failHtml += '<div style="font-size:12px;color:var(--text2);margin-top:4px">' + esc(dep.error || 'Unknown error') + '</div>';
+        failHtml += '<div style="display:flex;gap:8px;margin-top:10px">';
+        failHtml += '<button class="deploy-btn deploy-btn-danger" onclick="rollbackDeploy(\'' + esc(deployId) + '\')">Rollback All Resources</button>';
+        failHtml += '</div>';
+        deployChat('deploy-failed', failHtml, true);
         return;
       }
       if (dep.status === 'rolled_back' || dep.status === 'rollback_partial') {
-        appendDeployChatMsg('info', 'Deployment rolled back.');
-        _pendingDeployIntent = null;
+        deployChat('system', 'Deployment rolled back successfully.');
         return;
       }
-    } catch (err) {
-      // transient error, keep polling
-    }
+    } catch (err) { /* transient error, keep polling */ }
   }
-}
-
-function appendDeployChatMsg(type, text) {
-  var history = loadChatHistory();
-  if (!history.activeId) return;
-  var chat = history.chats.find(function(c) { return c.id === history.activeId; });
-  if (!chat) return;
-
-  var color = type === 'error' ? 'var(--crit)' : type === 'success' ? '#10b981' : type === 'step' ? 'var(--text)' : 'var(--text2)';
-  var weight = (type === 'success' || type === 'error') ? 'font-weight:600;' : '';
-  var htmlStr = '<div style="font-size:12px;color:' + color + ';' + weight + 'padding:2px 0">' + text + '</div>';
-
-  var lastMsg = chat.messages[chat.messages.length - 1];
-  if (lastMsg && lastMsg.provider === 'deploy-progress') {
-    lastMsg.text += '\n' + text.replace(/<[^>]+>/g, '');
-    lastMsg.html += htmlStr;
-  } else {
-    chat.messages.push({ role: 'ai', text: text.replace(/<[^>]+>/g, ''), html: htmlStr, provider: 'deploy-progress' });
-  }
-  chat.updatedAt = new Date().toISOString();
-  saveChatHistory(history);
-  renderConversation();
-}
-
-function showDeployActions(deployId) {
-  var history = loadChatHistory();
-  if (!history.activeId) return;
-  var chat = history.chats.find(function(c) { return c.id === history.activeId; });
-  if (!chat) return;
-
-  var actionsHtml = '<div style="display:flex;gap:8px;margin-top:8px">' +
-    '<button class="deploy-btn deploy-btn-danger" onclick="rollbackDeploy(\'' + esc(deployId) + '\')">Rollback</button>' +
-    '</div>';
-  chat.messages.push({ role: 'ai', text: 'Deployment actions', html: actionsHtml, provider: 'deploy-actions' });
-  chat.updatedAt = new Date().toISOString();
-  saveChatHistory(history);
-  renderConversation();
-}
-
-function showDeployRollbackAction(deployId) {
-  var history = loadChatHistory();
-  if (!history.activeId) return;
-  var chat = history.chats.find(function(c) { return c.id === history.activeId; });
-  if (!chat) return;
-
-  var actionsHtml = '<div style="display:flex;gap:8px;margin-top:8px">' +
-    '<button class="deploy-btn deploy-btn-danger" onclick="rollbackDeploy(\'' + esc(deployId) + '\')">Rollback All Resources</button>' +
-    '</div>';
-  chat.messages.push({ role: 'ai', text: 'Deployment failed', html: actionsHtml, provider: 'deploy-actions' });
-  chat.updatedAt = new Date().toISOString();
-  saveChatHistory(history);
-  renderConversation();
 }
 
 async function rollbackDeploy(deployId) {
-  appendDeployChatMsg('info', 'Rolling back deployment ' + deployId + '...');
+  deployChat('system', 'Rolling back deployment...');
   try {
     var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/deploy/rollback', {
       method: 'POST',
@@ -13012,14 +13061,53 @@ async function rollbackDeploy(deployId) {
     });
     var data = await resp.json();
     if (data.error) {
-      appendDeployChatMsg('error', 'Rollback failed: ' + data.error);
+      deployChat('error', 'Rollback failed: ' + data.error);
     } else {
       var status = data.status === 'rolled_back' ? 'complete' : 'partial';
-      appendDeployChatMsg(status === 'complete' ? 'success' : 'info', 'Rollback ' + status + '. All resources removed.');
+      deployChat(status === 'complete' ? 'success' : 'system', 'Rollback ' + status + '. All resources removed.');
+      _deployDeployId = null;
     }
-  } catch (err) {
-    appendDeployChatMsg('error', 'Rollback error: ' + err.message);
+  } catch (err) { deployChat('error', 'Rollback error: ' + err.message); }
+}
+
+function deployChat(type, content, isHtml) {
+  var history = loadChatHistory();
+  if (!history.activeId) return;
+  var chat = history.chats.find(function(c) { return c.id === history.activeId; });
+  if (!chat) return;
+
+  var htmlStr;
+  if (type === 'user' || type === 'user-file') {
+    var text = type === 'user-file' ? 'Uploaded: ' + content : content;
+    var uHtml = type === 'user-file'
+      ? '<div class="deploy-file-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' + esc(content) + '</div>'
+      : '<div style="font-size:13px">' + esc(content) + '</div>';
+    chat.messages.push({ role: 'user', text: text, html: uHtml });
+  } else if (type === 'error') {
+    htmlStr = '<div style="font-size:12px;color:var(--crit);font-weight:600;padding:6px 0">&#x274C; ' + esc(content) + '</div>';
+    chat.messages.push({ role: 'ai', text: content, html: htmlStr, provider: 'deploy' });
+  } else if (type === 'success') {
+    htmlStr = '<div style="font-size:12px;color:#10b981;font-weight:600;padding:6px 0">&#x2705; ' + esc(content) + '</div>';
+    chat.messages.push({ role: 'ai', text: content, html: htmlStr, provider: 'deploy' });
+  } else if (type === 'step') {
+    htmlStr = '<div style="font-size:12px;padding:2px 0">' + content + '</div>';
+    var lastMsg = chat.messages[chat.messages.length - 1];
+    if (lastMsg && lastMsg.provider === 'deploy-progress') {
+      lastMsg.html += htmlStr;
+      lastMsg.text += '\n' + content.replace(/<[^>]+>/g, '');
+    } else {
+      chat.messages.push({ role: 'ai', text: content.replace(/<[^>]+>/g, ''), html: htmlStr, provider: 'deploy-progress' });
+    }
+  } else if (isHtml) {
+    chat.messages.push({ role: 'ai', text: content.replace(/<[^>]+>/g, '').substring(0, 200), html: content, provider: 'deploy' });
+  } else {
+    htmlStr = '<div style="font-size:12px;color:var(--text2);padding:4px 0">' + content + '</div>';
+    chat.messages.push({ role: 'ai', text: content.replace(/<[^>]+>/g, ''), html: htmlStr, provider: 'deploy' });
   }
+
+  chat.updatedAt = new Date().toISOString();
+  saveChatHistory(history);
+  renderConversation();
 }
 
 // Drag-and-drop support on chat area

@@ -22,8 +22,8 @@ export async function extractAIS(parsedDoc, providerOpts = {}) {
     return { intent, missingFields, confidence };
   }
 
-  console.log("[ais-extractor] Deterministic extraction found no tiers, falling back to LLM");
-  return extractWithLLM(parsedDoc, providerOpts);
+  console.log("[ais-extractor] Deterministic extraction found no tiers, falling back to chunked LLM");
+  return extractWithChunkedLLM(parsedDoc, providerOpts);
 }
 
 // ---------------------------------------------------------------------------
@@ -424,17 +424,220 @@ function inferRole(heading) {
 }
 
 // ---------------------------------------------------------------------------
-// LLM fallback (only used for freeform/prose documents)
+// Chunked multi-pass LLM extraction — breaks doc into small sections,
+// processes each in parallel, then merges results. Avoids timeout on large docs.
 // ---------------------------------------------------------------------------
-async function extractWithLLM(parsedDoc, providerOpts) {
-  const PROMPT = `Parse this deployment document into a JSON object with these fields:
-- appName, description, environment, targetPlatform, namespace
-- tiers: [{name, role, image, replicas:{min,max}, port, protocol, resources:{cpuReq,cpuLim,memReq,memLim}, envVars:[{name,value?,fromSecret?,secretKey?}], storage:{size,mountPath,storageClass,accessMode}|null, probes, expose, hostname?, tls?, dependsOn:[], initSql?, security:{runAsNonRoot,readOnlyRootFs,dropCapabilities}}]
-- sharedSecrets, configMaps, networkPolicies, deployOrder, validationTests, rollbackCriteria
-Return ONLY valid JSON.\n\nDOCUMENT:\n`;
+async function extractWithChunkedLLM(parsedDoc, providerOpts) {
+  const chunks = chunkSections(parsedDoc.sections, 1500);
+  console.log("[ais-extractor] Chunked LLM: " + chunks.length + " chunks from " + parsedDoc.sections.length + " sections");
 
-  const docText = formatDocForLLM(parsedDoc);
+  const llmOpts = buildLLMOpts(providerOpts);
 
+  const CHUNK_PROMPT = `You are analyzing ONE section of a deployment document. Extract any deployment information you find into a JSON object. Include ONLY fields present in this section. Possible fields:
+- appName, description, environment, targetPlatform, namespace, deployOrder
+- tier: {name, role, image, replicas:{min,max}, port, protocol, resources:{cpuReq,cpuLim,memReq,memLim}, envVars:[{name,value?,fromSecret?,secretKey?}], storage:{size,mountPath,storageClass,accessMode}, probes:{liveness,readiness}, expose, hostname, tls, dependsOn, initSql, security:{runAsNonRoot,readOnlyRootFs,dropCapabilities}}
+- secret: {name, keys, usedBy}
+- configMap: {name, data:{}, usedBy}
+- networkPolicy: {from, to, port, protocol, allowed}
+- validationTest: {description, command, expected}
+- rollbackCriteria: [strings]
+Return ONLY valid JSON. If this section has no deployment info, return {}.
+
+SECTION:
+`;
+
+  // Process chunks in parallel (max 4 concurrent)
+  const partials = [];
+  const batchSize = 4;
+  for (let i = 0; i < chunks.length; i += batchSize) {
+    const batch = chunks.slice(i, i + batchSize);
+    const results = await Promise.allSettled(
+      batch.map(chunk => callLLM({
+        messages: [
+          { role: "system", content: "Return ONLY valid compact JSON. No markdown." },
+          { role: "user", content: CHUNK_PROMPT + chunk },
+        ],
+        maxTokens: 2048,
+        maxRetries: 1,
+        ...llmOpts,
+      }))
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled") {
+        const text = typeof r.value === "string" ? r.value : (r.value?.text || r.value?.content || "");
+        try {
+          const parsed = tryParseJSON(text.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, ""));
+          if (parsed && Object.keys(parsed).length > 0) partials.push(parsed);
+        } catch { /* skip unparseable chunks */ }
+      }
+    }
+  }
+
+  if (partials.length === 0) {
+    // Last resort: try single call with full doc
+    console.log("[ais-extractor] Chunked extraction yielded no results, trying single LLM call");
+    return extractWithLLM(parsedDoc, providerOpts);
+  }
+
+  // Merge partial results
+  const intent = mergePartialIntents(partials);
+
+  // If merge is too sparse, use LLM to finalize
+  if (intent.tiers.length === 0) {
+    console.log("[ais-extractor] Merged intent has no tiers, trying single LLM call");
+    return extractWithLLM(parsedDoc, providerOpts);
+  }
+
+  const missingFields = validateAIS(intent);
+  const confidence = calculateConfidence(intent, missingFields);
+  console.log("[ais-extractor] Chunked LLM extraction complete:", intent.tiers.length, "tiers, confidence:", confidence);
+  return { intent, missingFields, confidence };
+}
+
+function chunkSections(sections, maxTokens) {
+  const chunks = [];
+  let current = "";
+  let currentTokens = 0;
+
+  for (const sec of sections) {
+    const text = formatSectionForLLM(sec);
+    const tokens = Math.ceil(text.split(/\s+/).length * 1.3);
+
+    if (currentTokens + tokens > maxTokens && current) {
+      chunks.push(current);
+      current = "";
+      currentTokens = 0;
+    }
+
+    current += text + "\n\n";
+    currentTokens += tokens;
+  }
+
+  if (current.trim()) chunks.push(current);
+  return chunks;
+}
+
+function formatSectionForLLM(sec) {
+  const lines = [];
+  if (sec.heading) lines.push("#".repeat(Math.min(sec.level || 1, 4)) + " " + sec.heading);
+  if (sec.content) lines.push(sec.content);
+  for (const table of sec.tables) {
+    if (table.headers?.length > 0) {
+      lines.push("| " + table.headers.join(" | ") + " |");
+      lines.push("| " + table.headers.map(() => "---").join(" | ") + " |");
+      for (const row of table.rows) {
+        lines.push("| " + table.headers.map((h) => row[h] || "").join(" | ") + " |");
+      }
+    }
+  }
+  return lines.join("\n");
+}
+
+function mergePartialIntents(partials) {
+  const intent = {
+    appName: null,
+    description: null,
+    environment: null,
+    targetPlatform: null,
+    namespace: null,
+    tiers: [],
+    sharedSecrets: [],
+    configMaps: [],
+    networkPolicies: [],
+    deployOrder: [],
+    validationTests: [],
+    rollbackCriteria: [],
+  };
+
+  const seenTiers = new Set();
+  const seenSecrets = new Set();
+  const seenConfigMaps = new Set();
+
+  for (const p of partials) {
+    if (p.appName && !intent.appName) intent.appName = p.appName;
+    if (p.description && !intent.description) intent.description = p.description;
+    if (p.environment && !intent.environment) intent.environment = p.environment;
+    if (p.targetPlatform && !intent.targetPlatform) intent.targetPlatform = p.targetPlatform;
+    if (p.namespace && !intent.namespace) intent.namespace = p.namespace;
+    if (p.deployOrder?.length && intent.deployOrder.length === 0) intent.deployOrder = p.deployOrder;
+
+    // Single tier from a chunk
+    if (p.tier && p.tier.name && !seenTiers.has(p.tier.name)) {
+      seenTiers.add(p.tier.name);
+      intent.tiers.push(p.tier);
+    }
+    // Array of tiers
+    if (Array.isArray(p.tiers)) {
+      for (const t of p.tiers) {
+        if (t.name && !seenTiers.has(t.name)) {
+          seenTiers.add(t.name);
+          intent.tiers.push(t);
+        }
+      }
+    }
+
+    // Secrets
+    if (p.secret && p.secret.name && !seenSecrets.has(p.secret.name)) {
+      seenSecrets.add(p.secret.name);
+      intent.sharedSecrets.push({ ...p.secret, autoGenerate: true });
+    }
+    if (Array.isArray(p.sharedSecrets)) {
+      for (const s of p.sharedSecrets) {
+        if (s.name && !seenSecrets.has(s.name)) {
+          seenSecrets.add(s.name);
+          intent.sharedSecrets.push({ ...s, autoGenerate: true });
+        }
+      }
+    }
+
+    // ConfigMaps
+    if (p.configMap && p.configMap.name && !seenConfigMaps.has(p.configMap.name)) {
+      seenConfigMaps.add(p.configMap.name);
+      intent.configMaps.push(p.configMap);
+    }
+    if (Array.isArray(p.configMaps)) {
+      for (const cm of p.configMaps) {
+        if (cm.name && !seenConfigMaps.has(cm.name)) {
+          seenConfigMaps.add(cm.name);
+          intent.configMaps.push(cm);
+        }
+      }
+    }
+
+    // Network policies
+    if (Array.isArray(p.networkPolicies)) {
+      intent.networkPolicies.push(...p.networkPolicies);
+    }
+    if (p.networkPolicy) {
+      intent.networkPolicies.push(p.networkPolicy);
+    }
+
+    // Validation tests
+    if (Array.isArray(p.validationTests)) {
+      intent.validationTests.push(...p.validationTests);
+    }
+    if (p.validationTest) {
+      intent.validationTests.push(p.validationTest);
+    }
+
+    // Rollback criteria
+    if (Array.isArray(p.rollbackCriteria)) {
+      intent.rollbackCriteria.push(...p.rollbackCriteria);
+    }
+  }
+
+  // Infer deploy order
+  if (intent.deployOrder.length === 0 && intent.tiers.length > 0) {
+    const db = intent.tiers.filter((t) => t.role === "database").map((t) => t.name);
+    const app = intent.tiers.filter((t) => t.role === "app").map((t) => t.name);
+    const fe = intent.tiers.filter((t) => t.role === "frontend").map((t) => t.name);
+    intent.deployOrder = [...db, ...app, ...fe];
+  }
+
+  return intent;
+}
+
+function buildLLMOpts(providerOpts) {
   const config = loadConfig();
   const llmOpts = {};
   if (config.llm) {
@@ -449,6 +652,22 @@ Return ONLY valid JSON.\n\nDOCUMENT:\n`;
   if (providerOpts.model) llmOpts.model = providerOpts.model;
   if (providerOpts.azureDeployment) llmOpts.azureDeployment = providerOpts.azureDeployment;
   if (providerOpts.azureApiVersion) llmOpts.azureApiVersion = providerOpts.azureApiVersion;
+  return llmOpts;
+}
+
+// ---------------------------------------------------------------------------
+// LLM fallback (only used for freeform/prose documents)
+// ---------------------------------------------------------------------------
+async function extractWithLLM(parsedDoc, providerOpts) {
+  const PROMPT = `Parse this deployment document into a JSON object with these fields:
+- appName, description, environment, targetPlatform, namespace
+- tiers: [{name, role, image, replicas:{min,max}, port, protocol, resources:{cpuReq,cpuLim,memReq,memLim}, envVars:[{name,value?,fromSecret?,secretKey?}], storage:{size,mountPath,storageClass,accessMode}|null, probes, expose, hostname?, tls?, dependsOn:[], initSql?, security:{runAsNonRoot,readOnlyRootFs,dropCapabilities}}]
+- sharedSecrets, configMaps, networkPolicies, deployOrder, validationTests, rollbackCriteria
+Return ONLY valid JSON.\n\nDOCUMENT:\n`;
+
+  const docText = formatDocForLLM(parsedDoc);
+
+  const llmOpts = buildLLMOpts(providerOpts);
 
   const result = await callLLM({
     messages: [
