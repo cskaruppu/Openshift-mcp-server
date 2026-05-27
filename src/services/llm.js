@@ -36,13 +36,13 @@ const llmDispatcher = HTTPS_PROXY
   ? new ProxyAgent({ uri: HTTPS_PROXY, requestTls: { rejectUnauthorized: false } })
   : new Agent({
       connect: { rejectUnauthorized: false, timeout: 30_000 },
-      bodyTimeout: 60_000,
-      headersTimeout: 30_000,
+      bodyTimeout: 120_000,
+      headersTimeout: 90_000,
       keepAliveTimeout: 10_000,
       pipelining: 0,
     });
 
-const DNS_RETRY_CODES = new Set(["EAI_AGAIN", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "ECONNREFUSED", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"]);
+const DNS_RETRY_CODES = new Set(["EAI_AGAIN", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "ECONNREFUSED", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT"]);
 const MAX_RETRIES = 5;
 
 async function llmFetch(url, opts, retries = MAX_RETRIES) {
