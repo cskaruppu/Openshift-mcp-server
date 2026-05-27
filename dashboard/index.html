@@ -12701,6 +12701,10 @@ async function handleDocUpload(event) {
   try {
     var formData = new FormData();
     formData.append('file', file);
+    var pOpts = typeof getActiveProviderOpts === 'function' ? getActiveProviderOpts() : {};
+    if (pOpts && Object.keys(pOpts).length > 0) {
+      formData.append('providerOpts', JSON.stringify(pOpts));
+    }
     var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/deploy/upload', {
       method: 'POST',
       body: formData,

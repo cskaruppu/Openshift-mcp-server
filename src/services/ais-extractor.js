@@ -45,65 +45,19 @@ const AIS_SCHEMA = {
   rollbackCriteria: ["string"],
 };
 
-const EXTRACTION_PROMPT = `You are an expert Kubernetes deployment architect. Parse the following document into a structured Application Intent Schema (AIS) JSON.
+const EXTRACTION_PROMPT = `Parse this deployment document into a JSON object with these fields:
+- appName, description, environment, targetPlatform, namespace
+- tiers: array of {name, role("database"|"app"|"frontend"), image, replicas:{min,max}, port, protocol, resources:{cpuReq,cpuLim,memReq,memLim}, envVars:[{name,value?,fromSecret?,secretKey?}], storage:{size,mountPath,storageClass,accessMode}|null, probes:{liveness:{type,path?,command?,port,initialDelay,period},readiness:{...}}, expose(bool), hostname?, tls?, reverseProxy:{path,upstream}?, dependsOn:[], initSql?, security:{runAsNonRoot,readOnlyRootFs,dropCapabilities}}
+- sharedSecrets: [{name, keys:[], usedBy:[], autoGenerate:bool}]
+- configMaps: [{name, data:{}, usedBy:[]}]
+- networkPolicies: [{from, to, port, protocol, allowed:bool}]
+- deployOrder: [tier names in order]
+- validationTests: [{description, command, expected}]
+- rollbackCriteria: [strings]
 
-CRITICAL RULES:
-1. Extract EVERY field from the document. Use the exact values specified.
-2. For container images, use the exact image:tag specified. Do NOT invent images.
-3. For environment variables referencing secrets, set fromSecret and secretKey instead of value.
-4. deployOrder must respect dependsOn relationships (databases first, then app, then frontend).
-5. If a field is not specified in the document, set it to null — do NOT guess.
-6. For resources, keep the exact units (m for millicores, Mi/Gi for memory).
-7. For each tier, set role to exactly: "database", "app", or "frontend".
-8. For storage, only include if explicitly mentioned. Database tiers typically need storage.
-9. Port numbers must be integers, not strings.
-10. TLS value should be "edge", "passthrough", "reencrypt", or null.
+Rules: use exact values from doc, integers for ports, null for unspecified fields. Return ONLY valid JSON.
 
-Return ONLY valid JSON matching this schema:
-{
-  "appName": "string",
-  "description": "string",
-  "environment": "string (dev/staging/production)",
-  "targetPlatform": "string (openshift/eks/gke/aks/k8s/rancher)",
-  "namespace": "string",
-  "tiers": [{
-    "name": "component-name",
-    "role": "frontend|app|database",
-    "image": "registry/org/image:tag",
-    "replicas": { "min": 1, "max": 1 },
-    "port": 8080,
-    "protocol": "TCP",
-    "resources": { "cpuReq": "100m", "cpuLim": "500m", "memReq": "256Mi", "memLim": "1Gi" },
-    "envVars": [
-      { "name": "ENV_NAME", "value": "literal_value" },
-      { "name": "SECRET_VAR", "fromSecret": "secret-name", "secretKey": "key" }
-    ],
-    "storage": { "size": "10Gi", "mountPath": "/data", "storageClass": "default", "accessMode": "ReadWriteOnce" } or null,
-    "probes": {
-      "liveness": { "type": "http|tcp|exec", "path": "/healthz", "port": 8080, "command": null, "initialDelay": 30, "period": 10 },
-      "readiness": { "type": "http|tcp|exec", "path": "/ready", "port": 8080, "command": null, "initialDelay": 5, "period": 5 }
-    },
-    "expose": false,
-    "hostname": null,
-    "tls": null,
-    "reverseProxy": null or { "path": "/api/*", "upstream": "http://service:port" },
-    "dependsOn": ["other-tier-name"],
-    "initSql": null or "CREATE TABLE ...",
-    "security": { "runAsNonRoot": true, "readOnlyRootFs": false, "dropCapabilities": true }
-  }],
-  "sharedSecrets": [{ "name": "secret-name", "keys": ["username", "password"], "usedBy": ["tier1", "tier2"], "autoGenerate": true }],
-  "configMaps": [{ "name": "cm-name", "data": { "KEY": "value" }, "usedBy": ["tier1"] }],
-  "networkPolicies": [
-    { "from": "internet", "to": "frontend", "port": 443, "protocol": "TCP", "allowed": true },
-    { "from": "frontend", "to": "app", "port": 3000, "protocol": "TCP", "allowed": true },
-    { "from": "frontend", "to": "database", "port": 5432, "protocol": "TCP", "allowed": false }
-  ],
-  "deployOrder": ["database-name", "app-name", "frontend-name"],
-  "validationTests": [{ "description": "Health check", "command": "curl http://hostname/healthz", "expected": "200 OK" }],
-  "rollbackCriteria": ["Any tier fails to become Ready within timeout"]
-}
-
-DOCUMENT CONTENT:
+DOCUMENT:
 `;
 
 /**
@@ -111,7 +65,7 @@ DOCUMENT CONTENT:
  * @param {object} parsedDoc - Output from doc-parser (sections + rawText)
  * @returns {{ intent: object, missingFields: string[], confidence: number }}
  */
-export async function extractAIS(parsedDoc) {
+export async function extractAIS(parsedDoc, providerOpts = {}) {
   const docText = formatDocForLLM(parsedDoc);
   const userPrompt = EXTRACTION_PROMPT + docText;
 
@@ -123,12 +77,20 @@ export async function extractAIS(parsedDoc) {
     if (config.llm.apiUrl) llmOpts.apiUrl = config.llm.apiUrl;
     if (config.llm.model) llmOpts.model = config.llm.model;
   }
+  // Dashboard-provided provider settings override config-file defaults
+  if (providerOpts.provider) llmOpts.provider = providerOpts.provider;
+  if (providerOpts.apiKey) llmOpts.apiKey = providerOpts.apiKey;
+  if (providerOpts.apiUrl) llmOpts.apiUrl = providerOpts.apiUrl;
+  if (providerOpts.model) llmOpts.model = providerOpts.model;
+  if (providerOpts.azureDeployment) llmOpts.azureDeployment = providerOpts.azureDeployment;
+  if (providerOpts.azureApiVersion) llmOpts.azureApiVersion = providerOpts.azureApiVersion;
 
   const result = await callLLM({
     messages: [
-      { role: "system", content: "You are a Kubernetes deployment specification parser. Return only valid JSON, no markdown fences, no explanation." },
+      { role: "system", content: "You are a Kubernetes deployment specification parser. Return ONLY valid compact JSON, no markdown fences, no explanation, no trailing text." },
       { role: "user", content: userPrompt },
     ],
+    maxTokens: 4096,
     ...llmOpts,
   });
 
@@ -140,7 +102,7 @@ export async function extractAIS(parsedDoc) {
     if (cleaned.startsWith("```")) {
       cleaned = cleaned.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
     }
-    intent = JSON.parse(cleaned);
+    intent = tryParseJSON(cleaned);
   } catch (err) {
     throw new Error("Failed to parse LLM response as JSON: " + err.message);
   }
@@ -158,6 +120,39 @@ export async function extractAISFromText(text) {
   const { parseMarkdownText } = await import("./doc-parser.js");
   const parsed = parseMarkdownText(text);
   return extractAIS(parsed);
+}
+
+/**
+ * Try to parse JSON, with recovery for truncated responses.
+ * Attempts to close unclosed brackets/braces to salvage partial output.
+ */
+function tryParseJSON(text) {
+  try {
+    return JSON.parse(text);
+  } catch (firstErr) {
+    let fixed = text;
+    const opens = { "{": 0, "[": 0 };
+    let inString = false;
+    let escape = false;
+    for (const ch of fixed) {
+      if (escape) { escape = false; continue; }
+      if (ch === "\\") { escape = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === "{") opens["{"]++;
+      if (ch === "}") opens["{"]--;
+      if (ch === "[") opens["["]++;
+      if (ch === "]") opens["["]--;
+    }
+    if (inString) fixed += '"';
+    while (opens["["] > 0) { fixed += "]"; opens["["]--; }
+    while (opens["{"] > 0) { fixed += "}"; opens["{"]--; }
+    try {
+      return JSON.parse(fixed);
+    } catch {
+      throw firstErr;
+    }
+  }
 }
 
 function formatDocForLLM(parsedDoc) {

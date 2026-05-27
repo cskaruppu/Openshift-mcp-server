@@ -3672,7 +3672,7 @@ async function startSSE() {
     if (req.method === "POST" && url.pathname === "/api/deploy/upload") {
       try {
         const ct = req.headers["content-type"] || "";
-        let docBuffer, format;
+        let docBuffer, format, providerOpts = {};
         if (ct.includes("multipart/form-data")) {
           const raw = await readRawBody(req);
           const parts = parseMultipart(raw, ct);
@@ -3680,8 +3680,11 @@ async function startSSE() {
           if (!filePart) { sendJson(res, 400, { error: "No file uploaded" }); return; }
           docBuffer = filePart.data;
           format = filePart.filename.endsWith(".docx") ? "docx" : "text";
+          const optsPart = parts.find((p) => p.name === "providerOpts");
+          if (optsPart) { try { providerOpts = JSON.parse(optsPart.data.toString()); } catch {} }
         } else {
           const body = await readJsonBody(req);
+          providerOpts = body.providerOpts || {};
           if (body.document) {
             if (body.format === "docx") {
               docBuffer = Buffer.from(body.document, "base64");
@@ -3696,7 +3699,7 @@ async function startSSE() {
           }
         }
         const parsed = format === "docx" ? await parseDocx(docBuffer) : parseMarkdownText(String(docBuffer));
-        const { intent, missingFields, confidence } = await extractAIS(parsed);
+        const { intent, missingFields, confidence } = await extractAIS(parsed, providerOpts);
         sendJson(res, 200, { intent, missingFields, confidence, sectionCount: parsed.sections.length });
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
