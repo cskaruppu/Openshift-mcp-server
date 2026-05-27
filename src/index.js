@@ -223,6 +223,7 @@ import { flags as featureFlags, snapshot as flagSnapshot } from "./services/feat
 
 const silencedAlerts = new Map();
 let _liveState = null;
+const _parseJobs = new Map();
 
 function createMcpServer() {
   const server = new McpServer({
@@ -3669,6 +3670,7 @@ async function startSSE() {
     }
 
     // ── Document-Driven Deployment API ──────────────────────────────
+    // Async parse jobs — avoids HAProxy route timeout on long LLM calls
     if (req.method === "POST" && url.pathname === "/api/deploy/upload") {
       try {
         const ct = req.headers["content-type"] || "";
@@ -3698,10 +3700,33 @@ async function startSSE() {
             return;
           }
         }
+        // Parse doc immediately (fast), then queue LLM extraction async
         const parsed = format === "docx" ? await parseDocx(docBuffer) : parseMarkdownText(String(docBuffer));
-        const { intent, missingFields, confidence } = await extractAIS(parsed, providerOpts);
-        sendJson(res, 200, { intent, missingFields, confidence, sectionCount: parsed.sections.length });
+        const parseId = "parse-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+        _parseJobs.set(parseId, { status: "extracting", sectionCount: parsed.sections.length });
+        // Return immediately so the HTTP connection isn't held through the LLM call
+        sendJson(res, 202, { parseId, status: "extracting", sectionCount: parsed.sections.length });
+        // Run LLM extraction in background
+        extractAIS(parsed, providerOpts)
+          .then(({ intent, missingFields, confidence }) => {
+            _parseJobs.set(parseId, { status: "done", intent, missingFields, confidence, sectionCount: parsed.sections.length });
+          })
+          .catch((err) => {
+            _parseJobs.set(parseId, { status: "error", error: err.message });
+          });
       } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/deploy/parse-status") {
+      const parseId = url.searchParams.get("id");
+      if (!parseId) { sendJson(res, 400, { error: "id parameter required" }); return; }
+      const job = _parseJobs.get(parseId);
+      if (!job) { sendJson(res, 404, { error: "Parse job not found" }); return; }
+      sendJson(res, 200, { parseId, ...job });
+      if (job.status === "done" || job.status === "error") {
+        setTimeout(() => _parseJobs.delete(parseId), 300_000);
+      }
       return;
     }
 

@@ -12709,17 +12709,58 @@ async function handleDocUpload(event) {
       method: 'POST',
       body: formData,
     });
+    if (!resp.ok) {
+      var ct = resp.headers.get('content-type') || '';
+      if (ct.includes('text/html')) {
+        appendSystemMsg('Parse error: Server returned HTTP ' + resp.status + '. Check route timeout settings.');
+      } else {
+        var errBody = await resp.text();
+        try { var ej = JSON.parse(errBody); appendSystemMsg('Parse error: ' + (ej.error || resp.status)); }
+        catch { appendSystemMsg('Parse error: Server returned HTTP ' + resp.status); }
+      }
+      return;
+    }
     var data = await resp.json();
     if (data.error) {
       appendSystemMsg('Parse error: ' + data.error);
       return;
     }
 
-    _pendingDeployIntent = data.intent;
-    showDeployPreviewModal(data);
+    // Async extraction — poll for result
+    if (data.parseId && data.status === 'extracting') {
+      appendSystemMsg('Document parsed (' + (data.sectionCount || '?') + ' sections). AI is extracting deployment intent...');
+      var result = await pollParseJob(data.parseId);
+      if (!result) return;
+      if (result.error) {
+        appendSystemMsg('Parse error: ' + result.error);
+        return;
+      }
+      _pendingDeployIntent = result.intent;
+      showDeployPreviewModal(result);
+    } else if (data.intent) {
+      _pendingDeployIntent = data.intent;
+      showDeployPreviewModal(data);
+    }
   } catch (err) {
     appendSystemMsg('Upload failed: ' + err.message);
   }
+}
+
+async function pollParseJob(parseId) {
+  var maxPolls = 40;
+  var interval = 3000;
+  for (var i = 0; i < maxPolls; i++) {
+    await new Promise(function(r) { setTimeout(r, interval); });
+    try {
+      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/deploy/parse-status?id=' + encodeURIComponent(parseId));
+      if (!resp.ok) continue;
+      var job = await resp.json();
+      if (job.status === 'done') return job;
+      if (job.status === 'error') return job;
+    } catch { /* retry */ }
+  }
+  appendSystemMsg('Parse timed out after ' + Math.round(maxPolls * interval / 1000) + 's. Try again.');
+  return null;
 }
 
 function appendSystemMsg(text) {
