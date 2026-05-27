@@ -12747,7 +12747,7 @@ async function handleDocUpload(event) {
 }
 
 async function pollParseJob(parseId) {
-  var maxPolls = 40;
+  var maxPolls = 60;
   var interval = 3000;
   for (var i = 0; i < maxPolls; i++) {
     await new Promise(function(r) { setTimeout(r, interval); });
@@ -12757,9 +12757,10 @@ async function pollParseJob(parseId) {
       var job = await resp.json();
       if (job.status === 'done') return job;
       if (job.status === 'error') return job;
+      if (i === 15) appendSystemMsg('Still extracting... Azure OpenAI may take up to 60s for large documents.');
     } catch { /* retry */ }
   }
-  appendSystemMsg('Parse timed out after ' + Math.round(maxPolls * interval / 1000) + 's. Try again.');
+  appendSystemMsg('Parse timed out after ' + Math.round(maxPolls * interval / 1000) + 's. Check server logs for errors.');
   return null;
 }
 

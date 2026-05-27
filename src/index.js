@@ -3706,12 +3706,15 @@ async function startSSE() {
         _parseJobs.set(parseId, { status: "extracting", sectionCount: parsed.sections.length });
         // Return immediately so the HTTP connection isn't held through the LLM call
         sendJson(res, 202, { parseId, status: "extracting", sectionCount: parsed.sections.length });
+        console.log("[deploy] Parse job", parseId, "started, provider:", providerOpts.provider, "sections:", parsed.sections.length);
         // Run LLM extraction in background
         extractAIS(parsed, providerOpts)
           .then(({ intent, missingFields, confidence }) => {
+            console.log("[deploy] Parse job", parseId, "completed, confidence:", confidence, "missing:", missingFields.length);
             _parseJobs.set(parseId, { status: "done", intent, missingFields, confidence, sectionCount: parsed.sections.length });
           })
           .catch((err) => {
+            console.error("[deploy] Parse job", parseId, "FAILED:", err.message);
             _parseJobs.set(parseId, { status: "error", error: err.message });
           });
       } catch (err) { sendJson(res, 500, { error: err.message }); }

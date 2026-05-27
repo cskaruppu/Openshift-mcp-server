@@ -85,14 +85,19 @@ export async function extractAIS(parsedDoc, providerOpts = {}) {
   if (providerOpts.azureDeployment) llmOpts.azureDeployment = providerOpts.azureDeployment;
   if (providerOpts.azureApiVersion) llmOpts.azureApiVersion = providerOpts.azureApiVersion;
 
+  console.log("[ais-extractor] Starting extraction, provider:", llmOpts.provider, "prompt length:", userPrompt.length);
+
   const result = await callLLM({
     messages: [
       { role: "system", content: "You are a Kubernetes deployment specification parser. Return ONLY valid compact JSON, no markdown fences, no explanation, no trailing text." },
       { role: "user", content: userPrompt },
     ],
     maxTokens: 4096,
+    maxRetries: 1,
     ...llmOpts,
   });
+
+  console.log("[ais-extractor] LLM returned, response type:", typeof result, "text length:", (result?.text || "").length);
 
   const response = typeof result === "string" ? result : (result?.text || result?.content || "");
 
