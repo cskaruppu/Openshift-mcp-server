@@ -1,5 +1,6 @@
-import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, HeadingLevel, WidthType, BorderStyle, AlignmentType, PageBreak, VerticalAlign, ShadingType } from "docx";
+import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, HeadingLevel, WidthType, BorderStyle, AlignmentType, PageBreak, VerticalAlign, ShadingType, ImageRun } from "docx";
 import { writeFile } from "node:fs/promises";
+import { createCanvas } from "canvas";
 
 // ── Color Palette ──
 const C = {
@@ -178,6 +179,347 @@ function flowArrow(from, direction, to, port, protocol, purpose, opts = {}) {
   });
 }
 
+// ── Generate Architecture Diagram as PNG ──
+function generateArchDiagram() {
+  const W = 1400, H = 1100;
+  const canvas = createCanvas(W, H);
+  const ctx = canvas.getContext("2d");
+
+  // Background
+  ctx.fillStyle = "#F8FAFC";
+  ctx.fillRect(0, 0, W, H);
+
+  // Title bar
+  ctx.fillStyle = "#0F1B2D";
+  roundRect(ctx, 20, 15, W - 40, 56, 10, true, false);
+  ctx.fillStyle = "#FFFFFF";
+  ctx.font = "bold 22px Helvetica";
+  ctx.textAlign = "center";
+  ctx.fillText("TCS KubeNexus AI — Multi-Cluster Network Architecture", W / 2, 50);
+
+  // ── Hub Cluster Zone ──
+  const hubX = 60, hubY = 100, hubW = 580, hubH = 430;
+  drawZone(ctx, hubX, hubY, hubW, hubH, "#DBEAFE", "#2563EB", "SNO HUB CLUSTER", "10.131.71.72 — openshift-mcp");
+
+  // Hub components
+  const hubComps = [
+    { label: "MCP Server", sub: "Port 3000", icon: "⚙", color: "#1E40AF", bg: "#BFDBFE" },
+    { label: "Dashboard &\nAI Chat", sub: "UI", icon: "🖥", color: "#1E40AF", bg: "#BFDBFE" },
+    { label: "Multi-Cluster\nHub", sub: "Registry", icon: "🔗", color: "#1E40AF", bg: "#BFDBFE" },
+    { label: "Deploy\nOrchestrator", sub: "Engine", icon: "🚀", color: "#1E40AF", bg: "#BFDBFE" },
+  ];
+  const hubCompY = hubY + 80;
+  hubComps.forEach((c, i) => {
+    const cx = hubX + 30 + i * 138;
+    drawComponent(ctx, cx, hubCompY, 124, 90, c);
+  });
+
+  // Hub secondary row
+  const hub2 = [
+    { label: "PostgreSQL", sub: "Port 5432", icon: "🗄", color: "#1E40AF", bg: "#BFDBFE" },
+    { label: "OpenShift\nRoute", sub: "HTTPS :443", icon: "🔒", color: "#1E40AF", bg: "#BFDBFE" },
+  ];
+  hub2.forEach((c, i) => {
+    const cx = hubX + 30 + i * 138;
+    drawComponent(ctx, cx, hubCompY + 110, 124, 90, c);
+  });
+
+  // Hub ServiceAccount box
+  drawSmallLabel(ctx, hubX + 310, hubCompY + 120, 240, 60, "ServiceAccount + RBAC", "cluster-admin (Hub)", "#EFF6FF", "#3B82F6");
+
+  // ── Agent Cluster Zone ──
+  const agX = 760, agY = 100, agW = 580, agH = 430;
+  drawZone(ctx, agX, agY, agW, agH, "#D1FAE5", "#15803D", "3-NODE AGENT CLUSTER", "10.131.73.21/.22/.23 — openshift-mcp-agent");
+
+  // Agent components
+  const agComps = [
+    { label: "MCP Agent\nPod", sub: "Port 8080", icon: "📡", color: "#166534", bg: "#A7F3D0" },
+    { label: "Scanner", sub: "60s interval", icon: "🔍", color: "#166534", bg: "#A7F3D0" },
+    { label: "Reporter", sub: "HTTP POST", icon: "📤", color: "#166534", bg: "#A7F3D0" },
+    { label: "Health\nEndpoints", sub: "/healthz", icon: "💚", color: "#166534", bg: "#A7F3D0" },
+  ];
+  const agCompY = agY + 80;
+  agComps.forEach((c, i) => {
+    const cx = agX + 30 + i * 138;
+    drawComponent(ctx, cx, agCompY, 124, 90, c);
+  });
+
+  // Agent Kubernetes API
+  drawSmallLabel(ctx, agX + 30, agCompY + 110, 260, 60, "Kubernetes API Server", "Port 6443 — Master: 10.131.73.21", "#ECFDF5", "#15803D");
+
+  // Node boxes
+  const nodeY = agCompY + 190;
+  const nodes = [
+    { label: "Master", ip: "10.131.73.21" },
+    { label: "Worker 1", ip: "10.131.73.22" },
+    { label: "Worker 2", ip: "10.131.73.23" },
+  ];
+  nodes.forEach((n, i) => {
+    const nx = agX + 30 + i * 185;
+    drawNodeBox(ctx, nx, nodeY, 170, 50, n.label, n.ip);
+  });
+
+  // ServiceAccount for agent
+  drawSmallLabel(ctx, agX + 310, agCompY + 110, 240, 60, "ServiceAccount + RBAC", "cluster-reader (read-only)", "#ECFDF5", "#15803D");
+
+  // ── Communication Arrows ──
+
+  // Arrow 1: Agent → Hub (registration + reports)
+  drawArrow(ctx, agX - 10, 210, hubX + hubW + 10, 210, "#2563EB", "HTTP POST :3000", "Agent Registration + Reports (every 60s)", true);
+
+  // Arrow 2: Hub → K8s API (health probes)
+  drawArrow(ctx, hubX + hubW + 10, 310, agX - 10, 310, "#C2410C", "HTTPS GET :6443", "Health Probes + Remote Queries", false);
+
+  // ── Browser Zone ──
+  const brX = 200, brY = 600, brW = 200, brH = 80;
+  ctx.fillStyle = "#FCE7F3";
+  roundRect(ctx, brX, brY, brW, brH, 12, true, false);
+  ctx.strokeStyle = "#DB2777";
+  ctx.lineWidth = 2;
+  roundRect(ctx, brX, brY, brW, brH, 12, false, true);
+  ctx.fillStyle = "#831843";
+  ctx.font = "bold 16px Helvetica";
+  ctx.textAlign = "center";
+  ctx.fillText("🌐  Browser / User", brX + brW / 2, brY + 35);
+  ctx.font = "13px Helvetica";
+  ctx.fillStyle = "#9D174D";
+  ctx.fillText("Dashboard Access", brX + brW / 2, brY + 58);
+
+  // Arrow 3: Browser → Hub Route
+  drawCurvedArrow(ctx, brX + brW / 2, brY, hubX + hubW / 2, hubY + hubH, "#7C3AED", "HTTPS :443", "TLS Edge Termination");
+
+  // ── Azure OpenAI Zone ──
+  const azX = 960, azY = 620, azW = 220, azH = 80;
+  ctx.fillStyle = "#FFF7ED";
+  roundRect(ctx, azX, azY, azW, azH, 12, true, false);
+  ctx.strokeStyle = "#C2410C";
+  ctx.lineWidth = 2;
+  roundRect(ctx, azX, azY, azW, azH, 12, false, true);
+  ctx.fillStyle = "#7C2D12";
+  ctx.font = "bold 16px Helvetica";
+  ctx.textAlign = "center";
+  ctx.fillText("☁  Azure OpenAI", azX + azW / 2, azY + 35);
+  ctx.font = "13px Helvetica";
+  ctx.fillStyle = "#9A3412";
+  ctx.fillText("AI Chat (HTTPS :443)", azX + azW / 2, azY + 58);
+
+  // Arrow 4: Hub → Azure OpenAI
+  drawCurvedArrow(ctx, hubX + hubW / 2 + 80, hubY + hubH, azX + azW / 2 - 80, azY, "#C2410C", "HTTPS :443", "LLM API Calls");
+
+  // ── Legend ──
+  const legX = 60, legY = 760;
+  ctx.fillStyle = "#FFFFFF";
+  roundRect(ctx, legX, legY, W - 120, 130, 10, true, false);
+  ctx.strokeStyle = "#E5E7EB";
+  ctx.lineWidth = 1;
+  roundRect(ctx, legX, legY, W - 120, 130, 10, false, true);
+
+  ctx.fillStyle = "#0F1B2D";
+  ctx.font = "bold 15px Helvetica";
+  ctx.textAlign = "left";
+  ctx.fillText("LEGEND", legX + 20, legY + 25);
+
+  const legends = [
+    { color: "#2563EB", label: "Agent → Hub (HTTP POST :3000) — Registration & Reports", y: legY + 50 },
+    { color: "#C2410C", label: "Hub → Agent K8s API (HTTPS GET :6443) — Health Probes", y: legY + 75 },
+    { color: "#7C3AED", label: "Browser → Hub Route (HTTPS :443) — Dashboard Access", y: legY + 100 },
+  ];
+  legends.forEach(l => {
+    ctx.strokeStyle = l.color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(legX + 20, l.y);
+    ctx.lineTo(legX + 70, l.y);
+    ctx.stroke();
+    drawArrowHead(ctx, legX + 70, l.y, 0, l.color);
+    ctx.fillStyle = "#374151";
+    ctx.font = "14px Helvetica";
+    ctx.fillText(l.label, legX + 85, l.y + 5);
+  });
+
+  // Port summary
+  ctx.fillStyle = "#0F1B2D";
+  ctx.font = "bold 14px Helvetica";
+  ctx.textAlign = "left";
+  const portX = legX + 700;
+  ctx.fillText("Required Ports:", portX, legY + 50);
+  ctx.font = "13px Helvetica";
+  ctx.fillStyle = "#374151";
+  ctx.fillText("TCP 3000 — Hub MCP Server API", portX, legY + 70);
+  ctx.fillText("TCP 6443 — Kubernetes API Server", portX, legY + 88);
+  ctx.fillText("TCP 443  — HTTPS Route / TLS", portX, legY + 106);
+
+  // Footer
+  ctx.fillStyle = "#0F1B2D";
+  roundRect(ctx, 20, H - 45, W - 40, 32, 8, true, false);
+  ctx.fillStyle = "#93C5FD";
+  ctx.font = "12px Helvetica";
+  ctx.textAlign = "center";
+  ctx.fillText("Generated by TCS KubeNexus AI Platform  •  Hub-and-Spoke Model  •  All communication is agent-initiated (outbound)", W / 2, H - 24);
+
+  return canvas.toBuffer("image/png");
+}
+
+function roundRect(ctx, x, y, w, h, r, fill, stroke) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+  if (fill) ctx.fill();
+  if (stroke) ctx.stroke();
+}
+
+function drawZone(ctx, x, y, w, h, bg, border, title, subtitle) {
+  ctx.fillStyle = bg;
+  roundRect(ctx, x, y, w, h, 14, true, false);
+  ctx.strokeStyle = border;
+  ctx.lineWidth = 3;
+  roundRect(ctx, x, y, w, h, 14, false, true);
+  // Zone title bar
+  ctx.fillStyle = border;
+  roundRect(ctx, x, y, w, 38, 14, true, false);
+  ctx.fillRect(x, y + 20, w, 18);
+  ctx.fillStyle = "#FFFFFF";
+  ctx.font = "bold 15px Helvetica";
+  ctx.textAlign = "left";
+  ctx.fillText("☁  " + title, x + 16, y + 25);
+  ctx.font = "12px Helvetica";
+  ctx.fillStyle = border;
+  ctx.fillText(subtitle, x + 16, y + 56);
+}
+
+function drawComponent(ctx, x, y, w, h, comp) {
+  ctx.fillStyle = comp.bg;
+  roundRect(ctx, x, y, w, h, 8, true, false);
+  ctx.strokeStyle = comp.color;
+  ctx.lineWidth = 1.5;
+  roundRect(ctx, x, y, w, h, 8, false, true);
+  ctx.fillStyle = comp.color;
+  ctx.font = "20px Helvetica";
+  ctx.textAlign = "center";
+  ctx.fillText(comp.icon, x + w / 2, y + 22);
+  ctx.font = "bold 12px Helvetica";
+  const lines = comp.label.split("\n");
+  lines.forEach((line, i) => {
+    ctx.fillText(line, x + w / 2, y + 42 + i * 15);
+  });
+  ctx.font = "11px Helvetica";
+  ctx.fillStyle = "#6B7280";
+  ctx.fillText(comp.sub, x + w / 2, y + h - 10);
+}
+
+function drawSmallLabel(ctx, x, y, w, h, title, sub, bg, border) {
+  ctx.fillStyle = bg;
+  roundRect(ctx, x, y, w, h, 6, true, false);
+  ctx.strokeStyle = border;
+  ctx.lineWidth = 1;
+  roundRect(ctx, x, y, w, h, 6, false, true);
+  ctx.fillStyle = border;
+  ctx.font = "bold 12px Helvetica";
+  ctx.textAlign = "center";
+  ctx.fillText(title, x + w / 2, y + 22);
+  ctx.font = "11px Helvetica";
+  ctx.fillStyle = "#6B7280";
+  ctx.fillText(sub, x + w / 2, y + 42);
+}
+
+function drawNodeBox(ctx, x, y, w, h, label, ip) {
+  ctx.fillStyle = "#ECFDF5";
+  roundRect(ctx, x, y, w, h, 6, true, false);
+  ctx.strokeStyle = "#15803D";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  roundRect(ctx, x, y, w, h, 6, false, true);
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#166534";
+  ctx.font = "bold 12px Helvetica";
+  ctx.textAlign = "center";
+  ctx.fillText(label, x + w / 2, y + 20);
+  ctx.font = "11px Helvetica";
+  ctx.fillStyle = "#6B7280";
+  ctx.fillText(ip, x + w / 2, y + 38);
+}
+
+function drawArrowHead(ctx, x, y, angle, color) {
+  ctx.fillStyle = color;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(-10, -5);
+  ctx.lineTo(-10, 5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawArrow(ctx, x1, y1, x2, y2, color, label, sublabel, leftToRight) {
+  const midY = y1;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2.5;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  drawArrowHead(ctx, x2, y2, angle, color);
+  // Labels
+  const midX = (x1 + x2) / 2;
+  ctx.fillStyle = "#FFFFFF";
+  const tw = ctx.measureText(label).width + 16;
+  roundRect(ctx, midX - tw / 2, midY - 24, tw, 20, 4, true, false);
+  ctx.fillStyle = color;
+  ctx.font = "bold 12px Helvetica";
+  ctx.textAlign = "center";
+  ctx.fillText(label, midX, midY - 9);
+  ctx.font = "11px Helvetica";
+  ctx.fillStyle = "#374151";
+  ctx.fillText(sublabel, midX, midY + 8);
+}
+
+function drawCurvedArrow(ctx, x1, y1, x2, y2, color, label, sublabel) {
+  const cpx = (x1 + x2) / 2;
+  const cpy = Math.max(y1, y2) + 60;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.quadraticCurveTo(cpx, cpy, x2, y2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // Arrowhead at end
+  const t = 0.95;
+  const ax = 2 * (1 - t) * (cpx - x1) + 2 * t * (x2 - cpx);
+  const ay = 2 * (1 - t) * (cpy - y1) + 2 * t * (y2 - cpy);
+  const angle = Math.atan2(ay, ax);
+  drawArrowHead(ctx, x2, y2, angle, color);
+  // Label
+  const lx = (x1 + x2) / 2;
+  const ly = cpy - 10;
+  ctx.fillStyle = "#FFFFFF";
+  const tw = ctx.measureText(label).width + 14;
+  roundRect(ctx, lx - tw / 2, ly - 12, tw, 18, 4, true, false);
+  ctx.fillStyle = color;
+  ctx.font = "bold 11px Helvetica";
+  ctx.textAlign = "center";
+  ctx.fillText(label, lx, ly + 2);
+  ctx.font = "11px Helvetica";
+  ctx.fillStyle = "#374151";
+  ctx.fillText(sublabel, lx, ly + 18);
+}
+
+const diagramPng = generateArchDiagram();
+
 const doc = new Document({
   styles: { default: { document: { run: { font: "Calibri", size: 22 } } } },
   sections: [{
@@ -295,64 +637,23 @@ const doc = new Document({
       bulletPara("All communication uses standard HTTP/HTTPS over TCP. No VPNs, message queues, or special protocols required."),
 
       // ═══════════════════════════════════════════════════════════
-      // 4. ARCHITECTURE DIAGRAM — colored boxes
+      // 4. ARCHITECTURE DIAGRAM — embedded PNG image
       // ═══════════════════════════════════════════════════════════
       heading("4. Architecture Diagram", 1),
-      para("The following diagram shows the logical architecture with all components and communication paths.", { after: 120 }),
+      para("The following diagram shows the high-level architecture with all components, communication paths, ports, and protocols.", { after: 120 }),
 
-      // ── Hub Cluster Box ──
-      archBox(
-        "☁  SNO HUB CLUSTER",
-        "10.131.71.72 — Namespace: openshift-mcp",
-        [
-          { icon: "▸", label: "MCP Server (Hub)", detail: "Port 3000 — Core application", bold: true },
-          { icon: "▸", label: "Dashboard & AI Chat", detail: "Unified management UI" },
-          { icon: "▸", label: "Multi-Cluster Hub", detail: "Agent registry & cluster aggregation" },
-          { icon: "▸", label: "Deploy Orchestrator", detail: "Document-driven deployment engine" },
-          { icon: "▸", label: "PostgreSQL", detail: "Port 5432 — Chat history, audit log (optional)" },
-          { icon: "▸", label: "OpenShift Route", detail: "HTTPS :443 → :3000 (TLS edge, 600s timeout)" },
+      new Paragraph({
+        children: [
+          new ImageRun({
+            data: diagramPng,
+            transformation: { width: 720, height: 565 },
+            type: "png",
+          }),
         ],
-        { bg: C.blueBg, border: C.blue, titleColor: C.navy }
-      ),
-      para(""),
-
-      // ── Communication Flows ──
-      new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [new TableRow({ children: [
-        new TableCell({
-          children: [
-            new Paragraph({ children: [new TextRun({ text: "COMMUNICATION FLOWS", bold: true, size: 22, color: C.white })], alignment: AlignmentType.CENTER, spacing: { after: 0 } }),
-          ],
-          shading: { fill: C.navyDark, type: ShadingType.CLEAR },
-          borders: noBorders,
-          margins: { top: 80, bottom: 80, left: 100, right: 100 },
-        }),
-      ]})] }),
-      para(""),
-
-      // Flow 1: Agent → Hub
-      flowArrow("Agent Pod", "right", "MCP Hub", ":3000", "HTTP POST", "Agent registration (once) + periodic reports (every 60s)", { color: C.blue, fromBg: C.greenBg, toBg: C.blueBg }),
-      para(""),
-      // Flow 2: Hub → K8s API
-      flowArrow("MCP Hub", "right", "K8s API", ":6443", "HTTPS GET", "On-demand health probes + remote cluster queries (every 60s)", { color: C.orange, fromBg: C.blueBg, toBg: C.orangeBg }),
-      para(""),
-      // Flow 3: Browser → Hub
-      flowArrow("Browser", "right", "OCP Route", ":443", "HTTPS", "Dashboard access via OpenShift Route (TLS edge termination)", { color: C.purple, fromBg: C.pinkBg, toBg: C.blueBg }),
-      para(""),
-
-      // ── Agent Cluster Box ──
-      archBox(
-        "☁  3-NODE AGENT CLUSTER",
-        "10.131.73.21 / .22 / .23 — Namespace: openshift-mcp-agent",
-        [
-          { icon: "▸", label: "MCP Agent Pod", detail: "Port 8080 — Scanner + Reporter", bold: true },
-          { icon: "▸", label: "Scanner", detail: "Polls local K8s API every 60s (nodes, pods, deployments, events)" },
-          { icon: "▸", label: "Reporter", detail: "Pushes JSON report to Hub via HTTP POST" },
-          { icon: "▸", label: "Health Endpoints", detail: "/healthz, /readyz, /status, /scan" },
-          { icon: "▸", label: "Kubernetes API", detail: "Port 6443 — Master node 10.131.73.21" },
-          { icon: "▸", label: "Nodes", detail: "Master: 10.131.73.21 | Worker1: .22 | Worker2: .23" },
-        ],
-        { bg: C.greenBg, border: C.green, titleColor: C.green }
-      ),
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 120 },
+      }),
+      para("Figure 1: Hub-and-Spoke Multi-Cluster Architecture — SNO Hub + 3-Node Agent Cluster", { italic: true, color: C.gray, after: 200, align: AlignmentType.CENTER }),
 
       // ═══════════════════════════════════════════════════════════
       // 5. NETWORK CONNECTIVITY REQUIREMENTS
