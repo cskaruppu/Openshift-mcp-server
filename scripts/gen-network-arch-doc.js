@@ -179,191 +179,260 @@ function flowArrow(from, direction, to, port, protocol, purpose, opts = {}) {
   });
 }
 
-// ── Generate Architecture Diagram as PNG ──
+// ── Generate Architecture Diagram as PNG (Enterprise / Industry Standard) ──
 function generateArchDiagram() {
-  const W = 1400, H = 1100;
+  const W = 1600, H = 1200;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
 
-  // Background
-  ctx.fillStyle = "#F8FAFC";
-  ctx.fillRect(0, 0, W, H);
+  // ── Subtle dot grid ──
+  ctx.fillStyle = "#E5E7EB";
+  for (let gx = 0; gx < W; gx += 20) for (let gy = 0; gy < H; gy += 20) { ctx.beginPath(); ctx.arc(gx, gy, 0.5, 0, Math.PI * 2); ctx.fill(); }
 
-  // Title bar
+  // ════════════════════════════════════════════════════════════════
+  // TITLE BAR — dark navy with Red Hat branding
+  // ════════════════════════════════════════════════════════════════
+  const titleH = 64;
   ctx.fillStyle = "#0F1B2D";
-  roundRect(ctx, 20, 15, W - 40, 56, 10, true, false);
+  rr(ctx, 0, 0, W, titleH, 0); ctx.fill();
+  // Red accent bar
+  ctx.fillStyle = "#EE0000";
+  ctx.fillRect(0, titleH - 4, W, 4);
+  // Title text
   ctx.fillStyle = "#FFFFFF";
-  ctx.font = "bold 22px Helvetica";
+  ctx.font = "bold 24px Arial";
   ctx.textAlign = "center";
-  ctx.fillText("TCS KubeNexus AI — Multi-Cluster Network Architecture", W / 2, 50);
+  ctx.fillText("TCS KubeNexus AI — Multi-Cluster Network Architecture", W / 2, 40);
+  ctx.font = "13px Arial";
+  ctx.fillStyle = "#93C5FD";
+  ctx.textAlign = "right";
+  ctx.fillText("Hub-and-Spoke Model  |  Confidential — Internal", W - 30, 40);
 
-  // ── Hub Cluster Zone ──
-  const hubX = 60, hubY = 100, hubW = 580, hubH = 430;
-  drawZone(ctx, hubX, hubY, hubW, hubH, "#DBEAFE", "#2563EB", "SNO HUB CLUSTER", "10.131.71.72 — openshift-mcp");
+  // ════════════════════════════════════════════════════════════════
+  // NETWORK BOUNDARY — dashed line with firewall in center
+  // ════════════════════════════════════════════════════════════════
+  const fwX = W / 2, fwTopY = 88, fwBotY = 725;
+  ctx.strokeStyle = "#DC2626";
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([8, 5]);
+  ctx.beginPath(); ctx.moveTo(fwX, fwTopY); ctx.lineTo(fwX, fwBotY); ctx.stroke();
+  ctx.setLineDash([]);
+  // Firewall icon (shield shape) in center
+  const shX = fwX, shY = 395;
+  drawFirewallIcon(ctx, shX, shY);
 
-  // Hub components
-  const hubComps = [
-    { label: "MCP Server", sub: "Port 3000", icon: "⚙", color: "#1E40AF", bg: "#BFDBFE" },
-    { label: "Dashboard &\nAI Chat", sub: "UI", icon: "🖥", color: "#1E40AF", bg: "#BFDBFE" },
-    { label: "Multi-Cluster\nHub", sub: "Registry", icon: "🔗", color: "#1E40AF", bg: "#BFDBFE" },
-    { label: "Deploy\nOrchestrator", sub: "Engine", icon: "🚀", color: "#1E40AF", bg: "#BFDBFE" },
-  ];
-  const hubCompY = hubY + 80;
-  hubComps.forEach((c, i) => {
-    const cx = hubX + 30 + i * 138;
-    drawComponent(ctx, cx, hubCompY, 124, 90, c);
-  });
+  // "Network Boundary" label
+  ctx.save();
+  ctx.translate(fwX + 14, 620);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillStyle = "#DC2626";
+  ctx.font = "bold 11px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("NETWORK  BOUNDARY  /  FIREWALL", 0, 0);
+  ctx.restore();
 
-  // Hub secondary row
-  const hub2 = [
-    { label: "PostgreSQL", sub: "Port 5432", icon: "🗄", color: "#1E40AF", bg: "#BFDBFE" },
-    { label: "OpenShift\nRoute", sub: "HTTPS :443", icon: "🔒", color: "#1E40AF", bg: "#BFDBFE" },
-  ];
-  hub2.forEach((c, i) => {
-    const cx = hubX + 30 + i * 138;
-    drawComponent(ctx, cx, hubCompY + 110, 124, 90, c);
-  });
+  // ════════════════════════════════════════════════════════════════
+  // HUB CLUSTER ZONE (left) — Red Hat OpenShift branded
+  // ════════════════════════════════════════════════════════════════
+  const hubX = 30, hubY = 80, hubW = 740, hubH = 560;
+  // Zone background
+  ctx.fillStyle = "#FEF2F2";
+  rr(ctx, hubX, hubY, hubW, hubH, 12); ctx.fill();
+  ctx.strokeStyle = "#EE0000";
+  ctx.lineWidth = 2.5;
+  rr(ctx, hubX, hubY, hubW, hubH, 12); ctx.stroke();
+  // Zone header bar
+  ctx.fillStyle = "#EE0000";
+  rr(ctx, hubX, hubY, hubW, 44, 12); ctx.fill();
+  ctx.fillRect(hubX, hubY + 24, hubW, 20);
+  // OpenShift logo in header
+  drawOpenShiftLogo(ctx, hubX + 14, hubY + 6, 32, "#FFFFFF");
+  ctx.fillStyle = "#FFFFFF";
+  ctx.font = "bold 16px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText("Red Hat OpenShift — SNO Hub Cluster", hubX + 52, hubY + 28);
+  // Subtitle
+  ctx.fillStyle = "#991B1B";
+  ctx.font = "12px Arial";
+  ctx.fillText("Single Node OpenShift  |  10.131.71.72  |  Namespace: openshift-mcp", hubX + 18, hubY + 62);
 
-  // Hub ServiceAccount box
-  drawSmallLabel(ctx, hubX + 310, hubCompY + 120, 240, 60, "ServiceAccount + RBAC", "cluster-admin (Hub)", "#EFF6FF", "#3B82F6");
+  // ── Hub components ──
+  const hcY = hubY + 82;
+  // Row 1: MCP Server (main)
+  drawServerBox(ctx, hubX + 22, hcY, 175, 100, "MCP Server (Hub)", "Port 3000", "Core MCP Application", "#B91C1C", "#FEE2E2", "#EF4444");
+  drawServerBox(ctx, hubX + 210, hcY, 175, 100, "Dashboard & AI Chat", "Web UI", "Unified Management", "#B91C1C", "#FEE2E2", "#EF4444");
+  drawServerBox(ctx, hubX + 398, hcY, 175, 100, "Multi-Cluster Hub", "Registry", "Agent Aggregation", "#B91C1C", "#FEE2E2", "#EF4444");
+  drawServerBox(ctx, hubX + 554, hcY, 175, 100, "Deploy Orchestrator", "Engine", "Doc-Driven Deploy", "#B91C1C", "#FEE2E2", "#EF4444");
+  // Row 2
+  const hcY2 = hcY + 115;
+  drawCylinderDB(ctx, hubX + 22, hcY2, 160, 85, "PostgreSQL", "Port 5432", "#7C3AED", "#EDE9FE");
+  drawRouteBox(ctx, hubX + 198, hcY2, 180, 85, "OpenShift Route", "HTTPS :443 → :3000", "HAProxy TLS Edge", "#EE0000");
+  drawSmallBox(ctx, hubX + 395, hcY2, 175, 85, "ServiceAccount", "RBAC: cluster-admin", "#1E40AF", "#DBEAFE");
+  drawSmallBox(ctx, hubX + 582, hcY2, 145, 85, "ConfigMap\n& Secrets", "Env config", "#6B7280", "#F3F4F6");
 
-  // ── Agent Cluster Zone ──
-  const agX = 760, agY = 100, agW = 580, agH = 430;
-  drawZone(ctx, agX, agY, agW, agH, "#D1FAE5", "#15803D", "3-NODE AGENT CLUSTER", "10.131.73.21/.22/.23 — openshift-mcp-agent");
+  // Node box for SNO
+  drawNodeIcon(ctx, hubX + 22, hcY2 + 105, 706, 55, "SNO Node: 10.131.71.72", "RHCOS  |  Control + Compute + Infra  |  Roles: master,worker", "#7F1D1D", "#FEF2F2", "#EF4444");
 
-  // Agent components
-  const agComps = [
-    { label: "MCP Agent\nPod", sub: "Port 8080", icon: "📡", color: "#166534", bg: "#A7F3D0" },
-    { label: "Scanner", sub: "60s interval", icon: "🔍", color: "#166534", bg: "#A7F3D0" },
-    { label: "Reporter", sub: "HTTP POST", icon: "📤", color: "#166534", bg: "#A7F3D0" },
-    { label: "Health\nEndpoints", sub: "/healthz", icon: "💚", color: "#166534", bg: "#A7F3D0" },
-  ];
-  const agCompY = agY + 80;
-  agComps.forEach((c, i) => {
-    const cx = agX + 30 + i * 138;
-    drawComponent(ctx, cx, agCompY, 124, 90, c);
-  });
+  // ════════════════════════════════════════════════════════════════
+  // AGENT CLUSTER ZONE (right) — Red Hat OpenShift branded
+  // ════════════════════════════════════════════════════════════════
+  const agX = 830, agY = 80, agW = 740, agH = 560;
+  ctx.fillStyle = "#ECFDF5";
+  rr(ctx, agX, agY, agW, agH, 12); ctx.fill();
+  ctx.strokeStyle = "#15803D";
+  ctx.lineWidth = 2.5;
+  rr(ctx, agX, agY, agW, agH, 12); ctx.stroke();
+  // Header bar
+  ctx.fillStyle = "#15803D";
+  rr(ctx, agX, agY, agW, 44, 12); ctx.fill();
+  ctx.fillRect(agX, agY + 24, agW, 20);
+  drawOpenShiftLogo(ctx, agX + 14, agY + 6, 32, "#FFFFFF");
+  ctx.fillStyle = "#FFFFFF";
+  ctx.font = "bold 16px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText("Red Hat OpenShift — 3-Node Agent Cluster", agX + 52, agY + 28);
+  ctx.fillStyle = "#166534";
+  ctx.font = "12px Arial";
+  ctx.fillText("High Availability  |  10.131.73.21 / .22 / .23  |  Namespace: openshift-mcp-agent", agX + 18, agY + 62);
 
-  // Agent Kubernetes API
-  drawSmallLabel(ctx, agX + 30, agCompY + 110, 260, 60, "Kubernetes API Server", "Port 6443 — Master: 10.131.73.21", "#ECFDF5", "#15803D");
+  // ── Agent components ──
+  const acY = agY + 82;
+  drawServerBox(ctx, agX + 22, acY, 175, 100, "MCP Agent Pod", "Port 8080", "Scanner + Reporter", "#166534", "#D1FAE5", "#22C55E");
+  drawServerBox(ctx, agX + 210, acY, 175, 100, "Cluster Scanner", "60s Interval", "Nodes, Pods, Events", "#166534", "#D1FAE5", "#22C55E");
+  drawServerBox(ctx, agX + 398, acY, 175, 100, "Hub Reporter", "HTTP POST", "JSON Reports to Hub", "#166534", "#D1FAE5", "#22C55E");
+  drawServerBox(ctx, agX + 554, acY, 175, 100, "Health Endpoints", "/healthz /readyz", "/status  /scan", "#166534", "#D1FAE5", "#22C55E");
+
+  const acY2 = acY + 115;
+  drawSmallBox(ctx, agX + 22, acY2, 230, 85, "Kubernetes API Server", "Port 6443 — Master: 10.131.73.21", "#1E40AF", "#DBEAFE");
+  drawSmallBox(ctx, agX + 265, acY2, 175, 85, "ServiceAccount", "RBAC: cluster-reader (RO)", "#6B7280", "#F3F4F6");
+  drawSmallBox(ctx, agX + 453, acY2, 145, 85, "ConfigMap\n& Secrets", "HUB_SERVER_URL", "#6B7280", "#F3F4F6");
+  drawSmallBox(ctx, agX + 610, acY2, 118, 85, "TLS Certs", "SA Auto-mount", "#0D9488", "#CCFBF1");
 
   // Node boxes
-  const nodeY = agCompY + 190;
-  const nodes = [
-    { label: "Master", ip: "10.131.73.21" },
-    { label: "Worker 1", ip: "10.131.73.22" },
-    { label: "Worker 2", ip: "10.131.73.23" },
-  ];
-  nodes.forEach((n, i) => {
-    const nx = agX + 30 + i * 185;
-    drawNodeBox(ctx, nx, nodeY, 170, 50, n.label, n.ip);
-  });
+  const nY = acY2 + 105;
+  drawNodeIcon(ctx, agX + 22, nY, 226, 55, "Master: 10.131.73.21", "RHCOS  |  Control Plane  |  etcd, API, scheduler", "#14532D", "#ECFDF5", "#22C55E");
+  drawNodeIcon(ctx, agX + 260, nY, 226, 55, "Worker 1: 10.131.73.22", "RHCOS  |  Compute Node  |  Agent Pod runs here", "#14532D", "#ECFDF5", "#22C55E");
+  drawNodeIcon(ctx, agX + 498, nY, 226, 55, "Worker 2: 10.131.73.23", "RHCOS  |  Compute Node  |  Failover / scale", "#14532D", "#ECFDF5", "#22C55E");
 
-  // ServiceAccount for agent
-  drawSmallLabel(ctx, agX + 310, agCompY + 110, 240, 60, "ServiceAccount + RBAC", "cluster-reader (read-only)", "#ECFDF5", "#15803D");
+  // ════════════════════════════════════════════════════════════════
+  // COMMUNICATION ARROWS (between clusters, through firewall)
+  // ════════════════════════════════════════════════════════════════
+  // Arrow 1: Agent → Hub (HTTP POST :3000) — agent-initiated
+  drawLabeledArrow(ctx, agX - 6, 230, hubX + hubW + 6, 230, "#2563EB", 2.5, [],
+    "TCP 3000  |  HTTP POST",
+    "Agent Registration (once) + Periodic Reports (every 60s)");
 
-  // ── Communication Arrows ──
+  // Arrow 2: Hub → K8s API (HTTPS GET :6443) — hub-initiated
+  drawLabeledArrow(ctx, hubX + hubW + 6, 310, agX - 6, 310, "#C2410C", 2.5, [],
+    "TCP 6443  |  HTTPS GET",
+    "Health Probes + Remote Cluster Queries (every 60s)");
 
-  // Arrow 1: Agent → Hub (registration + reports)
-  drawArrow(ctx, agX - 10, 210, hubX + hubW + 10, 210, "#2563EB", "HTTP POST :3000", "Agent Registration + Reports (every 60s)", true);
+  // Arrow 3: Hub → Agent Route (optional HTTPS)
+  drawLabeledArrow(ctx, hubX + hubW + 6, 380, agX - 6, 380, "#7C3AED", 1.5, [6, 4],
+    "TCP 443  |  HTTPS (optional)",
+    "Hub → Agent via OpenShift Route (if configured)");
 
-  // Arrow 2: Hub → K8s API (health probes)
-  drawArrow(ctx, hubX + hubW + 10, 310, agX - 10, 310, "#C2410C", "HTTPS GET :6443", "Health Probes + Remote Queries", false);
+  // ════════════════════════════════════════════════════════════════
+  // EXTERNAL ENTITIES — Browser and Azure OpenAI
+  // ════════════════════════════════════════════════════════════════
 
-  // ── Browser Zone ──
-  const brX = 200, brY = 600, brW = 200, brH = 80;
-  ctx.fillStyle = "#FCE7F3";
-  roundRect(ctx, brX, brY, brW, brH, 12, true, false);
-  ctx.strokeStyle = "#DB2777";
-  ctx.lineWidth = 2;
-  roundRect(ctx, brX, brY, brW, brH, 12, false, true);
-  ctx.fillStyle = "#831843";
-  ctx.font = "bold 16px Helvetica";
-  ctx.textAlign = "center";
-  ctx.fillText("🌐  Browser / User", brX + brW / 2, brY + 35);
-  ctx.font = "13px Helvetica";
-  ctx.fillStyle = "#9D174D";
-  ctx.fillText("Dashboard Access", brX + brW / 2, brY + 58);
+  // Browser / End User
+  const brX = 80, brY = 700, brW = 200, brH = 90;
+  drawExternalEntity(ctx, brX, brY, brW, brH, "End User / Browser", "Dashboard Access via HTTPS", "#6D28D9", "#EDE9FE", "#8B5CF6");
+  drawGlobeIcon(ctx, brX + 15, brY + 20, 22, "#6D28D9");
 
-  // Arrow 3: Browser → Hub Route
-  drawCurvedArrow(ctx, brX + brW / 2, brY, hubX + hubW / 2, hubY + hubH, "#7C3AED", "HTTPS :443", "TLS Edge Termination");
+  // Arrow: Browser → Hub Route
+  drawBentArrow(ctx, brX + brW, brY + 30, hubX + hubW / 2, hubY + hubH, "#6D28D9", "HTTPS :443 — TLS Edge");
 
-  // ── Azure OpenAI Zone ──
-  const azX = 960, azY = 620, azW = 220, azH = 80;
-  ctx.fillStyle = "#FFF7ED";
-  roundRect(ctx, azX, azY, azW, azH, 12, true, false);
-  ctx.strokeStyle = "#C2410C";
-  ctx.lineWidth = 2;
-  roundRect(ctx, azX, azY, azW, azH, 12, false, true);
-  ctx.fillStyle = "#7C2D12";
-  ctx.font = "bold 16px Helvetica";
-  ctx.textAlign = "center";
-  ctx.fillText("☁  Azure OpenAI", azX + azW / 2, azY + 35);
-  ctx.font = "13px Helvetica";
-  ctx.fillStyle = "#9A3412";
-  ctx.fillText("AI Chat (HTTPS :443)", azX + azW / 2, azY + 58);
+  // Azure OpenAI
+  const azX = 400, azY = 700, azW = 240, azH = 90;
+  drawExternalEntity(ctx, azX, azY, azW, azH, "Azure OpenAI Service", "AI Chat & Document Analysis", "#0369A1", "#E0F2FE", "#0EA5E9");
+  drawCloudIcon(ctx, azX + 15, azY + 18, 28, "#0369A1");
 
-  // Arrow 4: Hub → Azure OpenAI
-  drawCurvedArrow(ctx, hubX + hubW / 2 + 80, hubY + hubH, azX + azW / 2 - 80, azY, "#C2410C", "HTTPS :443", "LLM API Calls");
+  // Arrow: Hub → Azure OpenAI
+  drawBentArrow(ctx, azX + azW / 2, azY, hubX + hubW / 2 + 120, hubY + hubH, "#0369A1", "HTTPS :443 — LLM API");
 
-  // ── Legend ──
-  const legX = 60, legY = 760;
+  // Kubernetes logo area
+  const k8X = 1100, k8Y = 700, k8W = 240, k8H = 90;
+  drawExternalEntity(ctx, k8X, k8Y, k8W, k8H, "Kubernetes API (Agent)", "Cluster State & Resource Data", "#1E40AF", "#DBEAFE", "#3B82F6");
+  drawK8sWheel(ctx, k8X + 15, k8Y + 18, 14, "#1E40AF");
+
+  // Arrow: Agent → Local K8s API (internal)
+  drawBentArrowUp(ctx, k8X + k8W / 2, k8Y, agX + agW / 2, agY + agH, "#1E40AF", "HTTPS :6443 — Internal");
+
+  // ════════════════════════════════════════════════════════════════
+  // LEGEND
+  // ════════════════════════════════════════════════════════════════
+  const legY = 830;
   ctx.fillStyle = "#FFFFFF";
-  roundRect(ctx, legX, legY, W - 120, 130, 10, true, false);
-  ctx.strokeStyle = "#E5E7EB";
+  rr(ctx, 30, legY, W - 60, 170, 10); ctx.fill();
+  ctx.strokeStyle = "#D1D5DB";
   ctx.lineWidth = 1;
-  roundRect(ctx, legX, legY, W - 120, 130, 10, false, true);
-
+  rr(ctx, 30, legY, W - 60, 170, 10); ctx.stroke();
+  // Legend header
   ctx.fillStyle = "#0F1B2D";
-  ctx.font = "bold 15px Helvetica";
+  ctx.font = "bold 14px Arial";
   ctx.textAlign = "left";
-  ctx.fillText("LEGEND", legX + 20, legY + 25);
+  ctx.fillText("LEGEND", 55, legY + 22);
 
-  const legends = [
-    { color: "#2563EB", label: "Agent → Hub (HTTP POST :3000) — Registration & Reports", y: legY + 50 },
-    { color: "#C2410C", label: "Hub → Agent K8s API (HTTPS GET :6443) — Health Probes", y: legY + 75 },
-    { color: "#7C3AED", label: "Browser → Hub Route (HTTPS :443) — Dashboard Access", y: legY + 100 },
-  ];
-  legends.forEach(l => {
-    ctx.strokeStyle = l.color;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(legX + 20, l.y);
-    ctx.lineTo(legX + 70, l.y);
-    ctx.stroke();
-    drawArrowHead(ctx, legX + 70, l.y, 0, l.color);
-    ctx.fillStyle = "#374151";
-    ctx.font = "14px Helvetica";
-    ctx.fillText(l.label, legX + 85, l.y + 5);
-  });
+  // Connection types
+  const lx = 55, lGap = 28;
+  let ly = legY + 48;
+  drawLegendLine(ctx, lx, ly, "#2563EB", [], "Agent → Hub (TCP 3000 / HTTP POST) — Registration & Reports"); ly += lGap;
+  drawLegendLine(ctx, lx, ly, "#C2410C", [], "Hub → Agent K8s API (TCP 6443 / HTTPS) — Health Probes & Queries"); ly += lGap;
+  drawLegendLine(ctx, lx, ly, "#7C3AED", [6, 4], "Optional / Secondary Connections (TCP 443)"); ly += lGap;
+  drawLegendLine(ctx, lx, ly, "#DC2626", [8, 5], "Network Boundary / Firewall Zone"); ly += lGap;
 
-  // Port summary
-  ctx.fillStyle = "#0F1B2D";
-  ctx.font = "bold 14px Helvetica";
-  ctx.textAlign = "left";
-  const portX = legX + 700;
-  ctx.fillText("Required Ports:", portX, legY + 50);
-  ctx.font = "13px Helvetica";
+  // Icons legend (right column)
+  const rx = 780;
+  ly = legY + 48;
+  drawOpenShiftLogo(ctx, rx, ly - 10, 18, "#EE0000");
+  ctx.fillStyle = "#374151"; ctx.font = "13px Arial"; ctx.textAlign = "left";
+  ctx.fillText("Red Hat OpenShift Container Platform", rx + 28, ly + 4); ly += lGap;
+  drawFirewallIconSmall(ctx, rx + 4, ly - 8, "#DC2626");
+  ctx.fillText("Network Firewall / Security Boundary", rx + 28, ly + 4); ly += lGap;
+  drawCylinderSmall(ctx, rx + 4, ly - 8, "#7C3AED");
+  ctx.fillText("Database (PostgreSQL)", rx + 28, ly + 4); ly += lGap;
+  drawCloudIcon(ctx, rx + 2, ly - 10, 18, "#0369A1");
+  ctx.fillText("External Cloud Service", rx + 28, ly + 4); ly += lGap;
+
+  // Required ports box
+  const px = 1150;
+  ctx.fillStyle = "#FEF2F2";
+  rr(ctx, px, legY + 30, 290, 120, 8); ctx.fill();
+  ctx.strokeStyle = "#EF4444";
+  ctx.lineWidth = 1;
+  rr(ctx, px, legY + 30, 290, 120, 8); ctx.stroke();
+  ctx.fillStyle = "#991B1B";
+  ctx.font = "bold 13px Arial";
+  ctx.fillText("REQUIRED FIREWALL PORTS", px + 15, legY + 52);
+  ctx.font = "12px Arial";
   ctx.fillStyle = "#374151";
-  ctx.fillText("TCP 3000 — Hub MCP Server API", portX, legY + 70);
-  ctx.fillText("TCP 6443 — Kubernetes API Server", portX, legY + 88);
-  ctx.fillText("TCP 443  — HTTPS Route / TLS", portX, legY + 106);
+  ctx.fillText("TCP 3000   Hub MCP Server API", px + 15, legY + 74);
+  ctx.fillText("TCP 6443   Kubernetes API Server", px + 15, legY + 94);
+  ctx.fillText("TCP 443    HTTPS Route / TLS (optional)", px + 15, legY + 114);
+  ctx.fillText("Protocol   HTTP/HTTPS over TCP", px + 15, legY + 134);
 
-  // Footer
+  // ════════════════════════════════════════════════════════════════
+  // FOOTER
+  // ════════════════════════════════════════════════════════════════
   ctx.fillStyle = "#0F1B2D";
-  roundRect(ctx, 20, H - 45, W - 40, 32, 8, true, false);
+  rr(ctx, 0, H - 40, W, 40, 0); ctx.fill();
+  ctx.fillStyle = "#EE0000";
+  ctx.fillRect(0, H - 40, W, 3);
   ctx.fillStyle = "#93C5FD";
-  ctx.font = "12px Helvetica";
+  ctx.font = "12px Arial";
   ctx.textAlign = "center";
-  ctx.fillText("Generated by TCS KubeNexus AI Platform  •  Hub-and-Spoke Model  •  All communication is agent-initiated (outbound)", W / 2, H - 24);
+  ctx.fillText("TCS KubeNexus AI Platform  |  Red Hat OpenShift Container Platform  |  Hub-and-Spoke Architecture  |  All communication is agent-initiated", W / 2, H - 16);
 
   return canvas.toBuffer("image/png");
 }
 
-function roundRect(ctx, x, y, w, h, r, fill, stroke) {
+// ── Drawing Primitives ──
+
+function rr(ctx, x, y, w, h, r) {
   ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
+  ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
   ctx.quadraticCurveTo(x + w, y, x + w, y + r);
   ctx.lineTo(x + w, y + h - r);
   ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
@@ -372,150 +441,393 @@ function roundRect(ctx, x, y, w, h, r, fill, stroke) {
   ctx.lineTo(x, y + r);
   ctx.quadraticCurveTo(x, y, x + r, y);
   ctx.closePath();
-  if (fill) ctx.fill();
-  if (stroke) ctx.stroke();
 }
 
-function drawZone(ctx, x, y, w, h, bg, border, title, subtitle) {
-  ctx.fillStyle = bg;
-  roundRect(ctx, x, y, w, h, 14, true, false);
-  ctx.strokeStyle = border;
-  ctx.lineWidth = 3;
-  roundRect(ctx, x, y, w, h, 14, false, true);
-  // Zone title bar
-  ctx.fillStyle = border;
-  roundRect(ctx, x, y, w, 38, 14, true, false);
-  ctx.fillRect(x, y + 20, w, 18);
-  ctx.fillStyle = "#FFFFFF";
-  ctx.font = "bold 15px Helvetica";
-  ctx.textAlign = "left";
-  ctx.fillText("☁  " + title, x + 16, y + 25);
-  ctx.font = "12px Helvetica";
-  ctx.fillStyle = border;
-  ctx.fillText(subtitle, x + 16, y + 56);
-}
-
-function drawComponent(ctx, x, y, w, h, comp) {
-  ctx.fillStyle = comp.bg;
-  roundRect(ctx, x, y, w, h, 8, true, false);
-  ctx.strokeStyle = comp.color;
-  ctx.lineWidth = 1.5;
-  roundRect(ctx, x, y, w, h, 8, false, true);
-  ctx.fillStyle = comp.color;
-  ctx.font = "20px Helvetica";
-  ctx.textAlign = "center";
-  ctx.fillText(comp.icon, x + w / 2, y + 22);
-  ctx.font = "bold 12px Helvetica";
-  const lines = comp.label.split("\n");
-  lines.forEach((line, i) => {
-    ctx.fillText(line, x + w / 2, y + 42 + i * 15);
-  });
-  ctx.font = "11px Helvetica";
-  ctx.fillStyle = "#6B7280";
-  ctx.fillText(comp.sub, x + w / 2, y + h - 10);
-}
-
-function drawSmallLabel(ctx, x, y, w, h, title, sub, bg, border) {
-  ctx.fillStyle = bg;
-  roundRect(ctx, x, y, w, h, 6, true, false);
-  ctx.strokeStyle = border;
-  ctx.lineWidth = 1;
-  roundRect(ctx, x, y, w, h, 6, false, true);
-  ctx.fillStyle = border;
-  ctx.font = "bold 12px Helvetica";
-  ctx.textAlign = "center";
-  ctx.fillText(title, x + w / 2, y + 22);
-  ctx.font = "11px Helvetica";
-  ctx.fillStyle = "#6B7280";
-  ctx.fillText(sub, x + w / 2, y + 42);
-}
-
-function drawNodeBox(ctx, x, y, w, h, label, ip) {
-  ctx.fillStyle = "#ECFDF5";
-  roundRect(ctx, x, y, w, h, 6, true, false);
-  ctx.strokeStyle = "#15803D";
-  ctx.lineWidth = 1;
-  ctx.setLineDash([4, 3]);
-  roundRect(ctx, x, y, w, h, 6, false, true);
-  ctx.setLineDash([]);
-  ctx.fillStyle = "#166534";
-  ctx.font = "bold 12px Helvetica";
-  ctx.textAlign = "center";
-  ctx.fillText(label, x + w / 2, y + 20);
-  ctx.font = "11px Helvetica";
-  ctx.fillStyle = "#6B7280";
-  ctx.fillText(ip, x + w / 2, y + 38);
-}
-
-function drawArrowHead(ctx, x, y, angle, color) {
-  ctx.fillStyle = color;
+// ── OpenShift Logo (stylized angular "O" — recognizable silhouette) ──
+function drawOpenShiftLogo(ctx, x, y, size, color) {
+  const s = size / 32;
   ctx.save();
   ctx.translate(x, y);
-  ctx.rotate(angle);
+  ctx.fillStyle = color;
+  // Outer ring
   ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.lineTo(-10, -5);
-  ctx.lineTo(-10, 5);
+  ctx.arc(16 * s, 16 * s, 14 * s, 0, Math.PI * 2);
+  ctx.fill();
+  // Inner cutout (darker)
+  ctx.fillStyle = color === "#FFFFFF" ? "#EE0000" : "#FFFFFF";
+  ctx.beginPath();
+  ctx.arc(16 * s, 16 * s, 9 * s, 0, Math.PI * 2);
+  ctx.fill();
+  // Arrow notch (the distinctive OpenShift arrow)
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(14 * s, 7 * s);
+  ctx.lineTo(24 * s, 12 * s);
+  ctx.lineTo(14 * s, 17 * s);
+  ctx.closePath();
+  ctx.fill();
+  // Lower arrow
+  ctx.fillStyle = color === "#FFFFFF" ? "#EE0000" : "#FFFFFF";
+  ctx.beginPath();
+  ctx.moveTo(18 * s, 15 * s);
+  ctx.lineTo(8 * s, 20 * s);
+  ctx.lineTo(18 * s, 25 * s);
   ctx.closePath();
   ctx.fill();
   ctx.restore();
 }
 
-function drawArrow(ctx, x1, y1, x2, y2, color, label, sublabel, leftToRight) {
-  const midY = y1;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 2.5;
-  ctx.setLineDash([]);
-  ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  ctx.lineTo(x2, y2);
-  ctx.stroke();
-  const angle = Math.atan2(y2 - y1, x2 - x1);
-  drawArrowHead(ctx, x2, y2, angle, color);
-  // Labels
-  const midX = (x1 + x2) / 2;
+// ── Firewall / Shield Icon ──
+function drawFirewallIcon(ctx, cx, cy) {
+  const w = 44, h = 52;
   ctx.fillStyle = "#FFFFFF";
-  const tw = ctx.measureText(label).width + 16;
-  roundRect(ctx, midX - tw / 2, midY - 24, tw, 20, 4, true, false);
-  ctx.fillStyle = color;
-  ctx.font = "bold 12px Helvetica";
+  rr(ctx, cx - w / 2 - 4, cy - h / 2 - 8, w + 8, h + 16, 8); ctx.fill();
+  ctx.strokeStyle = "#DC2626"; ctx.lineWidth = 1.5;
+  rr(ctx, cx - w / 2 - 4, cy - h / 2 - 8, w + 8, h + 16, 8); ctx.stroke();
+  // Shield shape
+  ctx.fillStyle = "#DC2626";
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - h / 2);
+  ctx.quadraticCurveTo(cx + w / 2, cy - h / 2 + 4, cx + w / 2, cy - 4);
+  ctx.quadraticCurveTo(cx + w / 2, cy + h / 3, cx, cy + h / 2);
+  ctx.quadraticCurveTo(cx - w / 2, cy + h / 3, cx - w / 2, cy - 4);
+  ctx.quadraticCurveTo(cx - w / 2, cy - h / 2 + 4, cx, cy - h / 2);
+  ctx.closePath();
+  ctx.fill();
+  // Lock icon inside shield
+  ctx.fillStyle = "#FFFFFF";
+  ctx.font = "bold 18px Arial";
   ctx.textAlign = "center";
-  ctx.fillText(label, midX, midY - 9);
-  ctx.font = "11px Helvetica";
-  ctx.fillStyle = "#374151";
-  ctx.fillText(sublabel, midX, midY + 8);
+  ctx.textBaseline = "middle";
+  ctx.fillText("FW", cx, cy + 2);
+  ctx.textBaseline = "alphabetic";
+  // Label
+  ctx.fillStyle = "#DC2626";
+  ctx.font = "bold 9px Arial";
+  ctx.fillText("FIREWALL", cx, cy + h / 2 + 14);
 }
 
-function drawCurvedArrow(ctx, x1, y1, x2, y2, color, label, sublabel) {
-  const cpx = (x1 + x2) / 2;
-  const cpy = Math.max(y1, y2) + 60;
+function drawFirewallIconSmall(ctx, x, y, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x + 8, y);
+  ctx.quadraticCurveTo(x + 16, y + 2, x + 16, y + 8);
+  ctx.quadraticCurveTo(x + 16, y + 14, x + 8, y + 18);
+  ctx.quadraticCurveTo(x, y + 14, x, y + 8);
+  ctx.quadraticCurveTo(x, y + 2, x + 8, y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#FFFFFF";
+  ctx.font = "bold 7px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("FW", x + 8, y + 11);
+}
+
+// ── Server Box (component) ──
+function drawServerBox(ctx, x, y, w, h, title, sub1, sub2, textColor, bg, accent) {
+  ctx.fillStyle = bg;
+  rr(ctx, x, y, w, h, 8); ctx.fill();
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 1.5;
+  rr(ctx, x, y, w, h, 8); ctx.stroke();
+  // Top accent bar
+  ctx.fillStyle = accent;
+  rr(ctx, x, y, w, 5, 8); ctx.fill();
+  // Server icon
+  ctx.fillStyle = accent;
+  const ix = x + 14, iy = y + 20;
+  rr(ctx, ix, iy, 18, 6, 2); ctx.fill();
+  rr(ctx, ix, iy + 9, 18, 6, 2); ctx.fill();
+  rr(ctx, ix, iy + 18, 18, 6, 2); ctx.fill();
+  // LED dots
+  ctx.fillStyle = "#FFFFFF";
+  ctx.beginPath(); ctx.arc(ix + 13, iy + 3, 1.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(ix + 13, iy + 12, 1.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(ix + 13, iy + 21, 1.5, 0, Math.PI * 2); ctx.fill();
+  // Text
+  ctx.fillStyle = textColor;
+  ctx.font = "bold 12px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText(title, x + 40, y + 30);
+  ctx.font = "11px Arial";
+  ctx.fillStyle = "#6B7280";
+  ctx.fillText(sub1, x + 40, y + 48);
+  ctx.fillText(sub2, x + 40, y + 64);
+  // Port badge
+  if (sub1.match(/Port|:(\d+)/)) {
+    const port = sub1.match(/\d+/);
+    if (port) {
+      ctx.fillStyle = accent;
+      rr(ctx, x + w - 50, y + h - 24, 42, 18, 9); ctx.fill();
+      ctx.fillStyle = "#FFFFFF";
+      ctx.font = "bold 9px Arial";
+      ctx.textAlign = "center";
+      ctx.fillText(":" + port[0], x + w - 29, y + h - 12);
+    }
+  }
+}
+
+// ── Database Cylinder ──
+function drawCylinderDB(ctx, x, y, w, h, title, sub, color, bg) {
+  const ey = 10;
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  ctx.ellipse(x + w / 2, y + ey, w / 2, ey, 0, Math.PI, 0);
+  ctx.lineTo(x + w, y + h - ey);
+  ctx.ellipse(x + w / 2, y + h - ey, w / 2, ey, 0, 0, Math.PI);
+  ctx.lineTo(x, y + ey);
+  ctx.closePath();
+  ctx.fill();
   ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // Top ellipse
+  ctx.beginPath();
+  ctx.ellipse(x + w / 2, y + ey, w / 2, ey, 0, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.15;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = color;
+  ctx.stroke();
+  // Text
+  ctx.fillStyle = color;
+  ctx.font = "bold 13px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText(title, x + w / 2, y + h / 2 + 4);
+  ctx.font = "11px Arial";
+  ctx.fillStyle = "#6B7280";
+  ctx.fillText(sub, x + w / 2, y + h / 2 + 20);
+}
+
+function drawCylinderSmall(ctx, x, y, color) {
+  ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.ellipse(x + 8, y + 4, 8, 4, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x, y + 4); ctx.lineTo(x, y + 16);
+  ctx.ellipse(x + 8, y + 16, 8, 4, 0, Math.PI, 0);
+  ctx.lineTo(x + 16, y + 4);
+  ctx.stroke();
+}
+
+// ── Route Box (with lock icon) ──
+function drawRouteBox(ctx, x, y, w, h, title, sub, sub2, color) {
+  ctx.fillStyle = "#FFF1F2";
+  rr(ctx, x, y, w, h, 8); ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  rr(ctx, x, y, w, h, 8); ctx.stroke();
+  // Lock icon
+  ctx.strokeStyle = color; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(x + 22, y + 26, 8, Math.PI, 0); ctx.stroke();
+  ctx.fillStyle = color;
+  rr(ctx, x + 10, y + 26, 24, 16, 3); ctx.fill();
+  ctx.fillStyle = "#FFFFFF";
+  ctx.beginPath(); ctx.arc(x + 22, y + 33, 3, 0, Math.PI * 2); ctx.fill();
+  // Text
+  ctx.fillStyle = "#991B1B";
+  ctx.font = "bold 12px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText(title, x + 42, y + 30);
+  ctx.font = "11px Arial";
+  ctx.fillStyle = "#6B7280";
+  ctx.fillText(sub, x + 42, y + 48);
+  ctx.fillText(sub2, x + 42, y + 64);
+}
+
+// ── Small Box (generic) ──
+function drawSmallBox(ctx, x, y, w, h, title, sub, color, bg) {
+  ctx.fillStyle = bg;
+  rr(ctx, x, y, w, h, 6); ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  rr(ctx, x, y, w, h, 6); ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.font = "bold 11px Arial";
+  ctx.textAlign = "center";
+  const lines = title.split("\n");
+  lines.forEach((l, i) => ctx.fillText(l, x + w / 2, y + 28 + i * 16));
+  ctx.font = "10px Arial";
+  ctx.fillStyle = "#6B7280";
+  ctx.fillText(sub, x + w / 2, y + h - 14);
+}
+
+// ── Node Icon (server rack style) ──
+function drawNodeIcon(ctx, x, y, w, h, title, sub, color, bg, accent) {
+  ctx.fillStyle = bg;
+  rr(ctx, x, y, w, h, 6); ctx.fill();
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([5, 3]);
+  rr(ctx, x, y, w, h, 6); ctx.stroke();
+  ctx.setLineDash([]);
+  // Server rack mini-icon
+  ctx.fillStyle = accent;
+  rr(ctx, x + 10, y + 12, 22, 7, 2); ctx.fill();
+  rr(ctx, x + 10, y + 22, 22, 7, 2); ctx.fill();
+  ctx.fillStyle = "#FFFFFF";
+  ctx.beginPath(); ctx.arc(x + 27, y + 15.5, 1.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x + 27, y + 25.5, 1.5, 0, Math.PI * 2); ctx.fill();
+  // Text
+  ctx.fillStyle = color;
+  ctx.font = "bold 12px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText(title, x + 40, y + 22);
+  ctx.font = "10px Arial";
+  ctx.fillStyle = "#6B7280";
+  ctx.fillText(sub, x + 40, y + 38);
+}
+
+// ── External Entity Box ──
+function drawExternalEntity(ctx, x, y, w, h, title, sub, color, bg, accent) {
+  ctx.fillStyle = bg;
+  rr(ctx, x, y, w, h, 10); ctx.fill();
+  ctx.strokeStyle = accent;
   ctx.lineWidth = 2;
-  ctx.setLineDash([6, 4]);
+  rr(ctx, x, y, w, h, 10); ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.font = "bold 13px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText(title, x + 48, y + 38);
+  ctx.font = "11px Arial";
+  ctx.fillStyle = "#6B7280";
+  ctx.fillText(sub, x + 48, y + 58);
+}
+
+// ── Globe Icon ──
+function drawGlobeIcon(ctx, x, y, r, color) {
+  ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(x + r, y + r, r, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(x + r, y + r, r * 0.45, r, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x, y + r); ctx.lineTo(x + r * 2, y + r); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + r, y + r * 2); ctx.stroke();
+}
+
+// ── Cloud Icon ──
+function drawCloudIcon(ctx, x, y, size, color) {
+  const s = size / 28;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x + 10 * s, y + 18 * s, 8 * s, Math.PI * 0.5, Math.PI * 1.5);
+  ctx.arc(x + 10 * s, y + 10 * s, 10 * s, Math.PI, Math.PI * 1.5);
+  ctx.arc(x + 20 * s, y + 8 * s, 8 * s, Math.PI * 1.2, 0);
+  ctx.arc(x + 22 * s, y + 18 * s, 8 * s, Math.PI * 1.5, Math.PI * 0.5);
+  ctx.lineTo(x + 2 * s, y + 26 * s);
+  ctx.closePath();
+  ctx.globalAlpha = 0.2;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+// ── Kubernetes Wheel Icon ──
+function drawK8sWheel(ctx, x, y, r, color) {
+  ctx.strokeStyle = color; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(x + r, y + r, r, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(x + r, y + r, r * 0.35, 0, Math.PI * 2); ctx.fill();
+  for (let i = 0; i < 7; i++) {
+    const a = (Math.PI * 2 * i) / 7 - Math.PI / 2;
+    ctx.beginPath();
+    ctx.moveTo(x + r + Math.cos(a) * r * 0.45, y + r + Math.sin(a) * r * 0.45);
+    ctx.lineTo(x + r + Math.cos(a) * r * 0.9, y + r + Math.sin(a) * r * 0.9);
+    ctx.stroke();
+  }
+}
+
+// ── Labeled Arrow (straight, with protocol badge) ──
+function drawLabeledArrow(ctx, x1, y1, x2, y2, color, lw, dash, label, sublabel) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lw;
+  ctx.setLineDash(dash);
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  ctx.setLineDash([]);
+  // Arrowhead
+  const ang = Math.atan2(y2 - y1, x2 - x1);
+  ctx.fillStyle = color;
+  ctx.save(); ctx.translate(x2, y2); ctx.rotate(ang);
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-12, -6); ctx.lineTo(-12, 6); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  // Label badge
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+  ctx.font = "bold 11px Arial";
+  const tw = ctx.measureText(label).width + 16;
+  ctx.fillStyle = "#FFFFFF";
+  rr(ctx, mx - tw / 2, my - 22, tw, 19, 4); ctx.fill();
+  ctx.strokeStyle = color; ctx.lineWidth = 1;
+  rr(ctx, mx - tw / 2, my - 22, tw, 19, 4); ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.fillText(label, mx, my - 8);
+  ctx.font = "10px Arial";
+  ctx.fillStyle = "#6B7280";
+  ctx.fillText(sublabel, mx, my + 8);
+}
+
+// ── Bent Arrow (for external entities connecting to zones) ──
+function drawBentArrow(ctx, x1, y1, x2, y2, color, label) {
+  const midY = y1 - 30;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([5, 3]);
   ctx.beginPath();
   ctx.moveTo(x1, y1);
-  ctx.quadraticCurveTo(cpx, cpy, x2, y2);
+  ctx.lineTo(x1 + 30, midY);
+  ctx.lineTo(x2, y2 + 15);
   ctx.stroke();
   ctx.setLineDash([]);
-  // Arrowhead at end
-  const t = 0.95;
-  const ax = 2 * (1 - t) * (cpx - x1) + 2 * t * (x2 - cpx);
-  const ay = 2 * (1 - t) * (cpy - y1) + 2 * t * (y2 - cpy);
-  const angle = Math.atan2(ay, ax);
-  drawArrowHead(ctx, x2, y2, angle, color);
-  // Label
-  const lx = (x1 + x2) / 2;
-  const ly = cpy - 10;
-  ctx.fillStyle = "#FFFFFF";
-  const tw = ctx.measureText(label).width + 14;
-  roundRect(ctx, lx - tw / 2, ly - 12, tw, 18, 4, true, false);
+  // Arrowhead
   ctx.fillStyle = color;
-  ctx.font = "bold 11px Helvetica";
+  ctx.save(); ctx.translate(x2, y2 + 15);
+  ctx.rotate(-Math.PI / 2);
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-8, -4); ctx.lineTo(-8, 4); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  // Label
+  const lx = (x1 + x2) / 2 + 20, ly = midY - 6;
+  ctx.font = "bold 9px Arial";
+  ctx.fillStyle = color;
   ctx.textAlign = "center";
-  ctx.fillText(label, lx, ly + 2);
-  ctx.font = "11px Helvetica";
+  ctx.fillText(label, lx, ly);
+}
+
+function drawBentArrowUp(ctx, x1, y1, x2, y2, color, label) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([5, 3]);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2 + 15);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = color;
+  ctx.save(); ctx.translate(x2, y2 + 15);
+  ctx.rotate(-Math.PI / 2);
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-8, -4); ctx.lineTo(-8, 4); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  ctx.font = "bold 9px Arial";
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.fillText(label, (x1 + x2) / 2 + 20, (y1 + y2) / 2 + 10);
+}
+
+// ── Legend Line ──
+function drawLegendLine(ctx, x, y, color, dash, label) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2.5;
+  ctx.setLineDash(dash);
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 50, y); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = color;
+  ctx.save(); ctx.translate(x + 50, y);
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-8, -4); ctx.lineTo(-8, 4); ctx.closePath(); ctx.fill();
+  ctx.restore();
   ctx.fillStyle = "#374151";
-  ctx.fillText(sublabel, lx, ly + 18);
+  ctx.font = "13px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText(label, x + 60, y + 5);
 }
 
 const diagramPng = generateArchDiagram();
@@ -646,7 +958,7 @@ const doc = new Document({
         children: [
           new ImageRun({
             data: diagramPng,
-            transformation: { width: 720, height: 565 },
+            transformation: { width: 740, height: 555 },
             type: "png",
           }),
         ],
