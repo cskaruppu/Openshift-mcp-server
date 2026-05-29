@@ -2255,20 +2255,42 @@ tr:hover td{background:#ffffff06}
     <!-- User Management (admin only) -->
     <div class="so-section" id="so-user-mgmt" style="display:none">
       <div class="so-section-title">User Management</div>
-      <div id="user-list" style="margin-bottom:12px;font-size:12px;color:var(--text2)">Loading users...</div>
-      <div style="border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--bg)">
-        <div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;margin-bottom:8px">Create New User</div>
-        <input class="login-input" id="new-user-name" placeholder="Username" style="margin-bottom:6px;font-size:12px;padding:8px 10px">
-        <input class="login-input" id="new-user-display" placeholder="Display name (optional)" style="margin-bottom:6px;font-size:12px;padding:8px 10px">
-        <input class="login-input" id="new-user-pass" type="password" placeholder="Password (min 8 chars)" style="margin-bottom:6px;font-size:12px;padding:8px 10px">
-        <select id="new-user-role" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;margin-bottom:8px">
-          <option value="viewer">Viewer</option>
-          <option value="operator">Operator</option>
-          <option value="admin">Admin</option>
-        </select>
-        <button onclick="createNewUser()" style="width:100%;padding:8px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Create User</button>
-        <div id="new-user-msg" style="font-size:11px;margin-top:6px;min-height:16px"></div>
+
+      <!-- Password Policy Banner -->
+      <div id="user-policy-banner" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:11px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-weight:600;color:var(--text2)">Policy:</span>
+        <span>Password expires every <strong id="policy-max-age">90</strong> days</span>
+        <span style="color:var(--border)">|</span>
+        <span>Min length: <strong>8 chars</strong></span>
+        <span style="color:var(--border)">|</span>
+        <span>Session: <strong id="policy-session-ttl">24</strong>h</span>
+        <button onclick="showPasswordChangeModal(_authUser && _authUser.name)" style="margin-left:auto;background:none;border:1px solid var(--accent2);color:var(--accent2);border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer;font-weight:600">Change My Password</button>
       </div>
+
+      <!-- User Table -->
+      <div id="user-list" style="margin-bottom:12px;font-size:12px;color:var(--text2)">Loading users...</div>
+
+      <!-- Create New User Form -->
+      <details style="border:1px solid var(--border);border-radius:8px;background:var(--bg);margin-bottom:8px">
+        <summary style="padding:10px 14px;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none">+ Create New User</summary>
+        <div style="padding:0 14px 14px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">
+            <input class="login-input" id="new-user-name" placeholder="Username" style="font-size:12px;padding:8px 10px">
+            <input class="login-input" id="new-user-display" placeholder="Display name (optional)" style="font-size:12px;padding:8px 10px">
+          </div>
+          <input class="login-input" id="new-user-pass" type="password" placeholder="Password (min 8 chars)" style="margin-bottom:6px;font-size:12px;padding:8px 10px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+            <select id="new-user-role" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px">
+              <option value="viewer">Viewer — read only</option>
+              <option value="operator">Operator — read + write</option>
+              <option value="admin">Admin — full access</option>
+            </select>
+            <input class="login-input" id="new-user-ns" placeholder="Namespaces (comma-sep, or *)" style="font-size:12px;padding:8px 10px">
+          </div>
+          <button onclick="createNewUser()" style="width:100%;padding:8px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Create User</button>
+          <div id="new-user-msg" style="font-size:11px;margin-top:6px;min-height:16px"></div>
+        </div>
+      </details>
     </div>
 
   </div>
@@ -7416,27 +7438,60 @@ function loadUserList() {
     return;
   }
   if (panel) panel.style.display = '';
+  // Load password policy
+  fetch('/api/auth/password-policy').then(function(r) { return r.json(); }).then(function(p) {
+    var el1 = document.getElementById('policy-max-age'); if (el1) el1.textContent = p.maxAgeDays || 90;
+    var el2 = document.getElementById('policy-session-ttl'); if (el2) el2.textContent = p.sessionTtlHours || 24;
+  }).catch(function() {});
+  // Load users
   fetch('/api/auth/users').then(function(r) { return r.json(); }).then(function(data) {
     var el = document.getElementById('user-list');
     if (!data.users || data.users.length === 0) {
-      el.innerHTML = '<div style="color:var(--text2)">No users created yet. Use the form below or token auth.</div>';
+      el.innerHTML = '<div style="color:var(--text2);padding:12px;text-align:center">No users created yet. Use the form below or token auth.</div>';
       return;
     }
-    el.innerHTML = '<table style="width:100%;font-size:12px"><tr><th style="text-align:left;padding:4px 8px">User</th><th style="text-align:left;padding:4px 8px">Role</th><th style="text-align:left;padding:4px 8px">Password</th><th style="text-align:left;padding:4px 8px">Last Login</th><th style="padding:4px 8px">Actions</th></tr>' +
-      data.users.map(function(u) {
-        var pwStatus = u.passwordExpired ? '<span style="color:var(--crit)">Expired</span>' :
-          (u.passwordAgeDays !== null ? u.passwordAgeDays + 'd / 90d' : '--');
-        return '<tr><td style="padding:4px 8px">' + esc(u.display_name || u.username) + ' <span style="color:var(--text2)">(' + esc(u.username) + ')</span></td>' +
-          '<td style="padding:4px 8px"><span class="badge badge-info">' + esc(u.role) + '</span></td>' +
-          '<td style="padding:4px 8px">' + pwStatus + '</td>' +
-          '<td style="padding:4px 8px">' + (u.last_login ? timeAgo(u.last_login) : 'Never') + '</td>' +
-          '<td style="padding:4px 8px;text-align:center">' +
-          (u.username !== (_authUser && _authUser.name) ? '<button onclick="deleteUserAccount(\'' + esc(u.username) + '\')" style="background:none;border:1px solid var(--crit);color:var(--crit);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer">Delete</button>' : '<span style="color:var(--text2);font-size:10px">You</span>') +
-          '</td></tr>';
-      }).join('') + '</table>';
+    var html = '<table style="width:100%;font-size:12px;border-collapse:collapse">' +
+      '<thead><tr style="border-bottom:2px solid var(--border)">' +
+      '<th style="text-align:left;padding:6px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2)">User</th>' +
+      '<th style="text-align:left;padding:6px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2)">Role</th>' +
+      '<th style="text-align:left;padding:6px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2)">Namespaces</th>' +
+      '<th style="text-align:left;padding:6px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2)">Password Age</th>' +
+      '<th style="text-align:left;padding:6px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2)">Last Login</th>' +
+      '<th style="text-align:center;padding:6px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2)">Status</th>' +
+      '<th style="text-align:right;padding:6px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2)">Actions</th>' +
+      '</tr></thead><tbody>';
+    data.users.forEach(function(u) {
+      var isSelf = u.username === (_authUser && _authUser.name);
+      var roleBadge = u.role === 'admin' ? 'badge-crit' : u.role === 'operator' ? 'badge-warn' : 'badge-info';
+      var pwColor = u.passwordExpired ? 'var(--crit)' : (u.passwordAgeDays > 60 ? 'var(--warn)' : 'var(--ok)');
+      var pwText = u.passwordExpired ? 'EXPIRED' : (u.passwordAgeDays !== null ? u.passwordAgeDays + 'd / 90d' : '--');
+      var statusColor = u.active !== false ? 'var(--ok)' : 'var(--text2)';
+      var statusText = u.active !== false ? 'Active' : 'Disabled';
+      var nsList = (u.namespaces && u.namespaces.length > 0) ? u.namespaces.join(', ') : '<span style="color:var(--text2)">All (*)</span>';
+      html += '<tr style="border-bottom:1px solid var(--border)">' +
+        '<td style="padding:8px">' +
+          '<div style="font-weight:600">' + esc(u.display_name || u.username) + (isSelf ? ' <span style="color:var(--accent2);font-size:10px">(you)</span>' : '') + '</div>' +
+          '<div style="font-size:10px;color:var(--text2);font-family:monospace">' + esc(u.username) + '</div>' +
+        '</td>' +
+        '<td style="padding:8px"><span class="badge ' + roleBadge + '">' + esc(u.role) + '</span></td>' +
+        '<td style="padding:8px;font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis">' + nsList + '</td>' +
+        '<td style="padding:8px"><span style="color:' + pwColor + ';font-weight:600;font-size:11px">' + pwText + '</span></td>' +
+        '<td style="padding:8px;font-size:11px">' + (u.last_login ? timeAgo(u.last_login) : '<span style="color:var(--text2)">Never</span>') + '</td>' +
+        '<td style="padding:8px;text-align:center"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + statusColor + '" title="' + statusText + '"></span></td>' +
+        '<td style="padding:8px;text-align:right;white-space:nowrap">' +
+          '<button onclick="showEditUserModal(\'' + esc(u.username) + '\')" title="Edit role &amp; policy" style="background:none;border:1px solid var(--accent2);color:var(--accent2);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;margin-right:4px">Edit</button>' +
+          '<button onclick="showResetPasswordModal(\'' + esc(u.username) + '\')" title="Reset password" style="background:none;border:1px solid var(--warn);color:var(--warn);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;margin-right:4px">Reset PW</button>' +
+          (isSelf ? '' : (u.active !== false ?
+            '<button onclick="toggleUserActive(\'' + esc(u.username) + '\',false)" title="Disable user" style="background:none;border:1px solid var(--text2);color:var(--text2);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;margin-right:4px">Disable</button>' :
+            '<button onclick="toggleUserActive(\'' + esc(u.username) + '\',true)" title="Enable user" style="background:none;border:1px solid var(--ok);color:var(--ok);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;margin-right:4px">Enable</button>')) +
+          (isSelf ? '' : '<button onclick="deleteUserAccount(\'' + esc(u.username) + '\')" title="Delete user permanently" style="background:none;border:1px solid var(--crit);color:var(--crit);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer">Delete</button>') +
+        '</td></tr>';
+    });
+    html += '</tbody></table>';
+    el.innerHTML = html;
   }).catch(function() {
     var el = document.getElementById('user-list');
-    if (el) el.innerHTML = '<div style="color:var(--text2)">DB not available — users stored in memory only.</div>';
+    if (el) el.innerHTML = '<div style="color:var(--text2);text-align:center;padding:12px">Could not load users.</div>';
   });
 }
 
@@ -7445,19 +7500,22 @@ function createNewUser() {
   var displayName = document.getElementById('new-user-display').value.trim();
   var password = document.getElementById('new-user-pass').value;
   var role = document.getElementById('new-user-role').value;
+  var nsInput = document.getElementById('new-user-ns');
+  var namespaces = nsInput ? nsInput.value.split(',').map(function(s) { return s.trim(); }).filter(Boolean) : [];
   var msgEl = document.getElementById('new-user-msg');
   if (!username || !password) { msgEl.textContent = 'Username and password required'; msgEl.style.color = 'var(--crit)'; return; }
   fetch('/api/auth/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: username, password: password, role: role, displayName: displayName })
+    body: JSON.stringify({ username: username, password: password, role: role, displayName: displayName, namespaces: namespaces })
   }).then(function(r) { return r.json(); }).then(function(data) {
     if (data.ok) {
-      msgEl.textContent = 'User "' + username + '" created!';
+      msgEl.textContent = 'User "' + username + '" created successfully';
       msgEl.style.color = 'var(--ok)';
       document.getElementById('new-user-name').value = '';
       document.getElementById('new-user-display').value = '';
       document.getElementById('new-user-pass').value = '';
+      if (nsInput) nsInput.value = '';
       loadUserList();
     } else {
       msgEl.textContent = data.error || 'Failed to create user';
@@ -7469,41 +7527,60 @@ function createNewUser() {
   });
 }
 
-function showPasswordChangeModal(username) {
-  var existing = document.getElementById('pw-change-modal');
-  if (existing) existing.remove();
-  var modal = document.createElement('div');
-  modal.id = 'pw-change-modal';
-  modal.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center';
-  modal.innerHTML = '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:32px;max-width:380px;width:90%">' +
-    '<h3 style="margin-bottom:16px;font-size:16px">Password Change Required</h3>' +
-    '<p style="font-size:13px;color:var(--text2);margin-bottom:16px">Your password has expired (90-day policy). Please set a new password to continue.</p>' +
-    '<input class="login-input" id="pw-old" type="password" placeholder="Current password" style="margin-bottom:8px;font-size:13px;padding:10px">' +
-    '<input class="login-input" id="pw-new" type="password" placeholder="New password (min 8 chars)" style="margin-bottom:8px;font-size:13px;padding:10px">' +
-    '<input class="login-input" id="pw-confirm" type="password" placeholder="Confirm new password" style="margin-bottom:12px;font-size:13px;padding:10px">' +
-    '<button onclick="submitPasswordChange(\'' + esc(username) + '\')" style="width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Change Password</button>' +
-    '<div id="pw-change-msg" style="font-size:12px;margin-top:8px;min-height:16px"></div>' +
+// --- Edit User Modal ---
+function showEditUserModal(username) {
+  _removeModal('user-edit-modal');
+  fetch('/api/auth/users').then(function(r) { return r.json(); }).then(function(data) {
+    var user = (data.users || []).find(function(u) { return u.username === username; });
+    if (!user) { alert('User not found'); return; }
+    var modal = document.createElement('div');
+    modal.id = 'user-edit-modal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center';
+    modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:28px 24px;max-width:420px;width:90%">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">' +
+        '<h3 style="font-size:15px;margin:0">Edit User: ' + esc(username) + '</h3>' +
+        '<button onclick="this.closest(\'#user-edit-modal\').remove()" style="background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer;padding:0">&times;</button>' +
+      '</div>' +
+      '<label style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;display:block;margin-bottom:4px">Display Name</label>' +
+      '<input class="login-input" id="edit-display" value="' + esc(user.display_name || '') + '" style="margin-bottom:10px;font-size:12px;padding:8px 10px">' +
+      '<label style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;display:block;margin-bottom:4px">Role</label>' +
+      '<select id="edit-role" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;margin-bottom:10px">' +
+        '<option value="viewer"' + (user.role === 'viewer' ? ' selected' : '') + '>Viewer — read only</option>' +
+        '<option value="operator"' + (user.role === 'operator' ? ' selected' : '') + '>Operator — read + write</option>' +
+        '<option value="admin"' + (user.role === 'admin' ? ' selected' : '') + '>Admin — full access</option>' +
+      '</select>' +
+      '<label style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;display:block;margin-bottom:4px">Allowed Namespaces <span style="font-weight:400">(comma-separated, empty = all)</span></label>' +
+      '<input class="login-input" id="edit-ns" value="' + esc((user.namespaces || []).join(', ')) + '" placeholder="* (all namespaces)" style="margin-bottom:10px;font-size:12px;padding:8px 10px">' +
+      '<label style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;display:block;margin-bottom:4px">Status</label>' +
+      '<select id="edit-active" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;margin-bottom:14px">' +
+        '<option value="true"' + (user.active !== false ? ' selected' : '') + '>Active</option>' +
+        '<option value="false"' + (user.active === false ? ' selected' : '') + '>Disabled</option>' +
+      '</select>' +
+      '<button onclick="submitEditUser(\'' + esc(username) + '\')" style="width:100%;padding:10px;background:var(--accent2);color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Save Changes</button>' +
+      '<div id="edit-user-msg" style="font-size:12px;margin-top:8px;min-height:16px"></div>' +
     '</div>';
-  document.body.appendChild(modal);
+    document.body.appendChild(modal);
+  });
 }
 
-function submitPasswordChange(username) {
-  var oldPw = document.getElementById('pw-old').value;
-  var newPw = document.getElementById('pw-new').value;
-  var confirmPw = document.getElementById('pw-confirm').value;
-  var msgEl = document.getElementById('pw-change-msg');
-  if (!oldPw || !newPw) { msgEl.textContent = 'All fields required'; msgEl.style.color = 'var(--crit)'; return; }
-  if (newPw !== confirmPw) { msgEl.textContent = 'Passwords do not match'; msgEl.style.color = 'var(--crit)'; return; }
-  if (newPw.length < 8) { msgEl.textContent = 'Password must be at least 8 characters'; msgEl.style.color = 'var(--crit)'; return; }
-  fetch('/api/auth/change-password', {
-    method: 'POST',
+function submitEditUser(username) {
+  var msgEl = document.getElementById('edit-user-msg');
+  var role = document.getElementById('edit-role').value;
+  var displayName = document.getElementById('edit-display').value.trim();
+  var nsRaw = document.getElementById('edit-ns').value;
+  var namespaces = nsRaw ? nsRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean) : [];
+  var active = document.getElementById('edit-active').value === 'true';
+  fetch('/api/auth/users/' + encodeURIComponent(username), {
+    method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: username, currentPassword: oldPw, newPassword: newPw })
+    body: JSON.stringify({ role: role, displayName: displayName, namespaces: namespaces, active: active })
   }).then(function(r) { return r.json(); }).then(function(data) {
     if (data.ok) {
-      msgEl.textContent = 'Password changed successfully!';
+      msgEl.textContent = 'User updated successfully';
       msgEl.style.color = 'var(--ok)';
-      setTimeout(function() { var m = document.getElementById('pw-change-modal'); if (m) m.remove(); }, 1500);
+      loadUserList();
+      setTimeout(function() { _removeModal('user-edit-modal'); }, 1000);
     } else {
       msgEl.textContent = data.error || 'Failed';
       msgEl.style.color = 'var(--crit)';
@@ -7511,12 +7588,89 @@ function submitPasswordChange(username) {
   }).catch(function(err) { msgEl.textContent = err.message; msgEl.style.color = 'var(--crit)'; });
 }
 
+// --- Reset Password Modal (admin resets another user's password) ---
+function showResetPasswordModal(username) {
+  var isSelf = username === (_authUser && _authUser.name);
+  _removeModal('pw-change-modal');
+  var modal = document.createElement('div');
+  modal.id = 'pw-change-modal';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center';
+  modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+  modal.innerHTML = '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:28px 24px;max-width:380px;width:90%">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">' +
+      '<h3 style="font-size:15px;margin:0">Reset Password: ' + esc(username) + '</h3>' +
+      '<button onclick="this.closest(\'#pw-change-modal\').remove()" style="background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer;padding:0">&times;</button>' +
+    '</div>' +
+    (isSelf ? '<input class="login-input" id="pw-old" type="password" placeholder="Current password" style="margin-bottom:8px;font-size:13px;padding:10px">' : '') +
+    '<input class="login-input" id="pw-new" type="password" placeholder="New password (min 8 chars)" style="margin-bottom:8px;font-size:13px;padding:10px">' +
+    '<input class="login-input" id="pw-confirm" type="password" placeholder="Confirm new password" style="margin-bottom:12px;font-size:13px;padding:10px">' +
+    '<button onclick="submitResetPassword(\'' + esc(username) + '\',' + isSelf + ')" style="width:100%;padding:10px;background:var(--warn);color:#000;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Reset Password</button>' +
+    '<div id="pw-change-msg" style="font-size:12px;margin-top:8px;min-height:16px"></div>' +
+  '</div>';
+  document.body.appendChild(modal);
+}
+
+function showPasswordChangeModal(username) {
+  showResetPasswordModal(username);
+}
+
+function submitResetPassword(username, isSelf) {
+  var oldPwEl = document.getElementById('pw-old');
+  var oldPw = oldPwEl ? oldPwEl.value : null;
+  var newPw = document.getElementById('pw-new').value;
+  var confirmPw = document.getElementById('pw-confirm').value;
+  var msgEl = document.getElementById('pw-change-msg');
+  if (isSelf && !oldPw) { msgEl.textContent = 'Current password required'; msgEl.style.color = 'var(--crit)'; return; }
+  if (!newPw) { msgEl.textContent = 'New password required'; msgEl.style.color = 'var(--crit)'; return; }
+  if (newPw !== confirmPw) { msgEl.textContent = 'Passwords do not match'; msgEl.style.color = 'var(--crit)'; return; }
+  if (newPw.length < 8) { msgEl.textContent = 'Minimum 8 characters'; msgEl.style.color = 'var(--crit)'; return; }
+  var body = { username: username, newPassword: newPw };
+  if (isSelf) body.currentPassword = oldPw;
+  fetch('/api/auth/change-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function(r) { return r.json(); }).then(function(data) {
+    if (data.ok) {
+      msgEl.textContent = 'Password reset successfully!';
+      msgEl.style.color = 'var(--ok)';
+      loadUserList();
+      setTimeout(function() { _removeModal('pw-change-modal'); }, 1500);
+    } else {
+      msgEl.textContent = data.error || 'Failed';
+      msgEl.style.color = 'var(--crit)';
+    }
+  }).catch(function(err) { msgEl.textContent = err.message; msgEl.style.color = 'var(--crit)'; });
+}
+
+function submitPasswordChange(username) { submitResetPassword(username, true); }
+
+// --- Toggle user active/disabled ---
+function toggleUserActive(username, active) {
+  var action = active ? 'enable' : 'disable';
+  if (!confirm(action.charAt(0).toUpperCase() + action.slice(1) + ' user "' + username + '"?')) return;
+  fetch('/api/auth/users/' + encodeURIComponent(username), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ active: active })
+  }).then(function(r) { return r.json(); }).then(function(data) {
+    if (data.ok) loadUserList();
+    else alert(data.error || 'Failed');
+  });
+}
+
+// --- Delete user ---
 function deleteUserAccount(username) {
-  if (!confirm('Delete user "' + username + '"?')) return;
+  if (!confirm('Permanently delete user "' + username + '"?\n\nThis cannot be undone.')) return;
   fetch('/api/auth/users/' + encodeURIComponent(username), { method: 'DELETE' }).then(function(r) { return r.json(); }).then(function(data) {
     if (data.ok) loadUserList();
     else alert(data.error || 'Failed to delete user');
   });
+}
+
+function _removeModal(id) {
+  var m = document.getElementById(id);
+  if (m) m.remove();
 }
 
 var _loginTab = 'token';

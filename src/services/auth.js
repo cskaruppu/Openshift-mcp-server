@@ -535,9 +535,28 @@ export async function handleTokenLogin(body, res) {
 }
 
 export async function handleUserManagement(req, body, res, url) {
-  // All user management requires admin role
   const username = req.user?.name || "anonymous";
   const role = getUserRole(username);
+
+  // Change-password and password-policy are available to all authenticated users
+  if (url.pathname === "/api/auth/change-password" || url.pathname === "/api/auth/password-policy") {
+    if (req.method === "POST" && url.pathname === "/api/auth/change-password") {
+      const targetUser = body.username || username;
+      if (targetUser !== username && ROLES[role]?.level < 3) {
+        sendJson(res, 403, { error: "Can only change your own password (or be admin)" });
+        return;
+      }
+      const result = await changePassword(targetUser, body.currentPassword, body.newPassword);
+      sendJson(res, result.ok ? 200 : 400, result);
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/auth/password-policy") {
+      sendJson(res, 200, { maxAgeDays: PASSWORD_MAX_AGE_DAYS, minLength: 8, sessionTtlHours: Math.round(SESSION_TTL / 3600) });
+      return;
+    }
+  }
+
+  // All other user management requires admin role
   if (ROLES[role]?.level < 3) {
     sendJson(res, 403, { error: "Admin access required" });
     return;
@@ -570,28 +589,6 @@ export async function handleUserManagement(req, body, res, url) {
     }
     const result = await deleteUser(targetUser);
     sendJson(res, result.ok ? 200 : 400, result);
-    return;
-  }
-
-  // POST /api/auth/change-password (any authenticated user can change own password)
-  if (req.method === "POST" && url.pathname === "/api/auth/change-password") {
-    const targetUser = body.username || req.user?.name;
-    if (targetUser !== req.user?.name && ROLES[role]?.level < 3) {
-      sendJson(res, 403, { error: "Can only change your own password (or be admin)" });
-      return;
-    }
-    const result = await changePassword(targetUser, body.currentPassword, body.newPassword);
-    sendJson(res, result.ok ? 200 : 400, result);
-    return;
-  }
-
-  // GET /api/auth/password-policy
-  if (req.method === "GET" && url.pathname === "/api/auth/password-policy") {
-    sendJson(res, 200, {
-      maxAgeDays: PASSWORD_MAX_AGE_DAYS,
-      minLength: 8,
-      sessionTtlHours: Math.round(SESSION_TTL / 3600),
-    });
     return;
   }
 
