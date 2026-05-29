@@ -8,9 +8,8 @@ data:
   MCP_SERVER_PORT: "3000"
   LOG_LEVEL: "info"
   EMERGENCY_AUTO_FIX: "false"
-  NODE_TLS_REJECT_UNAUTHORIZED: "0"
   # Authentication: "none" (default), "token" (set MCP_API_TOKEN in secrets), "oauth" (OpenShift SSO)
-  AUTH_MODE: "none"
+  AUTH_MODE: "token"
   # LLM Provider: "azure", "openai", "anthropic", "ollama", or "none" (built-in analysis)
   LLM_PROVIDER: "azure"
   # LLM_API_URL: Azure OpenAI endpoint (e.g. https://<resource>.openai.azure.com)

@@ -119,7 +119,7 @@ import { loadConfig } from "./utils/config.js";
 import { validateCommand, getAccessLevel, isToolAllowed } from "./security/command-validator.js";
 import { initComponents, isToolRegistrationEnabled, getComponentCatalog, getComponentSummary } from "./security/component-registry.js";
 import { initTelemetry, shutdownTelemetry, startSpan, traceChatRequest, traceToolCall, getTelemetryStatus } from "./utils/telemetry-otel.js";
-import { ocpGet, setRemoteCluster, clearRemoteCluster } from "./utils/openshift-client.js";
+import { ocpGet, withRemoteCluster, setRemoteCluster, clearRemoteCluster } from "./utils/openshift-client.js";
 import {
   connectServer as hubConnect,
   disconnectServer as hubDisconnect,
@@ -377,17 +377,23 @@ async function withClusterContext(url, handler) {
     if (!agent || !agent.apiUrl) {
       throw Object.assign(new Error(`Unknown cluster: ${clusterName}`), { status: 404 });
     }
-    setRemoteCluster(agent.apiUrl, agent.token);
-    try {
-      return await handler();
-    } finally {
-      clearRemoteCluster();
-    }
+    return withRemoteCluster(agent.apiUrl, agent.token, handler);
   }
   return handler();
 }
 
 function esc(s) { return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+function isBlockedUrl(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    const host = u.hostname;
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1") return true;
+    if (host === "0.0.0.0" || host.startsWith("169.254.") || host === "metadata.google.internal") return true;
+    if (/^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(host) && !process.env.ALLOW_PRIVATE_CLUSTER_IPS) return true;
+    return false;
+  } catch { return true; }
+}
 
 function generatePreflightHTML(report, ticketNumber, fields) {
   const checks = report.checks || [];
@@ -1604,6 +1610,7 @@ async function startSSE() {
       const { name, platform, apiUrl, token } = body;
       if (!name) return sendJson(res, 400, { error: "Cluster name is required" });
       if (!apiUrl) return sendJson(res, 400, { error: "API server URL is required" });
+      if (isBlockedUrl(apiUrl)) return sendJson(res, 400, { error: "API URL targets a blocked address range" });
 
       let testResult = null;
       try {
@@ -4036,6 +4043,7 @@ async function startSSE() {
     console.error(`  Agent Registry:   ${list.length} agents loaded`);
   }).catch(() => {});
 
+  _httpServer = httpServer;
   httpServer.listen(PORT, "0.0.0.0", () => {
     console.error(`TCS Agentic AI — Enterprise Intelligence Platform`);
     console.error(`  Server running on http://0.0.0.0:${PORT}`);
@@ -4090,9 +4098,19 @@ const mode =
   process.env.MCP_TRANSPORT ||
   (process.env.KUBERNETES_SERVICE_HOST ? "sse" : "stdio");
 
+let _httpServer = null;
+function gracefulShutdown(signal) {
+  console.error(`[${signal}] Shutting down gracefully...`);
+  if (_httpServer) _httpServer.close(() => console.error("[shutdown] HTTP server closed"));
+  setTimeout(() => { console.error("[shutdown] Forcing exit"); process.exit(0); }, 10_000);
+}
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
 process.on("uncaughtException", (err) => {
   console.error("[FATAL] Uncaught exception:", err.message);
   console.error(err.stack);
+  process.exit(1);
 });
 process.on("unhandledRejection", (reason) => {
   console.error("[FATAL] Unhandled promise rejection:", reason instanceof Error ? reason.message : reason);

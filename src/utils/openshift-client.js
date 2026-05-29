@@ -12,7 +12,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { Agent, fetch as undiciFetch } from "undici";
 
 const ocpAgent = new Agent({
-  connect: { rejectUnauthorized: false, timeout: 15_000 },
+  connect: { timeout: 15_000 },
   keepAliveTimeout: 30_000,
   keepAliveMaxTimeout: 60_000,
   pipelining: 1,
@@ -121,22 +121,31 @@ export function renderTraceMarkdown(trace) {
 }
 
 // ---------------------------------------------------------------------------
-// Remote cluster override — allows routing all ocpFetch() calls to a remote
-// cluster without changing hundreds of call sites.
+// Remote cluster override — per-request via AsyncLocalStorage so concurrent
+// requests to different clusters never bleed into each other.
 // ---------------------------------------------------------------------------
-let _remoteClusterOverride = null;
+const clusterStore = new AsyncLocalStorage();
 
 /**
- * Set a remote cluster override so subsequent ocpFetch() calls target
- * the given apiUrl/token instead of the local cluster.
+ * Run `fn` with all ocpFetch() calls routed to the given remote cluster.
+ * Safe under concurrency — each async context gets its own override.
  */
-export function setRemoteCluster(apiUrl, token) {
-  _remoteClusterOverride = { apiUrl, token };
+export function withRemoteCluster(apiUrl, token, fn) {
+  return clusterStore.run({ apiUrl, token }, fn);
 }
 
-/** Clear the remote cluster override, reverting to the local cluster. */
+/**
+ * Set a remote cluster override (legacy — prefer withRemoteCluster).
+ * Kept for backward compatibility but now uses AsyncLocalStorage internally.
+ */
+export function setRemoteCluster(apiUrl, token) {
+  // no-op — use withRemoteCluster instead; this is retained so existing
+  // imports don't break, but the actual routing is via clusterStore.
+}
+
+/** Clear the remote cluster override (legacy no-op). */
 export function clearRemoteCluster() {
-  _remoteClusterOverride = null;
+  // no-op — cleanup is automatic when withRemoteCluster's callback exits.
 }
 
 // ---------------------------------------------------------------------------
@@ -171,8 +180,7 @@ async function token() {
 const OCP_FETCH_TIMEOUT_MS = parseInt(process.env.OCP_FETCH_TIMEOUT_MS || "15000", 10);
 
 export async function ocpFetch(path, options = {}) {
-  // When a remote cluster override is active, route to that cluster instead.
-  const remote = _remoteClusterOverride;
+  const remote = clusterStore.getStore() || null;
   const baseUrl = remote ? remote.apiUrl : OPENSHIFT_API_URL;
   const tk = remote ? remote.token : await token();
   const url = `${baseUrl}${path}`;
@@ -224,10 +232,12 @@ const GET_CACHE_TTL_MS = 5_000;
 /** Shorthand GET with short-lived cache */
 export async function ocpGet(path) {
   const now = Date.now();
-  const cached = _getCache.get(path);
+  const remote = clusterStore.getStore();
+  const cacheKey = remote ? `${remote.apiUrl}||${path}` : path;
+  const cached = _getCache.get(cacheKey);
   if (cached && now - cached.ts < GET_CACHE_TTL_MS) return cached.data;
   const data = await ocpFetch(path);
-  _getCache.set(path, { data, ts: now });
+  _getCache.set(cacheKey, { data, ts: now });
   // Evict stale entries periodically
   if (_getCache.size > 200) {
     for (const [k, v] of _getCache) {

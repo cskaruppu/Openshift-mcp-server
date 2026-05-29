@@ -91,12 +91,26 @@ async function saveSettingsToDB(settings) {
  * GET /api/settings/llm — read LLM settings from DB → file → defaults
  */
 export async function handleLLMSettingsGet(req, res) {
+  function maskApiKeys(settings) {
+    if (!settings || !settings.providers) return settings;
+    const masked = { ...settings, providers: { ...settings.providers } };
+    for (const [name, cfg] of Object.entries(masked.providers)) {
+      if (cfg.apiKey) {
+        masked.providers[name] = {
+          ...cfg,
+          apiKey: cfg.apiKey.length > 4 ? "****" + cfg.apiKey.slice(-4) : "configured",
+        };
+      }
+    }
+    return masked;
+  }
+
   try {
     const fromDB = await loadSettingsFromDB();
     if (fromDB && fromDB.providers) {
       const provCount = Object.values(fromDB.providers).filter(c => c.enabled || c.apiKey).length;
       console.log(`[settings] loaded from DB — ${provCount} provider(s) configured`);
-      return json(res, 200, { ...fromDB, _storage: "database" });
+      return json(res, 200, { ...maskApiKeys(fromDB), _storage: "database" });
     }
   } catch (e) {
     console.warn("[settings] DB read failed:", e.message);
@@ -107,7 +121,7 @@ export async function handleLLMSettingsGet(req, res) {
     if (parsed && parsed.providers) {
       const provCount = Object.values(parsed.providers).filter(c => c.enabled || c.apiKey).length;
       console.log(`[settings] loaded from file — ${provCount} provider(s) configured`);
-      return json(res, 200, { ...parsed, _storage: "file" });
+      return json(res, 200, { ...maskApiKeys(parsed), _storage: "file" });
     }
   } catch { /* fall through */ }
   console.log("[settings] no saved settings found — returning defaults");

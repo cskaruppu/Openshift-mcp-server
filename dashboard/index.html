@@ -10,6 +10,7 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0f1117;--bg-deep:#0a0c10;--bg-alt:#161b22;--card:#1a1d27;--card-deep:#0d1117;--border:#2a2d3a;--border2:#30363d;--hover:#2a2d3a;--accent:#e04040;--accent2:#3b82f6;--accent3:#10b981;--text:#e4e4e7;--text2:#a1a1aa;--text-code:#e6edf3;--text-code-accent:#e2b3ff;--warn:#f59e0b;--crit:#ef4444;--ok:#22c55e}
+*:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 body{font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
 .header{background:linear-gradient(135deg,#0a0e1a 0%,#1a1040 40%,#2a1520 100%);border-bottom:2px solid transparent;border-image:linear-gradient(90deg,#e04040,#3b82f6,#10b981) 1;padding:16px 32px;display:flex;align-items:center;justify-content:space-between}
 .header .logo{display:flex;align-items:center;gap:14px}
@@ -6712,7 +6713,7 @@ async function loadAppChangesWidget() {
   }
 }
 
-setInterval(function() { loadAppChangesWidget(); }, 15000);
+setInterval(function() { if (!document.hidden) loadAppChangesWidget(); }, 15000);
 
 var _ivsLastScanTime = null;
 var _ivsTopImagesData = [];
@@ -7292,7 +7293,7 @@ var _dashRefreshTimer = null;
 function startDashRefresh() {
   if (_dashRefreshTimer) return;
   _dashRefreshTimer = setInterval(function() {
-    if (_currentView === 'dashboard') refreshAll();
+    if (!document.hidden && _currentView === 'dashboard') refreshAll();
   }, REFRESH_INTERVAL);
 }
 startDashRefresh();
@@ -9915,8 +9916,10 @@ function createWelcomeEl() {
 }
 
 function scrollConversation() {
-  const conv = document.getElementById('chat-conversation');
-  if (conv) setTimeout(() => conv.scrollTop = conv.scrollHeight, 50);
+  const el = document.getElementById('chat-conversation');
+  if (!el) return;
+  const nearBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 150;
+  if (nearBottom) setTimeout(() => el.scrollTop = el.scrollHeight, 50);
 }
 
 // ---------------------------------------------------------------------------
@@ -12496,6 +12499,8 @@ function renderMemoryBar() {
 }
 
 async function sendFullChatStreaming(text) {
+  var toolTraces = [];
+  var toolTracesEl = null;
   const input = document.getElementById('full-chat-input');
   const sendBtn = document.getElementById('full-chat-send');
   const msg = text || (input ? input.value.trim() : '');
@@ -12565,8 +12570,6 @@ async function sendFullChatStreaming(text) {
       const body = document.getElementById('stream-body');
       let buf = '';
       let firstChunk = true;
-      var toolTraces = [];
-      var toolTracesEl = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -18155,5 +18158,6 @@ function uwShowComplete(success) {
   <div class="footer-right">&copy; 2026 Tata Consultancy Services. All Rights Reserved.</div>
 </div>
 
+<script src="multi-platform.js"></script>
 </body>
 </html>

@@ -8,7 +8,7 @@
  * Sessions stored in-memory with Redis fallback for HA.
  */
 
-import { randomBytes, createHash } from "node:crypto";
+import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import { cacheGet, cacheSet } from "../utils/cache.js";
 import { query as dbQuery } from "../utils/db.js";
 
@@ -142,9 +142,8 @@ export function getRoles() {
 }
 
 const PUBLIC_PATHS = new Set([
-  "/healthz", "/readyz", "/metrics", "/sse", "/message",
+  "/healthz", "/readyz", "/metrics",
   "/api/auth/login", "/api/auth/callback", "/api/auth/status",
-  "/api/diag",
 ]);
 
 function isPublicPath(pathname) {
@@ -181,7 +180,9 @@ export async function authMiddleware(req, res, url) {
   if (authHeader) {
     if (AUTH_MODE === "token" && API_TOKEN) {
       const provided = authHeader.replace(/^Bearer\s+/i, "");
-      if (provided === API_TOKEN) {
+      const providedBuf = Buffer.from(provided);
+      const expectedBuf = Buffer.from(API_TOKEN);
+      if (providedBuf.length === expectedBuf.length && timingSafeEqual(providedBuf, expectedBuf)) {
         req.user = { name: "api-client", method: "token" };
         return true;
       }
