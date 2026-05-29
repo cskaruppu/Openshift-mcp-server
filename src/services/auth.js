@@ -54,16 +54,7 @@ export async function loadUserRoles() {
       }
     }
   } catch {}
-  // Load persistent users from DB
-  try {
-    const result = await dbQuery("SELECT username, role, namespaces FROM users WHERE active = true");
-    if (result?.rows) {
-      for (const row of result.rows) {
-        _userRoles.set(row.username, row.role);
-        if (row.namespaces?.length > 0) _userNamespaces.set(row.username, row.namespaces);
-      }
-    }
-  } catch {}
+  await _loadUsersFromDB();
   await ensureDefaultAdmin();
 }
 
@@ -106,132 +97,183 @@ function verifyPassword(password, stored) {
 }
 
 // ---------------------------------------------------------------------------
-// Persistent user CRUD (PostgreSQL-backed)
+// Persistent user CRUD — in-memory primary, DB write-through
 // ---------------------------------------------------------------------------
+const _users = new Map(); // username -> { passwordHash, role, namespaces, displayName, createdAt, passwordChangedAt, lastLogin, active }
+
+function _persistUsersToDB() {
+  const snapshot = {};
+  for (const [u, data] of _users) snapshot[u] = data;
+  dbQuery(
+    `INSERT INTO kv_store (key, value, updated_at) VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+    ["managed_users", JSON.stringify(snapshot)]
+  ).catch(() => {});
+}
+
+async function _loadUsersFromDB() {
+  // Try the users table first (PostgreSQL)
+  try {
+    const r = await dbQuery("SELECT username, password_hash, role, namespaces, display_name, created_at, password_changed_at, last_login, active, force_password_change FROM users ORDER BY created_at");
+    if (r?.rows?.length > 0) {
+      for (const row of r.rows) {
+        _users.set(row.username, {
+          passwordHash: row.password_hash,
+          role: row.role,
+          namespaces: row.namespaces || [],
+          displayName: row.display_name || row.username,
+          createdAt: row.created_at,
+          passwordChangedAt: row.password_changed_at,
+          lastLogin: row.last_login,
+          active: row.active !== false,
+          forcePasswordChange: row.force_password_change || false,
+        });
+        _userRoles.set(row.username, row.role);
+        if (row.namespaces?.length > 0) _userNamespaces.set(row.username, row.namespaces);
+      }
+      return;
+    }
+  } catch {}
+  // Fallback: load from kv_store (works even when users table doesn't exist)
+  try {
+    const r = await dbQuery("SELECT value FROM kv_store WHERE key = $1", ["managed_users"]);
+    if (r?.rows?.length > 0) {
+      const data = typeof r.rows[0].value === "string" ? JSON.parse(r.rows[0].value) : r.rows[0].value;
+      if (data && typeof data === "object") {
+        for (const [username, u] of Object.entries(data)) {
+          _users.set(username, u);
+          _userRoles.set(username, u.role);
+          if (u.namespaces?.length > 0) _userNamespaces.set(username, u.namespaces);
+        }
+      }
+    }
+  } catch {}
+}
+
+function _persistUserToDBTable(username, data) {
+  dbQuery(
+    `INSERT INTO users (username, password_hash, role, namespaces, display_name, created_at, password_changed_at, active, force_password_change)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (username) DO UPDATE SET
+       password_hash = $2, role = $3, namespaces = $4, display_name = $5,
+       password_changed_at = $7, active = $8, force_password_change = $9, updated_at = NOW()`,
+    [username, data.passwordHash, data.role, data.namespaces || [], data.displayName || username,
+     data.createdAt || new Date().toISOString(), data.passwordChangedAt || new Date().toISOString(),
+     data.active !== false, data.forcePasswordChange || false]
+  ).catch(() => {});
+}
+
 export async function createUser(username, password, role = "viewer", displayName = "", namespaces = []) {
   if (!ROLES[role]) return { error: "Invalid role" };
   if (!username || username.length < 2) return { error: "Username too short" };
   if (!password || password.length < 8) return { error: "Password must be at least 8 characters" };
+  if (_users.has(username)) return { error: "User already exists" };
   const passwordHash = hashPassword(password);
-  try {
-    await dbQuery(
-      `INSERT INTO users (username, password_hash, role, namespaces, display_name)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [username, passwordHash, role, namespaces, displayName || username]
-    );
-    _userRoles.set(username, role);
-    if (namespaces.length > 0) _userNamespaces.set(username, namespaces);
-    return { ok: true, username, role };
-  } catch (err) {
-    if (err.code === "23505") return { error: "User already exists" };
-    return { error: err.message };
-  }
+  const now = new Date().toISOString();
+  const userData = {
+    passwordHash, role, namespaces,
+    displayName: displayName || username,
+    createdAt: now, passwordChangedAt: now,
+    lastLogin: null, active: true, forcePasswordChange: false,
+  };
+  _users.set(username, userData);
+  _userRoles.set(username, role);
+  if (namespaces.length > 0) _userNamespaces.set(username, namespaces);
+  _persistUserToDBTable(username, userData);
+  _persistUsersToDB();
+  return { ok: true, username, role };
 }
 
 export async function updateUser(username, updates) {
-  const fields = [];
-  const params = [username];
-  let idx = 2;
+  const userData = _users.get(username);
+  if (!userData) return { error: "User not found" };
   if (updates.password) {
     if (updates.password.length < 8) return { error: "Password must be at least 8 characters" };
-    fields.push(`password_hash = $${idx++}`);
-    params.push(hashPassword(updates.password));
+    userData.passwordHash = hashPassword(updates.password);
+    userData.passwordChangedAt = new Date().toISOString();
+    userData.forcePasswordChange = false;
   }
   if (updates.role && ROLES[updates.role]) {
-    fields.push(`role = $${idx++}`);
-    params.push(updates.role);
+    userData.role = updates.role;
     _userRoles.set(username, updates.role);
   }
   if (updates.namespaces !== undefined) {
-    fields.push(`namespaces = $${idx++}`);
-    params.push(Array.isArray(updates.namespaces) ? updates.namespaces : []);
-    if (Array.isArray(updates.namespaces) && updates.namespaces.length > 0) {
-      _userNamespaces.set(username, updates.namespaces);
-    } else {
-      _userNamespaces.delete(username);
-    }
+    userData.namespaces = Array.isArray(updates.namespaces) ? updates.namespaces : [];
+    if (userData.namespaces.length > 0) _userNamespaces.set(username, userData.namespaces);
+    else _userNamespaces.delete(username);
   }
-  if (updates.displayName !== undefined) {
-    fields.push(`display_name = $${idx++}`);
-    params.push(updates.displayName);
-  }
-  if (updates.active !== undefined) {
-    fields.push(`active = $${idx++}`);
-    params.push(!!updates.active);
-  }
-  if (fields.length === 0) return { error: "Nothing to update" };
-  fields.push("updated_at = NOW()");
-  try {
-    const r = await dbQuery(`UPDATE users SET ${fields.join(", ")} WHERE username = $1`, params);
-    return r?.rowCount > 0 ? { ok: true } : { error: "User not found" };
-  } catch (err) {
-    return { error: err.message };
-  }
+  if (updates.displayName !== undefined) userData.displayName = updates.displayName;
+  if (updates.active !== undefined) userData.active = !!updates.active;
+  _persistUserToDBTable(username, userData);
+  _persistUsersToDB();
+  return { ok: true };
 }
 
 export async function deleteUser(username) {
-  try {
-    const r = await dbQuery("DELETE FROM users WHERE username = $1", [username]);
-    _userRoles.delete(username);
-    _userNamespaces.delete(username);
-    return r?.rowCount > 0 ? { ok: true } : { error: "User not found" };
-  } catch (err) {
-    return { error: err.message };
-  }
+  if (!_users.has(username)) return { error: "User not found" };
+  _users.delete(username);
+  _userRoles.delete(username);
+  _userNamespaces.delete(username);
+  dbQuery("DELETE FROM users WHERE username = $1", [username]).catch(() => {});
+  _persistUsersToDB();
+  return { ok: true };
 }
 
 export async function listUsers() {
-  try {
-    const r = await dbQuery("SELECT username, role, namespaces, display_name, created_at, last_login, active, password_changed_at, force_password_change FROM users ORDER BY created_at");
-    return (r?.rows || []).map((u) => {
-      const daysAge = u.password_changed_at ? Math.floor((Date.now() - new Date(u.password_changed_at).getTime()) / 86400000) : null;
-      return { ...u, passwordAgeDays: daysAge, passwordExpired: daysAge !== null && daysAge >= PASSWORD_MAX_AGE_DAYS };
+  const result = [];
+  for (const [username, u] of _users) {
+    const daysAge = u.passwordChangedAt ? Math.floor((Date.now() - new Date(u.passwordChangedAt).getTime()) / 86400000) : null;
+    result.push({
+      username,
+      role: u.role,
+      namespaces: u.namespaces || [],
+      display_name: u.displayName || username,
+      created_at: u.createdAt,
+      last_login: u.lastLogin,
+      active: u.active !== false,
+      password_changed_at: u.passwordChangedAt,
+      passwordAgeDays: daysAge,
+      passwordExpired: daysAge !== null && daysAge >= PASSWORD_MAX_AGE_DAYS,
+      force_password_change: u.forcePasswordChange || false,
     });
-  } catch {
-    return [];
   }
+  return result;
 }
 
 export async function changePassword(username, oldPassword, newPassword) {
   if (!newPassword || newPassword.length < 8) return { error: "Password must be at least 8 characters" };
-  try {
-    const r = await dbQuery("SELECT password_hash FROM users WHERE username = $1", [username]);
-    if (!r?.rows?.length) return { error: "User not found" };
-    if (oldPassword && !verifyPassword(oldPassword, r.rows[0].password_hash)) return { error: "Current password is incorrect" };
-    const hash = hashPassword(newPassword);
-    await dbQuery("UPDATE users SET password_hash = $1, password_changed_at = NOW(), force_password_change = false, updated_at = NOW() WHERE username = $2", [hash, username]);
-    return { ok: true };
-  } catch (err) {
-    return { error: err.message };
-  }
+  const userData = _users.get(username);
+  if (!userData) return { error: "User not found" };
+  if (oldPassword && !verifyPassword(oldPassword, userData.passwordHash)) return { error: "Current password is incorrect" };
+  userData.passwordHash = hashPassword(newPassword);
+  userData.passwordChangedAt = new Date().toISOString();
+  userData.forcePasswordChange = false;
+  _persistUserToDBTable(username, userData);
+  _persistUsersToDB();
+  return { ok: true };
 }
 
 async function authenticateUser(username, password) {
-  try {
-    const r = await dbQuery("SELECT password_hash, role, namespaces, display_name, active, password_changed_at, force_password_change FROM users WHERE username = $1", [username]);
-    if (!r?.rows?.length) return null;
-    const user = r.rows[0];
-    if (!user.active) return null;
-    if (!verifyPassword(password, user.password_hash)) return null;
-    // Check password expiry (90 days default)
-    const passwordAge = user.password_changed_at ? (Date.now() - new Date(user.password_changed_at).getTime()) / 86400000 : Infinity;
-    const expired = passwordAge >= PASSWORD_MAX_AGE_DAYS || user.force_password_change;
-    await dbQuery("UPDATE users SET last_login = NOW() WHERE username = $1", [username]).catch(() => {});
-    return { name: username, displayName: user.display_name, role: user.role, method: "password", passwordExpired: expired };
-  } catch {
-    return null;
-  }
+  const userData = _users.get(username);
+  if (!userData) return null;
+  if (!userData.active) return null;
+  if (!verifyPassword(password, userData.passwordHash)) return null;
+  const passwordAge = userData.passwordChangedAt ? (Date.now() - new Date(userData.passwordChangedAt).getTime()) / 86400000 : Infinity;
+  const expired = passwordAge >= PASSWORD_MAX_AGE_DAYS || userData.forcePasswordChange;
+  userData.lastLogin = new Date().toISOString();
+  dbQuery("UPDATE users SET last_login = NOW() WHERE username = $1", [username]).catch(() => {});
+  _persistUsersToDB();
+  return { name: username, displayName: userData.displayName, role: userData.role, method: "password", passwordExpired: expired };
 }
 
 async function ensureDefaultAdmin() {
-  try {
-    const r = await dbQuery("SELECT username FROM users WHERE role = 'admin' LIMIT 1");
-    if (r?.rows?.length > 0) return;
-    const adminPass = process.env.MCP_ADMIN_PASSWORD || API_TOKEN;
-    if (!adminPass || adminPass === "CHANGEME") return;
-    await createUser("admin", adminPass, "admin", "Admin");
-    console.log("[auth] default admin user created");
-  } catch {}
+  if (_users.size > 0) {
+    for (const [, u] of _users) { if (u.role === "admin") return; }
+  }
+  const adminPass = process.env.MCP_ADMIN_PASSWORD || API_TOKEN;
+  if (!adminPass || adminPass === "CHANGEME") return;
+  await createUser("admin", adminPass, "admin", "Admin");
+  console.log("[auth] default admin user created");
 }
 
 export function getUserRole(username) {

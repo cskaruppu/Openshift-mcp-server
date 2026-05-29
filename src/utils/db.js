@@ -216,6 +216,12 @@ async function ensureSchema() {
     await _pool.query(`
       ALTER TABLE conversations ADD COLUMN IF NOT EXISTS locked BOOLEAN NOT NULL DEFAULT FALSE
     `).catch(() => {});
+    await _pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ DEFAULT NOW()
+    `).catch(() => {});
+    await _pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS force_password_change BOOLEAN DEFAULT FALSE
+    `).catch(() => {});
     console.log("[db] schema ensured");
   } catch (err) {
     console.error("[db] failed to ensure schema:", err.message);
