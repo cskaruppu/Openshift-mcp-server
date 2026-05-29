@@ -65,6 +65,7 @@ import {
   getIncidentStats as leGetIncidentStats,
 } from "./learning-engine.js";
 import { maybeEnhance as nluEnhanceWithLLM } from "./nlu-llm.js";
+import { getPlatform } from "../platform/index.js";
 import { summarizeIfNeeded } from "./summarizer.js";
 import { suggestPlaybook, renderPlaybookMarkdown } from "./playbooks.js";
 import { findResource } from "./resource-index.js";
@@ -7303,6 +7304,10 @@ const PROMPT_SUPPLEMENT_AMBIGUITY = `
 - When lacking context, say what you DO know, state your assumption, ask if different`;
 
 function buildSystemPrompt(userMessage, context) {
+  const platform = getPlatform();
+  const isOCP = platform === "openshift";
+  const cli = isOCP ? "oc" : "kubectl";
+
   let prompt = SYSTEM_PROMPT_BASE;
   const lower = (userMessage || "").toLowerCase();
 
@@ -7369,6 +7374,13 @@ function buildSystemPrompt(userMessage, context) {
 
   if (/\bpdb\b|\bdisruption|\bhpa\b|\bautoscal|\bprobe|\bliveness|\breadiness|\borphan|\bunused|\bgovernance|\btenant|\bquota/i.test(lower)) {
     prompt += PROMPT_SUPPLEMENT_WORKLOAD;
+  }
+
+  if (!isOCP) {
+    prompt = prompt.replace(/Use `oc` commands \(not `kubectl`\) in all examples/g,
+      `Use \`${cli}\` commands in all examples. This is a ${platform.toUpperCase()} cluster.`);
+    prompt = prompt.replace(/Reference Routes, DeploymentConfigs, BuildConfigs, ImageStreams, SCCs, Projects/g,
+      'Reference platform-specific resources (Ingress, HPA, etc.)');
   }
 
   return prompt;
@@ -7901,7 +7913,12 @@ function summarizeContext(ctx) {
     }
   }
 
-  return sections.join("\n\n");
+  const MAX_CONTEXT_CHARS = 12000;
+  let result = sections.join("\n\n");
+  if (result.length > MAX_CONTEXT_CHARS) {
+    result = result.slice(0, MAX_CONTEXT_CHARS) + "\n\n[Context truncated to fit token budget]";
+  }
+  return result;
 }
 
 async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
@@ -7991,7 +8008,7 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
       messages,
       system: augmentedSystem,
       maxTokens: 2000,
-      temperature: 0.3,
+      temperature: 0.15,
       provider: opts.provider,
       apiUrl: opts.apiUrl,
       apiKey: opts.apiKey,
@@ -12185,7 +12202,10 @@ export async function handleChatAPI(req, res) {
     // ---- NLU: parse the message once, with conversation memory for
     // follow-up resolution ("show its logs", "delete it", "same in prod").
     const memory = await getMemory(conversationId);
-    const parsed = nluParse(userMessage, memory);
+    let parsed = nluParse(userMessage, memory);
+    if (parsed.confidence < 0.45 && typeof nluEnhanceWithLLM === 'function') {
+      try { parsed = await nluEnhanceWithLLM(parsed, userMessage, llmOpts || {}); } catch(e) {}
+    }
     intentsForLog = [parsed.intent, parsed.resource, parsed.scope]
       .filter(Boolean);
 
@@ -13216,7 +13236,7 @@ export async function handleChatAPI(req, res) {
             messages: [...priorMessages, { role: "user", content: userContent }],
             system: augmentedSystem,
             maxTokens: 2000,
-            temperature: 0.3,
+            temperature: 0.15,
             ...llmOpts,
             onDelta: (chunk) => {
               fullText += chunk;
@@ -13360,6 +13380,10 @@ export async function handleChatAPI(req, res) {
         }
       } else {
         replyText = await callLLMWithContext(userMessage, context, llmOpts);
+      }
+      // Label knowledge-only responses that skipped cluster data
+      if (context._skippedClusterContext && replyText) {
+        replyText += "\n\n> *This is general knowledge and has not been verified against your cluster.*";
       }
       return { context, replyText, toolsUsed };
     });

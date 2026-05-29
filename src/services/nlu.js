@@ -22,6 +22,11 @@
  * NO regex spaghetti — we tokenize once and walk the tokens.
  */
 
+import { getPlatform } from "../platform/index.js";
+import { getNLUSupplements } from "../platform/nlu-supplements.js";
+
+let _supplementsMerged = false;
+
 // ---------------------------------------------------------------------------
 // Vocabulary
 // ---------------------------------------------------------------------------
@@ -799,6 +804,17 @@ function normalizeCompounds(text) {
  *        "delete it", "now in production").
  */
 export function parse(message, memory = {}) {
+  // Merge platform-specific NLU supplements once
+  if (!_supplementsMerged) {
+    const supplements = getNLUSupplements(getPlatform());
+    if (supplements) {
+      for (const [key, val] of Object.entries(supplements)) {
+        if (!VERB_TABLE[key]) VERB_TABLE[key] = val;
+      }
+    }
+    _supplementsMerged = true;
+  }
+
   const raw = String(message || "");
   const normalized = normalizeCompounds(raw);
   const tokens = tokenize(normalized);

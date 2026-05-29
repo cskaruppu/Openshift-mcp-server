@@ -116,7 +116,6 @@ async function detectPlatform(apiGet) {
       // EKS detection
       if (labels["eks.amazonaws.com/nodegroup"] ||
           labels["karpenter.sh/provisioner-name"] ||
-          labels["node.kubernetes.io/instance-type"]?.startsWith("m5") ||
           providerID.startsWith("aws://")) {
         _detectedPlatform = PLATFORM.EKS;
         _platformMeta = {
@@ -183,7 +182,7 @@ async function detectPlatform(apiGet) {
 }
 
 function getPlatform() {
-  return _detectedPlatform || PLATFORM.OPENSHIFT;
+  return _detectedPlatform || PLATFORM.K8S;
 }
 
 function getPlatformMeta() {

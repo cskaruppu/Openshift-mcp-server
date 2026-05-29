@@ -119,7 +119,8 @@ import { loadConfig } from "./utils/config.js";
 import { validateCommand, getAccessLevel, isToolAllowed } from "./security/command-validator.js";
 import { initComponents, isToolRegistrationEnabled, getComponentCatalog, getComponentSummary } from "./security/component-registry.js";
 import { initTelemetry, shutdownTelemetry, startSpan, traceChatRequest, traceToolCall, getTelemetryStatus } from "./utils/telemetry-otel.js";
-import { ocpGet, withRemoteCluster, setRemoteCluster, clearRemoteCluster } from "./utils/openshift-client.js";
+import { ocpGet, ocpPost, ocpPatch, ocpDelete, ocpFetch, withRemoteCluster, setRemoteCluster, clearRemoteCluster } from "./utils/openshift-client.js";
+import { initPlatform, getPlatform } from "./platform/index.js";
 import {
   connectServer as hubConnect,
   disconnectServer as hubDisconnect,
@@ -1061,6 +1062,9 @@ async function startSSE() {
 
   // Initialize optional persistence layers (graceful fallback if not configured)
   await Promise.all([initDb(), initCache()]);
+
+  // Detect Kubernetes platform (OpenShift, EKS, AKS, GKE, vanilla K8s)
+  try { await initPlatform({ ocpGet, ocpPost, ocpPatch, ocpDelete, ocpFetch }); console.error("[platform] Detected:", getPlatform()); } catch(e) { console.error("[platform] Detection failed, defaulting to kubernetes"); }
 
   // Initialize MCP Hub — load saved server configs and auto-reconnect
   try {

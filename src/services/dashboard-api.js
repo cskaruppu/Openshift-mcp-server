@@ -7,6 +7,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
 import { dirname } from "node:path";
 import { ocpGet, ocpFetch, ocpDelete } from "../utils/openshift-client.js";
+import { getPlatform } from "../platform/index.js";
 import { callLLM } from "./llm.js";
 import { query as dbQuery, isEnabled as dbEnabled } from "../utils/db.js";
 import { validateUpgradeVersion } from "../tools/upgrade-preflight.js";
@@ -424,13 +425,22 @@ export async function handleDashboardAPI(pathname, req, res) {
       return;
     }
 
+    // ---- Platform info endpoint (multi-cloud) ----
+    if (pathname === "/api/platform-info") {
+      const platform = getPlatform();
+      const isOpenShift = platform === "openshift";
+      json(res, 200, { platform, isOpenShift, cli: isOpenShift ? "oc" : "kubectl" });
+      return;
+    }
+
     switch (pathname) {
       // ---- Cluster summary (top metrics) ----
       case "/api/cluster/summary": {
+        const isOCP = getPlatform() === "openshift";
         const [clusterVersion, operators, nodes, namespaces] =
           await Promise.all([
-            ocpGet("/apis/config.openshift.io/v1/clusterversions/version").catch(() => null),
-            ocpGet("/apis/config.openshift.io/v1/clusteroperators").catch(() => null),
+            isOCP ? ocpGet("/apis/config.openshift.io/v1/clusterversions/version").catch(() => null) : Promise.resolve(null),
+            isOCP ? ocpGet("/apis/config.openshift.io/v1/clusteroperators").catch(() => null) : Promise.resolve(null),
             ocpGet("/api/v1/nodes"),
             ocpGet("/api/v1/namespaces"),
           ]);
