@@ -13,6 +13,7 @@
  */
 
 import { Agent, ProxyAgent, fetch as undiciFetch } from "undici";
+import { redactIfEnabled } from "./redaction.js";
 
 const DEFAULT_PROVIDER = process.env.LLM_PROVIDER || "none";
 const DEFAULT_API_URL = process.env.LLM_API_URL || "http://localhost:11434";
@@ -91,6 +92,7 @@ function resolveOpts(opts = {}) {
 // Non-streaming call — returns { text, toolCalls }
 // ---------------------------------------------------------------------------
 export async function callLLM({ messages, ...opts }) {
+  messages = messages.map(m => ({ ...m, content: typeof m.content === "string" ? redactIfEnabled(m.content) : m.content }));
   const o = resolveOpts(opts);
   const t0 = Date.now();
   let provider = o.provider;
@@ -115,6 +117,7 @@ export async function callLLM({ messages, ...opts }) {
 // `onToolCall(tc)` for tool-use blocks. Returns final aggregated result.
 // ---------------------------------------------------------------------------
 export async function callLLMStream({ messages, onDelta, onToolCall, ...opts }) {
+  messages = messages.map(m => ({ ...m, content: typeof m.content === "string" ? redactIfEnabled(m.content) : m.content }));
   const o = resolveOpts(opts);
   const hooks = { onDelta, onToolCall };
   const t0 = Date.now();

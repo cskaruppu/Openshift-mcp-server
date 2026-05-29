@@ -16,6 +16,7 @@
  */
 
 import { ocpGet } from "../utils/openshift-client.js";
+import { getPlatform } from "../platform/index.js";
 import { callLLM, llmEnabled } from "./llm.js";
 import { query as dbQuery } from "../utils/db.js";
 import { recordIncident as leRecordIncident, signatureForInsight } from "./learning-engine.js";
@@ -31,6 +32,7 @@ const IMAGE_VULN_COOLDOWN_MS = 60 * 60 * 1000; // 60 min dedup window
 const MAX_INSIGHTS_KEPT = 50;
 
 let _running = false;
+let _scanning = false;
 let _timer = null;
 let _appChangeTimer = null;
 let _imageVulnTimer = null;
@@ -114,6 +116,8 @@ export function dismissInsight(id) {
 }
 
 async function runScan() {
+  if (_scanning) return;
+  _scanning = true;
   try {
     const [pods, events, nodes] = await Promise.allSettled([
       ocpGet("/api/v1/pods"),
@@ -130,14 +134,16 @@ async function runScan() {
     detectRestartSpikes(podItems);
     detectEventStorms(eventItems);
 
-    // Cluster-level and component-level detection (non-blocking)
-    await Promise.allSettled([
-      detectCertExpiry(),
-      detectOperatorHealth(),
+    const isOCP = getPlatform() === "openshift";
+    const detectors = [
       detectPVCIssues(),
       detectEndpointHealth(),
       detectResourceQuotas(),
-    ]);
+    ];
+    if (isOCP) {
+      detectors.push(detectCertExpiry(), detectOperatorHealth());
+    }
+    await Promise.allSettled(detectors);
 
     correlateInsights();
 
@@ -148,6 +154,8 @@ async function runScan() {
     persistInsights().catch(() => {});
   } catch (err) {
     console.error("[proactive] scan error:", err.message);
+  } finally {
+    _scanning = false;
   }
 }
 
