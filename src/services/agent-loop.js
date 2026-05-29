@@ -82,6 +82,8 @@ export async function runAgent({
   }
   messages.push({ role: "user", content: userContent });
 
+  const seenToolCalls = new Set();
+
   for (let step = 0; step < MAX_STEPS; step++) {
     const streaming = onDelta && step === MAX_STEPS - 1; // only stream final answer
     const fn = streaming ? callLLMStream : callLLM;
@@ -116,8 +118,14 @@ export async function runAgent({
         toolCalls.map((tc) => `Calling ${tc.name}(${JSON.stringify(tc.arguments)})`).join("; "),
     });
 
-    // Dispatch tool calls (cap per step)
-    const toRun = toolCalls.slice(0, MAX_TOOLS_PER_STEP);
+    // Dispatch tool calls (cap per step), skipping duplicates
+    const toRun = toolCalls.slice(0, MAX_TOOLS_PER_STEP).filter((tc) => {
+      const callKey = JSON.stringify({ name: tc.name, args: tc.arguments });
+      if (seenToolCalls.has(callKey)) return false;
+      seenToolCalls.add(callKey);
+      return true;
+    });
+    if (!toRun.length) break;
     const results = await Promise.all(
       toRun.map((tc) =>
         dispatch(tc.name, tc.arguments).then((r) => ({ tc, r }))
