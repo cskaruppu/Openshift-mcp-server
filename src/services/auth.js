@@ -8,7 +8,7 @@
  * Sessions stored in-memory with Redis fallback for HA.
  */
 
-import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
+import { randomBytes, createHash, timingSafeEqual, scryptSync } from "node:crypto";
 import { cacheGet, cacheSet } from "../utils/cache.js";
 import { query as dbQuery } from "../utils/db.js";
 
@@ -53,6 +53,17 @@ export async function loadUserRoles() {
       }
     }
   } catch {}
+  // Load persistent users from DB
+  try {
+    const result = await dbQuery("SELECT username, role, namespaces FROM users WHERE active = true");
+    if (result?.rows) {
+      for (const row of result.rows) {
+        _userRoles.set(row.username, row.role);
+        if (row.namespaces?.length > 0) _userNamespaces.set(row.username, row.namespaces);
+      }
+    }
+  } catch {}
+  await ensureDefaultAdmin();
 }
 
 async function persistUserRoles() {
@@ -74,6 +85,131 @@ async function persistUserNamespaces() {
        ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
       ["user_namespaces", JSON.stringify(nsMap)]
     );
+  } catch {}
+}
+
+// ---------------------------------------------------------------------------
+// Password hashing (scrypt-based)
+// ---------------------------------------------------------------------------
+function hashPassword(password) {
+  const salt = randomBytes(16).toString("hex");
+  const hash = scryptSync(password, salt, 64).toString("hex");
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, stored) {
+  const [salt, hash] = stored.split(":");
+  if (!salt || !hash) return false;
+  const derived = scryptSync(password, salt, 64).toString("hex");
+  return derived.length === hash.length && timingSafeEqual(Buffer.from(derived), Buffer.from(hash));
+}
+
+// ---------------------------------------------------------------------------
+// Persistent user CRUD (PostgreSQL-backed)
+// ---------------------------------------------------------------------------
+export async function createUser(username, password, role = "viewer", displayName = "", namespaces = []) {
+  if (!ROLES[role]) return { error: "Invalid role" };
+  if (!username || username.length < 2) return { error: "Username too short" };
+  if (!password || password.length < 8) return { error: "Password must be at least 8 characters" };
+  const passwordHash = hashPassword(password);
+  try {
+    await dbQuery(
+      `INSERT INTO users (username, password_hash, role, namespaces, display_name)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [username, passwordHash, role, namespaces, displayName || username]
+    );
+    _userRoles.set(username, role);
+    if (namespaces.length > 0) _userNamespaces.set(username, namespaces);
+    return { ok: true, username, role };
+  } catch (err) {
+    if (err.code === "23505") return { error: "User already exists" };
+    return { error: err.message };
+  }
+}
+
+export async function updateUser(username, updates) {
+  const fields = [];
+  const params = [username];
+  let idx = 2;
+  if (updates.password) {
+    if (updates.password.length < 8) return { error: "Password must be at least 8 characters" };
+    fields.push(`password_hash = $${idx++}`);
+    params.push(hashPassword(updates.password));
+  }
+  if (updates.role && ROLES[updates.role]) {
+    fields.push(`role = $${idx++}`);
+    params.push(updates.role);
+    _userRoles.set(username, updates.role);
+  }
+  if (updates.namespaces !== undefined) {
+    fields.push(`namespaces = $${idx++}`);
+    params.push(Array.isArray(updates.namespaces) ? updates.namespaces : []);
+    if (Array.isArray(updates.namespaces) && updates.namespaces.length > 0) {
+      _userNamespaces.set(username, updates.namespaces);
+    } else {
+      _userNamespaces.delete(username);
+    }
+  }
+  if (updates.displayName !== undefined) {
+    fields.push(`display_name = $${idx++}`);
+    params.push(updates.displayName);
+  }
+  if (updates.active !== undefined) {
+    fields.push(`active = $${idx++}`);
+    params.push(!!updates.active);
+  }
+  if (fields.length === 0) return { error: "Nothing to update" };
+  fields.push("updated_at = NOW()");
+  try {
+    const r = await dbQuery(`UPDATE users SET ${fields.join(", ")} WHERE username = $1`, params);
+    return r?.rowCount > 0 ? { ok: true } : { error: "User not found" };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+export async function deleteUser(username) {
+  try {
+    const r = await dbQuery("DELETE FROM users WHERE username = $1", [username]);
+    _userRoles.delete(username);
+    _userNamespaces.delete(username);
+    return r?.rowCount > 0 ? { ok: true } : { error: "User not found" };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+export async function listUsers() {
+  try {
+    const r = await dbQuery("SELECT username, role, namespaces, display_name, created_at, last_login, active FROM users ORDER BY created_at");
+    return r?.rows || [];
+  } catch {
+    return [];
+  }
+}
+
+async function authenticateUser(username, password) {
+  try {
+    const r = await dbQuery("SELECT password_hash, role, namespaces, display_name, active FROM users WHERE username = $1", [username]);
+    if (!r?.rows?.length) return null;
+    const user = r.rows[0];
+    if (!user.active) return null;
+    if (!verifyPassword(password, user.password_hash)) return null;
+    await dbQuery("UPDATE users SET last_login = NOW() WHERE username = $1", [username]).catch(() => {});
+    return { name: username, displayName: user.display_name, role: user.role, method: "password" };
+  } catch {
+    return null;
+  }
+}
+
+async function ensureDefaultAdmin() {
+  try {
+    const r = await dbQuery("SELECT username FROM users WHERE role = 'admin' LIMIT 1");
+    if (r?.rows?.length > 0) return;
+    const adminPass = process.env.MCP_ADMIN_PASSWORD || API_TOKEN;
+    if (!adminPass || adminPass === "CHANGEME") return;
+    await createUser("admin", adminPass, "admin", "Admin");
+    console.log("[auth] default admin user created");
   } catch {}
 }
 
@@ -146,9 +282,13 @@ const PUBLIC_PATHS = new Set([
   "/api/auth/login", "/api/auth/callback", "/api/auth/status",
 ]);
 
+const STATIC_EXT = new Set([".html", ".css", ".js", ".png", ".svg", ".ico", ".json", ".woff", ".woff2"]);
+
 function isPublicPath(pathname) {
   if (PUBLIC_PATHS.has(pathname)) return true;
   if (pathname.startsWith("/assets/") || pathname === "/favicon.ico") return true;
+  const dot = pathname.lastIndexOf(".");
+  if (dot > 0 && !pathname.startsWith("/api/") && STATIC_EXT.has(pathname.slice(dot))) return true;
   return false;
 }
 
@@ -159,12 +299,7 @@ export function getAuthMode() {
 export async function authMiddleware(req, res, url) {
   if (AUTH_MODE === "none") return true;
   if (isPublicPath(url.pathname)) return true;
-
-  // Allow login page itself
-  if (url.pathname === "/" && !req.headers.cookie?.includes("mcp_session")) {
-    // Will be redirected to login by the static file handler
-    return true;
-  }
+  if (url.pathname === "/") return true;
 
   const sessionId = extractSessionId(req);
   if (sessionId) {
@@ -238,11 +373,17 @@ export function registerAuthRoutes(req, res, url) {
       res.writeHead(302, { Location: oauthUrl });
       res.end();
     } else {
-      sendJson(res, 200, {
-        mode: AUTH_MODE,
-        message: AUTH_MODE === "none" ? "Authentication disabled" : "Provide token via Authorization: Bearer <token> header",
-        redirect,
-      });
+      const accept = req.headers.accept || "";
+      if (accept.includes("text/html")) {
+        res.writeHead(302, { Location: "/" });
+        res.end();
+      } else {
+        sendJson(res, 200, {
+          mode: AUTH_MODE,
+          message: AUTH_MODE === "none" ? "Authentication disabled" : "Provide token via POST /api/auth/token or use username/password",
+          redirect,
+        });
+      }
     }
     return true;
   }
@@ -282,12 +423,31 @@ export function registerAuthRoutes(req, res, url) {
 }
 
 export async function handleTokenLogin(body, res) {
-  const { token } = body;
-  if (!token) {
-    sendJson(res, 400, { error: "Missing token" });
+  const { token, username, password } = body;
+
+  // Username + password login (persistent DB users)
+  if (username && password) {
+    const user = await authenticateUser(username, password);
+    if (user) {
+      const session = await createSession(user);
+      res.writeHead(200, {
+        "Content-Type": "application/json",
+        "Set-Cookie": `mcp_session=${session.id}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_TTL}`,
+      });
+      res.end(JSON.stringify({ ok: true, user: session.user }));
+      return;
+    }
+    sendJson(res, 401, { error: "Invalid username or password" });
     return;
   }
-  if (AUTH_MODE === "token" && token === API_TOKEN) {
+
+  // Token-based login
+  if (!token) {
+    sendJson(res, 400, { error: "Missing token or credentials" });
+    return;
+  }
+  if (AUTH_MODE === "token" && API_TOKEN && token.length === API_TOKEN.length &&
+      timingSafeEqual(Buffer.from(token), Buffer.from(API_TOKEN))) {
     if (!_userRoles.has("admin")) { _userRoles.set("admin", "admin"); persistUserRoles().catch(() => {}); }
     const session = await createSession({ name: "admin", method: "token" });
     res.writeHead(200, {
@@ -309,6 +469,48 @@ export async function handleTokenLogin(body, res) {
     return;
   }
   sendJson(res, 401, { error: "Invalid token" });
+}
+
+export async function handleUserManagement(req, body, res, url) {
+  // All user management requires admin role
+  const username = req.user?.name || "anonymous";
+  const role = getUserRole(username);
+  if (ROLES[role]?.level < 3) {
+    sendJson(res, 403, { error: "Admin access required" });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/auth/users") {
+    const users = await listUsers();
+    sendJson(res, 200, { users });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/auth/users") {
+    const result = await createUser(body.username, body.password, body.role || "viewer", body.displayName, body.namespaces || []);
+    sendJson(res, result.ok ? 201 : 400, result);
+    return;
+  }
+
+  if (req.method === "PUT" && url.pathname.startsWith("/api/auth/users/")) {
+    const targetUser = decodeURIComponent(url.pathname.split("/").pop());
+    const result = await updateUser(targetUser, body);
+    sendJson(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
+  if (req.method === "DELETE" && url.pathname.startsWith("/api/auth/users/")) {
+    const targetUser = decodeURIComponent(url.pathname.split("/").pop());
+    if (targetUser === username) {
+      sendJson(res, 400, { error: "Cannot delete your own account" });
+      return;
+    }
+    const result = await deleteUser(targetUser);
+    sendJson(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
+  sendJson(res, 404, { error: "Not found" });
 }
 
 async function handleOAuthCallback(code, res) {

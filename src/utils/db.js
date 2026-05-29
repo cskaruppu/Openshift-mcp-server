@@ -170,6 +170,19 @@ CREATE TABLE IF NOT EXISTS kv_store (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS users (
+  username TEXT PRIMARY KEY,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'viewer',
+  namespaces TEXT[] DEFAULT '{}',
+  display_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_login TIMESTAMPTZ,
+  active BOOLEAN NOT NULL DEFAULT TRUE
+);
+CREATE INDEX IF NOT EXISTS idx_users_role ON users (role);
+
 CREATE TABLE IF NOT EXISTS change_requests (
   id TEXT PRIMARY KEY,
   ticket_id TEXT NOT NULL,
