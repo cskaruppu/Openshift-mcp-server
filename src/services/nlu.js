@@ -288,6 +288,15 @@ const VERB_TABLE = {
   consumes:    { intent: "top", weight: 65 },
   uses:        { intent: "top", weight: 50 },
   utilizing:   { intent: "top", weight: 65 },
+  allocated:   { intent: "get", weight: 75 },
+  allocation:  { intent: "get", weight: 75 },
+  allocations: { intent: "get", weight: 75 },
+  resources:   { intent: "get", weight: 55 },
+  limits:      { intent: "get", weight: 65 },
+  requests:    { intent: "get", weight: 55 },
+  quota:       { intent: "get", weight: 70 },
+  quotas:      { intent: "get", weight: 70 },
+  capacity:    { intent: "get", weight: 60 },
   exec:    { intent: "exec", weight: 95 },
   execute: { intent: "exec", weight: 90 },
   shell:   { intent: "exec", weight: 80 },
@@ -639,7 +648,7 @@ const STOP_WORDS = new Set([
   // never be treated as Kubernetes resource names.
   "detailed", "brief", "full", "complete", "quick", "more", "less", "latest",
   "previous", "recent", "current", "next", "last", "first", "new", "old",
-  "specific", "particular", "exact", "same", "other", "another", "above",
+  "specific", "particular", "exact", "same", "other", "another",
   "below", "existing", "available", "overall", "total", "entire", "whole",
   "continue", "continued", "also", "still", "just", "only", "even",
   "check", "give", "tell", "want", "need", "like", "know", "think",
@@ -647,7 +656,7 @@ const STOP_WORDS = new Set([
   "correct", "proper", "good", "bad", "better", "best", "worse", "worst",
   "history", "timeline", "changelog", "overview", "audit", "report",
   "everything", "anything", "something", "nothing",
-  "resource", "resources", "limits", "requests", "probes", "upgrades",
+  "probes", "upgrades",
   "clients", "servers", "providers", "rules", "policies",
   // Time-related words that appear in advanced filter queries
   "hour", "hours", "minute", "minutes", "second", "seconds",
@@ -839,7 +848,10 @@ export function parse(message, memory = {}) {
 
   // "how much CPU/memory" → metrics query, not a count
   let scope = null;
-  if (/\bhow\s+much\s+(cpu|memory|mem|ram)\b/.test(lower)) {
+  if (/\b(allocat(ed|ion|ions)|resource\s*(request|limit)|cpu\s*(request|limit)|memory\s*(request|limit)|requests?\s+and\s+limits?|limits?\s+and\s+requests?|right[\s-]?siz)/i.test(lower)) {
+    intent = intent || "get";
+    scope = "allocation";
+  } else if (/\bhow\s+much\s+(cpu|memory|mem|ram)\b/.test(lower)) {
     intent = "top";
     scope = "metrics";
   } else if (/\b(how\s+many|how\s+much|count|number\s+of|total)\b/.test(lower)) {
@@ -890,9 +902,9 @@ export function parse(message, memory = {}) {
     resourceTokenIdx = i;
     break;
   }
-  // Pronoun resolution from memory.
+  // Pronoun / follow-up resolution from memory.
   if (!resource && memory.resource &&
-      /\b(it|its|that|this|same|same\s+one)\b/.test(lower)) {
+      /\b(it|its|that|this|same|same\s+one|above|previous|those|them|these|prior)\b/.test(lower)) {
     resource = memory.resource;
   }
 
@@ -977,9 +989,9 @@ export function parse(message, memory = {}) {
     }
   }
 
-  // 3e. Pronoun resolution from memory.
+  // 3e. Pronoun / follow-up resolution from memory.
   if (!namespace && memory.namespace &&
-      /\b(it|its|same|same\s+(namespace|ns|project)|there)\b/.test(lower)) {
+      /\b(it|its|same|same\s+(namespace|ns|project)|there|above|previous|those|them|these|prior)\b/.test(lower)) {
     namespace = memory.namespace;
   }
 
@@ -1044,9 +1056,9 @@ export function parse(message, memory = {}) {
     }
   }
 
-  // 6d. Pronoun resolution: "delete it", "show its logs"
+  // 6d. Pronoun / follow-up resolution: "delete it", "show its logs", "check above"
   if (!name && memory.name &&
-      /\b(it|its|that\s+one|the\s+same|same\s+pod)\b/.test(lower)) {
+      /\b(it|its|that\s+one|the\s+same|same\s+(pod|deployment|service)|above|previous|prior)\b/.test(lower)) {
     name = memory.name;
   }
 

@@ -12,7 +12,8 @@ import { randomBytes, createHash, timingSafeEqual, scryptSync } from "node:crypt
 import { cacheGet, cacheSet } from "../utils/cache.js";
 import { query as dbQuery } from "../utils/db.js";
 
-const SESSION_TTL = parseInt(process.env.SESSION_TTL || "28800", 10); // 8 hours
+const SESSION_TTL = parseInt(process.env.SESSION_TTL || "86400", 10); // 24 hours
+const PASSWORD_MAX_AGE_DAYS = parseInt(process.env.PASSWORD_MAX_AGE_DAYS || "90", 10);
 const API_TOKEN = process.env.MCP_API_TOKEN || "";
 const AUTH_MODE = process.env.AUTH_MODE || (API_TOKEN ? "token" : "none");
 const OAUTH_CLIENT_ID = process.env.OAUTH_CLIENT_ID || "openshift-mcp";
@@ -181,22 +182,42 @@ export async function deleteUser(username) {
 
 export async function listUsers() {
   try {
-    const r = await dbQuery("SELECT username, role, namespaces, display_name, created_at, last_login, active FROM users ORDER BY created_at");
-    return r?.rows || [];
+    const r = await dbQuery("SELECT username, role, namespaces, display_name, created_at, last_login, active, password_changed_at, force_password_change FROM users ORDER BY created_at");
+    return (r?.rows || []).map((u) => {
+      const daysAge = u.password_changed_at ? Math.floor((Date.now() - new Date(u.password_changed_at).getTime()) / 86400000) : null;
+      return { ...u, passwordAgeDays: daysAge, passwordExpired: daysAge !== null && daysAge >= PASSWORD_MAX_AGE_DAYS };
+    });
   } catch {
     return [];
   }
 }
 
+export async function changePassword(username, oldPassword, newPassword) {
+  if (!newPassword || newPassword.length < 8) return { error: "Password must be at least 8 characters" };
+  try {
+    const r = await dbQuery("SELECT password_hash FROM users WHERE username = $1", [username]);
+    if (!r?.rows?.length) return { error: "User not found" };
+    if (oldPassword && !verifyPassword(oldPassword, r.rows[0].password_hash)) return { error: "Current password is incorrect" };
+    const hash = hashPassword(newPassword);
+    await dbQuery("UPDATE users SET password_hash = $1, password_changed_at = NOW(), force_password_change = false, updated_at = NOW() WHERE username = $2", [hash, username]);
+    return { ok: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
 async function authenticateUser(username, password) {
   try {
-    const r = await dbQuery("SELECT password_hash, role, namespaces, display_name, active FROM users WHERE username = $1", [username]);
+    const r = await dbQuery("SELECT password_hash, role, namespaces, display_name, active, password_changed_at, force_password_change FROM users WHERE username = $1", [username]);
     if (!r?.rows?.length) return null;
     const user = r.rows[0];
     if (!user.active) return null;
     if (!verifyPassword(password, user.password_hash)) return null;
+    // Check password expiry (90 days default)
+    const passwordAge = user.password_changed_at ? (Date.now() - new Date(user.password_changed_at).getTime()) / 86400000 : Infinity;
+    const expired = passwordAge >= PASSWORD_MAX_AGE_DAYS || user.force_password_change;
     await dbQuery("UPDATE users SET last_login = NOW() WHERE username = $1", [username]).catch(() => {});
-    return { name: username, displayName: user.display_name, role: user.role, method: "password" };
+    return { name: username, displayName: user.display_name, role: user.role, method: "password", passwordExpired: expired };
   } catch {
     return null;
   }
@@ -507,6 +528,28 @@ export async function handleUserManagement(req, body, res, url) {
     }
     const result = await deleteUser(targetUser);
     sendJson(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
+  // POST /api/auth/change-password (any authenticated user can change own password)
+  if (req.method === "POST" && url.pathname === "/api/auth/change-password") {
+    const targetUser = body.username || req.user?.name;
+    if (targetUser !== req.user?.name && ROLES[role]?.level < 3) {
+      sendJson(res, 403, { error: "Can only change your own password (or be admin)" });
+      return;
+    }
+    const result = await changePassword(targetUser, body.currentPassword, body.newPassword);
+    sendJson(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
+  // GET /api/auth/password-policy
+  if (req.method === "GET" && url.pathname === "/api/auth/password-policy") {
+    sendJson(res, 200, {
+      maxAgeDays: PASSWORD_MAX_AGE_DAYS,
+      minLength: 8,
+      sessionTtlHours: Math.round(SESSION_TTL / 3600),
+    });
     return;
   }
 

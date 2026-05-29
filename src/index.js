@@ -54,7 +54,7 @@ import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
 import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, agreeChange, dismissChange, getWorkloadsByNamespace, initTrackedNamespaces, getChangeHistory, getLastScanTime, getLastChangeTime, getHealthStreak } from "./tools/app-change-watcher.js";
 import { registerImageVulnScannerTools, runImageScan, getScanResults, getScanHistory, getComplianceCache, getImageAgeCache } from "./tools/image-vulnerability-scanner.js";
-import { authMiddleware, registerAuthRoutes, handleTokenLogin, handleUserManagement, getAuthMode, loadUserRoles, getUserRole, setUserRole, getAllUserRoles, checkPermission, getRoles, getUserNamespaces, canAccessNamespace, filterByNamespace, createUser, listUsers } from "./services/auth.js";
+import { authMiddleware, registerAuthRoutes, handleTokenLogin, handleUserManagement, getAuthMode, loadUserRoles, getUserRole, setUserRole, getAllUserRoles, checkPermission, getRoles, getUserNamespaces, canAccessNamespace, filterByNamespace, createUser, listUsers, changePassword } from "./services/auth.js";
 import { runRCA, runNamespaceRCA, getActiveInvestigations, getRCAHistory } from "./tools/rca-engine.js";
 import { getNetworkTopology, getClusterTopology, getExposedServices, getUnprotectedNamespaces } from "./tools/network-topology.js";
 import { captureSnapshot as captureCapacitySnapshot, getCapacityForecast, getNamespaceForecasts, getCapacityHistory } from "./tools/capacity-forecast.js";
@@ -1233,8 +1233,8 @@ async function startSSE() {
     const authOk = await authMiddleware(req, res, url);
     if (!authOk) return;
 
-    // User management routes (admin only, after auth middleware)
-    if (url.pathname.startsWith("/api/auth/users")) {
+    // User management routes (after auth middleware)
+    if (url.pathname.startsWith("/api/auth/users") || url.pathname === "/api/auth/change-password" || url.pathname === "/api/auth/password-policy") {
       const body = (req.method === "POST" || req.method === "PUT") ? await readJsonBody(req) : {};
       await handleUserManagement(req, body, res, url);
       return;

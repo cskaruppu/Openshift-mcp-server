@@ -7422,10 +7422,13 @@ function loadUserList() {
       el.innerHTML = '<div style="color:var(--text2)">No users created yet. Use the form below or token auth.</div>';
       return;
     }
-    el.innerHTML = '<table style="width:100%;font-size:12px"><tr><th style="text-align:left;padding:4px 8px">User</th><th style="text-align:left;padding:4px 8px">Role</th><th style="text-align:left;padding:4px 8px">Last Login</th><th style="padding:4px 8px">Actions</th></tr>' +
+    el.innerHTML = '<table style="width:100%;font-size:12px"><tr><th style="text-align:left;padding:4px 8px">User</th><th style="text-align:left;padding:4px 8px">Role</th><th style="text-align:left;padding:4px 8px">Password</th><th style="text-align:left;padding:4px 8px">Last Login</th><th style="padding:4px 8px">Actions</th></tr>' +
       data.users.map(function(u) {
+        var pwStatus = u.passwordExpired ? '<span style="color:var(--crit)">Expired</span>' :
+          (u.passwordAgeDays !== null ? u.passwordAgeDays + 'd / 90d' : '--');
         return '<tr><td style="padding:4px 8px">' + esc(u.display_name || u.username) + ' <span style="color:var(--text2)">(' + esc(u.username) + ')</span></td>' +
           '<td style="padding:4px 8px"><span class="badge badge-info">' + esc(u.role) + '</span></td>' +
+          '<td style="padding:4px 8px">' + pwStatus + '</td>' +
           '<td style="padding:4px 8px">' + (u.last_login ? timeAgo(u.last_login) : 'Never') + '</td>' +
           '<td style="padding:4px 8px;text-align:center">' +
           (u.username !== (_authUser && _authUser.name) ? '<button onclick="deleteUserAccount(\'' + esc(u.username) + '\')" style="background:none;border:1px solid var(--crit);color:var(--crit);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer">Delete</button>' : '<span style="color:var(--text2);font-size:10px">You</span>') +
@@ -7464,6 +7467,48 @@ function createNewUser() {
     msgEl.textContent = 'Error: ' + err.message;
     msgEl.style.color = 'var(--crit)';
   });
+}
+
+function showPasswordChangeModal(username) {
+  var existing = document.getElementById('pw-change-modal');
+  if (existing) existing.remove();
+  var modal = document.createElement('div');
+  modal.id = 'pw-change-modal';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center';
+  modal.innerHTML = '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:32px;max-width:380px;width:90%">' +
+    '<h3 style="margin-bottom:16px;font-size:16px">Password Change Required</h3>' +
+    '<p style="font-size:13px;color:var(--text2);margin-bottom:16px">Your password has expired (90-day policy). Please set a new password to continue.</p>' +
+    '<input class="login-input" id="pw-old" type="password" placeholder="Current password" style="margin-bottom:8px;font-size:13px;padding:10px">' +
+    '<input class="login-input" id="pw-new" type="password" placeholder="New password (min 8 chars)" style="margin-bottom:8px;font-size:13px;padding:10px">' +
+    '<input class="login-input" id="pw-confirm" type="password" placeholder="Confirm new password" style="margin-bottom:12px;font-size:13px;padding:10px">' +
+    '<button onclick="submitPasswordChange(\'' + esc(username) + '\')" style="width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Change Password</button>' +
+    '<div id="pw-change-msg" style="font-size:12px;margin-top:8px;min-height:16px"></div>' +
+    '</div>';
+  document.body.appendChild(modal);
+}
+
+function submitPasswordChange(username) {
+  var oldPw = document.getElementById('pw-old').value;
+  var newPw = document.getElementById('pw-new').value;
+  var confirmPw = document.getElementById('pw-confirm').value;
+  var msgEl = document.getElementById('pw-change-msg');
+  if (!oldPw || !newPw) { msgEl.textContent = 'All fields required'; msgEl.style.color = 'var(--crit)'; return; }
+  if (newPw !== confirmPw) { msgEl.textContent = 'Passwords do not match'; msgEl.style.color = 'var(--crit)'; return; }
+  if (newPw.length < 8) { msgEl.textContent = 'Password must be at least 8 characters'; msgEl.style.color = 'var(--crit)'; return; }
+  fetch('/api/auth/change-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: username, currentPassword: oldPw, newPassword: newPw })
+  }).then(function(r) { return r.json(); }).then(function(data) {
+    if (data.ok) {
+      msgEl.textContent = 'Password changed successfully!';
+      msgEl.style.color = 'var(--ok)';
+      setTimeout(function() { var m = document.getElementById('pw-change-modal'); if (m) m.remove(); }, 1500);
+    } else {
+      msgEl.textContent = data.error || 'Failed';
+      msgEl.style.color = 'var(--crit)';
+    }
+  }).catch(function(err) { msgEl.textContent = err.message; msgEl.style.color = 'var(--crit)'; });
 }
 
 function deleteUserAccount(username) {
@@ -7539,6 +7584,9 @@ function handleLogin(e) {
       hideLoginOverlay();
       refreshAll();
       startDashRefresh();
+      if (result.data.user && result.data.user.passwordExpired) {
+        setTimeout(function() { showPasswordChangeModal(result.data.user.name); }, 500);
+      }
     } else {
       errEl.textContent = result.data.error || 'Invalid credentials';
     }

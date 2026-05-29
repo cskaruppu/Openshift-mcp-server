@@ -67,5 +67,16 @@ export function memoryPatchFromParse(p) {
     name: p?.name || null,
     namespace: p?.namespace || null,
     lastIntent: p?.intent || null,
+    scope: p?.scope || null,
   };
+}
+
+/** Store a list of resource names from a response (for follow-up context). */
+export async function updateMemoryResourceList(conversationId, resource, names, namespace) {
+  if (!conversationId || !names?.length) return;
+  await updateMemory(conversationId, {
+    resource,
+    namespace: namespace || null,
+    lastResourceList: names.slice(0, 20),
+  });
 }

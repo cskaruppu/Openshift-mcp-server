@@ -10,6 +10,10 @@ data:
   EMERGENCY_AUTO_FIX: "false"
   # Authentication: "none" (default), "token" (set MCP_API_TOKEN in secrets), "oauth" (OpenShift SSO)
   AUTH_MODE: "token"
+  # Session timeout in seconds (default: 86400 = 24 hours)
+  SESSION_TTL: "86400"
+  # Password expiry in days (default: 90 days per security policy)
+  PASSWORD_MAX_AGE_DAYS: "90"
   # LLM Provider: "azure", "openai", "anthropic", "ollama", or "none" (built-in analysis)
   LLM_PROVIDER: "azure"
   # LLM_API_URL: Azure OpenAI endpoint (e.g. https://<resource>.openai.azure.com)

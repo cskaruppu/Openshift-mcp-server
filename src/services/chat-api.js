@@ -6599,6 +6599,11 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
           ready: dep.status?.readyReplicas || 0,
           available: dep.status?.availableReplicas || 0,
           image: dep.spec?.template?.spec?.containers?.[0]?.image,
+          containers: (dep.spec?.template?.spec?.containers || []).map((c) => ({
+            name: c.name,
+            image: c.image,
+            resources: { requests: c.resources?.requests || {}, limits: c.resources?.limits || {} },
+          })),
         }));
       }).catch(() => {})
     );
@@ -6614,6 +6619,10 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
           replicas: dep.spec?.replicas,
           ready: dep.status?.readyReplicas || 0,
           available: dep.status?.availableReplicas || 0,
+          containers: (dep.spec?.template?.spec?.containers || []).map((c) => ({
+            name: c.name,
+            resources: { requests: c.resources?.requests || {}, limits: c.resources?.limits || {} },
+          })),
         }));
       }).catch(() => {})
     );
@@ -6633,6 +6642,17 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
         } catch { return; }
         if (!dep) return;
         const ns = dep.metadata.namespace;
+        const containers = (dep.spec?.template?.spec?.containers || []).map((c) => ({
+          name: c.name,
+          image: c.image,
+          resources: {
+            requests: c.resources?.requests || {},
+            limits: c.resources?.limits || {},
+          },
+          ports: (c.ports || []).map((p) => ({ name: p.name, containerPort: p.containerPort, protocol: p.protocol })),
+          env: (c.env || []).length,
+          volumeMounts: (c.volumeMounts || []).length,
+        }));
         context.targetDeployment = {
           name: dep.metadata.name,
           namespace: ns,
@@ -6642,7 +6662,8 @@ async function gatherClusterContext(userMessage, nluParsed = null) {
           unavailableReplicas: dep.status?.unavailableReplicas || 0,
           updatedReplicas: dep.status?.updatedReplicas || 0,
           strategy: dep.spec?.strategy?.type,
-          image: dep.spec?.template?.spec?.containers?.[0]?.image,
+          containers,
+          image: containers[0]?.image,
           conditions: (dep.status?.conditions || []).map((c) => ({
             type: c.type, status: c.status, reason: c.reason, message: c.message,
           })),
@@ -7278,6 +7299,18 @@ const PROMPT_SUPPLEMENT_SECURITY = `
 - For CIS benchmarks, show pass/fail/skip counts
 - Never expose sensitive data (tokens, keys) in responses`;
 
+const PROMPT_SUPPLEMENT_ALLOCATION = `
+
+## Resource Allocation queries (requests, limits, quotas):
+- Show CPU and memory requests AND limits for every container in the deployment/pod
+- Format as a clear table: Container | CPU Request | CPU Limit | Memory Request | Memory Limit
+- If requests or limits are MISSING, explicitly flag it as a best-practice violation
+- Compare requests vs limits ratio — limits should typically be 1.5-2x of requests for CPU
+- If ResourceQuota exists in the namespace, show usage vs quota
+- Highlight containers with no resource limits (unbounded — can cause node pressure)
+- For "allocated resources" queries, this means the spec-level requests/limits, NOT live usage
+- When showing multiple deployments, include a total/summary row`;
+
 const PROMPT_SUPPLEMENT_CAPACITY = `
 
 ## Capacity / Topology / Scheduling queries:
@@ -7322,6 +7355,11 @@ function buildSystemPrompt(userMessage, context) {
 
   if (/\bcpu\b|\bmemory\b|\bmem\b|\bram\b|\busage\b|\bmetrics?\b|\btop\b|\bhigh\b|\bresource\s+usage|\bconsumption/i.test(lower)) {
     prompt += PROMPT_SUPPLEMENT_METRICS;
+  }
+
+  if (/\ballocat|\brequest.*limit|\blimit.*request|\bresource\s*(request|limit|quota)|\bquota|\bright.siz/i.test(lower) ||
+      context?.nluResult?.scope === "allocation") {
+    prompt += PROMPT_SUPPLEMENT_ALLOCATION;
   }
 
   if (/cert|certificate|expir|tls|csr/i.test(lower)) {
