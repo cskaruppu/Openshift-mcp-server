@@ -19,6 +19,7 @@ import { createServer } from "node:http";
 import { existsSync } from "node:fs";
 import { scanCluster, clearTokenCache } from "./scanner.js";
 import { registerWithHub, sendReport, getReporterStatus } from "./reporter.js";
+import { startBridge, getBridgeStatus } from "./bridge.js";
 
 // Allow skipping TLS verification for hub connections (self-signed/internal CA)
 if (process.env.HUB_TLS_SKIP_VERIFY === "true" && process.env.NODE_TLS_REJECT_UNAUTHORIZED === undefined) {
@@ -73,6 +74,7 @@ async function runScan() {
 
 function buildStatusResponse() {
   const reporter = getReporterStatus();
+  const bridge = getBridgeStatus();
   return {
     agent: "tcs-agentic-ai-agent",
     version: "1.0.0",
@@ -83,6 +85,7 @@ function buildStatusResponse() {
     errorCount: _errorCount,
     lastScanTime: _lastScanTime,
     hub: reporter,
+    bridge,
     summary: _lastScan
       ? {
           nodes: `${_lastScan.nodes.ready}/${_lastScan.nodes.total} ready`,
@@ -156,6 +159,9 @@ async function start() {
   log("info", `TLS skip:  ${process.env.HUB_TLS_SKIP_VERIFY === "true" ? "yes (self-signed certs accepted)" : "no (strict verification)"}`);
 
   await registerWithHub();
+
+  // Start the bidirectional MCP tool bridge (runs in parallel with scans)
+  startBridge(process.env.HUB_SERVER_URL, CLUSTER_NAME);
 
   await runScan();
   _ready = true;

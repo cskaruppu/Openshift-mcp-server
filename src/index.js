@@ -114,6 +114,7 @@ import { initSafety, getSafetyMode } from "./services/safety.js";
 import { redactIfEnabled } from "./services/redaction.js";
 import { loadKubeconfig, registerMultiClusterTools } from "./services/multi-cluster.js";
 import { handleAgentRoutes as handleAgentRegistryRoutes, loadAgents } from "./agents/registry.js";
+import { handleAgentChannel, handleToolRegistration, handleToolResponse, invokeAgentTool, hasActiveChannel, getChannelStatus } from "./services/agent-bridge.js";
 import { handleAgentMcpRoutes } from "./agents/mcp-router.js";
 import { loadConfig } from "./utils/config.js";
 import { validateCommand, getAccessLevel, isToolAllowed } from "./security/command-validator.js";
@@ -325,6 +326,9 @@ export function getConnectedAgents() {
   return _connectedAgents;
 }
 
+// Re-export bridge functions so other modules (e.g. chat-api) can invoke agent tools
+export { invokeAgentTool, hasActiveChannel } from "./services/agent-bridge.js";
+
 /**
  * Find an existing cluster entry by name (case-insensitive) or API URL.
  * Returns the Map key if found, null otherwise.
@@ -389,6 +393,12 @@ function sendJson(res, status, body) {
 async function withClusterContext(url, handler) {
   const clusterName = url.searchParams.get("cluster");
   if (clusterName && clusterName !== "local") {
+    // Try live agent bridge first (real-time data)
+    if (hasActiveChannel(clusterName)) {
+      const toolResult = await tryAgentBridgeTool(url.pathname, clusterName);
+      if (toolResult !== null) return toolResult;
+    }
+    // Fall back to direct API proxy
     const resolvedKey = findClusterKey(clusterName) || clusterName;
     const agent = _connectedAgents.get(resolvedKey);
     if (!agent) {
@@ -411,6 +421,31 @@ async function withClusterContext(url, handler) {
     throw Object.assign(new Error(`Cluster "${clusterName}" has no API connection and no cached data`), { status: 503 });
   }
   return handler();
+}
+
+/**
+ * Try to invoke a tool on a remote agent via the SSE bridge.
+ * Maps API endpoint paths to agent tool names.
+ * Returns the tool result data on success, or null to fall through to proxy/cache.
+ */
+async function tryAgentBridgeTool(pathname, clusterName) {
+  const toolMap = {
+    "/api/cluster/summary": "get_cluster_summary",
+    "/api/nodes": "get_nodes",
+    "/api/node-metrics": "get_metrics",
+    "/api/pods/issues": "get_pod_issues",
+    "/api/namespaces": "get_namespaces",
+    "/api/cluster/operators": "get_operators",
+  };
+  const toolName = toolMap[pathname];
+  if (!toolName) return null;
+  try {
+    const result = await invokeAgentTool(clusterName, toolName, {}, 12000);
+    if (result && result.success) return result.data;
+    return null;
+  } catch {
+    return null; // Fall through to cache/proxy
+  }
 }
 
 const AGENT_CACHE_MAX_AGE_SEC = 300; // 5 minutes
@@ -2043,6 +2078,7 @@ async function startSSE() {
           apiUrl: agent.apiUrl,
           hasToken: !!agent.token,
           status,
+          bridgeConnected: hasActiveChannel(agent.clusterName),
           registeredAt: agent.registeredAt,
           lastReportTime: agent.lastReportTime,
           lastHealthCheck: agent.lastHealthCheck || null,
@@ -2224,6 +2260,41 @@ async function startSSE() {
         lastReportTime: agent.lastReportTime,
         report: agent.lastReport,
       });
+    }
+
+    // -----------------------------------------------------------------------
+    // Agent Bridge — bidirectional SSE channel for real-time tool invocation
+    // -----------------------------------------------------------------------
+
+    // Agent SSE channel — bidirectional bridge
+    if (url.pathname === "/api/agent/channel" && req.method === "GET") {
+      const clusterName = url.searchParams.get("cluster");
+      if (!clusterName) return sendJson(res, 400, { error: "cluster parameter required" });
+      handleAgentChannel(req, res, clusterName);
+      return; // SSE — don't end response
+    }
+
+    // Agent registers its available tools
+    if (url.pathname === "/api/agent/channel/register-tools" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const { clusterName, tools } = body;
+      if (!clusterName) return sendJson(res, 400, { error: "clusterName required" });
+      handleToolRegistration(clusterName, tools || {});
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // Agent sends tool execution result
+    if (url.pathname === "/api/agent/tool-response" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const { requestId, clusterName, result } = body;
+      if (!requestId) return sendJson(res, 400, { error: "requestId required" });
+      const handled = handleToolResponse(requestId, clusterName, result);
+      return sendJson(res, 200, { ok: handled });
+    }
+
+    // Get bridge channel status
+    if (url.pathname === "/api/agent/channels" && req.method === "GET") {
+      return sendJson(res, 200, { channels: getChannelStatus() });
     }
 
     // LLM Settings API
