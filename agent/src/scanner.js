@@ -56,11 +56,13 @@ export async function scanCluster(platform) {
     timestamp: new Date().toISOString(),
     platform,
     nodes: { total: 0, ready: 0, items: [] },
-    pods: { total: 0, running: 0, failed: 0, pending: 0, issues: [] },
+    pods: { total: 0, running: 0, failed: 0, pending: 0, issues: [], byNamespace: {} },
     deployments: { total: 0, available: 0, items: [] },
     events: { warnings: 0, recent: [] },
     metrics: null,
-    namespaces: 0,
+    namespaces: { total: 0, user: 0, system: 0, items: [] },
+    clusterHealth: { status: "Healthy", apiServerHealthy: true },
+    resourceSummary: { totalCPU: 0, totalMemoryGi: 0, allocatableCPU: 0, allocatableMemoryGi: 0 },
   };
 
   await Promise.allSettled([
@@ -73,7 +75,26 @@ export async function scanCluster(platform) {
     platform === "openshift" ? scanOpenShift(scan) : Promise.resolve(),
   ]);
 
+  // Compute cluster health based on collected data
+  computeClusterHealth(scan);
+
   return scan;
+}
+
+function parseCPU(cpuStr) {
+  if (!cpuStr) return 0;
+  if (cpuStr.endsWith("m")) return parseInt(cpuStr, 10) / 1000;
+  return parseFloat(cpuStr) || 0;
+}
+
+function parseMemoryToGi(memStr) {
+  if (!memStr) return 0;
+  if (memStr.endsWith("Ki")) return parseInt(memStr, 10) / (1024 * 1024);
+  if (memStr.endsWith("Mi")) return parseInt(memStr, 10) / 1024;
+  if (memStr.endsWith("Gi")) return parseFloat(memStr);
+  if (memStr.endsWith("Ti")) return parseFloat(memStr) * 1024;
+  // Plain bytes
+  return parseInt(memStr, 10) / (1024 * 1024 * 1024);
 }
 
 async function scanNodes(scan) {
@@ -91,6 +112,21 @@ async function scanNodes(scan) {
       if (c.type !== "Ready" && c.status === "True") pressure.push(c.type);
     }
 
+    const memoryPressureCond = conditions.find((c) => c.type === "MemoryPressure");
+    const diskPressureCond = conditions.find((c) => c.type === "DiskPressure");
+    const pidPressureCond = conditions.find((c) => c.type === "PIDPressure");
+
+    const cpuCores = parseCPU(node.status?.capacity?.cpu);
+    const memoryGi = parseMemoryToGi(node.status?.capacity?.memory);
+    const allocatableCPU = parseCPU(node.status?.allocatable?.cpu);
+    const allocatableMemoryGi = parseMemoryToGi(node.status?.allocatable?.memory);
+
+    // Accumulate resource summary
+    scan.resourceSummary.totalCPU += cpuCores;
+    scan.resourceSummary.totalMemoryGi += memoryGi;
+    scan.resourceSummary.allocatableCPU += allocatableCPU;
+    scan.resourceSummary.allocatableMemoryGi += allocatableMemoryGi;
+
     scan.nodes.items.push({
       name: node.metadata.name,
       ready: isReady,
@@ -105,8 +141,20 @@ async function scanNodes(scan) {
         pods: node.status?.capacity?.pods,
       },
       pressure,
+      memoryPressure: memoryPressureCond?.status === "True",
+      diskPressure: diskPressureCond?.status === "True",
+      pidPressure: pidPressureCond?.status === "True",
+      maxPods: parseInt(node.status?.capacity?.pods, 10) || 0,
+      cpu: cpuCores,
+      memory: Math.round(memoryGi * 100) / 100,
     });
   }
+
+  // Round resource summary values
+  scan.resourceSummary.totalCPU = Math.round(scan.resourceSummary.totalCPU * 100) / 100;
+  scan.resourceSummary.totalMemoryGi = Math.round(scan.resourceSummary.totalMemoryGi * 100) / 100;
+  scan.resourceSummary.allocatableCPU = Math.round(scan.resourceSummary.allocatableCPU * 100) / 100;
+  scan.resourceSummary.allocatableMemoryGi = Math.round(scan.resourceSummary.allocatableMemoryGi * 100) / 100;
 }
 
 async function scanPods(scan) {
@@ -114,16 +162,38 @@ async function scanPods(scan) {
   const pods = data.items || [];
   scan.pods.total = pods.length;
 
+  const nsCounts = {};
+
   for (const pod of pods) {
     const ns = pod.metadata?.namespace;
+
+    // Track per-namespace pod breakdown for all namespaces
+    if (ns) {
+      if (!nsCounts[ns]) nsCounts[ns] = { total: 0, running: 0, failed: 0, pending: 0 };
+      nsCounts[ns].total++;
+    }
+
     if (ns?.startsWith("kube-") || ns === "kube-system") continue;
 
     const phase = pod.status?.phase;
-    if (phase === "Running") scan.pods.running++;
-    else if (phase === "Failed") scan.pods.failed++;
-    else if (phase === "Pending") scan.pods.pending++;
+    if (phase === "Running") {
+      scan.pods.running++;
+      if (ns && nsCounts[ns]) nsCounts[ns].running++;
+    } else if (phase === "Failed") {
+      scan.pods.failed++;
+      if (ns && nsCounts[ns]) nsCounts[ns].failed++;
+    } else if (phase === "Pending") {
+      scan.pods.pending++;
+      if (ns && nsCounts[ns]) nsCounts[ns].pending++;
+    }
 
     const containers = pod.status?.containerStatuses || [];
+    const ownerRef = pod.metadata?.ownerReferences?.[0];
+    const podCreation = pod.metadata?.creationTimestamp;
+    const podAgeHours = podCreation
+      ? Math.round((Date.now() - new Date(podCreation).getTime()) / (1000 * 60 * 60))
+      : null;
+
     for (const c of containers) {
       const waiting = c.state?.waiting;
       const restarts = c.restartCount || 0;
@@ -148,9 +218,22 @@ async function scanPods(scan) {
           container: c.name,
           restarts,
           message: waiting?.message || lastTerminated?.reason || "",
+          node: pod.spec?.nodeName || null,
+          podAge: podAgeHours,
+          ownerKind: ownerRef?.kind || null,
+          ownerName: ownerRef?.name || null,
         });
       }
     }
+  }
+
+  // Build byNamespace: top 20 namespaces by pod count
+  const sortedNs = Object.entries(nsCounts)
+    .sort((a, b) => b[1].total - a[1].total)
+    .slice(0, 20);
+  scan.pods.byNamespace = {};
+  for (const [nsName, counts] of sortedNs) {
+    scan.pods.byNamespace[nsName] = counts;
   }
 }
 
@@ -189,7 +272,7 @@ async function scanEvents(scan) {
     const ts = new Date(evt.lastTimestamp || evt.metadata.creationTimestamp).getTime();
     if (ts < thirtyMinAgo) continue;
     scan.events.warnings++;
-    if (scan.events.recent.length < 25) {
+    if (scan.events.recent.length < 50) {
       scan.events.recent.push({
         reason: evt.reason,
         message: (evt.message || "").substring(0, 200),
@@ -197,6 +280,12 @@ async function scanEvents(scan) {
         object: `${evt.involvedObject?.kind}/${evt.involvedObject?.name}`,
         count: evt.count || 1,
         lastSeen: evt.lastTimestamp || evt.metadata.creationTimestamp,
+        type: evt.type,
+        source: evt.source?.component || null,
+        involvedObject: {
+          kind: evt.involvedObject?.kind || null,
+          name: evt.involvedObject?.name || null,
+        },
       });
     }
   }
@@ -221,7 +310,24 @@ async function scanMetrics(scan) {
 async function scanNamespaces(scan) {
   try {
     const data = await k8sGet("/api/v1/namespaces");
-    scan.namespaces = (data.items || []).length;
+    const items = data.items || [];
+    scan.namespaces = { total: items.length, user: 0, system: 0, items: [] };
+
+    for (const ns of items) {
+      const name = ns.metadata?.name || "";
+      const isSystem = name.startsWith("openshift-") || name.startsWith("kube-") || name === "default";
+      if (isSystem) {
+        scan.namespaces.system++;
+      } else {
+        scan.namespaces.user++;
+      }
+      scan.namespaces.items.push({
+        name,
+        status: ns.status?.phase || "Active",
+        created: ns.metadata?.creationTimestamp || null,
+        labels: ns.metadata?.labels || {},
+      });
+    }
   } catch { /* skip */ }
 }
 
@@ -232,18 +338,62 @@ async function scanOpenShift(scan) {
 
     const co = await k8sGet("/apis/config.openshift.io/v1/clusteroperators");
     const operators = co.items || [];
+
+    let degradedCount = 0;
+    let progressingCount = 0;
+    const operatorItems = [];
+
+    for (const op of operators) {
+      const conditions = op.status?.conditions || [];
+      const availableCond = conditions.find((c) => c.type === "Available");
+      const degradedCond = conditions.find((c) => c.type === "Degraded");
+      const progressingCond = conditions.find((c) => c.type === "Progressing");
+
+      const isDegraded = degradedCond?.status === "True";
+      const isProgressing = progressingCond?.status === "True";
+
+      if (isDegraded) degradedCount++;
+      if (isProgressing) progressingCount++;
+
+      // Get version from status.versions where name === "operator"
+      const versionEntry = (op.status?.versions || []).find((v) => v.name === "operator");
+
+      operatorItems.push({
+        name: op.metadata?.name,
+        version: versionEntry?.version || null,
+        available: availableCond?.status === "True",
+        degraded: isDegraded,
+        progressing: isProgressing,
+        message: degradedCond?.message || progressingCond?.message || null,
+      });
+    }
+
     scan.clusterOperators = {
       total: operators.length,
-      degraded: operators.filter((o) =>
-        (o.status?.conditions || []).some((c) => c.type === "Degraded" && c.status === "True")
-      ).length,
-      progressing: operators.filter((o) =>
-        (o.status?.conditions || []).some((c) => c.type === "Progressing" && c.status === "True")
-      ).length,
+      healthy: operators.length - degradedCount,
+      degraded: degradedCount,
+      progressing: progressingCount,
+      items: operatorItems,
     };
   } catch {
     // Not OpenShift or insufficient permissions
   }
+}
+
+function computeClusterHealth(scan) {
+  const degradedOps = scan.clusterOperators?.degraded || 0;
+  const failedPods = scan.pods.failed || 0;
+  const issueCount = scan.pods.issues?.length || 0;
+
+  if (degradedOps >= 3 || failedPods >= 10) {
+    scan.clusterHealth.status = "Critical";
+  } else if (degradedOps >= 1 || failedPods >= 3 || issueCount >= 5) {
+    scan.clusterHealth.status = "Warning";
+  } else {
+    scan.clusterHealth.status = "Healthy";
+  }
+
+  scan.clusterHealth.apiServerHealthy = true;
 }
 
 export function clearTokenCache() {
