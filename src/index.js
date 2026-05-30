@@ -438,18 +438,40 @@ function isBlockedUrl(urlStr) {
 }
 
 // TLS-tolerant fetch for cluster-facing connections (handles self-signed certs)
-let _clusterAgent = null;
 async function clusterFetch(url, opts = {}) {
-  if (!_clusterAgent) {
-    try {
-      const undici = await import("undici");
-      _clusterAgent = new undici.Agent({ connect: { rejectUnauthorized: false } });
-    } catch {
-      _clusterAgent = "unavailable";
-    }
-  }
-  if (_clusterAgent && _clusterAgent !== "unavailable") {
-    return fetch(url, { ...opts, dispatcher: _clusterAgent });
+  const { signal, headers = {} } = opts;
+  const u = new URL(url);
+  if (u.protocol === "https:") {
+    const { default: https } = await import("node:https");
+    return new Promise((resolve, reject) => {
+      const reqOpts = {
+        hostname: u.hostname,
+        port: u.port || 443,
+        path: u.pathname + u.search,
+        method: opts.method || "GET",
+        headers,
+        rejectUnauthorized: false,
+        timeout: 10000,
+      };
+      const req = https.request(reqOpts, (res) => {
+        let body = "";
+        res.on("data", (chunk) => { body += chunk; });
+        res.on("end", () => {
+          resolve({
+            ok: res.statusCode >= 200 && res.statusCode < 300,
+            status: res.statusCode,
+            statusText: res.statusMessage,
+            text: () => Promise.resolve(body),
+            json: () => Promise.resolve(JSON.parse(body)),
+          });
+        });
+      });
+      req.on("error", reject);
+      req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+      if (signal) signal.addEventListener("abort", () => { req.destroy(); reject(new Error("aborted")); }, { once: true });
+      if (opts.body) req.write(opts.body);
+      req.end();
+    });
   }
   return fetch(url, opts);
 }
