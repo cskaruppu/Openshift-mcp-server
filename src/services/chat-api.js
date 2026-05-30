@@ -29,7 +29,7 @@ import {
   setRemoteCluster,
   clearRemoteCluster,
 } from "../utils/openshift-client.js";
-import { getConnectedAgents } from "../index.js";
+import { getConnectedAgents, getAgentCachedResponse } from "../index.js";
 import { cacheGet, cacheSet, isEnabled as cacheEnabled } from "../utils/cache.js";
 import {
   addMessage as histAddMessage,
@@ -6001,9 +6001,75 @@ function buildITSMForm(type, message, ctx, preflightReport = null) {
 }
 
 // ---------------------------------------------------------------------------
+// Resolve remote cluster context from agent cache for chat use
+// ---------------------------------------------------------------------------
+function resolveRemoteClusterContext(body) {
+  if (!body?.cluster || body.cluster === "local") return null;
+  const cachedSummary = getAgentCachedResponse(body.cluster, "/api/cluster/summary", { skipFreshnessCheck: true });
+  if (!cachedSummary) return null;
+  return {
+    clusterName: body.cluster,
+    summary: cachedSummary,
+    nodes: getAgentCachedResponse(body.cluster, "/api/nodes", { skipFreshnessCheck: true }) || [],
+    podIssues: getAgentCachedResponse(body.cluster, "/api/pods/issues", { skipFreshnessCheck: true }) || [],
+    alerts: getAgentCachedResponse(body.cluster, "/api/alerts", { skipFreshnessCheck: true }) || { alerts: [], summary: {} },
+    operators: getAgentCachedResponse(body.cluster, "/api/cluster/operators", { skipFreshnessCheck: true }) || [],
+    source: "agent-cache",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Build chat context from cached agent data (for remote clusters)
+// ---------------------------------------------------------------------------
+function buildContextFromAgentCache(cache, userMessage) {
+  const ctx = {};
+  const s = cache.summary;
+  if (s) {
+    ctx.clusterVersion = s.cluster?.version || "unknown";
+    ctx.clusterHealth = s.cluster?.health || "unknown";
+    ctx.platform = s.platform || "kubernetes";
+    ctx.isOpenShift = s.isOpenShift || false;
+    ctx.totalNodes = s.nodes?.total || 0;
+    ctx.readyNodes = s.nodes?.ready || 0;
+    ctx.totalCPU = s.nodes?.totalCPU || 0;
+    ctx.totalMemGi = s.nodes?.totalMemGi || 0;
+    ctx.totalNamespaces = s.namespaces?.total || 0;
+    ctx.userNamespaces = s.namespaces?.user || 0;
+    ctx.operatorCount = s.operators?.total || 0;
+    ctx.degradedOperators = s.operators?.degraded || 0;
+    ctx.degradedNames = s.operators?.degradedNames || [];
+  }
+  ctx.nodes = (cache.nodes || []).map(n => ({
+    name: n.name, roles: n.roles, ready: n.ready,
+    cpu: n.cpu, memory: n.memory, kubeletVersion: n.kubeletVersion,
+    osImage: n.osImage,
+  }));
+  ctx.problemPods = (cache.podIssues || []).map(p => ({
+    name: p.name, namespace: p.namespace, node: p.node,
+    phase: p.phase, issues: p.issues, ownerKind: p.ownerKind, ownerName: p.ownerName,
+  }));
+  ctx.operators = (cache.operators || []).map(o => ({
+    name: o.name, health: o.health, version: o.version, message: o.message,
+  }));
+  const alerts = cache.alerts;
+  ctx.recentWarnings = (alerts?.alerts || []).slice(0, 30).map(a => ({
+    reason: a.name, message: a.summary, namespace: a.namespace,
+    resource: a.resource, count: a.count,
+  }));
+  ctx._remoteCluster = cache.clusterName;
+  ctx._source = "agent-cache";
+  return ctx;
+}
+
+// ---------------------------------------------------------------------------
 // Gather cluster context based on user query
 // ---------------------------------------------------------------------------
-async function gatherClusterContext(userMessage, nluParsed = null) {
+async function gatherClusterContext(userMessage, nluParsed = null, remoteCache = null) {
+  // If remote cluster context is provided via agent cache, build a context
+  // from it instead of calling ocpGet (which only reaches the local cluster).
+  if (remoteCache) {
+    return buildContextFromAgentCache(remoteCache, userMessage);
+  }
   const lower = userMessage.toLowerCase();
   const context = {};
   const tasks = [];
@@ -12134,15 +12200,8 @@ export async function handleChatAPI(req, res) {
       return;
     }
 
-    // Remote cluster override — when the user selects a remote cluster in
-    // the dashboard, route all ocpGet/ocpFetch calls to that cluster.
-    if (body.cluster && body.cluster !== "local") {
-      const agents = getConnectedAgents();
-      const agent = agents.get(body.cluster);
-      if (agent && agent.apiUrl && agent.token) {
-        setRemoteCluster(agent.apiUrl, agent.token);
-      }
-    }
+    // Remote cluster override — use cached agent data for context
+    const _remoteClusterContext = resolveRemoteClusterContext(body);
 
     // Slash commands — fast-path for dashboard shortcuts
     // Override LLM settings from request (for UI provider selector)
@@ -12636,7 +12695,7 @@ export async function handleChatAPI(req, res) {
       !llmEnabled(llmOpts)
     ) {
       try {
-        const fastCtx = await gatherClusterContext(userMessage, parsed);
+        const fastCtx = await gatherClusterContext(userMessage, parsed, _remoteClusterContext);
         const reply = builtInAnalysis(userMessage, fastCtx);
         const provider = "built-in";
         if (conversationId) {
@@ -13210,7 +13269,7 @@ export async function handleChatAPI(req, res) {
       try {
         sseSend(res, { stage: "querying", toolProgress: "Fetching cluster data..." });
         const { result: sseTraced, trace: sseTrace } = await runWithTrace(async () => {
-          let context = await gatherClusterContext(userMessage, parsed);
+          let context = await gatherClusterContext(userMessage, parsed, _remoteClusterContext);
           // Filter unrelated cluster-wide data for deployment-specific queries
           if (context.targetDeployment) {
             const depNs = context.targetDeployment.namespace;
@@ -13353,7 +13412,7 @@ export async function handleChatAPI(req, res) {
       } else {
         context = await cacheGet(ctxKey);
         if (!context) {
-          context = await gatherClusterContext(userMessage, parsed);
+          context = await gatherClusterContext(userMessage, parsed, _remoteClusterContext);
           cacheSet(ctxKey, context, CONTEXT_CACHE_TTL).catch(() => {});
         }
       }
@@ -13550,17 +13609,11 @@ export async function handleChatCompareAPI(req, res) {
       return json(res, 400, { error: "Provide 1-3 providers in the 'providers' array" });
     }
 
-    // Remote cluster override
-    if (body.cluster && body.cluster !== "local") {
-      const agents = getConnectedAgents();
-      const agent = agents.get(body.cluster);
-      if (agent && agent.apiUrl && agent.token) {
-        setRemoteCluster(agent.apiUrl, agent.token);
-      }
-    }
+    // Remote cluster — use cached agent data
+    const _remoteCtx = resolveRemoteClusterContext(body);
 
     // Gather cluster context once, shared across all providers
-    const context = await gatherClusterContext(message);
+    const context = await gatherClusterContext(message, null, _remoteCtx);
     const contextStr = summarizeContext(context);
     const userContent = `${message}\n\n--- Live Cluster Data ---\n${contextStr}`;
 
@@ -13653,14 +13706,8 @@ export async function handleChatInvestigateAPI(req, res) {
 
     if (!message) return json(res, 400, { error: "Missing 'message' field" });
 
-    // Remote cluster override
-    if (body.cluster && body.cluster !== "local") {
-      const agents = getConnectedAgents();
-      const agent = agents.get(body.cluster);
-      if (agent && agent.apiUrl && agent.token) {
-        setRemoteCluster(agent.apiUrl, agent.token);
-      }
-    }
+    // Remote cluster — use cached agent data
+    const _remoteCtx = resolveRemoteClusterContext(body);
 
     const llmOpts = {};
     if (provider) llmOpts.provider = provider;
@@ -13671,7 +13718,7 @@ export async function handleChatInvestigateAPI(req, res) {
     // Build context hint from cluster
     let contextHint = null;
     try {
-      const ctx = await gatherClusterContext(message);
+      const ctx = await gatherClusterContext(message, null, _remoteCtx);
       contextHint = {
         problemPods: (ctx.problemPods || []).slice(0, 5),
         correlations: ctx.correlations || [],

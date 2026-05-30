@@ -4834,6 +4834,14 @@ function clusterUrl(url) {
   return url + sep + 'cluster=' + encodeURIComponent(_globalActiveCluster);
 }
 
+// Inject active cluster context into any POST body object
+function withCluster(body) {
+  if (_globalActiveCluster && _globalActiveCluster !== 'local') {
+    body.cluster = _globalActiveCluster;
+  }
+  return body;
+}
+
 var _apiFetchInflight = new Map();
 async function apiFetch(path, timeoutMs) {
   var key = path + '|' + _globalActiveCluster;
@@ -6005,7 +6013,7 @@ async function runLLMRiskAnalysis() {
     var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/risk-analysis', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ llmOpts: opts }),
+      body: JSON.stringify(withCluster({ llmOpts: opts })),
     });
     var data = await resp.json();
     if (data.error && (!data.findings || data.findings.length === 0)) {
@@ -6506,7 +6514,7 @@ async function acwDoTransfer(nsList, action) {
     var resp = await fetch(fetchUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: action, namespaces: nsList })
+      body: JSON.stringify(withCluster({ action: action, namespaces: nsList }))
     });
     if (!resp.ok) throw new Error(resp.status + ' ' + resp.statusText);
     var result = await resp.json();
@@ -6595,7 +6603,7 @@ async function acwChangeAction(changeId, action) {
     var actResp = await fetch(actUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ changeId: changeId, action: action })
+      body: JSON.stringify(withCluster({ changeId: changeId, action: action }))
     });
     var result = await actResp.json();
     var rowEl = document.getElementById('acw-row-' + changeId.replace(/[^a-z0-9]/g, ''));
@@ -8471,17 +8479,17 @@ async function planExecuteStep(planId, stepId, dryRun) {
   try {
     var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/execute-fix', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: cmd, dryRun: !!dryRun }),
+      body: JSON.stringify(withCluster({ command: cmd, dryRun: !!dryRun })),
     });
     var data = await resp.json();
     var newStatus = data.success ? 'completed' : 'failed';
     if (dryRun && data.success) newStatus = 'pending'; // Reset to pending so user can hit Execute next
     await fetch(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/steps/' + stepId, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify(withCluster({
         status: newStatus,
         output: data.stdout, error: data.stderr,
-      }),
+      })),
     });
   } catch (e) {
     await fetch(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/steps/' + stepId, {
@@ -8608,7 +8616,7 @@ async function applyFixProposal(fixId, fixDataB64, isDryRun) {
       var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/execute-fix', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: cmd, dryRun: !isReadOnly }),
+        body: JSON.stringify(withCluster({ command: cmd, dryRun: !isReadOnly })),
       });
       var data = await resp.json();
       if (data.success) {
@@ -8627,14 +8635,14 @@ async function applyFixProposal(fixId, fixDataB64, isDryRun) {
       var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: JSON.stringify(withCluster({
           action: fix.action,
           pod: fix.resource,
           deployment: fix.deploymentName || fix.resource,
           namespace: fix.namespace,
           resourceType: fix.resourceType,
           patchBody: fix.patchBody,
-        }),
+        })),
       });
       var data = await resp.json();
       if (data.success) {
@@ -9075,7 +9083,7 @@ function pollCRApproval(sysId, ticketId, preflightReport, upgradeInfo) {
       var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/itsm/cr-status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sysId: sysId, ticketId: ticketId }),
+        body: JSON.stringify(withCluster({ sysId: sysId, ticketId: ticketId })),
       });
       var data = await resp.json();
       if (data.status === 'approved') {
@@ -9254,7 +9262,7 @@ async function upgradeAction(action, formId) {
       var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/upgrade/dryrun', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ version: targetVersion, channel: channel }),
+        body: JSON.stringify(withCluster({ version: targetVersion, channel: channel })),
       });
       var data = await resp.json();
       if (data.success) {
@@ -9295,7 +9303,7 @@ async function upgradeAction(action, formId) {
       await fetch(MCP_API.replace(/\/api$/, '') + '/api/upgrade/channel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channel: channel }),
+        body: JSON.stringify(withCluster({ channel: channel })),
       });
       term.innerHTML += termLine('t-ok', '\\u2713 Channel set to ' + esc(channel));
     }
@@ -9305,7 +9313,7 @@ async function upgradeAction(action, formId) {
     var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/upgrade/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ version: targetVersion, force: force }),
+      body: JSON.stringify(withCluster({ version: targetVersion, force: force })),
     });
     var data = await resp.json();
     if (!data.success) {
@@ -9395,7 +9403,7 @@ async function runChatCommand(btn, cmd, isDryRun) {
     var resp = await fetch(apiBase + '/api/alerts/execute-fix', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: cmd, dryRun: !!isDryRun }),
+      body: JSON.stringify(withCluster({ command: cmd, dryRun: !!isDryRun })),
     });
     var data = await resp.json();
     if (outputEl) {
@@ -9436,7 +9444,7 @@ async function applyFix(btnId, action, name, ns) {
     const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/execute', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: action, pod: name, namespace: ns, deployment: name }),
+      body: JSON.stringify(withCluster({ action: action, pod: name, namespace: ns, deployment: name })),
     });
     const data = await resp.json();
 
@@ -9492,11 +9500,11 @@ async function sendMessage() {
   try {
     // Build request body — include LLM provider settings + enable streaming
     // Sprint A: include userId so Pillar 1+3 preferences are injected into LLM
-    const chatBody = {
+    const chatBody = withCluster({
       message: text,
       stream: true,
       userId: (typeof _currentUserId !== 'undefined' && _currentUserId) ? _currentUserId : (localStorage.getItem('mcp.userId') || 'default'),
-    };
+    });
     const selProvider = document.getElementById('llm-provider').value;
     if (selProvider && selProvider !== 'none') {
       chatBody.provider = selProvider;
@@ -10955,7 +10963,7 @@ async function sendCompareChat(msg, history, chatHistory) {
   const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat/compare', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: msg, providers: providers, conversationId: history.activeId, history: chatHistory }),
+    body: JSON.stringify(withCluster({ message: msg, providers: providers, conversationId: history.activeId, history: chatHistory })),
   });
   const data = await resp.json();
   const results = data.results || [];
@@ -10987,7 +10995,7 @@ async function sendInvestigateChat(msg, history, providerOpts, chatHistory) {
   const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat/investigate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: msg, conversationId: history.activeId, history: chatHistory, ...providerOpts }),
+    body: JSON.stringify(withCluster({ message: msg, conversationId: history.activeId, history: chatHistory, ...providerOpts })),
   });
   const data = await resp.json();
   data.durationMs = data.durationMs || (Date.now() - startMs);
@@ -11047,7 +11055,7 @@ async function executeRunbook(runbookId) {
     const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat/runbook', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ runbook: runbookId, conversationId: history.activeId, ...providerOpts }),
+      body: JSON.stringify(withCluster({ runbook: runbookId, conversationId: history.activeId, ...providerOpts })),
     });
     const data = await resp.json();
     const replyText = data.reply || data.error || 'Runbook completed';
@@ -13135,7 +13143,7 @@ async function sendFullChatStreaming(text) {
   setChatGenerating(true);
   _chatAbortCtrl = new AbortController();
 
-  const chatBody = { message: msg, conversationId: history.activeId, stream: true };
+  const chatBody = withCluster({ message: msg, conversationId: history.activeId, stream: true });
   const providerOpts = getActiveProviderOpts();
   Object.assign(chatBody, providerOpts);
   const provider = providerOpts.provider || 'none';
@@ -16643,7 +16651,7 @@ async function runHubOrchestrator() {
     var resp = await fetch(MCP_API + '/hub/orchestrate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: msg, llmOpts: opts }),
+      body: JSON.stringify(withCluster({ message: msg, llmOpts: opts })),
     });
     var data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Orchestrator failed');

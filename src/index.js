@@ -422,7 +422,7 @@ const AGENT_CACHE_MAX_AGE_SEC = 300; // 5 minutes
  * @param {object} [opts] - Options
  * @param {boolean} [opts.skipFreshnessCheck] - If true, serve data even if stale (used as fallback after proxy failure)
  */
-function getAgentCachedResponse(clusterName, endpointPath, opts = {}) {
+export function getAgentCachedResponse(clusterName, endpointPath, opts = {}) {
   const resolvedKey = findClusterKey(clusterName) || clusterName;
   const agent = _connectedAgents.get(resolvedKey);
   if (!agent?.lastReport) return null;
