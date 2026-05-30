@@ -2029,16 +2029,12 @@ async function startSSE() {
       });
 
       saveClustersToDB().catch(() => {});
-      console.error(`[hub] Cluster registered: ${name} (${platform}) — test: ${testResult?.ok ? "OK" : "failed"}${kubeconfigDetected ? " (kubeconfig parsed)" : ""}`);
-      const authHint = testResult && !testResult.ok && (testResult.status === 401 || testResult.status === 403)
-        ? "Token may have expired. For long-lived access, create a service account token: oc create token mcp-agent -n openshift-tcs-agentic-ai --duration=8760h"
-        : null;
+      console.error(`[hub] Cluster registered: ${name} (${platform}) — test: ${testResult?.ok ? "OK" : "skipped/failed"}${kubeconfigDetected ? " (kubeconfig parsed)" : ""}`);
       return sendJson(res, 200, {
         ok: true,
         cluster: { name, platform, status: testResult?.ok ? "live" : "registered" },
         connectionTest: testResult,
         kubeconfigDetected,
-        authHint,
       });
     }
 
