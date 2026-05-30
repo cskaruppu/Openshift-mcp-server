@@ -14801,6 +14801,8 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('  CLUSTER_PLATFORM: "' + platform + '"');
   lines.push('  SCAN_INTERVAL: "60"');
   lines.push('  LOG_LEVEL: "info"');
+  lines.push('  # Set to "true" if hub uses self-signed or internal CA certificates');
+  lines.push('  HUB_TLS_SKIP_VERIFY: "true"');
   if (apiUrl) {
     lines.push('  API_SERVER_URL: "' + apiUrl + '"');
   }

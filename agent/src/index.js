@@ -9,6 +9,7 @@
  *   CLUSTER_NAME         - Name of this cluster (default: unknown)
  *   CLUSTER_PLATFORM     - openshift | rancher | eks | aks | gke | k8s
  *   SCAN_INTERVAL        - Seconds between scans (default: 60)
+ *   HUB_TLS_SKIP_VERIFY  - Skip TLS verification for hub connection (default: false)
  *   LOG_LEVEL            - info | debug | error (default: info)
  *   PORT                 - Health endpoint port (default: 8080)
  *   NODE_EXTRA_CA_CERTS  - Path to CA bundle for TLS (auto-set if not provided)
@@ -18,6 +19,11 @@ import { createServer } from "node:http";
 import { existsSync } from "node:fs";
 import { scanCluster, clearTokenCache } from "./scanner.js";
 import { registerWithHub, sendReport, getReporterStatus } from "./reporter.js";
+
+// Allow skipping TLS verification for hub connections (self-signed/internal CA)
+if (process.env.HUB_TLS_SKIP_VERIFY === "true" && process.env.NODE_TLS_REJECT_UNAUTHORIZED === undefined) {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+}
 
 // Auto-configure TLS CA from in-cluster service account if not already set
 if (!process.env.NODE_EXTRA_CA_CERTS) {
@@ -147,6 +153,7 @@ async function start() {
   log("info", `Platform:  ${PLATFORM}`);
   log("info", `Scan interval: ${SCAN_INTERVAL / 1000}s`);
   log("info", `Hub URL:   ${process.env.HUB_SERVER_URL || "(not set)"}`);
+  log("info", `TLS skip:  ${process.env.HUB_TLS_SKIP_VERIFY === "true" ? "yes (self-signed certs accepted)" : "no (strict verification)"}`);
 
   await registerWithHub();
 
