@@ -1,5 +1,5 @@
 /**
- * Hub Reporter — sends scan results back to the KubeNexus AI hub server.
+ * Hub Reporter — sends scan results back to the TCS Agentic AI hub server.
  */
 
 const HUB_URL = process.env.HUB_SERVER_URL || "http://localhost:3000";

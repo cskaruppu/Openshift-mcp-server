@@ -1,13 +1,13 @@
 {
-  "name": "kubenexus-agent",
+  "name": "tcs-agentic-ai-agent",
   "version": "1.0.0",
-  "description": "TCS KubeNexus AI — Kubernetes Cluster Agent",
+  "description": "TCS Agentic AI — Kubernetes Cluster Agent",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js"
   },
-  "keywords": ["kubernetes", "openshift", "kubenexus", "agent"],
+  "keywords": ["kubernetes", "openshift", "tcs-agentic-ai", "agent"],
   "license": "MIT",
   "dependencies": {}
 }

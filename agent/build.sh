@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build and push the KubeNexus Agent image to quay.io
+# Build and push the TCS Agentic AI Agent image to quay.io
 #
 # Usage:
 #   ./build.sh                 # builds and pushes :latest
@@ -9,14 +9,14 @@
 set -euo pipefail
 
 REGISTRY="quay.io/karuppucs"
-IMAGE_NAME="kubenexus-agent"
+IMAGE_NAME="tcs-agentic-ai"
 TAG="${1:-latest}"
 FULL_IMAGE="${REGISTRY}/${IMAGE_NAME}"
 
 cd "$(dirname "$0")"
 
 echo "============================================"
-echo "  TCS KubeNexus AI — Agent Image Builder"
+echo "  TCS Agentic AI — Agent Image Builder"
 echo "============================================"
 echo "Registry : ${REGISTRY}"
 echo "Image    : ${IMAGE_NAME}"
@@ -62,5 +62,5 @@ echo "============================================"
 echo "  Push complete!"
 echo ""
 echo "  Pull: ${RUNTIME} pull ${FULL_IMAGE}:${TAG}"
-echo "  Deploy: kubectl apply -f kubenexus-agent.yaml"
+echo "  Deploy: kubectl apply -f tcs-agentic-ai.yaml"
 echo "============================================"

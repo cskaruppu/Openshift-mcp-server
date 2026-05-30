@@ -5,11 +5,11 @@ RUN npm ci --omit=dev 2>/dev/null || true
 COPY src/ src/
 
 FROM node:20-alpine
-LABEL maintainer="KubeNexus AI <kubenexus@tcs.com>"
-LABEL description="KubeNexus AI — Kubernetes Cluster Agent"
+LABEL maintainer="TCS Agentic AI <tcs-agentic-ai@tcs.com>"
+LABEL description="TCS Agentic AI — Kubernetes Cluster Agent"
 LABEL org.opencontainers.image.source="https://github.com/cskaruppu/openshift-mcp-server"
 
-RUN addgroup -g 1001 -S kubenexus && adduser -u 1001 -S agent -G kubenexus
+RUN addgroup -g 1001 -S tcsagent && adduser -u 1001 -S agent -G tcsagent
 
 WORKDIR /app
 

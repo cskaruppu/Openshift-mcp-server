@@ -1,11 +1,11 @@
 /**
- * KubeNexus AI — Kubernetes Cluster Agent
+ * TCS Agentic AI — Kubernetes Cluster Agent
  *
  * Lightweight agent that runs inside a target Kubernetes cluster,
- * scans for health/issues, and reports back to the KubeNexus AI Hub.
+ * scans for health/issues, and reports back to the TCS Agentic AI Hub.
  *
  * Environment variables:
- *   HUB_SERVER_URL      - KubeNexus hub URL (default: http://localhost:3000)
+ *   HUB_SERVER_URL      - TCS Agentic AI hub URL (default: http://localhost:3000)
  *   CLUSTER_NAME         - Name of this cluster (default: unknown)
  *   CLUSTER_PLATFORM     - openshift | rancher | eks | aks | gke | k8s
  *   SCAN_INTERVAL        - Seconds between scans (default: 60)
@@ -68,7 +68,7 @@ async function runScan() {
 function buildStatusResponse() {
   const reporter = getReporterStatus();
   return {
-    agent: "kubenexus-agent",
+    agent: "tcs-agentic-ai-agent",
     version: "1.0.0",
     cluster: CLUSTER_NAME,
     platform: PLATFORM,
@@ -141,7 +141,7 @@ const server = createServer((req, res) => {
 
 async function start() {
   log("info", "===========================================");
-  log("info", "  KubeNexus AI — Cluster Agent v1.0.0");
+  log("info", "  TCS Agentic AI — Cluster Agent v1.0.0");
   log("info", "===========================================");
   log("info", `Cluster:   ${CLUSTER_NAME}`);
   log("info", `Platform:  ${PLATFORM}`);
