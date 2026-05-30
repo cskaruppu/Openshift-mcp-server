@@ -501,19 +501,18 @@ function getAgentCachedResponse(clusterName, endpointPath, opts = {}) {
         cpuPercent: n.cpuPercent || 0,
         memoryUsage: n.memoryUsage || n.memory || "0",
         memoryPercent: n.memoryPercent || 0,
-        ...meta,
       }));
 
     case "/api/pods/issues":
       return (report.pods?.issues || []).map(i => ({
-        name: i.pod,
+        name: i.pod || i.name,
         namespace: i.namespace,
         node: i.node || "",
+        phase: i.phase || "Failed",
         podAgeHours: i.podAge || 0,
         ownerKind: i.ownerKind || "",
         ownerName: i.ownerName || "",
-        issues: [{ container: i.container, reason: i.type, restarts: i.restarts, message: i.message }],
-        ...meta,
+        issues: [{ container: i.container, reason: i.type || i.reason, restarts: i.restarts || 0, message: i.message }],
       }));
 
     case "/api/namespaces": {
@@ -548,12 +547,11 @@ function getAgentCachedResponse(clusterName, endpointPath, opts = {}) {
       return (report.clusterOperators?.items || []).map(o => ({
         name: o.name,
         version: o.version || "",
-        available: o.available,
-        degraded: o.degraded,
-        progressing: o.progressing,
-        health: o.degraded ? "degraded" : (o.available ? (o.progressing ? "progressing" : "available") : "unavailable"),
+        available: o.available !== false,
+        degraded: o.degraded || false,
+        progressing: o.progressing || false,
+        health: o.degraded ? "degraded" : (o.available !== false ? (o.progressing ? "progressing" : "available") : "unavailable"),
         message: o.message || "",
-        ...meta,
       }));
 
     case "/api/alerts":
@@ -1908,12 +1906,13 @@ async function startSSE() {
           return { version, nodeCount: nodeList.length, readyNodes: readyNodes.length, platform: "openshift" };
         });
         if (info === null) {
-          const cached = getAgentCachedResponse(cluster, "/api/cluster-info");
+          const cached = getAgentCachedResponse(cluster, "/api/cluster-info", { skipFreshnessCheck: true });
           if (cached) return sendJson(res, 200, cached);
+          return sendJson(res, 200, { version: "unknown", nodeCount: 0, readyNodes: 0, source: "agent-cache", available: false, message: "No cached data available" });
         }
         return sendJson(res, 200, info);
       } catch (err) {
-        const cached = cluster ? getAgentCachedResponse(cluster, "/api/cluster-info") : null;
+        const cached = cluster ? getAgentCachedResponse(cluster, "/api/cluster-info", { skipFreshnessCheck: true }) : null;
         if (cached) return sendJson(res, 200, cached);
         return sendJson(res, err.status || 200, err.status ? { error: err.message } : { version: "unknown", nodeCount: 0, readyNodes: 0, error: err.message });
       }
@@ -3088,6 +3087,10 @@ async function startSSE() {
 
         return sendJson(res, 200, { alerts: unified, summary });
       } catch (err) {
+        if (_ac && _ac !== "local") {
+          const cached = getAgentCachedResponse(_ac, "/api/alerts", { skipFreshnessCheck: true });
+          if (cached) return sendJson(res, 200, cached);
+        }
         return sendJson(res, 200, { alerts: [], summary: { critical: 0, warning: 0, info: 0 }, error: err.message });
       }
     }
@@ -3145,7 +3148,7 @@ async function startSSE() {
           buckets.push({ hour: new Date(now - i * 3600000).toISOString().slice(11, 13) + ":00", critical: 0, warning: 0, info: 0 });
         }
         const events = await withClusterContext(url, () => ocpGet("/api/v1/events")).catch(() => ({ items: [] }));
-        for (const e of (events.items || [])) {
+        for (const e of (events?.items || [])) {
           if (e.type !== "Warning") continue;
           const ts = new Date(e.lastTimestamp || e.metadata.creationTimestamp).getTime();
           const age = now - ts;
@@ -3229,13 +3232,26 @@ async function startSSE() {
 
     // Upgrade workflow — /api/upgrade/*
     if (req.method === "GET" && url.pathname === "/api/cluster/version") {
+      const _cvCluster = url.searchParams.get("cluster");
+      if (_cvCluster && _cvCluster !== "local") {
+        const cached = getAgentCachedResponse(_cvCluster, "/api/cluster-info");
+        if (cached) return sendJson(res, 200, { current: cached.version || "", channel: "", available: [], source: "agent-cache" });
+      }
       try {
         const cv = await withClusterContext(url, () => ocpGet("/apis/config.openshift.io/v1/clusterversions/version"));
+        if (cv === null && _cvCluster) {
+          const cached = getAgentCachedResponse(_cvCluster, "/api/cluster-info", { skipFreshnessCheck: true });
+          if (cached) return sendJson(res, 200, { current: cached.version || "", channel: "", available: [], source: "agent-cache" });
+        }
         const current = cv?.status?.desired?.version || cv?.status?.history?.[0]?.version || "";
         const channel = cv?.spec?.channel || "";
         const available = (cv?.status?.availableUpdates || []).map(u => u.version);
         json(res, 200, { current, channel, available });
       } catch (err) {
+        if (_cvCluster && _cvCluster !== "local") {
+          const cached = getAgentCachedResponse(_cvCluster, "/api/cluster-info", { skipFreshnessCheck: true });
+          if (cached) return sendJson(res, 200, { current: cached.version || "", channel: "", available: [], source: "agent-cache" });
+        }
         json(res, 200, { current: "", channel: "", available: [], error: err.message });
       }
       return;
@@ -4329,14 +4345,14 @@ async function startSSE() {
       try {
         const result = await withClusterContext(url, () => handleDashboardAPI(url.pathname, req, res));
         if (result === null && _cl) {
-          const cached = getAgentCachedResponse(_cl, url.pathname);
+          const cached = getAgentCachedResponse(_cl, url.pathname, { skipFreshnessCheck: true });
           if (cached) { sendJson(res, 200, cached); return; }
           sendJson(res, 200, { source: "agent-cache", available: false, message: "No cached data available for this endpoint" });
           return;
         }
       } catch (err) {
         if (_cl && _cl !== "local") {
-          const cached = getAgentCachedResponse(_cl, url.pathname);
+          const cached = getAgentCachedResponse(_cl, url.pathname, { skipFreshnessCheck: true });
           if (cached) { sendJson(res, 200, cached); return; }
         }
         if (!res.headersSent) sendJson(res, 500, { error: err.message });
