@@ -14877,6 +14877,8 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('          env:');
   lines.push('            - name: NODE_EXTRA_CA_CERTS');
   lines.push('              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt');
+  lines.push('            - name: NODE_TLS_REJECT_UNAUTHORIZED');
+  lines.push('              value: "0"');
   lines.push('          envFrom:');
   lines.push('            - configMapRef:');
   lines.push('                name: tcs-agentic-ai-config');
@@ -14912,7 +14914,6 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('            failureThreshold: 2');
   lines.push('          securityContext:');
   lines.push('            allowPrivilegeEscalation: false');
-  lines.push('            readOnlyRootFilesystem: true');
   lines.push('            capabilities:');
   lines.push('              drop:');
   lines.push('                - ALL');
