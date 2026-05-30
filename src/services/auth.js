@@ -350,6 +350,7 @@ const STATIC_EXT = new Set([".html", ".css", ".js", ".png", ".svg", ".ico", ".js
 function isPublicPath(pathname) {
   if (PUBLIC_PATHS.has(pathname)) return true;
   if (pathname.startsWith("/assets/") || pathname === "/favicon.ico") return true;
+  if (pathname.startsWith("/api/agent/")) return true;
   const dot = pathname.lastIndexOf(".");
   if (dot > 0 && !pathname.startsWith("/api/") && STATIC_EXT.has(pathname.slice(dot))) return true;
   return false;

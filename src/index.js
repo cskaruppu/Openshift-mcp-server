@@ -422,6 +422,23 @@ function isBlockedUrl(urlStr) {
   } catch { return true; }
 }
 
+// TLS-tolerant fetch for cluster-facing connections (handles self-signed certs)
+let _clusterAgent = null;
+async function clusterFetch(url, opts = {}) {
+  if (!_clusterAgent) {
+    try {
+      const undici = await import("undici");
+      _clusterAgent = new undici.Agent({ connect: { rejectUnauthorized: false } });
+    } catch {
+      _clusterAgent = "unavailable";
+    }
+  }
+  if (_clusterAgent && _clusterAgent !== "unavailable") {
+    return fetch(url, { ...opts, dispatcher: _clusterAgent });
+  }
+  return fetch(url, opts);
+}
+
 function generatePreflightHTML(report, ticketNumber, fields) {
   const checks = report.checks || [];
   const ts = report.timestamp ? new Date(report.timestamp).toLocaleString() : new Date().toLocaleString();
@@ -1172,7 +1189,7 @@ async function startSSE() {
   async function probeClusterHealth(agent) {
     if (!agent.apiUrl) return { reachable: false, error: "No API URL" };
     try {
-      const resp = await fetch(`${agent.apiUrl}/api/v1/namespaces?limit=1`, {
+      const resp = await clusterFetch(`${agent.apiUrl}/api/v1/namespaces?limit=1`, {
         headers: {
           ...(agent.token ? { Authorization: `Bearer ${agent.token}` } : {}),
           Accept: "application/json",
@@ -1669,7 +1686,7 @@ async function startSSE() {
       try {
         const headers = { Accept: "application/json" };
         if (token) headers.Authorization = `Bearer ${token}`;
-        const testResp = await fetch(`${apiUrl}/api/v1/namespaces?limit=1`, {
+        const testResp = await clusterFetch(`${apiUrl}/api/v1/namespaces?limit=1`, {
           headers,
           signal: AbortSignal.timeout(10000),
         });
