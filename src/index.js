@@ -443,11 +443,14 @@ function getAgentCachedResponse(clusterName, endpointPath, opts = {}) {
     : true;
   const meta = { source: "agent-cache", lastReportTime: agent.lastReportTime, clusterName: agent.clusterName, ...(stale ? { stale: true } : {}) };
 
+  const isOpenShift = (agent.platform || "").toLowerCase() === "openshift";
   switch (endpointPath) {
     case "/api/cluster-info":
       return {
-        version: report.openshiftVersion || "unknown",
+        version: report.openshiftVersion || report.kubernetesVersion || "unknown",
+        kubernetesVersion: report.kubernetesVersion || null,
         platform: agent.platform || "kubernetes",
+        isOpenShift,
         nodeCount: report.nodes?.total || 0,
         readyNodes: report.nodes?.ready || 0,
         health: (report.clusterHealth?.status || "unknown").toLowerCase(),
@@ -456,7 +459,14 @@ function getAgentCachedResponse(clusterName, endpointPath, opts = {}) {
 
     case "/api/cluster/summary":
       return {
-        cluster: { version: report.openshiftVersion || "unknown", health: (report.clusterHealth?.status || "unknown").toLowerCase(), channel: "stable-" + (report.openshiftVersion || "").split(".").slice(0, 2).join(".") },
+        platform: agent.platform || "kubernetes",
+        isOpenShift,
+        cluster: {
+          version: report.openshiftVersion || report.kubernetesVersion || "unknown",
+          kubernetesVersion: report.kubernetesVersion || null,
+          health: (report.clusterHealth?.status || "unknown").toLowerCase(),
+          channel: isOpenShift ? "stable-" + (report.openshiftVersion || "").split(".").slice(0, 2).join(".") : "",
+        },
         nodes: {
           total: report.nodes?.total || 0,
           ready: report.nodes?.ready || 0,
@@ -3246,13 +3256,13 @@ async function startSSE() {
         const current = cv?.status?.desired?.version || cv?.status?.history?.[0]?.version || "";
         const channel = cv?.spec?.channel || "";
         const available = (cv?.status?.availableUpdates || []).map(u => u.version);
-        json(res, 200, { current, channel, available });
+        sendJson(res, 200, { current, channel, available });
       } catch (err) {
         if (_cvCluster && _cvCluster !== "local") {
           const cached = getAgentCachedResponse(_cvCluster, "/api/cluster-info", { skipFreshnessCheck: true });
           if (cached) return sendJson(res, 200, { current: cached.version || "", channel: "", available: [], source: "agent-cache" });
         }
-        json(res, 200, { current: "", channel: "", available: [], error: err.message });
+        sendJson(res, 200, { current: "", channel: "", available: [], error: err.message });
       }
       return;
     }

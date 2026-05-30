@@ -2350,8 +2350,8 @@ tr:hover td{background:#ffffff06}
       <div class="metric" id="m-ns">--</div>
       <div class="metric-label" id="m-ns-label">Loading...</div>
     </div>
-    <div class="card">
-      <h3>Cluster Operators</h3>
+    <div class="card" id="m-ops-card">
+      <h3 id="m-ops-title">Cluster Operators</h3>
       <div class="metric" id="m-ops">--</div>
       <div class="metric-label" id="m-ops-label">Loading...</div>
     </div>
@@ -4909,17 +4909,37 @@ async function runDiagnostics() {
 // ---------------------------------------------------------------------------
 // Data loaders
 // ---------------------------------------------------------------------------
+// Determine the platform of the currently active cluster.
+// Local cluster is OpenShift (the hub runs on OCP); remote clusters carry their own platform.
+function getActiveClusterPlatform() {
+  if (_globalActiveCluster === 'local' || !_globalActiveCluster) return 'openshift';
+  var a = (_remoteAgents || {})[_globalActiveCluster];
+  return (a && a.platform) ? a.platform : 'k8s';
+}
+
 async function loadSummary() {
   try {
     const d = await apiFetch('/api/cluster/summary');
     setConnected(true);
 
+    // Resolve platform (prefer server-reported, fall back to local lookup)
+    var platform = (d.platform || getActiveClusterPlatform() || 'openshift').toLowerCase();
+    var isOCP = d.isOpenShift !== undefined ? d.isOpenShift : (platform === 'openshift');
+    var pInfo = K8S_PLATFORMS[platform] || K8S_PLATFORMS['k8s'];
+
     // Health
     const el = document.getElementById('m-health');
     el.textContent = d.cluster.health.charAt(0).toUpperCase() + d.cluster.health.slice(1);
     el.className = 'metric ' + (d.cluster.health === 'healthy' ? 'ok' : d.cluster.health === 'warning' ? 'warn' : 'crit');
-    document.getElementById('m-health-label').textContent =
-      'OpenShift ' + d.cluster.version + ' \u2022 ' + d.cluster.channel;
+    // Platform-aware version label: "OpenShift 4.19.14 \u00b7 stable-4.19" or "Amazon EKS \u00b7 Kubernetes v1.29"
+    var verLabel;
+    if (isOCP) {
+      verLabel = 'OpenShift ' + d.cluster.version + (d.cluster.channel ? ' \u2022 ' + d.cluster.channel : '');
+    } else {
+      var kver = d.cluster.kubernetesVersion || d.cluster.version;
+      verLabel = pInfo.name + (kver && kver !== 'unknown' ? ' \u2022 Kubernetes v' + kver : '');
+    }
+    document.getElementById('m-health-label').textContent = verLabel;
 
     // Nodes
     document.getElementById('m-nodes').textContent = d.nodes.ready + ' / ' + d.nodes.total;
@@ -4927,24 +4947,38 @@ async function loadSummary() {
     document.getElementById('m-nodes-label').textContent =
       'Ready \u2022 ' + d.nodes.totalCPU + ' CPU \u2022 ' + d.nodes.totalMemGi + ' Gi Memory';
 
-    // Namespaces
+    // Namespaces \u2014 "projects" is OpenShift terminology; others use "namespaces"
     document.getElementById('m-ns').textContent = d.namespaces.total;
     document.getElementById('m-ns-label').textContent =
-      d.namespaces.user + ' user projects \u2022 ' + d.namespaces.system + ' system';
+      d.namespaces.user + (isOCP ? ' user projects \u2022 ' : ' user namespaces \u2022 ') + d.namespaces.system + ' system';
 
-    // Operators
-    const opsEl = document.getElementById('m-ops');
-    opsEl.textContent = d.operators.healthy + ' / ' + d.operators.total;
-    opsEl.className = 'metric ' + (d.operators.degraded === 0 ? 'ok' : 'crit');
-    document.getElementById('m-ops-label').textContent =
-      d.operators.degraded === 0
-        ? 'All operators available'
-        : d.operators.degraded + ' degraded: ' + d.operators.degradedNames.join(', ');
+    // Operators card \u2014 OpenShift only. For other platforms, repurpose to "Workloads".
+    var opsCard = document.getElementById('m-ops-card');
+    var opsTitle = document.getElementById('m-ops-title');
+    var opsEl = document.getElementById('m-ops');
+    var opsLabelEl = document.getElementById('m-ops-label');
+    if (isOCP && d.operators && d.operators.total > 0) {
+      if (opsTitle) opsTitle.textContent = 'Cluster Operators';
+      opsEl.textContent = d.operators.healthy + ' / ' + d.operators.total;
+      opsEl.className = 'metric ' + (d.operators.degraded === 0 ? 'ok' : 'crit');
+      opsLabelEl.textContent =
+        d.operators.degraded === 0
+          ? 'All operators available'
+          : d.operators.degraded + ' degraded: ' + d.operators.degradedNames.join(', ');
+    } else {
+      // Non-OpenShift: show node-group / workload health instead of operators
+      if (opsTitle) opsTitle.textContent = 'Workloads';
+      opsEl.textContent = d.nodes.ready + ' / ' + d.nodes.total;
+      opsEl.className = 'metric ' + (d.nodes.ready === d.nodes.total ? 'ok' : 'warn');
+      opsLabelEl.textContent = pInfo.name + ' \u2022 nodes ready';
+    }
 
-    // Update global cluster selector with version
-    if (_globalActiveCluster === 'local') {
-      var gcsVer = document.getElementById('gcs-version');
-      if (gcsVer) gcsVer.textContent = 'OCP ' + d.cluster.version;
+    // Update global cluster selector with version (platform-aware)
+    var gcsVer = document.getElementById('gcs-version');
+    if (gcsVer) {
+      if (_globalActiveCluster === 'local') {
+        gcsVer.textContent = isOCP ? 'OCP ' + d.cluster.version : (pInfo.name + ' v' + (d.cluster.kubernetesVersion || d.cluster.version));
+      }
     }
 
   } catch (err) {
@@ -5067,38 +5101,47 @@ async function loadTopology() {
     var podIssues = results[2] || [];
     var operators = results[3] || [];
 
+    var platform = (clusterSummary && clusterSummary.platform) || getActiveClusterPlatform() || 'openshift';
+    var isOCP = clusterSummary && clusterSummary.isOpenShift !== undefined
+      ? clusterSummary.isOpenShift
+      : (platform.toLowerCase() === 'openshift');
+
     var readyNodes = nodes.filter(function(n) { return n.ready; }).length;
     var totalOps = operators.length;
     var degradedOps = operators.filter(function(o) { return o.health === 'degraded'; });
     var progressingOps = operators.filter(function(o) { return o.health === 'progressing'; });
     var availCount = operators.filter(function(o) { return o.health === 'available'; }).length;
 
-    // Summary
+    // Summary — include operators only on OpenShift
     if (clusterSummary && clusterSummary.cluster) {
-      summary.innerHTML = esc(clusterSummary.cluster.version) + ' &middot; ' +
-        readyNodes + '/' + nodes.length + ' nodes &middot; ' +
-        availCount + '/' + totalOps + ' operators';
+      var verStr = clusterSummary.cluster.version;
+      summary.innerHTML = esc(verStr) + ' &middot; ' + readyNodes + '/' + nodes.length + ' nodes' +
+        (isOCP && totalOps > 0 ? ' &middot; ' + availCount + '/' + totalOps + ' operators' : '');
     } else {
       summary.textContent = readyNodes + '/' + nodes.length + ' nodes';
     }
 
-    // Compact operator status bar — only show if there are degraded/progressing
-    if (degradedOps.length > 0 || progressingOps.length > 0) {
-      var opHtml = '<span style="font-size:10px;color:var(--text2);margin-right:4px">Operators:</span>';
-      degradedOps.forEach(function(op) {
-        opHtml += '<span class="topo-op-pill degraded" title="' + esc(op.name) + ': ' + esc((op.message || '').slice(0, 100)) + '" style="cursor:pointer" onclick="openNewChatWithCommand(\'describe clusteroperator ' + esc(op.name) + '\',\'' + esc(op.name) + '\')"><span class="op-dot"></span>' + esc(op.name) + '</span>';
-      });
-      progressingOps.forEach(function(op) {
-        opHtml += '<span class="topo-op-pill progressing" title="' + esc(op.name) + ': ' + esc((op.message || '').slice(0, 100)) + '" style="cursor:pointer" onclick="openNewChatWithCommand(\'describe clusteroperator ' + esc(op.name) + '\',\'' + esc(op.name) + '\')"><span class="op-dot"></span>' + esc(op.name) + '</span>';
-      });
-      if (availCount > 0) {
-        opHtml += '<span class="topo-op-pill ok"><span class="op-dot"></span>' + availCount + ' healthy</span>';
+    // Operator status bar — OpenShift only. Hidden for other platforms.
+    if (isOCP && totalOps > 0) {
+      if (degradedOps.length > 0 || progressingOps.length > 0) {
+        var opHtml = '<span style="font-size:10px;color:var(--text2);margin-right:4px">Operators:</span>';
+        degradedOps.forEach(function(op) {
+          opHtml += '<span class="topo-op-pill degraded" title="' + esc(op.name) + ': ' + esc((op.message || '').slice(0, 100)) + '" style="cursor:pointer" onclick="openNewChatWithCommand(\'describe clusteroperator ' + esc(op.name) + '\',\'' + esc(op.name) + '\')"><span class="op-dot"></span>' + esc(op.name) + '</span>';
+        });
+        progressingOps.forEach(function(op) {
+          opHtml += '<span class="topo-op-pill progressing" title="' + esc(op.name) + ': ' + esc((op.message || '').slice(0, 100)) + '" style="cursor:pointer" onclick="openNewChatWithCommand(\'describe clusteroperator ' + esc(op.name) + '\',\'' + esc(op.name) + '\')"><span class="op-dot"></span>' + esc(op.name) + '</span>';
+        });
+        if (availCount > 0) {
+          opHtml += '<span class="topo-op-pill ok"><span class="op-dot"></span>' + availCount + ' healthy</span>';
+        }
+        opBar.innerHTML = opHtml;
+      } else {
+        opBar.innerHTML = '<span style="font-size:10px;color:var(--text2)">Operators:</span><span class="topo-op-pill ok"><span class="op-dot"></span>' + availCount + '/' + totalOps + ' healthy</span>';
       }
-      opBar.innerHTML = opHtml;
       opBar.style.display = '';
     } else {
-      opBar.innerHTML = '<span style="font-size:10px;color:var(--text2)">Operators:</span><span class="topo-op-pill ok"><span class="op-dot"></span>' + availCount + '/' + totalOps + ' healthy</span>';
-      opBar.style.display = '';
+      opBar.innerHTML = '';
+      opBar.style.display = 'none';
     }
 
     if (!nodes || nodes.length === 0) {
@@ -10680,9 +10723,16 @@ function updateClusterContextBanner() {
   var verEl = document.getElementById('ccb-version');
   var dotEl = document.getElementById('ccb-dot');
   if (nameEl) nameEl.textContent = _globalActiveCluster;
-  if (verEl) verEl.textContent = _globalClusterInfo.version && _globalClusterInfo.version !== 'unknown'
-    ? 'OCP ' + _globalClusterInfo.version + ' · ' + (_globalClusterInfo.readyNodes || 0) + '/' + (_globalClusterInfo.nodeCount || 0) + ' nodes ready'
-    : 'connecting...';
+  if (verEl) {
+    var ci = _globalClusterInfo || {};
+    var isOCP = ci.isOpenShift !== undefined ? ci.isOpenShift : ((ci.platform || getActiveClusterPlatform() || '').toLowerCase() === 'openshift');
+    var pInfo = K8S_PLATFORMS[(ci.platform || getActiveClusterPlatform() || 'k8s').toLowerCase()] || K8S_PLATFORMS['k8s'];
+    var verPrefix = isOCP ? 'OCP ' : (pInfo.name + ' ');
+    var verVal = isOCP ? ci.version : (ci.kubernetesVersion || ci.version);
+    verEl.textContent = verVal && verVal !== 'unknown'
+      ? verPrefix + verVal + ' · ' + (ci.readyNodes || 0) + '/' + (ci.nodeCount || 0) + ' nodes ready'
+      : 'connecting...';
+  }
   var agent = (_remoteAgents || {})[_globalActiveCluster] || {};
   var color = (agent.status === 'live' || agent.status === 'connected') ? 'var(--ok)' : 'var(--warn)';
   if (dotEl) dotEl.style.background = color;

@@ -55,6 +55,7 @@ export async function scanCluster(platform) {
   const scan = {
     timestamp: new Date().toISOString(),
     platform,
+    kubernetesVersion: null,
     nodes: { total: 0, ready: 0, items: [] },
     pods: { total: 0, running: 0, failed: 0, pending: 0, issues: [], byNamespace: {} },
     deployments: { total: 0, available: 0, items: [] },
@@ -66,6 +67,7 @@ export async function scanCluster(platform) {
   };
 
   await Promise.allSettled([
+    scanVersion(scan),
     scanNodes(scan),
     scanPods(scan),
     scanDeployments(scan),
@@ -79,6 +81,17 @@ export async function scanCluster(platform) {
   computeClusterHealth(scan);
 
   return scan;
+}
+
+// Generic Kubernetes server version — works on every distribution
+async function scanVersion(scan) {
+  try {
+    const v = await k8sGet("/version");
+    // gitVersion looks like "v1.28.4+k3s1" or "v1.29.5"
+    scan.kubernetesVersion = (v.gitVersion || `${v.major}.${v.minor}`).replace(/^v/, "");
+  } catch {
+    // /version may be restricted; fall back to node kubelet version later
+  }
 }
 
 function parseCPU(cpuStr) {
