@@ -389,13 +389,219 @@ function sendJson(res, status, body) {
 async function withClusterContext(url, handler) {
   const clusterName = url.searchParams.get("cluster");
   if (clusterName && clusterName !== "local") {
-    const agent = _connectedAgents.get(clusterName);
-    if (!agent || !agent.apiUrl) {
+    const resolvedKey = findClusterKey(clusterName) || clusterName;
+    const agent = _connectedAgents.get(resolvedKey);
+    if (!agent) {
       throw Object.assign(new Error(`Unknown cluster: ${clusterName}`), { status: 404 });
     }
-    return withRemoteCluster(agent.apiUrl, agent.token, handler);
+    // If we have recent agent data, try proxy but fall back to cache on failure
+    if (agent.apiUrl && agent.token) {
+      try {
+        return await withRemoteCluster(agent.apiUrl, agent.token, handler);
+      } catch (proxyErr) {
+        if (agent.lastReport) {
+          console.error(`[hub] Proxy to ${clusterName} failed (${proxyErr.message}), falling back to cached agent data`);
+          return null; // signal caller to use cached data
+        }
+        throw proxyErr;
+      }
+    }
+    // No API URL or token — must use cached data
+    if (agent.lastReport) return null;
+    throw Object.assign(new Error(`Cluster "${clusterName}" has no API connection and no cached data`), { status: 503 });
   }
   return handler();
+}
+
+const AGENT_CACHE_MAX_AGE_SEC = 300; // 5 minutes
+
+/**
+ * Return cached agent data for a given cluster and endpoint.
+ * @param {string} clusterName - The cluster name from ?cluster= param
+ * @param {string} endpointPath - The API endpoint path (e.g. "/api/nodes")
+ * @param {object} [opts] - Options
+ * @param {boolean} [opts.skipFreshnessCheck] - If true, serve data even if stale (used as fallback after proxy failure)
+ */
+function getAgentCachedResponse(clusterName, endpointPath, opts = {}) {
+  const resolvedKey = findClusterKey(clusterName) || clusterName;
+  const agent = _connectedAgents.get(resolvedKey);
+  if (!agent?.lastReport) return null;
+
+  // Check freshness — only serve cache if report is within max age (unless skipped for fallback)
+  if (!opts.skipFreshnessCheck) {
+    if (agent.lastReportTime) {
+      const elapsed = (Date.now() - new Date(agent.lastReportTime).getTime()) / 1000;
+      if (elapsed > AGENT_CACHE_MAX_AGE_SEC) return null;
+    } else {
+      return null;
+    }
+  }
+
+  const report = agent.lastReport;
+  const stale = agent.lastReportTime
+    ? ((Date.now() - new Date(agent.lastReportTime).getTime()) / 1000 > AGENT_CACHE_MAX_AGE_SEC)
+    : true;
+  const meta = { source: "agent-cache", lastReportTime: agent.lastReportTime, clusterName: agent.clusterName, ...(stale ? { stale: true } : {}) };
+
+  switch (endpointPath) {
+    case "/api/cluster-info":
+      return {
+        version: report.openshiftVersion || "unknown",
+        platform: agent.platform || "kubernetes",
+        nodeCount: report.nodes?.total || 0,
+        readyNodes: report.nodes?.ready || 0,
+        health: (report.clusterHealth?.status || "unknown").toLowerCase(),
+        ...meta,
+      };
+
+    case "/api/cluster/summary":
+      return {
+        cluster: { version: report.openshiftVersion || "unknown", health: (report.clusterHealth?.status || "unknown").toLowerCase(), channel: "stable-" + (report.openshiftVersion || "").split(".").slice(0, 2).join(".") },
+        nodes: {
+          total: report.nodes?.total || 0,
+          ready: report.nodes?.ready || 0,
+          totalCPU: report.resourceSummary?.totalCPU || 0,
+          totalMemGi: report.resourceSummary?.totalMemoryGi || 0,
+        },
+        namespaces: {
+          total: report.namespaces?.total || 0,
+          user: report.namespaces?.user || 0,
+          system: report.namespaces?.system || 0,
+        },
+        operators: {
+          total: report.clusterOperators?.total || 0,
+          healthy: report.clusterOperators?.healthy || 0,
+          degraded: report.clusterOperators?.degraded || 0,
+          degradedNames: (report.clusterOperators?.items || []).filter(o => o.degraded).map(o => o.name),
+        },
+        ...meta,
+      };
+
+    case "/api/nodes":
+      return (report.nodes?.items || []).map(n => ({
+        name: n.name,
+        roles: Array.isArray(n.roles) ? n.roles : (n.roles ? [n.roles] : []),
+        ready: n.ready,
+        cpu: n.capacity?.cpu || String(n.cpu || "0"),
+        memory: n.capacity?.memory || (n.memory ? Math.round(n.memory) + "Gi" : "0"),
+        pods: 0,
+        maxPods: n.maxPods || 110,
+        kubeletVersion: n.kubeletVersion || "",
+        osImage: n.os || n.osImage || "",
+        memoryPressure: n.memoryPressure || false,
+        diskPressure: n.diskPressure || false,
+        pidPressure: n.pidPressure || false,
+      }));
+
+    case "/api/node-metrics":
+      if (!report.metrics?.nodes) return [];
+      return report.metrics.nodes.map(n => ({
+        name: n.name,
+        cpuUsage: n.cpuUsage || n.cpu || "0",
+        cpuPercent: n.cpuPercent || 0,
+        memoryUsage: n.memoryUsage || n.memory || "0",
+        memoryPercent: n.memoryPercent || 0,
+        ...meta,
+      }));
+
+    case "/api/pods/issues":
+      return (report.pods?.issues || []).map(i => ({
+        name: i.pod,
+        namespace: i.namespace,
+        node: i.node || "",
+        podAgeHours: i.podAge || 0,
+        ownerKind: i.ownerKind || "",
+        ownerName: i.ownerName || "",
+        issues: [{ container: i.container, reason: i.type, restarts: i.restarts, message: i.message }],
+        ...meta,
+      }));
+
+    case "/api/namespaces": {
+      const podsByNs = report.pods?.byNamespace || {};
+      return (report.namespaces?.items || []).map(ns => {
+        const nsName = ns.name;
+        const nsPods = podsByNs[nsName] || {};
+        const podCount = ns.podCount || nsPods.total || 0;
+        const running = ns.running || nsPods.running || 0;
+        const failed = ns.failed || nsPods.failed || 0;
+        const pending = ns.pending || nsPods.pending || 0;
+        let health = ns.health || "idle";
+        if (!ns.health && podCount > 0) {
+          if (failed > 0) health = "critical";
+          else if (pending > 0) health = "pending";
+          else health = "healthy";
+        }
+        return {
+          name: nsName,
+          status: ns.status || "Active",
+          created: ns.created || "",
+          podCount,
+          running,
+          failed,
+          pending,
+          health,
+        };
+      });
+    }
+
+    case "/api/cluster/operators":
+      return (report.clusterOperators?.items || []).map(o => ({
+        name: o.name,
+        version: o.version || "",
+        available: o.available,
+        degraded: o.degraded,
+        progressing: o.progressing,
+        health: o.degraded ? "degraded" : (o.available ? (o.progressing ? "progressing" : "available") : "unavailable"),
+        message: o.message || "",
+        ...meta,
+      }));
+
+    case "/api/alerts":
+      return {
+        alerts: (report.events?.recent || []).map(e => ({
+          source: "events",
+          name: e.reason,
+          severity: "warning",
+          namespace: e.namespace,
+          resource: e.object,
+          summary: e.message,
+          since: e.lastSeen,
+          count: e.count || 1,
+        })),
+        summary: { warning: report.events?.warnings || 0, critical: 0, info: 0 },
+        ...meta,
+      };
+
+    case "/api/diag":
+      return {
+        clusterName: agent.clusterName || resolvedKey,
+        platform: agent.platform,
+        status: agent.status,
+        nodeCount: report.nodes?.total,
+        health: report.clusterHealth?.status,
+        apiServerHealthy: report.clusterHealth?.apiServerHealthy,
+        summary: {
+          nodes: report.nodes?.total || 0,
+          pods: report.pods?.total || 0,
+          issues: report.pods?.issues?.length || 0,
+          warnings: report.events?.warnings || 0,
+        },
+        ...meta,
+      };
+
+    case "/api/dashboard/security":
+    case "/api/dashboard/gitops":
+    case "/api/dashboard/dr":
+    case "/api/dashboard/optimization":
+      return {
+        source: "agent-cache",
+        available: false,
+        message: "Data not available from remote agent",
+      };
+
+    default:
+      return null;
+  }
 }
 
 function esc(s) { return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
@@ -1372,6 +1578,11 @@ async function startSSE() {
 
     // Diagnostic endpoint — checks K8s API connectivity, token, auth mode
     if (req.method === "GET" && url.pathname === "/api/diag") {
+      const _diagCluster = url.searchParams.get("cluster");
+      if (_diagCluster && _diagCluster !== "local") {
+        const cached = getAgentCachedResponse(_diagCluster, "/api/diag");
+        if (cached) return sendJson(res, 200, cached);
+      }
       const diag = {
         authMode: getAuthMode(),
         k8sHost: process.env.KUBERNETES_SERVICE_HOST || "(not set)",
@@ -1677,6 +1888,11 @@ async function startSSE() {
     // Cluster info — lightweight version/node summary for the global selector
     // -----------------------------------------------------------------------
     if (req.method === "GET" && url.pathname === "/api/cluster-info") {
+      const cluster = url.searchParams.get("cluster");
+      if (cluster && cluster !== "local") {
+        const cached = getAgentCachedResponse(cluster, "/api/cluster-info");
+        if (cached) return sendJson(res, 200, cached);
+      }
       try {
         const info = await withClusterContext(url, async () => {
           const [cv, nodes] = await Promise.allSettled([
@@ -1691,8 +1907,14 @@ async function startSSE() {
             (n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True"));
           return { version, nodeCount: nodeList.length, readyNodes: readyNodes.length, platform: "openshift" };
         });
+        if (info === null) {
+          const cached = getAgentCachedResponse(cluster, "/api/cluster-info");
+          if (cached) return sendJson(res, 200, cached);
+        }
         return sendJson(res, 200, info);
       } catch (err) {
+        const cached = cluster ? getAgentCachedResponse(cluster, "/api/cluster-info") : null;
+        if (cached) return sendJson(res, 200, cached);
         return sendJson(res, err.status || 200, err.status ? { error: err.message } : { version: "unknown", nodeCount: 0, readyNodes: 0, error: err.message });
       }
     }
@@ -2788,6 +3010,11 @@ async function startSSE() {
 
     // GET /api/alerts — unified: Alertmanager + K8s warning events
     if (req.method === "GET" && url.pathname === "/api/alerts") {
+      const _ac = url.searchParams.get("cluster");
+      if (_ac && _ac !== "local") {
+        const cached = getAgentCachedResponse(_ac, "/api/alerts");
+        if (cached) return sendJson(res, 200, cached);
+      }
       try {
         const [promAlerts, eventsResp] = await withClusterContext(url, () => Promise.allSettled([
           listFiringAlerts(),
@@ -4094,7 +4321,26 @@ async function startSSE() {
 
     // Dashboard REST API — /api/...
     if (url.pathname.startsWith("/api/")) {
-      await withClusterContext(url, () => handleDashboardAPI(url.pathname, req, res));
+      const _cl = url.searchParams.get("cluster");
+      if (_cl && _cl !== "local") {
+        const cached = getAgentCachedResponse(_cl, url.pathname);
+        if (cached) { sendJson(res, 200, cached); return; }
+      }
+      try {
+        const result = await withClusterContext(url, () => handleDashboardAPI(url.pathname, req, res));
+        if (result === null && _cl) {
+          const cached = getAgentCachedResponse(_cl, url.pathname);
+          if (cached) { sendJson(res, 200, cached); return; }
+          sendJson(res, 200, { source: "agent-cache", available: false, message: "No cached data available for this endpoint" });
+          return;
+        }
+      } catch (err) {
+        if (_cl && _cl !== "local") {
+          const cached = getAgentCachedResponse(_cl, url.pathname);
+          if (cached) { sendJson(res, 200, cached); return; }
+        }
+        if (!res.headersSent) sendJson(res, 500, { error: err.message });
+      }
       return;
     }
 
