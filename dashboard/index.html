@@ -14869,6 +14869,12 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
     lines.push('        runAsGroup: 1001');
     lines.push('        fsGroup: 1001');
   }
+  lines.push('      dnsConfig:');
+  lines.push('        nameservers:');
+  lines.push('          - "10.131.19.154"');
+  lines.push('        options:');
+  lines.push('          - name: ndots');
+  lines.push('            value: "2"');
   lines.push('      terminationGracePeriodSeconds: 30');
   lines.push('      containers:');
   lines.push('        - name: agent');
