@@ -15284,7 +15284,15 @@ async function hubConnectCluster() {
       statusEl.innerHTML = '<span style="color:var(--ok)">&#x2714; Cluster connected! API reachable. Deploy the agent YAML above to enable continuous monitoring.</span>';
     } else {
       var reason = test ? (test.message || 'status ' + test.status) : 'unknown';
-      statusEl.innerHTML = '<span style="color:var(--warn)">&#x26A0; Cluster registered but API test failed: ' + esc(reason) + '. Deploy the agent YAML — it will connect using in-cluster credentials.</span>';
+      var hint = '';
+      if (reason.indexOf('ENOTFOUND') >= 0 || reason.indexOf('getaddrinfo') >= 0) {
+        hint = '<br><span style="font-size:10px;color:var(--text2)">DNS cannot resolve the hostname from the hub pod. Fix: use the cluster IP address instead of hostname, or add a <code>hostAliases</code> entry in the hub deployment. Run <code>dig +short ' + esc(new URL(apiUrl).hostname) + '</code> to get the IP.</span>';
+      } else if (reason.indexOf('CERT') >= 0 || reason.indexOf('self signed') >= 0 || reason.indexOf('certificate') >= 0) {
+        hint = '<br><span style="font-size:10px;color:var(--text2)">TLS certificate not trusted. The hub will use the agent reports instead.</span>';
+      } else if (reason === 'fetch failed') {
+        hint = '<br><span style="font-size:10px;color:var(--text2)">Network error — check firewall/DNS. Try using the cluster IP address instead of hostname.</span>';
+      }
+      statusEl.innerHTML = '<span style="color:var(--warn)">&#x26A0; Cluster registered but API test failed: ' + esc(reason) + '.' + hint + '<br>Deploy the agent YAML — it will connect using in-cluster credentials.</span>';
     }
     setTimeout(function() { dialog.style.display = 'none'; }, 3000);
     loadHubView();

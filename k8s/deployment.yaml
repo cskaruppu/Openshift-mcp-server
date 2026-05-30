@@ -18,6 +18,13 @@ spec:
         app.kubernetes.io/name: openshift-mcp-server
     spec:
       serviceAccountName: mcp-server
+      # Map secondary cluster hostnames to IPs when corporate DNS is not
+      # reachable from inside the pod. Add one entry per remote cluster.
+      # Find the IP with: dig +short api.ocp.caaslab.local
+      hostAliases:
+        - ip: "SECONDARY_CLUSTER_IP"
+          hostnames:
+            - "api.ocp.caaslab.local"
       securityContext:
         runAsNonRoot: true
         seccompProfile:
