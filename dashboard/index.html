@@ -14520,7 +14520,7 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
     '# TCS Agentic AI — Cluster Agent Deployment',
     '# Platform : ' + p.name,
     '# Cluster  : ' + (clusterName || safeName),
-    '# Registry : quay.io/karuppucs/openshift-mcp-server:latest',
+    '# Registry : quay.io/karuppucs/kubenexus-agent:latest',
     '# Generated: ' + date,
     '# ============================================================',
     '#',
@@ -14843,7 +14843,7 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('      terminationGracePeriodSeconds: 30');
   lines.push('      containers:');
   lines.push('        - name: agent');
-  lines.push('          image: quay.io/karuppucs/openshift-mcp-server:latest');
+  lines.push('          image: quay.io/karuppucs/kubenexus-agent:latest');
   lines.push('          imagePullPolicy: Always');
   lines.push('          env:');
   lines.push('            - name: NODE_EXTRA_CA_CERTS');
