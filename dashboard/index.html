@@ -15291,7 +15291,9 @@ async function hubConnectCluster() {
     } else {
       var reason = test ? (test.message || 'status ' + test.status) : 'unknown';
       var hint = '';
-      if (reason.indexOf('ENOTFOUND') >= 0 || reason.indexOf('getaddrinfo') >= 0) {
+      if (data.authHint) {
+        hint = '<br><span style="font-size:10px;color:var(--warn)">' + esc(data.authHint) + '</span>';
+      } else if (reason.indexOf('ENOTFOUND') >= 0 || reason.indexOf('getaddrinfo') >= 0) {
         hint = '<br><span style="font-size:10px;color:var(--text2)">DNS cannot resolve the hostname from the hub pod. Fix: use the cluster IP address instead of hostname, or add a <code>hostAliases</code> entry in the hub deployment. Run <code>dig +short ' + esc(new URL(apiUrl).hostname) + '</code> to get the IP.</span>';
       } else if (reason.indexOf('CERT') >= 0 || reason.indexOf('self signed') >= 0 || reason.indexOf('certificate') >= 0) {
         hint = '<br><span style="font-size:10px;color:var(--text2)">TLS certificate not trusted. The hub will use the agent reports instead.</span>';
@@ -16492,8 +16494,9 @@ function renderHubServers() {
       '</div>' : '') +
       (c.lastHealthCheck && !c.isBuiltin ? '<div style="font-size:10px;color:var(--text2);margin-bottom:8px">' +
         'Last verified: ' + timeAgo(c.lastHealthCheck) +
-        (c.lastHealthResult && !c.lastHealthResult.reachable ? ' &mdash; <span style="color:var(--crit)">' + esc(c.lastHealthResult.error || 'Connection failed') + '</span>' : '') +
-        (c.lastHealthResult && c.lastHealthResult.authError ? ' &mdash; <span style="color:var(--warn)">Token expired or invalid (HTTP ' + c.lastHealthResult.status + ')</span>' : '') +
+        (c.lastHealthResult && c.lastHealthResult.agentReported ? ' &mdash; <span style="color:var(--ok)">Agent healthy (reported ' + c.lastHealthResult.agentReportAge + 's ago)</span>' : '') +
+        (c.lastHealthResult && !c.lastHealthResult.reachable && !c.lastHealthResult.agentReported ? ' &mdash; <span style="color:var(--crit)">' + esc(c.lastHealthResult.error || 'Connection failed') + '</span>' : '') +
+        (c.lastHealthResult && c.lastHealthResult.authError ? ' &mdash; <span style="color:var(--warn)">Token expired or invalid (HTTP ' + c.lastHealthResult.status + '). Use a long-lived SA token: <code>oc create token mcp-agent -n openshift-tcs-agentic-ai --duration=8760h</code></span>' : '') +
       '</div>' : '') +
       '<div style="display:flex;gap:6px;border-top:1px solid var(--border);padding-top:10px">' +
         '<button onclick="hubChatWithCluster(\'' + esc(c.id) + '\',\'' + esc(c.name) + '\',\'' + esc(c.platform) + '\')" style="background:linear-gradient(135deg,' + pInfo.color + ',' + pInfo.color + 'cc);color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px;transition:opacity .15s" onmouseover="this.style.opacity=\'0.9\'" onmouseout="this.style.opacity=\'1\'" title="Open AI Chat for this cluster">&#x1F4AC; AI Chat</button>' +
