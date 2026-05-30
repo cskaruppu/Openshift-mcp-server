@@ -3912,8 +3912,19 @@ tr:hover td{background:#ffffff06}
         </div>
       </div>
       <div style="margin-bottom:16px;margin-left:30px">
-        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Bearer Token / Kubeconfig</label>
-        <textarea id="hub-cluster-token" rows="3" placeholder="Paste bearer token or kubeconfig YAML..." style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:11px;font-family:monospace;outline:none;resize:vertical;box-sizing:border-box"></textarea>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <label style="font-size:11px;color:var(--text2)">Authentication</label>
+          <div style="display:flex;gap:2px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:2px;margin-left:auto">
+            <button id="hub-auth-tab-token" onclick="hubSetAuthTab('token')" style="background:var(--accent);color:#fff;border:none;border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer;font-weight:600">Bearer Token</button>
+            <button id="hub-auth-tab-kubeconfig" onclick="hubSetAuthTab('kubeconfig')" style="background:transparent;color:var(--text2);border:none;border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer">Kubeconfig</button>
+            <button id="hub-auth-tab-sa" onclick="hubSetAuthTab('sa')" style="background:transparent;color:var(--text2);border:none;border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer">Service Account</button>
+          </div>
+        </div>
+        <div id="hub-auth-help" style="font-size:10px;color:var(--text2);margin-bottom:6px;padding:6px 10px;background:var(--bg);border-radius:6px;border:1px solid var(--border2)">
+          Paste a bearer token from <code>oc whoami -t</code> or <code>kubectl create token</code>
+        </div>
+        <textarea id="hub-cluster-token" rows="4" placeholder="Paste bearer token here..." style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:11px;font-family:monospace;outline:none;resize:vertical;box-sizing:border-box" oninput="hubDetectKubeconfig()" onpaste="setTimeout(hubDetectKubeconfig,50)"></textarea>
+        <div id="hub-kubeconfig-banner" style="display:none;margin-top:6px;padding:8px 12px;border-radius:6px;font-size:11px;border:1px solid transparent"></div>
       </div>
 
       <!-- Step 2 -->
@@ -14509,7 +14520,7 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
     '# TCS Agentic AI — Cluster Agent Deployment',
     '# Platform : ' + p.name,
     '# Cluster  : ' + (clusterName || safeName),
-    '# Registry : quay.io/karuppucs/tcs-agentic-ai:latest',
+    '# Registry : quay.io/karuppucs/openshift-mcp-server:latest',
     '# Generated: ' + date,
     '# ============================================================',
     '#',
@@ -14832,7 +14843,7 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('      terminationGracePeriodSeconds: 30');
   lines.push('      containers:');
   lines.push('        - name: agent');
-  lines.push('          image: quay.io/karuppucs/tcs-agentic-ai:latest');
+  lines.push('          image: quay.io/karuppucs/openshift-mcp-server:latest');
   lines.push('          imagePullPolicy: Always');
   lines.push('          env:');
   lines.push('            - name: NODE_EXTRA_CA_CERTS');
@@ -14959,6 +14970,109 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   return lines.join('\n');
 }
 
+var _hubParsedKubeconfig = null;
+
+function parseKubeconfigYAML(text) {
+  if (!text) return null;
+  var t = text.trim();
+  if (t.indexOf('apiVersion') < 0 || (t.indexOf('clusters:') < 0 && t.indexOf('kind: Config') < 0)) return null;
+
+  var servers = [], tokens = [], certDatas = [];
+  var section = null, inUser = false;
+  var lines = t.split('\n');
+  for (var i = 0; i < lines.length; i++) {
+    var s = lines[i].trim();
+    if (/^clusters:\s*$/.test(s)) { section = 'clusters'; inUser = false; continue; }
+    if (/^users:\s*$/.test(s)) { section = 'users'; inUser = false; continue; }
+    if (/^(contexts|preferences|apiVersion|kind):/.test(s)) { section = null; continue; }
+    if (section === 'clusters') {
+      if (/^server:\s*/.test(s)) servers.push(s.replace(/^server:\s*/, '').replace(/^["']|["']$/g, ''));
+      if (/^certificate-authority-data:\s*/.test(s)) certDatas.push(true);
+    }
+    if (section === 'users') {
+      if (/^-\s+name:/.test(s) || /^user:\s*$/.test(s)) { inUser = true; continue; }
+      if (inUser && /^token:\s*/.test(s)) tokens.push(s.replace(/^token:\s*/, '').replace(/^["']|["']$/g, ''));
+    }
+  }
+  if (servers.length === 0 && tokens.length === 0) return null;
+  return { server: servers[0] || null, token: tokens[0] || null, hasCert: certDatas.length > 0, serverCount: servers.length, tokenCount: tokens.length };
+}
+
+function hubDetectKubeconfig() {
+  var text = document.getElementById('hub-cluster-token').value;
+  var banner = document.getElementById('hub-kubeconfig-banner');
+  var parsed = parseKubeconfigYAML(text);
+  _hubParsedKubeconfig = parsed;
+
+  if (!parsed) {
+    banner.style.display = 'none';
+    return;
+  }
+
+  // Auto-fill API URL if empty
+  if (parsed.server) {
+    var urlInput = document.getElementById('hub-cluster-url');
+    if (!urlInput.value.trim()) {
+      urlInput.value = parsed.server;
+      if (urlInput.oninput) urlInput.oninput();
+    }
+  }
+
+  // Switch to kubeconfig tab
+  hubSetAuthTab('kubeconfig', true);
+
+  var msgs = [];
+  if (parsed.server) msgs.push('Server: <strong>' + esc(parsed.server) + '</strong>');
+  if (parsed.token) msgs.push('Token: <strong style="color:var(--ok)">extracted (' + parsed.token.length + ' chars)</strong>');
+  else msgs.push('Token: <span style="color:var(--warn)">not found in kubeconfig</span>');
+  if (parsed.hasCert) msgs.push('CA certificate: present');
+
+  banner.style.display = 'block';
+  banner.style.background = parsed.token ? '#22c55e18' : '#f59e0b18';
+  banner.style.borderColor = parsed.token ? '#22c55e55' : '#f59e0b55';
+  banner.style.color = 'var(--text)';
+  banner.innerHTML = '<div style="font-weight:700;margin-bottom:4px;color:' + (parsed.token ? 'var(--ok)' : 'var(--warn)') + '">' +
+    (parsed.token ? '&#x2714; Kubeconfig detected and parsed' : '&#x26A0; Kubeconfig detected but no token found') + '</div>' +
+    msgs.join('<br>') +
+    (parsed.token ? '' : '<div style="margin-top:4px;font-size:10px;color:var(--text2)">This kubeconfig may use certificate-based auth. To use token auth, run: <code>oc whoami -t</code> or <code>kubectl create token default</code></div>');
+}
+
+var _hubAuthHelpText = {
+  token: 'Paste a bearer token from <code>oc whoami -t</code> or <code>kubectl create token &lt;sa-name&gt;</code>',
+  kubeconfig: 'Paste your <code>~/.kube/config</code> content. Server URL and token will be extracted automatically.',
+  sa: 'Use in-cluster service account authentication. Deploy the agent YAML below — it uses the built-in service account token. No manual token needed.'
+};
+
+function hubSetAuthTab(tab, skipClear) {
+  var tabs = ['token', 'kubeconfig', 'sa'];
+  tabs.forEach(function(t) {
+    var btn = document.getElementById('hub-auth-tab-' + t);
+    if (btn) {
+      btn.style.background = t === tab ? 'var(--accent)' : 'transparent';
+      btn.style.color = t === tab ? '#fff' : 'var(--text2)';
+      btn.style.fontWeight = t === tab ? '600' : '400';
+    }
+  });
+  document.getElementById('hub-auth-help').innerHTML = _hubAuthHelpText[tab] || '';
+
+  var textarea = document.getElementById('hub-cluster-token');
+  if (tab === 'token') {
+    textarea.placeholder = 'Paste bearer token here...';
+    textarea.rows = 3;
+  } else if (tab === 'kubeconfig') {
+    textarea.placeholder = 'Paste kubeconfig YAML content here...\n\napiVersion: v1\nkind: Config\nclusters:\n- cluster:\n    server: https://...';
+    textarea.rows = 6;
+  } else if (tab === 'sa') {
+    textarea.placeholder = '(Optional) Paste a service account token, or leave empty to use in-cluster auth after deploying the agent YAML.';
+    textarea.rows = 2;
+  }
+
+  if (!skipClear && !textarea.value.trim()) {
+    document.getElementById('hub-kubeconfig-banner').style.display = 'none';
+    _hubParsedKubeconfig = null;
+  }
+}
+
 function hubAddCluster(platform) {
   var info = K8S_PLATFORMS[platform] || K8S_PLATFORMS['k8s'];
   var dialog = document.getElementById('hub-cluster-dialog');
@@ -14970,6 +15084,9 @@ function hubAddCluster(platform) {
   document.getElementById('hub-cluster-url').value = '';
   document.getElementById('hub-cluster-token').value = '';
   document.getElementById('hub-cluster-status').textContent = '';
+  document.getElementById('hub-kubeconfig-banner').style.display = 'none';
+  _hubParsedKubeconfig = null;
+  hubSetAuthTab('token');
   document.getElementById('hub-yaml-filename').textContent = 'tcs-agentic-ai-' + platform + '.yaml';
   var yaml = generateAgentYAML(platform, '', '');
   document.getElementById('hub-agent-yaml').textContent = yaml;
@@ -14990,8 +15107,15 @@ async function hubConnectCluster() {
   var platform = dialog.dataset.platform || 'k8s';
   var name = document.getElementById('hub-cluster-name').value.trim();
   var apiUrl = document.getElementById('hub-cluster-url').value.trim();
-  var token = document.getElementById('hub-cluster-token').value.trim();
+  var rawToken = document.getElementById('hub-cluster-token').value.trim();
   var statusEl = document.getElementById('hub-cluster-status');
+
+  // Use parsed kubeconfig data if available
+  var token = rawToken;
+  if (_hubParsedKubeconfig) {
+    if (_hubParsedKubeconfig.server && !apiUrl) apiUrl = _hubParsedKubeconfig.server;
+    if (_hubParsedKubeconfig.token) token = _hubParsedKubeconfig.token;
+  }
 
   if (!name) { statusEl.innerHTML = '<span style="color:var(--crit)">Please enter a cluster name</span>'; return; }
   if (!apiUrl) { statusEl.innerHTML = '<span style="color:var(--crit)">Please enter the API server URL</span>'; return; }

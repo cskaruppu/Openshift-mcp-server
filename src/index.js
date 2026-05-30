@@ -385,6 +385,32 @@ async function withClusterContext(url, handler) {
 
 function esc(s) { return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 
+function extractFromKubeconfig(raw) {
+  if (!raw || typeof raw !== "string") return null;
+  const t = raw.trim();
+  if (!t.includes("apiVersion") || !(t.includes("clusters:") || t.includes("kind: Config"))) return null;
+
+  let server = null, token = null;
+  let section = null, inUser = false;
+  for (const line of t.split("\n")) {
+    const s = line.trim();
+    if (/^clusters:\s*$/.test(s)) { section = "clusters"; inUser = false; continue; }
+    if (/^users:\s*$/.test(s)) { section = "users"; inUser = false; continue; }
+    if (/^(contexts|preferences|apiVersion|kind):/.test(s)) { section = null; continue; }
+    if (section === "clusters" && /^server:\s*/.test(s)) {
+      server = s.replace(/^server:\s*/, "").replace(/^["']|["']$/g, "");
+    }
+    if (section === "users") {
+      if (/^-\s+name:/.test(s)) inUser = true;
+      if (/^user:/.test(s)) inUser = true;
+      if (inUser && /^token:\s*/.test(s)) {
+        token = s.replace(/^token:\s*/, "").replace(/^["']|["']$/g, "");
+      }
+    }
+  }
+  return (server || token) ? { server, token } : null;
+}
+
 function isBlockedUrl(urlStr) {
   try {
     const u = new URL(urlStr);
@@ -1618,18 +1644,33 @@ async function startSSE() {
     // -----------------------------------------------------------------------
     if (url.pathname === "/api/hub/clusters" && req.method === "POST") {
       const body = await readJsonBody(req);
-      const { name, platform, apiUrl, token } = body;
+      const { name, platform } = body;
+      let { apiUrl, token } = body;
       if (!name) return sendJson(res, 400, { error: "Cluster name is required" });
+
+      // Detect kubeconfig YAML pasted as token and extract server + token
+      let kubeconfigDetected = false;
+      if (token) {
+        const kc = extractFromKubeconfig(token);
+        if (kc) {
+          kubeconfigDetected = true;
+          if (kc.server && !apiUrl) apiUrl = kc.server;
+          if (kc.server && apiUrl === kc.server) { /* already set */ }
+          if (kc.token) token = kc.token;
+          else token = null;
+          console.error(`[hub] Kubeconfig detected — extracted server: ${kc.server || "none"}, token: ${kc.token ? "yes" : "no"}`);
+        }
+      }
+
       if (!apiUrl) return sendJson(res, 400, { error: "API server URL is required" });
       if (isBlockedUrl(apiUrl)) return sendJson(res, 400, { error: "API URL targets a blocked address range" });
 
       let testResult = null;
       try {
+        const headers = { Accept: "application/json" };
+        if (token) headers.Authorization = `Bearer ${token}`;
         const testResp = await fetch(`${apiUrl}/api/v1/namespaces?limit=1`, {
-          headers: {
-            Authorization: token ? `Bearer ${token}` : undefined,
-            Accept: "application/json",
-          },
+          headers,
           signal: AbortSignal.timeout(10000),
         });
         if (testResp.ok) {
@@ -1657,11 +1698,12 @@ async function startSSE() {
       });
 
       saveClustersToDB().catch(() => {});
-      console.error(`[hub] Cluster registered: ${name} (${platform}) — test: ${testResult?.ok ? "OK" : "failed"}`);
+      console.error(`[hub] Cluster registered: ${name} (${platform}) — test: ${testResult?.ok ? "OK" : "failed"}${kubeconfigDetected ? " (kubeconfig parsed)" : ""}`);
       return sendJson(res, 200, {
         ok: true,
         cluster: { name, platform, status: testResult?.ok ? "live" : "registered" },
         connectionTest: testResult,
+        kubeconfigDetected,
       });
     }
 
