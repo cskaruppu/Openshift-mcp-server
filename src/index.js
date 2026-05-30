@@ -325,6 +325,21 @@ export function getConnectedAgents() {
   return _connectedAgents;
 }
 
+/**
+ * Find an existing cluster entry by name (case-insensitive) or API URL.
+ * Returns the Map key if found, null otherwise.
+ */
+function findClusterKey(name, apiUrl) {
+  if (_connectedAgents.has(name)) return name;
+  const nameLower = (name || "").toLowerCase();
+  for (const [key, agent] of _connectedAgents) {
+    if (key.toLowerCase() === nameLower) return key;
+    if ((agent.clusterName || "").toLowerCase() === nameLower) return key;
+    if (apiUrl && agent.apiUrl && agent.apiUrl === apiUrl) return key;
+  }
+  return null;
+}
+
 /** Persist the connected-agents map to the kv_store table. */
 async function saveClustersToDB() {
   if (!(await dbEnabled())) return;
@@ -1665,6 +1680,13 @@ async function startSSE() {
       let { apiUrl, token } = body;
       if (!name) return sendJson(res, 400, { error: "Cluster name is required" });
 
+      // Check for existing entry to merge (avoid duplicates on re-register)
+      const existingKey = findClusterKey(name, apiUrl);
+      if (existingKey && existingKey !== name) {
+        _connectedAgents.delete(existingKey);
+        console.error(`[hub] Removing duplicate entry "${existingKey}" — merging into "${name}"`);
+      }
+
       // Detect kubeconfig YAML pasted as token and extract server + token
       let kubeconfigDetected = false;
       if (token) {
@@ -1779,7 +1801,8 @@ async function startSSE() {
     // On-demand cluster health check
     if (url.pathname.match(/^\/api\/hub\/clusters\/[^/]+\/health$/) && req.method === "GET") {
       const name = decodeURIComponent(url.pathname.split("/api/hub/clusters/")[1].replace("/health", ""));
-      const agent = _connectedAgents.get(name);
+      const resolvedKey = findClusterKey(name) || name;
+      const agent = _connectedAgents.get(resolvedKey);
       if (!agent) return sendJson(res, 404, { error: "Cluster not found" });
       const result = await probeClusterHealth(agent);
       agent.lastHealthCheck = new Date().toISOString();
@@ -1798,9 +1821,10 @@ async function startSSE() {
 
     if (url.pathname.startsWith("/api/hub/clusters/") && req.method === "DELETE") {
       const name = decodeURIComponent(url.pathname.split("/api/hub/clusters/")[1]);
-      _connectedAgents.delete(name);
+      const resolvedKey = findClusterKey(name) || name;
+      _connectedAgents.delete(resolvedKey);
       saveClustersToDB().catch(() => {});
-      return sendJson(res, 200, { ok: true, deleted: name });
+      return sendJson(res, 200, { ok: true, deleted: resolvedKey });
     }
 
     // -----------------------------------------------------------------------
@@ -1832,33 +1856,63 @@ async function startSSE() {
     // -----------------------------------------------------------------------
     if (url.pathname === "/api/agent/register" && req.method === "POST") {
       const body = await readJsonBody(req);
-      const { clusterName, platform, agentVersion, capabilities } = body;
+      const { clusterName, platform, agentVersion, capabilities, apiUrl: agentApiUrl } = body;
       if (!clusterName) return sendJson(res, 400, { error: "clusterName required" });
-      _connectedAgents.set(clusterName, {
-        clusterName, platform, agentVersion, capabilities,
-        registeredAt: new Date().toISOString(),
-        lastReport: null, status: "registered",
-      });
+
+      // Merge with existing entry: match by exact name, case-insensitive name, or API URL
+      const existingKey = findClusterKey(clusterName, agentApiUrl);
+      const existing = existingKey ? _connectedAgents.get(existingKey) : null;
+
+      const entry = {
+        ...(existing || {}),
+        clusterName: existing?.clusterName || clusterName,
+        platform: platform || existing?.platform,
+        agentVersion,
+        capabilities,
+        registeredAt: existing?.registeredAt || new Date().toISOString(),
+        lastReport: existing?.lastReport || null,
+        status: "registered",
+        source: existing?.source === "dashboard" ? "dashboard" : "agent",
+        apiUrl: existing?.apiUrl || agentApiUrl || null,
+        token: existing?.token || null,
+      };
+
+      // Remove old key if name changed (case mismatch)
+      if (existingKey && existingKey !== entry.clusterName) {
+        _connectedAgents.delete(existingKey);
+      }
+      _connectedAgents.set(entry.clusterName, entry);
       saveClustersToDB().catch(() => {});
-      console.error(`[agent] Registered: ${clusterName} (${platform}) agent v${agentVersion}`);
-      return sendJson(res, 200, { ok: true, message: `Agent "${clusterName}" registered` });
+      console.error(`[agent] Registered: ${entry.clusterName} (${platform}) agent v${agentVersion}${existingKey ? " (merged with " + existingKey + ")" : ""}`);
+      return sendJson(res, 200, { ok: true, message: `Agent "${entry.clusterName}" registered` });
     }
 
     if (url.pathname === "/api/agent/report" && req.method === "POST") {
       const body = await readJsonBody(req);
       const { clusterName, platform, report } = body;
       if (!clusterName || !report) return sendJson(res, 400, { error: "clusterName and report required" });
-      const agent = _connectedAgents.get(clusterName) || { clusterName, platform };
+
+      // Find existing entry by name (case-insensitive) to avoid duplicates
+      const existingKey = findClusterKey(clusterName);
+      const key = existingKey || clusterName;
+      const agent = _connectedAgents.get(key) || { clusterName: key, platform };
+
       agent.lastReport = report;
       agent.lastReportTime = new Date().toISOString();
       agent.status = "live";
-      _connectedAgents.set(clusterName, agent);
+      if (!agent.source) agent.source = "agent";
+
+      // Clean up duplicate if agent reports under a different case
+      if (existingKey && existingKey !== clusterName && !_connectedAgents.has(existingKey)) {
+        // no-op, already using correct key
+      }
+      _connectedAgents.set(key, agent);
       saveClustersToDB().catch(() => {});
       const issues = report.pods?.issues?.length || 0;
       if (issues > 0) {
-        console.error(`[agent] ${clusterName}: ${issues} issues detected`);
+        console.error(`[agent] ${key}: ${issues} issues detected`);
       }
-      return sendJson(res, 200, { ok: true, received: clusterName });
+      return sendJson(res, 200, { ok: true, received: key });
     }
 
     if (url.pathname === "/api/agent/status" && req.method === "GET") {
