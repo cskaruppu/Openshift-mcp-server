@@ -6014,6 +6014,7 @@ function resolveRemoteClusterContext(body) {
     podIssues: getAgentCachedResponse(body.cluster, "/api/pods/issues", { skipFreshnessCheck: true }) || [],
     alerts: getAgentCachedResponse(body.cluster, "/api/alerts", { skipFreshnessCheck: true }) || { alerts: [], summary: {} },
     operators: getAgentCachedResponse(body.cluster, "/api/cluster/operators", { skipFreshnessCheck: true }) || [],
+    namespaces: getAgentCachedResponse(body.cluster, "/api/namespaces", { skipFreshnessCheck: true }) || [],
     source: "agent-cache",
   };
 }
@@ -6025,7 +6026,11 @@ function buildContextFromAgentCache(cache, userMessage) {
   const ctx = {};
   const s = cache.summary;
   if (s) {
-    ctx.clusterVersion = s.cluster?.version || "unknown";
+    ctx.clusterVersion = {
+      version: s.cluster?.version || "unknown",
+      desired: s.cluster?.version || "unknown",
+      channel: s.cluster?.channel || "",
+    };
     ctx.clusterHealth = s.cluster?.health || "unknown";
     ctx.platform = s.platform || "kubernetes";
     ctx.isOpenShift = s.isOpenShift || false;
@@ -6059,6 +6064,378 @@ function buildContextFromAgentCache(cache, userMessage) {
   ctx._remoteCluster = cache.clusterName;
   ctx._source = "agent-cache";
   return ctx;
+}
+
+// ---------------------------------------------------------------------------
+// Handle chat queries for remote clusters using cached agent data.
+//
+// When the user has selected a remote (spoke) cluster, ocpGet() still hits
+// the local hub cluster — so we answer from the cached agent snapshot instead.
+// Returns a formatted markdown string for recognized query types, or null
+// to fall through to the LLM path (which will receive the cached context via
+// buildContextFromAgentCache).
+// ---------------------------------------------------------------------------
+function handleRemoteCacheQuery(message, parsed, remoteCtx) {
+  if (!remoteCtx) return null;
+
+  const lower = message.toLowerCase();
+  const summary = remoteCtx.summary || {};
+  const isOpenShift = summary.isOpenShift || false;
+  const platform = summary.platform || (isOpenShift ? "OpenShift" : "Kubernetes");
+
+  // Cluster identity header — prepended to every response
+  const header = `> **Cluster: ${remoteCtx.clusterName}** (${platform} — data from agent cache)\n`;
+
+  // Helper: build the version label appropriate for the platform
+  const versionLabel = isOpenShift ? "OpenShift Version" : "Kubernetes Version";
+  const clusterVersion = summary.cluster?.version || "unknown";
+  const clusterHealth = summary.cluster?.health || "unknown";
+  const channel = summary.cluster?.channel || "—";
+
+  // ---------------------------------------------------------------------------
+  // (a) Cluster status / health / overview
+  // ---------------------------------------------------------------------------
+  if (/\bcluster\b/.test(lower) && /\bstatus\b|\bhealth\b|\boverview\b|\bcheck\b/.test(lower)) {
+    const parts = [header];
+    parts.push(`### Cluster Status Overview`);
+    parts.push("");
+
+    // Identity table
+    parts.push(`| Property | Value |`);
+    parts.push(`| --- | --- |`);
+    parts.push(`| **${versionLabel}** | ${clusterVersion} |`);
+    parts.push(`| **Channel** | ${channel} |`);
+    parts.push(`| **Platform** | ${platform} |`);
+    parts.push(`| **Health** | ${clusterHealth === "Healthy" ? "[OK] Healthy" : `[WARNING] ${clusterHealth}`} |`);
+    parts.push("");
+
+    // Node summary
+    const nodes = summary.nodes || {};
+    const notReady = (nodes.total || 0) - (nodes.ready || 0);
+    parts.push(`**Nodes:** ${nodes.total || 0} total | ${nodes.ready || 0} ready | ${notReady} not-ready | ${nodes.totalCPU || 0} CPU | ${nodes.totalMemGi || 0} Gi memory`);
+
+    // Flag not-ready nodes from the node list
+    const notReadyNodes = (remoteCtx.nodes || []).filter(n => !n.ready);
+    if (notReadyNodes.length > 0) {
+      notReadyNodes.forEach(n => parts.push(`  [CRITICAL] \`${n.name}\` — NotReady`));
+    }
+
+    // Pressure conditions
+    const pressureNodes = (remoteCtx.nodes || []).filter(n =>
+      n.memoryPressure || n.diskPressure || n.pidPressure
+    );
+    if (pressureNodes.length > 0) {
+      pressureNodes.forEach(n => {
+        const pTypes = [];
+        if (n.memoryPressure) pTypes.push("MemoryPressure");
+        if (n.diskPressure) pTypes.push("DiskPressure");
+        if (n.pidPressure) pTypes.push("PIDPressure");
+        parts.push(`  [WARNING] \`${n.name}\` — ${pTypes.join(", ")}`);
+      });
+    }
+    parts.push("");
+
+    // Operators / workloads summary
+    const ops = summary.operators || {};
+    if (isOpenShift) {
+      parts.push(`**Operators:** ${ops.total || 0} total | ${ops.healthy || 0} healthy | ${ops.degraded || 0} degraded`);
+      if (ops.degraded > 0 && ops.degradedNames?.length > 0) {
+        ops.degradedNames.forEach(name =>
+          parts.push(`  [CRITICAL] \`${name}\` — Degraded`)
+        );
+      }
+    } else {
+      parts.push(`**Workloads:** ${ops.total || 0} total | ${ops.healthy || 0} healthy | ${ops.degraded || 0} unhealthy`);
+    }
+    parts.push("");
+
+    // Namespaces
+    const ns = summary.namespaces || {};
+    const nsLabel = isOpenShift ? "Projects" : "Namespaces";
+    parts.push(`**${nsLabel}:** ${ns.total || 0} total | ${ns.user || 0} user | ${ns.system || 0} system`);
+    parts.push("");
+
+    // Problem pods
+    const podIssues = remoteCtx.podIssues || [];
+    if (podIssues.length > 0) {
+      parts.push(`**Problem Pods:** ${podIssues.length}`);
+      const byReason = {};
+      podIssues.forEach(p => {
+        (p.issues || []).forEach(i => {
+          const reason = i.reason || p.phase || "Unknown";
+          byReason[reason] = (byReason[reason] || 0) + 1;
+        });
+      });
+      Object.entries(byReason).sort((a, b) => b[1] - a[1]).forEach(([reason, count]) => {
+        parts.push(`  - ${reason}: ${count}`);
+      });
+      parts.push("");
+    }
+
+    // Warning events / alerts
+    const alerts = remoteCtx.alerts || {};
+    const alertList = alerts.alerts || [];
+    if (alertList.length > 0) {
+      const warnCount = alerts.summary?.warning || 0;
+      const critCount = alerts.summary?.critical || 0;
+      parts.push(`**Alerts:** ${alertList.length} active | ${critCount} critical | ${warnCount} warning`);
+      alertList.slice(0, 8).forEach(a => {
+        const sev = a.severity === "critical" ? "[CRITICAL]" : "[WARNING]";
+        parts.push(`  - ${sev} **${a.name}**: ${a.summary || "—"} (x${a.count || 1})`);
+      });
+      parts.push("");
+    }
+
+    return parts.join("\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // (b) Node health / list / status
+  // ---------------------------------------------------------------------------
+  if (/\bnode/.test(lower) && /\bhealth\b|\bstatus\b|\blist\b|\bshow\b|\bcheck\b/.test(lower)) {
+    const nodeList = remoteCtx.nodes || [];
+    const parts = [header];
+    parts.push(`### Node Health Overview`);
+    parts.push("");
+
+    const readyCount = nodeList.filter(n => n.ready).length;
+    const notReadyCount = nodeList.length - readyCount;
+    parts.push(`Your cluster has **${nodeList.length} node(s)**: ${readyCount} Ready, ${notReadyCount} NotReady`);
+    parts.push("");
+
+    parts.push(`| Status | Node | Roles | CPU | Memory | Kubelet | OS | Conditions |`);
+    parts.push(`| --- | --- | --- | --- | --- | --- | --- | --- |`);
+    nodeList.forEach(n => {
+      const icon = n.ready ? "[OK]" : "[CRITICAL]";
+      const roles = n.roles || "worker";
+      const cpu = n.cpu || "—";
+      const memory = n.memory || "—";
+      const kubelet = n.kubeletVersion || "—";
+      const os = n.osImage || "—";
+      const problemConds = [];
+      if (!n.ready) problemConds.push("NotReady");
+      if (n.memoryPressure) problemConds.push("MemoryPressure");
+      if (n.diskPressure) problemConds.push("DiskPressure");
+      if (n.pidPressure) problemConds.push("PIDPressure");
+      const condStr = problemConds.length > 0 ? problemConds.join(", ") : "Healthy";
+      parts.push(`| ${icon} | \`${n.name}\` | ${roles} | ${cpu} | ${memory} | ${kubelet} | ${os} | ${condStr} |`);
+    });
+    parts.push("");
+
+    // Summary stats
+    parts.push(`- **Total nodes:** ${nodeList.length}`);
+    parts.push(`- **Ready nodes:** ${readyCount}`);
+    parts.push(`- **NotReady nodes:** ${notReadyCount}`);
+
+    // Flag problem nodes
+    const problemNodes = nodeList.filter(n =>
+      !n.ready || n.memoryPressure || n.diskPressure || n.pidPressure
+    );
+    if (problemNodes.length > 0) {
+      parts.push("");
+      parts.push(`**Issues Detected:**`);
+      problemNodes.forEach(n => {
+        if (!n.ready) {
+          parts.push(`  [CRITICAL] \`${n.name}\` — NotReady`);
+        }
+        const pTypes = [];
+        if (n.memoryPressure) pTypes.push("MemoryPressure");
+        if (n.diskPressure) pTypes.push("DiskPressure");
+        if (n.pidPressure) pTypes.push("PIDPressure");
+        if (pTypes.length > 0) {
+          parts.push(`  [WARNING] \`${n.name}\` — ${pTypes.join(", ")}`);
+        }
+      });
+    }
+
+    return parts.join("\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // (c) Pod issues / problem pods / crash / failing / "what's wrong"
+  // ---------------------------------------------------------------------------
+  if ((/\bpod/.test(lower) && /\bissue|\bproblem|\bcrash|\bfail|\berror/.test(lower)) ||
+      /\bwhat.?s\s+wrong\b|\bwhat\s+is\s+wrong\b/.test(lower)) {
+    const podIssues = remoteCtx.podIssues || [];
+    const parts = [header];
+
+    if (podIssues.length === 0) {
+      parts.push(`### Pod Issues`);
+      parts.push("");
+      parts.push(`No problem pods detected on this cluster.`);
+      return parts.join("\n");
+    }
+
+    parts.push(`### Problem Pods (${podIssues.length})`);
+    parts.push("");
+
+    // Group by issue reason
+    const byReason = {};
+    podIssues.forEach(p => {
+      const reasons = (p.issues || []).map(i => i.reason).filter(Boolean);
+      const key = reasons.length > 0 ? reasons[0] : (p.phase || "Unknown");
+      if (!byReason[key]) byReason[key] = [];
+      byReason[key].push(p);
+    });
+
+    for (const [reason, pods] of Object.entries(byReason).sort((a, b) => b[1].length - a[1].length)) {
+      parts.push(`#### ${reason} (${pods.length})`);
+      parts.push(`| Status | Pod | Namespace | Node | Phase | Restarts | Message |`);
+      parts.push(`| --- | --- | --- | --- | --- | --- | --- |`);
+      pods.forEach(p => {
+        const issue = (p.issues || [])[0] || {};
+        const restarts = issue.restarts ?? 0;
+        const msg = (issue.message || "").slice(0, 80).replace(/\|/g, "/");
+        const owner = p.ownerKind ? `${p.ownerKind}/${p.ownerName}` : "—";
+        parts.push(`| [CRITICAL] | \`${p.name}\` | ${p.namespace} | ${p.node || "—"} | ${p.phase || "—"} | ${restarts} | ${msg || "—"} |`);
+      });
+      parts.push("");
+    }
+
+    return parts.join("\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // (d) List namespaces / projects
+  // ---------------------------------------------------------------------------
+  if (/\bnamespace|\bproject/.test(lower) && /\blist\b|\bshow\b|\bhow\s+many|\bcount/.test(lower)) {
+    const ns = summary.namespaces || {};
+    const nsLabel = isOpenShift ? "Projects" : "Namespaces";
+    const nsList = remoteCtx.namespaces || [];
+    const parts = [header];
+    parts.push(`### ${nsLabel} (${ns.total || nsList.length})`);
+    parts.push("");
+    parts.push(`**Summary:** ${ns.total || nsList.length} total | ${ns.user || 0} user | ${ns.system || 0} system`);
+    parts.push("");
+
+    if (nsList.length > 0) {
+      const userNs = nsList.filter(n => !n.name?.startsWith("kube-") && !n.name?.startsWith("openshift-") && n.name !== "default");
+      const sysNs = nsList.filter(n => n.name?.startsWith("kube-") || n.name?.startsWith("openshift-") || n.name === "default");
+
+      if (userNs.length > 0) {
+        parts.push(`#### User ${nsLabel} (${userNs.length})`);
+        parts.push(`| Status | ${nsLabel.slice(0, -1)} | Pods | Running | Failed | Health |`);
+        parts.push(`| --- | --- | --- | --- | --- | --- |`);
+        userNs.forEach(n => {
+          const icon = n.health === "critical" ? "[CRITICAL]" : (n.health === "pending" ? "[WARNING]" : "[OK]");
+          parts.push(`| ${icon} | \`${n.name}\` | ${n.podCount || 0} | ${n.running || 0} | ${n.failed || 0} | ${n.health || "idle"} |`);
+        });
+        parts.push("");
+      }
+
+      if (sysNs.length > 0) {
+        parts.push(`<details><summary>System ${nsLabel.toLowerCase()} (${sysNs.length})</summary>\n`);
+        parts.push(`| ${nsLabel.slice(0, -1)} | Pods | Status |`);
+        parts.push(`| --- | --- | --- |`);
+        sysNs.forEach(n => {
+          parts.push(`| \`${n.name}\` | ${n.podCount || 0} | ${n.status || "Active"} |`);
+        });
+        parts.push(`\n</details>`);
+      }
+    } else {
+      parts.push(`> Individual ${nsLabel.toLowerCase()} listing is not available from the agent cache.`);
+    }
+
+    return parts.join("\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // (e) List operators (OpenShift only)
+  // ---------------------------------------------------------------------------
+  if (/\boperator/.test(lower) && /\blist\b|\bshow\b|\bstatus\b|\bhealth\b/.test(lower)) {
+    const opsList = remoteCtx.operators || [];
+    const parts = [header];
+
+    if (!isOpenShift) {
+      parts.push(`### Operators`);
+      parts.push("");
+      parts.push(`This cluster is not running OpenShift — operator listing is not available.`);
+      return parts.join("\n");
+    }
+
+    parts.push(`### Cluster Operators (${opsList.length})`);
+    parts.push("");
+
+    if (opsList.length === 0) {
+      parts.push(`No operator data available in the agent cache.`);
+      return parts.join("\n");
+    }
+
+    // Show degraded / unavailable operators first
+    const degraded = opsList.filter(o => o.health === "Degraded" || o.degraded);
+    const unavailable = opsList.filter(o => o.available === false && !o.degraded);
+    const progressing = opsList.filter(o => o.progressing);
+    const healthy = opsList.filter(o =>
+      o.health !== "Degraded" && !o.degraded && o.available !== false
+    );
+
+    parts.push(`**Summary:** ${opsList.length} total | ${healthy.length} healthy | ${degraded.length} degraded | ${unavailable.length} unavailable | ${progressing.length} progressing`);
+    parts.push("");
+
+    parts.push(`| Status | Operator | Version | Health | Message |`);
+    parts.push(`| --- | --- | --- | --- | --- |`);
+
+    // Degraded operators first
+    degraded.forEach(o => {
+      const msg = (o.message || "").slice(0, 80).replace(/\|/g, "/");
+      parts.push(`| [CRITICAL] | \`${o.name}\` | ${o.version || "—"} | Degraded | ${msg || "—"} |`);
+    });
+
+    // Unavailable operators next
+    unavailable.forEach(o => {
+      const msg = (o.message || "").slice(0, 80).replace(/\|/g, "/");
+      parts.push(`| [WARNING] | \`${o.name}\` | ${o.version || "—"} | Unavailable | ${msg || "—"} |`);
+    });
+
+    // Progressing operators
+    progressing.filter(o => !o.degraded && o.available !== false).forEach(o => {
+      const msg = (o.message || "").slice(0, 80).replace(/\|/g, "/");
+      parts.push(`| [WARNING] | \`${o.name}\` | ${o.version || "—"} | Progressing | ${msg || "—"} |`);
+    });
+
+    // Healthy operators
+    healthy.filter(o => !o.progressing).forEach(o => {
+      parts.push(`| [OK] | \`${o.name}\` | ${o.version || "—"} | Healthy | — |`);
+    });
+
+    return parts.join("\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // (f) Events / warnings / alerts
+  // ---------------------------------------------------------------------------
+  if (/\bevent|\bwarning|\balert/.test(lower)) {
+    const alerts = remoteCtx.alerts || {};
+    const alertList = alerts.alerts || [];
+    const parts = [header];
+
+    if (alertList.length === 0) {
+      parts.push(`### Alerts & Warnings`);
+      parts.push("");
+      parts.push(`No active alerts or warnings on this cluster.`);
+      return parts.join("\n");
+    }
+
+    const warnCount = alerts.summary?.warning || 0;
+    const critCount = alerts.summary?.critical || 0;
+    parts.push(`### Alerts & Warnings (${alertList.length} active | ${critCount} critical | ${warnCount} warning)`);
+    parts.push("");
+
+    parts.push(`| Severity | Alert | Namespace | Resource | Summary | Count |`);
+    parts.push(`| --- | --- | --- | --- | --- | --- |`);
+    alertList.forEach(a => {
+      const icon = a.severity === "critical" ? "[CRITICAL]" : "[WARNING]";
+      const msg = (a.summary || "").slice(0, 80).replace(/\|/g, "/");
+      parts.push(`| ${icon} | **${a.name}** | ${a.namespace || "—"} | ${a.resource || "—"} | ${msg || "—"} | x${a.count || 1} |`);
+    });
+
+    return parts.join("\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // (g) Unrecognized query — fall through to LLM with cached context
+  // ---------------------------------------------------------------------------
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -7487,6 +7864,17 @@ function buildSystemPrompt(userMessage, context) {
       'Reference platform-specific resources (Ingress, HPA, etc.)');
   }
 
+  if (context?._remoteCluster) {
+    const rp = context.platform || platform;
+    const rcli = (rp === "openshift") ? "oc" : "kubectl";
+    prompt += `\n\n## ACTIVE CLUSTER CONTEXT
+You are answering about the REMOTE cluster **"${context._remoteCluster}"** (platform: ${rp}).
+- The cluster data below comes from an agent cache snapshot, not live API calls.
+- Use \`${rcli}\` commands in examples for this cluster.
+- Always identify the cluster by name in your response header.
+- If the cached data doesn't contain enough detail for the question, say so clearly rather than guessing.`;
+  }
+
   return prompt;
 }
 
@@ -7777,12 +8165,17 @@ function summarizeContext(ctx) {
   if (!ctx || typeof ctx !== "object") return "";
   const sections = [];
 
+  if (ctx._remoteCluster) {
+    sections.push(`## Active Cluster: ${ctx._remoteCluster} (${ctx.platform || "kubernetes"}, source: ${ctx._source || "agent-cache"})`);
+  }
+
   // --- Cluster version ---
   if (ctx.clusterVersion) {
     const cv = ctx.clusterVersion;
     const ver = cv.desired || cv.version || "unknown";
+    const platformLabel = ctx.isOpenShift === false ? "Kubernetes" : "OpenShift";
     const channel = cv.channel || "";
-    sections.push(`## Cluster\n- OpenShift ${ver}${channel ? `, channel ${channel}` : ""}`);
+    sections.push(`## Cluster\n- ${platformLabel} ${ver}${channel ? `, channel ${channel}` : ""}`);
   }
 
   // --- Nodes ---
@@ -13153,111 +13546,150 @@ export async function handleChatAPI(req, res) {
     // This handles: logs, top, delete, run, exec, update
     const llmActive = activeProvider && activeProvider !== "none";
 
-    // Rule-based handlers run first for straightforward commands (logs,
-    // describe, list, get, etc.) — they're fast, reliable, and don't burn
-    // LLM tokens. When they can handle the request, return immediately.
-    // When they return null (ambiguous or unrecognized), fall through to
-    // the agentic LLM path.
-    const directResult = await handleDirectCommand(userMessage, cmd, { llmAvailable: llmActive });
-    if (directResult) {
-      const provider = llmActive ? activeProvider : "built-in";
-      const payload = {
-        reply: directResult,
-        provider,
-        contextKeys: ["directCommand", parsed.intent, parsed.resource].filter(Boolean),
-      };
-      if (!isMutating) {
-        cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
-      }
-      if (conversationId) {
-        histAddMessage(conversationId, {
-          role: "assistant",
-          content: directResult,
+    // ---- Remote cluster: answer from cached agent data ----
+    // When the user has selected a remote (spoke) cluster, ocpGet() still
+    // hits the local hub — so we intercept recognized query types here and
+    // answer from the agent cache snapshot.  Unrecognized queries (null)
+    // fall through to the LLM path which receives the cached context via
+    // buildContextFromAgentCache.
+    if (_remoteClusterContext) {
+      const remoteCacheReply = handleRemoteCacheQuery(userMessage, parsed, _remoteClusterContext);
+      if (remoteCacheReply) {
+        const provider = llmActive ? activeProvider : "built-in";
+        const payload = {
+          reply: remoteCacheReply,
           provider,
-        }).catch(() => {});
-      }
-      updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
-      if (wantsStream) {
-        sseStart(res);
-        sseSend(res, { stage: "querying" });
-        sseSend(res, { stage: "generating" });
-        sseSend(res, { delta: directResult });
-        sseSend(res, { done: true, provider, conversationId });
-        sseEnd(res);
-        return;
-      }
-      return json(res, 200, { ...payload, cached: false, conversationId });
-    }
-
-    // Try list command handler (for "list/show/get X" queries)
-    const listResult = await handleListCommand(userMessage, cmd, { llmAvailable: llmActive });
-    if (listResult) {
-      const provider = llmActive ? activeProvider : "built-in";
-      const payload = {
-        reply: listResult,
-        provider,
-        contextKeys: ["listCommand", parsed.resource, parsed.scope].filter(Boolean),
-      };
-      cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
-      if (conversationId) {
-        histAddMessage(conversationId, {
-          role: "assistant",
-          content: listResult,
-          provider,
-        }).catch(() => {});
-      }
-      updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
-      if (wantsStream) {
-        sseStart(res);
-        sseSend(res, { stage: "querying" });
-        sseSend(res, { stage: "generating" });
-        sseSend(res, { delta: listResult });
-        sseSend(res, { done: true, provider, conversationId });
-        sseEnd(res);
-        return;
-      }
-      return json(res, 200, { ...payload, cached: false, conversationId });
-    }
-
-    // ---- Specific pod early check: if user asks about a named pod, verify
-    // it exists BEFORE entering the expensive LLM path. If the pod is not
-    // found, return a clear built-in response immediately. This prevents
-    // generic "Cluster Troubleshooting Report" fallbacks from the LLM. ----
-    const podNameFromParse = parsed?.name && parsed?.resource === "pod" ? parsed.name : null;
-    const podNameFromRegex = !podNameFromParse ? (userMessage.match(/\b([a-z][-a-z0-9]*(?:-[a-z0-9]{4,10}){1,2})\b/i) || [])[1] : null;
-    const earlyPodName = podNameFromParse || podNameFromRegex;
-    if (earlyPodName && /\b(why|diagnos|troubleshoot|restart|crash|fail|error|wrong|issue|problem|check|analyse|analyze|investig)/i.test(userMessage.toLowerCase())) {
-      try {
-        const podLookup = await ocpGet(`/api/v1/pods?fieldSelector=metadata.name=${earlyPodName}`);
-        const foundPod = (podLookup.items || [])[0];
-        if (!foundPod) {
-          const lines = [];
-          lines.push(`### Pod Not Found: \`${earlyPodName}\``);
-          lines.push(`[WARNING] Could not find pod **${earlyPodName}** in the cluster.`);
-          lines.push(`The pod may have been deleted, evicted, or the name may be incorrect.`);
-          lines.push(``);
-          lines.push(`#### Suggestions`);
-          lines.push(`  - Check if the pod still exists: \`oc get pod ${earlyPodName} --all-namespaces\``);
-          lines.push(`  - List pods in the expected namespace: \`oc get pods -n <namespace>\``);
-          lines.push(`  - Check recent events: \`oc get events --all-namespaces --sort-by=.lastTimestamp | grep ${earlyPodName}\``);
-          const earlyReply = lines.join("\n");
-          const provider = activeProvider || "built-in";
-          if (conversationId) histAddMessage(conversationId, { role: "assistant", content: earlyReply, provider }).catch(() => {});
-          if (wantsStream) {
-            sseStart(res);
-            sseSend(res, { stage: "querying" });
-            sseSend(res, { stage: "generating" });
-            sseSend(res, { delta: earlyReply });
-            sseSend(res, { done: true, provider, conversationId });
-            sseEnd(res);
-            return;
-          }
-          return json(res, 200, { reply: earlyReply, provider, contextKeys: ["specific_pod", "not_found"], cached: false, conversationId });
+          contextKeys: ["remoteCache", parsed.intent, parsed.resource].filter(Boolean),
+        };
+        if (!isMutating) {
+          cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
         }
-      } catch {
-        // Pod lookup failed (API error, permissions) — fall through to normal LLM path
+        if (conversationId) {
+          histAddMessage(conversationId, {
+            role: "assistant",
+            content: remoteCacheReply,
+            provider,
+          }).catch(() => {});
+        }
+        updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
+        if (wantsStream) {
+          sseStart(res);
+          sseSend(res, { stage: "querying" });
+          sseSend(res, { stage: "generating" });
+          sseSend(res, { delta: remoteCacheReply });
+          sseSend(res, { done: true, provider, conversationId });
+          sseEnd(res);
+          return;
+        }
+        return json(res, 200, { ...payload, cached: false, conversationId });
       }
     }
+
+    // Rule-based handlers — only for LOCAL cluster. These call ocpGet()
+    // which always hits the hub's own K8s API, returning wrong data for
+    // remote clusters. Remote queries are handled above via handleRemoteCacheQuery
+    // or fall through to the LLM path with cached context.
+    if (!_remoteClusterContext) {
+      const directResult = await handleDirectCommand(userMessage, cmd, { llmAvailable: llmActive });
+      if (directResult) {
+        const provider = llmActive ? activeProvider : "built-in";
+        const payload = {
+          reply: directResult,
+          provider,
+          contextKeys: ["directCommand", parsed.intent, parsed.resource].filter(Boolean),
+        };
+        if (!isMutating) {
+          cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
+        }
+        if (conversationId) {
+          histAddMessage(conversationId, {
+            role: "assistant",
+            content: directResult,
+            provider,
+          }).catch(() => {});
+        }
+        updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
+        if (wantsStream) {
+          sseStart(res);
+          sseSend(res, { stage: "querying" });
+          sseSend(res, { stage: "generating" });
+          sseSend(res, { delta: directResult });
+          sseSend(res, { done: true, provider, conversationId });
+          sseEnd(res);
+          return;
+        }
+        return json(res, 200, { ...payload, cached: false, conversationId });
+      }
+
+      // Try list command handler (for "list/show/get X" queries)
+      const listResult = await handleListCommand(userMessage, cmd, { llmAvailable: llmActive });
+      if (listResult) {
+        const provider = llmActive ? activeProvider : "built-in";
+        const payload = {
+          reply: listResult,
+          provider,
+          contextKeys: ["listCommand", parsed.resource, parsed.scope].filter(Boolean),
+        };
+        cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
+        if (conversationId) {
+          histAddMessage(conversationId, {
+            role: "assistant",
+            content: listResult,
+            provider,
+          }).catch(() => {});
+        }
+        updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
+        if (wantsStream) {
+          sseStart(res);
+          sseSend(res, { stage: "querying" });
+          sseSend(res, { stage: "generating" });
+          sseSend(res, { delta: listResult });
+          sseSend(res, { done: true, provider, conversationId });
+          sseEnd(res);
+          return;
+        }
+        return json(res, 200, { ...payload, cached: false, conversationId });
+      }
+
+      // ---- Specific pod early check: if user asks about a named pod, verify
+      // it exists BEFORE entering the expensive LLM path. If the pod is not
+      // found, return a clear built-in response immediately. ----
+      const podNameFromParse = parsed?.name && parsed?.resource === "pod" ? parsed.name : null;
+      const podNameFromRegex = !podNameFromParse ? (userMessage.match(/\b([a-z][-a-z0-9]*(?:-[a-z0-9]{4,10}){1,2})\b/i) || [])[1] : null;
+      const earlyPodName = podNameFromParse || podNameFromRegex;
+      if (earlyPodName && /\b(why|diagnos|troubleshoot|restart|crash|fail|error|wrong|issue|problem|check|analyse|analyze|investig)/i.test(userMessage.toLowerCase())) {
+        try {
+          const podLookup = await ocpGet(`/api/v1/pods?fieldSelector=metadata.name=${earlyPodName}`);
+          const foundPod = (podLookup.items || [])[0];
+          if (!foundPod) {
+            const lines = [];
+            lines.push(`### Pod Not Found: \`${earlyPodName}\``);
+            lines.push(`[WARNING] Could not find pod **${earlyPodName}** in the cluster.`);
+            lines.push(`The pod may have been deleted, evicted, or the name may be incorrect.`);
+            lines.push(``);
+            lines.push(`#### Suggestions`);
+            lines.push(`  - Check if the pod still exists: \`oc get pod ${earlyPodName} --all-namespaces\``);
+            lines.push(`  - List pods in the expected namespace: \`oc get pods -n <namespace>\``);
+            lines.push(`  - Check recent events: \`oc get events --all-namespaces --sort-by=.lastTimestamp | grep ${earlyPodName}\``);
+            const earlyReply = lines.join("\n");
+            const provider = activeProvider || "built-in";
+            if (conversationId) histAddMessage(conversationId, { role: "assistant", content: earlyReply, provider }).catch(() => {});
+            if (wantsStream) {
+              sseStart(res);
+              sseSend(res, { stage: "querying" });
+              sseSend(res, { stage: "generating" });
+              sseSend(res, { delta: earlyReply });
+              sseSend(res, { done: true, provider, conversationId });
+              sseEnd(res);
+              return;
+            }
+            return json(res, 200, { reply: earlyReply, provider, contextKeys: ["specific_pod", "not_found"], cached: false, conversationId });
+          }
+        } catch {
+          // Pod lookup failed — fall through to normal LLM path
+        }
+      }
+    } // end !_remoteClusterContext
 
     // ---- Streaming SSE path ----
     if (wantsStream && llmEnabled(llmOpts)) {
