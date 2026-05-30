@@ -3923,8 +3923,32 @@ tr:hover td{background:#ffffff06}
         <div id="hub-auth-help" style="font-size:10px;color:var(--text2);margin-bottom:6px;padding:6px 10px;background:var(--bg);border-radius:6px;border:1px solid var(--border2)">
           Paste a bearer token from <code>oc whoami -t</code> or <code>kubectl create token</code>
         </div>
+        <!-- File upload drop zone (visible on Kubeconfig tab) -->
+        <div id="hub-file-drop-zone" style="display:none;margin-bottom:8px;border:2px dashed var(--border);border-radius:8px;padding:16px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s"
+          onclick="document.getElementById('hub-kubeconfig-file').click()"
+          ondragover="event.preventDefault();this.style.borderColor='var(--accent)';this.style.background='var(--accent)'+'10'"
+          ondragleave="this.style.borderColor='var(--border)';this.style.background='transparent'"
+          ondrop="event.preventDefault();this.style.borderColor='var(--border)';this.style.background='transparent';hubHandleFileDrop(event)">
+          <div style="font-size:22px;margin-bottom:4px;opacity:.5">&#x1F4C1;</div>
+          <div style="font-size:11px;font-weight:600;color:var(--text)">Drop kubeconfig file here or click to browse</div>
+          <div style="font-size:10px;color:var(--text2);margin-top:2px">Supports <code>~/.kube/config</code>, YAML, or JSON kubeconfig files</div>
+          <input type="file" id="hub-kubeconfig-file" accept=".yaml,.yml,.json,.conf,.config,.kubeconfig,*" style="display:none" onchange="hubHandleFileSelect(event)">
+        </div>
+        <div id="hub-file-info" style="display:none;margin-bottom:8px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:11px;display:none">
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:14px">&#x1F4C4;</span>
+            <span id="hub-file-name" style="font-weight:600;color:var(--text)"></span>
+            <span id="hub-file-size" style="color:var(--text2)"></span>
+            <button onclick="hubClearFile()" style="margin-left:auto;background:none;border:1px solid var(--border);color:var(--text2);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:10px">Remove</button>
+          </div>
+        </div>
         <textarea id="hub-cluster-token" rows="4" placeholder="Paste bearer token here..." style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:11px;font-family:monospace;outline:none;resize:vertical;box-sizing:border-box" oninput="hubDetectKubeconfig()" onpaste="setTimeout(hubDetectKubeconfig,50)"></textarea>
         <div id="hub-kubeconfig-banner" style="display:none;margin-top:6px;padding:8px 12px;border-radius:6px;font-size:11px;border:1px solid transparent"></div>
+        <!-- Platform-specific quick commands -->
+        <div id="hub-platform-cmds" style="margin-top:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--border2);border-radius:6px;font-size:10px;display:none">
+          <div style="font-weight:600;color:var(--text);margin-bottom:4px">Quick setup commands:</div>
+          <div id="hub-platform-cmds-list" style="color:var(--text2);line-height:1.8"></div>
+        </div>
       </div>
 
       <!-- Step 2 -->
@@ -3936,7 +3960,10 @@ tr:hover td{background:#ffffff06}
       <div style="margin-left:30px;margin-bottom:16px;background:var(--card-deep);border:1px solid var(--border2);border-radius:10px;overflow:hidden">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:var(--bg-alt);border-bottom:1px solid var(--border2)">
           <span style="font-size:11px;font-weight:600;color:var(--accent2)" id="hub-yaml-filename">tcs-agentic-ai.yaml</span>
-          <button onclick="navigator.clipboard.writeText(document.getElementById('hub-agent-yaml').textContent).then(function(){this.textContent='Copied!'}.bind(this))" style="background:none;border:1px solid var(--border2);color:var(--text2);border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px">Copy YAML</button>
+          <div style="display:flex;gap:4px">
+            <button onclick="hubDownloadYAML()" style="background:none;border:1px solid var(--border2);color:var(--text2);border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px">Download</button>
+            <button onclick="navigator.clipboard.writeText(document.getElementById('hub-agent-yaml').textContent).then(function(){this.textContent='Copied!'}.bind(this))" style="background:none;border:1px solid var(--border2);color:var(--text2);border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px">Copy YAML</button>
+          </div>
         </div>
         <pre id="hub-agent-yaml" style="margin:0;padding:14px 16px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:11px;color:var(--text-code);white-space:pre;overflow-x:auto;max-height:300px;overflow-y:auto;line-height:1.5;tab-size:2"></pre>
       </div>
@@ -14970,6 +14997,17 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   return lines.join('\n');
 }
 
+function hubDownloadYAML() {
+  var yaml = document.getElementById('hub-agent-yaml').textContent;
+  var filename = document.getElementById('hub-yaml-filename').textContent || 'tcs-agentic-ai.yaml';
+  var blob = new Blob([yaml], { type: 'application/x-yaml' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 var _hubParsedKubeconfig = null;
 
 function parseKubeconfigYAML(text) {
@@ -15039,9 +15077,81 @@ function hubDetectKubeconfig() {
 
 var _hubAuthHelpText = {
   token: 'Paste a bearer token from <code>oc whoami -t</code> or <code>kubectl create token &lt;sa-name&gt;</code>',
-  kubeconfig: 'Paste your <code>~/.kube/config</code> content. Server URL and token will be extracted automatically.',
+  kubeconfig: 'Upload or paste your <code>~/.kube/config</code> file. Server URL and token will be extracted automatically.',
   sa: 'Use in-cluster service account authentication. Deploy the agent YAML below — it uses the built-in service account token. No manual token needed.'
 };
+
+var _hubPlatformCmds = {
+  openshift: [
+    { label: 'Get token', cmd: 'oc whoami -t' },
+    { label: 'Export kubeconfig', cmd: 'oc config view --raw > kubeconfig.yaml' },
+    { label: 'Login', cmd: 'oc login https://api.cluster.example.com:6443 -u admin' },
+    { label: 'Create SA token', cmd: 'oc create token tcs-agentic-ai -n openshift-tcs-agentic --duration=8760h' },
+  ],
+  eks: [
+    { label: 'Update kubeconfig', cmd: 'aws eks update-kubeconfig --name <cluster> --region <region>' },
+    { label: 'Export kubeconfig', cmd: 'cat ~/.kube/config' },
+    { label: 'Create SA token', cmd: 'kubectl create token tcs-agentic-ai -n tcs-agentic-system --duration=8760h' },
+  ],
+  aks: [
+    { label: 'Get credentials', cmd: 'az aks get-credentials --resource-group <rg> --name <cluster>' },
+    { label: 'Export kubeconfig', cmd: 'cat ~/.kube/config' },
+    { label: 'Create SA token', cmd: 'kubectl create token tcs-agentic-ai -n tcs-agentic-system --duration=8760h' },
+  ],
+  gke: [
+    { label: 'Get credentials', cmd: 'gcloud container clusters get-credentials <cluster> --zone <zone>' },
+    { label: 'Export kubeconfig', cmd: 'cat ~/.kube/config' },
+    { label: 'Create SA token', cmd: 'kubectl create token tcs-agentic-ai -n tcs-agentic-system --duration=8760h' },
+  ],
+  rancher: [
+    { label: 'Download kubeconfig', cmd: 'Rancher UI → Cluster → Download KubeConfig' },
+    { label: 'Create SA token', cmd: 'kubectl create token tcs-agentic-ai -n tcs-agentic-system --duration=8760h' },
+  ],
+  k8s: [
+    { label: 'Export kubeconfig', cmd: 'cat ~/.kube/config' },
+    { label: 'Create SA token', cmd: 'kubectl create token tcs-agentic-ai -n tcs-agentic-system --duration=8760h' },
+  ]
+};
+
+function hubHandleFileDrop(event) {
+  var files = event.dataTransfer.files;
+  if (files.length > 0) hubLoadFile(files[0]);
+}
+
+function hubHandleFileSelect(event) {
+  var files = event.target.files;
+  if (files.length > 0) hubLoadFile(files[0]);
+}
+
+function hubLoadFile(file) {
+  if (file.size > 1024 * 1024) {
+    alert('File too large. Kubeconfig files should be under 1 MB.');
+    return;
+  }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var content = e.target.result;
+    document.getElementById('hub-cluster-token').value = content;
+    // Show file info
+    var infoEl = document.getElementById('hub-file-info');
+    infoEl.style.display = 'block';
+    document.getElementById('hub-file-name').textContent = file.name;
+    document.getElementById('hub-file-size').textContent = '(' + (file.size < 1024 ? file.size + ' B' : (file.size / 1024).toFixed(1) + ' KB') + ')';
+    // Hide drop zone, show info
+    document.getElementById('hub-file-drop-zone').style.display = 'none';
+    hubDetectKubeconfig();
+  };
+  reader.readAsText(file);
+}
+
+function hubClearFile() {
+  document.getElementById('hub-cluster-token').value = '';
+  document.getElementById('hub-file-info').style.display = 'none';
+  document.getElementById('hub-file-drop-zone').style.display = 'block';
+  document.getElementById('hub-kubeconfig-banner').style.display = 'none';
+  document.getElementById('hub-kubeconfig-file').value = '';
+  _hubParsedKubeconfig = null;
+}
 
 function hubSetAuthTab(tab, skipClear) {
   var tabs = ['token', 'kubeconfig', 'sa'];
@@ -15056,15 +15166,49 @@ function hubSetAuthTab(tab, skipClear) {
   document.getElementById('hub-auth-help').innerHTML = _hubAuthHelpText[tab] || '';
 
   var textarea = document.getElementById('hub-cluster-token');
+  var dropZone = document.getElementById('hub-file-drop-zone');
+  var fileInfo = document.getElementById('hub-file-info');
+
   if (tab === 'token') {
     textarea.placeholder = 'Paste bearer token here...';
     textarea.rows = 3;
+    textarea.style.display = '';
+    dropZone.style.display = 'none';
+    if (fileInfo) fileInfo.style.display = 'none';
   } else if (tab === 'kubeconfig') {
-    textarea.placeholder = 'Paste kubeconfig YAML content here...\n\napiVersion: v1\nkind: Config\nclusters:\n- cluster:\n    server: https://...';
-    textarea.rows = 6;
+    textarea.placeholder = 'Or paste kubeconfig YAML content here...';
+    textarea.rows = 5;
+    textarea.style.display = '';
+    // Show drop zone if no file is loaded
+    var hasFile = fileInfo && fileInfo.style.display === 'block';
+    dropZone.style.display = hasFile ? 'none' : 'block';
   } else if (tab === 'sa') {
     textarea.placeholder = '(Optional) Paste a service account token, or leave empty to use in-cluster auth after deploying the agent YAML.';
     textarea.rows = 2;
+    textarea.style.display = '';
+    dropZone.style.display = 'none';
+    if (fileInfo) fileInfo.style.display = 'none';
+  }
+
+  // Show platform-specific commands
+  var cmdsEl = document.getElementById('hub-platform-cmds');
+  var cmdsListEl = document.getElementById('hub-platform-cmds-list');
+  var dialog = document.getElementById('hub-cluster-dialog');
+  var platform = dialog ? dialog.dataset.platform : 'k8s';
+  var cmds = _hubPlatformCmds[platform] || _hubPlatformCmds['k8s'];
+
+  if (tab === 'token' || tab === 'kubeconfig') {
+    var html = '';
+    cmds.forEach(function(c) {
+      html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">' +
+        '<span style="color:var(--accent);font-weight:600;min-width:120px">' + c.label + ':</span> ' +
+        '<code style="background:var(--card);padding:2px 6px;border-radius:3px;cursor:pointer;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="Click to copy" onclick="navigator.clipboard.writeText(this.textContent);var o=this;o.style.color=\'var(--ok)\';setTimeout(function(){o.style.color=\'\'},800)">' + esc(c.cmd) + '</code>' +
+        '</div>';
+    });
+    cmdsListEl.innerHTML = html;
+    cmdsEl.style.display = 'block';
+  } else {
+    cmdsEl.style.display = 'none';
   }
 
   if (!skipClear && !textarea.value.trim()) {
@@ -15085,6 +15229,8 @@ function hubAddCluster(platform) {
   document.getElementById('hub-cluster-token').value = '';
   document.getElementById('hub-cluster-status').textContent = '';
   document.getElementById('hub-kubeconfig-banner').style.display = 'none';
+  document.getElementById('hub-file-info').style.display = 'none';
+  document.getElementById('hub-kubeconfig-file').value = '';
   _hubParsedKubeconfig = null;
   hubSetAuthTab('token');
   document.getElementById('hub-yaml-filename').textContent = 'tcs-agentic-ai-' + platform + '.yaml';
