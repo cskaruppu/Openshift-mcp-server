@@ -1923,8 +1923,8 @@ tr:hover td{background:#ffffff06}
 /* Global Cluster Selector */
 .global-cluster-selector { position:relative; display:inline-flex; }
 .gcs-trigger {
-  display:flex; align-items:center; gap:6px; background:none; border:1px solid transparent;
-  border-radius:8px; padding:4px 10px; color:var(--text); font-size:13px;
+  display:flex; align-items:center; gap:8px; background:none; border:1px solid transparent;
+  border-radius:8px; padding:5px 12px; color:var(--text); font-size:13px;
   cursor:pointer; transition:all 0.2s; font-family:inherit; white-space:nowrap;
 }
 .gcs-trigger:hover { border-color:var(--border); background:var(--hover); }
@@ -1939,26 +1939,45 @@ tr:hover td{background:#ffffff06}
 .gcs-trigger.open .gcs-caret { transform:rotate(180deg); }
 .gcs-dropdown {
   display:none; position:absolute; top:calc(100% + 6px); right:0;
-  background:var(--card); border:1px solid var(--border); border-radius:10px;
-  min-width:300px; max-height:380px; overflow-y:auto;
-  box-shadow:0 8px 32px rgba(0,0,0,0.4); z-index:9999;
+  background:var(--card); border:1px solid var(--border); border-radius:12px;
+  min-width:340px; max-height:420px; overflow:hidden;
+  box-shadow:0 12px 40px rgba(0,0,0,0.45); z-index:9999;
 }
-.gcs-dropdown.open { display:block; animation:gcs-fadeIn 0.15s ease; }
+.gcs-dropdown.open { display:flex; flex-direction:column; animation:gcs-fadeIn 0.15s ease; }
 @keyframes gcs-fadeIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
-.gcs-dropdown-header { padding:10px 14px 6px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:var(--text2); }
+.gcs-dropdown-header { padding:12px 16px 8px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px; color:var(--text2); border-bottom:1px solid var(--border); }
+.gcs-search-wrap { padding:8px 12px; border-bottom:1px solid var(--border); }
+.gcs-search {
+  width:100%; padding:7px 10px; background:var(--bg); border:1px solid var(--border);
+  border-radius:6px; color:var(--text); font-size:12px; font-family:inherit; outline:none;
+  box-sizing:border-box; transition:border-color 0.2s;
+}
+.gcs-search:focus { border-color:var(--accent2); }
+.gcs-search::placeholder { color:var(--text2); opacity:0.6; }
+.gcs-items-list { overflow-y:auto; max-height:300px; padding:4px 0; }
 .gcs-item {
-  display:flex; align-items:center; gap:10px; padding:10px 14px;
-  cursor:pointer; transition:background 0.15s; font-size:13px;
+  display:flex; align-items:center; gap:10px; padding:10px 16px;
+  cursor:pointer; transition:background 0.15s; font-size:13px; position:relative;
 }
 .gcs-item:hover { background:var(--hover); }
 .gcs-item.active { background:color-mix(in srgb, var(--accent2) 10%, transparent); }
+.gcs-item.active::before {
+  content:''; position:absolute; left:0; top:6px; bottom:6px; width:3px;
+  background:var(--accent2); border-radius:0 3px 3px 0;
+}
+.gcs-item-icon { font-size:18px; width:24px; text-align:center; flex-shrink:0; }
 .gcs-item-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
 .gcs-item-info { flex:1; min-width:0; }
-.gcs-item-name { font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.gcs-item-meta { font-size:11px; color:var(--text2); margin-top:2px; }
+.gcs-item-name { font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; gap:6px; }
+.gcs-item-status { font-size:10px; font-weight:500; padding:1px 6px; border-radius:3px; background:color-mix(in srgb, var(--warn) 15%, transparent); color:var(--warn); }
+.gcs-item-status.unreachable, .gcs-item-status.error { background:color-mix(in srgb, var(--crit) 15%, transparent); color:var(--crit); }
+.gcs-item-status.auth-error { background:color-mix(in srgb, var(--crit) 15%, transparent); color:var(--crit); }
+.gcs-item-meta { font-size:11px; color:var(--text2); margin-top:3px; display:flex; align-items:center; gap:0; flex-wrap:wrap; }
+.gcs-item-platform { font-weight:500; }
+.gcs-meta-sep { display:inline-block; width:3px; height:3px; border-radius:50%; background:var(--text2); opacity:0.4; margin:0 6px; flex-shrink:0; }
 .gcs-item-check { color:var(--accent2); flex-shrink:0; }
 .gcs-add {
-  display:flex; align-items:center; gap:8px; padding:10px 14px;
+  display:flex; align-items:center; gap:8px; padding:10px 16px;
   border-top:1px solid var(--border); color:var(--accent2);
   cursor:pointer; font-size:12px; font-weight:500;
 }
@@ -2090,7 +2109,7 @@ tr:hover td{background:#ffffff06}
         <svg class="gcs-caret" viewBox="0 0 10 6" width="10" height="6"><path d="M0 0l5 6 5-6z" fill="currentColor"/></svg>
       </button>
       <div class="gcs-dropdown" id="gcs-dropdown">
-        <div class="gcs-dropdown-header">Switch Cluster</div>
+        <div class="gcs-dropdown-header" id="gcs-dropdown-header">Clusters</div>
         <div class="gcs-dropdown-inner" id="gcs-dropdown-inner"></div>
         <div class="gcs-add" onclick="showView('hub')">
           <svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
@@ -4827,6 +4846,7 @@ function formatMem(memStr) {
 
 var _globalActiveCluster = 'local';
 var _globalClusterInfo = {};
+var _localClusterInfo = {};
 
 function clusterUrl(url) {
   if (!_globalActiveCluster || _globalActiveCluster === 'local') return url;
@@ -4921,6 +4941,7 @@ async function runDiagnostics() {
 // Local cluster is OpenShift (the hub runs on OCP); remote clusters carry their own platform.
 function getActiveClusterPlatform() {
   if (_globalActiveCluster === 'local' || !_globalActiveCluster) {
+    if (_localClusterInfo && _localClusterInfo.platform) return _localClusterInfo.platform;
     return (_globalClusterInfo && _globalClusterInfo.platform) ? _globalClusterInfo.platform : 'openshift';
   }
   var a = (_remoteAgents || {})[_globalActiveCluster];
@@ -5002,6 +5023,9 @@ async function loadSummary() {
       readyNodes: d.nodes.ready,
       health: d.cluster.health,
     };
+    if (!_globalActiveCluster || _globalActiveCluster === 'local') {
+      _localClusterInfo = Object.assign({}, _globalClusterInfo);
+    }
     updateClusterContextBanner();
 
   } catch (err) {
@@ -10599,6 +10623,16 @@ document.addEventListener('click', function(e) {
     if (gcsTrigger) gcsTrigger.classList.remove('open');
   }
 });
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    var gcsDropdown = document.getElementById('gcs-dropdown');
+    var gcsTrigger = document.getElementById('gcs-trigger');
+    if (gcsDropdown && gcsDropdown.classList.contains('open')) {
+      gcsDropdown.classList.remove('open');
+      if (gcsTrigger) gcsTrigger.classList.remove('open');
+    }
+  }
+});
 
 function populateChatClusterDropdown() {
   const sel = document.getElementById('ctx-cluster-select');
@@ -10661,12 +10695,16 @@ function toggleGlobalClusterDropdown(e) {
 function populateGlobalClusterDropdown() {
   var inner = document.getElementById('gcs-dropdown-inner');
   if (!inner) return;
-  var localPlatform = (_globalClusterInfo && _globalClusterInfo.platform) ? _globalClusterInfo.platform : getActiveClusterPlatform();
-  var localRawVer = (_globalClusterInfo && _globalClusterInfo.version) ? _globalClusterInfo.version : '';
-  var localNodeCount = (_globalClusterInfo && _globalClusterInfo.nodeCount) ? _globalClusterInfo.readyNodes + '/' + _globalClusterInfo.nodeCount : '';
-  var items = [{ name: 'local', label: 'Local Cluster', status: 'live', version: localRawVer, nodes: localNodeCount, platform: localPlatform }];
+  // Use _localClusterInfo (persists across switches) for the local cluster item
+  var lci = (_localClusterInfo && _localClusterInfo.platform) ? _localClusterInfo : _globalClusterInfo;
+  var localPlatform = (lci && lci.platform) ? lci.platform : 'openshift';
+  var localRawVer = (lci && lci.version) ? lci.version : '';
+  var localNodeCount = (lci && lci.nodeCount) ? (lci.readyNodes || 0) + '/' + lci.nodeCount : '';
+  var localHealth = (lci && lci.health) ? lci.health : '';
+  var items = [{ name: 'local', label: 'Local Cluster', status: 'live', version: localRawVer, nodes: localNodeCount, platform: localPlatform, health: localHealth }];
   for (var name in (_remoteAgents || {})) {
     var a = _remoteAgents[name];
+    var rHealth = (a.summary && a.summary.health) ? a.summary.health : '';
     items.push({
       name: name,
       label: a.name || name,
@@ -10674,26 +10712,67 @@ function populateGlobalClusterDropdown() {
       version: a.summary ? a.summary.version : '',
       nodes: a.summary ? a.summary.nodes : '',
       platform: a.platform || 'k8s',
+      health: rHealth,
     });
   }
-  inner.innerHTML = items.map(function(item) {
-    var dotColor = (item.status === 'live' || item.status === 'connected') ? 'var(--ok)' :
-                   (item.status === 'auth-error' || item.status === 'stale' || item.status === 'registered') ? 'var(--warn)' :
-                   item.status === 'unreachable' || item.status === 'error' ? 'var(--crit)' : 'var(--accent2)';
-    var statusText = (item.status === 'live' || item.status === 'connected') ? '' :
+  var hdr = document.getElementById('gcs-dropdown-header');
+  if (hdr) hdr.textContent = 'Clusters (' + items.length + ')';
+  var searchHtml = items.length > 3
+    ? '<div class="gcs-search-wrap"><input class="gcs-search" id="gcs-search" type="text" placeholder="Search clusters..." autocomplete="off" spellcheck="false"></div>'
+    : '';
+  inner.innerHTML = searchHtml + '<div class="gcs-items-list" id="gcs-items-list">' + items.map(function(item) {
+    var pInfo = K8S_PLATFORMS[(item.platform || 'k8s').toLowerCase()] || K8S_PLATFORMS['k8s'];
+    var isConnected = item.status === 'live' || item.status === 'connected';
+    // Health-based dot color (if health data available), otherwise connection status
+    var dotColor;
+    if (item.health) {
+      var h = item.health.toLowerCase();
+      dotColor = h === 'healthy' ? 'var(--ok)' : (h === 'warning' || h === 'degraded') ? 'var(--warn)' : h === 'critical' ? 'var(--crit)' : isConnected ? 'var(--ok)' : 'var(--warn)';
+    } else {
+      dotColor = isConnected ? 'var(--ok)' :
+        (item.status === 'auth-error' || item.status === 'stale' || item.status === 'registered') ? 'var(--warn)' :
+        item.status === 'unreachable' || item.status === 'error' ? 'var(--crit)' : 'var(--accent2)';
+    }
+    var statusText = isConnected ? '' :
                      item.status === 'auth-error' ? 'Auth error' :
                      item.status === 'unreachable' ? 'Unreachable' :
-                     item.status === 'registered' ? 'Not verified' : '';
+                     item.status === 'registered' ? 'Pending' : '';
     var active = item.name === _globalActiveCluster ? ' active' : '';
-    var platformLabel = (K8S_PLATFORMS[(item.platform || 'k8s').toLowerCase()] || K8S_PLATFORMS['k8s']).name;
-    var meta = [platformLabel, item.version, item.nodes ? item.nodes + ' nodes' : '', statusText].filter(Boolean).join(' · ');
+    var platformLabel = pInfo.name;
+    var versionStr = '';
+    if (item.version) {
+      var isOCPItem = (item.platform || '').toLowerCase() === 'openshift';
+      versionStr = isOCPItem ? 'v' + item.version : 'v' + item.version;
+    }
+    var nodeStr = item.nodes ? item.nodes + ' nodes' : '';
     var checkSvg = active ? '<svg class="gcs-item-check" viewBox="0 0 16 16" width="14" height="14"><path d="M3 8l3 3 7-7" stroke="currentColor" stroke-width="2" fill="none"/></svg>' : '';
-    return '<div class="gcs-item' + active + '" onclick="switchGlobalCluster(\'' + esc(item.name).replace(/'/g, "\\'") + '\')">' +
-      '<span class="gcs-item-dot" style="background:' + dotColor + '"></span>' +
-      '<div class="gcs-item-info"><div class="gcs-item-name">' + esc(item.label) + '</div>' +
-      (meta ? '<div class="gcs-item-meta">' + esc(meta) + '</div>' : '') + '</div>' +
+    return '<div class="gcs-item' + active + '" data-name="' + esc(item.label) + '" onclick="switchGlobalCluster(\'' + esc(item.name).replace(/'/g, "\\'") + '\')">' +
+      '<span class="gcs-item-icon" style="color:' + pInfo.color + '">' + pInfo.icon + '</span>' +
+      '<div class="gcs-item-info">' +
+        '<div class="gcs-item-name">' + esc(item.label) +
+          (statusText ? '<span class="gcs-item-status ' + item.status + '">' + statusText + '</span>' : '') +
+        '</div>' +
+        '<div class="gcs-item-meta">' +
+          '<span class="gcs-item-platform">' + platformLabel + '</span>' +
+          (versionStr ? '<span class="gcs-meta-sep"></span><span>' + esc(versionStr) + '</span>' : '') +
+          (nodeStr ? '<span class="gcs-meta-sep"></span><span>' + esc(nodeStr) + '</span>' : '') +
+        '</div>' +
+      '</div>' +
+      '<span class="gcs-item-dot" style="background:' + dotColor + '" title="' + (item.health || item.status) + '"></span>' +
       checkSvg + '</div>';
-  }).join('');
+  }).join('') + '</div>';
+  // Wire up search
+  var searchInput = document.getElementById('gcs-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', function() {
+      var q = this.value.toLowerCase();
+      var listItems = document.querySelectorAll('#gcs-items-list .gcs-item');
+      listItems.forEach(function(el) {
+        el.style.display = (el.getAttribute('data-name') || '').toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+      });
+    });
+    setTimeout(function() { searchInput.focus(); }, 50);
+  }
 }
 
 async function switchGlobalCluster(name) {
@@ -10709,7 +10788,18 @@ async function switchGlobalCluster(name) {
   var ver = document.getElementById('gcs-version');
   if (name === 'local') {
     if (label) label.textContent = 'Local Cluster';
-    if (ver) ver.textContent = '';
+    if (ver) {
+      // Restore local cluster version from cached local info
+      if (_localClusterInfo && _localClusterInfo.version) {
+        var isLOCP = _localClusterInfo.isOpenShift || (_localClusterInfo.platform || '').toLowerCase() === 'openshift';
+        if (isLOCP) { ver.textContent = 'OCP ' + _localClusterInfo.version; }
+        else {
+          var lp = (K8S_PLATFORMS[(_localClusterInfo.platform || 'k8s').toLowerCase()] || K8S_PLATFORMS['k8s']).name;
+          ver.textContent = lp + ' v' + (_localClusterInfo.kubernetesVersion || _localClusterInfo.version);
+        }
+      } else { ver.textContent = ''; }
+    }
+    _globalClusterInfo = Object.assign({}, _localClusterInfo);
   } else {
     if (label) label.textContent = name;
     if (ver) ver.textContent = 'connecting...';
