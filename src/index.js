@@ -3416,6 +3416,10 @@ async function startSSE() {
 
     // ── App Change Watcher API ─────────────────────────────────────
     if (req.method === "GET" && url.pathname === "/api/dashboard/app-changes") {
+      const _acCluster = url.searchParams.get("cluster");
+      if (_acCluster && _acCluster !== "local") {
+        return sendJson(res, 200, { available: false, source: "agent-cache", message: "Application change tracking is not available for remote clusters" });
+      }
       try {
         const ns = url.searchParams.get("namespace") || undefined;
         let namespaces = getWatchedNamespaces();
@@ -3633,6 +3637,10 @@ async function startSSE() {
 
     // ── Image Vulnerability Scanner API ──────────────────────────────
     if (req.method === "GET" && url.pathname === "/api/dashboard/image-vulns") {
+      const _ivCluster = url.searchParams.get("cluster");
+      if (_ivCluster && _ivCluster !== "local") {
+        return sendJson(res, 200, { available: false, source: "agent-cache", message: "Image vulnerability scanning is not available for remote clusters" });
+      }
       try {
         const ns = url.searchParams.get("namespace") || undefined;
         const scan = await runImageScan(ns);

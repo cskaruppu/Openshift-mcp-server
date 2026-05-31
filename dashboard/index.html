@@ -6209,9 +6209,27 @@ function gradeStyle(g) {
 }
 function sevIcon(s) { return s === 'critical' ? '&#x1F534;' : s === 'high' ? '&#x1F7E0;' : s === 'warning' ? '&#x1F7E1;' : '&#x1F535;'; }
 
+function _isRemoteCluster() { return _globalActiveCluster && _globalActiveCluster !== 'local'; }
+function _remoteUnavailableHTML(widgetLabel) {
+  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px 16px;gap:8px;color:var(--text2);text-align:center">' +
+    '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>' +
+    '<div style="font-size:12px;font-weight:600">Remote Cluster</div>' +
+    '<div style="font-size:11px;opacity:0.7">' + widgetLabel + ' data is collected locally.<br>Not available via remote agent.</div></div>';
+}
+
 async function loadSecurityWidget() {
   try {
     const d = await apiFetch('/api/dashboard/security', 30000);
+    if (d && d.available === false) {
+      document.getElementById('sec-score').textContent = '-';
+      document.getElementById('sec-score').style.color = 'var(--text2)';
+      document.getElementById('sec-meta').textContent = 'Remote cluster';
+      var g = document.getElementById('sec-grade'); if (g) { g.textContent = '-'; g.style.cssText = 'color:var(--text2)'; }
+      document.getElementById('sec-findings').innerHTML = _remoteUnavailableHTML('CIS compliance');
+      var catMap = { 'pod-security': 'sec-cat-pod', 'network-security': 'sec-cat-net', 'rbac-secrets': 'sec-cat-rbac', 'image-security': 'sec-cat-img' };
+      for (var cat in catMap) { var el = document.getElementById(catMap[cat]); if (el) el.innerHTML = '<span style="color:var(--text2)">-</span>'; }
+      return;
+    }
     const circ = 2 * Math.PI * 27;
     const offset = circ - (d.score / 100) * circ;
     const color = scoreColor(d.score);
@@ -6252,6 +6270,14 @@ async function loadSecurityWidget() {
 async function loadGitOpsWidget() {
   try {
     const d = await apiFetch('/api/dashboard/gitops');
+    if (d && d.available === false) {
+      document.getElementById('gitops-synced').textContent = '-';
+      document.getElementById('gitops-outofsync').textContent = '-';
+      document.getElementById('gitops-degraded').textContent = '-';
+      document.getElementById('gitops-total').textContent = '-';
+      document.getElementById('gitops-apps').innerHTML = _remoteUnavailableHTML('GitOps');
+      return;
+    }
     document.getElementById('gitops-synced').textContent = d.synced;
     document.getElementById('gitops-outofsync').textContent = d.outOfSync;
     document.getElementById('gitops-degraded').textContent = d.degraded;
@@ -6275,6 +6301,14 @@ async function loadGitOpsWidget() {
 async function loadDRWidget() {
   try {
     const d = await apiFetch('/api/dashboard/dr');
+    if (d && d.available === false) {
+      document.getElementById('dr-score').textContent = '-';
+      document.getElementById('dr-score').style.color = 'var(--text2)';
+      document.getElementById('dr-meta').textContent = 'Remote cluster';
+      var dg = document.getElementById('dr-grade'); if (dg) { dg.textContent = '-'; dg.style.cssText = 'color:var(--text2)'; }
+      document.getElementById('dr-details').innerHTML = _remoteUnavailableHTML('Disaster recovery');
+      return;
+    }
     const circ = 2 * Math.PI * 27;
     const offset = circ - (d.score / 100) * circ;
     const color = scoreColor(d.score);
@@ -6736,6 +6770,14 @@ async function acwForceScan() {
 async function loadAppChangesWidget() {
   try {
     var d = await apiFetch('/api/dashboard/app-changes');
+    if (d && d.available === false) {
+      var tracked = document.getElementById('acw-tracked'); if (tracked) tracked.textContent = '-';
+      var meta = document.getElementById('acw-meta'); if (meta) meta.textContent = 'Remote cluster';
+      var banner = document.getElementById('acw-discovery-banner'); if (banner) banner.style.display = 'none';
+      var chList = document.getElementById('acw-changes-list');
+      if (chList) chList.innerHTML = _remoteUnavailableHTML('Application change tracking');
+      return;
+    }
     var nsBadge = document.getElementById('acw-ns-badge');
     if (nsBadge) nsBadge.textContent = d.watchedNamespaces.length + ' namespace' + (d.watchedNamespaces.length !== 1 ? 's' : '');
     var tracked = document.getElementById('acw-tracked');
@@ -7075,6 +7117,17 @@ function ivsTrivyDetail(img, idx) {
 async function loadImageVulnsWidget() {
   try {
     var d = await apiFetch('/api/dashboard/image-vulns');
+    if (d && d.available === false) {
+      document.getElementById('ivs-score').textContent = '-'; document.getElementById('ivs-score').style.color = 'var(--text2)';
+      var ig = document.getElementById('ivs-grade'); if (ig) { ig.textContent = '-'; ig.style.cssText = 'color:var(--text2)'; }
+      var im = document.getElementById('ivs-meta'); if (im) im.textContent = 'Remote cluster';
+      ['ivs-total-vulns','ivs-critical','ivs-high','ivs-medium','ivs-low','ivs-images-count','ivs-fixable','ivs-max-cvss'].forEach(function(id) {
+        var el = document.getElementById(id); if (el) el.textContent = '-';
+      });
+      var topImg = document.getElementById('ivs-top-images');
+      if (topImg) topImg.innerHTML = _remoteUnavailableHTML('Image vulnerability scanning');
+      return;
+    }
     var scannerBadge = document.getElementById('ivs-scanner-badge');
     if (scannerBadge) scannerBadge.textContent = d.scannerType || 'unknown';
     var circ = 2 * Math.PI * 27;
@@ -7172,6 +7225,20 @@ var _orphanedPvcData = [];
 async function loadOptimizationWidget() {
   try {
     const d = await apiFetch('/api/dashboard/optimization');
+    if (d && d.available === false) {
+      var pctEl = document.getElementById('opt-score-pct'); if (pctEl) pctEl.textContent = '-/100';
+      var gradeEl = document.getElementById('opt-grade'); if (gradeEl) { gradeEl.textContent = '-'; gradeEl.style.color = 'var(--text2)'; }
+      var podsSum = document.getElementById('opt-pods-summary'); if (podsSum) podsSum.textContent = 'Remote cluster';
+      ['opt-reclaim-cpu','opt-reclaim-mem','opt-reclaim-storage'].forEach(function(id) {
+        var el = document.getElementById(id); if (el) el.textContent = '-';
+      });
+      ['opt-over','opt-under','opt-nolimits'].forEach(function(id) {
+        var el = document.getElementById(id); if (el) el.textContent = '-';
+      });
+      var offenders = document.getElementById('opt-offenders');
+      if (offenders) offenders.innerHTML = _remoteUnavailableHTML('Resource optimization');
+      return;
+    }
 
     // Efficiency Score Ring with animated count-up
     var score = Math.max(0, Math.min(100, d.efficiencyScore || 0));
@@ -7479,22 +7546,25 @@ async function loadAIActivityFeed() {
       apiFetch('/api/pods/issues').catch(() => []),
     ]);
     const ts = new Date().toLocaleTimeString();
-    if (secData) {
+    if (secData && secData.available !== false) {
       items.push({ icon: '&#x1F6E1;', text: 'Security score: <strong>' + secData.grade + '</strong> (' + secData.score + '/100)', color: scoreColor(secData.score), time: ts });
       if (secData.findings?.length) items.push({ icon: '&#x26A0;', text: esc(secData.findings[0].msg), color: 'var(--warn)', time: ts });
     }
-    if (drData) {
+    if (drData && drData.available !== false) {
       items.push({ icon: '&#x1F4BE;', text: 'DR readiness: <strong>' + drData.grade + '</strong> (' + drData.score + '/100)' + (drData.lastBackupAge != null ? ' \u2022 Last backup: ' + drData.lastBackupAge + 'd ago' : ''), color: scoreColor(drData.score), time: ts });
     }
-    if (optData) {
+    if (optData && optData.available !== false) {
       if (optData.overProvisioned > 0) items.push({ icon: '&#x1F4C9;', text: optData.overProvisioned + ' over-provisioned workload(s) — potential cost savings', color: 'var(--warn)', time: ts });
       if (optData.underProvisioned > 0) items.push({ icon: '&#x1F4C8;', text: optData.underProvisioned + ' under-provisioned workload(s) — risk of throttling', color: 'var(--crit)', time: ts });
       items.push({ icon: '&#x1F4CA;', text: 'Cluster headroom: CPU ' + optData.cpuHeadroom + '% \u2022 Memory ' + optData.memHeadroom + '%', color: optData.cpuHeadroom < 20 || optData.memHeadroom < 20 ? 'var(--warn)' : 'var(--ok)', time: ts });
     }
     if (Array.isArray(podData) && podData.length > 0) {
       items.push({ icon: '&#x1F534;', text: podData.length + ' pod(s) with issues detected', color: 'var(--crit)', time: ts });
-    } else {
+    } else if (Array.isArray(podData)) {
       items.push({ icon: '&#x2705;', text: 'No pod issues detected', color: 'var(--ok)', time: ts });
+    }
+    if (_isRemoteCluster() && items.length === 0) {
+      items.push({ icon: '&#x2139;', text: 'Viewing remote cluster — detailed insights (security, DR, optimization) are only available for the local cluster', color: 'var(--text2)', time: ts });
     }
   } catch { items.push({ icon: '&#x2139;', text: 'Could not gather insights', color: 'var(--text2)', time: '' }); }
   if (items.length === 0) { feed.innerHTML = '<div style="color:var(--text2);text-align:center;padding:16px">No insights available</div>'; return; }
