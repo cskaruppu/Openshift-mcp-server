@@ -4920,7 +4920,9 @@ async function runDiagnostics() {
 // Determine the platform of the currently active cluster.
 // Local cluster is OpenShift (the hub runs on OCP); remote clusters carry their own platform.
 function getActiveClusterPlatform() {
-  if (_globalActiveCluster === 'local' || !_globalActiveCluster) return 'openshift';
+  if (_globalActiveCluster === 'local' || !_globalActiveCluster) {
+    return (_globalClusterInfo && _globalClusterInfo.platform) ? _globalClusterInfo.platform : 'openshift';
+  }
   var a = (_remoteAgents || {})[_globalActiveCluster];
   return (a && a.platform) ? a.platform : 'k8s';
 }
@@ -10659,7 +10661,10 @@ function toggleGlobalClusterDropdown(e) {
 function populateGlobalClusterDropdown() {
   var inner = document.getElementById('gcs-dropdown-inner');
   if (!inner) return;
-  var items = [{ name: 'local', label: 'Local Cluster', status: 'live', version: document.getElementById('gcs-version')?.textContent || '' }];
+  var localPlatform = (_globalClusterInfo && _globalClusterInfo.platform) ? _globalClusterInfo.platform : getActiveClusterPlatform();
+  var localRawVer = (_globalClusterInfo && _globalClusterInfo.version) ? _globalClusterInfo.version : '';
+  var localNodeCount = (_globalClusterInfo && _globalClusterInfo.nodeCount) ? _globalClusterInfo.readyNodes + '/' + _globalClusterInfo.nodeCount : '';
+  var items = [{ name: 'local', label: 'Local Cluster', status: 'live', version: localRawVer, nodes: localNodeCount, platform: localPlatform }];
   for (var name in (_remoteAgents || {})) {
     var a = _remoteAgents[name];
     items.push({
@@ -10735,9 +10740,9 @@ async function switchGlobalCluster(name) {
       _globalClusterInfo = {};
       if (ver) ver.textContent = 'unreachable';
     }
-  } else {
-    _globalClusterInfo = {};
   }
+  // Don't clear _globalClusterInfo — loadSummary() in reloadCurrentView
+  // will repopulate it with the correct cluster's data.
 
   reloadCurrentView();
 }
