@@ -395,12 +395,13 @@ async function scanOpenShift(scan) {
 
 function computeClusterHealth(scan) {
   const degradedOps = scan.clusterOperators?.degraded || 0;
-  const failedPods = scan.pods.failed || 0;
-  const issueCount = scan.pods.issues?.length || 0;
+  const totalNodes = scan.nodes?.total || 0;
+  const readyNodes = scan.nodes?.ready || 0;
+  const notReadyNodes = totalNodes - readyNodes;
 
-  if (degradedOps >= 3 || failedPods >= 10) {
-    scan.clusterHealth.status = "Critical";
-  } else if (degradedOps >= 1 || failedPods >= 3 || issueCount >= 5) {
+  if (degradedOps > 0) {
+    scan.clusterHealth.status = "Degraded";
+  } else if (notReadyNodes > 0) {
     scan.clusterHealth.status = "Warning";
   } else {
     scan.clusterHealth.status = "Healthy";

@@ -6106,7 +6106,7 @@ function handleRemoteCacheQuery(message, parsed, remoteCtx) {
     parts.push(`| **${versionLabel}** | ${clusterVersion} |`);
     parts.push(`| **Channel** | ${channel} |`);
     parts.push(`| **Platform** | ${platform} |`);
-    parts.push(`| **Health** | ${clusterHealth === "Healthy" ? "[OK] Healthy" : `[WARNING] ${clusterHealth}`} |`);
+    parts.push(`| **Health** | ${clusterHealth === "healthy" ? "[OK] Healthy" : clusterHealth === "warning" || clusterHealth === "degraded" ? `[WARNING] ${clusterHealth.charAt(0).toUpperCase() + clusterHealth.slice(1)}` : `[CRITICAL] ${clusterHealth.charAt(0).toUpperCase() + clusterHealth.slice(1)}`} |`);
     parts.push("");
 
     // Node summary

@@ -4940,7 +4940,7 @@ async function loadSummary() {
     // Health
     const el = document.getElementById('m-health');
     el.textContent = d.cluster.health.charAt(0).toUpperCase() + d.cluster.health.slice(1);
-    el.className = 'metric ' + (d.cluster.health === 'healthy' ? 'ok' : d.cluster.health === 'warning' ? 'warn' : 'crit');
+    el.className = 'metric ' + (d.cluster.health === 'healthy' ? 'ok' : (d.cluster.health === 'warning' || d.cluster.health === 'degraded') ? 'warn' : 'crit');
     // Platform-aware version label: "OpenShift 4.19.14 \u00b7 stable-4.19" or "Amazon EKS \u00b7 Kubernetes v1.29"
     var verLabel;
     if (isOCP) {
@@ -5268,7 +5268,7 @@ function _healthStorageKey() {
 }
 function recordHealthSnapshot(health) {
   var now = Date.now();
-  _healthHistory.push({ t: now, v: health === 'healthy' ? 100 : health === 'warning' ? 60 : 20 });
+  _healthHistory.push({ t: now, v: health === 'healthy' ? 100 : (health === 'warning' || health === 'degraded') ? 60 : 20 });
   var cutoff = now - 24 * 60 * 60 * 1000;
   _healthHistory = _healthHistory.filter(function(h) { return h.t >= cutoff; });
   try { localStorage.setItem(_healthStorageKey(), JSON.stringify(_healthHistory)); } catch {}
