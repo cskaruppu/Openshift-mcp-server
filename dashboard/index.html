@@ -1985,18 +1985,25 @@ tr:hover td{background:#ffffff06}
 
 /* Cluster Context Banner */
 .cluster-context-banner {
-  display:flex; align-items:center; gap:10px; padding:6px 32px; font-size:12px;
-  background:color-mix(in srgb, var(--accent2) 8%, var(--bg));
-  border-bottom:1px solid color-mix(in srgb, var(--accent2) 25%, var(--border));
+  display:flex; align-items:center; gap:12px; padding:7px 32px; font-size:12px;
+  background:linear-gradient(90deg, color-mix(in srgb, var(--accent2) 12%, var(--bg)), color-mix(in srgb, var(--accent2) 4%, var(--bg)));
+  border-bottom:1px solid color-mix(in srgb, var(--accent2) 20%, var(--border));
   color:var(--text2);
 }
-.ccb-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+.ccb-icon { font-size:15px; flex-shrink:0; }
+.ccb-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px; color:var(--accent2); opacity:0.8; }
+.ccb-cluster-name { font-weight:700; color:var(--text); font-size:13px; }
+.ccb-detail { display:flex; align-items:center; gap:0; color:var(--text2); font-size:11px; }
+.ccb-sep { display:inline-block; width:3px; height:3px; border-radius:50%; background:var(--text2); opacity:0.4; margin:0 8px; }
+.ccb-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+.ccb-status-text { font-size:10px; font-weight:600; }
 .ccb-back {
   margin-left:auto; background:none; border:1px solid var(--border);
-  border-radius:6px; padding:2px 10px; color:var(--text2);
-  font-size:11px; cursor:pointer; font-family:inherit;
+  border-radius:6px; padding:3px 12px; color:var(--text2);
+  font-size:11px; cursor:pointer; font-family:inherit; display:flex; align-items:center; gap:4px;
+  transition:all 0.2s;
 }
-.ccb-back:hover { border-color:var(--accent2); color:var(--text); }
+.ccb-back:hover { border-color:var(--accent2); color:var(--text); background:color-mix(in srgb, var(--accent2) 8%, transparent); }
 .light-theme .gcs-dropdown { box-shadow:0 8px 32px rgba(0,0,0,0.12); }
 
 /* Login screen */
@@ -2141,9 +2148,13 @@ tr:hover td{background:#ffffff06}
 
 <!-- Cluster Context Banner (shown when viewing a remote cluster) -->
 <div class="cluster-context-banner" id="cluster-context-banner" style="display:none">
+  <span class="ccb-icon" id="ccb-icon"></span>
+  <span class="ccb-label">REMOTE CLUSTER</span>
+  <span class="ccb-cluster-name" id="ccb-name"></span>
+  <span class="ccb-detail" id="ccb-detail"><span id="ccb-version"></span></span>
   <span class="ccb-dot" id="ccb-dot"></span>
-  <span>Viewing: <strong id="ccb-name"></strong> &mdash; <span id="ccb-version"></span></span>
-  <button class="ccb-back" onclick="switchGlobalCluster('local')">&#x2190; Switch to local</button>
+  <span class="ccb-status-text" id="ccb-status-text"></span>
+  <button class="ccb-back" onclick="switchGlobalCluster('local')">&#x2190; Back to local cluster</button>
 </div>
 
 <!-- Settings slide-out panel -->
@@ -10854,20 +10865,32 @@ function updateClusterContextBanner() {
   var nameEl = document.getElementById('ccb-name');
   var verEl = document.getElementById('ccb-version');
   var dotEl = document.getElementById('ccb-dot');
+  var iconEl = document.getElementById('ccb-icon');
+  var statusEl = document.getElementById('ccb-status-text');
+  var ci = _globalClusterInfo || {};
+  var platform = (ci.platform || getActiveClusterPlatform() || 'k8s').toLowerCase();
+  var pInfo = K8S_PLATFORMS[platform] || K8S_PLATFORMS['k8s'];
+  var isOCP = ci.isOpenShift !== undefined ? ci.isOpenShift : (platform === 'openshift');
+  if (iconEl) { iconEl.textContent = pInfo.icon; iconEl.style.color = pInfo.color; }
   if (nameEl) nameEl.textContent = _globalActiveCluster;
   if (verEl) {
-    var ci = _globalClusterInfo || {};
-    var isOCP = ci.isOpenShift !== undefined ? ci.isOpenShift : ((ci.platform || getActiveClusterPlatform() || '').toLowerCase() === 'openshift');
-    var pInfo = K8S_PLATFORMS[(ci.platform || getActiveClusterPlatform() || 'k8s').toLowerCase()] || K8S_PLATFORMS['k8s'];
-    var verPrefix = isOCP ? 'OCP ' : (pInfo.name + ' ');
     var verVal = isOCP ? ci.version : (ci.kubernetesVersion || ci.version);
-    verEl.textContent = verVal && verVal !== 'unknown'
-      ? verPrefix + verVal + ' · ' + (ci.readyNodes || 0) + '/' + (ci.nodeCount || 0) + ' nodes ready'
-      : 'connecting...';
+    var parts = [];
+    if (verVal && verVal !== 'unknown') parts.push(pInfo.name + ' ' + verVal);
+    else parts.push(pInfo.name);
+    if (ci.nodeCount) parts.push((ci.readyNodes || 0) + '/' + ci.nodeCount + ' nodes');
+    verEl.innerHTML = parts.length > 0 ? parts.map(function(p, i) {
+      return (i > 0 ? '<span class="ccb-sep"></span>' : '') + p;
+    }).join('') : 'connecting...';
   }
   var agent = (_remoteAgents || {})[_globalActiveCluster] || {};
-  var color = (agent.status === 'live' || agent.status === 'connected') ? 'var(--ok)' : 'var(--warn)';
-  if (dotEl) dotEl.style.background = color;
+  var isConnected = agent.status === 'live' || agent.status === 'connected';
+  var dotColor = isConnected ? 'var(--ok)' : 'var(--warn)';
+  if (dotEl) dotEl.style.background = dotColor;
+  if (statusEl) {
+    statusEl.textContent = isConnected ? 'Connected' : (agent.status || 'Connecting');
+    statusEl.style.color = isConnected ? 'var(--ok)' : 'var(--warn)';
+  }
 }
 
 function updateGlobalClusterDot() {

@@ -480,26 +480,36 @@ export function getAgentCachedResponse(clusterName, endpointPath, opts = {}) {
 
   const isOpenShift = (agent.platform || "").toLowerCase() === "openshift";
   switch (endpointPath) {
-    case "/api/cluster-info":
+    case "/api/cluster-info": {
+      const _ciDeg = report.clusterOperators?.degraded || 0;
+      const _ciTot = report.nodes?.total || 0;
+      const _ciRdy = report.nodes?.ready || 0;
+      const _ciHealth = _ciDeg > 0 ? "degraded" : (_ciRdy < _ciTot ? "warning" : "healthy");
       return {
         version: report.openshiftVersion || report.kubernetesVersion || "unknown",
         kubernetesVersion: report.kubernetesVersion || null,
         platform: agent.platform || "kubernetes",
         isOpenShift,
-        nodeCount: report.nodes?.total || 0,
-        readyNodes: report.nodes?.ready || 0,
-        health: (report.clusterHealth?.status || "unknown").toLowerCase(),
+        nodeCount: _ciTot,
+        readyNodes: _ciRdy,
+        health: _ciHealth,
         ...meta,
       };
+    }
 
-    case "/api/cluster/summary":
+    case "/api/cluster/summary": {
+      // Recompute health from operators+nodes (authoritative hub formula)
+      const _degOps = report.clusterOperators?.degraded || 0;
+      const _totalN = report.nodes?.total || 0;
+      const _readyN = report.nodes?.ready || 0;
+      const _health = _degOps > 0 ? "degraded" : (_readyN < _totalN ? "warning" : "healthy");
       return {
         platform: agent.platform || "kubernetes",
         isOpenShift,
         cluster: {
           version: report.openshiftVersion || report.kubernetesVersion || "unknown",
           kubernetesVersion: report.kubernetesVersion || null,
-          health: (report.clusterHealth?.status || "unknown").toLowerCase(),
+          health: _health,
           channel: isOpenShift ? "stable-" + (report.openshiftVersion || "").split(".").slice(0, 2).join(".") : "",
         },
         nodes: {
@@ -521,6 +531,7 @@ export function getAgentCachedResponse(clusterName, endpointPath, opts = {}) {
         },
         ...meta,
       };
+    }
 
     case "/api/nodes":
       return (report.nodes?.items || []).map(n => ({
@@ -621,8 +632,8 @@ export function getAgentCachedResponse(clusterName, endpointPath, opts = {}) {
         platform: agent.platform,
         status: agent.status,
         nodeCount: report.nodes?.total,
-        health: report.clusterHealth?.status,
-        apiServerHealthy: report.clusterHealth?.apiServerHealthy,
+        health: (() => { const d = report.clusterOperators?.degraded || 0; const t = report.nodes?.total || 0; const r = report.nodes?.ready || 0; return d > 0 ? "Degraded" : (r < t ? "Warning" : "Healthy"); })(),
+        apiServerHealthy: true,
         summary: {
           nodes: report.nodes?.total || 0,
           pods: report.pods?.total || 0,
@@ -2080,14 +2091,21 @@ async function startSSE() {
           lastHealthCheck: agent.lastHealthCheck || null,
           lastHealthResult: agent.lastHealthResult || null,
           source: agent.source || "agent",
-          summary: agent.lastReport ? {
-            version: agent.lastReport.openshiftVersion || agent.lastReport.kubernetesVersion || "",
-            health: (agent.lastReport.clusterHealth?.status || "unknown").toLowerCase(),
-            nodes: `${agent.lastReport.nodes?.ready || 0}/${agent.lastReport.nodes?.total || 0}`,
-            pods: agent.lastReport.pods?.total || 0,
-            issues: agent.lastReport.pods?.issues?.length || 0,
-            warnings: agent.lastReport.events?.warnings || 0,
-          } : null,
+          summary: agent.lastReport ? (() => {
+            const _r = agent.lastReport;
+            const _d = _r.clusterOperators?.degraded || 0;
+            const _t = _r.nodes?.total || 0;
+            const _rd = _r.nodes?.ready || 0;
+            const _h = _d > 0 ? "degraded" : (_rd < _t ? "warning" : "healthy");
+            return {
+              version: _r.openshiftVersion || _r.kubernetesVersion || "",
+              health: _h,
+              nodes: `${_rd}/${_t}`,
+              pods: _r.pods?.total || 0,
+              issues: _r.pods?.issues?.length || 0,
+              warnings: _r.events?.warnings || 0,
+            };
+          })() : null,
         });
       }
       return sendJson(res, 200, { clusters });
@@ -2211,6 +2229,17 @@ async function startSSE() {
       agent.lastReportTime = new Date().toISOString();
       agent.status = "live";
       if (!agent.source) agent.source = "agent";
+
+      // Re-compute health on hub side using operators+nodes formula
+      // to override any stale agent-side health calculation
+      if (report.clusterHealth) {
+        const degradedOps = report.clusterOperators?.degraded || 0;
+        const totalN = report.nodes?.total || 0;
+        const readyN = report.nodes?.ready || 0;
+        if (degradedOps > 0) report.clusterHealth.status = "Degraded";
+        else if (readyN < totalN) report.clusterHealth.status = "Warning";
+        else report.clusterHealth.status = "Healthy";
+      }
 
       // Clean up duplicate if agent reports under a different case
       if (existingKey && existingKey !== clusterName && !_connectedAgents.has(existingKey)) {
