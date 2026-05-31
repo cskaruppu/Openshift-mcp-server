@@ -2081,6 +2081,8 @@ async function startSSE() {
           lastHealthResult: agent.lastHealthResult || null,
           source: agent.source || "agent",
           summary: agent.lastReport ? {
+            version: agent.lastReport.openshiftVersion || agent.lastReport.kubernetesVersion || "",
+            health: (agent.lastReport.clusterHealth?.status || "unknown").toLowerCase(),
             nodes: `${agent.lastReport.nodes?.ready || 0}/${agent.lastReport.nodes?.total || 0}`,
             pods: agent.lastReport.pods?.total || 0,
             issues: agent.lastReport.pods?.issues?.length || 0,

@@ -4984,10 +4984,23 @@ async function loadSummary() {
     // Update global cluster selector with version (platform-aware)
     var gcsVer = document.getElementById('gcs-version');
     if (gcsVer) {
-      if (_globalActiveCluster === 'local') {
-        gcsVer.textContent = isOCP ? 'OCP ' + d.cluster.version : (pInfo.name + ' v' + (d.cluster.kubernetesVersion || d.cluster.version));
+      if (isOCP) {
+        gcsVer.textContent = 'OCP ' + d.cluster.version;
+      } else {
+        gcsVer.textContent = pInfo.name + ' v' + (d.cluster.kubernetesVersion || d.cluster.version);
       }
     }
+    // Update context banner with fresh data
+    _globalClusterInfo = {
+      version: d.cluster.version,
+      kubernetesVersion: d.cluster.kubernetesVersion,
+      platform: d.platform || platform,
+      isOpenShift: isOCP,
+      nodeCount: d.nodes.total,
+      readyNodes: d.nodes.ready,
+      health: d.cluster.health,
+    };
+    updateClusterContextBanner();
 
   } catch (err) {
     setConnected(false, 'Error: ' + err.message);
@@ -5248,23 +5261,28 @@ async function loadTopology() {
 // Feature 2: Cluster Health Timeline (sparkline + events)
 // ---------------------------------------------------------------------------
 var _healthHistory = [];
+function _healthStorageKey() {
+  return 'mcp-health-history-' + (_globalActiveCluster || 'local');
+}
 function recordHealthSnapshot(health) {
   var now = Date.now();
   _healthHistory.push({ t: now, v: health === 'healthy' ? 100 : health === 'warning' ? 60 : 20 });
-  // Keep 24h of data
   var cutoff = now - 24 * 60 * 60 * 1000;
   _healthHistory = _healthHistory.filter(function(h) { return h.t >= cutoff; });
-  try { localStorage.setItem('mcp-health-history', JSON.stringify(_healthHistory)); } catch {}
+  try { localStorage.setItem(_healthStorageKey(), JSON.stringify(_healthHistory)); } catch {}
 }
-(function() {
+function loadHealthHistory() {
   try {
-    var saved = JSON.parse(localStorage.getItem('mcp-health-history'));
+    var saved = JSON.parse(localStorage.getItem(_healthStorageKey()));
     if (Array.isArray(saved)) {
       var cutoff = Date.now() - 24 * 60 * 60 * 1000;
       _healthHistory = saved.filter(function(h) { return h.t >= cutoff; });
+    } else {
+      _healthHistory = [];
     }
-  } catch {}
-})();
+  } catch { _healthHistory = []; }
+}
+(function() { loadHealthHistory(); })();
 
 function renderTimeline() {
   var svg = document.getElementById('timeline-svg');
@@ -7848,6 +7866,7 @@ function handleLogin(e) {
 async function refreshAll() {
   if (!_authenticated) return;
   document.getElementById('last-updated').textContent = 'Refreshing...';
+  loadHealthHistory();
   var results = await Promise.allSettled([
     loadSummary(),
     loadAlerts(),
@@ -10647,7 +10666,7 @@ function populateGlobalClusterDropdown() {
       name: name,
       label: a.name || name,
       status: a.status || 'registered',
-      version: a.summary ? '' : '',
+      version: a.summary ? a.summary.version : '',
       nodes: a.summary ? a.summary.nodes : '',
       platform: a.platform || 'k8s',
     });
@@ -10661,7 +10680,8 @@ function populateGlobalClusterDropdown() {
                      item.status === 'unreachable' ? 'Unreachable' :
                      item.status === 'registered' ? 'Not verified' : '';
     var active = item.name === _globalActiveCluster ? ' active' : '';
-    var meta = [item.platform === 'openshift' ? 'OpenShift' : item.platform, item.version, item.nodes ? item.nodes + ' nodes' : '', statusText].filter(Boolean).join(' · ');
+    var platformLabel = (K8S_PLATFORMS[(item.platform || 'k8s').toLowerCase()] || K8S_PLATFORMS['k8s']).name;
+    var meta = [platformLabel, item.version, item.nodes ? item.nodes + ' nodes' : '', statusText].filter(Boolean).join(' · ');
     var checkSvg = active ? '<svg class="gcs-item-check" viewBox="0 0 16 16" width="14" height="14"><path d="M3 8l3 3 7-7" stroke="currentColor" stroke-width="2" fill="none"/></svg>' : '';
     return '<div class="gcs-item' + active + '" onclick="switchGlobalCluster(\'' + esc(item.name).replace(/'/g, "\\'") + '\')">' +
       '<span class="gcs-item-dot" style="background:' + dotColor + '"></span>' +
@@ -10700,7 +10720,16 @@ async function switchGlobalCluster(name) {
     try {
       var info = await apiFetch('/api/cluster-info?cluster=' + encodeURIComponent(name), 10000);
       _globalClusterInfo = info;
-      if (ver) ver.textContent = info.version && info.version !== 'unknown' ? 'OCP ' + info.version : '';
+      if (ver) {
+        var isInfoOCP = info.isOpenShift !== undefined ? info.isOpenShift : ((info.platform || '').toLowerCase() === 'openshift');
+        if (isInfoOCP) {
+          ver.textContent = info.version && info.version !== 'unknown' ? 'OCP ' + info.version : '';
+        } else {
+          var kVer = info.kubernetesVersion || info.version;
+          var pName = (K8S_PLATFORMS[(info.platform || 'k8s').toLowerCase()] || K8S_PLATFORMS['k8s']).name;
+          ver.textContent = kVer && kVer !== 'unknown' ? pName + ' v' + kVer : pName;
+        }
+      }
       updateClusterContextBanner();
     } catch(e) {
       _globalClusterInfo = {};
