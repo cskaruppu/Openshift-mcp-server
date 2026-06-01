@@ -13270,14 +13270,20 @@ export async function handleChatAPI(req, res) {
         }
       } else {
         try {
-          const [cvRes, nodesRes, opsRes] = await Promise.allSettled([
+          const [cvRes, nodesRes, opsRes, k8sVerRes] = await Promise.allSettled([
             ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
             ocpGet("/api/v1/nodes"),
             ocpGet("/apis/config.openshift.io/v1/clusteroperators"),
+            ocpGet("/version"),
           ]);
-          if (cvRes.status === "fulfilled") {
-            clusterVersion = cvRes.value.status?.desired?.version || "unknown";
+          const isOCP = cvRes.status === "fulfilled" && cvRes.value?.status?.desired?.version;
+          if (isOCP) {
+            clusterVersion = cvRes.value.status.desired.version;
             clusterChannel = cvRes.value.spec?.channel || "";
+            platformLabel = "OpenShift";
+          } else if (k8sVerRes.status === "fulfilled") {
+            clusterVersion = k8sVerRes.value?.gitVersion || "unknown";
+            platformLabel = "Kubernetes";
           }
           if (nodesRes.status === "fulfilled") {
             const items = nodesRes.value.items || [];
@@ -13286,7 +13292,7 @@ export async function handleChatAPI(req, res) {
               (n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True")
             ).length;
           }
-          if (opsRes.status === "fulfilled") {
+          if (isOCP && opsRes.status === "fulfilled") {
             const items = opsRes.value.items || [];
             operatorCount = items.length;
             degradedCount = items.filter(o =>
@@ -13302,6 +13308,10 @@ export async function handleChatAPI(req, res) {
         ? `You are connected to **${clusterLabel}** (${platformLabel} ${clusterVersion})${clusterChannel ? ` (${clusterChannel})` : ""}.`
         : `You are connected to **${platformLabel} ${clusterVersion}**${clusterChannel ? ` (${clusterChannel})` : ""}.`;
 
+      const isOCPGreeting = platformLabel === "OpenShift";
+      const opsRow = operatorCount > 0
+        ? `| Cluster Operators | ${operatorCount - degradedCount}/${operatorCount} Available${degradedCount > 0 ? ` (${degradedCount} degraded)` : ""} |`
+        : null;
       const reply = [
         `### Welcome to TCS Agentic AI`,
         ``,
@@ -13311,7 +13321,7 @@ export async function handleChatAPI(req, res) {
         `| --- | --- |`,
         `| Cluster Health | ${healthIcon} **${healthStatus}** |`,
         `| Nodes | ${readyNodes}/${nodeCount} Ready |`,
-        `| Cluster Operators | ${operatorCount - degradedCount}/${operatorCount} Available${degradedCount > 0 ? ` (${degradedCount} degraded)` : ""} |`,
+        ...(opsRow ? [opsRow] : []),
         ``,
         `I can help you manage, troubleshoot, and monitor your cluster. Here are some things you can try:`,
         ``,
@@ -13319,18 +13329,18 @@ export async function handleChatAPI(req, res) {
         `  - \`check cluster health\` — overall cluster status and issues`,
         `  - \`show pods with issues\` — pods in error states`,
         `  - \`list deployments\` — all deployments across namespaces`,
-        `  - \`who has access to cluster\` — RBAC and access audit`,
+        `  - \`show node metrics\` — CPU and memory utilization`,
         ``,
         `**Diagnostics:**`,
         `  - \`why is pod <name> failing?\` — deep diagnosis with root cause`,
         `  - \`show events in <namespace>\` — recent cluster events`,
-        `  - \`show crashloopbackoff pods\` — filter by issue type`,
+        `  - \`diagnostics\` — full health check across all components`,
         ``,
         `**Operations:**`,
         `  - \`/security\` — security & compliance audit`,
-        `  - \`/operators\` — operator lifecycle status`,
-        `  - \`/builds\` — build pipeline status`,
+        ...(isOCPGreeting ? [`  - \`/operators\` — operator lifecycle status`] : []),
         `  - \`/recommendations\` — optimization suggestions`,
+        `  - \`upgrade precheck\` — pre-flight readiness check`,
         ``,
         `Type \`help\` to see the full list of supported commands.`,
       ].join("\n");
