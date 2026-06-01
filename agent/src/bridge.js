@@ -10,6 +10,7 @@
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { executeTool, TOOLS } from "./tools.js";
+import { runReconcile } from "./rbac-reconciler.js";
 
 const SKIP_TLS = process.env.HUB_TLS_SKIP_VERIFY === "true";
 
@@ -20,6 +21,9 @@ const MAX_RECONNECT_MS = 60000;
 let _reconnectDelay = INITIAL_RECONNECT_MS;
 let _connected = false;
 let _currentReq = null;
+let _hubUrl = null;
+let _clusterName = null;
+let _platform = process.env.CLUSTER_PLATFORM || "k8s";
 
 function log(level, ...args) {
   const ts = new Date().toISOString();
@@ -197,7 +201,12 @@ function connectSSE(hubUrl, clusterName) {
         return;
       }
 
-      if (event.requestId && event.tool) {
+      if (event.type === "rbac_update") {
+        log("info", "Received RBAC update event from hub — reconciling...");
+        runReconcile(_hubUrl, _clusterName, _platform).catch((err) => {
+          log("error", `RBAC reconcile failed: ${err.message}`);
+        });
+      } else if (event.requestId && event.tool) {
         // Fire-and-forget — do not block the SSE stream
         handleToolRequest(hubUrl, clusterName, event).catch((err) => {
           log("error", `Unhandled error handling tool request: ${err.message}`);
@@ -256,6 +265,8 @@ export function startBridge(hubUrl, clusterName) {
     log("info", "No HUB_SERVER_URL configured — bridge disabled");
     return;
   }
+  _hubUrl = hubUrl;
+  _clusterName = clusterName;
   log("info", `Starting MCP tool bridge for cluster "${clusterName}"`);
   connectSSE(hubUrl, clusterName);
 }

@@ -118,6 +118,34 @@ export function hasActiveChannel(clusterName) {
 }
 
 /**
+ * Push an arbitrary event to a connected agent over the SSE channel.
+ */
+export function pushEventToAgent(clusterName, event) {
+  const ch = _channels.get(clusterName);
+  if (!ch) return false;
+  try {
+    ch.res.write(`data: ${JSON.stringify(event)}\n\n`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Push an event to ALL connected agents.
+ */
+export function broadcastEvent(event) {
+  let count = 0;
+  for (const [, ch] of _channels) {
+    try {
+      ch.res.write(`data: ${JSON.stringify(event)}\n\n`);
+      count++;
+    } catch { /* ignore dead channels */ }
+  }
+  return count;
+}
+
+/**
  * Get channel status for all connected agents.
  */
 export function getChannelStatus() {

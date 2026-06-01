@@ -114,7 +114,7 @@ import { initSafety, getSafetyMode } from "./services/safety.js";
 import { redactIfEnabled } from "./services/redaction.js";
 import { loadKubeconfig, registerMultiClusterTools } from "./services/multi-cluster.js";
 import { handleAgentRoutes as handleAgentRegistryRoutes, loadAgents } from "./agents/registry.js";
-import { handleAgentChannel, handleToolRegistration, handleToolResponse, invokeAgentTool, hasActiveChannel, getChannelStatus } from "./services/agent-bridge.js";
+import { handleAgentChannel, handleToolRegistration, handleToolResponse, invokeAgentTool, hasActiveChannel, getChannelStatus, pushEventToAgent, broadcastEvent } from "./services/agent-bridge.js";
 import { handleAgentMcpRoutes } from "./agents/mcp-router.js";
 import { loadConfig } from "./utils/config.js";
 import { validateCommand, getAccessLevel, isToolAllowed } from "./security/command-validator.js";
@@ -383,6 +383,59 @@ async function loadClustersFromDB() {
   } catch (err) {
     console.warn("[hub] Failed to load clusters from DB:", err.message);
   }
+}
+
+/**
+ * Build the desired ClusterRole rules for a given platform.
+ * This is the single source of truth for agent RBAC — the agent
+ * fetches this and patches its own ClusterRole to match.
+ */
+function buildDesiredRBACRules(platform) {
+  const rules = [
+    { apiGroups: [""], resources: ["pods", "pods/log", "nodes", "services", "events", "namespaces", "configmaps", "persistentvolumeclaims", "endpoints", "replicationcontrollers", "serviceaccounts", "resourcequotas", "limitranges"], verbs: ["get", "list", "watch"] },
+    { apiGroups: ["apps"], resources: ["deployments", "statefulsets", "daemonsets", "replicasets"], verbs: ["get", "list", "watch"] },
+    { apiGroups: ["batch"], resources: ["jobs", "cronjobs"], verbs: ["get", "list", "watch"] },
+    { apiGroups: ["networking.k8s.io"], resources: ["ingresses", "networkpolicies"], verbs: ["get", "list", "watch"] },
+    { apiGroups: ["metrics.k8s.io"], resources: ["pods", "nodes"], verbs: ["get", "list"] },
+    { apiGroups: ["storage.k8s.io"], resources: ["storageclasses", "volumeattachments"], verbs: ["get", "list", "watch"] },
+    { apiGroups: ["autoscaling"], resources: ["horizontalpodautoscalers"], verbs: ["get", "list", "watch"] },
+    { apiGroups: ["policy"], resources: ["poddisruptionbudgets"], verbs: ["get", "list", "watch"] },
+    // RBAC audit + self-update for the agent's own ClusterRole
+    { apiGroups: ["rbac.authorization.k8s.io"], resources: ["clusterroles", "clusterrolebindings", "roles", "rolebindings"], verbs: ["get", "list"] },
+    { apiGroups: ["rbac.authorization.k8s.io"], resources: ["clusterroles"], resourceNames: ["tcs-agentic-ai-role"], verbs: ["update", "patch"] },
+    // GitOps — ArgoCD
+    { apiGroups: ["argoproj.io"], resources: ["applications", "applicationsets"], verbs: ["get", "list"] },
+    // DR — Velero/OADP
+    { apiGroups: ["velero.io"], resources: ["backups", "schedules", "backupstoragelocations"], verbs: ["get", "list"] },
+    // Image Vulnerabilities — Trivy
+    { apiGroups: ["aquasecurity.github.io"], resources: ["vulnerabilityreports", "configauditreports"], verbs: ["get", "list"] },
+  ];
+
+  if (platform === "openshift") {
+    rules.push(
+      { apiGroups: ["route.openshift.io"], resources: ["routes"], verbs: ["get", "list", "watch"] },
+      { apiGroups: ["apps.openshift.io"], resources: ["deploymentconfigs"], verbs: ["get", "list", "watch"] },
+      { apiGroups: ["project.openshift.io"], resources: ["projects"], verbs: ["get", "list"] },
+      { apiGroups: ["config.openshift.io"], resources: ["clusterversions", "clusteroperators", "infrastructures"], verbs: ["get", "list"] },
+      { apiGroups: ["machine.openshift.io"], resources: ["machines", "machinesets"], verbs: ["get", "list"] },
+      { apiGroups: ["security.openshift.io"], resources: ["securitycontextconstraints"], verbs: ["get", "list"] },
+      { apiGroups: ["secscan.quay.redhat.com"], resources: ["imagemanifestvulns"], verbs: ["get", "list"] },
+    );
+  }
+  if (platform === "rancher") {
+    rules.push(
+      { apiGroups: ["management.cattle.io"], resources: ["clusters", "nodes"], verbs: ["get", "list", "watch"] },
+      { apiGroups: ["fleet.cattle.io"], resources: ["bundles", "gitrepos"], verbs: ["get", "list"] },
+    );
+  }
+  if (platform === "eks") {
+    rules.push({ apiGroups: ["eks.amazonaws.com"], resources: ["*"], verbs: ["get", "list"] });
+  }
+  if (platform === "gke") {
+    rules.push({ apiGroups: ["cloud.google.com"], resources: ["*"], verbs: ["get", "list"] });
+  }
+
+  return rules;
 }
 
 function sendJson(res, status, body) {
@@ -2336,7 +2389,18 @@ async function startSSE() {
       _connectedAgents.set(entry.clusterName, entry);
       saveClustersToDB().catch(() => {});
       console.error(`[agent] Registered: ${entry.clusterName} (${platform}) agent v${agentVersion}${existingKey ? " (merged with " + existingKey + ")" : ""}`);
-      return sendJson(res, 200, { ok: true, message: `Agent "${entry.clusterName}" registered` });
+
+      // Auto-push RBAC update if agent version is outdated
+      const HUB_AGENT_VERSION = "1.1.0";
+      const needsRbacUpdate = !agentVersion || agentVersion < HUB_AGENT_VERSION;
+      if (needsRbacUpdate) {
+        setTimeout(() => {
+          pushEventToAgent(entry.clusterName, { type: "rbac_update", version: HUB_AGENT_VERSION, triggeredAt: new Date().toISOString() });
+          console.error(`[agent] Pushed RBAC update to ${entry.clusterName} (agent v${agentVersion} < hub v${HUB_AGENT_VERSION})`);
+        }, 3000);
+      }
+
+      return sendJson(res, 200, { ok: true, message: `Agent "${entry.clusterName}" registered`, hubVersion: HUB_AGENT_VERSION, rbacUpdatePending: needsRbacUpdate });
     }
 
     if (url.pathname === "/api/agent/report" && req.method === "POST") {
@@ -2446,6 +2510,25 @@ async function startSSE() {
     // Get bridge channel status
     if (url.pathname === "/api/agent/channels" && req.method === "GET") {
       return sendJson(res, 200, { channels: getChannelStatus() });
+    }
+
+    // RBAC manifest — returns desired ClusterRole rules for a platform
+    if (url.pathname === "/api/agent/rbac-manifest" && req.method === "GET") {
+      const platform = url.searchParams.get("platform") || "k8s";
+      return sendJson(res, 200, { version: "1.1.0", rules: buildDesiredRBACRules(platform) });
+    }
+
+    // Push RBAC update to a specific agent or all agents
+    if (url.pathname === "/api/agent/push-rbac-update" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const target = body.clusterName;
+      const event = { type: "rbac_update", version: "1.1.0", triggeredAt: new Date().toISOString() };
+      if (target) {
+        const sent = pushEventToAgent(target, event);
+        return sendJson(res, 200, { ok: sent, target, message: sent ? "RBAC update pushed" : "Agent not connected" });
+      }
+      const count = broadcastEvent(event);
+      return sendJson(res, 200, { ok: true, agentsNotified: count });
     }
 
     // LLM Settings API

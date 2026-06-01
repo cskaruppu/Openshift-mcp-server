@@ -15249,6 +15249,14 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('      - rolebindings');
   lines.push('    verbs: ["get", "list"]');
   lines.push('');
+  lines.push('  # Self-update — agent patches its own ClusterRole on hub RBAC push');
+  lines.push('  - apiGroups: ["rbac.authorization.k8s.io"]');
+  lines.push('    resources:');
+  lines.push('      - clusterroles');
+  lines.push('    resourceNames:');
+  lines.push('      - tcs-agentic-ai-role');
+  lines.push('    verbs: ["update", "patch"]');
+  lines.push('');
   lines.push('  # GitOps — ArgoCD Applications (optional; ignored if not installed)');
   lines.push('  - apiGroups: ["argoproj.io"]');
   lines.push('    resources:');
@@ -15422,7 +15430,7 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('    app: tcs-agentic-ai');
   lines.push('    app.kubernetes.io/name: tcs-agentic-ai');
   lines.push('    app.kubernetes.io/part-of: tcs-agentic-ai');
-  lines.push('    app.kubernetes.io/version: "1.0.0"');
+  lines.push('    app.kubernetes.io/version: "1.1.0"');
   lines.push('spec:');
   lines.push('  replicas: 1');
   lines.push('  revisionHistoryLimit: 3');
@@ -16826,6 +16834,7 @@ function buildKebabMenu(clusterId, clusterName, platform, isBuiltin, source) {
       '<button class="kebab-item" onclick="hubCheckStatus(\'' + esc(clusterName) + '\',\'' + esc(source) + '\');closeAllKebabs()">&#x1F4CA; Status Check</button>' +
       '<button class="kebab-item" onclick="hubEditCluster(\'' + esc(clusterName) + '\',\'' + esc(platform) + '\',\'' + esc(source) + '\');closeAllKebabs()">&#x270F; Edit Cluster</button>' +
       '<button class="kebab-item" onclick="hubReconnectCluster(\'' + esc(clusterName) + '\',\'' + esc(source) + '\');closeAllKebabs()">&#x21BB; Reconnect</button>' +
+      (source === 'agent' ? '<button class="kebab-item" onclick="hubPushRBACUpdate(\'' + esc(clusterName) + '\');closeAllKebabs()">&#x1F512; Sync RBAC</button>' : '') +
       (isBuiltin ? '' : '<div class="kebab-sep"></div><button class="kebab-item danger" onclick="hubDeleteCluster(\'' + esc(clusterName) + '\',\'' + esc(source) + '\');closeAllKebabs()">&#x1F5D1; Delete Cluster</button>') +
     '</div></div>';
 }
@@ -16843,6 +16852,36 @@ function closeAllKebabs() {
 }
 
 document.addEventListener('click', closeAllKebabs);
+
+async function hubPushRBACUpdate(clusterName) {
+  try {
+    var resp = await fetch(MCP_API + '/agent/push-rbac-update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clusterName: clusterName }),
+    }).then(function(r) { return r.json(); });
+    if (resp.ok) {
+      showNotification('RBAC update pushed to ' + clusterName + '. Agent will reconcile automatically.', 'success');
+    } else {
+      showNotification('Agent "' + clusterName + '" is not connected via SSE bridge. Restart the agent to pick up new RBAC.', 'warning');
+    }
+  } catch (e) {
+    showNotification('Failed to push RBAC update: ' + e.message, 'error');
+  }
+}
+
+async function hubPushRBACUpdateAll() {
+  try {
+    var resp = await fetch(MCP_API + '/agent/push-rbac-update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    }).then(function(r) { return r.json(); });
+    showNotification('RBAC update broadcast to ' + (resp.agentsNotified || 0) + ' agent(s).', 'success');
+  } catch (e) {
+    showNotification('Failed to broadcast RBAC update: ' + e.message, 'error');
+  }
+}
 
 async function hubCheckStatus(clusterName, source) {
   var statusDialog = document.createElement('div');
