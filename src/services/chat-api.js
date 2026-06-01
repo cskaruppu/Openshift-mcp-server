@@ -12996,40 +12996,66 @@ export async function handleChatAPI(req, res) {
       let operatorCount = 0;
       let degradedCount = 0;
       let healthStatus = "Unknown";
+      let clusterLabel = "";
+      let platformLabel = "OpenShift";
 
-      try {
-        const [cvRes, nodesRes, opsRes] = await Promise.allSettled([
-          ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
-          ocpGet("/api/v1/nodes"),
-          ocpGet("/apis/config.openshift.io/v1/clusteroperators"),
-        ]);
-        if (cvRes.status === "fulfilled") {
-          clusterVersion = cvRes.value.status?.desired?.version || "unknown";
-          clusterChannel = cvRes.value.spec?.channel || "";
-        }
-        if (nodesRes.status === "fulfilled") {
-          const items = nodesRes.value.items || [];
-          nodeCount = items.length;
-          readyNodes = items.filter(n =>
-            (n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True")
-          ).length;
-        }
-        if (opsRes.status === "fulfilled") {
-          const items = opsRes.value.items || [];
-          operatorCount = items.length;
-          degradedCount = items.filter(o =>
-            (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True")
-          ).length;
-        }
+      if (_remoteClusterContext) {
+        const rs = _remoteClusterContext.summary || {};
+        clusterVersion = rs.cluster?.version || "unknown";
+        clusterChannel = rs.cluster?.channel || "";
+        nodeCount = rs.nodes?.total || 0;
+        readyNodes = rs.nodes?.ready || 0;
+        operatorCount = rs.operators?.total || 0;
+        degradedCount = rs.operators?.degraded || 0;
         healthStatus = degradedCount > 0 ? "Degraded" : readyNodes < nodeCount ? "Warning" : "Healthy";
-      } catch { /* best effort */ }
+        clusterLabel = _remoteClusterContext.clusterName || "";
+        if (rs.platform) {
+          const p = rs.platform.toLowerCase();
+          if (p === "eks") platformLabel = "EKS";
+          else if (p === "aks") platformLabel = "AKS";
+          else if (p === "gke") platformLabel = "GKE";
+          else if (p === "rancher") platformLabel = "Rancher";
+          else if (p === "openshift") platformLabel = "OpenShift";
+          else platformLabel = rs.platform;
+        }
+      } else {
+        try {
+          const [cvRes, nodesRes, opsRes] = await Promise.allSettled([
+            ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
+            ocpGet("/api/v1/nodes"),
+            ocpGet("/apis/config.openshift.io/v1/clusteroperators"),
+          ]);
+          if (cvRes.status === "fulfilled") {
+            clusterVersion = cvRes.value.status?.desired?.version || "unknown";
+            clusterChannel = cvRes.value.spec?.channel || "";
+          }
+          if (nodesRes.status === "fulfilled") {
+            const items = nodesRes.value.items || [];
+            nodeCount = items.length;
+            readyNodes = items.filter(n =>
+              (n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True")
+            ).length;
+          }
+          if (opsRes.status === "fulfilled") {
+            const items = opsRes.value.items || [];
+            operatorCount = items.length;
+            degradedCount = items.filter(o =>
+              (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True")
+            ).length;
+          }
+          healthStatus = degradedCount > 0 ? "Degraded" : readyNodes < nodeCount ? "Warning" : "Healthy";
+        } catch { /* best effort */ }
+      }
 
       const healthIcon = healthStatus === "Healthy" ? "[OK]" : healthStatus === "Degraded" ? "[CRITICAL]" : "[WARNING]";
+      const connectedLine = clusterLabel
+        ? `You are connected to **${clusterLabel}** (${platformLabel} ${clusterVersion})${clusterChannel ? ` (${clusterChannel})` : ""}.`
+        : `You are connected to **${platformLabel} ${clusterVersion}**${clusterChannel ? ` (${clusterChannel})` : ""}.`;
 
       const reply = [
         `### Welcome to TCS Agentic AI`,
         ``,
-        `You are connected to **OpenShift ${clusterVersion}**${clusterChannel ? ` (${clusterChannel})` : ""}.`,
+        connectedLine,
         ``,
         `| Property | Status |`,
         `| --- | --- |`,

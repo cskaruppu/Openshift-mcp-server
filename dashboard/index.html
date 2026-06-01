@@ -3059,7 +3059,7 @@ tr:hover td{background:#ffffff06}
         <div class="chat-welcome" id="chat-welcome">
           <div style="width:52px;height:52px;border-radius:16px;background:linear-gradient(135deg,#0052cc,#1a8cff);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:#fff">TA</div>
           <h2>TCS Agentic AI</h2>
-          <p>Ask anything about your OpenShift cluster in plain English. I have live access to your cluster data.</p>
+          <p id="chat-welcome-desc">Ask anything about your OpenShift cluster in plain English. I have live access to your cluster data.</p>
 
           <!-- Dynamic cluster alerts bar -->
           <div class="welcome-live-bar" id="welcome-live-bar"></div>
@@ -10741,6 +10741,21 @@ function onClusterSwitch() {
     switchGlobalCluster(sel.value);
   }
   updateClusterDot();
+  updateChatWelcomeText();
+}
+
+function updateChatWelcomeText() {
+  var desc = document.getElementById('chat-welcome-desc');
+  if (!desc) return;
+  if (!_globalActiveCluster || _globalActiveCluster === 'local') {
+    desc.textContent = 'Ask anything about your OpenShift cluster in plain English. I have live access to your cluster data.';
+  } else {
+    var agent = (_remoteAgents || {})[_globalActiveCluster] || {};
+    var ver = agent.summary?.version || '';
+    var plat = (agent.platform || 'Kubernetes').charAt(0).toUpperCase() + (agent.platform || 'kubernetes').slice(1);
+    var label = _globalActiveCluster + (ver ? ' (' + plat + ' ' + ver + ')' : '');
+    desc.textContent = 'Connected to remote cluster ' + label + '. All queries will target this cluster.';
+  }
 }
 
 function updateClusterDot() {
