@@ -2006,6 +2006,67 @@ tr:hover td{background:#ffffff06}
 .ccb-back:hover { border-color:var(--accent2); color:var(--text); background:color-mix(in srgb, var(--accent2) 8%, transparent); }
 .light-theme .gcs-dropdown { box-shadow:0 8px 32px rgba(0,0,0,0.12); }
 
+/* Chat Cluster Selector (CCS) — rich dropdown for AI Chat context bar */
+.ccs-wrapper { position:relative; display:inline-flex; }
+.ccs-trigger {
+  display:flex; align-items:center; gap:7px; background:var(--card); border:1px solid var(--border);
+  border-radius:10px; padding:6px 14px; color:var(--text); font-size:12px;
+  cursor:pointer; transition:all 0.2s; font-family:inherit; white-space:nowrap;
+}
+.ccs-trigger:hover { border-color:color-mix(in srgb, var(--accent2) 50%, var(--border)); background:var(--hover); }
+.ccs-trigger.open { border-color:var(--accent2); background:var(--card); box-shadow:0 0 0 2px color-mix(in srgb, var(--accent2) 15%, transparent); }
+.ccs-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+.ccs-icon { font-size:14px; line-height:1; }
+.ccs-label { font-weight:600; max-width:180px; overflow:hidden; text-overflow:ellipsis; }
+.ccs-ver { color:var(--text2); font-size:10px; font-weight:400; }
+.ccs-caret { color:var(--text2); transition:transform 0.2s; flex-shrink:0; }
+.ccs-trigger.open .ccs-caret { transform:rotate(180deg); }
+.ccs-dropdown {
+  display:none; position:absolute; top:calc(100% + 6px); left:0;
+  background:var(--card); border:1px solid var(--border); border-radius:12px;
+  min-width:320px; max-width:380px; max-height:400px; overflow:hidden;
+  box-shadow:0 12px 40px rgba(0,0,0,0.45); z-index:9999;
+}
+.ccs-dropdown.open { display:flex; flex-direction:column; animation:gcs-fadeIn 0.15s ease; }
+.ccs-dd-header { padding:10px 16px 8px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px; color:var(--text2); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+.ccs-dd-header .ccs-cluster-count { background:color-mix(in srgb, var(--accent2) 15%, transparent); color:var(--accent2); font-size:10px; padding:1px 7px; border-radius:8px; font-weight:600; }
+.ccs-search-wrap { padding:8px 12px; border-bottom:1px solid var(--border); }
+.ccs-search {
+  width:100%; padding:7px 10px; background:var(--bg); border:1px solid var(--border);
+  border-radius:6px; color:var(--text); font-size:12px; font-family:inherit; outline:none;
+  box-sizing:border-box; transition:border-color 0.2s;
+}
+.ccs-search:focus { border-color:var(--accent2); }
+.ccs-search::placeholder { color:var(--text2); opacity:0.6; }
+.ccs-section-label { padding:8px 16px 4px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:var(--text2); opacity:0.7; }
+.ccs-items { overflow-y:auto; max-height:300px; padding:4px 0; }
+.ccs-item {
+  display:flex; align-items:center; gap:10px; padding:9px 16px;
+  cursor:pointer; transition:background 0.15s; font-size:13px; position:relative;
+}
+.ccs-item:hover { background:var(--hover); }
+.ccs-item.active { background:color-mix(in srgb, var(--accent2) 10%, transparent); }
+.ccs-item.active::before {
+  content:''; position:absolute; left:0; top:6px; bottom:6px; width:3px;
+  background:var(--accent2); border-radius:0 3px 3px 0;
+}
+.ccs-item-icon { font-size:16px; width:22px; text-align:center; flex-shrink:0; }
+.ccs-item-info { flex:1; min-width:0; }
+.ccs-item-name { font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; gap:6px; font-size:12px; }
+.ccs-item-badge { font-size:9px; font-weight:600; padding:1px 6px; border-radius:3px; }
+.ccs-item-badge.live { background:color-mix(in srgb, var(--ok) 15%, transparent); color:var(--ok); }
+.ccs-item-badge.warn { background:color-mix(in srgb, var(--warn) 15%, transparent); color:var(--warn); }
+.ccs-item-badge.error { background:color-mix(in srgb, var(--crit) 15%, transparent); color:var(--crit); }
+.ccs-item-meta { font-size:10px; color:var(--text2); margin-top:2px; display:flex; align-items:center; gap:0; flex-wrap:wrap; }
+.ccs-meta-sep { display:inline-block; width:3px; height:3px; border-radius:50%; background:var(--text2); opacity:0.4; margin:0 6px; flex-shrink:0; }
+.ccs-item-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+.ccs-item-check { color:var(--accent2); flex-shrink:0; }
+.ccs-cap-row { display:flex; gap:3px; margin-top:3px; }
+.ccs-cap { font-size:8px; padding:1px 5px; border-radius:3px; background:color-mix(in srgb, var(--accent2) 8%, transparent); color:var(--text2); font-weight:500; text-transform:uppercase; letter-spacing:0.3px; }
+.light-theme .ccs-dropdown { box-shadow:0 8px 32px rgba(0,0,0,0.12); }
+.light-theme .ccs-trigger { background:#fff; border-color:#e0e0e6; }
+.light-theme .ccs-trigger:hover { border-color:#2563eb80; background:#f6f8fa; }
+
 /* Login screen */
 .login-overlay{position:fixed;inset:0;z-index:99999;background:var(--bg);display:flex;align-items:center;justify-content:center;transition:opacity .3s}
 .login-overlay.hidden{opacity:0;pointer-events:none}
@@ -3034,11 +3095,21 @@ tr:hover td{background:#ffffff06}
   <div class="chat-main-area">
     <!-- Context bar — cluster & LLM selection -->
     <div class="chat-context-bar">
-      <div class="ctx-group">
-        <span class="ctx-dot" id="ctx-cluster-dot" style="background:#22c55e"></span>
-        <select class="ctx-select" id="ctx-cluster-select" onchange="onClusterSwitch()">
-          <option value="local">Current Cluster</option>
-        </select>
+      <!-- Rich cluster selector (replaces plain <select>) -->
+      <div class="ccs-wrapper" id="ccs-wrapper">
+        <button class="ccs-trigger" id="ccs-trigger" onclick="toggleChatClusterDropdown(event)">
+          <span class="ccs-dot" id="ccs-dot" style="background:var(--ok)"></span>
+          <span class="ccs-icon" id="ccs-icon"></span>
+          <span class="ccs-label" id="ccs-label">Local Cluster</span>
+          <span class="ccs-ver" id="ccs-ver"></span>
+          <svg class="ccs-caret" viewBox="0 0 10 6" width="10" height="6"><path d="M0 0l5 6 5-6z" fill="currentColor"/></svg>
+        </button>
+        <div class="ccs-dropdown" id="ccs-dropdown">
+          <div class="ccs-dd-header">Select Cluster</div>
+          <div class="ccs-dd-inner" id="ccs-dd-inner"></div>
+        </div>
+        <!-- Hidden select to keep existing withCluster/onClusterSwitch APIs working -->
+        <select id="ctx-cluster-select" style="display:none"><option value="local">Current Cluster</option></select>
       </div>
       <div class="ctx-group">
         <select class="ctx-select" id="full-llm-provider" onchange="onFullProviderChange()">
@@ -10703,6 +10774,12 @@ document.addEventListener('click', function(e) {
     gcsDropdown.classList.remove('open');
     if (gcsTrigger) gcsTrigger.classList.remove('open');
   }
+  var ccsDropdown = document.getElementById('ccs-dropdown');
+  var ccsTrigger = document.getElementById('ccs-trigger');
+  if (ccsDropdown && ccsDropdown.classList.contains('open') && !e.target.closest('.ccs-wrapper')) {
+    ccsDropdown.classList.remove('open');
+    if (ccsTrigger) ccsTrigger.classList.remove('open');
+  }
 });
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') {
@@ -10716,31 +10793,209 @@ document.addEventListener('keydown', function(e) {
 });
 
 function populateChatClusterDropdown() {
-  const sel = document.getElementById('ctx-cluster-select');
-  if (!sel) return;
-  const current = sel.value;
-  sel.innerHTML = '<option value="local">Current Cluster</option>';
-  var names = new Set();
-  (_hubServers || []).forEach(function(s) { if (s.name) names.add(s.name); });
-  Object.keys(_remoteAgents || {}).forEach(function(n) { names.add(n); });
-  names.forEach(function(name) {
-    if (name === 'local') return;
-    var opt = document.createElement('option');
-    opt.value = name;
-    opt.textContent = name;
-    sel.appendChild(opt);
-  });
-  sel.value = current || 'local';
-  if (!sel.value) sel.value = 'local';
-  updateClusterDot();
+  var sel = document.getElementById('ctx-cluster-select');
+  if (sel) {
+    var current = sel.value;
+    sel.innerHTML = '<option value="local">Current Cluster</option>';
+    var names = new Set();
+    (_hubServers || []).forEach(function(s) { if (s.name) names.add(s.name); });
+    Object.keys(_remoteAgents || {}).forEach(function(n) { names.add(n); });
+    names.forEach(function(name) {
+      if (name === 'local') return;
+      var opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      sel.appendChild(opt);
+    });
+    sel.value = current || 'local';
+    if (!sel.value) sel.value = 'local';
+  }
+  updateCcsTrigger();
+}
+
+function toggleChatClusterDropdown(e) {
+  e.stopPropagation();
+  var trigger = document.getElementById('ccs-trigger');
+  var dropdown = document.getElementById('ccs-dropdown');
+  if (!trigger || !dropdown) return;
+  var isOpen = dropdown.classList.contains('open');
+  dropdown.classList.toggle('open', !isOpen);
+  trigger.classList.toggle('open', !isOpen);
+  if (!isOpen) renderChatClusterItems();
+}
+
+function _ccsClusterItems() {
+  var lci = (_localClusterInfo && _localClusterInfo.platform) ? _localClusterInfo : _globalClusterInfo;
+  var localPlatform = (lci && lci.platform) ? lci.platform : 'openshift';
+  var localRawVer = (lci && lci.version) ? lci.version : '';
+  var localNodeCount = (lci && lci.nodeCount) ? (lci.readyNodes || 0) + '/' + lci.nodeCount : '';
+  var localHealth = (lci && lci.health) ? lci.health : '';
+  var items = [{ name: 'local', label: 'Local Cluster (Hub)', status: 'live', version: localRawVer, nodes: localNodeCount, platform: localPlatform, health: localHealth, isLocal: true }];
+  for (var name in (_remoteAgents || {})) {
+    var a = _remoteAgents[name];
+    var rHealth = (a.summary && a.summary.health) ? a.summary.health : '';
+    items.push({
+      name: name, label: a.name || name, status: a.status || 'registered',
+      version: a.summary ? a.summary.version : '', nodes: a.summary ? a.summary.nodes : '',
+      platform: a.platform || 'k8s', health: rHealth,
+      pods: a.summary ? a.summary.pods : 0, issues: a.summary ? a.summary.issues : 0,
+      lastReport: a.lastReportTime || null, bridgeConnected: a.bridgeConnected || false,
+    });
+  }
+  return items;
+}
+
+function _ccsHealthDot(item) {
+  var isConnected = item.status === 'live' || item.status === 'connected';
+  if (item.health) {
+    var h = item.health.toLowerCase();
+    if (h === 'healthy') return 'var(--ok)';
+    if (h === 'warning' || h === 'degraded') return 'var(--warn)';
+    if (h === 'critical') return 'var(--crit)';
+    return isConnected ? 'var(--ok)' : 'var(--warn)';
+  }
+  if (isConnected) return 'var(--ok)';
+  if (item.status === 'auth-error' || item.status === 'unreachable' || item.status === 'error') return 'var(--crit)';
+  return 'var(--warn)';
+}
+
+function _ccsStatusBadge(item) {
+  var isConnected = item.status === 'live' || item.status === 'connected';
+  if (isConnected) {
+    if (item.health) {
+      var h = item.health.toLowerCase();
+      if (h === 'healthy') return '<span class="ccs-item-badge live">Healthy</span>';
+      if (h === 'degraded') return '<span class="ccs-item-badge warn">Degraded</span>';
+      if (h === 'warning') return '<span class="ccs-item-badge warn">Warning</span>';
+    }
+    return '';
+  }
+  if (item.status === 'auth-error') return '<span class="ccs-item-badge error">Auth Error</span>';
+  if (item.status === 'unreachable') return '<span class="ccs-item-badge error">Unreachable</span>';
+  if (item.status === 'registered') return '<span class="ccs-item-badge warn">Pending</span>';
+  return '';
+}
+
+function _ccsFreshness(item) {
+  if (!item.lastReport) return '';
+  var age = (Date.now() - new Date(item.lastReport).getTime()) / 1000;
+  if (age < 60) return 'just now';
+  if (age < 3600) return Math.floor(age / 60) + 'm ago';
+  if (age < 86400) return Math.floor(age / 3600) + 'h ago';
+  return Math.floor(age / 86400) + 'd ago';
+}
+
+function renderChatClusterItems() {
+  var inner = document.getElementById('ccs-dd-inner');
+  if (!inner) return;
+  var items = _ccsClusterItems();
+  var localItems = items.filter(function(i) { return i.isLocal; });
+  var remoteItems = items.filter(function(i) { return !i.isLocal; });
+  var totalCount = items.length;
+  var hdr = inner.parentElement.querySelector('.ccs-dd-header');
+  if (hdr) hdr.innerHTML = 'Select Cluster <span class="ccs-cluster-count">' + totalCount + '</span>';
+  var searchHtml = totalCount > 3 ? '<div class="ccs-search-wrap"><input class="ccs-search" id="ccs-search" type="text" placeholder="Search clusters..." autocomplete="off" spellcheck="false"></div>' : '';
+  var html = searchHtml;
+  html += '<div class="ccs-items" id="ccs-items">';
+  html += '<div class="ccs-section-label">Hub Cluster</div>';
+  html += localItems.map(function(item) { return _ccsRenderItem(item); }).join('');
+  if (remoteItems.length > 0) {
+    html += '<div class="ccs-section-label">Remote Clusters</div>';
+    html += remoteItems.map(function(item) { return _ccsRenderItem(item); }).join('');
+  }
+  html += '</div>';
+  inner.innerHTML = html;
+  var searchInput = document.getElementById('ccs-search');
+  if (searchInput) {
+    searchInput.focus();
+    searchInput.addEventListener('input', function() {
+      var q = this.value.toLowerCase();
+      document.querySelectorAll('#ccs-items .ccs-item').forEach(function(el) {
+        el.style.display = (el.getAttribute('data-name') || '').toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+      });
+    });
+  }
+}
+
+function _ccsRenderItem(item) {
+  var pInfo = K8S_PLATFORMS[(item.platform || 'k8s').toLowerCase()] || K8S_PLATFORMS['k8s'];
+  var active = item.name === _globalActiveCluster ? ' active' : '';
+  var dotColor = _ccsHealthDot(item);
+  var badge = _ccsStatusBadge(item);
+  var platformLabel = pInfo.name;
+  var versionStr = item.version ? 'v' + item.version : '';
+  var nodeStr = item.nodes ? item.nodes + ' nodes' : '';
+  var freshStr = _ccsFreshness(item);
+  var checkSvg = active ? '<svg class="ccs-item-check" viewBox="0 0 16 16" width="14" height="14"><path d="M3 8l3 3 7-7" stroke="currentColor" stroke-width="2" fill="none"/></svg>' : '';
+  var meta = '<span style="font-weight:500">' + platformLabel + '</span>';
+  if (versionStr) meta += '<span class="ccs-meta-sep"></span><span>' + esc(versionStr) + '</span>';
+  if (nodeStr) meta += '<span class="ccs-meta-sep"></span><span>' + esc(nodeStr) + '</span>';
+  if (freshStr && !item.isLocal) meta += '<span class="ccs-meta-sep"></span><span>' + esc(freshStr) + '</span>';
+  var capsHtml = '';
+  if (!item.isLocal) {
+    var caps = [];
+    var isConnected = item.status === 'live' || item.status === 'connected';
+    if (isConnected) caps.push('Status');
+    if (isConnected) caps.push('Nodes');
+    if (isConnected) caps.push('Pods');
+    if (isConnected && (item.platform || '').toLowerCase() === 'openshift') caps.push('Operators');
+    if (isConnected) caps.push('Events');
+    if (isConnected) caps.push('Metrics');
+    if (caps.length > 0) capsHtml = '<div class="ccs-cap-row">' + caps.map(function(c) { return '<span class="ccs-cap">' + c + '</span>'; }).join('') + '</div>';
+  }
+  return '<div class="ccs-item' + active + '" data-name="' + esc(item.label) + '" onclick="selectChatCluster(\'' + esc(item.name).replace(/'/g, "\\'") + '\')">' +
+    '<span class="ccs-item-icon" style="color:' + pInfo.color + '">' + pInfo.icon + '</span>' +
+    '<div class="ccs-item-info">' +
+      '<div class="ccs-item-name">' + esc(item.label) + badge + '</div>' +
+      '<div class="ccs-item-meta">' + meta + '</div>' +
+      capsHtml +
+    '</div>' +
+    '<span class="ccs-item-dot" style="background:' + dotColor + '" title="' + (item.health || item.status) + '"></span>' +
+    checkSvg + '</div>';
+}
+
+function selectChatCluster(name) {
+  var dropdown = document.getElementById('ccs-dropdown');
+  var trigger = document.getElementById('ccs-trigger');
+  if (dropdown) dropdown.classList.remove('open');
+  if (trigger) trigger.classList.remove('open');
+  var sel = document.getElementById('ctx-cluster-select');
+  if (sel) sel.value = name;
+  if (name !== _globalActiveCluster) {
+    switchGlobalCluster(name);
+  }
+  updateCcsTrigger();
+  updateChatWelcomeText();
+}
+
+function updateCcsTrigger() {
+  var dot = document.getElementById('ccs-dot');
+  var icon = document.getElementById('ccs-icon');
+  var label = document.getElementById('ccs-label');
+  var ver = document.getElementById('ccs-ver');
+  if (!label) return;
+  var val = _globalActiveCluster || 'local';
+  if (val === 'local') {
+    var lci = (_localClusterInfo && _localClusterInfo.platform) ? _localClusterInfo : _globalClusterInfo;
+    var pKey = (lci && lci.platform) ? lci.platform : 'openshift';
+    var pInfo = K8S_PLATFORMS[pKey.toLowerCase()] || K8S_PLATFORMS['k8s'];
+    if (dot) dot.style.background = 'var(--ok)';
+    if (icon) { icon.textContent = pInfo.icon; icon.style.color = pInfo.color; }
+    label.textContent = 'Local Cluster';
+    if (ver) ver.textContent = (lci && lci.version) ? 'v' + lci.version : '';
+  } else {
+    var agent = (_remoteAgents || {})[val] || {};
+    var rp = K8S_PLATFORMS[(agent.platform || 'k8s').toLowerCase()] || K8S_PLATFORMS['k8s'];
+    var dotColor = _ccsHealthDot(agent.summary ? { status: agent.status, health: agent.summary.health } : { status: agent.status || 'registered' });
+    if (dot) dot.style.background = dotColor;
+    if (icon) { icon.textContent = rp.icon; icon.style.color = rp.color; }
+    label.textContent = val;
+    if (ver) ver.textContent = agent.summary ? 'v' + agent.summary.version : '';
+  }
 }
 
 function onClusterSwitch() {
-  var sel = document.getElementById('ctx-cluster-select');
-  if (sel && sel.value !== _globalActiveCluster) {
-    switchGlobalCluster(sel.value);
-  }
-  updateClusterDot();
+  updateCcsTrigger();
   updateChatWelcomeText();
 }
 
@@ -10748,29 +11003,20 @@ function updateChatWelcomeText() {
   var desc = document.getElementById('chat-welcome-desc');
   if (!desc) return;
   if (!_globalActiveCluster || _globalActiveCluster === 'local') {
-    desc.textContent = 'Ask anything about your OpenShift cluster in plain English. I have live access to your cluster data.';
+    var lci = (_localClusterInfo && _localClusterInfo.platform) ? _localClusterInfo : _globalClusterInfo;
+    var pn = (K8S_PLATFORMS[(lci && lci.platform || 'openshift').toLowerCase()] || K8S_PLATFORMS['openshift']).name;
+    desc.textContent = 'Ask anything about your ' + pn + ' cluster in plain English. I have live access to your cluster data.';
   } else {
     var agent = (_remoteAgents || {})[_globalActiveCluster] || {};
-    var ver = agent.summary?.version || '';
-    var plat = (agent.platform || 'Kubernetes').charAt(0).toUpperCase() + (agent.platform || 'kubernetes').slice(1);
+    var ver = agent.summary ? agent.summary.version : '';
+    var plat = (K8S_PLATFORMS[(agent.platform || 'k8s').toLowerCase()] || K8S_PLATFORMS['k8s']).name;
     var label = _globalActiveCluster + (ver ? ' (' + plat + ' ' + ver + ')' : '');
     desc.textContent = 'Connected to remote cluster ' + label + '. All queries will target this cluster.';
   }
 }
 
 function updateClusterDot() {
-  var dot = document.getElementById('ctx-cluster-dot');
-  var sel = document.getElementById('ctx-cluster-select');
-  if (!dot || !sel) return;
-  var val = sel.value;
-  if (val === 'local') {
-    dot.style.background = 'var(--ok)';
-  } else {
-    var agent = (_remoteAgents || {})[val];
-    var srv = (_hubServers || []).find(function(s) { return s.name === val; });
-    var info = agent || srv || {};
-    dot.style.background = (info.status === 'connected' || info.status === 'live') ? 'var(--ok)' : 'var(--accent2)';
-  }
+  updateCcsTrigger();
 }
 
 // -------------------------------------------------------------------------
@@ -10905,7 +11151,7 @@ async function switchGlobalCluster(name) {
   updateGlobalClusterDot();
 
   var chatSel = document.getElementById('ctx-cluster-select');
-  if (chatSel) { chatSel.value = name; updateClusterDot(); }
+  if (chatSel) { chatSel.value = name; updateCcsTrigger(); updateChatWelcomeText(); }
 
   if (name !== 'local') {
     try {

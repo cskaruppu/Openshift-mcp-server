@@ -6061,6 +6061,21 @@ function buildContextFromAgentCache(cache, userMessage) {
     reason: a.name, message: a.summary, namespace: a.namespace,
     resource: a.resource, count: a.count,
   }));
+  const nodeMetrics = getAgentCachedResponse(cache.clusterName, "/api/node-metrics", { skipFreshnessCheck: true }) || [];
+  if (nodeMetrics.length > 0) {
+    ctx.nodeMetrics = nodeMetrics.map(m => ({
+      name: m.name, cpuUsage: m.cpuUsage, cpu: m.cpu, cpuPercent: m.cpuPercent,
+      memoryUsage: m.memoryUsage, memory: m.memory, memoryPercent: m.memoryPercent,
+    }));
+  }
+  const nsList = cache.namespaces || [];
+  if (nsList.length > 0) {
+    ctx.namespaces = nsList.map(n => ({
+      name: n.name, status: n.status, podCount: n.podCount,
+      running: n.running, failed: n.failed, pending: n.pending, health: n.health,
+    }));
+    ctx.totalPods = nsList.reduce((s, n) => s + (n.podCount || 0), 0);
+  }
   ctx._remoteCluster = cache.clusterName;
   ctx._source = "agent-cache";
   return ctx;
@@ -6433,7 +6448,179 @@ function handleRemoteCacheQuery(message, parsed, remoteCtx, opts = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // (g) Unrecognized query — if an LLM is active, let it handle the query
+  // (g) Node metrics / CPU / memory / resource usage / "top nodes"
+  // ---------------------------------------------------------------------------
+  if ((/\bnode/.test(lower) && /\bcpu\b|\bmemory\b|\bresource\b|\busage\b|\butiliz|\btop\b|\bmetric/.test(lower)) ||
+      (/\btop\b/.test(lower) && /\bnode/.test(lower)) ||
+      (/\bresource\b/.test(lower) && /\busage\b|\butiliz/.test(lower))) {
+    const nodeMetrics = getAgentCachedResponse(remoteCtx.clusterName, "/api/node-metrics", { skipFreshnessCheck: true }) || [];
+    const nodeList = remoteCtx.nodes || [];
+    const parts = [header];
+    parts.push(`### Node Resource Utilization`);
+    parts.push("");
+
+    if (nodeMetrics.length > 0) {
+      parts.push(`| Node | CPU Usage | CPU Capacity | CPU % | Memory Usage | Memory Capacity | Memory % |`);
+      parts.push(`| --- | --- | --- | --- | --- | --- | --- |`);
+      nodeMetrics.forEach(m => {
+        const cpuPct = m.cpuPercent != null ? m.cpuPercent + "%" : "—";
+        const memPct = m.memoryPercent != null ? m.memoryPercent + "%" : "—";
+        const icon = (m.cpuPercent > 85 || m.memoryPercent > 85) ? "[WARNING]" : "[OK]";
+        parts.push(`| ${icon} \`${m.name}\` | ${m.cpuUsage || "—"} | ${m.cpu || "—"} | ${cpuPct} | ${m.memoryUsage || "—"} | ${m.memory || "—"} | ${memPct} |`);
+      });
+      parts.push("");
+      const avgCpu = nodeMetrics.filter(m => m.cpuPercent != null).reduce((s, m) => s + m.cpuPercent, 0) / (nodeMetrics.filter(m => m.cpuPercent != null).length || 1);
+      const avgMem = nodeMetrics.filter(m => m.memoryPercent != null).reduce((s, m) => s + m.memoryPercent, 0) / (nodeMetrics.filter(m => m.memoryPercent != null).length || 1);
+      parts.push(`**Cluster Average:** CPU ${avgCpu.toFixed(1)}% | Memory ${avgMem.toFixed(1)}%`);
+      const hotNodes = nodeMetrics.filter(m => m.cpuPercent > 80 || m.memoryPercent > 80);
+      if (hotNodes.length > 0) {
+        parts.push("");
+        parts.push(`**High Utilization Nodes:**`);
+        hotNodes.forEach(m => {
+          if (m.cpuPercent > 80) parts.push(`  [WARNING] \`${m.name}\` — CPU at ${m.cpuPercent}%`);
+          if (m.memoryPercent > 80) parts.push(`  [WARNING] \`${m.name}\` — Memory at ${m.memoryPercent}%`);
+        });
+      }
+    } else if (nodeList.length > 0) {
+      parts.push(`| Node | Roles | CPU Capacity | Memory Capacity | Status |`);
+      parts.push(`| --- | --- | --- | --- | --- |`);
+      nodeList.forEach(n => {
+        parts.push(`| \`${n.name}\` | ${n.roles || "worker"} | ${n.cpu || "—"} | ${n.memory || "—"} | ${n.ready ? "Ready" : "NotReady"} |`);
+      });
+      parts.push("");
+      parts.push(`> Detailed metrics (usage percentages) are not available in the agent cache. Capacity values shown.`);
+    } else {
+      parts.push(`No node metrics available for this cluster.`);
+    }
+    return parts.join("\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // (h) Version / upgrade / channel info
+  // ---------------------------------------------------------------------------
+  if (/\bversion\b|\bupgrade\b|\bupdate\b|\bchannel\b/.test(lower)) {
+    const parts = [header];
+    parts.push(`### Cluster Version`);
+    parts.push("");
+    parts.push(`| Property | Value |`);
+    parts.push(`| --- | --- |`);
+    parts.push(`| **${versionLabel}** | ${clusterVersion} |`);
+    parts.push(`| **Channel** | ${channel} |`);
+    parts.push(`| **Platform** | ${platform} |`);
+    parts.push(`| **Health** | ${clusterHealth === "healthy" ? "[OK] Healthy" : clusterHealth === "degraded" ? "[WARNING] Degraded" : "[CRITICAL] " + clusterHealth} |`);
+    parts.push("");
+    const nodeList = remoteCtx.nodes || [];
+    if (nodeList.length > 0) {
+      const kubeletVersions = [...new Set(nodeList.map(n => n.kubeletVersion).filter(Boolean))];
+      parts.push(`**Kubelet Versions:** ${kubeletVersions.join(", ") || "—"}`);
+      if (kubeletVersions.length > 1) {
+        parts.push(`  [WARNING] Mixed kubelet versions detected across nodes`);
+      }
+    }
+    return parts.join("\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // (i) Pod summary / workload overview / pod count / "how many pods"
+  // ---------------------------------------------------------------------------
+  if ((/\bpod/.test(lower) && /\blist\b|\bshow\b|\bcount\b|\bsummary\b|\bhow\s+many|\btotal\b/.test(lower)) ||
+      (/\bworkload/.test(lower) && /\boverview\b|\bsummary\b|\bstatus\b|\bshow\b/.test(lower))) {
+    const nsList = remoteCtx.namespaces || [];
+    const podIssues = remoteCtx.podIssues || [];
+    const parts = [header];
+    parts.push(`### Pod & Workload Summary`);
+    parts.push("");
+    const totalPods = nsList.reduce((s, n) => s + (n.podCount || 0), 0);
+    const totalRunning = nsList.reduce((s, n) => s + (n.running || 0), 0);
+    const totalFailed = nsList.reduce((s, n) => s + (n.failed || 0), 0);
+    const totalPending = nsList.reduce((s, n) => s + (n.pending || 0), 0);
+    parts.push(`| Metric | Count |`);
+    parts.push(`| --- | --- |`);
+    parts.push(`| **Total Pods** | ${totalPods} |`);
+    parts.push(`| **Running** | ${totalRunning} |`);
+    parts.push(`| **Pending** | ${totalPending} |`);
+    parts.push(`| **Failed** | ${totalFailed} |`);
+    parts.push(`| **Problem Pods** | ${podIssues.length} |`);
+    parts.push("");
+    const activeNs = nsList.filter(n => (n.podCount || 0) > 0 && !n.name?.startsWith("kube-") && !n.name?.startsWith("openshift-") && n.name !== "default");
+    if (activeNs.length > 0) {
+      parts.push(`**Top Namespaces by Pod Count:**`);
+      parts.push(`| Namespace | Pods | Running | Failed | Pending | Health |`);
+      parts.push(`| --- | --- | --- | --- | --- | --- |`);
+      activeNs.sort((a, b) => (b.podCount || 0) - (a.podCount || 0)).slice(0, 15).forEach(n => {
+        const icon = n.health === "critical" ? "[CRITICAL]" : n.health === "pending" ? "[WARNING]" : "[OK]";
+        parts.push(`| \`${n.name}\` | ${n.podCount || 0} | ${n.running || 0} | ${n.failed || 0} | ${n.pending || 0} | ${icon} ${n.health || "idle"} |`);
+      });
+    }
+    if (podIssues.length > 0) {
+      parts.push("");
+      parts.push(`**Problem Pods:** ${podIssues.length} — use "show pod issues" for details`);
+    }
+    return parts.join("\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // (j) Diagnostics / troubleshoot / "what's happening" / summary
+  // ---------------------------------------------------------------------------
+  if (/\bdiag|\btroubleshoot|\bsummar|\bwhat.?s\s+happening|\boverview\b/.test(lower)) {
+    const parts = [header];
+    parts.push(`### Cluster Diagnostics Summary`);
+    parts.push("");
+    const nodes = summary.nodes || {};
+    const ops = summary.operators || {};
+    const podIssues = remoteCtx.podIssues || [];
+    const alerts = remoteCtx.alerts || {};
+    const alertList = alerts.alerts || [];
+    let findings = 0;
+    parts.push(`#### Health Check Results`);
+    parts.push("");
+    if ((nodes.ready || 0) < (nodes.total || 0)) {
+      findings++;
+      parts.push(`[CRITICAL] **${(nodes.total || 0) - (nodes.ready || 0)} node(s) not ready** — ${nodes.ready || 0}/${nodes.total || 0} nodes operational`);
+    } else {
+      parts.push(`[OK] All ${nodes.total || 0} nodes are ready`);
+    }
+    if (isOpenShift) {
+      if ((ops.degraded || 0) > 0) {
+        findings++;
+        parts.push(`[CRITICAL] **${ops.degraded} operator(s) degraded** — ${ops.degradedNames?.join(", ") || "unknown"}`);
+      } else {
+        parts.push(`[OK] All ${ops.total || 0} operators healthy`);
+      }
+    }
+    if (podIssues.length > 0) {
+      findings++;
+      const reasons = {};
+      podIssues.forEach(p => (p.issues || []).forEach(i => { reasons[i.reason || "Unknown"] = (reasons[i.reason || "Unknown"] || 0) + 1; }));
+      parts.push(`[WARNING] **${podIssues.length} problem pod(s)** — ${Object.entries(reasons).map(([r, c]) => r + ": " + c).join(", ")}`);
+    } else {
+      parts.push(`[OK] No problem pods detected`);
+    }
+    if (alertList.length > 0) {
+      findings++;
+      const critAlerts = alertList.filter(a => a.severity === "critical").length;
+      parts.push(`[WARNING] **${alertList.length} active alert(s)** — ${critAlerts} critical`);
+    } else {
+      parts.push(`[OK] No active alerts`);
+    }
+    const nodeMetrics = getAgentCachedResponse(remoteCtx.clusterName, "/api/node-metrics", { skipFreshnessCheck: true }) || [];
+    if (nodeMetrics.length > 0) {
+      const highCpu = nodeMetrics.filter(m => m.cpuPercent > 80);
+      const highMem = nodeMetrics.filter(m => m.memoryPercent > 80);
+      if (highCpu.length > 0 || highMem.length > 0) {
+        findings++;
+        parts.push(`[WARNING] **Resource pressure** — ${highCpu.length} node(s) CPU >80%, ${highMem.length} node(s) memory >80%`);
+      } else {
+        parts.push(`[OK] Resource utilization within normal range`);
+      }
+    }
+    parts.push("");
+    parts.push(`**Overall Assessment:** ${findings === 0 ? "[OK] Cluster is healthy — no issues detected" : `[WARNING] ${findings} issue(s) require attention`}`);
+    return parts.join("\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // (k) Unrecognized query — if an LLM is active, let it handle the query
   //     with cached context.  Otherwise, return a cluster overview so the
   //     user doesn't get an unhelpful "I don't understand" response.
   // ---------------------------------------------------------------------------
@@ -6444,38 +6631,42 @@ function handleRemoteCacheQuery(message, parsed, remoteCtx, opts = {}) {
   parts.push("");
 
   // Quick status
-  const nodes = summary.nodes || {};
-  const ops = summary.operators || {};
-  const ns = summary.namespaces || {};
-  const nsLabel = isOpenShift ? "projects" : "namespaces";
-  const healthIcon = clusterHealth === "healthy" ? "Healthy" : clusterHealth === "warning" || clusterHealth === "degraded" ? "Warning" : "Critical";
+  const _fNodes = summary.nodes || {};
+  const _fOps = summary.operators || {};
+  const _fNs = summary.namespaces || {};
+  const _fNsLabel = isOpenShift ? "projects" : "namespaces";
+  const _fHealthIcon = clusterHealth === "healthy" ? "Healthy" : clusterHealth === "warning" || clusterHealth === "degraded" ? "Warning" : "Critical";
 
   parts.push(`| Property | Value |`);
   parts.push(`| --- | --- |`);
   parts.push(`| **Platform** | ${platform} |`);
   parts.push(`| **${versionLabel}** | ${clusterVersion} |`);
-  parts.push(`| **Health** | ${healthIcon} |`);
-  parts.push(`| **Nodes** | ${nodes.ready || 0}/${nodes.total || 0} ready |`);
-  if (isOpenShift) parts.push(`| **Operators** | ${ops.healthy || 0}/${ops.total || 0} healthy |`);
-  parts.push(`| **${isOpenShift ? "Projects" : "Namespaces"}** | ${ns.total || 0} (${ns.user || 0} user, ${ns.system || 0} system) |`);
+  parts.push(`| **Health** | ${_fHealthIcon} |`);
+  parts.push(`| **Nodes** | ${_fNodes.ready || 0}/${_fNodes.total || 0} ready |`);
+  if (isOpenShift) parts.push(`| **Operators** | ${_fOps.healthy || 0}/${_fOps.total || 0} healthy |`);
+  parts.push(`| **${isOpenShift ? "Projects" : "Namespaces"}** | ${_fNs.total || 0} (${_fNs.user || 0} user, ${_fNs.system || 0} system) |`);
   parts.push("");
 
   // Pod issues
-  const podIssues = remoteCtx.podIssues || [];
-  if (podIssues.length > 0) {
-    parts.push(`**Pod Issues:** ${podIssues.length} problem pod(s) detected`);
+  const _fPodIssues = remoteCtx.podIssues || [];
+  if (_fPodIssues.length > 0) {
+    parts.push(`**Pod Issues:** ${_fPodIssues.length} problem pod(s) detected`);
   } else {
     parts.push(`**Pod Issues:** None — all pods healthy`);
   }
   parts.push("");
 
   parts.push(`You can ask me about this cluster. Try:`);
-  parts.push(`- "check cluster health" — full status overview`);
-  parts.push(`- "show nodes" — node health details`);
-  parts.push(`- "list namespaces" — ${nsLabel} and pod counts`);
-  parts.push(`- "show pod issues" — problem pods`);
-  if (isOpenShift) parts.push(`- "show operators" — operator status`);
-  parts.push(`- "show events" — alerts and warnings`);
+  parts.push(`- \`check cluster health\` — full status overview`);
+  parts.push(`- \`show nodes\` — node health details`);
+  parts.push(`- \`show node metrics\` — CPU & memory utilization`);
+  parts.push(`- \`show pods\` — workload overview by namespace`);
+  parts.push(`- \`list namespaces\` — ${_fNsLabel} and pod counts`);
+  parts.push(`- \`show pod issues\` — problem pods`);
+  if (isOpenShift) parts.push(`- \`show operators\` — operator status`);
+  parts.push(`- \`show events\` — alerts and warnings`);
+  parts.push(`- \`diagnostics\` — full cluster health check`);
+  parts.push(`- \`show version\` — cluster version and channel`);
 
   return parts.join("\n");
 }
