@@ -15200,6 +15200,14 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('      - replicasets');
   lines.push('    verbs: ["get", "list", "watch"]');
   lines.push('');
+  lines.push('  # Self-redeploy — agent patches its own Deployment for rollout restart');
+  lines.push('  - apiGroups: ["apps"]');
+  lines.push('    resources:');
+  lines.push('      - deployments');
+  lines.push('    resourceNames:');
+  lines.push('      - tcs-agentic-ai');
+  lines.push('    verbs: ["patch"]');
+  lines.push('');
   lines.push('  # Batch — jobs, cronjobs');
   lines.push('  - apiGroups: ["batch"]');
   lines.push('    resources:');
@@ -16834,7 +16842,9 @@ function buildKebabMenu(clusterId, clusterName, platform, isBuiltin, source) {
       '<button class="kebab-item" onclick="hubCheckStatus(\'' + esc(clusterName) + '\',\'' + esc(source) + '\');closeAllKebabs()">&#x1F4CA; Status Check</button>' +
       '<button class="kebab-item" onclick="hubEditCluster(\'' + esc(clusterName) + '\',\'' + esc(platform) + '\',\'' + esc(source) + '\');closeAllKebabs()">&#x270F; Edit Cluster</button>' +
       '<button class="kebab-item" onclick="hubReconnectCluster(\'' + esc(clusterName) + '\',\'' + esc(source) + '\');closeAllKebabs()">&#x21BB; Reconnect</button>' +
-      (source === 'agent' ? '<button class="kebab-item" onclick="hubPushRBACUpdate(\'' + esc(clusterName) + '\');closeAllKebabs()">&#x1F512; Sync RBAC</button>' : '') +
+      (source === 'agent' ? '<div class="kebab-sep"></div>' +
+        '<button class="kebab-item" onclick="hubPushRBACUpdate(\'' + esc(clusterName) + '\');closeAllKebabs()">&#x1F512; Sync RBAC</button>' +
+        '<button class="kebab-item" onclick="hubRedeployAgent(\'' + esc(clusterName) + '\');closeAllKebabs()">&#x1F504; Redeploy Agent</button>' : '') +
       (isBuiltin ? '' : '<div class="kebab-sep"></div><button class="kebab-item danger" onclick="hubDeleteCluster(\'' + esc(clusterName) + '\',\'' + esc(source) + '\');closeAllKebabs()">&#x1F5D1; Delete Cluster</button>') +
     '</div></div>';
 }
@@ -16883,6 +16893,24 @@ async function hubPushRBACUpdateAll() {
   }
 }
 
+async function hubRedeployAgent(clusterName) {
+  if (!confirm('Redeploy agent on "' + clusterName + '"?\n\nThis triggers a rolling restart of the agent deployment. Use this after you have pushed a new container image to the registry.\n\nThe agent will restart with the latest image (imagePullPolicy: Always).')) return;
+  try {
+    var resp = await fetch(MCP_API + '/agent/rollout-restart', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clusterName: clusterName }),
+    }).then(function(r) { return r.json(); });
+    if (resp.ok) {
+      showNotification('Rollout restart triggered for "' + clusterName + '". Agent will pull the latest image and restart.', 'success');
+    } else {
+      showNotification('Agent "' + clusterName + '" is not connected via SSE bridge. Restart the agent manually: kubectl rollout restart deployment/tcs-agentic-ai', 'warning');
+    }
+  } catch (e) {
+    showNotification('Failed to trigger redeploy: ' + e.message, 'error');
+  }
+}
+
 async function hubCheckStatus(clusterName, source) {
   var statusDialog = document.createElement('div');
   statusDialog.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#000a;display:flex;align-items:center;justify-content:center';
@@ -16908,15 +16936,23 @@ async function hubCheckStatus(clusterName, source) {
         '<div style="background:var(--bg);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--text2);margin-bottom:4px">Status</div><div style="font-size:14px;font-weight:600;color:' + statusColor + '">' + statusLabel + '</div></div>' +
         '<div style="background:var(--bg);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--text2);margin-bottom:4px">Platform</div><div style="font-size:14px;font-weight:600">' + pInfo.name + '</div></div>' +
         '<div style="background:var(--bg);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--text2);margin-bottom:4px">Source</div><div style="font-size:14px;font-weight:600">' + (source || info.source || 'hub') + '</div></div>' +
-        '<div style="background:var(--bg);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--text2);margin-bottom:4px">Registered</div><div style="font-size:12px;font-weight:500">' + (info.registeredAt ? new Date(info.registeredAt).toLocaleString() : 'Built-in') + '</div></div>' +
+        '<div style="background:var(--bg);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--text2);margin-bottom:4px">Agent Version</div><div style="font-size:14px;font-weight:600">' + (info.agentVersion || 'N/A') + (info.agentVersion && info.agentVersion < '1.1.0' ? ' <span style="color:var(--warn);font-size:10px;font-weight:500">(update available)</span>' : '') + '</div></div>' +
       '</div>' +
+      (source === 'agent' ? '<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">' +
+        '<button onclick="hubPushRBACUpdate(\'' + esc(clusterName) + '\');showNotification(\'Sync initiated\',\'info\')" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:11px;color:var(--text);display:flex;align-items:center;gap:5px"><span>&#x1F512;</span> Sync RBAC</button>' +
+        '<button onclick="hubRedeployAgent(\'' + esc(clusterName) + '\')" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:11px;color:var(--text);display:flex;align-items:center;gap:5px"><span>&#x1F504;</span> Redeploy Agent</button>' +
+      '</div>' : '') +
       (info.summary ? '<div style="border-top:1px solid var(--border);padding-top:12px"><div style="font-size:11px;font-weight:600;margin-bottom:8px;color:var(--text2)">Cluster Metrics</div><div style="display:flex;gap:8px;flex-wrap:wrap">' +
         (info.summary.nodes ? '<span style="background:color-mix(in srgb,var(--ok) 7%,transparent);border:1px solid color-mix(in srgb,var(--ok) 20%,transparent);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--ok)">Nodes: ' + info.summary.nodes + '</span>' : '') +
         (info.summary.pods != null ? '<span style="background:' + pInfo.color + '11;border:1px solid ' + pInfo.color + '33;border-radius:6px;padding:4px 10px;font-size:11px;color:' + pInfo.color + '">Pods: ' + info.summary.pods + '</span>' : '') +
         (info.summary.issues > 0 ? '<span style="background:color-mix(in srgb,var(--crit) 8%,transparent);border:1px solid color-mix(in srgb,var(--crit) 20%,transparent);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--crit)">' + info.summary.issues + ' issues</span>' : '') +
         (info.summary.warnings > 0 ? '<span style="background:color-mix(in srgb,var(--warn) 8%,transparent);border:1px solid color-mix(in srgb,var(--warn) 20%,transparent);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--warn)">' + info.summary.warnings + ' warnings</span>' : '') +
       '</div></div>' : '') +
-      (info.apiUrl ? '<div style="margin-top:12px;font-size:10px;color:var(--text2);word-break:break-all;font-family:monospace;background:var(--bg);padding:6px 10px;border-radius:6px">API: ' + esc(info.apiUrl) + '</div>' : '') +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">' +
+        '<div style="background:var(--bg);border-radius:6px;padding:8px 10px"><div style="font-size:9px;color:var(--text2);margin-bottom:2px">Registered</div><div style="font-size:11px;font-weight:500">' + (info.registeredAt ? new Date(info.registeredAt).toLocaleString() : 'Built-in') + '</div></div>' +
+        '<div style="background:var(--bg);border-radius:6px;padding:8px 10px"><div style="font-size:9px;color:var(--text2);margin-bottom:2px">Last Report</div><div style="font-size:11px;font-weight:500">' + (info.lastReportTime ? new Date(info.lastReportTime).toLocaleString() : 'N/A') + '</div></div>' +
+      '</div>' +
+      (info.apiUrl ? '<div style="margin-top:8px;font-size:10px;color:var(--text2);word-break:break-all;font-family:monospace;background:var(--bg);padding:6px 10px;border-radius:6px">API: ' + esc(info.apiUrl) + '</div>' : '') +
     '</div>';
   document.body.appendChild(statusDialog);
   statusDialog.addEventListener('click', function(e) { if (e.target === statusDialog) statusDialog.remove(); });

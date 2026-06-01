@@ -163,9 +163,6 @@ async function start() {
 
   await registerWithHub();
 
-  // Reconcile RBAC — apply any new permissions pushed by the hub
-  await runReconcile(process.env.HUB_SERVER_URL, CLUSTER_NAME, PLATFORM);
-
   // Start the bidirectional MCP tool bridge (runs in parallel with scans)
   startBridge(process.env.HUB_SERVER_URL, CLUSTER_NAME);
 

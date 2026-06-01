@@ -11,6 +11,7 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { executeTool, TOOLS } from "./tools.js";
 import { runReconcile } from "./rbac-reconciler.js";
+import { rolloutRestart } from "./deployer.js";
 
 const SKIP_TLS = process.env.HUB_TLS_SKIP_VERIFY === "true";
 
@@ -202,9 +203,14 @@ function connectSSE(hubUrl, clusterName) {
       }
 
       if (event.type === "rbac_update") {
-        log("info", "Received RBAC update event from hub — reconciling...");
+        log("info", "Received RBAC sync event from hub — reconciling...");
         runReconcile(_hubUrl, _clusterName, _platform).catch((err) => {
           log("error", `RBAC reconcile failed: ${err.message}`);
+        });
+      } else if (event.type === "rollout_restart") {
+        log("info", "Received rollout restart event from hub — restarting deployment...");
+        rolloutRestart().catch((err) => {
+          log("error", `Rollout restart failed: ${err.message}`);
         });
       } else if (event.requestId && event.tool) {
         // Fire-and-forget — do not block the SSE stream

@@ -394,6 +394,8 @@ function buildDesiredRBACRules(platform) {
   const rules = [
     { apiGroups: [""], resources: ["pods", "pods/log", "nodes", "services", "events", "namespaces", "configmaps", "persistentvolumeclaims", "endpoints", "replicationcontrollers", "serviceaccounts", "resourcequotas", "limitranges"], verbs: ["get", "list", "watch"] },
     { apiGroups: ["apps"], resources: ["deployments", "statefulsets", "daemonsets", "replicasets"], verbs: ["get", "list", "watch"] },
+    // Self-redeploy — agent patches its own Deployment for rollout restart
+    { apiGroups: ["apps"], resources: ["deployments"], resourceNames: ["tcs-agentic-ai"], verbs: ["patch"] },
     { apiGroups: ["batch"], resources: ["jobs", "cronjobs"], verbs: ["get", "list", "watch"] },
     { apiGroups: ["networking.k8s.io"], resources: ["ingresses", "networkpolicies"], verbs: ["get", "list", "watch"] },
     { apiGroups: ["metrics.k8s.io"], resources: ["pods", "nodes"], verbs: ["get", "list"] },
@@ -2261,6 +2263,7 @@ async function startSSE() {
           platform: agent.platform,
           apiUrl: agent.apiUrl,
           hasToken: !!agent.token,
+          agentVersion: agent.agentVersion || null,
           status,
           bridgeConnected: hasActiveChannel(agent.clusterName),
           registeredAt: agent.registeredAt,
@@ -2390,17 +2393,8 @@ async function startSSE() {
       saveClustersToDB().catch(() => {});
       console.error(`[agent] Registered: ${entry.clusterName} (${platform}) agent v${agentVersion}${existingKey ? " (merged with " + existingKey + ")" : ""}`);
 
-      // Auto-push RBAC update if agent version is outdated
       const HUB_AGENT_VERSION = "1.1.0";
-      const needsRbacUpdate = !agentVersion || agentVersion < HUB_AGENT_VERSION;
-      if (needsRbacUpdate) {
-        setTimeout(() => {
-          pushEventToAgent(entry.clusterName, { type: "rbac_update", version: HUB_AGENT_VERSION, triggeredAt: new Date().toISOString() });
-          console.error(`[agent] Pushed RBAC update to ${entry.clusterName} (agent v${agentVersion} < hub v${HUB_AGENT_VERSION})`);
-        }, 3000);
-      }
-
-      return sendJson(res, 200, { ok: true, message: `Agent "${entry.clusterName}" registered`, hubVersion: HUB_AGENT_VERSION, rbacUpdatePending: needsRbacUpdate });
+      return sendJson(res, 200, { ok: true, message: `Agent "${entry.clusterName}" registered`, hubVersion: HUB_AGENT_VERSION });
     }
 
     if (url.pathname === "/api/agent/report" && req.method === "POST") {
@@ -2518,14 +2512,27 @@ async function startSSE() {
       return sendJson(res, 200, { version: "1.1.0", rules: buildDesiredRBACRules(platform) });
     }
 
-    // Push RBAC update to a specific agent or all agents
+    // Sync RBAC — push RBAC update to a specific agent or all agents (manual trigger)
     if (url.pathname === "/api/agent/push-rbac-update" && req.method === "POST") {
       const body = await readJsonBody(req);
       const target = body.clusterName;
       const event = { type: "rbac_update", version: "1.1.0", triggeredAt: new Date().toISOString() };
       if (target) {
         const sent = pushEventToAgent(target, event);
-        return sendJson(res, 200, { ok: sent, target, message: sent ? "RBAC update pushed" : "Agent not connected" });
+        return sendJson(res, 200, { ok: sent, target, message: sent ? "RBAC sync pushed" : "Agent not connected via SSE" });
+      }
+      const count = broadcastEvent(event);
+      return sendJson(res, 200, { ok: true, agentsNotified: count });
+    }
+
+    // Redeploy — trigger rolling restart of agent deployment (after image rebuild)
+    if (url.pathname === "/api/agent/rollout-restart" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const target = body.clusterName;
+      const event = { type: "rollout_restart", triggeredAt: new Date().toISOString() };
+      if (target) {
+        const sent = pushEventToAgent(target, event);
+        return sendJson(res, 200, { ok: sent, target, message: sent ? "Rollout restart triggered" : "Agent not connected via SSE" });
       }
       const count = broadcastEvent(event);
       return sendJson(res, 200, { ok: true, agentsNotified: count });
