@@ -15239,6 +15239,37 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('    resources:');
   lines.push('      - poddisruptionbudgets');
   lines.push('    verbs: ["get", "list", "watch"]');
+  lines.push('');
+  lines.push('  # RBAC audit — cluster roles & bindings (security posture)');
+  lines.push('  - apiGroups: ["rbac.authorization.k8s.io"]');
+  lines.push('    resources:');
+  lines.push('      - clusterroles');
+  lines.push('      - clusterrolebindings');
+  lines.push('      - roles');
+  lines.push('      - rolebindings');
+  lines.push('    verbs: ["get", "list"]');
+  lines.push('');
+  lines.push('  # GitOps — ArgoCD Applications (optional; ignored if not installed)');
+  lines.push('  - apiGroups: ["argoproj.io"]');
+  lines.push('    resources:');
+  lines.push('      - applications');
+  lines.push('      - applicationsets');
+  lines.push('    verbs: ["get", "list"]');
+  lines.push('');
+  lines.push('  # Disaster Recovery — Velero/OADP (optional; ignored if not installed)');
+  lines.push('  - apiGroups: ["velero.io"]');
+  lines.push('    resources:');
+  lines.push('      - backups');
+  lines.push('      - schedules');
+  lines.push('      - backupstoragelocations');
+  lines.push('    verbs: ["get", "list"]');
+  lines.push('');
+  lines.push('  # Image Vulnerabilities — Trivy Operator (optional; ignored if not installed)');
+  lines.push('  - apiGroups: ["aquasecurity.github.io"]');
+  lines.push('    resources:');
+  lines.push('      - vulnerabilityreports');
+  lines.push('      - configauditreports');
+  lines.push('    verbs: ["get", "list"]');
 
   // Platform-specific RBAC
   if (platform === 'openshift') {
@@ -15280,6 +15311,12 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
     lines.push('  - apiGroups: ["security.openshift.io"]');
     lines.push('    resources:');
     lines.push('      - securitycontextconstraints');
+    lines.push('    verbs: ["get", "list"]');
+    lines.push('');
+    lines.push('  # OpenShift — Quay Container Security Operator (optional image scans)');
+    lines.push('  - apiGroups: ["secscan.quay.redhat.com"]');
+    lines.push('    resources:');
+    lines.push('      - imagemanifestvulns');
     lines.push('    verbs: ["get", "list"]');
   }
 

@@ -77,7 +77,7 @@ function buildStatusResponse() {
   const bridge = getBridgeStatus();
   return {
     agent: "tcs-agentic-ai-agent",
-    version: "1.0.0",
+    version: "1.1.0",
     cluster: CLUSTER_NAME,
     platform: PLATFORM,
     uptime: Math.floor(process.uptime()),
@@ -150,7 +150,7 @@ const server = createServer((req, res) => {
 
 async function start() {
   log("info", "===========================================");
-  log("info", "  TCS Agentic AI — Cluster Agent v1.0.0");
+  log("info", "  TCS Agentic AI — Cluster Agent v1.1.0");
   log("info", "===========================================");
   log("info", `Cluster:   ${CLUSTER_NAME}`);
   log("info", `Platform:  ${PLATFORM}`);

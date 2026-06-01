@@ -643,15 +643,139 @@ export function getAgentCachedResponse(clusterName, endpointPath, opts = {}) {
         ...meta,
       };
 
-    case "/api/dashboard/security":
-    case "/api/dashboard/gitops":
-    case "/api/dashboard/dr":
-    case "/api/dashboard/optimization":
-      return {
-        source: "agent-cache",
-        available: false,
-        message: "Data not available from remote agent",
+    case "/api/dashboard/security": {
+      const sec = report.security;
+      if (!sec || sec.available === false) {
+        return { source: "agent-cache", available: false, message: "Security scan not available from this agent" };
+      }
+      const grade = sec.score >= 90 ? "A" : sec.score >= 80 ? "B" : sec.score >= 70 ? "C" : sec.score >= 60 ? "D" : "F";
+      const sevMap = { high: "critical", medium: "warning", low: "info" };
+      const summary = {
+        "pod-security": { fail: (sec.privilegedPods || 0) + (sec.runAsRootPods || 0), critical: sec.privilegedPods || 0, warning: sec.runAsRootPods || 0, pass: 0 },
+        "network-security": { fail: sec.hostNetworkPods || 0, critical: sec.hostNetworkPods || 0, warning: 0, pass: 0 },
+        "rbac-secrets": { fail: sec.clusterAdminBindings > 1 ? sec.clusterAdminBindings - 1 : 0, critical: 0, warning: sec.clusterAdminBindings > 1 ? sec.clusterAdminBindings - 1 : 0, pass: 0 },
+        "image-security": { fail: report.imageVulns?.critical || 0, critical: report.imageVulns?.critical || 0, warning: report.imageVulns?.high || 0, pass: 0 },
       };
+      return {
+        score: sec.score, grade, scanTime: report.timestamp,
+        findings: (sec.findings || []).slice(0, 5).map(f => ({ severity: sevMap[f.severity] || "info", msg: f.title })),
+        summary,
+        totals: { pass: 0, fail: (sec.findings || []).length, warning: 0 },
+        podCount: sec.totalWorkloadPods || 0,
+        namespaceCount: Object.keys(summary).length,
+        ...meta,
+      };
+    }
+
+    case "/api/dashboard/gitops": {
+      const g = report.gitops;
+      if (!g) return { source: "agent-cache", available: false, message: "GitOps data not available from this agent" };
+      if (!g.installed) return { total: 0, synced: 0, outOfSync: 0, degraded: 0, healthy: 0, apps: [], unavailable: true, ...meta };
+      return {
+        total: g.totalApps || 0, synced: g.synced || 0, outOfSync: g.outOfSync || 0,
+        degraded: g.degraded || 0, healthy: g.healthy || 0,
+        apps: (g.apps || []).slice(0, 10).map(a => ({ name: a.name, sync: a.sync, health: a.health, repo: a.repo })),
+        ...meta,
+      };
+    }
+
+    case "/api/dashboard/dr": {
+      const dr = report.dr;
+      if (!dr) return { source: "agent-cache", available: false, message: "DR data not available from this agent" };
+      if (!dr.installed) return { installed: false, score: 0, grade: "?", backups: 0, completed: 0, failed: 0, schedules: 0, activeSchedules: 0, storageLocations: 0, availableLocations: 0, lastBackup: null, lastBackupAge: null, ...meta };
+      let lastBackupAge = null;
+      if (dr.lastBackup) lastBackupAge = Math.floor((Date.now() - new Date(dr.lastBackup).getTime()) / 86400000);
+      let score = 100;
+      if (dr.schedules === 0) score -= 25;
+      if (dr.completed === 0) score -= 25;
+      else if (lastBackupAge != null && lastBackupAge > 7) score -= 15;
+      if (dr.failed > 0) score -= Math.min(15, dr.failed * 5);
+      score = Math.max(0, Math.round(score));
+      const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
+      return {
+        installed: true, score, grade,
+        backups: dr.totalBackups || 0, completed: dr.completed || 0, failed: dr.failed || 0,
+        schedules: dr.schedules || 0, activeSchedules: dr.schedules || 0,
+        storageLocations: dr.schedules > 0 ? 1 : 0, availableLocations: dr.schedules > 0 ? 1 : 0,
+        lastBackup: dr.lastBackup || null, lastBackupAge,
+        ...meta,
+      };
+    }
+
+    case "/api/dashboard/optimization": {
+      const opt = report.optimization;
+      if (!opt || opt.available === false) {
+        return { source: "agent-cache", available: false, message: "Optimization data not available from this agent" };
+      }
+      return {
+        efficiencyScore: opt.efficiencyScore || 0,
+        grade: opt.grade || "?",
+        totalPods: opt.totalPods || 0,
+        overProvisioned: opt.overProvisioned || 0,
+        underProvisioned: opt.underProvisioned || 0,
+        noLimits: opt.podsNoLimits || 0,
+        noRequests: opt.podsNoRequests || 0,
+        reclaimCpu: Math.round((opt.wastedCPUcores || 0) * 1000),
+        reclaimMemGi: Math.round((opt.wastedMemGi || 0) * 10) / 10,
+        reclaimStorageGi: 0,
+        cpuHeadroom: opt.cpuHeadroom || 0,
+        memHeadroom: opt.memHeadroom || 0,
+        metricsAvailable: opt.metricsAvailable !== false,
+        topProblems: opt.offenders || [],
+        pvc: { total: 0, bound: 0, pending: 0, lost: 0, orphaned: 0, totalCapacityGi: 0, usedStorageGi: 0, allocatedUnusedGi: 0, orphanedStorageGi: 0, orphanedList: [], pvcDetails: [] },
+        ...meta,
+      };
+    }
+
+    case "/api/dashboard/image-vulns": {
+      const iv = report.imageVulns;
+      if (!iv) return { source: "agent-cache", available: false, message: "Image scan not available from this agent" };
+      if (!iv.installed) {
+        return { installed: false, unavailable: true, scannerType: null, riskScore: 100, grade: "A", totalImages: 0, totalVulns: 0, critical: 0, high: 0, medium: 0, low: 0, fixable: 0, maxCVSS: 0, topImages: [], compliance: {}, ageSummary: {}, ...meta };
+      }
+      const totalVulns = (iv.critical || 0) + (iv.high || 0) + (iv.medium || 0) + (iv.low || 0);
+      // Risk score: start at 100, deduct heavily for critical/high
+      let riskScore = 100 - Math.min(60, (iv.critical || 0) * 10) - Math.min(30, (iv.high || 0) * 3) - Math.min(10, (iv.medium || 0));
+      riskScore = Math.max(0, riskScore);
+      const grade = riskScore >= 90 ? "A" : riskScore >= 80 ? "B" : riskScore >= 70 ? "C" : riskScore >= 60 ? "D" : "F";
+      return {
+        installed: true, scannerType: iv.scanner,
+        riskScore, grade, timestamp: report.timestamp,
+        totalImages: iv.totalImages || 0, totalVulns,
+        critical: iv.critical || 0, high: iv.high || 0, medium: iv.medium || 0, low: iv.low || 0,
+        fixable: 0, maxCVSS: iv.critical > 0 ? 9.8 : iv.high > 0 ? 7.5 : iv.medium > 0 ? 5.0 : 0,
+        topImages: (iv.images || []).slice(0, 20).map(im => ({ image: im.image, critical: im.critical || 0, high: im.high || 0, medium: im.medium || 0, cves: [] })),
+        compliance: {}, ageSummary: {},
+        ...meta,
+      };
+    }
+
+    case "/api/dashboard/rbac": {
+      const rbac = report.rbac;
+      if (!rbac || rbac.available === false) {
+        return { source: "agent-cache", available: false, message: "RBAC data not available from this agent" };
+      }
+      return {
+        clusterRoleBindings: rbac.clusterRoleBindings || 0,
+        clusterRoles: rbac.clusterRoles || 0,
+        serviceAccounts: rbac.serviceAccounts || 0,
+        clusterAdmins: rbac.clusterAdmins || [],
+        ...meta,
+      };
+    }
+
+    case "/api/workloads":
+    case "/api/dashboard/workloads": {
+      const w = report.workloads;
+      if (!w) return { source: "agent-cache", available: false, message: "Workload data not available from this agent" };
+      return {
+        deployments: w.deployments || 0, statefulsets: w.statefulsets || 0,
+        daemonsets: w.daemonsets || 0, services: w.services || 0,
+        ingresses: w.ingresses || 0, routes: w.routes || 0,
+        items: w.items || [],
+        ...meta,
+      };
+    }
 
     default:
       return null;
@@ -3639,7 +3763,9 @@ async function startSSE() {
     if (req.method === "GET" && url.pathname === "/api/dashboard/image-vulns") {
       const _ivCluster = url.searchParams.get("cluster");
       if (_ivCluster && _ivCluster !== "local") {
-        return sendJson(res, 200, { available: false, source: "agent-cache", message: "Image vulnerability scanning is not available for remote clusters" });
+        const cached = getAgentCachedResponse(_ivCluster, "/api/dashboard/image-vulns", { skipFreshnessCheck: true });
+        if (cached) return sendJson(res, 200, cached);
+        return sendJson(res, 200, { available: false, source: "agent-cache", message: "Image vulnerability scanning is not available for this cluster" });
       }
       try {
         const ns = url.searchParams.get("namespace") || undefined;

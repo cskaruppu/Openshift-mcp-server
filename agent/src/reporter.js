@@ -20,8 +20,8 @@ export async function registerWithHub() {
       body: JSON.stringify({
         clusterName: CLUSTER_NAME,
         platform: CLUSTER_PLATFORM,
-        agentVersion: "1.0.0",
-        capabilities: ["scan", "events", "metrics", "openshift"],
+        agentVersion: "1.1.0",
+        capabilities: ["scan", "events", "metrics", "openshift", "security", "gitops", "dr", "optimization", "imagevulns", "rbac", "workloads"],
       }),
       signal: AbortSignal.timeout(REPORT_TIMEOUT_MS),
     });
@@ -47,7 +47,7 @@ export async function sendReport(scanData) {
       body: JSON.stringify({
         clusterName: CLUSTER_NAME,
         platform: CLUSTER_PLATFORM,
-        agentVersion: "1.0.0",
+        agentVersion: "1.1.0",
         report: scanData,
       }),
       signal: AbortSignal.timeout(REPORT_TIMEOUT_MS),

@@ -6015,6 +6015,13 @@ function resolveRemoteClusterContext(body) {
     alerts: getAgentCachedResponse(body.cluster, "/api/alerts", { skipFreshnessCheck: true }) || { alerts: [], summary: {} },
     operators: getAgentCachedResponse(body.cluster, "/api/cluster/operators", { skipFreshnessCheck: true }) || [],
     namespaces: getAgentCachedResponse(body.cluster, "/api/namespaces", { skipFreshnessCheck: true }) || [],
+    // Advanced feature data (present when agent reports it; null otherwise)
+    security: getAgentCachedResponse(body.cluster, "/api/dashboard/security", { skipFreshnessCheck: true }),
+    gitops: getAgentCachedResponse(body.cluster, "/api/dashboard/gitops", { skipFreshnessCheck: true }),
+    dr: getAgentCachedResponse(body.cluster, "/api/dashboard/dr", { skipFreshnessCheck: true }),
+    optimization: getAgentCachedResponse(body.cluster, "/api/dashboard/optimization", { skipFreshnessCheck: true }),
+    imageVulns: getAgentCachedResponse(body.cluster, "/api/dashboard/image-vulns", { skipFreshnessCheck: true }),
+    workloads: getAgentCachedResponse(body.cluster, "/api/dashboard/workloads", { skipFreshnessCheck: true }),
     source: "agent-cache",
   };
 }
@@ -6679,7 +6686,157 @@ function handleRemoteCacheQuery(message, parsed, remoteCtx, opts = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // (k) Unrecognized query — if an LLM is active, let it handle the query
+  // (k) Security / compliance posture
+  // ---------------------------------------------------------------------------
+  if (/\bsecurity\b|\bcompliance\b|\bcis\b|\bhardening\b|\bprivileged\b|\bvulnerab/.test(lower)) {
+    const sec = remoteCtx.security;
+    const iv = remoteCtx.imageVulns;
+    const parts = [header];
+    parts.push(`### Security Posture`);
+    parts.push("");
+    if (sec && sec.available !== false) {
+      parts.push(`**Security Score:** ${sec.score}/100 (Grade ${sec.grade})`);
+      parts.push("");
+      parts.push(`| Check | Count |`);
+      parts.push(`| --- | --- |`);
+      parts.push(`| Workload pods analyzed | ${sec.podCount || 0} |`);
+      (sec.findings || []).forEach(f => {
+        const icon = f.severity === "critical" ? "[CRITICAL]" : f.severity === "warning" ? "[WARNING]" : "[INFO]";
+        parts.push(`| ${icon} ${f.msg} | — |`);
+      });
+      parts.push("");
+    } else {
+      parts.push(`> Security scan data is not available from this cluster's agent yet.`);
+      parts.push("");
+    }
+    if (iv && iv.installed) {
+      parts.push(`**Image Vulnerabilities** (scanner: ${iv.scannerType}):`);
+      parts.push(`  ${iv.critical} critical | ${iv.high} high | ${iv.medium} medium | ${iv.low} low across ${iv.totalImages} images`);
+    } else {
+      parts.push(`**Image Vulnerabilities:** No scanner (Trivy/Quay) detected on this cluster.`);
+    }
+    return parts.join("\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // (l) GitOps / ArgoCD
+  // ---------------------------------------------------------------------------
+  if (/\bgitops\b|\bargo\b|\bargocd\b|\bsync\b.*\bapp|\bapplication.*\bsync/.test(lower)) {
+    const g = remoteCtx.gitops;
+    const parts = [header];
+    parts.push(`### GitOps Status`);
+    parts.push("");
+    if (!g || g.available === false || g.unavailable) {
+      parts.push(`> ArgoCD / OpenShift GitOps is not installed on this cluster.`);
+      return parts.join("\n");
+    }
+    parts.push(`**Applications:** ${g.total} total | ${g.synced} synced | ${g.outOfSync} out-of-sync | ${g.healthy} healthy | ${g.degraded} degraded`);
+    parts.push("");
+    if ((g.apps || []).length > 0) {
+      parts.push(`| Application | Sync | Health | Repo |`);
+      parts.push(`| --- | --- | --- | --- |`);
+      g.apps.forEach(a => {
+        const syncIcon = a.sync === "Synced" ? "[OK]" : "[WARNING]";
+        parts.push(`| \`${a.name}\` | ${syncIcon} ${a.sync} | ${a.health} | ${(a.repo || "—").replace(/\|/g, "/")} |`);
+      });
+    }
+    return parts.join("\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // (m) Disaster Recovery / backups / Velero
+  // ---------------------------------------------------------------------------
+  if (/\bbackup\b|\bvelero\b|\bdisaster\b|\brecovery\b|\bdr\b|\boadp\b|\brestore\b/.test(lower)) {
+    const dr = remoteCtx.dr;
+    const parts = [header];
+    parts.push(`### Disaster Recovery`);
+    parts.push("");
+    if (!dr || dr.available === false || !dr.installed) {
+      parts.push(`> Velero / OADP backup tooling is not installed on this cluster.`);
+      return parts.join("\n");
+    }
+    parts.push(`**DR Readiness:** ${dr.score}/100 (Grade ${dr.grade})`);
+    parts.push("");
+    parts.push(`| Metric | Value |`);
+    parts.push(`| --- | --- |`);
+    parts.push(`| Total backups | ${dr.backups} |`);
+    parts.push(`| Completed | ${dr.completed} |`);
+    parts.push(`| Failed | ${dr.failed} |`);
+    parts.push(`| Schedules | ${dr.schedules} |`);
+    parts.push(`| Last backup | ${dr.lastBackupAge != null ? dr.lastBackupAge + " day(s) ago" : "Never"} |`);
+    return parts.join("\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // (n) Workloads / deployments / services
+  // ---------------------------------------------------------------------------
+  if (/\bdeployment\b|\bworkload\b|\bservice\b|\bstatefulset\b|\bdaemonset\b|\bingress\b|\broute\b/.test(lower) &&
+      /\blist\b|\bshow\b|\bhow\s+many|\bcount\b|\ball\b/.test(lower)) {
+    const w = remoteCtx.workloads;
+    const parts = [header];
+    parts.push(`### Workloads`);
+    parts.push("");
+    if (!w || w.available === false) {
+      parts.push(`> Workload inventory is not available from this cluster's agent yet.`);
+      return parts.join("\n");
+    }
+    parts.push(`| Type | Count |`);
+    parts.push(`| --- | --- |`);
+    parts.push(`| Deployments | ${w.deployments || 0} |`);
+    parts.push(`| StatefulSets | ${w.statefulsets || 0} |`);
+    parts.push(`| DaemonSets | ${w.daemonsets || 0} |`);
+    parts.push(`| Services | ${w.services || 0} |`);
+    parts.push(`| Ingresses | ${w.ingresses || 0} |`);
+    if (w.routes) parts.push(`| Routes | ${w.routes} |`);
+    parts.push("");
+    const notReady = (w.items || []).filter(d => d.ready < d.desired);
+    if (notReady.length > 0) {
+      parts.push(`**Deployments not fully available (${notReady.length}):**`);
+      parts.push(`| Deployment | Namespace | Ready |`);
+      parts.push(`| --- | --- | --- |`);
+      notReady.slice(0, 15).forEach(d => parts.push(`| \`${d.name}\` | ${d.namespace} | ${d.ready}/${d.desired} |`));
+    } else if ((w.items || []).length > 0) {
+      parts.push(`[OK] All deployments are fully available.`);
+    }
+    return parts.join("\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // (o) Optimization / cost / resource waste
+  // ---------------------------------------------------------------------------
+  if (/\boptimi|\bcost\b|\bwaste\b|\bright.?siz|\befficien|\bover.?provision|\bunder.?provision|\breclaim/.test(lower)) {
+    const opt = remoteCtx.optimization;
+    const parts = [header];
+    parts.push(`### Resource Optimization`);
+    parts.push("");
+    if (!opt || opt.available === false) {
+      parts.push(`> Optimization data is not available from this cluster's agent yet (metrics-server may be missing).`);
+      return parts.join("\n");
+    }
+    parts.push(`**Efficiency Score:** ${opt.efficiencyScore}/100 (Grade ${opt.grade})`);
+    parts.push("");
+    parts.push(`| Metric | Value |`);
+    parts.push(`| --- | --- |`);
+    parts.push(`| Workloads analyzed | ${opt.totalPods} |`);
+    parts.push(`| Over-provisioned | ${opt.overProvisioned} |`);
+    parts.push(`| Under-provisioned | ${opt.underProvisioned} |`);
+    parts.push(`| Without limits | ${opt.noLimits} |`);
+    parts.push(`| Reclaimable CPU | ${opt.reclaimCpu}m |`);
+    parts.push(`| Reclaimable memory | ${opt.reclaimMemGi}Gi |`);
+    parts.push(`| CPU headroom | ${opt.cpuHeadroom}% |`);
+    parts.push(`| Memory headroom | ${opt.memHeadroom}% |`);
+    parts.push("");
+    if ((opt.topProblems || []).length > 0) {
+      parts.push(`**Top offenders:**`);
+      parts.push(`| Pod | Namespace | Type | Detail |`);
+      parts.push(`| --- | --- | --- | --- |`);
+      opt.topProblems.slice(0, 10).forEach(p => parts.push(`| \`${p.name}\` | ${p.ns} | ${p.type} | ${p.detail || "—"} |`));
+    }
+    return parts.join("\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // (p) Unrecognized query — if an LLM is active, let it handle the query
   //     with cached context.  Otherwise, return a cluster overview so the
   //     user doesn't get an unhelpful "I don't understand" response.
   // ---------------------------------------------------------------------------
@@ -6724,8 +6881,13 @@ function handleRemoteCacheQuery(message, parsed, remoteCtx, opts = {}) {
   parts.push(`- \`show pod issues\` — problem pods`);
   if (isOpenShift) parts.push(`- \`show operators\` — operator status`);
   parts.push(`- \`show events\` — alerts and warnings`);
+  parts.push(`- \`security posture\` — compliance & vulnerabilities`);
+  parts.push(`- \`gitops status\` — ArgoCD application sync`);
+  parts.push(`- \`backup status\` — disaster recovery readiness`);
+  parts.push(`- \`optimization\` — resource waste & right-sizing`);
+  parts.push(`- \`list deployments\` — workload inventory`);
   parts.push(`- \`diagnostics\` — full cluster health check`);
-  parts.push(`- \`show version\` — cluster version and channel`);
+  parts.push(`- \`upgrade precheck\` — pre-flight readiness`);
 
   return parts.join("\n");
 }
