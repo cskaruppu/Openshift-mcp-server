@@ -6282,10 +6282,16 @@ function sevIcon(s) { return s === 'critical' ? '&#x1F534;' : s === 'high' ? '&#
 
 function _isRemoteCluster() { return _globalActiveCluster && _globalActiveCluster !== 'local'; }
 function _remoteUnavailableHTML(widgetLabel) {
-  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px 16px;gap:8px;color:var(--text2);text-align:center">' +
-    '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>' +
-    '<div style="font-size:12px;font-weight:600">Remote Cluster</div>' +
-    '<div style="font-size:11px;opacity:0.7">' + widgetLabel + ' data is collected locally.<br>Not available via remote agent.</div></div>';
+  var clusterName = _globalActiveCluster || 'Remote';
+  var agent = (_remoteAgents || {})[clusterName] || {};
+  var status = agent.status === 'live' || agent.status === 'connected' ? 'Connected' : (agent.status || 'Unknown');
+  var statusColor = status === 'Connected' ? 'var(--ok)' : 'var(--warn)';
+  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px 16px;gap:10px;color:var(--text2);text-align:center">' +
+    '<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.5">' +
+    '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>' +
+    '<div style="font-size:12px;font-weight:700;color:var(--text)">' + esc(clusterName) + '</div>' +
+    '<div style="display:flex;align-items:center;gap:5px;font-size:10px"><span style="width:6px;height:6px;border-radius:50%;background:' + statusColor + '"></span>' + esc(status) + '</div>' +
+    '<div style="font-size:11px;opacity:0.7;line-height:1.5">' + widgetLabel + ' requires direct cluster access.<br>Use <b>AI Chat</b> to query this cluster.</div></div>';
 }
 
 async function loadSecurityWidget() {
@@ -8045,6 +8051,7 @@ async function refreshAll() {
   if (!_authenticated) return;
   document.getElementById('last-updated').textContent = 'Refreshing...';
   loadHealthHistory();
+  refreshClusterList();
   var results = await Promise.allSettled([
     loadSummary(),
     loadAlerts(),
@@ -8077,7 +8084,11 @@ async function refreshAll() {
 var _currentView = 'dashboard';
 (window.requestIdleCallback || function(cb) { setTimeout(cb, 50); })(function() {
   checkAuthStatus().then(function(ok) {
-    if (ok) { refreshAll(); if (typeof applyDashLayoutPrefs === 'function') setTimeout(applyDashLayoutPrefs, 800); }
+    if (ok) {
+      refreshClusterList();
+      refreshAll();
+      if (typeof applyDashLayoutPrefs === 'function') setTimeout(applyDashLayoutPrefs, 800);
+    }
   });
 });
 
@@ -8090,6 +8101,7 @@ function startDashRefresh() {
   }, REFRESH_INTERVAL);
 }
 startDashRefresh();
+setInterval(function() { if (!document.hidden && _authenticated) refreshClusterList(); }, 30000);
 
 // ---------------------------------------------------------------------------
 // Chat — sends user message to /api/chat which queries the cluster + LLM
@@ -11183,6 +11195,7 @@ function reloadCurrentView() {
   if (_currentView === 'dashboard') { refreshAll(); }
   else if (_currentView === 'audit') { if (typeof loadAuditView === 'function') loadAuditView(); }
   else if (_currentView === 'intelligence') { if (typeof loadIntelligenceView === 'function') loadIntelligenceView(); }
+  else if (_currentView === 'chat') { updateCcsTrigger(); updateChatWelcomeText(); }
 }
 
 function updateClusterContextBanner() {
@@ -15961,6 +15974,31 @@ function hubSwitchChatLLM(provider) {
 }
 
 var _remoteAgents = {};
+var _clusterListLastRefresh = 0;
+
+async function refreshClusterList() {
+  if (Date.now() - _clusterListLastRefresh < 15000) return;
+  _clusterListLastRefresh = Date.now();
+  try {
+    var cRes = await fetch(MCP_API + '/hub/clusters').then(function(r) { return r.json(); }).catch(function() { return { clusters: [] }; });
+    var clusters = cRes.clusters || [];
+    if (clusters.length === 0 && Object.keys(_remoteAgents).length === 0) return;
+    var prevCount = Object.keys(_remoteAgents).length;
+    var prevNames = new Set(Object.keys(_remoteAgents));
+    _remoteAgents = {};
+    clusters.forEach(function(c) { _remoteAgents[c.name] = c; });
+    var newCount = Object.keys(_remoteAgents).length;
+    var newNames = new Set(Object.keys(_remoteAgents));
+    var changed = newCount !== prevCount;
+    if (!changed) { newNames.forEach(function(n) { if (!prevNames.has(n)) changed = true; }); }
+    if (changed) {
+      populateChatClusterDropdown();
+      updateCcsTrigger();
+      var gcsTrigger = document.getElementById('gcs-trigger');
+      if (gcsTrigger && !gcsTrigger.classList.contains('single')) updateGlobalClusterTrigger();
+    }
+  } catch (e) { /* best effort */ }
+}
 
 // ---- AI Settings (Sprint A — Pillars 1, 3, 5, Feature Flags) ----
 var _currentUserId = localStorage.getItem('mcp.userId') || 'default';

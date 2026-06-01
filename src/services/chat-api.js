@@ -6099,7 +6099,8 @@ function handleRemoteCacheQuery(message, parsed, remoteCtx, opts = {}) {
   const platform = summary.platform || (isOpenShift ? "OpenShift" : "Kubernetes");
 
   // Cluster identity header — prepended to every response
-  const header = `> **Cluster: ${remoteCtx.clusterName}** (${platform} — data from agent cache)\n`;
+  const healthEmoji = (summary.cluster?.health || "").toLowerCase() === "healthy" ? "[OK]" : "[WARNING]";
+  const header = `> ${healthEmoji} **${remoteCtx.clusterName}** | ${platform} ${summary.cluster?.version || ""} | ${(summary.nodes?.ready || 0)}/${(summary.nodes?.total || 0)} nodes\n`;
 
   // Helper: build the version label appropriate for the platform
   const versionLabel = isOpenShift ? "OpenShift Version" : "Kubernetes Version";
@@ -6496,11 +6497,12 @@ function handleRemoteCacheQuery(message, parsed, remoteCtx, opts = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // (h) Version / upgrade / channel info
+  // (h) Version / upgrade / precheck / update / channel info
   // ---------------------------------------------------------------------------
-  if (/\bversion\b|\bupgrade\b|\bupdate\b|\bchannel\b/.test(lower)) {
+  if (/\bversion\b|\bupgrade\b|\bupdate\b|\bchannel\b|\bprecheck\b|\bpre-check\b|\bpre.?flight\b|\bupgrad/.test(lower)) {
+    const isUpgradeQuery = /\bupgrade\b|\bupdate\b|\bprecheck\b|\bpre-check\b|\bpre.?flight\b/.test(lower);
     const parts = [header];
-    parts.push(`### Cluster Version`);
+    parts.push(isUpgradeQuery ? `### Upgrade Readiness — ${remoteCtx.clusterName}` : `### Cluster Version`);
     parts.push("");
     parts.push(`| Property | Value |`);
     parts.push(`| --- | --- |`);
@@ -6509,6 +6511,7 @@ function handleRemoteCacheQuery(message, parsed, remoteCtx, opts = {}) {
     parts.push(`| **Platform** | ${platform} |`);
     parts.push(`| **Health** | ${clusterHealth === "healthy" ? "[OK] Healthy" : clusterHealth === "degraded" ? "[WARNING] Degraded" : "[CRITICAL] " + clusterHealth} |`);
     parts.push("");
+
     const nodeList = remoteCtx.nodes || [];
     if (nodeList.length > 0) {
       const kubeletVersions = [...new Set(nodeList.map(n => n.kubeletVersion).filter(Boolean))];
@@ -6516,6 +6519,62 @@ function handleRemoteCacheQuery(message, parsed, remoteCtx, opts = {}) {
       if (kubeletVersions.length > 1) {
         parts.push(`  [WARNING] Mixed kubelet versions detected across nodes`);
       }
+      parts.push("");
+    }
+
+    if (isUpgradeQuery) {
+      const ops = summary.operators || {};
+      const nodes = summary.nodes || {};
+      const podIssues = remoteCtx.podIssues || [];
+      const alerts = remoteCtx.alerts || {};
+      const alertList = alerts.alerts || [];
+      let readyForUpgrade = true;
+      parts.push(`#### Pre-flight Checks`);
+      parts.push("");
+      if (clusterHealth !== "healthy") {
+        readyForUpgrade = false;
+        parts.push(`[CRITICAL] Cluster health is **${clusterHealth}** — resolve before upgrading`);
+      } else {
+        parts.push(`[OK] Cluster health is **Healthy**`);
+      }
+      if ((nodes.ready || 0) < (nodes.total || 0)) {
+        readyForUpgrade = false;
+        parts.push(`[CRITICAL] ${(nodes.total || 0) - (nodes.ready || 0)} node(s) not ready — all nodes must be Ready before upgrade`);
+      } else {
+        parts.push(`[OK] All ${nodes.total || 0} nodes are Ready`);
+      }
+      if (isOpenShift && (ops.degraded || 0) > 0) {
+        readyForUpgrade = false;
+        parts.push(`[CRITICAL] ${ops.degraded} operator(s) degraded: ${ops.degradedNames?.join(", ") || "unknown"}`);
+      } else if (isOpenShift) {
+        parts.push(`[OK] All ${ops.total || 0} cluster operators are Available`);
+      }
+      if (podIssues.length > 5) {
+        readyForUpgrade = false;
+        parts.push(`[WARNING] ${podIssues.length} problem pods detected — review before upgrade`);
+      } else if (podIssues.length > 0) {
+        parts.push(`[WARNING] ${podIssues.length} problem pod(s) — minor, may not block upgrade`);
+      } else {
+        parts.push(`[OK] No problem pods`);
+      }
+      const nodeMetrics = getAgentCachedResponse(remoteCtx.clusterName, "/api/node-metrics", { skipFreshnessCheck: true }) || [];
+      if (nodeMetrics.length > 0) {
+        const highMem = nodeMetrics.filter(m => m.memoryPercent > 85);
+        const highCpu = nodeMetrics.filter(m => m.cpuPercent > 85);
+        if (highMem.length > 0 || highCpu.length > 0) {
+          parts.push(`[WARNING] Resource pressure — ${highCpu.length} node(s) CPU >85%, ${highMem.length} node(s) memory >85%`);
+        } else {
+          parts.push(`[OK] Resource utilization within safe upgrade range`);
+        }
+      }
+      if (alertList.filter(a => a.severity === "critical").length > 0) {
+        readyForUpgrade = false;
+        parts.push(`[CRITICAL] ${alertList.filter(a => a.severity === "critical").length} critical alert(s) active`);
+      }
+      parts.push("");
+      parts.push(`**Overall:** ${readyForUpgrade ? "[OK] Cluster appears **ready for upgrade**" : "[WARNING] Cluster has issues that should be resolved before upgrading"}`);
+      parts.push("");
+      parts.push(`> This assessment is based on cached agent data. For the most accurate pre-upgrade validation, run the upgrade pre-check directly on the cluster.`);
     }
     return parts.join("\n");
   }
