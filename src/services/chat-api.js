@@ -6075,7 +6075,7 @@ function buildContextFromAgentCache(cache, userMessage) {
 // to fall through to the LLM path (which will receive the cached context via
 // buildContextFromAgentCache).
 // ---------------------------------------------------------------------------
-function handleRemoteCacheQuery(message, parsed, remoteCtx) {
+function handleRemoteCacheQuery(message, parsed, remoteCtx, opts = {}) {
   if (!remoteCtx) return null;
 
   const lower = message.toLowerCase();
@@ -6433,9 +6433,51 @@ function handleRemoteCacheQuery(message, parsed, remoteCtx) {
   }
 
   // ---------------------------------------------------------------------------
-  // (g) Unrecognized query — fall through to LLM with cached context
+  // (g) Unrecognized query — if an LLM is active, let it handle the query
+  //     with cached context.  Otherwise, return a cluster overview so the
+  //     user doesn't get an unhelpful "I don't understand" response.
   // ---------------------------------------------------------------------------
-  return null;
+  if (opts.llmAvailable) return null;
+
+  const parts = [header];
+  parts.push(`### Cluster: ${remoteCtx.clusterName}`);
+  parts.push("");
+
+  // Quick status
+  const nodes = summary.nodes || {};
+  const ops = summary.operators || {};
+  const ns = summary.namespaces || {};
+  const nsLabel = isOpenShift ? "projects" : "namespaces";
+  const healthIcon = clusterHealth === "healthy" ? "Healthy" : clusterHealth === "warning" || clusterHealth === "degraded" ? "Warning" : "Critical";
+
+  parts.push(`| Property | Value |`);
+  parts.push(`| --- | --- |`);
+  parts.push(`| **Platform** | ${platform} |`);
+  parts.push(`| **${versionLabel}** | ${clusterVersion} |`);
+  parts.push(`| **Health** | ${healthIcon} |`);
+  parts.push(`| **Nodes** | ${nodes.ready || 0}/${nodes.total || 0} ready |`);
+  if (isOpenShift) parts.push(`| **Operators** | ${ops.healthy || 0}/${ops.total || 0} healthy |`);
+  parts.push(`| **${isOpenShift ? "Projects" : "Namespaces"}** | ${ns.total || 0} (${ns.user || 0} user, ${ns.system || 0} system) |`);
+  parts.push("");
+
+  // Pod issues
+  const podIssues = remoteCtx.podIssues || [];
+  if (podIssues.length > 0) {
+    parts.push(`**Pod Issues:** ${podIssues.length} problem pod(s) detected`);
+  } else {
+    parts.push(`**Pod Issues:** None — all pods healthy`);
+  }
+  parts.push("");
+
+  parts.push(`You can ask me about this cluster. Try:`);
+  parts.push(`- "check cluster health" — full status overview`);
+  parts.push(`- "show nodes" — node health details`);
+  parts.push(`- "list namespaces" — ${nsLabel} and pod counts`);
+  parts.push(`- "show pod issues" — problem pods`);
+  if (isOpenShift) parts.push(`- "show operators" — operator status`);
+  parts.push(`- "show events" — alerts and warnings`);
+
+  return parts.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -13036,7 +13078,9 @@ export async function handleChatAPI(req, res) {
     // Only triggers for short/vague queries with low NLU confidence and no
     // conversation history that would resolve the ambiguity.
     const hasHistory = Array.isArray(llmOpts.history) && llmOpts.history.length > 0;
-    if (!hasHistory) {
+    // Skip ambiguity detection for remote clusters — let handleRemoteCacheQuery
+    // decide how to respond (it provides a cluster overview for short queries).
+    if (!hasHistory && !_remoteClusterContext) {
       const clarifyToken = detectAmbiguity(userMessage, parsed, memory);
       if (clarifyToken) {
         const reply = clarifyToken;
@@ -13058,9 +13102,9 @@ export async function handleChatAPI(req, res) {
 
     // ---- Confidence-based routing ----
     // Very low confidence with no conversation history — ask for clarification
-    // rather than risk a poor answer.
+    // rather than risk a poor answer.  Skip for remote clusters.
     const confidence = parsed.confidence || 0;
-    if (confidence < 0.3 && !hasHistory) {
+    if (confidence < 0.3 && !hasHistory && !_remoteClusterContext) {
       const reply = `I'm not sure I understood your question correctly. Could you rephrase or provide more details?\n\nFor example, you can ask:\n- "Show pods with issues in namespace X"\n- "Check cluster health"\n- "Diagnose pod my-pod-xyz"\n- "List deployments in production"`;
       const provider = "built-in";
       if (conversationId) {
@@ -13553,7 +13597,7 @@ export async function handleChatAPI(req, res) {
     // fall through to the LLM path which receives the cached context via
     // buildContextFromAgentCache.
     if (_remoteClusterContext) {
-      const remoteCacheReply = handleRemoteCacheQuery(userMessage, parsed, _remoteClusterContext);
+      const remoteCacheReply = handleRemoteCacheQuery(userMessage, parsed, _remoteClusterContext, { llmAvailable: llmActive });
       if (remoteCacheReply) {
         const provider = llmActive ? activeProvider : "built-in";
         const payload = {
