@@ -53,7 +53,7 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 K8S_DIR="$SCRIPT_DIR/k8s"
 
-STEPS=7
+STEPS=8
 STEP=0
 next() { STEP=$((STEP + 1)); echo ""; echo "[$STEP/$STEPS] $1"; }
 
@@ -151,6 +151,31 @@ oc get pods -n "$NS" -o wide
 echo ""
 
 ROUTE=$(oc get route mcp-server -n "$NS" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+
+# ---------------------------------------------------------------------------
+# 8. Auto-deploy remote agents (if hub is reachable)
+# ---------------------------------------------------------------------------
+next "Auto-deploying remote agents..."
+if [ -n "$ROUTE" ]; then
+  HUB_URL="https://${ROUTE}"
+  echo "       Hub URL: ${HUB_URL}"
+  echo "       Sending rollout-restart to connected agents..."
+  RESP=$(curl -s -X POST "${HUB_URL}/api/agent/rollout-restart" \
+    -H "Content-Type: application/json" \
+    -d '{}' \
+    --connect-timeout 10 \
+    --max-time 15 2>/dev/null || echo '{"error":"failed"}')
+  NOTIFIED=$(echo "$RESP" | grep -o '"agentsNotified":[0-9]*' | cut -d: -f2 || echo "0")
+  if [ "${NOTIFIED:-0}" -gt 0 ]; then
+    echo "       Rollout restart sent to ${NOTIFIED} remote agent(s)."
+  else
+    echo "       No remote agents connected. They will auto-update on next restart."
+  fi
+else
+  echo "       No route found. Skipping remote agent deploy."
+fi
+
+echo ""
 echo "============================================"
 echo " Deployment complete!"
 echo ""
