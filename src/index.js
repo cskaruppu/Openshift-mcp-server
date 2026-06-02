@@ -1291,25 +1291,27 @@ async function handleChatHistoryAPI(url, req, res) {
     });
   }
 
-  // /api/chats/search?q=term
+  // /api/chats/search?q=term&cluster=<name>
   if (url.pathname === "/api/chats/search" && req.method === "GET") {
     const q = url.searchParams.get("q") || "";
     const limit = parseInt(url.searchParams.get("limit") || "50", 10);
-    const results = await searchChats(q, limit);
+    const cluster = url.searchParams.get("cluster") || null;
+    const results = await searchChats(q, limit, cluster);
     return sendJson(res, 200, { results });
   }
 
-  // /api/chats
+  // /api/chats?cluster=<name>  (cluster scopes the list; "all" or omitted = all clusters)
   if (url.pathname === "/api/chats") {
     if (req.method === "GET") {
       const limit = parseInt(url.searchParams.get("limit") || "100", 10);
-      const chats = await listChats(limit);
+      const cluster = url.searchParams.get("cluster") || null;
+      const chats = await listChats(limit, cluster);
       return sendJson(res, 200, { chats });
     }
     if (req.method === "POST") {
       try {
         const body = await readJsonBody(req);
-        const chat = await createChat({ id: body.id, title: body.title });
+        const chat = await createChat({ id: body.id, title: body.title, cluster: body.cluster });
         return sendJson(res, 201, chat);
       } catch (err) {
         return sendJson(res, 400, { error: err.message });

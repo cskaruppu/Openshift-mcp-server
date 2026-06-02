@@ -19,20 +19,28 @@ export async function isHistoryEnabled() {
   return dbEnabled();
 }
 
-/** List conversations, newest first. */
-export async function listChats(limit = 100) {
+/**
+ * List conversations, newest first.
+ * @param {number} limit
+ * @param {string|null} cluster - when provided, only chats for that cluster
+ *   are returned (per-cluster single pane of glass). Omit/null = all clusters.
+ */
+export async function listChats(limit = 100, cluster = null) {
+  const filterCluster = cluster && cluster !== "all";
   const r = await query(
     `SELECT c.id,
             c.title,
             c.starred,
             c.locked,
+            c.cluster,
             c.created_at,
             c.updated_at,
             (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count
        FROM conversations c
+      ${filterCluster ? "WHERE c.cluster = $2" : ""}
       ORDER BY c.starred DESC, c.updated_at DESC
       LIMIT $1`,
-    [limit]
+    filterCluster ? [limit, cluster] : [limit]
   );
   if (!r) return [];
   return r.rows.map((row) => ({
@@ -40,6 +48,7 @@ export async function listChats(limit = 100) {
     title: row.title,
     starred: row.starred || false,
     locked: row.locked || false,
+    cluster: row.cluster || "local",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     messageCount: Number(row.message_count) || 0,
@@ -79,21 +88,23 @@ export async function getChat(id) {
   };
 }
 
-/** Create a new conversation. */
-export async function createChat({ id, title } = {}) {
+/** Create a new conversation, tagged with the cluster it belongs to. */
+export async function createChat({ id, title, cluster } = {}) {
   const cid = id || newId();
   const t = title || "New chat";
+  const cl = cluster || "local";
   const r = await query(
-    `INSERT INTO conversations (id, title) VALUES ($1, $2)
-     ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, updated_at = NOW()
-     RETURNING id, title, created_at, updated_at`,
-    [cid, t]
+    `INSERT INTO conversations (id, title, cluster) VALUES ($1, $2, $3)
+     ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, cluster = EXCLUDED.cluster, updated_at = NOW()
+     RETURNING id, title, cluster, created_at, updated_at`,
+    [cid, t, cl]
   );
   if (!r || r.rowCount === 0) return null;
   const row = r.rows[0];
   return {
     id: row.id,
     title: row.title,
+    cluster: row.cluster || "local",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     messages: [],
@@ -101,14 +112,14 @@ export async function createChat({ id, title } = {}) {
 }
 
 /** Append a message to a conversation, creating the conversation if needed. */
-export async function addMessage(conversationId, { role, content, html, provider }) {
+export async function addMessage(conversationId, { role, content, html, provider, cluster }) {
   if (!conversationId) return null;
 
-  // Make sure the conversation exists.
+  // Make sure the conversation exists, tagged with the originating cluster.
   await query(
-    `INSERT INTO conversations (id, title) VALUES ($1, $2)
+    `INSERT INTO conversations (id, title, cluster) VALUES ($1, $2, $3)
      ON CONFLICT (id) DO NOTHING`,
-    [conversationId, role === "user" ? truncateTitle(content) : "New chat"]
+    [conversationId, role === "user" ? truncateTitle(content) : "New chat", cluster || "local"]
   );
 
   const r = await query(
@@ -208,15 +219,17 @@ export async function isLocked(id) {
   return Boolean(r.rows[0].locked);
 }
 
-/** Search conversations by title or message content. */
-export async function searchChats(term, limit = 50) {
+/** Search conversations by title or message content (optionally scoped to a cluster). */
+export async function searchChats(term, limit = 50, cluster = null) {
   if (!term || !term.trim()) return [];
   const pattern = `%${term.trim()}%`;
+  const filterCluster = cluster && cluster !== "all";
   const r = await query(
     `SELECT DISTINCT c.id,
             c.title,
             c.starred,
             c.locked,
+            c.cluster,
             c.created_at,
             c.updated_at,
             (SELECT COUNT(*) FROM messages m2 WHERE m2.conversation_id = c.id) AS message_count,
@@ -225,10 +238,10 @@ export async function searchChats(term, limit = 50) {
              ORDER BY m3.id LIMIT 1) AS matched_snippet
        FROM conversations c
        LEFT JOIN messages m ON m.conversation_id = c.id
-      WHERE c.title ILIKE $1 OR m.content ILIKE $1
+      WHERE (c.title ILIKE $1 OR m.content ILIKE $1)${filterCluster ? " AND c.cluster = $3" : ""}
       ORDER BY c.starred DESC, c.updated_at DESC
       LIMIT $2`,
-    [pattern, limit]
+    filterCluster ? [pattern, limit, cluster] : [pattern, limit]
   );
   if (!r) return [];
   return r.rows.map((row) => ({
@@ -236,6 +249,7 @@ export async function searchChats(term, limit = 50) {
     title: row.title,
     starred: row.starred || false,
     locked: row.locked || false,
+    cluster: row.cluster || "local",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     messageCount: Number(row.message_count) || 0,

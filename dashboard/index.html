@@ -9988,13 +9988,24 @@ function showView(view) {
 // Structure: { chats: [{ id, title, messages: [{ role, text, provider?, html? }], updatedAt }], activeId }
 let _historyRemote = null; // null = unknown, true = server-backed, false = localStorage
 let _historyCache = { chats: [], activeId: null };
+// Chat-history scope: 'cluster' = only the active cluster's chats (default,
+// single-pane-of-glass); 'all' = every cluster's chats.
+let _chatHistoryScope = 'cluster';
+
+// The cluster a new chat belongs to / the sidebar is scoped to.
+function activeChatCluster() {
+  return (_globalActiveCluster && _globalActiveCluster !== 'local') ? _globalActiveCluster : 'local';
+}
+function chatScopeParam() {
+  return _chatHistoryScope === 'all' ? '' : ('?cluster=' + encodeURIComponent(activeChatCluster()));
+}
 
 function chatApiBase() { return MCP_API.replace(/\/api$/, ''); }
 
 async function detectHistoryBackend() {
   if (_historyRemote !== null) return _historyRemote;
   try {
-    const resp = await fetch(chatApiBase() + '/api/chats');
+    const resp = await fetch(chatApiBase() + '/api/chats' + chatScopeParam());
     if (resp.ok) {
       _historyRemote = true;
       const data = await resp.json();
@@ -10003,6 +10014,7 @@ async function detectHistoryBackend() {
         title: c.title,
         starred: c.starred || false,
         locked: c.locked || false,
+        cluster: c.cluster || 'local',
         messages: [], // lazy-loaded on select
         messageCount: c.messageCount || 0,
         updatedAt: c.updatedAt,
@@ -10023,6 +10035,40 @@ async function detectHistoryBackend() {
     if (saved && saved.chats) _historyCache = saved;
   } catch (e) {}
   return false;
+}
+
+// Re-fetch (remote) or re-render (local) the chat list for the current
+// cluster scope. Called when the user switches clusters or toggles scope.
+async function reloadChatList() {
+  if (_historyRemote) {
+    try {
+      const resp = await fetch(chatApiBase() + '/api/chats' + chatScopeParam());
+      if (resp.ok) {
+        const data = await resp.json();
+        const prev = _historyCache.chats || [];
+        _historyCache.chats = (data.chats || []).map(c => {
+          const old = prev.find(p => p.id === c.id);
+          return {
+            id: c.id,
+            title: c.title,
+            starred: c.starred || false,
+            locked: c.locked || false,
+            cluster: c.cluster || 'local',
+            messages: old && old.loaded ? old.messages : [],
+            messageCount: c.messageCount || 0,
+            updatedAt: c.updatedAt,
+            loaded: old ? old.loaded : false,
+          };
+        });
+        // If the active chat is no longer in this cluster's list, clear it.
+        if (_historyCache.activeId && !_historyCache.chats.find(c => c.id === _historyCache.activeId)) {
+          _historyCache.activeId = null;
+        }
+      }
+    } catch (e) {}
+  }
+  renderChatHistory();
+  renderConversation();
 }
 
 function loadChatHistory() {
@@ -10098,6 +10144,7 @@ async function newChat() {
   const chat = {
     id,
     title: 'New conversation',
+    cluster: activeChatCluster(),
     messages: [],
     messageCount: 0,
     updatedAt: new Date().toISOString(),
@@ -10111,7 +10158,7 @@ async function newChat() {
     fetch(chatApiBase() + '/api/chats', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, title: chat.title }),
+      body: JSON.stringify({ id, title: chat.title, cluster: chat.cluster }),
     }).catch(() => {});
   }
 
@@ -10126,6 +10173,7 @@ async function openNewChatWithCommand(command, title) {
   const chat = {
     id,
     title: title || command,
+    cluster: activeChatCluster(),
     messages: [],
     messageCount: 0,
     updatedAt: new Date().toISOString(),
@@ -10138,7 +10186,7 @@ async function openNewChatWithCommand(command, title) {
     fetch(chatApiBase() + '/api/chats', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, title: chat.title }),
+      body: JSON.stringify({ id, title: chat.title, cluster: chat.cluster }),
     }).catch(() => {});
   }
   renderChatHistory();
@@ -10417,12 +10465,39 @@ function showToast(message, kind) {
   }, 2800);
 }
 
+function toggleChatHistoryScope() {
+  _chatHistoryScope = (_chatHistoryScope === 'all') ? 'cluster' : 'all';
+  reloadChatList();
+}
+
+function _chatScopeHeaderHtml() {
+  var scopeCluster = activeChatCluster();
+  var clusterLabel = scopeCluster === 'local' ? 'Hub (local)' : scopeCluster;
+  var pInfo = K8S_PLATFORMS[(scopeCluster === 'local' ? (getActiveClusterPlatform && getActiveClusterPlatform()) : ((_remoteAgents[scopeCluster] || {}).platform)) || 'k8s'] || K8S_PLATFORMS['k8s'];
+  var label = _chatHistoryScope === 'all'
+    ? '<span style="opacity:.7">All clusters</span>'
+    : '<span style="color:' + pInfo.color + '">' + pInfo.icon + '</span> ' + esc(clusterLabel);
+  var toggle = _chatHistoryScope === 'all' ? 'This cluster' : 'All clusters';
+  return '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px 10px;margin-bottom:4px;border-bottom:1px solid var(--border);font-size:11px">' +
+    '<span style="font-weight:600;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + label + '</span>' +
+    '<button onclick="toggleChatHistoryScope()" title="Toggle chat history scope" style="background:none;border:1px solid var(--border);border-radius:5px;padding:2px 8px;cursor:pointer;font-size:10px;color:var(--text2);white-space:nowrap">' + toggle + '</button>' +
+    '</div>';
+}
+
 function renderChatHistory() {
   const list = document.getElementById('chat-history-list');
   const history = loadChatHistory();
+  const scopeHeader = _chatScopeHeaderHtml();
+  const scopeCluster = activeChatCluster();
+  const clusterLabel = scopeCluster === 'local' ? 'the hub cluster' : scopeCluster;
 
-  if (history.chats.length === 0) {
-    list.innerHTML = '<div style="padding:16px;color:var(--text2);font-size:13px;text-align:center">No conversations yet.<br>Start a new chat!</div>';
+  // Scope the visible list to the active cluster unless "All clusters" is on.
+  const visibleChats = (_chatHistoryScope === 'all')
+    ? history.chats
+    : history.chats.filter(function(c) { return (c.cluster || 'local') === scopeCluster; });
+
+  if (visibleChats.length === 0) {
+    list.innerHTML = scopeHeader + '<div style="padding:16px;color:var(--text2);font-size:13px;text-align:center">No conversations for <b>' + esc(clusterLabel) + '</b> yet.<br>Start a new chat!</div>';
     return;
   }
 
@@ -10445,15 +10520,23 @@ function renderChatHistory() {
   });
   if (titleFixed) saveChatHistory(history);
 
-  list.innerHTML = history.chats.map(c => {
+  list.innerHTML = scopeHeader + visibleChats.map(c => {
     const active = c.id === history.activeId ? ' active' : '';
     const time = c.updatedAt ? timeAgo(c.updatedAt) : '';
     const count = (c.messages && c.messages.length) || c.messageCount || 0;
     const starred = c.starred ? ' starred' : '';
     const locked = c.locked ? ' locked' : '';
     const lockBadge = c.locked ? '<span class="lock-badge" title="Locked \u2014 protected from deletion">\ud83d\udd12</span>' : '';
+    // In "all clusters" mode, show which cluster each chat belongs to.
+    var clChip = '';
+    if (_chatHistoryScope === 'all') {
+      var cl = c.cluster || 'local';
+      var clName = cl === 'local' ? 'hub' : cl;
+      var cpInfo = K8S_PLATFORMS[(cl === 'local' ? 'openshift' : ((_remoteAgents[cl] || {}).platform)) || 'k8s'] || K8S_PLATFORMS['k8s'];
+      clChip = '<span style="display:inline-block;font-size:9px;padding:1px 6px;border-radius:4px;background:' + cpInfo.color + '18;color:' + cpInfo.color + ';margin-left:4px">' + esc(clName) + '</span>';
+    }
     return '<div class="history-item' + active + starred + locked + '" data-chat-id="' + c.id + '" onclick="selectChat(\'' + c.id + '\')">' +
-      '<div class="history-title">' + lockBadge + esc(c.title) + '</div>' +
+      '<div class="history-title">' + lockBadge + esc(c.title) + clChip + '</div>' +
       '<div class="history-meta">' + count + ' messages' + (time ? ' \u00b7 ' + time : '') + '</div>' +
       '<button class="history-menu-btn" onclick="toggleChatMenu(\'' + c.id + '\', event)" title="Options">\u22ef</button>' +
       '<div class="history-dropdown" id="chat-menu-' + c.id + '">' +
@@ -11205,6 +11288,9 @@ function reloadCurrentView() {
   else if (_currentView === 'audit') { if (typeof loadAuditView === 'function') loadAuditView(); }
   else if (_currentView === 'intelligence') { if (typeof loadIntelligenceView === 'function') loadIntelligenceView(); }
   else if (_currentView === 'chat') { updateCcsTrigger(); updateChatWelcomeText(); }
+  // Chat history is per-cluster — refresh the scoped list on every switch so
+  // that opening AI Chat always shows only the selected cluster's chats.
+  if (typeof reloadChatList === 'function') { reloadChatList(); }
 }
 
 function updateClusterContextBanner() {
@@ -14281,7 +14367,9 @@ var _chatSearchActive = false;
 function localFilterChats(q) {
   var history = loadChatHistory();
   var list = document.getElementById('chat-history-list');
-  var matches = history.chats.filter(function(c) {
+  var scopeCluster = activeChatCluster();
+  var pool = (_chatHistoryScope === 'all') ? history.chats : history.chats.filter(function(c) { return (c.cluster || 'local') === scopeCluster; });
+  var matches = pool.filter(function(c) {
     if ((c.title || '').toLowerCase().includes(q)) return true;
     if (c.messages) {
       return c.messages.some(function(m) {
@@ -14295,7 +14383,8 @@ function localFilterChats(q) {
 }
 
 function serverSearchChats(q) {
-  fetch(chatApiBase() + '/api/chats/search?q=' + encodeURIComponent(q))
+  var scope = _chatHistoryScope === 'all' ? '' : ('&cluster=' + encodeURIComponent(activeChatCluster()));
+  fetch(chatApiBase() + '/api/chats/search?q=' + encodeURIComponent(q) + scope)
     .then(function(r) { return r.ok ? r.json() : null; })
     .then(function(data) {
       if (!data || !data.results) return;

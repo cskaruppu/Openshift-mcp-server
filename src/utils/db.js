@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   title TEXT NOT NULL DEFAULT 'New chat',
   starred BOOLEAN NOT NULL DEFAULT FALSE,
   locked BOOLEAN NOT NULL DEFAULT FALSE,
+  cluster TEXT NOT NULL DEFAULT 'local',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -215,6 +216,12 @@ async function ensureSchema() {
     `).catch(() => {});
     await _pool.query(`
       ALTER TABLE conversations ADD COLUMN IF NOT EXISTS locked BOOLEAN NOT NULL DEFAULT FALSE
+    `).catch(() => {});
+    await _pool.query(`
+      ALTER TABLE conversations ADD COLUMN IF NOT EXISTS cluster TEXT NOT NULL DEFAULT 'local'
+    `).catch(() => {});
+    await _pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_conversations_cluster ON conversations(cluster, updated_at DESC)
     `).catch(() => {});
     await _pool.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ DEFAULT NOW()
