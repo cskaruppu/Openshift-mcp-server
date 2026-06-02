@@ -6284,8 +6284,9 @@ function _isRemoteCluster() { return _globalActiveCluster && _globalActiveCluste
 function _remoteUnavailableHTML(widgetLabel) {
   var clusterName = _globalActiveCluster || 'Remote';
   var agent = (_remoteAgents || {})[clusterName] || {};
-  var status = agent.status === 'live' || agent.status === 'connected' ? 'Connected' : (agent.status || 'Unknown');
-  var statusColor = status === 'Connected' ? 'var(--ok)' : 'var(--warn)';
+  var _isUp = agent.status === 'active' || agent.status === 'live' || agent.status === 'connected' || agent.status === 'reporting';
+  var status = _isUp ? 'Active' : (agent.status === 'waiting' || agent.status === 'registered') ? 'Awaiting Data' : agent.status === 'pending' ? 'Agent Not Installed' : agent.status === 'stale' ? 'Stale' : (agent.status || 'Unknown');
+  var statusColor = _isUp ? 'var(--ok)' : (agent.status === 'waiting' || agent.status === 'registered') ? 'var(--accent2)' : 'var(--warn)';
   return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px 16px;gap:10px;color:var(--text2);text-align:center">' +
     '<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.5">' +
     '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>' +
@@ -10857,34 +10858,42 @@ function _ccsClusterItems() {
   return items;
 }
 
+function _ccsIsActive(status) {
+  return status === 'active' || status === 'live' || status === 'connected' || status === 'reporting';
+}
+
 function _ccsHealthDot(item) {
-  var isConnected = item.status === 'live' || item.status === 'connected';
+  var isActive = _ccsIsActive(item.status);
   if (item.health) {
     var h = item.health.toLowerCase();
     if (h === 'healthy') return 'var(--ok)';
     if (h === 'warning' || h === 'degraded') return 'var(--warn)';
     if (h === 'critical') return 'var(--crit)';
-    return isConnected ? 'var(--ok)' : 'var(--warn)';
+    return isActive ? 'var(--ok)' : 'var(--warn)';
   }
-  if (isConnected) return 'var(--ok)';
+  if (isActive) return 'var(--ok)';
+  if (item.status === 'waiting' || item.status === 'registered') return 'var(--accent2)';
   if (item.status === 'auth-error' || item.status === 'unreachable' || item.status === 'error') return 'var(--crit)';
+  if (item.status === 'stale' || item.status === 'pending') return 'var(--warn)';
   return 'var(--warn)';
 }
 
 function _ccsStatusBadge(item) {
-  var isConnected = item.status === 'live' || item.status === 'connected';
-  if (isConnected) {
+  var isActive = _ccsIsActive(item.status);
+  if (isActive) {
     if (item.health) {
       var h = item.health.toLowerCase();
       if (h === 'healthy') return '<span class="ccs-item-badge live">Healthy</span>';
       if (h === 'degraded') return '<span class="ccs-item-badge warn">Degraded</span>';
       if (h === 'warning') return '<span class="ccs-item-badge warn">Warning</span>';
     }
-    return '';
+    return '<span class="ccs-item-badge live">Active</span>';
   }
+  if (item.status === 'waiting' || item.status === 'registered') return '<span class="ccs-item-badge warn">Awaiting Data</span>';
+  if (item.status === 'pending') return '<span class="ccs-item-badge error">No Agent</span>';
+  if (item.status === 'stale') return '<span class="ccs-item-badge warn">Stale</span>';
   if (item.status === 'auth-error') return '<span class="ccs-item-badge error">Auth Error</span>';
   if (item.status === 'unreachable') return '<span class="ccs-item-badge error">Unreachable</span>';
-  if (item.status === 'registered') return '<span class="ccs-item-badge warn">Pending</span>';
   return '';
 }
 
@@ -10946,13 +10955,13 @@ function _ccsRenderItem(item) {
   var capsHtml = '';
   if (!item.isLocal) {
     var caps = [];
-    var isConnected = item.status === 'live' || item.status === 'connected';
-    if (isConnected) caps.push('Status');
-    if (isConnected) caps.push('Nodes');
-    if (isConnected) caps.push('Pods');
-    if (isConnected && (item.platform || '').toLowerCase() === 'openshift') caps.push('Operators');
-    if (isConnected) caps.push('Events');
-    if (isConnected) caps.push('Metrics');
+    var isActive = _ccsIsActive(item.status);
+    if (isActive) caps.push('Status');
+    if (isActive) caps.push('Nodes');
+    if (isActive) caps.push('Pods');
+    if (isActive && (item.platform || '').toLowerCase() === 'openshift') caps.push('Operators');
+    if (isActive) caps.push('Events');
+    if (isActive) caps.push('Metrics');
     if (caps.length > 0) capsHtml = '<div class="ccs-cap-row">' + caps.map(function(c) { return '<span class="ccs-cap">' + c + '</span>'; }).join('') + '</div>';
   }
   return '<div class="ccs-item' + active + '" data-name="' + esc(item.label) + '" onclick="selectChatCluster(\'' + esc(item.name).replace(/'/g, "\\'") + '\')">' +
@@ -11076,21 +11085,14 @@ function populateGlobalClusterDropdown() {
     : '';
   inner.innerHTML = searchHtml + '<div class="gcs-items-list" id="gcs-items-list">' + items.map(function(item) {
     var pInfo = K8S_PLATFORMS[(item.platform || 'k8s').toLowerCase()] || K8S_PLATFORMS['k8s'];
-    var isConnected = item.status === 'live' || item.status === 'connected';
-    // Health-based dot color (if health data available), otherwise connection status
-    var dotColor;
-    if (item.health) {
-      var h = item.health.toLowerCase();
-      dotColor = h === 'healthy' ? 'var(--ok)' : (h === 'warning' || h === 'degraded') ? 'var(--warn)' : h === 'critical' ? 'var(--crit)' : isConnected ? 'var(--ok)' : 'var(--warn)';
-    } else {
-      dotColor = isConnected ? 'var(--ok)' :
-        (item.status === 'auth-error' || item.status === 'stale' || item.status === 'registered') ? 'var(--warn)' :
-        item.status === 'unreachable' || item.status === 'error' ? 'var(--crit)' : 'var(--accent2)';
-    }
-    var statusText = isConnected ? '' :
+    var isActive = _ccsIsActive(item.status);
+    var dotColor = _ccsHealthDot(item);
+    var statusText = isActive ? '' :
+                     (item.status === 'waiting' || item.status === 'registered') ? 'Awaiting data' :
+                     item.status === 'pending' ? 'No agent' :
+                     item.status === 'stale' ? 'Stale' :
                      item.status === 'auth-error' ? 'Auth error' :
-                     item.status === 'unreachable' ? 'Unreachable' :
-                     item.status === 'registered' ? 'Pending' : '';
+                     item.status === 'unreachable' ? 'Unreachable' : '';
     var active = item.name === _globalActiveCluster ? ' active' : '';
     var platformLabel = pInfo.name;
     var versionStr = '';
@@ -11228,12 +11230,12 @@ function updateClusterContextBanner() {
     }).join('') : 'connecting...';
   }
   var agent = (_remoteAgents || {})[_globalActiveCluster] || {};
-  var isConnected = agent.status === 'live' || agent.status === 'connected';
-  var dotColor = isConnected ? 'var(--ok)' : 'var(--warn)';
+  var isActive = _ccsIsActive(agent.status);
+  var dotColor = isActive ? 'var(--ok)' : (agent.status === 'waiting' || agent.status === 'registered') ? 'var(--accent2)' : 'var(--warn)';
   if (dotEl) dotEl.style.background = dotColor;
   if (statusEl) {
-    statusEl.textContent = isConnected ? 'Connected' : (agent.status || 'Connecting');
-    statusEl.style.color = isConnected ? 'var(--ok)' : 'var(--warn)';
+    statusEl.textContent = isActive ? 'Active' : (agent.status === 'waiting' || agent.status === 'registered') ? 'Awaiting Data' : agent.status === 'pending' ? 'Agent Not Installed' : agent.status === 'stale' ? 'Stale' : (agent.status || 'Connecting');
+    statusEl.style.color = dotColor;
   }
 }
 
@@ -11244,7 +11246,7 @@ function updateGlobalClusterDot() {
     dot.style.background = 'var(--ok)';
   } else {
     var agent = (_remoteAgents || {})[_globalActiveCluster] || {};
-    dot.style.background = (agent.status === 'live' || agent.status === 'connected') ? 'var(--ok)' : 'var(--warn)';
+    dot.style.background = _ccsIsActive(agent.status) ? 'var(--ok)' : (agent.status === 'waiting' || agent.status === 'registered') ? 'var(--accent2)' : 'var(--warn)';
   }
 }
 
@@ -16842,10 +16844,11 @@ function buildKebabMenu(clusterId, clusterName, platform, isBuiltin, source) {
       '<button class="kebab-item" onclick="hubCheckStatus(\'' + esc(clusterName) + '\',\'' + esc(source) + '\');closeAllKebabs()">&#x1F4CA; Status Check</button>' +
       '<button class="kebab-item" onclick="hubEditCluster(\'' + esc(clusterName) + '\',\'' + esc(platform) + '\',\'' + esc(source) + '\');closeAllKebabs()">&#x270F; Edit Cluster</button>' +
       '<button class="kebab-item" onclick="hubReconnectCluster(\'' + esc(clusterName) + '\',\'' + esc(source) + '\');closeAllKebabs()">&#x21BB; Reconnect</button>' +
-      (source === 'agent' ? '<div class="kebab-sep"></div>' +
+      (!isBuiltin ? '<div class="kebab-sep"></div>' +
         '<button class="kebab-item" onclick="hubPushRBACUpdate(\'' + esc(clusterName) + '\');closeAllKebabs()">&#x1F512; Sync RBAC</button>' +
-        '<button class="kebab-item" onclick="hubRedeployAgent(\'' + esc(clusterName) + '\');closeAllKebabs()">&#x1F504; Redeploy Agent</button>' : '') +
-      (isBuiltin ? '' : '<div class="kebab-sep"></div><button class="kebab-item danger" onclick="hubDeleteCluster(\'' + esc(clusterName) + '\',\'' + esc(source) + '\');closeAllKebabs()">&#x1F5D1; Delete Cluster</button>') +
+        '<button class="kebab-item" onclick="hubRedeployAgent(\'' + esc(clusterName) + '\');closeAllKebabs()">&#x1F504; Redeploy Agent</button>' +
+        '<div class="kebab-sep"></div>' +
+        '<button class="kebab-item danger" onclick="hubDeleteCluster(\'' + esc(clusterName) + '\',\'' + esc(source) + '\');closeAllKebabs()">&#x1F5D1; Remove Cluster</button>' : '') +
     '</div></div>';
 }
 
@@ -16918,14 +16921,17 @@ async function hubCheckStatus(clusterName, source) {
   var s = _hubServers.find(function(sv) { return sv.name === clusterName; });
   var info = a || s || {};
   var pInfo = K8S_PLATFORMS[info.platform || 'k8s'] || K8S_PLATFORMS['k8s'];
-  var statusColor = (info.status === 'connected' || info.status === 'live') ? 'var(--ok)' :
-    (info.status === 'auth-error' || info.status === 'stale' || info.status === 'registered') ? 'var(--warn)' :
-    (info.status === 'unreachable' || info.status === 'error') ? 'var(--crit)' : 'var(--accent2)';
-  var statusLabel = (info.status === 'connected' || info.status === 'live') ? 'Live' :
-    info.status === 'auth-error' ? 'Auth Error' :
-    info.status === 'unreachable' ? 'Unreachable' :
-    info.status === 'registered' ? 'Registered' :
-    info.status === 'stale' ? 'Stale' : info.status || 'Unknown';
+  var _statusMap = {
+    active: { c: 'var(--ok)', l: 'Active' }, live: { c: 'var(--ok)', l: 'Active' },
+    reporting: { c: 'var(--ok)', l: 'Reporting' }, connected: { c: 'var(--ok)', l: 'Connected' },
+    waiting: { c: 'var(--accent2)', l: 'Awaiting Data' }, pending: { c: 'var(--warn)', l: 'Agent Not Installed' },
+    registered: { c: 'var(--accent2)', l: 'Awaiting Data' },
+    stale: { c: 'var(--warn)', l: 'Stale' }, 'auth-error': { c: 'var(--crit)', l: 'Auth Error' },
+    unreachable: { c: 'var(--crit)', l: 'Unreachable' }, error: { c: 'var(--crit)', l: 'Error' },
+  };
+  var _sm = _statusMap[info.status] || { c: 'var(--text2)', l: info.status || 'Unknown' };
+  var statusColor = _sm.c;
+  var statusLabel = _sm.l;
   statusDialog.innerHTML =
     '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:420px;max-height:80vh;overflow-y:auto;padding:24px">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">' +
@@ -17106,23 +17112,29 @@ function renderHubServers() {
 
   el.innerHTML = allClusters.map(function(c) {
     var pInfo = K8S_PLATFORMS[c.platform] || K8S_PLATFORMS['k8s'];
-    var statusColor, statusLabel, statusPulse;
-    if (c.status === 'live' || c.status === 'connected') {
-      statusColor = 'var(--ok)'; statusLabel = 'Live'; statusPulse = 'animation:pulse 2s infinite';
-    } else if (c.status === 'connecting') {
-      statusColor = 'var(--warn)'; statusLabel = 'Connecting'; statusPulse = 'animation:pulse 1s infinite';
+    var statusColor, statusLabel, statusPulse, statusIcon;
+    if (c.status === 'active' || c.status === 'live') {
+      statusColor = 'var(--ok)'; statusLabel = 'Active'; statusPulse = 'animation:pulse 2s infinite'; statusIcon = '&#x2714;';
+    } else if (c.status === 'reporting') {
+      statusColor = 'var(--ok)'; statusLabel = 'Reporting'; statusPulse = 'animation:pulse 2s infinite'; statusIcon = '&#x2714;';
+    } else if (c.status === 'connected') {
+      statusColor = 'var(--ok)'; statusLabel = 'Connected'; statusPulse = 'animation:pulse 2s infinite'; statusIcon = '&#x26A1;';
+    } else if (c.status === 'waiting') {
+      statusColor = 'var(--accent2)'; statusLabel = 'Awaiting Data'; statusPulse = 'animation:pulse 1.5s infinite'; statusIcon = '&#x23F3;';
+    } else if (c.status === 'pending') {
+      statusColor = 'var(--warn)'; statusLabel = 'Agent Not Installed'; statusPulse = ''; statusIcon = '&#x26A0;';
     } else if (c.status === 'registered') {
-      statusColor = 'var(--accent2)'; statusLabel = 'Registered'; statusPulse = '';
-    } else if (c.status === 'auth-error') {
-      statusColor = 'var(--warn)'; statusLabel = 'Auth Error'; statusPulse = '';
-    } else if (c.status === 'unreachable') {
-      statusColor = 'var(--crit)'; statusLabel = 'Unreachable'; statusPulse = '';
+      statusColor = 'var(--accent2)'; statusLabel = 'Awaiting Data'; statusPulse = 'animation:pulse 1.5s infinite'; statusIcon = '&#x23F3;';
     } else if (c.status === 'stale') {
-      statusColor = 'var(--warn)'; statusLabel = 'Stale'; statusPulse = '';
+      statusColor = 'var(--warn)'; statusLabel = 'Stale'; statusPulse = ''; statusIcon = '&#x23F1;';
+    } else if (c.status === 'auth-error') {
+      statusColor = 'var(--crit)'; statusLabel = 'Auth Error'; statusPulse = ''; statusIcon = '&#x1F512;';
+    } else if (c.status === 'unreachable') {
+      statusColor = 'var(--crit)'; statusLabel = 'Unreachable'; statusPulse = ''; statusIcon = '&#x274C;';
     } else if (c.status === 'error') {
-      statusColor = 'var(--crit)'; statusLabel = 'Error'; statusPulse = '';
+      statusColor = 'var(--crit)'; statusLabel = 'Error'; statusPulse = ''; statusIcon = '&#x274C;';
     } else {
-      statusColor = 'var(--crit)'; statusLabel = c.status || 'Unknown'; statusPulse = '';
+      statusColor = 'var(--text2)'; statusLabel = c.status || 'Unknown'; statusPulse = ''; statusIcon = '&#x2753;';
     }
 
     var summaryHtml = '';
@@ -17173,6 +17185,9 @@ function renderHubServers() {
         '</div>' +
       '</div>' +
       toolsHtml +
+      (c.status === 'pending' ? '<div style="background:var(--warn)08;border:1px solid var(--warn)22;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:11px;color:var(--warn);display:flex;align-items:start;gap:6px"><span>&#x26A0;</span><span>Agent not installed on this cluster. Deploy the agent YAML from the <b>Connect Cluster</b> wizard, then the status will update automatically.</span></div>' : '') +
+      (c.status === 'waiting' || c.status === 'registered' ? '<div style="background:var(--accent2)08;border:1px solid var(--accent2)22;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:11px;color:var(--accent2);display:flex;align-items:start;gap:6px"><span>&#x23F3;</span><span>Agent registered but hasn\'t sent its first scan report yet. This usually takes about 60 seconds after deployment.</span></div>' : '') +
+      (c.status === 'stale' ? '<div style="background:var(--warn)08;border:1px solid var(--warn)22;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:11px;color:var(--warn);display:flex;align-items:start;gap:6px"><span>&#x23F1;</span><span>Agent hasn\'t reported in over 5 minutes. Check agent pod logs on the remote cluster.</span></div>' : '') +
       summaryHtml +
       (c.toolCount > 0 ? '<div style="font-size:10px;color:var(--text2);margin-bottom:10px">' +
         (c.tools || []).slice(0, 5).map(function(t) { return '<code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:9px">' + esc(t.name) + '</code>'; }).join(' ') +
@@ -17187,8 +17202,8 @@ function renderHubServers() {
       '<div style="display:flex;gap:6px;border-top:1px solid var(--border);padding-top:10px;flex-wrap:wrap">' +
         '<button onclick="hubChatWithCluster(\'' + esc(c.id) + '\',\'' + esc(c.name) + '\',\'' + esc(c.platform) + '\')" style="background:linear-gradient(135deg,' + pInfo.color + ',' + pInfo.color + 'cc);color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px;transition:opacity .15s" onmouseover="this.style.opacity=\'0.9\'" onmouseout="this.style.opacity=\'1\'" title="Open AI Chat for this cluster">&#x1F4AC; AI Chat</button>' +
         (!c.isBuiltin ? '<button onclick="verifyClusterHealth(\'' + esc(c.name).replace(/'/g, "\\'") + '\')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:11px;font-weight:500;color:var(--text2);display:flex;align-items:center;gap:4px;transition:all .15s" onmouseover="this.style.borderColor=\'var(--accent2)\';this.style.color=\'var(--text)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.color=\'var(--text2)\'" title="Verify cluster connectivity">&#x1F50D; Verify</button>' : '') +
-        (c.source === 'agent' ? '<button onclick="hubPushRBACUpdate(\'' + esc(c.name) + '\')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:11px;font-weight:500;color:var(--text2);display:flex;align-items:center;gap:4px;transition:all .15s" onmouseover="this.style.borderColor=\'var(--accent2)\';this.style.color=\'var(--text)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.color=\'var(--text2)\'" title="Push updated RBAC rules to agent">&#x1F512; Sync RBAC</button>' : '') +
-        (c.source === 'agent' ? '<button onclick="hubRedeployAgent(\'' + esc(c.name) + '\')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:11px;font-weight:500;color:var(--text2);display:flex;align-items:center;gap:4px;transition:all .15s" onmouseover="this.style.borderColor=\'var(--warn)\';this.style.color=\'var(--text)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.color=\'var(--text2)\'" title="Rollout restart after image rebuild">&#x1F504; Redeploy</button>' : '') +
+        (!c.isBuiltin ? '<button onclick="hubPushRBACUpdate(\'' + esc(c.name) + '\')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:11px;font-weight:500;color:var(--text2);display:flex;align-items:center;gap:4px;transition:all .15s" onmouseover="this.style.borderColor=\'var(--accent2)\';this.style.color=\'var(--text)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.color=\'var(--text2)\'" title="Push updated RBAC rules to agent">&#x1F512; Sync RBAC</button>' : '') +
+        (!c.isBuiltin ? '<button onclick="hubRedeployAgent(\'' + esc(c.name) + '\')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:11px;font-weight:500;color:var(--text2);display:flex;align-items:center;gap:4px;transition:all .15s" onmouseover="this.style.borderColor=\'var(--warn)\';this.style.color=\'var(--text)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.color=\'var(--text2)\'" title="Rollout restart after image rebuild">&#x1F504; Redeploy</button>' : '') +
       '</div>' +
     '</div>';
   }).join('');

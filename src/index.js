@@ -2240,22 +2240,35 @@ async function startSSE() {
           : null;
 
         let status;
-        if (agentReportElapsed !== null && agentReportElapsed < 300) {
-          status = "live"; // Agent reported recently — trust it
+        const hasBridge = hasActiveChannel(agent.clusterName);
+        const hasReport = agentReportElapsed !== null;
+        const reportFresh = hasReport && agentReportElapsed < 300;
+        const reportStale = hasReport && agentReportElapsed >= 300 && agentReportElapsed < 900;
+
+        if (reportFresh && hasBridge) {
+          status = "active";
+        } else if (reportFresh && !hasBridge) {
+          status = "reporting";
+        } else if (hasBridge && !hasReport) {
+          status = "connected";
+        } else if (reportStale) {
+          status = "stale";
         } else if (agent.lastHealthResult) {
-          // Use most recent health probe result
           if (agent.lastHealthResult.reachable && !agent.lastHealthResult.authError) {
-            status = "live";
+            status = "active";
           } else if (agent.lastHealthResult.reachable && agent.lastHealthResult.authError) {
             status = "auth-error";
           } else {
             status = "unreachable";
           }
         } else if (agent.connectionTest) {
-          // Fall back to initial connection test
-          status = agent.connectionTest.ok ? "registered" : "error";
+          status = agent.connectionTest.ok ? "waiting" : "error";
+        } else if (agent.source === "dashboard" && !hasReport) {
+          status = "pending";
+        } else if (agent.source === "agent" && !hasReport) {
+          status = "waiting";
         } else {
-          status = "registered";
+          status = "waiting";
         }
 
         clusters.push({
