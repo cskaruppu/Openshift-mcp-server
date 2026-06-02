@@ -1,6 +1,6 @@
 {
   "name": "tcs-agentic-ai-agent",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "TCS Agentic AI — Kubernetes Cluster Agent",
   "type": "module",
   "main": "src/index.js",

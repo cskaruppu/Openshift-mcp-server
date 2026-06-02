@@ -4058,6 +4058,13 @@ tr:hover td{background:#ffffff06}
         <span style="font-size:13px;font-weight:600">Deploy TCS Agent</span>
         <span style="font-size:10px;color:var(--text2)">Apply this YAML to your target cluster</span>
       </div>
+      <div style="margin-left:30px;margin-bottom:12px;display:flex;align-items:flex-start;gap:8px;background:var(--bg-alt);border:1px solid var(--border2);border-radius:8px;padding:10px 12px">
+        <input type="checkbox" id="hub-allow-actions" style="margin-top:2px;cursor:pointer" onchange="hubUpdateYamlActions()">
+        <label for="hub-allow-actions" style="font-size:11px;color:var(--text2);cursor:pointer;line-height:1.5">
+          <span style="font-weight:600;color:var(--text)">Allow remote actions (write access)</span><br>
+          Grants scoped write RBAC (scale, restart, delete pod, cordon) and enables the AI Chat to <b>act</b> on this cluster — not just read. Leave unchecked for read-only (zero-trust default).
+        </label>
+      </div>
       <div style="margin-left:30px;margin-bottom:16px;background:var(--card-deep);border:1px solid var(--border2);border-radius:10px;overflow:hidden">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:var(--bg-alt);border-bottom:1px solid var(--border2)">
           <span style="font-size:11px;font-weight:600;color:var(--accent2)" id="hub-yaml-filename">tcs-agentic-ai.yaml</span>
@@ -15086,7 +15093,7 @@ var K8S_PLATFORMS = {
   k8s:       { name: 'Vanilla K8s', color: '#326ce5', icon: '⚙', version: 'K8s', ns: 'tcs-agentic-system', cli: 'kubectl' },
 };
 
-function generateAgentYAML(platform, clusterName, apiUrl) {
+function generateAgentYAML(platform, clusterName, apiUrl, allowActions) {
   var p = K8S_PLATFORMS[platform] || K8S_PLATFORMS['k8s'];
   var ns = p.ns;
   var safeName = (clusterName || 'my-cluster').replace(/[^a-z0-9-]/gi, '-').toLowerCase();
@@ -15210,6 +15217,32 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('      - tcs-agentic-ai');
   lines.push('    verbs: ["patch"]');
   lines.push('');
+  if (allowActions) {
+    lines.push('  # ===== Remote actions (write) — ENABLED for this cluster =====');
+    lines.push('  # Scale & rollout-restart workloads from the hub AI Chat');
+    lines.push('  - apiGroups: ["apps"]');
+    lines.push('    resources:');
+    lines.push('      - deployments');
+    lines.push('      - statefulsets');
+    lines.push('      - daemonsets');
+    lines.push('      - deployments/scale');
+    lines.push('      - statefulsets/scale');
+    lines.push('    verbs: ["update", "patch"]');
+    lines.push('');
+    lines.push('  # Delete (restart) pods');
+    lines.push('  - apiGroups: [""]');
+    lines.push('    resources:');
+    lines.push('      - pods');
+    lines.push('    verbs: ["delete"]');
+    lines.push('');
+    lines.push('  # Cordon / uncordon nodes');
+    lines.push('  - apiGroups: [""]');
+    lines.push('    resources:');
+    lines.push('      - nodes');
+    lines.push('    verbs: ["patch", "update"]');
+    lines.push('  # =============================================================');
+    lines.push('');
+  }
   lines.push('  # Batch — jobs, cronjobs');
   lines.push('  - apiGroups: ["batch"]');
   lines.push('    resources:');
@@ -15407,6 +15440,9 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('  LOG_LEVEL: "info"');
   lines.push('  # Set to "true" if hub uses self-signed or internal CA certificates');
   lines.push('  HUB_TLS_SKIP_VERIFY: "true"');
+  lines.push('  # Remote actions (write): scale/restart/delete/cordon via AI Chat.');
+  lines.push('  # Read-only (false) by default — zero-trust posture.');
+  lines.push('  ALLOW_REMOTE_ACTIONS: "' + (allowActions ? 'true' : 'false') + '"');
   if (apiUrl) {
     lines.push('  API_SERVER_URL: "' + apiUrl + '"');
   }
@@ -15440,7 +15476,7 @@ function generateAgentYAML(platform, clusterName, apiUrl) {
   lines.push('    app: tcs-agentic-ai');
   lines.push('    app.kubernetes.io/name: tcs-agentic-ai');
   lines.push('    app.kubernetes.io/part-of: tcs-agentic-ai');
-  lines.push('    app.kubernetes.io/version: "1.1.0"');
+  lines.push('    app.kubernetes.io/version: "1.2.0"');
   lines.push('spec:');
   lines.push('  replicas: 1');
   lines.push('  revisionHistoryLimit: 3');
@@ -15847,18 +15883,26 @@ function hubAddCluster(platform) {
   _hubParsedKubeconfig = null;
   hubSetAuthTab('token');
   document.getElementById('hub-yaml-filename').textContent = 'tcs-agentic-ai-' + platform + '.yaml';
-  var yaml = generateAgentYAML(platform, '', '');
+  var actionsBox = document.getElementById('hub-allow-actions');
+  if (actionsBox) actionsBox.checked = false;
+  var yaml = generateAgentYAML(platform, '', '', false);
   document.getElementById('hub-agent-yaml').textContent = yaml;
 
   var nameInput = document.getElementById('hub-cluster-name');
   var urlInput = document.getElementById('hub-cluster-url');
   var updateYaml = function() {
-    var y = generateAgentYAML(platform, nameInput.value.trim(), urlInput.value.trim());
+    var allow = !!(document.getElementById('hub-allow-actions') || {}).checked;
+    var y = generateAgentYAML(platform, nameInput.value.trim(), urlInput.value.trim(), allow);
     document.getElementById('hub-agent-yaml').textContent = y;
   };
+  window._hubUpdateYaml = updateYaml;
   nameInput.oninput = updateYaml;
   urlInput.oninput = updateYaml;
   nameInput.focus();
+}
+
+function hubUpdateYamlActions() {
+  if (typeof window._hubUpdateYaml === 'function') window._hubUpdateYaml();
 }
 
 async function hubConnectCluster() {
@@ -16942,7 +16986,7 @@ async function hubCheckStatus(clusterName, source) {
         '<div style="background:var(--bg);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--text2);margin-bottom:4px">Status</div><div style="font-size:14px;font-weight:600;color:' + statusColor + '">' + statusLabel + '</div></div>' +
         '<div style="background:var(--bg);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--text2);margin-bottom:4px">Platform</div><div style="font-size:14px;font-weight:600">' + pInfo.name + '</div></div>' +
         '<div style="background:var(--bg);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--text2);margin-bottom:4px">Source</div><div style="font-size:14px;font-weight:600">' + (source || info.source || 'hub') + '</div></div>' +
-        '<div style="background:var(--bg);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--text2);margin-bottom:4px">Agent Version</div><div style="font-size:14px;font-weight:600">' + (info.agentVersion || 'N/A') + (info.agentVersion && info.agentVersion < '1.1.0' ? ' <span style="color:var(--warn);font-size:10px;font-weight:500">(update available)</span>' : '') + '</div></div>' +
+        '<div style="background:var(--bg);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--text2);margin-bottom:4px">Agent Version</div><div style="font-size:14px;font-weight:600">' + (info.agentVersion || 'N/A') + (info.agentVersion && info.agentVersion < '1.2.0' ? ' <span style="color:var(--warn);font-size:10px;font-weight:500">(update available)</span>' : '') + '</div></div>' +
       '</div>' +
       (source === 'agent' ? '<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">' +
         '<button onclick="hubPushRBACUpdate(\'' + esc(clusterName) + '\');showNotification(\'Sync initiated\',\'info\')" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:11px;color:var(--text);display:flex;align-items:center;gap:5px"><span>&#x1F512;</span> Sync RBAC</button>' +
@@ -17074,6 +17118,7 @@ function renderHubServers() {
       summary: agent ? agent.summary : null,
       source: agent ? agent.source : 'hub',
       agentVersion: agent ? agent.agentVersion : null,
+      actionsEnabled: agent ? agent.actionsEnabled : false,
       registeredAt: agent ? agent.registeredAt : null,
       lastReportTime: agent ? agent.lastReportTime : null,
       lastHealthCheck: agent ? agent.lastHealthCheck : null,
@@ -17098,6 +17143,7 @@ function renderHubServers() {
       summary: a.summary,
       source: a.source || 'agent',
       agentVersion: a.agentVersion || null,
+      actionsEnabled: a.actionsEnabled || false,
       registeredAt: a.registeredAt,
       lastReportTime: a.lastReportTime,
       lastHealthCheck: a.lastHealthCheck || null,
@@ -17157,13 +17203,16 @@ function renderHubServers() {
     } else {
       var versionBadge = '';
       if (c.agentVersion) {
-        var vColor = c.agentVersion >= '1.1.0' ? 'var(--ok)' : 'var(--warn)';
-        versionBadge = '<span style="background:' + vColor + '11;border:1px solid ' + vColor + '33;border-radius:4px;padding:2px 8px;font-size:10px;color:' + vColor + '">v' + esc(c.agentVersion) + (c.agentVersion < '1.1.0' ? ' (update available)' : '') + '</span>';
+        var vColor = c.agentVersion >= '1.2.0' ? 'var(--ok)' : 'var(--warn)';
+        versionBadge = '<span style="background:' + vColor + '11;border:1px solid ' + vColor + '33;border-radius:4px;padding:2px 8px;font-size:10px;color:' + vColor + '">v' + esc(c.agentVersion) + (c.agentVersion < '1.2.0' ? ' (update available)' : '') + '</span>';
       }
       toolsHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
         '<span style="background:' + pInfo.color + '11;border:1px solid ' + pInfo.color + '33;border-radius:4px;padding:2px 8px;font-size:10px;color:' + pInfo.color + '">' + c.platform.toUpperCase() + '</span>' +
         (c.source === 'agent' ? '<span style="background:color-mix(in srgb,var(--accent2) 7%,transparent);border:1px solid color-mix(in srgb,var(--accent2) 20%,transparent);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--accent2)">Agent</span>' : '') +
         (c.source === 'dashboard' ? '<span style="background:color-mix(in srgb,var(--warn) 7%,transparent);border:1px solid color-mix(in srgb,var(--warn) 20%,transparent);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--warn)">Manual</span>' : '') +
+        (c.source === 'agent' ? (c.actionsEnabled
+          ? '<span title="Write actions enabled (scale/restart/delete/cordon)" style="background:color-mix(in srgb,var(--warn) 10%,transparent);border:1px solid color-mix(in srgb,var(--warn) 30%,transparent);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--warn)">&#x270E; Actions ON</span>'
+          : '<span title="Read-only (zero-trust default)" style="background:color-mix(in srgb,var(--ok) 7%,transparent);border:1px solid color-mix(in srgb,var(--ok) 20%,transparent);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--ok)">&#x1F512; Read-only</span>') : '') +
         versionBadge +
       '</div>';
     }

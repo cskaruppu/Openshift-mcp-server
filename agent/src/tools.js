@@ -18,6 +18,11 @@ const API_URL = process.env.KUBERNETES_SERVICE_HOST
 
 const PLATFORM = process.env.CLUSTER_PLATFORM || "k8s";
 
+// Remote actions (writes) are OFF by default — zero-trust posture.
+// Enable per-cluster by setting ALLOW_REMOTE_ACTIONS=true in the agent
+// ConfigMap AND granting the scoped write RBAC in the ClusterRole.
+const WRITES_ENABLED = process.env.ALLOW_REMOTE_ACTIONS === "true";
+
 let _token = null;
 
 async function loadToken() {
@@ -50,6 +55,51 @@ async function k8sGet(path, timeoutMs = 10000, asText = false) {
     return asText ? await resp.text() : await resp.json();
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * Write request against the K8s API server (PATCH / POST / DELETE).
+ * `patchType` selects the Content-Type for PATCH operations.
+ */
+async function k8sWrite(method, path, body, patchType = "merge", timeoutMs = 15000) {
+  const tk = await loadToken();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const headers = {
+    Authorization: tk ? `Bearer ${tk}` : undefined,
+    Accept: "application/json",
+  };
+  if (method === "PATCH") {
+    headers["Content-Type"] =
+      patchType === "strategic" ? "application/strategic-merge-patch+json"
+      : patchType === "json" ? "application/json-patch+json"
+      : "application/merge-patch+json";
+  } else if (body) {
+    headers["Content-Type"] = "application/json";
+  }
+  try {
+    const resp = await fetch(`${API_URL}${path}`, {
+      method,
+      signal: controller.signal,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(`${resp.status} ${data?.message || resp.statusText}`);
+    }
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function assertWritesEnabled() {
+  if (!WRITES_ENABLED) {
+    throw new Error(
+      "Remote actions are disabled on this cluster. Set ALLOW_REMOTE_ACTIONS=true in the agent ConfigMap and grant write RBAC to enable."
+    );
   }
 }
 
@@ -212,6 +262,42 @@ export const TOOLS = {
       namespace: { type: "string" },
       labelSelector: { type: "string" },
     },
+  },
+  // ── Write tools (require ALLOW_REMOTE_ACTIONS=true + write RBAC) ──
+  scale_workload: {
+    description: "Scale a deployment or statefulset to N replicas (requires remote actions enabled)",
+    parameters: {
+      kind: { type: "string", description: "deployment | statefulset" },
+      name: { type: "string", required: true },
+      namespace: { type: "string", required: true },
+      replicas: { type: "number", required: true },
+    },
+    mutating: true,
+  },
+  restart_workload: {
+    description: "Rolling-restart a deployment/statefulset/daemonset (requires remote actions enabled)",
+    parameters: {
+      kind: { type: "string", description: "deployment | statefulset | daemonset" },
+      name: { type: "string", required: true },
+      namespace: { type: "string", required: true },
+    },
+    mutating: true,
+  },
+  delete_pod: {
+    description: "Delete (restart) a pod (requires remote actions enabled)",
+    parameters: {
+      name: { type: "string", required: true },
+      namespace: { type: "string", required: true },
+    },
+    mutating: true,
+  },
+  cordon_node: {
+    description: "Cordon or uncordon a node (requires remote actions enabled)",
+    parameters: {
+      name: { type: "string", required: true },
+      uncordon: { type: "boolean", description: "true to uncordon" },
+    },
+    mutating: true,
   },
 };
 
@@ -500,6 +586,51 @@ async function toolListResources({ kind, namespace, labelSelector }) {
   }));
 }
 
+// ── Write tool implementations ───────────────────────────────────────
+
+async function toolScaleWorkload({ kind, name, namespace, replicas }) {
+  assertWritesEnabled();
+  if (!name || !namespace) throw new Error("'name' and 'namespace' are required");
+  if (replicas == null || replicas < 0) throw new Error("'replicas' must be >= 0");
+  const k = (kind || "deployment").toLowerCase();
+  const resource = k.startsWith("statefulset") ? "statefulsets" : "deployments";
+  const path = `/apis/apps/v1/namespaces/${namespace}/${resource}/${name}/scale`;
+  await k8sWrite("PATCH", path, { spec: { replicas: Number(replicas) } }, "merge");
+  return { kind: resource, name, namespace, replicas: Number(replicas), action: "scaled" };
+}
+
+async function toolRestartWorkload({ kind, name, namespace }) {
+  assertWritesEnabled();
+  if (!name || !namespace) throw new Error("'name' and 'namespace' are required");
+  const k = (kind || "deployment").toLowerCase();
+  const resource = k.startsWith("statefulset") ? "statefulsets"
+    : k.startsWith("daemonset") ? "daemonsets" : "deployments";
+  const path = `/apis/apps/v1/namespaces/${namespace}/${resource}/${name}`;
+  const patch = {
+    spec: { template: { metadata: { annotations: {
+      "tcs-agentic-ai/restartedAt": new Date().toISOString(),
+    } } } },
+  };
+  await k8sWrite("PATCH", path, patch, "strategic");
+  return { kind: resource, name, namespace, action: "rollout-restarted" };
+}
+
+async function toolDeletePod({ name, namespace }) {
+  assertWritesEnabled();
+  if (!name || !namespace) throw new Error("'name' and 'namespace' are required");
+  const path = `/api/v1/namespaces/${namespace}/pods/${name}`;
+  await k8sWrite("DELETE", path, null);
+  return { name, namespace, action: "deleted" };
+}
+
+async function toolCordonNode({ name, uncordon }) {
+  assertWritesEnabled();
+  if (!name) throw new Error("'name' is required");
+  const path = `/api/v1/nodes/${name}`;
+  await k8sWrite("PATCH", path, { spec: { unschedulable: !uncordon } }, "merge");
+  return { name, action: uncordon ? "uncordoned" : "cordoned" };
+}
+
 // ── Dispatch map ─────────────────────────────────────────────────────
 
 const TOOL_FNS = {
@@ -514,7 +645,16 @@ const TOOL_FNS = {
   describe_resource:   toolDescribeResource,
   get_logs:            toolGetLogs,
   list_resources:      toolListResources,
+  // Write tools (gated by ALLOW_REMOTE_ACTIONS)
+  scale_workload:      toolScaleWorkload,
+  restart_workload:    toolRestartWorkload,
+  delete_pod:          toolDeletePod,
+  cordon_node:         toolCordonNode,
 };
+
+export function writesEnabled() {
+  return WRITES_ENABLED;
+}
 
 /**
  * Execute a named tool with the given arguments.

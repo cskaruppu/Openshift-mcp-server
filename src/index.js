@@ -390,7 +390,7 @@ async function loadClustersFromDB() {
  * This is the single source of truth for agent RBAC — the agent
  * fetches this and patches its own ClusterRole to match.
  */
-function buildDesiredRBACRules(platform) {
+function buildDesiredRBACRules(platform, withActions = false) {
   const rules = [
     { apiGroups: [""], resources: ["pods", "pods/log", "nodes", "services", "events", "namespaces", "configmaps", "persistentvolumeclaims", "endpoints", "replicationcontrollers", "serviceaccounts", "resourcequotas", "limitranges"], verbs: ["get", "list", "watch"] },
     { apiGroups: ["apps"], resources: ["deployments", "statefulsets", "daemonsets", "replicasets"], verbs: ["get", "list", "watch"] },
@@ -435,6 +435,20 @@ function buildDesiredRBACRules(platform) {
   }
   if (platform === "gke") {
     rules.push({ apiGroups: ["cloud.google.com"], resources: ["*"], verbs: ["get", "list"] });
+  }
+
+  // Opt-in remote actions — scoped write verbs for scale/restart/delete/cordon.
+  // Only added when the user explicitly enables actions for this cluster.
+  if (withActions) {
+    rules.push(
+      // Scale & rollout-restart deployments/statefulsets/daemonsets
+      { apiGroups: ["apps"], resources: ["deployments", "statefulsets", "daemonsets"], verbs: ["update", "patch"] },
+      { apiGroups: ["apps"], resources: ["deployments/scale", "statefulsets/scale"], verbs: ["update", "patch"] },
+      // Delete (restart) pods
+      { apiGroups: [""], resources: ["pods"], verbs: ["delete"] },
+      // Cordon / uncordon nodes
+      { apiGroups: [""], resources: ["nodes"], verbs: ["patch", "update"] },
+    );
   }
 
   return rules;
@@ -2277,6 +2291,7 @@ async function startSSE() {
           apiUrl: agent.apiUrl,
           hasToken: !!agent.token,
           agentVersion: agent.agentVersion || null,
+          actionsEnabled: agent.actionsEnabled === true,
           status,
           bridgeConnected: hasActiveChannel(agent.clusterName),
           registeredAt: agent.registeredAt,
@@ -2377,7 +2392,7 @@ async function startSSE() {
     // -----------------------------------------------------------------------
     if (url.pathname === "/api/agent/register" && req.method === "POST") {
       const body = await readJsonBody(req);
-      const { clusterName, platform, agentVersion, capabilities, apiUrl: agentApiUrl } = body;
+      const { clusterName, platform, agentVersion, capabilities, apiUrl: agentApiUrl, actionsEnabled } = body;
       if (!clusterName) return sendJson(res, 400, { error: "clusterName required" });
 
       // Merge with existing entry: match by exact name, case-insensitive name, or API URL
@@ -2390,6 +2405,7 @@ async function startSSE() {
         platform: platform || existing?.platform,
         agentVersion,
         capabilities,
+        actionsEnabled: actionsEnabled === true,
         registeredAt: existing?.registeredAt || new Date().toISOString(),
         lastReport: existing?.lastReport || null,
         status: "registered",
@@ -2406,7 +2422,7 @@ async function startSSE() {
       saveClustersToDB().catch(() => {});
       console.error(`[agent] Registered: ${entry.clusterName} (${platform}) agent v${agentVersion}${existingKey ? " (merged with " + existingKey + ")" : ""}`);
 
-      const HUB_AGENT_VERSION = "1.1.0";
+      const HUB_AGENT_VERSION = "1.2.0";
       return sendJson(res, 200, { ok: true, message: `Agent "${entry.clusterName}" registered`, hubVersion: HUB_AGENT_VERSION });
     }
 
@@ -2519,17 +2535,22 @@ async function startSSE() {
       return sendJson(res, 200, { channels: getChannelStatus() });
     }
 
-    // RBAC manifest — returns desired ClusterRole rules for a platform
+    // RBAC manifest — returns desired ClusterRole rules for a platform.
+    // Honors the cluster's actions opt-in (or ?actions=true) to include
+    // scoped write verbs for remote scale/restart/delete/cordon.
     if (url.pathname === "/api/agent/rbac-manifest" && req.method === "GET") {
       const platform = url.searchParams.get("platform") || "k8s";
-      return sendJson(res, 200, { version: "1.1.0", rules: buildDesiredRBACRules(platform) });
+      const clusterParam = url.searchParams.get("cluster");
+      const agent = clusterParam ? _connectedAgents.get(findClusterKey(clusterParam) || clusterParam) : null;
+      const withActions = url.searchParams.get("actions") === "true" || agent?.actionsEnabled === true;
+      return sendJson(res, 200, { version: "1.2.0", actions: withActions, rules: buildDesiredRBACRules(platform, withActions) });
     }
 
     // Sync RBAC — push RBAC update to a specific agent or all agents (manual trigger)
     if (url.pathname === "/api/agent/push-rbac-update" && req.method === "POST") {
       const body = await readJsonBody(req);
       const target = body.clusterName;
-      const event = { type: "rbac_update", version: "1.1.0", triggeredAt: new Date().toISOString() };
+      const event = { type: "rbac_update", version: "1.2.0", triggeredAt: new Date().toISOString() };
       if (target) {
         const sent = pushEventToAgent(target, event);
         return sendJson(res, 200, { ok: sent, target, message: sent ? "RBAC sync pushed" : "Agent not connected via SSE" });

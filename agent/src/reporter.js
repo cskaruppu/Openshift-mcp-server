@@ -7,6 +7,10 @@ const CLUSTER_NAME = process.env.CLUSTER_NAME || "unknown";
 const CLUSTER_PLATFORM = process.env.CLUSTER_PLATFORM || "k8s";
 const REPORT_TIMEOUT_MS = 15000;
 const SKIP_TLS = process.env.HUB_TLS_SKIP_VERIFY === "true";
+const ACTIONS_ENABLED = process.env.ALLOW_REMOTE_ACTIONS === "true";
+
+const BASE_CAPABILITIES = ["scan", "events", "metrics", "openshift", "security", "gitops", "dr", "optimization", "imagevulns", "rbac", "workloads"];
+const CAPABILITIES = ACTIONS_ENABLED ? [...BASE_CAPABILITIES, "actions"] : BASE_CAPABILITIES;
 
 let _registered = false;
 let _lastReportStatus = null;
@@ -20,8 +24,9 @@ export async function registerWithHub() {
       body: JSON.stringify({
         clusterName: CLUSTER_NAME,
         platform: CLUSTER_PLATFORM,
-        agentVersion: "1.1.0",
-        capabilities: ["scan", "events", "metrics", "openshift", "security", "gitops", "dr", "optimization", "imagevulns", "rbac", "workloads"],
+        agentVersion: "1.2.0",
+        capabilities: CAPABILITIES,
+        actionsEnabled: ACTIONS_ENABLED,
       }),
       signal: AbortSignal.timeout(REPORT_TIMEOUT_MS),
     });
@@ -47,7 +52,7 @@ export async function sendReport(scanData) {
       body: JSON.stringify({
         clusterName: CLUSTER_NAME,
         platform: CLUSTER_PLATFORM,
-        agentVersion: "1.1.0",
+        agentVersion: "1.2.0",
         report: scanData,
       }),
       signal: AbortSignal.timeout(REPORT_TIMEOUT_MS),

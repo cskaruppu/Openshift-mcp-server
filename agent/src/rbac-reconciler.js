@@ -67,8 +67,9 @@ function rulesEqual(current, desired) {
  */
 async function fetchDesiredRules(hubUrl, clusterName, platform) {
   try {
+    const actions = process.env.ALLOW_REMOTE_ACTIONS === "true" ? "&actions=true" : "";
     const resp = await fetch(
-      `${hubUrl}/api/agent/rbac-manifest?cluster=${encodeURIComponent(clusterName)}&platform=${encodeURIComponent(platform)}`,
+      `${hubUrl}/api/agent/rbac-manifest?cluster=${encodeURIComponent(clusterName)}&platform=${encodeURIComponent(platform)}${actions}`,
       { signal: AbortSignal.timeout(15000) }
     );
     if (!resp.ok) {

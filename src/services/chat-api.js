@@ -7073,6 +7073,107 @@ function _ageFromTimestamp(ts) {
 }
 
 // ---------------------------------------------------------------------------
+// Live remote-cluster MUTATIONS via the agent bridge.
+//
+// Maps scale / restart / delete / cordon intents to the agent's write tools.
+// Writes are double-gated: the agent must have ALLOW_REMOTE_ACTIONS=true AND
+// the scoped write RBAC. If not, the agent returns a clear error which we
+// surface with remediation guidance. Every executed action is audit-logged.
+//
+// Returns formatted markdown, or null to fall through.
+// ---------------------------------------------------------------------------
+async function handleRemoteMutation(message, parsed, remoteCtx, opts = {}) {
+  if (!remoteCtx) return null;
+  const cluster = remoteCtx.clusterName;
+  if (!hasActiveChannel || !hasActiveChannel(cluster)) return null;
+
+  const lower = message.toLowerCase();
+  const summary = remoteCtx.summary || {};
+  const platform = summary.platform || (summary.isOpenShift ? "OpenShift" : "Kubernetes");
+  const header = `> [ACTION] **${cluster}** | ${platform} ${summary.cluster?.version || ""} | live\n`;
+
+  // Namespace extraction (shared with read path semantics)
+  let ns = parsed?.namespace || null;
+  if (!ns) {
+    const m = lower.match(/(?:\bin\b|\bunder\b|\bfrom\b|\bns\b|\bnamespace\b|\bproject\b)\s+["'`]?([a-z0-9][-a-z0-9.]{0,61}[a-z0-9])["'`]?/);
+    if (m) ns = m[1];
+  }
+  if (ns && /^(the|all|this|cluster|status|health)$/.test(ns)) ns = null;
+
+  // Resource name — prefer parsed, else a dns-like token
+  const name = parsed?.name || (message.match(/\b([a-z][-a-z0-9]*(?:-[a-z0-9]{3,12}){0,2})\b/i) || [])[1] || null;
+
+  const kindWord = /\bstatefulset|\bsts\b/.test(lower) ? "statefulset"
+    : /\bdaemonset|\bds\b/.test(lower) ? "daemonset" : "deployment";
+
+  const auditLog = (action, detail) => {
+    console.error(`[audit] remote-action cluster=${cluster} user=${opts.userId || "?"} action=${action} ${detail}`);
+  };
+
+  const notEnabledMsg = (errText) => {
+    const parts = [header];
+    parts.push(`### Remote Action Blocked`);
+    parts.push("");
+    parts.push(`[WARNING] ${errText || "Remote actions are disabled on this cluster."}`);
+    parts.push("");
+    parts.push(`To enable write actions on **${cluster}**:`);
+    parts.push(`1. In **AI Hub → cluster card → Edit/Connect**, turn on **Allow remote actions**, OR regenerate the agent YAML with actions enabled.`);
+    parts.push(`2. Re-apply the YAML (adds scoped write RBAC + \`ALLOW_REMOTE_ACTIONS=true\`).`);
+    parts.push(`3. Click **Sync RBAC** then **Redeploy Agent** on the cluster card.`);
+    return parts.join("\n");
+  };
+
+  const runTool = async (tool, args, successFmt) => {
+    try {
+      const r = await invokeAgentTool(cluster, tool, args, 20000);
+      if (r?.success) {
+        auditLog(tool, JSON.stringify(args));
+        return `${header}\n${successFmt(r.data)}`;
+      }
+      if (/disabled|forbidden|403/i.test(r?.error || "")) return notEnabledMsg(r.error);
+      return `${header}\n### Action Failed\n\n[CRITICAL] ${r?.error || "Unknown error"}`;
+    } catch (err) {
+      if (/disabled|forbidden|403/i.test(err.message)) return notEnabledMsg(err.message);
+      return `${header}\n### Action Failed\n\n[CRITICAL] ${err.message}`;
+    }
+  };
+
+  // ---- SCALE ----
+  const scaleMatch = lower.match(/\bscale\b/) && (lower.match(/\bto\s+(\d+)\b/) || lower.match(/\breplicas?\s*=?\s*(\d+)\b/) || lower.match(/\b(\d+)\s+replicas?\b/));
+  if (lower.match(/\bscale\b/) && scaleMatch) {
+    const replicas = parseInt(scaleMatch[1], 10);
+    if (!name || !ns) return `${header}\n### Scale Workload\n\n[WARNING] Specify name and namespace.\n\n**Example:** \`scale deployment my-app to 3 in my-ns\``;
+    return runTool("scale_workload", { kind: kindWord, name, namespace: ns, replicas }, (d) =>
+      `### Workload Scaled\n\n[OK] \`${d.name}\` (${d.kind}) in \`${d.namespace}\` scaled to **${d.replicas}** replica(s).`);
+  }
+
+  // ---- RESTART (rollout restart) ----
+  if (/\brestart\b|\broll(?:ing)?\s*restart\b|\bredeploy\b/.test(lower) && /\bdeployment|\bstatefulset|\bdaemonset|\bworkload\b/.test(lower)) {
+    if (!name || !ns) return `${header}\n### Restart Workload\n\n[WARNING] Specify name and namespace.\n\n**Example:** \`restart deployment my-app in my-ns\``;
+    return runTool("restart_workload", { kind: kindWord, name, namespace: ns }, (d) =>
+      `### Rollout Restart Triggered\n\n[OK] \`${d.name}\` (${d.kind}) in \`${d.namespace}\` is rolling out a restart.`);
+  }
+
+  // ---- DELETE POD ----
+  if (/\b(delete|remove|kill|restart)\b/.test(lower) && /\bpod\b/.test(lower)) {
+    if (!name || !ns) return `${header}\n### Delete Pod\n\n[WARNING] Specify pod name and namespace.\n\n**Example:** \`delete pod my-pod-abc123 in my-ns\``;
+    return runTool("delete_pod", { name, namespace: ns }, (d) =>
+      `### Pod Deleted\n\n[OK] Pod \`${d.name}\` in \`${d.namespace}\` deleted. Its controller will recreate it if managed.`);
+  }
+
+  // ---- CORDON / UNCORDON ----
+  if (/\bcordon\b/.test(lower) && /\bnode\b/.test(lower)) {
+    const uncordon = /\buncordon\b/.test(lower);
+    const nodeName = parsed?.name || (message.match(/\bnode\s+["'`]?([a-z0-9][-a-z0-9.]+)["'`]?/i) || [])[1] || name;
+    if (!nodeName) return `${header}\n### ${uncordon ? "Uncordon" : "Cordon"} Node\n\n[WARNING] Specify a node name.`;
+    return runTool("cordon_node", { name: nodeName, uncordon }, (d) =>
+      `### Node ${uncordon ? "Uncordoned" : "Cordoned"}\n\n[OK] Node \`${d.name}\` ${uncordon ? "is schedulable again" : "marked unschedulable"}.`);
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Gather cluster context based on user query
 // ---------------------------------------------------------------------------
 async function gatherClusterContext(userMessage, nluParsed = null, remoteCache = null) {
@@ -14225,10 +14326,21 @@ export async function handleChatAPI(req, res) {
     // fall through to the LLM path which receives the cached context via
     // buildContextFromAgentCache.
     if (_remoteClusterContext) {
-      // (1) Cache-based handler first — fast, no network round-trip.
-      // (2) If it returns null (unrecognized / namespace-specific), try the
-      //     LIVE agent bridge for real-time data (feature parity with hub).
-      let remoteCacheReply = handleRemoteCacheQuery(userMessage, parsed, _remoteClusterContext, { llmAvailable: llmActive });
+      // (0) Mutating actions (scale/restart/delete/cordon) take priority and
+      //     run live via the agent bridge — double-gated by RBAC + opt-in.
+      // (1) Cache-based handler — fast, no network round-trip.
+      // (2) LIVE agent bridge for real-time reads (feature parity with hub).
+      let remoteCacheReply = null;
+      if (isMutating || /\bscale\b|\brestart\b|\bredeploy\b|\bcordon\b|\b(delete|remove|kill)\b/.test(userMessage.toLowerCase())) {
+        try {
+          remoteCacheReply = await handleRemoteMutation(userMessage, parsed, _remoteClusterContext, { userId: llmOpts.userId });
+        } catch (mutErr) {
+          console.error(`[chat] Remote mutation failed for ${_remoteClusterContext.clusterName}: ${mutErr.message}`);
+        }
+      }
+      if (!remoteCacheReply) {
+        remoteCacheReply = handleRemoteCacheQuery(userMessage, parsed, _remoteClusterContext, { llmAvailable: llmActive });
+      }
       if (!remoteCacheReply) {
         try {
           remoteCacheReply = await handleRemoteLiveQuery(userMessage, parsed, _remoteClusterContext);
