@@ -7954,6 +7954,15 @@ function handleLogout() {
     var logoutBtn = document.getElementById('logout-btn');
     if (userLabel) userLabel.textContent = '';
     if (logoutBtn) logoutBtn.style.display = 'none';
+    // Exit cluster picker mode if active
+    document.body.classList.remove('cluster-picker-mode');
+    var cpEl = document.getElementById('view-cluster-picker');
+    if (cpEl) cpEl.style.display = 'none';
+    // Hide workspace header elements
+    var backBtn = document.getElementById('workspace-back-btn');
+    var clusterLabel = document.getElementById('workspace-cluster-label');
+    if (backBtn) backBtn.style.display = 'none';
+    if (clusterLabel) clusterLabel.style.display = 'none';
     showLoginOverlay('token');
   });
 }
@@ -10304,6 +10313,10 @@ function _updateWorkspaceHeader() {
   var hasRemote = Object.keys(_remoteAgents || {}).length > 0;
 
   if (backBtn) backBtn.style.display = hasRemote ? 'flex' : 'none';
+
+  // Hide AI Hub tab in workspace mode — it lives on the cluster picker page
+  var hubTab = document.querySelector('#main-nav-tabs .nav-tab[data-view="hub"]');
+  if (hubTab) hubTab.style.display = hasRemote ? 'none' : '';
 
   if (clusterLabel && hasRemote) {
     clusterLabel.style.display = 'flex';
