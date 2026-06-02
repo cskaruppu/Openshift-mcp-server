@@ -1,8 +1,9 @@
 /**
- * Bidirectional MCP Tool Bridge.
+ * Bidirectional MCP Tool Bridge — AI-Native Cluster Agent.
  *
- * Opens an SSE connection to the hub, receives tool invocation requests,
- * executes them against the local K8s API, and POSTs results back.
+ * Opens an SSE connection to the MCP Gateway (hub), receives tool invocation
+ * requests derived from LLM reasoning, executes them against the local K8s API,
+ * and POSTs results back to feed into the AI response.
  *
  * Zero npm dependencies — uses native http/https modules only.
  */
@@ -273,7 +274,7 @@ export function startBridge(hubUrl, clusterName) {
   }
   _hubUrl = hubUrl;
   _clusterName = clusterName;
-  log("info", `Starting MCP tool bridge for cluster "${clusterName}"`);
+  log("info", `Starting AI-Native MCP bridge for cluster "${clusterName}"`);
   connectSSE(hubUrl, clusterName);
 }
 

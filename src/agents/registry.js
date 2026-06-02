@@ -191,15 +191,25 @@ async function serveAgentCard(req, res) {
 
   const card = {
     name: "TCS Agentic AI",
+    type: "mcp-gateway",
     description:
-      "Enterprise AI platform for OpenShift cluster management, diagnostics, upgrades, ITSM, and proactive intelligence. " +
+      "MCP Gateway and AI Control Plane for multi-cluster Kubernetes management. " +
+      "Single MCP endpoint that multiplexes tool calls across all connected clusters via AI-Native Cluster Agents. " +
+      "Supports OpenShift, EKS, AKS, GKE, Rancher, and vanilla K8s. " +
       "MCP-native, framework-agnostic — compatible with Microsoft Agent Framework, Anthropic Claude Agent SDK, LangChain, and any MCP-aware client.",
     version: "2.0.0",
     publisher: {
       name: "TCS",
       url: "https://www.tcs.com",
     },
-    protocols: ["mcp", "rest", "a2a"],
+    protocols: ["mcp", "mcp-gateway-v1", "rest", "a2a"],
+    gateway: {
+      protocol: "mcp-gateway-v1",
+      heartbeatInterval: 30,
+      staleThreshold: 90,
+      unreachableThreshold: 300,
+      agentType: "ai-native",
+    },
     capabilities: {
       agents: agents.length,
       tools: totalTools,
@@ -207,12 +217,16 @@ async function serveAgentCard(req, res) {
       humanInTheLoop: true,
       multiCluster: true,
       autonomous: true,
+      gateway: true,
+      aiNativeAgents: true,
     },
     endpoints: {
       mcp: `${baseUrl}/mcp`,
+      mcpGateway: `${baseUrl}/sse`,
       rest: `${baseUrl}/api`,
       agents: `${baseUrl}/api/agents`,
       categories: `${baseUrl}/api/agents/categories`,
+      heartbeat: `${baseUrl}/api/agent/heartbeat`,
       openapi: `${baseUrl}/openapi.yaml`,
       dashboard: `${baseUrl}/`,
     },

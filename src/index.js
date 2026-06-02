@@ -2259,29 +2259,41 @@ async function startSSE() {
     }
 
     if (url.pathname === "/api/hub/clusters" && req.method === "GET") {
+      // Heartbeat protocol v1 thresholds (seconds)
+      const HB_STALE_THRESHOLD = 90;
+      const HB_UNREACHABLE_THRESHOLD = 300;
+
       const clusters = [];
       for (const [, agent] of _connectedAgents) {
-        // Determine real status from multiple signals
+        // Determine real status from multiple signals (report + heartbeat + bridge)
         const agentReportElapsed = agent.lastReportTime
           ? (Date.now() - new Date(agent.lastReportTime).getTime()) / 1000
           : null;
-        const healthCheckElapsed = agent.lastHealthCheck
-          ? (Date.now() - new Date(agent.lastHealthCheck).getTime()) / 1000
+        const heartbeatElapsed = agent.lastHeartbeat
+          ? (Date.now() - new Date(agent.lastHeartbeat).getTime()) / 1000
           : null;
 
         let status;
         const hasBridge = hasActiveChannel(agent.clusterName);
         const hasReport = agentReportElapsed !== null;
+        const hasHeartbeat = heartbeatElapsed !== null;
         const reportFresh = hasReport && agentReportElapsed < 300;
         const reportStale = hasReport && agentReportElapsed >= 300 && agentReportElapsed < 900;
+        const heartbeatFresh = hasHeartbeat && heartbeatElapsed < HB_STALE_THRESHOLD;
+        const heartbeatStale = hasHeartbeat && heartbeatElapsed >= HB_STALE_THRESHOLD && heartbeatElapsed < HB_UNREACHABLE_THRESHOLD;
+        const heartbeatDead = hasHeartbeat && heartbeatElapsed >= HB_UNREACHABLE_THRESHOLD;
 
-        if (reportFresh && hasBridge) {
+        if ((reportFresh || heartbeatFresh) && hasBridge) {
           status = "active";
         } else if (reportFresh && !hasBridge) {
           status = "reporting";
+        } else if (hasBridge && !hasReport && heartbeatFresh) {
+          status = "connected";
         } else if (hasBridge && !hasReport) {
           status = "connected";
-        } else if (reportStale) {
+        } else if (heartbeatDead && !reportFresh) {
+          status = "unreachable";
+        } else if (heartbeatStale || reportStale) {
           status = "stale";
         } else if (agent.lastHealthResult) {
           if (agent.lastHealthResult.reachable && !agent.lastHealthResult.authError) {
@@ -2307,11 +2319,17 @@ async function startSSE() {
           apiUrl: agent.apiUrl,
           hasToken: !!agent.token,
           agentVersion: agent.agentVersion || null,
+          agentType: agent.agentType || null,
           actionsEnabled: agent.actionsEnabled === true,
           status,
           bridgeConnected: hasActiveChannel(agent.clusterName),
           registeredAt: agent.registeredAt,
           lastReportTime: agent.lastReportTime,
+          lastHeartbeat: agent.lastHeartbeat || null,
+          heartbeatSeq: agent.heartbeatSeq || 0,
+          agentUptime: agent.agentUptime || null,
+          agentMemMB: agent.agentMemMB || null,
+          agentHealthy: agent.agentHealthy !== false,
           lastHealthCheck: agent.lastHealthCheck || null,
           lastHealthResult: agent.lastHealthResult || null,
           source: agent.source || "agent",
@@ -2408,7 +2426,7 @@ async function startSSE() {
     // -----------------------------------------------------------------------
     if (url.pathname === "/api/agent/register" && req.method === "POST") {
       const body = await readJsonBody(req);
-      const { clusterName, platform, agentVersion, capabilities, apiUrl: agentApiUrl, actionsEnabled } = body;
+      const { clusterName, platform, agentVersion, agentType, capabilities, apiUrl: agentApiUrl, actionsEnabled } = body;
       if (!clusterName) return sendJson(res, 400, { error: "clusterName required" });
 
       // Merge with existing entry: match by exact name, case-insensitive name, or API URL
@@ -2420,6 +2438,7 @@ async function startSSE() {
         clusterName: existing?.clusterName || clusterName,
         platform: platform || existing?.platform,
         agentVersion,
+        agentType: agentType || "standard",
         capabilities,
         actionsEnabled: actionsEnabled === true,
         registeredAt: existing?.registeredAt || new Date().toISOString(),
@@ -2440,6 +2459,26 @@ async function startSSE() {
 
       const HUB_AGENT_VERSION = "1.2.0";
       return sendJson(res, 200, { ok: true, message: `Agent "${entry.clusterName}" registered`, hubVersion: HUB_AGENT_VERSION });
+    }
+
+    // Heartbeat protocol v1 — lightweight 30 s ping from agents
+    // Thresholds: <90 s = healthy, 90-300 s = stale, >300 s = unreachable
+    if (url.pathname === "/api/agent/heartbeat" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const { clusterName, seq, ts, uptime, memMB, healthy, lastReportAge } = body;
+      if (!clusterName) return sendJson(res, 400, { error: "clusterName required" });
+      const key = findClusterKey(clusterName) || clusterName;
+      const agent = _connectedAgents.get(key);
+      if (agent) {
+        agent.lastHeartbeat = new Date().toISOString();
+        agent.heartbeatSeq = seq || 0;
+        agent.agentUptime = uptime;
+        agent.agentMemMB = memMB;
+        agent.agentHealthy = healthy !== false;
+        agent.lastReportAge = lastReportAge;
+        _connectedAgents.set(key, agent);
+      }
+      return sendJson(res, 200, { ok: true });
     }
 
     if (url.pathname === "/api/agent/report" && req.method === "POST") {
@@ -4864,13 +4903,14 @@ async function startSSE() {
 
   _httpServer = httpServer;
   httpServer.listen(PORT, "0.0.0.0", () => {
-    console.error(`TCS Agentic AI — Enterprise Intelligence Platform`);
+    console.error(`TCS Agentic AI — MCP Gateway · Control Plane`);
     console.error(`  Server running on http://0.0.0.0:${PORT}`);
-    console.error(`  MCP SSE (full):   GET  /sse`);
+    console.error(`  MCP Gateway:      GET  /sse (tool routing to all clusters)`);
     console.error(`  MCP Message:      POST /message?sessionId=<id>`);
     console.error(`  Per-agent MCP:    GET  /mcp/<agent-id>/sse`);
     console.error(`  Agent discovery:  GET  /.well-known/agent.json`);
     console.error(`  Agent registry:   GET  /api/agents`);
+    console.error(`  Agent heartbeat:  POST /api/agent/heartbeat`);
     console.error(`  OpenAPI spec:     GET  /openapi.yaml`);
     console.error(`  MCP Hub:          GET  /api/hub/servers`);
     console.error(`  Hub Tools:        GET  /api/hub/tools`);

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TCS Agentic AI - Enterprise Intelligence Solution</title>
+<title>TCS Agentic AI - MCP Gateway · Multi-Cluster AI</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Comfortaa:wght@700&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"></noscript>
@@ -2238,7 +2238,7 @@ body.cluster-picker-mode .cluster-context-banner{display:none!important}
     </svg>
     <div class="brand">
       <span class="brand-name"><span class="tcs">TCS</span> <span class="agentic">Agentic</span> <span class="ai">AI</span></span>
-      <span class="brand-sub">Enterprise Intelligence Solution</span>
+      <span class="brand-sub">MCP Gateway &middot; Multi-Cluster AI</span>
     </div>
   </div>
   <button class="workspace-back-btn" id="workspace-back-btn" onclick="showClusterPicker()">
@@ -2520,7 +2520,7 @@ body.cluster-picker-mode .cluster-context-banner{display:none!important}
       </svg>
       <div class="cp-brand-text">
         <span class="cp-brand-name"><span class="tcs">TCS</span> <span class="agentic">Agentic</span> <span class="ai">AI</span></span>
-        <span class="cp-brand-sub">Enterprise Intelligence Solution</span>
+        <span class="cp-brand-sub">MCP Gateway &middot; Multi-Cluster AI</span>
       </div>
     </div>
     <div class="cp-user">
@@ -4007,8 +4007,8 @@ body.cluster-picker-mode .cluster-context-banner{display:none!important}
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4m-10-10h4m12 0h4m-3.5-6.5l-2.8 2.8m-7.4 7.4l-2.8 2.8m0-13l2.8 2.8m7.4 7.4l2.8 2.8"/></svg>
             </div>
             <div>
-              <div style="font-size:20px;font-weight:800;color:#f8fafc;letter-spacing:-.5px">AI Hub <span style="font-size:10px;font-weight:700;color:#0f172a;background:#38bdf8;border-radius:5px;padding:2px 7px;vertical-align:middle;margin-left:6px">FLEET VIEW · ALL CLUSTERS</span></div>
-              <div style="font-size:11px;color:#64748b">Manage every connected cluster &mdash; all other pages are scoped to the cluster you select here</div>
+              <div style="font-size:20px;font-weight:800;color:#f8fafc;letter-spacing:-.5px">MCP Gateway <span style="font-size:10px;font-weight:700;color:#0f172a;background:#38bdf8;border-radius:5px;padding:2px 7px;vertical-align:middle;margin-left:6px">FLEET VIEW · ALL CLUSTERS</span></div>
+              <div style="font-size:11px;color:#64748b">Single MCP endpoint for all clusters &mdash; AI-Native agents participate in LLM reasoning</div>
             </div>
           </div>
         </div>
@@ -4282,7 +4282,7 @@ body.cluster-picker-mode .cluster-context-banner{display:none!important}
       <!-- Step 2 -->
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
         <span style="background:var(--accent2);color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">2</span>
-        <span style="font-size:13px;font-weight:600">Deploy TCS Agent</span>
+        <span style="font-size:13px;font-weight:600">Deploy AI-Native Cluster Agent</span>
         <span style="font-size:10px;color:var(--text2)">Apply this YAML to your target cluster</span>
       </div>
       <div style="margin-left:30px;margin-bottom:12px;display:flex;align-items:flex-start;gap:8px;background:var(--bg-alt);border:1px solid var(--border2);border-radius:8px;padding:10px 12px">
@@ -5150,6 +5150,16 @@ function timeAgo(dateStr) {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return hrs + 'h ago';
   return Math.floor(hrs / 24) + 'd ago';
+}
+
+function formatUptime(seconds) {
+  if (!seconds || seconds < 60) return seconds + 's';
+  var m = Math.floor(seconds / 60);
+  if (m < 60) return m + 'm';
+  var h = Math.floor(m / 60);
+  if (h < 24) return h + 'h ' + (m % 60) + 'm';
+  var d = Math.floor(h / 24);
+  return d + 'd ' + (h % 24) + 'h';
 }
 
 function formatMem(memStr) {
@@ -10402,7 +10412,9 @@ function renderClusterPickerCards() {
     var metaTags = '<span class="cp-card-meta-tag">' + pInfo.name + '</span>';
     if (a.summary && a.summary.nodes) metaTags += '<span class="cp-card-meta-tag">' + a.summary.nodes + ' nodes</span>';
     if (a.summary && a.summary.pods != null) metaTags += '<span class="cp-card-meta-tag">' + a.summary.pods + ' pods</span>';
+    if (a.agentType === 'ai-native' || a.source === 'agent') metaTags += '<span class="cp-card-meta-tag" style="color:#a371f7;border-color:color-mix(in srgb,#a371f7 30%,var(--border))">&#x1F9E0; AI-Native</span>';
     if (a.actionsEnabled) metaTags += '<span class="cp-card-meta-tag" style="color:var(--warn);border-color:color-mix(in srgb,var(--warn) 30%,var(--border))">Actions ON</span>';
+    if (a.lastHeartbeat) metaTags += '<span class="cp-card-meta-tag" title="Heartbeat protocol v1">&#x1F493; ' + timeAgo(a.lastHeartbeat) + '</span>';
     if (a.agentVersion) metaTags += '<span class="cp-card-meta-tag">v' + esc(a.agentVersion) + '</span>';
 
     cards.push(
@@ -15893,7 +15905,7 @@ function generateAgentYAML(platform, clusterName, apiUrl, allowActions) {
   lines.push('    app.kubernetes.io/managed-by: tcs-agentic-hub');
   if (platform === 'openshift') {
     lines.push('  annotations:');
-    lines.push('    openshift.io/description: "TCS Agentic AI monitoring agent"');
+    lines.push('    openshift.io/description: "TCS AI-Native Cluster Agent"');
   }
   lines.push('');
 
@@ -17985,7 +17997,7 @@ function renderHubServers() {
       }
       toolsHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
         '<span style="background:' + pInfo.color + '11;border:1px solid ' + pInfo.color + '33;border-radius:4px;padding:2px 8px;font-size:10px;color:' + pInfo.color + '">' + c.platform.toUpperCase() + '</span>' +
-        (c.source === 'agent' ? '<span style="background:color-mix(in srgb,var(--accent2) 7%,transparent);border:1px solid color-mix(in srgb,var(--accent2) 20%,transparent);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--accent2)">Agent</span>' : '') +
+        (c.source === 'agent' ? '<span title="AI-Native agent — participates in LLM reasoning" style="background:color-mix(in srgb,#a371f7 10%,transparent);border:1px solid color-mix(in srgb,#a371f7 25%,transparent);border-radius:4px;padding:2px 8px;font-size:10px;color:#a371f7">&#x1F9E0; AI-Native</span>' : '') +
         (c.source === 'dashboard' ? '<span style="background:color-mix(in srgb,var(--warn) 7%,transparent);border:1px solid color-mix(in srgb,var(--warn) 20%,transparent);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--warn)">Manual</span>' : '') +
         (c.source === 'agent' ? (c.actionsEnabled
           ? '<span title="Write actions enabled (scale/restart/delete/cordon)" style="background:color-mix(in srgb,var(--warn) 10%,transparent);border:1px solid color-mix(in srgb,var(--warn) 30%,transparent);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--warn)">&#x270E; Actions ON</span>'
@@ -18000,7 +18012,7 @@ function renderHubServers() {
         '<div style="width:36px;height:36px;border-radius:8px;background:' + pInfo.color + '15;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">' + pInfo.icon + '</div>' +
         '<div style="flex:1;min-width:0">' +
           '<div style="font-weight:700;font-size:14px;color:' + pInfo.color + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(c.name) + '</div>' +
-          '<div style="font-size:10px;color:var(--text2)">' + pInfo.name + ' ' + pInfo.version + (c.source === 'agent' ? ' &bull; Remote Agent' : '') + '</div>' +
+          '<div style="font-size:10px;color:var(--text2)">' + pInfo.name + ' ' + pInfo.version + (c.source === 'agent' ? ' &bull; AI-Native Cluster Agent' : '') + '</div>' +
         '</div>' +
         '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0">' +
           '<div style="background:' + statusColor + '15;border:1px solid ' + statusColor + '33;border-radius:6px;padding:4px 10px;display:flex;align-items:center;gap:4px">' +
@@ -18024,6 +18036,13 @@ function renderHubServers() {
         (c.lastHealthResult && c.lastHealthResult.agentReported ? ' &mdash; <span style="color:var(--ok)">Agent healthy (reported ' + c.lastHealthResult.agentReportAge + 's ago)</span>' : '') +
         (c.lastHealthResult && !c.lastHealthResult.reachable && !c.lastHealthResult.agentReported ? ' &mdash; <span style="color:var(--crit)">' + esc(c.lastHealthResult.error || 'Connection failed') + '</span>' : '') +
         (c.lastHealthResult && c.lastHealthResult.authError ? ' &mdash; <span style="color:var(--warn)">Token expired or invalid (HTTP ' + c.lastHealthResult.status + '). Use a long-lived SA token: <code>oc create token mcp-agent -n openshift-tcs-agentic-ai --duration=8760h</code></span>' : '') +
+      '</div>' : '') +
+      (c.lastHeartbeat && !c.isBuiltin ? '<div style="display:flex;gap:12px;font-size:10px;color:var(--text2);margin-bottom:8px;align-items:center">' +
+        '<span title="Heartbeat protocol v1">&#x1F493; ' + timeAgo(c.lastHeartbeat) + '</span>' +
+        (c.agentUptime ? '<span title="Agent uptime">&#x23F1; ' + formatUptime(c.agentUptime) + '</span>' : '') +
+        (c.agentMemMB ? '<span title="Agent memory">' + c.agentMemMB + ' MB</span>' : '') +
+        (c.heartbeatSeq ? '<span title="Heartbeat sequence">#' + c.heartbeatSeq + '</span>' : '') +
+        (!c.agentHealthy ? '<span style="color:var(--crit);font-weight:600" title="Agent self-reports unhealthy">&#x26A0; Unhealthy</span>' : '') +
       '</div>' : '') +
       '<div style="display:flex;gap:6px;border-top:1px solid var(--border);padding-top:10px;flex-wrap:wrap">' +
         '<button onclick="hubChatWithCluster(\'' + esc(c.id) + '\',\'' + esc(c.name) + '\',\'' + esc(c.platform) + '\')" style="background:linear-gradient(135deg,' + pInfo.color + ',' + pInfo.color + 'cc);color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px;transition:opacity .15s" onmouseover="this.style.opacity=\'0.9\'" onmouseout="this.style.opacity=\'1\'" title="Open AI Chat for this cluster">&#x1F4AC; AI Chat</button>' +
@@ -20479,7 +20498,7 @@ function uwShowComplete(success) {
 <div class="app-footer">
   <div class="footer-left">
     <span class="ft-dot"></span>
-    TCS Agentic AI &bull; Enterprise Intelligence Solution &bull; Powered by TCS Agentic AI + Multi-LLM + ACM + Ansible + ServiceNow
+    TCS Agentic AI &bull; MCP Gateway &bull; AI-Native Cluster Agents &bull; Multi-LLM + ACM + Ansible + ServiceNow
   </div>
   <div class="footer-right">&copy; 2026 Tata Consultancy Services. All Rights Reserved.</div>
 </div>

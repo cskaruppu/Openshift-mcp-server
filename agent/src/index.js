@@ -1,11 +1,17 @@
 /**
- * TCS Agentic AI — Kubernetes Cluster Agent
+ * TCS AI-Native Cluster Agent
  *
- * Lightweight agent that runs inside a target Kubernetes cluster,
- * scans for health/issues, and reports back to the TCS Agentic AI Hub.
+ * Lightweight AI-native agent that runs inside a target Kubernetes cluster,
+ * scans for health/issues, participates in AI reasoning via the MCP Gateway,
+ * and reports back to the TCS Agentic AI Control Plane.
+ *
+ * Unlike traditional data-collector agents (Datadog, Rancher cattle-agent),
+ * this agent participates in AI reasoning — the hub sends natural-language-
+ * derived tool calls, the agent executes them and returns context that feeds
+ * back into LLM responses.
  *
  * Environment variables:
- *   HUB_SERVER_URL      - TCS Agentic AI hub URL (default: http://localhost:3000)
+ *   HUB_SERVER_URL      - TCS MCP Gateway URL (default: http://localhost:3000)
  *   CLUSTER_NAME         - Name of this cluster (default: unknown)
  *   CLUSTER_PLATFORM     - openshift | rancher | eks | aks | gke | k8s
  *   SCAN_INTERVAL        - Seconds between scans (default: 60)
@@ -78,7 +84,8 @@ function buildStatusResponse() {
   const bridge = getBridgeStatus();
   const rbac = getReconcileStatus();
   return {
-    agent: "tcs-agentic-ai-agent",
+    agent: "tcs-ai-native-cluster-agent",
+    agentType: "ai-native",
     version: "1.2.0",
     cluster: CLUSTER_NAME,
     platform: PLATFORM,
@@ -152,9 +159,10 @@ const server = createServer((req, res) => {
 });
 
 async function start() {
-  log("info", "===========================================");
-  log("info", "  TCS Agentic AI — Cluster Agent v1.2.0");
-  log("info", "===========================================");
+  log("info", "=============================================");
+  log("info", "  TCS AI-Native Cluster Agent v1.2.0");
+  log("info", "  MCP Gateway Protocol · Heartbeat v1");
+  log("info", "=============================================");
   log("info", `Cluster:   ${CLUSTER_NAME}`);
   log("info", `Platform:  ${PLATFORM}`);
   log("info", `Scan interval: ${SCAN_INTERVAL / 1000}s`);

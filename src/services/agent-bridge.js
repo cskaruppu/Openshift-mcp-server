@@ -1,8 +1,8 @@
 /**
- * Agent Bridge — Bidirectional SSE channel for real-time hub-to-agent communication.
+ * MCP Gateway Bridge — Bidirectional SSE channel for real-time hub-to-agent communication.
  *
- * Each remote cluster agent opens an outbound SSE connection to the hub.
- * The hub sends tool invocation requests over this SSE channel.
+ * Each AI-Native Cluster Agent opens an outbound SSE connection to the MCP Gateway.
+ * The gateway routes LLM-derived tool invocation requests over this channel.
  * The agent executes the tool (K8s API call) and POSTs the result back.
  */
 
