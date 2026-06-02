@@ -120,7 +120,7 @@ import { loadConfig } from "./utils/config.js";
 import { validateCommand, getAccessLevel, isToolAllowed } from "./security/command-validator.js";
 import { initComponents, isToolRegistrationEnabled, getComponentCatalog, getComponentSummary } from "./security/component-registry.js";
 import { initTelemetry, shutdownTelemetry, startSpan, traceChatRequest, traceToolCall, getTelemetryStatus } from "./utils/telemetry-otel.js";
-import { ocpGet, ocpPost, ocpPatch, ocpDelete, ocpFetch, withRemoteCluster, setRemoteCluster, clearRemoteCluster } from "./utils/openshift-client.js";
+import { ocpGet, ocpPost, ocpPatch, ocpDelete, ocpFetch, withRemoteCluster, setRemoteCluster, clearRemoteCluster, setBridgeInvoker } from "./utils/openshift-client.js";
 import { initPlatform, getPlatform } from "./platform/index.js";
 import {
   connectServer as hubConnect,
@@ -329,6 +329,16 @@ export function getConnectedAgents() {
 // Re-export bridge functions so other modules (e.g. chat-api) can invoke agent tools
 export { invokeAgentTool, hasActiveChannel } from "./services/agent-bridge.js";
 
+// Wire ocpGet() bridge routing → remote agent api_get tool. This lets the
+// existing preflight/upgrade/CR logic run against remote clusters unchanged.
+setBridgeInvoker(async (cluster, path, opts = {}) => {
+  const r = await invokeAgentTool(cluster, "api_get", { path, asText: !!opts.asText }, 15000);
+  if (!r || !r.success) {
+    throw new Error(r?.error || `Bridge api_get failed for ${path}`);
+  }
+  return r.data;
+});
+
 /**
  * Find an existing cluster entry by name (case-insensitive) or API URL.
  * Returns the Map key if found, null otherwise.
@@ -449,6 +459,10 @@ function buildDesiredRBACRules(platform, withActions = false) {
       // Cordon / uncordon nodes
       { apiGroups: [""], resources: ["nodes"], verbs: ["patch", "update"] },
     );
+    // OpenShift cluster upgrade — patch ClusterVersion desiredUpdate
+    if (platform === "openshift") {
+      rules.push({ apiGroups: ["config.openshift.io"], resources: ["clusterversions"], verbs: ["patch", "update"] });
+    }
   }
 
   return rules;

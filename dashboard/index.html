@@ -4062,7 +4062,7 @@ tr:hover td{background:#ffffff06}
         <input type="checkbox" id="hub-allow-actions" style="margin-top:2px;cursor:pointer" onchange="hubUpdateYamlActions()">
         <label for="hub-allow-actions" style="font-size:11px;color:var(--text2);cursor:pointer;line-height:1.5">
           <span style="font-weight:600;color:var(--text)">Allow remote actions (write access)</span><br>
-          Grants scoped write RBAC (scale, restart, delete pod, cordon) and enables the AI Chat to <b>act</b> on this cluster — not just read. Leave unchecked for read-only (zero-trust default).
+          Grants scoped write RBAC (scale, restart, delete pod, cordon, and OpenShift cluster upgrade) and enables the AI Chat to <b>act</b> on this cluster — not just read. Leave unchecked for read-only (zero-trust default).
         </label>
       </div>
       <div style="margin-left:30px;margin-bottom:16px;background:var(--card-deep);border:1px solid var(--border2);border-radius:10px;overflow:hidden">
@@ -15240,6 +15240,14 @@ function generateAgentYAML(platform, clusterName, apiUrl, allowActions) {
     lines.push('    resources:');
     lines.push('      - nodes');
     lines.push('    verbs: ["patch", "update"]');
+    if (platform === 'openshift') {
+      lines.push('');
+      lines.push('  # Cluster upgrade — patch ClusterVersion desiredUpdate');
+      lines.push('  - apiGroups: ["config.openshift.io"]');
+      lines.push('    resources:');
+      lines.push('      - clusterversions');
+      lines.push('    verbs: ["patch", "update"]');
+    }
     lines.push('  # =============================================================');
     lines.push('');
   }

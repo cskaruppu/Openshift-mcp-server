@@ -28,6 +28,7 @@ import {
   renderTraceMarkdown,
   setRemoteCluster,
   clearRemoteCluster,
+  enterRemoteClusterBridge,
 } from "../utils/openshift-client.js";
 import { getConnectedAgents, getAgentCachedResponse, invokeAgentTool, hasActiveChannel } from "../index.js";
 import { cacheGet, cacheSet, isEnabled as cacheEnabled } from "../utils/cache.js";
@@ -7138,6 +7139,37 @@ async function handleRemoteMutation(message, parsed, remoteCtx, opts = {}) {
     }
   };
 
+  // ---- CLUSTER UPGRADE (OpenShift) — change-controlled, confirmation-gated ----
+  if (/\bupgrade\b/.test(lower) && !/\bprecheck|pre-?check|pre-?flight|assessment|readiness|status\b/.test(lower)) {
+    if (!summary.isOpenShift) {
+      return `${header}\n### Cluster Upgrade\n\n> Chat-driven cluster upgrades are supported for OpenShift clusters only.`;
+    }
+    const vMatch = lower.match(/\bto\s+v?(\d+\.\d+\.\d+)/) || lower.match(/\bv?(\d+\.\d+\.\d+)\b/);
+    const version = vMatch ? vMatch[1] : null;
+    if (!version) {
+      return `${header}\n### Cluster Upgrade\n\n[WARNING] Specify a target version.\n\n**Workflow (same as hub):**\n1. \`precheck upgrade to <version>\` — 22-point assessment\n2. \`raise change request for upgrade to <version>\` — ITSM CR\n3. \`upgrade ${cluster} to <version> --confirm\` — execute`;
+    }
+    const confirmed = /--confirm|\bconfirm\b|\bproceed\b|\bapprove\b/.test(lower);
+    const force = /\bforce\b/.test(lower);
+    if (!confirmed) {
+      return [
+        header,
+        `### Confirm Cluster Upgrade — ${cluster} → ${version}`,
+        ``,
+        `[WARNING] This is a **production-impacting** change. Follow the change-controlled workflow:`,
+        ``,
+        `1. **Preflight:** \`precheck upgrade to ${version}\` — run the 22-point readiness assessment`,
+        `2. **Change Request:** \`raise change request for upgrade to ${version}\` — creates the ServiceNow CR with the preflight report attached`,
+        `3. **Execute:** repeat this command with confirmation:`,
+        `   > \`upgrade ${cluster} to ${version} --confirm\``,
+        ``,
+        `The upgrade runs via the agent (ClusterVersion desiredUpdate) and requires remote actions to be enabled on this cluster.`,
+      ].join("\n");
+    }
+    return runTool("upgrade_cluster", { version, force }, (d) =>
+      `### Upgrade Initiated\n\n[OK] **${cluster}** is upgrading to **${d.version}**.${d.image ? `\n\nRelease image: \`${d.image}\`` : ""}\n\nMonitor progress with \`cluster upgrade status\` or \`oc get clusterversion\`.`);
+  }
+
   // ---- SCALE ----
   const scaleMatch = lower.match(/\bscale\b/) && (lower.match(/\bto\s+(\d+)\b/) || lower.match(/\breplicas?\s*=?\s*(\d+)\b/) || lower.match(/\b(\d+)\s+replicas?\b/));
   if (lower.match(/\bscale\b/) && scaleMatch) {
@@ -13331,6 +13363,15 @@ export async function handleChatAPI(req, res) {
     // Remote cluster override — use cached agent data for context
     const _remoteClusterContext = resolveRemoteClusterContext(body);
 
+    // When a remote cluster with a LIVE bridge is selected, route every
+    // ocpGet() in this request through the agent bridge. This makes the
+    // existing preflight / upgrade-validation / CR logic operate on the
+    // remote cluster unchanged (industry-standard agent-pull pattern).
+    const _remoteBridgeActive = !!(_remoteClusterContext && hasActiveChannel(_remoteClusterContext.clusterName));
+    if (_remoteBridgeActive) {
+      enterRemoteClusterBridge(_remoteClusterContext.clusterName);
+    }
+
     // Slash commands — fast-path for dashboard shortcuts
     // Override LLM settings from request (for UI provider selector)
     const llmOpts = {};
@@ -13904,6 +13945,14 @@ export async function handleChatAPI(req, res) {
       // Run ITSM context gather and preflight IN PARALLEL — they're independent.
       // This saves ~20-30s compared to running them sequentially.
       let itsmCtx;
+      // For remote upgrade CRs, require a live bridge so the preflight (which
+      // gets auto-attached to the CR) runs against the correct cluster.
+      if (itsmType === "change_request" && isUpgradeRelated && _remoteClusterContext && !_remoteBridgeActive) {
+        const m = `### Change Request Blocked\n\n[WARNING] The agent on **${_remoteClusterContext.clusterName}** is offline, so the mandatory pre-upgrade assessment cannot be attached to the change request.\n\nBring the agent **Active** in AI Hub, then raise the CR again.`;
+        if (conversationId) histAddMessage(conversationId, { role: "assistant", content: m, provider: "built-in" }).catch(() => {});
+        if (wantsStream) { sseStart(res); sseSend(res, { delta: m }); sseSend(res, { done: true, provider: "built-in", conversationId }); sseEnd(res); return; }
+        return json(res, 200, { reply: m, provider: "built-in", contextKeys: ["cr", "bridge_offline"], cached: false, conversationId });
+      }
       if (itsmType === "change_request" && isUpgradeRelated) {
         const versionMatch = userMessage.match(/(\d+\.\d+\.\d+)/g);
         let targetVer = "";
@@ -14212,6 +14261,21 @@ export async function handleChatAPI(req, res) {
     // ---- Upgrade preflight: "precheck upgrade", "cluster upgrade precheck", etc. ----
     const UPGRADE_PREFLIGHT_PAT = /\b(?:pre-?(?:check|flight|upgrade)|upgrade.*(?:pre-?check|assessment|readiness|compatible|compatibility)|check.*(?:before|prior).*upgrade|upgrade\s+cluster.*(?:from|to)\s+\d+\.\d+|cluster\s+(?:upgrade\s+)?pre-?check)\b/i;
     if (UPGRADE_PREFLIGHT_PAT.test(userMessage)) {
+      // Remote cluster guards: preflight is OpenShift-only and needs a live bridge.
+      if (_remoteClusterContext) {
+        if (!_remoteBridgeActive) {
+          const m = `### Preflight Unavailable\n\n[WARNING] The agent on **${_remoteClusterContext.clusterName}** is not connected via the live bridge, so a real-time pre-upgrade assessment cannot run.\n\nEnsure the cluster shows **Active** in AI Hub, then retry.`;
+          if (conversationId) histAddMessage(conversationId, { role: "assistant", content: m, provider: "built-in" }).catch(() => {});
+          if (wantsStream) { sseStart(res); sseSend(res, { delta: m }); sseSend(res, { done: true, provider: "built-in", conversationId }); sseEnd(res); return; }
+          return json(res, 200, { reply: m, provider: "built-in", contextKeys: ["preflight", "bridge_offline"], cached: false, conversationId });
+        }
+        if (!_remoteClusterContext.summary?.isOpenShift) {
+          const m = `### Preflight Not Applicable\n\n> **${_remoteClusterContext.clusterName}** is not an OpenShift cluster. The 22-point pre-upgrade assessment applies to OpenShift Container Platform only.`;
+          if (conversationId) histAddMessage(conversationId, { role: "assistant", content: m, provider: "built-in" }).catch(() => {});
+          if (wantsStream) { sseStart(res); sseSend(res, { delta: m }); sseSend(res, { done: true, provider: "built-in", conversationId }); sseEnd(res); return; }
+          return json(res, 200, { reply: m, provider: "built-in", contextKeys: ["preflight", "not_openshift"], cached: false, conversationId });
+        }
+      }
       try {
         const versionMatch = userMessage.match(/(\d+\.\d+\.\d+)/g);
         let targetVer = "";
@@ -14331,7 +14395,7 @@ export async function handleChatAPI(req, res) {
       // (1) Cache-based handler — fast, no network round-trip.
       // (2) LIVE agent bridge for real-time reads (feature parity with hub).
       let remoteCacheReply = null;
-      if (isMutating || /\bscale\b|\brestart\b|\bredeploy\b|\bcordon\b|\b(delete|remove|kill)\b/.test(userMessage.toLowerCase())) {
+      if (isMutating || /\bscale\b|\brestart\b|\bredeploy\b|\bcordon\b|\bupgrade\b|\b(delete|remove|kill)\b/.test(userMessage.toLowerCase())) {
         try {
           remoteCacheReply = await handleRemoteMutation(userMessage, parsed, _remoteClusterContext, { userId: llmOpts.userId });
         } catch (mutErr) {

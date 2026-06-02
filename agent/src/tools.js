@@ -263,6 +263,13 @@ export const TOOLS = {
       labelSelector: { type: "string" },
     },
   },
+  api_get: {
+    description: "Raw GET against any Kubernetes API path (read-only). Used by the hub to run preflight/upgrade assessments against this cluster.",
+    parameters: {
+      path: { type: "string", required: true, description: "API path beginning with /" },
+      asText: { type: "boolean", description: "Return text instead of JSON (e.g. logs)" },
+    },
+  },
   // ── Write tools (require ALLOW_REMOTE_ACTIONS=true + write RBAC) ──
   scale_workload: {
     description: "Scale a deployment or statefulset to N replicas (requires remote actions enabled)",
@@ -296,6 +303,14 @@ export const TOOLS = {
     parameters: {
       name: { type: "string", required: true },
       uncordon: { type: "boolean", description: "true to uncordon" },
+    },
+    mutating: true,
+  },
+  upgrade_cluster: {
+    description: "Set ClusterVersion desiredUpdate to start an OpenShift upgrade (requires remote actions enabled)",
+    parameters: {
+      version: { type: "string", required: true, description: "Target OCP version, e.g. 4.19.25" },
+      force: { type: "boolean", description: "Force the upgrade past precondition checks" },
     },
     mutating: true,
   },
@@ -586,6 +601,14 @@ async function toolListResources({ kind, namespace, labelSelector }) {
   }));
 }
 
+// Raw GET — read-only, used for hub-driven preflight/upgrade assessments.
+async function toolApiGet({ path, asText }) {
+  if (!path || typeof path !== "string" || !path.startsWith("/")) {
+    throw new Error("'path' must be a string beginning with /");
+  }
+  return await k8sGet(path, 15000, !!asText);
+}
+
 // ── Write tool implementations ───────────────────────────────────────
 
 async function toolScaleWorkload({ kind, name, namespace, replicas }) {
@@ -631,6 +654,29 @@ async function toolCordonNode({ name, uncordon }) {
   return { name, action: uncordon ? "uncordoned" : "cordoned" };
 }
 
+async function toolUpgradeCluster({ version, force }) {
+  assertWritesEnabled();
+  if (!version) throw new Error("'version' is required");
+  // Resolve the release image for this version from availableUpdates so the
+  // ClusterVersion controller accepts the desiredUpdate (mirrors `oc adm upgrade --to`).
+  const cv = await k8sGet("/apis/config.openshift.io/v1/clusterversions/version");
+  const updates = cv.status?.availableUpdates || [];
+  const match = updates.find((u) => u.version === version);
+  if (!match && !force) {
+    throw new Error(`Version ${version} is not in availableUpdates. Re-run preflight or pass force=true.`);
+  }
+  const desiredUpdate = match
+    ? { version: match.version, image: match.image, force: !!force }
+    : { version, force: true };
+  await k8sWrite(
+    "PATCH",
+    "/apis/config.openshift.io/v1/clusterversions/version",
+    { spec: { desiredUpdate } },
+    "merge"
+  );
+  return { version, action: "upgrade-initiated", image: desiredUpdate.image || null, force: !!force };
+}
+
 // ── Dispatch map ─────────────────────────────────────────────────────
 
 const TOOL_FNS = {
@@ -645,11 +691,13 @@ const TOOL_FNS = {
   describe_resource:   toolDescribeResource,
   get_logs:            toolGetLogs,
   list_resources:      toolListResources,
+  api_get:             toolApiGet,
   // Write tools (gated by ALLOW_REMOTE_ACTIONS)
   scale_workload:      toolScaleWorkload,
   restart_workload:    toolRestartWorkload,
   delete_pod:          toolDeletePod,
   cordon_node:         toolCordonNode,
+  upgrade_cluster:     toolUpgradeCluster,
 };
 
 export function writesEnabled() {

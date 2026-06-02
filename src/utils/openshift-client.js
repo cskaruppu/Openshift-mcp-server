@@ -134,6 +134,31 @@ export function withRemoteCluster(apiUrl, token, fn) {
   return clusterStore.run({ apiUrl, token }, fn);
 }
 
+// ---------------------------------------------------------------------------
+// Bridge mode — route ocpGet through a remote agent's SSE bridge (api_get
+// tool) instead of a direct API call. Used when the hub cannot reach the
+// remote API server directly (the industry-standard agent-pull pattern).
+// ---------------------------------------------------------------------------
+let _bridgeInvoker = null;
+
+/** Register the function that invokes a read on a remote agent via the bridge. */
+export function setBridgeInvoker(fn) {
+  _bridgeInvoker = fn;
+}
+
+/** Run `fn` with all ocpGet() calls routed through the agent bridge for `cluster`. */
+export function withRemoteClusterBridge(cluster, fn) {
+  return clusterStore.run({ bridge: cluster }, fn);
+}
+
+/**
+ * Route all subsequent ocpGet() calls in the CURRENT async context through the
+ * agent bridge for `cluster`. Persists across awaits within this request only.
+ */
+export function enterRemoteClusterBridge(cluster) {
+  clusterStore.enterWith({ bridge: cluster });
+}
+
 /**
  * Set a remote cluster override (legacy — prefer withRemoteCluster).
  * Kept for backward compatibility but now uses AsyncLocalStorage internally.
@@ -181,6 +206,19 @@ const OCP_FETCH_TIMEOUT_MS = parseInt(process.env.OCP_FETCH_TIMEOUT_MS || "15000
 
 export async function ocpFetch(path, options = {}) {
   const remote = clusterStore.getStore() || null;
+
+  // Bridge mode — route reads through the remote agent's api_get tool.
+  if (remote && remote.bridge) {
+    const method = (options.method || "GET").toUpperCase();
+    if (method !== "GET") {
+      throw new Error(`Bridge mode is read-only — ${method} on ${path} must use a dedicated agent action tool`);
+    }
+    if (!_bridgeInvoker) throw new Error("Bridge invoker not registered");
+    const acceptHdr = options.headers && options.headers.Accept;
+    const asText = acceptHdr === "text/plain";
+    return await _bridgeInvoker(remote.bridge, path, { asText });
+  }
+
   const baseUrl = remote ? remote.apiUrl : OPENSHIFT_API_URL;
   const tk = remote ? remote.token : await token();
   const url = `${baseUrl}${path}`;
@@ -233,7 +271,7 @@ const GET_CACHE_TTL_MS = 5_000;
 export async function ocpGet(path) {
   const now = Date.now();
   const remote = clusterStore.getStore();
-  const cacheKey = remote ? `${remote.apiUrl}||${path}` : path;
+  const cacheKey = remote ? `${remote.bridge ? "bridge:" + remote.bridge : remote.apiUrl}||${path}` : path;
   const cached = _getCache.get(cacheKey);
   if (cached && now - cached.ts < GET_CACHE_TTL_MS) return cached.data;
   const data = await ocpFetch(path);
