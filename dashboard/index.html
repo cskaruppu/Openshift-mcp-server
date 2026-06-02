@@ -17067,6 +17067,7 @@ function renderHubServers() {
       apiUrl: agent ? agent.apiUrl : s.url,
       summary: agent ? agent.summary : null,
       source: agent ? agent.source : 'hub',
+      agentVersion: agent ? agent.agentVersion : null,
       registeredAt: agent ? agent.registeredAt : null,
       lastReportTime: agent ? agent.lastReportTime : null,
       lastHealthCheck: agent ? agent.lastHealthCheck : null,
@@ -17090,6 +17091,7 @@ function renderHubServers() {
       apiUrl: a.apiUrl,
       summary: a.summary,
       source: a.source || 'agent',
+      agentVersion: a.agentVersion || null,
       registeredAt: a.registeredAt,
       lastReportTime: a.lastReportTime,
       lastHealthCheck: a.lastHealthCheck || null,
@@ -17141,10 +17143,16 @@ function renderHubServers() {
         '<span style="background:' + pInfo.color + '11;border:1px solid ' + pInfo.color + '33;border-radius:4px;padding:2px 8px;font-size:10px;color:' + pInfo.color + '">' + c.platform.toUpperCase() + '</span>' +
       '</div>';
     } else {
+      var versionBadge = '';
+      if (c.agentVersion) {
+        var vColor = c.agentVersion >= '1.1.0' ? 'var(--ok)' : 'var(--warn)';
+        versionBadge = '<span style="background:' + vColor + '11;border:1px solid ' + vColor + '33;border-radius:4px;padding:2px 8px;font-size:10px;color:' + vColor + '">v' + esc(c.agentVersion) + (c.agentVersion < '1.1.0' ? ' (update available)' : '') + '</span>';
+      }
       toolsHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
         '<span style="background:' + pInfo.color + '11;border:1px solid ' + pInfo.color + '33;border-radius:4px;padding:2px 8px;font-size:10px;color:' + pInfo.color + '">' + c.platform.toUpperCase() + '</span>' +
         (c.source === 'agent' ? '<span style="background:color-mix(in srgb,var(--accent2) 7%,transparent);border:1px solid color-mix(in srgb,var(--accent2) 20%,transparent);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--accent2)">Agent</span>' : '') +
         (c.source === 'dashboard' ? '<span style="background:color-mix(in srgb,var(--warn) 7%,transparent);border:1px solid color-mix(in srgb,var(--warn) 20%,transparent);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--warn)">Manual</span>' : '') +
+        versionBadge +
       '</div>';
     }
 
@@ -17176,9 +17184,11 @@ function renderHubServers() {
         (c.lastHealthResult && !c.lastHealthResult.reachable && !c.lastHealthResult.agentReported ? ' &mdash; <span style="color:var(--crit)">' + esc(c.lastHealthResult.error || 'Connection failed') + '</span>' : '') +
         (c.lastHealthResult && c.lastHealthResult.authError ? ' &mdash; <span style="color:var(--warn)">Token expired or invalid (HTTP ' + c.lastHealthResult.status + '). Use a long-lived SA token: <code>oc create token mcp-agent -n openshift-tcs-agentic-ai --duration=8760h</code></span>' : '') +
       '</div>' : '') +
-      '<div style="display:flex;gap:6px;border-top:1px solid var(--border);padding-top:10px">' +
+      '<div style="display:flex;gap:6px;border-top:1px solid var(--border);padding-top:10px;flex-wrap:wrap">' +
         '<button onclick="hubChatWithCluster(\'' + esc(c.id) + '\',\'' + esc(c.name) + '\',\'' + esc(c.platform) + '\')" style="background:linear-gradient(135deg,' + pInfo.color + ',' + pInfo.color + 'cc);color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px;transition:opacity .15s" onmouseover="this.style.opacity=\'0.9\'" onmouseout="this.style.opacity=\'1\'" title="Open AI Chat for this cluster">&#x1F4AC; AI Chat</button>' +
         (!c.isBuiltin ? '<button onclick="verifyClusterHealth(\'' + esc(c.name).replace(/'/g, "\\'") + '\')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:11px;font-weight:500;color:var(--text2);display:flex;align-items:center;gap:4px;transition:all .15s" onmouseover="this.style.borderColor=\'var(--accent2)\';this.style.color=\'var(--text)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.color=\'var(--text2)\'" title="Verify cluster connectivity">&#x1F50D; Verify</button>' : '') +
+        (c.source === 'agent' ? '<button onclick="hubPushRBACUpdate(\'' + esc(c.name) + '\')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:11px;font-weight:500;color:var(--text2);display:flex;align-items:center;gap:4px;transition:all .15s" onmouseover="this.style.borderColor=\'var(--accent2)\';this.style.color=\'var(--text)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.color=\'var(--text2)\'" title="Push updated RBAC rules to agent">&#x1F512; Sync RBAC</button>' : '') +
+        (c.source === 'agent' ? '<button onclick="hubRedeployAgent(\'' + esc(c.name) + '\')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:11px;font-weight:500;color:var(--text2);display:flex;align-items:center;gap:4px;transition:all .15s" onmouseover="this.style.borderColor=\'var(--warn)\';this.style.color=\'var(--text)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.color=\'var(--text2)\'" title="Rollout restart after image rebuild">&#x1F504; Redeploy</button>' : '') +
       '</div>' +
     '</div>';
   }).join('');
