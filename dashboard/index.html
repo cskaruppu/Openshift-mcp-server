@@ -2210,7 +2210,7 @@ tr:hover td{background:#ffffff06}
 <!-- Cluster Context Banner (shown when viewing a remote cluster) -->
 <div class="cluster-context-banner" id="cluster-context-banner" style="display:none">
   <span class="ccb-icon" id="ccb-icon"></span>
-  <span class="ccb-label">REMOTE CLUSTER</span>
+  <span class="ccb-label" id="ccb-label">REMOTE CLUSTER</span>
   <span class="ccb-cluster-name" id="ccb-name"></span>
   <span class="ccb-detail" id="ccb-detail"><span id="ccb-version"></span></span>
   <span class="ccb-dot" id="ccb-dot"></span>
@@ -9979,6 +9979,17 @@ function showView(view) {
     loadAgentRegistry();
   }
   if (view !== 'intelligence' && _liveSSE) { _liveSSE.close(); _liveSSE = null; }
+
+  // The "you are here" cluster banner shows on every scoped page, but NOT on
+  // AI Hub / Settings / Agents which are fleet-wide (all-clusters) surfaces.
+  var ccb = document.getElementById('cluster-context-banner');
+  if (ccb) {
+    if (view === 'hub' || view === 'settings' || view === 'agents') {
+      ccb.style.display = 'none';
+    } else {
+      updateClusterContextBanner();
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -11304,10 +11315,35 @@ function reloadCurrentView() {
 function updateClusterContextBanner() {
   var banner = document.getElementById('cluster-context-banner');
   if (!banner) return;
+  var labelEl = document.getElementById('ccb-label');
+  // Always-on "you are here" banner (single pane of glass). The hub shows a
+  // PRIMARY badge; remote clusters show REMOTE.
   if (_globalActiveCluster === 'local') {
-    banner.style.display = 'none';
+    banner.style.display = 'flex';
+    var lci = _localClusterInfo || {};
+    var lplatform = (lci.platform || getActiveClusterPlatform() || 'openshift').toLowerCase();
+    var lpInfo = K8S_PLATFORMS[lplatform] || K8S_PLATFORMS['k8s'];
+    var lIsOCP = lci.isOpenShift !== undefined ? lci.isOpenShift : (lplatform === 'openshift');
+    if (labelEl) labelEl.textContent = 'HUB CLUSTER · PRIMARY';
+    var liconEl = document.getElementById('ccb-icon');
+    var lnameEl = document.getElementById('ccb-name');
+    var lverEl = document.getElementById('ccb-version');
+    var ldotEl = document.getElementById('ccb-dot');
+    var lstatusEl = document.getElementById('ccb-status-text');
+    if (liconEl) { liconEl.textContent = lpInfo.icon; liconEl.style.color = lpInfo.color; }
+    if (lnameEl) lnameEl.textContent = lci.name || 'Hub';
+    if (lverEl) {
+      var lver = lIsOCP ? lci.version : (lci.kubernetesVersion || lci.version);
+      var lparts = [];
+      if (lver && lver !== 'unknown') lparts.push(lpInfo.name + ' ' + lver); else lparts.push(lpInfo.name);
+      if (lci.nodeCount) lparts.push((lci.readyNodes || 0) + '/' + lci.nodeCount + ' nodes');
+      lverEl.innerHTML = lparts.map(function(p, i) { return (i > 0 ? '<span class="ccb-sep"></span>' : '') + p; }).join('');
+    }
+    if (ldotEl) ldotEl.style.background = 'var(--ok)';
+    if (lstatusEl) { lstatusEl.textContent = 'Active'; lstatusEl.style.color = 'var(--ok)'; }
     return;
   }
+  if (labelEl) labelEl.textContent = 'REMOTE CLUSTER';
   banner.style.display = 'flex';
   var nameEl = document.getElementById('ccb-name');
   var verEl = document.getElementById('ccb-version');
