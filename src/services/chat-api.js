@@ -29,7 +29,7 @@ import {
   setRemoteCluster,
   clearRemoteCluster,
 } from "../utils/openshift-client.js";
-import { getConnectedAgents, getAgentCachedResponse } from "../index.js";
+import { getConnectedAgents, getAgentCachedResponse, invokeAgentTool, hasActiveChannel } from "../index.js";
 import { cacheGet, cacheSet, isEnabled as cacheEnabled } from "../utils/cache.js";
 import {
   addMessage as histAddMessage,
@@ -6890,6 +6890,186 @@ function handleRemoteCacheQuery(message, parsed, remoteCtx, opts = {}) {
   parts.push(`- \`upgrade precheck\` — pre-flight readiness`);
 
   return parts.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Live remote-cluster query via the agent SSE bridge.
+//
+// When the user selects a remote cluster that has an ACTIVE bridge channel,
+// we can run real-time K8s queries on it — same data the hub gets for itself.
+// This gives feature parity for namespace-specific pod listings, deployments,
+// replica counts, services, logs, etc. — without needing the LLM.
+//
+// Returns a formatted markdown string, or null to fall through to the
+// cache-based handler / LLM path.
+// ---------------------------------------------------------------------------
+async function handleRemoteLiveQuery(message, parsed, remoteCtx) {
+  if (!remoteCtx) return null;
+  const cluster = remoteCtx.clusterName;
+  // Only use the live path when the agent bridge is connected.
+  if (!hasActiveChannel || !hasActiveChannel(cluster)) return null;
+
+  const lower = message.toLowerCase();
+  const summary = remoteCtx.summary || {};
+  const isOpenShift = summary.isOpenShift || false;
+  const platform = summary.platform || (isOpenShift ? "OpenShift" : "Kubernetes");
+  const healthEmoji = (summary.cluster?.health || "").toLowerCase() === "healthy" ? "[OK]" : "[WARNING]";
+  const header = `> ${healthEmoji} **${cluster}** | ${platform} ${summary.cluster?.version || ""} | live\n`;
+
+  // Extract namespace: explicit parsed field, or "in/under/from/namespace X" patterns
+  let ns = parsed?.namespace || null;
+  if (!ns) {
+    const m = lower.match(/(?:\bin\b|\bunder\b|\bfrom\b|\bns\b|\bnamespace\b|\bproject\b)\s+["'`]?([a-z0-9][-a-z0-9.]{0,61}[a-z0-9])["'`]?/);
+    if (m) ns = m[1];
+  }
+  // Guard: don't treat common words as a namespace
+  if (ns && /^(the|all|this|cluster|status|health|each|every|any)$/.test(ns)) ns = null;
+
+  // Map a resource keyword in the message to an agent list_resources kind.
+  const RESOURCE_KEYWORDS = [
+    { re: /\bpods?\b/, kind: "pods", label: "Pods" },
+    { re: /\bdeployments?\b|\bdeploys?\b/, kind: "deployments", label: "Deployments" },
+    { re: /\bstatefulsets?\b|\bsts\b/, kind: "statefulsets", label: "StatefulSets" },
+    { re: /\bdaemonsets?\b|\bds\b/, kind: "daemonsets", label: "DaemonSets" },
+    { re: /\breplicasets?\b|\brs\b/, kind: "replicasets", label: "ReplicaSets" },
+    { re: /\bservices?\b|\bsvc\b/, kind: "services", label: "Services" },
+    { re: /\bingress(?:es)?\b/, kind: "ingresses", label: "Ingresses" },
+    { re: /\broutes?\b/, kind: "routes", label: "Routes" },
+    { re: /\bconfigmaps?\b|\bcm\b/, kind: "configmaps", label: "ConfigMaps" },
+    { re: /\bpvcs?\b|\bpersistentvolumeclaims?\b/, kind: "persistentvolumeclaims", label: "PVCs" },
+    { re: /\bjobs?\b/, kind: "jobs", label: "Jobs" },
+    { re: /\bcronjobs?\b/, kind: "cronjobs", label: "CronJobs" },
+    { re: /\bsecrets?\b/, kind: "secrets", label: "Secrets" },
+    { re: /\bserviceaccounts?\b|\bsa\b/, kind: "serviceaccounts", label: "ServiceAccounts" },
+  ];
+
+  const isListIntent = /\blist\b|\bshow\b|\bget\b|\bhow\s+many\b|\bcount\b|\ball\b|\brunning\b|\bdisplay\b|\bwhat\b/.test(lower)
+    || parsed?.intent === "list" || parsed?.operation === "list";
+
+  // ---- Pod logs (live only) ----
+  if (/\blogs?\b/.test(lower) && parsed?.name) {
+    try {
+      const r = await invokeAgentTool(cluster, "get_logs", { name: parsed.name, namespace: ns || "default", tail: 100 }, 15000);
+      if (r?.success && r.data?.logs != null) {
+        const logs = String(r.data.logs).slice(-6000);
+        return `${header}\n### Logs: \`${parsed.name}\`${ns ? " (" + ns + ")" : ""}\n\n\`\`\`\n${logs || "(no output)"}\n\`\`\``;
+      }
+    } catch { /* fall through */ }
+  }
+
+  // ---- Pods (namespace-specific or named) ----
+  if (/\bpods?\b/.test(lower) && (isListIntent || ns || parsed?.name)) {
+    try {
+      const r = await invokeAgentTool(cluster, "get_pods", ns ? { namespace: ns } : {}, 15000);
+      if (r?.success && r.data) {
+        const d = r.data;
+        const parts = [header];
+        parts.push(`### Pods${ns ? " in `" + ns + "`" : " (cluster-wide)"}`);
+        parts.push("");
+        parts.push(`| Metric | Count |`);
+        parts.push(`| --- | --- |`);
+        parts.push(`| **Total** | ${d.total || 0} |`);
+        parts.push(`| **Running** | ${d.running || 0} |`);
+        parts.push(`| **Pending** | ${d.pending || 0} |`);
+        parts.push(`| **Failed** | ${d.failed || 0} |`);
+        parts.push("");
+        const probs = d.items || [];
+        if (probs.length > 0) {
+          parts.push(`**Non-running / problem pods (${probs.length}):**`);
+          parts.push(`| Pod | Phase | Restarts | Node | State |`);
+          parts.push(`| --- | --- | --- | --- | --- |`);
+          probs.slice(0, 25).forEach(p => {
+            const st = (p.containers || []).map(c => c.state).filter(s => s && s !== "Running").join(", ") || p.phase;
+            parts.push(`| \`${p.name}\` | ${p.phase || "—"} | ${p.restarts || 0} | ${p.node || "—"} | ${st || "—"} |`);
+          });
+        } else {
+          parts.push(`[OK] All ${d.running || 0} pod(s)${ns ? " in this namespace" : ""} are Running.`);
+        }
+        return parts.join("\n");
+      }
+    } catch { /* fall through */ }
+  }
+
+  // ---- Generic resource listing (deployments, services, replicas, etc.) ----
+  const kindMatch = RESOURCE_KEYWORDS.find(k => k.re.test(lower) && k.kind !== "pods");
+  if (kindMatch && (isListIntent || ns)) {
+    try {
+      const r = await invokeAgentTool(cluster, "list_resources", ns ? { kind: kindMatch.kind, namespace: ns } : { kind: kindMatch.kind }, 15000);
+      if (r?.success && Array.isArray(r.data)) {
+        const items = r.data;
+        const parts = [header];
+        parts.push(`### ${kindMatch.label}${ns ? " in `" + ns + "`" : " (cluster-wide)"} — ${items.length} total`);
+        parts.push("");
+        if (items.length === 0) {
+          parts.push(`No ${kindMatch.label.toLowerCase()} found${ns ? " in namespace `" + ns + "`" : ""}.`);
+          return parts.join("\n");
+        }
+        // For deployments/statefulsets, fetch replica detail via describe for the first few
+        if (kindMatch.kind === "deployments" || kindMatch.kind === "statefulsets") {
+          parts.push(`| Name | Namespace | Replicas (ready/desired) |`);
+          parts.push(`| --- | --- | --- |`);
+          const top = items.slice(0, 25);
+          const details = await Promise.all(top.map(it =>
+            invokeAgentTool(cluster, "describe_resource", { kind: kindMatch.kind, name: it.name, namespace: it.namespace }, 10000)
+              .then(dr => ({ it, dr })).catch(() => ({ it, dr: null }))
+          ));
+          details.forEach(({ it, dr }) => {
+            const spec = dr?.success ? dr.data : null;
+            const desired = spec?.spec?.replicas ?? "—";
+            const ready = spec?.status?.readyReplicas ?? 0;
+            const icon = (spec && ready >= (spec.spec?.replicas || 0)) ? "[OK]" : "[WARNING]";
+            parts.push(`| \`${it.name}\` | ${it.namespace || "—"} | ${icon} ${ready}/${desired} |`);
+          });
+        } else {
+          parts.push(`| Name | Namespace | Age |`);
+          parts.push(`| --- | --- | --- |`);
+          items.slice(0, 40).forEach(it => {
+            const age = it.created ? _ageFromTimestamp(it.created) : "—";
+            parts.push(`| \`${it.name}\` | ${it.namespace || "—"} | ${age} |`);
+          });
+          if (items.length > 40) parts.push(`\n_…and ${items.length - 40} more._`);
+        }
+        return parts.join("\n");
+      }
+    } catch { /* fall through */ }
+  }
+
+  // ---- Describe a specific named resource (replicas, details) ----
+  if (parsed?.name && parsed?.resource) {
+    const kindEntry = RESOURCE_KEYWORDS.find(k => k.re.test(parsed.resource.toLowerCase()));
+    if (kindEntry) {
+      try {
+        const r = await invokeAgentTool(cluster, "describe_resource", { kind: kindEntry.kind, name: parsed.name, namespace: ns || undefined }, 12000);
+        if (r?.success && r.data) {
+          const obj = r.data;
+          const parts = [header];
+          parts.push(`### ${kindEntry.label.replace(/s$/, "")}: \`${parsed.name}\``);
+          parts.push("");
+          parts.push(`| Field | Value |`);
+          parts.push(`| --- | --- |`);
+          parts.push(`| Namespace | ${obj.metadata?.namespace || "—"} |`);
+          if (obj.spec?.replicas != null) {
+            parts.push(`| Desired replicas | ${obj.spec.replicas} |`);
+            parts.push(`| Ready replicas | ${obj.status?.readyReplicas || 0} |`);
+            parts.push(`| Available replicas | ${obj.status?.availableReplicas || 0} |`);
+          }
+          if (obj.status?.phase) parts.push(`| Phase | ${obj.status.phase} |`);
+          parts.push(`| Created | ${obj.metadata?.creationTimestamp ? _ageFromTimestamp(obj.metadata.creationTimestamp) : "—"} |`);
+          return parts.join("\n");
+        }
+      } catch { /* fall through */ }
+    }
+  }
+
+  return null;
+}
+
+function _ageFromTimestamp(ts) {
+  const age = (Date.now() - new Date(ts).getTime()) / 1000;
+  if (age < 60) return Math.floor(age) + "s";
+  if (age < 3600) return Math.floor(age / 60) + "m";
+  if (age < 86400) return Math.floor(age / 3600) + "h";
+  return Math.floor(age / 86400) + "d";
 }
 
 // ---------------------------------------------------------------------------
@@ -14045,7 +14225,17 @@ export async function handleChatAPI(req, res) {
     // fall through to the LLM path which receives the cached context via
     // buildContextFromAgentCache.
     if (_remoteClusterContext) {
-      const remoteCacheReply = handleRemoteCacheQuery(userMessage, parsed, _remoteClusterContext, { llmAvailable: llmActive });
+      // (1) Cache-based handler first — fast, no network round-trip.
+      // (2) If it returns null (unrecognized / namespace-specific), try the
+      //     LIVE agent bridge for real-time data (feature parity with hub).
+      let remoteCacheReply = handleRemoteCacheQuery(userMessage, parsed, _remoteClusterContext, { llmAvailable: llmActive });
+      if (!remoteCacheReply) {
+        try {
+          remoteCacheReply = await handleRemoteLiveQuery(userMessage, parsed, _remoteClusterContext);
+        } catch (liveErr) {
+          console.error(`[chat] Remote live query failed for ${_remoteClusterContext.clusterName}: ${liveErr.message}`);
+        }
+      }
       if (remoteCacheReply) {
         const provider = llmActive ? activeProvider : "built-in";
         const payload = {
