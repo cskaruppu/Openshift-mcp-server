@@ -74,7 +74,7 @@ import { generateManifests, renderYaml, renderSingleYaml } from "./services/mani
 import { createDeployment, executeDeployment, rollbackDeployment, getDeployment, listDeployments } from "./services/deployment-orchestrator.js";
 import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
-import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, trackSubmittedCR } from "./services/chat-api.js";
+import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, trackSubmittedCR, handleFleetChatAPI } from "./services/chat-api.js";
 import {
   listActions,
   getAction,
@@ -2619,6 +2619,12 @@ async function startSSE() {
     // LLM Chat API — /api/chat (POST)
     if (req.method === "POST" && url.pathname === "/api/chat") {
       await handleChatAPI(req, res);
+      return;
+    }
+
+    // Fleet AI — ask across ALL clusters (POST /api/fleet/chat)
+    if (req.method === "POST" && url.pathname === "/api/fleet/chat") {
+      await handleFleetChatAPI(req, res);
       return;
     }
 

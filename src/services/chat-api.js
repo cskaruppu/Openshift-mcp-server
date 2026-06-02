@@ -29,6 +29,7 @@ import {
   setRemoteCluster,
   clearRemoteCluster,
   enterRemoteClusterBridge,
+  withRemoteClusterBridge,
 } from "../utils/openshift-client.js";
 import { getConnectedAgents, getAgentCachedResponse, invokeAgentTool, hasActiveChannel } from "../index.js";
 import { cacheGet, cacheSet, isEnabled as cacheEnabled } from "../utils/cache.js";
@@ -13327,6 +13328,296 @@ function sseEnd(res) {
     res.write("data: [DONE]\n\n");
     res.end();
   } catch {}
+}
+
+// ===========================================================================
+// FLEET AI — "ask across all clusters" (single pane of glass, fleet view)
+//
+// Aggregates a compact snapshot of every connected cluster (hub + agents)
+// and answers fleet-wide questions: upgrades available, health overview,
+// version inventory, problem pods, security posture, capacity. Falls back
+// to the LLM with the aggregated fleet context for free-form questions.
+// ===========================================================================
+
+function _fleetClusterFromReport(name, platform, report, status, agentVersion) {
+  const isOCP = !!(report?.openshiftVersion) || platform === "openshift";
+  const nodes = report?.nodes || {};
+  const pods = report?.pods || {};
+  const ops = report?.clusterOperators || {};
+  const sec = report?.security || null;
+  return {
+    name,
+    platform: platform || (isOCP ? "openshift" : "k8s"),
+    isOpenShift: isOCP,
+    version: report?.openshiftVersion || report?.kubernetesVersion || "unknown",
+    health: (report?.clusterHealth?.status || "unknown").toLowerCase(),
+    nodesTotal: nodes.total || 0,
+    nodesReady: nodes.ready || 0,
+    podsTotal: pods.total || 0,
+    podsFailed: pods.failed || 0,
+    podsPending: pods.pending || 0,
+    podIssues: (pods.issues || []).length,
+    operatorsTotal: ops.total || 0,
+    operatorsDegraded: ops.degraded || 0,
+    namespaces: report?.namespaces?.total || 0,
+    cpu: report?.resourceSummary?.totalCPU || 0,
+    memGi: report?.resourceSummary?.totalMemoryGi || 0,
+    securityScore: sec && sec.available !== false ? sec.score : null,
+    securityGrade: sec && sec.available !== false ? sec.grade : null,
+    status: status || "unknown",
+    role: "spoke",
+    availableUpdates: null, // filled live on demand for upgrade queries
+  };
+}
+
+/** Build a compact snapshot of the whole fleet (hub + all agents). */
+async function buildFleetSnapshot() {
+  const clusters = [];
+
+  // --- Hub (local) ---
+  try {
+    let hub = { name: "hub", platform: "openshift", role: "hub", status: "active",
+      isOpenShift: true, version: "unknown", health: "unknown",
+      nodesTotal: 0, nodesReady: 0, podsTotal: 0, podsFailed: 0, podsPending: 0,
+      podIssues: 0, operatorsTotal: 0, operatorsDegraded: 0, namespaces: 0,
+      cpu: 0, memGi: 0, securityScore: null, securityGrade: null, availableUpdates: null };
+    const [cvR, verR, nodesR] = await Promise.allSettled([
+      ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
+      ocpGet("/version"),
+      ocpGet("/api/v1/nodes"),
+    ]);
+    if (cvR.status === "fulfilled" && cvR.value) {
+      hub.isOpenShift = true;
+      hub.version = cvR.value.status?.desired?.version || "unknown";
+      hub.channel = cvR.value.spec?.channel || "";
+      hub.availableUpdates = (cvR.value.status?.availableUpdates || []).map(u => u.version);
+      const conds = cvR.value.status?.conditions || [];
+      const failing = conds.find(c => c.type === "Failing" && c.status === "True");
+      hub.health = failing ? "degraded" : "healthy";
+    } else if (verR.status === "fulfilled" && verR.value) {
+      hub.isOpenShift = false; hub.platform = "k8s";
+      hub.version = (verR.value.gitVersion || "").replace(/^v/, "") || "unknown";
+      hub.health = "healthy";
+    }
+    if (nodesR.status === "fulfilled" && nodesR.value) {
+      const items = nodesR.value.items || [];
+      hub.nodesTotal = items.length;
+      hub.nodesReady = items.filter(n => (n.status?.conditions || []).find(c => c.type === "Ready")?.status === "True").length;
+      if (hub.nodesReady < hub.nodesTotal && hub.health === "healthy") hub.health = "warning";
+    }
+    clusters.push(hub);
+  } catch { /* hub summary best-effort */ }
+
+  // --- Agents (remote spokes) ---
+  try {
+    const agents = getConnectedAgents();
+    for (const [, a] of agents) {
+      if (a.source === "dashboard" && !a.lastReport) continue;
+      const elapsed = a.lastReportTime ? (Date.now() - new Date(a.lastReportTime).getTime()) / 1000 : null;
+      const status = elapsed !== null && elapsed < 300 ? "active" : elapsed !== null ? "stale" : "registered";
+      clusters.push(_fleetClusterFromReport(a.clusterName, a.platform, a.lastReport, status, a.agentVersion));
+    }
+  } catch { /* ignore */ }
+
+  return clusters;
+}
+
+/** Fetch availableUpdates live for OpenShift clusters (hub + bridged agents). */
+async function enrichFleetUpgrades(snapshot) {
+  await Promise.allSettled(snapshot.map(async (c) => {
+    if (!c.isOpenShift || Array.isArray(c.availableUpdates)) return;
+    if (c.role === "hub") return; // already done in snapshot
+    if (!hasActiveChannel(c.name)) { c.availableUpdates = null; return; }
+    try {
+      const cv = await withRemoteClusterBridge(c.name, () =>
+        ocpGet("/apis/config.openshift.io/v1/clusterversions/version"));
+      c.availableUpdates = (cv.status?.availableUpdates || []).map(u => u.version);
+      c.channel = cv.spec?.channel || c.channel;
+    } catch { c.availableUpdates = null; }
+  }));
+}
+
+function _latestVersion(versions) {
+  if (!versions || !versions.length) return null;
+  return [...versions].sort((a, b) => {
+    const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
+    for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0); }
+    return 0;
+  })[0];
+}
+
+function _healthIcon(h) {
+  return h === "healthy" ? "[OK]" : h === "warning" ? "[WARNING]" : (h === "degraded" || h === "critical") ? "[CRITICAL]" : "[—]";
+}
+
+/** Rule-based fleet answers. Returns markdown or null to fall through to LLM. */
+async function handleFleetQuery(message, snapshot) {
+  const lower = (message || "").toLowerCase();
+  const total = snapshot.length;
+  const hdr = `> **Fleet** · ${total} cluster${total === 1 ? "" : "s"} · ${snapshot.filter(c => c.status === "active").length} active\n`;
+
+  // --- Upgrades available across the fleet ---
+  if (/\bupgrade|\bupdate(s)?\b|\bnew version|\bout.?of.?date|\bpatch\b/.test(lower)) {
+    await enrichFleetUpgrades(snapshot);
+    const parts = [hdr, `### Upgrade Availability Across the Fleet`, ""];
+    parts.push(`| Cluster | Platform | Current | Latest available | Status |`);
+    parts.push(`| --- | --- | --- | --- | --- |`);
+    let upgradable = 0;
+    snapshot.forEach(c => {
+      if (!c.isOpenShift) {
+        parts.push(`| \`${c.name}\` | ${c.platform.toUpperCase()} | ${c.version} | — | n/a (non-OCP) |`);
+        return;
+      }
+      if (!Array.isArray(c.availableUpdates)) {
+        parts.push(`| \`${c.name}\` | OCP | ${c.version} | ? | ${c.role === "hub" ? "—" : "agent offline"} |`);
+        return;
+      }
+      const latest = _latestVersion(c.availableUpdates);
+      if (latest && latest !== c.version) {
+        upgradable++;
+        parts.push(`| \`${c.name}\` | OCP | ${c.version} | **${latest}** (${c.availableUpdates.length}) | [WARNING] upgrade available |`);
+      } else {
+        parts.push(`| \`${c.name}\` | OCP | ${c.version} | — | [OK] up to date |`);
+      }
+    });
+    parts.push("");
+    parts.push(upgradable > 0
+      ? `**${upgradable} cluster(s) have upgrades available.** Select a cluster from the Fleet view, then ask *"precheck upgrade to <version>"* to run the assessment.`
+      : `[OK] All OpenShift clusters are up to date.`);
+    return parts.join("\n");
+  }
+
+  // --- Health / status / overview ---
+  if (/\bhealth|\bstatus|\boverview|\bsummary|\bhow.+(?:cluster|fleet)|\bwhich.+(?:unhealthy|degraded|down|problem)/.test(lower)) {
+    const parts = [hdr, `### Fleet Health Overview`, ""];
+    parts.push(`| Cluster | Role | Platform | Version | Health | Nodes | Pod issues |`);
+    parts.push(`| --- | --- | --- | --- | --- | --- | --- |`);
+    snapshot.forEach(c => {
+      parts.push(`| \`${c.name}\` | ${c.role} | ${c.platform.toUpperCase()} | ${c.version} | ${_healthIcon(c.health)} ${c.health} | ${c.nodesReady}/${c.nodesTotal} | ${c.podIssues} |`);
+    });
+    const unhealthy = snapshot.filter(c => c.health === "degraded" || c.health === "critical" || c.health === "warning");
+    const offline = snapshot.filter(c => c.status === "stale" || c.status === "registered");
+    parts.push("");
+    parts.push(`**Summary:** ${snapshot.filter(c => c.health === "healthy").length}/${total} healthy` +
+      (unhealthy.length ? ` · ${unhealthy.length} need attention (${unhealthy.map(c => c.name).join(", ")})` : "") +
+      (offline.length ? ` · ${offline.length} agent(s) not reporting (${offline.map(c => c.name).join(", ")})` : ""));
+    return parts.join("\n");
+  }
+
+  // --- Problem pods / critical issues across fleet ---
+  if (/\b(pod|workload).*(issue|problem|fail|crash|error)|\bcritical\b|\bproblem|\bfailing\b/.test(lower)) {
+    const parts = [hdr, `### Problem Pods Across the Fleet`, ""];
+    const withIssues = snapshot.filter(c => c.podIssues > 0 || c.podsFailed > 0);
+    if (withIssues.length === 0) { parts.push(`[OK] No problem pods detected across any cluster.`); return parts.join("\n"); }
+    parts.push(`| Cluster | Problem pods | Failed | Pending |`);
+    parts.push(`| --- | --- | --- | --- |`);
+    withIssues.sort((a, b) => b.podIssues - a.podIssues).forEach(c => {
+      parts.push(`| \`${c.name}\` | ${c.podIssues} | ${c.podsFailed} | ${c.podsPending} |`);
+    });
+    const totalIssues = snapshot.reduce((s, c) => s + c.podIssues, 0);
+    parts.push("");
+    parts.push(`**${totalIssues} problem pod(s)** across ${withIssues.length} cluster(s). Open a cluster and ask *"show pod issues"* for details.`);
+    return parts.join("\n");
+  }
+
+  // --- Security posture across fleet ---
+  if (/\bsecurity|\bcompliance|\bvulnerab|\bcis\b|\bposture|\bhardening/.test(lower)) {
+    const parts = [hdr, `### Security Posture Across the Fleet`, ""];
+    const scored = snapshot.filter(c => c.securityScore != null);
+    if (scored.length === 0) { parts.push(`> No security scan data reported yet. Agents collect this on their next scan.`); return parts.join("\n"); }
+    parts.push(`| Cluster | Score | Grade |`);
+    parts.push(`| --- | --- | --- |`);
+    scored.sort((a, b) => a.securityScore - b.securityScore).forEach(c => {
+      parts.push(`| \`${c.name}\` | ${c.securityScore}/100 | ${c.securityGrade} |`);
+    });
+    const avg = Math.round(scored.reduce((s, c) => s + c.securityScore, 0) / scored.length);
+    parts.push("");
+    parts.push(`**Fleet average:** ${avg}/100. Weakest: \`${scored[0].name}\` (${scored[0].securityScore}).`);
+    return parts.join("\n");
+  }
+
+  // --- Inventory / versions / capacity ---
+  if (/\binventory|\blist.+cluster|\ball.+cluster|\bversion|\bwhat.+cluster|\bcapacity|\bnodes?\b|\bcpu|\bmemory/.test(lower)) {
+    const parts = [hdr, `### Fleet Inventory`, ""];
+    parts.push(`| Cluster | Role | Platform | Version | Nodes | CPU | Mem (Gi) | Namespaces |`);
+    parts.push(`| --- | --- | --- | --- | --- | --- | --- | --- |`);
+    snapshot.forEach(c => {
+      parts.push(`| \`${c.name}\` | ${c.role} | ${c.platform.toUpperCase()} | ${c.version} | ${c.nodesReady}/${c.nodesTotal} | ${c.cpu} | ${c.memGi} | ${c.namespaces} |`);
+    });
+    const totNodes = snapshot.reduce((s, c) => s + c.nodesTotal, 0);
+    const totCpu = Math.round(snapshot.reduce((s, c) => s + c.cpu, 0));
+    const totMem = Math.round(snapshot.reduce((s, c) => s + c.memGi, 0));
+    parts.push("");
+    parts.push(`**Fleet totals:** ${total} clusters · ${totNodes} nodes · ${totCpu} CPU cores · ${totMem} Gi memory.`);
+    return parts.join("\n");
+  }
+
+  return null; // fall through to LLM
+}
+
+function _fleetContextString(snapshot) {
+  const lines = ["FLEET SNAPSHOT (all connected clusters):"];
+  snapshot.forEach(c => {
+    lines.push(`- ${c.name} [${c.role}] platform=${c.platform} version=${c.version} health=${c.health} ` +
+      `nodes=${c.nodesReady}/${c.nodesTotal} podIssues=${c.podIssues} failedPods=${c.podsFailed} ` +
+      `operatorsDegraded=${c.operatorsDegraded} namespaces=${c.namespaces} ` +
+      `security=${c.securityScore != null ? c.securityScore + "/100(" + c.securityGrade + ")" : "n/a"} status=${c.status}`);
+  });
+  return lines.join("\n");
+}
+
+/** POST /api/fleet/chat — fleet-wide AI across all clusters. */
+export async function handleFleetChatAPI(req, res) {
+  try {
+    const body = await readBody(req);
+    const message = body.message;
+    if (!message) return json(res, 400, { error: "Missing 'message' field" });
+
+    const snapshot = await buildFleetSnapshot();
+    if (snapshot.length === 0) {
+      return json(res, 200, { reply: "No clusters are connected yet. Add clusters from the AI Hub to use fleet-wide queries.", provider: "built-in", scope: "fleet" });
+    }
+
+    // Rule-based fleet answer first.
+    let reply = await handleFleetQuery(message, snapshot);
+    let provider = "built-in";
+
+    // LLM fallback with aggregated fleet context.
+    if (!reply) {
+      const llmOpts = {};
+      if (body.provider) llmOpts.provider = body.provider;
+      if (body.apiKey) llmOpts.apiKey = body.apiKey;
+      if (body.apiUrl) llmOpts.apiUrl = body.apiUrl;
+      if (body.model) llmOpts.model = body.model;
+      if (body.azureDeployment) llmOpts.azureDeployment = body.azureDeployment;
+      if (body.azureApiVersion) llmOpts.azureApiVersion = body.azureApiVersion;
+      const active = (llmOpts.provider || LLM_PROVIDER) && (llmOpts.provider || LLM_PROVIDER) !== "none";
+      if (active) {
+        try {
+          const sys = "You are a multi-cluster SRE assistant. You are given a snapshot of ALL clusters in a fleet. " +
+            "Answer the user's question using ONLY this fleet data. Be concise, use markdown tables when comparing clusters, " +
+            "and call out which specific clusters are affected. Do not invent clusters or metrics not present in the data.";
+          const r = await callLLM({
+            messages: [{ role: "user", content: `${message}\n\n--- ${_fleetContextString(snapshot)}` }],
+            system: sys, maxTokens: 1500, temperature: 0.15, ...llmOpts,
+          });
+          reply = r?.text || null;
+          provider = llmOpts.provider || LLM_PROVIDER;
+        } catch (e) {
+          reply = null;
+        }
+      }
+      // Built-in fallback: a fleet overview.
+      if (!reply) {
+        reply = await handleFleetQuery("fleet health overview", snapshot);
+        provider = "built-in";
+      }
+    }
+
+    return json(res, 200, { reply, provider, scope: "fleet", clusterCount: snapshot.length });
+  } catch (err) {
+    return json(res, 500, { error: err.message });
+  }
 }
 
 // ---------------------------------------------------------------------------
