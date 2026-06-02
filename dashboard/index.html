@@ -2091,8 +2091,11 @@ tr:hover td{background:#ffffff06}
 .login-card .login-mode-badge{display:inline-block;background:var(--bg);border:1px solid var(--border);padding:2px 10px;border-radius:12px;font-size:11px;color:var(--text2);margin-bottom:16px}
 
 /* ── Cluster Picker View ── */
-.cluster-picker{min-height:100vh;background:linear-gradient(135deg,#0a0c10 0%,#111827 40%,#0f172a 100%);display:flex;flex-direction:column}
-.cp-header{display:flex;align-items:center;justify-content:space-between;padding:20px 32px;border-bottom:1px solid var(--border)}
+.cluster-picker{min-height:100vh;background:linear-gradient(160deg,#020617 0%,#0a0f1e 20%,#0c1631 40%,#161338 60%,#1a0e2e 80%,#0a0a14 100%);display:flex;flex-direction:column;position:relative}
+.cluster-picker::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 120% 60% at 20% -10%,rgba(99,102,241,.08),transparent 60%),radial-gradient(ellipse 80% 50% at 80% 20%,rgba(56,189,248,.04),transparent 50%),radial-gradient(ellipse 60% 50% at 70% 100%,rgba(168,85,247,.06),transparent 50%),radial-gradient(ellipse 40% 30% at 10% 80%,rgba(224,64,64,.04),transparent 50%);pointer-events:none;z-index:0}
+.cluster-picker::after{content:'';position:absolute;inset:0;background:radial-gradient(circle 600px at 50% 40%,rgba(99,102,241,.03),transparent),radial-gradient(circle 400px at 30% 70%,rgba(168,85,247,.025),transparent);pointer-events:none;z-index:0}
+.cluster-picker>*{position:relative;z-index:1}
+.cp-header{display:flex;align-items:center;justify-content:space-between;padding:20px 32px;border-bottom:1px solid rgba(99,102,241,.1);background:rgba(3,7,18,.4);backdrop-filter:blur(12px)}
 .cp-header .cp-brand{display:flex;align-items:center;gap:12px}
 .cp-header .cp-brand svg{width:40px;height:40px}
 .cp-header .cp-brand-text{display:flex;flex-direction:column}
@@ -2103,12 +2106,12 @@ tr:hover td{background:#ffffff06}
 .cp-header .cp-logout-btn{background:none;border:1px solid var(--border);color:var(--text2);border-radius:6px;padding:5px 14px;font-size:11px;cursor:pointer;transition:all .15s}
 .cp-header .cp-logout-btn:hover{border-color:var(--crit);color:var(--crit)}
 .cp-body{flex:1;max-width:1200px;width:100%;margin:0 auto;padding:40px 32px}
-.cp-title{font-size:28px;font-weight:800;margin-bottom:6px;color:#f8fafc}
+.cp-title{font-size:30px;font-weight:800;margin-bottom:6px;background:linear-gradient(135deg,#f8fafc 0%,#c7d2fe 30%,#a78bfa 60%,#818cf8 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;letter-spacing:-.3px}
 .cp-subtitle{font-size:13px;color:var(--text2);margin-bottom:32px}
 .cp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px;margin-bottom:40px}
-.cp-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;cursor:pointer;transition:all .2s;position:relative;overflow:hidden}
-.cp-card:hover{border-color:var(--accent2);transform:translateY(-3px);box-shadow:0 8px 30px rgba(0,0,0,.3)}
-.cp-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--accent),var(--accent2));opacity:0;transition:opacity .2s}
+.cp-card{background:linear-gradient(145deg,#1c1f2e,#14172280);border:1px solid rgba(99,102,241,.12);border-radius:14px;padding:24px;cursor:pointer;transition:all .25s ease;position:relative;overflow:hidden;backdrop-filter:blur(8px)}
+.cp-card:hover{border-color:rgba(99,102,241,.35);transform:translateY(-3px);box-shadow:0 8px 32px rgba(0,0,0,.35),0 0 0 1px rgba(99,102,241,.1) inset}
+.cp-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--accent),#a78bfa,var(--accent2));opacity:0;transition:opacity .25s}
 .cp-card:hover::before{opacity:1}
 .cp-card-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
 .cp-card-icon{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0}
@@ -2121,12 +2124,15 @@ tr:hover td{background:#ffffff06}
 .cp-card-status-label{font-size:12px;color:var(--text2)}
 .cp-card-meta{display:flex;gap:8px;flex-wrap:wrap}
 .cp-card-meta-tag{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:10px;color:var(--text2)}
-.cp-card-add{background:transparent;border:2px dashed var(--border);border-radius:14px;padding:24px;cursor:pointer;transition:all .2s;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:160px;gap:12px}
-.cp-card-add:hover{border-color:var(--accent2);background:color-mix(in srgb,var(--accent2) 5%,transparent)}
+.cp-card-add{background:rgba(15,18,30,.4);border:2px dashed rgba(99,102,241,.2);border-radius:14px;padding:24px;cursor:pointer;transition:all .25s ease;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:160px;gap:12px;backdrop-filter:blur(4px)}
+.cp-card-add:hover{border-color:rgba(99,102,241,.45);background:rgba(99,102,241,.06)}
 .cp-card-add-icon{width:48px;height:48px;border-radius:50%;background:var(--bg);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:24px;color:var(--text2);transition:all .2s}
 .cp-card-add:hover .cp-card-add-icon{border-color:var(--accent2);color:var(--accent2)}
 .cp-card-add-label{font-size:13px;font-weight:600;color:var(--text2)}
-.cp-fleet-bar{background:linear-gradient(135deg,#0f172a,#1e1b4b,#0f172a);border:1px solid #334155;border-radius:14px;padding:20px 24px;position:relative;overflow:hidden}
+.cp-card-add-platforms{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;justify-content:center}
+.cp-platform-pill{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:20px;font-size:10px;font-weight:600;border:1px solid currentColor;opacity:.7;cursor:pointer;transition:all .2s;background:rgba(0,0,0,.2)}
+.cp-platform-pill:hover{opacity:1;transform:scale(1.05);background:rgba(255,255,255,.05)}
+.cp-fleet-bar{background:linear-gradient(135deg,#0c1226,#1a1545,#0c1226);border:1px solid rgba(99,102,241,.15);border-radius:14px;padding:20px 24px;position:relative;overflow:hidden;backdrop-filter:blur(8px)}
 .cp-fleet-bar::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,#6366f108,transparent);animation:hubDataFlow 6s ease infinite;background-size:200% 100%}
 .cp-fleet-bar-inner{position:relative;z-index:1}
 .cp-fleet-bar-title{display:flex;align-items:center;gap:8px;margin-bottom:12px}
@@ -2170,6 +2176,28 @@ tr:hover td{background:#ffffff06}
 body.cluster-picker-mode .header{display:none}
 body.cluster-picker-mode .app-footer{display:none}
 body.cluster-picker-mode .cluster-context-banner{display:none!important}
+
+/* ── Workspace mode: hide redundant cluster selectors ── */
+body.workspace-mode #global-cluster-selector{display:none}
+body.workspace-mode #conn-dot{display:none}
+body.workspace-mode #conn-label{display:none}
+body.workspace-mode .cluster-context-banner{display:none!important}
+body.workspace-mode #ccs-wrapper{display:none}
+body.workspace-mode .settings-gear{display:none}
+body.workspace-mode #agents-nav-btn{display:none}
+body.workspace-mode .status > :is(span:empty, br){display:none}
+body.workspace-mode #last-updated{display:none}
+body.workspace-mode .status .icon-btn[onclick*="refreshAll"]{display:none}
+body.workspace-mode .status{font-size:0}
+body.workspace-mode .status > *{font-size:13px}
+body.workspace-mode .nav-tabs{flex:1;justify-content:center}
+body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
+
+/* ── Cluster Picker header toolbar icons ── */
+.cp-header-actions{display:flex;align-items:center;gap:8px;margin-right:8px}
+.cp-action-btn{background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.15);border-radius:8px;padding:6px 10px;color:var(--text2);cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600}
+.cp-action-btn:hover{border-color:rgba(99,102,241,.4);color:#c7d2fe;background:rgba(99,102,241,.12)}
+.cp-action-btn svg{width:16px;height:16px}
 </style>
 </head>
 <body>
@@ -2524,6 +2552,19 @@ body.cluster-picker-mode .cluster-context-banner{display:none!important}
       </div>
     </div>
     <div class="cp-user">
+      <div class="cp-header-actions">
+        <button class="cp-action-btn" onclick="_exitClusterPicker();showView('settings')" title="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+          Settings
+        </button>
+        <button class="cp-action-btn" onclick="_exitClusterPicker();showView('agents')" title="AI Agents">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="7" r="3"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/>
+            <line x1="12" y1="10" x2="5" y2="15.5"/><line x1="12" y1="10" x2="19" y2="15.5"/>
+          </svg>
+          Agents
+        </button>
+      </div>
       <span class="cp-user-label" id="cp-user-label"></span>
       <button class="cp-logout-btn" id="cp-logout-btn" onclick="handleLogout()" style="display:none">Sign Out</button>
     </div>
@@ -10278,6 +10319,7 @@ function showClusterPicker() {
   _inClusterPicker = true;
   _currentView = 'cluster-picker';
   document.body.classList.add('cluster-picker-mode');
+  document.body.classList.remove('workspace-mode');
 
   // Hide ALL workspace views
   var views = ['dashboard', 'chat', 'audit', 'settings', 'hub', 'intelligence', 'agents'];
@@ -10321,6 +10363,9 @@ function _updateWorkspaceHeader() {
   var backBtn = document.getElementById('workspace-back-btn');
   var clusterLabel = document.getElementById('workspace-cluster-label');
   var hasRemote = Object.keys(_remoteAgents || {}).length > 0;
+
+  // Toggle workspace-mode body class for CSS-driven hiding of redundant elements
+  document.body.classList.toggle('workspace-mode', hasRemote);
 
   if (backBtn) backBtn.style.display = hasRemote ? 'flex' : 'none';
 
@@ -10435,11 +10480,19 @@ function renderClusterPickerCards() {
     );
   });
 
-  // Add cluster card
+  // Add cluster card with inline platform selection
   cards.push(
-    '<div class="cp-card-add" onclick="showView(\'hub\')">' +
+    '<div class="cp-card-add">' +
       '<div class="cp-card-add-icon">+</div>' +
       '<div class="cp-card-add-label">Connect New Cluster</div>' +
+      '<div class="cp-card-add-platforms">' +
+        '<span class="cp-platform-pill" onclick="event.stopPropagation();cpAddCluster(\'openshift\')" style="color:#e04040">&#x2B22; OpenShift</span>' +
+        '<span class="cp-platform-pill" onclick="event.stopPropagation();cpAddCluster(\'rancher\')" style="color:#0075a8">&#x1F42E; Rancher</span>' +
+        '<span class="cp-platform-pill" onclick="event.stopPropagation();cpAddCluster(\'eks\')" style="color:#ff9900">&#x2601; EKS</span>' +
+        '<span class="cp-platform-pill" onclick="event.stopPropagation();cpAddCluster(\'aks\')" style="color:#0078d4">&#x26C5; AKS</span>' +
+        '<span class="cp-platform-pill" onclick="event.stopPropagation();cpAddCluster(\'gke\')" style="color:#4285f4">&#x1F310; GKE</span>' +
+        '<span class="cp-platform-pill" onclick="event.stopPropagation();cpAddCluster(\'k8s\')" style="color:#326ce5">&#x2699; K8s</span>' +
+      '</div>' +
     '</div>'
   );
 
@@ -10449,6 +10502,11 @@ function renderClusterPickerCards() {
   if (remoteNames.length === 0) {
     enterClusterWorkspace('local');
   }
+}
+
+// Connect new cluster from picker page — delegates to hub dialog
+function cpAddCluster(platform) {
+  hubAddCluster(platform);
 }
 
 // Fleet AI from cluster picker page
