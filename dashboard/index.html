@@ -7888,7 +7888,7 @@ function confirmDeletePvc(ns, name) {
     this.disabled = true;
     this.textContent = 'Deleting...';
     try {
-      var resp = await fetch('/api/pvc/' + encodeURIComponent(ns) + '/' + encodeURIComponent(name), { method: 'DELETE' });
+      var resp = await fetch(clusterUrl('/api/pvc/' + encodeURIComponent(ns) + '/' + encodeURIComponent(name)), { method: 'DELETE' });
       var result = await resp.json();
       if (result.ok) {
         modal.remove();
@@ -7932,7 +7932,7 @@ async function deleteSelectedOrphans() {
       if (_orphanedPvcData[idx]) toDelete.push(_orphanedPvcData[idx]);
     });
     var results = await Promise.allSettled(toDelete.map(function(p) {
-      return fetch('/api/pvc/' + encodeURIComponent(p.ns) + '/' + encodeURIComponent(p.name), { method: 'DELETE' }).then(function(r) { return r.json(); });
+      return fetch(clusterUrl('/api/pvc/' + encodeURIComponent(p.ns) + '/' + encodeURIComponent(p.name)), { method: 'DELETE' }).then(function(r) { return r.json(); });
     }));
     modal.remove();
     loadOptimizationWidget();
@@ -12072,6 +12072,7 @@ async function switchGlobalCluster(name) {
 
   if (name === _globalActiveCluster) return;
   _globalActiveCluster = name;
+  _apiFetchInflight.clear();
   // Persist selection so a refresh / shared link keeps the cluster context.
   try {
     localStorage.setItem('mcp-active-cluster', name);
@@ -14218,7 +14219,7 @@ async function _aicFetchAndRenderPods(container) {
   var ls = parent?.dataset?.ls;
   if (!ns || !ls) return false;
   try {
-    var resp = await fetch('/api/pod-status?namespace=' + encodeURIComponent(ns) + '&labelSelector=' + encodeURIComponent(ls));
+    var resp = await fetch(clusterUrl('/api/pod-status?namespace=' + encodeURIComponent(ns) + '&labelSelector=' + encodeURIComponent(ls)));
     var data = await resp.json();
     if (data.pods && data.pods.length > 0) {
       var ctx = container.closest('.aic-fix-context') || parent.querySelector('.aic-fix-context');
@@ -19905,6 +19906,7 @@ function connectLiveStream() {
   if (_liveSSE) { _liveSSE.close(); _liveSSE = null; }
   var pulse = document.getElementById('live-pulse');
   if (pulse) { pulse.textContent = '● Connecting...'; pulse.className = 'live-pulse connecting'; }
+  var streamCluster = _globalActiveCluster || 'local';
   try {
     _liveSSE = new EventSource(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/live-stream'));
   } catch { return; }
@@ -19913,6 +19915,7 @@ function connectLiveStream() {
   };
   _liveSSE.onmessage = function(e) {
     try {
+      if ((_globalActiveCluster || 'local') !== streamCluster) return;
       var data = JSON.parse(e.data);
       if (data.type === 'connected') {
         if (pulse) { pulse.textContent = '● Live'; pulse.className = 'live-pulse connected'; }
@@ -19920,6 +19923,7 @@ function connectLiveStream() {
       }
       if (data.type === 'cluster-state') {
         _liveState = data;
+        _liveState._cluster = streamCluster;
         renderLiveCluster(data);
         populateWelcomeLiveBar();
         loadSmartSuggestions();

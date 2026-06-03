@@ -223,7 +223,7 @@ import {
 import { getRecentTraces } from "./services/reasoning.js";
 import { flags as featureFlags, snapshot as flagSnapshot } from "./services/feature-flags.js";
 
-const silencedAlerts = new Map();
+const silencedAlerts = new Map(); // key: "cluster|name|namespace"
 let _liveState = null;
 const _parseJobs = new Map();
 
@@ -1686,10 +1686,11 @@ async function startSSE() {
 
   // Restore silenced alerts from DB
   try {
-    const rows = await dbQuery("SELECT name, namespace, silenced_at, expires_at FROM silenced_alerts WHERE expires_at > NOW()");
+    const rows = await dbQuery("SELECT name, namespace, cluster, silenced_at, expires_at FROM silenced_alerts WHERE expires_at > NOW()");
     for (const r of (rows?.rows || [])) {
-      silencedAlerts.set(`${r.name}|${r.namespace}`, {
-        name: r.name, namespace: r.namespace,
+      const cl = r.cluster || "local";
+      silencedAlerts.set(`${cl}|${r.name}|${r.namespace}`, {
+        name: r.name, namespace: r.namespace, cluster: cl,
         silencedAt: r.silenced_at, expiresAt: r.expires_at,
       });
     }
@@ -3366,6 +3367,7 @@ async function startSSE() {
             trackSubmittedCR(convId, {
               ticketId: number,
               sysId,
+              cluster: body.cluster || url.searchParams.get("cluster") || "local",
               targetVersion: upgradeInfo?.targetVersion || preflightReport?.targetVersion || "",
               fromVersion: upgradeInfo?.fromVersion || preflightReport?.fromVersion || "",
               preflightReport,
@@ -3453,12 +3455,21 @@ async function startSSE() {
         if (cached) return sendJson(res, 200, cached);
       }
       try {
-        const [promAlerts, eventsResp] = await withClusterContext(url, () => Promise.allSettled([
+        const clusterResult = await withClusterContext(url, () => Promise.allSettled([
           listFiringAlerts(),
           ocpGet("/api/v1/events"),
         ]));
 
+        // Remote cluster returned null — no live data, try stale cache
+        if (clusterResult === null) {
+          const stale = getAgentCachedResponse(_ac, "/api/alerts", { skipFreshnessCheck: true });
+          if (stale) return sendJson(res, 200, stale);
+          return sendJson(res, 503, { error: `Cluster ${_ac} is not reachable`, alerts: [], summary: { critical: 0, warning: 0, info: 0 } });
+        }
+
+        const [promAlerts, eventsResp] = clusterResult;
         const unified = [];
+        const scopeCluster = (_ac && _ac !== "local") ? _ac : "local";
 
         // Alertmanager (Prometheus) alerts
         const amAlerts = promAlerts.status === "fulfilled" ? promAlerts.value || [] : [];
@@ -3507,10 +3518,10 @@ async function startSSE() {
         const sevOrder = { critical: 0, warning: 1, info: 2 };
         unified.sort((a, b) => (sevOrder[a.severity] ?? 2) - (sevOrder[b.severity] ?? 2) || new Date(b.since) - new Date(a.since));
 
-        // Mark silenced alerts
+        // Mark silenced alerts — scoped to the requesting cluster
         const now = Date.now();
         for (const a of unified) {
-          const key = `${a.name}|${a.namespace}`;
+          const key = `${scopeCluster}|${a.name}|${a.namespace}`;
           const silence = silencedAlerts.get(key);
           if (silence && new Date(silence.expiresAt).getTime() > now) {
             a.silenced = true;
@@ -3537,13 +3548,14 @@ async function startSSE() {
     if (req.method === "POST" && url.pathname === "/api/alerts/silence") {
       try {
         const body = await readJsonBody(req);
-        const { name, namespace, duration } = body;
+        const { name, namespace, duration, cluster } = body;
         if (!name) return sendJson(res, 400, { error: "Missing alert name" });
+        const cl = cluster || url.searchParams.get("cluster") || "local";
         const durationMs = (duration || 60) * 60 * 1000;
-        const entry = { name, namespace: namespace || "", silencedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + durationMs).toISOString(), duration: duration || 60 };
-        silencedAlerts.set(`${name}|${namespace || ""}`, entry);
+        const entry = { name, namespace: namespace || "", cluster: cl, silencedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + durationMs).toISOString(), duration: duration || 60 };
+        silencedAlerts.set(`${cl}|${name}|${namespace || ""}`, entry);
         try {
-          await dbQuery("INSERT INTO silenced_alerts (name, namespace, silenced_at, expires_at) VALUES ($1, $2, $3, $4)", [name, namespace || "", entry.silencedAt, entry.expiresAt]);
+          await dbQuery("INSERT INTO silenced_alerts (name, namespace, cluster, silenced_at, expires_at) VALUES ($1, $2, $3, $4, $5)", [name, namespace || "", cl, entry.silencedAt, entry.expiresAt]);
         } catch { /* DB optional */ }
         return sendJson(res, 200, { ok: true, silence: entry });
       } catch (err) {
@@ -3555,10 +3567,11 @@ async function startSSE() {
     if (req.method === "DELETE" && url.pathname === "/api/alerts/silence") {
       try {
         const body = await readJsonBody(req);
-        const { name, namespace } = body;
-        silencedAlerts.delete(`${name}|${namespace || ""}`);
+        const { name, namespace, cluster } = body;
+        const cl = cluster || url.searchParams.get("cluster") || "local";
+        silencedAlerts.delete(`${cl}|${name}|${namespace || ""}`);
         try {
-          await dbQuery("DELETE FROM silenced_alerts WHERE name = $1 AND namespace = $2", [name, namespace || ""]);
+          await dbQuery("DELETE FROM silenced_alerts WHERE name = $1 AND namespace = $2 AND cluster = $3", [name, namespace || "", cl]);
         } catch { /* DB optional */ }
         return sendJson(res, 200, { ok: true });
       } catch (err) {
@@ -3566,13 +3579,14 @@ async function startSSE() {
       }
     }
 
-    // GET /api/alerts/silences — list active silences
+    // GET /api/alerts/silences — list active silences (scoped to requested cluster)
     if (req.method === "GET" && url.pathname === "/api/alerts/silences") {
+      const cl = url.searchParams.get("cluster") || "local";
       const now = Date.now();
       const active = [];
       for (const [key, s] of silencedAlerts) {
-        if (new Date(s.expiresAt).getTime() > now) active.push(s);
-        else silencedAlerts.delete(key);
+        if (new Date(s.expiresAt).getTime() <= now) { silencedAlerts.delete(key); continue; }
+        if ((s.cluster || "local") === cl) active.push(s);
       }
       return sendJson(res, 200, { silences: active });
     }
@@ -3585,8 +3599,9 @@ async function startSSE() {
         for (let i = 23; i >= 0; i--) {
           buckets.push({ hour: new Date(now - i * 3600000).toISOString().slice(11, 13) + ":00", critical: 0, warning: 0, info: 0 });
         }
-        const events = await withClusterContext(url, () => ocpGet("/api/v1/events")).catch(() => ({ items: [] }));
-        for (const e of (events?.items || [])) {
+        const eventsResult = await withClusterContext(url, () => ocpGet("/api/v1/events")).catch(() => null);
+        if (eventsResult === null) return sendJson(res, 200, { buckets: [], error: "Remote cluster not reachable" });
+        for (const e of (eventsResult?.items || [])) {
           if (e.type !== "Warning") continue;
           const ts = new Date(e.lastTimestamp || e.metadata.creationTimestamp).getTime();
           const age = now - ts;
@@ -3677,9 +3692,12 @@ async function startSSE() {
       }
       try {
         const cv = await withClusterContext(url, () => ocpGet("/apis/config.openshift.io/v1/clusterversions/version"));
-        if (cv === null && _cvCluster) {
-          const cached = getAgentCachedResponse(_cvCluster, "/api/cluster-info", { skipFreshnessCheck: true });
-          if (cached) return sendJson(res, 200, { current: cached.version || "", channel: "", available: [], source: "agent-cache" });
+        if (cv === null) {
+          if (_cvCluster) {
+            const cached = getAgentCachedResponse(_cvCluster, "/api/cluster-info", { skipFreshnessCheck: true });
+            if (cached) return sendJson(res, 200, { current: cached.version || "", channel: "", available: [], source: "agent-cache" });
+          }
+          return sendJson(res, 503, { error: `Cluster ${_cvCluster || "unknown"} is not reachable`, current: "", channel: "", available: [] });
         }
         const current = cv?.status?.desired?.version || cv?.status?.history?.[0]?.version || "";
         const channel = cv?.spec?.channel || "";
@@ -4744,6 +4762,11 @@ async function startSSE() {
     if (req.method === "GET" && url.pathname === "/api/export/report") {
       try {
         const type = url.searchParams.get("type") || "summary";
+        const exportCluster = url.searchParams.get("cluster");
+        if (exportCluster && exportCluster !== "local") {
+          const cached = getAgentCachedResponse(exportCluster, "/api/cluster/summary", { skipFreshnessCheck: true });
+          return sendJson(res, 200, { cluster: exportCluster, clusterHealth: cached?.summary || {}, source: "agent-cache" });
+        }
         const report = {};
         if (type === "summary" || type === "all") {
           report.clusterHealth = _liveState?.summary || {};

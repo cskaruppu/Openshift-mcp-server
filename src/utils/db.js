@@ -159,10 +159,11 @@ CREATE TABLE IF NOT EXISTS silenced_alerts (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   namespace TEXT NOT NULL DEFAULT '',
+  cluster TEXT NOT NULL DEFAULT 'local',
   silenced_at TIMESTAMPTZ NOT NULL,
   expires_at TIMESTAMPTZ NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_silenced_alerts_lookup ON silenced_alerts (name, namespace);
+CREATE INDEX IF NOT EXISTS idx_silenced_alerts_lookup ON silenced_alerts (name, namespace, cluster);
 CREATE INDEX IF NOT EXISTS idx_silenced_alerts_expiry ON silenced_alerts (expires_at);
 
 CREATE TABLE IF NOT EXISTS kv_store (

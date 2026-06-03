@@ -197,17 +197,19 @@ function getCachedPreflightReport(conversationId) {
   return entry.report;
 }
 
-// Track submitted upgrade CRs per conversation for approval monitoring.
+// Track submitted upgrade CRs per conversation+cluster for approval monitoring.
 const _submittedCRs = new Map();
 export function trackSubmittedCR(conversationId, crInfo) {
   if (!conversationId || !crInfo) return;
-  _submittedCRs.set(conversationId, { ...crInfo, ts: Date.now() });
+  const key = `${conversationId}:${crInfo.cluster || "local"}`;
+  _submittedCRs.set(key, { ...crInfo, ts: Date.now() });
 }
-function getTrackedCR(conversationId) {
+function getTrackedCR(conversationId, cluster) {
   if (!conversationId) return null;
-  const entry = _submittedCRs.get(conversationId);
+  const key = `${conversationId}:${cluster || "local"}`;
+  const entry = _submittedCRs.get(key);
   if (!entry) return null;
-  if (Date.now() - entry.ts > 24 * 60 * 60 * 1000) { _submittedCRs.delete(conversationId); return null; }
+  if (Date.now() - entry.ts > 24 * 60 * 60 * 1000) { _submittedCRs.delete(key); return null; }
   return entry;
 }
 
@@ -7580,7 +7582,7 @@ async function gatherClusterContext(userMessage, nluParsed = null, remoteCache =
   // to avoid redundant API calls on every chat message.
   // -------------------------------------------------------------------------
 
-  // Reuse cached cluster digest if fresh (per-cluster, updated every 30s)
+  // Only reached for local cluster (remote clusters return early via buildContextFromAgentCache)
   const digest = getClusterDigest("local");
   if (digest) {
     context.clusterVersion = digest.version;
@@ -13898,7 +13900,8 @@ export async function handleChatAPI(req, res) {
     ]);
     const isHealthScope = parsed.scope === "health" || /\bhealth\b|\bstatus\b|\bdiagnos|\btroubleshoot/.test(userMessage.toLowerCase());
     const isMutating = CACHE_BYPASS_INTENTS.has(parsed.intent) || isHealthScope;
-    const cacheKey = cacheKeyForChat(userMessage, activeProvider);
+    const activeClusterForCache = _remoteClusterContext?.clusterName || body.cluster || "local";
+    const cacheKey = `${activeClusterForCache}:${cacheKeyForChat(userMessage, activeProvider)}`;
 
     if (!isMutating) {
       const cached = await cacheGet(cacheKey);
@@ -14473,7 +14476,7 @@ export async function handleChatAPI(req, res) {
     //      "proceed with upgrade", "execute upgrade", "start the upgrade" ----
     const CR_STATUS_PAT = /\b(?:(?:check|status|track|monitor|poll)\s+(?:cr|change\s*request|ticket|CHG)|(?:cr|change\s*request|CHG)\s+(?:status|approved|rejected|state)|(?:is|has)\s+(?:the\s+)?(?:cr|change\s*request|ticket)\s+(?:been\s+)?(?:approved|rejected)|(?:proceed|execute|start|run|initiate|trigger)\s+(?:(?:the|with)\s+)?(?:(?:the|cluster)\s+)?(?:upgrade|cluster\s+upgrade)|(?:upgrade|go\s+ahead)\s+(?:the\s+)?cluster|CHG\d{7})\b/i;
     if (CR_STATUS_PAT.test(userMessage)) {
-      const trackedCR = getTrackedCR(conversationId);
+      const trackedCR = getTrackedCR(conversationId, body.cluster);
       const crNumberMatch = userMessage.match(/CHG\d{7}/i);
 
       // If user is asking about CR status (not explicitly asking to execute)
@@ -15295,7 +15298,7 @@ export async function handleChatCompareAPI(req, res) {
       try {
         const r = await callLLM({
           messages: [{ role: "user", content: userContent }],
-          system: buildSystemPrompt(message),
+          system: buildSystemPrompt(message, context),
           maxTokens: 2000,
           temperature: 0.3,
           provider: prov.provider,
