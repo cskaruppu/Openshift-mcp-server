@@ -10587,7 +10587,7 @@ function renderClusterPickerCards() {
       statusColor = 'var(--text2)'; statusLabel = a.status || 'Connecting'; statusPulse = '';
     }
 
-    var rVersion = a.agentVersion || (a.summary && a.summary.version) || '--';
+    var rVersion = (a.summary && a.summary.version) || '--';
     var rNodes = (a.summary && a.summary.nodes) ? a.summary.nodes : '--';
     var rPods = (a.summary && a.summary.pods != null) ? a.summary.pods : '--';
 
