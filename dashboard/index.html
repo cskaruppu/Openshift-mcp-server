@@ -2170,19 +2170,27 @@ tr:hover td{background:#ffffff06}
 .cp-card-add-platforms{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;justify-content:center}
 .cp-platform-pill{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:20px;font-size:10px;font-weight:600;border:1px solid currentColor;opacity:.7;cursor:pointer;transition:all .2s;background:rgba(0,0,0,.2)}
 .cp-platform-pill:hover{opacity:1;transform:scale(1.05);background:rgba(255,255,255,.05)}
-.cp-fleet-bar{background:linear-gradient(135deg,#0c1226,#1a1545,#0c1226);border:1px solid rgba(99,102,241,.15);border-radius:14px;padding:20px 24px;position:relative;overflow:hidden;backdrop-filter:blur(8px)}
+.cp-fleet-bar{background:linear-gradient(135deg,#0c1226,#1a1545,#0c1226);border:1px solid rgba(99,102,241,.15);border-radius:14px;position:relative;overflow:hidden;backdrop-filter:blur(8px)}
 .cp-fleet-bar::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,#6366f108,transparent);animation:hubDataFlow 6s ease infinite;background-size:200% 100%}
 .cp-fleet-bar-inner{position:relative;z-index:1}
-.cp-fleet-bar-title{display:flex;align-items:center;gap:8px;margin-bottom:12px}
-.cp-fleet-bar-title span:first-child{font-size:18px}
-.cp-fleet-bar-title .cp-fleet-label{font-size:14px;font-weight:700;color:#f8fafc}
-.cp-fleet-bar-title .cp-fleet-badge{font-size:10px;font-weight:700;color:#0f172a;background:#38bdf8;border-radius:5px;padding:2px 7px}
+.cp-fleet-bar-header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;cursor:pointer}
+.cp-fleet-bar-header:hover{background:rgba(99,102,241,.04)}
+.cp-fleet-bar-title{display:flex;align-items:center;gap:8px}
+.cp-fleet-bar-title span:first-child{font-size:16px}
+.cp-fleet-bar-title .cp-fleet-label{font-size:13px;font-weight:700;color:#f8fafc}
+.cp-fleet-bar-title .cp-fleet-badge{font-size:9px;font-weight:700;color:#0f172a;background:#38bdf8;border-radius:5px;padding:2px 7px}
+.cp-fleet-bar-hint{font-size:11px;color:#64748b}
+.cp-fleet-bar-body{padding:0 20px 16px;display:none}
+.cp-fleet-bar.open .cp-fleet-bar-body{display:block}
+.cp-fleet-bar.open .cp-fleet-bar-chevron{transform:rotate(180deg)}
+.cp-fleet-bar-chevron{transition:transform .2s;color:#64748b;font-size:14px}
 .cp-fleet-input-row{display:flex;gap:8px;align-items:center}
-.cp-fleet-input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;outline:none}
-.cp-fleet-input:focus{border-color:#38bdf8}
-.cp-fleet-btn{background:linear-gradient(135deg,#38bdf8,#0ea5e9);color:#04243a;border:none;border-radius:8px;padding:10px 20px;cursor:pointer;font-size:13px;font-weight:700;white-space:nowrap}
+.cp-fleet-input{flex:1;background:rgba(2,6,23,.5);border:1px solid rgba(99,102,241,.12);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;outline:none;transition:border-color .2s}
+.cp-fleet-input:focus{border-color:#38bdf8;box-shadow:0 0 0 2px rgba(56,189,248,.1)}
+.cp-fleet-btn{background:linear-gradient(135deg,#38bdf8,#0ea5e9);color:#04243a;border:none;border-radius:8px;padding:10px 20px;cursor:pointer;font-size:13px;font-weight:700;white-space:nowrap;transition:all .2s}
+.cp-fleet-btn:hover{box-shadow:0 2px 12px rgba(56,189,248,.3)}
 .cp-fleet-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
-.cp-fleet-response{display:none;margin-top:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;font-size:13px;line-height:1.6;max-height:300px;overflow-y:auto}
+.cp-fleet-response{display:none;margin-top:12px;background:rgba(2,6,23,.4);border:1px solid rgba(99,102,241,.1);border-radius:8px;padding:14px 16px;font-size:13px;line-height:1.7;max-height:240px;overflow-y:auto}
 
 /* ── Workspace back button in header ── */
 /* ── Workspace breadcrumb bar (below header, above content) ── */
@@ -2262,9 +2270,12 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
 .light-theme .cp-platform-pill{background:rgba(255,255,255,.5)}
 .light-theme .cp-platform-pill:hover{background:rgba(255,255,255,.8)}
 .light-theme .cp-fleet-bar{background:linear-gradient(135deg,#eef2ff,#e8e0f4,#eef2ff);border-color:rgba(99,102,241,.12)}
+.light-theme .cp-fleet-bar-header:hover{background:rgba(99,102,241,.03)}
 .light-theme .cp-fleet-bar-title .cp-fleet-label{color:#1e293b}
+.light-theme .cp-fleet-bar-hint{color:#9ca3af}
 .light-theme .cp-fleet-input{background:#fff;border-color:#e2e8f0;color:#1e293b}
-.light-theme .cp-fleet-response{background:#fff;border-color:#e2e8f0}
+.light-theme .cp-fleet-input:focus{border-color:#38bdf8;box-shadow:0 0 0 2px rgba(56,189,248,.08)}
+.light-theme .cp-fleet-response{background:#f8fafc;border-color:#e2e8f0}
 .light-theme .cp-action-btn{background:rgba(99,102,241,.04);border-color:rgba(99,102,241,.12);color:#6b7280}
 .light-theme .cp-action-btn:hover{border-color:rgba(99,102,241,.3);color:#4338ca;background:rgba(99,102,241,.08)}
 .light-theme .cp-user-label{color:#6b7280}
@@ -2768,27 +2779,34 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
       <div style="opacity:.4;text-align:center;padding:40px;font-size:13px;color:var(--text2);grid-column:1/-1">Loading clusters...</div>
     </div>
 
-    <!-- Fleet AI quick-query bar -->
-    <div class="cp-fleet-bar">
+    <!-- Fleet AI — collapsible query bar -->
+    <div class="cp-fleet-bar" id="cp-fleet-bar">
       <div class="cp-fleet-bar-inner">
-        <div class="cp-fleet-bar-title">
-          <span>&#x1F30D;</span>
-          <span class="cp-fleet-label">Fleet AI</span>
-          <span class="cp-fleet-badge">ALL CLUSTERS</span>
-          <span style="font-size:11px;color:var(--text2);margin-left:auto">Ask one question across every connected cluster</span>
+        <div class="cp-fleet-bar-header" onclick="document.getElementById('cp-fleet-bar').classList.toggle('open')">
+          <div class="cp-fleet-bar-title">
+            <span>&#x1F30D;</span>
+            <span class="cp-fleet-label">Fleet AI</span>
+            <span class="cp-fleet-badge">ALL CLUSTERS</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <span class="cp-fleet-bar-hint">Ask across every connected cluster</span>
+            <span class="cp-fleet-bar-chevron">&#x25BC;</span>
+          </div>
         </div>
-        <div class="cp-fleet-input-row">
-          <input type="text" class="cp-fleet-input" id="cp-fleet-input" placeholder="e.g. which clusters have upgrades available?" onkeydown="if(event.key==='Enter')cpFleetAsk()">
-          <button class="cp-fleet-btn" onclick="cpFleetAsk()">Ask Fleet</button>
+        <div class="cp-fleet-bar-body">
+          <div class="cp-fleet-input-row">
+            <input type="text" class="cp-fleet-input" id="cp-fleet-input" placeholder="e.g. which clusters have upgrades available?" onkeydown="if(event.key==='Enter')cpFleetAsk()">
+            <button class="cp-fleet-btn" onclick="cpFleetAsk()">Ask Fleet</button>
+          </div>
+          <div class="cp-fleet-chips">
+            <button class="fleet-chip" onclick="cpFleetQuick('fleet health overview')">Health overview</button>
+            <button class="fleet-chip" onclick="cpFleetQuick('which clusters have upgrades available?')">Upgrades</button>
+            <button class="fleet-chip" onclick="cpFleetQuick('problem pods across all clusters')">Problem pods</button>
+            <button class="fleet-chip" onclick="cpFleetQuick('security posture across the fleet')">Security posture</button>
+            <button class="fleet-chip" onclick="cpFleetQuick('fleet inventory and capacity')">Capacity</button>
+          </div>
+          <div class="cp-fleet-response" id="cp-fleet-response"></div>
         </div>
-        <div class="cp-fleet-chips">
-          <button class="fleet-chip" onclick="cpFleetQuick('which clusters have upgrades available?')">Upgrades available</button>
-          <button class="fleet-chip" onclick="cpFleetQuick('fleet health overview')">Health overview</button>
-          <button class="fleet-chip" onclick="cpFleetQuick('problem pods across all clusters')">Problem pods</button>
-          <button class="fleet-chip" onclick="cpFleetQuick('security posture across the fleet')">Security posture</button>
-          <button class="fleet-chip" onclick="cpFleetQuick('fleet inventory and capacity')">Inventory &amp; capacity</button>
-        </div>
-        <div class="cp-fleet-response" id="cp-fleet-response"></div>
       </div>
     </div>
   </div>
@@ -10617,6 +10635,8 @@ function cpFleetAsk() {
 }
 
 function cpFleetQuick(q) {
+  var bar = document.getElementById('cp-fleet-bar');
+  if (bar) bar.classList.add('open');
   var input = document.getElementById('cp-fleet-input');
   if (input) input.value = q;
   cpFleetSend(q);
@@ -10626,18 +10646,28 @@ async function cpFleetSend(question) {
   var responseEl = document.getElementById('cp-fleet-response');
   if (!responseEl) return;
   responseEl.style.display = 'block';
-  responseEl.innerHTML = '<div style="color:var(--text2);display:flex;align-items:center;gap:6px"><span class="hub-spin">&#x2699;</span> Asking fleet...</div>';
+  responseEl.innerHTML = '<div style="color:var(--text2);display:flex;align-items:center;gap:8px"><span class="hub-spin" style="font-size:16px">&#x2699;</span> Querying all clusters...</div>';
   try {
     var base = (typeof MCP_API !== 'undefined') ? MCP_API.replace(/\/api$/, '') : '';
+    var headers = { 'Content-Type': 'application/json' };
+    if (typeof _authToken !== 'undefined' && _authToken) headers['Authorization'] = 'Bearer ' + _authToken;
     var resp = await fetch(base + '/api/fleet/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: headers,
       body: JSON.stringify({ message: question })
     });
+    if (!resp.ok) {
+      var errText = '';
+      try { var ed = await resp.json(); errText = ed.error || resp.statusText; } catch(_) { errText = resp.statusText; }
+      responseEl.innerHTML = '<span style="color:var(--crit)">Error ' + resp.status + ': ' + esc(errText) + '</span>';
+      return;
+    }
     var data = await resp.json();
-    responseEl.innerHTML = (typeof md === 'function') ? md(data.response || data.answer || 'No response') : esc(data.response || data.answer || 'No response');
+    var answer = data.reply || data.response || data.answer || 'No response from fleet.';
+    var providerTag = data.provider ? '<span style="display:inline-block;margin-top:8px;font-size:10px;color:var(--text2);background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 6px">' + esc(data.provider) + (data.clusterCount ? ' · ' + data.clusterCount + ' clusters' : '') + '</span>' : '';
+    responseEl.innerHTML = ((typeof md === 'function') ? md(answer) : esc(answer)) + providerTag;
   } catch (e) {
-    responseEl.innerHTML = '<span style="color:var(--crit)">Error: ' + esc(e.message) + '</span>';
+    responseEl.innerHTML = '<span style="color:var(--crit)">Connection error: ' + esc(e.message) + '</span>';
   }
 }
 
