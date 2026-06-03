@@ -12080,7 +12080,7 @@ function reloadCurrentView() {
   if (_currentView === 'dashboard') { refreshAll(); }
   else if (_currentView === 'audit') { if (typeof loadAuditView === 'function') loadAuditView(); }
   else if (_currentView === 'intelligence') { if (typeof loadIntelligenceView === 'function') loadIntelligenceView(); }
-  else if (_currentView === 'chat') { updateCcsTrigger(); updateChatWelcomeText(); }
+  else if (_currentView === 'chat') { updateCcsTrigger(); updateChatWelcomeText(); renderConversation(); scrollConversation(); }
   // Chat history is per-cluster — refresh the scoped list on every switch so
   // that opening AI Chat always shows only the selected cluster's chats.
   if (typeof reloadChatList === 'function') { reloadChatList(); }

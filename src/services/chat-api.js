@@ -420,20 +420,27 @@ function _formatAge(date) {
 const CHAT_CACHE_TTL = parseInt(process.env.CHAT_CACHE_TTL || "300", 10);
 const CONTEXT_CACHE_TTL = parseInt(process.env.CONTEXT_CACHE_TTL || "120", 10);
 
-// Pre-computed cluster digest — refreshed by agent reports or first chat query.
-// Avoids redundant cluster version/node API calls on every message.
-let _clusterDigest = null;
-let _clusterDigestTs = 0;
+// Pre-computed cluster digest — per-cluster, refreshed by agent reports.
+// Keyed by cluster name to prevent cross-cluster data bleed.
+const _clusterDigests = new Map();
 
 export function updateClusterDigest(info) {
-  _clusterDigest = {
-    version: info.version || _clusterDigest?.version,
-    channel: info.channel || _clusterDigest?.channel,
-    platform: info.platform || _clusterDigest?.platform || "kubernetes",
-    nodeCount: info.nodeCount ?? _clusterDigest?.nodeCount,
-    readyNodes: info.readyNodes ?? _clusterDigest?.readyNodes,
-  };
-  _clusterDigestTs = Date.now();
+  const key = info.cluster || "local";
+  _clusterDigests.set(key, {
+    version: info.version,
+    channel: info.channel,
+    platform: info.platform || "kubernetes",
+    nodeCount: info.nodeCount,
+    readyNodes: info.readyNodes,
+    ts: Date.now(),
+  });
+}
+
+function getClusterDigest(cluster) {
+  const key = cluster || "local";
+  const d = _clusterDigests.get(key);
+  if (!d || (Date.now() - d.ts > 60000)) return null;
+  return d;
 }
 
 function cacheKeyForChat(message, provider) {
@@ -7573,24 +7580,23 @@ async function gatherClusterContext(userMessage, nluParsed = null, remoteCache =
   // to avoid redundant API calls on every chat message.
   // -------------------------------------------------------------------------
 
-  // Reuse cached cluster digest if fresh (updated every 30s by agent reports)
-  if (_clusterDigest && (Date.now() - _clusterDigestTs < 60000)) {
-    context.clusterVersion = _clusterDigest.version;
-    context.channel = _clusterDigest.channel;
-    context.nodeCount = _clusterDigest.nodeCount;
-    context.readyNodes = _clusterDigest.readyNodes;
-    context.platform = _clusterDigest.platform;
+  // Reuse cached cluster digest if fresh (per-cluster, updated every 30s)
+  const digest = getClusterDigest("local");
+  if (digest) {
+    context.clusterVersion = digest.version;
+    context.channel = digest.channel;
+    context.nodeCount = digest.nodeCount;
+    context.readyNodes = digest.readyNodes;
+    context.platform = digest.platform;
   } else {
     tasks.push(
       ocpGet("/apis/config.openshift.io/v1/clusterversions/version")
         .then((d) => {
           context.clusterVersion = d.status?.desired?.version;
           context.channel = d.spec?.channel;
-          _clusterDigest = { version: context.clusterVersion, channel: context.channel, platform: "openshift" };
-          _clusterDigestTs = Date.now();
+          updateClusterDigest({ cluster: "local", version: context.clusterVersion, channel: context.channel, platform: "openshift" });
         })
         .catch(() => {
-          // Fallback for non-OpenShift clusters
           tasks.push(
             ocpGet("/version")
               .then((d) => { context.clusterVersion = d.gitVersion; context.platform = "kubernetes"; })
@@ -7614,11 +7620,11 @@ async function gatherClusterContext(userMessage, nluParsed = null, remoteCache =
           cpu: n.status?.capacity?.cpu,
           memory: n.status?.capacity?.memory,
         }));
-        if (_clusterDigest) {
-          _clusterDigest.nodeCount = context.nodes.length;
-          _clusterDigest.readyNodes = context.nodes.filter((n) => n.ready).length;
-          _clusterDigestTs = Date.now();
-        }
+        updateClusterDigest({
+          cluster: "local",
+          nodeCount: context.nodes.length,
+          readyNodes: context.nodes.filter((n) => n.ready).length,
+        });
       }).catch(() => {})
     );
   }
@@ -15067,7 +15073,8 @@ export async function handleChatAPI(req, res) {
       const needsClusterData = !KNOWLEDGE_INTENTS.test(userMessage) ||
         /\b(show|list|get|describe|check|status|health|my\s+cluster|this\s+cluster|our\s+cluster)\b/i.test(userMessage);
 
-      const ctxKey = `ctx:${cacheKeyForChat(userMessage, "ctx")}`;
+      const activeCluster = _remoteClusterContext?.clusterName || body.cluster || "local";
+      const ctxKey = `ctx:${activeCluster}:${cacheKeyForChat(userMessage, "ctx")}`;
       let context;
       if (!needsClusterData) {
         context = { intents: ["knowledge"], _skippedClusterContext: true };

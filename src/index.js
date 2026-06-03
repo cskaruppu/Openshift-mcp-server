@@ -1621,6 +1621,7 @@ async function startSSE() {
     const nodes = await ocpGet("/api/v1/nodes").catch(() => null);
     const ver = cv?.status?.desired?.version || (await ocpGet("/version").catch(() => ({}))).gitVersion;
     updateClusterDigest({
+      cluster: "local",
       version: ver,
       channel: cv?.spec?.channel,
       platform: getPlatform() || "kubernetes",
@@ -2528,16 +2529,15 @@ async function startSSE() {
       }
       _connectedAgents.set(key, agent);
       saveClustersToDB().catch(() => {});
-      if (key === "local" || !existingKey) {
-        try {
-          updateClusterDigest({
-            version: report.clusterHealth?.version || report.version,
-            platform: platform || "kubernetes",
-            nodeCount: report.nodes?.total,
-            readyNodes: report.nodes?.ready,
-          });
-        } catch {}
-      }
+      try {
+        updateClusterDigest({
+          cluster: key,
+          version: report.clusterHealth?.version || report.version,
+          platform: platform || "kubernetes",
+          nodeCount: report.nodes?.total,
+          readyNodes: report.nodes?.ready,
+        });
+      } catch {}
       const issues = report.pods?.issues?.length || 0;
       if (issues > 0) {
         console.error(`[agent] ${key}: ${issues} issues detected`);
