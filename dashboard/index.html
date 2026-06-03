@@ -7,6 +7,17 @@
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Comfortaa:wght@700&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"></noscript>
+<link rel="dns-prefetch" href="https://fonts.googleapis.com">
+<style>
+/* Critical loading skeleton — renders before main CSS/JS parse */
+.app-loading{position:fixed;inset:0;z-index:9999;background:#0f1117;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;transition:opacity .3s}
+.app-loading.hide{opacity:0;pointer-events:none}
+.app-loading-logo{width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#e04040,#3b82f6);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#fff;font-family:system-ui}
+.app-loading-text{color:#a1a1aa;font-size:13px;font-family:'Inter',system-ui,sans-serif;letter-spacing:.3px}
+.app-loading-bar{width:160px;height:3px;background:#1a1d27;border-radius:2px;overflow:hidden}
+.app-loading-bar::after{content:'';display:block;width:40%;height:100%;background:linear-gradient(90deg,#e04040,#3b82f6);border-radius:2px;animation:loadSlide 1.2s ease-in-out infinite}
+@keyframes loadSlide{0%{transform:translateX(-100%)}100%{transform:translateX(400%)}}
+</style>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0f1117;--bg-deep:#0a0c10;--bg-alt:#161b22;--card:#1a1d27;--card-deep:#0d1117;--border:#2a2d3a;--border2:#30363d;--hover:#2a2d3a;--accent:#e04040;--accent2:#3b82f6;--accent3:#10b981;--text:#e4e4e7;--text2:#a1a1aa;--text-code:#e6edf3;--text-code-accent:#e2b3ff;--warn:#f59e0b;--crit:#ef4444;--ok:#22c55e}
@@ -2368,6 +2379,13 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
 </style>
 </head>
 <body>
+
+<!-- Loading skeleton — visible immediately while JS parses -->
+<div class="app-loading" id="app-loading">
+  <div class="app-loading-logo">TA</div>
+  <div class="app-loading-text">TCS Agentic AI</div>
+  <div class="app-loading-bar"></div>
+</div>
 
 <!-- Login Screen Overlay -->
 <div class="login-overlay" id="login-overlay">
@@ -7994,6 +8012,7 @@ async function checkAuthStatus() {
 }
 
 function showLoginOverlay(mode) {
+  dismissAppLoading();
   var overlay = document.getElementById('login-overlay');
   if (overlay) {
     overlay.classList.remove('hidden');
@@ -8398,7 +8417,6 @@ async function _postAuthInit() {
   await refreshClusterList();
   refreshAll();
   startDashRefresh();
-  // If there are remote agents, show the cluster picker; otherwise go straight to dashboard.
   var hasRemote = Object.keys(_remoteAgents || {}).length > 0;
   if (hasRemote) {
     showClusterPicker();
@@ -8406,6 +8424,13 @@ async function _postAuthInit() {
     enterClusterWorkspace('local');
   }
   if (typeof applyDashLayoutPrefs === 'function') setTimeout(applyDashLayoutPrefs, 800);
+  dismissAppLoading();
+}
+function dismissAppLoading() {
+  var el = document.getElementById('app-loading');
+  if (!el) return;
+  el.classList.add('hide');
+  setTimeout(function() { el.remove(); }, 400);
 }
 
 (window.requestIdleCallback || function(cb) { setTimeout(cb, 50); })(function() {
@@ -10284,19 +10309,19 @@ function showView(view, skipPush) {
   document.body.classList.toggle('chat-active', view === 'chat');
 
   if (view === 'chat') {
-    loadEnabledProviders();
     renderLLMSwitcher();
     populateChatClusterDropdown();
     var chatSel = document.getElementById('ctx-cluster-select');
     if (chatSel && chatSel.value !== _globalActiveCluster) chatSel.value = _globalActiveCluster;
-    detectHistoryBackend().then(() => {
-      renderChatHistory();
-      renderConversation();
-      scrollConversation();
-    });
-    setTimeout(function() { document.getElementById('full-chat-input')?.focus(); }, 200);
-    checkPendingCRNotifications();
+    renderConversation();
+    scrollConversation();
+    setTimeout(function() { document.getElementById('full-chat-input')?.focus(); }, 100);
     updateActionsClusterScope();
+    requestAnimationFrame(function() {
+      loadEnabledProviders();
+      detectHistoryBackend().then(function() { renderChatHistory(); });
+      checkPendingCRNotifications();
+    });
   } else if (view === 'audit') {
     loadAuditView();
     loadComplianceResults();

@@ -420,6 +420,22 @@ function _formatAge(date) {
 const CHAT_CACHE_TTL = parseInt(process.env.CHAT_CACHE_TTL || "300", 10);
 const CONTEXT_CACHE_TTL = parseInt(process.env.CONTEXT_CACHE_TTL || "120", 10);
 
+// Pre-computed cluster digest — refreshed by agent reports or first chat query.
+// Avoids redundant cluster version/node API calls on every message.
+let _clusterDigest = null;
+let _clusterDigestTs = 0;
+
+export function updateClusterDigest(info) {
+  _clusterDigest = {
+    version: info.version || _clusterDigest?.version,
+    channel: info.channel || _clusterDigest?.channel,
+    platform: info.platform || _clusterDigest?.platform || "kubernetes",
+    nodeCount: info.nodeCount ?? _clusterDigest?.nodeCount,
+    readyNodes: info.readyNodes ?? _clusterDigest?.readyNodes,
+  };
+  _clusterDigestTs = Date.now();
+}
+
 function cacheKeyForChat(message, provider) {
   // Normalize whitespace + lowercase so trivial variants share the cache.
   const norm = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -7552,15 +7568,37 @@ async function gatherClusterContext(userMessage, nluParsed = null, remoteCache =
   }
 
   // -------------------------------------------------------------------------
-  // Fetch ONLY the data needed for detected intents
+  // Fetch ONLY the data needed for detected intents.
+  // Use pre-computed cluster digest for basic info (version, node count)
+  // to avoid redundant API calls on every chat message.
   // -------------------------------------------------------------------------
 
-  // Always get cluster version (it's lightweight)
-  tasks.push(
-    ocpGet("/apis/config.openshift.io/v1/clusterversions/version")
-      .then((d) => { context.clusterVersion = d.status?.desired?.version; context.channel = d.spec?.channel; })
-      .catch(() => {})
-  );
+  // Reuse cached cluster digest if fresh (updated every 30s by agent reports)
+  if (_clusterDigest && (Date.now() - _clusterDigestTs < 60000)) {
+    context.clusterVersion = _clusterDigest.version;
+    context.channel = _clusterDigest.channel;
+    context.nodeCount = _clusterDigest.nodeCount;
+    context.readyNodes = _clusterDigest.readyNodes;
+    context.platform = _clusterDigest.platform;
+  } else {
+    tasks.push(
+      ocpGet("/apis/config.openshift.io/v1/clusterversions/version")
+        .then((d) => {
+          context.clusterVersion = d.status?.desired?.version;
+          context.channel = d.spec?.channel;
+          _clusterDigest = { version: context.clusterVersion, channel: context.channel, platform: "openshift" };
+          _clusterDigestTs = Date.now();
+        })
+        .catch(() => {
+          // Fallback for non-OpenShift clusters
+          tasks.push(
+            ocpGet("/version")
+              .then((d) => { context.clusterVersion = d.gitVersion; context.platform = "kubernetes"; })
+              .catch(() => {})
+          );
+        })
+    );
+  }
 
   // Nodes — only if intent is nodes or cluster_health
   if (context.intents.includes("nodes") || context.intents.includes("cluster_health")) {
@@ -7572,9 +7610,15 @@ async function gatherClusterContext(userMessage, nluParsed = null, remoteCache =
             .filter((l) => l.startsWith("node-role.kubernetes.io/"))
             .map((l) => l.replace("node-role.kubernetes.io/", "")),
           ready: (n.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True"),
+          conditions: (n.status?.conditions || []).filter((c) => c.type !== "Ready" && c.status === "True").map((c) => c.type),
           cpu: n.status?.capacity?.cpu,
           memory: n.status?.capacity?.memory,
         }));
+        if (_clusterDigest) {
+          _clusterDigest.nodeCount = context.nodes.length;
+          _clusterDigest.readyNodes = context.nodes.filter((n) => n.ready).length;
+          _clusterDigestTs = Date.now();
+        }
       }).catch(() => {})
     );
   }
@@ -8924,6 +8968,33 @@ function historyToMessages(history, limit = 10) {
   }));
 
   return [summaryMsg, ...latestMsgs];
+}
+
+// ---------------------------------------------------------------------------
+// Compact delta summary for follow-up messages — only includes actionable
+// data (problems, focused resources) to reduce token usage on continuations.
+// ---------------------------------------------------------------------------
+function summarizeContextDelta(ctx) {
+  if (!ctx || typeof ctx !== "object") return "";
+  const parts = [];
+  if (ctx.clusterVersion) {
+    const ver = typeof ctx.clusterVersion === "object" ? (ctx.clusterVersion.desired || ctx.clusterVersion.version) : ctx.clusterVersion;
+    parts.push(`Cluster: ${ver}`);
+  }
+  if (ctx.nodeCount) parts.push(`Nodes: ${ctx.readyNodes || "?"}/${ctx.nodeCount} ready`);
+  if (Array.isArray(ctx.problemPods) && ctx.problemPods.length > 0) {
+    parts.push(`Problem pods: ${ctx.problemPods.length} — ${ctx.problemPods.slice(0, 5).map((p) => `${p.name}(${p.reason || p.state})`).join(", ")}`);
+  }
+  if (ctx.targetPod) parts.push(`Focus: ${ctx.targetPod.name} in ${ctx.targetPod.namespace}`);
+  if (ctx._focusPodLogs) parts.push(`Logs (last 200 lines): ${ctx._focusPodLogs.slice(-2000)}`);
+  if (Array.isArray(ctx.correlations) && ctx.correlations.length > 0) {
+    parts.push(`Root causes: ${ctx.correlations.slice(0, 5).map((c) => `${c.pod}: ${c.likelyCause}`).join("; ")}`);
+  }
+  if (ctx._autoDiagnosis) {
+    const d = ctx._autoDiagnosis;
+    parts.push(`Auto-diagnosis: ${d.rootCause || "unknown"} — ${d.fixSuggestion || ""}`);
+  }
+  return parts.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -14909,9 +14980,12 @@ export async function handleChatAPI(req, res) {
             });
             context._autoDiagnosis = autoFix;
           }
-          const contextStr = summarizeContext(context);
-          const userContent = `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;
           const priorMessages = historyToMessages(llmOpts.history);
+          const isFollowUp = priorMessages.length > 0;
+          const contextStr = summarizeContext(context);
+          const userContent = isFollowUp && contextStr.length > 800
+            ? `${userMessage}\n\n--- Updated Cluster Data (changes only) ---\n${summarizeContextDelta(context)}`
+            : `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;
           const streamBasePrompt = buildSystemPrompt(userMessage, context);
           const augmentedSystem = await augmentSystemPrompt(streamBasePrompt, {
             parsed, userId: body.userId || null, conversationId,

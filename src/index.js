@@ -74,7 +74,7 @@ import { generateManifests, renderYaml, renderSingleYaml } from "./services/mani
 import { createDeployment, executeDeployment, rollbackDeployment, getDeployment, listDeployments } from "./services/deployment-orchestrator.js";
 import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
-import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, trackSubmittedCR, handleFleetChatAPI } from "./services/chat-api.js";
+import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import {
   listActions,
   getAction,
@@ -1615,6 +1615,21 @@ async function startSSE() {
   // Detect Kubernetes platform (OpenShift, EKS, AKS, GKE, vanilla K8s)
   try { await initPlatform({ ocpGet, ocpPost, ocpPatch, ocpDelete, ocpFetch }); console.error("[platform] Detected:", getPlatform()); } catch(e) { console.error("[platform] Detection failed, defaulting to kubernetes"); }
 
+  // Pre-populate cluster digest for faster first chat response
+  try {
+    const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version").catch(() => null);
+    const nodes = await ocpGet("/api/v1/nodes").catch(() => null);
+    const ver = cv?.status?.desired?.version || (await ocpGet("/version").catch(() => ({}))).gitVersion;
+    updateClusterDigest({
+      version: ver,
+      channel: cv?.spec?.channel,
+      platform: getPlatform() || "kubernetes",
+      nodeCount: nodes?.items?.length,
+      readyNodes: nodes?.items?.filter((n) => (n.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True")).length,
+    });
+    console.error("[startup] Cluster digest pre-populated");
+  } catch (e) { console.error("[startup] Cluster digest pre-populate skipped:", e.message); }
+
   // Initialize MCP Hub — load saved server configs and auto-reconnect
   try {
     await hubLoadAndReconnect();
@@ -2513,6 +2528,16 @@ async function startSSE() {
       }
       _connectedAgents.set(key, agent);
       saveClustersToDB().catch(() => {});
+      if (key === "local" || !existingKey) {
+        try {
+          updateClusterDigest({
+            version: report.clusterHealth?.version || report.version,
+            platform: platform || "kubernetes",
+            nodeCount: report.nodes?.total,
+            readyNodes: report.nodes?.ready,
+          });
+        } catch {}
+      }
       const issues = report.pods?.issues?.length || 0;
       if (issues > 0) {
         console.error(`[agent] ${key}: ${issues} issues detected`);
