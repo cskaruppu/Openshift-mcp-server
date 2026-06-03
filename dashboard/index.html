@@ -2199,6 +2199,12 @@ tr:hover td{background:#ffffff06}
 .cp-card-stat{background:var(--card);padding:10px 8px;text-align:center}
 .cp-card-stat-val{font-size:15px;font-weight:800;color:var(--text);line-height:1.1}
 .cp-card-stat-lbl{font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-top:3px}
+/* Cluster card kebab (three-dot) menu */
+.cp-card-kebab{position:absolute;top:12px;right:12px;z-index:10}
+.cp-card-kebab .kebab-btn{width:28px;height:28px;border-radius:8px;font-size:18px;color:var(--text2);border:1px solid transparent}
+.cp-card-kebab .kebab-btn:hover{background:var(--bg);border-color:var(--border);color:var(--text)}
+.cp-card-kebab .kebab-dropdown{top:calc(100% + 2px);right:0;min-width:190px;border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,.2)}
+.cp-card{position:relative}
 .cp-card-meta{display:flex;gap:8px;flex-wrap:wrap}
 .cp-card-meta-tag{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:10px;color:var(--text2)}
 .cp-card-add{background:rgba(15,18,30,.4);border:2px dashed rgba(99,102,241,.2);border-radius:14px;padding:24px;cursor:pointer;transition:all .25s ease;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:160px;gap:12px;backdrop-filter:blur(4px)}
@@ -2303,6 +2309,8 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
 .light-theme .cp-card{background:rgba(255,255,255,.7);border-color:rgba(99,102,241,.1);backdrop-filter:blur(12px)}
 .light-theme .cp-card:hover{border-color:rgba(99,102,241,.3);box-shadow:0 8px 32px rgba(99,102,241,.1),0 0 0 1px rgba(99,102,241,.08) inset}
 .light-theme .cp-card-name{color:#1e293b}
+.light-theme .cp-card-kebab .kebab-btn:hover{background:#f1f5f9;border-color:#e2e8f0}
+.light-theme .cp-card-kebab .kebab-dropdown{box-shadow:0 8px 32px rgba(0,0,0,.1);background:#fff;border-color:#e2e8f0}
 .light-theme .cp-card-stats{background:#e5e7eb;border-color:#e5e7eb}
 .light-theme .cp-card-stat{background:#fff}
 .light-theme .cp-card-stat-val{color:#1e293b}
@@ -10346,6 +10354,20 @@ function _exitClusterPicker() {
   if (cpEl) cpEl.style.display = 'none';
 }
 
+async function cpDeleteCluster(clusterName, source) {
+  if (!confirm('Remove cluster "' + clusterName + '"?\n\nThis will disconnect it from the platform. The agent on the remote cluster will remain running but will no longer report data.')) return;
+  try {
+    await fetch(MCP_API + '/hub/clusters/' + encodeURIComponent(clusterName), { method: 'DELETE' });
+    var s = (_hubServers || []).find(function(sv) { return sv.name === clusterName; });
+    if (s) await fetch(MCP_API + '/hub/servers/' + encodeURIComponent(s.id), { method: 'DELETE' });
+    delete _remoteAgents[clusterName];
+    renderClusterPickerCards();
+    showNotification('Cluster "' + clusterName + '" removed successfully.', 'success');
+  } catch (e) {
+    showNotification('Failed to remove cluster: ' + e.message, 'error');
+  }
+}
+
 function enterClusterWorkspace(clusterName) {
   _exitClusterPicker();
   if (clusterName !== _globalActiveCluster) {
@@ -10485,8 +10507,18 @@ function renderClusterPickerCards() {
   var hubVersion = lVersion && lVersion !== 'unknown' ? esc(lVersion) : '--';
   var hubNodes = lci.nodeCount ? (lci.readyNodes || 0) + '/' + lci.nodeCount : '--';
   var hubPods = lci.podCount != null ? lci.podCount : (lci.totalPods != null ? lci.totalPods : '--');
+  var hubKebabId = 'cp-kebab-hub';
   cards.push(
     '<div class="cp-card" onclick="enterClusterWorkspace(\'local\')">' +
+      '<div class="cp-card-kebab" onclick="event.stopPropagation()">' +
+        '<button class="kebab-btn" onclick="toggleKebab(event,\'' + hubKebabId + '\')" title="Cluster actions">&#x22EE;</button>' +
+        '<div class="kebab-dropdown" id="' + hubKebabId + '">' +
+          '<button class="kebab-item" onclick="enterClusterWorkspace(\'local\');closeAllKebabs()">&#x1F4CA; Open Dashboard</button>' +
+          '<button class="kebab-item" onclick="verifyClusterHealth(\'local\');closeAllKebabs();showNotification(\'Hub health check started\',\'success\')">&#x1F50D; Verify Health</button>' +
+          '<div class="kebab-sep"></div>' +
+          '<button class="kebab-item" onclick="hubPushRBACUpdate(\'local\');closeAllKebabs()">&#x1F512; Sync RBAC</button>' +
+        '</div>' +
+      '</div>' +
       '<div class="cp-card-header">' +
         '<div class="cp-card-icon" style="background:' + lpInfo.color + '15;color:' + lpInfo.color + '">' + lpInfo.icon + '</div>' +
         '<div class="cp-card-info">' +
@@ -10532,8 +10564,24 @@ function renderClusterPickerCards() {
     var rNodes = (a.summary && a.summary.nodes) ? a.summary.nodes : '--';
     var rPods = (a.summary && a.summary.pods != null) ? a.summary.pods : '--';
 
+    var rKebabId = 'cp-kebab-' + name.replace(/[^a-zA-Z0-9]/g, '_');
+    var rSource = a.source || 'agent';
     cards.push(
       '<div class="cp-card" onclick="enterClusterWorkspace(\'' + esc(name) + '\')">' +
+        '<div class="cp-card-kebab" onclick="event.stopPropagation()">' +
+          '<button class="kebab-btn" onclick="toggleKebab(event,\'' + rKebabId + '\')" title="Cluster actions">&#x22EE;</button>' +
+          '<div class="kebab-dropdown" id="' + rKebabId + '">' +
+            '<button class="kebab-item" onclick="hubCheckStatus(\'' + esc(name) + '\',\'' + esc(rSource) + '\');closeAllKebabs()">&#x1F4CA; Status Check</button>' +
+            '<button class="kebab-item" onclick="verifyClusterHealth(\'' + esc(name) + '\');closeAllKebabs()">&#x1F50D; Verify Health</button>' +
+            '<button class="kebab-item" onclick="hubEditCluster(\'' + esc(name) + '\',\'' + esc(platform) + '\',\'' + esc(rSource) + '\');closeAllKebabs()">&#x270F; Edit Cluster</button>' +
+            '<button class="kebab-item" onclick="hubReconnectCluster(\'' + esc(name) + '\',\'' + esc(rSource) + '\');closeAllKebabs()">&#x21BB; Reconnect</button>' +
+            '<div class="kebab-sep"></div>' +
+            '<button class="kebab-item" onclick="hubPushRBACUpdate(\'' + esc(name) + '\');closeAllKebabs()">&#x1F512; Sync RBAC</button>' +
+            '<button class="kebab-item" onclick="hubRedeployAgent(\'' + esc(name) + '\');closeAllKebabs()">&#x1F504; Redeploy Agent</button>' +
+            '<div class="kebab-sep"></div>' +
+            '<button class="kebab-item danger" onclick="cpDeleteCluster(\'' + esc(name) + '\',\'' + esc(rSource) + '\');closeAllKebabs()">&#x1F5D1; Remove Cluster</button>' +
+          '</div>' +
+        '</div>' +
         '<div class="cp-card-header">' +
           '<div class="cp-card-icon" style="background:' + pInfo.color + '15;color:' + pInfo.color + '">' + pInfo.icon + '</div>' +
           '<div class="cp-card-info">' +
