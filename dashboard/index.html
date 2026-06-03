@@ -611,8 +611,21 @@ tr:hover td{background:#ffffff06}
 /* Full-page chat layout */
 .chat-fullpage{display:flex;height:calc(100vh - 65px);background:var(--bg-deep)}
 .chat-sidebar{width:260px;background:var(--bg);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
-.actions-panel{width:320px;background:var(--bg);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
+.actions-panel{position:fixed;top:65px;right:0;bottom:0;width:340px;background:var(--bg);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;z-index:120;transform:translateX(100%);transition:transform .3s cubic-bezier(.4,0,.2,1);box-shadow:none}
+.actions-panel.open{transform:translateX(0);box-shadow:-4px 0 24px rgba(0,0,0,.15)}
+.actions-panel-backdrop{position:fixed;inset:0;top:65px;background:rgba(0,0,0,.25);z-index:119;display:none;animation:fadeIn .2s}
+.actions-panel-backdrop.open{display:block}
+.actions-fab{position:fixed;right:20px;bottom:24px;z-index:115;display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:10px 16px 10px 12px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.2);transition:all .2s cubic-bezier(.4,0,.2,1)}
+.actions-fab:hover{transform:translateY(-2px);box-shadow:0 6px 24px rgba(0,0,0,.3);border-color:var(--accent2)}
+.actions-fab.has-pending{border-color:var(--accent);animation:fabGlow 2s ease-in-out infinite}
+@keyframes fabGlow{0%,100%{box-shadow:0 4px 16px rgba(0,0,0,.2)}50%{box-shadow:0 4px 20px color-mix(in srgb,var(--accent) 30%,rgba(0,0,0,.2))}}
+.actions-fab-icon{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,var(--accent2),#818cf8);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;flex-shrink:0}
+.actions-fab-label{font-size:12px;font-weight:600;color:var(--text);white-space:nowrap}
+.actions-fab-badge{position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;border-radius:9px;background:var(--crit);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 4px;border:2px solid var(--bg-deep)}
+.actions-fab-badge:empty,.actions-fab-badge[data-count="0"]{display:none}
 .actions-header{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:space-between}
+.actions-close-btn{background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer;padding:2px 6px;border-radius:6px;transition:all .15s;line-height:1}
+.actions-close-btn:hover{color:var(--text);background:var(--hover)}
 .actions-header .snow-badge{font-size:10px;padding:2px 6px;border-radius:4px;font-weight:500}
 .actions-header .snow-on{background:color-mix(in srgb,var(--ok) 15%,var(--card));color:var(--ok)}
 .actions-header .snow-off{background:color-mix(in srgb,var(--warn) 15%,var(--card));color:var(--warn)}
@@ -635,7 +648,7 @@ tr:hover td{background:#ffffff06}
 .action-card .ac-btns button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .action-card .ac-btns button.primary:hover{opacity:.9}
 .action-card .ac-btns button:disabled{opacity:.5;cursor:not-allowed}
-@media(max-width:1100px){.actions-panel{display:none}}
+@media(max-width:768px){.actions-fab{right:12px;bottom:16px;padding:8px 12px 8px 10px}.actions-panel{width:calc(100vw - 40px)}}
 .sidebar-header{padding:12px 14px;border-bottom:1px solid var(--border)}
 .new-chat-btn{background:transparent;color:var(--text2);border:none;border-radius:8px;padding:10px 12px;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:8px}
 .new-chat-btn:hover{background:var(--card);color:var(--text)}
@@ -657,7 +670,7 @@ tr:hover td{background:#ffffff06}
 .history-dropdown button.danger:hover{color:var(--crit);background:#ef444415}
 .history-dropdown .dropdown-sep{height:1px;background:var(--border);margin:4px 0}
 .history-item.starred .history-title::before{content:'\2605 ';color:var(--warn);font-size:11px}
-.chat-main-area{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg-deep)}
+.chat-main-area{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg-deep);position:relative}
 /* Context bar — hidden; LLM switcher now in input bar */
 .chat-context-bar{display:none}
 .ctx-select{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 12px;color:var(--text);font-size:12px;outline:none;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='%236b7280'%3E%3Cpath d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:28px;min-width:140px;transition:border-color .2s}
@@ -748,25 +761,24 @@ tr:hover td{background:#ffffff06}
 .conv-body hr{border:none;border-top:1px solid var(--border2);margin:14px 0}
 .conv-body a{color:var(--accent2);text-decoration:none;border-bottom:1px solid transparent}
 .conv-body a:hover{border-bottom-color:var(--accent2)}
-.chat-welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--text2);padding:60px 20px 80px;min-height:100%}
-.chat-welcome h2{font-size:28px;font-weight:700;color:var(--text);margin:20px 0 6px;letter-spacing:-.3px}
-.chat-welcome p{font-size:13px;margin-bottom:32px;max-width:420px;color:var(--text2);line-height:1.6}
+.chat-welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--text2);padding:0 20px;min-height:100%;margin-top:-40px}
+.chat-welcome h2{font-size:26px;font-weight:700;color:var(--text);margin:16px 0 4px;letter-spacing:-.3px}
+.chat-welcome p{font-size:13px;margin-bottom:24px;max-width:420px;color:var(--text2);line-height:1.6}
 .welcome-suggestions{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;max-width:560px;width:100%}
 .welcome-suggestions button{background:transparent;border:1px solid var(--border);border-radius:14px;padding:14px 18px;color:var(--text2);font-size:13px;cursor:pointer;transition:all .2s;text-align:left;line-height:1.4}
 .welcome-suggestions button:hover{border-color:color-mix(in srgb,var(--accent2) 50%,transparent);color:var(--text);background:var(--card)}
 /* Welcome categories — guided quick-start cards */
-.welcome-categories{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;max-width:560px;width:100%;margin-top:0}
+.welcome-categories{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;max-width:480px;width:100%;margin-top:0}
 .wcat{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;transition:border-color .2s,box-shadow .2s;cursor:pointer;text-align:left}
 .wcat:hover{border-color:var(--accent2);box-shadow:0 2px 12px color-mix(in srgb,var(--accent2) 12%,transparent)}
-.wcat-head{display:flex;align-items:center;gap:10px;padding:14px 16px;user-select:none}
-.wcat-icon{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;color:#fff}
+.wcat-head{display:flex;align-items:center;gap:10px;padding:12px 14px;user-select:none}
+.wcat-icon{width:26px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;color:#fff}
 .wcat-title{font-size:12px;font-weight:600;color:var(--text);flex:1}
 .wcat-arrow{display:none}
 .wcat-body{display:none}
 .welcome-tip{display:none}
 /* Welcome live bar — dynamic cluster alerts */
-.welcome-live-bar{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:720px;width:100%;margin-bottom:12px;min-height:0}
-.welcome-live-bar:empty{display:none}
+.welcome-live-bar{display:none}
 .wlb-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid;cursor:pointer;transition:all .2s;animation:wlb-in .3s ease}
 .wlb-chip:hover{filter:brightness(1.2);transform:translateY(-1px)}
 .wlb-chip.crit{background:color-mix(in srgb,var(--crit) 12%,transparent);border-color:color-mix(in srgb,var(--crit) 40%,transparent);color:var(--crit)}
@@ -786,7 +798,7 @@ tr:hover td{background:#ffffff06}
 .smart-suggestion.ss-crit:hover{background:color-mix(in srgb,var(--crit) 18%,transparent);color:#ff6b6b}
 .smart-suggestion.ss-warn{background:color-mix(in srgb,var(--warn) 8%,transparent);border-color:color-mix(in srgb,var(--warn) 30%,transparent);color:var(--warn)}
 .smart-suggestion.ss-warn:hover{background:color-mix(in srgb,var(--warn) 18%,transparent);color:#fbbf24}
-.chat-bottom-bar{position:absolute;bottom:0;left:0;right:0;padding:0 24px 16px;background:linear-gradient(to top,var(--bg-deep) 70%,transparent);pointer-events:none;z-index:10}
+.chat-bottom-bar{position:absolute;bottom:0;left:0;right:0;padding:0 24px 12px;background:linear-gradient(to top,var(--bg-deep) 80%,transparent);pointer-events:none;z-index:10}
 .chat-bottom-inner{max-width:780px;margin:0 auto;pointer-events:auto}
 .chat-controls-row{display:none}
 .chat-input-row{display:flex;align-items:center;gap:0;background:var(--card);border:1px solid var(--border);border-radius:24px;padding:4px 6px 4px 6px;transition:border-color .2s,box-shadow .2s}
@@ -1141,7 +1153,11 @@ tr:hover td{background:#ffffff06}
 .light-theme .history-dropdown{background:#fff;border-color:#d0d7de;box-shadow:0 8px 24px rgba(0,0,0,.12)}
 .light-theme .history-dropdown button:hover{background:#eeeef2}
 .light-theme .history-menu-btn:hover{background:#dde0e8}
-.light-theme .chat-sidebar,.light-theme .actions-panel{background:#eef0f4}
+.light-theme .chat-sidebar,.light-theme .actions-panel{background:#f8f9fb}
+.light-theme .actions-panel.open{box-shadow:-4px 0 24px rgba(0,0,0,.08)}
+.light-theme .actions-fab{background:#fff;border-color:#e0e0e6;box-shadow:0 4px 16px rgba(0,0,0,.06)}
+.light-theme .actions-fab:hover{box-shadow:0 6px 24px rgba(0,0,0,.1);border-color:#2563eb}
+.light-theme .actions-panel-backdrop{background:rgba(0,0,0,.1)}
 .light-theme .llm-switcher-trigger{background:#fff;border-color:#e0e0e6}
 .light-theme .llm-switcher-trigger:hover{border-color:#2563eb;background:#f0f4ff}
 .light-theme .llm-dropdown{background:#fff;border-color:#e0e0e6;box-shadow:0 12px 40px rgba(0,0,0,.1)}
@@ -3586,9 +3602,6 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
           <div style="width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#0052cc,#1a8cff);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#fff">TA</div>
           <h2>TCS Agentic AI</h2>
           <p id="chat-welcome-desc">Ask anything about your cluster in plain English.</p>
-
-          <div class="welcome-live-bar" id="welcome-live-bar"></div>
-
           <div class="welcome-categories">
             <div class="wcat" onclick="sendFullChat('Check cluster health')">
               <div class="wcat-head">
@@ -3669,13 +3682,16 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
     </div>
   </div>
 
-  <!-- Actions panel — confirmation workflow for mutating operations -->
+  <!-- Actions drawer backdrop -->
+  <div class="actions-panel-backdrop" id="actions-backdrop" onclick="closeActionsDrawer()"></div>
+  <!-- Actions panel — slide-out drawer -->
   <div class="actions-panel" id="actions-panel">
     <div class="actions-header">
       <span style="display:flex;align-items:center;gap:6px">Actions <span id="actions-cluster-scope" style="font-size:10px;color:var(--accent2);font-weight:500"></span></span>
       <div style="display:flex;align-items:center;gap:6px">
         <button class="icon-btn" style="font-size:11px;padding:3px 8px" onclick="togglePinboard()" title="Toggle pinboard">&#x1F4CC; Pins</button>
         <span id="snow-badge" class="snow-badge snow-off">ServiceNow: off</span>
+        <button class="actions-close-btn" onclick="closeActionsDrawer()" title="Close">&times;</button>
       </div>
     </div>
     <div id="pending-cr-panel" style="display:none"></div>
@@ -3689,6 +3705,13 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
     <div class="actions-list" id="actions-history-list" style="max-height:200px">
       <div class="actions-empty">Action history will appear here.</div>
     </div>
+  </div>
+
+  <!-- Actions floating button -->
+  <div class="actions-fab" id="actions-fab" onclick="toggleActionsDrawer()" style="display:none">
+    <div class="actions-fab-icon">&#x26A1;</div>
+    <div class="actions-fab-label">Actions</div>
+    <div class="actions-fab-badge" id="actions-fab-badge"></div>
   </div>
 
   <!-- Pinboard panel -->
@@ -10257,6 +10280,10 @@ function showView(view, skipPush) {
     else el.style.display = (view === v) ? 'block' : 'none';
   });
 
+  var actionsFab = document.getElementById('actions-fab');
+  if (actionsFab) actionsFab.style.display = (view === 'chat') ? 'flex' : 'none';
+  if (view !== 'chat') closeActionsDrawer();
+
   if (view === 'chat') {
     loadEnabledProviders();
     renderLLMSwitcher();
@@ -11488,152 +11515,23 @@ function createWelcomeEl() {
   div.className = 'chat-welcome';
   div.id = 'chat-welcome';
   div.innerHTML =
-    '<div style="width:52px;height:52px;border-radius:16px;background:linear-gradient(135deg,#0052cc,#1a8cff);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:#fff">TA</div>' +
+    '<div style="width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#0052cc,#1a8cff);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#fff">TA</div>' +
     '<h2>TCS Agentic AI</h2>' +
-    '<p>Ask anything about your OpenShift cluster in plain English. I have live access to your cluster data.</p>' +
-    '<div class="welcome-live-bar" id="welcome-live-bar"></div>' +
+    '<p>Ask anything about your cluster in plain English. I have live access to your cluster data.</p>' +
     '<div class="welcome-categories">' +
-      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
-        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#22c55e,#10b981)">&#x2764;</span><span class="wcat-title">Cluster Health</span><span class="wcat-arrow">&#x25B8;</span></div>' +
-        '<div class="wcat-body">' +
-          '<button onclick="sendFullChat(\'Check cluster health\')">How healthy is my cluster?</button>' +
-          '<button onclick="sendFullChat(\'Show node CPU and memory utilization\')">Show node resource usage</button>' +
-          '<button onclick="sendFullChat(\'Show me all pods with issues\')">Which pods have issues?</button>' +
-          '<button onclick="sendFullChat(\'Show top pods by CPU usage\')">Top CPU consuming pods</button>' +
-          '<button onclick="sendFullChat(\'Are there any degraded operators?\')">Any degraded operators?</button>' +
-          '<button onclick="sendFullChat(\'Show warning events in the cluster\')">Recent warning events</button>' +
-        '</div>' +
+      '<div class="wcat" onclick="event.stopPropagation();sendFullChat(\'Check cluster health\')">' +
+        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#22c55e,#10b981)">&#x2764;</span><span class="wcat-title">Cluster Health</span></div>' +
       '</div>' +
-      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
-        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#ef4444,#f97316)">&#x1F527;</span><span class="wcat-title">Troubleshoot</span><span class="wcat-arrow">&#x25B8;</span></div>' +
-        '<div class="wcat-body">' +
-          '<button onclick="sendFullChat(\'Show CrashLoopBackOff pods\')">Find CrashLoopBackOff pods</button>' +
-          '<button onclick="sendFullChat(\'Show OOMKilled pods\')">Find OOMKilled pods</button>' +
-          '<button onclick="sendFullChat(\'Show ImagePullBackOff pods\')">Find ImagePullBackOff pods</button>' +
-          '<button onclick="sendFullChat(\'Show pods with high restart count\')">Pods with high restarts</button>' +
-          '<button onclick="sendFullChat(\'Show pending pods\')">Stuck pending pods</button>' +
-          '<button onclick="sendFullChat(\'Why is my deployment not available?\')">Deployment not ready?</button>' +
-        '</div>' +
+      '<div class="wcat" onclick="event.stopPropagation();sendFullChat(\'Show CrashLoopBackOff pods and diagnose issues\')">' +
+        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#ef4444,#f97316)">&#x1F527;</span><span class="wcat-title">Troubleshoot</span></div>' +
       '</div>' +
-      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
-        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#3b82f6,#6366f1)">&#x1F4E6;</span><span class="wcat-title">Workloads</span><span class="wcat-arrow">&#x25B8;</span></div>' +
-        '<div class="wcat-body">' +
-          '<button onclick="sendFullChat(\'List deployments\')">List all deployments</button>' +
-          '<button onclick="sendFullChat(\'Show pods in default namespace\')">Pods in a namespace</button>' +
-          '<button onclick="sendFullChat(\'Show statefulsets\')">StatefulSets status</button>' +
-          '<button onclick="sendFullChat(\'Show daemonsets\')">DaemonSets status</button>' +
-          '<button onclick="sendFullChat(\'List jobs and cronjobs\')">Jobs &amp; CronJobs</button>' +
-          '<button onclick="sendFullChat(\'Show pods without resource limits\')">Pods without limits</button>' +
-        '</div>' +
+      '<div class="wcat" onclick="event.stopPropagation();sendFullChat(\'/security\')">' +
+        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#a855f7,#ec4899)">&#x1F6E1;</span><span class="wcat-title">Security Audit</span></div>' +
       '</div>' +
-      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
-        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#a855f7,#ec4899)">&#x1F6E1;</span><span class="wcat-title">Security</span><span class="wcat-arrow">&#x25B8;</span></div>' +
-        '<div class="wcat-body">' +
-          '<button onclick="sendFullChat(\'/security\')">Full security audit</button>' +
-          '<button onclick="sendFullChat(\'Find pods using privileged SCC\')">Privileged pods</button>' +
-          '<button onclick="sendFullChat(\'/cert-check\')">Certificate expiry check</button>' +
-          '<button onclick="sendFullChat(\'/compliance\')">Compliance check</button>' +
-          '<button onclick="sendFullChat(\'Show RBAC for namespace\')">RBAC permissions</button>' +
-          '<button onclick="sendFullChat(\'Show network policies\')">Network policies</button>' +
-        '</div>' +
+      '<div class="wcat" onclick="event.stopPropagation();sendFullChat(\'Show node CPU and memory utilization\')">' +
+        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#0ea5e9,#06b6d4)">&#x1F4CA;</span><span class="wcat-title">Resources &amp; Metrics</span></div>' +
       '</div>' +
-      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
-        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#f59e0b,#eab308)">&#x2B06;</span><span class="wcat-title">Upgrade &amp; Lifecycle</span><span class="wcat-arrow">&#x25B8;</span></div>' +
-        '<div class="wcat-body">' +
-          '<button onclick="sendFullChat(\'/upgrade-check\')">Upgrade readiness assessment</button>' +
-          '<button onclick="sendFullChat(\'Show cluster version and upgrade history\')">Current version &amp; history</button>' +
-          '<button onclick="sendFullChat(\'Compare upgrade paths\')">Compare upgrade paths</button>' +
-          '<button onclick="sendFullChat(\'Check certificate expiry\')">Certificate expiry</button>' +
-          '<button onclick="sendFullChat(\'/operator-health\')">Operator health check</button>' +
-          '<button onclick="sendFullChat(\'Show cluster capacity forecast\')">Capacity forecast</button>' +
-        '</div>' +
-      '</div>' +
-      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
-        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#0ea5e9,#06b6d4)">&#x1F4CA;</span><span class="wcat-title">Resources &amp; Metrics</span><span class="wcat-arrow">&#x25B8;</span></div>' +
-        '<div class="wcat-body">' +
-          '<button onclick="sendFullChat(\'Show top pods by memory usage\')">Top memory consumers</button>' +
-          '<button onclick="sendFullChat(\'Show PVC usage\')">PVC / Storage usage</button>' +
-          '<button onclick="sendFullChat(\'List routes\')">Routes &amp; Services</button>' +
-          '<button onclick="sendFullChat(\'List configmaps\')">ConfigMaps</button>' +
-          '<button onclick="sendFullChat(\'List secrets\')">Secrets overview</button>' +
-          '<button onclick="sendFullChat(\'Show resource quotas\')">Resource quotas</button>' +
-        '</div>' +
-      '</div>' +
-      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
-        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#f43f5e,#e11d48)">&#x1F514;</span><span class="wcat-title">Observability</span><span class="wcat-arrow">&#x25B8;</span></div>' +
-        '<div class="wcat-body">' +
-          '<button onclick="sendFullChat(\'Show firing alerts\')">Firing alerts</button>' +
-          '<button onclick="sendFullChat(\'Show silenced alerts\')">Silenced alerts</button>' +
-          '<button onclick="sendFullChat(\'Show ArgoCD sync status\')">GitOps app sync</button>' +
-          '<button onclick="sendFullChat(\'Show image vulnerabilities\')">Image vulnerabilities</button>' +
-          '<button onclick="sendFullChat(\'Show warning events in the cluster\')">Cluster events</button>' +
-          '<button onclick="sendFullChat(\'Show resource optimization\')">Resource optimization</button>' +
-        '</div>' +
-      '</div>' +
-      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
-        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#14b8a6,#0d9488)">&#x1F4BE;</span><span class="wcat-title">Backup &amp; DR</span><span class="wcat-arrow">&#x25B8;</span></div>' +
-        '<div class="wcat-body">' +
-          '<button onclick="sendFullChat(\'Show backup status\')">Backup status</button>' +
-          '<button onclick="sendFullChat(\'Show velero backups\')">Velero backups</button>' +
-          '<button onclick="sendFullChat(\'Show etcd health\')">etcd health</button>' +
-          '<button onclick="sendFullChat(\'Show must-gather options\')">Must-gather diagnostics</button>' +
-          '<button onclick="sendFullChat(\'Show network diagnostics\')">Network diagnostics</button>' +
-          '<button onclick="sendFullChat(\'Show identity providers\')">Identity &amp; OAuth</button>' +
-        '</div>' +
-      '</div>' +
-      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
-        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#8b5cf6,#7c3aed)">&#x1F30D;</span><span class="wcat-title">Multi-Cluster</span><span class="wcat-arrow">&#x25B8;</span></div>' +
-        '<div class="wcat-body">' +
-          '<button onclick="sendFullChat(\'Show fleet status\')">Fleet / managed clusters</button>' +
-          '<button onclick="sendFullChat(\'Show compliance status\')">Compliance status</button>' +
-          '<button onclick="sendFullChat(\'Show policy violations\')">Policy violations</button>' +
-          '<button onclick="sendFullChat(\'Show automation status\')">Ansible automation</button>' +
-          '<button onclick="sendFullChat(\'Show cluster operators\')">Cluster operators</button>' +
-          '<button onclick="sendFullChat(\'Show certificate lifecycle\')">Certificate lifecycle</button>' +
-        '</div>' +
-      '</div>' +
-      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
-        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#f43f5e,#dc2626)">&#x1F6A8;</span><span class="wcat-title">Incident &amp; SRE</span><span class="wcat-arrow">&#x25B8;</span></div>' +
-        '<div class="wcat-body">' +
-          '<button onclick="sendFullChat(\'Show active incidents\')">Active incidents</button>' +
-          '<button onclick="sendFullChat(\'Show SLO status\')">SLO / error budget</button>' +
-          '<button onclick="sendFullChat(\'Show resource saturation\')">Resource saturation</button>' +
-          '<button onclick="sendFullChat(\'Show blast radius analysis\')">Blast radius / impact</button>' +
-          '<button onclick="sendFullChat(\'Show postmortem timeline\')">Postmortem timeline</button>' +
-        '</div>' +
-      '</div>' +
-      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
-        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#0891b2,#0e7490)">&#x1F50F;</span><span class="wcat-title">Supply Chain &amp; Hardening</span><span class="wcat-arrow">&#x25B8;</span></div>' +
-        '<div class="wcat-body">' +
-          '<button onclick="sendFullChat(\'Show supply chain security\')">Supply chain security</button>' +
-          '<button onclick="sendFullChat(\'Show stale images\')">Stale / outdated images</button>' +
-          '<button onclick="sendFullChat(\'Show cluster hardening status\')">CIS benchmark / hardening</button>' +
-          '<button onclick="sendFullChat(\'Show pod security admission status\')">Pod security admission</button>' +
-          '<button onclick="sendFullChat(\'Show admission webhooks\')">Admission webhooks</button>' +
-          '<button onclick="sendFullChat(\'Show deprecated API usage\')">Deprecated APIs</button>' +
-        '</div>' +
-      '</div>' +
-      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
-        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#059669,#047857)">&#x1F4C8;</span><span class="wcat-title">Capacity &amp; Governance</span><span class="wcat-arrow">&#x25B8;</span></div>' +
-        '<div class="wcat-body">' +
-          '<button onclick="sendFullChat(\'Show capacity planning\')">Capacity planning</button>' +
-          '<button onclick="sendFullChat(\'Show MachineConfigPool status\')">MCP drift / rendering</button>' +
-          '<button onclick="sendFullChat(\'Show tenant governance\')">Tenant governance / quotas</button>' +
-          '<button onclick="sendFullChat(\'Show orphaned resources\')">Orphaned resources</button>' +
-        '</div>' +
-      '</div>' +
-      '<div class="wcat" onclick="this.classList.toggle(\'open\')">' +
-        '<div class="wcat-head"><span class="wcat-icon" style="background:linear-gradient(135deg,#7c3aed,#6d28d9)">&#x1F6E0;</span><span class="wcat-title">Workload Resilience</span><span class="wcat-arrow">&#x25B8;</span></div>' +
-        '<div class="wcat-body">' +
-          '<button onclick="sendFullChat(\'Show PDB analysis\')">PodDisruptionBudgets</button>' +
-          '<button onclick="sendFullChat(\'Show HPA status\')">HPA / autoscalers</button>' +
-          '<button onclick="sendFullChat(\'Show health probe analysis\')">Health probe coverage</button>' +
-          '<button onclick="sendFullChat(\'Show topology analysis\')">Topology / affinity</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>' +
-    '<div class="welcome-tip"><span>&#x1F4A1;</span> Tip: Just type your question in plain English — no need to know Kubernetes commands. I\'ll fetch the data directly from your cluster.</div>';
-  populateWelcomeLiveBar();
+    '</div>';
   return div;
 }
 
@@ -12880,6 +12778,36 @@ function statusLabel(s) {
   }[s] || s;
 }
 
+function toggleActionsDrawer() {
+  var panel = document.getElementById('actions-panel');
+  var backdrop = document.getElementById('actions-backdrop');
+  if (!panel) return;
+  var isOpen = panel.classList.contains('open');
+  panel.classList.toggle('open', !isOpen);
+  if (backdrop) backdrop.classList.toggle('open', !isOpen);
+}
+function openActionsDrawer() {
+  var panel = document.getElementById('actions-panel');
+  var backdrop = document.getElementById('actions-backdrop');
+  if (panel) panel.classList.add('open');
+  if (backdrop) backdrop.classList.add('open');
+}
+function closeActionsDrawer() {
+  var panel = document.getElementById('actions-panel');
+  var backdrop = document.getElementById('actions-backdrop');
+  if (panel) panel.classList.remove('open');
+  if (backdrop) backdrop.classList.remove('open');
+}
+function updateActionsFabBadge(pendingCount) {
+  var badge = document.getElementById('actions-fab-badge');
+  if (badge) {
+    badge.textContent = pendingCount > 0 ? pendingCount : '';
+    badge.dataset.count = pendingCount;
+  }
+  var fab = document.getElementById('actions-fab');
+  if (fab) fab.classList.toggle('has-pending', pendingCount > 0);
+}
+
 function renderActionsPanel(data) {
   const list = document.getElementById('actions-list');
   const histList = document.getElementById('actions-history-list');
@@ -12903,6 +12831,7 @@ function renderActionsPanel(data) {
 
   if (pendingCount) pendingCount.textContent = pending.length;
   if (histCount) histCount.textContent = history.length;
+  updateActionsFabBadge(pending.length);
 
   if (pending.length === 0) {
     list.innerHTML = '<div class="actions-empty">No pending actions. Ask to restart, delete or scale a workload and it will appear here for confirmation.</div>';
