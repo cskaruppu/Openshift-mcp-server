@@ -206,7 +206,7 @@ tr:hover td{background:#ffffff06}
 .itsm-result{padding:10px 18px;font-size:12px;border-top:1px solid var(--border);color:var(--text)}
 /* Upgrade Execute card */
 .ux-card{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin:12px 0;width:100%;box-shadow:0 2px 8px rgba(0,0,0,.15)}
-.conv-body .ux-card{margin-left:-38px;width:calc(100% + 38px)}
+.conv-body .ux-card{margin-left:-36px;width:calc(100% + 36px)}
 .ux-header{background:linear-gradient(135deg,#065f46 0%,#059669 100%);color:#fff;padding:16px 20px;display:flex;align-items:center;gap:12px}
 .ux-header h4{margin:0;font-size:15px;font-weight:700}
 .ux-header .ux-ticket{background:rgba(255,255,255,.2);padding:3px 10px;border-radius:12px;font-size:11px;font-weight:500}
@@ -253,7 +253,8 @@ tr:hover td{background:#ffffff06}
 .fix-box .bool{color:#ff7b72}
 .fix-box .flag{color:#d2a8ff}
 /* Tool-call trace cards — Claude Desktop style */
-.tool-trace{margin:8px 0;border:1px solid var(--border2);border-radius:8px;overflow:hidden;font-size:12px}
+.tool-traces-container{padding-left:36px;margin-bottom:6px}
+.tool-trace{margin:6px 0;border:1px solid var(--border2);border-radius:8px;overflow:hidden;font-size:12px}
 .tool-trace-header{display:flex;align-items:center;gap:8px;padding:6px 12px;background:var(--bg-alt);cursor:pointer;user-select:none}
 .tool-trace-header:hover{background:var(--card)}
 .tool-trace-icon{width:16px;height:16px;color:var(--accent2);flex-shrink:0}
@@ -666,17 +667,17 @@ tr:hover td{background:#ffffff06}
 .ctx-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .ctx-group{display:flex;align-items:center;gap:6px}
 /* Premium LLM Provider Switcher — compact pill for input bar */
-.llm-switcher{position:relative;display:flex;align-items:center}
-.llm-switcher-trigger{display:flex;align-items:center;gap:6px;padding:4px 10px 4px 4px;background:transparent;border:none;border-radius:20px;cursor:pointer;transition:all .2s}
-.llm-switcher-trigger:hover{background:color-mix(in srgb,var(--accent2) 8%,transparent)}
-.llm-switcher-trigger.open{background:color-mix(in srgb,var(--accent2) 10%,transparent)}
-.llm-sw-icon{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:#fff;flex-shrink:0}
+.llm-switcher{position:relative;display:flex;align-items:center;flex-shrink:0;margin-left:4px}
+.llm-switcher-trigger{display:flex;align-items:center;gap:5px;padding:3px 8px 3px 3px;background:transparent;border:1px solid var(--border);border-radius:18px;cursor:pointer;transition:all .2s}
+.llm-switcher-trigger:hover{border-color:var(--accent2);background:color-mix(in srgb,var(--accent2) 6%,transparent)}
+.llm-switcher-trigger.open{border-color:var(--accent2);background:color-mix(in srgb,var(--accent2) 8%,transparent)}
+.llm-sw-icon{width:20px;height:20px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:#fff;flex-shrink:0}
 .llm-sw-info{flex:1;min-width:0}
-.llm-sw-name{font-size:11px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.llm-sw-name{font-size:10px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:80px}
 .llm-sw-model{display:none}
-.llm-sw-chevron{color:var(--text2);font-size:8px;transition:transform .2s}
+.llm-sw-chevron{color:var(--text2);font-size:7px;transition:transform .2s}
 .llm-switcher-trigger.open .llm-sw-chevron{transform:rotate(180deg)}
-.llm-dropdown{position:absolute;bottom:calc(100% + 8px);left:0;min-width:260px;background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.25);z-index:200;display:none;overflow:hidden;animation:llmDdIn .15s ease-out}
+.llm-dropdown{position:absolute;bottom:calc(100% + 8px);right:0;min-width:260px;background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.25);z-index:200;display:none;overflow:hidden;animation:llmDdIn .15s ease-out}
 @keyframes llmDdIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
 .llm-dropdown.open{display:block}
 .llm-dd-header{padding:12px 16px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);font-weight:600}
@@ -699,17 +700,17 @@ tr:hover td{background:#ffffff06}
 .action-card .ac-cluster::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
 .action-card .ac-time{font-size:10px;color:var(--text2);margin-top:2px}
 .chat-conversation{flex:1;overflow-y:auto;background:var(--bg-deep)}
-.chat-conv-inner{max-width:780px;margin:0 auto;padding:32px 24px 100px}
-.conv-msg{margin-bottom:28px;animation:msgIn .25s ease-out}
+.chat-conv-inner{max-width:780px;margin:0 auto;padding:32px 24px 120px}
+.conv-msg{margin-bottom:24px;animation:msgIn .25s ease-out}
 @keyframes msgIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-.conv-msg.user{display:flex;justify-content:flex-end}
-.conv-msg.user .conv-bubble{background:var(--hover);color:var(--text);border-radius:18px 18px 4px 18px;padding:12px 18px;max-width:70%;font-size:14px;line-height:1.6}
-.conv-msg.ai{position:relative}
-.conv-msg.ai .conv-header{display:flex;align-items:center;gap:8px;margin-bottom:10px}
-.conv-avatar{width:30px;height:30px;border-radius:10px;background:linear-gradient(135deg,#e04040,#a020a0);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
+.conv-msg.user{display:flex;justify-content:flex-end;padding-left:48px}
+.conv-msg.user .conv-bubble{background:color-mix(in srgb,var(--accent2) 12%,var(--card));color:var(--text);border-radius:20px 20px 4px 20px;padding:10px 16px;max-width:85%;font-size:14px;line-height:1.6;border:1px solid color-mix(in srgb,var(--accent2) 15%,transparent)}
+.conv-msg.ai{position:relative;padding-right:24px}
+.conv-msg.ai .conv-header{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.conv-avatar{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#0052cc,#1a8cff);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex-shrink:0}
 .conv-name{font-size:13px;font-weight:600;color:var(--text)}
 .conv-provider-tag{font-size:10px;color:#818cf8;background:#818cf815;padding:2px 8px;border-radius:10px;font-weight:500;letter-spacing:.2px}
-.conv-body{padding-left:38px;font-size:14px;line-height:1.7;color:var(--text);word-wrap:break-word}
+.conv-body{padding-left:36px;font-size:14px;line-height:1.7;color:var(--text);word-wrap:break-word}
 .conv-body .chat-heading{font-size:16px;font-weight:700;margin:16px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--border2);color:var(--text);letter-spacing:-0.01em}
 .conv-body .chat-heading.h2{font-size:17px}
 .conv-body .chat-heading.chat-heading-sm{font-size:13px;border-bottom:none;margin:10px 0 4px}
@@ -801,7 +802,7 @@ tr:hover td{background:#ffffff06}
 @keyframes sendPulse{0%,100%{opacity:.7}50%{opacity:1}}
 .chat-send-btn svg{width:18px;height:18px;fill:none;stroke:currentColor}
 .chat-send-btn .stop-icon{width:14px;height:14px;background:currentColor;border-radius:2px}
-.chat-bottom-hint{text-align:center;font-size:11px;color:var(--text2);opacity:.5;margin-top:8px}
+.chat-bottom-hint{text-align:center;font-size:11px;color:var(--text2);opacity:.45;margin-top:6px;padding:0 4px}
 /* Document-driven deployment */
 .deploy-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:flex;align-items:center;justify-content:center;animation:fadeIn .2s}
 .deploy-modal{background:var(--card);border:1px solid var(--border);border-radius:16px;width:90%;max-width:800px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 20px 60px #00000080}
@@ -1142,7 +1143,7 @@ tr:hover td{background:#ffffff06}
 .light-theme .history-menu-btn:hover{background:#dde0e8}
 .light-theme .chat-sidebar,.light-theme .actions-panel{background:#eef0f4}
 .light-theme .llm-switcher-trigger{background:#fff;border-color:#e0e0e6}
-.light-theme .llm-switcher-trigger:hover{border-color:#2563eb;box-shadow:0 2px 8px rgba(37,99,235,.08)}
+.light-theme .llm-switcher-trigger:hover{border-color:#2563eb;background:#f0f4ff}
 .light-theme .llm-dropdown{background:#fff;border-color:#e0e0e6;box-shadow:0 12px 40px rgba(0,0,0,.1)}
 .light-theme .llm-dd-item:hover{background:rgba(37,99,235,.04)}
 .light-theme .llm-dd-item.active{background:rgba(37,99,235,.06)}
@@ -1180,7 +1181,7 @@ tr:hover td{background:#ffffff06}
 .light-theme .risk-rca-btn:hover{background:#fee2e2;box-shadow:0 2px 6px rgba(0,0,0,.08)}
 .light-theme .smart-suggestion{background:#f0f4ff;border-color:#bfdbfe;color:#4b5563}
 .light-theme .smart-suggestion:hover{background:#dbeafe;color:#1a1a2e}
-.light-theme .conv-msg.user .conv-bubble{background:#f0f2f6;color:#1a1a2e}
+.light-theme .conv-msg.user .conv-bubble{background:#e8f0fe;color:#1a1a2e;border-color:#c8d8f0}
 .light-theme .conv-body{color:#374151}
 .light-theme .conv-body .chat-heading{color:#1a1a2e;border-color:#e0e0e6}
 .light-theme .conv-body .pod-issue{background:#fff5f5;border-color:#dc262640}
@@ -1325,7 +1326,7 @@ tr:hover td{background:#ffffff06}
 .clarify-option .clarify-opt-arrow{color:var(--text2);opacity:.4;font-size:14px}
 .clarify-option:hover .clarify-opt-arrow{opacity:1;color:var(--accent2)}
 /* Auto-generated follow-up suggestions under AI replies */
-.followup-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+.followup-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
 .followup-chips .chip-label{font-size:10px;color:#4b5563;width:100%;margin-bottom:2px;letter-spacing:.3px;text-transform:uppercase}
 .followup-chip{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:6px 14px;color:var(--text2);cursor:pointer;font-size:12px;transition:all .15s;display:inline-flex;align-items:center;gap:5px}
 .followup-chip:hover{border-color:var(--accent2);color:var(--text);background:var(--hover);transform:translateY(-1px)}
@@ -3646,14 +3647,11 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
           <input type="file" id="deploy-doc-upload" accept=".docx,.doc,.md,.txt" style="display:none" onchange="handleDocUpload(event)">
           <input type="text" class="chat-input-full" id="full-chat-input" placeholder="Message TCS Agentic AI..." oninput="updateSendBtnState()" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendFullChat()}">
           <button class="chat-send-btn" id="full-chat-send" onclick="sendFullChat()" aria-label="Send message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
-        </div>
-        <!-- LLM provider pill + hint row -->
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding:0 4px">
           <div class="llm-switcher" id="llm-switcher">
             <div class="llm-switcher-trigger" id="llm-switcher-trigger" onclick="toggleLLMSwitcher()">
               <div class="llm-sw-icon" id="llm-sw-icon" style="background:#6366f1">AI</div>
               <div class="llm-sw-info">
-                <div class="llm-sw-name" id="llm-sw-name">Built-in Analysis</div>
+                <div class="llm-sw-name" id="llm-sw-name">Built-in</div>
               </div>
               <span class="llm-sw-chevron">&#x25BC;</span>
             </div>
@@ -3664,8 +3662,8 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
               <div class="llm-dd-footer"><a href="#" onclick="showView('settings');toggleLLMSwitcher();return false">Manage Providers &rarr;</a></div>
             </div>
           </div>
-          <div class="chat-bottom-hint" style="margin:0">TCS Agentic AI can make mistakes. Verify important operations.</div>
         </div>
+        <div class="chat-bottom-hint">TCS Agentic AI can make mistakes. Verify important operations.</div>
         <span class="chat-model-pill" id="model-pill-display" style="display:none"><span class="pill-dot"></span>Built-in</span>
       </div>
     </div>
@@ -12765,7 +12763,7 @@ function saveFullLLMConfig() {}
 // Premium LLM Provider Switcher
 // ---------------------------------------------------------------------------
 var _llmProviderMeta = {
-  none:      { icon: 'AI', color: '#6366f1', label: 'Built-in Analysis', desc: 'Rule-based engine' },
+  none:      { icon: 'AI', color: '#6366f1', label: 'Built-in', desc: 'Rule-based engine' },
   azure:     { icon: 'Az', color: '#0078d4', label: 'Azure OpenAI', desc: 'GPT-4o / GPT-4 Turbo' },
   openai:    { icon: 'OA', color: '#10a37f', label: 'OpenAI', desc: 'GPT-4o / GPT-4' },
   anthropic: { icon: 'Cl', color: '#d97706', label: 'Anthropic', desc: 'Claude Sonnet / Opus' },
