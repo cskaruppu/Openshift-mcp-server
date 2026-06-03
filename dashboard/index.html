@@ -665,6 +665,39 @@ tr:hover td{background:#ffffff06}
 .ctx-label{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
 .ctx-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .ctx-group{display:flex;align-items:center;gap:6px}
+/* Premium LLM Provider Switcher */
+.llm-switcher{position:relative;display:flex;align-items:center}
+.llm-switcher-trigger{display:flex;align-items:center;gap:8px;padding:6px 14px;background:var(--card);border:1px solid var(--border);border-radius:10px;cursor:pointer;transition:all .2s;min-width:170px}
+.llm-switcher-trigger:hover{border-color:var(--accent2);box-shadow:0 2px 8px rgba(99,102,241,.1)}
+.llm-switcher-trigger.open{border-color:var(--accent2);box-shadow:0 4px 16px rgba(99,102,241,.15)}
+.llm-sw-icon{width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#fff;flex-shrink:0}
+.llm-sw-info{flex:1;min-width:0}
+.llm-sw-name{font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.llm-sw-model{font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.3px;margin-top:1px}
+.llm-sw-chevron{color:var(--text2);font-size:10px;transition:transform .2s}
+.llm-switcher-trigger.open .llm-sw-chevron{transform:rotate(180deg)}
+.llm-dropdown{position:absolute;top:calc(100% + 6px);left:0;right:0;min-width:240px;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.25);z-index:200;display:none;overflow:hidden;animation:llmDdIn .15s ease-out}
+@keyframes llmDdIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+.llm-dropdown.open{display:block}
+.llm-dd-header{padding:10px 14px 6px;font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);font-weight:600}
+.llm-dd-item{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;transition:background .15s}
+.llm-dd-item:hover{background:rgba(99,102,241,.06)}
+.llm-dd-item.active{background:rgba(99,102,241,.08)}
+.llm-dd-item .llm-sw-icon{width:28px;height:28px;border-radius:7px;font-size:11px}
+.llm-dd-item-info{flex:1}
+.llm-dd-item-name{font-size:12px;font-weight:600;color:var(--text)}
+.llm-dd-item-desc{font-size:10px;color:var(--text2);margin-top:1px}
+.llm-dd-item.active .llm-dd-item-name::after{content:' \2713';color:var(--accent2);font-weight:800}
+.llm-dd-divider{height:1px;background:var(--border);margin:4px 0}
+.llm-dd-footer{padding:8px 14px;border-top:1px solid var(--border)}
+.llm-dd-footer a{font-size:11px;color:var(--accent2);text-decoration:none;font-weight:500}
+.llm-dd-footer a:hover{text-decoration:underline}
+/* Actions panel premium design */
+.actions-section-title{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);font-weight:600;padding:12px 14px 6px;display:flex;align-items:center;gap:6px}
+.actions-section-title .as-count{background:var(--accent2);color:#fff;font-size:9px;padding:1px 6px;border-radius:10px;font-weight:700}
+.action-card .ac-cluster{font-size:10px;color:var(--accent2);display:flex;align-items:center;gap:4px;margin-bottom:2px}
+.action-card .ac-cluster::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
+.action-card .ac-time{font-size:10px;color:var(--text2);margin-top:2px}
 .chat-conversation{flex:1;overflow-y:auto;background:var(--bg-deep)}
 .chat-conv-inner{max-width:780px;margin:0 auto;padding:32px 24px 100px}
 .conv-msg{margin-bottom:28px;animation:msgIn .25s ease-out}
@@ -1111,6 +1144,11 @@ tr:hover td{background:#ffffff06}
 .light-theme .history-dropdown button:hover{background:#eeeef2}
 .light-theme .history-menu-btn:hover{background:#dde0e8}
 .light-theme .chat-sidebar,.light-theme .actions-panel{background:#eef0f4}
+.light-theme .llm-switcher-trigger{background:#fff;border-color:#e0e0e6}
+.light-theme .llm-switcher-trigger:hover{border-color:#2563eb;box-shadow:0 2px 8px rgba(37,99,235,.08)}
+.light-theme .llm-dropdown{background:#fff;border-color:#e0e0e6;box-shadow:0 12px 40px rgba(0,0,0,.1)}
+.light-theme .llm-dd-item:hover{background:rgba(37,99,235,.04)}
+.light-theme .llm-dd-item.active{background:rgba(37,99,235,.06)}
 .light-theme .chat-main-area,.light-theme .chat-conversation{background:#fff}
 .light-theme .chat-context-bar{background:#fafbfc;border-color:#e0e0e6}
 .light-theme .ctx-select{background:#fff;border-color:#e0e0e6;color:#374151}
@@ -3525,11 +3563,25 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
         <!-- Hidden select to keep existing withCluster/onClusterSwitch APIs working -->
         <select id="ctx-cluster-select" style="display:none"><option value="local">Current Cluster</option></select>
       </div>
-      <div class="ctx-group">
-        <select class="ctx-select" id="full-llm-provider" onchange="onFullProviderChange()">
-          <option value="none">Built-in Analysis</option>
-        </select>
+      <!-- Premium LLM Provider Switcher -->
+      <div class="llm-switcher" id="llm-switcher">
+        <div class="llm-switcher-trigger" id="llm-switcher-trigger" onclick="toggleLLMSwitcher()">
+          <div class="llm-sw-icon" id="llm-sw-icon" style="background:#6366f1">AI</div>
+          <div class="llm-sw-info">
+            <div class="llm-sw-name" id="llm-sw-name">Built-in Analysis</div>
+            <div class="llm-sw-model" id="llm-sw-model">Rule-based engine</div>
+          </div>
+          <span class="llm-sw-chevron">&#x25BC;</span>
+        </div>
+        <div class="llm-dropdown" id="llm-dropdown">
+          <div class="llm-dd-header">Select AI Provider</div>
+          <div id="llm-dd-list"></div>
+          <div class="llm-dd-divider"></div>
+          <div class="llm-dd-footer"><a href="#" onclick="showView('settings');toggleLLMSwitcher();return false">Manage Providers &rarr;</a></div>
+        </div>
       </div>
+      <!-- Hidden selects to keep existing APIs working -->
+      <select id="full-llm-provider" style="display:none" onchange="onFullProviderChange()"><option value="none">Built-in Analysis</option></select>
       <select id="full-llm-model-select" onchange="onFullModelChange()" style="display:none"><option value="">Default Model</option></select>
       <div style="display:none">
         <input type="text" id="full-llm-api-key">
@@ -3800,17 +3852,22 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
   <!-- Actions panel — confirmation workflow for mutating operations -->
   <div class="actions-panel" id="actions-panel">
     <div class="actions-header">
-      <span>Actions</span>
+      <span style="display:flex;align-items:center;gap:6px">Actions <span id="actions-cluster-scope" style="font-size:10px;color:var(--accent2);font-weight:500"></span></span>
       <div style="display:flex;align-items:center;gap:6px">
         <button class="icon-btn" style="font-size:11px;padding:3px 8px" onclick="togglePinboard()" title="Toggle pinboard">&#x1F4CC; Pins</button>
         <span id="snow-badge" class="snow-badge snow-off">ServiceNow: off</span>
       </div>
     </div>
     <div id="pending-cr-panel" style="display:none"></div>
+    <div class="actions-section-title">Pending <span class="as-count" id="actions-pending-count">0</span></div>
     <div class="actions-list" id="actions-list">
       <div class="actions-empty">
         No pending actions. Ask to restart, delete or scale a workload and it will appear here for confirmation.
       </div>
+    </div>
+    <div class="actions-section-title" style="border-top:1px solid var(--border)">History <span class="as-count" id="actions-history-count" style="background:var(--text2)">0</span></div>
+    <div class="actions-list" id="actions-history-list" style="max-height:200px">
+      <div class="actions-empty">Action history will appear here.</div>
     </div>
   </div>
 
@@ -10349,7 +10406,7 @@ try {
 // ---------------------------------------------------------------------------
 // View switching — Dashboard vs AI Chat
 // ---------------------------------------------------------------------------
-function showView(view) {
+function showView(view, skipPush) {
   // Alerts is now merged into AI Intelligence
   if (view === 'alerts-view' || view === 'alerts') view = 'intelligence';
 
@@ -10382,6 +10439,7 @@ function showView(view) {
 
   if (view === 'chat') {
     loadEnabledProviders();
+    renderLLMSwitcher();
     populateChatClusterDropdown();
     var chatSel = document.getElementById('ctx-cluster-select');
     if (chatSel && chatSel.value !== _globalActiveCluster) chatSel.value = _globalActiveCluster;
@@ -10392,6 +10450,7 @@ function showView(view) {
     });
     setTimeout(function() { document.getElementById('full-chat-input')?.focus(); }, 200);
     checkPendingCRNotifications();
+    updateActionsClusterScope();
   } else if (view === 'audit') {
     loadAuditView();
     loadComplianceResults();
@@ -10425,6 +10484,9 @@ function showView(view) {
 
   // Show workspace header elements
   _updateWorkspaceHeader();
+
+  // URL routing
+  if (!skipPush) _pushRouteState(view, _globalActiveCluster);
 }
 
 // ---------------------------------------------------------------------------
@@ -10432,7 +10494,7 @@ function showView(view) {
 // ---------------------------------------------------------------------------
 var _inClusterPicker = false;
 
-function showClusterPicker() {
+function showClusterPicker(skipPush) {
   _inClusterPicker = true;
   _currentView = 'cluster-picker';
   document.body.classList.add('cluster-picker-mode');
@@ -10459,6 +10521,8 @@ function showClusterPicker() {
     if (cpUserLabel) cpUserLabel.textContent = _authUser.name;
     if (cpLogout) cpLogout.style.display = '';
   }
+
+  if (!skipPush) _pushRouteState('clusters', null);
 }
 
 function _exitClusterPicker() {
@@ -10473,7 +10537,70 @@ function enterClusterWorkspace(clusterName) {
   if (clusterName !== _globalActiveCluster) {
     switchGlobalCluster(clusterName);
   }
-  showView('dashboard');
+  showView('dashboard', true);
+  _pushRouteState('dashboard', clusterName);
+}
+
+// ---------------------------------------------------------------------------
+// URL Routing — pushState/popstate for cluster + view navigation
+// URL pattern: ?cluster=<name>&view=<view> or just ?view=clusters
+// ---------------------------------------------------------------------------
+function _pushRouteState(view, clusterName) {
+  try {
+    var u = new URL(window.location.href);
+    if (view === 'clusters' || view === 'cluster-picker') {
+      u.searchParams.delete('cluster');
+      u.searchParams.set('view', 'clusters');
+    } else {
+      if (clusterName && clusterName !== 'local') {
+        u.searchParams.set('cluster', clusterName);
+      } else {
+        u.searchParams.delete('cluster');
+        if (clusterName === 'local') u.searchParams.set('cluster', 'hub');
+      }
+      u.searchParams.set('view', view || 'dashboard');
+    }
+    var state = { view: view, cluster: clusterName || null };
+    window.history.pushState(state, '', u);
+    document.title = _buildPageTitle(view, clusterName);
+  } catch (e) {}
+}
+
+function _buildPageTitle(view, clusterName) {
+  var parts = ['TCS Agentic AI'];
+  if (view === 'clusters' || view === 'cluster-picker') {
+    parts.push('Clusters');
+  } else {
+    var cname = clusterName === 'local' ? 'Hub Cluster' : (clusterName || 'Cluster');
+    parts.push(cname);
+    var viewLabels = { dashboard: 'Dashboard', chat: 'AI Chat', audit: 'Audit', intelligence: 'AI Intelligence', settings: 'Settings', hub: 'AI Hub' };
+    if (viewLabels[view]) parts.push(viewLabels[view]);
+  }
+  return parts.join(' · ');
+}
+
+window.addEventListener('popstate', function(e) {
+  var state = e.state;
+  if (!state) {
+    var u = new URL(window.location.href);
+    state = { view: u.searchParams.get('view') || 'clusters', cluster: u.searchParams.get('cluster') || null };
+  }
+  if (state.view === 'clusters' || state.view === 'cluster-picker') {
+    showClusterPicker(true);
+  } else {
+    var cn = state.cluster;
+    if (cn === 'hub') cn = 'local';
+    if (cn && cn !== _globalActiveCluster) switchGlobalCluster(cn);
+    showView(state.view || 'dashboard', true);
+  }
+});
+
+// Actions panel: show which cluster actions belong to
+function updateActionsClusterScope() {
+  var el = document.getElementById('actions-cluster-scope');
+  if (!el) return;
+  var name = _globalActiveCluster === 'local' ? 'Hub Cluster' : (_globalActiveCluster || 'Cluster');
+  el.textContent = '· ' + name;
 }
 
 function _updateWorkspaceHeader() {
@@ -12758,6 +12885,7 @@ function loadEnabledProviders() {
       sel.value = 'none';
     }
   }
+  if (typeof renderLLMSwitcher === 'function') renderLLMSwitcher();
 }
 
 // Compat shims for old code paths
@@ -12767,9 +12895,94 @@ function onFullProviderChange() {
   var sel = document.getElementById('full-llm-provider');
   if (sel) { try { localStorage.setItem('mcp-selected-provider', sel.value); } catch(e) {} }
   if (typeof updateModelPill === 'function') updateModelPill();
+  renderLLMSwitcher();
 }
 function toggleFullLLMConfig() { showView('settings'); }
 function saveFullLLMConfig() {}
+
+// ---------------------------------------------------------------------------
+// Premium LLM Provider Switcher
+// ---------------------------------------------------------------------------
+var _llmProviderMeta = {
+  none:      { icon: 'AI', color: '#6366f1', label: 'Built-in Analysis', desc: 'Rule-based engine' },
+  azure:     { icon: 'Az', color: '#0078d4', label: 'Azure OpenAI', desc: 'GPT-4o / GPT-4 Turbo' },
+  openai:    { icon: 'OA', color: '#10a37f', label: 'OpenAI', desc: 'GPT-4o / GPT-4' },
+  anthropic: { icon: 'Cl', color: '#d97706', label: 'Anthropic', desc: 'Claude Sonnet / Opus' },
+  google:    { icon: 'Ge', color: '#4285f4', label: 'Google Gemini', desc: 'Gemini Pro / Ultra' },
+  bedrock:   { icon: 'BR', color: '#ff9900', label: 'AWS Bedrock', desc: 'Claude / Titan' },
+  ollama:    { icon: 'OL', color: '#1a1a2e', label: 'Ollama', desc: 'Local models' }
+};
+
+function toggleLLMSwitcher() {
+  var trigger = document.getElementById('llm-switcher-trigger');
+  var dd = document.getElementById('llm-dropdown');
+  if (!trigger || !dd) return;
+  var isOpen = dd.classList.contains('open');
+  dd.classList.toggle('open', !isOpen);
+  trigger.classList.toggle('open', !isOpen);
+  if (!isOpen) renderLLMDropdownList();
+}
+
+function closeLLMSwitcher() {
+  var trigger = document.getElementById('llm-switcher-trigger');
+  var dd = document.getElementById('llm-dropdown');
+  if (dd) dd.classList.remove('open');
+  if (trigger) trigger.classList.remove('open');
+}
+
+function renderLLMSwitcher() {
+  var sel = document.getElementById('full-llm-provider');
+  var val = sel ? sel.value : 'none';
+  var meta = _llmProviderMeta[val] || _llmProviderMeta.none;
+  var iconEl = document.getElementById('llm-sw-icon');
+  var nameEl = document.getElementById('llm-sw-name');
+  var modelEl = document.getElementById('llm-sw-model');
+  if (iconEl) { iconEl.textContent = meta.icon; iconEl.style.background = meta.color; }
+  if (nameEl) nameEl.textContent = meta.label;
+  if (modelEl) {
+    var modelSel = document.getElementById('full-llm-model-select');
+    var modelName = (modelSel && modelSel.value) ? modelSel.value : meta.desc;
+    modelEl.textContent = modelName;
+  }
+}
+
+function renderLLMDropdownList() {
+  var list = document.getElementById('llm-dd-list');
+  if (!list) return;
+  var sel = document.getElementById('full-llm-provider');
+  var current = sel ? sel.value : 'none';
+  var html = '';
+  // Built-in always first
+  var noneMeta = _llmProviderMeta.none;
+  html += '<div class="llm-dd-item' + (current === 'none' ? ' active' : '') + '" onclick="selectLLMProvider(\'none\')">' +
+    '<div class="llm-sw-icon" style="background:' + noneMeta.color + '">' + noneMeta.icon + '</div>' +
+    '<div class="llm-dd-item-info"><div class="llm-dd-item-name">' + noneMeta.label + '</div>' +
+    '<div class="llm-dd-item-desc">' + noneMeta.desc + '</div></div></div>';
+  // Configured providers
+  if (sel) {
+    Array.from(sel.options).forEach(function(opt) {
+      if (opt.value === 'none') return;
+      var meta = _llmProviderMeta[opt.value] || { icon: opt.value.substring(0,2).toUpperCase(), color: '#6b7280', label: opt.textContent, desc: '' };
+      html += '<div class="llm-dd-item' + (current === opt.value ? ' active' : '') + '" onclick="selectLLMProvider(\'' + opt.value + '\')">' +
+        '<div class="llm-sw-icon" style="background:' + meta.color + '">' + meta.icon + '</div>' +
+        '<div class="llm-dd-item-info"><div class="llm-dd-item-name">' + meta.label + '</div>' +
+        '<div class="llm-dd-item-desc">' + meta.desc + '</div></div></div>';
+    });
+  }
+  list.innerHTML = html;
+}
+
+function selectLLMProvider(value) {
+  var sel = document.getElementById('full-llm-provider');
+  if (sel) { sel.value = value; onFullProviderChange(); }
+  renderLLMSwitcher();
+  closeLLMSwitcher();
+}
+
+document.addEventListener('click', function(e) {
+  var sw = document.getElementById('llm-switcher');
+  if (sw && !sw.contains(e.target)) closeLLMSwitcher();
+});
 
 // ---------------------------------------------------------------------------
 // Actions panel — approval workflow for mutating operations.
@@ -12810,7 +13023,10 @@ function statusLabel(s) {
 
 function renderActionsPanel(data) {
   const list = document.getElementById('actions-list');
+  const histList = document.getElementById('actions-history-list');
   const badge = document.getElementById('snow-badge');
+  const pendingCount = document.getElementById('actions-pending-count');
+  const histCount = document.getElementById('actions-history-count');
   if (!list) return;
   if (badge) {
     if (data && data.serviceNowEnabled) {
@@ -12823,14 +13039,27 @@ function renderActionsPanel(data) {
   }
 
   const actions = (data && data.actions) || [];
-  // Hide terminal states after a short grace so the list stays focused.
-  const visible = actions.filter(a => a.status !== 'cancelled' || (Date.now() - new Date(a.updatedAt).getTime()) < 60000);
+  const pending = actions.filter(a => ['pending_confirmation','awaiting_approval','approved'].includes(a.status));
+  const history = actions.filter(a => ['executed','failed','cancelled','rejected'].includes(a.status));
 
-  if (visible.length === 0) {
+  if (pendingCount) pendingCount.textContent = pending.length;
+  if (histCount) histCount.textContent = history.length;
+
+  if (pending.length === 0) {
     list.innerHTML = '<div class="actions-empty">No pending actions. Ask to restart, delete or scale a workload and it will appear here for confirmation.</div>';
-    return;
+  } else {
+    list.innerHTML = pending.map(renderActionCard).join('');
   }
-  list.innerHTML = visible.map(renderActionCard).join('');
+
+  if (histList) {
+    if (history.length === 0) {
+      histList.innerHTML = '<div class="actions-empty">Action history will appear here.</div>';
+    } else {
+      histList.innerHTML = history.slice(0, 20).map(renderActionCard).join('');
+    }
+  }
+
+  updateActionsClusterScope();
 }
 
 function renderActionCard(a) {
@@ -12879,11 +13108,18 @@ function renderActionCard(a) {
     cancelled: 'cancelled',
   })[status] || 'pending';
 
+  var clusterTag = a.cluster ? `<div class="ac-cluster">${esc(a.cluster === 'local' ? 'Hub Cluster' : a.cluster)}</div>` : '';
+  var timeTag = a.createdAt ? `<div class="ac-time">${timeAgo(a.createdAt)}</div>` : '';
+
   return (
     `<div class="action-card ${cardClass}" data-id="${esc(a.id)}">` +
+      clusterTag +
       `<div class="ac-summary">${summary}</div>` +
       (meta ? `<div class="ac-meta">${meta}</div>` : '') +
-      `<div class="ac-status">${esc(statusLabel(status))}</div>` +
+      `<div style="display:flex;align-items:center;justify-content:space-between;gap:6px">` +
+        `<div class="ac-status">${esc(statusLabel(status))}</div>` +
+        timeTag +
+      `</div>` +
       cr +
       result +
       buttons +
@@ -17099,17 +17335,24 @@ async function refreshClusterList() {
     if (!_clusterRestored) {
       _clusterRestored = true;
       var want = null;
+      var wantView = null;
       try {
-        want = new URL(window.location.href).searchParams.get('cluster')
-          || localStorage.getItem('mcp-active-cluster');
+        var _urlParams = new URL(window.location.href).searchParams;
+        want = _urlParams.get('cluster') || localStorage.getItem('mcp-active-cluster');
+        wantView = _urlParams.get('view');
+        if (want === 'hub') want = 'local';
       } catch (e) {}
-      if (want && want !== 'local' && want !== _globalActiveCluster && _remoteAgents[want]) {
-        // If cluster picker is showing, go directly into that workspace
+      if (wantView === 'clusters') {
+        if (!_inClusterPicker) showClusterPicker(true);
+      } else if (want && want !== _globalActiveCluster && (want === 'local' || _remoteAgents[want])) {
         if (_inClusterPicker) {
           enterClusterWorkspace(want);
         } else {
           switchGlobalCluster(want);
         }
+        if (wantView && wantView !== 'dashboard') showView(wantView, true);
+      } else if (wantView && wantView !== 'clusters' && !_inClusterPicker) {
+        showView(wantView, true);
       }
     }
   } catch (e) { /* best effort */ }
