@@ -611,8 +611,12 @@ tr:hover td{background:#ffffff06}
 /* Full-page chat layout — single scrollbar (conversation only) */
 body.chat-active{overflow:hidden}
 body.chat-active .app-footer{display:none}
-.chat-fullpage{display:flex;height:calc(100vh - 65px);background:var(--bg-deep);overflow:hidden}
-.chat-sidebar{width:260px;background:var(--bg);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.chat-fullpage{display:flex;flex-direction:column;height:calc(100vh - 65px);background:var(--bg-deep);overflow:hidden}
+.chat-body-row{display:flex;flex:1;min-height:0;overflow:hidden}
+.chat-footer{background:var(--bg);border-top:1px solid var(--border);padding:6px 24px;display:flex;align-items:center;justify-content:space-between;font-size:10px;color:var(--text2);flex-shrink:0;letter-spacing:.2px;opacity:.7}
+.chat-footer .cf-left{display:flex;align-items:center;gap:6px}
+.chat-footer .cf-dot{width:5px;height:5px;border-radius:50%;background:var(--accent3)}
+.chat-sidebar{width:250px;background:var(--bg);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
 @media(max-width:900px){.chat-sidebar{width:220px}}
 @media(max-width:700px){.chat-sidebar{display:none}}
 .actions-panel{position:fixed;top:65px;right:0;bottom:0;width:340px;background:var(--bg);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;z-index:120;transform:translateX(100%);transition:transform .3s cubic-bezier(.4,0,.2,1);box-shadow:none}
@@ -725,7 +729,7 @@ body.chat-active .app-footer{display:none}
 .chat-conversation::-webkit-scrollbar-track{background:transparent}
 .chat-conversation::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 .chat-conversation::-webkit-scrollbar-thumb:hover{background:var(--text2)}
-.chat-conv-inner{max-width:none;padding:24px clamp(40px,8vw,140px) 140px clamp(40px,5vw,100px)}
+.chat-conv-inner{max-width:none;padding:24px clamp(32px,6vw,120px) 140px clamp(32px,4vw,80px)}
 .conv-msg{margin-bottom:8px;animation:msgIn .2s ease-out}
 @keyframes msgIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
 .conv-msg.user{display:flex;justify-content:flex-end;margin-bottom:20px}
@@ -736,12 +740,6 @@ body.chat-active .app-footer{display:none}
 .conv-name{font-size:14px;font-weight:600;color:var(--text)}
 .conv-provider-tag{font-size:10px;color:#818cf8;background:#818cf815;padding:2px 8px;border-radius:10px;font-weight:500;letter-spacing:.2px}
 .conv-body{padding-left:32px;font-size:15px;line-height:1.75;color:var(--text);word-wrap:break-word}
-.conv-actions{display:flex;align-items:center;gap:2px;padding-left:32px;margin-top:6px;opacity:0;transition:opacity .15s}
-.conv-msg.ai:hover .conv-actions{opacity:1}
-.conv-action-btn{background:none;border:none;color:var(--text2);cursor:pointer;padding:5px 7px;border-radius:6px;font-size:14px;line-height:1;transition:all .15s;display:flex;align-items:center;justify-content:center}
-.conv-action-btn:hover{background:var(--hover);color:var(--text)}
-.conv-action-btn.liked{color:var(--ok)}
-.conv-action-btn.disliked{color:var(--crit)}
 .conv-body .chat-heading{font-size:16px;font-weight:700;margin:16px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--border2);color:var(--text);letter-spacing:-0.01em}
 .conv-body .chat-heading.h2{font-size:17px}
 .conv-body .chat-heading.chat-heading-sm{font-size:13px;border-bottom:none;margin:10px 0 4px}
@@ -816,7 +814,7 @@ body.chat-active .app-footer{display:none}
 .smart-suggestion.ss-crit:hover{background:color-mix(in srgb,var(--crit) 18%,transparent);color:#ff6b6b}
 .smart-suggestion.ss-warn{background:color-mix(in srgb,var(--warn) 8%,transparent);border-color:color-mix(in srgb,var(--warn) 30%,transparent);color:var(--warn)}
 .smart-suggestion.ss-warn:hover{background:color-mix(in srgb,var(--warn) 18%,transparent);color:#fbbf24}
-.chat-bottom-bar{position:absolute;bottom:0;left:0;right:0;padding:0 clamp(40px,8vw,140px) 10px clamp(40px,5vw,100px);background:linear-gradient(to top,var(--bg-deep) 85%,transparent);pointer-events:none;z-index:10}
+.chat-bottom-bar{position:absolute;bottom:0;left:0;right:0;padding:0 clamp(32px,6vw,120px) 10px clamp(32px,4vw,80px);background:linear-gradient(to top,var(--bg-deep) 85%,transparent);pointer-events:none;z-index:10}
 .chat-bottom-inner{max-width:none;pointer-events:auto}
 .chat-controls-row{display:none}
 .chat-input-row{display:flex;align-items:center;gap:0;background:var(--card);border:1px solid var(--border);border-radius:24px;padding:4px 6px;transition:border-color .2s,box-shadow .2s}
@@ -1142,6 +1140,7 @@ body.chat-active .app-footer{display:none}
 .light-theme .header .brand-name .agentic{color:#2563eb}
 .light-theme .header .brand-sub{color:#64748b}
 .light-theme .app-footer{background:linear-gradient(135deg,#f8f9fc 0%,#eee8f8 100%);border-top:1px solid #e0e0e0;color:#666}
+.light-theme .chat-footer{background:#fafbfc;border-top-color:#e0e0e0;color:#888}
 .light-theme .msg.ai{background:#eeeef2}
 .light-theme .msg code,.light-theme .conv-body code{background:#e8e8f0;color:#6f42c1}
 .light-theme .msg blockquote,.light-theme .conv-body blockquote{background:#2563eb06;border-color:#2563eb;color:#57606a}
@@ -3570,6 +3569,7 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
 
 <!-- Full-page AI Chat View (hidden by default) -->
 <div id="view-chat" class="chat-fullpage" style="display:none">
+  <div class="chat-body-row">
   <!-- Sidebar: conversation history -->
   <div class="chat-sidebar">
     <div class="sidebar-header">
@@ -3582,6 +3582,7 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
     <div class="chat-history-list" id="chat-history-list"></div>
     <div style="padding:10px 14px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
       <button class="export-btn" onclick="exportConversation()" title="Export conversations" style="font-size:11px;display:flex;align-items:center;gap:4px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg> Export</button>
+      <span style="font-size:9px;color:var(--text2);opacity:.5;letter-spacing:.3px">v2.0</span>
     </div>
   </div>
 
@@ -3743,6 +3744,11 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
     <div class="pinboard-list" id="pinboard-list">
       <div class="pinboard-empty">Pin important AI responses to save them here for reference.</div>
     </div>
+  </div>
+  </div><!-- /chat-body-row -->
+  <div class="chat-footer">
+    <div class="cf-left"><span class="cf-dot"></span> TCS Agentic AI &bull; Enterprise Intelligence Platform &bull; Multi-LLM + ACM + Ansible</div>
+    <div>&copy; 2026 TCS. All Rights Reserved.</div>
   </div>
 </div>
 
@@ -11486,12 +11492,6 @@ function renderConversation() {
         toolsBlock +
         '<div class="conv-body">' + (msg.html || md(msg.text || '')) + '</div>' +
         traceBlock +
-        '<div class="conv-actions">' +
-          '<button class="conv-action-btn" onclick="copyAiMsg(this)" title="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>' +
-          '<button class="conv-action-btn" onclick="likeAiMsg(this,' + msgIdx + ')" title="Good response"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 22V11l5-9 2 1-1 5h7a2 2 0 012 2v2l-3 9H7z"/></svg></button>' +
-          '<button class="conv-action-btn" onclick="dislikeAiMsg(this,' + msgIdx + ')" title="Bad response"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 2v11l-5 9-2-1 1-5H4a2 2 0 01-2-2v-2l3-9h12z"/></svg></button>' +
-          '<button class="conv-action-btn" onclick="retryAiMsg(' + msgIdx + ')" title="Retry"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 105.64-11.36L3 10"/></svg></button>' +
-        '</div>' +
         '</div>';
     }
   }
@@ -11500,34 +11500,6 @@ function renderConversation() {
   scrollConversation();
 }
 
-function copyAiMsg(btn) {
-  var body = btn.closest('.conv-msg.ai').querySelector('.conv-body');
-  if (!body) return;
-  var text = body.innerText || body.textContent;
-  navigator.clipboard.writeText(text).then(function() {
-    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>';
-    setTimeout(function() {
-      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
-    }, 1500);
-  });
-}
-function likeAiMsg(btn, idx) {
-  btn.classList.toggle('liked');
-  btn.closest('.conv-actions').querySelector('.conv-action-btn.disliked')?.classList.remove('disliked');
-}
-function dislikeAiMsg(btn, idx) {
-  btn.classList.toggle('disliked');
-  btn.closest('.conv-actions').querySelector('.conv-action-btn.liked')?.classList.remove('liked');
-}
-function retryAiMsg(idx) {
-  var chat = getActiveChat();
-  if (!chat || !chat.messages[idx]) return;
-  var lastUserIdx = -1;
-  for (var i = idx - 1; i >= 0; i--) {
-    if (chat.messages[i].role === 'user') { lastUserIdx = i; break; }
-  }
-  if (lastUserIdx >= 0) sendFullChat(chat.messages[lastUserIdx].text);
-}
 
 function restoreCachedFixResults(container) {
   container.querySelectorAll('.sec-fix-cmd, .aic-ai-fix-cmd').forEach(function(cmdEl) {
