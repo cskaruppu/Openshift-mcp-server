@@ -2175,13 +2175,18 @@ tr:hover td{background:#ffffff06}
 .cp-fleet-response{display:none;margin-top:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;font-size:13px;line-height:1.6;max-height:300px;overflow-y:auto}
 
 /* ── Workspace back button in header ── */
-.workspace-back-btn{display:none;align-items:center;gap:6px;background:none;border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:600;transition:all .15s;margin-right:12px;white-space:nowrap}
-.workspace-back-btn:hover{border-color:var(--accent2);color:var(--accent2);background:color-mix(in srgb,var(--accent2) 8%,transparent)}
-.workspace-back-btn svg{width:14px;height:14px}
-.workspace-cluster-label{display:none;align-items:center;gap:8px;margin-right:12px;font-size:12px;color:var(--text)}
-.workspace-cluster-label .wcl-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.workspace-cluster-label .wcl-name{font-weight:700;font-size:13px}
-.workspace-cluster-label .wcl-platform{color:var(--text2);font-size:11px}
+/* ── Workspace breadcrumb bar (below header, above content) ── */
+.workspace-breadcrumb{display:none;align-items:center;justify-content:space-between;padding:10px 24px;background:var(--card);border-bottom:1px solid var(--border);font-size:12px}
+.workspace-breadcrumb-left{display:flex;align-items:center;gap:6px}
+.workspace-breadcrumb-back{display:flex;align-items:center;gap:5px;background:none;border:none;color:var(--accent2);cursor:pointer;font-size:12px;font-weight:600;padding:4px 10px;border-radius:6px;transition:all .15s}
+.workspace-breadcrumb-back:hover{background:color-mix(in srgb,var(--accent2) 8%,transparent)}
+.workspace-breadcrumb-back svg{width:12px;height:12px}
+.workspace-breadcrumb-sep{color:var(--border);font-size:14px;margin:0 4px}
+.workspace-breadcrumb-cluster{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--text)}
+.workspace-breadcrumb-cluster .wbc-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.workspace-breadcrumb-cluster .wbc-name{font-size:13px;font-weight:700}
+.workspace-breadcrumb-cluster .wbc-badge{font-size:9px;font-weight:700;padding:2px 8px;border-radius:4px;text-transform:uppercase;letter-spacing:.5px}
+.workspace-breadcrumb-right{display:flex;align-items:center;gap:12px;color:var(--text2);font-size:11px}
 
 /* ── AI Hub Analytics Sections ── */
 .hub-analytics-section{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
@@ -2204,6 +2209,7 @@ tr:hover td{background:#ffffff06}
 body.cluster-picker-mode .header{display:none}
 body.cluster-picker-mode .app-footer{display:none}
 body.cluster-picker-mode .cluster-context-banner{display:none!important}
+body.cluster-picker-mode .workspace-breadcrumb{display:none!important}
 
 /* ── Workspace mode: hide redundant cluster selectors ── */
 body.workspace-mode #global-cluster-selector{display:none}
@@ -2253,6 +2259,14 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
 .light-theme .cp-action-btn:hover{border-color:rgba(99,102,241,.3);color:#4338ca;background:rgba(99,102,241,.08)}
 .light-theme .cp-user-label{color:#6b7280}
 .light-theme .cp-logout-btn{border-color:#e2e8f0;color:#6b7280}
+
+/* ── Light theme: workspace breadcrumb ── */
+.light-theme .workspace-breadcrumb{background:#fff;border-bottom-color:#e5e7eb}
+.light-theme .workspace-breadcrumb-back{color:#4f46e5}
+.light-theme .workspace-breadcrumb-back:hover{background:rgba(79,70,229,.06)}
+.light-theme .workspace-breadcrumb-sep{color:#d1d5db}
+.light-theme .workspace-breadcrumb-cluster .wbc-name{color:#1e293b}
+.light-theme .workspace-breadcrumb-right{color:#9ca3af}
 </style>
 </head>
 <body>
@@ -2303,7 +2317,7 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
         <code>POST /api/auth/users</code> or the User Management panel.
       </div>
     </div>
-    <div class="login-footer-tagline">Enterprise Intelligence Platform</div>
+    <div class="login-footer-tagline">MCP Gateway &middot; Multi-Cluster AI</div>
   </div>
 </div>
 
@@ -2330,15 +2344,6 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
       <span class="brand-name"><span class="tcs">TCS</span> <span class="agentic">Agentic</span> <span class="ai">AI</span></span>
       <span class="brand-sub">Enterprise Intelligence Platform</span>
     </div>
-  </div>
-  <button class="workspace-back-btn" id="workspace-back-btn" onclick="showClusterPicker()">
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 2L4 8l6 6"/></svg>
-    Clusters
-  </button>
-  <div class="workspace-cluster-label" id="workspace-cluster-label">
-    <span class="wcl-dot" id="wcl-dot"></span>
-    <span class="wcl-name" id="wcl-name"></span>
-    <span class="wcl-platform" id="wcl-platform"></span>
   </div>
   <div class="nav-tabs" id="main-nav-tabs">
     <button class="nav-tab active" data-view="dashboard" onclick="showView('dashboard')">Dashboard</button>
@@ -2387,6 +2392,23 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
     <span id="auth-user-label" style="font-size:11px;color:var(--text2);margin-left:8px"></span>
     <button class="icon-btn" id="logout-btn" onclick="handleLogout()" title="Sign out" style="display:none;margin-left:4px;color:var(--text2)">&#x23FB;</button>
   </div>
+</div>
+
+<!-- Workspace breadcrumb bar (visible when multi-cluster, between header and content) -->
+<div class="workspace-breadcrumb" id="workspace-breadcrumb">
+  <div class="workspace-breadcrumb-left">
+    <button class="workspace-breadcrumb-back" onclick="showClusterPicker()">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 2L4 8l6 6"/></svg>
+      Clusters
+    </button>
+    <span class="workspace-breadcrumb-sep">/</span>
+    <div class="workspace-breadcrumb-cluster">
+      <span class="wbc-dot" id="wbc-dot"></span>
+      <span class="wbc-name" id="wbc-name"></span>
+      <span class="wbc-badge" id="wbc-badge"></span>
+    </div>
+  </div>
+  <div class="workspace-breadcrumb-right" id="wbc-meta"></div>
 </div>
 
 <!-- Cluster Context Banner (shown when viewing a remote cluster) -->
@@ -8075,11 +8097,10 @@ function handleLogout() {
     document.body.classList.remove('cluster-picker-mode');
     var cpEl = document.getElementById('view-cluster-picker');
     if (cpEl) cpEl.style.display = 'none';
-    // Hide workspace header elements
-    var backBtn = document.getElementById('workspace-back-btn');
-    var clusterLabel = document.getElementById('workspace-cluster-label');
-    if (backBtn) backBtn.style.display = 'none';
-    if (clusterLabel) clusterLabel.style.display = 'none';
+    // Hide workspace breadcrumb bar
+    var breadcrumb = document.getElementById('workspace-breadcrumb');
+    if (breadcrumb) breadcrumb.style.display = 'none';
+    document.body.classList.remove('workspace-mode');
     showLoginOverlay('token');
   });
 }
@@ -10422,43 +10443,55 @@ function enterClusterWorkspace(clusterName) {
 }
 
 function _updateWorkspaceHeader() {
-  var backBtn = document.getElementById('workspace-back-btn');
-  var clusterLabel = document.getElementById('workspace-cluster-label');
+  var breadcrumb = document.getElementById('workspace-breadcrumb');
   var hasRemote = Object.keys(_remoteAgents || {}).length > 0;
 
-  // Toggle workspace-mode body class for CSS-driven hiding of redundant elements
   document.body.classList.toggle('workspace-mode', hasRemote);
 
-  if (backBtn) backBtn.style.display = hasRemote ? 'flex' : 'none';
-
-  // Hide AI Hub tab in workspace mode — it lives on the cluster picker page
   var hubTab = document.querySelector('#main-nav-tabs .nav-tab[data-view="hub"]');
   if (hubTab) hubTab.style.display = hasRemote ? 'none' : '';
 
-  if (clusterLabel && hasRemote) {
-    clusterLabel.style.display = 'flex';
-    var dotEl = document.getElementById('wcl-dot');
-    var nameEl = document.getElementById('wcl-name');
-    var platEl = document.getElementById('wcl-platform');
+  if (breadcrumb && hasRemote) {
+    breadcrumb.style.display = 'flex';
+    var dotEl = document.getElementById('wbc-dot');
+    var nameEl = document.getElementById('wbc-name');
+    var badgeEl = document.getElementById('wbc-badge');
+    var metaEl = document.getElementById('wbc-meta');
     if (_globalActiveCluster === 'local') {
+      var lp = (_localClusterInfo && _localClusterInfo.platform) || 'openshift';
+      var lpInfo = K8S_PLATFORMS[lp.toLowerCase()] || K8S_PLATFORMS['k8s'];
       if (nameEl) nameEl.textContent = (_localClusterInfo && _localClusterInfo.name) || 'Hub';
-      if (platEl) {
-        var lp = (_localClusterInfo && _localClusterInfo.platform) || 'openshift';
-        var lpInfo = K8S_PLATFORMS[lp.toLowerCase()] || K8S_PLATFORMS['k8s'];
-        platEl.textContent = lpInfo.icon + ' ' + lpInfo.name + ' · PRIMARY';
+      if (badgeEl) {
+        badgeEl.textContent = lpInfo.name + ' · PRIMARY';
+        badgeEl.style.background = 'linear-gradient(135deg,#e04040,#c03030)';
+        badgeEl.style.color = '#fff';
       }
       if (dotEl) dotEl.style.background = 'var(--ok)';
+      if (metaEl) {
+        var lv = (_localClusterInfo && (_localClusterInfo.version || _localClusterInfo.kubernetesVersion)) || '';
+        metaEl.textContent = lv ? 'v' + lv : '';
+      }
     } else {
       var agent = (_remoteAgents || {})[_globalActiveCluster] || {};
       var platform = (agent.platform || 'k8s').toLowerCase();
       var pInfo = K8S_PLATFORMS[platform] || K8S_PLATFORMS['k8s'];
       if (nameEl) nameEl.textContent = _globalActiveCluster;
-      if (platEl) platEl.textContent = pInfo.icon + ' ' + pInfo.name;
+      if (badgeEl) {
+        badgeEl.textContent = pInfo.name;
+        badgeEl.style.background = pInfo.color || 'var(--accent2)';
+        badgeEl.style.color = '#fff';
+      }
       var isAct = _ccsIsActive(agent.status);
       if (dotEl) dotEl.style.background = isAct ? 'var(--ok)' : 'var(--warn)';
+      if (metaEl) {
+        var parts = [];
+        if (agent.version) parts.push('v' + agent.version);
+        if (agent.status) parts.push(agent.status);
+        metaEl.textContent = parts.join(' · ');
+      }
     }
-  } else if (clusterLabel) {
-    clusterLabel.style.display = 'none';
+  } else if (breadcrumb) {
+    breadcrumb.style.display = 'none';
   }
 }
 
