@@ -5290,6 +5290,14 @@ function withCluster(body) {
 }
 
 var _apiFetchInflight = new Map();
+var _clusterAbortController = new AbortController();
+
+// Abort all in-flight cluster-scoped requests. Called on cluster switch.
+function abortClusterRequests() {
+  _clusterAbortController.abort();
+  _clusterAbortController = new AbortController();
+}
+
 async function apiFetch(path, timeoutMs) {
   var key = path + '|' + _globalActiveCluster;
   if (_apiFetchInflight.has(key)) return _apiFetchInflight.get(key);
@@ -5300,10 +5308,14 @@ async function apiFetch(path, timeoutMs) {
 }
 async function _apiFetchInner(path, timeoutMs) {
   const controller = new AbortController();
+  const clusterSignal = _clusterAbortController.signal;
   const tid = setTimeout(() => controller.abort(), timeoutMs || 12000);
+  clusterSignal.addEventListener('abort', function() { controller.abort(); }, { once: true });
   try {
     var fetchUrl = clusterUrl(MCP_API.replace(/\/api$/, '') + path);
-    const res = await fetch(fetchUrl, { signal: controller.signal });
+    var headers = { 'X-Cluster-Context': _globalActiveCluster || 'local' };
+    if (_authToken) headers['Authorization'] = 'Bearer ' + _authToken;
+    const res = await fetch(fetchUrl, { signal: controller.signal, headers: headers });
     clearTimeout(tid);
     if (res.status === 401) {
       _authenticated = false;
@@ -6489,7 +6501,7 @@ async function runLLMRiskAnalysis() {
   btn.classList.add('loading');
   btn.textContent = '\u{1F9E0} Analyzing...';
   try {
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/risk-analysis', {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/risk-analysis'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(withCluster({ llmOpts: opts })),
@@ -6811,7 +6823,10 @@ function acwToggleNsPanel() {
 function acwStartLiveRefresh() {
   acwStopLiveRefresh();
   _acwLiveTimer = setInterval(function() {
-    acwLoadTransferList(true);
+    var _gen = clusterGen();
+    acwLoadTransferList(true).then(function() {
+      if (!clusterGuard(_gen)) return;
+    }).catch(function() {});
   }, 30000);
 }
 function acwStopLiveRefresh() {
@@ -6830,8 +6845,10 @@ function acwToast(msg) {
 }
 
 async function acwLoadTransferList(silent) {
+  var _gen = clusterGen();
   try {
     var disco = await apiFetch('/api/dashboard/app-changes');
+    if (!clusterGuard(_gen)) return;
     var watched = disco.watchedNamespaces || [];
     _acwWatchedNs = watched;
     var allNs = [];
@@ -9070,7 +9087,7 @@ async function planExecuteStep(planId, stepId, dryRun) {
   var cmd = cmdEl.textContent;
 
   // Mark running
-  await fetch(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/steps/' + stepId, {
+  await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/steps/' + stepId), {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status: 'running' }),
   });
@@ -9078,14 +9095,14 @@ async function planExecuteStep(planId, stepId, dryRun) {
 
   // Execute via existing fix endpoint (gets guardrails for free)
   try {
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/execute-fix', {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/alerts/execute-fix'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(withCluster({ command: cmd, dryRun: !!dryRun })),
     });
     var data = await resp.json();
     var newStatus = data.success ? 'completed' : 'failed';
     if (dryRun && data.success) newStatus = 'pending'; // Reset to pending so user can hit Execute next
-    await fetch(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/steps/' + stepId, {
+    await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/steps/' + stepId), {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(withCluster({
         status: newStatus,
@@ -9093,7 +9110,7 @@ async function planExecuteStep(planId, stepId, dryRun) {
       })),
     });
   } catch (e) {
-    await fetch(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/steps/' + stepId, {
+    await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/steps/' + stepId), {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'failed', error: e.message }),
     });
@@ -9102,7 +9119,7 @@ async function planExecuteStep(planId, stepId, dryRun) {
 }
 
 async function planMarkStep(planId, stepId, status) {
-  await fetch(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/steps/' + stepId, {
+  await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/steps/' + stepId), {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status: status }),
   });
@@ -9110,13 +9127,13 @@ async function planMarkStep(planId, stepId, status) {
 }
 
 async function planApprove(planId) {
-  await fetch(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/approve', { method: 'POST' });
+  await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/approve'), { method: 'POST' });
   planRefresh(planId);
 }
 
 async function planRollback(planId) {
   if (!confirm('Rollback all completed steps in reverse order? This will run rollback commands.')) return;
-  var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/rollback', { method: 'POST' });
+  var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId + '/rollback'), { method: 'POST' });
   var data = await resp.json();
   if (data.rollbackSteps) {
     alert('Rollback initiated. ' + data.rollbackSteps.length + ' rollback commands queued. Re-execute them manually if needed.');
@@ -9125,7 +9142,7 @@ async function planRollback(planId) {
 }
 
 async function planRefresh(planId) {
-  var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId);
+  var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/plans/' + planId));
   if (!resp.ok) return;
   var data = await resp.json();
   if (!data.plan) return;
@@ -9214,7 +9231,7 @@ async function applyFixProposal(fixId, fixDataB64, isDryRun) {
     if (isDryRun || isReadOnly) {
       // Read-only actions and dry runs go through the fix-executor
       var cmd = fix.command;
-      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/execute-fix', {
+      var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/alerts/execute-fix'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(withCluster({ command: cmd, dryRun: !isReadOnly })),
@@ -9233,7 +9250,7 @@ async function applyFixProposal(fixId, fixDataB64, isDryRun) {
         resultEl.innerHTML = '<div class="fp-fix-result err">&#x274C; ' + (isDryRun ? 'Dry run failed: ' : 'Failed: ') + esc(data.stderr || data.error || 'Unknown error') + '</div>';
       }
     } else {
-      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/execute', {
+      var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/execute'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(withCluster({
@@ -9547,7 +9564,7 @@ async function submitITSMForm(formId, type) {
       payload.upgradeInfo = uinfo;
       payload.conversationId = uinfo.conversationId || '';
     }
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/itsm/submit', {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/itsm/submit'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -9681,7 +9698,7 @@ function pollCRApproval(sysId, ticketId, preflightReport, upgradeInfo) {
     attempts++;
     if (attempts > maxAttempts) { clearInterval(timer); return; }
     try {
-      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/itsm/cr-status', {
+      var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/itsm/cr-status'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(withCluster({ sysId: sysId, ticketId: ticketId })),
@@ -9860,7 +9877,7 @@ async function upgradeAction(action, formId) {
       termLine('t-dim', 'Validating upgrade path...') + '</div>';
     var term = document.getElementById(formId + '-term');
     try {
-      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/upgrade/dryrun', {
+      var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/upgrade/dryrun'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(withCluster({ version: targetVersion, channel: channel })),
@@ -9901,7 +9918,7 @@ async function upgradeAction(action, formId) {
     if (channel) {
       term.innerHTML += termLine('t-dim', '$ oc adm upgrade channel --channel=' + esc(channel));
       term.innerHTML += termLine('t-dim', 'Setting update channel...');
-      await fetch(MCP_API.replace(/\/api$/, '') + '/api/upgrade/channel', {
+      await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/upgrade/channel'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(withCluster({ channel: channel })),
@@ -9911,7 +9928,7 @@ async function upgradeAction(action, formId) {
 
     term.innerHTML += termLine('t-dim', 'Initiating cluster upgrade to ' + esc(targetVersion) + '...');
 
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/upgrade/start', {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/upgrade/start'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(withCluster({ version: targetVersion, force: force })),
@@ -10042,7 +10059,7 @@ async function applyFix(btnId, action, name, ns) {
   if (resultEl) resultEl.innerHTML = '';
 
   try {
-    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/execute', {
+    const resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/execute'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(withCluster({ action: action, pod: name, namespace: ns, deployment: name })),
@@ -10117,7 +10134,7 @@ async function sendMessage() {
       if (ml) chatBody.model = ml;
     }
 
-    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat', {
+    const resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/chat'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
       body: JSON.stringify(chatBody),
@@ -12038,6 +12055,7 @@ async function switchGlobalCluster(name) {
   if (name === _globalActiveCluster) return;
   _globalActiveCluster = name;
   _clusterGeneration++;
+  abortClusterRequests();
   _apiFetchInflight.clear();
   // Persist selection so a refresh / shared link keeps the cluster context.
   try {
@@ -12104,13 +12122,31 @@ async function switchGlobalCluster(name) {
 }
 
 function reloadCurrentView() {
+  // Clear stale cluster data from DOM before loading new cluster's data.
+  // This prevents users from seeing cluster-A data while cluster-B loads.
+  clearDashboardMetrics();
+
   if (_currentView === 'dashboard') { refreshAll(); }
   else if (_currentView === 'audit') { if (typeof loadAuditView === 'function') loadAuditView(); }
   else if (_currentView === 'intelligence') { if (typeof loadIntelligenceView === 'function') loadIntelligenceView(); }
   else if (_currentView === 'chat') { updateCcsTrigger(); updateChatWelcomeText(); renderConversation(); scrollConversation(); }
-  // Chat history is per-cluster — refresh the scoped list on every switch so
-  // that opening AI Chat always shows only the selected cluster's chats.
   if (typeof reloadChatList === 'function') { reloadChatList(); }
+}
+
+function clearDashboardMetrics() {
+  var ids = ['m-health', 'm-nodes', 'm-ns', 'm-ops', 'dash-alert-count', 'dash-pod-issues',
+    'm-health-label', 'm-nodes-label', 'm-ns-label', 'm-ops-label', 'dash-alert-breakdown', 'dash-pod-breakdown'];
+  ids.forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) {
+      if (el.classList.contains('metric')) { el.textContent = '--'; el.className = 'metric'; }
+      else el.textContent = 'Loading...';
+    }
+  });
+  ['sec-score', 'gitops-sync', 'dr-score', 'opt-score', 'acw-tracked', 'iv-total'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = '--';
+  });
 }
 
 function updateClusterContextBanner() {
@@ -12337,7 +12373,7 @@ async function sendFullChat(text) {
       if (clusterCtx) chatBody.cluster = clusterCtx;
       // Fire pending CR fetch and chat request in parallel
       var crPromise = fetchPendingCRs().catch(function() { return []; });
-      var chatPromise = fetch(MCP_API.replace(/\/api$/, '') + '/api/chat', {
+      var chatPromise = fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/chat'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(chatBody),
@@ -12390,7 +12426,7 @@ async function sendCompareChat(msg, history, chatHistory) {
     providers.push(getActiveProviderOpts());
   }
 
-  const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat/compare', {
+  const resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/chat/compare'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(withCluster({ message: msg, providers: providers, conversationId: history.activeId, history: chatHistory })),
@@ -12422,7 +12458,7 @@ async function sendCompareChat(msg, history, chatHistory) {
 
 async function sendInvestigateChat(msg, history, providerOpts, chatHistory) {
   const startMs = Date.now();
-  const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat/investigate', {
+  const resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/chat/investigate'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(withCluster({ message: msg, conversationId: history.activeId, history: chatHistory, ...providerOpts })),
@@ -12482,7 +12518,7 @@ async function executeRunbook(runbookId) {
   scrollConversation();
 
   try {
-    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat/runbook', {
+    const resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/chat/runbook'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(withCluster({ runbook: runbookId, conversationId: history.activeId, ...providerOpts })),
@@ -12843,7 +12879,7 @@ async function fetchActions() {
     const history = loadChatHistory();
     const cid = history.activeId || '';
     const qs = cid ? ('?conversationId=' + encodeURIComponent(cid)) : '';
-    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/actions' + qs);
+    const resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/actions' + qs));
     if (!resp.ok) {
       if (resp.status === 404) _actionsBackendEnabled = false;
       return { actions: [] };
@@ -13070,7 +13106,7 @@ function stopActionsPolling() {
 // ---------------------------------------------------------------------------
 async function fetchPendingCRs() {
   try {
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/cr/pending');
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/cr/pending'));
     if (!resp.ok) return [];
     var data = await resp.json();
     return data.crs || [];
@@ -13169,7 +13205,7 @@ async function syncCR(ticketId) {
   var card = document.getElementById('cr-card-' + ticketId);
   if (card) card.classList.add('cr-syncing');
   try {
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/cr/' + encodeURIComponent(ticketId) + '/sync', { method: 'POST' });
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/cr/' + encodeURIComponent(ticketId) + '/sync'), { method: 'POST' });
     var data = await resp.json();
     _crLastSyncTime = new Date();
     if (data.changed) {
@@ -13190,7 +13226,7 @@ async function dismissCR(ticketId) {
   var card = document.getElementById('cr-card-' + ticketId);
   if (card) card.classList.add('cr-syncing');
   try {
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/cr/' + encodeURIComponent(ticketId), { method: 'DELETE' });
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/cr/' + encodeURIComponent(ticketId)), { method: 'DELETE' });
     var data = await resp.json();
     if (data.success) {
       if (data.snowCancelled) {
@@ -13214,7 +13250,7 @@ async function dismissCR(ticketId) {
 async function syncAllCRs() {
   showToast('Syncing all pending CRs...', '');
   try {
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/cr/sync-all', { method: 'POST' });
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/cr/sync-all'), { method: 'POST' });
     var data = await resp.json();
     _crLastSyncTime = new Date();
     var changed = (data.results || []).filter(function(r){ return r.changed; });
@@ -13242,7 +13278,7 @@ async function scheduleCR(ticketId) {
   var date = prompt('Enter planned execution date (YYYY-MM-DD):');
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
   try {
-    await fetch(MCP_API.replace(/\/api$/, '') + '/api/cr/' + encodeURIComponent(ticketId), {
+    await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/cr/' + encodeURIComponent(ticketId)), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'scheduled', scheduledDate: date + 'T00:00:00Z' }),
@@ -13252,14 +13288,16 @@ async function scheduleCR(ticketId) {
 }
 
 async function refreshPendingCRs() {
+  var _gen = clusterGen();
   var crs = await fetchPendingCRs();
+  if (!clusterGuard(_gen)) return;
   _crLastSyncTime = new Date();
   renderPendingCRPanel(crs);
 }
 
 window.backfillCRs = async function() {
   try {
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/cr/backfill', { method: 'POST' });
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/cr/backfill'), { method: 'POST' });
     var data = await resp.json();
     console.log('Backfill result:', data);
     await refreshPendingCRs();
@@ -13331,7 +13369,7 @@ function sendFeedback(msgIdx, rating) {
   if (msg) msg.feedback = rating;
   saveChatHistory(history);
   // Send to structured feedback endpoint (positive/negative)
-  fetch(MCP_API.replace(/\/api$/, '') + '/api/chat/feedback', {
+  fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/chat/feedback'), {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
@@ -14028,7 +14066,7 @@ async function aicExecuteFix(encodedCmd, idx, dryRun, confirmationToken) {
   // explicit confirmation modal (for destructive commands)
   if (!dryRun && !confirmationToken) {
     try {
-      var clsResp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/guardrails/classify', {
+      var clsResp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/guardrails/classify'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: cmd }),
       });
@@ -14041,7 +14079,7 @@ async function aicExecuteFix(encodedCmd, idx, dryRun, confirmationToken) {
       }
       if (cls.level === 'destructive' || (cls.level === 'caution' && cls.protectedNs)) {
         // Get a confirmation token first
-        var tokenResp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/guardrails/confirm', {
+        var tokenResp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/guardrails/confirm'), {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ command: cmd }),
         });
@@ -14070,7 +14108,7 @@ async function aicExecuteFix(encodedCmd, idx, dryRun, confirmationToken) {
     '</div>';
 
   try {
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/execute-fix', {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/alerts/execute-fix'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: cmd, dryRun: !!dryRun, confirmationToken: confirmationToken || null }),
     });
@@ -14320,9 +14358,10 @@ function resetAlertsCountdown() {
 // Poll alerts badge every 60s — deferred to avoid competing with initial load
 setTimeout(function() {
   setInterval(() => {
+    var _gen = clusterGen();
     fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/alerts'))
       .then(r => r.json())
-      .then(d => updateAlertsBadge((d.alerts || []).filter(a => !a.silenced).length))
+      .then(d => { if (clusterGuard(_gen)) updateAlertsBadge((d.alerts || []).filter(a => !a.silenced).length); })
       .catch(() => {});
   }, 60000);
 }, 10000);
@@ -14401,7 +14440,7 @@ function showSilenceModal(name, namespace) {
   modal.querySelector('#silence-confirm').addEventListener('click', async () => {
     const duration = parseInt(document.getElementById('silence-duration').value);
     try {
-      await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/silence', {
+      await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/alerts/silence'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, namespace: namespace || '', duration }),
@@ -14417,7 +14456,7 @@ function showSilenceModal(name, namespace) {
 
 async function unsilenceAlert(name, namespace) {
   try {
-    await fetch(MCP_API.replace(/\/api$/, '') + '/api/alerts/silence', {
+    await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/alerts/silence'), {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, namespace: namespace || '' }),
@@ -14702,7 +14741,7 @@ async function sendFullChatStreaming(text) {
   let fullText = '';
   let streamProvider = provider || 'none';
   try {
-    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/chat', {
+    const resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/chat'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
       body: JSON.stringify(chatBody),
@@ -14877,7 +14916,7 @@ async function handleDocUpload(event) {
     if (pOpts && Object.keys(pOpts).length > 0) {
       formData.append('providerOpts', JSON.stringify(pOpts));
     }
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/deploy/upload', {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/deploy/upload'), {
       method: 'POST',
       body: formData,
     });
@@ -14917,7 +14956,7 @@ async function pollParseJob(parseId) {
   for (var i = 0; i < maxPolls; i++) {
     await new Promise(function(r) { setTimeout(r, interval); });
     try {
-      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/deploy/parse-status?id=' + encodeURIComponent(parseId));
+      var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/deploy/parse-status?id=' + encodeURIComponent(parseId)));
       if (!resp.ok) continue;
       var job = await resp.json();
       if (job.status === 'done') return job;
@@ -15019,7 +15058,7 @@ async function deployAction(action) {
     deployChat('user', 'Show me the generated YAML');
     deployChat('system', 'Generating YAML manifests...');
     try {
-      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/deploy/chat-action', {
+      var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/deploy/chat-action'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'show-yaml', parseId: _deployParseId }),
@@ -15055,7 +15094,7 @@ async function deployAction(action) {
     deployChat('user', 'Deploy to OpenShift');
     try {
       // Get current intent for display
-      var intentResp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/deploy/chat-action', {
+      var intentResp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/deploy/chat-action'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'get-intent', parseId: _deployParseId }),
@@ -15067,7 +15106,7 @@ async function deployAction(action) {
 
       deployChat('system', 'Deploying <strong>' + esc(appName) + '</strong> (' + tierCount + ' tiers) to <strong>' + esc(ns) + '</strong>...');
 
-      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/deploy/chat-action', {
+      var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/deploy/chat-action'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'deploy', parseId: _deployParseId }),
@@ -15134,7 +15173,7 @@ async function handleDeployChatCommand(userMsg) {
     if (fieldMap[field]) field = fieldMap[field];
 
     try {
-      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/deploy/chat-action', {
+      var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/deploy/chat-action'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'update-field', parseId: _deployParseId, tierName: tierName, field: field, value: value }),
@@ -15167,7 +15206,7 @@ async function pollDeployStatus(deployId, appName) {
   for (var i = 0; i < maxPolls; i++) {
     await new Promise(function(r) { setTimeout(r, pollInterval); });
     try {
-      var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/deploy/status?id=' + encodeURIComponent(deployId));
+      var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/deploy/status?id=' + encodeURIComponent(deployId)));
       var dep = await resp.json();
       if (dep.error) break;
 
@@ -15211,7 +15250,7 @@ async function pollDeployStatus(deployId, appName) {
 async function rollbackDeploy(deployId) {
   deployChat('system', 'Rolling back deployment...');
   try {
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/deploy/rollback', {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/deploy/rollback'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ deployId: deployId }),
@@ -15548,7 +15587,7 @@ async function loadAdvisorView() {
   const el = document.getElementById('advisor-content');
   el.innerHTML = '<div class="loading">Analyzing workload efficiency...</div>';
   try {
-    const resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/advisor');
+    const resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/advisor'));
     const data = await resp.json();
     const lines = [];
     lines.push('<h3 style="margin-bottom:12px">Efficiency Report</h3>');
@@ -18029,7 +18068,7 @@ document.addEventListener('click', closeAllKebabs);
 
 async function hubPushRBACUpdate(clusterName) {
   try {
-    var resp = await fetch(MCP_API + '/agent/push-rbac-update', {
+    var resp = await fetch(clusterUrl(MCP_API + '/agent/push-rbac-update'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clusterName: clusterName }),
@@ -18046,7 +18085,7 @@ async function hubPushRBACUpdate(clusterName) {
 
 async function hubPushRBACUpdateAll() {
   try {
-    var resp = await fetch(MCP_API + '/agent/push-rbac-update', {
+    var resp = await fetch(clusterUrl(MCP_API + '/agent/push-rbac-update'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
@@ -18060,7 +18099,7 @@ async function hubPushRBACUpdateAll() {
 async function hubRedeployAgent(clusterName) {
   if (!confirm('Redeploy agent on "' + clusterName + '"?\n\nThis triggers a rolling restart of the agent deployment. Use this after you have pushed a new container image to the registry.\n\nThe agent will restart with the latest image (imagePullPolicy: Always).')) return;
   try {
-    var resp = await fetch(MCP_API + '/agent/rollout-restart', {
+    var resp = await fetch(clusterUrl(MCP_API + '/agent/rollout-restart'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clusterName: clusterName }),
@@ -19601,7 +19640,7 @@ async function submitDeclareIncident() {
     declaredBy: 'dashboard',
   };
   try {
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/incidents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/incidents'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (resp.ok) {
       document.getElementById('incident-dialog').style.display = 'none';
       loadIncidents();
@@ -19614,7 +19653,7 @@ async function submitDeclareIncident() {
 
 async function advanceIncident(incidentId, newStatus) {
   try {
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/incidents/' + encodeURIComponent(incidentId), {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/incidents/' + encodeURIComponent(incidentId)), {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus, actor: 'dashboard' }),
     });
@@ -19628,7 +19667,7 @@ async function resolveIncidentUI(incidentId) {
   if (!resolutionNote) return;
   var rootCause = prompt('Root cause (optional):') || '';
   try {
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/incidents/' + encodeURIComponent(incidentId) + '/resolve', {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/incidents/' + encodeURIComponent(incidentId) + '/resolve'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ resolutionNote: resolutionNote, rootCause: rootCause, actor: 'dashboard' }),
     });
@@ -19640,7 +19679,7 @@ async function resolveIncidentUI(incidentId) {
 async function closeIncidentUI(incidentId) {
   var postmortem = prompt('Post-mortem summary (optional):') || '';
   try {
-    var resp = await fetch(MCP_API.replace(/\/api$/, '') + '/api/incidents/' + encodeURIComponent(incidentId) + '/close', {
+    var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/incidents/' + encodeURIComponent(incidentId) + '/close'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ postmortem: postmortem, actor: 'dashboard' }),
     });
@@ -20231,7 +20270,7 @@ function renderIntelKBStats(stats) {
 
 async function loadAutomationRules() {
   try {
-    var resp = await fetch(MCP_API + '/intelligence/rules');
+    var resp = await fetch(clusterUrl(MCP_API + '/intelligence/rules'));
     var data = await resp.json();
     var el = document.getElementById('intel-rules-list');
     var rules = data.rules || [];
@@ -20256,7 +20295,7 @@ async function loadAutomationRules() {
 
 async function loadKBEntries() {
   try {
-    var resp = await fetch(MCP_API + '/intelligence/kb');
+    var resp = await fetch(clusterUrl(MCP_API + '/intelligence/kb'));
     var data = await resp.json();
     var el = document.getElementById('intel-kb-list');
     if (!el) return;
@@ -20276,7 +20315,7 @@ async function loadKBEntries() {
 async function analyzeInsightAI(id) {
   var opts = getActiveProviderOpts();
   try {
-    var resp = await fetch(MCP_API + '/intelligence/insights/analyze', {
+    var resp = await fetch(clusterUrl(MCP_API + '/intelligence/insights/analyze'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: id, llmOpts: opts }),
     });
@@ -20288,7 +20327,7 @@ async function analyzeInsightAI(id) {
 }
 
 async function dismissInsightUI(id) {
-  await fetch(MCP_API + '/intelligence/insights/dismiss', {
+  await fetch(clusterUrl(MCP_API + '/intelligence/insights/dismiss'), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: id }),
   });
@@ -20304,7 +20343,7 @@ async function createAutomationRule() {
   statusEl.innerHTML = '<span style="color:var(--accent)">Creating rule...</span>';
 
   try {
-    var resp = await fetch(MCP_API + '/intelligence/rules', {
+    var resp = await fetch(clusterUrl(MCP_API + '/intelligence/rules'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ description: desc }),
     });
@@ -20318,7 +20357,7 @@ async function createAutomationRule() {
 }
 
 async function toggleAutomationRule(id, enabled) {
-  await fetch(MCP_API + '/intelligence/rules/' + id, {
+  await fetch(clusterUrl(MCP_API + '/intelligence/rules/' + id), {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled: enabled }),
   });
@@ -20326,13 +20365,13 @@ async function toggleAutomationRule(id, enabled) {
 
 async function deleteAutomationRule(id) {
   if (!confirm('Delete this automation rule?')) return;
-  await fetch(MCP_API + '/intelligence/rules/' + id, { method: 'DELETE' });
+  await fetch(clusterUrl(MCP_API + '/intelligence/rules/' + id), { method: 'DELETE' });
   loadAutomationRules();
 }
 
 async function runPredictions() {
   try {
-    var resp = await fetch(MCP_API + '/intelligence/predictions/run', { method: 'POST' });
+    var resp = await fetch(clusterUrl(MCP_API + '/intelligence/predictions/run'), { method: 'POST' });
     var data = await resp.json();
     renderIntelPredictions(data.predictions || []);
   } catch(e) { alert('Error: ' + e.message); }
@@ -20341,7 +20380,9 @@ async function runPredictions() {
 // Auto-refresh intelligence badge — deferred to avoid competing with initial load
 setTimeout(function() {
   setInterval(function() {
-    fetch(MCP_API + '/intelligence/insights').then(function(r) { return r.json(); }).then(function(d) {
+    var _gen = clusterGen();
+    fetch(clusterUrl(MCP_API + '/intelligence/insights')).then(function(r) { return r.json(); }).then(function(d) {
+      if (!clusterGuard(_gen)) return;
       var badge = document.getElementById('intel-badge');
       var critical = (d.summary?.critical || 0);
       if (badge) {

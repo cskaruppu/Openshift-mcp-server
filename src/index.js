@@ -224,7 +224,7 @@ import { getRecentTraces } from "./services/reasoning.js";
 import { flags as featureFlags, snapshot as flagSnapshot } from "./services/feature-flags.js";
 
 const silencedAlerts = new Map(); // key: "cluster|name|namespace"
-let _liveState = null;
+let _liveState = null; // Local cluster only — never served for remote cluster requests
 const _parseJobs = new Map();
 
 function createMcpServer() {
@@ -473,6 +473,26 @@ function sendJson(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+// ---------------------------------------------------------------------------
+// Cluster Isolation Policy — validate that a cluster name is known before
+// accepting it in any API request. Returns the resolved key or "local".
+// Rejects unknown/arbitrary cluster names to prevent enumeration and spoofing.
+// ---------------------------------------------------------------------------
+function validateClusterParam(nameOrBody, url) {
+  const raw = (typeof nameOrBody === "string" ? nameOrBody : null)
+    || (nameOrBody?.cluster)
+    || (url?.searchParams?.get("cluster"))
+    || "local";
+  if (!raw || raw === "local") return "local";
+  const resolved = findClusterKey(raw);
+  if (!resolved) return null;
+  return resolved;
+}
+
+function rejectUnknownCluster(res, name) {
+  sendJson(res, 404, { error: "Cluster not found" });
+}
+
 async function withClusterContext(url, handler) {
   const clusterName = url.searchParams.get("cluster");
   if (clusterName && clusterName !== "local") {
@@ -485,7 +505,7 @@ async function withClusterContext(url, handler) {
     const resolvedKey = findClusterKey(clusterName) || clusterName;
     const agent = _connectedAgents.get(resolvedKey);
     if (!agent) {
-      throw Object.assign(new Error(`Unknown cluster: ${clusterName}`), { status: 404 });
+      throw Object.assign(new Error("Cluster not found"), { status: 404 });
     }
     // If we have recent agent data, try proxy but fall back to cache on failure
     if (agent.apiUrl && agent.token) {
@@ -1291,7 +1311,8 @@ async function handleChatHistoryAPI(url, req, res) {
   if (url.pathname === "/api/chats/search" && req.method === "GET") {
     const q = url.searchParams.get("q") || "";
     const limit = parseInt(url.searchParams.get("limit") || "50", 10);
-    const cluster = url.searchParams.get("cluster") || null;
+    const rawCluster = url.searchParams.get("cluster") || null;
+    const cluster = rawCluster ? (validateClusterParam(rawCluster) || rawCluster) : null;
     const results = await searchChats(q, limit, cluster);
     return sendJson(res, 200, { results });
   }
@@ -1300,14 +1321,16 @@ async function handleChatHistoryAPI(url, req, res) {
   if (url.pathname === "/api/chats") {
     if (req.method === "GET") {
       const limit = parseInt(url.searchParams.get("limit") || "100", 10);
-      const cluster = url.searchParams.get("cluster") || null;
+      const rawCluster = url.searchParams.get("cluster") || null;
+      const cluster = rawCluster ? (validateClusterParam(rawCluster) || rawCluster) : null;
       const chats = await listChats(limit, cluster);
       return sendJson(res, 200, { chats });
     }
     if (req.method === "POST") {
       try {
         const body = await readJsonBody(req);
-        const chat = await createChat({ id: body.id, title: body.title, cluster: body.cluster });
+        const validatedCluster = validateClusterParam(body.cluster) || "local";
+        const chat = await createChat({ id: body.id, title: body.title, cluster: validatedCluster });
         return sendJson(res, 201, chat);
       } catch (err) {
         return sendJson(res, 400, { error: err.message });
@@ -1798,6 +1821,19 @@ async function startSSE() {
     // Auth middleware — protect non-public routes
     const authOk = await authMiddleware(req, res, url);
     if (!authOk) return;
+
+    // Cluster isolation: cross-check X-Cluster-Context header against query param.
+    // If both are present and disagree, reject the request to prevent spoofing.
+    const headerCluster = req.headers["x-cluster-context"];
+    const queryCluster = url.searchParams.get("cluster");
+    if (headerCluster && queryCluster && headerCluster !== "local" && queryCluster !== "local") {
+      const resolvedHeader = findClusterKey(headerCluster);
+      const resolvedQuery = findClusterKey(queryCluster);
+      if (resolvedHeader && resolvedQuery && resolvedHeader !== resolvedQuery) {
+        console.warn(`[security] Cluster context mismatch: header=${headerCluster} query=${queryCluster}`);
+        return sendJson(res, 400, { error: "Cluster context mismatch" });
+      }
+    }
 
     // User management routes (after auth middleware)
     if (url.pathname.startsWith("/api/auth/users") || url.pathname === "/api/auth/change-password" || url.pathname === "/api/auth/password-policy") {
@@ -3367,7 +3403,7 @@ async function startSSE() {
             trackSubmittedCR(convId, {
               ticketId: number,
               sysId,
-              cluster: body.cluster || url.searchParams.get("cluster") || "local",
+              cluster: validateClusterParam(body.cluster || url.searchParams.get("cluster") || "local") || "local",
               targetVersion: upgradeInfo?.targetVersion || preflightReport?.targetVersion || "",
               fromVersion: upgradeInfo?.fromVersion || preflightReport?.fromVersion || "",
               preflightReport,
@@ -3436,7 +3472,8 @@ async function startSSE() {
     if (req.method === "GET" && url.pathname === "/api/intelligence/similar") {
       try {
         const signature = url.searchParams.get("signature") || "";
-        const cluster = url.searchParams.get("cluster") || null;
+        const rawCluster = url.searchParams.get("cluster") || null;
+        const cluster = rawCluster ? (validateClusterParam(rawCluster) || rawCluster) : null;
         const sinceDays = Math.min(parseInt(url.searchParams.get("sinceDays"), 10) || 90, 365);
         const limit = Math.min(parseInt(url.searchParams.get("limit"), 10) || 5, 50);
         if (!signature) return sendJson(res, 400, { error: "signature is required" });
@@ -3464,7 +3501,7 @@ async function startSSE() {
         if (clusterResult === null) {
           const stale = getAgentCachedResponse(_ac, "/api/alerts", { skipFreshnessCheck: true });
           if (stale) return sendJson(res, 200, stale);
-          return sendJson(res, 503, { error: `Cluster ${_ac} is not reachable`, alerts: [], summary: { critical: 0, warning: 0, info: 0 } });
+          return sendJson(res, 503, { error: "Remote cluster is not reachable", alerts: [], summary: { critical: 0, warning: 0, info: 0 } });
         }
 
         const [promAlerts, eventsResp] = clusterResult;
@@ -3550,7 +3587,8 @@ async function startSSE() {
         const body = await readJsonBody(req);
         const { name, namespace, duration, cluster } = body;
         if (!name) return sendJson(res, 400, { error: "Missing alert name" });
-        const cl = cluster || url.searchParams.get("cluster") || "local";
+        const cl = validateClusterParam(cluster || url.searchParams.get("cluster") || "local");
+        if (cl === null) return rejectUnknownCluster(res);
         const durationMs = (duration || 60) * 60 * 1000;
         const entry = { name, namespace: namespace || "", cluster: cl, silencedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + durationMs).toISOString(), duration: duration || 60 };
         silencedAlerts.set(`${cl}|${name}|${namespace || ""}`, entry);
@@ -3568,7 +3606,8 @@ async function startSSE() {
       try {
         const body = await readJsonBody(req);
         const { name, namespace, cluster } = body;
-        const cl = cluster || url.searchParams.get("cluster") || "local";
+        const cl = validateClusterParam(cluster || url.searchParams.get("cluster") || "local");
+        if (cl === null) return rejectUnknownCluster(res);
         silencedAlerts.delete(`${cl}|${name}|${namespace || ""}`);
         try {
           await dbQuery("DELETE FROM silenced_alerts WHERE name = $1 AND namespace = $2 AND cluster = $3", [name, namespace || "", cl]);
@@ -3581,7 +3620,7 @@ async function startSSE() {
 
     // GET /api/alerts/silences — list active silences (scoped to requested cluster)
     if (req.method === "GET" && url.pathname === "/api/alerts/silences") {
-      const cl = url.searchParams.get("cluster") || "local";
+      const cl = validateClusterParam(null, url) || "local";
       const now = Date.now();
       const active = [];
       for (const [key, s] of silencedAlerts) {
@@ -3697,7 +3736,7 @@ async function startSSE() {
             const cached = getAgentCachedResponse(_cvCluster, "/api/cluster-info", { skipFreshnessCheck: true });
             if (cached) return sendJson(res, 200, { current: cached.version || "", channel: "", available: [], source: "agent-cache" });
           }
-          return sendJson(res, 503, { error: `Cluster ${_cvCluster || "unknown"} is not reachable`, current: "", channel: "", available: [] });
+          return sendJson(res, 503, { error: "Remote cluster is not reachable", current: "", channel: "", available: [] });
         }
         const current = cv?.status?.desired?.version || cv?.status?.history?.[0]?.version || "";
         const channel = cv?.spec?.channel || "";
@@ -4818,7 +4857,7 @@ async function startSSE() {
         if (result === null && _cl) {
           const cached = getAgentCachedResponse(_cl, url.pathname, { skipFreshnessCheck: true });
           if (cached) { sendJson(res, 200, cached); return; }
-          if (!res.headersSent) sendJson(res, 503, { error: `No data available for cluster "${_cl}". The remote agent may not be reporting or the cluster is unreachable.`, cluster: _cl, source: "none" });
+          if (!res.headersSent) sendJson(res, 503, { error: "Remote cluster data is not available. The agent may not be reporting or the cluster is unreachable.", source: "none" });
           return;
         }
       } catch (err) {
@@ -4826,7 +4865,7 @@ async function startSSE() {
           const cached = getAgentCachedResponse(_cl, url.pathname, { skipFreshnessCheck: true });
           if (cached) { sendJson(res, 200, cached); return; }
         }
-        if (!res.headersSent) sendJson(res, _cl ? 503 : 500, { error: err.message, cluster: _cl || "local" });
+        if (!res.headersSent) sendJson(res, _cl ? 503 : 500, { error: _cl ? "Remote cluster request failed" : err.message });
       }
       return;
     }
