@@ -1582,6 +1582,16 @@ tr:hover td{background:#ffffff06}
 .settings-slideout-body{flex:1;overflow-y:auto;padding:20px}
 .settings-slideout-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:299;display:none}
 .settings-slideout-overlay.open{display:block}
+/* Agents modal overlay */
+.agents-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:299;display:none}
+.agents-modal-overlay.open{display:block}
+.agents-modal{position:fixed;top:20px;left:50%;transform:translateX(-50%);width:90%;max-width:1100px;max-height:calc(100vh - 40px);background:var(--card);border:1px solid var(--border);border-radius:14px;z-index:300;display:none;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.agents-modal.open{display:block}
+.agents-modal-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card);z-index:1;border-radius:14px 14px 0 0}
+.agents-modal-header h3{font-size:16px;font-weight:700;margin:0}
+.agents-modal-close{background:none;border:none;color:var(--text2);font-size:22px;cursor:pointer;padding:0 4px}
+.agents-modal-close:hover{color:var(--text)}
+.agents-modal-body{padding:20px}
 /* Persona selector */
 .persona-cards{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:20px}
 .persona-card{background:var(--bg);border:2px solid var(--border);border-radius:10px;padding:12px;cursor:pointer;transition:all .2s;text-align:center}
@@ -2229,7 +2239,7 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
 
 /* ── Cluster Picker header toolbar icons ── */
 .cp-header-actions{display:flex;align-items:center;gap:8px;margin-right:8px}
-.cp-action-btn{background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.15);border-radius:8px;padding:6px 10px;color:var(--text2);cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600}
+.cp-action-btn{background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.15);border-radius:8px;padding:8px;color:var(--text2);cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600}
 .cp-action-btn:hover{border-color:rgba(99,102,241,.4);color:#c7d2fe;background:rgba(99,102,241,.12)}
 .cp-action-btn svg{width:16px;height:16px}
 
@@ -2381,7 +2391,7 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
     <button class="settings-gear" onclick="toggleSettingsPanel()" title="Settings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
     </button>
-    <button class="agents-icon-btn" data-view="agents" onclick="showView('agents')" title="AI Agents" id="agents-nav-btn">
+    <button class="agents-icon-btn" data-view="agents" onclick="toggleAgentsModal()" title="AI Agents" id="agents-nav-btn">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="7" r="3"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/>
         <line x1="12" y1="10" x2="5" y2="15.5"/><line x1="12" y1="10" x2="19" y2="15.5"/>
@@ -2591,6 +2601,110 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
   </div>
 </div>
 
+<!-- Agents modal overlay -->
+<div class="agents-modal-overlay" id="agents-modal-overlay" onclick="toggleAgentsModal()"></div>
+<div class="agents-modal" id="agents-modal">
+  <div class="agents-modal-header">
+    <h3>Agent Registry</h3>
+    <button class="agents-modal-close" onclick="toggleAgentsModal()">&times;</button>
+  </div>
+  <div class="agents-modal-body" id="agents-modal-body"></div>
+</div>
+
+<!-- Cluster Dialog (global modal — accessible from cluster picker and AI Hub) -->
+<div id="hub-cluster-dialog" style="display:none;position:fixed;inset:0;z-index:9999;background:#000a;overflow-y:auto">
+  <div style="max-width:640px;margin:40px auto;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;position:relative;box-shadow:0 20px 60px #000a">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px;padding-bottom:14px;border-bottom:1px solid var(--border)">
+      <span style="font-weight:700;font-size:16px" id="hub-cluster-dialog-title">Connect Cluster</span>
+      <button onclick="document.getElementById('hub-cluster-dialog').style.display='none'" style="margin-left:auto;background:none;border:none;color:var(--text2);cursor:pointer;font-size:22px;line-height:1">&times;</button>
+    </div>
+    <!-- Step 1 -->
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+      <span style="background:var(--accent);color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">1</span>
+      <span style="font-size:13px;font-weight:600">Cluster Connection Details</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;margin-left:30px">
+      <div>
+        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Cluster Name</label>
+        <input type="text" id="hub-cluster-name" placeholder="e.g. production-ocp" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">API Server URL</label>
+        <input type="text" id="hub-cluster-url" placeholder="https://api.cluster.example.com:6443" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box">
+      </div>
+    </div>
+    <div style="margin-bottom:16px;margin-left:30px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <label style="font-size:11px;color:var(--text2)">Authentication</label>
+        <div style="display:flex;gap:2px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:2px;margin-left:auto">
+          <button id="hub-auth-tab-token" onclick="hubSetAuthTab('token')" style="background:var(--accent);color:#fff;border:none;border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer;font-weight:600">Bearer Token</button>
+          <button id="hub-auth-tab-kubeconfig" onclick="hubSetAuthTab('kubeconfig')" style="background:transparent;color:var(--text2);border:none;border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer">Kubeconfig</button>
+          <button id="hub-auth-tab-sa" onclick="hubSetAuthTab('sa')" style="background:transparent;color:var(--text2);border:none;border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer">Service Account</button>
+        </div>
+      </div>
+      <div id="hub-auth-help" style="font-size:10px;color:var(--text2);margin-bottom:6px;padding:6px 10px;background:var(--bg);border-radius:6px;border:1px solid var(--border2)">
+        Paste a bearer token from <code>oc whoami -t</code> or <code>kubectl create token</code>
+      </div>
+      <div id="hub-file-drop-zone" style="display:none;margin-bottom:8px;border:2px dashed var(--border);border-radius:8px;padding:16px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s"
+        onclick="document.getElementById('hub-kubeconfig-file').click()"
+        ondragover="event.preventDefault();this.style.borderColor='var(--accent)';this.style.background='var(--accent)'+'10'"
+        ondragleave="this.style.borderColor='var(--border)';this.style.background='transparent'"
+        ondrop="event.preventDefault();this.style.borderColor='var(--border)';this.style.background='transparent';hubHandleFileDrop(event)">
+        <div style="font-size:22px;margin-bottom:4px;opacity:.5">&#x1F4C1;</div>
+        <div style="font-size:11px;font-weight:600;color:var(--text)">Drop kubeconfig file here or click to browse</div>
+        <div style="font-size:10px;color:var(--text2);margin-top:2px">Supports <code>~/.kube/config</code>, YAML, or JSON kubeconfig files</div>
+        <input type="file" id="hub-kubeconfig-file" accept=".yaml,.yml,.json,.conf,.config,.kubeconfig,*" style="display:none" onchange="hubHandleFileSelect(event)">
+      </div>
+      <div id="hub-file-info" style="display:none;margin-bottom:8px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:11px">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:14px">&#x1F4C4;</span>
+          <span id="hub-file-name" style="font-weight:600;color:var(--text)"></span>
+          <span id="hub-file-size" style="color:var(--text2)"></span>
+          <button onclick="hubClearFile()" style="margin-left:auto;background:none;border:1px solid var(--border);color:var(--text2);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:10px">Remove</button>
+        </div>
+      </div>
+      <textarea id="hub-cluster-token" rows="4" placeholder="Paste bearer token here..." style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:11px;font-family:monospace;outline:none;resize:vertical;box-sizing:border-box" oninput="hubDetectKubeconfig()" onpaste="setTimeout(hubDetectKubeconfig,50)"></textarea>
+      <div id="hub-kubeconfig-banner" style="display:none;margin-top:6px;padding:8px 12px;border-radius:6px;font-size:11px;border:1px solid transparent"></div>
+      <div id="hub-platform-cmds" style="margin-top:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--border2);border-radius:6px;font-size:10px;display:none">
+        <div style="font-weight:600;color:var(--text);margin-bottom:4px">Quick setup commands:</div>
+        <div id="hub-platform-cmds-list" style="color:var(--text2);line-height:1.8"></div>
+      </div>
+    </div>
+    <!-- Step 2 -->
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+      <span style="background:var(--accent2);color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">2</span>
+      <span style="font-size:13px;font-weight:600">Deploy AI-Native Cluster Agent</span>
+      <span style="font-size:10px;color:var(--text2)">Apply this YAML to your target cluster</span>
+    </div>
+    <div style="margin-left:30px;margin-bottom:12px;display:flex;align-items:flex-start;gap:8px;background:var(--bg-alt);border:1px solid var(--border2);border-radius:8px;padding:10px 12px">
+      <input type="checkbox" id="hub-allow-actions" style="margin-top:2px;cursor:pointer" onchange="hubUpdateYamlActions()">
+      <label for="hub-allow-actions" style="font-size:11px;color:var(--text2);cursor:pointer;line-height:1.5">
+        <span style="font-weight:600;color:var(--text)">Allow remote actions (write access)</span><br>
+        Grants scoped write RBAC and enables the AI Chat to <b>act</b> on this cluster. Leave unchecked for read-only (zero-trust default).
+      </label>
+    </div>
+    <div style="margin-left:30px;margin-bottom:16px;background:var(--card-deep);border:1px solid var(--border2);border-radius:10px;overflow:hidden">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:var(--bg-alt);border-bottom:1px solid var(--border2)">
+        <span style="font-size:11px;font-weight:600;color:var(--accent2)" id="hub-yaml-filename">tcs-agentic-ai.yaml</span>
+        <div style="display:flex;gap:4px">
+          <button onclick="hubDownloadYAML()" style="background:none;border:1px solid var(--border2);color:var(--text2);border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px">Download</button>
+          <button onclick="navigator.clipboard.writeText(document.getElementById('hub-agent-yaml').textContent).then(function(){this.textContent='Copied!'}.bind(this))" style="background:none;border:1px solid var(--border2);color:var(--text2);border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px">Copy YAML</button>
+        </div>
+      </div>
+      <pre id="hub-agent-yaml" style="margin:0;padding:14px 16px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:11px;color:var(--text-code);white-space:pre;overflow-x:auto;max-height:300px;overflow-y:auto;line-height:1.5;tab-size:2"></pre>
+    </div>
+    <!-- Step 3 -->
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+      <span style="background:#22c55e;color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">3</span>
+      <span style="font-size:13px;font-weight:600">Verify &amp; Connect</span>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;margin-left:30px">
+      <button onclick="hubConnectCluster()" style="background:linear-gradient(135deg,var(--accent),#c03030);color:#fff;border:none;border-radius:8px;padding:10px 28px;cursor:pointer;font-size:13px;font-weight:700;letter-spacing:.3px;transition:transform .15s" onmouseover="this.style.transform='translateY(-1px)'" onmouseout="this.style.transform=''">Connect Cluster</button>
+      <span id="hub-cluster-status" style="font-size:12px;color:var(--text2)"></span>
+    </div>
+  </div>
+</div>
+
 <!-- Keyboard shortcuts overlay -->
 <div class="kbd-overlay" id="kbd-overlay" onclick="if(event.target===this)toggleKbdOverlay()">
   <div class="kbd-card" style="position:relative">
@@ -2639,18 +2753,18 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
       <div class="cp-header-actions">
         <button class="cp-action-btn" onclick="toggleTheme()" title="Toggle light/dark theme" id="cp-theme-toggle">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
-          Theme
         </button>
-        <button class="cp-action-btn" onclick="_exitClusterPicker();showView('settings')" title="Settings">
+        <button class="cp-action-btn" onclick="toggleSettingsPanel()" title="User Management">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+        </button>
+        <button class="cp-action-btn" onclick="toggleSettingsPanel()" title="Settings">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-          Settings
         </button>
-        <button class="cp-action-btn" onclick="_exitClusterPicker();showView('agents')" title="AI Agents">
+        <button class="cp-action-btn" onclick="toggleAgentsModal()" title="AI Agents">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="7" r="3"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/>
             <line x1="12" y1="10" x2="5" y2="15.5"/><line x1="12" y1="10" x2="19" y2="15.5"/>
           </svg>
-          Agents
         </button>
       </div>
       <span class="cp-user-label" id="cp-user-label"></span>
@@ -4341,105 +4455,6 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
           <span class="hub-platform-pill" onclick="hubAddCluster('gke')" style="color:#4285f4;border-color:#4285f433" onmouseover="this.style.borderColor='#4285f4'" onmouseout="this.style.borderColor='#4285f433'"><span class="pill-icon">&#x1F310;</span> GKE</span>
           <span class="hub-platform-pill" onclick="hubAddCluster('k8s')" style="color:#326ce5;border-color:#326ce533" onmouseover="this.style.borderColor='#326ce5'" onmouseout="this.style.borderColor='#326ce533'"><span class="pill-icon">&#x2699;</span> K8s</span>
         </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Cluster Dialog (modal overlay) -->
-  <div id="hub-cluster-dialog" style="display:none;position:fixed;inset:0;z-index:9999;background:#000a;overflow-y:auto">
-    <div style="max-width:640px;margin:40px auto;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;position:relative;box-shadow:0 20px 60px #000a">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px;padding-bottom:14px;border-bottom:1px solid var(--border)">
-        <span style="font-weight:700;font-size:16px" id="hub-cluster-dialog-title">Connect Cluster</span>
-        <button onclick="document.getElementById('hub-cluster-dialog').style.display='none'" style="margin-left:auto;background:none;border:none;color:var(--text2);cursor:pointer;font-size:22px;line-height:1">&times;</button>
-      </div>
-
-      <!-- Step 1 -->
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
-        <span style="background:var(--accent);color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">1</span>
-        <span style="font-size:13px;font-weight:600">Cluster Connection Details</span>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;margin-left:30px">
-        <div>
-          <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Cluster Name</label>
-          <input type="text" id="hub-cluster-name" placeholder="e.g. production-ocp" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box">
-        </div>
-        <div>
-          <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">API Server URL</label>
-          <input type="text" id="hub-cluster-url" placeholder="https://api.cluster.example.com:6443" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box">
-        </div>
-      </div>
-      <div style="margin-bottom:16px;margin-left:30px">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-          <label style="font-size:11px;color:var(--text2)">Authentication</label>
-          <div style="display:flex;gap:2px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:2px;margin-left:auto">
-            <button id="hub-auth-tab-token" onclick="hubSetAuthTab('token')" style="background:var(--accent);color:#fff;border:none;border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer;font-weight:600">Bearer Token</button>
-            <button id="hub-auth-tab-kubeconfig" onclick="hubSetAuthTab('kubeconfig')" style="background:transparent;color:var(--text2);border:none;border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer">Kubeconfig</button>
-            <button id="hub-auth-tab-sa" onclick="hubSetAuthTab('sa')" style="background:transparent;color:var(--text2);border:none;border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer">Service Account</button>
-          </div>
-        </div>
-        <div id="hub-auth-help" style="font-size:10px;color:var(--text2);margin-bottom:6px;padding:6px 10px;background:var(--bg);border-radius:6px;border:1px solid var(--border2)">
-          Paste a bearer token from <code>oc whoami -t</code> or <code>kubectl create token</code>
-        </div>
-        <!-- File upload drop zone (visible on Kubeconfig tab) -->
-        <div id="hub-file-drop-zone" style="display:none;margin-bottom:8px;border:2px dashed var(--border);border-radius:8px;padding:16px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s"
-          onclick="document.getElementById('hub-kubeconfig-file').click()"
-          ondragover="event.preventDefault();this.style.borderColor='var(--accent)';this.style.background='var(--accent)'+'10'"
-          ondragleave="this.style.borderColor='var(--border)';this.style.background='transparent'"
-          ondrop="event.preventDefault();this.style.borderColor='var(--border)';this.style.background='transparent';hubHandleFileDrop(event)">
-          <div style="font-size:22px;margin-bottom:4px;opacity:.5">&#x1F4C1;</div>
-          <div style="font-size:11px;font-weight:600;color:var(--text)">Drop kubeconfig file here or click to browse</div>
-          <div style="font-size:10px;color:var(--text2);margin-top:2px">Supports <code>~/.kube/config</code>, YAML, or JSON kubeconfig files</div>
-          <input type="file" id="hub-kubeconfig-file" accept=".yaml,.yml,.json,.conf,.config,.kubeconfig,*" style="display:none" onchange="hubHandleFileSelect(event)">
-        </div>
-        <div id="hub-file-info" style="display:none;margin-bottom:8px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:11px;display:none">
-          <div style="display:flex;align-items:center;gap:6px">
-            <span style="font-size:14px">&#x1F4C4;</span>
-            <span id="hub-file-name" style="font-weight:600;color:var(--text)"></span>
-            <span id="hub-file-size" style="color:var(--text2)"></span>
-            <button onclick="hubClearFile()" style="margin-left:auto;background:none;border:1px solid var(--border);color:var(--text2);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:10px">Remove</button>
-          </div>
-        </div>
-        <textarea id="hub-cluster-token" rows="4" placeholder="Paste bearer token here..." style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:11px;font-family:monospace;outline:none;resize:vertical;box-sizing:border-box" oninput="hubDetectKubeconfig()" onpaste="setTimeout(hubDetectKubeconfig,50)"></textarea>
-        <div id="hub-kubeconfig-banner" style="display:none;margin-top:6px;padding:8px 12px;border-radius:6px;font-size:11px;border:1px solid transparent"></div>
-        <!-- Platform-specific quick commands -->
-        <div id="hub-platform-cmds" style="margin-top:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--border2);border-radius:6px;font-size:10px;display:none">
-          <div style="font-weight:600;color:var(--text);margin-bottom:4px">Quick setup commands:</div>
-          <div id="hub-platform-cmds-list" style="color:var(--text2);line-height:1.8"></div>
-        </div>
-      </div>
-
-      <!-- Step 2 -->
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
-        <span style="background:var(--accent2);color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">2</span>
-        <span style="font-size:13px;font-weight:600">Deploy AI-Native Cluster Agent</span>
-        <span style="font-size:10px;color:var(--text2)">Apply this YAML to your target cluster</span>
-      </div>
-      <div style="margin-left:30px;margin-bottom:12px;display:flex;align-items:flex-start;gap:8px;background:var(--bg-alt);border:1px solid var(--border2);border-radius:8px;padding:10px 12px">
-        <input type="checkbox" id="hub-allow-actions" style="margin-top:2px;cursor:pointer" onchange="hubUpdateYamlActions()">
-        <label for="hub-allow-actions" style="font-size:11px;color:var(--text2);cursor:pointer;line-height:1.5">
-          <span style="font-weight:600;color:var(--text)">Allow remote actions (write access)</span><br>
-          Grants scoped write RBAC (scale, restart, delete pod, cordon, and OpenShift cluster upgrade) and enables the AI Chat to <b>act</b> on this cluster — not just read. Leave unchecked for read-only (zero-trust default).
-        </label>
-      </div>
-      <div style="margin-left:30px;margin-bottom:16px;background:var(--card-deep);border:1px solid var(--border2);border-radius:10px;overflow:hidden">
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:var(--bg-alt);border-bottom:1px solid var(--border2)">
-          <span style="font-size:11px;font-weight:600;color:var(--accent2)" id="hub-yaml-filename">tcs-agentic-ai.yaml</span>
-          <div style="display:flex;gap:4px">
-            <button onclick="hubDownloadYAML()" style="background:none;border:1px solid var(--border2);color:var(--text2);border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px">Download</button>
-            <button onclick="navigator.clipboard.writeText(document.getElementById('hub-agent-yaml').textContent).then(function(){this.textContent='Copied!'}.bind(this))" style="background:none;border:1px solid var(--border2);color:var(--text2);border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px">Copy YAML</button>
-          </div>
-        </div>
-        <pre id="hub-agent-yaml" style="margin:0;padding:14px 16px;font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:11px;color:var(--text-code);white-space:pre;overflow-x:auto;max-height:300px;overflow-y:auto;line-height:1.5;tab-size:2"></pre>
-      </div>
-
-      <!-- Step 3 -->
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
-        <span style="background:#22c55e;color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">3</span>
-        <span style="font-size:13px;font-weight:600">Verify &amp; Connect</span>
-      </div>
-      <div style="display:flex;gap:10px;align-items:center;margin-left:30px">
-        <button onclick="hubConnectCluster()" style="background:linear-gradient(135deg,var(--accent),#c03030);color:#fff;border:none;border-radius:8px;padding:10px 28px;cursor:pointer;font-size:13px;font-weight:700;letter-spacing:.3px;transition:transform .15s" onmouseover="this.style.transform='translateY(-1px)'" onmouseout="this.style.transform=''">Connect Cluster</button>
-        <span id="hub-cluster-status" style="font-size:12px;color:var(--text2)"></span>
       </div>
     </div>
   </div>
@@ -15457,6 +15472,18 @@ function toggleSettingsPanel() {
     loadServiceNowSettings();
     const themeToggle = document.getElementById('so-theme-toggle');
     if (themeToggle) themeToggle.checked = !document.body.classList.contains('light-theme');
+  }
+}
+
+function toggleAgentsModal() {
+  var overlay = document.getElementById('agents-modal-overlay');
+  var modal = document.getElementById('agents-modal');
+  var isOpen = modal.classList.toggle('open');
+  overlay.classList.toggle('open', isOpen);
+  if (isOpen) {
+    var body = document.getElementById('agents-modal-body');
+    var agentView = document.getElementById('view-agents');
+    if (agentView && body) body.innerHTML = agentView.innerHTML;
   }
 }
 
