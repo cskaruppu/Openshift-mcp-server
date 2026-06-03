@@ -2157,9 +2157,13 @@ tr:hover td{background:#ffffff06}
 .cp-card-name{font-size:16px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cp-card-platform{font-size:11px;color:var(--text2)}
 .cp-card-primary-badge{display:inline-block;background:linear-gradient(135deg,#e04040,#c03030);color:#fff;font-size:9px;font-weight:700;letter-spacing:.5px;padding:2px 8px;border-radius:4px;text-transform:uppercase;margin-left:8px;vertical-align:middle}
-.cp-card-status{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.cp-card-status{display:flex;align-items:center;gap:8px;margin-bottom:14px}
 .cp-card-status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 .cp-card-status-label{font-size:12px;color:var(--text2)}
+.cp-card-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.cp-card-stat{background:var(--card);padding:10px 8px;text-align:center}
+.cp-card-stat-val{font-size:15px;font-weight:800;color:var(--text);line-height:1.1}
+.cp-card-stat-lbl{font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-top:3px}
 .cp-card-meta{display:flex;gap:8px;flex-wrap:wrap}
 .cp-card-meta-tag{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:10px;color:var(--text2)}
 .cp-card-add{background:rgba(15,18,30,.4);border:2px dashed rgba(99,102,241,.2);border-radius:14px;padding:24px;cursor:pointer;transition:all .25s ease;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:160px;gap:12px;backdrop-filter:blur(4px)}
@@ -2228,6 +2232,7 @@ body.cluster-picker-mode .header{display:none}
 body.cluster-picker-mode .app-footer{display:none}
 body.cluster-picker-mode .cluster-context-banner{display:none!important}
 body.cluster-picker-mode .workspace-breadcrumb{display:none!important}
+body.cluster-picker-mode #settings-cluster-ctx-section{display:none!important}
 
 /* ── Workspace mode: hide redundant cluster selectors ── */
 body.workspace-mode #global-cluster-selector{display:none}
@@ -2263,6 +2268,9 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
 .light-theme .cp-card{background:rgba(255,255,255,.7);border-color:rgba(99,102,241,.1);backdrop-filter:blur(12px)}
 .light-theme .cp-card:hover{border-color:rgba(99,102,241,.3);box-shadow:0 8px 32px rgba(99,102,241,.1),0 0 0 1px rgba(99,102,241,.08) inset}
 .light-theme .cp-card-name{color:#1e293b}
+.light-theme .cp-card-stats{background:#e5e7eb;border-color:#e5e7eb}
+.light-theme .cp-card-stat{background:#fff}
+.light-theme .cp-card-stat-val{color:#1e293b}
 .light-theme .cp-card-meta-tag{background:#f1f5f9;border-color:#e2e8f0;color:#64748b}
 .light-theme .cp-card-add{background:rgba(255,255,255,.4);border-color:rgba(99,102,241,.15)}
 .light-theme .cp-card-add:hover{border-color:rgba(99,102,241,.35);background:rgba(99,102,241,.04)}
@@ -2446,7 +2454,7 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
   <div class="settings-slideout-body">
 
     <!-- Cluster Context Widget -->
-    <div class="so-section">
+    <div class="so-section" id="settings-cluster-ctx-section">
       <div class="so-section-title">Cluster Context</div>
       <div class="cluster-ctx" id="cluster-ctx-widget">
         <div class="ctx-title"><span class="ctx-dot" id="ctx-dot"></span> <span id="ctx-cluster-name">Loading...</span></div>
@@ -5905,6 +5913,8 @@ async function loadNamespaceHeatmap() {
     }
 
     summaryEl.textContent = nsList.length + ' ns / ' + totalPods + ' pods';
+    if (_localClusterInfo) { _localClusterInfo.podCount = totalPods; }
+    if (_inClusterPicker && typeof renderClusterPickerCards === 'function') renderClusterPickerCards();
     statsEl.innerHTML =
       '<span class="hm-stat"><span class="hm-dot" style="background:#3fb950"></span>' + counts.healthy + '</span>' +
       '<span class="hm-stat"><span class="hm-dot" style="background:#d29922"></span>' + counts.warning + '</span>' +
@@ -10531,6 +10541,9 @@ function renderClusterPickerCards() {
   var lVersion = lIsOCP ? lci.version : (lci.kubernetesVersion || lci.version);
 
   // Hub/primary cluster card
+  var hubVersion = lVersion && lVersion !== 'unknown' ? esc(lVersion) : '--';
+  var hubNodes = lci.nodeCount ? (lci.readyNodes || 0) + '/' + lci.nodeCount : '--';
+  var hubPods = lci.podCount != null ? lci.podCount : (lci.totalPods != null ? lci.totalPods : '--');
   cards.push(
     '<div class="cp-card" onclick="enterClusterWorkspace(\'local\')">' +
       '<div class="cp-card-header">' +
@@ -10544,9 +10557,10 @@ function renderClusterPickerCards() {
         '<span class="cp-card-status-dot" style="background:var(--ok);animation:pulse 2s infinite"></span>' +
         '<span class="cp-card-status-label" style="color:var(--ok)">Active</span>' +
       '</div>' +
-      '<div class="cp-card-meta">' +
-        (lVersion && lVersion !== 'unknown' ? '<span class="cp-card-meta-tag">' + lpInfo.name + ' ' + esc(lVersion) + '</span>' : '') +
-        (lci.nodeCount ? '<span class="cp-card-meta-tag">' + (lci.readyNodes || 0) + '/' + lci.nodeCount + ' nodes</span>' : '') +
+      '<div class="cp-card-stats">' +
+        '<div class="cp-card-stat"><div class="cp-card-stat-val">' + hubVersion + '</div><div class="cp-card-stat-lbl">Version</div></div>' +
+        '<div class="cp-card-stat"><div class="cp-card-stat-val">' + hubNodes + '</div><div class="cp-card-stat-lbl">Nodes</div></div>' +
+        '<div class="cp-card-stat"><div class="cp-card-stat-val">' + hubPods + '</div><div class="cp-card-stat-lbl">Pods</div></div>' +
       '</div>' +
     '</div>'
   );
@@ -10573,13 +10587,9 @@ function renderClusterPickerCards() {
       statusColor = 'var(--text2)'; statusLabel = a.status || 'Connecting'; statusPulse = '';
     }
 
-    var metaTags = '<span class="cp-card-meta-tag">' + pInfo.name + '</span>';
-    if (a.summary && a.summary.nodes) metaTags += '<span class="cp-card-meta-tag">' + a.summary.nodes + ' nodes</span>';
-    if (a.summary && a.summary.pods != null) metaTags += '<span class="cp-card-meta-tag">' + a.summary.pods + ' pods</span>';
-    if (a.agentType === 'ai-native' || a.source === 'agent') metaTags += '<span class="cp-card-meta-tag" style="color:#a371f7;border-color:color-mix(in srgb,#a371f7 30%,var(--border))">&#x1F9E0; AI-Native</span>';
-    if (a.actionsEnabled) metaTags += '<span class="cp-card-meta-tag" style="color:var(--warn);border-color:color-mix(in srgb,var(--warn) 30%,var(--border))">Actions ON</span>';
-    if (a.lastHeartbeat) metaTags += '<span class="cp-card-meta-tag" title="Heartbeat protocol v1">&#x1F493; ' + timeAgo(a.lastHeartbeat) + '</span>';
-    if (a.agentVersion) metaTags += '<span class="cp-card-meta-tag">v' + esc(a.agentVersion) + '</span>';
+    var rVersion = a.agentVersion || (a.summary && a.summary.version) || '--';
+    var rNodes = (a.summary && a.summary.nodes) ? a.summary.nodes : '--';
+    var rPods = (a.summary && a.summary.pods != null) ? a.summary.pods : '--';
 
     cards.push(
       '<div class="cp-card" onclick="enterClusterWorkspace(\'' + esc(name) + '\')">' +
@@ -10594,7 +10604,11 @@ function renderClusterPickerCards() {
           '<span class="cp-card-status-dot" style="background:' + statusColor + ';' + statusPulse + '"></span>' +
           '<span class="cp-card-status-label" style="color:' + statusColor + '">' + statusLabel + '</span>' +
         '</div>' +
-        '<div class="cp-card-meta">' + metaTags + '</div>' +
+        '<div class="cp-card-stats">' +
+          '<div class="cp-card-stat"><div class="cp-card-stat-val">' + esc(String(rVersion)) + '</div><div class="cp-card-stat-lbl">Version</div></div>' +
+          '<div class="cp-card-stat"><div class="cp-card-stat-val">' + rNodes + '</div><div class="cp-card-stat-lbl">Nodes</div></div>' +
+          '<div class="cp-card-stat"><div class="cp-card-stat-val">' + rPods + '</div><div class="cp-card-stat-lbl">Pods</div></div>' +
+        '</div>' +
       '</div>'
     );
   });
