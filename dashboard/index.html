@@ -5252,6 +5252,29 @@ var _globalActiveCluster = 'local';
 var _globalClusterInfo = {};
 var _localClusterInfo = {};
 
+// ---------------------------------------------------------------------------
+// Cluster Isolation Policy — prevents stale cross-cluster data from reaching
+// the DOM after an async operation. Every cluster switch increments the
+// generation counter. Async callbacks must check clusterGuard(gen) before
+// writing to DOM.
+// ---------------------------------------------------------------------------
+var _clusterGeneration = 0;
+
+// Capture the current generation before starting an async operation.
+function clusterGen() { return _clusterGeneration; }
+
+// Check if the cluster context is still valid. Returns false if the user
+// switched clusters since gen was captured — caller must discard stale data.
+function clusterGuard(gen) { return gen === _clusterGeneration; }
+
+// Guarded fetch: returns null if the cluster changed during the request.
+async function guardedFetch(path, timeoutMs) {
+  var gen = _clusterGeneration;
+  var data = await apiFetch(path, timeoutMs);
+  if (!clusterGuard(gen)) return null;
+  return data;
+}
+
 function clusterUrl(url) {
   if (!_globalActiveCluster || _globalActiveCluster === 'local') return url;
   var sep = url.indexOf('?') >= 0 ? '&' : '?';
@@ -5353,8 +5376,10 @@ function getActiveClusterPlatform() {
 }
 
 async function loadSummary() {
+  var _gen = clusterGen();
   try {
     const d = await apiFetch('/api/cluster/summary');
+    if (!clusterGuard(_gen)) return;
     setConnected(true);
 
     // Resolve platform (prefer server-reported, fall back to local lookup)
@@ -5439,8 +5464,10 @@ async function loadSummary() {
 }
 
 async function loadAlerts() {
+  var _gen = clusterGen();
   try {
     const data = await apiFetch('/api/alerts');
+    if (!clusterGuard(_gen)) return;
     const alerts = (data.alerts || []).filter(a => !a.silenced);
     const summary = data.summary || {};
     updateAlertsBadge(alerts.length);
@@ -5468,8 +5495,10 @@ async function loadAlerts() {
 }
 
 async function loadPodIssues() {
+  var _gen = clusterGen();
   try {
     const pods = await apiFetch('/api/pods/issues');
+    if (!clusterGuard(_gen)) return;
     var countEl = document.getElementById('dash-pod-issues');
     var breakEl = document.getElementById('dash-pod-breakdown');
     if (countEl) {
@@ -6621,8 +6650,10 @@ function _remoteUnavailableHTML(widgetLabel) {
 }
 
 async function loadSecurityWidget() {
+  var _gen = clusterGen();
   try {
     const d = await apiFetch('/api/dashboard/security', 30000);
+    if (!clusterGuard(_gen)) return;
     if (d && d.available === false) {
       document.getElementById('sec-score').textContent = '-';
       document.getElementById('sec-score').style.color = 'var(--text2)';
@@ -6671,8 +6702,10 @@ async function loadSecurityWidget() {
 
 
 async function loadGitOpsWidget() {
+  var _gen = clusterGen();
   try {
     const d = await apiFetch('/api/dashboard/gitops');
+    if (!clusterGuard(_gen)) return;
     if (d && d.available === false) {
       document.getElementById('gitops-synced').textContent = '-';
       document.getElementById('gitops-outofsync').textContent = '-';
@@ -6702,8 +6735,10 @@ async function loadGitOpsWidget() {
 }
 
 async function loadDRWidget() {
+  var _gen = clusterGen();
   try {
     const d = await apiFetch('/api/dashboard/dr');
+    if (!clusterGuard(_gen)) return;
     if (d && d.available === false) {
       document.getElementById('dr-score').textContent = '-';
       document.getElementById('dr-score').style.color = 'var(--text2)';
@@ -7171,8 +7206,10 @@ async function acwForceScan() {
 }
 
 async function loadAppChangesWidget() {
+  var _gen = clusterGen();
   try {
     var d = await apiFetch('/api/dashboard/app-changes');
+    if (!clusterGuard(_gen)) return;
     if (d && d.available === false) {
       var tracked = document.getElementById('acw-tracked'); if (tracked) tracked.textContent = '-';
       var meta = document.getElementById('acw-meta'); if (meta) meta.textContent = 'Remote cluster';
@@ -7518,8 +7555,10 @@ function ivsTrivyDetail(img, idx) {
 }
 
 async function loadImageVulnsWidget() {
+  var _gen = clusterGen();
   try {
     var d = await apiFetch('/api/dashboard/image-vulns');
+    if (!clusterGuard(_gen)) return;
     if (d && d.available === false) {
       document.getElementById('ivs-score').textContent = '-'; document.getElementById('ivs-score').style.color = 'var(--text2)';
       var ig = document.getElementById('ivs-grade'); if (ig) { ig.textContent = '-'; ig.style.cssText = 'color:var(--text2)'; }
@@ -7626,8 +7665,10 @@ async function loadImageVulnsWidget() {
 var _orphanedPvcData = [];
 
 async function loadOptimizationWidget() {
+  var _gen = clusterGen();
   try {
     const d = await apiFetch('/api/dashboard/optimization');
+    if (!clusterGuard(_gen)) return;
     if (d && d.available === false) {
       var pctEl = document.getElementById('opt-score-pct'); if (pctEl) pctEl.textContent = '-/100';
       var gradeEl = document.getElementById('opt-grade'); if (gradeEl) { gradeEl.textContent = '-'; gradeEl.style.color = 'var(--text2)'; }
@@ -8379,6 +8420,7 @@ function handleLogin(e) {
 // ---------------------------------------------------------------------------
 async function refreshAll() {
   if (!_authenticated) return;
+  var _gen = clusterGen();
   document.getElementById('last-updated').textContent = 'Refreshing...';
   loadHealthHistory();
   refreshClusterList();
@@ -8398,6 +8440,7 @@ async function refreshAll() {
     loadNamespaceHeatmap(),
     loadRiskPredictions(),
   ]);
+  if (!clusterGuard(_gen)) return;
   // Record health snapshot for timeline after summary loads
   try {
     var el = document.getElementById('m-health');
@@ -11994,6 +12037,7 @@ async function switchGlobalCluster(name) {
 
   if (name === _globalActiveCluster) return;
   _globalActiveCluster = name;
+  _clusterGeneration++;
   _apiFetchInflight.clear();
   // Persist selection so a refresh / shared link keeps the cluster context.
   try {
@@ -12032,8 +12076,10 @@ async function switchGlobalCluster(name) {
   if (chatSel) { chatSel.value = name; updateCcsTrigger(); updateChatWelcomeText(); }
 
   if (name !== 'local') {
+    var _switchGen = clusterGen();
     try {
       var info = await apiFetch('/api/cluster-info?cluster=' + encodeURIComponent(name), 10000);
+      if (!clusterGuard(_switchGen)) return;
       _globalClusterInfo = info;
       if (ver) {
         var isInfoOCP = info.isOpenShift !== undefined ? info.isOpenShift : ((info.platform || '').toLowerCase() === 'openshift');
@@ -12988,7 +13034,9 @@ async function executeActionUI(id) { return postAction(id, 'execute'); }
 async function refreshActionUI(id) { return postAction(id, 'refresh'); }
 
 async function refreshActionsPanel() {
+  var _gen = clusterGen();
   const data = await fetchActions();
+  if (!clusterGuard(_gen)) return;
   renderActionsPanel(data);
 }
 
@@ -13543,8 +13591,10 @@ function renderAuditTimeline() {
 }
 
 async function loadAuditView() {
+  var _gen = clusterGen();
   try {
     var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/audit'));
+    if (!clusterGuard(_gen)) return;
     _auditData = await resp.json();
     var executed = _auditData.executed || [];
     var pending = _auditData.pending || [];
@@ -13695,12 +13745,14 @@ async function loadAlertsView() {
 }
 
 async function loadUnifiedAlerts() {
+  var _gen = clusterGen();
   try {
     const [alertsResp] = await Promise.all([
       fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/alerts')).then(r => r.json()),
       loadSilences(),
       loadAlertsTrends(),
     ]);
+    if (!clusterGuard(_gen)) return;
     _alertsData = alertsResp.alerts || [];
     const summary = alertsResp.summary || { critical: 0, warning: 0, info: 0 };
 
@@ -18460,6 +18512,7 @@ function switchIntelTab(tab) {
 // AI Intelligence View
 // ---------------------------------------------------------------------------
 async function loadIntelligenceView() {
+  var _gen = clusterGen();
   // Load alerts first (the primary feature) — runs in parallel with intel data
   loadUnifiedAlerts();
   loadIncidents();
@@ -18467,6 +18520,7 @@ async function loadIntelligenceView() {
 
   try {
     var resp = await fetch(clusterUrl(MCP_API + '/intelligence/dashboard'));
+    if (!clusterGuard(_gen)) return;
     var data = await resp.json();
 
     var elPred = document.getElementById('aic-predictions');
