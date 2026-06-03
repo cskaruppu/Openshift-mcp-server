@@ -1,0 +1,34 @@
+{
+  "id": "backup-dr",
+  "name": "Backup & Disaster Recovery Agent",
+  "version": "1.0.0",
+  "description": "Backup policy auditing, PVC snapshot management, ETCD backup status, and disaster recovery readiness assessment across clusters.",
+  "category": "Lifecycle",
+  "icon": "shield",
+  "color": "#7c3aed",
+  "tools": [
+    "list_persistent_volume_claims",
+    "list_persistent_volumes",
+    "get_etcd_status",
+    "list_custom_resources",
+    "list_namespaces",
+    "get_cluster_version",
+    "list_nodes",
+    "get_dashboard_summary"
+  ],
+  "services": ["storage", "etcd", "backup"],
+  "capabilities": [
+    "PVC backup policy audit and snapshot verification",
+    "ETCD backup status and health monitoring",
+    "Persistent volume reclaim policy compliance",
+    "Disaster recovery readiness scoring per cluster",
+    "Cross-cluster backup coverage gap detection",
+    "Storage class and provisioner inventory",
+    "Recovery point objective (RPO) estimation"
+  ],
+  "requires": ["core"],
+  "protocols": ["mcp", "rest", "a2a"],
+  "selectable": true,
+  "mcpEndpoint": "/mcp/backup-dr",
+  "tags": ["backup", "disaster-recovery", "storage", "etcd", "resilience", "snapshots"]
+}

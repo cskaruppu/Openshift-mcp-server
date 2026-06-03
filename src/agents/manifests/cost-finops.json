@@ -1,0 +1,34 @@
+{
+  "id": "cost-finops",
+  "name": "Cost & FinOps Agent",
+  "version": "1.0.0",
+  "description": "Resource cost analysis, quota utilization tracking, idle resource detection, and capacity right-sizing recommendations across clusters.",
+  "category": "Governance",
+  "icon": "dollar-sign",
+  "color": "#16a34a",
+  "tools": [
+    "list_resource_quotas",
+    "get_namespace_details",
+    "pods_top",
+    "nodes_top",
+    "list_namespaces",
+    "get_dashboard_summary",
+    "list_limit_ranges",
+    "list_persistent_volume_claims"
+  ],
+  "services": ["metrics", "quotas", "capacity"],
+  "capabilities": [
+    "Resource quota utilization analysis per namespace",
+    "Idle pod and over-provisioned workload detection",
+    "Node capacity utilization and right-sizing recommendations",
+    "PVC storage usage tracking and orphan volume detection",
+    "Namespace cost attribution based on CPU/memory requests",
+    "Limit range compliance auditing",
+    "Cross-cluster resource comparison and optimization"
+  ],
+  "requires": ["core"],
+  "protocols": ["mcp", "rest", "a2a"],
+  "selectable": true,
+  "mcpEndpoint": "/mcp/cost-finops",
+  "tags": ["cost", "finops", "quotas", "capacity", "optimization", "resources"]
+}

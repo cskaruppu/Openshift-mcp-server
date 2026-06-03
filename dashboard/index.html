@@ -10397,7 +10397,8 @@ function showView(view) {
   } else if (view === 'intelligence') {
     loadIntelligenceView();
   } else if (view === 'agents') {
-    loadAgentRegistry();
+    toggleAgentsModal();
+    return;
   }
   if (view !== 'intelligence' && _liveSSE) { _liveSSE.close(); _liveSSE = null; }
 
@@ -15500,10 +15501,16 @@ function toggleAgentsModal() {
   var modal = document.getElementById('agents-modal');
   var isOpen = modal.classList.toggle('open');
   overlay.classList.toggle('open', isOpen);
+  var body = document.getElementById('agents-modal-body');
+  var agentView = document.getElementById('view-agents');
+  if (!body || !agentView) return;
   if (isOpen) {
-    var body = document.getElementById('agents-modal-body');
-    var agentView = document.getElementById('view-agents');
-    if (agentView && body) body.innerHTML = agentView.innerHTML;
+    agentView.style.display = '';
+    body.appendChild(agentView);
+    loadAgentRegistry();
+  } else {
+    agentView.style.display = 'none';
+    document.body.appendChild(agentView);
   }
 }
 
