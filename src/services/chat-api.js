@@ -53,6 +53,7 @@ import {
   isServiceNowEnabled,
 } from "./action-workflow.js";
 import { callLLM, callLLMStream, llmEnabled } from "./llm.js";
+import { resolveLLMOpts } from "./dashboard-api.js";
 import { diagnosePod } from "./pod-doctor.js";
 import { runAgent } from "./agent-loop.js";
 import { runOrchestrator } from "./mcp-orchestrator.js";
@@ -13591,6 +13592,7 @@ export async function handleFleetChatAPI(req, res) {
       if (body.model) llmOpts.model = body.model;
       if (body.azureDeployment) llmOpts.azureDeployment = body.azureDeployment;
       if (body.azureApiVersion) llmOpts.azureApiVersion = body.azureApiVersion;
+      await resolveLLMOpts(llmOpts);
       const active = (llmOpts.provider || LLM_PROVIDER) && (llmOpts.provider || LLM_PROVIDER) !== "none";
       if (active) {
         try {
@@ -13672,6 +13674,11 @@ export async function handleChatAPI(req, res) {
     if (body.model) llmOpts.model = body.model;
     if (body.azureDeployment) llmOpts.azureDeployment = body.azureDeployment;
     if (body.azureApiVersion) llmOpts.azureApiVersion = body.azureApiVersion;
+    // The dashboard caches a MASKED api key from GET /api/settings/llm and
+    // echoes it back here. Resolve the real key (and any omitted provider
+    // config) from server-side storage so the LLM works for EVERY cluster,
+    // not just whichever one happened to have a full key cached client-side.
+    await resolveLLMOpts(llmOpts);
 
     // ---- View-more pagination handler ----
     const viewMoreMatch = userMessage.match(/^__viewmore__\s+(\S+)\s+(\S+)\s+(\d+)\s+(\d+)$/);
@@ -15198,6 +15205,9 @@ export async function handleChatCompareAPI(req, res) {
     const contextStr = summarizeContext(context);
     const userContent = `${message}\n\n--- Live Cluster Data ---\n${contextStr}`;
 
+    // Resolve real API keys for any masked/empty keys the UI echoed back.
+    await Promise.all(providers.map((p) => resolveLLMOpts(p)));
+
     // Send to all providers in parallel
     const promises = providers.map(async (prov) => {
       const provStart = Date.now();
@@ -15295,6 +15305,9 @@ export async function handleChatInvestigateAPI(req, res) {
     if (apiKey) llmOpts.apiKey = apiKey;
     if (apiUrl) llmOpts.apiUrl = apiUrl;
     if (model) llmOpts.model = model;
+    if (body.azureDeployment) llmOpts.azureDeployment = body.azureDeployment;
+    if (body.azureApiVersion) llmOpts.azureApiVersion = body.azureApiVersion;
+    await resolveLLMOpts(llmOpts);
 
     // Build context hint from cluster
     let contextHint = null;
@@ -15724,6 +15737,9 @@ export async function handleChatRunbookAPI(req, res) {
     if (apiKey) llmOpts.apiKey = apiKey;
     if (apiUrl) llmOpts.apiUrl = apiUrl;
     if (model) llmOpts.model = model;
+    if (body.azureDeployment) llmOpts.azureDeployment = body.azureDeployment;
+    if (body.azureApiVersion) llmOpts.azureApiVersion = body.azureApiVersion;
+    await resolveLLMOpts(llmOpts);
 
     const steps = await executeRunbook(runbook, namespace || null, llmOpts);
 

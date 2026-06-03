@@ -89,6 +89,51 @@ async function saveSettingsToDB(settings) {
 }
 
 /**
+ * Load the stored LLM settings (UNMASKED) from DB → file → defaults.
+ * Used server-side to resolve real API keys when the client sends a masked
+ * or empty key. The client never holds the real secret — the server does.
+ */
+export async function loadStoredLLMSettings() {
+  try {
+    const fromDB = await loadSettingsFromDB();
+    if (fromDB && fromDB.providers) return fromDB;
+  } catch { /* fall through */ }
+  try {
+    const raw = await readFile(LLM_SETTINGS_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.providers) return parsed;
+  } catch { /* fall through */ }
+  return DEFAULT_LLM_SETTINGS;
+}
+
+/**
+ * Given llmOpts from a chat request, resolve the real API key (and any
+ * provider config the client omitted or masked) from server-side storage.
+ * A masked key looks like "****abcd" or "configured". Mutates and returns opts.
+ */
+export async function resolveLLMOpts(opts = {}) {
+  const provider = opts.provider;
+  if (!provider || provider === "none") return opts;
+  const keyLooksMasked = !opts.apiKey || /^\*{2,}/.test(opts.apiKey) || opts.apiKey === "configured";
+  // If the client supplied a real key and a URL, trust it as-is.
+  if (!keyLooksMasked && opts.apiUrl) return opts;
+  try {
+    const stored = await loadStoredLLMSettings();
+    const cfg = stored?.providers?.[provider];
+    if (cfg) {
+      if (keyLooksMasked && cfg.apiKey) opts.apiKey = cfg.apiKey;
+      if (!opts.apiUrl && cfg.apiUrl) opts.apiUrl = cfg.apiUrl;
+      if (!opts.model && cfg.model) opts.model = cfg.model;
+      if (provider === "azure") {
+        if (!opts.azureDeployment && cfg.deployment) opts.azureDeployment = cfg.deployment;
+        if (!opts.azureApiVersion && cfg.apiVersion) opts.azureApiVersion = cfg.apiVersion;
+      }
+    }
+  } catch { /* best effort — fall back to whatever the client sent */ }
+  return opts;
+}
+
+/**
  * GET /api/settings/llm — read LLM settings from DB → file → defaults
  */
 export async function handleLLMSettingsGet(req, res) {
