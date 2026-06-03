@@ -2070,25 +2070,55 @@ tr:hover td{background:#ffffff06}
 .light-theme .ccs-trigger:hover { border-color:#2563eb80; background:#f6f8fa; }
 
 /* Login screen */
-.login-overlay{position:fixed;inset:0;z-index:99999;background:var(--bg);display:flex;align-items:center;justify-content:center;transition:opacity .3s}
+/* ── Login Overlay — premium split layout ── */
+.login-overlay{position:fixed;inset:0;z-index:99999;background:linear-gradient(160deg,#020617 0%,#0a0f1e 20%,#0c1631 40%,#161338 60%,#1a0e2e 80%,#0a0a14 100%);display:flex;align-items:center;justify-content:center;transition:opacity .3s;overflow:hidden}
+.login-overlay::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 100% 80% at 30% 0%,rgba(99,102,241,.1),transparent 60%),radial-gradient(ellipse 80% 60% at 80% 100%,rgba(168,85,247,.08),transparent 50%);pointer-events:none}
 .login-overlay.hidden{opacity:0;pointer-events:none}
-.login-card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:48px 40px;max-width:420px;width:90%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5)}
-.login-card .login-logo{margin-bottom:24px}
-.login-card .login-logo svg{width:56px;height:56px}
-.login-card .login-brand{font-size:24px;font-weight:700;margin-bottom:4px}
-.login-card .login-brand .tcs{color:#fff;font-weight:800;letter-spacing:3px;font-size:28px}
-.login-card .login-brand .ai{background:linear-gradient(135deg,#f59e0b,#ef4444,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;font-weight:800}
-.login-card .login-sub{font-size:12px;color:var(--text2);letter-spacing:1px;text-transform:uppercase;margin-bottom:32px}
-.login-card .login-label{display:block;text-align:left;font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
-.login-card .login-input{width:100%;padding:12px 16px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;font-family:monospace;outline:none;box-sizing:border-box;transition:border-color .2s}
-.login-card .login-input:focus{border-color:var(--accent)}
-.login-card .login-btn{width:100%;margin-top:16px;padding:12px;background:linear-gradient(135deg,#e04040,#c03030);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:opacity .2s}
-.login-card .login-btn:hover{opacity:.9}
+.login-wrapper{display:flex;flex-direction:column;align-items:center;gap:32px;position:relative;z-index:1;width:90%;max-width:440px}
+.login-hero{text-align:center}
+.login-hero-logo{margin-bottom:20px;display:flex;justify-content:center}
+.login-hero-logo svg{width:72px;height:72px;filter:drop-shadow(0 0 20px rgba(99,102,241,.3))}
+.login-hero-brand{font-size:38px;font-weight:800;letter-spacing:-1px;margin-bottom:6px}
+.login-hero-brand .tcs{color:#f8fafc;font-weight:800;letter-spacing:4px;font-size:42px}
+.login-hero-brand .agentic{color:#c7d2fe}
+.login-hero-brand .ai{background:linear-gradient(135deg,#818cf8,#a78bfa,#c084fc);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;font-weight:800}
+.login-hero-sub{font-size:13px;color:#94a3b8;letter-spacing:2px;text-transform:uppercase}
+.login-theme-toggle{position:absolute;top:24px;right:24px;z-index:2;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.15);border-radius:8px;padding:8px 12px;color:#94a3b8;cursor:pointer;font-size:16px;transition:all .2s}
+.login-theme-toggle:hover{border-color:rgba(99,102,241,.4);color:#c7d2fe}
+.login-card{background:rgba(15,23,42,.6);border:1px solid rgba(99,102,241,.12);border-radius:16px;padding:32px 32px 28px;width:100%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.4),0 0 0 1px rgba(99,102,241,.05) inset;backdrop-filter:blur(16px)}
+.login-card .login-label{display:block;text-align:left;font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
+.login-card .login-input{width:100%;padding:12px 16px;background:rgba(2,6,23,.5);border:1px solid rgba(99,102,241,.12);border-radius:10px;color:#f8fafc;font-size:14px;font-family:'SF Mono','Fira Code',monospace;outline:none;box-sizing:border-box;transition:border-color .2s}
+.login-card .login-input:focus{border-color:rgba(129,140,248,.5);box-shadow:0 0 0 3px rgba(99,102,241,.1)}
+.login-card .login-btn{width:100%;margin-top:16px;padding:13px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;letter-spacing:.3px}
+.login-card .login-btn:hover{opacity:.9;box-shadow:0 4px 20px rgba(99,102,241,.3)}
 .login-card .login-btn:disabled{opacity:.5;cursor:not-allowed}
-.login-card .login-error{color:var(--crit);font-size:13px;margin-top:12px;min-height:20px}
-.login-card .login-help{margin-top:24px;font-size:11px;color:var(--text2);line-height:1.6}
-.login-card .login-help code{background:var(--bg);padding:1px 6px;border-radius:4px;font-size:11px}
-.login-card .login-mode-badge{display:inline-block;background:var(--bg);border:1px solid var(--border);padding:2px 10px;border-radius:12px;font-size:11px;color:var(--text2);margin-bottom:16px}
+.login-card .login-error{color:#f87171;font-size:13px;margin-top:12px;min-height:20px}
+.login-card .login-help{margin-top:20px;font-size:11px;color:#64748b;line-height:1.6}
+.login-card .login-help code{background:rgba(2,6,23,.5);padding:1px 6px;border-radius:4px;font-size:11px;color:#94a3b8}
+.login-card .login-mode-badge{display:inline-block;background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.12);padding:3px 12px;border-radius:12px;font-size:10px;font-weight:600;color:#818cf8;margin-bottom:16px;letter-spacing:.5px}
+.login-tab-row{display:flex;gap:4px;justify-content:center;margin-bottom:20px;background:rgba(2,6,23,.4);border-radius:10px;padding:3px}
+.login-tab-row .login-tab-btn{flex:1;background:none;border:none;color:#64748b;padding:8px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;transition:all .2s}
+.login-tab-row .login-tab-btn.active{background:rgba(99,102,241,.15);color:#c7d2fe}
+.login-tab-row .login-tab-btn:hover:not(.active){color:#94a3b8}
+
+/* ── Light theme login ── */
+.light-theme .login-overlay{background:linear-gradient(160deg,#f0f2f8 0%,#e8ecf5 20%,#dfe4f2 40%,#e8e0f4 60%,#f2e8f0 80%,#f5f3f8 100%)}
+.light-theme .login-overlay::before{background:radial-gradient(ellipse 100% 80% at 30% 0%,rgba(99,102,241,.06),transparent 60%),radial-gradient(ellipse 80% 60% at 80% 100%,rgba(168,85,247,.04),transparent 50%)}
+.light-theme .login-hero-brand .tcs{color:#1e1b4b}
+.light-theme .login-hero-brand .agentic{color:#4338ca}
+.light-theme .login-hero-sub{color:#6b7280}
+.light-theme .login-theme-toggle{background:rgba(99,102,241,.06);border-color:rgba(99,102,241,.15);color:#6b7280}
+.light-theme .login-card{background:rgba(255,255,255,.85);border-color:rgba(99,102,241,.1);box-shadow:0 20px 60px rgba(0,0,0,.08),0 0 0 1px rgba(99,102,241,.05) inset}
+.light-theme .login-card .login-label{color:#6b7280}
+.light-theme .login-card .login-input{background:#f8fafc;border-color:#e2e8f0;color:#1e293b}
+.light-theme .login-card .login-input:focus{border-color:rgba(99,102,241,.5);box-shadow:0 0 0 3px rgba(99,102,241,.08)}
+.light-theme .login-card .login-btn{background:linear-gradient(135deg,#4f46e5,#7c3aed)}
+.light-theme .login-card .login-mode-badge{background:rgba(99,102,241,.06);border-color:rgba(99,102,241,.12);color:#6366f1}
+.light-theme .login-card .login-help{color:#9ca3af}
+.light-theme .login-card .login-help code{background:#f1f5f9;color:#6b7280}
+.light-theme .login-tab-row{background:#f1f5f9}
+.light-theme .login-tab-row .login-tab-btn{color:#9ca3af}
+.light-theme .login-tab-row .login-tab-btn.active{background:rgba(99,102,241,.1);color:#4f46e5}
 
 /* ── Cluster Picker View ── */
 .cluster-picker{min-height:100vh;background:linear-gradient(160deg,#020617 0%,#0a0f1e 20%,#0c1631 40%,#161338 60%,#1a0e2e 80%,#0a0a14 100%);display:flex;flex-direction:column;position:relative}
@@ -2198,49 +2228,87 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
 .cp-action-btn{background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.15);border-radius:8px;padding:6px 10px;color:var(--text2);cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600}
 .cp-action-btn:hover{border-color:rgba(99,102,241,.4);color:#c7d2fe;background:rgba(99,102,241,.12)}
 .cp-action-btn svg{width:16px;height:16px}
+
+/* ── Light theme: Cluster Picker ── */
+.light-theme .cluster-picker{background:linear-gradient(160deg,#f0f2f8 0%,#e8ecf5 20%,#dfe4f2 40%,#e8e0f4 60%,#f2e8f0 80%,#f5f3f8 100%)}
+.light-theme .cluster-picker::before{background:radial-gradient(ellipse 120% 60% at 20% -10%,rgba(99,102,241,.06),transparent 60%),radial-gradient(ellipse 80% 50% at 80% 20%,rgba(56,189,248,.03),transparent 50%),radial-gradient(ellipse 60% 50% at 70% 100%,rgba(168,85,247,.04),transparent 50%)}
+.light-theme .cluster-picker::after{background:radial-gradient(circle 600px at 50% 40%,rgba(99,102,241,.025),transparent)}
+.light-theme .cp-header{background:rgba(255,255,255,.6);border-bottom-color:rgba(99,102,241,.08);backdrop-filter:blur(16px)}
+.light-theme .cp-header .cp-brand-name{color:#1e1b4b}
+.light-theme .cp-header .cp-brand-sub{color:#6b7280}
+.light-theme .cp-title{background:linear-gradient(135deg,#1e1b4b 0%,#4338ca 30%,#6366f1 60%,#818cf8 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.light-theme .cp-subtitle{color:#6b7280}
+.light-theme .cp-card{background:rgba(255,255,255,.7);border-color:rgba(99,102,241,.1);backdrop-filter:blur(12px)}
+.light-theme .cp-card:hover{border-color:rgba(99,102,241,.3);box-shadow:0 8px 32px rgba(99,102,241,.1),0 0 0 1px rgba(99,102,241,.08) inset}
+.light-theme .cp-card-name{color:#1e293b}
+.light-theme .cp-card-meta-tag{background:#f1f5f9;border-color:#e2e8f0;color:#64748b}
+.light-theme .cp-card-add{background:rgba(255,255,255,.4);border-color:rgba(99,102,241,.15)}
+.light-theme .cp-card-add:hover{border-color:rgba(99,102,241,.35);background:rgba(99,102,241,.04)}
+.light-theme .cp-card-add-icon{background:#f8fafc;border-color:#e2e8f0}
+.light-theme .cp-platform-pill{background:rgba(255,255,255,.5)}
+.light-theme .cp-platform-pill:hover{background:rgba(255,255,255,.8)}
+.light-theme .cp-fleet-bar{background:linear-gradient(135deg,#eef2ff,#e8e0f4,#eef2ff);border-color:rgba(99,102,241,.12)}
+.light-theme .cp-fleet-bar-title .cp-fleet-label{color:#1e293b}
+.light-theme .cp-fleet-input{background:#fff;border-color:#e2e8f0;color:#1e293b}
+.light-theme .cp-fleet-response{background:#fff;border-color:#e2e8f0}
+.light-theme .cp-action-btn{background:rgba(99,102,241,.04);border-color:rgba(99,102,241,.12);color:#6b7280}
+.light-theme .cp-action-btn:hover{border-color:rgba(99,102,241,.3);color:#4338ca;background:rgba(99,102,241,.08)}
+.light-theme .cp-user-label{color:#6b7280}
+.light-theme .cp-logout-btn{border-color:#e2e8f0;color:#6b7280}
 </style>
 </head>
 <body>
 
 <!-- Login Screen Overlay -->
 <div class="login-overlay" id="login-overlay">
-  <div class="login-card">
-    <div class="login-logo">
-      <svg viewBox="0 0 56 56" fill="none">
-        <circle cx="28" cy="28" r="26" stroke="url(#lg)" stroke-width="2" fill="none"/>
-        <path d="M20 28l5 5 11-11" stroke="#e04040" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-        <defs><linearGradient id="lg" x1="0" y1="0" x2="56" y2="56"><stop stop-color="#e04040"/><stop offset=".5" stop-color="#3b82f6"/><stop offset="1" stop-color="#10b981"/></linearGradient></defs>
-      </svg>
-    </div>
-    <div class="login-brand"><span class="tcs">TCS</span> Agentic <span class="ai">AI</span></div>
-    <div class="login-sub">Enterprise Intelligence Platform</div>
-    <div class="login-mode-badge" id="login-mode-badge">Token Authentication</div>
-    <div style="display:flex;gap:8px;justify-content:center;margin-bottom:16px">
-      <button class="login-tab-btn active" id="login-tab-token" onclick="switchLoginTab('token')" style="background:none;border:1px solid var(--border);color:var(--text);padding:6px 16px;border-radius:6px;font-size:12px;cursor:pointer">API Token</button>
-      <button class="login-tab-btn" id="login-tab-password" onclick="switchLoginTab('password')" style="background:none;border:1px solid var(--border);color:var(--text2);padding:6px 16px;border-radius:6px;font-size:12px;cursor:pointer">Username &amp; Password</button>
-    </div>
-    <form id="login-form" onsubmit="return handleLogin(event)">
-      <div id="login-token-fields">
-        <label class="login-label" for="login-token">API Token</label>
-        <input class="login-input" id="login-token" type="password" placeholder="Enter your MCP_API_TOKEN" autocomplete="current-password" autofocus>
+  <button class="login-theme-toggle" onclick="toggleTheme()" title="Toggle light/dark theme">&#x263E;</button>
+  <div class="login-wrapper">
+    <div class="login-hero">
+      <div class="login-hero-logo">
+        <svg viewBox="0 0 72 72" fill="none">
+          <circle cx="36" cy="36" r="34" stroke="url(#lg2)" stroke-width="2" fill="none" opacity=".6"/>
+          <circle cx="36" cy="36" r="24" stroke="url(#lg2)" stroke-width="1.5" fill="none" opacity=".3"/>
+          <circle cx="36" cy="22" r="4" fill="#818cf8" opacity=".8"/>
+          <circle cx="22" cy="44" r="3.5" fill="#a78bfa" opacity=".7"/>
+          <circle cx="50" cy="44" r="3.5" fill="#6366f1" opacity=".7"/>
+          <line x1="36" y1="26" x2="23" y2="41" stroke="#818cf8" stroke-width="1.5" opacity=".5"/>
+          <line x1="36" y1="26" x2="49" y2="41" stroke="#818cf8" stroke-width="1.5" opacity=".5"/>
+          <line x1="25" y1="44" x2="47" y2="44" stroke="#a78bfa" stroke-width="1" opacity=".3"/>
+          <defs><linearGradient id="lg2" x1="0" y1="0" x2="72" y2="72"><stop stop-color="#6366f1"/><stop offset=".5" stop-color="#a78bfa"/><stop offset="1" stop-color="#818cf8"/></linearGradient></defs>
+        </svg>
       </div>
-      <div id="login-password-fields" style="display:none">
-        <label class="login-label" for="login-username">Username</label>
-        <input class="login-input" id="login-username" type="text" placeholder="admin" autocomplete="username" style="margin-bottom:12px">
-        <label class="login-label" for="login-password">Password</label>
-        <input class="login-input" id="login-password" type="password" placeholder="Enter your password" autocomplete="current-password">
-      </div>
-      <button class="login-btn" type="submit" id="login-btn">Sign In</button>
-    </form>
-    <div class="login-error" id="login-error"></div>
-    <div class="login-help" id="login-help-token">
-      Set the token in your cluster secret:<br>
-      <code>oc edit secret mcp-server-secrets -n openshift-mcp</code><br>
-      Then add: <code>MCP_API_TOKEN: "your-token-here"</code>
+      <div class="login-hero-brand"><span class="tcs">TCS</span> <span class="agentic">Agentic</span> <span class="ai">AI</span></div>
+      <div class="login-hero-sub">MCP Gateway &middot; Multi-Cluster AI</div>
     </div>
-    <div class="login-help" id="login-help-password" style="display:none">
-      Admin users can create accounts via<br>
-      <code>POST /api/auth/users</code> or the User Management panel.
+    <div class="login-card">
+      <div class="login-mode-badge" id="login-mode-badge">Secure Authentication</div>
+      <div class="login-tab-row">
+        <button class="login-tab-btn active" id="login-tab-token" onclick="switchLoginTab('token')">API Token</button>
+        <button class="login-tab-btn" id="login-tab-password" onclick="switchLoginTab('password')">Username &amp; Password</button>
+      </div>
+      <form id="login-form" onsubmit="return handleLogin(event)">
+        <div id="login-token-fields">
+          <label class="login-label" for="login-token">API Token</label>
+          <input class="login-input" id="login-token" type="password" placeholder="Enter your MCP_API_TOKEN" autocomplete="current-password" autofocus>
+        </div>
+        <div id="login-password-fields" style="display:none">
+          <label class="login-label" for="login-username">Username</label>
+          <input class="login-input" id="login-username" type="text" placeholder="admin" autocomplete="username" style="margin-bottom:12px">
+          <label class="login-label" for="login-password">Password</label>
+          <input class="login-input" id="login-password" type="password" placeholder="Enter your password" autocomplete="current-password">
+        </div>
+        <button class="login-btn" type="submit" id="login-btn">Sign In</button>
+      </form>
+      <div class="login-error" id="login-error"></div>
+      <div class="login-help" id="login-help-token">
+        Set the token in your cluster secret:<br>
+        <code>oc edit secret mcp-server-secrets -n openshift-mcp</code><br>
+        Then add: <code>MCP_API_TOKEN: "your-token-here"</code>
+      </div>
+      <div class="login-help" id="login-help-password" style="display:none">
+        Admin users can create accounts via<br>
+        <code>POST /api/auth/users</code> or the User Management panel.
+      </div>
     </div>
   </div>
 </div>
@@ -2553,6 +2621,10 @@ body.workspace-mode .nav-tab{flex:1;text-align:center;max-width:180px}
     </div>
     <div class="cp-user">
       <div class="cp-header-actions">
+        <button class="cp-action-btn" onclick="toggleTheme()" title="Toggle light/dark theme" id="cp-theme-toggle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+          Theme
+        </button>
         <button class="cp-action-btn" onclick="_exitClusterPicker();showView('settings')" title="Settings">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
           Settings
@@ -8276,18 +8348,14 @@ function switchLoginTab(tab) {
     tokenHelp.style.display = '';
     passHelp.style.display = 'none';
     tokenBtn.classList.add('active');
-    tokenBtn.style.color = 'var(--text)';
     passBtn.classList.remove('active');
-    passBtn.style.color = 'var(--text2)';
   } else {
     tokenFields.style.display = 'none';
     passFields.style.display = '';
     tokenHelp.style.display = 'none';
     passHelp.style.display = '';
     passBtn.classList.add('active');
-    passBtn.style.color = 'var(--text)';
     tokenBtn.classList.remove('active');
-    tokenBtn.style.color = 'var(--text2)';
   }
   document.getElementById('login-error').textContent = '';
 }
@@ -15173,14 +15241,21 @@ function highlightMatch(text, q) {
 function toggleTheme() {
   const isLight = document.body.classList.toggle('light-theme');
   localStorage.setItem('mcp-theme', isLight ? 'light' : 'dark');
-  document.getElementById('theme-toggle').innerHTML = isLight ? '&#x2600;' : '&#x263E;';
+  const icon = isLight ? '&#x2600;' : '&#x263E;';
+  var mainBtn = document.getElementById('theme-toggle');
+  if (mainBtn) mainBtn.innerHTML = icon;
+  var loginBtn = document.querySelector('.login-theme-toggle');
+  if (loginBtn) loginBtn.innerHTML = icon;
 }
 (function initTheme() {
   const saved = localStorage.getItem('mcp-theme');
   if (saved === 'light') {
     document.body.classList.add('light-theme');
-    const btn = document.getElementById('theme-toggle');
-    if (btn) btn.innerHTML = '&#x2600;';
+    const icon = '&#x2600;';
+    var mainBtn = document.getElementById('theme-toggle');
+    if (mainBtn) mainBtn.innerHTML = icon;
+    var loginBtn = document.querySelector('.login-theme-toggle');
+    if (loginBtn) loginBtn.innerHTML = icon;
   }
 })();
 
