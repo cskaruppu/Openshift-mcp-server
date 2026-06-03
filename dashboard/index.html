@@ -623,6 +623,7 @@ tr:hover td{background:#ffffff06}
 body.chat-active{overflow:hidden}
 .chat-fullpage{display:flex;height:calc(100vh - 65px - 38px);background:var(--bg-deep);overflow:hidden}
 .chat-sidebar{width:340px;background:var(--bg);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+#chat-scope-dropdown.open{display:block!important}
 @media(max-width:900px){.chat-sidebar{width:260px}}
 @media(max-width:700px){.chat-sidebar{display:none}}
 .actions-panel{width:340px;background:var(--bg);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
@@ -10827,16 +10828,18 @@ function renderHubLLMIntegration() {
 // Structure: { chats: [{ id, title, messages: [{ role, text, provider?, html? }], updatedAt }], activeId }
 let _historyRemote = null; // null = unknown, true = server-backed, false = localStorage
 let _historyCache = { chats: [], activeId: null };
-// Chat-history scope: 'cluster' = only the active cluster's chats (default,
-// single-pane-of-glass); 'all' = every cluster's chats.
-let _chatHistoryScope = 'cluster';
+// Chat-history scope: 'active' = only the currently-selected cluster (default),
+// 'all' = every cluster, or a specific cluster name like 'local'/'cluster-01'.
+let _chatHistoryScope = 'active';
 
 // The cluster a new chat belongs to / the sidebar is scoped to.
 function activeChatCluster() {
   return (_globalActiveCluster && _globalActiveCluster !== 'local') ? _globalActiveCluster : 'local';
 }
 function chatScopeParam() {
-  return _chatHistoryScope === 'all' ? '' : ('?cluster=' + encodeURIComponent(activeChatCluster()));
+  if (_chatHistoryScope === 'all') return '';
+  if (_chatHistoryScope === 'active') return '?cluster=' + encodeURIComponent(activeChatCluster());
+  return '?cluster=' + encodeURIComponent(_chatHistoryScope);
 }
 
 function chatApiBase() { return MCP_API.replace(/\/api$/, ''); }
@@ -11304,10 +11307,21 @@ function showToast(message, kind) {
   }, 2800);
 }
 
-function toggleChatHistoryScope() {
-  _chatHistoryScope = (_chatHistoryScope === 'all') ? 'cluster' : 'all';
+function setChatHistoryScope(scope) {
+  _chatHistoryScope = scope || 'active';
+  var dd = document.getElementById('chat-scope-dropdown');
+  if (dd) dd.classList.remove('open');
   reloadChatList();
 }
+function toggleChatScopeDropdown(e) {
+  if (e) e.stopPropagation();
+  var dd = document.getElementById('chat-scope-dropdown');
+  if (dd) dd.classList.toggle('open');
+}
+document.addEventListener('click', function() {
+  var dd = document.getElementById('chat-scope-dropdown');
+  if (dd) dd.classList.remove('open');
+});
 
 // ---- Fleet AI — ask across ALL clusters (AI Hub) ----
 function fleetAsk(q) {
@@ -11348,28 +11362,73 @@ async function sendFleetChat() {
 }
 
 function _chatScopeHeaderHtml() {
-  var scopeCluster = activeChatCluster();
-  var clusterLabel = scopeCluster === 'local' ? 'Hub (local)' : scopeCluster;
-  var pInfo = K8S_PLATFORMS[(scopeCluster === 'local' ? (getActiveClusterPlatform && getActiveClusterPlatform()) : ((_remoteAgents[scopeCluster] || {}).platform)) || 'k8s'] || K8S_PLATFORMS['k8s'];
-  var label = _chatHistoryScope === 'all'
-    ? '<span style="opacity:.7">All clusters</span>'
-    : '<span style="color:' + pInfo.color + '">' + pInfo.icon + '</span> ' + esc(clusterLabel);
-  var toggle = _chatHistoryScope === 'all' ? 'This cluster' : 'All clusters';
-  return '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px 10px;margin-bottom:4px;border-bottom:1px solid var(--border);font-size:11px">' +
-    '<span style="font-weight:600;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + label + '</span>' +
-    '<button onclick="toggleChatHistoryScope()" title="Toggle chat history scope" style="background:none;border:1px solid var(--border);border-radius:5px;padding:2px 8px;cursor:pointer;font-size:10px;color:var(--text2);white-space:nowrap">' + toggle + '</button>' +
-    '</div>';
+  var scope = _chatHistoryScope;
+  var resolvedCluster = (scope === 'active') ? activeChatCluster() : (scope === 'all' ? null : scope);
+
+  // Build label for current selection
+  var label;
+  if (scope === 'all') {
+    label = '<span style="opacity:.7">☰ All clusters</span>';
+  } else {
+    var cl = resolvedCluster || 'local';
+    var clName = cl === 'local' ? 'Hub (local)' : cl;
+    var plat = (cl === 'local') ? (getActiveClusterPlatform && getActiveClusterPlatform() || 'openshift') : ((_remoteAgents[cl] || {}).platform || 'k8s');
+    var pInfo = K8S_PLATFORMS[plat.toLowerCase()] || K8S_PLATFORMS['k8s'];
+    label = '<span style="color:' + pInfo.color + '">' + pInfo.icon + '</span> ' + esc(clName);
+  }
+
+  // Build cluster option list
+  var clusters = [{ key: 'active', label: 'This cluster', icon: '' }];
+  clusters.push({ key: 'all', label: 'All clusters', icon: '☰' });
+  // Hub
+  var hubPlat = (getActiveClusterPlatform && getActiveClusterPlatform() || 'openshift').toLowerCase();
+  var hubInfo = K8S_PLATFORMS[hubPlat] || K8S_PLATFORMS['k8s'];
+  clusters.push({ key: 'local', label: 'Hub (local)', icon: hubInfo.icon, color: hubInfo.color });
+  // Remote clusters
+  var remoteNames = Object.keys(_remoteAgents || {}).sort();
+  remoteNames.forEach(function(name) {
+    var ag = _remoteAgents[name] || {};
+    var rp = K8S_PLATFORMS[(ag.platform || 'k8s').toLowerCase()] || K8S_PLATFORMS['k8s'];
+    clusters.push({ key: name, label: name, icon: rp.icon, color: rp.color });
+  });
+
+  var items = clusters.map(function(c) {
+    var isActive = (scope === c.key) || (scope === 'active' && c.key === 'active');
+    var check = isActive ? '<span style="margin-left:auto;color:var(--accent)">&#10003;</span>' : '';
+    var iconHtml = c.color
+      ? '<span style="color:' + c.color + ';margin-right:4px">' + c.icon + '</span>'
+      : (c.icon ? '<span style="margin-right:4px;opacity:.6">' + c.icon + '</span>' : '');
+    return '<div onclick="setChatHistoryScope(\'' + c.key + '\')" style="display:flex;align-items:center;gap:2px;padding:5px 10px;cursor:pointer;font-size:11px;color:var(--text);border-radius:4px;' + (isActive ? 'background:var(--accent)12;font-weight:600' : '') + '" onmouseenter="this.style.background=\'var(--hover)\'" onmouseleave="this.style.background=\'' + (isActive ? 'var(--accent)12' : '') + '\'">' +
+      iconHtml + esc(c.label) + check + '</div>';
+  }).join('');
+
+  return '<div style="position:relative;padding:6px 10px;margin-bottom:4px;border-bottom:1px solid var(--border);font-size:11px">' +
+    '<div onclick="toggleChatScopeDropdown(event)" style="display:flex;align-items:center;justify-content:space-between;gap:6px;cursor:pointer;user-select:none">' +
+      '<span style="font-weight:600;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + label + '</span>' +
+      '<span style="font-size:9px;color:var(--text2);transform:rotate(90deg)">&#9654;</span>' +
+    '</div>' +
+    '<div id="chat-scope-dropdown" style="display:none;position:absolute;top:100%;left:6px;right:6px;z-index:200;background:var(--bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.25);padding:4px 0;max-height:220px;overflow-y:auto">' +
+      items +
+    '</div>' +
+  '</div>';
 }
 
 function renderChatHistory() {
   const list = document.getElementById('chat-history-list');
   const history = loadChatHistory();
   const scopeHeader = _chatScopeHeaderHtml();
-  const scopeCluster = activeChatCluster();
-  const clusterLabel = scopeCluster === 'local' ? 'the hub cluster' : scopeCluster;
+  var resolvedScope = _chatHistoryScope;
+  var scopeCluster;
+  if (resolvedScope === 'active') {
+    scopeCluster = activeChatCluster();
+  } else if (resolvedScope === 'all') {
+    scopeCluster = null;
+  } else {
+    scopeCluster = resolvedScope;
+  }
+  const clusterLabel = !scopeCluster ? 'all clusters' : (scopeCluster === 'local' ? 'the hub cluster' : scopeCluster);
 
-  // Scope the visible list to the active cluster unless "All clusters" is on.
-  const visibleChats = (_chatHistoryScope === 'all')
+  const visibleChats = (resolvedScope === 'all')
     ? history.chats
     : history.chats.filter(function(c) { return (c.cluster || 'local') === scopeCluster; });
 
@@ -11404,7 +11463,6 @@ function renderChatHistory() {
     const starred = c.starred ? ' starred' : '';
     const locked = c.locked ? ' locked' : '';
     const lockBadge = c.locked ? '<span class="lock-badge" title="Locked \u2014 protected from deletion">\ud83d\udd12</span>' : '';
-    // In "all clusters" mode, show which cluster each chat belongs to.
     var clChip = '';
     if (_chatHistoryScope === 'all') {
       var cl = c.cluster || 'local';
@@ -15299,7 +15357,7 @@ var _chatSearchActive = false;
 function localFilterChats(q) {
   var history = loadChatHistory();
   var list = document.getElementById('chat-history-list');
-  var scopeCluster = activeChatCluster();
+  var scopeCluster = (_chatHistoryScope === 'active') ? activeChatCluster() : (_chatHistoryScope === 'all' ? null : _chatHistoryScope);
   var pool = (_chatHistoryScope === 'all') ? history.chats : history.chats.filter(function(c) { return (c.cluster || 'local') === scopeCluster; });
   var matches = pool.filter(function(c) {
     if ((c.title || '').toLowerCase().includes(q)) return true;
@@ -15315,7 +15373,8 @@ function localFilterChats(q) {
 }
 
 function serverSearchChats(q) {
-  var scope = _chatHistoryScope === 'all' ? '' : ('&cluster=' + encodeURIComponent(activeChatCluster()));
+  var scopeClusterSearch = (_chatHistoryScope === 'active') ? activeChatCluster() : (_chatHistoryScope === 'all' ? null : _chatHistoryScope);
+  var scope = !scopeClusterSearch ? '' : ('&cluster=' + encodeURIComponent(scopeClusterSearch));
   fetch(chatApiBase() + '/api/chats/search?q=' + encodeURIComponent(q) + scope)
     .then(function(r) { return r.ok ? r.json() : null; })
     .then(function(data) {
