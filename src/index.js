@@ -492,16 +492,12 @@ async function withClusterContext(url, handler) {
       try {
         return await withRemoteCluster(agent.apiUrl, agent.token, handler);
       } catch (proxyErr) {
-        if (agent.lastReport) {
-          console.error(`[hub] Proxy to ${clusterName} failed (${proxyErr.message}), falling back to cached agent data`);
-          return null; // signal caller to use cached data
-        }
-        throw proxyErr;
+        console.error(`[hub] Proxy to ${clusterName} failed (${proxyErr.message}), falling back to cached agent data`);
+        return null; // signal caller to use cached data
       }
     }
-    // No API URL or token — must use cached data
-    if (agent.lastReport) return null;
-    throw Object.assign(new Error(`Cluster "${clusterName}" has no API connection and no cached data`), { status: 503 });
+    // No API URL or token — signal caller to use cached data (never fall through to local)
+    return null;
   }
   return handler();
 }
@@ -4799,7 +4795,7 @@ async function startSSE() {
         if (result === null && _cl) {
           const cached = getAgentCachedResponse(_cl, url.pathname, { skipFreshnessCheck: true });
           if (cached) { sendJson(res, 200, cached); return; }
-          sendJson(res, 200, { source: "agent-cache", available: false, message: "No cached data available for this endpoint" });
+          if (!res.headersSent) sendJson(res, 503, { error: `No data available for cluster "${_cl}". The remote agent may not be reporting or the cluster is unreachable.`, cluster: _cl, source: "none" });
           return;
         }
       } catch (err) {
@@ -4807,7 +4803,7 @@ async function startSSE() {
           const cached = getAgentCachedResponse(_cl, url.pathname, { skipFreshnessCheck: true });
           if (cached) { sendJson(res, 200, cached); return; }
         }
-        if (!res.headersSent) sendJson(res, 500, { error: err.message });
+        if (!res.headersSent) sendJson(res, _cl ? 503 : 500, { error: err.message, cluster: _cl || "local" });
       }
       return;
     }
