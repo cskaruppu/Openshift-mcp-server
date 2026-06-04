@@ -23,6 +23,19 @@ const cvssColor = (v) => {
   return "#22c55e";
 };
 
+const sevColor = (s) => {
+  if (s === "critical") return "#ef4444";
+  if (s === "high") return "#f97316";
+  if (s === "medium") return "#f59e0b";
+  return "#22c55e";
+};
+
+const frameworkIcon = (fw) => {
+  const map = { "NIST NVD": "N", "CIS": "C", "OWASP": "O", "SOC2": "S", "PCI-DSS": "P" };
+  for (const [k, v] of Object.entries(map)) if ((fw || "").includes(k)) return v;
+  return "AI";
+};
+
 export function ImageVulnsWidget() {
   const cluster = useActiveCluster();
   const { data, isLoading, isError, error, refetch } = useClusterQuery(
@@ -31,6 +44,10 @@ export function ImageVulnsWidget() {
   );
   const [scanning, setScanning] = useState(false);
   const [expandedImg, setExpandedImg] = useState(null);
+  const [aiFindings, setAiFindings] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiProvider, setAiProvider] = useState(null);
+  const [expandedAi, setExpandedAi] = useState(null);
 
   const handleScan = useCallback(async () => {
     setScanning(true);
@@ -45,6 +62,26 @@ export function ImageVulnsWidget() {
       setScanning(false);
     }
   }, [cluster, refetch]);
+
+  const handleAiAnalysis = useCallback(async () => {
+    setAiLoading(true);
+    setAiFindings(null);
+    try {
+      const res = await fetch(clusterUrl("/api/ai/image-vuln-analysis", cluster), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Analysis failed");
+      setAiFindings(json.findings || []);
+      setAiProvider(json.provider || null);
+      showToast(`AI analysis complete — ${(json.findings || []).length} findings`, "ok");
+    } catch (err) {
+      showToast("AI analysis failed: " + err.message, "err");
+    } finally {
+      setAiLoading(false);
+    }
+  }, [cluster]);
 
   if (isLoading) {
     return (
@@ -93,6 +130,9 @@ export function ImageVulnsWidget() {
         <h3>Image Vulnerability Scanner</h3>
         <div className="ivs-header-actions">
           <span className="ivs-scanner-badge">{scannerLabel}</span>
+          <button className="ivs-ai-btn" onClick={handleAiAnalysis} disabled={aiLoading}>
+            {aiLoading ? "Analyzing…" : "AI Security Analysis"}
+          </button>
           <button className="ivs-scan-btn" onClick={handleScan} disabled={scanning}>
             {scanning ? "Scanning…" : "Scan"}
           </button>
@@ -222,6 +262,56 @@ export function ImageVulnsWidget() {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* AI Security Analysis */}
+      {aiLoading && (
+        <div className="ivs-ai-loading">
+          <div className="ivs-ai-spinner" />
+          <span>AI is analyzing vulnerabilities against NIST NVD, CIS, OWASP benchmarks…</span>
+        </div>
+      )}
+
+      {aiFindings && aiFindings.length > 0 && (
+        <div className="ivs-ai-panel">
+          <div className="ivs-ai-header">
+            <div className="ivs-ai-header-left">
+              <span className="ivs-ai-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="2"><path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.58-3.25 3.93L12 22l-.75-12.07A4.001 4.001 0 0 1 12 2z"/><circle cx="12" cy="6" r="1" fill="#8b5cf6"/><path d="M5 10l2 2M19 10l-2 2M5 18h3M16 18h3"/></svg>
+              </span>
+              <h4>AI Security Analysis</h4>
+              <span className="ivs-ai-count">{aiFindings.length} findings</span>
+            </div>
+            {aiProvider && <span className="ivs-ai-provider">{aiProvider}</span>}
+          </div>
+          <div className="ivs-ai-findings">
+            {aiFindings.map((f, i) => (
+              <div key={i} className={"ivs-ai-finding" + (expandedAi === i ? " expanded" : "")} style={{ "--ai-sev": sevColor(f.severity) }}>
+                <div className="ivs-ai-finding-header" onClick={() => setExpandedAi(expandedAi === i ? null : i)}>
+                  <span className="ivs-ai-sev-dot" />
+                  <span className="ivs-ai-fw-badge">{frameworkIcon(f.framework)}</span>
+                  <div className="ivs-ai-finding-title">
+                    <div className="ivs-ai-title-text">{f.title}</div>
+                    <div className="ivs-ai-title-meta">
+                      <span className={"ivs-ai-sev-pill " + f.severity}>{f.severity}</span>
+                      {f.category && <span className="ivs-ai-cat">{f.category}</span>}
+                      {f.confidence && <span className="ivs-ai-conf">{Math.round(f.confidence * 100)}% conf</span>}
+                    </div>
+                  </div>
+                  <span className="ivs-ai-chevron">{expandedAi === i ? "▲" : "▼"}</span>
+                </div>
+                {expandedAi === i && (
+                  <div className="ivs-ai-finding-body">
+                    {f.evidence && <div className="ivs-ai-section"><span className="ivs-ai-lbl">Evidence</span><p>{f.evidence}</p></div>}
+                    {f.impact && <div className="ivs-ai-section"><span className="ivs-ai-lbl">Impact</span><p>{f.impact}</p></div>}
+                    {f.action && <div className="ivs-ai-section ivs-ai-action"><span className="ivs-ai-lbl">Recommended Action</span><p>{f.action}</p></div>}
+                    {f.framework && <div className="ivs-ai-framework-tag">{f.framework}</div>}
                   </div>
                 )}
               </div>

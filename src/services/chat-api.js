@@ -16260,3 +16260,259 @@ export async function handleFeedbackStatsAPI(req, res) {
     json(res, 500, { error: err.message });
   }
 }
+
+// ---------------------------------------------------------------------------
+// POST /api/ai/image-vuln-analysis — AI analysis of image vulnerabilities
+// ---------------------------------------------------------------------------
+export async function handleImageVulnAnalysisAPI(req, res) {
+  try {
+    const body = await readBody(req);
+    const llmOpts = body.llmOpts || {};
+    const provider = llmOpts.provider || LLM_PROVIDER;
+
+    if (!provider || provider === "none") {
+      return json(res, 200, { findings: [], error: "No LLM provider configured. Configure a provider in Settings to enable AI vulnerability analysis." });
+    }
+
+    let vulnData = null;
+    try {
+      const { scanAllNamespaceImages } = await import("../tools/image-vulnerability-scanner.js");
+      vulnData = await scanAllNamespaceImages();
+    } catch { /* scanner not available */ }
+
+    if (!vulnData || !vulnData.topImages || vulnData.topImages.length === 0) {
+      return json(res, 200, { findings: [], error: "No image vulnerability data available. Run a scan first." });
+    }
+
+    const vulnSummary = {
+      totalImages: vulnData.totalImages, totalVulns: vulnData.totalVulns,
+      critical: vulnData.critical, high: vulnData.high, medium: vulnData.medium, low: vulnData.low,
+      fixable: vulnData.fixable, maxCVSS: vulnData.maxCVSS, riskScore: vulnData.riskScore,
+      grade: vulnData.grade, compliance: vulnData.compliance, ageSummary: vulnData.ageSummary,
+    };
+
+    const topCVEs = [];
+    for (const img of (vulnData.topImages || []).slice(0, 8)) {
+      for (const v of (img.vulnerabilities || []).slice(0, 5)) {
+        topCVEs.push({ image: img.image, namespace: img.namespace, cve: v.id, severity: v.severity, cvss: v.cvss, package: v.package, version: v.version, fix: v.fix || v.fixedBy || null, description: (v.description || "").substring(0, 150) });
+      }
+    }
+
+    const prompt = `You are a container security expert specializing in Kubernetes image vulnerability analysis. Analyze the vulnerability scan results below using industry-standard security frameworks.
+
+VULNERABILITY SUMMARY:
+${JSON.stringify(vulnSummary, null, 1)}
+
+TOP CVEs (${topCVEs.length} most critical):
+${JSON.stringify(topCVEs.slice(0, 30), null, 1)}
+
+TOP VULNERABLE IMAGES:
+${JSON.stringify((vulnData.topImages || []).slice(0, 8).map(i => ({ image: i.image, namespace: i.namespace, critical: i.critical, high: i.high, medium: i.medium, low: i.low, maxCVSS: i.maxCVSS, totalVulns: (i.vulnerabilities || []).length })), null, 1)}
+
+Analyze against these industry frameworks:
+1. **NIST NVD Risk Assessment** — Known exploits, EPSS probability, CISA KEV
+2. **Supply Chain Risk** — Base image freshness, unsigned images, missing SBOMs. Stale images: ${vulnData.ageSummary?.stale || 0}
+3. **Compound Vulnerability Chains** — Multiple CVEs in same image enabling privilege escalation or RCE
+4. **Compliance Gaps** — CIS 5.5.1 (no :latest), 5.5.2 (digest pinning), SOC2/PCI-DSS signing. Signed: ${vulnData.compliance?.signed || 0}/${vulnData.compliance?.total || 0}
+5. **Blast Radius** — Vulnerable images in critical namespaces
+6. **Remediation Priority** — Biggest risk reduction, quick wins vs major rebuilds
+7. **Image Hygiene** — Fixable but unpatched vulnerabilities, outdated base images
+
+Respond ONLY with a JSON array of findings. Each:
+- "severity": "critical" | "warning" | "info"
+- "title": max 80 chars
+- "category": "exploit_risk" | "supply_chain" | "compound_vuln" | "compliance" | "blast_radius" | "remediation" | "hygiene"
+- "evidence": specific CVEs, images, data
+- "impact": security impact
+- "action": remediation steps with image names/CVE IDs
+- "confidence": 70-99
+- "framework": security framework (NIST, CIS, PCI-DSS, OWASP)
+
+Return ONLY the JSON array.`;
+
+    const r = await callLLM({
+      messages: [{ role: "user", content: prompt }],
+      system: "You are a precise container security analyst. Reference specific CVE IDs, image names, and industry frameworks. Output only valid JSON arrays. No markdown fences.",
+      maxTokens: 3000, temperature: 0.15,
+      provider: llmOpts.provider, apiUrl: llmOpts.apiUrl, apiKey: llmOpts.apiKey,
+      model: llmOpts.model, azureDeployment: llmOpts.azureDeployment, azureApiVersion: llmOpts.azureApiVersion,
+    });
+
+    let findings = [];
+    try {
+      let text = (r.text || "").trim();
+      const fm = text.match(/\[[\s\S]*\]/);
+      if (fm) text = fm[0];
+      findings = JSON.parse(text);
+      if (!Array.isArray(findings)) findings = [];
+      findings = findings.filter(f => f.severity && f.title).map(f => ({
+        severity: ["critical", "warning", "info"].includes(f.severity) ? f.severity : "info",
+        title: String(f.title).substring(0, 100), category: f.category || "hygiene",
+        evidence: String(f.evidence || "").substring(0, 500), impact: String(f.impact || "").substring(0, 500),
+        action: String(f.action || "").substring(0, 400), confidence: Math.min(99, Math.max(70, parseInt(f.confidence) || 85)),
+        framework: String(f.framework || "").substring(0, 50), llm: true,
+      }));
+    } catch { return json(res, 200, { findings: [], error: "Failed to parse LLM response" }); }
+
+    json(res, 200, { findings, provider: r.provider || provider });
+  } catch (err) {
+    console.error("Image vuln AI analysis error:", err);
+    json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/ai/optimization-analysis — AI resource optimization with trends
+// ---------------------------------------------------------------------------
+export async function handleOptimizationAnalysisAPI(req, res) {
+  try {
+    const body = await readBody(req);
+    const llmOpts = body.llmOpts || {};
+    const provider = llmOpts.provider || LLM_PROVIDER;
+
+    if (!provider || provider === "none") {
+      return json(res, 200, { findings: [], error: "No LLM provider configured. Configure a provider in Settings to enable AI optimization analysis." });
+    }
+
+    const clusterData = {};
+    const tasks = [];
+
+    tasks.push(ocpGet("/api/v1/pods?limit=500").then(r => {
+      clusterData.pods = (r?.items || []).map(p => {
+        const containers = p.spec?.containers || [];
+        const statuses = p.status?.containerStatuses || [];
+        return { name: p.metadata?.name, ns: p.metadata?.namespace, phase: p.status?.phase,
+          restarts: statuses.reduce((s, c) => s + (c.restartCount || 0), 0), age: p.metadata?.creationTimestamp,
+          requests: containers.map(c => ({ cpu: c.resources?.requests?.cpu, mem: c.resources?.requests?.memory, limCpu: c.resources?.limits?.cpu, limMem: c.resources?.limits?.memory })),
+        };
+      });
+    }).catch(() => { clusterData.pods = []; }));
+
+    tasks.push(ocpGet("/apis/metrics.k8s.io/v1beta1/pods").then(r => {
+      clusterData.podMetrics = (r?.items || []).map(m => ({
+        name: m.metadata?.name, ns: m.metadata?.namespace,
+        containers: (m.containers || []).map(c => ({ cpu: c.usage?.cpu, mem: c.usage?.memory })),
+      }));
+    }).catch(() => { clusterData.podMetrics = []; }));
+
+    tasks.push(ocpGet("/api/v1/nodes").then(r => {
+      clusterData.nodes = (r?.items || []).map(n => ({
+        name: n.metadata?.name, allocCpu: n.status?.allocatable?.cpu, allocMem: n.status?.allocatable?.memory,
+        roles: Object.keys(n.metadata?.labels || {}).filter(l => l.startsWith("node-role.kubernetes.io/")).map(l => l.split("/")[1]),
+      }));
+    }).catch(() => { clusterData.nodes = []; }));
+
+    tasks.push(ocpGet("/apis/metrics.k8s.io/v1beta1/nodes").then(r => {
+      clusterData.nodeMetrics = (r?.items || []).map(m => ({ name: m.metadata?.name, cpu: m.usage?.cpu, mem: m.usage?.memory }));
+    }).catch(() => { clusterData.nodeMetrics = []; }));
+
+    tasks.push(ocpGet("/api/v1/persistentvolumeclaims?limit=200").then(r => {
+      clusterData.pvcs = (r?.items || []).map(p => ({ name: p.metadata?.name, ns: p.metadata?.namespace, size: p.spec?.resources?.requests?.storage, phase: p.status?.phase, storageClass: p.spec?.storageClassName, age: p.metadata?.creationTimestamp }));
+    }).catch(() => { clusterData.pvcs = []; }));
+
+    let trendData = {};
+    try { const { getTrends } = await import("./predictive-intel.js"); trendData = getTrends(); } catch {}
+
+    let historicalFixes = [];
+    try {
+      const { findSimilarIncidents } = await import("./learning-engine.js");
+      const matches = await findSimilarIncidents("optimization:resource-waste", { sinceDays: 365, limit: 5 });
+      historicalFixes = (matches || []).map(m => ({ type: m.issue_type, resource: m.resource_name, ns: m.namespace, resolution: m.resolution_summary, success: m.resolution_success, date: m.resolved_at || m.occurred_at }));
+    } catch {}
+
+    await Promise.all(tasks);
+
+    const metricsMap = new Map();
+    for (const m of (clusterData.podMetrics || [])) metricsMap.set(`${m.ns}/${m.name}`, m);
+
+    const systemNs = /^(openshift-|kube-|default$)/;
+    const utilizationAnalysis = [];
+    for (const p of clusterData.pods) {
+      if (systemNs.test(p.ns) || p.phase !== "Running") continue;
+      const m = metricsMap.get(`${p.ns}/${p.name}`);
+      if (!m?.containers?.[0] || !p.requests?.[0]?.cpu) continue;
+      const cpuReqM = _parseCpuM(p.requests[0].cpu);
+      const cpuUseM = _parseCpuM(m.containers[0].cpu);
+      if (cpuReqM <= 0) continue;
+      const util = Math.round((cpuUseM / cpuReqM) * 100);
+      if (util < 15 || util > 130) {
+        utilizationAnalysis.push({ pod: p.name, ns: p.ns, cpuReq: cpuReqM, cpuUse: cpuUseM, util, memReq: p.requests[0].mem, memUse: m.containers[0].mem, type: util < 15 ? "over" : "under", age: p.age, restarts: p.restarts });
+      }
+    }
+    utilizationAnalysis.sort((a, b) => Math.abs(b.util - 100) - Math.abs(a.util - 100));
+
+    const prompt = `You are a FinOps and Kubernetes resource optimization expert. Analyze this cluster's resource utilization and provide strategic recommendations.
+
+CLUSTER: ${clusterData.nodes.length} nodes, ${clusterData.pods.length} pods, ${clusterData.pvcs.length} PVCs
+
+NODE RESOURCES & USAGE:
+${JSON.stringify(clusterData.nodes.map(n => { const nm = (clusterData.nodeMetrics || []).find(m => m.name === n.name); return { ...n, currentCpu: nm?.cpu, currentMem: nm?.mem }; }).slice(0, 10), null, 1)}
+
+TOP INEFFICIENCIES (${utilizationAnalysis.length} pods):
+${JSON.stringify(utilizationAnalysis.slice(0, 20), null, 1)}
+
+TREND DATA: ${JSON.stringify(trendData, null, 1)}
+HISTORICAL FIXES (past year): ${JSON.stringify(historicalFixes, null, 1)}
+
+Analyze:
+1. **Long-Term Trends** — Workloads consistently over/under-provisioned based on pod age & restarts
+2. **Capacity Planning** — Node utilization forecast, scaling needs, decommission candidates
+3. **Right-Sizing Strategy** — VPA vs manual vs HPA per workload type
+4. **Cost Optimization** — Monthly waste estimate, top 3 savings opportunities
+5. **Namespace Quotas** — ResourceQuota/LimitRange based on actual usage
+6. **Storage** — PVC utilization, orphaned storage
+7. **Quick Wins vs Strategic** — "this week" vs "next quarter" changes
+8. **Benchmarks** — Compare against Gartner FinOps (>85%), CIS (100% limits), Google SRE (20-40% headroom)
+
+JSON array of findings. Each:
+- "severity": "critical" | "warning" | "info"
+- "title": max 80 chars
+- "category": "waste_detection" | "capacity_planning" | "right_sizing" | "cost_optimization" | "namespace_quota" | "storage" | "quick_win" | "strategic" | "benchmark"
+- "evidence": specific pod names, utilization %, data
+- "impact": quantified (e.g., "~200m CPU monthly waste")
+- "action": kubectl/oc commands or VPA/HPA configs
+- "confidence": 70-99
+- "timeframe": "immediate" | "this_week" | "this_month" | "next_quarter"
+- "savings": resource savings estimate (optional)
+
+Return ONLY the JSON array.`;
+
+    const r = await callLLM({
+      messages: [{ role: "user", content: prompt }],
+      system: "Precise FinOps/K8s optimization analyst. Reference specific pod names, namespaces, utilization numbers. Align with Gartner FinOps, CNCF, Google SRE. Output only valid JSON arrays.",
+      maxTokens: 3000, temperature: 0.15,
+      provider: llmOpts.provider, apiUrl: llmOpts.apiUrl, apiKey: llmOpts.apiKey,
+      model: llmOpts.model, azureDeployment: llmOpts.azureDeployment, azureApiVersion: llmOpts.azureApiVersion,
+    });
+
+    let findings = [];
+    try {
+      let text = (r.text || "").trim();
+      const fm = text.match(/\[[\s\S]*\]/);
+      if (fm) text = fm[0];
+      findings = JSON.parse(text);
+      if (!Array.isArray(findings)) findings = [];
+      findings = findings.filter(f => f.severity && f.title).map(f => ({
+        severity: ["critical", "warning", "info"].includes(f.severity) ? f.severity : "info",
+        title: String(f.title).substring(0, 100), category: f.category || "right_sizing",
+        evidence: String(f.evidence || "").substring(0, 500), impact: String(f.impact || "").substring(0, 500),
+        action: String(f.action || "").substring(0, 500), confidence: Math.min(99, Math.max(70, parseInt(f.confidence) || 85)),
+        timeframe: f.timeframe || "this_month", savings: String(f.savings || "").substring(0, 100), llm: true,
+      }));
+    } catch { return json(res, 200, { findings: [], error: "Failed to parse LLM response" }); }
+
+    json(res, 200, { findings, provider: r.provider || provider });
+  } catch (err) {
+    console.error("Optimization AI analysis error:", err);
+    json(res, 500, { error: err.message });
+  }
+}
+
+function _parseCpuM(cpu) {
+  if (!cpu) return 0;
+  const s = String(cpu);
+  if (s.endsWith("n")) return parseInt(s) / 1_000_000;
+  if (s.endsWith("u")) return parseInt(s) / 1_000;
+  if (s.endsWith("m")) return parseInt(s);
+  return parseFloat(s) * 1000;
+}

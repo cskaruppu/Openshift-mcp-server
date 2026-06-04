@@ -74,7 +74,7 @@ import { generateManifests, renderYaml, renderSingleYaml } from "./services/mani
 import { createDeployment, executeDeployment, rollbackDeployment, getDeployment, listDeployments } from "./services/deployment-orchestrator.js";
 import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
-import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
+import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleOptimizationAnalysisAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import {
   listActions,
   getAction,
@@ -2953,6 +2953,20 @@ async function startSSE() {
     if (req.method === "POST" && url.pathname === "/api/risk-analysis") {
       if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
       await handleRiskAnalysisAPI(req, res);
+      return;
+    }
+
+    // AI image vulnerability analysis — /api/ai/image-vuln-analysis (POST)
+    if (req.method === "POST" && url.pathname === "/api/ai/image-vuln-analysis") {
+      if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
+      await withClusterContext(url, async () => { await handleImageVulnAnalysisAPI(req, res); });
+      return;
+    }
+
+    // AI resource optimization analysis — /api/ai/optimization-analysis (POST)
+    if (req.method === "POST" && url.pathname === "/api/ai/optimization-analysis") {
+      if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
+      await withClusterContext(url, async () => { await handleOptimizationAnalysisAPI(req, res); });
       return;
     }
 

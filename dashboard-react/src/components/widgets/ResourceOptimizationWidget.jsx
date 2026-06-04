@@ -17,6 +17,13 @@ const headroomColor = (pct) =>
 const utilizationColor = (pct) =>
   pct <= 20 ? "#ef4444" : pct <= 50 ? "#f59e0b" : pct <= 85 ? "#22c55e" : "#3b82f6";
 
+const sevColor = (s) => {
+  if (s === "critical") return "#ef4444";
+  if (s === "high") return "#f97316";
+  if (s === "medium") return "#f59e0b";
+  return "#22c55e";
+};
+
 export function ResourceOptimizationWidget() {
   const cluster = useActiveCluster();
   const { data, isLoading, isError, error, refetch } = useClusterQuery(
@@ -26,6 +33,10 @@ export function ResourceOptimizationWidget() {
   const [expanded, setExpanded] = useState(null);
   const [showPVCs, setShowPVCs] = useState(false);
   const [deletingPVC, setDeletingPVC] = useState(null);
+  const [aiFindings, setAiFindings] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiProvider, setAiProvider] = useState(null);
+  const [expandedAi, setExpandedAi] = useState(null);
 
   const handleDeletePVC = useCallback(async (name, ns) => {
     if (!confirm(`Delete orphaned PVC "${name}" in namespace "${ns}"?`)) return;
@@ -37,6 +48,26 @@ export function ResourceOptimizationWidget() {
     } catch (err) { showToast("Delete failed: " + err.message, "err"); }
     finally { setDeletingPVC(null); }
   }, [cluster, refetch]);
+
+  const handleAiAnalysis = useCallback(async () => {
+    setAiLoading(true);
+    setAiFindings(null);
+    try {
+      const res = await fetch(clusterUrl("/api/ai/optimization-analysis", cluster), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Analysis failed");
+      setAiFindings(json.findings || []);
+      setAiProvider(json.provider || null);
+      showToast(`AI optimization analysis — ${(json.findings || []).length} recommendations`, "ok");
+    } catch (err) {
+      showToast("AI analysis failed: " + err.message, "err");
+    } finally {
+      setAiLoading(false);
+    }
+  }, [cluster]);
 
   if (isLoading) return <div className="ro"><div className="ro-header"><h3>Resource Optimization</h3></div><div className="ro-loading">Analyzing resource usage…</div></div>;
   if (isError) return <div className="ro"><div className="ro-header"><h3>Resource Optimization</h3></div><div className="ro-error">{String(error?.message)}</div></div>;
@@ -67,7 +98,12 @@ export function ResourceOptimizationWidget() {
       {/* Header */}
       <div className="ro-header">
         <h3>Resource Optimization</h3>
-        <button className="ro-refresh-btn" onClick={() => refetch()} title="Refresh analysis">Analyze</button>
+        <div className="ro-header-actions">
+          <button className="ro-ai-btn" onClick={handleAiAnalysis} disabled={aiLoading}>
+            {aiLoading ? "Analyzing…" : "AI Optimization"}
+          </button>
+          <button className="ro-refresh-btn" onClick={() => refetch()} title="Refresh analysis">Analyze</button>
+        </div>
       </div>
 
       {/* Hero: Score + Reclaim */}
@@ -333,6 +369,60 @@ export function ResourceOptimizationWidget() {
           <BenchmarkPill label="Storage Waste" value={pvc.total > 0 ? Math.round(((pvc.orphaned || 0) / pvc.total) * 100) : 0} target={5} unit="%" source="FinOps" invert />
         </div>
       </div>
+
+      {/* AI Optimization Analysis */}
+      {aiLoading && (
+        <div className="ro-ai-loading">
+          <div className="ro-ai-spinner" />
+          <span>AI analyzing historical utilization, capacity trends & FinOps benchmarks…</span>
+        </div>
+      )}
+
+      {aiFindings && aiFindings.length > 0 && (
+        <div className="ro-ai-panel">
+          <div className="ro-ai-header">
+            <div className="ro-ai-header-left">
+              <span className="ro-ai-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="2"><path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.58-3.25 3.93L12 22l-.75-12.07A4.001 4.001 0 0 1 12 2z"/><circle cx="12" cy="6" r="1" fill="#8b5cf6"/><path d="M5 10l2 2M19 10l-2 2M5 18h3M16 18h3"/></svg>
+              </span>
+              <h4>AI Optimization Recommendations</h4>
+              <span className="ro-ai-count">{aiFindings.length} insights</span>
+            </div>
+            {aiProvider && <span className="ro-ai-provider">{aiProvider}</span>}
+          </div>
+          <div className="ro-ai-findings">
+            {aiFindings.map((f, i) => (
+              <div key={i} className={"ro-ai-finding" + (expandedAi === i ? " expanded" : "")} style={{ "--ai-sev": sevColor(f.severity) }}>
+                <div className="ro-ai-finding-header" onClick={() => setExpandedAi(expandedAi === i ? null : i)}>
+                  <span className="ro-ai-sev-dot" />
+                  <div className="ro-ai-finding-title">
+                    <div className="ro-ai-title-text">{f.title}</div>
+                    <div className="ro-ai-title-meta">
+                      <span className={"ro-ai-sev-pill " + f.severity}>{f.severity}</span>
+                      {f.category && <span className="ro-ai-cat">{f.category}</span>}
+                      {f.timeframe && <span className="ro-ai-timeframe">{f.timeframe}</span>}
+                      {f.savings && <span className="ro-ai-savings">{f.savings}</span>}
+                    </div>
+                  </div>
+                  <span className="ro-ai-chevron">{expandedAi === i ? "▲" : "▼"}</span>
+                </div>
+                {expandedAi === i && (
+                  <div className="ro-ai-finding-body">
+                    {f.evidence && <div className="ro-ai-section"><span className="ro-ai-lbl">Evidence</span><p>{f.evidence}</p></div>}
+                    {f.impact && <div className="ro-ai-section"><span className="ro-ai-lbl">Impact</span><p>{f.impact}</p></div>}
+                    {f.action && <div className="ro-ai-section ro-ai-action"><span className="ro-ai-lbl">Recommended Action</span><p>{f.action}</p></div>}
+                    <div className="ro-ai-footer-tags">
+                      {f.confidence && <span className="ro-ai-conf">{Math.round(f.confidence * 100)}% confidence</span>}
+                      {f.timeframe && <span className="ro-ai-tf-tag">{f.timeframe}</span>}
+                      {f.savings && <span className="ro-ai-save-tag">{f.savings}</span>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
