@@ -172,6 +172,19 @@ CREATE TABLE IF NOT EXISTS kv_store (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Phase 1: per-cluster snapshot store (ACM/Rancher-style warm cache).
+-- One row per cluster, upserted on every agent report. Scales to any number
+-- of clusters without write amplification, survives hub restarts, and is the
+-- authoritative read source for the dashboard when the store is enabled.
+CREATE TABLE IF NOT EXISTS cluster_snapshots (
+  cluster TEXT PRIMARY KEY,
+  platform TEXT,
+  report JSONB NOT NULL,
+  reported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_cluster_snapshots_reported ON cluster_snapshots (reported_at DESC);
+
 CREATE TABLE IF NOT EXISTS users (
   username TEXT PRIMARY KEY,
   password_hash TEXT NOT NULL,
@@ -268,4 +281,61 @@ export async function closeDb() {
     _pool = null;
     _enabled = false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1: per-cluster snapshot store
+// ---------------------------------------------------------------------------
+
+/**
+ * Upsert a single cluster's latest report. One row per cluster — scales to any
+ * number of clusters and avoids rewriting all clusters on every report.
+ */
+export async function saveClusterSnapshot(cluster, platform, report) {
+  if (!cluster || !report) return false;
+  const r = await query(
+    `INSERT INTO cluster_snapshots (cluster, platform, report, reported_at, updated_at)
+     VALUES ($1, $2, $3, NOW(), NOW())
+     ON CONFLICT (cluster)
+     DO UPDATE SET platform = $2, report = $3, reported_at = NOW(), updated_at = NOW()`,
+    [cluster, platform || null, JSON.stringify(report)]
+  );
+  return !!r;
+}
+
+/** Load one cluster's latest snapshot, or null. */
+export async function loadClusterSnapshot(cluster) {
+  if (!cluster) return null;
+  const r = await query(
+    "SELECT cluster, platform, report, reported_at FROM cluster_snapshots WHERE cluster = $1",
+    [cluster]
+  );
+  if (!r?.rows?.length) return null;
+  const row = r.rows[0];
+  return {
+    cluster: row.cluster,
+    platform: row.platform,
+    report: typeof row.report === "string" ? JSON.parse(row.report) : row.report,
+    reportedAt: row.reported_at,
+  };
+}
+
+/** Load all cluster snapshots (used for startup hydration). */
+export async function loadAllClusterSnapshots() {
+  const r = await query(
+    "SELECT cluster, platform, report, reported_at FROM cluster_snapshots ORDER BY reported_at DESC"
+  );
+  if (!r?.rows?.length) return [];
+  return r.rows.map((row) => ({
+    cluster: row.cluster,
+    platform: row.platform,
+    report: typeof row.report === "string" ? JSON.parse(row.report) : row.report,
+    reportedAt: row.reported_at,
+  }));
+}
+
+/** Remove a cluster's snapshot (on cluster removal). */
+export async function deleteClusterSnapshot(cluster) {
+  if (!cluster) return;
+  await query("DELETE FROM cluster_snapshots WHERE cluster = $1", [cluster]);
 }

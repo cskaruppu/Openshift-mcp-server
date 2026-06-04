@@ -104,7 +104,7 @@ import {
   addMessage,
   isHistoryEnabled,
 } from "./services/chat-history.js";
-import { initDb, query as dbQuery, isEnabled as dbEnabled } from "./utils/db.js";
+import { initDb, query as dbQuery, isEnabled as dbEnabled, saveClusterSnapshot, loadClusterSnapshot, loadAllClusterSnapshots, deleteClusterSnapshot } from "./utils/db.js";
 import { initCache, isEnabled as cacheReady } from "./utils/cache.js";
 import { handleMetricsRequest } from "./services/metrics.js";
 import { enforce as enforceRateLimit } from "./services/rate-limit.js";
@@ -548,6 +548,12 @@ async function tryAgentBridgeTool(pathname, clusterName) {
 }
 
 const AGENT_CACHE_MAX_AGE_SEC = 300; // 5 minutes
+
+// Phase 1: per-cluster snapshot store. When enabled, agent reports are
+// persisted to PostgreSQL (one row per cluster) and hydrated on startup so the
+// dashboard has warm data immediately and survives hub restarts.
+// Feature-flag reversible: set CLUSTER_STORE_ENABLED=false to disable instantly.
+const CLUSTER_STORE_ENABLED = process.env.CLUSTER_STORE_ENABLED !== "false";
 
 const _localDashCache = new Map();
 const LOCAL_CACHE_TTL_MS = 30000;
@@ -1720,6 +1726,31 @@ async function startSSE() {
   // Restore registered clusters from DB
   await loadClustersFromDB();
 
+  // Phase 1: hydrate per-cluster snapshots so the dashboard has warm data
+  // immediately after a hub restart (no waiting for the next agent report).
+  if (CLUSTER_STORE_ENABLED) {
+    try {
+      const snapshots = await loadAllClusterSnapshots();
+      let hydrated = 0;
+      for (const snap of snapshots) {
+        const key = findClusterKey(snap.cluster) || snap.cluster;
+        const agent = _connectedAgents.get(key) || { clusterName: key, platform: snap.platform, source: "agent" };
+        // Only hydrate if we don't already have a fresher in-memory report.
+        if (!agent.lastReport || !agent.lastReportTime ||
+            new Date(snap.reportedAt).getTime() > new Date(agent.lastReportTime).getTime()) {
+          agent.lastReport = snap.report;
+          agent.lastReportTime = snap.reportedAt;
+          if (!agent.platform) agent.platform = snap.platform;
+          _connectedAgents.set(key, agent);
+          hydrated++;
+        }
+      }
+      if (hydrated > 0) console.log(`[startup] Hydrated ${hydrated} cluster snapshot(s) from store`);
+    } catch (e) {
+      console.warn("[startup] snapshot hydration failed:", e.message);
+    }
+  }
+
   // Restore ServiceNow settings from DB/file into process.env
   try {
     await restoreServiceNowSettings();
@@ -2461,6 +2492,7 @@ async function startSSE() {
       const resolvedKey = findClusterKey(name) || name;
       _connectedAgents.delete(resolvedKey);
       saveClustersToDB().catch(() => {});
+      if (CLUSTER_STORE_ENABLED) deleteClusterSnapshot(resolvedKey).catch(() => {});
       return sendJson(res, 200, { ok: true, deleted: resolvedKey });
     }
 
@@ -2580,6 +2612,12 @@ async function startSSE() {
       }
       _connectedAgents.set(key, agent);
       saveClustersToDB().catch(() => {});
+      // Phase 1: persist this cluster's snapshot to the per-cluster store.
+      if (CLUSTER_STORE_ENABLED) {
+        saveClusterSnapshot(key, platform || "kubernetes", report).catch((e) =>
+          console.warn(`[store] snapshot save failed for ${key}:`, e.message)
+        );
+      }
       try {
         updateClusterDigest({
           cluster: key,
@@ -2594,6 +2632,31 @@ async function startSSE() {
         console.error(`[agent] ${key}: ${issues} issues detected`);
       }
       return sendJson(res, 200, { ok: true, received: key });
+    }
+
+    // Phase 1: store observability — confirm the per-cluster snapshot store is
+    // active and report how many clusters have persisted snapshots.
+    if (url.pathname === "/api/hub/store/status" && req.method === "GET") {
+      if (!CLUSTER_STORE_ENABLED) {
+        return sendJson(res, 200, { enabled: false, mode: "in-memory", message: "Cluster snapshot store is disabled (CLUSTER_STORE_ENABLED=false)" });
+      }
+      try {
+        const snapshots = await loadAllClusterSnapshots();
+        return sendJson(res, 200, {
+          enabled: true,
+          mode: "postgres",
+          dbConnected: await dbEnabled(),
+          clusterCount: snapshots.length,
+          clusters: snapshots.map((s) => ({
+            cluster: s.cluster,
+            platform: s.platform,
+            reportedAt: s.reportedAt,
+            ageSec: Math.round((Date.now() - new Date(s.reportedAt).getTime()) / 1000),
+          })),
+        });
+      } catch (e) {
+        return sendJson(res, 200, { enabled: true, mode: "postgres", dbConnected: false, error: e.message });
+      }
     }
 
     if (url.pathname === "/api/agent/status" && req.method === "GET") {
