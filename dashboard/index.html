@@ -12085,6 +12085,7 @@ async function switchGlobalCluster(name) {
   _clusterGeneration++;
   abortClusterRequests();
   _apiFetchInflight.clear();
+  clearDashboardMetrics();
   // Persist selection so a refresh / shared link keeps the cluster context.
   try {
     localStorage.setItem('mcp-active-cluster', name);
@@ -12150,9 +12151,11 @@ async function switchGlobalCluster(name) {
 }
 
 function reloadCurrentView() {
-  // Clear stale cluster data from DOM before loading new cluster's data.
+  // Clear stale cluster data from DOM IMMEDIATELY before loading new cluster's data.
   // This prevents users from seeing cluster-A data while cluster-B loads.
   clearDashboardMetrics();
+  clearAuditView();
+  clearIntelligenceView();
 
   if (_currentView === 'dashboard') { refreshAll(); }
   else if (_currentView === 'audit') { if (typeof loadAuditView === 'function') loadAuditView(); }
@@ -12161,7 +12164,28 @@ function reloadCurrentView() {
   if (typeof reloadChatList === 'function') { reloadChatList(); }
 }
 
+function clearAuditView() {
+  ['audit-stat-total', 'audit-stat-success', 'audit-stat-pending', 'audit-stat-queries', 'audit-stat-cache'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = '—';
+  });
+  var badge = document.getElementById('audit-pending-badge');
+  if (badge) badge.textContent = '0';
+  ['audit-pending-cards', 'audit-query-analytics', 'audit-timeline'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2);font-size:12px">Loading...</div>';
+  });
+}
+
+function clearIntelligenceView() {
+  ['intel-rules-list', 'intel-kb-list', 'intel-insights-list', 'intel-predictions-list'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2);font-size:12px">Loading...</div>';
+  });
+}
+
 function clearDashboardMetrics() {
+  // 1. Top metric cards
   var ids = ['m-health', 'm-nodes', 'm-ns', 'm-ops', 'dash-alert-count', 'dash-pod-issues',
     'm-health-label', 'm-nodes-label', 'm-ns-label', 'm-ops-label', 'dash-alert-breakdown', 'dash-pod-breakdown'];
   ids.forEach(function(id) {
@@ -12171,10 +12195,39 @@ function clearDashboardMetrics() {
       else el.textContent = 'Loading...';
     }
   });
+  // 2. Secondary KPI scores
   ['sec-score', 'gitops-sync', 'dr-score', 'opt-score', 'acw-tracked', 'iv-total'].forEach(function(id) {
     var el = document.getElementById(id);
     if (el) el.textContent = '--';
   });
+  // 3. Node Topology — clear node cards and summary
+  var topoCanvas = document.getElementById('topo-canvas');
+  if (topoCanvas) topoCanvas.innerHTML = '<div style="padding:30px;text-align:center;color:var(--text2)">Loading cluster nodes...</div>';
+  var topoSummary = document.getElementById('topo-summary');
+  if (topoSummary) topoSummary.textContent = '';
+  var topoOpBar = document.getElementById('topo-op-bar');
+  if (topoOpBar) topoOpBar.innerHTML = '';
+  // 4. Namespace Heatmap — clear grid and stats
+  var heatGrid = document.getElementById('heatmap-grid');
+  if (heatGrid) heatGrid.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">Loading namespaces...</div>';
+  var heatStats = document.getElementById('heatmap-stats');
+  if (heatStats) heatStats.innerHTML = '';
+  var heatSummary = document.getElementById('heatmap-summary');
+  if (heatSummary) heatSummary.textContent = '';
+  // 5. Health Timeline — clear SVG and events
+  var timelineSvg = document.getElementById('timeline-svg');
+  if (timelineSvg) timelineSvg.innerHTML = '';
+  var timelineEvents = document.getElementById('timeline-events');
+  if (timelineEvents) timelineEvents.innerHTML = '<div style="padding:10px;text-align:center;color:var(--text2);font-size:12px">Loading timeline...</div>';
+  // 6. Alert list (if rendered inline)
+  var alertList = document.getElementById('alert-list');
+  if (alertList) alertList.innerHTML = '';
+  // 7. AI Activity Feed
+  var aiFeed = document.getElementById('ai-activity-feed');
+  if (aiFeed) aiFeed.innerHTML = '';
+  // 8. Clear any cached widget data
+  if (typeof _heatmapData !== 'undefined') _heatmapData = null;
+  if (typeof _riskData !== 'undefined') _riskData = null;
 }
 
 function updateClusterContextBanner() {
