@@ -5546,9 +5546,11 @@ async function loadPodIssues() {
 }
 
 async function loadACMClusters() {
+  var _gen = clusterGen();
   const container = document.getElementById('acm-clusters');
   try {
     const clusters = await apiFetch('/api/acm/clusters');
+    if (!clusterGuard(_gen)) return;
     if (clusters.length === 0) {
       container.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:8px">ACM not detected or no managed clusters</div>';
       return;
@@ -5578,6 +5580,7 @@ async function loadACMClusters() {
 // Feature 1: Node Topology
 // ---------------------------------------------------------------------------
 async function loadTopology() {
+  var _gen = clusterGen();
   var canvas = document.getElementById('topo-canvas');
   var summary = document.getElementById('topo-summary');
   var opBar = document.getElementById('topo-op-bar');
@@ -5588,6 +5591,7 @@ async function loadTopology() {
       apiFetch('/api/pods/issues').catch(function() { return []; }),
       apiFetch('/api/cluster/operators').catch(function() { return []; }),
     ]);
+    if (!clusterGuard(_gen)) return;
     var nodes = results[0] || [];
     var clusterSummary = results[1];
     var podIssues = results[2] || [];
@@ -5845,16 +5849,19 @@ var HM_COLORS = {
 };
 
 async function loadNamespaceHeatmap() {
+  var _gen = clusterGen();
   var grid = document.getElementById('heatmap-grid');
   var summaryEl = document.getElementById('heatmap-summary');
   var statsEl = document.getElementById('heatmap-stats');
   try {
     var nsList = [];
     try { nsList = await apiFetch('/api/namespaces') || []; } catch {}
+    if (!clusterGuard(_gen)) return;
 
     if (nsList.length === 0) {
       try {
         var data = await apiFetch('/api/cluster/summary');
+        if (!clusterGuard(_gen)) return;
         if (data && data.namespaces) summaryEl.textContent = data.namespaces.total + ' namespaces';
       } catch {}
       grid.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2);font-size:12px">Namespace details unavailable</div>';
@@ -6007,12 +6014,14 @@ function updateDashRiskKPI(counts) {
 }
 
 async function loadRiskPredictions() {
+  var _gen = clusterGen();
   try {
     _riskData = [];
     var seen = {};
 
     var pods = [];
     try { pods = await apiFetch('/api/pods/issues'); } catch {}
+    if (!clusterGuard(_gen)) return;
 
     (pods || []).forEach(function(p) {
       var podKey = p.namespace + '/' + p.name;
@@ -6136,6 +6145,7 @@ async function loadRiskPredictions() {
     // Node-level risks from actual conditions
     try {
       var nodes = await apiFetch('/api/nodes');
+      if (!clusterGuard(_gen)) return;
       (nodes || []).forEach(function(n) {
         var shortName = n.name.split('.')[0];
 
@@ -6212,6 +6222,7 @@ async function loadRiskPredictions() {
     // Node resource utilization from metrics API
     try {
       var nodeMetrics = await apiFetch('/api/node-metrics');
+      if (!clusterGuard(_gen)) return;
       var nodesByName = {};
       (nodes || []).forEach(function(n) { nodesByName[n.name] = n; });
       (nodeMetrics || []).forEach(function(nm) {
@@ -6286,6 +6297,7 @@ async function loadRiskPredictions() {
     // Cluster operators — degraded or unavailable
     try {
       var operators = await apiFetch('/api/cluster/operators');
+      if (!clusterGuard(_gen)) return;
       (operators || []).forEach(function(op) {
         if (op.health === 'degraded') {
           _riskData.push({
@@ -7997,6 +8009,7 @@ async function deleteSelectedOrphans() {
 }
 
 async function loadAIActivityFeed() {
+  var _gen = clusterGen();
   const feed = document.getElementById('ai-activity-feed');
   const items = [];
   try {
@@ -8006,6 +8019,7 @@ async function loadAIActivityFeed() {
       apiFetch('/api/dashboard/optimization').catch(() => null),
       apiFetch('/api/pods/issues').catch(() => []),
     ]);
+    if (!clusterGuard(_gen)) return;
     const ts = new Date().toLocaleTimeString();
     if (secData && secData.available !== false) {
       items.push({ icon: '&#x1F6E1;', text: 'Security score: <strong>' + secData.grade + '</strong> (' + secData.score + '/100)', color: scoreColor(secData.score), time: ts });
@@ -12124,28 +12138,27 @@ async function switchGlobalCluster(name) {
 
   if (name !== 'local') {
     var _switchGen = clusterGen();
-    try {
-      var info = await apiFetch('/api/cluster-info?cluster=' + encodeURIComponent(name), 10000);
-      if (!clusterGuard(_switchGen)) return;
-      _globalClusterInfo = info;
-      if (ver) {
-        var isInfoOCP = info.isOpenShift !== undefined ? info.isOpenShift : ((info.platform || '').toLowerCase() === 'openshift');
-        if (isInfoOCP) {
-          ver.textContent = info.version && info.version !== 'unknown' ? 'OCP ' + info.version : '';
-        } else {
-          var kVer = info.kubernetesVersion || info.version;
-          var pName = (K8S_PLATFORMS[(info.platform || 'k8s').toLowerCase()] || K8S_PLATFORMS['k8s']).name;
-          ver.textContent = kVer && kVer !== 'unknown' ? pName + ' v' + kVer : pName;
+    apiFetch('/api/cluster-info?cluster=' + encodeURIComponent(name), 10000)
+      .then(function(info) {
+        if (!clusterGuard(_switchGen)) return;
+        _globalClusterInfo = info;
+        if (ver) {
+          var isInfoOCP = info.isOpenShift !== undefined ? info.isOpenShift : ((info.platform || '').toLowerCase() === 'openshift');
+          if (isInfoOCP) {
+            ver.textContent = info.version && info.version !== 'unknown' ? 'OCP ' + info.version : '';
+          } else {
+            var kVer = info.kubernetesVersion || info.version;
+            var pName = (K8S_PLATFORMS[(info.platform || 'k8s').toLowerCase()] || K8S_PLATFORMS['k8s']).name;
+            ver.textContent = kVer && kVer !== 'unknown' ? pName + ' v' + kVer : pName;
+          }
         }
-      }
-      updateClusterContextBanner();
-    } catch(e) {
-      _globalClusterInfo = {};
-      if (ver) ver.textContent = 'unreachable';
-    }
+        updateClusterContextBanner();
+      }).catch(function(e) {
+        if (!clusterGuard(_switchGen)) return;
+        _globalClusterInfo = {};
+        if (ver) ver.textContent = 'unreachable';
+      });
   }
-  // Don't clear _globalClusterInfo — loadSummary() in reloadCurrentView
-  // will repopulate it with the correct cluster's data.
 
   reloadCurrentView();
 }
@@ -18962,8 +18975,10 @@ async function runComplianceScanUI() {
 }
 
 async function loadComplianceResults() {
+  var _gen = clusterGen();
   try {
     var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/compliance/results'));
+    if (!clusterGuard(_gen)) return;
     var data = await resp.json();
     if (data && data.score !== null && data.score !== undefined) {
       renderComplianceResults(data);
@@ -19386,6 +19401,7 @@ async function savePrometheusUrl() {
 // Audit Trail (persistent)
 // ---------------------------------------------------------------------------
 async function loadAuditTrail() {
+  var _gen = clusterGen();
   var list = document.getElementById('audit-trail-list');
   var statsEl = document.getElementById('audit-trail-stats');
   var typeFilter = document.getElementById('audit-trail-type-filter')?.value || '';
@@ -19393,6 +19409,7 @@ async function loadAuditTrail() {
     var params = 'limit=50';
     if (typeFilter) params += '&type=' + typeFilter;
     var resp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/audit-trail?' + params));
+    if (!clusterGuard(_gen)) return;
     var data = await resp.json();
     var events = data.events || [];
     if (events.length === 0) {
@@ -19413,6 +19430,7 @@ async function loadAuditTrail() {
   } catch (e) { list.innerHTML = '<div style="color:var(--crit);font-size:11px">Error: ' + esc(e.message) + '</div>'; }
   try {
     var sResp = await fetch(clusterUrl(MCP_API.replace(/\/api$/, '') + '/api/audit-trail/stats?days=30'));
+    if (!clusterGuard(_gen)) return;
     var stats = await sResp.json();
     var byType = stats.byType || {};
     var total = Object.values(byType).reduce(function(a, b) { return a + b; }, 0);
@@ -19433,6 +19451,7 @@ function exportAuditTrailUI(format) {
 // Agent Execution Traces (Audit view)
 // ---------------------------------------------------------------------------
 async function loadQueryTraces() {
+  var _gen = clusterGen();
   var list = document.getElementById('query-traces-list');
   var statsBar = document.getElementById('trace-stats-bar');
   var agentFilter = document.getElementById('trace-agent-filter')?.value || '';
@@ -19445,6 +19464,7 @@ async function loadQueryTraces() {
       fetch(clusterUrl(base + '/api/traces?' + params)),
       fetch(clusterUrl(base + '/api/traces/stats?days=30')),
     ]);
+    if (!clusterGuard(_gen)) return;
     var tracesData = await tracesResp.json();
     var statsData = await statsResp.json();
 
@@ -19839,11 +19859,13 @@ async function loadChangeTimeline() {
 // Compliance Framework Profiles
 // ---------------------------------------------------------------------------
 async function loadComplianceFrameworks() {
+  var _gen = clusterGen();
   var grid = document.getElementById('frameworks-summary-grid');
   if (!grid) return;
   try {
     var base = MCP_API.replace(/\/api$/, '');
     var resp = await fetch(clusterUrl(base + '/api/compliance/frameworks-summary'));
+    if (!clusterGuard(_gen)) return;
     var data = await resp.json();
     var results = data.results || [];
     if (results.length === 0) {

@@ -549,6 +549,24 @@ async function tryAgentBridgeTool(pathname, clusterName) {
 
 const AGENT_CACHE_MAX_AGE_SEC = 300; // 5 minutes
 
+const _localDashCache = new Map();
+const LOCAL_CACHE_TTL_MS = 30000;
+const LOCAL_CACHEABLE = new Set([
+  "/api/cluster/summary", "/api/nodes", "/api/node-metrics", "/api/namespaces",
+  "/api/pods/issues", "/api/cluster/operators", "/api/alerts",
+  "/api/dashboard/security", "/api/dashboard/gitops", "/api/dashboard/dr",
+  "/api/dashboard/optimization", "/api/dashboard/image-vulns",
+]);
+function getLocalCache(path) {
+  const entry = _localDashCache.get(path);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > LOCAL_CACHE_TTL_MS) { _localDashCache.delete(path); return null; }
+  return entry.data;
+}
+function setLocalCache(path, data) {
+  if (LOCAL_CACHEABLE.has(path)) _localDashCache.set(path, { data, ts: Date.now() });
+}
+
 /**
  * Return cached agent data for a given cluster and endpoint.
  * @param {string} clusterName - The cluster name from ?cluster= param
@@ -3491,6 +3509,10 @@ async function startSSE() {
         const cached = getAgentCachedResponse(_ac, "/api/alerts");
         if (cached) return sendJson(res, 200, cached);
       }
+      if (!_ac || _ac === "local") {
+        const lc = getLocalCache("/api/alerts");
+        if (lc) return sendJson(res, 200, lc);
+      }
       try {
         const clusterResult = await withClusterContext(url, () => Promise.allSettled([
           listFiringAlerts(),
@@ -3571,7 +3593,9 @@ async function startSSE() {
           if (!a.silenced) summary[a.severity] = (summary[a.severity] || 0) + 1;
         }
 
-        return sendJson(res, 200, { alerts: unified, summary });
+        const _alertResult = { alerts: unified, summary };
+        if (!_ac || _ac === "local") setLocalCache("/api/alerts", _alertResult);
+        return sendJson(res, 200, _alertResult);
       } catch (err) {
         if (_ac && _ac !== "local") {
           const cached = getAgentCachedResponse(_ac, "/api/alerts", { skipFreshnessCheck: true });
@@ -4852,8 +4876,18 @@ async function startSSE() {
         const cached = getAgentCachedResponse(_cl, url.pathname);
         if (cached) { sendJson(res, 200, cached); return; }
       }
+      const _isLocalCacheable = (!_cl || _cl === "local") && LOCAL_CACHEABLE.has(url.pathname);
+      if (_isLocalCacheable) {
+        const lc = getLocalCache(url.pathname);
+        if (lc) { sendJson(res, 200, lc); return; }
+      }
       try {
-        const result = await withClusterContext(url, () => handleDashboardAPI(url.pathname, req, res));
+        const _cachePath = _isLocalCacheable ? url.pathname : null;
+        const _proxyRes = _cachePath ? Object.create(res, {
+          writeHead: { value: function(code, ...a) { this._code = code; return res.writeHead(code, ...a); } },
+          end: { value: function(data) { if ((!this._code || this._code === 200) && data) { try { setLocalCache(_cachePath, JSON.parse(data)); } catch {} } return res.end(data); } },
+        }) : res;
+        const result = await withClusterContext(url, () => handleDashboardAPI(url.pathname, req, _proxyRes));
         if (result === null && _cl) {
           const cached = getAgentCachedResponse(_cl, url.pathname, { skipFreshnessCheck: true });
           if (cached) { sendJson(res, 200, cached); return; }
