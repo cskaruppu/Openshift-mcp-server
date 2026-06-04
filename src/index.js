@@ -641,6 +641,12 @@ export function getAgentCachedResponse(clusterName, endpointPath, opts = {}) {
           totalCPU: report.resourceSummary?.totalCPU || 0,
           totalMemGi: report.resourceSummary?.totalMemoryGi || 0,
         },
+        pods: {
+          total: report.pods?.total || 0,
+          running: report.pods?.running || 0,
+          failed: report.pods?.failed || 0,
+          pending: report.pods?.pending || 0,
+        },
         namespaces: {
           total: report.namespaces?.total || 0,
           user: report.namespaces?.user || 0,
@@ -2672,6 +2678,8 @@ async function startSSE() {
           status: elapsed !== null && elapsed < 300 ? "live" : elapsed !== null ? "stale" : "registered",
           lastReport: undefined,
           summary: agent.lastReport ? {
+            version: agent.lastReport.openshiftVersion || agent.lastReport.kubernetesVersion || "",
+            health: agent.lastReport.clusterHealth?.status || "",
             nodes: `${agent.lastReport.nodes?.ready || 0}/${agent.lastReport.nodes?.total || 0}`,
             pods: agent.lastReport.pods?.total || 0,
             issues: agent.lastReport.pods?.issues?.length || 0,
@@ -2764,6 +2772,103 @@ async function startSSE() {
       }
       const count = broadcastEvent(event);
       return sendJson(res, 200, { ok: true, agentsNotified: count });
+    }
+
+    // -----------------------------------------------------------------------
+    // Per-cluster agent management (kebab menu actions on cluster cards)
+    // These resolve the cluster name from the URL path and wrap existing
+    // bridge/registry primitives so the dashboard can act on a single agent.
+    // -----------------------------------------------------------------------
+    {
+      const perAgentMatch = url.pathname.match(/^\/api\/agent\/([^/]+)\/(status|health-check|reconnect|rbac-sync|redeploy)$/);
+      if (perAgentMatch) {
+        const rawName = decodeURIComponent(perAgentMatch[1]);
+        const action = perAgentMatch[2];
+        const clusterName = findClusterKey(rawName) || rawName;
+        const agent = _connectedAgents.get(clusterName);
+
+        // Status Check — return the agent's last report summary + connection state
+        if (action === "status" && req.method === "GET") {
+          if (!agent) return sendJson(res, 404, { error: `Agent "${rawName}" not found` });
+          const elapsed = agent.lastReportTime
+            ? (Date.now() - new Date(agent.lastReportTime).getTime()) / 1000
+            : null;
+          const channels = getChannelStatus();
+          return sendJson(res, 200, {
+            clusterName: agent.clusterName,
+            platform: agent.platform,
+            agentVersion: agent.agentVersion || null,
+            status: elapsed !== null && elapsed < 300 ? "live" : elapsed !== null ? "stale" : "registered",
+            registeredAt: agent.registeredAt || null,
+            lastReportTime: agent.lastReportTime || null,
+            lastHeartbeat: agent.lastHeartbeat || null,
+            lastReportAgeSec: elapsed !== null ? Math.round(elapsed) : null,
+            bridgeConnected: !!channels[clusterName],
+            actionsEnabled: !!agent.actionsEnabled,
+            summary: agent.lastReport ? {
+              version: agent.lastReport.openshiftVersion || agent.lastReport.kubernetesVersion || "",
+              health: agent.lastReport.clusterHealth?.status || "",
+              nodes: `${agent.lastReport.nodes?.ready || 0}/${agent.lastReport.nodes?.total || 0}`,
+              pods: agent.lastReport.pods?.total || 0,
+              issues: agent.lastReport.pods?.issues?.length || 0,
+              warnings: agent.lastReport.events?.warnings || 0,
+            } : null,
+          });
+        }
+
+        // Verify Health — invoke the agent's health_check tool over the SSE bridge
+        if (action === "health-check" && req.method === "POST") {
+          if (!agent) return sendJson(res, 404, { error: `Agent "${rawName}" not found` });
+          try {
+            const result = await invokeAgentTool(clusterName, "health_check", {});
+            agent.lastHealthCheck = new Date().toISOString();
+            agent.lastHealthResult = result;
+            return sendJson(res, 200, { ok: true, target: clusterName, message: "Health check complete", result });
+          } catch (e) {
+            return sendJson(res, 200, { ok: false, target: clusterName, message: e.message || "Health check failed — agent not connected via SSE" });
+          }
+        }
+
+        // Reconnect — ask the agent to drop and re-establish its SSE channel
+        if (action === "reconnect" && req.method === "POST") {
+          const event = { type: "reconnect", triggeredAt: new Date().toISOString() };
+          const sent = pushEventToAgent(clusterName, event);
+          return sendJson(res, 200, { ok: sent, target: clusterName, message: sent ? "Reconnect signal sent" : "Agent not connected via SSE" });
+        }
+
+        // Sync RBAC — push an RBAC update event to this agent
+        if (action === "rbac-sync" && req.method === "POST") {
+          const event = { type: "rbac_update", version: "1.2.0", triggeredAt: new Date().toISOString() };
+          const sent = pushEventToAgent(clusterName, event);
+          return sendJson(res, 200, { ok: sent, target: clusterName, message: sent ? "RBAC sync pushed" : "Agent not connected via SSE" });
+        }
+
+        // Redeploy — trigger a rolling restart of this agent's deployment
+        if (action === "redeploy" && req.method === "POST") {
+          const event = { type: "rollout_restart", triggeredAt: new Date().toISOString() };
+          const sent = pushEventToAgent(clusterName, event);
+          return sendJson(res, 200, { ok: sent, target: clusterName, message: sent ? "Redeploy (rollout restart) triggered" : "Agent not connected via SSE" });
+        }
+      }
+
+      // Remove Cluster — DELETE /api/agent/:name — drop from registry + close channel
+      const delMatch = url.pathname.match(/^\/api\/agent\/([^/]+)$/);
+      if (delMatch && req.method === "DELETE") {
+        const rawName = decodeURIComponent(delMatch[1]);
+        const clusterName = findClusterKey(rawName) || rawName;
+        const existed = _connectedAgents.delete(clusterName);
+        // Best-effort: tell the agent to stop reporting; its SSE channel closes
+        // itself on disconnect (agent-bridge cleans up _channels on 'close').
+        try { pushEventToAgent(clusterName, { type: "deregister", triggeredAt: new Date().toISOString() }); } catch { /* best effort */ }
+        if (CLUSTER_STORE_ENABLED) {
+          try { await deleteClusterSnapshot(clusterName); } catch { /* best effort */ }
+        }
+        return sendJson(res, existed ? 200 : 404, {
+          ok: existed,
+          target: clusterName,
+          message: existed ? `Cluster "${clusterName}" removed` : `Cluster "${rawName}" not found`,
+        });
+      }
     }
 
     // LLM Settings API
