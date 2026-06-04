@@ -6,9 +6,12 @@ import { ClusterOperatorsWidget } from "./components/widgets/ClusterOperatorsWid
 import { ActiveAlertsWidget } from "./components/widgets/ActiveAlertsWidget";
 import { PodsAtRiskWidget } from "./components/widgets/PodsAtRiskWidget";
 import { ScoreWidget } from "./components/widgets/ScoreWidget";
+import { NodeTopologyWidget } from "./components/widgets/NodeTopologyWidget";
+import { NamespaceHeatmapWidget } from "./components/widgets/NamespaceHeatmapWidget";
+import { RiskPredictionsWidget } from "./components/widgets/RiskPredictionsWidget";
 import { useActiveCluster } from "./store/clusterStore";
 
-const MIGRATED = 11;
+const MIGRATED = 14;
 const TOTAL = 22;
 
 export default function App() {
@@ -61,6 +64,11 @@ export default function App() {
           path="/api/dashboard/image-vulns"
           map={(d) => ({ value: `${d.riskScore}/100`, grade: d.grade, label: `${d.critical || 0} critical · ${d.high || 0} high · ${d.totalImages || 0} images` })}
         />
+
+        {/* Full-width widgets */}
+        <NodeTopologyWidget />
+        <NamespaceHeatmapWidget />
+        <RiskPredictionsWidget />
       </main>
 
       <footer className="app-footer">
