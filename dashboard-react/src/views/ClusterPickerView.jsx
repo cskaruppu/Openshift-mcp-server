@@ -80,7 +80,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
   const hubPInfo = getPlatformInfo(lci.platform);
   const hubVersion = isOCP ? (lci.cluster?.version || "--") : (lci.cluster?.kubernetesVersion || lci.cluster?.version || "--");
   const hubNodes = lci.nodes ? `${lci.nodes.ready || 0}/${lci.nodes.total || 0}` : "--";
-  const hubPods = lci.pods?.total ?? lci.pods?.running ?? "--";
+  const hubPods = lci.pods ? `${lci.pods.running ?? 0}/${lci.pods.total ?? 0}` : "--";
 
   return (
     <div className="cluster-picker">

@@ -1,7 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
 import { useThemeStore } from "../store/themeStore";
-import { useActiveCluster } from "../store/clusterStore";
-import { useClusterQuery } from "../hooks/useClusterQuery";
 import { showToast } from "../store/toastStore";
 
 /* ------------------------------------------------------------------ */
@@ -898,8 +896,6 @@ function AppearanceTab({ theme, toggleTheme }) {
 export function SettingsPanel({ open, onClose }) {
   const theme = useThemeStore((s) => s.theme);
   const toggleTheme = useThemeStore((s) => s.toggle);
-  const cluster = useActiveCluster();
-  const { data: clusterData } = useClusterQuery("/api/dashboard/health");
 
   const [activeTab, setActiveTab] = useState("llm");
 
@@ -950,21 +946,6 @@ export function SettingsPanel({ open, onClose }) {
           <button className="settings-slideout-close" onClick={onClose}>&times;</button>
         </div>
         <div className="settings-slideout-body">
-
-          {/* ---- Global: Cluster Context ---- */}
-          <div className="so-section">
-            <div className="so-section-title">Cluster Context</div>
-            <div className="cluster-ctx">
-              <div className="ctx-title">
-                <span className="ctx-dot" style={{ background: clusterData?.status === "Healthy" ? "#22c55e" : "#f59e0b" }} />
-                {cluster === "local" ? "Hub (local)" : cluster}
-              </div>
-              <div className="ctx-row"><span>Health</span><span className="ctx-val">{clusterData?.status || "--"}</span></div>
-              <div className="ctx-row"><span>Nodes</span><span className="ctx-val">{clusterData?.nodes ?? "--"}</span></div>
-              <div className="ctx-row"><span>Namespaces</span><span className="ctx-val">{clusterData?.namespaces ?? "--"}</span></div>
-              <div className="ctx-row"><span>Version</span><span className="ctx-val">{clusterData?.version || "--"}</span></div>
-            </div>
-          </div>
 
           {/* ---- Global: AI Persona ---- */}
           <div className="so-section">

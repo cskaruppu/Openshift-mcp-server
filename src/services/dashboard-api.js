@@ -482,12 +482,13 @@ export async function handleDashboardAPI(pathname, req, res) {
       // ---- Cluster summary (top metrics) ----
       case "/api/cluster/summary": {
         const isOCP = getPlatform() === "openshift";
-        const [clusterVersion, operators, nodes, namespaces] =
+        const [clusterVersion, operators, nodes, namespaces, allPods] =
           await Promise.all([
             isOCP ? ocpGet("/apis/config.openshift.io/v1/clusterversions/version").catch(() => null) : Promise.resolve(null),
             isOCP ? ocpGet("/apis/config.openshift.io/v1/clusteroperators").catch(() => null) : Promise.resolve(null),
             ocpGet("/api/v1/nodes"),
             ocpGet("/api/v1/namespaces"),
+            ocpGet("/api/v1/pods").catch(() => ({ items: [] })),
           ]);
 
         const nodeList = nodes.items || [];
@@ -528,6 +529,9 @@ export async function handleDashboardAPI(pathname, req, res) {
             ns.metadata.name !== "openshift"
         );
 
+        const podItems = allPods.items || [];
+        const runningPods = podItems.filter((p) => p.status?.phase === "Running").length;
+
         json(res, 200, {
           platform: getPlatform() || "kubernetes",
           isOpenShift: isOpenShiftFamily(getPlatform()),
@@ -551,6 +555,10 @@ export async function handleDashboardAPI(pathname, req, res) {
             total: nsList.length,
             user: userNS.length,
             system: nsList.length - userNS.length,
+          },
+          pods: {
+            total: podItems.length,
+            running: runningPods,
           },
           operators: {
             total: opItems.length,
