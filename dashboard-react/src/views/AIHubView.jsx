@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "../api/client";
 import { useActiveCluster } from "../store/clusterStore";
 import { showToast } from "../store/toastStore";
+import { PLATFORM_MAP, getPlatformInfo } from "../lib/platforms";
 
 /* ── Constants ── */
 
@@ -38,14 +39,7 @@ const FRAMEWORKS = [
   "Any MCP client",
 ];
 
-const PLATFORM_PILLS = [
-  { key: "openshift", icon: "⬢", color: "#e04040", name: "OpenShift" },
-  { key: "rancher", icon: "🐮", color: "#0075a8", name: "Rancher" },
-  { key: "eks", icon: "☁", color: "#ff9900", name: "EKS" },
-  { key: "aks", icon: "⛅", color: "#0078d4", name: "AKS" },
-  { key: "gke", icon: "🌐", color: "#4285f4", name: "GKE" },
-  { key: "k8s", icon: "⚙", color: "#326ce5", name: "K8s" },
-];
+const PLATFORM_PILLS = Object.values(PLATFORM_MAP);
 
 const AGENT_CATEGORIES = [
   {
@@ -228,18 +222,25 @@ export function AIHubView() {
           <div className="hub-cluster-list">
             <div className="hub-cluster-item hub">
               <span className="hub-cluster-dot" style={{ background: "#22c55e" }} />
+              <span className="hub-cluster-platform" style={{ color: "#e04040" }}>{"⬢"}</span>
               <span className="hub-cluster-name">Hub Cluster (Primary)</span>
               <span className="badge badge-ok">Active</span>
             </div>
-            {agents.map((a) => (
-              <div key={a.clusterName} className="hub-cluster-item">
-                <span className="hub-cluster-dot" style={{ background: a.status === "live" ? "#22c55e" : "#ef4444" }} />
-                <span className="hub-cluster-name">{a.clusterName}</span>
-                <span className={"badge " + (a.status === "live" ? "badge-ok" : "badge-crit")}>
-                  {a.status === "live" ? "Active" : a.status}
-                </span>
-              </div>
-            ))}
+            {agents.map((a) => {
+              const pInfo = getPlatformInfo(a.platform);
+              const isLive = a.status === "live" || a.status === "active";
+              return (
+                <div key={a.clusterName} className="hub-cluster-item">
+                  <span className="hub-cluster-dot" style={{ background: isLive ? "#22c55e" : "#ef4444" }} />
+                  <span className="hub-cluster-platform" style={{ color: pInfo.color }}>{pInfo.icon}</span>
+                  <span className="hub-cluster-name">{a.clusterName}</span>
+                  <span className="hub-cluster-plat-label">{pInfo.name}</span>
+                  <span className={"badge " + (isLive ? "badge-ok" : "badge-crit")}>
+                    {isLive ? "Active" : a.status}
+                  </span>
+                </div>
+              );
+            })}
           </div>
           <div className="hub-add-cluster-row">
             <div className="hub-add-label">Supported Platforms</div>

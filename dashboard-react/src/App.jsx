@@ -17,6 +17,7 @@ import { useThemeStore } from "./store/themeStore";
 import { showToast } from "./store/toastStore";
 import { useClusterStore, useActiveCluster } from "./store/clusterStore";
 import { useViewStore } from "./store/viewStore";
+import { getPlatformInfo } from "./lib/platforms";
 
 const NAV = [
   { key: "dashboard", label: "Dashboard" },
@@ -49,6 +50,10 @@ export default function App() {
 
   const agentsList = Array.isArray(agentData?.agents) ? agentData.agents : [];
   const hasRemoteClusters = agentsList.length > 0;
+
+  const activeAgent = cluster !== "local" ? agentsList.find((a) => (a.clusterName || a.name) === cluster) : null;
+  const activePlatform = getPlatformInfo(activeAgent?.platform || (cluster === "local" ? "openshift" : "k8s"));
+  const isHub = cluster === "local";
 
   useEffect(() => {
     document.body.classList.toggle("light-theme", theme === "light");
@@ -133,11 +138,11 @@ export default function App() {
                 </button>
                 <span className="workspace-breadcrumb-sep">/</span>
                 <span className="workspace-breadcrumb-cluster">
-                  <span className="wbc-dot" style={{ background: "#22c55e" }} />
-                  <span className="wbc-platform">{"⬢"}</span>
-                  <span className="wbc-name">{cluster === "local" ? "Hub" : cluster}</span>
-                  <span className="wbc-badge" style={{ background: cluster === "local" ? "linear-gradient(135deg,#e04040,#c03030)" : "#3b82f6", color: "#fff" }}>
-                    {cluster === "local" ? "OPENSHIFT · PRIMARY" : "REMOTE"}
+                  <span className="wbc-dot" style={{ background: activeAgent?.status === "live" || isHub ? "#22c55e" : "#f59e0b" }} />
+                  <span className="wbc-platform" style={{ color: activePlatform.color }}>{activePlatform.icon}</span>
+                  <span className="wbc-name">{isHub ? "Hub" : cluster}</span>
+                  <span className="wbc-badge" style={{ background: isHub ? `linear-gradient(135deg,${activePlatform.color},${activePlatform.color}dd)` : activePlatform.color, color: "#fff" }}>
+                    {isHub ? `${activePlatform.name.toUpperCase()} · PRIMARY` : `${activePlatform.name.toUpperCase()} · REMOTE`}
                   </span>
                 </span>
               </div>
@@ -238,12 +243,27 @@ export default function App() {
 }
 
 function VersionLabel() {
-  const { data } = useQuery({
-    queryKey: ["/api/cluster/summary", "local"],
+  const cluster = useActiveCluster();
+  const { data: summaryData } = useQuery({
+    queryKey: ["/api/cluster/summary", cluster],
     queryFn: ({ signal }) => apiGet("/api/cluster/summary", { signal }),
     staleTime: 60_000,
+    enabled: cluster === "local",
   });
-  const ver = data?.cluster?.version;
+  const { data: agentData } = useQuery({
+    queryKey: ["/api/agent/status"],
+    queryFn: ({ signal }) => apiGet("/api/agent/status", { signal }),
+    staleTime: 30_000,
+  });
+
+  let ver;
+  if (cluster === "local") {
+    ver = summaryData?.cluster?.version;
+  } else {
+    const agents = Array.isArray(agentData?.agents) ? agentData.agents : [];
+    const agent = agents.find((a) => (a.clusterName || a.name) === cluster);
+    ver = agent?.summary?.version;
+  }
   if (!ver) return null;
   return <span className="wbc-version">v{ver}</span>;
 }

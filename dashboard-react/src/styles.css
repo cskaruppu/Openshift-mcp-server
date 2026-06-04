@@ -481,6 +481,7 @@ h3.widget-title {
 .fleet-card:hover { border-color: var(--accent); transform: translateY(-1px); box-shadow: 0 4px 16px rgba(0,0,0,.2); }
 .fleet-card.active { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
 .fleet-name { font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.fleet-platform-icon { font-size: 15px; flex-shrink: 0; }
 .fleet-badge {
   font-size: 9px; background: linear-gradient(135deg, var(--accent), #c03030);
   color: #fff; border-radius: 8px; padding: 2px 8px; font-weight: 700;
@@ -1636,8 +1637,10 @@ h3.widget-title {
   background: var(--bg); border: 1px solid var(--border); border-radius: 8px; font-size: 12px;
 }
 .hub-cluster-item.hub { border-left: 3px solid var(--accent); }
-.hub-cluster-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.hub-cluster-name { flex: 1; font-weight: 500; }
+.hub-cluster-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 6px currentColor; }
+.hub-cluster-platform { font-size: 14px; flex-shrink: 0; }
+.hub-cluster-name { flex: 1; font-weight: 600; }
+.hub-cluster-plat-label { font-size: 10px; color: var(--text2); font-weight: 500; }
 .hub-add-cluster-row { border-top: 1px solid var(--border); padding-top: 10px; }
 .hub-add-label { font-size: 10px; text-transform: uppercase; color: var(--text2); margin-bottom: 8px; letter-spacing: .4px; font-weight: 600; }
 .hub-platform-pills { display: flex; gap: 6px; flex-wrap: wrap; }
