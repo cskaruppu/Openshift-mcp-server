@@ -2,8 +2,8 @@ import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useActiveCluster } from "../store/clusterStore";
 import { useChatStore } from "../store/chatStore";
 import { clusterUrl } from "../api/client";
-import { renderMarkdown } from "../utils/markdown";
 import { showToast } from "../store/toastStore";
+import { ChatMessageBody } from "./ChatTokens";
 
 /* ── Provider metadata ── */
 const PROVIDER_META = {
@@ -18,19 +18,28 @@ const PROVIDER_META = {
 
 /* ── Slash commands ── */
 const SLASH_COMMANDS = [
-  { cmd: "/help",          desc: "Show available commands",      cat: "general" },
-  { cmd: "/health",        desc: "Cluster health summary",       cat: "cluster" },
-  { cmd: "/pods",          desc: "List pods with issues",         cat: "cluster" },
-  { cmd: "/nodes",         desc: "Node status overview",          cat: "cluster" },
-  { cmd: "/deployments",   desc: "Deployment status",             cat: "cluster" },
-  { cmd: "/events",        desc: "Recent cluster events",         cat: "cluster" },
-  { cmd: "/alerts",        desc: "Active alerts",                 cat: "cluster" },
-  { cmd: "/security",      desc: "Security audit",                cat: "security" },
-  { cmd: "/compliance",    desc: "Compliance scan",               cat: "security" },
-  { cmd: "/cost",          desc: "Cost analysis",                 cat: "intelligence" },
-  { cmd: "/topology",      desc: "Resource topology",             cat: "intelligence" },
-  { cmd: "/upgrade-check", desc: "Upgrade readiness",             cat: "intelligence" },
-  { cmd: "/drift",         desc: "Configuration drift detection", cat: "intelligence" },
+  { cmd: "/help",            desc: "Show available commands",                cat: "general" },
+  { cmd: "/health",          desc: "Cluster health summary",                 cat: "cluster" },
+  { cmd: "/pods",            desc: "Show pod summary across cluster",         cat: "cluster" },
+  { cmd: "/nodes",           desc: "List cluster nodes with status",         cat: "cluster" },
+  { cmd: "/deployments",     desc: "List deployments across namespaces",     cat: "cluster" },
+  { cmd: "/events",          desc: "Recent cluster events",                  cat: "cluster" },
+  { cmd: "/alerts",          desc: "Active alerts",                          cat: "cluster" },
+  { cmd: "/pipelines",       desc: "List Tekton pipelines",                  cat: "cluster" },
+  { cmd: "/vms",             desc: "List KubeVirt virtual machines",         cat: "cluster" },
+  { cmd: "/security",        desc: "Security audit",                         cat: "security" },
+  { cmd: "/compliance",      desc: "CIS / NIST 800-190 compliance check",    cat: "security" },
+  { cmd: "/scc-audit",       desc: "Audit pods for over-privileged SCC",     cat: "security" },
+  { cmd: "/explain-scc",     desc: "Explain which SCC is assigned to a pod", cat: "security" },
+  { cmd: "/generate-policy", desc: "Generate K8s/OCP policy from prompt",    cat: "security" },
+  { cmd: "/upgrade-check",   desc: "Check cluster upgrade readiness",        cat: "intelligence" },
+  { cmd: "/cert-check",      desc: "Check for expiring TLS certificates",    cat: "intelligence" },
+  { cmd: "/operator-health", desc: "Diagnose OLM operator issues",           cat: "intelligence" },
+  { cmd: "/what-if",         desc: "Predict impact of a change",             cat: "intelligence" },
+  { cmd: "/drift",           desc: "Detect configuration drift across ACM",  cat: "intelligence" },
+  { cmd: "/timeline",        desc: "Build incident timeline",                cat: "intelligence" },
+  { cmd: "/cost",            desc: "Analyze workload cost efficiency",       cat: "intelligence" },
+  { cmd: "/topology",        desc: "Service dependency map for a namespace", cat: "intelligence" },
 ];
 
 const CAT_COLORS = { general: "#a1a1aa", cluster: "#3b82f6", security: "#ef4444", intelligence: "#8b5cf6" };
@@ -375,9 +384,10 @@ export function ChatView() {
     }
   }
 
-  /* ── Send message ── */
-  async function send() {
-    const msg = input.trim();
+  /* ── Send message (optionally with an explicit text override) ── */
+  async function sendText(text) { return send(text); }
+  async function send(override) {
+    const msg = (typeof override === "string" ? override : input).trim();
     if (!msg || busy) return;
     setInput("");
     setSlashOpen(false);
@@ -398,7 +408,7 @@ export function ChatView() {
       const res = await fetch(clusterUrl("/api/chat", cluster), {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream", "X-Cluster-Context": cluster },
-        body: JSON.stringify({ message: msg, conversationId: conv.conversationId, stream: true }),
+        body: JSON.stringify({ message: msg, conversationId: conv.conversationId, stream: true, provider: activeProvider, cluster }),
         signal: ctrl.signal,
       });
 
@@ -655,13 +665,8 @@ export function ChatView() {
                       </div>
                     ))}
 
-                    {/* Message bubble */}
-                    <div
-                      className="chat-bubble md-content"
-                      dangerouslySetInnerHTML={{
-                        __html: renderMarkdown(m.text || (busy && i === conv.messages.length - 1 ? "" : "")),
-                      }}
-                    />
+                    {/* Message bubble — markdown + interactive token cards */}
+                    {m.text && <ChatMessageBody text={m.text} cluster={cluster} onQuery={(q) => { setInput(q); setTimeout(() => sendText(q), 0); }} />}
 
                     {/* Message actions - only on completed assistant messages with content */}
                     {m.text && !(busy && i === conv.messages.length - 1) && (
