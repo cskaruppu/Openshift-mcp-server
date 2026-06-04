@@ -10,6 +10,7 @@ import { NodeTopologyWidget } from "../components/widgets/NodeTopologyWidget";
 import { NamespaceHeatmapWidget } from "../components/widgets/NamespaceHeatmapWidget";
 import { RiskPredictionsWidget } from "../components/widgets/RiskPredictionsWidget";
 import { AppChangesWidget } from "../components/widgets/AppChangesWidget";
+import { ImageVulnsWidget } from "../components/widgets/ImageVulnsWidget";
 import { HealthTimelineWidget } from "../components/widgets/HealthTimelineWidget";
 import { EmergencyActionsWidget } from "../components/widgets/EmergencyActionsWidget";
 
@@ -107,6 +108,11 @@ export function DashboardView() {
       {/* ── Application Change Watcher (full feature) ── */}
       <section className="dash-section">
         <AppChangesWidget />
+      </section>
+
+      {/* ── Image Vulnerability Scanner (full feature) ── */}
+      <section className="dash-section">
+        <ImageVulnsWidget />
       </section>
 
       {/* ── Health & Topology (side by side) ── */}

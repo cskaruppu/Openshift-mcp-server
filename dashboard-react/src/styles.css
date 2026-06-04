@@ -576,6 +576,163 @@ h3.widget-title {
 .light-theme .ht-track::before { background: rgba(0,0,0,0.08); }
 .light-theme .ht-legend { border-top-color: rgba(0,0,0,0.08); }
 
+/* ── Image Vulnerability Scanner (premium) ── */
+.ivs {
+  background: var(--card-bg, var(--bg2)); border: 1px solid var(--border);
+  border-radius: 12px; overflow: hidden;
+}
+.ivs-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 18px; border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.ivs-header h3 { margin: 0; font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: 0.3px; text-transform: uppercase; }
+.ivs-header-actions { display: flex; align-items: center; gap: 8px; }
+.ivs-scanner-badge {
+  padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 600;
+  background: rgba(99,102,241,0.12); color: #818cf8; border: 1px solid rgba(99,102,241,0.25);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.ivs-scan-btn {
+  padding: 4px 12px; border-radius: 6px; font-size: 11px; font-weight: 600;
+  background: rgba(59,130,246,0.1); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3);
+  cursor: pointer; transition: all 0.15s;
+}
+.ivs-scan-btn:hover { background: rgba(59,130,246,0.2); }
+.ivs-scan-btn:disabled { opacity: 0.5; cursor: wait; }
+.ivs-loading, .ivs-error, .ivs-unavailable {
+  padding: 32px; text-align: center; font-size: 13px; color: var(--text2);
+}
+.ivs-hero {
+  display: flex; align-items: center; gap: 16px; padding: 16px 18px 12px;
+}
+.ivs-donut { position: relative; width: 64px; height: 64px; flex-shrink: 0; }
+.ivs-donut-score {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: 800; color: var(--text);
+}
+.ivs-grade-info { flex: 1; }
+.ivs-grade-pill {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 6px; font-size: 14px; font-weight: 800;
+  border: 2px solid; margin-bottom: 4px;
+}
+.ivs-grade-label { font-weight: 600; font-size: 13px; margin-bottom: 2px; }
+.ivs-grade-meta { font-size: 11px; color: var(--text2); }
+.ivs-findings-count { text-align: center; }
+.ivs-findings-num { font-size: 28px; font-weight: 800; }
+.ivs-findings-label { font-size: 10px; color: var(--text2); }
+
+.ivs-severity-row {
+  display: flex; gap: 6px; padding: 0 18px 10px; flex-wrap: wrap;
+}
+.ivs-sev-card {
+  flex: 1; min-width: 55px; text-align: center; padding: 6px;
+  background: color-mix(in srgb, var(--sev-color) 8%, var(--bg, #0a0a0a));
+  border-radius: 8px; border: 1px solid color-mix(in srgb, var(--sev-color) 20%, transparent);
+}
+.ivs-sev-val { font-size: 18px; font-weight: 800; color: var(--sev-color); }
+.ivs-sev-label { font-size: 9px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.4px; }
+
+.ivs-stats-row {
+  display: flex; justify-content: space-between; padding: 0 18px 4px;
+  font-size: 11px; color: var(--text2);
+}
+.ivs-progress-track {
+  height: 4px; margin: 0 18px 10px; background: var(--border);
+  border-radius: 2px; overflow: hidden;
+}
+.ivs-progress-bar {
+  height: 100%; background: var(--accent3, #06b6d4); border-radius: 2px;
+  transition: width 0.6s ease;
+}
+
+.ivs-compliance-row {
+  display: flex; gap: 6px; padding: 0 18px 10px; flex-wrap: wrap;
+}
+.ivs-badge {
+  display: flex; align-items: center; gap: 4px; padding: 3px 10px;
+  border-radius: 14px; font-size: 10px; color: var(--text2);
+  background: color-mix(in srgb, var(--badge-color) 8%, var(--bg, #0a0a0a));
+  border: 1px solid color-mix(in srgb, var(--badge-color) 18%, transparent);
+}
+.ivs-badge-count { font-weight: 700; color: var(--badge-color); }
+
+.ivs-freshness { padding: 0 18px 12px; }
+.ivs-freshness-header {
+  display: flex; justify-content: space-between; font-size: 10px;
+  color: var(--text2); margin-bottom: 4px;
+}
+.ivs-freshness-counts { font-weight: 600; }
+.ivs-freshness-track {
+  display: flex; height: 6px; border-radius: 3px; overflow: hidden;
+  background: var(--border);
+}
+.ivs-fresh-bar { transition: width 0.6s ease; }
+
+.ivs-images { padding: 0 18px 14px; }
+.ivs-images-title {
+  font-size: 11px; font-weight: 600; color: var(--text2);
+  text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 6px;
+}
+.ivs-images-list {
+  display: flex; flex-direction: column; gap: 3px;
+  max-height: 220px; overflow-y: auto;
+}
+.ivs-img-row {
+  border-radius: 6px; border: 1px solid var(--border);
+  overflow: hidden; transition: border-color 0.15s;
+}
+.ivs-img-row:hover, .ivs-img-row.expanded { border-color: rgba(99,102,241,0.3); }
+.ivs-img-summary {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  cursor: pointer; font-size: 11px;
+}
+.ivs-img-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-weight: 500; color: var(--text);
+}
+.ivs-img-ns { font-size: 10px; color: var(--text2); flex-shrink: 0; }
+.ivs-img-sevs { display: flex; gap: 3px; flex-shrink: 0; }
+.ivs-img-sev {
+  padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 700;
+}
+.ivs-img-sev.crit { background: rgba(239,68,68,0.15); color: #ef4444; }
+.ivs-img-sev.high { background: rgba(249,115,22,0.15); color: #f97316; }
+.ivs-img-sev.med { background: rgba(59,130,246,0.15); color: #3b82f6; }
+.ivs-img-sev.low { background: rgba(34,197,94,0.15); color: #22c55e; }
+.ivs-img-cvss { font-weight: 700; font-size: 11px; flex-shrink: 0; min-width: 28px; text-align: right; }
+.ivs-img-chevron { font-size: 9px; color: var(--text2); flex-shrink: 0; }
+
+.ivs-img-detail { padding: 0 10px 10px; overflow-x: auto; }
+.ivs-vuln-table {
+  width: 100%; border-collapse: collapse; font-size: 10px;
+}
+.ivs-vuln-table th {
+  text-align: left; padding: 4px 6px; font-weight: 600; color: var(--text2);
+  border-bottom: 1px solid var(--border); font-size: 9px; text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.ivs-vuln-table td {
+  padding: 3px 6px; border-bottom: 1px solid rgba(255,255,255,0.03);
+  color: var(--text2);
+}
+.ivs-sev-pill {
+  padding: 1px 6px; border-radius: 3px; font-size: 9px; font-weight: 600;
+  text-transform: uppercase;
+}
+.ivs-sev-pill.critical { background: rgba(239,68,68,0.15); color: #ef4444; }
+.ivs-sev-pill.high { background: rgba(249,115,22,0.15); color: #f97316; }
+.ivs-sev-pill.medium { background: rgba(59,130,246,0.15); color: #3b82f6; }
+.ivs-sev-pill.low { background: rgba(34,197,94,0.15); color: #22c55e; }
+.ivs-cve-id { font-family: monospace; font-size: 10px; color: var(--text); }
+
+/* light theme */
+.light-theme .ivs { border-color: rgba(0,0,0,0.1); }
+.light-theme .ivs-header { border-bottom-color: rgba(0,0,0,0.08); }
+.light-theme .ivs-sev-card { background: color-mix(in srgb, var(--sev-color) 6%, #fff); }
+.light-theme .ivs-badge { background: color-mix(in srgb, var(--badge-color) 6%, #fff); }
+.light-theme .ivs-vuln-table td { border-bottom-color: rgba(0,0,0,0.04); }
+
 /* Emergency actions */
 .action-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
 .action-btn {
