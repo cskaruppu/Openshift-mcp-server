@@ -8043,6 +8043,7 @@ async function loadAIActivityFeed() {
 // ---------------------------------------------------------------------------
 var _authenticated = false;
 var _authUser = null;
+var _authToken = null;
 
 async function checkAuthStatus() {
   try {
@@ -10442,8 +10443,35 @@ function showClusterPicker(skipPush) {
   var cpEl = document.getElementById('view-cluster-picker');
   if (cpEl) cpEl.style.display = 'flex';
 
-  // Render cards
+  // Render cards (fetch hub summary if not yet loaded)
   renderClusterPickerCards();
+  if (!_localClusterInfo || !_localClusterInfo.version) {
+    var prevCluster = _globalActiveCluster;
+    _globalActiveCluster = 'local';
+    apiFetch('/api/cluster/summary').then(function(d) {
+      if (!d || !d.cluster) return;
+      var isOCP = d.isOpenShift !== undefined ? d.isOpenShift : true;
+      _localClusterInfo = {
+        version: d.cluster.version,
+        kubernetesVersion: d.cluster.kubernetesVersion,
+        platform: d.platform || 'openshift',
+        isOpenShift: isOCP,
+        nodeCount: d.nodes.total,
+        readyNodes: d.nodes.ready,
+        health: d.cluster.health,
+        name: _localClusterInfo?.name || 'Hub Cluster',
+      };
+      _globalActiveCluster = prevCluster;
+      renderClusterPickerCards();
+    }).catch(function() { _globalActiveCluster = prevCluster; });
+    apiFetch('/api/namespaces').then(function(nsList) {
+      if (!nsList || !Array.isArray(nsList)) return;
+      var totalPods = 0;
+      for (var i = 0; i < nsList.length; i++) totalPods += (nsList[i].podCount || 0);
+      if (_localClusterInfo) _localClusterInfo.podCount = totalPods;
+      renderClusterPickerCards();
+    }).catch(function() {});
+  }
 
   // Update picker user label
   var cpUserLabel = document.getElementById('cp-user-label');
