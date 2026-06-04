@@ -11,6 +11,7 @@ import { DashboardView } from "./views/DashboardView";
 import { AuditView } from "./views/AuditView";
 import { IntelligenceView } from "./views/IntelligenceView";
 import { ChatView } from "./views/ChatView";
+import { AIHubView } from "./views/AIHubView";
 import { useAuthStore } from "./store/authStore";
 import { useThemeStore } from "./store/themeStore";
 import { showToast } from "./store/toastStore";
@@ -21,6 +22,7 @@ const NAV = [
   { key: "dashboard", label: "Dashboard" },
   { key: "chat", label: "AI Chat" },
   { key: "audit", label: "Audit" },
+  { key: "hub", label: "AI Hub" },
   { key: "intelligence", label: "AI Intelligence" },
 ];
 
@@ -34,6 +36,7 @@ export default function App() {
   const toggleTheme = useThemeStore((s) => s.toggle);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [inClusterPicker, setInClusterPicker] = useState(true);
+  const [agentsModalOpen, setAgentsModalOpen] = useState(false);
   const { kbdOpen, setKbdOpen } = useKeyboardShortcuts();
 
   const { data: agentData } = useQuery({
@@ -156,22 +159,57 @@ export default function App() {
                   onClick={() => setActiveView(t.key)}
                 >
                   {t.label}
+                  {t.key === "intelligence" && (
+                    <span className="alerts-badge" style={{ background: "#6366f1", marginLeft: 6 }}>0</span>
+                  )}
                 </button>
               ))}
             </nav>
             <div className="header-actions">
+              {/* Connection status */}
+              <div className="conn-status">
+                <span className="conn-dot connected" />
+                <span className="conn-label">Connected</span>
+              </div>
+
               {!hasRemoteClusters && <ClusterSwitcher />}
+
+              <button className="icon-btn" onClick={() => { showToast("Refreshing...", "ok"); window.location.reload(); }} title="Refresh">
+                &#x21bb;
+              </button>
               <button
                 className="icon-btn"
                 onClick={toggleTheme}
                 title="Toggle theme"
                 dangerouslySetInnerHTML={{ __html: theme === "light" ? "&#x2600;" : "&#x263E;" }}
               />
-              <button className="icon-btn" onClick={() => setSettingsOpen(true)} title="Settings">
-                &#x2699;
+              <button className="icon-btn" onClick={() => setKbdOpen(true)} title="Keyboard shortcuts (Ctrl+/)">
+                &#x2328;
+              </button>
+              <button className="settings-gear" onClick={() => setSettingsOpen(true)} title="Settings">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+              </button>
+              <button
+                className={"agents-icon-btn" + (agentsModalOpen ? " active" : "")}
+                onClick={() => { setAgentsModalOpen(!agentsModalOpen); setActiveView("hub"); }}
+                title="AI Agents"
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="7" r="3" /><circle cx="5" cy="18" r="2.5" /><circle cx="19" cy="18" r="2.5" />
+                  <line x1="12" y1="10" x2="5" y2="15.5" /><line x1="12" y1="10" x2="19" y2="15.5" />
+                  <line x1="5" y1="15.5" x2="19" y2="15.5" strokeDasharray="2 2" opacity="0.5" />
+                </svg>
+                <span className="agents-icon-badge">{agentsList.length + 10}</span>
               </button>
               {user && user.name !== "anonymous" && (
-                <span className="user-badge">{user.display_name || user.name}</span>
+                <>
+                  <span className="user-badge">{user.display_name || user.name}</span>
+                  <button className="icon-btn logout-btn" onClick={handleLogout} title="Sign out">
+                    &#x23FB;
+                  </button>
+                </>
               )}
             </div>
           </header>
@@ -180,6 +218,7 @@ export default function App() {
             {activeView === "dashboard" && <DashboardView />}
             {activeView === "chat" && <ChatView />}
             {activeView === "audit" && <AuditView />}
+            {activeView === "hub" && <AIHubView />}
             {activeView === "intelligence" && <IntelligenceView />}
           </main>
 
