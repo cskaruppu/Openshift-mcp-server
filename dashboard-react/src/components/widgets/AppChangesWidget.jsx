@@ -20,12 +20,12 @@ export function AppChangesWidget() {
       {!isLoading && !isError && (
         unavailable ? (
           <>
-            <div className="metric" style={{ color: "#888" }}>N/A</div>
+            <div className="metric muted">N/A</div>
             <div className="metric-label">{data.message || "Not available for remote clusters"}</div>
           </>
         ) : (
           <>
-            <div className="metric" style={{ color: critical ? "#ef4444" : warning ? "#f59e0b" : "#22c55e" }}>{total}</div>
+            <div className={`metric ${critical ? "crit" : warning ? "warn" : "ok"}`}>{total}</div>
             <div className="metric-label">{critical} critical · {warning} warning · {data?.baselines ?? 0} baselines</div>
           </>
         )

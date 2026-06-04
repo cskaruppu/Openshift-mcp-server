@@ -24,7 +24,7 @@ export function AnsibleWidget() {
       {isError && <div className="metric err">{String(error.message)}</div>}
       {!isLoading && !isError && (
         <>
-          <div className="metric" style={{ color: configured ? "#22c55e" : "#888" }}>
+          <div className={`metric ${configured ? "ok" : "muted"}`}>
             {configured ? "Connected" : "Not configured"}
           </div>
           <div className="metric-label">

@@ -18,7 +18,7 @@ export function NodesWidget() {
       {isError && <div className="metric err">{String(error.message)}</div>}
       {!isLoading && !isError && (
         <>
-          <div className="metric" style={{ color: allReady ? "#22c55e" : "#f59e0b" }}>
+          <div className={`metric ${allReady ? "ok" : "warn"}`}>
             {total ? `${ready} / ${total}` : "--"}
           </div>
           <div className="metric-label">

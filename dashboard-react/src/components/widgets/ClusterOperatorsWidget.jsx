@@ -16,7 +16,7 @@ export function ClusterOperatorsWidget() {
       {isError && <div className="metric err">{String(error.message)}</div>}
       {!isLoading && !isError && (
         <>
-          <div className="metric" style={{ color: degraded.length ? "#f59e0b" : "#22c55e" }}>
+          <div className={`metric ${degraded.length ? "warn" : "ok"}`}>
             {total ? `${available} / ${total}` : "--"}
           </div>
           <div className="metric-label">
