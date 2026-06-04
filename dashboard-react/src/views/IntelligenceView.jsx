@@ -9,17 +9,13 @@ const SEV = { critical: "#ef4444", warning: "#f59e0b", info: "#3b82f6" };
 function sevBucket(s) {
   if (!s) return "info";
   const l = typeof s === "string" ? s.toLowerCase() : "";
-  if (/crit/.test(l) || (typeof s === "number" && s >= 80)) return "critical";
-  if (/warn|high/.test(l) || (typeof s === "number" && s >= 50)) return "warning";
+  if (/crit|sev1/.test(l) || (typeof s === "number" && s >= 80)) return "critical";
+  if (/warn|high|sev2/.test(l) || (typeof s === "number" && s >= 50)) return "warning";
   return "info";
 }
 
 function sevLabel(s) {
-  if (typeof s === "number") {
-    if (s >= 80) return "CRITICAL";
-    if (s >= 50) return "WARNING";
-    return "INFO";
-  }
+  if (typeof s === "number") return s >= 80 ? "CRITICAL" : s >= 50 ? "WARNING" : "INFO";
   return (s || "info").toUpperCase();
 }
 
@@ -35,90 +31,90 @@ function timeAgo(ts) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+function fmt(ts) {
+  if (!ts) return "—";
+  try { return new Date(ts).toLocaleString(); } catch { return String(ts); }
+}
+
 export function IntelligenceView() {
   const cluster = useActiveCluster();
 
   const { data: intelData, isLoading: intelLoading, isError: intelError, error: intelErr, refetch: refetchIntel } =
     useClusterQuery("/api/intelligence/dashboard", { refetchInterval: 30_000 });
-
   const { data: alertsData, refetch: refetchAlerts } =
     useClusterQuery("/api/alerts", { refetchInterval: 20_000 });
+  const { data: incData, refetch: refetchInc } =
+    useClusterQuery("/api/incidents?limit=50", { refetchInterval: 30_000 });
+  const { data: incStats } =
+    useClusterQuery("/api/incidents/stats?days=30", { refetchInterval: 60_000 });
+  const { data: rulesData, refetch: refetchRules } =
+    useClusterQuery("/api/intelligence/rules", { refetchInterval: 60_000 });
+  const { data: kbData, refetch: refetchKB } =
+    useClusterQuery("/api/intelligence/kb", { refetchInterval: 60_000 });
+  const { data: playbookData } =
+    useClusterQuery("/api/intelligence/playbook?limit=10&sinceDays=90", { refetchInterval: 120_000 });
+  const { data: silencesData, refetch: refetchSilences } =
+    useClusterQuery("/api/alerts/silences", { refetchInterval: 30_000 });
+  const { data: clusterSummary } =
+    useClusterQuery("/api/cluster/summary", { refetchInterval: 30_000 });
+  const { data: timelineData, refetch: refetchTimeline } =
+    useClusterQuery("/api/change-timeline?window=24h&limit=50", { refetchInterval: 60_000 });
 
+  const [activeTab, setActiveTab] = useState("insights");
   const [sevFilter, setSevFilter] = useState("all");
   const [search, setSearch] = useState("");
-  const [clusterFilter, setClusterFilter] = useState("all");
+  const [clusterFilterVal, setClusterFilterVal] = useState("all");
   const [nsFilter, setNsFilter] = useState("all");
-  const [tab, setTab] = useState("insights");
+  const [insightTab, setInsightTab] = useState("all");
   const [expandedCards, setExpandedCards] = useState({});
   const [analyzing, setAnalyzing] = useState({});
   const [analyses, setAnalyses] = useState({});
   const [dismissing, setDismissing] = useState({});
 
+  const [incStatusFilter, setIncStatusFilter] = useState("all");
+  const [showDeclare, setShowDeclare] = useState(false);
+  const [declareForm, setDeclareForm] = useState({ title: "", severity: "sev2", description: "", namespaces: "", services: "" });
+  const [declaring, setDeclaring] = useState(false);
+
+  const [ruleDesc, setRuleDesc] = useState("");
+  const [ruleName, setRuleName] = useState("");
+  const [creatingRule, setCreatingRule] = useState(false);
+
+  const [silenceAlert, setSilenceAlert] = useState(null);
+  const [silenceHours, setSilenceHours] = useState(4);
+
   const insights = intelData?.insights || [];
   const predictions = intelData?.predictions || [];
-  const kb = intelData?.knowledgeBase || {};
-  const rulesCount = intelData?.automationRules ?? 0;
   const monitoring = intelData?.monitoring ?? false;
   const proactive = intelData?.proactive || {};
-
-  const alerts = useMemo(() => {
-    if (!alertsData?.alerts) return [];
-    return alertsData.alerts.filter((a) => !a.silenced);
-  }, [alertsData]);
-
-  const alertSummary = alertsData?.summary || { critical: 0, warning: 0, info: 0 };
+  const alerts = useMemo(() => (alertsData?.alerts || []).filter((a) => !a.silenced), [alertsData]);
+  const alertSummary = alertsData?.summary || {};
 
   const allItems = useMemo(() => {
     const items = [];
     for (const ins of insights) {
       items.push({
-        id: ins.id || `ins-${items.length}`,
-        kind: "insight",
-        title: ins.title || ins.type || "Insight",
-        severity: ins.severity,
-        sevBucket: sevBucket(ins.severity),
-        message: ins.message || ins.description || ins.detail || "",
-        namespace: ins.namespace,
-        resource: ins.resource,
-        source: ins.source || "proactive",
-        cluster: ins.cluster,
-        timestamp: ins.timestamp,
-        recommendation: ins.recommendation,
-        count: ins.count,
-        rootCause: ins.rootCause,
-        impact: ins.impact,
-        fixCommand: ins.fixCommand,
-        fixAvailable: ins.fixAvailable,
-        raw: ins,
+        id: ins.id || `ins-${items.length}`, kind: "insight",
+        title: ins.title || ins.type || "Insight", severity: ins.severity,
+        sevBucket: sevBucket(ins.severity), message: ins.message || ins.description || ins.detail || "",
+        namespace: ins.namespace, resource: ins.resource, source: ins.source || "proactive",
+        cluster: ins.cluster, timestamp: ins.timestamp, recommendation: ins.recommendation,
+        count: ins.count, rootCause: ins.rootCause, impact: ins.impact,
+        fixCommand: ins.fixCommand, fixAvailable: ins.fixAvailable, raw: ins,
       });
     }
     for (const a of alerts) {
-      const dup = items.find(
-        (i) => i.resource === a.resource && i.namespace === a.namespace && i.title === a.name
-      );
-      if (dup) continue;
+      if (items.find((i) => i.resource === a.resource && i.namespace === a.namespace && i.title === a.name)) continue;
       items.push({
-        id: `alert-${items.length}`,
-        kind: "alert",
-        title: a.name,
-        severity: a.severity,
-        sevBucket: sevBucket(a.severity),
-        message: a.summary || "",
-        namespace: a.namespace,
-        resource: a.resource,
-        source: a.source || "alertmanager",
-        cluster: null,
-        timestamp: a.since,
-        count: a.count,
-        raw: a,
+        id: `alert-${items.length}`, kind: "alert", title: a.name,
+        severity: a.severity, sevBucket: sevBucket(a.severity),
+        message: a.summary || "", namespace: a.namespace, resource: a.resource,
+        source: a.source || "alertmanager", cluster: null, timestamp: a.since, count: a.count, raw: a,
       });
     }
     items.sort((a, b) => {
       const order = { critical: 0, warning: 1, info: 2 };
-      const sa = order[a.sevBucket] ?? 2;
-      const sb = order[b.sevBucket] ?? 2;
-      if (sa !== sb) return sa - sb;
-      return new Date(b.timestamp || 0) - new Date(a.timestamp || 0);
+      return (order[a.sevBucket] ?? 2) - (order[b.sevBucket] ?? 2) || new Date(b.timestamp || 0) - new Date(a.timestamp || 0);
     });
     return items;
   }, [insights, alerts]);
@@ -134,46 +130,39 @@ export function IntelligenceView() {
 
   const filtered = useMemo(() => {
     let list = allItems;
-    if (tab === "insights") list = list.filter((i) => i.kind === "insight");
-    if (tab === "alerts") list = list.filter((i) => i.kind === "alert");
+    if (insightTab === "insights") list = list.filter((i) => i.kind === "insight");
+    if (insightTab === "alerts") list = list.filter((i) => i.kind === "alert");
     if (sevFilter !== "all") list = list.filter((i) => i.sevBucket === sevFilter);
-    if (clusterFilter !== "all") list = list.filter((i) => i.cluster === clusterFilter);
+    if (clusterFilterVal !== "all") list = list.filter((i) => i.cluster === clusterFilterVal);
     if (nsFilter !== "all") list = list.filter((i) => i.namespace === nsFilter);
     if (search.trim()) {
       const q = search.toLowerCase();
-      list = list.filter((i) =>
-        [i.title, i.message, i.namespace, i.resource, i.source, i.cluster].filter(Boolean).join(" ").toLowerCase().includes(q)
-      );
+      list = list.filter((i) => [i.title, i.message, i.namespace, i.resource, i.source, i.cluster].filter(Boolean).join(" ").toLowerCase().includes(q));
     }
     return list;
-  }, [allItems, tab, sevFilter, clusterFilter, nsFilter, search]);
+  }, [allItems, insightTab, sevFilter, clusterFilterVal, nsFilter, search]);
 
   const toggleCard = useCallback((id) => setExpandedCards((p) => ({ ...p, [id]: !p[id] })), []);
 
   const handleRefresh = useCallback(() => {
-    refetchIntel();
-    refetchAlerts();
-    showToast("Refreshing intelligence data…", "ok");
-  }, [refetchIntel, refetchAlerts]);
+    refetchIntel(); refetchAlerts(); refetchInc(); refetchRules(); refetchKB(); refetchTimeline();
+    showToast("Refreshing…", "ok");
+  }, [refetchIntel, refetchAlerts, refetchInc, refetchRules, refetchKB, refetchTimeline]);
 
   const handleAnalyze = useCallback(async (item) => {
     if (item.kind !== "insight") return;
     setAnalyzing((p) => ({ ...p, [item.id]: true }));
     try {
       const res = await fetch(clusterUrl("/api/intelligence/insights/analyze", cluster), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: item.raw.id }),
       });
       const json = await res.json();
       if (json.error) throw new Error(json.error);
       setAnalyses((p) => ({ ...p, [item.id]: json.analysis }));
       showToast("AI analysis complete", "ok");
-    } catch (err) {
-      showToast("Analysis failed: " + err.message, "err");
-    } finally {
-      setAnalyzing((p) => ({ ...p, [item.id]: false }));
-    }
+    } catch (err) { showToast("Analysis failed: " + err.message, "err"); }
+    finally { setAnalyzing((p) => ({ ...p, [item.id]: false })); }
   }, [cluster]);
 
   const handleDismiss = useCallback(async (item) => {
@@ -181,29 +170,155 @@ export function IntelligenceView() {
     setDismissing((p) => ({ ...p, [item.id]: true }));
     try {
       await fetch(clusterUrl("/api/intelligence/insights/dismiss", cluster), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: item.raw.id }),
       });
-      refetchIntel();
-      showToast("Insight dismissed", "ok");
-    } catch (err) {
-      showToast("Dismiss failed: " + err.message, "err");
-    } finally {
-      setDismissing((p) => ({ ...p, [item.id]: false }));
-    }
+      refetchIntel(); showToast("Insight dismissed", "ok");
+    } catch (err) { showToast("Dismiss failed: " + err.message, "err"); }
+    finally { setDismissing((p) => ({ ...p, [item.id]: false })); }
   }, [cluster, refetchIntel]);
 
   const handleRunPredictions = useCallback(async () => {
+    showToast("Running predictive analysis…", "ok");
     try {
-      showToast("Running predictive analysis…", "ok");
       await fetch(clusterUrl("/api/intelligence/predictions/run", cluster), { method: "POST" });
-      refetchIntel();
-      showToast("Predictions updated", "ok");
-    } catch (err) {
-      showToast("Prediction run failed: " + err.message, "err");
-    }
+      refetchIntel(); showToast("Predictions updated", "ok");
+    } catch (err) { showToast("Failed: " + err.message, "err"); }
   }, [cluster, refetchIntel]);
+
+  const handleSilence = useCallback(async (alertName, ns) => {
+    try {
+      await fetch(clusterUrl("/api/alerts/silence", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: alertName, namespace: ns || "", duration: silenceHours }),
+      });
+      refetchAlerts(); refetchSilences(); setSilenceAlert(null);
+      showToast(`Alert silenced for ${silenceHours}h`, "ok");
+    } catch (err) { showToast("Silence failed: " + err.message, "err"); }
+  }, [cluster, silenceHours, refetchAlerts, refetchSilences]);
+
+  const handleUnsilence = useCallback(async (name, ns) => {
+    try {
+      await fetch(clusterUrl("/api/alerts/silence", cluster), {
+        method: "DELETE", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, namespace: ns || "" }),
+      });
+      refetchAlerts(); refetchSilences(); showToast("Alert unsilenced", "ok");
+    } catch (err) { showToast("Unsilence failed: " + err.message, "err"); }
+  }, [cluster, refetchAlerts, refetchSilences]);
+
+  const handleDeclareIncident = useCallback(async () => {
+    if (!declareForm.title.trim()) { showToast("Title required", "err"); return; }
+    setDeclaring(true);
+    try {
+      await fetch(clusterUrl("/api/incidents", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: declareForm.title, severity: declareForm.severity,
+          description: declareForm.description,
+          affectedNamespaces: declareForm.namespaces.split(",").map((s) => s.trim()).filter(Boolean),
+          affectedServices: declareForm.services.split(",").map((s) => s.trim()).filter(Boolean),
+        }),
+      });
+      refetchInc(); setShowDeclare(false);
+      setDeclareForm({ title: "", severity: "sev2", description: "", namespaces: "", services: "" });
+      showToast("Incident declared", "ok");
+    } catch (err) { showToast("Failed: " + err.message, "err"); }
+    finally { setDeclaring(false); }
+  }, [cluster, declareForm, refetchInc]);
+
+  const handleAdvanceIncident = useCallback(async (incId, newStatus) => {
+    try {
+      await fetch(clusterUrl(`/api/incidents/${encodeURIComponent(incId)}`, cluster), {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      refetchInc(); showToast(`Incident ${newStatus}`, "ok");
+    } catch (err) { showToast("Failed: " + err.message, "err"); }
+  }, [cluster, refetchInc]);
+
+  const handleResolveIncident = useCallback(async (incId) => {
+    try {
+      await fetch(clusterUrl(`/api/incidents/${encodeURIComponent(incId)}/resolve`, cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actor: "dashboard" }),
+      });
+      refetchInc(); showToast("Incident resolved", "ok");
+    } catch (err) { showToast("Failed: " + err.message, "err"); }
+  }, [cluster, refetchInc]);
+
+  const handleCloseIncident = useCallback(async (incId) => {
+    try {
+      await fetch(clusterUrl(`/api/incidents/${encodeURIComponent(incId)}/close`, cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actor: "dashboard" }),
+      });
+      refetchInc(); showToast("Incident closed", "ok");
+    } catch (err) { showToast("Failed: " + err.message, "err"); }
+  }, [cluster, refetchInc]);
+
+  const handleCreateRule = useCallback(async () => {
+    if (!ruleDesc.trim()) return;
+    setCreatingRule(true);
+    try {
+      const res = await fetch(clusterUrl("/api/intelligence/rules", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: ruleDesc, name: ruleName || undefined }),
+      });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      refetchRules(); setRuleDesc(""); setRuleName("");
+      showToast("Rule created", "ok");
+    } catch (err) { showToast("Failed: " + err.message, "err"); }
+    finally { setCreatingRule(false); }
+  }, [cluster, ruleDesc, ruleName, refetchRules]);
+
+  const handleToggleRule = useCallback(async (id, enabled) => {
+    try {
+      await fetch(clusterUrl(`/api/intelligence/rules/${id}`, cluster), {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !enabled }),
+      });
+      refetchRules();
+    } catch (err) { showToast("Toggle failed: " + err.message, "err"); }
+  }, [cluster, refetchRules]);
+
+  const handleDeleteRule = useCallback(async (id) => {
+    try {
+      await fetch(clusterUrl(`/api/intelligence/rules/${id}`, cluster), { method: "DELETE" });
+      refetchRules(); showToast("Rule deleted", "ok");
+    } catch (err) { showToast("Delete failed: " + err.message, "err"); }
+  }, [cluster, refetchRules]);
+
+  const handleRateKB = useCallback(async (id, delta) => {
+    try {
+      await fetch(clusterUrl("/api/intelligence/kb/rate", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, delta }),
+      });
+      refetchKB();
+    } catch {}
+  }, [cluster, refetchKB]);
+
+  const incidents = incData?.incidents || [];
+  const filteredInc = useMemo(() => {
+    if (incStatusFilter === "all") return incidents;
+    if (incStatusFilter === "open") return incidents.filter((i) => !["resolved", "closed"].includes(i.status));
+    return incidents.filter((i) => i.status === incStatusFilter || i.severity === incStatusFilter);
+  }, [incidents, incStatusFilter]);
+
+  const rules = rulesData?.rules || [];
+  const kbEntries = kbData?.entries || [];
+  const kbStats = kbData?.stats || {};
+  const playbook = playbookData?.playbook || {};
+  const playbookStats = playbookData?.stats || {};
+  const silences = silencesData?.silences || [];
+  const cs = clusterSummary || {};
+  const tlEvents = timelineData?.events || [];
+  const tlStats = timelineData?.stats || {};
+  const iStats = incStats || {};
+
+  const totalActive = allItems.length;
 
   if (intelLoading) {
     return (
@@ -228,10 +343,6 @@ export function IntelligenceView() {
     );
   }
 
-  const totalActive = allItems.length;
-  const predCount = predictions.length;
-  const kbTotal = kb.totalEntries ?? kb.total ?? kb.count ?? 0;
-
   return (
     <div className="intel">
 
@@ -244,8 +355,7 @@ export function IntelligenceView() {
               <div className="intel-pulse"><span className="intel-pulse-dot" /></div>
               <div>
                 <h2>AI Intelligence Command Center</h2>
-                <p>
-                  Real-time alerts, proactive monitoring, predictions &amp; automation
+                <p>Real-time alerts, proactive monitoring, incident management &amp; automation
                   {cluster !== "local" && <span className="intel-cluster-badge">{cluster}</span>}
                 </p>
               </div>
@@ -256,36 +366,48 @@ export function IntelligenceView() {
           </div>
 
           <div className="intel-hero-stats">
-            <div className="intel-stat-box" style={{ "--stat-color": "#8b5cf6" }}>
-              <div className="intel-stat-val">{totalActive}</div>
-              <div className="intel-stat-label">Active Alerts</div>
-            </div>
             <div className="intel-stat-box" style={{ "--stat-color": "#ef4444" }}>
-              <div className="intel-stat-val">{alertSummary.critical + (proactive.critical || 0)}</div>
+              <div className="intel-stat-val">{sevCounts.critical}</div>
               <div className="intel-stat-label">Critical</div>
             </div>
             <div className="intel-stat-box" style={{ "--stat-color": "#f59e0b" }}>
-              <div className="intel-stat-val">{alertSummary.warning + (proactive.warning || 0)}</div>
+              <div className="intel-stat-val">{sevCounts.warning}</div>
               <div className="intel-stat-label">Warning</div>
             </div>
-            <div className="intel-stat-box" style={{ "--stat-color": "#06b6d4" }}>
-              <div className="intel-stat-val">{predCount}</div>
-              <div className="intel-stat-label">Predictions</div>
+            <div className="intel-stat-box" style={{ "--stat-color": "#8b5cf6" }}>
+              <div className="intel-stat-val">{predictions.length}</div>
+              <div className="intel-stat-label">Predicted</div>
             </div>
             <div className="intel-stat-box" style={{ "--stat-color": "#22c55e" }}>
-              <div className="intel-stat-val">{kbTotal}</div>
-              <div className="intel-stat-label">KB Entries</div>
+              <div className="intel-stat-val">{iStats.open || 0}</div>
+              <div className="intel-stat-label">Open Incidents</div>
+            </div>
+            <div className="intel-stat-box" style={{ "--stat-color": "#06b6d4" }}>
+              <div className="intel-stat-val">{rules.length}</div>
+              <div className="intel-stat-label">Auto Rules</div>
+            </div>
+            <div className="intel-stat-box" style={{ "--stat-color": monitoring ? "#22c55e" : "#64748b" }}>
+              <div className="intel-stat-val">{monitoring ? "ON" : "OFF"}</div>
+              <div className="intel-stat-label">Monitoring</div>
             </div>
           </div>
 
-          <div className="intel-hero-status">
-            <span className={"intel-status-dot " + (monitoring ? "on" : "off")} />
-            <span>Proactive monitoring: <strong>{monitoring ? "Active" : "Paused"}</strong></span>
-            <span className="intel-hero-sep">&bull;</span>
-            <span>{rulesCount} automation rule{rulesCount !== 1 ? "s" : ""}</span>
-            <span className="intel-hero-sep">&bull;</span>
-            <span>Auto-refresh 30s</span>
-          </div>
+          {/* Live cluster status bar */}
+          {cs.pods && (
+            <div className="intel-live-bar">
+              <span className="intel-live-dot" />
+              <span>{cs.pods?.total || 0} pods</span>
+              <span className="intel-live-sep">&bull;</span>
+              <span style={{ color: (cs.pods?.failed || 0) > 0 ? "#ef4444" : "#22c55e" }}>{cs.pods?.failed || 0} problem</span>
+              <span className="intel-live-sep">&bull;</span>
+              <span>{cs.nodes?.total || 0} nodes ({cs.nodes?.ready || 0} ready)</span>
+              <span className="intel-live-sep">&bull;</span>
+              <span>{cs.operators?.total || 0} operators</span>
+              {(cs.operators?.degraded || 0) > 0 && (
+                <span style={{ color: "#ef4444" }}> ({cs.operators.degraded} degraded)</span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -297,324 +419,492 @@ export function IntelligenceView() {
             <div className="intel-monitor-title">Proactive Monitoring: {monitoring ? "ON" : "OFF"}</div>
             <div className="intel-monitor-sub">
               {proactive.status || (monitoring ? "Background scanning every 60s" : "Enable monitoring for proactive alerts")}
-              {proactive.countdown && <> &middot; {proactive.countdown}</>}
             </div>
           </div>
         </div>
+        {silences.length > 0 && (
+          <span className="intel-silence-count">{silences.length} silenced alert{silences.length > 1 ? "s" : ""}</span>
+        )}
       </div>
 
-      {/* ═══ TABS + FILTERS ═══ */}
-      <div className="intel-section">
-        <div className="intel-section-head">
-          <div className="intel-section-title">
-            <div className="intel-section-icon sev-icon">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-            </div>
-            <div>
-              <h3>Real-Time Intelligence</h3>
-              <p>Live alerts &amp; AI-investigated findings across your cluster</p>
-            </div>
-          </div>
-        </div>
+      {/* ═══ TABS ═══ */}
+      <div className="intel-tabs">
+        {[
+          { key: "insights", label: "Insights & Alerts", count: totalActive },
+          { key: "incidents", label: "Incidents", count: incidents.length },
+          { key: "timeline", label: "Change Timeline", count: tlEvents.length },
+          { key: "predictions", label: "Predictions", count: predictions.length },
+          { key: "rules", label: "Automation Rules", count: rules.length },
+          { key: "kb", label: "Knowledge Base", count: kbEntries.length },
+          { key: "playbook", label: "Team Playbook" },
+        ].map((t) => (
+          <button key={t.key} className={"intel-tab" + (activeTab === t.key ? " active" : "")} onClick={() => setActiveTab(t.key)}>
+            {t.label}
+            {t.count != null && <span className="intel-tab-count">{t.count}</span>}
+          </button>
+        ))}
+      </div>
 
-        {/* Tab bar */}
-        <div className="intel-tabs">
-          {[
-            { key: "all", label: "All", count: allItems.length },
-            { key: "insights", label: "AI Insights", count: insights.length },
-            { key: "alerts", label: "Cluster Alerts", count: alerts.length },
-          ].map((t) => (
-            <button key={t.key} className={"intel-tab" + (tab === t.key ? " active" : "")} onClick={() => setTab(t.key)}>
-              {t.label}
-              <span className="intel-tab-count">{t.count}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* Severity pills */}
-        <div className="intel-filter-row">
-          <div className="intel-sev-pills">
-            {[
-              { key: "all", label: "All", color: null },
-              { key: "critical", label: "Critical", color: SEV.critical },
-              { key: "warning", label: "Warning", color: SEV.warning },
-              { key: "info", label: "Info", color: SEV.info },
-            ].map((p) => (
-              <button
-                key={p.key}
-                className={"intel-sev-pill" + (sevFilter === p.key ? " active" : "")}
-                style={sevFilter === p.key && p.color ? { background: p.color, borderColor: p.color, color: "#fff" } : {}}
-                onClick={() => setSevFilter(p.key)}
-              >
-                {p.label}
-                <span className="intel-sev-count">{sevCounts[p.key] ?? 0}</span>
+      {/* ═══ 1. INSIGHTS & ALERTS ═══ */}
+      {activeTab === "insights" && (
+        <div className="intel-section">
+          <div className="intel-tabs" style={{ marginBottom: 12 }}>
+            {[{ key: "all", label: "All", count: allItems.length }, { key: "insights", label: "AI Insights", count: insights.length }, { key: "alerts", label: "Cluster Alerts", count: alerts.length }].map((t) => (
+              <button key={t.key} className={"intel-tab" + (insightTab === t.key ? " active" : "")} onClick={() => setInsightTab(t.key)}>
+                {t.label}<span className="intel-tab-count">{t.count}</span>
               </button>
             ))}
           </div>
-          <div className="intel-search-row">
-            <input
-              className="intel-search"
-              type="text"
-              placeholder="Search alerts, namespaces, resources…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            {uniqueClusters.length > 0 && (
-              <select className="intel-filter-select" value={clusterFilter} onChange={(e) => setClusterFilter(e.target.value)}>
-                <option value="all">All Clusters</option>
-                {uniqueClusters.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            )}
-            {uniqueNs.length > 0 && (
-              <select className="intel-filter-select" value={nsFilter} onChange={(e) => setNsFilter(e.target.value)}>
-                <option value="all">All Namespaces</option>
-                {uniqueNs.map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
-            )}
-          </div>
-        </div>
-
-        {/* Cards */}
-        <div className="intel-card-list">
-          {filtered.length === 0 && (
-            <div className="intel-empty">
-              {allItems.length === 0
-                ? "No active alerts or insights — your cluster is healthy"
-                : "No items match the current filters"}
+          <div className="intel-filter-row">
+            <div className="intel-sev-pills">
+              {[{ key: "all", label: "All" }, { key: "critical", label: "Critical", color: SEV.critical }, { key: "warning", label: "Warning", color: SEV.warning }, { key: "info", label: "Info", color: SEV.info }].map((p) => (
+                <button key={p.key} className={"intel-sev-pill" + (sevFilter === p.key ? " active" : "")}
+                  style={sevFilter === p.key && p.color ? { background: p.color, borderColor: p.color, color: "#fff" } : {}}
+                  onClick={() => setSevFilter(p.key)}>
+                  {p.label}<span className="intel-sev-count">{sevCounts[p.key] ?? 0}</span>
+                </button>
+              ))}
             </div>
-          )}
-          {filtered.map((item) => {
-            const sc = SEV[item.sevBucket] || SEV.info;
-            const isExpanded = !!expandedCards[item.id];
-            const aiResult = analyses[item.id];
-            const isAnalyzing = analyzing[item.id];
-            const isDismissing = dismissing[item.id];
+            <div className="intel-search-row">
+              <input className="intel-search" type="text" placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} />
+              {uniqueNs.length > 0 && (
+                <select className="intel-filter-select" value={nsFilter} onChange={(e) => setNsFilter(e.target.value)}>
+                  <option value="all">All Namespaces</option>
+                  {uniqueNs.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              )}
+            </div>
+          </div>
 
-            return (
-              <div key={item.id} className={"intel-card" + (isExpanded ? " expanded" : "")} style={{ "--card-sev": sc }}>
-                <div className="intel-card-head" onClick={() => toggleCard(item.id)}>
-                  <span className="intel-card-sev-bar" />
-                  <div className="intel-card-body">
-                    <div className="intel-card-row1">
-                      <span className="intel-card-title">{item.title}</span>
-                      <span className={"intel-card-sev-badge " + item.sevBucket}>{sevLabel(item.severity)}</span>
-                      <span className={"intel-card-kind-badge " + item.kind}>{item.kind === "insight" ? "AI Insight" : "Alert"}</span>
-                      {item.source && <span className="intel-card-source">{item.source}</span>}
-                      {item.cluster && <span className="intel-card-cluster">{item.cluster}</span>}
+          <div className="intel-card-list">
+            {filtered.length === 0 && <div className="intel-empty">{allItems.length === 0 ? "No active alerts — cluster healthy" : "No items match filters"}</div>}
+            {filtered.map((item) => {
+              const sc = SEV[item.sevBucket] || SEV.info;
+              const isExp = !!expandedCards[item.id];
+              return (
+                <div key={item.id} className={"intel-card" + (isExp ? " expanded" : "")} style={{ "--card-sev": sc }}>
+                  <div className="intel-card-head" onClick={() => toggleCard(item.id)}>
+                    <div className="intel-card-body">
+                      <div className="intel-card-row1">
+                        <span className="intel-card-title">{item.title}</span>
+                        <span className={"intel-card-sev-badge " + item.sevBucket}>{sevLabel(item.severity)}</span>
+                        <span className={"intel-card-kind-badge " + item.kind}>{item.kind === "insight" ? "AI Insight" : "Alert"}</span>
+                        {item.source && <span className="intel-card-source">{item.source}</span>}
+                      </div>
+                      {item.message && <div className="intel-card-msg">{item.message}</div>}
+                      <div className="intel-card-meta">
+                        {item.namespace && <span>NS: {item.namespace}</span>}
+                        {item.resource && <span>Res: {item.resource}</span>}
+                        {item.count > 1 && <span>{item.count}x</span>}
+                        {item.timestamp && <span>{timeAgo(item.timestamp)}</span>}
+                      </div>
                     </div>
-                    {item.message && <div className="intel-card-msg">{item.message}</div>}
-                    <div className="intel-card-meta">
-                      {item.namespace && <span>NS: {item.namespace}</span>}
-                      {item.resource && <span>Res: {item.resource}</span>}
-                      {item.count > 1 && <span>{item.count}x</span>}
-                      {item.timestamp && <span>{timeAgo(item.timestamp)}</span>}
+                    <div className="intel-card-actions">
+                      {item.kind === "insight" && (
+                        <>
+                          <button className="intel-card-btn primary" onClick={(e) => { e.stopPropagation(); handleAnalyze(item); }} disabled={analyzing[item.id]}>
+                            {analyzing[item.id] ? "…" : "Investigate"}
+                          </button>
+                          <button className="intel-card-btn" onClick={(e) => { e.stopPropagation(); handleDismiss(item); }} disabled={dismissing[item.id]}>Dismiss</button>
+                        </>
+                      )}
+                      {item.kind === "alert" && (
+                        <button className="intel-card-btn" onClick={(e) => { e.stopPropagation(); setSilenceAlert(item); }}>Silence</button>
+                      )}
+                      {item.fixCommand && <button className="intel-card-btn success">Auto-fix</button>}
+                      <span className="intel-card-chevron">{isExp ? "▲" : "▼"}</span>
                     </div>
                   </div>
-                  <div className="intel-card-actions">
-                    {item.kind === "insight" && (
-                      <>
-                        <button
-                          className="intel-card-btn primary"
-                          onClick={(e) => { e.stopPropagation(); handleAnalyze(item); }}
-                          disabled={isAnalyzing}
-                        >
-                          {isAnalyzing ? "Analyzing…" : "Investigate"}
-                        </button>
-                        <button
-                          className="intel-card-btn"
-                          onClick={(e) => { e.stopPropagation(); handleDismiss(item); }}
-                          disabled={isDismissing}
-                        >
-                          {isDismissing ? "…" : "Dismiss"}
-                        </button>
-                      </>
-                    )}
-                    {(item.fixAvailable || item.fixCommand) && (
-                      <button className="intel-card-btn success">Auto-fix</button>
-                    )}
-                    <span className="intel-card-chevron">{isExpanded ? "▲" : "▼"}</span>
-                  </div>
-                </div>
-
-                {/* Expanded detail */}
-                {isExpanded && (
-                  <div className="intel-card-detail">
-                    {item.recommendation && (
-                      <div className="intel-detail-block recommendation">
-                        <span className="intel-detail-lbl">Recommendation</span>
-                        <p>{item.recommendation}</p>
-                      </div>
-                    )}
-                    {item.rootCause && (
-                      <div className="intel-detail-block">
-                        <span className="intel-detail-lbl">Root Cause</span>
-                        <p>{item.rootCause}</p>
-                      </div>
-                    )}
-                    {item.impact && (
-                      <div className="intel-detail-block">
-                        <span className="intel-detail-lbl">Impact</span>
-                        <p>{item.impact}</p>
-                      </div>
-                    )}
-                    {item.fixCommand && (
-                      <div className="intel-fix-cmd">
-                        <code>{item.fixCommand}</code>
-                        <button onClick={() => { navigator.clipboard.writeText(item.fixCommand); showToast("Copied", "ok"); }}>Copy</button>
-                      </div>
-                    )}
-                    {/* AI Analysis result */}
-                    {aiResult && (
-                      <div className="intel-ai-panel">
-                        <div className="intel-ai-header">
-                          <span className="intel-ai-spark">AI</span>
-                          AI Deep Analysis
+                  {isExp && (
+                    <div className="intel-card-detail">
+                      {item.recommendation && <div className="intel-detail-block recommendation"><span className="intel-detail-lbl">Recommendation</span><p>{item.recommendation}</p></div>}
+                      {item.rootCause && <div className="intel-detail-block"><span className="intel-detail-lbl">Root Cause</span><p>{item.rootCause}</p></div>}
+                      {item.impact && <div className="intel-detail-block"><span className="intel-detail-lbl">Impact</span><p>{item.impact}</p></div>}
+                      {item.fixCommand && (
+                        <div className="intel-fix-cmd"><code>{item.fixCommand}</code>
+                          <button onClick={() => { navigator.clipboard.writeText(item.fixCommand); showToast("Copied", "ok"); }}>Copy</button>
                         </div>
-                        <div className="intel-ai-text">{aiResult}</div>
-                      </div>
-                    )}
-                    {!aiResult && item.kind === "insight" && (
-                      <button
-                        className="intel-card-btn primary"
-                        onClick={() => handleAnalyze(item)}
-                        disabled={isAnalyzing}
-                        style={{ marginTop: 8 }}
-                      >
-                        {isAnalyzing ? "Running AI analysis…" : "Run AI Deep Analysis"}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ═══ PREDICTIVE INTELLIGENCE ═══ */}
-      <div className="intel-section">
-        <div className="intel-section-head">
-          <div className="intel-section-title">
-            <div className="intel-section-icon pred-icon">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-            </div>
-            <div>
-              <h3>Predictive Intelligence</h3>
-              <p>Forecasted issues based on trend analysis &amp; historical data</p>
-            </div>
-          </div>
-          <button className="intel-hero-btn" onClick={handleRunPredictions}>Run Predictions</button>
-        </div>
-
-        <div className="intel-pred-list">
-          {predictions.length === 0 && (
-            <div className="intel-empty">No predictions — trends are stable</div>
-          )}
-          {predictions.map((p, i) => {
-            const score = p.score ?? p.riskScore ?? null;
-            const confidence = p.confidence ?? null;
-            const sc = SEV[sevBucket(p.severity || p.risk)] || "#8b5cf6";
-            return (
-              <div key={p.id || `pred-${i}`} className="intel-pred-card" style={{ "--pred-color": sc }}>
-                <div className="intel-pred-score-ring">
-                  {score != null ? (
-                    <span className="intel-pred-score" style={{ background: sc + "22", color: sc }}>{score}</span>
-                  ) : (
-                    <span className="intel-pred-score" style={{ background: "rgba(139,92,246,0.12)", color: "#8b5cf6" }}>?</span>
+                      )}
+                      {analyses[item.id] && (
+                        <div className="intel-ai-panel"><div className="intel-ai-header"><span className="intel-ai-spark">AI</span>AI Deep Analysis</div><div className="intel-ai-text">{analyses[item.id]}</div></div>
+                      )}
+                      {!analyses[item.id] && item.kind === "insight" && (
+                        <button className="intel-card-btn primary" onClick={() => handleAnalyze(item)} disabled={analyzing[item.id]} style={{ marginTop: 8 }}>
+                          {analyzing[item.id] ? "Analyzing…" : "Run AI Deep Analysis"}
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
-                <div className="intel-pred-body">
-                  <div className="intel-pred-title">{p.target || p.resource || p.title || "Prediction"}</div>
-                  <div className="intel-pred-detail">{p.reason || p.message || p.prediction || ""}</div>
-                  <div className="intel-pred-tags">
-                    {score != null && <span className="intel-pred-tag" style={{ color: sc }}>Risk: {score}</span>}
-                    {confidence != null && (
-                      <span className="intel-pred-tag conf">
-                        Confidence: {typeof confidence === "number" ? `${Math.round(confidence * 100)}%` : confidence}
-                      </span>
-                    )}
-                    {p.hoursRemaining != null && (
-                      <span className="intel-pred-tag eta">ETA: {p.hoursRemaining}h</span>
-                    )}
-                    {p.severity && (
-                      <span className={"intel-card-sev-badge " + sevBucket(p.severity)}>{(p.severity || "").toUpperCase()}</span>
-                    )}
-                  </div>
+              );
+            })}
+          </div>
+
+          {/* Silence dialog */}
+          {silenceAlert && (
+            <div className="intel-modal-overlay" onClick={() => setSilenceAlert(null)}>
+              <div className="intel-modal" onClick={(e) => e.stopPropagation()}>
+                <h4>Silence Alert</h4>
+                <p>Silence "{silenceAlert.title}" for:</p>
+                <select className="intel-filter-select" value={silenceHours} onChange={(e) => setSilenceHours(Number(e.target.value))}>
+                  {[1, 2, 4, 8, 12, 24, 48].map((h) => <option key={h} value={h}>{h} hours</option>)}
+                </select>
+                <div className="intel-modal-actions">
+                  <button className="intel-card-btn" onClick={() => setSilenceAlert(null)}>Cancel</button>
+                  <button className="intel-card-btn primary" onClick={() => handleSilence(silenceAlert.title, silenceAlert.namespace)}>Silence</button>
                 </div>
               </div>
-            );
-          })}
-        </div>
-      </div>
+            </div>
+          )}
 
-      {/* ═══ KNOWLEDGE BASE & AUTOMATION ═══ */}
-      <div className="intel-bottom-row">
-        <div className="intel-section intel-kb-panel">
-          <div className="intel-section-head">
-            <div className="intel-section-title">
-              <div className="intel-section-icon kb-icon">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-              </div>
-              <div>
-                <h3>Knowledge Base</h3>
-                <p>Learned resolutions from past incidents</p>
-              </div>
-            </div>
-          </div>
-          <div className="intel-kb-stats">
-            <div className="intel-kb-stat">
-              <div className="intel-kb-stat-val">{kbTotal}</div>
-              <div className="intel-kb-stat-lbl">Total Entries</div>
-            </div>
-            <div className="intel-kb-stat">
-              <div className="intel-kb-stat-val">{kb.avgEffectiveness ?? 0}</div>
-              <div className="intel-kb-stat-lbl">Avg Effectiveness</div>
-            </div>
-            <div className="intel-kb-stat">
-              <div className="intel-kb-stat-val">{Object.keys(kb.byType || {}).length}</div>
-              <div className="intel-kb-stat-lbl">Issue Types</div>
-            </div>
-          </div>
-          {kb.byType && Object.keys(kb.byType).length > 0 && (
-            <div className="intel-kb-types">
-              {Object.entries(kb.byType).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([type, count]) => (
-                <span key={type} className="intel-kb-type-pill">
-                  {type} <strong>{count}</strong>
-                </span>
+          {/* Active silences */}
+          {silences.length > 0 && (
+            <div className="intel-silences">
+              <h4 className="intel-sub-title">Active Silences ({silences.length})</h4>
+              {silences.map((s, i) => (
+                <div key={i} className="intel-silence-row">
+                  <span className="intel-silence-name">{s.name}</span>
+                  {s.namespace && <span className="intel-silence-ns">{s.namespace}</span>}
+                  <span className="intel-silence-exp">expires {timeAgo(s.expiresAt)}</span>
+                  <button className="intel-card-btn" onClick={() => handleUnsilence(s.name, s.namespace)}>Unsilence</button>
+                </div>
               ))}
             </div>
           )}
         </div>
+      )}
 
-        <div className="intel-section intel-auto-panel">
+      {/* ═══ 2. INCIDENT LIFECYCLE ═══ */}
+      {activeTab === "incidents" && (
+        <div className="intel-section">
+          <div className="intel-section-head">
+            <div className="intel-section-title">
+              <div className="intel-section-icon" style={{ background: "linear-gradient(135deg, #ef4444, #f97316)" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              </div>
+              <div><h3>Incident Lifecycle Manager</h3><p>Declared → Triaging → Investigating → Mitigating → Resolved → Closed</p></div>
+            </div>
+            <button className="intel-hero-btn" style={{ background: "rgba(239,68,68,.15)", borderColor: "rgba(239,68,68,.4)", color: "#fca5a5" }} onClick={() => setShowDeclare(true)}>Declare Incident</button>
+          </div>
+
+          {/* Incident stats */}
+          <div className="intel-inc-stats">
+            <div className="intel-inc-stat" style={{ "--is-c": "#8b5cf6" }}><span>{iStats.total || 0}</span><label>Total</label></div>
+            <div className="intel-inc-stat" style={{ "--is-c": "#ef4444" }}><span>{iStats.open || 0}</span><label>Open</label></div>
+            <div className="intel-inc-stat" style={{ "--is-c": "#f59e0b" }}><span>{iStats.incidentsThisWeek || 0}</span><label>This Week</label></div>
+            <div className="intel-inc-stat" style={{ "--is-c": "#22c55e" }}><span>{iStats.avgMTTR != null ? `${Math.round(iStats.avgMTTR)}m` : "—"}</span><label>Avg MTTR</label></div>
+          </div>
+
+          {/* Status filter */}
+          <div className="intel-sev-pills" style={{ marginBottom: 12 }}>
+            {["all", "open", "declared", "investigating", "mitigating", "resolved", "closed"].map((s) => (
+              <button key={s} className={"intel-sev-pill" + (incStatusFilter === s ? " active" : "")} onClick={() => setIncStatusFilter(s)}>
+                {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
+              </button>
+            ))}
+          </div>
+
+          {/* Incidents list */}
+          <div className="intel-card-list">
+            {filteredInc.length === 0 && <div className="intel-empty">No incidents</div>}
+            {filteredInc.map((inc) => {
+              const sc = sevBucket(inc.severity);
+              const color = SEV[sc] || SEV.info;
+              const STATUS_NEXT = { declared: "investigating", investigating: "mitigating", mitigating: null };
+              const next = STATUS_NEXT[inc.status];
+              return (
+                <div key={inc.incident_id || inc.id} className="intel-card" style={{ "--card-sev": color }}>
+                  <div className="intel-card-head">
+                    <div className="intel-card-body">
+                      <div className="intel-card-row1">
+                        <span className="intel-card-title">{inc.incident_id || inc.id}: {inc.title}</span>
+                        <span className={"intel-card-sev-badge " + sc}>{(inc.severity || "sev3").toUpperCase()}</span>
+                        <span className="intel-card-source">{inc.status}</span>
+                      </div>
+                      {inc.description && <div className="intel-card-msg">{inc.description}</div>}
+                      <div className="intel-card-meta">
+                        {inc.assignee && <span>Assignee: {inc.assignee}</span>}
+                        <span>Created {timeAgo(inc.created_at)}</span>
+                        {inc.affected_namespaces?.length > 0 && <span>NS: {inc.affected_namespaces.join(", ")}</span>}
+                      </div>
+                    </div>
+                    <div className="intel-card-actions">
+                      {next && <button className="intel-card-btn primary" onClick={() => handleAdvanceIncident(inc.incident_id, next)}>→ {next}</button>}
+                      {inc.status === "mitigating" && <button className="intel-card-btn success" onClick={() => handleResolveIncident(inc.incident_id)}>Resolve</button>}
+                      {inc.status === "resolved" && <button className="intel-card-btn" onClick={() => handleCloseIncident(inc.incident_id)}>Close</button>}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Declare dialog */}
+          {showDeclare && (
+            <div className="intel-modal-overlay" onClick={() => setShowDeclare(false)}>
+              <div className="intel-modal wide" onClick={(e) => e.stopPropagation()}>
+                <h4>Declare Incident</h4>
+                <label className="intel-modal-lbl">Title *</label>
+                <input className="intel-modal-input" value={declareForm.title} onChange={(e) => setDeclareForm((f) => ({ ...f, title: e.target.value }))} placeholder="Brief incident title" />
+                <label className="intel-modal-lbl">Severity</label>
+                <select className="intel-filter-select" value={declareForm.severity} onChange={(e) => setDeclareForm((f) => ({ ...f, severity: e.target.value }))}>
+                  {["sev1", "sev2", "sev3", "sev4"].map((s) => <option key={s} value={s}>{s.toUpperCase()}</option>)}
+                </select>
+                <label className="intel-modal-lbl">Description</label>
+                <textarea className="intel-modal-textarea" value={declareForm.description} onChange={(e) => setDeclareForm((f) => ({ ...f, description: e.target.value }))} rows={3} />
+                <label className="intel-modal-lbl">Affected Namespaces (comma-separated)</label>
+                <input className="intel-modal-input" value={declareForm.namespaces} onChange={(e) => setDeclareForm((f) => ({ ...f, namespaces: e.target.value }))} />
+                <label className="intel-modal-lbl">Affected Services (comma-separated)</label>
+                <input className="intel-modal-input" value={declareForm.services} onChange={(e) => setDeclareForm((f) => ({ ...f, services: e.target.value }))} />
+                <div className="intel-modal-actions">
+                  <button className="intel-card-btn" onClick={() => setShowDeclare(false)}>Cancel</button>
+                  <button className="intel-card-btn primary" onClick={handleDeclareIncident} disabled={declaring}>{declaring ? "Declaring…" : "Declare"}</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ═══ 3. CHANGE TIMELINE ═══ */}
+      {activeTab === "timeline" && (
+        <div className="intel-section">
+          <div className="intel-section-head">
+            <div className="intel-section-title">
+              <div className="intel-section-icon" style={{ background: "linear-gradient(135deg, #06b6d4, #3b82f6)" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              </div>
+              <div><h3>Change Timeline</h3><p>Correlate deployments, configs, scaling &amp; alerts</p></div>
+            </div>
+            <button className="intel-hero-btn" onClick={() => refetchTimeline()}>Refresh</button>
+          </div>
+
+          <div className="intel-tl-list">
+            {tlEvents.length === 0 && <div className="intel-empty">No changes in the last 24 hours</div>}
+            {tlEvents.slice(0, 60).map((ev, i) => {
+              const ec = ev.severity === "critical" ? "#ef4444" : ev.severity === "warning" ? "#f59e0b" : ev.source === "deployment" ? "#3b82f6" : ev.source === "configmap" ? "#8b5cf6" : "#06b6d4";
+              return (
+                <div key={i} className="intel-tl-entry" style={{ "--tl-c": ec }}>
+                  <div className="intel-tl-dot" />
+                  <div className="intel-tl-content">
+                    <div className="intel-tl-row1">
+                      <span className="intel-tl-source">{ev.source || ev.type || "event"}</span>
+                      {ev.severity && <span className={"intel-card-sev-badge " + sevBucket(ev.severity)}>{ev.severity}</span>}
+                      <span className="intel-tl-time">{fmt(ev.timestamp || ev.time)}</span>
+                    </div>
+                    <div className="intel-tl-msg">{ev.message || ev.description || ev.summary || "—"}</div>
+                    {(ev.namespace || ev.resource) && (
+                      <div className="intel-card-meta">
+                        {ev.namespace && <span>NS: {ev.namespace}</span>}
+                        {ev.resource && <span>Res: {ev.resource}</span>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ 4. PREDICTIONS ═══ */}
+      {activeTab === "predictions" && (
+        <div className="intel-section">
+          <div className="intel-section-head">
+            <div className="intel-section-title">
+              <div className="intel-section-icon pred-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+              </div>
+              <div><h3>Predictive Intelligence</h3><p>Forecasted issues based on trend analysis &amp; historical data</p></div>
+            </div>
+            <button className="intel-hero-btn" onClick={handleRunPredictions}>Run Predictions</button>
+          </div>
+
+          <div className="intel-pred-list">
+            {predictions.length === 0 && <div className="intel-empty">No predictions — trends are stable</div>}
+            {predictions.map((p, i) => {
+              const score = p.score ?? p.riskScore ?? null;
+              const confidence = p.confidence ?? null;
+              const sc = SEV[sevBucket(p.severity || p.risk)] || "#8b5cf6";
+              return (
+                <div key={p.id || `pred-${i}`} className="intel-pred-card" style={{ "--pred-color": sc }}>
+                  <div className="intel-pred-score-ring">
+                    <span className="intel-pred-score" style={{ background: sc + "22", color: sc }}>{score ?? "?"}</span>
+                  </div>
+                  <div className="intel-pred-body">
+                    <div className="intel-pred-title">{p.target || p.resource || p.title || "Prediction"}</div>
+                    <div className="intel-pred-detail">{p.reason || p.message || p.prediction || ""}</div>
+                    <div className="intel-pred-tags">
+                      {score != null && <span className="intel-pred-tag" style={{ color: sc }}>Risk: {score}</span>}
+                      {confidence != null && <span className="intel-pred-tag conf">Conf: {typeof confidence === "number" ? `${Math.round(confidence * 100)}%` : confidence}</span>}
+                      {p.hoursRemaining != null && <span className="intel-pred-tag eta">ETA: {p.hoursRemaining}h</span>}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ 5. AUTOMATION RULES ═══ */}
+      {activeTab === "rules" && (
+        <div className="intel-section">
           <div className="intel-section-head">
             <div className="intel-section-title">
               <div className="intel-section-icon auto-icon">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
               </div>
-              <div>
-                <h3>Automation</h3>
-                <p>Rules for automatic remediation</p>
-              </div>
+              <div><h3>Automation Rules</h3><p>When X happens, do Y — automated remediation</p></div>
             </div>
           </div>
-          <div className="intel-auto-stats">
-            <div className="intel-auto-stat">
-              <div className="intel-auto-stat-val">{rulesCount}</div>
-              <div className="intel-auto-stat-lbl">Active Rules</div>
-            </div>
-            <div className="intel-auto-stat">
-              <div className="intel-auto-stat-val" style={{ color: monitoring ? "#22c55e" : "#ef4444" }}>
-                {monitoring ? "ON" : "OFF"}
-              </div>
-              <div className="intel-auto-stat-lbl">Monitor Status</div>
-            </div>
+
+          {/* Create rule */}
+          <div className="intel-rule-create">
+            <input className="intel-modal-input" placeholder="Rule name (optional)" value={ruleName} onChange={(e) => setRuleName(e.target.value)} style={{ maxWidth: 200 }} />
+            <input className="intel-modal-input" placeholder='Rule description, e.g. "When CrashLoopBackOff in ns production, restart pod and notify Slack"' value={ruleDesc} onChange={(e) => setRuleDesc(e.target.value)} style={{ flex: 1 }} />
+            <button className="intel-card-btn primary" onClick={handleCreateRule} disabled={creatingRule || !ruleDesc.trim()}>
+              {creatingRule ? "Creating…" : "Create Rule"}
+            </button>
           </div>
-          <div className="intel-auto-info">
-            Automation evaluates active insights against configured rules and applies safe remediation actions automatically.
+
+          {/* Rules list */}
+          <div className="intel-card-list">
+            {rules.length === 0 && <div className="intel-empty">No automation rules configured</div>}
+            {rules.map((r) => (
+              <div key={r.id} className="intel-card" style={{ "--card-sev": r.enabled ? "#22c55e" : "#64748b" }}>
+                <div className="intel-card-head">
+                  <div className="intel-card-body">
+                    <div className="intel-card-row1">
+                      <span className="intel-card-title">{r.name || `Rule #${r.id}`}</span>
+                      <span className={"intel-card-sev-badge " + (r.enabled ? "info" : "warning")}>{r.enabled ? "ACTIVE" : "DISABLED"}</span>
+                      {r.executions > 0 && <span className="intel-card-source">{r.executions} executions</span>}
+                    </div>
+                    <div className="intel-card-msg">{r.description}</div>
+                    <div className="intel-card-meta">
+                      {r.conditionTypes?.length > 0 && <span>Triggers: {r.conditionTypes.join(", ")}</span>}
+                      {r.namespaceFilter && <span>NS: {r.namespaceFilter}</span>}
+                      {r.lastTriggered && <span>Last: {timeAgo(r.lastTriggered)}</span>}
+                      <span>Cooldown: {r.cooldownMinutes || 0}m</span>
+                    </div>
+                  </div>
+                  <div className="intel-card-actions">
+                    <button className="intel-card-btn" onClick={() => handleToggleRule(r.id, r.enabled)}>{r.enabled ? "Disable" : "Enable"}</button>
+                    <button className="intel-card-btn" style={{ color: "#ef4444" }} onClick={() => handleDeleteRule(r.id)}>Delete</button>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
-      </div>
+      )}
+
+      {/* ═══ 6. KNOWLEDGE BASE ═══ */}
+      {activeTab === "kb" && (
+        <div className="intel-section">
+          <div className="intel-section-head">
+            <div className="intel-section-title">
+              <div className="intel-section-icon kb-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+              </div>
+              <div><h3>Knowledge Base</h3><p>Learned resolutions from past incidents</p></div>
+            </div>
+          </div>
+
+          {/* KB Stats */}
+          <div className="intel-kb-top-stats">
+            <div className="intel-kb-stat"><div className="intel-kb-stat-val">{kbStats.totalEntries || 0}</div><div className="intel-kb-stat-lbl">Entries</div></div>
+            <div className="intel-kb-stat"><div className="intel-kb-stat-val">{kbStats.avgEffectiveness ?? 0}</div><div className="intel-kb-stat-lbl">Avg Rating</div></div>
+            <div className="intel-kb-stat"><div className="intel-kb-stat-val">{Object.keys(kbStats.byType || {}).length}</div><div className="intel-kb-stat-lbl">Issue Types</div></div>
+          </div>
+
+          {kbStats.byType && Object.keys(kbStats.byType).length > 0 && (
+            <div className="intel-kb-types">
+              {Object.entries(kbStats.byType).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([type, count]) => (
+                <span key={type} className="intel-kb-type-pill">{type} <strong>{count}</strong></span>
+              ))}
+            </div>
+          )}
+
+          {/* KB Entries */}
+          <div className="intel-card-list" style={{ marginTop: 14 }}>
+            {kbEntries.length === 0 && <div className="intel-empty">No KB entries yet — they are created when incidents are resolved</div>}
+            {kbEntries.slice(0, 30).map((e) => (
+              <div key={e.id} className="intel-card" style={{ "--card-sev": "#06b6d4" }}>
+                <div className="intel-card-head">
+                  <div className="intel-card-body">
+                    <div className="intel-card-row1">
+                      <span className="intel-card-title">{e.type || "Resolution"}</span>
+                      <span className="intel-card-source">{e.resource_pattern || "*"}</span>
+                      {e.tags?.length > 0 && e.tags.slice(0, 3).map((t) => <span key={t} className="intel-card-kind-badge insight">{t}</span>)}
+                    </div>
+                    {e.symptoms && <div className="intel-card-msg"><strong>Symptoms:</strong> {e.symptoms}</div>}
+                    {e.root_cause && <div className="intel-card-msg"><strong>Root Cause:</strong> {e.root_cause}</div>}
+                    {e.resolution && <div className="intel-card-msg" style={{ color: "#22c55e" }}><strong>Resolution:</strong> {e.resolution}</div>}
+                    {e.commands && <div className="intel-fix-cmd"><code>{e.commands}</code></div>}
+                    <div className="intel-card-meta">
+                      {e.namespace_pattern && e.namespace_pattern !== "*" && <span>NS: {e.namespace_pattern}</span>}
+                      <span>Effectiveness: {e.effectiveness || 0}</span>
+                      <span>{timeAgo(e.created_at)}</span>
+                    </div>
+                  </div>
+                  <div className="intel-card-actions">
+                    <button className="intel-card-btn success" onClick={() => handleRateKB(e.id, 1)} title="Helpful">👍</button>
+                    <button className="intel-card-btn" onClick={() => handleRateKB(e.id, -1)} title="Not helpful">👎</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ 7. TEAM PLAYBOOK ═══ */}
+      {activeTab === "playbook" && (
+        <div className="intel-section">
+          <div className="intel-section-head">
+            <div className="intel-section-title">
+              <div className="intel-section-icon" style={{ background: "linear-gradient(135deg, #f59e0b, #ef4444)" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              </div>
+              <div><h3>Team Playbook</h3><p>Learned patterns from incident history (last 90 days)</p></div>
+            </div>
+          </div>
+
+          {/* Playbook stats */}
+          {playbookStats.total != null && (
+            <div className="intel-inc-stats" style={{ marginBottom: 14 }}>
+              <div className="intel-inc-stat" style={{ "--is-c": "#8b5cf6" }}><span>{playbookStats.total || 0}</span><label>Incidents</label></div>
+              <div className="intel-inc-stat" style={{ "--is-c": "#ef4444" }}><span>{playbookStats.open || 0}</span><label>Open</label></div>
+              <div className="intel-inc-stat" style={{ "--is-c": "#22c55e" }}><span>{playbookStats.avgMTTR != null ? `${Math.round(playbookStats.avgMTTR)}m` : "—"}</span><label>Avg MTTR</label></div>
+            </div>
+          )}
+
+          {/* Playbook patterns */}
+          <div className="intel-card-list">
+            {(!playbook.patterns || playbook.patterns.length === 0) && (!playbook.topIssues || playbook.topIssues.length === 0) && (
+              <div className="intel-empty">No playbook patterns yet — they build as incidents are resolved</div>
+            )}
+            {(playbook.patterns || playbook.topIssues || []).map((p, i) => (
+              <div key={i} className="intel-card" style={{ "--card-sev": "#f59e0b" }}>
+                <div className="intel-card-head">
+                  <div className="intel-card-body">
+                    <div className="intel-card-row1">
+                      <span className="intel-card-title">{p.type || p.issueType || p.signature || "Pattern"}</span>
+                      {p.count && <span className="intel-card-source">{p.count} occurrences</span>}
+                      {p.avgResolutionMinutes && <span className="intel-card-kind-badge insight">~{Math.round(p.avgResolutionMinutes)}m to resolve</span>}
+                    </div>
+                    {p.lastResolution && <div className="intel-card-msg"><strong>Last fix:</strong> {p.lastResolution}</div>}
+                    {p.commonNamespaces?.length > 0 && (
+                      <div className="intel-card-meta"><span>Common NS: {p.commonNamespaces.join(", ")}</span></div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
