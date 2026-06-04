@@ -1,16 +1,18 @@
 import { ClusterSwitcher } from "./components/ClusterSwitcher";
 import { DashboardView } from "./views/DashboardView";
 import { AuditView } from "./views/AuditView";
+import { IntelligenceView } from "./views/IntelligenceView";
 import { useActiveCluster } from "./store/clusterStore";
 import { useViewStore } from "./store/viewStore";
 
-const MIGRATED = 17;
+const MIGRATED = 18;
 const TOTAL = 22;
 
 const NAV = [
   { key: "dashboard", label: "Dashboard" },
   { key: "audit", label: "Audit" },
-  // Chat and AI Intelligence are migrated next.
+  { key: "intelligence", label: "AI Intelligence" },
+  // AI Chat is migrated next.
 ];
 
 export default function App() {
@@ -42,6 +44,7 @@ export default function App() {
       <main className="main-area">
         {activeView === "dashboard" && <DashboardView />}
         {activeView === "audit" && <AuditView />}
+        {activeView === "intelligence" && <IntelligenceView />}
       </main>
 
       <footer className="app-footer">
