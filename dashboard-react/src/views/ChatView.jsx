@@ -1,22 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { useActiveCluster } from "../store/clusterStore";
 import { useChatStore } from "../store/chatStore";
 import { clusterUrl } from "../api/client";
+import { renderMarkdown } from "../utils/markdown";
+import { showToast } from "../store/toastStore";
 
-/**
- * AI Chat view — conversational ops assistant, scoped to the ACTIVE cluster.
- *
- * Isolation: messages are stored per-cluster in chatStore, and every request is
- * cluster-scoped (clusterUrl + X-Cluster-Context). Switching clusters swaps the
- * conversation entirely — cluster A's chat is never visible under cluster B.
- *
- * Streaming contract (matches backend handleChatAPI):
- *   POST /api/chat  { message, conversationId, stream:true }  Accept: text/event-stream
- *   SSE: data: { stage }            -> progress
- *        data: { delta }            -> reply text
- *        data: { done, provider, conversationId }
- *        data: [DONE]
- */
 export function ChatView() {
   const cluster = useActiveCluster();
   const conv = useChatStore((s) => s.byCluster[cluster]) || { messages: [], conversationId: null };
@@ -25,6 +13,7 @@ export function ChatView() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState("");
+  const [sidebarSearch, setSidebarSearch] = useState("");
   const abortRef = useRef(null);
   const scrollRef = useRef(null);
 
@@ -32,18 +21,52 @@ export function ChatView() {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [conv.messages, stage]);
 
-  // Cancel any in-flight chat when the cluster changes (isolation).
   useEffect(() => {
     return () => { if (abortRef.current) abortRef.current.abort(); };
   }, [cluster]);
 
-  // Pick up a seed message set by Emergency Actions for this cluster.
   const takeSeed = useChatStore((s) => s.takeSeed);
   useEffect(() => {
     const seed = takeSeed(cluster);
     if (seed) setInput(seed);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cluster]);
+
+  const allClusters = useChatStore((s) => s.byCluster);
+  const conversations = useMemo(() => {
+    const list = [];
+    for (const [c, data] of Object.entries(allClusters)) {
+      if (data.messages.length > 0) {
+        const firstUserMsg = data.messages.find((m) => m.role === "user");
+        const preview = firstUserMsg?.text || data.messages[0]?.text || "(empty)";
+        list.push({ cluster: c, preview: preview.slice(0, 60), count: data.messages.length });
+      }
+    }
+    return list;
+  }, [allClusters]);
+
+  const filteredConversations = sidebarSearch
+    ? conversations.filter((c) => c.cluster.toLowerCase().includes(sidebarSearch.toLowerCase()) || c.preview.toLowerCase().includes(sidebarSearch.toLowerCase()))
+    : conversations;
+
+  function handleNewChat() {
+    clear(cluster);
+    setInput("");
+    showToast("Chat cleared", "ok");
+  }
+
+  function exportConversation() {
+    if (!conv.messages.length) return;
+    const data = { cluster, messages: conv.messages, exportedAt: new Date().toISOString() };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `chat-${cluster}-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast("Conversation exported", "ok");
+  }
 
   async function send() {
     const msg = input.trim();
@@ -107,40 +130,97 @@ export function ChatView() {
   }
 
   return (
-    <div className="chat-view">
-      <div className="view-head" style={{ padding: "16px 24px 0" }}>
-        <h2>AI Chat</h2>
-        <span className="scope-chip">Scope: {cluster === "local" ? "Hub (local)" : cluster}</span>
-        <button className="chat-clear" onClick={() => clear(cluster)} title="Clear this cluster's conversation">Clear</button>
-      </div>
+    <div className="chat-layout">
+      {/* Sidebar */}
+      <aside className="chat-sidebar">
+        <div className="chat-sidebar-header">
+          <button className="chat-new-btn" onClick={handleNewChat}>+ New Chat</button>
+        </div>
+        <div className="chat-sidebar-search">
+          <input
+            type="text"
+            placeholder="Search conversations…"
+            value={sidebarSearch}
+            onChange={(e) => setSidebarSearch(e.target.value)}
+          />
+        </div>
+        <div className="chat-sidebar-list">
+          {filteredConversations.length === 0 && (
+            <div className="chat-sidebar-empty">No conversations yet</div>
+          )}
+          {filteredConversations.map((c) => (
+            <div
+              key={c.cluster}
+              className={"chat-sidebar-item" + (c.cluster === cluster ? " active" : "")}
+            >
+              <div className="chat-sidebar-item-cluster">{c.cluster === "local" ? "Hub" : c.cluster}</div>
+              <div className="chat-sidebar-item-preview">{c.preview}</div>
+              <div className="chat-sidebar-item-count">{c.count} msgs</div>
+            </div>
+          ))}
+        </div>
+      </aside>
 
-      <div className="chat-scroll" ref={scrollRef}>
-        {conv.messages.length === 0 && (
-          <div className="chat-empty">
-            Ask about this cluster — e.g. “show pods at risk”, “why is operator X degraded”,
-            “summarize cluster health”. Answers are scoped to <strong>{cluster === "local" ? "the hub" : cluster}</strong>.
+      {/* Main chat area */}
+      <div className="chat-view">
+        <div className="chat-header-bar">
+          <h2 className="chat-title">AI Chat</h2>
+          <span className="scope-chip">Scope: {cluster === "local" ? "Hub (local)" : cluster}</span>
+          {stage && <span className="chat-stage-chip">{stage}…</span>}
+          <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+            <button className="chat-clear" onClick={exportConversation} title="Export conversation" disabled={!conv.messages.length}>Export</button>
+            <button className="chat-clear" onClick={handleNewChat} title="Clear this cluster's conversation">Clear</button>
           </div>
-        )}
-        {conv.messages.map((m, i) => (
-          <div key={i} className={"chat-msg " + m.role}>
-            <div className="chat-avatar">{m.role === "user" ? "You" : "TA"}</div>
-            <div className="chat-bubble">{m.text || (busy && i === conv.messages.length - 1 ? (stage || "thinking") + "…" : "")}</div>
-          </div>
-        ))}
-      </div>
+        </div>
 
-      <div className="chat-input-row">
-        <textarea
-          className="chat-input"
-          placeholder={`Message AI about ${cluster === "local" ? "the hub cluster" : cluster}…`}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-          rows={2}
-        />
-        <button className="chat-send" onClick={send} disabled={busy || !input.trim()}>
-          {busy ? "…" : "Send"}
-        </button>
+        <div className="chat-scroll" ref={scrollRef}>
+          {conv.messages.length === 0 && (
+            <div className="chat-empty">
+              <div className="chat-empty-icon">{"\u{1F916}"}</div>
+              <div className="chat-empty-title">Ask about this cluster</div>
+              <div className="chat-empty-desc">
+                Try "show pods at risk", "why is operator X degraded", or "summarize cluster health".
+                Answers are scoped to <strong>{cluster === "local" ? "the hub" : cluster}</strong>.
+              </div>
+              <div className="chat-quick-prompts">
+                {["Summarize cluster health", "Show pods at risk", "List degraded operators", "Check node resource usage"].map((q) => (
+                  <button key={q} className="chat-quick-btn" onClick={() => { setInput(q); }}>
+                    {q}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {conv.messages.map((m, i) => (
+            <div key={i} className={"chat-msg " + m.role}>
+              <div className="chat-avatar">{m.role === "user" ? "You" : "TA"}</div>
+              {m.role === "assistant" ? (
+                <div
+                  className="chat-bubble md-content"
+                  dangerouslySetInnerHTML={{
+                    __html: renderMarkdown(m.text || (busy && i === conv.messages.length - 1 ? (stage || "thinking") + "…" : "")),
+                  }}
+                />
+              ) : (
+                <div className="chat-bubble">{m.text}</div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="chat-input-row">
+          <textarea
+            className="chat-input"
+            placeholder={`Message AI about ${cluster === "local" ? "the hub cluster" : cluster}…`}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+            rows={2}
+          />
+          <button className="chat-send" onClick={send} disabled={busy || !input.trim()}>
+            {busy ? "…" : "Send"}
+          </button>
+        </div>
       </div>
     </div>
   );
