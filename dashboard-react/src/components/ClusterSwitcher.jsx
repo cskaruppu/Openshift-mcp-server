@@ -19,9 +19,8 @@ export function ClusterSwitcher() {
     refetchInterval: 30_000,
   });
 
-  const agentsObj = data?.agents || {};
-  const agentNames = Object.keys(agentsObj);
-  const clusters = [{ key: "local", label: "Hub Cluster (Primary)" }, ...agentNames.map((name) => ({ key: name, label: name }))];
+  const agentsList = Array.isArray(data?.agents) ? data.agents : [];
+  const clusters = [{ key: "local", label: "Hub Cluster (Primary)" }, ...agentsList.map((a) => ({ key: a.clusterName || a.name, label: a.clusterName || a.name }))];
 
   return (
     <div className="cluster-switcher">

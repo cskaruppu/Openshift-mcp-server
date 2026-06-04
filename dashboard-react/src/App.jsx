@@ -44,7 +44,8 @@ export default function App() {
     enabled: authenticated,
   });
 
-  const hasRemoteClusters = agentData && Object.keys(agentData.agents || {}).length > 0;
+  const agentsList = Array.isArray(agentData?.agents) ? agentData.agents : [];
+  const hasRemoteClusters = agentsList.length > 0;
 
   useEffect(() => {
     document.body.classList.toggle("light-theme", theme === "light");
@@ -70,7 +71,7 @@ export default function App() {
 
   useEffect(() => {
     if (authenticated && agentData) {
-      const hasRemote = Object.keys(agentData.agents || {}).length > 0;
+      const hasRemote = Array.isArray(agentData.agents) && agentData.agents.length > 0;
       if (!hasRemote) {
         setInClusterPicker(false);
       }

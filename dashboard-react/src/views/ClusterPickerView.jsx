@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "../api/client";
 import { useAuthStore } from "../store/authStore";
 import { useThemeStore } from "../store/themeStore";
+import { showToast } from "../store/toastStore";
 
 const PLATFORM_MAP = {
   openshift: { name: "OpenShift", icon: "\u{1F3F0}", color: "#e04040" },
@@ -17,6 +18,55 @@ function getPlatformInfo(platform) {
   return PLATFORM_MAP[(platform || "k8s").toLowerCase()] || PLATFORM_MAP.k8s;
 }
 
+function statusDisplay(status) {
+  if (status === "live" || status === "active" || status === "connected") return { label: "Active", color: "var(--ok)", pulse: true };
+  if (status === "waiting" || status === "registered") return { label: "Awaiting Data", color: "var(--accent2)", pulse: true };
+  if (status === "stale") return { label: "Stale", color: "var(--warn)", pulse: false };
+  if (status === "unreachable" || status === "error") return { label: "Unreachable", color: "var(--crit)", pulse: false };
+  if (status === "auth-error") return { label: "Auth Error", color: "var(--crit)", pulse: false };
+  if (status === "pending") return { label: "Agent Not Installed", color: "var(--warn)", pulse: false };
+  return { label: status || "Connecting", color: "var(--text2)", pulse: false };
+}
+
+function KebabMenu({ items }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div className="kebab-menu" ref={ref} onClick={(e) => e.stopPropagation()}>
+      <button className="kebab-btn" onClick={() => setOpen(!open)} title="Cluster actions">&#x22EE;</button>
+      {open && (
+        <div className="kebab-dropdown open">
+          {items.map((item, i) =>
+            item.sep ? <div key={i} className="kebab-sep" /> : (
+              <button key={i} className={"kebab-item" + (item.danger ? " danger" : "")} onClick={() => { setOpen(false); item.action(); }}>
+                <span>{item.icon}</span> {item.label}
+              </button>
+            )
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+async function clusterAction(url, method, successMsg) {
+  try {
+    const res = await fetch(url, { method: method || "POST" });
+    const data = await res.json().catch(() => ({}));
+    showToast(data.message || successMsg, res.ok ? "ok" : "err");
+  } catch (err) {
+    showToast("Error: " + err.message, "err");
+  }
+}
+
 export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings }) {
   const user = useAuthStore((s) => s.user);
   const theme = useThemeStore((s) => s.theme);
@@ -29,26 +79,21 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings })
     refetchInterval: 15_000,
   });
 
-  const { data: healthData } = useQuery({
-    queryKey: ["/api/dashboard/health", "local"],
-    queryFn: ({ signal }) => apiGet("/api/dashboard/health", { signal }),
+  const { data: hubData } = useQuery({
+    queryKey: ["/api/cluster/summary", "local"],
+    queryFn: ({ signal }) => apiGet("/api/cluster/summary", { signal }),
     staleTime: 15_000,
   });
 
-  const { data: nodesData } = useQuery({
-    queryKey: ["/api/dashboard/nodes", "local"],
-    queryFn: ({ signal }) => apiGet("/api/dashboard/nodes", { signal }),
-    staleTime: 15_000,
-  });
+  const remoteAgents = Array.isArray(agentData?.agents) ? agentData.agents : [];
 
-  const remoteAgents = agentData?.agents || {};
-  const remoteNames = Object.keys(remoteAgents);
-
-  const hubVersion = healthData?.version || "--";
-  const hubNodes = nodesData ? `${nodesData.ready || 0}/${nodesData.total || 0}` : "--";
-  const hubPods = healthData?.pods ?? "--";
-  const hubPlatform = healthData?.platform || "openshift";
+  const lci = hubData || {};
+  const isOCP = lci.isOpenShift !== undefined ? lci.isOpenShift : true;
+  const hubPlatform = lci.platform || "openshift";
   const hubPInfo = getPlatformInfo(hubPlatform);
+  const hubVersion = isOCP ? (lci.cluster?.version || "--") : (lci.cluster?.kubernetesVersion || lci.cluster?.version || "--");
+  const hubNodes = lci.nodes ? `${lci.nodes.ready || 0}/${lci.nodes.total || 0}` : "--";
+  const hubPods = lci.pods?.total ?? lci.pods?.running ?? "--";
 
   return (
     <div className="cluster-picker">
@@ -110,6 +155,12 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings })
                 <div className="cp-card-name">Hub Cluster <span className="cp-card-primary-badge">PRIMARY</span></div>
                 <div className="cp-card-platform">{hubPInfo.name}</div>
               </div>
+              <KebabMenu items={[
+                { icon: "📊", label: "Open Dashboard", action: () => onSelectCluster("local") },
+                { icon: "🔍", label: "Verify Health", action: () => { clusterAction("/api/cluster/health-check", "POST", "Hub health check started"); } },
+                { sep: true },
+                { icon: "🔒", label: "Sync RBAC", action: () => { clusterAction("/api/cluster/rbac-sync", "POST", "RBAC sync initiated"); } },
+              ]} />
             </div>
             <div className="cp-card-status">
               <span className="cp-card-status-dot" style={{ background: "var(--ok)", animation: "pulse 2s infinite" }} />
@@ -132,40 +183,44 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings })
           </div>
 
           {/* Remote cluster cards */}
-          {remoteNames.map((name) => {
-            const agent = remoteAgents[name];
+          {remoteAgents.map((agent) => {
+            const clusterName = agent.clusterName || agent.name || "unknown";
             const pInfo = getPlatformInfo(agent.platform);
-            const isActive = agent.status === "active" || agent.status === "connected";
-            const statusColor = isActive ? "var(--ok)"
-              : agent.status === "stale" ? "var(--warn)"
-              : agent.status === "unreachable" || agent.status === "error" ? "var(--crit)"
-              : "var(--text2)";
-            const statusLabel = isActive ? "Active"
-              : agent.status === "stale" ? "Stale"
-              : agent.status || "Connecting";
+            const st = statusDisplay(agent.status);
             const summary = agent.summary || {};
 
             return (
-              <div className="cp-card" key={name} onClick={() => onSelectCluster(name)}>
+              <div className="cp-card" key={clusterName} onClick={() => onSelectCluster(clusterName)}>
                 <div className="cp-card-header">
                   <div className="cp-card-icon" style={{ background: pInfo.color + "15", color: pInfo.color }}>
                     {pInfo.icon}
                   </div>
                   <div className="cp-card-info">
-                    <div className="cp-card-name">{name}</div>
+                    <div className="cp-card-name">{clusterName}</div>
                     <div className="cp-card-platform">{pInfo.name}</div>
                   </div>
+                  <KebabMenu items={[
+                    { icon: "📊", label: "Status Check", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/status`, "GET", "Status check complete"); } },
+                    { icon: "🔍", label: "Verify Health", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/health-check`, "POST", "Health check started"); } },
+                    { icon: "✏️", label: "Edit Cluster", action: () => { onOpenSettings(); } },
+                    { icon: "↻", label: "Reconnect", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/reconnect`, "POST", "Reconnect initiated"); } },
+                    { sep: true },
+                    { icon: "🔒", label: "Sync RBAC", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/rbac-sync`, "POST", "RBAC sync initiated"); } },
+                    { icon: "🔄", label: "Redeploy Agent", action: () => { if (confirm(`Redeploy agent on ${clusterName}?`)) clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/redeploy`, "POST", "Redeploy initiated"); } },
+                    { sep: true },
+                    { icon: "🗑️", label: "Remove Cluster", danger: true, action: () => { if (confirm(`Remove cluster "${clusterName}"? This cannot be undone.`)) clusterAction(`/api/agent/${encodeURIComponent(clusterName)}`, "DELETE", `Cluster ${clusterName} removed`); } },
+                  ]} />
                 </div>
                 <div className="cp-card-status">
                   <span className="cp-card-status-dot" style={{
-                    background: statusColor,
-                    animation: isActive ? "pulse 2s infinite" : "none"
+                    background: st.color,
+                    animation: st.pulse ? "pulse 2s infinite" : "none"
                   }} />
-                  <span className="cp-card-status-label" style={{ color: statusColor }}>{statusLabel}</span>
+                  <span className="cp-card-status-label" style={{ color: st.color }}>{st.label}</span>
                 </div>
                 <div className="cp-card-stats">
                   <div className="cp-card-stat">
-                    <div className="cp-card-stat-val">{summary.version || "--"}</div>
+                    <div className="cp-card-stat-val">{summary.version || agent.version || "--"}</div>
                     <div className="cp-card-stat-lbl">Version</div>
                   </div>
                   <div className="cp-card-stat">
@@ -283,4 +338,3 @@ function FleetAIBar() {
     </div>
   );
 }
-
