@@ -14,13 +14,20 @@ export function ClusterSwitcher() {
     refetchInterval: 30_000,
   });
 
+  // Hub platform derived from live cluster summary, not assumed.
+  const { data: hubSummary } = useQuery({
+    queryKey: ["/api/cluster/summary", "local"],
+    queryFn: ({ signal }) => apiGet("/api/cluster/summary", { signal }),
+    staleTime: 60_000,
+  });
+
   const agentsList = Array.isArray(data?.agents) ? data.agents : [];
   const clusters = [
-    { key: "local", label: "Hub Cluster (Primary)", platform: "openshift" },
+    { key: "local", label: "Hub Cluster (Primary)", platform: hubSummary?.platform },
     ...agentsList.map((a) => ({
       key: a.clusterName || a.name,
       label: a.clusterName || a.name,
-      platform: a.platform || "k8s",
+      platform: a.platform,
     })),
   ];
 

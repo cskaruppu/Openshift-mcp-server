@@ -2,7 +2,8 @@ import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "../api/client";
 import { useActiveCluster } from "../store/clusterStore";
-import { showToast } from "../store/toastStore";
+import { useChatStore } from "../store/chatStore";
+import { useViewStore } from "../store/viewStore";
 import { PLATFORM_MAP, getPlatformInfo } from "../lib/platforms";
 
 /* ── Constants ── */
@@ -41,44 +42,22 @@ const FRAMEWORKS = [
 
 const PLATFORM_PILLS = Object.values(PLATFORM_MAP);
 
-const AGENT_CATEGORIES = [
-  {
-    name: "Operations",
-    color: "#22c55e",
-    agents: [
-      { name: "Health Monitor", desc: "Cluster health, node status, resource pressure", icon: "💚", tools: ["health_check", "node_status", "resource_report"] },
-      { name: "Pod Debugger", desc: "CrashLoopBackOff analysis, OOMKilled triage", icon: "🔍", tools: ["pod_debug", "log_analysis", "event_trace"] },
-      { name: "Scaling Advisor", desc: "HPA recommendations, resource right-sizing", icon: "⚖", tools: ["hpa_recommend", "resource_analyze"] },
-    ],
-  },
-  {
-    name: "Lifecycle",
-    color: "#3b82f6",
-    agents: [
-      { name: "Upgrade Planner", desc: "Version compatibility, upgrade path planning", icon: "🚀", tools: ["version_check", "upgrade_plan", "compatibility_scan"] },
-      { name: "Rollout Manager", desc: "Deployment rollouts, canary, blue-green", icon: "♻", tools: ["rollout_status", "rollout_restart", "canary_promote"] },
-    ],
-  },
-  {
-    name: "Platform",
-    color: "#8b5cf6",
-    agents: [
-      { name: "Network Inspector", desc: "Service mesh, ingress, DNS resolution", icon: "🌐", tools: ["network_test", "dns_check", "route_verify"] },
-      { name: "Storage Analyzer", desc: "PV/PVC utilization, storage class audit", icon: "💾", tools: ["pv_status", "storage_audit"] },
-    ],
-  },
-  {
-    name: "Governance",
-    color: "#f59e0b",
-    agents: [
-      { name: "RBAC Auditor", desc: "Permission analysis, least-privilege review", icon: "🛡", tools: ["rbac_audit", "permission_check", "policy_verify"] },
-      { name: "Compliance Scanner", desc: "CIS benchmarks, security policies", icon: "✅", tools: ["cis_scan", "policy_report"] },
-    ],
-  },
-];
+// Maps manifest icon names (e.g. "shield") to display glyphs.
+const AGENT_ICON_MAP = {
+  shield: "\u{1F6E1}", heart: "\u{1F49A}", search: "\u{1F50D}", wrench: "\u{1F527}",
+  rocket: "\u{1F680}", recycle: "♻", globe: "\u{1F310}", database: "\u{1F4BE}",
+  lock: "\u{1F512}", check: "✅", chart: "\u{1F4CA}", bell: "\u{1F514}",
+  network: "\u{1F578}", cpu: "\u{1F9E0}", cloud: "☁", layers: "\u{1F5C2}",
+  gear: "⚙", server: "\u{1F5A5}", activity: "\u{1F493}", box: "\u{1F4E6}",
+};
+function agentIcon(name) {
+  return AGENT_ICON_MAP[(name || "").toLowerCase()] || "\u{1F916}";
+}
 
 export function AIHubView() {
   const cluster = useActiveCluster();
+  const setSeed = useChatStore((s) => s.setSeed);
+  const setActiveView = useViewStore((s) => s.setActiveView);
   const [fleetQuery, setFleetQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [detailAgent, setDetailAgent] = useState(null);
@@ -89,9 +68,10 @@ export function AIHubView() {
     staleTime: 10_000,
   });
 
+  // Federated MCP hub tools (external connected servers).
   const { data: toolsData } = useQuery({
-    queryKey: ["/api/tools"],
-    queryFn: ({ signal }) => apiGet("/api/tools", { signal }),
+    queryKey: ["/api/hub/tools"],
+    queryFn: ({ signal }) => apiGet("/api/hub/tools", { signal }).catch(() => ({})),
     staleTime: 30_000,
   });
 
@@ -101,21 +81,78 @@ export function AIHubView() {
     staleTime: 30_000,
   });
 
+  // Real usage analytics from the audit trail (last 30 days).
+  const { data: statsData } = useQuery({
+    queryKey: ["/api/audit-trail/stats"],
+    queryFn: ({ signal }) => apiGet("/api/audit-trail/stats?days=30", { signal }).catch(() => ({})),
+    staleTime: 30_000,
+  });
+
+  // Hub platform derived from live cluster summary, not assumed.
+  const { data: hubSummary } = useQuery({
+    queryKey: ["/api/cluster/summary", "local"],
+    queryFn: ({ signal }) => apiGet("/api/cluster/summary", { signal }),
+    staleTime: 60_000,
+  });
+  const hubPInfo = getPlatformInfo(hubSummary?.platform);
+
+  // Real agent registry from manifests.
+  const { data: registryData } = useQuery({
+    queryKey: ["/api/agents"],
+    queryFn: ({ signal }) => apiGet("/api/agents", { signal }).catch(() => ({})),
+    staleTime: 60_000,
+  });
+
+  const registryAgents = Array.isArray(registryData?.agents) ? registryData.agents : [];
+  const registryTotal = registryData?.total ?? registryAgents.length;
+  const serviceCount = new Set(registryAgents.flatMap((a) => a.services || [])).size;
+
+  // Unique built-in tools across all agent manifests.
+  const registryTools = [...new Set(registryAgents.flatMap((a) => a.tools || []))];
+  // Federated tools from external MCP servers connected to the hub.
+  const hubTools = Array.isArray(toolsData?.tools) ? toolsData.tools : [];
+  // Combined, de-duplicated tool catalogue for display.
+  const toolNameSet = new Set(registryTools);
+  for (const t of hubTools) toolNameSet.add(t.name || t);
+  const toolList = [
+    ...registryTools.map((name) => ({ name })),
+    ...hubTools.filter((t) => !registryTools.includes(t.name)),
+  ];
+  const toolCount = toolNameSet.size;
+
   const agents = Array.isArray(agentData?.agents) ? agentData.agents : [];
   const clusterCount = 1 + agents.length;
-  const toolCount = Array.isArray(toolsData?.tools) ? toolsData.tools.length : 0;
-  const activeProviders = LLM_PROVIDERS.filter((p) => llmData?.[p.key]?.enabled).length || 1;
+  const activeProviders = LLM_PROVIDERS.filter((p) => p.key === "builtin" || llmData?.[p.key]?.enabled).length;
+
+  // Derive real counts from the audit-trail stats response.
+  const byType = Array.isArray(statsData?.byType) ? statsData.byType : [];
+  const totalEvents = byType.reduce((sum, t) => sum + (t.count || 0), 0);
+  const sumTypes = (re) => byType.filter((t) => re.test(t.event_type || t.type || "")).reduce((s, t) => s + (t.count || 0), 0);
+  const queryCount = sumTypes(/query|chat|question|ask/i);
+  const actionCount = sumTypes(/action|remediat|scale|restart|delete|drain|cordon|deploy|rollout/i);
+  const connectedAgents = agents.filter((a) => a.status === "live" || a.status === "active").length;
 
   const handleFleetQuery = useCallback(() => {
     if (!fleetQuery.trim()) return;
-    showToast("Fleet query sent: " + fleetQuery.slice(0, 40) + "...", "ok");
+    // Route the fleet question into the AI Chat (scoped to the active cluster)
+    // where it runs against the real LLM + tools, instead of faking a response.
+    setSeed(cluster, fleetQuery);
+    setActiveView("chat");
     setFleetQuery("");
-  }, [fleetQuery]);
+  }, [fleetQuery, cluster, setSeed, setActiveView]);
 
+  // Group the real registry agents by their manifest category.
+  const categoryMap = new Map();
+  for (const a of registryAgents) {
+    const cat = a.category || "Other";
+    if (!categoryMap.has(cat)) categoryMap.set(cat, { name: cat, color: a.color || "#3b82f6", agents: [] });
+    categoryMap.get(cat).agents.push(a);
+  }
+  const allCategories = Array.from(categoryMap.values());
   const filteredCategories =
     selectedCategory === "all"
-      ? AGENT_CATEGORIES
-      : AGENT_CATEGORIES.filter((c) => c.name === selectedCategory);
+      ? allCategories
+      : allCategories.filter((c) => c.name === selectedCategory);
 
   return (
     <div className="view-pane hub-view">
@@ -135,7 +172,7 @@ export function AIHubView() {
               <div className="hsr-label">Clusters</div>
             </div>
             <div className="hub-stat-ring" style={{ color: "#818cf8", borderColor: "#818cf8" }}>
-              <div className="hsr-num">{toolCount || 24}</div>
+              <div className="hsr-num">{toolCount || "--"}</div>
               <div className="hsr-label">Tools</div>
             </div>
             <div className="hub-stat-ring" style={{ color: "#fbbf24", borderColor: "#fbbf24" }}>
@@ -175,19 +212,20 @@ export function AIHubView() {
         </div>
       </div>
 
-      {/* Agent Usage Analytics */}
+      {/* Agent Usage Analytics — real values from the audit trail (last 30 days) */}
       <div className="hub-analytics card">
         <div className="hub-section-head">
           <span style={{ fontSize: 16 }}>{"📊"}</span>
           <h3>Agent Usage Analytics</h3>
+          <span className="hub-tool-count">Last 30 days</span>
         </div>
         <div className="hub-analytics-grid">
-          <AnalyticsStat label="Agents Connected" value={agents.filter((a) => a.status === "live" || a.status === "active").length} color="var(--ok)" />
-          <AnalyticsStat label="MCP Tools" value={toolCount || 24} color="var(--accent2)" />
-          <AnalyticsStat label="Queries Today" value={Math.floor(Math.random() * 80 + 40)} color="#8b5cf6" />
-          <AnalyticsStat label="Actions Taken" value={Math.floor(Math.random() * 20 + 5)} color="#f59e0b" />
-          <AnalyticsStat label="Conversations" value={Math.floor(Math.random() * 30 + 10)} color="#ec4899" />
-          <AnalyticsStat label="Avg Response" value="1.2s" color="#22d3ee" />
+          <AnalyticsStat label="Agents Connected" value={connectedAgents} color="var(--ok)" />
+          <AnalyticsStat label="MCP Tools" value={toolCount || "--"} color="var(--accent2)" />
+          <AnalyticsStat label="Total Events" value={totalEvents} color="#8b5cf6" />
+          <AnalyticsStat label="Queries" value={queryCount} color="#22d3ee" />
+          <AnalyticsStat label="Actions Taken" value={actionCount} color="#f59e0b" />
+          <AnalyticsStat label="Clusters" value={clusterCount} color="#ec4899" />
         </div>
       </div>
 
@@ -222,8 +260,9 @@ export function AIHubView() {
           <div className="hub-cluster-list">
             <div className="hub-cluster-item hub">
               <span className="hub-cluster-dot" style={{ background: "#22c55e" }} />
-              <span className="hub-cluster-platform" style={{ color: "#e04040" }}>{"⬢"}</span>
+              <span className="hub-cluster-platform" style={{ color: hubPInfo.color }}>{hubPInfo.icon}</span>
               <span className="hub-cluster-name">Hub Cluster (Primary)</span>
+              <span className="hub-cluster-plat-label">{hubPInfo.name}</span>
               <span className="badge badge-ok">Active</span>
             </div>
             {agents.map((a) => {
@@ -255,26 +294,25 @@ export function AIHubView() {
         </div>
       </div>
 
-      {/* MCP Capabilities */}
+      {/* MCP Capabilities — real tools from /api/tools */}
       <div className="card hub-panel">
         <div className="hub-section-head">
           <span style={{ fontSize: 16 }}>{"🔧"}</span>
           <h3>MCP Capabilities</h3>
-          <span className="hub-tool-count">{toolCount || 24} tools</span>
+          <span className="hub-tool-count">{toolCount} tools</span>
         </div>
-        <div className="hub-mcp-grid">
-          {(Array.isArray(toolsData?.tools) ? toolsData.tools.slice(0, 12) : [
-            { name: "health_check" }, { name: "get_pods" }, { name: "get_nodes" },
-            { name: "get_events" }, { name: "get_operators" }, { name: "rbac_audit" },
-            { name: "rollout_restart" }, { name: "get_routes" }, { name: "scale_deployment" },
-            { name: "get_logs" }, { name: "describe_resource" }, { name: "get_namespaces" },
-          ]).map((t, i) => (
-            <div key={i} className="hub-mcp-tool">
-              <span className="hub-mcp-icon">{"⚙"}</span>
-              {t.name}
-            </div>
-          ))}
-        </div>
+        {toolCount === 0 ? (
+          <div className="metric muted" style={{ fontSize: 13 }}>No tools reported</div>
+        ) : (
+          <div className="hub-mcp-grid">
+            {toolList.slice(0, 24).map((t, i) => (
+              <div key={t.name || i} className="hub-mcp-tool" title={t.description || t.name}>
+                <span className="hub-mcp-icon">{"⚙"}</span>
+                {t.name}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── AGENT REGISTRY ── */}
@@ -292,15 +330,15 @@ export function AIHubView() {
             </div>
             <div className="agents-hero-stats">
               <div className="agents-stat">
-                <div className="agents-stat-num">{filteredCategories.reduce((t, c) => t + c.agents.length, 0)}</div>
+                <div className="agents-stat-num">{registryTotal}</div>
                 <div className="agents-stat-lbl">Agents</div>
               </div>
               <div className="agents-stat">
-                <div className="agents-stat-num">{toolCount || 24}</div>
+                <div className="agents-stat-num">{toolCount}</div>
                 <div className="agents-stat-lbl">MCP Tools</div>
               </div>
               <div className="agents-stat">
-                <div className="agents-stat-num">15</div>
+                <div className="agents-stat-num">{serviceCount}</div>
                 <div className="agents-stat-lbl">Services</div>
               </div>
             </div>
@@ -329,7 +367,7 @@ export function AIHubView() {
         {/* Category Filter */}
         <div className="agents-filter-bar">
           <button className={"agents-filter-btn" + (selectedCategory === "all" ? " active" : "")} onClick={() => setSelectedCategory("all")}>All Agents</button>
-          {AGENT_CATEGORIES.map((c) => (
+          {allCategories.map((c) => (
             <button
               key={c.name}
               className={"agents-filter-btn" + (selectedCategory === c.name ? " active" : "")}
@@ -341,7 +379,10 @@ export function AIHubView() {
           ))}
         </div>
 
-        {/* Agent Cards */}
+        {/* Agent Cards — real registry data */}
+        {registryAgents.length === 0 && (
+          <div className="metric muted" style={{ fontSize: 13, padding: "20px 0" }}>Loading agent registry…</div>
+        )}
         {filteredCategories.map((cat) => (
           <div key={cat.name} className="agents-category">
             <div className="agents-category-title" style={{ color: cat.color }}>
@@ -352,21 +393,24 @@ export function AIHubView() {
             <div className="agents-cards-grid">
               {cat.agents.map((ag) => (
                 <div
-                  key={ag.name}
+                  key={ag.id || ag.name}
                   className="agents-card"
-                  style={{ borderTopColor: cat.color }}
+                  style={{ borderTopColor: ag.color || cat.color }}
                   onClick={() => setDetailAgent(ag)}
                 >
-                  <div className="agents-card-icon">{ag.icon}</div>
+                  <div className="agents-card-icon">{agentIcon(ag.icon)}</div>
                   <div className="agents-card-name">{ag.name}</div>
-                  <div className="agents-card-desc">{ag.desc}</div>
+                  <div className="agents-card-desc">{ag.description}</div>
                   <div className="agents-card-tools">
-                    {ag.tools.map((t) => (
+                    {(ag.tools || []).slice(0, 5).map((t) => (
                       <span key={t} className="agents-card-tool">{t}</span>
                     ))}
+                    {(ag.tools || []).length > 5 && (
+                      <span className="agents-card-tool">+{ag.tools.length - 5}</span>
+                    )}
                   </div>
                   <div className="agents-card-status">
-                    <span className="agents-card-dot" /> Active
+                    <span className="agents-card-dot" /> {(ag.protocols || []).map((p) => p.toUpperCase()).join(" · ") || "MCP"}
                   </div>
                 </div>
               ))}
@@ -375,30 +419,55 @@ export function AIHubView() {
         ))}
       </div>
 
-      {/* Agent Detail Drawer */}
+      {/* Agent Detail Drawer — real registry data */}
       {detailAgent && (
         <div className="agent-detail-overlay" onClick={() => setDetailAgent(null)}>
           <div className="agent-detail" onClick={(e) => e.stopPropagation()}>
             <button className="agent-detail-close" onClick={() => setDetailAgent(null)}>&times;</button>
-            <div className="agent-detail-icon">{detailAgent.icon}</div>
+            <div className="agent-detail-icon">{agentIcon(detailAgent.icon)}</div>
             <h3>{detailAgent.name}</h3>
-            <p>{detailAgent.desc}</p>
-            <h4>MCP Tools</h4>
+            <div className="agent-detail-cat" style={{ color: detailAgent.color }}>{detailAgent.category}{detailAgent.version ? ` · v${detailAgent.version}` : ""}</div>
+            <p>{detailAgent.description}</p>
+
+            {detailAgent.mcpEndpoint && (
+              <>
+                <h4>MCP Endpoint</h4>
+                <div className="agent-detail-mcp">{detailAgent.mcpEndpoint}</div>
+              </>
+            )}
+
+            {Array.isArray(detailAgent.capabilities) && detailAgent.capabilities.length > 0 && (
+              <>
+                <h4>Capabilities</h4>
+                <ul>
+                  {detailAgent.capabilities.map((c, i) => <li key={i}>{c}</li>)}
+                </ul>
+              </>
+            )}
+
+            <h4>MCP Tools ({(detailAgent.tools || []).length})</h4>
             <div className="agent-detail-tool-list">
-              {detailAgent.tools.map((t) => (
+              {(detailAgent.tools || []).map((t) => (
                 <span key={t} className="agent-detail-tool">{t}</span>
               ))}
             </div>
+
+            {Array.isArray(detailAgent.services) && detailAgent.services.length > 0 && (
+              <>
+                <h4>Services</h4>
+                <div className="agent-detail-tool-list">
+                  {detailAgent.services.map((s) => (
+                    <span key={s} className="agent-detail-tool">{s}</span>
+                  ))}
+                </div>
+              </>
+            )}
+
             <h4>Protocols</h4>
             <div className="agent-detail-protos">
-              <span className="agent-detail-proto">MCP</span>
-              <span className="agent-detail-proto">A2A</span>
-              <span className="agent-detail-proto">REST</span>
-            </div>
-            <h4>Status</h4>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#22c55e", display: "inline-block" }} />
-              Active — Ready to process queries
+              {(detailAgent.protocols || ["mcp"]).map((p) => (
+                <span key={p} className="agent-detail-proto">{p}</span>
+              ))}
             </div>
           </div>
         </div>

@@ -48,12 +48,20 @@ export default function App() {
     enabled: authenticated,
   });
 
+  // Hub platform is derived from the live cluster summary — never assumed.
+  const { data: hubSummary } = useQuery({
+    queryKey: ["/api/cluster/summary", "local"],
+    queryFn: ({ signal }) => apiGet("/api/cluster/summary", { signal }),
+    staleTime: 60_000,
+    enabled: authenticated,
+  });
+
   const agentsList = Array.isArray(agentData?.agents) ? agentData.agents : [];
   const hasRemoteClusters = agentsList.length > 0;
 
-  const activeAgent = cluster !== "local" ? agentsList.find((a) => (a.clusterName || a.name) === cluster) : null;
-  const activePlatform = getPlatformInfo(activeAgent?.platform || (cluster === "local" ? "openshift" : "k8s"));
   const isHub = cluster === "local";
+  const activeAgent = !isHub ? agentsList.find((a) => (a.clusterName || a.name) === cluster) : null;
+  const activePlatform = getPlatformInfo(isHub ? hubSummary?.platform : activeAgent?.platform);
 
   useEffect(() => {
     document.body.classList.toggle("light-theme", theme === "light");
@@ -208,7 +216,7 @@ export default function App() {
                   <line x1="12" y1="10" x2="5" y2="15.5" /><line x1="12" y1="10" x2="19" y2="15.5" />
                   <line x1="5" y1="15.5" x2="19" y2="15.5" strokeDasharray="2 2" opacity="0.5" />
                 </svg>
-                <span className="agents-icon-badge">{agentsList.length + 10}</span>
+                {agentsList.length > 0 && <span className="agents-icon-badge">{agentsList.length}</span>}
               </button>
               {user && user.name !== "anonymous" && (
                 <>

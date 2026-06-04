@@ -14,6 +14,13 @@ export function MulticlusterWidget() {
     refetchInterval: 30_000,
   });
 
+  // Hub platform + version derived from live cluster summary, not assumed.
+  const { data: hubSummary } = useQuery({
+    queryKey: ["/api/cluster/summary", "local"],
+    queryFn: ({ signal }) => apiGet("/api/cluster/summary", { signal }),
+    staleTime: 60_000,
+  });
+
   const agents = Array.isArray(data?.agents) ? data.agents : [];
   const live = agents.filter((a) => a.status === "live").length;
 
@@ -30,11 +37,12 @@ export function MulticlusterWidget() {
             {/* Hub cluster card */}
             <FleetClusterCard
               name="Hub Cluster"
-              platform="openshift"
+              platform={hubSummary?.platform}
               isHub
               isActive={activeCluster === "local"}
               status="live"
-              meta="local"
+              meta={hubSummary?.nodes ? `${hubSummary.nodes.ready}/${hubSummary.nodes.total} nodes` : "local"}
+              version={hubSummary?.cluster?.version}
               onClick={() => setActiveCluster("local")}
             />
             {/* Remote cluster cards */}

@@ -7,7 +7,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
 import { dirname } from "node:path";
 import { ocpGet, ocpFetch, ocpDelete } from "../utils/openshift-client.js";
-import { getPlatform } from "../platform/index.js";
+import { getPlatform, isOpenShiftFamily } from "../platform/index.js";
 import { callLLM } from "./llm.js";
 import { query as dbQuery, isEnabled as dbEnabled } from "../utils/db.js";
 import { validateUpgradeVersion } from "../tools/upgrade-preflight.js";
@@ -529,6 +529,8 @@ export async function handleDashboardAPI(pathname, req, res) {
         );
 
         json(res, 200, {
+          platform: getPlatform() || "kubernetes",
+          isOpenShift: isOpenShiftFamily(getPlatform()),
           cluster: {
             version: clusterVersion?.status?.desired?.version || "unknown",
             channel: clusterVersion?.spec?.channel || "unknown",
