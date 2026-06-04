@@ -9,7 +9,7 @@ export function PodsAtRiskWidget() {
   const failed = pods.filter((p) => p.phase === "Failed" || p.phase === "CrashLoopBackOff").length;
 
   return (
-    <WidgetCard title="Pods at Risk">
+    <WidgetCard title="Pods at Risk" linkTo="intelligence" linkLabel="View in AI Intelligence">
       {isLoading && <div className="metric muted">Loading…</div>}
       {isError && <div className="metric err">{String(error.message)}</div>}
       {!isLoading && !isError && (

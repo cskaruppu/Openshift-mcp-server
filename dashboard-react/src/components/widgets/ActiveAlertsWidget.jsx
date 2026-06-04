@@ -1,7 +1,6 @@
 import { useClusterQuery } from "../../hooks/useClusterQuery";
 import { WidgetCard } from "../WidgetCard";
 
-/** Active Alerts — firing alerts + warning events for the active cluster. */
 export function ActiveAlertsWidget() {
   const { data, isLoading, isError, error } = useClusterQuery("/api/alerts");
 
@@ -9,7 +8,7 @@ export function ActiveAlertsWidget() {
   const summary = data?.summary || {};
 
   return (
-    <WidgetCard title="Active Alerts">
+    <WidgetCard title="Active Alerts" linkTo="intelligence" linkLabel="View in AI Intelligence">
       {isLoading && <div className="metric muted">Loading…</div>}
       {isError && <div className="metric err">{String(error.message)}</div>}
       {!isLoading && !isError && (

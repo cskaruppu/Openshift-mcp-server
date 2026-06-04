@@ -134,13 +134,15 @@ export default function App() {
                 <span className="workspace-breadcrumb-sep">/</span>
                 <span className="workspace-breadcrumb-cluster">
                   <span className="wbc-dot" style={{ background: "#22c55e" }} />
-                  <span className="wbc-name">{cluster === "local" ? "Hub Cluster" : cluster}</span>
+                  <span className="wbc-platform">{"⬢"}</span>
+                  <span className="wbc-name">{cluster === "local" ? "Hub" : cluster}</span>
                   <span className="wbc-badge" style={{ background: cluster === "local" ? "linear-gradient(135deg,#e04040,#c03030)" : "#3b82f6", color: "#fff" }}>
-                    {cluster === "local" ? "PRIMARY" : "REMOTE"}
+                    {cluster === "local" ? "OPENSHIFT · PRIMARY" : "REMOTE"}
                   </span>
                 </span>
               </div>
               <div className="workspace-breadcrumb-right">
+                <VersionLabel />
                 <ClusterSwitcher />
               </div>
             </div>
@@ -149,7 +151,7 @@ export default function App() {
           <header className="app-header">
             <div className="brand">
               <span className="brand-mark">TCS</span> Agentic AI
-              <span className="brand-sub">Multi-Cluster Dashboard</span>
+              <span className="brand-sub">Enterprise Intelligence Platform</span>
             </div>
             <nav className="nav-tabs">
               {NAV.map((t) => (
@@ -233,4 +235,15 @@ export default function App() {
       <ToastStack />
     </>
   );
+}
+
+function VersionLabel() {
+  const { data } = useQuery({
+    queryKey: ["/api/cluster/summary", "local"],
+    queryFn: ({ signal }) => apiGet("/api/cluster/summary", { signal }),
+    staleTime: 60_000,
+  });
+  const ver = data?.cluster?.version;
+  if (!ver) return null;
+  return <span className="wbc-version">v{ver}</span>;
 }
