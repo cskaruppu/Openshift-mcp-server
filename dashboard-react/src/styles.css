@@ -2817,6 +2817,231 @@ h3.widget-title {
 .acw-wl-name { font-weight: 600; flex: 1; }
 .acw-wl-replicas { font-size: 11px; color: var(--text2); }
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  AI Risk Predictions (premium)                                       */
+/* ══════════════════════════════════════════════════════════════════════ */
+.rp {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 14px; padding: 20px; overflow: hidden;
+}
+
+/* Header */
+.rp-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 18px; flex-wrap: wrap; gap: 12px;
+}
+.rp-title-row {
+  display: flex; align-items: center; gap: 16px;
+}
+.rp-title-row h3 {
+  font-size: 16px; font-weight: 700; margin: 0;
+  display: flex; align-items: center; gap: 8px;
+}
+.rp-title-row h3::before {
+  content: "\1F9E0"; font-size: 18px;
+}
+
+/* Accuracy ring */
+.rp-accuracy {
+  display: flex; align-items: center; gap: 6px;
+}
+.rp-accuracy-ring {
+  position: relative; width: 32px; height: 32px;
+}
+.rp-accuracy-ring svg { display: block; }
+.rp-accuracy-val {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; font-size: 8px; font-weight: 800;
+  color: var(--text);
+}
+.rp-accuracy-label {
+  font-size: 10px; color: var(--text2); font-weight: 600;
+}
+
+/* Actions */
+.rp-actions { display: flex; gap: 8px; }
+.rp-btn {
+  padding: 7px 16px; border-radius: 9px; font-size: 12px; font-weight: 600;
+  border: none; cursor: pointer; transition: all .18s;
+}
+.rp-btn:disabled { opacity: .55; cursor: not-allowed; }
+.rp-btn-pred {
+  background: rgba(59,130,246,.12); color: #60a5fa;
+  border: 1px solid rgba(59,130,246,.3);
+}
+.rp-btn-pred:hover:not(:disabled) { background: rgba(59,130,246,.22); border-color: #60a5fa; }
+.rp-btn-llm {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff; border: 1px solid rgba(139,92,246,.5);
+  box-shadow: 0 0 12px rgba(99,102,241,.15);
+}
+.rp-btn-llm:hover:not(:disabled) {
+  filter: brightness(1.15); box-shadow: 0 0 20px rgba(99,102,241,.3);
+}
+
+/* Stats row */
+.rp-stats {
+  display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap;
+}
+.rp-stat {
+  flex: 1; min-width: 80px; text-align: center;
+  padding: 10px 6px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.rp-stat-val { font-size: 22px; font-weight: 800; line-height: 1.2; }
+.rp-stat-label {
+  font-size: 9px; color: var(--text2); font-weight: 600;
+  text-transform: uppercase; letter-spacing: .4px; margin-top: 2px;
+}
+.rp-stat-crit { border-left: 3px solid var(--crit); }
+.rp-stat-warn { border-left: 3px solid var(--warn); }
+
+/* Filters */
+.rp-filters {
+  display: flex; gap: 14px; margin-bottom: 16px; flex-wrap: wrap;
+  align-items: center;
+}
+.rp-filter-group { display: flex; gap: 5px; flex-wrap: wrap; }
+.rp-filter-pill, .rp-scope-pill {
+  padding: 5px 12px; border-radius: 16px; font-size: 11px; font-weight: 600;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--text2); cursor: pointer; transition: all .15s;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.rp-filter-pill:hover, .rp-scope-pill:hover {
+  border-color: var(--accent2); color: var(--text);
+}
+.rp-filter-pill.active {
+  background: var(--pill-color, var(--accent2));
+  color: #fff; border-color: var(--pill-color, var(--accent2));
+}
+.rp-scope-pill.active {
+  background: var(--accent2); color: #fff; border-color: var(--accent2);
+}
+.rp-pill-count {
+  font-size: 10px; font-weight: 800; padding: 0 5px;
+  border-radius: 8px; background: rgba(255,255,255,.2);
+  min-width: 16px; text-align: center;
+}
+.rp-filter-pill:not(.active) .rp-pill-count {
+  background: rgba(148,163,184,.15); color: var(--text2);
+}
+
+/* Empty state */
+.rp-empty {
+  text-align: center; padding: 32px 16px; color: var(--text2); font-size: 13px;
+}
+.rp-empty-icon { font-size: 32px; margin-bottom: 8px; }
+.rp-empty-hint { font-size: 11px; color: var(--text2); opacity: .7; margin-top: 4px; }
+
+/* Risk list */
+.rp-list { display: flex; flex-direction: column; gap: 8px; }
+
+/* Risk card */
+.rp-card {
+  background: var(--bg); border: 1px solid var(--border);
+  border-left: 3px solid var(--risk-color, var(--text2));
+  border-radius: 10px; overflow: hidden;
+  transition: all .18s;
+}
+.rp-card:hover { border-color: color-mix(in srgb, var(--risk-color) 50%, var(--border)); }
+.rp-card.expanded {
+  border-color: var(--risk-color);
+  box-shadow: 0 2px 16px rgba(0,0,0,.15);
+}
+
+/* Card header */
+.rp-card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 12px 14px; cursor: pointer;
+}
+.rp-card-left { display: flex; align-items: flex-start; gap: 10px; flex: 1; min-width: 0; }
+.rp-card-icon { font-size: 20px; flex-shrink: 0; line-height: 1; margin-top: 2px; }
+.rp-card-info { flex: 1; min-width: 0; }
+.rp-card-title {
+  font-size: 13px; font-weight: 700; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rp-card-meta {
+  display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: wrap;
+}
+
+/* Badges */
+.rp-sev-badge {
+  font-size: 9px; font-weight: 800; padding: 2px 7px; border-radius: 5px;
+  text-transform: uppercase; letter-spacing: .3px;
+}
+.rp-scope-badge {
+  font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 5px;
+  background: rgba(148,163,184,.12); color: var(--text2);
+  text-transform: uppercase; letter-spacing: .3px;
+}
+.rp-pred-badge {
+  font-size: 8px; font-weight: 800; padding: 2px 6px; border-radius: 4px;
+  background: linear-gradient(135deg, rgba(99,102,241,.2), rgba(139,92,246,.2));
+  color: #a78bfa; letter-spacing: .5px; text-transform: uppercase;
+  border: 1px solid rgba(139,92,246,.3);
+}
+.rp-llm-badge {
+  font-size: 8px; font-weight: 800; padding: 2px 6px; border-radius: 4px;
+  background: linear-gradient(135deg, rgba(236,72,153,.15), rgba(168,85,247,.15));
+  color: #f472b6; letter-spacing: .5px; text-transform: uppercase;
+  border: 1px solid rgba(236,72,153,.3);
+}
+.rp-card-target {
+  font-size: 10px; color: var(--text2); font-family: 'SFMono-Regular', Consolas, monospace;
+  max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Card right side — score */
+.rp-card-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.rp-card-score { display: flex; align-items: center; gap: 6px; }
+.rp-score-bar {
+  width: 48px; height: 5px; border-radius: 3px;
+  background: var(--border); overflow: hidden;
+}
+.rp-score-fill {
+  height: 100%; border-radius: 3px;
+  transition: width .5s ease;
+}
+.rp-score-num {
+  font-size: 12px; font-weight: 800; color: var(--risk-color);
+  min-width: 20px; text-align: right;
+}
+.rp-card-conf {
+  font-size: 9px; color: var(--text2); font-weight: 600;
+  white-space: nowrap;
+}
+.rp-card-chevron {
+  font-size: 10px; color: var(--text2); transition: transform .2s;
+}
+
+/* Card detail (expanded) */
+.rp-card-detail {
+  padding: 0 14px 14px; border-top: 1px solid var(--border);
+  animation: rp-expand .2s ease-out;
+}
+@keyframes rp-expand { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+.rp-detail-section { margin-top: 10px; }
+.rp-detail-label {
+  font-size: 10px; font-weight: 700; color: var(--text2);
+  text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px;
+}
+.rp-detail-text {
+  font-size: 12px; color: var(--text); line-height: 1.6;
+}
+.rp-detail-action {
+  color: var(--accent2); font-weight: 500;
+  padding: 6px 10px; border-radius: 7px;
+  background: color-mix(in srgb, var(--accent2) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent2) 15%, var(--border));
+}
+
+/* Light theme */
+.light-theme .rp { background: #fff; border-color: #e5e7eb; }
+.light-theme .rp-stat { background: #f8fafc; border-color: #e5e7eb; }
+.light-theme .rp-card { background: #f9fafb; border-color: #e5e7eb; }
+
 /* Light theme */
 .light-theme .acw { background: #fff; border-color: #e5e7eb; }
 .light-theme .acw-ns-panel { background: #f8fafc; border-color: #e5e7eb; }
