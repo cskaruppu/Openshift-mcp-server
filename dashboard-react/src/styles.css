@@ -94,6 +94,16 @@ body {
 .heatmap-label { font-size: 10px; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .heatmap-count { font-size: 14px; font-weight: 700; color: #fff; }
 
+/* Fleet / multicluster */
+.fleet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.fleet-card { text-align: left; background: #0d1117; border: 1px solid var(--border); border-radius: 8px; padding: 12px; cursor: pointer; color: var(--text); transition: border-color .15s; }
+.fleet-card:hover { border-color: var(--accent); }
+.fleet-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.fleet-name { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.fleet-badge { font-size: 9px; background: var(--accent); color: #fff; border-radius: 8px; padding: 2px 6px; font-weight: 700; }
+.fleet-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.fleet-meta { font-size: 11px; color: var(--text2); margin-top: 4px; }
+
 /* Risk predictions */
 .risk-list { display: flex; flex-direction: column; gap: 6px; }
 .risk-row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
