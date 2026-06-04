@@ -5,7 +5,6 @@ import { clusterUrl } from "../api/client";
 import { showToast } from "../store/toastStore";
 import { ChatMessageBody } from "./ChatTokens";
 
-/* ── Provider metadata ── */
 const PROVIDER_META = {
   builtin:   { icon: "TA", color: "#e04040",  label: "Built-in Analysis", desc: "No API key needed" },
   anthropic: { icon: "Cl", color: "#d97706",  label: "Anthropic",         desc: "Claude Sonnet / Opus" },
@@ -16,11 +15,10 @@ const PROVIDER_META = {
   ollama:    { icon: "Ol", color: "#333",      label: "Ollama",            desc: "Local models" },
 };
 
-/* ── Slash commands ── */
 const SLASH_COMMANDS = [
   { cmd: "/help",            desc: "Show available commands",                cat: "general" },
   { cmd: "/health",          desc: "Cluster health summary",                 cat: "cluster" },
-  { cmd: "/pods",            desc: "Show pod summary across cluster",         cat: "cluster" },
+  { cmd: "/pods",            desc: "Show pod summary across cluster",        cat: "cluster" },
   { cmd: "/nodes",           desc: "List cluster nodes with status",         cat: "cluster" },
   { cmd: "/deployments",     desc: "List deployments across namespaces",     cat: "cluster" },
   { cmd: "/events",          desc: "Recent cluster events",                  cat: "cluster" },
@@ -28,7 +26,7 @@ const SLASH_COMMANDS = [
   { cmd: "/pipelines",       desc: "List Tekton pipelines",                  cat: "cluster" },
   { cmd: "/vms",             desc: "List KubeVirt virtual machines",         cat: "cluster" },
   { cmd: "/security",        desc: "Security audit",                         cat: "security" },
-  { cmd: "/compliance",      desc: "CIS / NIST 800-190 compliance check",    cat: "security" },
+  { cmd: "/compliance",      desc: "CIS / NIST 800-190 compliance check",   cat: "security" },
   { cmd: "/scc-audit",       desc: "Audit pods for over-privileged SCC",     cat: "security" },
   { cmd: "/explain-scc",     desc: "Explain which SCC is assigned to a pod", cat: "security" },
   { cmd: "/generate-policy", desc: "Generate K8s/OCP policy from prompt",    cat: "security" },
@@ -42,183 +40,57 @@ const SLASH_COMMANDS = [
   { cmd: "/topology",        desc: "Service dependency map for a namespace", cat: "intelligence" },
 ];
 
-const CAT_COLORS = { general: "#a1a1aa", cluster: "#3b82f6", security: "#ef4444", intelligence: "#8b5cf6" };
+const CAT_COLORS = { general: "#94a3b8", cluster: "#3b82f6", security: "#ef4444", intelligence: "#8b5cf6" };
+const CAT_LABELS = { general: "General", cluster: "Cluster", security: "Security", intelligence: "Intelligence" };
 
-/* ── Welcome category cards ── */
 const WELCOME_CARDS = [
-  { title: "Cluster Health",      desc: "Check cluster health and status",          bg: "#22c55e", icon: "❤", prompt: "Summarize cluster health" },
-  { title: "Troubleshoot",        desc: "Show CrashLoopBackOff pods and failures",  bg: "#ef4444", icon: "⚠", prompt: "Show pods in CrashLoopBackOff" },
-  { title: "Security Audit",      desc: "Run a security audit",                     bg: "#f59e0b", icon: "\u{1F6E1}", prompt: "Run a security audit" },
-  { title: "Resources & Metrics", desc: "Show top pods by CPU and memory",          bg: "#3b82f6", icon: "\u{1F4CA}", prompt: "Show top pods by CPU and memory" },
+  { title: "Cluster Health",      desc: "Overall status, node readiness & operator health", color: "#22c55e", icon: "H", prompt: "Summarize cluster health" },
+  { title: "Troubleshoot",        desc: "CrashLoopBackOff pods, failures & restarts",      color: "#ef4444", icon: "T", prompt: "Show pods in CrashLoopBackOff" },
+  { title: "Security Audit",      desc: "RBAC, SCC, network policies & compliance",        color: "#f59e0b", icon: "S", prompt: "Run a security audit" },
+  { title: "Resources & Metrics", desc: "CPU, memory, storage utilization trends",          color: "#3b82f6", icon: "R", prompt: "Show top pods by CPU and memory" },
 ];
 
-const QUICK_SUGGESTIONS = [
+const QUICK_PROMPTS = [
   "Summarize cluster health",
   "Show pods at risk",
   "List degraded operators",
   "Check node resource usage",
+  "Show recent events",
+  "Audit security posture",
 ];
 
-/* ── Thinking stages config ── */
 const STAGE_DEFS = [
-  { key: "parse",    label: "Understanding your question..." },
-  { key: "query",    label: "Querying cluster data" },
-  { key: "generate", label: "Generating response" },
+  { key: "parse",    label: "Parsing" },
+  { key: "query",    label: "Querying" },
+  { key: "generate", label: "Generating" },
 ];
 
-/* ── Follow-up suggestions by keyword heuristic ── */
 function getFollowUps(text) {
   if (!text) return [];
-  const lower = text.toLowerCase();
-  if (lower.includes("health") || lower.includes("status"))
+  const l = text.toLowerCase();
+  if (l.includes("health") || l.includes("status"))
     return ["Show failing pods", "Check node pressure", "List recent events"];
-  if (lower.includes("pod") || lower.includes("crash"))
+  if (l.includes("pod") || l.includes("crash"))
     return ["Show pod logs", "Describe the failing pod", "Check resource limits"];
-  if (lower.includes("security") || lower.includes("audit"))
+  if (l.includes("security") || l.includes("audit"))
     return ["List RBAC misconfigurations", "Show privileged containers", "Check network policies"];
-  if (lower.includes("node"))
+  if (l.includes("node"))
     return ["Show node resource usage", "List taints and tolerations", "Check disk pressure"];
-  if (lower.includes("deploy"))
+  if (l.includes("deploy"))
     return ["Show rollout history", "Check replica status", "List failed deployments"];
   return ["Show cluster health", "List recent events", "Check resource usage"];
 }
 
-/* ── Inline styles (kept inside JS to avoid CSS file bloat for new elements) ── */
-const S = {
-  /* Provider switcher */
-  providerToggle: {
-    display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
-    background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 20,
-    padding: "4px 12px 4px 6px", fontSize: 12, fontWeight: 600, color: "var(--text)",
-    userSelect: "none", transition: "border-color .15s", flexShrink: 0,
-  },
-  providerIcon: (color) => ({
-    width: 24, height: 24, borderRadius: "50%", background: color, color: "#fff",
-    display: "flex", alignItems: "center", justifyContent: "center",
-    fontSize: 10, fontWeight: 800, flexShrink: 0, lineHeight: 1,
-  }),
-  providerDropdown: {
-    position: "absolute", bottom: "calc(100% + 8px)", left: 0,
-    background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12,
-    boxShadow: "0 12px 40px rgba(0,0,0,.45)", padding: 6, minWidth: 260, zIndex: 100,
-  },
-  providerOption: (active) => ({
-    display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
-    borderRadius: 8, cursor: "pointer", background: active ? "var(--hover)" : "transparent",
-    border: "none", width: "100%", textAlign: "left", color: "var(--text)",
-    transition: "background .1s",
-  }),
-  providerLabel: { fontSize: 13, fontWeight: 600 },
-  providerDesc:  { fontSize: 11, color: "var(--text2)" },
-
-  /* Slash command palette */
-  slashPalette: {
-    position: "absolute", bottom: "calc(100% + 8px)", left: 0, right: 0,
-    background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12,
-    boxShadow: "0 12px 40px rgba(0,0,0,.45)", maxHeight: 320, overflowY: "auto",
-    zIndex: 100, padding: 6,
-  },
-  slashItem: (active) => ({
-    display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
-    borderRadius: 8, cursor: "pointer", background: active ? "var(--hover)" : "transparent",
-    border: "none", width: "100%", textAlign: "left", color: "var(--text)",
-    transition: "background .1s",
-  }),
-  slashCmd: { fontSize: 13, fontWeight: 700, fontFamily: "monospace" },
-  slashDesc: { fontSize: 12, color: "var(--text2)", flex: 1 },
-  slashCatDot: (color) => ({
-    width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0,
-  }),
-
-  /* Welcome */
-  welcomeGrid: {
-    display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, maxWidth: 540, margin: "0 auto 20px",
-  },
-  welcomeCard: {
-    background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14,
-    padding: 20, cursor: "pointer", transition: "border-color .15s, transform .15s",
-    textAlign: "left",
-  },
-  welcomeIconWrap: (bg) => ({
-    width: 40, height: 40, borderRadius: 10, background: bg, color: "#fff",
-    display: "flex", alignItems: "center", justifyContent: "center",
-    fontSize: 18, marginBottom: 10,
-  }),
-  welcomeTitle: { fontSize: 14, fontWeight: 700, marginBottom: 4 },
-  welcomeDesc: { fontSize: 12, color: "var(--text2)", lineHeight: 1.5 },
-  sugGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, maxWidth: 540, margin: "0 auto" },
-
-  /* Thinking stages */
-  stageBox: {
-    display: "flex", flexDirection: "column", gap: 6, padding: "12px 16px",
-    background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12,
-    marginBottom: 8, maxWidth: "75%",
-  },
-  stageRow: (state) => ({
-    display: "flex", alignItems: "center", gap: 8, fontSize: 13,
-    color: state === "done" ? "var(--ok)" : state === "active" ? "var(--text)" : "var(--text2)",
-    opacity: state === "pending" ? 0.45 : 1,
-    transition: "opacity .2s, color .2s",
-  }),
-
-  /* Message actions */
-  msgActions: {
-    display: "flex", gap: 4, marginTop: 6,
-  },
-  actionBtn: {
-    background: "none", border: "1px solid transparent", borderRadius: 6,
-    padding: "3px 8px", cursor: "pointer", fontSize: 12, color: "var(--text2)",
-    transition: "all .15s", display: "flex", alignItems: "center", gap: 4,
-  },
-
-  /* Tool call card */
-  toolCard: {
-    background: "rgba(99,102,241,.06)", border: "1px solid rgba(99,102,241,.15)",
-    borderRadius: 10, padding: "10px 14px", marginBottom: 8, fontSize: 12,
-  },
-  toolName: { fontWeight: 700, color: "#818cf8", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 },
-  toolArgs: {
-    fontFamily: "'SF Mono', 'Fira Code', monospace", fontSize: 11, color: "var(--text2)",
-    background: "rgba(0,0,0,.2)", borderRadius: 6, padding: "6px 10px",
-    maxHeight: 80, overflowY: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all",
-  },
-
-  /* Follow-up chips */
-  followUps: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 },
-  followBtn: {
-    background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 20,
-    padding: "5px 14px", fontSize: 12, color: "var(--text2)", cursor: "pointer",
-    transition: "all .15s",
-  },
-
-  /* Pill input bar */
-  inputBar: {
-    display: "flex", alignItems: "flex-end", gap: 0,
-    padding: "10px 24px 16px", borderTop: "1px solid var(--border)",
-    position: "relative",
-  },
-  inputPill: {
-    display: "flex", alignItems: "flex-end", gap: 8, flex: 1,
-    background: "var(--card)", border: "1px solid var(--border)", borderRadius: 24,
-    padding: "6px 6px 6px 6px", transition: "border-color .15s",
-  },
-  inputPillFocused: {
-    borderColor: "var(--accent2)",
-  },
-  textarea: {
-    flex: 1, background: "transparent", border: "none", color: "var(--text)",
-    fontSize: 14, resize: "none", fontFamily: "inherit", outline: "none",
-    padding: "6px 8px", lineHeight: 1.5, maxHeight: 120, minHeight: 32,
-  },
-  sendBtn: (active) => ({
-    width: 36, height: 36, borderRadius: "50%", border: "none", flexShrink: 0,
-    display: "flex", alignItems: "center", justifyContent: "center",
-    cursor: active ? "pointer" : "not-allowed",
-    background: active ? "var(--accent2)" : "var(--border)",
-    color: "#fff", fontSize: 16, transition: "background .15s",
-  }),
-};
-
+function timeAgo(ts) {
+  if (!ts) return "";
+  const d = Date.now() - new Date(ts).getTime();
+  if (d < 60000) return "just now";
+  const m = Math.floor(d / 60000);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
 
 export function ChatView() {
   const cluster = useActiveCluster();
@@ -227,26 +99,26 @@ export function ChatView() {
 
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [stage, setStage] = useState("");        // current stage key
+  const [stage, setStage] = useState("");
   const [completedStages, setCompletedStages] = useState(new Set());
   const [sidebarSearch, setSidebarSearch] = useState("");
-  const [toolCalls, setToolCalls] = useState([]); // tool trace for current response
+  const [toolCalls, setToolCalls] = useState([]);
   const [followUps, setFollowUps] = useState([]);
   const [inputFocused, setInputFocused] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  /* Provider state */
   const [providers, setProviders] = useState({});
   const [activeProvider, setActiveProvider] = useState("builtin");
   const [providerOpen, setProviderOpen] = useState(false);
 
-  /* Slash palette state */
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashIdx, setSlashIdx] = useState(0);
 
-  /* Message action state */
   const [likedMsgs, setLikedMsgs] = useState(new Set());
   const [dislikedMsgs, setDislikedMsgs] = useState(new Set());
+
+  const [savedChats, setSavedChats] = useState([]);
 
   const abortRef = useRef(null);
   const scrollRef = useRef(null);
@@ -254,25 +126,20 @@ export function ChatView() {
   const providerRef = useRef(null);
   const slashRef = useRef(null);
 
-  /* ── Auto-scroll ── */
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [conv.messages, stage, toolCalls]);
 
-  /* ── Abort on cluster switch ── */
   useEffect(() => {
     return () => { if (abortRef.current) abortRef.current.abort(); };
   }, [cluster]);
 
-  /* ── Seed from Emergency Actions ── */
   const takeSeed = useChatStore((s) => s.takeSeed);
   useEffect(() => {
     const seed = takeSeed(cluster);
     if (seed) setInput(seed);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cluster]);
+  }, [cluster]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* ── Load LLM providers on mount ── */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -288,7 +155,19 @@ export function ChatView() {
     return () => { cancelled = true; };
   }, [cluster]);
 
-  /* ── Close dropdowns on outside click ── */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(clusterUrl("/api/chats?limit=30", cluster));
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data.conversations)) setSavedChats(data.conversations);
+      } catch { /* silent */ }
+    })();
+    return () => { cancelled = true; };
+  }, [cluster]);
+
   useEffect(() => {
     function onDoc(e) {
       if (providerOpen && providerRef.current && !providerRef.current.contains(e.target)) setProviderOpen(false);
@@ -298,37 +177,40 @@ export function ChatView() {
     return () => document.removeEventListener("mousedown", onDoc);
   }, [providerOpen, slashOpen]);
 
-  /* ── Conversation list ── */
   const allClusters = useChatStore((s) => s.byCluster);
   const conversations = useMemo(() => {
     const list = [];
     for (const [c, data] of Object.entries(allClusters)) {
       if (data.messages.length > 0) {
-        const firstUserMsg = data.messages.find((m) => m.role === "user");
-        const preview = firstUserMsg?.text || data.messages[0]?.text || "(empty)";
-        list.push({ cluster: c, preview: preview.slice(0, 60), count: data.messages.length });
+        const firstUser = data.messages.find((m) => m.role === "user");
+        const preview = firstUser?.text || data.messages[0]?.text || "(empty)";
+        list.push({ cluster: c, preview: preview.slice(0, 80), count: data.messages.length, active: c === cluster });
       }
     }
     return list;
-  }, [allClusters]);
+  }, [allClusters, cluster]);
 
   const filteredConversations = sidebarSearch
     ? conversations.filter((c) => c.cluster.toLowerCase().includes(sidebarSearch.toLowerCase()) || c.preview.toLowerCase().includes(sidebarSearch.toLowerCase()))
     : conversations;
 
-  /* ── Slash command filtering ── */
   const filteredSlash = useMemo(() => {
     if (!slashFilter) return SLASH_COMMANDS;
     const q = slashFilter.toLowerCase();
     return SLASH_COMMANDS.filter((s) => s.cmd.toLowerCase().includes(q) || s.desc.toLowerCase().includes(q));
   }, [slashFilter]);
 
-  /* ── Input change handler with slash detection ── */
+  const groupedSlash = useMemo(() => {
+    const groups = {};
+    for (const sc of filteredSlash) {
+      (groups[sc.cat] ??= []).push(sc);
+    }
+    return groups;
+  }, [filteredSlash]);
+
   const handleInputChange = useCallback((e) => {
     const val = e.target.value;
     setInput(val);
-
-    // Detect slash at start of input
     if (val.startsWith("/")) {
       setSlashOpen(true);
       setSlashFilter(val);
@@ -339,7 +221,6 @@ export function ChatView() {
     }
   }, []);
 
-  /* ── Pick a slash command ── */
   const pickSlash = useCallback((cmd) => {
     setInput(cmd + " ");
     setSlashOpen(false);
@@ -347,45 +228,52 @@ export function ChatView() {
     textareaRef.current?.focus();
   }, []);
 
-  /* ── New chat ── */
   function handleNewChat() {
     clear(cluster);
     setInput("");
     setToolCalls([]);
     setFollowUps([]);
     setCompletedStages(new Set());
-    showToast("Chat cleared", "ok");
+    showToast("New conversation started", "ok");
   }
 
-  /* ── Export ── */
   function exportConversation() {
     if (!conv.messages.length) return;
     const data = { cluster, messages: conv.messages, exportedAt: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url;
-    a.download = `chat-${cluster}-${Date.now()}.json`;
-    a.click();
+    a.href = url; a.download = `chat-${cluster}-${Date.now()}.json`; a.click();
     URL.revokeObjectURL(url);
-    showToast("Conversation exported", "ok");
+    showToast("Exported", "ok");
   }
 
-  /* ── Copy message text ── */
   function copyMessage(text) {
-    navigator.clipboard.writeText(text).then(() => showToast("Copied to clipboard", "ok")).catch(() => {});
+    navigator.clipboard.writeText(text).then(() => showToast("Copied", "ok")).catch(() => {});
   }
 
-  /* ── Retry last user message ── */
   function retryLast() {
     const lastUser = [...conv.messages].reverse().find((m) => m.role === "user");
-    if (lastUser) {
-      setInput(lastUser.text);
-    }
+    if (lastUser) sendText(lastUser.text);
   }
 
-  /* ── Send message (optionally with an explicit text override) ── */
+  const sendFeedback = useCallback(async (msgIdx, reaction) => {
+    try {
+      await fetch(clusterUrl("/api/chat/feedback", cluster), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId: conv.conversationId,
+          messageIndex: msgIdx,
+          reaction,
+          cluster,
+        }),
+      });
+    } catch { /* silent */ }
+  }, [cluster, conv.conversationId]);
+
   async function sendText(text) { return send(text); }
+
   async function send(override) {
     const msg = (typeof override === "string" ? override : input).trim();
     if (!msg || busy) return;
@@ -421,7 +309,7 @@ export function ChatView() {
         const decoder = new TextDecoder();
         let buf = "";
         let full = "";
-        const done_stages = new Set();
+        const doneStages = new Set();
 
         while (true) {
           const { done, value } = await reader.read();
@@ -436,10 +324,9 @@ export function ChatView() {
             try {
               const evt = JSON.parse(payload);
               if (evt.stage) {
-                // Mark previous stage as done
-                if (stage) done_stages.add(stage);
+                if (stage) doneStages.add(stage);
                 setStage(evt.stage);
-                setCompletedStages(new Set(done_stages));
+                setCompletedStages(new Set(doneStages));
               }
               if (evt.delta) {
                 full += evt.delta;
@@ -451,17 +338,13 @@ export function ChatView() {
               }
               if (evt.done) {
                 if (evt.conversationId) setConversationId(sendingCluster, evt.conversationId);
-                // All stages done
-                done_stages.add("parse");
-                done_stages.add("query");
-                done_stages.add("generate");
-                setCompletedStages(new Set(done_stages));
+                doneStages.add("parse"); doneStages.add("query"); doneStages.add("generate");
+                setCompletedStages(new Set(doneStages));
               }
-            } catch { /* ignore non-JSON keepalives */ }
+            } catch { /* ignore */ }
           }
         }
         if (!full) updateLastAssistant(sendingCluster, "(no response)");
-        // Generate follow-ups based on the response
         setFollowUps(getFollowUps(full));
       }
     } catch (e) {
@@ -473,324 +356,306 @@ export function ChatView() {
     }
   }
 
-  /* ── Keyboard in textarea ── */
   function handleKeyDown(e) {
     if (slashOpen && filteredSlash.length > 0) {
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setSlashIdx((i) => Math.min(i + 1, filteredSlash.length - 1));
-        return;
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setSlashIdx((i) => Math.max(i - 1, 0));
-        return;
-      }
-      if (e.key === "Enter" || e.key === "Tab") {
-        e.preventDefault();
-        pickSlash(filteredSlash[slashIdx].cmd);
-        return;
-      }
-      if (e.key === "Escape") {
-        setSlashOpen(false);
-        return;
-      }
+      if (e.key === "ArrowDown") { e.preventDefault(); setSlashIdx((i) => Math.min(i + 1, filteredSlash.length - 1)); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); setSlashIdx((i) => Math.max(i - 1, 0)); return; }
+      if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pickSlash(filteredSlash[slashIdx].cmd); return; }
+      if (e.key === "Escape") { setSlashOpen(false); return; }
     }
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   }
 
-  /* ── Active provider meta ── */
+  function handleAbort() {
+    if (abortRef.current) { abortRef.current.abort(); showToast("Aborted", "warn"); }
+  }
+
   const activeMeta = PROVIDER_META[activeProvider] || PROVIDER_META.builtin;
 
-  /* ── Available provider keys (enabled ones from API) ── */
   const availableProviders = useMemo(() => {
     const keys = Object.keys(providers).filter((k) => providers[k]?.enabled);
-    // Always include builtin
     if (!keys.includes("builtin")) keys.unshift("builtin");
     return keys;
   }, [providers]);
 
-  /* ── Determine stage state for each thinking step ── */
   function stageState(key) {
     if (completedStages.has(key)) return "done";
     if (stage === key) return "active";
     return "pending";
   }
 
-  /* ── Render spinner/check ── */
-  function StageIcon({ state }) {
-    if (state === "done") return <span style={{ color: "var(--ok)", fontSize: 14 }}>{"✓"}</span>;
-    if (state === "active") return (
-      <span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid var(--accent2)", borderTopColor: "transparent", borderRadius: "50%", animation: "spin .8s linear infinite" }} />
-    );
-    return <span style={{ color: "var(--text2)", fontSize: 14 }}>{"○"}</span>;
-  }
-
-  /* ── Abort handler ── */
-  function handleAbort() {
-    if (abortRef.current) {
-      abortRef.current.abort();
-      showToast("Request aborted", "warn");
-    }
-  }
+  const hasMessages = conv.messages.length > 0;
 
   return (
-    <div className="chat-layout">
+    <div className="ac">
+      {/* ── Sidebar toggle (mobile + desktop) ── */}
+      <button className="ac-sidebar-toggle" onClick={() => setSidebarOpen((v) => !v)} title="Conversations">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        {conversations.length > 0 && <span className="ac-sidebar-badge">{conversations.length}</span>}
+      </button>
+
       {/* ── Sidebar ── */}
-      <aside className="chat-sidebar">
-        <div className="chat-sidebar-header">
-          <button className="chat-new-btn" onClick={handleNewChat}>+ New Chat</button>
+      <aside className={"ac-sidebar" + (sidebarOpen ? " open" : "")}>
+        <div className="ac-sidebar-head">
+          <span className="ac-sidebar-title">Conversations</span>
+          <button className="ac-sidebar-close" onClick={() => setSidebarOpen(false)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
         </div>
-        <div className="chat-sidebar-search">
-          <input
-            type="text"
-            placeholder="Search conversations..."
-            value={sidebarSearch}
-            onChange={(e) => setSidebarSearch(e.target.value)}
-          />
+        <button className="ac-new-btn" onClick={handleNewChat}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New Chat
+        </button>
+        <div className="ac-sidebar-search">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" placeholder="Search..." value={sidebarSearch} onChange={(e) => setSidebarSearch(e.target.value)} />
         </div>
-        <div className="chat-sidebar-list">
-          {filteredConversations.length === 0 && (
-            <div className="chat-sidebar-empty">No conversations yet</div>
-          )}
+        <div className="ac-sidebar-list">
+          {filteredConversations.length === 0 && <div className="ac-sidebar-empty">No conversations</div>}
           {filteredConversations.map((c) => (
-            <div
-              key={c.cluster}
-              className={"chat-sidebar-item" + (c.cluster === cluster ? " active" : "")}
-            >
-              <div className="chat-sidebar-item-cluster">{c.cluster === "local" ? "Hub" : c.cluster}</div>
-              <div className="chat-sidebar-item-preview">{c.preview}</div>
-              <div className="chat-sidebar-item-count">{c.count} msgs</div>
+            <div key={c.cluster} className={"ac-conv-item" + (c.active ? " active" : "")}>
+              <div className="ac-conv-cluster">{c.cluster === "local" ? "Hub Cluster" : c.cluster}</div>
+              <div className="ac-conv-preview">{c.preview}</div>
+              <span className="ac-conv-count">{c.count}</span>
             </div>
           ))}
+          {savedChats.length > 0 && (
+            <>
+              <div className="ac-sidebar-divider">Saved</div>
+              {savedChats.slice(0, 15).map((ch) => (
+                <div key={ch.id} className="ac-conv-item">
+                  <div className="ac-conv-cluster">{ch.title || "Untitled"}</div>
+                  <div className="ac-conv-preview">{ch.cluster} &middot; {timeAgo(ch.updated_at || ch.created_at)}</div>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       </aside>
+      {sidebarOpen && <div className="ac-sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
 
-      {/* ── Main chat area ── */}
-      <div className="chat-view">
-        <div className="chat-header-bar">
-          <h2 className="chat-title">AI Chat</h2>
-          <span className="scope-chip">Scope: {cluster === "local" ? "Hub (local)" : cluster}</span>
-          <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-            <button className="chat-clear" onClick={exportConversation} title="Export conversation" disabled={!conv.messages.length}>Export</button>
-            <button className="chat-clear" onClick={handleNewChat} title="Clear this cluster's conversation">Clear</button>
+      {/* ── Main chat ── */}
+      <div className="ac-main">
+        {/* Header */}
+        <div className="ac-header">
+          <div className="ac-header-left">
+            <h2 className="ac-title">AI Chat</h2>
+            <span className="ac-scope-chip">{cluster === "local" ? "Hub" : cluster}</span>
+          </div>
+          <div className="ac-header-right">
             {busy && (
-              <button className="chat-clear" onClick={handleAbort} title="Abort current request" style={{ borderColor: "var(--crit)", color: "var(--crit)" }}>Abort</button>
+              <button className="ac-header-btn ac-abort-btn" onClick={handleAbort}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                Stop
+              </button>
             )}
+            <button className="ac-header-btn" onClick={exportConversation} disabled={!hasMessages} title="Export">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </button>
+            <button className="ac-header-btn" onClick={handleNewChat} title="New chat">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
           </div>
         </div>
 
-        {/* ── Message scroll area ── */}
-        <div className="chat-scroll" ref={scrollRef}>
-          {/* ── Welcome screen ── */}
-          {conv.messages.length === 0 && (
-            <div className="chat-empty" style={{ maxWidth: 600 }}>
-              <div className="chat-empty-icon">{"\u{1F916}"}</div>
-              <div className="chat-empty-title">Ask about this cluster</div>
-              <div className="chat-empty-desc" style={{ marginBottom: 24 }}>
-                AI-powered cluster intelligence scoped to <strong>{cluster === "local" ? "the hub" : cluster}</strong>.
-                Try a slash command or pick a category below.
+        {/* Messages */}
+        <div className="ac-messages" ref={scrollRef}>
+          {/* Welcome */}
+          {!hasMessages && (
+            <div className="ac-welcome">
+              <div className="ac-welcome-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/>
+                  <line x1="10" y1="22" x2="14" y2="22"/>
+                  <line x1="9" y1="9" x2="9.01" y2="9"/>
+                  <line x1="15" y1="9" x2="15.01" y2="9"/>
+                </svg>
               </div>
+              <h2 className="ac-welcome-title">What can I help you with?</h2>
+              <p className="ac-welcome-desc">
+                AI-powered cluster intelligence scoped to <strong>{cluster === "local" ? "the hub cluster" : cluster}</strong>.
+                Ask anything or use <code>/</code> commands.
+              </p>
 
-              {/* 2x2 category cards */}
-              <div style={S.welcomeGrid}>
-                {WELCOME_CARDS.map((card) => (
-                  <div
-                    key={card.title}
-                    style={S.welcomeCard}
-                    className="welcome-card-hover"
-                    onClick={() => { setInput(card.prompt); }}
-                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = card.bg; e.currentTarget.style.transform = "translateY(-2px)"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.transform = "none"; }}
-                  >
-                    <div style={S.welcomeIconWrap(card.bg)}>{card.icon}</div>
-                    <div style={S.welcomeTitle}>{card.title}</div>
-                    <div style={S.welcomeDesc}>{card.desc}</div>
-                  </div>
+              <div className="ac-welcome-grid">
+                {WELCOME_CARDS.map((c) => (
+                  <button key={c.title} className="ac-welcome-card" onClick={() => sendText(c.prompt)}>
+                    <div className="ac-wc-icon" style={{ background: c.color }}>{c.icon}</div>
+                    <div className="ac-wc-body">
+                      <div className="ac-wc-title">{c.title}</div>
+                      <div className="ac-wc-desc">{c.desc}</div>
+                    </div>
+                    <svg className="ac-wc-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
+                  </button>
                 ))}
               </div>
 
-              {/* 2-col suggestion buttons */}
-              <div style={S.sugGrid}>
-                {QUICK_SUGGESTIONS.map((q) => (
-                  <button key={q} className="chat-quick-btn" onClick={() => setInput(q)}>
-                    {q}
-                  </button>
+              <div className="ac-quick-grid">
+                {QUICK_PROMPTS.map((q) => (
+                  <button key={q} className="ac-quick-btn" onClick={() => sendText(q)}>{q}</button>
                 ))}
               </div>
             </div>
           )}
 
-          {/* ── Messages ── */}
-          {conv.messages.map((m, i) => (
-            <div key={i}>
-              <div className={"chat-msg " + m.role}>
-                <div className="chat-avatar">
-                  {m.role === "user" ? "You" : (
-                    <span style={{ color: activeMeta.color, fontSize: 11, fontWeight: 800 }}>{activeMeta.icon}</span>
+          {/* Message list */}
+          {conv.messages.map((m, i) => {
+            const isLastAI = m.role === "assistant" && i === conv.messages.length - 1;
+            return (
+              <div key={i} className={"ac-msg ac-msg-" + m.role}>
+                <div className="ac-avatar">
+                  {m.role === "user" ? (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                  ) : (
+                    <div className="ac-ai-icon" style={{ background: activeMeta.color }}>{activeMeta.icon}</div>
                   )}
                 </div>
-                {m.role === "assistant" ? (
-                  <div style={{ maxWidth: "75%" }}>
-                    {/* Thinking stages - show while streaming for last assistant message */}
-                    {busy && i === conv.messages.length - 1 && stage && (
-                      <div style={S.stageBox}>
-                        {STAGE_DEFS.map((sd) => {
-                          const st = stageState(sd.key);
-                          return (
-                            <div key={sd.key} style={S.stageRow(st)}>
-                              <StageIcon state={st} />
-                              <span>{sd.label}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* Tool call cards - show during streaming for last message */}
-                    {i === conv.messages.length - 1 && toolCalls.length > 0 && toolCalls.map((tc, ti) => (
-                      <div key={ti} style={S.toolCard}>
-                        <div style={S.toolName}>
-                          <span style={{ fontSize: 14 }}>{"⚙"}</span>
-                          <span>{tc.name}</span>
-                        </div>
-                        {tc.arguments && (
-                          <div style={S.toolArgs}>
-                            {typeof tc.arguments === "string" ? tc.arguments : JSON.stringify(tc.arguments, null, 2)}
+                <div className="ac-msg-content">
+                  {/* Thinking stages */}
+                  {busy && isLastAI && stage && (
+                    <div className="ac-thinking">
+                      {STAGE_DEFS.map((sd) => {
+                        const st = stageState(sd.key);
+                        return (
+                          <div key={sd.key} className={"ac-think-step " + st}>
+                            <div className="ac-think-icon" />
+                            <span>{sd.label}</span>
                           </div>
-                        )}
-                      </div>
-                    ))}
+                        );
+                      })}
+                    </div>
+                  )}
 
-                    {/* Message bubble — markdown + interactive token cards */}
-                    {m.text && <ChatMessageBody text={m.text} cluster={cluster} onQuery={(q) => { setInput(q); setTimeout(() => sendText(q), 0); }} />}
+                  {/* Tool calls */}
+                  {isLastAI && toolCalls.length > 0 && (
+                    <div className="ac-tool-calls">
+                      {toolCalls.map((tc, ti) => (
+                        <div key={ti} className="ac-tool-card">
+                          <span className="ac-tool-name">{tc.name}</span>
+                          {tc.arguments && (
+                            <code className="ac-tool-args">
+                              {typeof tc.arguments === "string" ? tc.arguments : JSON.stringify(tc.arguments, null, 2)}
+                            </code>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
-                    {/* Message actions - only on completed assistant messages with content */}
-                    {m.text && !(busy && i === conv.messages.length - 1) && (
-                      <div style={S.msgActions}>
-                        <button
-                          style={S.actionBtn}
-                          onClick={() => copyMessage(m.text)}
-                          onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text)"; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.borderColor = "transparent"; e.currentTarget.style.color = "var(--text2)"; }}
-                          title="Copy"
-                        >
-                          {"\u{1F4CB}"} Copy
-                        </button>
-                        <button
-                          style={{ ...S.actionBtn, color: likedMsgs.has(i) ? "var(--ok)" : "var(--text2)" }}
-                          onClick={() => {
-                            setLikedMsgs((prev) => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
-                            setDislikedMsgs((prev) => { const n = new Set(prev); n.delete(i); return n; });
-                          }}
-                          onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--border)"; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.borderColor = "transparent"; }}
-                          title="Like"
-                        >
-                          {likedMsgs.has(i) ? "\u{1F44D}" : "\u{1F44D}"} Like
-                        </button>
-                        <button
-                          style={{ ...S.actionBtn, color: dislikedMsgs.has(i) ? "var(--crit)" : "var(--text2)" }}
-                          onClick={() => {
-                            setDislikedMsgs((prev) => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
-                            setLikedMsgs((prev) => { const n = new Set(prev); n.delete(i); return n; });
-                          }}
-                          onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--border)"; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.borderColor = "transparent"; }}
-                          title="Dislike"
-                        >
-                          {"\u{1F44E}"} Dislike
-                        </button>
-                        <button
-                          style={S.actionBtn}
-                          onClick={retryLast}
-                          onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text)"; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.borderColor = "transparent"; e.currentTarget.style.color = "var(--text2)"; }}
-                          title="Retry"
-                        >
-                          {"↻"} Retry
-                        </button>
-                      </div>
-                    )}
+                  {/* Message body */}
+                  {m.role === "assistant" ? (
+                    m.text && <ChatMessageBody text={m.text} cluster={cluster} onQuery={(q) => sendText(q)} />
+                  ) : (
+                    <div className="ac-bubble">{m.text}</div>
+                  )}
 
-                    {/* Follow-up suggestions - only after the final completed assistant message */}
-                    {!busy && i === conv.messages.length - 1 && followUps.length > 0 && (
-                      <div style={S.followUps}>
-                        {followUps.map((fu) => (
-                          <button
-                            key={fu}
-                            style={S.followBtn}
-                            onClick={() => setInput(fu)}
-                            onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--accent2)"; e.currentTarget.style.color = "var(--text)"; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text2)"; }}
-                          >
-                            {fu}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="chat-bubble">{m.text}</div>
-                )}
+                  {/* Message actions */}
+                  {m.role === "assistant" && m.text && !(busy && isLastAI) && (
+                    <div className="ac-msg-actions">
+                      <button className="ac-action-btn" onClick={() => copyMessage(m.text)} title="Copy">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                      </button>
+                      <button
+                        className={"ac-action-btn" + (likedMsgs.has(i) ? " liked" : "")}
+                        onClick={() => {
+                          const wasLiked = likedMsgs.has(i);
+                          setLikedMsgs((p) => { const n = new Set(p); wasLiked ? n.delete(i) : n.add(i); return n; });
+                          setDislikedMsgs((p) => { const n = new Set(p); n.delete(i); return n; });
+                          if (!wasLiked) sendFeedback(i, "like");
+                        }}
+                        title="Helpful"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill={likedMsgs.has(i) ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+                      </button>
+                      <button
+                        className={"ac-action-btn" + (dislikedMsgs.has(i) ? " disliked" : "")}
+                        onClick={() => {
+                          const wasDisliked = dislikedMsgs.has(i);
+                          setDislikedMsgs((p) => { const n = new Set(p); wasDisliked ? n.delete(i) : n.add(i); return n; });
+                          setLikedMsgs((p) => { const n = new Set(p); n.delete(i); return n; });
+                          if (!wasDisliked) sendFeedback(i, "dislike");
+                        }}
+                        title="Not helpful"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill={dislikedMsgs.has(i) ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z"/><path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
+                      </button>
+                      <button className="ac-action-btn" onClick={retryLast} title="Retry">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Follow-ups */}
+                  {!busy && isLastAI && followUps.length > 0 && (
+                    <div className="ac-follow-ups">
+                      {followUps.map((fu) => (
+                        <button key={fu} className="ac-follow-btn" onClick={() => sendText(fu)}>{fu}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
-        {/* ── Input bar (pill style) ── */}
-        <div style={S.inputBar}>
+        {/* Input area */}
+        <div className="ac-input-area">
           {/* Slash palette */}
           {slashOpen && filteredSlash.length > 0 && (
-            <div style={S.slashPalette} ref={slashRef}>
-              {filteredSlash.map((sc, idx) => (
-                <button
-                  key={sc.cmd}
-                  style={S.slashItem(idx === slashIdx)}
-                  onClick={() => pickSlash(sc.cmd)}
-                  onMouseEnter={() => setSlashIdx(idx)}
-                >
-                  <span style={S.slashCatDot(CAT_COLORS[sc.cat])} />
-                  <span style={S.slashCmd}>{sc.cmd}</span>
-                  <span style={S.slashDesc}>{sc.desc}</span>
-                </button>
+            <div className="ac-slash-palette" ref={slashRef}>
+              <div className="ac-slash-head">Commands</div>
+              {Object.entries(groupedSlash).map(([cat, cmds]) => (
+                <div key={cat}>
+                  <div className="ac-slash-group">
+                    <span className="ac-slash-dot" style={{ background: CAT_COLORS[cat] }} />
+                    {CAT_LABELS[cat] || cat}
+                  </div>
+                  {cmds.map((sc) => {
+                    const idx = filteredSlash.indexOf(sc);
+                    return (
+                      <button
+                        key={sc.cmd}
+                        className={"ac-slash-item" + (idx === slashIdx ? " active" : "")}
+                        onClick={() => pickSlash(sc.cmd)}
+                        onMouseEnter={() => setSlashIdx(idx)}
+                      >
+                        <span className="ac-slash-cmd">{sc.cmd}</span>
+                        <span className="ac-slash-desc">{sc.desc}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               ))}
             </div>
           )}
 
-          <div style={{ ...S.inputPill, ...(inputFocused ? S.inputPillFocused : {}) }}>
+          <div className={"ac-input-pill" + (inputFocused ? " focused" : "")}>
             {/* Provider switcher */}
-            <div style={{ position: "relative" }} ref={providerRef}>
-              <div
-                style={S.providerToggle}
-                onClick={() => setProviderOpen((v) => !v)}
-                title={`Provider: ${activeMeta.label}`}
-              >
-                <div style={S.providerIcon(activeMeta.color)}>{activeMeta.icon}</div>
-                <span style={{ whiteSpace: "nowrap" }}>{activeMeta.label}</span>
-                <span style={{ fontSize: 10, color: "var(--text2)", marginLeft: 2 }}>{providerOpen ? "▲" : "▼"}</span>
-              </div>
+            <div className="ac-provider-wrap" ref={providerRef}>
+              <button className="ac-provider-toggle" onClick={() => setProviderOpen((v) => !v)} title={activeMeta.label}>
+                <div className="ac-provider-icon" style={{ background: activeMeta.color }}>{activeMeta.icon}</div>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points={providerOpen ? "18 15 12 9 6 15" : "6 9 12 15 18 9"}/></svg>
+              </button>
               {providerOpen && (
-                <div style={S.providerDropdown}>
+                <div className="ac-provider-dropdown">
+                  <div className="ac-provider-dd-head">LLM Provider</div>
                   {(availableProviders.length > 0 ? availableProviders : Object.keys(PROVIDER_META)).map((key) => {
                     const meta = PROVIDER_META[key] || PROVIDER_META.builtin;
                     return (
                       <button
                         key={key}
-                        style={S.providerOption(key === activeProvider)}
-                        onClick={() => { setActiveProvider(key); setProviderOpen(false); showToast(`Switched to ${meta.label}`, "ok"); }}
-                        onMouseEnter={(e) => { e.currentTarget.style.background = "var(--hover)"; }}
-                        onMouseLeave={(e) => { if (key !== activeProvider) e.currentTarget.style.background = "transparent"; }}
+                        className={"ac-provider-option" + (key === activeProvider ? " active" : "")}
+                        onClick={() => { setActiveProvider(key); setProviderOpen(false); showToast(`Using ${meta.label}`, "ok"); }}
                       >
-                        <div style={S.providerIcon(meta.color)}>{meta.icon}</div>
-                        <div>
-                          <div style={S.providerLabel}>{meta.label}</div>
-                          <div style={S.providerDesc}>{meta.desc}</div>
+                        <div className="ac-provider-icon" style={{ background: meta.color }}>{meta.icon}</div>
+                        <div className="ac-provider-info">
+                          <div className="ac-provider-name">{meta.label}</div>
+                          <div className="ac-provider-desc">{meta.desc}</div>
                         </div>
-                        {key === activeProvider && <span style={{ marginLeft: "auto", color: "var(--ok)", fontSize: 14 }}>{"✓"}</span>}
+                        {key === activeProvider && (
+                          <svg className="ac-provider-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
+                        )}
                       </button>
                     );
                   })}
@@ -798,11 +663,10 @@ export function ChatView() {
               )}
             </div>
 
-            {/* Textarea */}
             <textarea
               ref={textareaRef}
-              style={S.textarea}
-              placeholder={`Message AI about ${cluster === "local" ? "the hub cluster" : cluster}... (type / for commands)`}
+              className="ac-textarea"
+              placeholder={`Ask about ${cluster === "local" ? "the hub cluster" : cluster}...`}
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
@@ -811,38 +675,22 @@ export function ChatView() {
               rows={1}
             />
 
-            {/* Send button (circle) */}
+            <div className="ac-input-hint">
+              <kbd>/</kbd> commands
+            </div>
+
             {busy ? (
-              <button
-                style={{ ...S.sendBtn(true), background: "var(--crit)" }}
-                onClick={handleAbort}
-                title="Abort"
-              >
-                {"■"}
+              <button className="ac-send-btn abort" onClick={handleAbort} title="Stop">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
               </button>
             ) : (
-              <button
-                style={S.sendBtn(!!input.trim())}
-                onClick={send}
-                disabled={!input.trim()}
-                title="Send"
-              >
-                {"↑"}
+              <button className="ac-send-btn" onClick={send} disabled={!input.trim()} title="Send">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
               </button>
             )}
           </div>
         </div>
       </div>
-
-      {/* Inline keyframe for spinner */}
-      <style>{`
-        @keyframes spin {
-          to { transform: rotate(360deg); }
-        }
-        .welcome-card-hover:hover {
-          box-shadow: 0 4px 20px rgba(0,0,0,.2);
-        }
-      `}</style>
     </div>
   );
 }
