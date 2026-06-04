@@ -2681,7 +2681,10 @@ async function startSSE() {
             version: agent.lastReport.openshiftVersion || agent.lastReport.kubernetesVersion || "",
             health: agent.lastReport.clusterHealth?.status || "",
             nodes: `${agent.lastReport.nodes?.ready || 0}/${agent.lastReport.nodes?.total || 0}`,
-            pods: agent.lastReport.pods?.total || 0,
+            pods: {
+              running: agent.lastReport.pods?.running || 0,
+              total: agent.lastReport.pods?.total || 0,
+            },
             issues: agent.lastReport.pods?.issues?.length || 0,
             warnings: agent.lastReport.events?.warnings || 0,
           } : null,
@@ -4232,18 +4235,12 @@ async function startSSE() {
 
     // ── Image Vulnerability Scanner API ──────────────────────────────
     if (req.method === "GET" && url.pathname === "/api/dashboard/image-vulns") {
-      const _ivCluster = url.searchParams.get("cluster");
-      if (_ivCluster && _ivCluster !== "local") {
-        const cached = getAgentCachedResponse(_ivCluster, "/api/dashboard/image-vulns", { skipFreshnessCheck: true });
-        if (cached) return sendJson(res, 200, cached);
-        return sendJson(res, 200, { available: false, source: "agent-cache", message: "Image vulnerability scanning is not available for this cluster" });
-      }
-      try {
+      const _ivHandler = async () => {
         const ns = url.searchParams.get("namespace") || undefined;
         const scan = await runImageScan(ns);
         const riskScore = Math.max(0, 100 - scan.critical * 15 - scan.high * 8 - scan.medium * 3 - scan.low * 1);
         const grade = riskScore >= 90 ? "A" : riskScore >= 80 ? "B" : riskScore >= 70 ? "C" : riskScore >= 60 ? "D" : "F";
-        sendJson(res, 200, {
+        return {
           scannerType: scan.scannerType,
           timestamp: scan.timestamp,
           scope: scan.namespace,
@@ -4277,7 +4274,17 @@ async function startSSE() {
             })),
           })),
           history: getScanHistory().slice(0, 5),
-        });
+        };
+      };
+      try {
+        const data = await withClusterContext(url, _ivHandler);
+        if (data === null) {
+          const _ivCluster = url.searchParams.get("cluster");
+          const cached = getAgentCachedResponse(_ivCluster, "/api/dashboard/image-vulns", { skipFreshnessCheck: true });
+          if (cached) return sendJson(res, 200, cached);
+          return sendJson(res, 200, { available: false, source: "agent-cache", message: "Not installed on this cluster" });
+        }
+        sendJson(res, 200, data);
       } catch (err) {
         sendJson(res, 200, { scannerType: "unknown", totalImages: 0, totalVulns: 0, critical: 0, high: 0, medium: 0, low: 0, fixable: 0, maxCVSS: 0, riskScore: 0, grade: "?", topImages: [], history: [], compliance: { avgScore: 0, signed: 0, sbom: 0, pinned: 0, trusted: 0, total: 0 }, ageSummary: { fresh: 0, aging: 0, stale: 0, current: 0, unknown: 0 }, error: err.message });
       }

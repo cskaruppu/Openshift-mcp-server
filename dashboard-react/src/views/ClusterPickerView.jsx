@@ -80,7 +80,8 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
   const hubPInfo = getPlatformInfo(lci.platform);
   const hubVersion = isOCP ? (lci.cluster?.version || "--") : (lci.cluster?.kubernetesVersion || lci.cluster?.version || "--");
   const hubNodes = lci.nodes ? `${lci.nodes.ready || 0}/${lci.nodes.total || 0}` : "--";
-  const hubPods = lci.pods ? `${lci.pods.running ?? 0}/${lci.pods.total ?? 0}` : "--";
+  const hubPods = lci.pods ? `${lci.pods.running ?? 0}` : "--";
+  const hubPodsTotal = lci.pods?.total ?? 0;
 
   return (
     <div className="cluster-picker">
@@ -185,7 +186,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
               </div>
               <div className="cp-card-stat">
                 <div className="cp-card-stat-val">{hubPods}</div>
-                <div className="cp-card-stat-lbl">Pods</div>
+                <div className="cp-card-stat-lbl">Running Pods{hubPodsTotal > 0 ? ` / ${hubPodsTotal}` : ""}</div>
               </div>
             </div>
           </div>
@@ -236,8 +237,8 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                     <div className="cp-card-stat-lbl">Nodes</div>
                   </div>
                   <div className="cp-card-stat">
-                    <div className="cp-card-stat-val">{summary.pods ?? "--"}</div>
-                    <div className="cp-card-stat-lbl">Pods</div>
+                    <div className="cp-card-stat-val">{typeof summary.pods === "object" ? (summary.pods.running ?? 0) : (summary.pods ?? "--")}</div>
+                    <div className="cp-card-stat-lbl">Running Pods{typeof summary.pods === "object" && summary.pods.total > 0 ? ` / ${summary.pods.total}` : ""}</div>
                   </div>
                 </div>
               </div>

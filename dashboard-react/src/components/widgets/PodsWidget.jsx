@@ -7,6 +7,7 @@ export function PodsWidget() {
   const pods = data?.pods;
   const running = pods?.running ?? 0;
   const total = pods?.total ?? 0;
+  const notRunning = total - running;
   const allHealthy = total > 0 && running === total;
 
   return (
@@ -15,11 +16,11 @@ export function PodsWidget() {
       {isError && <div className="metric err">{String(error.message)}</div>}
       {!isLoading && !isError && (
         <>
-          <div className={`metric ${allHealthy ? "ok" : total > 0 ? "warn" : "muted"}`}>
-            {total ? `${running} / ${total}` : "--"}
+          <div className={`metric ${allHealthy ? "ok" : notRunning > 0 ? "warn" : "muted"}`}>
+            {total ? running : "--"}
           </div>
           <div className="metric-label">
-            {pods ? `Running · ${total - running} not running` : ""}
+            {pods ? `Running of ${total} total${notRunning > 0 ? ` · ${notRunning} pending/failed` : ""}` : ""}
           </div>
         </>
       )}
