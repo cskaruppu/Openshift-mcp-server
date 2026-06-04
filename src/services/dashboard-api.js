@@ -778,6 +778,12 @@ export async function handleDashboardAPI(pathname, req, res) {
           }
         }
 
+        let totalAllPods = 0;
+        let systemPods = 0;
+        for (const ns of Object.keys(podsByNs)) {
+          totalAllPods += podsByNs[ns].total;
+        }
+
         const nsList = (namespaces.items || [])
           .filter(
             (ns) =>
@@ -809,7 +815,11 @@ export async function handleDashboardAPI(pathname, req, res) {
             };
           });
 
-        json(res, 200, nsList);
+        let userPods = 0;
+        for (const ns of nsList) userPods += ns.podCount || 0;
+        systemPods = totalAllPods - userPods;
+
+        json(res, 200, { namespaces: nsList, totalPods: totalAllPods, userPods, systemPods });
         break;
       }
 

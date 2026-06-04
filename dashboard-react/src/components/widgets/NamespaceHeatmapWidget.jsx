@@ -9,13 +9,16 @@ const healthColor = (h) =>
  */
 export function NamespaceHeatmapWidget() {
   const { data, isLoading, isError, error } = useClusterQuery("/api/namespaces");
-  const namespaces = (Array.isArray(data) ? data : []).slice().sort((a, b) => (b.podCount || 0) - (a.podCount || 0));
+  const raw = data?.namespaces ?? (Array.isArray(data) ? data : []);
+  const namespaces = raw.slice().sort((a, b) => (b.podCount || 0) - (a.podCount || 0));
+  const totalAllPods = data?.totalPods ?? 0;
+  const systemPods = data?.systemPods ?? 0;
 
   const counts = { healthy: 0, warning: 0, critical: 0, pending: 0 };
-  let totalPods = 0;
+  let userPods = 0;
   for (const ns of namespaces) {
     if (counts[ns.health] != null) counts[ns.health]++;
-    totalPods += ns.podCount || 0;
+    userPods += ns.podCount || 0;
   }
 
   return (
@@ -27,7 +30,7 @@ export function NamespaceHeatmapWidget() {
         {!isLoading && !isError && (
           <>
             <div className="metric-label" style={{ marginBottom: 10 }}>
-              {namespaces.length} namespaces · {totalPods} pods ·
+              {namespaces.length} namespaces · {userPods} user pods{systemPods > 0 ? ` · ${systemPods} system` : ""}{totalAllPods > 0 ? ` · ${totalAllPods} total` : ""} ·
               <span style={{ color: "#22c55e" }}> {counts.healthy} healthy</span> ·
               <span style={{ color: "#f59e0b" }}> {counts.warning} warning</span> ·
               <span style={{ color: "#ef4444" }}> {counts.critical} critical</span>

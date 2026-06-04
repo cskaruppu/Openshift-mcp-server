@@ -1,5 +1,6 @@
 import { ClusterHealthWidget } from "../components/widgets/ClusterHealthWidget";
 import { NodesWidget } from "../components/widgets/NodesWidget";
+import { PodsWidget } from "../components/widgets/PodsWidget";
 import { NamespacesWidget } from "../components/widgets/NamespacesWidget";
 import { ClusterOperatorsWidget } from "../components/widgets/ClusterOperatorsWidget";
 import { ActiveAlertsWidget } from "../components/widgets/ActiveAlertsWidget";
@@ -9,7 +10,6 @@ import { NodeTopologyWidget } from "../components/widgets/NodeTopologyWidget";
 import { NamespaceHeatmapWidget } from "../components/widgets/NamespaceHeatmapWidget";
 import { RiskPredictionsWidget } from "../components/widgets/RiskPredictionsWidget";
 import { AppChangesWidget } from "../components/widgets/AppChangesWidget";
-import { MulticlusterWidget } from "../components/widgets/MulticlusterWidget";
 import { HealthTimelineWidget } from "../components/widgets/HealthTimelineWidget";
 import { EmergencyActionsWidget } from "../components/widgets/EmergencyActionsWidget";
 import { AnsibleWidget } from "../components/widgets/AnsibleWidget";
@@ -25,6 +25,9 @@ export function DashboardView() {
           </div>
           <div className="dash-hero-card hero-nodes">
             <NodesWidget />
+          </div>
+          <div className="dash-hero-card hero-pods">
+            <PodsWidget />
           </div>
           <div className="dash-hero-card hero-ns">
             <NamespacesWidget />
@@ -112,14 +115,6 @@ export function DashboardView() {
         <div className="dash-ansible-row">
           <AnsibleWidget />
         </div>
-      </section>
-
-      {/* ── Fleet Overview ── */}
-      <section className="dash-section">
-        <div className="dash-section-header">
-          <h2 className="dash-section-title">Fleet & Infrastructure</h2>
-        </div>
-        <MulticlusterWidget />
       </section>
 
       {/* ── Health & Topology (side by side) ── */}
