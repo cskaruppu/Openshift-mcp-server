@@ -123,18 +123,23 @@ export function AIHubView() {
   const registryTotal = registryData?.total ?? registryAgents.length;
   const serviceCount = new Set(registryAgents.flatMap((a) => a.services || [])).size;
 
-  // Unique built-in tools across all agent manifests.
+  // Total MCP tools across all agents (sum incl. shared tools) — matches the
+  // registry's own totalTools count, e.g. 167.
+  const registryToolCount = registryData?.totalTools ?? registryAgents.reduce((s, a) => s + (a.tools?.length || 0), 0);
+  // Unique built-in tools (for the capability grid).
   const registryTools = [...new Set(registryAgents.flatMap((a) => a.tools || []))];
   // Federated tools from external MCP servers connected to the hub.
   const hubTools = Array.isArray(toolsData?.tools) ? toolsData.tools : [];
-  // Combined, de-duplicated tool catalogue for display.
-  const toolNameSet = new Set(registryTools);
-  for (const t of hubTools) toolNameSet.add(t.name || t);
+  // Combined, de-duplicated tool catalogue for the capability grid.
+  const uniqueToolSet = new Set(registryTools);
+  for (const t of hubTools) uniqueToolSet.add(t.name || t);
   const toolList = [
     ...registryTools.map((name) => ({ name })),
     ...hubTools.filter((t) => !registryTools.includes(t.name)),
   ];
-  const toolCount = toolNameSet.size;
+  const uniqueToolCount = uniqueToolSet.size;
+  // Headline "tools" number tracks the registry total (167) plus any federated.
+  const toolCount = registryToolCount + hubTools.filter((t) => !registryTools.includes(t.name)).length;
 
   const agents = Array.isArray(agentData?.agents) ? agentData.agents : [];
   const clusterCount = 1 + agents.length;
@@ -331,18 +336,18 @@ export function AIHubView() {
         </div>
       </div>
 
-      {/* MCP Capabilities — real tools from /api/tools */}
+      {/* MCP Capabilities — unique tools across the registry + federated servers */}
       <div className="card hub-panel">
         <div className="hub-section-head">
           <span style={{ fontSize: 16 }}>{"🔧"}</span>
           <h3>MCP Capabilities</h3>
-          <span className="hub-tool-count">{toolCount} tools</span>
+          <span className="hub-tool-count">{toolCount} total · {uniqueToolCount} unique</span>
         </div>
-        {toolCount === 0 ? (
+        {uniqueToolCount === 0 ? (
           <div className="metric muted" style={{ fontSize: 13 }}>No tools reported</div>
         ) : (
           <div className="hub-mcp-grid">
-            {toolList.slice(0, 24).map((t, i) => (
+            {toolList.map((t, i) => (
               <div key={t.name || i} className="hub-mcp-tool" title={t.description || t.name}>
                 <span className="hub-mcp-icon">{"⚙"}</span>
                 {t.name}
@@ -400,6 +405,11 @@ export function AIHubView() {
             ))}
           </div>
         </div>
+
+        {/* Agent Orchestration Flow */}
+        {registryAgents.length > 0 && (
+          <AgentFlowDiagram categories={allCategories} onSelect={setDetailAgent} />
+        )}
 
         {/* Category Filter */}
         <div className="agents-filter-bar">
@@ -532,4 +542,87 @@ function timeAgo(iso) {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
+}
+
+/* Agent Orchestration Flow — User → AI Orchestrator → all agents, grouped by category. */
+function AgentFlowDiagram({ categories, onSelect }) {
+  const COL_W = 150, NODE_W = 134, NODE_H = 52, ROW_H = 70;
+  const cols = categories.length;
+  const maxRows = Math.max(1, ...categories.map((c) => c.agents.length));
+  const width = Math.max(680, cols * COL_W + 30);
+  const topY = 16, orchY = 96, agentTopY = 200;
+  const height = agentTopY + maxRows * ROW_H + 10;
+  const orchX = width / 2;
+
+  return (
+    <div className="agent-flow card">
+      <div className="agent-flow-head">
+        <span style={{ fontSize: 15 }}>{"🧭"}</span>
+        <h3>Agent Orchestration Flow</h3>
+        <span className="agent-flow-legend">
+          <span><span className="afl-dot" style={{ background: "#6366f1" }} /> Orchestrator</span>
+          <span><span className="afl-dot" style={{ background: "#22c55e" }} /> Agent</span>
+        </span>
+      </div>
+      <div className="agent-flow-scroll">
+        <svg viewBox={`0 0 ${width} ${height}`} width="100%" style={{ minWidth: width, maxHeight: height }}>
+          {/* edges: orchestrator → each agent */}
+          {categories.map((cat, ci) =>
+            cat.agents.map((a, ri) => {
+              const ax = 15 + ci * COL_W + NODE_W / 2;
+              const ay = agentTopY + ri * ROW_H;
+              return (
+                <path
+                  key={`e-${a.id || a.name}`}
+                  d={`M ${orchX} ${orchY + 28} C ${orchX} ${orchY + 80}, ${ax} ${ay - 40}, ${ax} ${ay}`}
+                  stroke={a.color || "#3b82f6"} strokeWidth="1.2" fill="none" opacity="0.35"
+                />
+              );
+            })
+          )}
+          {/* user → orchestrator */}
+          <line x1={orchX} y1={topY + 24} x2={orchX} y2={orchY} stroke="#64748b" strokeWidth="1.4" />
+
+          {/* user node */}
+          <g>
+            <rect x={orchX - 55} y={topY} width="110" height="26" rx="13" fill="#1e293b" stroke="#334155" />
+            <text x={orchX} y={topY + 17} textAnchor="middle" fill="#e2e8f0" fontSize="11" fontWeight="600">{"\u{1F464} User Query"}</text>
+          </g>
+
+          {/* orchestrator node */}
+          <g>
+            <rect x={orchX - 130} y={orchY} width="260" height="44" rx="10" fill="url(#orchGrad)" stroke="#6366f1" />
+            <text x={orchX} y={orchY + 20} textAnchor="middle" fill="#fff" fontSize="12.5" fontWeight="800">{"\u{1F9E0} AI Orchestrator"}</text>
+            <text x={orchX} y={orchY + 35} textAnchor="middle" fill="#c7d2fe" fontSize="9">LLM Router · Intent Classification</text>
+          </g>
+          <defs>
+            <linearGradient id="orchGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#312e81" /><stop offset="100%" stopColor="#4338ca" />
+            </linearGradient>
+          </defs>
+
+          {/* agent nodes */}
+          {categories.map((cat, ci) =>
+            cat.agents.map((a, ri) => {
+              const ax = 15 + ci * COL_W;
+              const ay = agentTopY + ri * ROW_H;
+              return (
+                <g key={a.id || a.name} style={{ cursor: "pointer" }} onClick={() => onSelect(a)}>
+                  <rect x={ax} y={ay} width={NODE_W} height={NODE_H} rx="9"
+                    fill="#0d1117" stroke={a.color || "#3b82f6"} strokeWidth="1.3" />
+                  <circle cx={ax + 14} cy={ay + 16} r="4" fill={a.color || "#3b82f6"} />
+                  <text x={ax + 26} y={ay + 19} fill="#e2e8f0" fontSize="10" fontWeight="700">
+                    {(a.name || "").replace(/ Agent$/, "").slice(0, 16)}
+                  </text>
+                  <text x={ax + 10} y={ay + 38} fill="#94a3b8" fontSize="8.5">
+                    {(a.tools?.length || 0)} tools · {cat.name}
+                  </text>
+                </g>
+              );
+            })
+          )}
+        </svg>
+      </div>
+    </div>
+  );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "./api/client";
 import { ClusterSwitcher } from "./components/ClusterSwitcher";
@@ -19,11 +19,12 @@ import { useClusterStore, useActiveCluster } from "./store/clusterStore";
 import { useViewStore } from "./store/viewStore";
 import { getPlatformInfo } from "./lib/platforms";
 
+// Per-cluster views only. AI Hub / Agent Registry / Settings are fleet-level
+// and live on the centralized cluster-picker screen, not inside a cluster.
 const NAV = [
   { key: "dashboard", label: "Dashboard" },
   { key: "chat", label: "AI Chat" },
   { key: "audit", label: "Audit" },
-  { key: "hub", label: "AI Hub" },
   { key: "intelligence", label: "AI Intelligence" },
 ];
 
@@ -37,7 +38,7 @@ export default function App() {
   const toggleTheme = useThemeStore((s) => s.toggle);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [inClusterPicker, setInClusterPicker] = useState(true);
-  const [agentsModalOpen, setAgentsModalOpen] = useState(false);
+  const [hubOpen, setHubOpen] = useState(false);
   const { kbdOpen, setKbdOpen } = useKeyboardShortcuts();
 
   const { data: agentData } = useQuery({
@@ -85,12 +86,16 @@ export default function App() {
     })();
   }, []);
 
+  // One-time auto-skip: if the only cluster is the hub, drop the user straight
+  // into its workspace on first load. Must not re-fire on later refetches, or it
+  // would kick the user out whenever they return to the centralized picker.
+  const autoSkippedRef = useRef(false);
   useEffect(() => {
+    if (autoSkippedRef.current) return;
     if (authenticated && agentData) {
+      autoSkippedRef.current = true;
       const hasRemote = Array.isArray(agentData.agents) && agentData.agents.length > 0;
-      if (!hasRemote) {
-        setInClusterPicker(false);
-      }
+      if (!hasRemote) setInClusterPicker(false);
     }
   }, [authenticated, agentData]);
 
@@ -99,6 +104,15 @@ export default function App() {
     setInClusterPicker(false);
     setActiveView("dashboard");
   }, [setActiveCluster, setActiveView]);
+
+  // AI Hub is fleet-level / centralized — it opens as its own full-screen view
+  // layered over the cluster picker, never inside a single cluster's workspace.
+  const handleOpenAIHub = useCallback(() => {
+    setHubOpen(true);
+  }, []);
+  const handleCloseAIHub = useCallback(() => {
+    setHubOpen(false);
+  }, []);
 
   const handleBackToPicker = useCallback(() => {
     setInClusterPicker(true);
@@ -130,6 +144,7 @@ export default function App() {
           onSelectCluster={handleSelectCluster}
           onLogout={handleLogout}
           onOpenSettings={() => setSettingsOpen(true)}
+          onOpenAIHub={handleOpenAIHub}
         />
       )}
       {authenticated && !inClusterPicker && (
@@ -189,6 +204,10 @@ export default function App() {
 
               {!hasRemoteClusters && <ClusterSwitcher />}
 
+              {/* Return to the centralized workspace home (AI Hub, Settings, all clusters) */}
+              <button className="icon-btn" onClick={handleBackToPicker} title="Workspaces & AI Hub">
+                &#x2302;
+              </button>
               <button className="icon-btn" onClick={() => { showToast("Refreshing...", "ok"); window.location.reload(); }} title="Refresh">
                 &#x21bb;
               </button>
@@ -200,23 +219,6 @@ export default function App() {
               />
               <button className="icon-btn" onClick={() => setKbdOpen(true)} title="Keyboard shortcuts (Ctrl+/)">
                 &#x2328;
-              </button>
-              <button className="settings-gear" onClick={() => setSettingsOpen(true)} title="Settings">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                </svg>
-              </button>
-              <button
-                className={"agents-icon-btn" + (agentsModalOpen ? " active" : "")}
-                onClick={() => { setAgentsModalOpen(!agentsModalOpen); setActiveView("hub"); }}
-                title="AI Agents"
-              >
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="7" r="3" /><circle cx="5" cy="18" r="2.5" /><circle cx="19" cy="18" r="2.5" />
-                  <line x1="12" y1="10" x2="5" y2="15.5" /><line x1="12" y1="10" x2="19" y2="15.5" />
-                  <line x1="5" y1="15.5" x2="19" y2="15.5" strokeDasharray="2 2" opacity="0.5" />
-                </svg>
-                {agentsList.length > 0 && <span className="agents-icon-badge">{agentsList.length}</span>}
               </button>
               {user && user.name !== "anonymous" && (
                 <>
@@ -233,7 +235,6 @@ export default function App() {
             {activeView === "dashboard" && <DashboardView />}
             {activeView === "chat" && <ChatView />}
             {activeView === "audit" && <AuditView />}
-            {activeView === "hub" && <AIHubView />}
             {activeView === "intelligence" && <IntelligenceView />}
           </main>
 
@@ -243,6 +244,38 @@ export default function App() {
           </footer>
         </div>
       )}
+
+      {/* Centralized AI Hub — fleet-wide, shared across all clusters */}
+      {authenticated && hubOpen && (
+        <div className="hub-fullscreen">
+          <header className="app-header">
+            <div className="brand">
+              <span className="brand-mark">TCS</span> Agentic AI
+              <span className="brand-sub">AI Hub · Centralized Intelligence</span>
+            </div>
+            <div className="header-actions" style={{ marginLeft: "auto" }}>
+              <button className="icon-btn hub-back-btn" onClick={handleCloseAIHub} title="Back to clusters">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M8 1L3 6l5 5" /></svg>
+                All Clusters
+              </button>
+              <button className="icon-btn" onClick={() => setSettingsOpen(true)} title="Settings">&#x2699;</button>
+              <button
+                className="icon-btn"
+                onClick={toggleTheme}
+                title="Toggle theme"
+                dangerouslySetInnerHTML={{ __html: theme === "light" ? "&#x2600;" : "&#x263E;" }}
+              />
+              {user && user.name !== "anonymous" && (
+                <span className="user-badge">{user.display_name || user.name}</span>
+              )}
+            </div>
+          </header>
+          <main className="main-area">
+            <AIHubView />
+          </main>
+        </div>
+      )}
+
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <KbdOverlay open={kbdOpen} onClose={() => setKbdOpen(false)} />
       <ToastStack />
