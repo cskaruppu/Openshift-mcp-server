@@ -55,7 +55,7 @@ async function clusterAction(url, method, successMsg) {
   }
 }
 
-export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, onOpenAIHub }) {
+export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, onOpenAgentRegistry, onOpenUserMgmt }) {
   const user = useAuthStore((s) => s.user);
   const theme = useThemeStore((s) => s.theme);
   const toggleTheme = useThemeStore((s) => s.toggle);
@@ -112,18 +112,31 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
         </div>
         <div className="cp-user">
           <div className="cp-header-actions">
-            <button className="cp-hub-btn" onClick={onOpenAIHub} title="AI Hub — Agent Registry & Fleet Intelligence">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <button className="cp-icon-btn agents-icon-btn" onClick={onOpenAgentRegistry} title="Agent Registry">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="7" r="3" /><circle cx="5" cy="18" r="2.5" /><circle cx="19" cy="18" r="2.5" />
                 <line x1="12" y1="10" x2="5" y2="15.5" /><line x1="12" y1="10" x2="19" y2="15.5" />
                 <line x1="5" y1="15.5" x2="19" y2="15.5" strokeDasharray="2 2" opacity="0.5" />
               </svg>
-              AI Hub
+              <span className="agents-icon-badge">{remoteAgents.length > 0 ? "!" : ""}</span>
             </button>
-            <button className="cp-action-btn" onClick={toggleTheme} title="Toggle theme">
+            <button className="cp-icon-btn" onClick={onOpenUserMgmt} title="User Management">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+            </button>
+            <button className="cp-icon-btn" onClick={onOpenSettings} title="Settings">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </button>
+            <button className="cp-icon-btn" onClick={toggleTheme} title="Toggle theme">
               <span dangerouslySetInnerHTML={{ __html: theme === "light" ? "&#x2600;" : "&#x263E;" }} />
             </button>
-            <button className="cp-action-btn" onClick={onOpenSettings} title="Settings">&#x2699;</button>
           </div>
           {user && user.name !== "anonymous" && (
             <>
@@ -242,32 +255,6 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                 </span>
               ))}
             </div>
-          </div>
-        </div>
-
-        {/* Centralized AI Hub / Agent Registry entry — fleet-wide, not per-cluster */}
-        <div className="cp-hub-banner" onClick={onOpenAIHub}>
-          <div className="cp-hub-banner-left">
-            <div className="cp-hub-banner-icon">
-              <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="7" r="3" /><circle cx="5" cy="18" r="2.5" /><circle cx="19" cy="18" r="2.5" />
-                <line x1="12" y1="10" x2="5" y2="15.5" /><line x1="12" y1="10" x2="19" y2="15.5" />
-                <line x1="5" y1="15.5" x2="19" y2="15.5" strokeDasharray="2 2" opacity="0.5" />
-              </svg>
-            </div>
-            <div>
-              <div className="cp-hub-banner-title">
-                AI Hub
-                <span className="cp-hub-banner-badge">CENTRALIZED · ALL CLUSTERS</span>
-              </div>
-              <div className="cp-hub-banner-sub">
-                Agent Registry, LLM providers, MCP capabilities and fleet-wide intelligence — shared across every cluster
-              </div>
-            </div>
-          </div>
-          <div className="cp-hub-banner-cta">
-            Open AI Hub
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M5 2l5 5-5 5" /></svg>
           </div>
         </div>
 

@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from "react";
-import { useAuthStore } from "../store/authStore";
 import { useThemeStore } from "../store/themeStore";
 import { useActiveCluster } from "../store/clusterStore";
 import { useClusterQuery } from "../hooks/useClusterQuery";
@@ -32,7 +31,6 @@ const TABS = [
   { key: "notifications", label: "Notifications" },
   { key: "flags", label: "Feature Flags" },
   { key: "appearance", label: "Appearance" },
-  { key: "account", label: "Account" },
 ];
 
 const LLM_PROVIDERS = [
@@ -892,93 +890,12 @@ function AppearanceTab({ theme, toggleTheme }) {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Tab 7: Account                                                     */
-/* ------------------------------------------------------------------ */
-
-function AccountTab({ user, isAdmin, handleLogout }) {
-  return (
-    <div>
-      <div style={S.card}>
-        <div style={{ fontWeight: 600, fontSize: 14, ...S.mb8 }}>Current User</div>
-        {user && (
-          <div style={{ fontSize: 13, ...S.mb12 }}>
-            Signed in as <strong>{user.display_name || user.name || "anonymous"}</strong>
-            {user.role && <span className="scope-chip" style={{ marginLeft: 8 }}>{user.role}</span>}
-          </div>
-        )}
-        {user?.email && (
-          <div style={S.muted}>Email: {user.email}</div>
-        )}
-      </div>
-
-      {isAdmin && (
-        <div style={S.card}>
-          <div style={{ fontWeight: 600, fontSize: 14, ...S.mb8 }}>User Management</div>
-          <UserManagement />
-        </div>
-      )}
-
-      <button className="so-logout-btn" onClick={handleLogout}>Sign Out</button>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  User Management (reused from original)                             */
-/* ------------------------------------------------------------------ */
-
-function UserManagement() {
-  const [users, setUsers] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  const loadUsers = useCallback(async () => {
-    try {
-      const res = await fetch("/api/auth/users");
-      const data = await res.json();
-      setUsers(data.users || []);
-    } catch {
-      setUsers([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { loadUsers(); }, [loadUsers]);
-
-  if (loading) return <div style={{ fontSize: 12, color: "var(--text2)" }}>Loading users...</div>;
-  if (!users?.length) return <div style={{ fontSize: 12, color: "var(--text2)" }}>No users found.</div>;
-
-  return (
-    <table className="audit-table" style={{ width: "100%", marginBottom: 0 }}>
-      <thead>
-        <tr>
-          <th>User</th>
-          <th>Role</th>
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {users.map((u) => (
-          <tr key={u.username}>
-            <td style={{ fontWeight: 600 }}>{u.display_name || u.username}</td>
-            <td><span className="pill" style={{ background: u.role === "admin" ? "var(--accent)" : "#3b82f6" }}>{u.role}</span></td>
-            <td>
-              <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: u.active !== false ? "#22c55e" : "#666" }} />
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
 
 /* ------------------------------------------------------------------ */
 /*  Main Panel                                                         */
 /* ------------------------------------------------------------------ */
 
 export function SettingsPanel({ open, onClose }) {
-  const user = useAuthStore((s) => s.user);
   const theme = useThemeStore((s) => s.theme);
   const toggleTheme = useThemeStore((s) => s.toggle);
   const cluster = useActiveCluster();
@@ -1010,20 +927,7 @@ export function SettingsPanel({ open, onClose }) {
     });
   };
 
-  const handleLogout = useCallback(async () => {
-    try {
-      await fetch("/api/auth/logout", { method: "POST" });
-    } finally {
-      useAuthStore.getState().logout();
-      useAuthStore.getState().setUnauthenticated("password");
-      showToast("Logged out", "ok");
-      onClose();
-    }
-  }, [onClose]);
-
   if (!open) return null;
-
-  const isAdmin = user?.role === "admin" || user?.name === "admin";
 
   const renderTab = () => {
     switch (activeTab) {
@@ -1033,7 +937,6 @@ export function SettingsPanel({ open, onClose }) {
       case "notifications": return <NotificationsTab />;
       case "flags": return <FeatureFlagsTab />;
       case "appearance": return <AppearanceTab theme={theme} toggleTheme={toggleTheme} />;
-      case "account": return <AccountTab user={user} isAdmin={isAdmin} handleLogout={handleLogout} />;
       default: return null;
     }
   };

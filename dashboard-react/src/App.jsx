@@ -4,6 +4,8 @@ import { apiGet } from "./api/client";
 import { ClusterSwitcher } from "./components/ClusterSwitcher";
 import { LoginOverlay } from "./components/LoginOverlay";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { UserManagementPanel } from "./components/UserManagementPanel";
+import { AgentRegistryModal } from "./components/AgentRegistryModal";
 import { ToastStack } from "./components/ToastStack";
 import { KbdOverlay, useKeyboardShortcuts } from "./components/KeyboardShortcuts";
 import { ClusterPickerView } from "./views/ClusterPickerView";
@@ -11,7 +13,6 @@ import { DashboardView } from "./views/DashboardView";
 import { AuditView } from "./views/AuditView";
 import { IntelligenceView } from "./views/IntelligenceView";
 import { ChatView } from "./views/ChatView";
-import { AIHubView } from "./views/AIHubView";
 import { useAuthStore } from "./store/authStore";
 import { useThemeStore } from "./store/themeStore";
 import { showToast } from "./store/toastStore";
@@ -37,8 +38,9 @@ export default function App() {
   const theme = useThemeStore((s) => s.theme);
   const toggleTheme = useThemeStore((s) => s.toggle);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [userMgmtOpen, setUserMgmtOpen] = useState(false);
+  const [agentRegOpen, setAgentRegOpen] = useState(false);
   const [inClusterPicker, setInClusterPicker] = useState(true);
-  const [hubOpen, setHubOpen] = useState(false);
   const { kbdOpen, setKbdOpen } = useKeyboardShortcuts();
 
   const { data: agentData } = useQuery({
@@ -105,13 +107,17 @@ export default function App() {
     setActiveView("dashboard");
   }, [setActiveCluster, setActiveView]);
 
-  // AI Hub is fleet-level / centralized — it opens as its own full-screen view
-  // layered over the cluster picker, never inside a single cluster's workspace.
-  const handleOpenAIHub = useCallback(() => {
-    setHubOpen(true);
+  const handleOpenAgentRegistry = useCallback(() => {
+    setAgentRegOpen(true);
   }, []);
-  const handleCloseAIHub = useCallback(() => {
-    setHubOpen(false);
+  const handleCloseAgentRegistry = useCallback(() => {
+    setAgentRegOpen(false);
+  }, []);
+  const handleOpenUserMgmt = useCallback(() => {
+    setUserMgmtOpen(true);
+  }, []);
+  const handleCloseUserMgmt = useCallback(() => {
+    setUserMgmtOpen(false);
   }, []);
 
   const handleBackToPicker = useCallback(() => {
@@ -144,7 +150,8 @@ export default function App() {
           onSelectCluster={handleSelectCluster}
           onLogout={handleLogout}
           onOpenSettings={() => setSettingsOpen(true)}
-          onOpenAIHub={handleOpenAIHub}
+          onOpenAgentRegistry={handleOpenAgentRegistry}
+          onOpenUserMgmt={handleOpenUserMgmt}
         />
       )}
       {authenticated && !inClusterPicker && (
@@ -245,37 +252,8 @@ export default function App() {
         </div>
       )}
 
-      {/* Centralized AI Hub — fleet-wide, shared across all clusters */}
-      {authenticated && hubOpen && (
-        <div className="hub-fullscreen">
-          <header className="app-header">
-            <div className="brand">
-              <span className="brand-mark">TCS</span> Agentic AI
-              <span className="brand-sub">AI Hub · Centralized Intelligence</span>
-            </div>
-            <div className="header-actions" style={{ marginLeft: "auto" }}>
-              <button className="icon-btn hub-back-btn" onClick={handleCloseAIHub} title="Back to clusters">
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M8 1L3 6l5 5" /></svg>
-                All Clusters
-              </button>
-              <button className="icon-btn" onClick={() => setSettingsOpen(true)} title="Settings">&#x2699;</button>
-              <button
-                className="icon-btn"
-                onClick={toggleTheme}
-                title="Toggle theme"
-                dangerouslySetInnerHTML={{ __html: theme === "light" ? "&#x2600;" : "&#x263E;" }}
-              />
-              {user && user.name !== "anonymous" && (
-                <span className="user-badge">{user.display_name || user.name}</span>
-              )}
-            </div>
-          </header>
-          <main className="main-area">
-            <AIHubView />
-          </main>
-        </div>
-      )}
-
+      <AgentRegistryModal open={agentRegOpen} onClose={handleCloseAgentRegistry} />
+      <UserManagementPanel open={userMgmtOpen} onClose={handleCloseUserMgmt} />
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <KbdOverlay open={kbdOpen} onClose={() => setKbdOpen(false)} />
       <ToastStack />
