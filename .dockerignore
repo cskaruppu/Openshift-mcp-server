@@ -1,0 +1,12 @@
+# Keep the Docker build context lean and reproducible.
+# node_modules are reinstalled inside the image via `npm ci`.
+node_modules
+**/node_modules
+dashboard-react/dist
+npm-debug.log*
+.git
+.gitignore
+*.md
+.env
+.env.*
+tests

@@ -13,6 +13,7 @@
 #   ./build.sh --no-deploy        # Build + push only, skip deployment
 #   ./build.sh --no-push          # Build only, skip push and deploy
 #   ./build.sh --no-pull          # Skip git pull, build from local files
+#   ./build.sh --no-ui            # Skip host-side React dashboard build
 #   ./build.sh --tag v1.1.0       # Tag images with version + latest
 #   ./build.sh agent --tag v1.1.0 --no-deploy   # Tag agent, skip deploy
 #
@@ -41,6 +42,7 @@ TAG="latest"
 PULL=true
 PUSH=true
 DEPLOY=true
+BUILD_UI=true         # build the Phase 2 React dashboard on the host
 
 # ---------------------------------------------------------------------------
 # Parse arguments
@@ -50,6 +52,7 @@ while [[ $# -gt 0 ]]; do
     hub|agent|all)     TARGET="$1"; shift ;;
     --tag)             TAG="$2"; shift 2 ;;
     --no-pull)         PULL=false; shift ;;
+    --no-ui)           BUILD_UI=false; shift ;;
     --no-push)         PUSH=false; DEPLOY=false; shift ;;
     --no-deploy)       DEPLOY=false; shift ;;
     --pull)            PULL=true; shift ;;
@@ -101,6 +104,7 @@ echo "  Tag        : ${TAG}"
 echo "  Registry   : ${REGISTRY}"
 echo "  Branch     : ${BRANCH}"
 echo "  Git pull   : ${PULL}"
+echo "  Build UI   : ${BUILD_UI}"
 echo "  Push       : ${PUSH}"
 echo "  Auto-deploy: ${DEPLOY}"
 echo "  Runtime    : ${RUNTIME}"
@@ -161,6 +165,46 @@ build_image() {
   echo ""
   BUILT=$((BUILT + 1))
 }
+
+# ---------------------------------------------------------------------------
+# Step 1.5: Build the Phase 2 React dashboard (host-side)
+# Produces dashboard/next/, which the hub Dockerfile copies into the image.
+# The Dockerfile ALSO builds the UI inside the image (stage "ui-build"), so this
+# host step is an optimization / keeps the committed output fresh — it is
+# non-fatal if Node/npm is unavailable on the build host.
+# ---------------------------------------------------------------------------
+build_dashboard_ui() {
+  local ui_dir="${SCRIPT_DIR}/dashboard-react"
+  if [ ! -d "$ui_dir" ]; then
+    echo "  dashboard-react/ not found — skipping UI build."
+    return 0
+  fi
+  if ! command -v npm &>/dev/null; then
+    echo "  npm not found on host — the Dockerfile will build the UI inside the image."
+    return 0
+  fi
+  echo "  Building React dashboard (dashboard-react -> dashboard/next)..."
+  (
+    cd "$ui_dir"
+    if [ ! -d node_modules ]; then
+      npm ci 2>&1 | tail -3
+    fi
+    npm run build 2>&1 | tail -5
+  ) || {
+    echo "  WARNING: Host UI build failed — the Dockerfile will rebuild it inside the image."
+    return 0
+  }
+  echo "  React dashboard built: dashboard/next/"
+}
+
+if [ "$BUILD_UI" = true ] && { [ "$TARGET" = "all" ] || [ "$TARGET" = "hub" ]; }; then
+  echo "--- [1.5] Building React dashboard (Phase 2 UI) ---"
+  build_dashboard_ui
+  echo ""
+else
+  echo "--- [1.5] Skipping host UI build ---"
+  echo ""
+fi
 
 echo "--- [2] Building container images ---"
 echo ""
