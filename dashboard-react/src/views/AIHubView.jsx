@@ -42,17 +42,28 @@ const FRAMEWORKS = [
 
 const PLATFORM_PILLS = Object.values(PLATFORM_MAP);
 
-// Maps manifest icon names (e.g. "shield") to display glyphs.
+// Maps manifest icon names to display glyphs — mirrors the legacy agentEmojiFor().
 const AGENT_ICON_MAP = {
-  shield: "\u{1F6E1}", heart: "\u{1F49A}", search: "\u{1F50D}", wrench: "\u{1F527}",
-  rocket: "\u{1F680}", recycle: "♻", globe: "\u{1F310}", database: "\u{1F4BE}",
-  lock: "\u{1F512}", check: "✅", chart: "\u{1F4CA}", bell: "\u{1F514}",
-  network: "\u{1F578}", cpu: "\u{1F9E0}", cloud: "☁", layers: "\u{1F5C2}",
-  gear: "⚙", server: "\u{1F5A5}", activity: "\u{1F493}", box: "\u{1F4E6}",
+  server: "\u{1F5A5}",            // 🖥
+  package: "\u{1F4E6}",           // 📦
+  stethoscope: "\u{1FA7A}",       // 🩺
+  "arrow-up-circle": "\u{2B06}",  // ⬆
+  "clipboard-check": "\u{1F4CB}", // 📋
+  shield: "\u{1F6E1}",            // 🛡
+  "shield-check": "\u{1F6E1}",    // 🛡
+  network: "\u{1F310}",           // 🌐
+  "git-branch": "\u{1F500}",      // 🔀
+  activity: "\u{1F4C8}",          // 📈
+  monitor: "\u{1F5A5}",           // 🖥
+  brain: "\u{1F9E0}",             // 🧠
+  globe: "\u{1F30D}",             // 🌍
 };
 function agentIcon(name) {
   return AGENT_ICON_MAP[(name || "").toLowerCase()] || "\u{1F916}";
 }
+
+// Legacy category display order.
+const CATEGORY_ORDER = ["Operations", "Lifecycle", "Platform", "Governance", "Intelligence"];
 
 export function AIHubView() {
   const cluster = useActiveCluster();
@@ -81,10 +92,15 @@ export function AIHubView() {
     staleTime: 30_000,
   });
 
-  // Real usage analytics from the audit trail (last 30 days).
-  const { data: statsData } = useQuery({
-    queryKey: ["/api/audit-trail/stats"],
-    queryFn: ({ signal }) => apiGet("/api/audit-trail/stats?days=30", { signal }).catch(() => ({})),
+  // Real query-trace stats + per-agent analytics (last 30 days) — same source the legacy app uses.
+  const { data: traceStats } = useQuery({
+    queryKey: ["/api/traces/stats"],
+    queryFn: ({ signal }) => apiGet("/api/traces/stats?days=30", { signal }).catch(() => ({})),
+    staleTime: 30_000,
+  });
+  const { data: traceAnalytics } = useQuery({
+    queryKey: ["/api/traces/analytics"],
+    queryFn: ({ signal }) => apiGet("/api/traces/analytics?days=30", { signal }).catch(() => ({})),
     staleTime: 30_000,
   });
 
@@ -124,12 +140,12 @@ export function AIHubView() {
   const clusterCount = 1 + agents.length;
   const activeProviders = LLM_PROVIDERS.filter((p) => p.key === "builtin" || llmData?.[p.key]?.enabled).length;
 
-  // Derive real counts from the audit-trail stats response.
-  const byType = Array.isArray(statsData?.byType) ? statsData.byType : [];
-  const totalEvents = byType.reduce((sum, t) => sum + (t.count || 0), 0);
-  const sumTypes = (re) => byType.filter((t) => re.test(t.event_type || t.type || "")).reduce((s, t) => s + (t.count || 0), 0);
-  const queryCount = sumTypes(/query|chat|question|ask/i);
-  const actionCount = sumTypes(/action|remediat|scale|restart|delete|drain|cordon|deploy|rollout/i);
+  // Real per-agent usage analytics from the query tracer.
+  const agentAnalytics = Array.isArray(traceAnalytics?.agents) ? traceAnalytics.agents : [];
+  const totalQueries = traceStats?.total_queries ?? 0;
+  const avgLatencyMs = traceStats?.avg_duration_ms ?? 0;
+  const activeAgentCount = agentAnalytics.length;
+  const peakHour = traceStats?.busiest_hours?.[0]?.hour;
   const connectedAgents = agents.filter((a) => a.status === "live" || a.status === "active").length;
 
   const handleFleetQuery = useCallback(() => {
@@ -148,7 +164,10 @@ export function AIHubView() {
     if (!categoryMap.has(cat)) categoryMap.set(cat, { name: cat, color: a.color || "#3b82f6", agents: [] });
     categoryMap.get(cat).agents.push(a);
   }
-  const allCategories = Array.from(categoryMap.values());
+  const allCategories = Array.from(categoryMap.values()).sort((a, b) => {
+    const ia = CATEGORY_ORDER.indexOf(a.name); const ib = CATEGORY_ORDER.indexOf(b.name);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
   const filteredCategories =
     selectedCategory === "all"
       ? allCategories
@@ -212,7 +231,7 @@ export function AIHubView() {
         </div>
       </div>
 
-      {/* Agent Usage Analytics — real values from the audit trail (last 30 days) */}
+      {/* Agent Usage Analytics — real query-trace data (last 30 days) */}
       <div className="hub-analytics card">
         <div className="hub-section-head">
           <span style={{ fontSize: 16 }}>{"📊"}</span>
@@ -220,13 +239,31 @@ export function AIHubView() {
           <span className="hub-tool-count">Last 30 days</span>
         </div>
         <div className="hub-analytics-grid">
-          <AnalyticsStat label="Agents Connected" value={connectedAgents} color="var(--ok)" />
+          <AnalyticsStat label="Total Queries" value={totalQueries} color="#8b5cf6" />
+          <AnalyticsStat label="Active Agents" value={activeAgentCount} color="var(--ok)" />
+          <AnalyticsStat label="Avg Latency" value={avgLatencyMs ? `${avgLatencyMs}ms` : "--"} color="#22d3ee" />
+          <AnalyticsStat label="Peak Hour" value={peakHour != null ? `${String(peakHour).padStart(2, "0")}:00` : "--"} color="#f59e0b" />
           <AnalyticsStat label="MCP Tools" value={toolCount || "--"} color="var(--accent2)" />
-          <AnalyticsStat label="Total Events" value={totalEvents} color="#8b5cf6" />
-          <AnalyticsStat label="Queries" value={queryCount} color="#22d3ee" />
-          <AnalyticsStat label="Actions Taken" value={actionCount} color="#f59e0b" />
           <AnalyticsStat label="Clusters" value={clusterCount} color="#ec4899" />
         </div>
+
+        {/* Per-agent usage table — real invocation data */}
+        {agentAnalytics.length > 0 && (
+          <div className="agent-usage-table">
+            <div className="aut-head">
+              <span>Agent</span><span>Invocations</span><span>Avg Latency</span><span>Error Rate</span><span>Last Used</span>
+            </div>
+            {agentAnalytics.slice(0, 8).map((a) => (
+              <div className="aut-row" key={a.agent_id || a.agent_name}>
+                <span className="aut-name">{a.agent_name || a.agent_id}</span>
+                <span>{a.invocation_count}</span>
+                <span>{a.avg_duration_ms != null ? `${a.avg_duration_ms}ms` : "--"}</span>
+                <span style={{ color: a.error_rate > 0 ? "var(--crit)" : "var(--ok)" }}>{a.error_rate ?? 0}%</span>
+                <span className="aut-time">{a.last_used ? timeAgo(a.last_used) : "--"}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* LLM Integration + Clusters */}
@@ -483,4 +520,16 @@ function AnalyticsStat({ label, value, color }) {
       <div className="ha-label">{label}</div>
     </div>
   );
+}
+
+function timeAgo(iso) {
+  const t = new Date(iso).getTime();
+  if (!t) return "--";
+  const s = Math.floor((Date.now() - t) / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }

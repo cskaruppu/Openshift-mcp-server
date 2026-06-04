@@ -1610,6 +1610,21 @@ h3.widget-title {
 .ha-value { font-size: 22px; font-weight: 800; }
 .ha-label { font-size: 10px; color: var(--text2); margin-top: 4px; text-transform: uppercase; letter-spacing: .3px; }
 
+/* Per-agent usage table */
+.agent-usage-table { margin-top: 16px; border-top: 1px solid var(--border); }
+.aut-head, .aut-row {
+  display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1.2fr; gap: 8px;
+  padding: 8px 4px; font-size: 12px; align-items: center;
+}
+.aut-head {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .4px;
+  color: var(--text2); font-weight: 700; border-bottom: 1px solid var(--border);
+}
+.aut-row { border-bottom: 1px solid #1c2128; }
+.aut-row:hover { background: rgba(255,255,255,.02); }
+.aut-name { font-weight: 600; color: var(--text); }
+.aut-time { color: var(--text2); }
+
 /* Two-column */
 .hub-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
 .hub-panel { padding: 16px 18px; }
