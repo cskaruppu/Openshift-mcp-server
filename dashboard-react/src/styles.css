@@ -4392,6 +4392,81 @@ h3.widget-title {
 .light-theme .aud-fd-block { background: #fff; border-color: #e5e7eb; }
 .light-theme .aud-fw-card { background: #f9fafb; border-color: #e5e7eb; }
 .light-theme .aud-fw-ctrl { background: #fff; border-color: #e5e7eb; }
+/* ── CR Tracker ── */
+.aud-tab-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 9px; font-size: 10px; font-weight: 700;
+  background: rgba(59,130,246,.15); color: #3b82f6;
+  margin-left: 6px;
+}
+.aud-tab.active .aud-tab-count { background: rgba(34,197,94,.15); color: #22c55e; }
+
+.aud-cr-stats {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+  margin-bottom: 16px;
+}
+.aud-cr-stat {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 16px; text-align: center;
+}
+.aud-cr-stat span { font-size: 24px; font-weight: 800; color: var(--cs-c); display: block; }
+.aud-cr-stat label { font-size: 10px; color: var(--text2); margin-top: 3px; display: block; text-transform: uppercase; letter-spacing: .4px; }
+
+.aud-filter-row {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+
+.aud-cr-list { display: flex; flex-direction: column; gap: 8px; }
+
+.aud-cr-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 16px; border-left: 3px solid var(--cr-c, var(--accent2));
+  transition: border-color .15s, box-shadow .15s;
+}
+.aud-cr-card:hover { border-color: rgba(99,102,241,.25); box-shadow: 0 2px 12px rgba(0,0,0,.12); }
+
+.aud-cr-head {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.aud-cr-id {
+  font-size: 13px; font-weight: 700; color: var(--accent2);
+  font-family: "SF Mono", "Fira Code", monospace;
+}
+.aud-cr-status {
+  font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 6px;
+  text-transform: uppercase; letter-spacing: .3px;
+}
+.aud-cr-snow {
+  font-size: 10px; color: var(--text2); background: rgba(255,255,255,.05);
+  padding: 2px 8px; border-radius: 6px; font-family: "SF Mono", "Fira Code", monospace;
+}
+
+.aud-cr-title {
+  font-size: 13px; font-weight: 600; color: var(--text);
+  margin-bottom: 6px; line-height: 1.4;
+}
+
+.aud-cr-meta {
+  display: flex; gap: 14px; flex-wrap: wrap;
+  font-size: 11px; color: var(--text2); margin-bottom: 10px;
+}
+
+.aud-cr-actions { display: flex; gap: 6px; }
+.aud-cr-btn {
+  font-size: 11px; padding: 4px 12px; border-radius: 6px; cursor: pointer;
+  background: rgba(59,130,246,.1); border: 1px solid rgba(59,130,246,.25);
+  color: #3b82f6; font-weight: 600; transition: all .15s;
+}
+.aud-cr-btn:hover { background: rgba(59,130,246,.2); border-color: #3b82f6; }
+.aud-cr-btn:disabled { opacity: .5; cursor: wait; }
+.aud-cr-btn.dismiss {
+  background: rgba(239,68,68,.08); border-color: rgba(239,68,68,.2);
+  color: #ef4444;
+}
+.aud-cr-btn.dismiss:hover { background: rgba(239,68,68,.18); border-color: #ef4444; }
+
 .light-theme .aud-trail-stat { background: #f9fafb; border-color: #e5e7eb; }
 .light-theme .aud-trail-pill { background: #fff; border-color: #e5e7eb; }
 .light-theme .aud-act-stat { background: #f9fafb; border-color: #e5e7eb; }
@@ -4399,6 +4474,10 @@ h3.widget-title {
 .light-theme .aud-table tr:hover td { background: #f9fafb; }
 .light-theme .aud-analytics-card { background: #f9fafb; border-color: #e5e7eb; }
 .light-theme .aud-history-item { background: #f9fafb; border-color: #e5e7eb; }
+.light-theme .aud-cr-stat { background: rgba(255,255,255,.7); border-color: #e2e8f0; }
+.light-theme .aud-cr-card { background: #f9fafb; border-color: #e5e7eb; }
+.light-theme .aud-cr-snow { background: rgba(0,0,0,.04); }
+.light-theme .aud-tab-count { background: rgba(59,130,246,.1); }
 
 /* ── RESPONSIVE ── */
 @media (max-width: 1024px) {
@@ -4407,6 +4486,7 @@ h3.widget-title {
   .aud-analytics-grid { grid-template-columns: repeat(2, 1fr); }
   .aud-comp-hero { flex-direction: column; align-items: flex-start; }
   .aud-cat-cards { margin-left: 0; }
+  .aud-cr-stats { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 768px) {
   .aud { padding: 12px 14px; }
@@ -4414,6 +4494,8 @@ h3.widget-title {
   .aud-hero-top { flex-direction: column; }
   .aud-tabs { flex-direction: column; }
   .aud-fw-head { flex-direction: column; }
+  .aud-cr-stats { grid-template-columns: 1fr 1fr; }
+  .aud-cr-head { flex-direction: column; align-items: flex-start; }
 }
 
 /* ════════════════════════════════════════════════════════

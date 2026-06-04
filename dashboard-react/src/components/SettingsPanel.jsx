@@ -409,6 +409,103 @@ function LLMProvidersTab() {
 /*  Tab 2: Integrations                                                */
 /* ------------------------------------------------------------------ */
 
+function ServiceNowSection() {
+  const [snow, setSnow] = useState({ instance: "", username: "", password: "" });
+  const [connected, setConnected] = useState(null);
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/settings/servicenow")
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return;
+        setSnow({
+          instance: data.instance || "",
+          username: data.username || "",
+          password: data.password ? "••••••••" : "",
+        });
+        setConnected(data.configured || false);
+      })
+      .catch(() => {});
+  }, []);
+
+  const testConnection = async () => {
+    setTesting(true);
+    try {
+      const res = await fetch("/api/settings/servicenow/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(snow),
+      });
+      const data = await res.json().catch(() => ({}));
+      setConnected(res.ok);
+      showToast(res.ok ? "ServiceNow connected" : `Failed: ${data.error || "Connection error"}`, res.ok ? "ok" : "err");
+    } catch {
+      setConnected(false);
+      showToast("Connection failed", "err");
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const saveSettings = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/settings/servicenow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(snow),
+      });
+      showToast(res.ok ? "ServiceNow settings saved" : "Save failed", res.ok ? "ok" : "err");
+    } catch {
+      showToast("Save failed", "err");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={S.card}>
+      <div style={S.cardHeader}>
+        <div style={S.cardTitle}>
+          <div style={S.badge("#0c5e2e")}>SN</div>
+          <span>ServiceNow</span>
+        </div>
+        <span style={connected ? S.pillOn : connected === false ? S.pillOff : { ...S.pillOff, background: "#64748b22", color: "#94a3b8" }}>
+          {connected ? "Connected" : connected === false ? "Not Connected" : "Unknown"}
+        </span>
+      </div>
+      <div style={S.field}>
+        <label style={S.label}>Instance URL</label>
+        <input type="text" style={S.input} placeholder="https://yourinstance.service-now.com"
+          value={snow.instance} onChange={(e) => setSnow((s) => ({ ...s, instance: e.target.value }))} />
+      </div>
+      <div style={S.field}>
+        <label style={S.label}>Username</label>
+        <input type="text" style={S.input} placeholder="admin"
+          value={snow.username} onChange={(e) => setSnow((s) => ({ ...s, username: e.target.value }))} />
+      </div>
+      <div style={S.field}>
+        <label style={S.label}>Password</label>
+        <input type="password" style={S.input} placeholder="••••••••"
+          value={snow.password} onChange={(e) => setSnow((s) => ({ ...s, password: e.target.value }))} />
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button style={{ ...S.btnOutline, ...(testing ? { opacity: 0.6 } : {}) }} onClick={testConnection} disabled={testing}>
+          {testing ? "Testing..." : "Test Connection"}
+        </button>
+        <button style={{ ...S.btnPrimary, ...(saving ? { opacity: 0.6 } : {}) }} onClick={saveSettings} disabled={saving}>
+          {saving ? "Saving..." : "Save"}
+        </button>
+      </div>
+      <div style={{ ...S.muted, marginTop: 8 }}>
+        Used for Change Requests, Incidents, and approval workflows. Without ServiceNow, ITSM tickets are saved locally.
+      </div>
+    </div>
+  );
+}
+
 function IntegrationsTab() {
   const [integrations, setIntegrations] = useState(() => {
     const init = {};
@@ -479,6 +576,9 @@ function IntegrationsTab() {
 
   return (
     <div>
+      {/* ServiceNow — dedicated section with its own API */}
+      <ServiceNowSection />
+
       {INTEGRATION_DEFS.map((def) => {
         const integ = integrations[def.key];
         return (

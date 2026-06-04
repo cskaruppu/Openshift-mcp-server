@@ -62,6 +62,12 @@ export function AuditView() {
   const { data: compHistory } =
     useClusterQuery("/api/compliance/history", { refetchInterval: 120_000 });
 
+  const { data: crData, refetch: refetchCRs } =
+    useClusterQuery("/api/cr?limit=50", { refetchInterval: 30_000 });
+
+  const { data: pendingCRData } =
+    useClusterQuery("/api/cr/pending", { refetchInterval: 30_000 });
+
   const [activeTab, setActiveTab] = useState("compliance");
   const [scanning, setScanning] = useState(false);
   const [catFilter, setCatFilter] = useState("all");
@@ -75,6 +81,40 @@ export function AuditView() {
   const [actionType, setActionType] = useState("All");
 
   const [trailType, setTrailType] = useState("all");
+  const [crStatusFilter, setCrStatusFilter] = useState("all");
+  const [syncingAll, setSyncingAll] = useState(false);
+  const [syncingCR, setSyncingCR] = useState({});
+  const [dismissingCR, setDismissingCR] = useState({});
+
+  const handleSyncAll = useCallback(async () => {
+    setSyncingAll(true);
+    try {
+      await fetch(clusterUrl("/api/cr/sync-all", cluster), { method: "POST" });
+      refetchCRs();
+      showToast("All CRs synced with ServiceNow", "ok");
+    } catch (err) { showToast("Sync failed: " + err.message, "err"); }
+    finally { setSyncingAll(false); }
+  }, [cluster, refetchCRs]);
+
+  const handleSyncCR = useCallback(async (ticketId) => {
+    setSyncingCR((p) => ({ ...p, [ticketId]: true }));
+    try {
+      await fetch(clusterUrl(`/api/cr/${encodeURIComponent(ticketId)}/sync`, cluster), { method: "POST" });
+      refetchCRs();
+      showToast(`${ticketId} synced`, "ok");
+    } catch (err) { showToast("Sync failed: " + err.message, "err"); }
+    finally { setSyncingCR((p) => ({ ...p, [ticketId]: false })); }
+  }, [cluster, refetchCRs]);
+
+  const handleDismissCR = useCallback(async (ticketId) => {
+    setDismissingCR((p) => ({ ...p, [ticketId]: true }));
+    try {
+      await fetch(clusterUrl(`/api/cr/${encodeURIComponent(ticketId)}`, cluster), { method: "DELETE" });
+      refetchCRs();
+      showToast(`${ticketId} dismissed`, "ok");
+    } catch (err) { showToast("Dismiss failed: " + err.message, "err"); }
+    finally { setDismissingCR((p) => ({ ...p, [ticketId]: false })); }
+  }, [cluster, refetchCRs]);
 
   const handleScan = useCallback(async () => {
     setScanning(true);
@@ -227,12 +267,14 @@ export function AuditView() {
         {[
           { key: "compliance", label: "CIS Compliance", icon: "shield" },
           { key: "frameworks", label: "Framework Profiles", icon: "layers" },
+          { key: "change-requests", label: "Change Requests", count: (crData?.crs || []).length },
           { key: "trail", label: "Audit Trail", icon: "scroll" },
           { key: "activity", label: "Activity & Actions", icon: "zap" },
           { key: "analytics", label: "Query Analytics", icon: "chart" },
         ].map((t) => (
           <button key={t.key} className={"aud-tab" + (activeTab === t.key ? " active" : "")} onClick={() => setActiveTab(t.key)}>
             {t.label}
+            {t.count != null && t.count > 0 && <span className="aud-tab-count">{t.count}</span>}
           </button>
         ))}
       </div>
@@ -424,7 +466,88 @@ export function AuditView() {
         </div>
       )}
 
-      {/* ═══ 3. AUDIT TRAIL ═══ */}
+      {/* ═══ 3. CHANGE REQUESTS (ServiceNow / ITSM) ═══ */}
+      {activeTab === "change-requests" && (() => {
+        const allCRs = crData?.crs || [];
+        const pendingCRs = pendingCRData?.crs || [];
+        const filtCRs = crStatusFilter === "all" ? allCRs :
+          crStatusFilter === "pending" ? allCRs.filter((c) => ["submitted", "pending_approval", "awaiting_approval"].includes(c.status)) :
+          allCRs.filter((c) => c.status === crStatusFilter);
+        const STATUS_C = { submitted: "#3b82f6", pending_approval: "#f59e0b", awaiting_approval: "#f59e0b", approved: "#22c55e", scheduled: "#8b5cf6", executed: "#06b6d4", cancelled: "#ef4444", dismissed: "#64748b", rejected: "#ef4444" };
+        return (
+          <div className="aud-section">
+            <div className="aud-section-head">
+              <div className="aud-section-title">
+                <div className="aud-section-icon" style={{ background: "linear-gradient(135deg, #0c5e2e, #22c55e)" }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                </div>
+                <div>
+                  <h3>Change Request Tracker</h3>
+                  <p>ServiceNow CRs, approval status &amp; lifecycle tracking</p>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button className="aud-scan-btn" onClick={handleSyncAll} disabled={syncingAll}>
+                  {syncingAll ? "Syncing..." : "Sync All from ServiceNow"}
+                </button>
+              </div>
+            </div>
+
+            {/* Stats row */}
+            <div className="aud-cr-stats">
+              <div className="aud-cr-stat" style={{ "--cs-c": "#3b82f6" }}><span>{allCRs.length}</span><label>Total</label></div>
+              <div className="aud-cr-stat" style={{ "--cs-c": "#f59e0b" }}><span>{pendingCRs.length}</span><label>Pending</label></div>
+              <div className="aud-cr-stat" style={{ "--cs-c": "#22c55e" }}><span>{allCRs.filter((c) => c.status === "approved").length}</span><label>Approved</label></div>
+              <div className="aud-cr-stat" style={{ "--cs-c": "#06b6d4" }}><span>{allCRs.filter((c) => c.status === "executed").length}</span><label>Executed</label></div>
+            </div>
+
+            {/* Status filter */}
+            <div className="aud-filter-row" style={{ marginBottom: 12 }}>
+              {["all", "pending", "approved", "executed", "cancelled", "dismissed"].map((s) => (
+                <button key={s} className={"aud-filter-pill" + (crStatusFilter === s ? " active" : "")} onClick={() => setCrStatusFilter(s)}>
+                  {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
+                </button>
+              ))}
+            </div>
+
+            {/* CR list */}
+            <div className="aud-cr-list">
+              {filtCRs.length === 0 && <div className="aud-empty">No change requests found</div>}
+              {filtCRs.map((cr) => {
+                const stColor = STATUS_C[cr.status] || "#64748b";
+                return (
+                  <div key={cr.ticket_id || cr.ticketId} className="aud-cr-card" style={{ "--cr-c": stColor }}>
+                    <div className="aud-cr-head">
+                      <div className="aud-cr-id">{cr.ticket_id || cr.ticketId}</div>
+                      <span className="aud-cr-status" style={{ background: stColor + "22", color: stColor }}>{(cr.status || "unknown").toUpperCase()}</span>
+                      {cr.snow_number && <span className="aud-cr-snow">SN: {cr.snow_number}</span>}
+                    </div>
+                    <div className="aud-cr-title">{cr.title || cr.description || "—"}</div>
+                    <div className="aud-cr-meta">
+                      {cr.target_version && <span>Target: {cr.target_version}</span>}
+                      {cr.cluster && <span>Cluster: {cr.cluster}</span>}
+                      <span>{fmt(cr.created_at || cr.createdAt)}</span>
+                      {cr.scheduled_date && <span>Scheduled: {fmt(cr.scheduled_date)}</span>}
+                    </div>
+                    <div className="aud-cr-actions">
+                      <button className="aud-cr-btn" onClick={() => handleSyncCR(cr.ticket_id || cr.ticketId)} disabled={syncingCR[cr.ticket_id || cr.ticketId]}>
+                        {syncingCR[cr.ticket_id || cr.ticketId] ? "..." : "Sync"}
+                      </button>
+                      {!["executed", "cancelled", "dismissed"].includes(cr.status) && (
+                        <button className="aud-cr-btn dismiss" onClick={() => handleDismissCR(cr.ticket_id || cr.ticketId)} disabled={dismissingCR[cr.ticket_id || cr.ticketId]}>
+                          Dismiss
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ═══ 4. AUDIT TRAIL ═══ */}
       {activeTab === "trail" && (
         <div className="aud-section">
           <div className="aud-section-intro">
