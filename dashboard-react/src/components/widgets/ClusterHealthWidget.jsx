@@ -13,8 +13,7 @@ export function ClusterHealthWidget() {
   const isOCP = data?.isOpenShift;
   const channel = data?.cluster?.channel;
 
-  const healthColor =
-    health === "healthy" ? "#22c55e" : health === "degraded" || health === "warning" ? "#f59e0b" : health ? "#ef4444" : "#888";
+  const healthClass = health === "healthy" ? "ok" : health === "degraded" || health === "warning" ? "warn" : health ? "crit" : "muted";
 
   return (
     <WidgetCard title="Cluster Health">
@@ -22,7 +21,7 @@ export function ClusterHealthWidget() {
       {isError && <div className="metric err">{String(error.message)}</div>}
       {!isLoading && !isError && (
         <>
-          <div className="metric" style={{ color: healthColor }}>
+          <div className={`metric ${healthClass}`}>
             {health ? health.charAt(0).toUpperCase() + health.slice(1) : "--"}
           </div>
           <div className="metric-label">

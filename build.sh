@@ -183,7 +183,7 @@ build_dashboard_ui() {
     echo "  npm not found on host — the Dockerfile will build the UI inside the image."
     return 0
   fi
-  echo "  Building React dashboard (dashboard-react -> dashboard/next)..."
+  echo "  Building React dashboard (dashboard-react -> dashboard/app)..."
   (
     cd "$ui_dir"
     if [ ! -d node_modules ]; then
@@ -194,7 +194,7 @@ build_dashboard_ui() {
     echo "  WARNING: Host UI build failed — the Dockerfile will rebuild it inside the image."
     return 0
   }
-  echo "  React dashboard built: dashboard/next/"
+  echo "  React dashboard built: dashboard/app/"
 }
 
 if [ "$BUILD_UI" = true ] && { [ "$TARGET" = "all" ] || [ "$TARGET" = "hub" ]; }; then

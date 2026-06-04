@@ -4999,11 +4999,13 @@ async function startSSE() {
       const DASHBOARD_DIR = process.env.DASHBOARD_DIR || resolve(process.cwd(), "dashboard");
       const MIME = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon" };
       const COMPRESSIBLE = new Set([".html", ".css", ".js", ".json", ".svg"]);
-      // Phase 2 React app (parallel): /next and /next/ serve the SPA entry.
-      // Its built assets live under dashboard/next/ and are served normally.
+      // React app at / — legacy app moved to /old-app.
+      // React SPA assets live under dashboard/app/ and are served for all non-API routes.
       let filePath;
-      if (url.pathname === "/") filePath = "index.html";
-      else if (url.pathname === "/next" || url.pathname === "/next/") filePath = "next/index.html";
+      if (url.pathname === "/old-app" || url.pathname === "/old-app/") filePath = "index.html";
+      else if (url.pathname.startsWith("/old-app/")) filePath = url.pathname.replace(/^\/old-app\//, "");
+      else if (url.pathname === "/" || url.pathname === "/index.html") filePath = "app/index.html";
+      else if (url.pathname.startsWith("/assets/")) filePath = "app" + url.pathname;
       else filePath = url.pathname.replace(/^\//, "");
 
       if (!startSSE._gzCache) startSSE._gzCache = new Map();
@@ -5044,8 +5046,10 @@ async function startSSE() {
         }
         return;
       } catch {
+        // SPA fallback: serve the React app entry for any unknown route
         try {
-          const full = resolve(DASHBOARD_DIR, "index.html");
+          const spaPath = url.pathname.startsWith("/old-app") ? "index.html" : "app/index.html";
+          const full = resolve(DASHBOARD_DIR, spaPath);
           const data = await readFile(full);
           const acceptGzip = (req.headers["accept-encoding"] || "").includes("gzip");
           if (acceptGzip) {

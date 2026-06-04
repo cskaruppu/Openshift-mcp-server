@@ -1,14 +1,14 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// Phase 2 dashboard. Builds to ../dashboard/next so the backend can serve the
-// new UI at /next while the legacy single-file dashboard keeps serving at /.
+// React dashboard — builds to ../dashboard/app so the backend serves it at /.
+// The legacy single-file dashboard is preserved at /old-app.
 // During development, API calls are proxied to the running MCP server.
 export default defineConfig({
-  base: "/next/",
+  base: "/",
   plugins: [react()],
   build: {
-    outDir: "../dashboard/next",
+    outDir: "../dashboard/app",
     emptyOutDir: true,
   },
   server: {

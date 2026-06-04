@@ -1,10 +1,20 @@
 :root {
-  --bg: #0d1117;
-  --card: #161b22;
-  --border: #30363d;
-  --text: #e6edf3;
-  --text2: #8b949e;
+  --bg: #0f1117;
+  --bg-deep: #0a0c10;
+  --bg-alt: #161b22;
+  --card: #1a1d27;
+  --card-deep: #0d1117;
+  --border: #2a2d3a;
+  --border2: #30363d;
+  --hover: #2a2d3a;
   --accent: #e04040;
+  --accent2: #3b82f6;
+  --accent3: #10b981;
+  --text: #e4e4e7;
+  --text2: #a1a1aa;
+  --warn: #f59e0b;
+  --crit: #ef4444;
+  --ok: #22c55e;
 }
 
 * { box-sizing: border-box; }
@@ -19,16 +29,25 @@ body {
 .app { min-height: 100vh; display: flex; flex-direction: column; }
 
 .app-header {
+  background: linear-gradient(135deg, #0a0e1a 0%, #1a1040 40%, #2a1520 100%);
+  border-bottom: 2px solid transparent;
+  border-image: linear-gradient(90deg, #e04040, #3b82f6, #10b981) 1;
+  padding: 16px 32px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--border);
 }
 
 .brand { font-size: 18px; font-weight: 600; }
 .brand-mark { color: var(--accent); font-weight: 800; }
 .brand-sub { display: block; font-size: 11px; color: var(--text2); font-weight: 400; margin-top: 2px; }
+
+/* Badges */
+.badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 600; }
+.badge-ok { background: #22c55e22; color: var(--ok); }
+.badge-warn { background: #f59e0b22; color: var(--warn); }
+.badge-crit { background: #ef444422; color: var(--crit); }
+.badge-info { background: #3b82f622; color: var(--accent2); }
 
 .cluster-switcher { display: flex; align-items: center; gap: 8px; }
 .cluster-switcher label { font-size: 13px; color: var(--text2); }
@@ -65,9 +84,11 @@ body {
 .nav-tab.active { background: var(--accent); color: #fff; }
 
 .dashboard-grid {
+  max-width: 1440px;
+  margin: 0 auto;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
+  gap: 20px;
   padding: 24px;
 }
 
@@ -177,13 +198,18 @@ body {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 20px;
+  transition: border-color .2s;
 }
-.widget-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text2); }
+.widget-card:hover { border-color: var(--border2); }
+h3.widget-title { font-size: 13px; font-weight: 600; color: var(--text2); margin: 0 0 4px; }
 .widget-body { margin-top: 12px; }
-.metric { font-size: 36px; font-weight: 700; }
+.metric { font-size: 36px; font-weight: 700; line-height: 1; }
+.metric.ok { color: var(--ok); }
+.metric.warn { color: var(--warn); }
+.metric.crit { color: var(--crit); }
 .metric.muted { color: var(--text2); font-size: 18px; }
-.metric.err { color: var(--accent); font-size: 13px; }
-.metric-label { font-size: 12px; color: var(--text2); margin-top: 6px; }
+.metric.err { color: var(--crit); font-size: 13px; }
+.metric-label { font-size: 13px; color: var(--text2); margin-top: 4px; }
 
 .app-footer {
   padding: 14px 24px;
@@ -418,13 +444,15 @@ body {
   display: flex; flex-direction: column; gap: 8px;
 }
 .toast {
-  padding: 10px 18px; border-radius: 10px; font-size: 13px; font-weight: 500;
-  color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,.3);
-  animation: toastIn .25s ease;
+  background: var(--card); border: 1px solid var(--border);
+  border-left: 3px solid var(--accent2); color: var(--text);
+  padding: 10px 16px; border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.3); font-size: 13px;
+  max-width: 340px; animation: toastIn .25s ease;
 }
-.toast.ok { background: #22c55e; }
-.toast.err { background: var(--accent); }
-.toast.warn { background: #f59e0b; color: #000; }
+.toast.ok { border-left-color: var(--ok); }
+.toast.err { border-left-color: var(--crit); }
+.toast.warn { border-left-color: var(--warn); }
 @keyframes toastIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
@@ -641,7 +669,15 @@ body {
 }
 
 /* ── Light Theme ── */
-.light-theme { --bg: #f8f9fc; --card: #ffffff; --border: #e5e7eb; --text: #1e293b; --text2: #6b7280; }
+.light-theme {
+  --bg: #f8f9fc; --bg-deep: #f0f2f6; --bg-alt: #ffffff;
+  --card: #ffffff; --card-deep: #f9fafb; --border: #e5e7eb; --border2: #d1d5db;
+  --hover: #f3f4f6; --text: #1e293b; --text2: #6b7280;
+}
+.light-theme .app-header {
+  background: linear-gradient(135deg, #f8f9fc 0%, #e8e4f2 40%, #fae8ec 100%);
+  border-image: linear-gradient(90deg, #e04040, #3b82f6, #10b981) 1;
+}
 .light-theme .login-overlay { background: linear-gradient(135deg, #f8f9fc, #f5f5f7 40%, #f0f2f6); }
 .light-theme .login-overlay::before { background: radial-gradient(ellipse 100% 80% at 50% 0%, rgba(99,102,241,.03), transparent 60%); }
 .light-theme .login-hero-brand .tcs { color: #1a1a2e; }

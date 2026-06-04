@@ -14,7 +14,7 @@ export function PodsAtRiskWidget() {
       {isError && <div className="metric err">{String(error.message)}</div>}
       {!isLoading && !isError && (
         <>
-          <div className="metric" style={{ color: pods.length ? "#f59e0b" : "#22c55e" }}>
+          <div className={`metric ${pods.length ? "warn" : "ok"}`}>
             {pods.length}
           </div>
           <div className="metric-label">
