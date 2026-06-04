@@ -49,13 +49,45 @@ body {
   font-weight: 700;
 }
 
+.main-area { flex: 1; }
+
+.nav-tabs { display: flex; gap: 4px; }
+.nav-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text2);
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.nav-tab:hover { color: var(--text); }
+.nav-tab.active { background: var(--accent); color: #fff; }
+
 .dashboard-grid {
-  flex: 1;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
   padding: 24px;
 }
+
+/* View panes (audit, etc.) */
+.view-pane { padding: 24px; }
+.view-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.view-head h2 { margin: 0; font-size: 20px; }
+.scope-chip { font-size: 11px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 4px 10px; color: var(--text2); }
+.section-title { font-size: 13px; text-transform: uppercase; letter-spacing: .5px; color: var(--text2); margin: 22px 0 8px; }
+
+.stat-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.stat-box { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 20px; min-width: 120px; }
+.stat-value { font-size: 26px; font-weight: 700; }
+.stat-label { font-size: 11px; color: var(--text2); margin-top: 4px; }
+
+.audit-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.audit-table th { text-align: left; color: var(--text2); font-weight: 600; padding: 8px; border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; }
+.audit-table td { padding: 8px; border-bottom: 1px solid #1c2128; }
+.audit-table td.muted { color: var(--text2); text-align: center; padding: 16px; }
+.pill { color: #fff; font-size: 11px; border-radius: 8px; padding: 2px 8px; }
 
 .widget-card {
   background: var(--card);
