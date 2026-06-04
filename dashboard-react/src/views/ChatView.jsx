@@ -37,6 +37,14 @@ export function ChatView() {
     return () => { if (abortRef.current) abortRef.current.abort(); };
   }, [cluster]);
 
+  // Pick up a seed message set by Emergency Actions for this cluster.
+  const takeSeed = useChatStore((s) => s.takeSeed);
+  useEffect(() => {
+    const seed = takeSeed(cluster);
+    if (seed) setInput(seed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cluster]);
+
   async function send() {
     const msg = input.trim();
     if (!msg || busy) return;

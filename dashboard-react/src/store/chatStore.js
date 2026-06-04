@@ -7,6 +7,16 @@ import { create } from "zustand";
  */
 export const useChatStore = create((set, get) => ({
   byCluster: {}, // { [cluster]: { messages: [{role,text}], conversationId } }
+  seedByCluster: {}, // { [cluster]: "draft message" } — set by Emergency Actions
+
+  setSeed(cluster, text) {
+    set((state) => ({ seedByCluster: { ...state.seedByCluster, [cluster]: text } }));
+  },
+  takeSeed(cluster) {
+    const seed = get().seedByCluster[cluster];
+    if (seed) set((state) => ({ seedByCluster: { ...state.seedByCluster, [cluster]: null } }));
+    return seed || null;
+  },
 
   getConversation(cluster) {
     return get().byCluster[cluster] || { messages: [], conversationId: null };

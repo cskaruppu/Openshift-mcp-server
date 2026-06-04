@@ -6,7 +6,7 @@ import { ChatView } from "./views/ChatView";
 import { useActiveCluster } from "./store/clusterStore";
 import { useViewStore } from "./store/viewStore";
 
-const MIGRATED = 19;
+const MIGRATED = 22;
 const TOTAL = 22;
 
 const NAV = [

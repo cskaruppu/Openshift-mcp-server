@@ -10,6 +10,9 @@ import { NamespaceHeatmapWidget } from "../components/widgets/NamespaceHeatmapWi
 import { RiskPredictionsWidget } from "../components/widgets/RiskPredictionsWidget";
 import { AppChangesWidget } from "../components/widgets/AppChangesWidget";
 import { MulticlusterWidget } from "../components/widgets/MulticlusterWidget";
+import { HealthTimelineWidget } from "../components/widgets/HealthTimelineWidget";
+import { EmergencyActionsWidget } from "../components/widgets/EmergencyActionsWidget";
+import { AnsibleWidget } from "../components/widgets/AnsibleWidget";
 
 export function DashboardView() {
   return (
@@ -48,12 +51,15 @@ export function DashboardView() {
         map={(d) => ({ value: `${d.riskScore}/100`, grade: d.grade, label: `${d.critical || 0} critical · ${d.high || 0} high · ${d.totalImages || 0} images` })}
       />
       <AppChangesWidget />
+      <AnsibleWidget />
 
       {/* Full-width widgets */}
       <MulticlusterWidget />
+      <HealthTimelineWidget />
       <NodeTopologyWidget />
       <NamespaceHeatmapWidget />
       <RiskPredictionsWidget />
+      <EmergencyActionsWidget />
     </div>
   );
 }
