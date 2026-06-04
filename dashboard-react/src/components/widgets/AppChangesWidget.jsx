@@ -1,6 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useClusterQuery } from "../../hooks/useClusterQuery";
+import { useActiveCluster } from "../../store/clusterStore";
 import { showToast } from "../../store/toastStore";
+
+function clusterUrl(path, cluster) {
+  if (!cluster || cluster === "local") return path;
+  return `${path}${path.includes("?") ? "&" : "?"}cluster=${encodeURIComponent(cluster)}`;
+}
 
 const CHANGE_ICONS = {
   "image-update": { icon: "\u{1F4E6}", color: "#ef4444", label: "Image" },
@@ -22,6 +28,7 @@ function relTime(iso) {
 }
 
 export function AppChangesWidget() {
+  const cluster = useActiveCluster();
   const { data, isLoading, isError, error, refetch } = useClusterQuery(
     "/api/dashboard/app-changes",
     { refetchInterval: 15_000 }
@@ -46,7 +53,7 @@ export function AppChangesWidget() {
   const handleScan = async () => {
     setScanning(true);
     try {
-      const res = await fetch("/api/dashboard/app-changes/scan", { method: "POST" });
+      const res = await fetch(clusterUrl("/api/dashboard/app-changes/scan", cluster), { method: "POST" });
       const d = await res.json().catch(() => ({}));
       showToast(d.newChanges != null ? `Scan complete: ${d.newChanges} new changes` : "Scan complete", "ok");
       refetch();
@@ -59,7 +66,7 @@ export function AppChangesWidget() {
 
   const handleAction = async (changeId, action) => {
     try {
-      const res = await fetch("/api/dashboard/app-changes/action", {
+      const res = await fetch(clusterUrl("/api/dashboard/app-changes/action", cluster), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ changeId, action }),
@@ -123,6 +130,7 @@ export function AppChangesWidget() {
       {/* Namespace Manager Panel */}
       {nsPanelOpen && (
         <NamespaceManager
+          cluster={cluster}
           watched={watched}
           onClose={() => setNsPanelOpen(false)}
           onUpdate={refetch}
@@ -156,7 +164,7 @@ export function AppChangesWidget() {
       </div>
 
       {/* Workloads detail (collapsible) */}
-      {workloadsOpen && <WorkloadsViewer />}
+      {workloadsOpen && <WorkloadsViewer cluster={cluster} />}
 
       {/* Change Type Breakdown */}
       {Object.keys(changeTypes).length > 0 && (
@@ -231,7 +239,7 @@ export function AppChangesWidget() {
 }
 
 /* ── Namespace Manager ── */
-function NamespaceManager({ watched, onClose, onUpdate }) {
+function NamespaceManager({ cluster, watched, onClose, onUpdate }) {
   const [allNs, setAllNs] = useState([]);
   const [trackedNs, setTrackedNs] = useState([]);
   const [search, setSearch] = useState("");
@@ -244,7 +252,7 @@ function NamespaceManager({ watched, onClose, onUpdate }) {
 
   const loadData = useCallback(async () => {
     try {
-      const res = await fetch("/api/dashboard/app-changes");
+      const res = await fetch(clusterUrl("/api/dashboard/app-changes", cluster));
       const d = await res.json();
       const discovered = d.discoveredNamespaces || [];
       const watchedSet = new Set(d.watchedNamespaces || watched || []);
@@ -256,7 +264,7 @@ function NamespaceManager({ watched, onClose, onUpdate }) {
     } finally {
       setLoading(false);
     }
-  }, [watched]);
+  }, [watched, cluster]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -300,7 +308,7 @@ function NamespaceManager({ watched, onClose, onUpdate }) {
 
   const transfer = async (namespaces, action) => {
     try {
-      await fetch("/api/dashboard/app-changes/namespaces", {
+      await fetch(clusterUrl("/api/dashboard/app-changes/namespaces", cluster), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, namespaces }),
@@ -455,12 +463,12 @@ function NamespaceManager({ watched, onClose, onUpdate }) {
 }
 
 /* ── Workloads Viewer ── */
-function WorkloadsViewer() {
+function WorkloadsViewer({ cluster }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/dashboard/app-changes/workloads")
+    fetch(clusterUrl("/api/dashboard/app-changes/workloads", cluster))
       .then((r) => r.json())
       .then((d) => setData(d))
       .catch(() => {})

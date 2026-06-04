@@ -3995,96 +3995,103 @@ async function startSSE() {
 
     // ── App Change Watcher API ─────────────────────────────────────
     if (req.method === "GET" && url.pathname === "/api/dashboard/app-changes") {
-      const _acCluster = url.searchParams.get("cluster");
-      if (_acCluster && _acCluster !== "local") {
-        return sendJson(res, 200, { available: false, source: "agent-cache", message: "Application change tracking is not available for remote clusters" });
-      }
       try {
-        const ns = url.searchParams.get("namespace") || undefined;
-        let namespaces = getWatchedNamespaces();
+        const handler = async () => {
+          const ns = url.searchParams.get("namespace") || undefined;
+          let namespaces = getWatchedNamespaces();
 
-        let discoveredNamespaces = null;
-        try {
-          discoveredNamespaces = await discoverAppNamespaces();
-        } catch {};
+          let discoveredNamespaces = null;
+          try {
+            discoveredNamespaces = await discoverAppNamespaces();
+          } catch {};
 
-        const changes = await scanForChanges();
-        const log = getChangeLog();
-        namespaces = getWatchedNamespaces();
-        const filtered = ns ? log.filter(e => e.namespace === ns) : log;
-        const totalChanges = filtered.length;
-        const critical = filtered.filter(e => e.severity === "critical").length;
-        const warning = filtered.filter(e => e.severity === "warning").length;
-        const info = filtered.filter(e => e.severity === "info").length;
-        const baselines = Object.keys(getBaselines()).length;
+          const changes = await scanForChanges();
+          const log = getChangeLog();
+          namespaces = getWatchedNamespaces();
+          const filtered = ns ? log.filter(e => e.namespace === ns) : log;
+          const totalChanges = filtered.length;
+          const critical = filtered.filter(e => e.severity === "critical").length;
+          const warning = filtered.filter(e => e.severity === "warning").length;
+          const info = filtered.filter(e => e.severity === "info").length;
+          const baselines = Object.keys(getBaselines()).length;
 
-        const timelineStats = getTimelineStats();
+          const timelineStats = getTimelineStats();
 
-        const changeTypeBreakdown = {};
-        for (const e of filtered) {
-          const t = e.changeType || "other";
-          changeTypeBreakdown[t] = (changeTypeBreakdown[t] || 0) + 1;
-        }
-
-        let gitopsDrift = null;
-        try {
-          const driftResults = await scanGitOpsDrift();
-          if (driftResults.length > 0) {
-            const synced = driftResults.filter(d => !d.isDrifted).length;
-            const drifted = driftResults.filter(d => d.isDrifted).length;
-            const unhealthy = driftResults.filter(d => !d.isHealthy).length;
-            gitopsDrift = {
-              argoInstalled: true,
-              totalApps: driftResults.length,
-              synced, drifted, unhealthy,
-              apps: driftResults.slice(0, 20).map(d => ({
-                name: d.appName,
-                targetNamespace: d.targetNamespace,
-                syncStatus: d.syncStatus,
-                healthStatus: d.healthStatus,
-                isDrifted: d.isDrifted,
-                isHealthy: d.isHealthy,
-                driftSeverity: d.driftSeverity,
-                outOfSyncCount: d.outOfSyncResources.length,
-                outOfSyncResources: d.outOfSyncResources.slice(0, 5),
-                lastSynced: d.lastSynced,
-              })),
-            };
+          const changeTypeBreakdown = {};
+          for (const e of filtered) {
+            const t = e.changeType || "other";
+            changeTypeBreakdown[t] = (changeTypeBreakdown[t] || 0) + 1;
           }
-        } catch {}
 
-        const history = getChangeHistory();
-        sendJson(res, 200, {
-          watchedNamespaces: namespaces,
-          trackedWorkloads: baselines,
-          newChanges: changes.length,
-          totalChanges, critical, warning, info,
-          lastScanTime: getLastScanTime(),
-          lastChangeTime: getLastChangeTime(),
-          healthStreakMs: getHealthStreak(),
-          discoveredNamespaces: discoveredNamespaces ? discoveredNamespaces.map(d => ({ namespace: d.ns, workloads: d.count, breakdown: d.breakdown || {} })) : null,
-          changeTypeBreakdown,
-          timelineStats,
-          gitopsDrift,
-          recentChanges: filtered.filter(e => !e.acknowledged).slice(0, 30).map(e => ({
-            id: e.id, namespace: e.namespace, kind: e.kind, name: e.name,
-            severity: e.severity, timestamp: e.timestamp,
-            changeType: e.changeType || "other",
-            followUp: e.followUp || false,
-            followUpCount: e.followUpCount || 0,
-            riskScore: e.riskScore || 0,
-            riskLevel: e.riskLevel || "low",
-            changedBy: e.changedBy || null,
-            changeFreezeViolation: e.changeFreezeViolation || false,
-            correlatedEvents: (e.correlatedEvents || []).slice(0, 5),
-            changes: e.changes.map(c => ({ field: c.field, old: c.old, new: c.new, severity: c.severity })),
-            rollbackPreview: e.baseline ? {
-              replicas: e.baseline.replicas,
-              containers: (e.baseline.containers || []).map(c => ({ name: c.name, image: c.image, ports: c.ports })),
-            } : null,
-          })),
-          changeHistory: history.slice(0, 50),
-        });
+          let gitopsDrift = null;
+          try {
+            const driftResults = await scanGitOpsDrift();
+            if (driftResults.length > 0) {
+              const synced = driftResults.filter(d => !d.isDrifted).length;
+              const drifted = driftResults.filter(d => d.isDrifted).length;
+              const unhealthy = driftResults.filter(d => !d.isHealthy).length;
+              gitopsDrift = {
+                argoInstalled: true,
+                totalApps: driftResults.length,
+                synced, drifted, unhealthy,
+                apps: driftResults.slice(0, 20).map(d => ({
+                  name: d.appName,
+                  targetNamespace: d.targetNamespace,
+                  syncStatus: d.syncStatus,
+                  healthStatus: d.healthStatus,
+                  isDrifted: d.isDrifted,
+                  isHealthy: d.isHealthy,
+                  driftSeverity: d.driftSeverity,
+                  outOfSyncCount: d.outOfSyncResources.length,
+                  outOfSyncResources: d.outOfSyncResources.slice(0, 5),
+                  lastSynced: d.lastSynced,
+                })),
+              };
+            }
+          } catch {}
+
+          const history = getChangeHistory();
+          return {
+            watchedNamespaces: namespaces,
+            trackedWorkloads: baselines,
+            newChanges: changes.length,
+            totalChanges, critical, warning, info,
+            lastScanTime: getLastScanTime(),
+            lastChangeTime: getLastChangeTime(),
+            healthStreakMs: getHealthStreak(),
+            discoveredNamespaces: discoveredNamespaces ? discoveredNamespaces.map(d => ({ namespace: d.ns, workloads: d.count, breakdown: d.breakdown || {} })) : null,
+            changeTypeBreakdown,
+            timelineStats,
+            gitopsDrift,
+            recentChanges: filtered.filter(e => !e.acknowledged).slice(0, 30).map(e => ({
+              id: e.id, namespace: e.namespace, kind: e.kind, name: e.name,
+              severity: e.severity, timestamp: e.timestamp,
+              changeType: e.changeType || "other",
+              followUp: e.followUp || false,
+              followUpCount: e.followUpCount || 0,
+              riskScore: e.riskScore || 0,
+              riskLevel: e.riskLevel || "low",
+              changedBy: e.changedBy || null,
+              changeFreezeViolation: e.changeFreezeViolation || false,
+              correlatedEvents: (e.correlatedEvents || []).slice(0, 5),
+              changes: e.changes.map(c => ({ field: c.field, old: c.old, new: c.new, severity: c.severity })),
+              rollbackPreview: e.baseline ? {
+                replicas: e.baseline.replicas,
+                containers: (e.baseline.containers || []).map(c => ({ name: c.name, image: c.image, ports: c.ports })),
+              } : null,
+            })),
+            changeHistory: history.slice(0, 50),
+          };
+        };
+
+        const result = await withClusterContext(url, handler);
+        if (result === null) {
+          const _acCluster = url.searchParams.get("cluster");
+          const cached = getAgentCachedResponse(_acCluster, "/api/dashboard/app-changes", { skipFreshnessCheck: true });
+          if (cached) return sendJson(res, 200, cached);
+          return sendJson(res, 200, { available: false, source: "agent-cache", message: "Application change tracking data unavailable — agent may be offline" });
+        }
+        sendJson(res, 200, result);
       } catch (err) {
         sendJson(res, 200, { watchedNamespaces: [], trackedWorkloads: 0, newChanges: 0, totalChanges: 0, critical: 0, warning: 0, info: 0, recentChanges: [], error: err.message });
       }
@@ -4094,7 +4101,8 @@ async function startSSE() {
     // ── App Change Watcher — Auto-discover + Watch ──────────────────
     if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/discover") {
       try {
-        const result = await autoDiscoverAndWatch();
+        const result = await withClusterContext(url, () => autoDiscoverAndWatch());
+        if (result === null) return sendJson(res, 200, { discovered: 0, added: 0, total: 0, namespaces: [], error: "Agent offline" });
         sendJson(res, 200, {
           discovered: result.discovered,
           added: result.added,
@@ -4113,28 +4121,31 @@ async function startSSE() {
         const body = await readJsonBody(req);
         const action = body.action;
         const nsList = body.namespaces || [];
-        if (action === "add" && nsList.length > 0) {
-          await addNamespaces(nsList);
-          sendJson(res, 200, {
+        const result = await withClusterContext(url, async () => {
+          if (action === "add" && nsList.length > 0) {
+            await addNamespaces(nsList);
+            const resp = {
+              watchedNamespaces: getWatchedNamespaces(),
+              trackedWorkloads: Object.keys(getBaselines()).length,
+              baselineStatus: "initializing",
+            };
+            initNamespaceBaselines(nsList).catch(e =>
+              console.warn("[app-watcher] Background baseline init error:", e.message)
+            );
+            return resp;
+          } else if (action === "remove" && nsList.length > 0) {
+            await removeNamespaces(nsList);
+            return {
+              watchedNamespaces: getWatchedNamespaces(),
+              trackedWorkloads: Object.keys(getBaselines()).length,
+            };
+          }
+          return {
             watchedNamespaces: getWatchedNamespaces(),
             trackedWorkloads: Object.keys(getBaselines()).length,
-            baselineStatus: "initializing",
-          });
-          initNamespaceBaselines(nsList).catch(e =>
-            console.warn("[app-watcher] Background baseline init error:", e.message)
-          );
-        } else if (action === "remove" && nsList.length > 0) {
-          await removeNamespaces(nsList);
-          sendJson(res, 200, {
-            watchedNamespaces: getWatchedNamespaces(),
-            trackedWorkloads: Object.keys(getBaselines()).length,
-          });
-        } else {
-          sendJson(res, 200, {
-            watchedNamespaces: getWatchedNamespaces(),
-            trackedWorkloads: Object.keys(getBaselines()).length,
-          });
-        }
+          };
+        });
+        sendJson(res, 200, result || { error: "Agent offline" });
       } catch (err) {
         sendJson(res, 200, { error: err.message });
       }
@@ -4144,14 +4155,17 @@ async function startSSE() {
     // ── App Change Watcher — Force scan now ────────────────────────
     if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/scan") {
       try {
-        const changes = await scanForChanges();
-        const log = getChangeLog().filter(e => !e.acknowledged);
-        sendJson(res, 200, {
-          scanned: true,
-          newChanges: changes.length,
-          pendingChanges: log.length,
-          timestamp: new Date().toISOString(),
+        const result = await withClusterContext(url, async () => {
+          const changes = await scanForChanges();
+          const log = getChangeLog().filter(e => !e.acknowledged);
+          return {
+            scanned: true,
+            newChanges: changes.length,
+            pendingChanges: log.length,
+            timestamp: new Date().toISOString(),
+          };
         });
+        sendJson(res, 200, result || { scanned: false, error: "Agent offline" });
       } catch (err) {
         sendJson(res, 200, { scanned: false, error: err.message });
       }
@@ -4161,13 +4175,16 @@ async function startSSE() {
     // ── App Change Watcher — Reset baselines ─────────────────────
     if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/reset-baselines") {
       try {
-        const ns = getWatchedNamespaces();
-        await initNamespaceBaselines(ns);
-        sendJson(res, 200, {
-          reset: true,
-          namespaces: ns.length,
-          baselines: Object.keys(getBaselines()).length,
+        const result = await withClusterContext(url, async () => {
+          const ns = getWatchedNamespaces();
+          await initNamespaceBaselines(ns);
+          return {
+            reset: true,
+            namespaces: ns.length,
+            baselines: Object.keys(getBaselines()).length,
+          };
         });
+        sendJson(res, 200, result || { reset: false, error: "Agent offline" });
       } catch (err) {
         sendJson(res, 200, { reset: false, error: err.message });
       }
@@ -4179,17 +4196,13 @@ async function startSSE() {
       try {
         const body = await readJsonBody(req);
         const { changeId, action } = body;
-        let result;
-        if (action === "dismiss") {
-          result = await dismissChange(changeId);
-        } else if (action === "agree") {
-          result = agreeChange(changeId);
-        } else if (action === "acknowledge") {
-          result = acknowledgeChange(changeId);
-        } else {
-          result = { found: false, error: "Unknown action. Use: agree, dismiss, acknowledge" };
-        }
-        sendJson(res, 200, result);
+        const result = await withClusterContext(url, async () => {
+          if (action === "dismiss") return await dismissChange(changeId);
+          if (action === "agree") return agreeChange(changeId);
+          if (action === "acknowledge") return acknowledgeChange(changeId);
+          return { found: false, error: "Unknown action. Use: agree, dismiss, acknowledge" };
+        });
+        sendJson(res, 200, result || { found: false, error: "Agent offline" });
       } catch (err) {
         sendJson(res, 200, { found: false, error: err.message });
       }
@@ -4199,15 +4212,18 @@ async function startSSE() {
     // ── App Change Watcher — Workload listing ──────────────────────
     if (req.method === "GET" && url.pathname === "/api/dashboard/app-changes/workloads") {
       try {
-        const byNs = getWorkloadsByNamespace();
-        sendJson(res, 200, {
-          namespaces: Object.entries(byNs).map(([ns, wl]) => ({
-            namespace: ns,
-            workloads: wl,
-            count: wl.length,
-          })).sort((a, b) => b.count - a.count),
-          total: Object.values(byNs).reduce((s, wl) => s + wl.length, 0),
+        const result = await withClusterContext(url, async () => {
+          const byNs = getWorkloadsByNamespace();
+          return {
+            namespaces: Object.entries(byNs).map(([ns, wl]) => ({
+              namespace: ns,
+              workloads: wl,
+              count: wl.length,
+            })).sort((a, b) => b.count - a.count),
+            total: Object.values(byNs).reduce((s, wl) => s + wl.length, 0),
+          };
         });
+        sendJson(res, 200, result || { namespaces: [], total: 0, error: "Agent offline" });
       } catch (err) {
         sendJson(res, 200, { namespaces: [], total: 0, error: err.message });
       }
