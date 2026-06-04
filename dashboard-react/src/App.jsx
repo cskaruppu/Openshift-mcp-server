@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "./api/client";
-import { ClusterSwitcher } from "./components/ClusterSwitcher";
 import { LoginOverlay } from "./components/LoginOverlay";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { UserManagementPanel } from "./components/UserManagementPanel";
@@ -18,7 +17,6 @@ import { useThemeStore } from "./store/themeStore";
 import { showToast } from "./store/toastStore";
 import { useClusterStore, useActiveCluster } from "./store/clusterStore";
 import { useViewStore } from "./store/viewStore";
-import { getPlatformInfo } from "./lib/platforms";
 
 // Per-cluster views only. AI Hub / Agent Registry / Settings are fleet-level
 // and live on the centralized cluster-picker screen, not inside a cluster.
@@ -51,20 +49,6 @@ export default function App() {
     enabled: authenticated,
   });
 
-  // Hub platform is derived from the live cluster summary — never assumed.
-  const { data: hubSummary } = useQuery({
-    queryKey: ["/api/cluster/summary", "local"],
-    queryFn: ({ signal }) => apiGet("/api/cluster/summary", { signal }),
-    staleTime: 60_000,
-    enabled: authenticated,
-  });
-
-  const agentsList = Array.isArray(agentData?.agents) ? agentData.agents : [];
-  const hasRemoteClusters = agentsList.length > 0;
-
-  const isHub = cluster === "local";
-  const activeAgent = !isHub ? agentsList.find((a) => (a.clusterName || a.name) === cluster) : null;
-  const activePlatform = getPlatformInfo(isHub ? hubSummary?.platform : activeAgent?.platform);
 
   useEffect(() => {
     document.body.classList.toggle("light-theme", theme === "light");
@@ -156,37 +140,17 @@ export default function App() {
       )}
       {authenticated && !inClusterPicker && (
         <div className="app">
-          {/* Workspace breadcrumb bar */}
-          {hasRemoteClusters && (
-            <div className="workspace-breadcrumb">
-              <div className="workspace-breadcrumb-left">
-                <button className="workspace-breadcrumb-back" onClick={handleBackToPicker}>
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                    <path d="M8 1L3 6l5 5"/>
-                  </svg>
-                  All Clusters
-                </button>
-                <span className="workspace-breadcrumb-sep">/</span>
-                <span className="workspace-breadcrumb-cluster">
-                  <span className="wbc-dot" style={{ background: activeAgent?.status === "live" || isHub ? "#22c55e" : "#f59e0b" }} />
-                  <span className="wbc-platform" style={{ color: activePlatform.color }}>{activePlatform.icon}</span>
-                  <span className="wbc-name">{isHub ? "Hub" : cluster}</span>
-                  <span className="wbc-badge" style={{ background: isHub ? `linear-gradient(135deg,${activePlatform.color},${activePlatform.color}dd)` : activePlatform.color, color: "#fff" }}>
-                    {isHub ? `${activePlatform.name.toUpperCase()} · PRIMARY` : `${activePlatform.name.toUpperCase()} · REMOTE`}
-                  </span>
-                </span>
-              </div>
-              <div className="workspace-breadcrumb-right">
-                <VersionLabel />
-                <ClusterSwitcher />
-              </div>
-            </div>
-          )}
-
           <header className="app-header">
-            <div className="brand">
-              <span className="brand-mark">TCS</span> Agentic AI
-              <span className="brand-sub">Enterprise Intelligence Platform</span>
+            <div className="header-left">
+              <button className="back-pill" onClick={handleBackToPicker} title="Back to cluster selection">
+                <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                  <path d="M8 1L3 6l5 5"/>
+                </svg>
+              </button>
+              <div className="brand">
+                <span className="brand-mark">TCS</span> Agentic AI
+                <span className="brand-sub">Enterprise Intelligence Platform</span>
+              </div>
             </div>
             <nav className="nav-tabs">
               {NAV.map((t) => (
@@ -203,18 +167,10 @@ export default function App() {
               ))}
             </nav>
             <div className="header-actions">
-              {/* Connection status */}
               <div className="conn-status">
                 <span className="conn-dot connected" />
                 <span className="conn-label">Connected</span>
               </div>
-
-              {!hasRemoteClusters && <ClusterSwitcher />}
-
-              {/* Return to the centralized workspace home (AI Hub, Settings, all clusters) */}
-              <button className="icon-btn" onClick={handleBackToPicker} title="Workspaces & AI Hub">
-                &#x2302;
-              </button>
               <button className="icon-btn" onClick={() => { showToast("Refreshing...", "ok"); window.location.reload(); }} title="Refresh">
                 &#x21bb;
               </button>
@@ -261,28 +217,3 @@ export default function App() {
   );
 }
 
-function VersionLabel() {
-  const cluster = useActiveCluster();
-  const { data: summaryData } = useQuery({
-    queryKey: ["/api/cluster/summary", cluster],
-    queryFn: ({ signal }) => apiGet("/api/cluster/summary", { signal }),
-    staleTime: 60_000,
-    enabled: cluster === "local",
-  });
-  const { data: agentData } = useQuery({
-    queryKey: ["/api/agent/status"],
-    queryFn: ({ signal }) => apiGet("/api/agent/status", { signal }),
-    staleTime: 30_000,
-  });
-
-  let ver;
-  if (cluster === "local") {
-    ver = summaryData?.cluster?.version;
-  } else {
-    const agents = Array.isArray(agentData?.agents) ? agentData.agents : [];
-    const agent = agents.find((a) => (a.clusterName || a.name) === cluster);
-    ver = agent?.summary?.version;
-  }
-  if (!ver) return null;
-  return <span className="wbc-version">v{ver}</span>;
-}
