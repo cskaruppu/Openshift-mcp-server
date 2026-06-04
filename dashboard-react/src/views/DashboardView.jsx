@@ -12,6 +12,7 @@ import { RiskPredictionsWidget } from "../components/widgets/RiskPredictionsWidg
 import { AppChangesWidget } from "../components/widgets/AppChangesWidget";
 import { ImageVulnsWidget } from "../components/widgets/ImageVulnsWidget";
 import { HealthTimelineWidget } from "../components/widgets/HealthTimelineWidget";
+import { ResourceOptimizationWidget } from "../components/widgets/ResourceOptimizationWidget";
 import { EmergencyActionsWidget } from "../components/widgets/EmergencyActionsWidget";
 
 export function DashboardView() {
@@ -113,6 +114,11 @@ export function DashboardView() {
       {/* ── Image Vulnerability Scanner (full feature) ── */}
       <section className="dash-section">
         <ImageVulnsWidget />
+      </section>
+
+      {/* ── Resource Optimization (full feature) ── */}
+      <section className="dash-section">
+        <ResourceOptimizationWidget />
       </section>
 
       {/* ── Health & Topology (side by side) ── */}
