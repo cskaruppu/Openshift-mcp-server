@@ -12,7 +12,6 @@ import { RiskPredictionsWidget } from "../components/widgets/RiskPredictionsWidg
 import { AppChangesWidget } from "../components/widgets/AppChangesWidget";
 import { HealthTimelineWidget } from "../components/widgets/HealthTimelineWidget";
 import { EmergencyActionsWidget } from "../components/widgets/EmergencyActionsWidget";
-import { AnsibleWidget } from "../components/widgets/AnsibleWidget";
 
 export function DashboardView() {
   return (
@@ -108,13 +107,6 @@ export function DashboardView() {
       {/* ── Application Change Watcher (full feature) ── */}
       <section className="dash-section">
         <AppChangesWidget />
-      </section>
-
-      {/* ── Ansible Automation ── */}
-      <section className="dash-section">
-        <div className="dash-ansible-row">
-          <AnsibleWidget />
-        </div>
       </section>
 
       {/* ── Health & Topology (side by side) ── */}

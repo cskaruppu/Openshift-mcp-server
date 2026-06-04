@@ -178,20 +178,44 @@ async function ensurePersistedLoad() {
 
 const _envNamespaces = (process.env.WATCHED_APP_NAMESPACES || "").split(",").map(s => s.trim()).filter(Boolean);
 const _fileNamespaces = loadFromFile();
-const _watchedNamespaces = new Set([..._envNamespaces, ..._fileNamespaces]);
-const _baselines = new Map();
-const _changeLog = [];
-const _resolvedIds = new Set();
-const _dismissedKeys = new Map();
-const _changeHistory = [];
+
 const MAX_CHANGES = 500;
 const MAX_HISTORY = 200;
+const MAX_TIMELINE = 1000;
+
+// Per-cluster state container — each cluster gets its own isolated watcher state
+const _clusterStates = new Map();
+function _cs(cluster = "local") {
+  if (!_clusterStates.has(cluster)) {
+    const initial = cluster === "local" ? [..._envNamespaces, ..._fileNamespaces] : [];
+    _clusterStates.set(cluster, {
+      watchedNamespaces: new Set(initial),
+      baselines: new Map(),
+      changeLog: [],
+      resolvedIds: new Set(),
+      dismissedKeys: new Map(),
+      changeHistory: [],
+      lastScanTime: null,
+      lastChangeTime: null,
+      gitopsDriftCache: new Map(),
+      changeTimeline: [],
+    });
+  }
+  return _clusterStates.get(cluster);
+}
+
+// Legacy compat — keep references for MCP tool handlers that don't pass cluster
+const _watchedNamespaces = _cs("local").watchedNamespaces;
+const _baselines = _cs("local").baselines;
+const _changeLog = _cs("local").changeLog;
+const _resolvedIds = _cs("local").resolvedIds;
+const _dismissedKeys = _cs("local").dismissedKeys;
+const _changeHistory = _cs("local").changeHistory;
 let _lastScanTime = null;
 let _lastChangeTime = null;
 
-const _gitopsDriftCache = new Map();
-const _changeTimeline = [];
-const MAX_TIMELINE = 1000;
+const _gitopsDriftCache = _cs("local").gitopsDriftCache;
+const _changeTimeline = _cs("local").changeTimeline;
 
 const SYSTEM_NS_PREFIXES = ["openshift-", "openshift", "kube-", "kube", "default"];
 const SYSTEM_NS_EXACT = new Set([
@@ -397,46 +421,50 @@ async function correlateWithEvents(ns, kind, name) {
   } catch { return []; }
 }
 
-export function getChangeHistory() { return _changeHistory.slice(); }
-export function getLastScanTime() { return _lastScanTime; }
-export function getLastChangeTime() { return _lastChangeTime; }
-export function getHealthStreak() {
-  if (!_lastChangeTime) return _lastScanTime ? Date.now() - new Date(_lastScanTime).getTime() : 0;
-  return Date.now() - new Date(_lastChangeTime).getTime();
+export function getChangeHistory(cluster) { return _cs(cluster).changeHistory.slice(); }
+export function getLastScanTime(cluster) { return _cs(cluster).lastScanTime; }
+export function getLastChangeTime(cluster) { return _cs(cluster).lastChangeTime; }
+export function getHealthStreak(cluster) {
+  const s = _cs(cluster);
+  if (!s.lastChangeTime) return s.lastScanTime ? Date.now() - new Date(s.lastScanTime).getTime() : 0;
+  return Date.now() - new Date(s.lastChangeTime).getTime();
 }
 
 const ARGO_API = "apis/argoproj.io/v1alpha1";
 const GITOPS_NS = process.env.ARGOCD_NAMESPACE || "openshift-gitops";
 
 export { ensurePersistedLoad as initTrackedNamespaces };
-export function getWatchedNamespaces() { return [..._watchedNamespaces]; }
-export function getBaselines() { return Object.fromEntries(_baselines); }
-export function getChangeLog() { return _changeLog.slice(); }
-export function getChangeTimeline() { return _changeTimeline.slice(); }
-export function getGitOpsDrift() { return Object.fromEntries(_gitopsDriftCache); }
+export function getWatchedNamespaces(cluster) { return [..._cs(cluster).watchedNamespaces]; }
+export function getBaselines(cluster) { return Object.fromEntries(_cs(cluster).baselines); }
+export function getChangeLog(cluster) { return _cs(cluster).changeLog.slice(); }
+export function getChangeTimeline(cluster) { return _cs(cluster).changeTimeline.slice(); }
+export function getGitOpsDrift(cluster) { return Object.fromEntries(_cs(cluster).gitopsDriftCache); }
 
-export async function addNamespaces(nsList) {
-  for (const ns of nsList) _watchedNamespaces.add(ns);
-  await persistNamespaces();
+export async function addNamespaces(nsList, cluster) {
+  const s = _cs(cluster);
+  for (const ns of nsList) s.watchedNamespaces.add(ns);
+  if (!cluster || cluster === "local") await persistNamespaces();
 }
-export async function removeNamespaces(nsList) {
+export async function removeNamespaces(nsList, cluster) {
+  const s = _cs(cluster);
   for (const ns of nsList) {
-    _watchedNamespaces.delete(ns);
-    for (const [key] of _baselines) {
-      if (key.startsWith(ns + "/")) _baselines.delete(key);
+    s.watchedNamespaces.delete(ns);
+    for (const [key] of s.baselines) {
+      if (key.startsWith(ns + "/")) s.baselines.delete(key);
     }
   }
-  await persistNamespaces();
+  if (!cluster || cluster === "local") await persistNamespaces();
 }
-export async function initNamespaceBaselines(nsList) {
+export async function initNamespaceBaselines(nsList, cluster) {
+  const s = _cs(cluster);
   let newBaselines = 0;
   for (const ns of nsList) {
     try {
       const workloads = await fetchWorkloads(ns);
       for (const w of workloads) {
         const key = workloadKey(ns, w.kind, w.metadata.name);
-        if (!_baselines.has(key)) {
-          _baselines.set(key, extractSpec(w));
+        if (!s.baselines.has(key)) {
+          s.baselines.set(key, extractSpec(w));
           newBaselines++;
         }
       }
@@ -445,32 +473,35 @@ export async function initNamespaceBaselines(nsList) {
   if (newBaselines > 0) persistWatcherState().catch(() => {});
 }
 
-export async function acknowledgeChange(changeId) {
-  const entry = _changeLog.find(e => e.id === changeId);
+export async function acknowledgeChange(changeId, cluster) {
+  const s = _cs(cluster);
+  const entry = s.changeLog.find(e => e.id === changeId);
   if (!entry) return { found: false };
-  _resolvedIds.add(changeId);
-  recordHistory(entry, "acknowledged");
-  const idx = _changeLog.indexOf(entry);
-  if (idx >= 0) _changeLog.splice(idx, 1);
-  persistWatcherState().catch(() => {});
+  s.resolvedIds.add(changeId);
+  recordHistory(entry, "acknowledged", cluster);
+  const idx = s.changeLog.indexOf(entry);
+  if (idx >= 0) s.changeLog.splice(idx, 1);
+  if (!cluster || cluster === "local") persistWatcherState().catch(() => {});
   return { found: true, id: changeId, action: "acknowledged", resolved: true };
 }
 
-export async function agreeChange(changeId) {
-  const entry = _changeLog.find(e => e.id === changeId);
+export async function agreeChange(changeId, cluster) {
+  const s = _cs(cluster);
+  const entry = s.changeLog.find(e => e.id === changeId);
   if (!entry) return { found: false };
-  _resolvedIds.add(changeId);
-  recordHistory(entry, "agreed");
+  s.resolvedIds.add(changeId);
+  recordHistory(entry, "agreed", cluster);
   const key = workloadKey(entry.namespace, entry.kind, entry.name);
-  if (entry.currentSpec) _baselines.set(key, entry.currentSpec);
-  const idx = _changeLog.indexOf(entry);
-  if (idx >= 0) _changeLog.splice(idx, 1);
-  persistWatcherState().catch(() => {});
+  if (entry.currentSpec) s.baselines.set(key, entry.currentSpec);
+  const idx = s.changeLog.indexOf(entry);
+  if (idx >= 0) s.changeLog.splice(idx, 1);
+  if (!cluster || cluster === "local") persistWatcherState().catch(() => {});
   return { found: true, id: changeId, action: "agreed", resolved: true };
 }
 
-export async function dismissChange(changeId) {
-  const entry = _changeLog.find(e => e.id === changeId);
+export async function dismissChange(changeId, cluster) {
+  const s = _cs(cluster);
+  const entry = s.changeLog.find(e => e.id === changeId);
   if (!entry) return { found: false };
   const kindPath = entry.kind === "Deployment" ? "deployments" : entry.kind === "StatefulSet" ? "statefulsets" : "daemonsets";
   const apiPath = `/apis/apps/v1/namespaces/${entry.namespace}/${kindPath}/${entry.name}`;
@@ -495,18 +526,19 @@ export async function dismissChange(changeId) {
 
   await ocpPatch(apiPath, patch, "application/strategic-merge-patch+json");
   const key = workloadKey(entry.namespace, entry.kind, entry.name);
-  _baselines.set(key, baselineSpec);
-  _dismissedKeys.set(key, { baseline: baselineSpec, dismissedAt: Date.now(), followUpCount: 0 });
-  recordHistory(entry, "dismissed");
-  const idx = _changeLog.indexOf(entry);
-  if (idx >= 0) _changeLog.splice(idx, 1);
-  persistWatcherState().catch(() => {});
+  s.baselines.set(key, baselineSpec);
+  s.dismissedKeys.set(key, { baseline: baselineSpec, dismissedAt: Date.now(), followUpCount: 0 });
+  recordHistory(entry, "dismissed", cluster);
+  const idx = s.changeLog.indexOf(entry);
+  if (idx >= 0) s.changeLog.splice(idx, 1);
+  if (!cluster || cluster === "local") persistWatcherState().catch(() => {});
   return { found: true, id: changeId, action: "dismissed", rolledBack: true, resolved: true };
 }
 
-export function getWorkloadsByNamespace() {
+export function getWorkloadsByNamespace(cluster) {
+  const s = _cs(cluster);
   const byNs = {};
-  for (const [key, spec] of _baselines) {
+  for (const [key, spec] of s.baselines) {
     const parts = key.split("/");
     const ns = parts[0];
     const kind = parts[1];
@@ -570,23 +602,24 @@ export async function discoverAppNamespaces() {
   }
 }
 
-export async function autoDiscoverAndWatch() {
+export async function autoDiscoverAndWatch(cluster) {
+  const s = _cs(cluster);
   const discovered = await discoverAppNamespaces();
   let added = 0;
   for (const { ns } of discovered) {
-    if (!_watchedNamespaces.has(ns)) {
-      _watchedNamespaces.add(ns);
+    if (!s.watchedNamespaces.has(ns)) {
+      s.watchedNamespaces.add(ns);
       added++;
       try {
         const workloads = await fetchWorkloads(ns);
         for (const w of workloads) {
           const key = workloadKey(ns, w.kind, w.metadata.name);
-          _baselines.set(key, extractSpec(w));
+          s.baselines.set(key, extractSpec(w));
         }
       } catch {}
     }
   }
-  return { discovered: discovered.length, added, total: _watchedNamespaces.size, namespaces: discovered };
+  return { discovered: discovered.length, added, total: s.watchedNamespaces.size, namespaces: discovered };
 }
 
 function extractSpec(resource) {
@@ -725,10 +758,11 @@ async function fetchWorkloads(namespace) {
   return items;
 }
 
-function recordChange(entry) {
-  _changeLog.unshift(entry);
-  if (_changeLog.length > MAX_CHANGES) _changeLog.length = MAX_CHANGES;
-  _lastChangeTime = entry.timestamp;
+function recordChange(entry, cluster) {
+  const s = _cs(cluster);
+  s.changeLog.unshift(entry);
+  if (s.changeLog.length > MAX_CHANGES) s.changeLog.length = MAX_CHANGES;
+  s.lastChangeTime = entry.timestamp;
 
   const timelineEntry = {
     timestamp: entry.timestamp,
@@ -741,8 +775,8 @@ function recordChange(entry) {
     riskScore: entry.riskScore,
     changedBy: entry.changedBy,
   };
-  _changeTimeline.push(timelineEntry);
-  if (_changeTimeline.length > MAX_TIMELINE) _changeTimeline.splice(0, _changeTimeline.length - MAX_TIMELINE);
+  s.changeTimeline.push(timelineEntry);
+  if (s.changeTimeline.length > MAX_TIMELINE) s.changeTimeline.splice(0, s.changeTimeline.length - MAX_TIMELINE);
 
   recordTimelineEvent({
     source: entry.kind === "ConfigMap" ? "configmap" : (entry.changeType === "scaling" ? "scaling" : "deployment"),
@@ -756,8 +790,9 @@ function recordChange(entry) {
   }).catch((err) => console.warn("[app-change-watcher] timeline persist failed:", err.message));
 }
 
-function recordHistory(entry, action) {
-  _changeHistory.unshift({
+function recordHistory(entry, action, cluster) {
+  const s = _cs(cluster);
+  s.changeHistory.unshift({
     id: entry.id,
     namespace: entry.namespace,
     kind: entry.kind,
@@ -772,14 +807,15 @@ function recordHistory(entry, action) {
     changeCount: entry.changes.length,
     changeSummary: entry.changes.slice(0, 3).map(c => c.field).join(", "),
   });
-  if (_changeHistory.length > MAX_HISTORY) _changeHistory.length = MAX_HISTORY;
+  if (s.changeHistory.length > MAX_HISTORY) s.changeHistory.length = MAX_HISTORY;
 }
 
-export async function scanForChanges() {
+export async function scanForChanges(cluster) {
+  const s = _cs(cluster);
   const results = [];
-  const namespaces = [..._watchedNamespaces];
+  const namespaces = [...s.watchedNamespaces];
   if (namespaces.length === 0) return results;
-  _lastScanTime = new Date().toISOString();
+  s.lastScanTime = new Date().toISOString();
   const outsideHours = isOutsideBusinessHours();
   const weekend = isWeekend();
 
@@ -789,9 +825,9 @@ export async function scanForChanges() {
       for (const w of workloads) {
         const key = workloadKey(ns, w.kind, w.metadata.name);
         const current = extractSpec(w);
-        const baseline = _baselines.get(key);
+        const baseline = s.baselines.get(key);
         if (!baseline) {
-          _baselines.set(key, current);
+          s.baselines.set(key, current);
           continue;
         }
         if (baseline.generation === current.generation && baseline.resourceVersion === current.resourceVersion) continue;
@@ -799,7 +835,7 @@ export async function scanForChanges() {
         if (diffs.length > 0) {
           const changeType = classifyChangeType(diffs);
           const severity = diffs.some(d => d.severity === "critical") ? "critical" : diffs.some(d => d.severity === "warning") ? "warning" : "info";
-          const dismissed = _dismissedKeys.get(key);
+          const dismissed = s.dismissedKeys.get(key);
           let followUp = false;
           let followUpCount = 0;
           if (dismissed) {
@@ -835,19 +871,19 @@ export async function scanForChanges() {
             changeFreezeViolation,
             correlatedEvents,
           };
-          recordChange(entry);
+          recordChange(entry, cluster);
           results.push(entry);
         }
-        _baselines.set(key, current);
-        if (!_dismissedKeys.has(key) || diffs.length === 0) {
-          _dismissedKeys.delete(key);
+        s.baselines.set(key, current);
+        if (!s.dismissedKeys.has(key) || diffs.length === 0) {
+          s.dismissedKeys.delete(key);
         }
       }
     } catch (e) {
       console.warn(`[app-watcher] Error scanning namespace ${ns}:`, e.message);
     }
   }
-  if (results.length > 0) persistWatcherState().catch(() => {});
+  if (results.length > 0 && (!cluster || cluster === "local")) persistWatcherState().catch(() => {});
   return results;
 }
 
@@ -914,21 +950,22 @@ export async function scanGitOpsDrift() {
   }
 }
 
-export function getTimelineStats() {
+export function getTimelineStats(cluster) {
+  const s = _cs(cluster);
   const now = Date.now();
   const h1 = new Date(now - 3600000).toISOString();
   const h6 = new Date(now - 6 * 3600000).toISOString();
   const h24 = new Date(now - 24 * 3600000).toISOString();
 
-  const last1h = _changeTimeline.filter(e => e.timestamp >= h1);
-  const last6h = _changeTimeline.filter(e => e.timestamp >= h6);
-  const last24h = _changeTimeline.filter(e => e.timestamp >= h24);
+  const last1h = s.changeTimeline.filter(e => e.timestamp >= h1);
+  const last6h = s.changeTimeline.filter(e => e.timestamp >= h6);
+  const last24h = s.changeTimeline.filter(e => e.timestamp >= h24);
 
   const hourlyBuckets = [];
   for (let i = 23; i >= 0; i--) {
     const bucketStart = new Date(now - (i + 1) * 3600000).toISOString();
     const bucketEnd = new Date(now - i * 3600000).toISOString();
-    const entries = _changeTimeline.filter(e => e.timestamp >= bucketStart && e.timestamp < bucketEnd);
+    const entries = s.changeTimeline.filter(e => e.timestamp >= bucketStart && e.timestamp < bucketEnd);
     hourlyBuckets.push({
       hour: new Date(now - i * 3600000).getHours(),
       total: entries.length,

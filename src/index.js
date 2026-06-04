@@ -3998,27 +3998,28 @@ async function startSSE() {
 
     // ── App Change Watcher API ─────────────────────────────────────
     if (req.method === "GET" && url.pathname === "/api/dashboard/app-changes") {
+      const clusterName = url.searchParams.get("cluster") || "local";
       try {
         const handler = async () => {
           const ns = url.searchParams.get("namespace") || undefined;
-          let namespaces = getWatchedNamespaces();
+          let namespaces = getWatchedNamespaces(clusterName);
 
           let discoveredNamespaces = null;
           try {
             discoveredNamespaces = await discoverAppNamespaces();
           } catch {};
 
-          const changes = await scanForChanges();
-          const log = getChangeLog();
-          namespaces = getWatchedNamespaces();
+          const changes = await scanForChanges(clusterName);
+          const log = getChangeLog(clusterName);
+          namespaces = getWatchedNamespaces(clusterName);
           const filtered = ns ? log.filter(e => e.namespace === ns) : log;
           const totalChanges = filtered.length;
           const critical = filtered.filter(e => e.severity === "critical").length;
           const warning = filtered.filter(e => e.severity === "warning").length;
           const info = filtered.filter(e => e.severity === "info").length;
-          const baselines = Object.keys(getBaselines()).length;
+          const baselines = Object.keys(getBaselines(clusterName)).length;
 
-          const timelineStats = getTimelineStats();
+          const timelineStats = getTimelineStats(clusterName);
 
           const changeTypeBreakdown = {};
           for (const e of filtered) {
@@ -4053,15 +4054,15 @@ async function startSSE() {
             }
           } catch {}
 
-          const history = getChangeHistory();
+          const history = getChangeHistory(clusterName);
           return {
             watchedNamespaces: namespaces,
             trackedWorkloads: baselines,
             newChanges: changes.length,
             totalChanges, critical, warning, info,
-            lastScanTime: getLastScanTime(),
-            lastChangeTime: getLastChangeTime(),
-            healthStreakMs: getHealthStreak(),
+            lastScanTime: getLastScanTime(clusterName),
+            lastChangeTime: getLastChangeTime(clusterName),
+            healthStreakMs: getHealthStreak(clusterName),
             discoveredNamespaces: discoveredNamespaces ? discoveredNamespaces.map(d => ({ namespace: d.ns, workloads: d.count, breakdown: d.breakdown || {} })) : null,
             changeTypeBreakdown,
             timelineStats,
@@ -4089,10 +4090,10 @@ async function startSSE() {
 
         const result = await withClusterContext(url, handler);
         if (result === null) {
-          const _acCluster = url.searchParams.get("cluster");
-          const cached = getAgentCachedResponse(_acCluster, "/api/dashboard/app-changes", { skipFreshnessCheck: true });
+          const cached = getAgentCachedResponse(clusterName, "/api/dashboard/app-changes", { skipFreshnessCheck: true });
           if (cached) return sendJson(res, 200, cached);
-          return sendJson(res, 200, { available: false, source: "agent-cache", message: "Application change tracking data unavailable — agent may be offline" });
+          // Return empty state so the widget shows setup UI instead of "unavailable"
+          return sendJson(res, 200, { watchedNamespaces: [], trackedWorkloads: 0, newChanges: 0, totalChanges: 0, critical: 0, warning: 0, info: 0, recentChanges: [], discoveredNamespaces: null, changeHistory: [] });
         }
         sendJson(res, 200, result);
       } catch (err) {
@@ -4103,9 +4104,10 @@ async function startSSE() {
 
     // ── App Change Watcher — Auto-discover + Watch ──────────────────
     if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/discover") {
+      const _acCluster = url.searchParams.get("cluster") || "local";
       try {
-        const result = await withClusterContext(url, () => autoDiscoverAndWatch());
-        if (result === null) return sendJson(res, 200, { discovered: 0, added: 0, total: 0, namespaces: [], error: "Agent offline" });
+        const result = await withClusterContext(url, () => autoDiscoverAndWatch(_acCluster));
+        if (result === null) return sendJson(res, 200, { discovered: 0, added: 0, total: 0, namespaces: [] });
         sendJson(res, 200, {
           discovered: result.discovered,
           added: result.added,
@@ -4120,35 +4122,36 @@ async function startSSE() {
 
     // ── App Change Watcher — Namespace management ─────────────────
     if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/namespaces") {
+      const _acCluster = url.searchParams.get("cluster") || "local";
       try {
         const body = await readJsonBody(req);
         const action = body.action;
         const nsList = body.namespaces || [];
         const result = await withClusterContext(url, async () => {
           if (action === "add" && nsList.length > 0) {
-            await addNamespaces(nsList);
+            await addNamespaces(nsList, _acCluster);
             const resp = {
-              watchedNamespaces: getWatchedNamespaces(),
-              trackedWorkloads: Object.keys(getBaselines()).length,
+              watchedNamespaces: getWatchedNamespaces(_acCluster),
+              trackedWorkloads: Object.keys(getBaselines(_acCluster)).length,
               baselineStatus: "initializing",
             };
-            initNamespaceBaselines(nsList).catch(e =>
+            initNamespaceBaselines(nsList, _acCluster).catch(e =>
               console.warn("[app-watcher] Background baseline init error:", e.message)
             );
             return resp;
           } else if (action === "remove" && nsList.length > 0) {
-            await removeNamespaces(nsList);
+            await removeNamespaces(nsList, _acCluster);
             return {
-              watchedNamespaces: getWatchedNamespaces(),
-              trackedWorkloads: Object.keys(getBaselines()).length,
+              watchedNamespaces: getWatchedNamespaces(_acCluster),
+              trackedWorkloads: Object.keys(getBaselines(_acCluster)).length,
             };
           }
           return {
-            watchedNamespaces: getWatchedNamespaces(),
-            trackedWorkloads: Object.keys(getBaselines()).length,
+            watchedNamespaces: getWatchedNamespaces(_acCluster),
+            trackedWorkloads: Object.keys(getBaselines(_acCluster)).length,
           };
         });
-        sendJson(res, 200, result || { error: "Agent offline" });
+        sendJson(res, 200, result || { watchedNamespaces: [], trackedWorkloads: 0 });
       } catch (err) {
         sendJson(res, 200, { error: err.message });
       }
@@ -4157,10 +4160,11 @@ async function startSSE() {
 
     // ── App Change Watcher — Force scan now ────────────────────────
     if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/scan") {
+      const _acCluster = url.searchParams.get("cluster") || "local";
       try {
         const result = await withClusterContext(url, async () => {
-          const changes = await scanForChanges();
-          const log = getChangeLog().filter(e => !e.acknowledged);
+          const changes = await scanForChanges(_acCluster);
+          const log = getChangeLog(_acCluster).filter(e => !e.acknowledged);
           return {
             scanned: true,
             newChanges: changes.length,
@@ -4168,7 +4172,7 @@ async function startSSE() {
             timestamp: new Date().toISOString(),
           };
         });
-        sendJson(res, 200, result || { scanned: false, error: "Agent offline" });
+        sendJson(res, 200, result || { scanned: false, newChanges: 0, pendingChanges: 0 });
       } catch (err) {
         sendJson(res, 200, { scanned: false, error: err.message });
       }
@@ -4177,17 +4181,18 @@ async function startSSE() {
 
     // ── App Change Watcher — Reset baselines ─────────────────────
     if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/reset-baselines") {
+      const _acCluster = url.searchParams.get("cluster") || "local";
       try {
         const result = await withClusterContext(url, async () => {
-          const ns = getWatchedNamespaces();
-          await initNamespaceBaselines(ns);
+          const ns = getWatchedNamespaces(_acCluster);
+          await initNamespaceBaselines(ns, _acCluster);
           return {
             reset: true,
             namespaces: ns.length,
-            baselines: Object.keys(getBaselines()).length,
+            baselines: Object.keys(getBaselines(_acCluster)).length,
           };
         });
-        sendJson(res, 200, result || { reset: false, error: "Agent offline" });
+        sendJson(res, 200, result || { reset: false });
       } catch (err) {
         sendJson(res, 200, { reset: false, error: err.message });
       }
@@ -4196,13 +4201,14 @@ async function startSSE() {
 
     // ── App Change Watcher — Change actions (agree/dismiss/ack) ────
     if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/action") {
+      const _acCluster = url.searchParams.get("cluster") || "local";
       try {
         const body = await readJsonBody(req);
         const { changeId, action } = body;
         const result = await withClusterContext(url, async () => {
-          if (action === "dismiss") return await dismissChange(changeId);
-          if (action === "agree") return agreeChange(changeId);
-          if (action === "acknowledge") return acknowledgeChange(changeId);
+          if (action === "dismiss") return await dismissChange(changeId, _acCluster);
+          if (action === "agree") return agreeChange(changeId, _acCluster);
+          if (action === "acknowledge") return acknowledgeChange(changeId, _acCluster);
           return { found: false, error: "Unknown action. Use: agree, dismiss, acknowledge" };
         });
         sendJson(res, 200, result || { found: false, error: "Agent offline" });
@@ -4214,9 +4220,10 @@ async function startSSE() {
 
     // ── App Change Watcher — Workload listing ──────────────────────
     if (req.method === "GET" && url.pathname === "/api/dashboard/app-changes/workloads") {
+      const _acCluster = url.searchParams.get("cluster") || "local";
       try {
         const result = await withClusterContext(url, async () => {
-          const byNs = getWorkloadsByNamespace();
+          const byNs = getWorkloadsByNamespace(_acCluster);
           return {
             namespaces: Object.entries(byNs).map(([ns, wl]) => ({
               namespace: ns,
