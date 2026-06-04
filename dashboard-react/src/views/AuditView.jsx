@@ -1,275 +1,117 @@
 import { useState, useMemo, useCallback } from "react";
 import { useClusterQuery } from "../hooks/useClusterQuery";
 import { useActiveCluster } from "../store/clusterStore";
+import { clusterUrl } from "../api/client";
+import { showToast } from "../store/toastStore";
 
-/**
- * Audit view — executed actions, pending approvals, and query analytics for the
- * ACTIVE cluster. Cluster-scoped via useClusterQuery, so the audit trail can
- * never show another cluster's activity.
- *
- * Redesigned to match the legacy dashboard Audit section with filter pills,
- * time-range selector, export buttons, action-type dropdown, query analytics,
- * and improved table styling.
- */
-
-/* ── constants ── */
 const STATUS_FILTERS = ["All", "Success", "Failed", "ITSM"];
 const TIME_RANGES = [
   { label: "Last Hour", ms: 3_600_000 },
   { label: "Last 24h", ms: 86_400_000 },
   { label: "Last 7 Days", ms: 604_800_000 },
+  { label: "Last 30 Days", ms: 2_592_000_000 },
   { label: "All Time", ms: 0 },
 ];
 const ACTION_TYPES = ["All", "Scale", "Restart", "Delete", "Patch", "Create", "Update", "Rollback", "Approve", "Deny"];
+const TRAIL_TYPES = ["all", "compliance_scan", "policy_violation", "change_detected", "action_taken", "slo_breach", "config_change", "login"];
 
-/* ── styles (inline, scoped to this view) ── */
-const S = {
-  filterBar: {
-    display: "flex",
-    flexWrap: "wrap",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 18,
-  },
-  pillGroup: {
-    display: "flex",
-    gap: 6,
-    flexWrap: "wrap",
-  },
-  pill: (active) => ({
-    padding: "5px 14px",
-    borderRadius: 20,
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: "pointer",
-    border: "1px solid",
-    borderColor: active ? "#3b82f6" : "#334155",
-    background: active ? "#3b82f620" : "transparent",
-    color: active ? "#3b82f6" : "#a1a1aa",
-    transition: "all .15s",
-    userSelect: "none",
-  }),
-  select: {
-    background: "#1a1d27",
-    color: "#e4e4e7",
-    border: "1px solid #334155",
-    borderRadius: 8,
-    padding: "5px 10px",
-    fontSize: 12,
-    cursor: "pointer",
-    outline: "none",
-  },
-  exportBtn: {
-    padding: "5px 14px",
-    borderRadius: 8,
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: "pointer",
-    border: "1px solid #334155",
-    background: "#1e293b80",
-    color: "#a1a1aa",
-    transition: "all .15s",
-  },
-  statBox: (color) => ({
-    background: "#1e293b80",
-    border: "1px solid #334155",
-    borderLeft: `3px solid ${color}`,
-    borderRadius: 10,
-    padding: "12px 14px",
-    minWidth: 120,
-    flex: "1 1 120px",
-  }),
-  table: {
-    width: "100%",
-    borderCollapse: "collapse",
-    fontSize: 13,
-  },
-  th: {
-    textAlign: "left",
-    color: "#a1a1aa",
-    fontWeight: 600,
-    padding: "10px 12px",
-    borderBottom: "1px solid #2a2d3a",
-    fontSize: 11,
-    textTransform: "uppercase",
-    letterSpacing: ".5px",
-  },
-  td: {
-    padding: "10px 12px",
-    borderBottom: "1px solid #1c2128",
-  },
-  statusPill: (status) => {
-    const map = {
-      success: { bg: "#22c55e22", color: "#22c55e", border: "#22c55e44" },
-      failed: { bg: "#ef444422", color: "#ef4444", border: "#ef444444" },
-      pending: { bg: "#f59e0b22", color: "#f59e0b", border: "#f59e0b44" },
-    };
-    const s = map[status] || map.pending;
-    return {
-      display: "inline-block",
-      padding: "2px 10px",
-      borderRadius: 9999,
-      fontSize: 11,
-      fontWeight: 600,
-      background: s.bg,
-      color: s.color,
-      border: `1px solid ${s.border}`,
-    };
-  },
-  analyticsGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-    gap: 12,
-    marginTop: 8,
-  },
-  analyticsCard: {
-    background: "#1e293b80",
-    border: "1px solid #334155",
-    borderRadius: 10,
-    padding: "16px 18px",
-    textAlign: "center",
-  },
-  headerRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 16,
-    flexWrap: "wrap",
-  },
-  headerRight: {
-    marginLeft: "auto",
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-  },
-  sectionTitle: {
-    fontSize: 13,
-    textTransform: "uppercase",
-    letterSpacing: ".5px",
-    color: "#a1a1aa",
-    margin: "22px 0 8px",
-    fontWeight: 600,
-  },
-  emptyRow: {
-    color: "#a1a1aa",
-    textAlign: "center",
-    padding: 16,
-  },
+const gradeColor = (g) =>
+  g === "A" ? "#22c55e" : g === "B" ? "#84cc16" : g === "C" ? "#f59e0b" : g === "D" ? "#f97316" : "#ef4444";
+
+const sevColor = (s) => {
+  if (s === "critical") return "#ef4444";
+  if (s === "warning" || s === "high") return "#f59e0b";
+  return "#3b82f6";
 };
 
-/* ── helpers ── */
+const statusIcon = (st) =>
+  st === "PASS" ? "✓" : st === "FAIL" ? "✗" : "!";
+
 function fmt(ts) {
   if (!ts) return "—";
-  try {
-    return new Date(ts).toLocaleString();
-  } catch {
-    return String(ts);
-  }
-}
-
-function fmtDuration(ms) {
-  if (ms == null) return "—";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  return `${(ms / 1000).toFixed(2)}s`;
+  try { return new Date(ts).toLocaleString(); } catch { return String(ts); }
 }
 
 function downloadFile(content, filename, mime) {
   const blob = new Blob([content], { type: mime });
-  const url = URL.createObjectURL(blob);
+  const u = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  a.href = u; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(u);
 }
 
-/* ── sub-components ── */
-function Stat({ label, value, color }) {
-  return (
-    <div style={S.statBox(color)}>
-      <div style={{ fontSize: 26, fontWeight: 700, color }}>{value}</div>
-      <div style={{ fontSize: 11, color: "#a1a1aa", marginTop: 4 }}>{label}</div>
-    </div>
-  );
-}
-
-function StatusPill({ status }) {
-  const normalized =
-    status === true || status === "success"
-      ? "success"
-      : status === false || status === "failed"
-      ? "failed"
-      : "pending";
-  return <span style={S.statusPill(normalized)}>{normalized}</span>;
-}
-
-function HoverRow({ children, style }) {
-  const [hovered, setHovered] = useState(false);
-  return (
-    <tr
-      style={{
-        ...style,
-        background: hovered ? "#ffffff08" : "transparent",
-        transition: "background .12s",
-      }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      {children}
-    </tr>
-  );
-}
-
-/* ── main component ── */
 export function AuditView() {
   const cluster = useActiveCluster();
-  const { data, isLoading, isError, error } = useClusterQuery("/api/audit", {
-    refetchInterval: 20_000,
-  });
 
-  /* --- state --- */
+  const { data: auditData, isLoading: auditLoading, isError: auditError, error: auditErr } =
+    useClusterQuery("/api/audit", { refetchInterval: 20_000 });
+
+  const { data: compData, refetch: refetchComp } =
+    useClusterQuery("/api/compliance/results", { refetchInterval: 60_000 });
+
+  const { data: fwSummary, refetch: refetchFw } =
+    useClusterQuery("/api/compliance/frameworks-summary", { refetchInterval: 120_000 });
+
+  const { data: trailData, refetch: refetchTrail } =
+    useClusterQuery("/api/audit-trail?limit=100", { refetchInterval: 30_000 });
+
+  const { data: trailStats } =
+    useClusterQuery("/api/audit-trail/stats?days=30", { refetchInterval: 120_000 });
+
+  const { data: compHistory } =
+    useClusterQuery("/api/compliance/history", { refetchInterval: 120_000 });
+
+  const [activeTab, setActiveTab] = useState("compliance");
+  const [scanning, setScanning] = useState(false);
+  const [catFilter, setCatFilter] = useState("all");
+  const [findingSev, setFindingSev] = useState("all");
+  const [findingStatus, setFindingStatus] = useState("all");
+  const [expandedFinding, setExpandedFinding] = useState(null);
+  const [expandedFw, setExpandedFw] = useState(null);
+
   const [statusFilter, setStatusFilter] = useState("All");
   const [timeRange, setTimeRange] = useState("All Time");
   const [actionType, setActionType] = useState("All");
 
-  /* --- raw data --- */
-  const executed = data?.executed || [];
-  const pending = data?.pending || [];
-  const queries = data?.queries || [];
-  const queryStats = data?.queryStats || {};
+  const [trailType, setTrailType] = useState("all");
 
-  /* --- derived / filtered data --- */
+  const handleScan = useCallback(async () => {
+    setScanning(true);
+    try {
+      const res = await fetch(clusterUrl("/api/compliance/scan", cluster), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (!res.ok) throw new Error("Scan failed");
+      await res.json();
+      refetchComp();
+      refetchFw();
+      showToast("Compliance scan complete", "ok");
+    } catch (err) {
+      showToast("Scan failed: " + err.message, "err");
+    } finally {
+      setScanning(false);
+    }
+  }, [cluster, refetchComp, refetchFw]);
+
+  const executed = auditData?.executed || [];
+  const pending = auditData?.pending || [];
+  const queries = auditData?.queries || [];
+  const queryStats = auditData?.queryStats || {};
+
   const filteredExecuted = useMemo(() => {
     let list = [...executed];
-
-    // time range
     const range = TIME_RANGES.find((t) => t.label === timeRange);
     if (range && range.ms > 0) {
       const cutoff = Date.now() - range.ms;
-      list = list.filter((e) => {
-        const ts = e.created_at || e.createdAt;
-        return ts && new Date(ts).getTime() >= cutoff;
-      });
+      list = list.filter((e) => new Date(e.created_at || e.createdAt || 0).getTime() >= cutoff);
     }
-
-    // status filter
-    if (statusFilter === "Success") {
-      list = list.filter((e) => e.success === true);
-    } else if (statusFilter === "Failed") {
-      list = list.filter((e) => e.success === false);
-    } else if (statusFilter === "ITSM") {
-      list = list.filter((e) => e.itsm || e.ticketId || e.itsmRef);
-    }
-
-    // action type
-    if (actionType !== "All") {
-      list = list.filter(
-        (e) => (e.action || "").toLowerCase() === actionType.toLowerCase()
-      );
-    }
-
+    if (statusFilter === "Success") list = list.filter((e) => e.success === true);
+    else if (statusFilter === "Failed") list = list.filter((e) => e.success === false);
+    else if (statusFilter === "ITSM") list = list.filter((e) => e.itsm || e.ticketId);
+    if (actionType !== "All") list = list.filter((e) => (e.action || "").toLowerCase() === actionType.toLowerCase());
     return list;
   }, [executed, statusFilter, timeRange, actionType]);
 
@@ -278,326 +120,513 @@ export function AuditView() {
   const failedCount = executed.filter((e) => e.success === false).length;
   const rate = total ? Math.round((successCount / total) * 100) : 0;
 
-  /* --- export handlers --- */
+  const findings = compData?.findings || [];
+  const compScore = compData?.score ?? null;
+  const compGrade = compData?.grade || "?";
+  const compTotals = compData?.totals || {};
+  const compSummary = compData?.summary || {};
+  const categories = Object.keys(compSummary);
+
+  const filteredFindings = useMemo(() => {
+    let list = findings;
+    if (catFilter !== "all") list = list.filter((f) => f.category === catFilter);
+    if (findingSev !== "all") list = list.filter((f) => f.severity === findingSev);
+    if (findingStatus !== "all") list = list.filter((f) => f.status === findingStatus);
+    return list;
+  }, [findings, catFilter, findingSev, findingStatus]);
+
+  const frameworks = fwSummary?.results || [];
+
+  const trailEntries = trailData?.entries || trailData?.events || [];
+  const filteredTrail = useMemo(() => {
+    if (trailType === "all") return trailEntries;
+    return trailEntries.filter((e) => e.type === trailType);
+  }, [trailEntries, trailType]);
+
+  const trailStatsData = trailStats || {};
+
   const handleExportJSON = useCallback(() => {
-    const payload = {
-      cluster,
-      exported: new Date().toISOString(),
-      filters: { statusFilter, timeRange, actionType },
-      executed: filteredExecuted,
-      pending,
-      queries,
-      queryStats,
-    };
-    downloadFile(JSON.stringify(payload, null, 2), `audit-${cluster}-${Date.now()}.json`, "application/json");
-  }, [cluster, statusFilter, timeRange, actionType, filteredExecuted, pending, queries, queryStats]);
+    downloadFile(
+      JSON.stringify({ cluster, exported: new Date().toISOString(), executed: filteredExecuted, pending, queries }, null, 2),
+      `audit-${cluster}-${Date.now()}.json`, "application/json"
+    );
+  }, [cluster, filteredExecuted, pending, queries]);
 
   const handleExportCSV = useCallback(() => {
     const headers = ["Timestamp", "Action", "Target", "Namespace", "Status", "User", "Details"];
     const rows = filteredExecuted.map((e) => [
-      e.created_at || e.createdAt || "",
-      e.action || "",
-      e.target || "",
-      e.namespace || "",
-      e.success ? "success" : "failed",
-      e.user || e.initiator || "",
-      e.details || e.message || "",
+      e.created_at || e.createdAt || "", e.action || "", e.target || "",
+      e.namespace || "", e.success ? "success" : "failed", e.user || e.initiator || "", e.details || e.message || "",
     ]);
     const csv = [headers, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
     downloadFile(csv, `audit-${cluster}-${Date.now()}.csv`, "text/csv");
   }, [cluster, filteredExecuted]);
 
+  const historyList = compHistory?.history || [];
+
   return (
-    <div className="view-pane">
-      {/* ── Header ── */}
-      <div style={S.headerRow}>
-        <h2 style={{ margin: 0, fontSize: 20 }}>Audit &amp; Activity</h2>
-        <span className="scope-chip">
-          Scope: {cluster === "local" ? "Hub (local)" : cluster}
-        </span>
-        <div style={S.headerRight}>
-          <button
-            style={S.exportBtn}
-            onClick={handleExportJSON}
-            title="Export filtered audit data as JSON"
-            onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#3b82f6"; e.currentTarget.style.color = "#e4e4e7"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#334155"; e.currentTarget.style.color = "#a1a1aa"; }}
-          >
-            Export JSON
-          </button>
-          <button
-            style={S.exportBtn}
-            onClick={handleExportCSV}
-            title="Export filtered audit data as CSV"
-            onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#3b82f6"; e.currentTarget.style.color = "#e4e4e7"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#334155"; e.currentTarget.style.color = "#a1a1aa"; }}
-          >
-            Export CSV
-          </button>
+    <div className="aud">
+
+      {/* ═══ HERO ═══ */}
+      <div className="aud-hero">
+        <div className="aud-hero-glow" />
+        <div className="aud-hero-inner">
+          <div className="aud-hero-top">
+            <div className="aud-hero-title">
+              <div className="aud-hero-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              </div>
+              <div>
+                <h2>Audit &amp; Compliance Center</h2>
+                <p>CIS benchmarks, compliance frameworks, audit trail &amp; activity
+                  {cluster !== "local" && <span className="aud-cluster-badge">{cluster}</span>}
+                </p>
+              </div>
+            </div>
+            <div className="aud-hero-actions">
+              <button className="aud-hero-btn scan" onClick={handleScan} disabled={scanning}>
+                {scanning ? "Scanning…" : "Run CIS Scan"}
+              </button>
+              <button className="aud-hero-btn" onClick={handleExportJSON}>Export JSON</button>
+              <button className="aud-hero-btn" onClick={handleExportCSV}>Export CSV</button>
+            </div>
+          </div>
+
+          {/* Hero stats */}
+          <div className="aud-hero-stats">
+            <div className="aud-stat-box" style={{ "--stat-c": compScore !== null ? gradeColor(compGrade) : "#64748b" }}>
+              <div className="aud-stat-val">{compScore !== null ? compScore : "—"}</div>
+              <div className="aud-stat-lbl">CIS Score</div>
+            </div>
+            <div className="aud-stat-box" style={{ "--stat-c": "#ef4444" }}>
+              <div className="aud-stat-val">{compTotals.fail || 0}</div>
+              <div className="aud-stat-lbl">Findings (Fail)</div>
+            </div>
+            <div className="aud-stat-box" style={{ "--stat-c": "#22c55e" }}>
+              <div className="aud-stat-val">{compTotals.pass || 0}</div>
+              <div className="aud-stat-lbl">Checks Passed</div>
+            </div>
+            <div className="aud-stat-box" style={{ "--stat-c": "#3b82f6" }}>
+              <div className="aud-stat-val">{total}</div>
+              <div className="aud-stat-lbl">Actions Executed</div>
+            </div>
+            <div className="aud-stat-box" style={{ "--stat-c": rate >= 90 ? "#22c55e" : rate >= 70 ? "#f59e0b" : "#ef4444" }}>
+              <div className="aud-stat-val">{rate}%</div>
+              <div className="aud-stat-lbl">Success Rate</div>
+            </div>
+            <div className="aud-stat-box" style={{ "--stat-c": "#8b5cf6" }}>
+              <div className="aud-stat-val">{frameworks.length}</div>
+              <div className="aud-stat-lbl">Frameworks</div>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* ── Filter Bar ── */}
-      <div style={S.filterBar}>
-        {/* Status pills */}
-        <div style={S.pillGroup}>
-          {STATUS_FILTERS.map((f) => (
-            <span
-              key={f}
-              style={S.pill(statusFilter === f)}
-              onClick={() => setStatusFilter(f)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => e.key === "Enter" && setStatusFilter(f)}
-            >
-              {f}
-            </span>
-          ))}
-        </div>
-
-        {/* Time range dropdown */}
-        <select
-          style={S.select}
-          value={timeRange}
-          onChange={(e) => setTimeRange(e.target.value)}
-          aria-label="Time range"
-        >
-          {TIME_RANGES.map((t) => (
-            <option key={t.label} value={t.label}>
-              {t.label}
-            </option>
-          ))}
-        </select>
-
-        {/* Action type dropdown */}
-        <select
-          style={S.select}
-          value={actionType}
-          onChange={(e) => setActionType(e.target.value)}
-          aria-label="Action type"
-        >
-          {ACTION_TYPES.map((a) => (
-            <option key={a} value={a}>
-              {a === "All" ? "All Actions" : a}
-            </option>
-          ))}
-        </select>
+      {/* ═══ TAB BAR ═══ */}
+      <div className="aud-tabs">
+        {[
+          { key: "compliance", label: "CIS Compliance", icon: "shield" },
+          { key: "frameworks", label: "Framework Profiles", icon: "layers" },
+          { key: "trail", label: "Audit Trail", icon: "scroll" },
+          { key: "activity", label: "Activity & Actions", icon: "zap" },
+          { key: "analytics", label: "Query Analytics", icon: "chart" },
+        ].map((t) => (
+          <button key={t.key} className={"aud-tab" + (activeTab === t.key ? " active" : "")} onClick={() => setActiveTab(t.key)}>
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      {/* ── Loading / Error ── */}
-      {isLoading && <div className="metric muted">Loading audit data...</div>}
-      {isError && (
-        <div className="metric err">{String(error.message)}</div>
+      {/* ═══ 1. CIS COMPLIANCE ═══ */}
+      {activeTab === "compliance" && (
+        <div className="aud-section">
+          {compScore === null ? (
+            <div className="aud-empty-state">
+              <div className="aud-empty-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              </div>
+              <h3>No Compliance Scan Yet</h3>
+              <p>Run a CIS Kubernetes Benchmark scan to see your cluster's security posture</p>
+              <button className="aud-hero-btn scan" onClick={handleScan} disabled={scanning}>
+                {scanning ? "Scanning…" : "Run CIS Scan"}
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Score + Grade Ring */}
+              <div className="aud-comp-hero">
+                <div className="aud-comp-ring">
+                  <svg viewBox="0 0 96 96" width="96" height="96">
+                    <circle cx="48" cy="48" r="42" fill="none" stroke="var(--border)" strokeWidth="6" />
+                    <circle cx="48" cy="48" r="42" fill="none" stroke={gradeColor(compGrade)} strokeWidth="6" strokeLinecap="round"
+                      strokeDasharray={2 * Math.PI * 42} strokeDashoffset={2 * Math.PI * 42 * (1 - compScore / 100)}
+                      style={{ transform: "rotate(-90deg)", transformOrigin: "center", transition: "stroke-dashoffset .8s ease" }} />
+                  </svg>
+                  <div className="aud-comp-ring-inner">
+                    <div className="aud-comp-score">{compScore}</div>
+                    <div className="aud-comp-max">/100</div>
+                  </div>
+                </div>
+                <div className="aud-comp-info">
+                  <div className="aud-comp-grade-pill" style={{ background: gradeColor(compGrade) + "18", color: gradeColor(compGrade), borderColor: gradeColor(compGrade) }}>
+                    Grade {compGrade}
+                  </div>
+                  <div className="aud-comp-meta">
+                    {compTotals.total || 0} checks · {compTotals.pass || 0} passed · {compTotals.fail || 0} failed · {compTotals.warn || 0} warnings
+                  </div>
+                  {compData?.scanTime && <div className="aud-comp-time">Scanned: {fmt(compData.scanTime)}</div>}
+                </div>
+
+                {/* Category cards */}
+                <div className="aud-cat-cards">
+                  {categories.map((cat) => {
+                    const s = compSummary[cat] || {};
+                    const isActive = catFilter === cat;
+                    return (
+                      <button
+                        key={cat}
+                        className={"aud-cat-card" + (isActive ? " active" : "")}
+                        onClick={() => setCatFilter(isActive ? "all" : cat)}
+                      >
+                        <div className="aud-cat-name">{cat.replace(/-/g, " ")}</div>
+                        <div className="aud-cat-counts">
+                          <span className="aud-cat-pass">{s.pass || 0} pass</span>
+                          <span className="aud-cat-fail">{s.fail || 0} fail</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Finding filters */}
+              <div className="aud-finding-filters">
+                <select className="aud-f-select" value={findingSev} onChange={(e) => setFindingSev(e.target.value)}>
+                  <option value="all">All Severities</option>
+                  <option value="critical">Critical</option>
+                  <option value="warning">Warning</option>
+                  <option value="info">Info</option>
+                </select>
+                <select className="aud-f-select" value={findingStatus} onChange={(e) => setFindingStatus(e.target.value)}>
+                  <option value="all">All Statuses</option>
+                  <option value="FAIL">Failed</option>
+                  <option value="PASS">Passed</option>
+                  <option value="WARN">Warning</option>
+                </select>
+                <span className="aud-f-count">{filteredFindings.length} findings</span>
+              </div>
+
+              {/* Findings list */}
+              <div className="aud-findings-list">
+                {filteredFindings.length === 0 && <div className="aud-empty">No findings match the current filters</div>}
+                {filteredFindings.slice(0, 60).map((f, i) => {
+                  const sc = f.status === "PASS" ? "#22c55e" : f.status === "FAIL" ? "#ef4444" : "#f59e0b";
+                  const isExp = expandedFinding === i;
+                  return (
+                    <div key={i} className={"aud-finding" + (isExp ? " expanded" : "")} style={{ "--find-c": sc }}>
+                      <div className="aud-finding-head" onClick={() => setExpandedFinding(isExp ? null : i)}>
+                        <span className="aud-finding-status" style={{ color: sc }}>{statusIcon(f.status)}</span>
+                        <div className="aud-finding-body">
+                          <div className="aud-finding-row1">
+                            <span className="aud-finding-id">{f.id}</span>
+                            <span className="aud-finding-title">{f.title}</span>
+                            <span className={"aud-finding-sev " + (f.severity || "info")}>{(f.severity || "info").toUpperCase()}</span>
+                            <span className={"aud-finding-st " + (f.status || "").toLowerCase()}>{f.status}</span>
+                          </div>
+                          {f.namespace && <span className="aud-finding-ns">ns: {f.namespace}</span>}
+                          {f.resource && <span className="aud-finding-res">{f.resource}</span>}
+                        </div>
+                        <span className="aud-finding-chevron">{isExp ? "▲" : "▼"}</span>
+                      </div>
+                      {isExp && (
+                        <div className="aud-finding-detail">
+                          {f.description && <div className="aud-fd-block"><span className="aud-fd-lbl">Description</span><p>{f.description}</p></div>}
+                          {f.remediation && <div className="aud-fd-block remediation"><span className="aud-fd-lbl">Remediation</span><p>{f.remediation}</p></div>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Compliance History */}
+              {historyList.length > 1 && (
+                <div className="aud-history">
+                  <h4>Scan History</h4>
+                  <div className="aud-history-list">
+                    {historyList.slice(0, 10).map((h, i) => (
+                      <div key={i} className="aud-history-item">
+                        <span className="aud-history-score" style={{ color: gradeColor(h.score >= 90 ? "A" : h.score >= 80 ? "B" : h.score >= 70 ? "C" : "D") }}>
+                          {h.score}
+                        </span>
+                        <span className="aud-history-time">{fmt(h.scanTime)}</span>
+                        <span className="aud-history-counts">{h.totals?.fail || 0} fail · {h.totals?.pass || 0} pass</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       )}
 
-      {!isLoading && !isError && (
-        <>
-          {/* ── Stat Boxes ── */}
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
-            <Stat label="Total Executed" value={total} color="#3b82f6" />
-            <Stat
-              label="Success Rate"
-              value={`${rate}%`}
-              color={rate >= 90 ? "#22c55e" : rate >= 70 ? "#f59e0b" : "#ef4444"}
-            />
-            <Stat label="Failed" value={failedCount} color="#ef4444" />
-            <Stat
-              label="Pending Approvals"
-              value={pending.length}
-              color={pending.length ? "#f59e0b" : "#22c55e"}
-            />
-            <Stat
-              label="Queries"
-              value={queries.length}
-              color="#8b5cf6"
-            />
+      {/* ═══ 2. FRAMEWORK PROFILES ═══ */}
+      {activeTab === "frameworks" && (
+        <div className="aud-section">
+          <div className="aud-section-intro">
+            <h3>Compliance Framework Profiles</h3>
+            <p>CIS findings mapped to industry compliance frameworks</p>
+          </div>
+          {frameworks.length === 0 ? (
+            <div className="aud-empty">Run a CIS scan first to see framework evaluations</div>
+          ) : (
+            <div className="aud-fw-grid">
+              {frameworks.map((fw, i) => {
+                const gc = gradeColor(fw.grade || "F");
+                const isExp = expandedFw === i;
+                return (
+                  <div key={fw.id || i} className={"aud-fw-card" + (isExp ? " expanded" : "")}>
+                    <div className="aud-fw-head" onClick={() => setExpandedFw(isExp ? null : i)}>
+                      <div className="aud-fw-score-ring" style={{ "--fw-c": gc }}>
+                        <span>{fw.score ?? 0}</span>
+                      </div>
+                      <div className="aud-fw-info">
+                        <div className="aud-fw-name">{fw.name}</div>
+                        <div className="aud-fw-desc">{fw.description}</div>
+                        <div className="aud-fw-stats">
+                          <span style={{ color: "#22c55e" }}>{fw.compliant || 0} compliant</span>
+                          <span style={{ color: "#f59e0b" }}>{fw.partial || 0} partial</span>
+                          <span style={{ color: "#ef4444" }}>{fw.nonCompliant || 0} non-compliant</span>
+                        </div>
+                      </div>
+                      <div className="aud-fw-grade" style={{ color: gc, borderColor: gc }}>{fw.grade || "?"}</div>
+                    </div>
+                    {isExp && fw.controls && (
+                      <div className="aud-fw-controls">
+                        {fw.controls.map((ctrl, ci) => (
+                          <div key={ci} className={"aud-fw-ctrl " + (ctrl.status || "not-evaluated")}>
+                            <span className="aud-fw-ctrl-id">{ctrl.controlId}</span>
+                            <div className="aud-fw-ctrl-info">
+                              <div className="aud-fw-ctrl-title">{ctrl.title}</div>
+                              <div className="aud-fw-ctrl-desc">{ctrl.description}</div>
+                            </div>
+                            <span className={"aud-fw-ctrl-status " + (ctrl.status || "")}>{(ctrl.status || "N/A").replace("-", " ")}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ═══ 3. AUDIT TRAIL ═══ */}
+      {activeTab === "trail" && (
+        <div className="aud-section">
+          <div className="aud-section-intro">
+            <h3>Persistent Audit Trail</h3>
+            <p>90-day event log of all cluster compliance &amp; security events</p>
           </div>
 
-          {/* ── Filtered count ── */}
-          <div
-            style={{
-              fontSize: 12,
-              color: "#a1a1aa",
-              marginBottom: 6,
-            }}
-          >
-            Showing {filteredExecuted.length} of {total} executed actions
-            {statusFilter !== "All" && <> &middot; Filter: <strong style={{ color: "#3b82f6" }}>{statusFilter}</strong></>}
-            {actionType !== "All" && <> &middot; Type: <strong style={{ color: "#3b82f6" }}>{actionType}</strong></>}
-            {timeRange !== "All Time" && <> &middot; Range: <strong style={{ color: "#3b82f6" }}>{timeRange}</strong></>}
+          {/* Trail stats */}
+          {trailStatsData.total != null && (
+            <div className="aud-trail-stats">
+              <div className="aud-trail-stat" style={{ "--ts-c": "#8b5cf6" }}>
+                <div className="aud-trail-stat-val">{trailStatsData.total || 0}</div>
+                <div className="aud-trail-stat-lbl">Total Events</div>
+              </div>
+              <div className="aud-trail-stat" style={{ "--ts-c": "#ef4444" }}>
+                <div className="aud-trail-stat-val">{trailStatsData.critical || 0}</div>
+                <div className="aud-trail-stat-lbl">Critical</div>
+              </div>
+              <div className="aud-trail-stat" style={{ "--ts-c": "#f59e0b" }}>
+                <div className="aud-trail-stat-val">{trailStatsData.warnings || trailStatsData.warning || 0}</div>
+                <div className="aud-trail-stat-lbl">Warnings</div>
+              </div>
+              <div className="aud-trail-stat" style={{ "--ts-c": "#3b82f6" }}>
+                <div className="aud-trail-stat-val">{trailStatsData.info || 0}</div>
+                <div className="aud-trail-stat-lbl">Info</div>
+              </div>
+            </div>
+          )}
+
+          {/* Trail type filter */}
+          <div className="aud-trail-filters">
+            {TRAIL_TYPES.map((t) => (
+              <button key={t} className={"aud-trail-pill" + (trailType === t ? " active" : "")} onClick={() => setTrailType(t)}>
+                {t === "all" ? "All Events" : t.replace(/_/g, " ")}
+              </button>
+            ))}
           </div>
 
-          {/* ── Executed Actions Table ── */}
-          <h3 style={S.sectionTitle}>Recent Executed Actions</h3>
-          <div style={{ overflowX: "auto" }}>
-            <table style={S.table}>
-              <thead>
-                <tr>
-                  <th style={S.th}>When</th>
-                  <th style={S.th}>Action</th>
-                  <th style={S.th}>Target</th>
-                  <th style={S.th}>Namespace</th>
-                  <th style={S.th}>User</th>
-                  <th style={S.th}>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredExecuted.length === 0 && (
-                  <tr>
-                    <td colSpan={6} style={S.emptyRow}>
-                      No executed actions match the current filters
-                    </td>
-                  </tr>
-                )}
-                {filteredExecuted.slice(0, 50).map((e, i) => (
-                  <HoverRow key={i}>
-                    <td style={S.td}>{fmt(e.created_at || e.createdAt)}</td>
-                    <td style={S.td}>
-                      <span
-                        style={{
-                          display: "inline-block",
-                          padding: "2px 8px",
-                          borderRadius: 6,
-                          fontSize: 11,
-                          fontWeight: 600,
-                          background: "#3b82f618",
-                          color: "#60a5fa",
-                          border: "1px solid #3b82f630",
-                        }}
-                      >
-                        {e.action || "—"}
-                      </span>
-                    </td>
-                    <td style={S.td}>{e.target || "—"}</td>
-                    <td style={{ ...S.td, color: "#a1a1aa" }}>{e.namespace || "—"}</td>
-                    <td style={{ ...S.td, color: "#a1a1aa", fontSize: 12 }}>{e.user || e.initiator || "—"}</td>
-                    <td style={S.td}>
-                      <StatusPill status={e.success} />
-                    </td>
-                  </HoverRow>
-                ))}
-              </tbody>
-            </table>
+          {/* Trail entries */}
+          <div className="aud-trail-list">
+            {filteredTrail.length === 0 && <div className="aud-empty">No audit trail entries found</div>}
+            {filteredTrail.slice(0, 80).map((e, i) => {
+              const ec = e.severity === "critical" ? "#ef4444" : e.severity === "warning" ? "#f59e0b" : "#3b82f6";
+              return (
+                <div key={i} className="aud-trail-entry" style={{ "--te-c": ec }}>
+                  <div className="aud-trail-dot" />
+                  <div className="aud-trail-content">
+                    <div className="aud-trail-row1">
+                      <span className="aud-trail-type">{(e.type || "event").replace(/_/g, " ")}</span>
+                      {e.severity && <span className={"aud-trail-sev " + e.severity}>{e.severity}</span>}
+                      <span className="aud-trail-time">{fmt(e.timestamp || e.created_at)}</span>
+                    </div>
+                    <div className="aud-trail-msg">{e.message || e.description || e.details || "—"}</div>
+                    {(e.namespace || e.username || e.resource) && (
+                      <div className="aud-trail-meta">
+                        {e.namespace && <span>ns: {e.namespace}</span>}
+                        {e.resource && <span>res: {e.resource}</span>}
+                        {e.username && <span>user: {e.username}</span>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
+        </div>
+      )}
 
-          {/* ── Pending Approvals Table ── */}
-          {pending.length > 0 && (
+      {/* ═══ 4. ACTIVITY & ACTIONS ═══ */}
+      {activeTab === "activity" && (
+        <div className="aud-section">
+          {auditLoading && <div className="aud-loading">Loading audit data…</div>}
+          {auditError && <div className="aud-err">{String(auditErr?.message)}</div>}
+
+          {!auditLoading && !auditError && (
             <>
-              <h3 style={S.sectionTitle}>Pending Approvals</h3>
-              <div style={{ overflowX: "auto" }}>
-                <table style={S.table}>
+              {/* Filter bar */}
+              <div className="aud-filter-bar">
+                <div className="aud-pill-group">
+                  {STATUS_FILTERS.map((f) => (
+                    <button key={f} className={"aud-pill" + (statusFilter === f ? " active" : "")} onClick={() => setStatusFilter(f)}>
+                      {f}
+                    </button>
+                  ))}
+                </div>
+                <select className="aud-f-select" value={timeRange} onChange={(e) => setTimeRange(e.target.value)}>
+                  {TIME_RANGES.map((t) => <option key={t.label} value={t.label}>{t.label}</option>)}
+                </select>
+                <select className="aud-f-select" value={actionType} onChange={(e) => setActionType(e.target.value)}>
+                  {ACTION_TYPES.map((a) => <option key={a} value={a}>{a === "All" ? "All Actions" : a}</option>)}
+                </select>
+              </div>
+
+              {/* Activity stats */}
+              <div className="aud-act-stats">
+                <div className="aud-act-stat" style={{ "--as-c": "#3b82f6" }}><span>{total}</span><label>Total</label></div>
+                <div className="aud-act-stat" style={{ "--as-c": "#22c55e" }}><span>{successCount}</span><label>Success</label></div>
+                <div className="aud-act-stat" style={{ "--as-c": "#ef4444" }}><span>{failedCount}</span><label>Failed</label></div>
+                <div className="aud-act-stat" style={{ "--as-c": "#f59e0b" }}><span>{pending.length}</span><label>Pending</label></div>
+              </div>
+
+              <div className="aud-f-count">Showing {filteredExecuted.length} of {total} actions</div>
+
+              {/* Executed actions table */}
+              <div className="aud-table-wrap">
+                <table className="aud-table">
                   <thead>
                     <tr>
-                      <th style={S.th}>Action</th>
-                      <th style={S.th}>Resource</th>
-                      <th style={S.th}>Namespace</th>
-                      <th style={S.th}>Requested By</th>
-                      <th style={S.th}>Status</th>
+                      <th>When</th><th>Action</th><th>Target</th><th>Namespace</th><th>User</th><th>Status</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {pending.slice(0, 25).map((p, i) => (
-                      <HoverRow key={i}>
-                        <td style={S.td}>
-                          <span
-                            style={{
-                              display: "inline-block",
-                              padding: "2px 8px",
-                              borderRadius: 6,
-                              fontSize: 11,
-                              fontWeight: 600,
-                              background: "#f59e0b18",
-                              color: "#fbbf24",
-                              border: "1px solid #f59e0b30",
-                            }}
-                          >
-                            {p.action || "—"}
-                          </span>
-                        </td>
-                        <td style={S.td}>{p.resource_name || p.resourceName || "—"}</td>
-                        <td style={{ ...S.td, color: "#a1a1aa" }}>{p.namespace || "—"}</td>
-                        <td style={{ ...S.td, color: "#a1a1aa", fontSize: 12 }}>{p.user || p.requestedBy || "—"}</td>
-                        <td style={S.td}>
-                          <StatusPill status={p.status || "pending"} />
-                        </td>
-                      </HoverRow>
+                    {filteredExecuted.length === 0 && <tr><td colSpan={6} className="aud-table-empty">No actions match filters</td></tr>}
+                    {filteredExecuted.slice(0, 50).map((e, i) => (
+                      <tr key={i}>
+                        <td>{fmt(e.created_at || e.createdAt)}</td>
+                        <td><span className="aud-action-pill">{e.action || "—"}</span></td>
+                        <td>{e.target || "—"}</td>
+                        <td className="aud-muted">{e.namespace || "—"}</td>
+                        <td className="aud-muted">{e.user || e.initiator || "—"}</td>
+                        <td><span className={"aud-status-pill " + (e.success ? "ok" : "fail")}>{e.success ? "success" : "failed"}</span></td>
+                      </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+
+              {/* Pending approvals */}
+              {pending.length > 0 && (
+                <>
+                  <h4 className="aud-sub-title">Pending Approvals ({pending.length})</h4>
+                  <div className="aud-table-wrap">
+                    <table className="aud-table">
+                      <thead>
+                        <tr><th>Action</th><th>Resource</th><th>Namespace</th><th>Requested By</th><th>Status</th></tr>
+                      </thead>
+                      <tbody>
+                        {pending.slice(0, 25).map((p, i) => (
+                          <tr key={i}>
+                            <td><span className="aud-action-pill pending">{p.action || "—"}</span></td>
+                            <td>{p.resource_name || p.resourceName || "—"}</td>
+                            <td className="aud-muted">{p.namespace || "—"}</td>
+                            <td className="aud-muted">{p.user || p.requestedBy || "—"}</td>
+                            <td><span className="aud-status-pill pending">pending</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
             </>
           )}
+        </div>
+      )}
 
-          {/* ── Query Analytics ── */}
-          <h3 style={S.sectionTitle}>Query Analytics</h3>
-          <div style={S.analyticsGrid}>
-            <div style={S.analyticsCard}>
-              <div style={{ fontSize: 28, fontWeight: 700, color: "#8b5cf6" }}>
-                {queryStats.totalQueries ?? queries.length ?? 0}
-              </div>
-              <div style={{ fontSize: 11, color: "#a1a1aa", marginTop: 4 }}>Total Queries</div>
+      {/* ═══ 5. QUERY ANALYTICS ═══ */}
+      {activeTab === "analytics" && (
+        <div className="aud-section">
+          <div className="aud-analytics-grid">
+            <div className="aud-analytics-card" style={{ "--ac-c": "#8b5cf6" }}>
+              <div className="aud-ac-val">{queryStats.totalQueries ?? queries.length ?? 0}</div>
+              <div className="aud-ac-lbl">Total Queries</div>
             </div>
-            <div style={S.analyticsCard}>
-              <div style={{ fontSize: 28, fontWeight: 700, color: "#06b6d4" }}>
-                {fmtDuration(queryStats.avgResponseTime)}
-              </div>
-              <div style={{ fontSize: 11, color: "#a1a1aa", marginTop: 4 }}>Avg Response Time</div>
+            <div className="aud-analytics-card" style={{ "--ac-c": "#06b6d4" }}>
+              <div className="aud-ac-val">{queryStats.avgResponseTime != null ? `${Math.round(queryStats.avgResponseTime)}ms` : "—"}</div>
+              <div className="aud-ac-lbl">Avg Response Time</div>
             </div>
-            <div style={S.analyticsCard}>
-              <div style={{ fontSize: 28, fontWeight: 700, color: "#22c55e" }}>
-                {queryStats.cacheHitRate != null ? `${queryStats.cacheHitRate}%` : "—"}
-              </div>
-              <div style={{ fontSize: 11, color: "#a1a1aa", marginTop: 4 }}>Cache Hit Rate</div>
+            <div className="aud-analytics-card" style={{ "--ac-c": "#22c55e" }}>
+              <div className="aud-ac-val">{queryStats.cacheHitRate != null ? `${queryStats.cacheHitRate}%` : "—"}</div>
+              <div className="aud-ac-lbl">Cache Hit Rate</div>
             </div>
-            <div style={S.analyticsCard}>
-              <div style={{ fontSize: 28, fontWeight: 700, color: "#f59e0b" }}>
-                {queryStats.errorRate != null ? `${queryStats.errorRate}%` : "—"}
-              </div>
-              <div style={{ fontSize: 11, color: "#a1a1aa", marginTop: 4 }}>Error Rate</div>
+            <div className="aud-analytics-card" style={{ "--ac-c": "#f59e0b" }}>
+              <div className="aud-ac-val">{queryStats.errorRate != null ? `${queryStats.errorRate}%` : "—"}</div>
+              <div className="aud-ac-lbl">Error Rate</div>
             </div>
           </div>
 
-          {/* ── Recent Queries Table ── */}
           {queries.length > 0 && (
             <>
-              <h3 style={S.sectionTitle}>Recent Queries</h3>
-              <div style={{ overflowX: "auto" }}>
-                <table style={S.table}>
+              <h4 className="aud-sub-title">Recent Queries</h4>
+              <div className="aud-table-wrap">
+                <table className="aud-table">
                   <thead>
-                    <tr>
-                      <th style={S.th}>When</th>
-                      <th style={S.th}>Query</th>
-                      <th style={S.th}>Response Time</th>
-                      <th style={S.th}>Cache</th>
-                      <th style={S.th}>Status</th>
-                    </tr>
+                    <tr><th>When</th><th>Query</th><th>Response Time</th><th>Cache</th><th>Status</th></tr>
                   </thead>
                   <tbody>
                     {queries.slice(0, 25).map((q, i) => (
-                      <HoverRow key={i}>
-                        <td style={S.td}>{fmt(q.created_at || q.createdAt || q.timestamp)}</td>
-                        <td style={{ ...S.td, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {q.query || q.prompt || q.text || "—"}
-                        </td>
-                        <td style={S.td}>{fmtDuration(q.responseTime || q.duration)}</td>
-                        <td style={S.td}>
-                          {q.cached || q.cacheHit ? (
-                            <span style={{ color: "#22c55e", fontSize: 11, fontWeight: 600 }}>HIT</span>
-                          ) : (
-                            <span style={{ color: "#a1a1aa", fontSize: 11 }}>MISS</span>
-                          )}
-                        </td>
-                        <td style={S.td}>
-                          <StatusPill status={q.success != null ? q.success : q.status || "success"} />
-                        </td>
-                      </HoverRow>
+                      <tr key={i}>
+                        <td>{fmt(q.created_at || q.createdAt || q.timestamp)}</td>
+                        <td className="aud-query-text">{q.query || q.prompt || q.text || "—"}</td>
+                        <td>{q.responseTime || q.duration ? `${Math.round(q.responseTime || q.duration)}ms` : "—"}</td>
+                        <td>{q.cached || q.cacheHit ? <span className="aud-cache-hit">HIT</span> : <span className="aud-cache-miss">MISS</span>}</td>
+                        <td><span className={"aud-status-pill " + ((q.success !== false && q.status !== "failed") ? "ok" : "fail")}>{(q.success !== false && q.status !== "failed") ? "success" : "failed"}</span></td>
+                      </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             </>
           )}
-        </>
+        </div>
       )}
     </div>
   );
