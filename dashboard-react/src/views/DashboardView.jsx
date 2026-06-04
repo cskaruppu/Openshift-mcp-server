@@ -89,9 +89,22 @@ export function DashboardView() {
             />
           </div>
           <div className="dash-score-card score-app">
-            <AppChangesWidget />
+            <ScoreWidget
+              title="Application Changes"
+              path="/api/dashboard/app-changes"
+              map={(d) => ({
+                value: `${d.totalChanges ?? 0}`,
+                grade: (d.critical ?? 0) > 0 ? "F" : (d.warning ?? 0) > 0 ? "C" : "A",
+                label: `${d.critical ?? 0} critical · ${d.trackedWorkloads ?? 0} tracked`,
+              })}
+            />
           </div>
         </div>
+      </section>
+
+      {/* ── Application Change Watcher (full feature) ── */}
+      <section className="dash-section">
+        <AppChangesWidget />
       </section>
 
       {/* ── Ansible Automation ── */}
