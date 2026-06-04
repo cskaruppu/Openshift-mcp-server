@@ -4999,7 +4999,12 @@ async function startSSE() {
       const DASHBOARD_DIR = process.env.DASHBOARD_DIR || resolve(process.cwd(), "dashboard");
       const MIME = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon" };
       const COMPRESSIBLE = new Set([".html", ".css", ".js", ".json", ".svg"]);
-      const filePath = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\//, "");
+      // Phase 2 React app (parallel): /next and /next/ serve the SPA entry.
+      // Its built assets live under dashboard/next/ and are served normally.
+      let filePath;
+      if (url.pathname === "/") filePath = "index.html";
+      else if (url.pathname === "/next" || url.pathname === "/next/") filePath = "next/index.html";
+      else filePath = url.pathname.replace(/^\//, "");
 
       if (!startSSE._gzCache) startSSE._gzCache = new Map();
       const gzCache = startSSE._gzCache;
