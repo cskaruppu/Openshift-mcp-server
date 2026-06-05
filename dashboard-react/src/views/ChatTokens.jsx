@@ -718,16 +718,20 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
   const fromVer = s.fromVersion || data?.fromVersion || "";
   const targetVer = s.targetVersion || data?.targetVersion || "";
 
+  // Each step's `key` is the state REACHED once the step completes. `fromStates`
+  // are the states from which the step's action is a valid next move — the
+  // action button only shows when the current state is one of them, so we never
+  // re-fire a step that already ran (which would be an invalid transition).
   const STEPS = [
-    { key: "version_validated", label: "Version Validation", action: handleValidate, actionLabel: "Validate" },
-    { key: "pre_assessed", label: "Pre-Assessment (22 checks)", action: handlePreAssess, actionLabel: "Run Assessment" },
-    { key: "component_analyzed", label: "Component Analysis", action: handleComponentAnalysis, actionLabel: "Analyze" },
-    { key: "remediation_proposed", label: "Remediation Plan", action: handleRemediationPlan, actionLabel: "Build Plan" },
-    { key: "cr_submitted", label: "Change Request", action: null },
-    { key: "cr_approved", label: "CR Approved", action: handleCheckCR, actionLabel: "Check Status" },
-    { key: "dry_run_passed", label: "Dry Run", action: handleDryRun, actionLabel: "Run Dry Run" },
-    { key: "executing", label: "Execute Upgrade", action: handleExecute, actionLabel: "Execute" },
-    { key: "completed", label: "Post-Assessment", action: handlePostAssess, actionLabel: "Run Post-Assessment" },
+    { key: "version_validated", label: "Version Validation", fromStates: ["idle"], action: handleValidate, actionLabel: "Validate" },
+    { key: "pre_assessed", label: "Pre-Assessment (22 checks)", fromStates: ["version_validated", "channel_switched"], action: handlePreAssess, actionLabel: "Run Assessment" },
+    { key: "component_analyzed", label: "Component Analysis", fromStates: ["pre_assessed"], action: handleComponentAnalysis, actionLabel: "Analyze" },
+    { key: "remediation_proposed", label: "Remediation Plan", fromStates: ["pre_assessed", "component_analyzed"], action: handleRemediationPlan, actionLabel: "Build Plan" },
+    { key: "cr_submitted", label: "Change Request", fromStates: [], action: null },
+    { key: "cr_approved", label: "CR Approved", fromStates: ["cr_submitted"], action: handleCheckCR, actionLabel: "Check Status" },
+    { key: "dry_run_passed", label: "Dry Run", fromStates: ["cr_approved"], action: handleDryRun, actionLabel: "Run Dry Run" },
+    { key: "executing", label: "Execute Upgrade", fromStates: ["cr_approved", "dry_run_passed"], action: handleExecute, actionLabel: "Execute" },
+    { key: "completed", label: "Post-Assessment", fromStates: ["monitoring", "executing"], action: handlePostAssess, actionLabel: "Run Post-Assessment" },
   ];
 
   const STATE_ORDER = ["idle", "version_validated", "channel_switched", "pre_assessed", "component_analyzed",
@@ -762,22 +766,17 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
           {STEPS.map((step, i) => {
             const stepIdx = STATE_ORDER.indexOf(step.key);
-            const done = stepIdx <= currentIdx && stepIdx >= 0;
-            const active = step.key === state || (state === "monitoring" && step.key === "executing");
-            const icon = done ? "✅" : active ? "▶" : "⬜";
-            const isNext = !done && !active && stepIdx === currentIdx + 1;
+            const done = stepIdx >= 0 && stepIdx <= currentIdx;
+            // This step's action is the valid next move from the current state.
+            const isNextAction = !!step.action && step.fromStates.includes(state);
+            const active = isNextAction || (state === "monitoring" && step.key === "executing");
+            const icon = done ? "✅" : isNextAction ? "▶" : "⬜";
 
             return (
-              <div key={step.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, opacity: done || active || isNext ? 1 : 0.5 }}>
+              <div key={step.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, opacity: done || active ? 1 : 0.5 }}>
                 <span style={{ width: 24, textAlign: "center" }}>{icon}</span>
-                <span style={{ flex: 1, fontWeight: active ? 600 : 400 }}>{step.label}</span>
-                {isNext && step.action && (
-                  <button className="ux-btn ux-btn-dryrun" style={{ padding: "3px 10px", fontSize: 11 }}
-                    onClick={step.action} disabled={!!stepRunning}>
-                    {stepRunning === step.key ? "Running…" : step.actionLabel}
-                  </button>
-                )}
-                {active && step.action && step.key !== "cr_submitted" && (
+                <span style={{ flex: 1, fontWeight: isNextAction ? 600 : 400 }}>{step.label}</span>
+                {isNextAction && (
                   <button className="ux-btn ux-btn-dryrun" style={{ padding: "3px 10px", fontSize: 11 }}
                     onClick={step.action} disabled={!!stepRunning}>
                     {stepRunning ? "Running…" : step.actionLabel}

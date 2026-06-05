@@ -338,10 +338,21 @@ export async function stepValidateVersion(sessionId) {
     return { session: await getSession(sessionId), result, valid: false };
   }
 
-  const updated = await transition(sessionId, UPGRADE_STATES.VERSION_VALIDATED, {
-    upgradeType,
-    channel: channelChangeNeeded ? suggestedChannel : channel,
-  });
+  // Re-validation is idempotent: if we're already at or past VERSION_VALIDATED,
+  // just refresh the derived fields without forcing an (illegal) self-transition.
+  let updated;
+  if (session.state === UPGRADE_STATES.IDLE) {
+    updated = await transition(sessionId, UPGRADE_STATES.VERSION_VALIDATED, {
+      upgradeType,
+      channel: channelChangeNeeded ? suggestedChannel : channel,
+    });
+  } else {
+    await updateSession(sessionId, {
+      upgradeType,
+      channel: channelChangeNeeded ? suggestedChannel : channel,
+    });
+    updated = await getSession(sessionId);
+  }
 
   return { session: updated, result, valid: true };
 }
