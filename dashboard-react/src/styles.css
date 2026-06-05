@@ -538,7 +538,20 @@ body {
 }
 .ac-rp-card-title { font-size: 12px; color: var(--text); line-height: 1.4; }
 .ac-rp-card-snow { font-size: 10px; color: var(--text2); margin-top: 2px; }
-.ac-rp-card-actions { display: flex; gap: 4px; margin-top: 6px; }
+.ac-rp-card-sub { display: flex; gap: 5px; font-size: 10px; color: var(--text2); margin-top: 3px; }
+/* CR status badge — color by tone */
+.ac-rp-badge {
+  font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 5px;
+  letter-spacing: .3px; text-transform: uppercase; white-space: nowrap;
+}
+.ac-rp-badge.ok   { background: rgba(34,197,94,.14);  color: #22c55e; }
+.ac-rp-badge.bad  { background: rgba(239,68,68,.14);  color: #ef4444; }
+.ac-rp-badge.warn { background: rgba(245,158,11,.14); color: #f59e0b; }
+.ac-rp-badge.info { background: rgba(59,130,246,.14); color: #60a5fa; }
+.ac-rp-sync-btn:disabled { opacity: .6; cursor: default; }
+.ac-rp-sync-btn.spinning svg { animation: acSpin 1s linear infinite; }
+@keyframes acSpin { to { transform: rotate(360deg); } }
+.ac-rp-card-actions { display: flex; gap: 4px; margin-top: 8px; }
 .ac-rp-action {
   font-size: 10px; padding: 3px 10px; border-radius: 5px; cursor: pointer;
   font-weight: 600; font-family: inherit; transition: all .15s;

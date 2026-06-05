@@ -144,7 +144,8 @@ export function ChatView() {
   const [rightTab, setRightTab] = useState("actions");
   const [pendingActions, setPendingActions] = useState([]);
   const [pendingCRs, setPendingCRs] = useState([]);
-  const [actionHistory, setActionHistory] = useState([]);
+  const [allCRs, setAllCRs] = useState([]);
+  const [crSyncing, setCrSyncing] = useState(false);
   const [ctxMenu, setCtxMenu] = useState(null);
   const [msgMeta, setMsgMeta] = useState({});
   const [renamingId, setRenamingId] = useState(null);
@@ -215,25 +216,40 @@ export function ChatView() {
 
   const refreshPending = useCallback(async () => {
     try {
-      const [aRes, cRes] = await Promise.all([
+      const [aRes, cRes, crRes] = await Promise.all([
         fetch(clusterUrl("/api/actions", cluster)),
         fetch(clusterUrl("/api/cr/pending", cluster)),
+        fetch(clusterUrl("/api/cr?limit=50", cluster)),
       ]);
       if (aRes.ok) {
         const d = await aRes.json();
         const all = d.actions || [];
         setPendingActions(all.filter((a) => a.status === "pending_confirmation" || a.status === "awaiting_approval"));
-        setActionHistory(all.filter((a) => a.status === "executed" || a.status === "cancelled" || a.status === "failed"));
       }
       if (cRes.ok) { const d = await cRes.json(); setPendingCRs(d.crs || []); }
+      if (crRes.ok) { const d = await crRes.json(); setAllCRs(d.crs || []); }
     } catch { /* silent */ }
   }, [cluster]);
+
+  // Auto-update CR statuses from ServiceNow on a slower cadence, then refresh.
+  const autoSyncCRs = useCallback(async () => {
+    try {
+      await fetch(clusterUrl("/api/cr/sync-all", cluster), { method: "POST" });
+      refreshPending();
+    } catch { /* silent */ }
+  }, [cluster, refreshPending]);
 
   useEffect(() => {
     refreshPending();
     const iv = setInterval(refreshPending, 30000);
     return () => clearInterval(iv);
   }, [refreshPending]);
+
+  // Pull fresh ServiceNow statuses periodically so the CR list auto-updates.
+  useEffect(() => {
+    const iv = setInterval(autoSyncCRs, 90000);
+    return () => clearInterval(iv);
+  }, [autoSyncCRs]);
 
   useEffect(() => {
     function onDoc(e) {
@@ -340,18 +356,40 @@ export function ChatView() {
   }
 
   async function syncAllPendingCRs() {
+    setCrSyncing(true);
     try {
       const res = await fetch(clusterUrl("/api/cr/sync-all", cluster), { method: "POST" });
-      if (res.ok) { showToast("CRs synced", "ok"); refreshPending(); }
+      if (res.ok) { showToast("CR statuses updated from ServiceNow", "ok"); await refreshPending(); }
       else showToast("Sync failed", "error");
     } catch { showToast("Sync failed", "error"); }
+    finally { setCrSyncing(false); }
   }
 
-  async function syncSingleCR(ticketId) {
+  // Verify a single CR's status against ServiceNow and auto-update it.
+  async function verifyCR(ticketId) {
     try {
       const res = await fetch(clusterUrl(`/api/cr/${ticketId}/sync`, cluster), { method: "POST" });
-      if (res.ok) { showToast("CR synced", "ok"); refreshPending(); }
-    } catch { /* silent */ }
+      if (res.ok) {
+        const d = await res.json().catch(() => ({}));
+        const st = d?.result?.status ? ` → ${d.result.status}` : "";
+        showToast(`Status verified${st}`, "ok");
+        refreshPending();
+      } else showToast("Verify failed", "error");
+    } catch { showToast("Verify failed", "error"); }
+  }
+
+  // Cancel a CR (e.g. not implemented / opened in duplicate). This also cancels
+  // the change request in ServiceNow when it is still open.
+  async function cancelCR(ticketId) {
+    if (!window.confirm(`Cancel change request ${ticketId}? This will also cancel it in ServiceNow if it is still open.`)) return;
+    try {
+      const res = await fetch(clusterUrl(`/api/cr/${ticketId}`, cluster), { method: "DELETE" });
+      if (res.ok) {
+        const d = await res.json().catch(() => ({}));
+        showToast(d.snowCancelled ? "CR cancelled in ServiceNow" : "CR cancelled", "ok");
+        refreshPending();
+      } else showToast("Cancel failed", "error");
+    } catch { showToast("Cancel failed", "error"); }
   }
 
   const reloadSavedChats = useCallback(async () => {
@@ -666,6 +704,40 @@ export function ChatView() {
             </button>
           </div>
         )}
+      </div>
+    );
+  }
+
+  // Status → badge tone for ServiceNow change requests.
+  function crStatusTone(status) {
+    const s = (status || "").toLowerCase();
+    if (/(implement|closed|complete|approved|executed|success)/.test(s)) return "ok";
+    if (/(cancel|reject|fail|error)/.test(s)) return "bad";
+    if (/(approval|await|review|hold)/.test(s)) return "warn";
+    return "info"; // new / pending / scheduled / in_progress
+  }
+
+  // A ServiceNow CR card with Verify (sync status) + Cancel actions.
+  function renderCRCard(cr) {
+    const id = cr.ticket_id || cr.ticketId;
+    const isFinal = /(implement|closed|complete|cancel|reject)/.test((cr.status || "").toLowerCase());
+    return (
+      <div key={id} className="ac-rp-card">
+        <div className="ac-rp-card-head">
+          <span className="ac-rp-card-id">{cr.snow_number || id}</span>
+          <span className={"ac-rp-badge " + crStatusTone(cr.status)}>{(cr.status || "pending").replace(/_/g, " ")}</span>
+        </div>
+        <div className="ac-rp-card-title">{cr.title || "Change Request"}</div>
+        <div className="ac-rp-card-sub">
+          {cr.snow_number && <span>{id}</span>}
+          {cr.updated_at && <span>· {timeAgo(cr.updated_at)}</span>}
+        </div>
+        <div className="ac-rp-card-actions">
+          <button className="ac-rp-action" onClick={() => verifyCR(id)} title="Check the latest status in ServiceNow">Verify status</button>
+          {!isFinal && (
+            <button className="ac-rp-action cancel" onClick={() => cancelCR(id)} title="Cancel this CR (and in ServiceNow)">Cancel</button>
+          )}
+        </div>
       </div>
     );
   }
@@ -1022,7 +1094,6 @@ export function ChatView() {
           <div className="ac-right-tabs">
             {[
               { key: "actions", label: "Actions" },
-              { key: "cluster", label: "Hub Cluster" },
               { key: "fixes", label: "Fixes" },
               { key: "servicenow", label: "ServiceNow" },
             ].map((t) => (
@@ -1035,40 +1106,28 @@ export function ChatView() {
           <div className="ac-right-body">
             {rightTab === "actions" && (
               <>
-                {/* Pending CRs */}
+                {/* Change Requests (ServiceNow) */}
                 <div className="ac-rp-section">
                   <div className="ac-rp-section-head">
-                    <span className="ac-rp-section-title" style={{ color: "#3b82f6" }}>Pending CRs ({pendingCRs.length})</span>
-                    <button className="ac-rp-sync-btn" onClick={syncAllPendingCRs}>
+                    <span className="ac-rp-section-title" style={{ color: "#3b82f6" }}>Change Requests ({allCRs.length})</span>
+                    <button className={"ac-rp-sync-btn" + (crSyncing ? " spinning" : "")} onClick={syncAllPendingCRs} disabled={crSyncing} title="Pull latest statuses from ServiceNow">
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-                      Sync
+                      {crSyncing ? "Syncing" : "Sync"}
                     </button>
                   </div>
-                  {pendingCRs.length === 0 ? (
-                    <p className="ac-rp-empty">No pending change requests. Ask me to create a workload and it will appear here for confirmation.</p>
+                  {allCRs.length === 0 ? (
+                    <p className="ac-rp-empty">No change requests yet. Ask me to create or modify a workload and the ServiceNow CR will appear here — with options to verify status or cancel.</p>
                   ) : (
                     <div className="ac-rp-list">
-                      {pendingCRs.map((cr) => (
-                        <div key={cr.ticket_id || cr.ticketId} className="ac-rp-card">
-                          <div className="ac-rp-card-head">
-                            <span className="ac-rp-card-id">{cr.ticket_id || cr.ticketId}</span>
-                            <span className="ac-rp-card-status">{(cr.status || "pending").toUpperCase()}</span>
-                          </div>
-                          <div className="ac-rp-card-title">{cr.title || "Change Request"}</div>
-                          {cr.snow_number && <div className="ac-rp-card-snow">SN: {cr.snow_number}</div>}
-                          <div className="ac-rp-card-actions">
-                            <button className="ac-rp-action" onClick={() => syncSingleCR(cr.ticket_id || cr.ticketId)}>Sync</button>
-                          </div>
-                        </div>
-                      ))}
+                      {allCRs.map((cr) => renderCRCard(cr))}
                     </div>
                   )}
                 </div>
 
-                {/* Pending Actions */}
+                {/* Pending Actions (workload confirmations) */}
                 <div className="ac-rp-section">
                   <div className="ac-rp-section-head">
-                    <span className="ac-rp-section-title">PENDING</span>
+                    <span className="ac-rp-section-title">Pending Actions</span>
                   </div>
                   {pendingActions.length === 0 ? (
                     <p className="ac-rp-empty">No pending actions. Ask me to restart, scale or edit a workload and it will appear here for confirmation.</p>
@@ -1078,10 +1137,10 @@ export function ChatView() {
                         <div key={act.id} className="ac-rp-card">
                           <div className="ac-rp-card-head">
                             <span className="ac-rp-card-id">{act.action || act.resourceType}</span>
-                            <span className="ac-rp-card-status">{(act.status || "pending").replace(/_/g, " ").toUpperCase()}</span>
+                            <span className="ac-rp-badge warn">{(act.status || "pending").replace(/_/g, " ")}</span>
                           </div>
                           <div className="ac-rp-card-title">{act.resourceName || act.description || "Action"}</div>
-                          {act.namespace && <div className="ac-rp-card-snow">ns: {act.namespace}</div>}
+                          {act.namespace && <div className="ac-rp-card-sub">ns: {act.namespace}</div>}
                           <div className="ac-rp-card-actions">
                             <button className="ac-rp-action confirm" onClick={() => confirmPendingAction(act.id)}>Confirm</button>
                             <button className="ac-rp-action cancel" onClick={() => cancelPendingAction(act.id)}>Cancel</button>
@@ -1091,48 +1150,7 @@ export function ChatView() {
                     </div>
                   )}
                 </div>
-
-                {/* History */}
-                <div className="ac-rp-section">
-                  <div className="ac-rp-section-head">
-                    <span className="ac-rp-section-title">HISTORY</span>
-                  </div>
-                  {actionHistory.length === 0 ? (
-                    <p className="ac-rp-empty">Action history will appear here</p>
-                  ) : (
-                    <div className="ac-rp-list">
-                      {actionHistory.slice(0, 10).map((act) => (
-                        <div key={act.id} className="ac-rp-history-item">
-                          <span className={"ac-rp-dot " + (act.status === "executed" ? "ok" : act.status === "failed" ? "fail" : "muted")} />
-                          <div className="ac-rp-hist-body">
-                            <div className="ac-rp-hist-title">{act.action} {act.resourceName}</div>
-                            <div className="ac-rp-hist-meta">{act.status} {act.completedAt ? `· ${timeAgo(act.completedAt)}` : ""}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
               </>
-            )}
-
-            {rightTab === "cluster" && (
-              <div className="ac-rp-section">
-                <div className="ac-rp-section-head">
-                  <span className="ac-rp-section-title">Cluster Info</span>
-                </div>
-                <div className="ac-rp-cluster-info">
-                  <div className="ac-rp-info-row"><span className="ac-rp-info-label">Cluster</span><span className="ac-rp-info-val">{cluster === "local" ? "Hub Cluster" : cluster}</span></div>
-                  <div className="ac-rp-info-row"><span className="ac-rp-info-label">Context</span><span className="ac-rp-info-val">{cluster}</span></div>
-                  <div className="ac-rp-info-row"><span className="ac-rp-info-label">Provider</span><span className="ac-rp-info-val">{activeMeta.label}</span></div>
-                </div>
-                <div className="ac-rp-quick-actions">
-                  <button className="ac-rp-quick" onClick={() => sendText("/health")}>Check Health</button>
-                  <button className="ac-rp-quick" onClick={() => sendText("/nodes")}>List Nodes</button>
-                  <button className="ac-rp-quick" onClick={() => sendText("/pods")}>Show Pods</button>
-                  <button className="ac-rp-quick" onClick={() => sendText("/events")}>Recent Events</button>
-                </div>
-              </div>
             )}
 
             {rightTab === "fixes" && (
@@ -1153,24 +1171,21 @@ export function ChatView() {
               <div className="ac-rp-section">
                 <div className="ac-rp-section-head">
                   <span className="ac-rp-section-title" style={{ color: "#22c55e" }}>ServiceNow</span>
+                  <button className={"ac-rp-sync-btn" + (crSyncing ? " spinning" : "")} onClick={syncAllPendingCRs} disabled={crSyncing}>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                    {crSyncing ? "Syncing" : "Sync"}
+                  </button>
                 </div>
                 <div className="ac-rp-snow-stats">
-                  <div className="ac-rp-snow-stat"><span className="ac-rp-snow-val">{pendingCRs.length}</span><label>Pending CRs</label></div>
-                  <div className="ac-rp-snow-stat"><span className="ac-rp-snow-val">{actionHistory.filter((a) => a.status === "executed").length}</span><label>Executed</label></div>
+                  <div className="ac-rp-snow-stat"><span className="ac-rp-snow-val">{allCRs.length}</span><label>Total CRs</label></div>
+                  <div className="ac-rp-snow-stat"><span className="ac-rp-snow-val">{pendingCRs.length}</span><label>Open</label></div>
+                  <div className="ac-rp-snow-stat"><span className="ac-rp-snow-val">{allCRs.filter((c) => /(implement|closed|complete)/.test((c.status || "").toLowerCase())).length}</span><label>Done</label></div>
                 </div>
-                {pendingCRs.length === 0 ? (
-                  <p className="ac-rp-empty">No ServiceNow tickets in progress. CRs created through chat will appear here.</p>
+                {allCRs.length === 0 ? (
+                  <p className="ac-rp-empty">No ServiceNow change requests yet. CRs created through chat will appear here, with options to verify status or cancel.</p>
                 ) : (
                   <div className="ac-rp-list">
-                    {pendingCRs.map((cr) => (
-                      <div key={cr.ticket_id || cr.ticketId} className="ac-rp-card">
-                        <div className="ac-rp-card-head">
-                          <span className="ac-rp-card-id">{cr.snow_number || cr.ticket_id || cr.ticketId}</span>
-                          <span className="ac-rp-card-status">{(cr.status || "pending").toUpperCase()}</span>
-                        </div>
-                        <div className="ac-rp-card-title">{cr.title || "—"}</div>
-                      </div>
-                    ))}
+                    {allCRs.map((cr) => renderCRCard(cr))}
                   </div>
                 )}
               </div>
