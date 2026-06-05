@@ -14999,7 +14999,7 @@ export async function handleChatAPI(req, res) {
     const AUTO_UPGRADE_PAT = /\b(?:automat(?:e|ed|ic)\s+(?:(?:cluster\s+)?upgrade|the\s+upgrade)|upgrade\s+automat(?:ion|e|ed)|full\s+upgrade\s+(?:flow|process|workflow)|start\s+upgrade\s+(?:flow|automation|process|workflow)|begin\s+(?:automated|full)\s+upgrade|orchestrat(?:e|ed)\s+(?:the\s+)?upgrade)\b/i;
     if (AUTO_UPGRADE_PAT.test(userMessage)) {
       try {
-        const { createSession, getActiveSession, stepValidateVersion, formatSessionSummary, buildUpgradeProgressToken } = await import("./upgrade-orchestrator.js");
+        const { createSession, getActiveSession, stepValidateVersion, stepPreAssessment, stepComponentAnalysis, stepBuildRemediationPlan, formatSessionSummary, buildUpgradeProgressToken } = await import("./upgrade-orchestrator.js");
 
         // Check for existing active session on this cluster
         const activeCluster = _remoteClusterContext?.clusterName || body.cluster || "local";
@@ -15017,10 +15017,14 @@ export async function handleChatAPI(req, res) {
             targetVer = versionMatch[0];
           }
 
-          // Auto-detect versions if not specified
+          // Auto-detect versions if not specified — route through bridge for remote clusters
+          const clusterOcpGet = activeCluster && activeCluster !== "local"
+            ? (path) => withRemoteClusterBridge(activeCluster, () => ocpGet(path))
+            : ocpGet;
+
           if (!targetVer) {
             try {
-              const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+              const cv = await clusterOcpGet("/apis/config.openshift.io/v1/clusterversions/version");
               fromVer = cv?.status?.desired?.version || "";
               const updates = cv?.status?.availableUpdates || [];
               if (updates.length > 0) {
@@ -15043,10 +15047,10 @@ export async function handleChatAPI(req, res) {
             return json(res, 200, { reply, provider, contextKeys: ["upgrade", "orchestrator"], cached: false, conversationId });
           }
 
-          // If no fromVer, fetch it
+          // If no fromVer, fetch it from the target cluster
           if (!fromVer) {
             try {
-              const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+              const cv = await clusterOcpGet("/apis/config.openshift.io/v1/clusterversions/version");
               fromVer = cv?.status?.desired?.version || "";
             } catch { /* ignore */ }
           }
@@ -15062,13 +15066,11 @@ export async function handleChatAPI(req, res) {
         if (session) {
           // Auto-run version validation as the first step
           const validation = await stepValidateVersion(session.id);
-          const updatedSession = validation.session;
-
-          const progressToken = `@@UPGRADE_PROGRESS|${JSON.stringify(buildUpgradeProgressToken(updatedSession)).replace(/@@/g, "@ @")}@@`;
+          let latestSession = validation.session;
 
           let statusText = "";
           if (validation.valid) {
-            statusText = `### Automated Upgrade Initiated\n\n**${updatedSession.fromVersion} → ${updatedSession.targetVersion}** (${updatedSession.upgradeType || "patch"})\n\n`;
+            statusText = `### Automated Upgrade Initiated\n\n**${latestSession.fromVersion} → ${latestSession.targetVersion}** (${latestSession.upgradeType || "patch"})\n\n`;
             statusText += `✅ Version validation passed.\n\n`;
             if (validation.result.channelChangeNeeded) {
               statusText += `⚠️ Channel switch required: ${validation.result.channel} → ${validation.result.suggestedChannel}\n\n`;
@@ -15079,20 +15081,56 @@ export async function handleChatAPI(req, res) {
             if (validation.result.isEUSToEUS) {
               statusText += `📋 ${validation.result.eusNote}\n\n`;
             }
-            statusText += `Use the upgrade flow below to proceed step by step. Each step requires your confirmation before proceeding.\n\n`;
+
+            // Auto-run diagnostic steps: pre-assessment → component analysis → remediation plan
+            const autoSteps = [
+              { name: "Pre-Assessment (22 checks)", fn: () => stepPreAssessment(latestSession.id) },
+              { name: "Component Analysis", fn: () => stepComponentAnalysis(latestSession.id) },
+              { name: "Remediation Plan", fn: () => stepBuildRemediationPlan(latestSession.id) },
+            ];
+
+            if (wantsStream) {
+              sseStart(res);
+              sseSend(res, { stage: "querying" });
+              sseSend(res, { stage: "generating" });
+              sseSend(res, { delta: statusText });
+            }
+
+            for (const step of autoSteps) {
+              try {
+                if (wantsStream) sseSend(res, { delta: `Running ${step.name}...\n` });
+                const stepResult = await step.fn();
+                latestSession = stepResult.session || latestSession;
+                statusText += `✅ ${step.name} completed.\n\n`;
+                if (wantsStream) sseSend(res, { delta: `✅ ${step.name} completed.\n\n` });
+              } catch (err) {
+                statusText += `⚠️ ${step.name} failed: ${err.message}\n\n`;
+                if (wantsStream) sseSend(res, { delta: `⚠️ ${step.name} failed: ${err.message}\n\n` });
+                break;
+              }
+            }
+
+            statusText += `AI has completed the assessment. Review the results below and proceed with the remaining steps when ready.\n\n`;
+            if (wantsStream) sseSend(res, { delta: `AI has completed the assessment. Review the results below and proceed with the remaining steps when ready.\n\n` });
           } else {
             statusText = `### Upgrade Validation Failed\n\n${validation.result.validation.reason}\n\n`;
             if (validation.result.validation.recommendation) {
               statusText += `**Recommendation:** ${validation.result.validation.recommendation}\n\n`;
             }
+            if (wantsStream) {
+              sseStart(res);
+              sseSend(res, { stage: "querying" });
+              sseSend(res, { stage: "generating" });
+              sseSend(res, { delta: statusText });
+            }
           }
 
+          const progressToken = `@@UPGRADE_PROGRESS|${JSON.stringify(buildUpgradeProgressToken(latestSession)).replace(/@@/g, "@ @")}@@`;
           const reply = statusText + progressToken;
           const provider = "built-in";
           if (conversationId) histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
           if (wantsStream) {
-            sseStart(res); sseSend(res, { stage: "querying" }); sseSend(res, { stage: "generating" });
-            sseSend(res, { delta: reply }); sseSend(res, { done: true, provider, conversationId }); sseEnd(res); return;
+            sseSend(res, { delta: progressToken }); sseSend(res, { done: true, provider, conversationId }); sseEnd(res); return;
           }
           return json(res, 200, { reply, provider, contextKeys: ["upgrade", "orchestrator"], cached: false, conversationId });
         }
