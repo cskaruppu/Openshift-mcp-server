@@ -122,7 +122,7 @@ import { loadConfig } from "./utils/config.js";
 import { validateCommand, getAccessLevel, isToolAllowed } from "./security/command-validator.js";
 import { initComponents, isToolRegistrationEnabled, getComponentCatalog, getComponentSummary } from "./security/component-registry.js";
 import { initTelemetry, shutdownTelemetry, startSpan, traceChatRequest, traceToolCall, getTelemetryStatus } from "./utils/telemetry-otel.js";
-import { ocpGet, ocpPost, ocpPatch, ocpDelete, ocpFetch, withRemoteCluster, setRemoteCluster, clearRemoteCluster, setBridgeInvoker } from "./utils/openshift-client.js";
+import { ocpGet, ocpPost, ocpPatch, ocpDelete, ocpFetch, withRemoteCluster, setRemoteCluster, clearRemoteCluster, setBridgeInvoker, enterRemoteClusterBridge } from "./utils/openshift-client.js";
 import { initPlatform, getPlatform } from "./platform/index.js";
 import {
   connectServer as hubConnect,
@@ -1894,6 +1894,16 @@ async function startSSE() {
         console.warn(`[security] Cluster context mismatch: header=${headerCluster} query=${queryCluster}`);
         return sendJson(res, 400, { error: "Cluster context mismatch" });
       }
+    }
+
+    // ── Universal cluster bridge ──────────────────────────────────────────
+    // When a request targets a remote cluster via ?cluster=<name>, set up the
+    // agent bridge so ALL ocpGet/ocpFetch calls in this request automatically
+    // route through the remote agent — no per-endpoint wiring needed.
+    // Works for any cluster name, any endpoint, present or future.
+    const _reqCluster = queryCluster || headerCluster;
+    if (_reqCluster && _reqCluster !== "local" && hasActiveChannel(_reqCluster)) {
+      enterRemoteClusterBridge(_reqCluster);
     }
 
     // User management routes (after auth middleware)
