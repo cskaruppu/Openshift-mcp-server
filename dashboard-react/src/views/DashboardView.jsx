@@ -99,15 +99,19 @@ export function DashboardView() {
         </div>
       </section>
 
-      {/* ── 4. Security & Change Risk ── */}
+      {/* ── 4. Security & Change Risk (side by side) ── */}
       <section className="dash-section">
         <div className="dash-section-header">
           <h2 className="dash-section-title">Security &amp; Change Risk</h2>
         </div>
-        <ImageVulnsWidget />
-      </section>
-      <section className="dash-section">
-        <AppChangesWidget />
+        <div className="dash-twin-row">
+          <div className="dash-twin-card">
+            <ImageVulnsWidget />
+          </div>
+          <div className="dash-twin-card">
+            <AppChangesWidget />
+          </div>
+        </div>
       </section>
 
       {/* ── 5. Capacity & Efficiency ── */}
