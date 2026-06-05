@@ -6,7 +6,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
 import { dirname } from "node:path";
-import { ocpGet, ocpFetch, ocpDelete } from "../utils/openshift-client.js";
+import { ocpGet, ocpFetch, ocpDelete, withRemoteClusterBridge } from "../utils/openshift-client.js";
 import { getPlatform, isOpenShiftFamily } from "../platform/index.js";
 import { callLLM } from "./llm.js";
 import { query as dbQuery, isEnabled as dbEnabled } from "../utils/db.js";
@@ -48,6 +48,19 @@ function json(res, status, data) {
     res.writeHead(status, { "Content-Type": "application/json" });
     res.end(body);
   }
+}
+
+function getRequestCluster(req) {
+  try {
+    const url = new URL(req.url, "http://localhost");
+    return url.searchParams.get("cluster") || null;
+  } catch { return null; }
+}
+
+function withRequestClusterContext(req, fn) {
+  const cluster = getRequestCluster(req);
+  if (!cluster || cluster === "local") return fn();
+  return withRemoteClusterBridge(cluster, fn);
 }
 
 function readJsonBody(req) {
@@ -1222,12 +1235,13 @@ export async function handleDashboardAPI(pathname, req, res) {
  */
 export async function handleUpgradeAnalyze(req, res) {
   try {
-    const [clusterVersion, operators, nodes, mcpools] = await Promise.all([
-      ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
-      ocpGet("/apis/config.openshift.io/v1/clusteroperators"),
-      ocpGet("/api/v1/nodes"),
-      ocpGet("/apis/machineconfiguration.openshift.io/v1/machineconfigpools").catch(() => null),
-    ]);
+    const [clusterVersion, operators, nodes, mcpools] = await withRequestClusterContext(req, () =>
+      Promise.all([
+        ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
+        ocpGet("/apis/config.openshift.io/v1/clusteroperators"),
+        ocpGet("/api/v1/nodes"),
+        ocpGet("/apis/machineconfiguration.openshift.io/v1/machineconfigpools").catch(() => null),
+      ]));
 
     // --- Current version & channel ---
     const currentVersion = clusterVersion?.status?.desired?.version || "unknown";
@@ -1351,53 +1365,54 @@ export async function handleUpgradeStart(req, res) {
       return json(res, 400, { error: "Missing or invalid 'version' field" });
     }
 
-    // Validate upgrade version using Red Hat prerequisite checks
-    const clusterVersion = await ocpGet(
-      "/apis/config.openshift.io/v1/clusterversions/version"
-    );
-    const currentVersion = clusterVersion?.status?.desired?.version || "";
-    const clusterChannel = clusterVersion?.spec?.channel || "";
-    const availableUpdates = clusterVersion?.status?.availableUpdates || [];
-    const validation = validateUpgradeVersion(currentVersion, version, availableUpdates, clusterChannel);
-    if (!validation.valid) {
-      return json(res, 400, {
-        error: validation.reason,
-        severity: validation.severity,
-        recommendation: validation.recommendation || null,
-        suggestedPath: validation.suggestedPath || null,
-        availableVersions: validation.availableVersions || null,
-        currentVersion,
-        channel: clusterChannel,
-      });
-    }
-
-    // Check if an upgrade is already in progress
-    const progressing = (clusterVersion?.status?.conditions || []).find(
-      (c) => c.type === "Progressing"
-    );
-    if (
-      progressing?.status === "True" &&
-      (progressing?.message || "").toLowerCase().includes("working towards")
-    ) {
-      return json(res, 409, {
-        error: "An upgrade is already in progress",
-        message: progressing.message,
-      });
-    }
-
-    // PATCH ClusterVersion to set desiredUpdate
-    await ocpFetch(
-      "/apis/config.openshift.io/v1/clusterversions/version",
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/merge-patch+json" },
-        body: JSON.stringify({
-          spec: { desiredUpdate: { version } },
-        }),
+    await withRequestClusterContext(req, async () => {
+      const clusterVersion = await ocpGet(
+        "/apis/config.openshift.io/v1/clusterversions/version"
+      );
+      const currentVersion = clusterVersion?.status?.desired?.version || "";
+      const clusterChannel = clusterVersion?.spec?.channel || "";
+      const availableUpdates = clusterVersion?.status?.availableUpdates || [];
+      const validation = validateUpgradeVersion(currentVersion, version, availableUpdates, clusterChannel);
+      if (!validation.valid) {
+        json(res, 400, {
+          error: validation.reason,
+          severity: validation.severity,
+          recommendation: validation.recommendation || null,
+          suggestedPath: validation.suggestedPath || null,
+          availableVersions: validation.availableVersions || null,
+          currentVersion,
+          channel: clusterChannel,
+        });
+        return;
       }
-    );
 
-    json(res, 200, { success: true, version, message: `Upgrade to ${version} initiated` });
+      const progressing = (clusterVersion?.status?.conditions || []).find(
+        (c) => c.type === "Progressing"
+      );
+      if (
+        progressing?.status === "True" &&
+        (progressing?.message || "").toLowerCase().includes("working towards")
+      ) {
+        json(res, 409, {
+          error: "An upgrade is already in progress",
+          message: progressing.message,
+        });
+        return;
+      }
+
+      await ocpFetch(
+        "/apis/config.openshift.io/v1/clusterversions/version",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/merge-patch+json" },
+          body: JSON.stringify({
+            spec: { desiredUpdate: { version } },
+          }),
+        }
+      );
+
+      json(res, 200, { success: true, version, message: `Upgrade to ${version} initiated` });
+    });
   } catch (err) {
     console.error("[upgrade/start] error:", err.message);
     json(res, 500, { error: err.message });
@@ -1415,6 +1430,10 @@ export function handleUpgradeStatus(req, res) {
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
   });
+
+  const cluster = getRequestCluster(req);
+  const wrapCluster = (fn) => cluster && cluster !== "local"
+    ? withRemoteClusterBridge(cluster, fn) : fn();
 
   const POLL_INTERVAL_MS = 10_000;
   const TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
@@ -1437,10 +1456,10 @@ export function handleUpgradeStatus(req, res) {
     }
 
     try {
-      const [cv, ops] = await Promise.all([
+      const [cv, ops] = await wrapCluster(() => Promise.all([
         ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
         ocpGet("/apis/config.openshift.io/v1/clusteroperators"),
-      ]);
+      ]));
 
       const conditions = (cv?.status?.conditions || []).reduce((acc, c) => {
         acc[c.type] = { status: c.status, message: c.message || "", lastTransition: c.lastTransitionTime || "" };
@@ -1546,91 +1565,90 @@ export async function handleUpgradeDryRun(req, res) {
     const { version, channel } = body;
     if (!version) return json(res, 400, { error: "Missing 'version' field" });
 
-    const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
-    const currentVersion = cv?.status?.desired?.version || "unknown";
-    const currentChannel = cv?.spec?.channel || "";
-    const available = (cv?.status?.availableUpdates || []).map(u => u.version);
+    const result = await withRequestClusterContext(req, async () => {
+      const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+      const currentVersion = cv?.status?.desired?.version || "unknown";
+      const currentChannel = cv?.spec?.channel || "";
+      const available = (cv?.status?.availableUpdates || []).map(u => u.version);
 
-    const details = [];
-    details.push(`Current version : ${currentVersion}`);
-    details.push(`Target version  : ${version}`);
-    details.push(`Current channel : ${currentChannel}`);
-    if (channel && channel !== currentChannel) {
-      details.push(`Channel change  : ${currentChannel} → ${channel}`);
-    }
-    details.push(`Available updates: ${available.length > 0 ? available.join(", ") : "none"}`);
-    details.push(``);
-
-    // Check if upgrade is already in progress
-    const progressing = (cv?.status?.conditions || []).find(c => c.type === "Progressing");
-    if (progressing?.status === "True" && (progressing?.message || "").includes("working towards")) {
-      return json(res, 200, { success: false, error: `Upgrade already in progress: ${progressing.message}`, details: details.join("\n") });
-    }
-
-    // Check version availability
-    if (!available.includes(version)) {
-      details.push(`[FAIL] Version ${version} is NOT in available updates.`);
-      details.push(`       Available: ${available.join(", ") || "none"}`);
+      const details = [];
+      details.push(`Current version : ${currentVersion}`);
+      details.push(`Target version  : ${version}`);
+      details.push(`Current channel : ${currentChannel}`);
       if (channel && channel !== currentChannel) {
-        details.push(`       A channel switch to '${channel}' may make it available — try switching first.`);
+        details.push(`Channel change  : ${currentChannel} → ${channel}`);
       }
-      return json(res, 200, { success: false, error: `Version ${version} not available`, details: details.join("\n") });
-    }
+      details.push(`Available updates: ${available.length > 0 ? available.join(", ") : "none"}`);
+      details.push(``);
 
-    // Validate operators
-    const ops = await ocpGet("/apis/config.openshift.io/v1/clusteroperators");
-    const degraded = (ops?.items || []).filter(o =>
-      (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True")
-    );
-    const unavailable = (ops?.items || []).filter(o =>
-      !(o.status?.conditions || []).some(c => c.type === "Available" && c.status === "True")
-    );
+      const progressing = (cv?.status?.conditions || []).find(c => c.type === "Progressing");
+      if (progressing?.status === "True" && (progressing?.message || "").includes("working towards")) {
+        return { success: false, error: `Upgrade already in progress: ${progressing.message}`, details: details.join("\n") };
+      }
 
-    details.push(`[PASS] Version ${version} is in available updates`);
-    details.push(`[PASS] Cluster version operator is healthy`);
+      if (!available.includes(version)) {
+        details.push(`[FAIL] Version ${version} is NOT in available updates.`);
+        details.push(`       Available: ${available.join(", ") || "none"}`);
+        if (channel && channel !== currentChannel) {
+          details.push(`       A channel switch to '${channel}' may make it available — try switching first.`);
+        }
+        return { success: false, error: `Version ${version} not available`, details: details.join("\n") };
+      }
 
-    if (degraded.length > 0) {
-      details.push(`[WARN] ${degraded.length} degraded operator(s): ${degraded.map(o => o.metadata.name).join(", ")}`);
-    } else {
-      details.push(`[PASS] No degraded operators`);
-    }
-    if (unavailable.length > 0) {
-      details.push(`[WARN] ${unavailable.length} unavailable operator(s): ${unavailable.map(o => o.metadata.name).join(", ")}`);
-    } else {
-      details.push(`[PASS] All operators available`);
-    }
-
-    // Check nodes
-    const nodes = await ocpGet("/api/v1/nodes");
-    const notReady = (nodes?.items || []).filter(n =>
-      !(n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True")
-    );
-    if (notReady.length > 0) {
-      details.push(`[WARN] ${notReady.length} node(s) NOT ready: ${notReady.map(n => n.metadata.name).join(", ")}`);
-    } else {
-      details.push(`[PASS] All ${(nodes?.items || []).length} nodes ready`);
-    }
-
-    // Check MCP
-    try {
-      const mcps = await ocpGet("/apis/machineconfiguration.openshift.io/v1/machineconfigpools");
-      const mcpUpdating = (mcps?.items || []).filter(m =>
-        (m.status?.conditions || []).some(c => c.type === "Updating" && c.status === "True")
+      const ops = await ocpGet("/apis/config.openshift.io/v1/clusteroperators");
+      const degraded = (ops?.items || []).filter(o =>
+        (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True")
       );
-      if (mcpUpdating.length > 0) {
-        details.push(`[WARN] ${mcpUpdating.length} MachineConfigPool(s) currently updating`);
+      const unavailable = (ops?.items || []).filter(o =>
+        !(o.status?.conditions || []).some(c => c.type === "Available" && c.status === "True")
+      );
+
+      details.push(`[PASS] Version ${version} is in available updates`);
+      details.push(`[PASS] Cluster version operator is healthy`);
+
+      if (degraded.length > 0) {
+        details.push(`[WARN] ${degraded.length} degraded operator(s): ${degraded.map(o => o.metadata.name).join(", ")}`);
       } else {
-        details.push(`[PASS] No MachineConfigPools updating`);
+        details.push(`[PASS] No degraded operators`);
       }
-    } catch { details.push(`[INFO] MachineConfigPools not available`); }
+      if (unavailable.length > 0) {
+        details.push(`[WARN] ${unavailable.length} unavailable operator(s): ${unavailable.map(o => o.metadata.name).join(", ")}`);
+      } else {
+        details.push(`[PASS] All operators available`);
+      }
 
-    details.push(``);
-    const hasWarn = details.some(d => d.includes("[WARN]"));
-    details.push(hasWarn
-      ? `DRY RUN RESULT: PASSED WITH WARNINGS — review warnings before proceeding`
-      : `DRY RUN RESULT: PASSED — safe to proceed with upgrade to ${version}`);
+      const nodes = await ocpGet("/api/v1/nodes");
+      const notReady = (nodes?.items || []).filter(n =>
+        !(n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True")
+      );
+      if (notReady.length > 0) {
+        details.push(`[WARN] ${notReady.length} node(s) NOT ready: ${notReady.map(n => n.metadata.name).join(", ")}`);
+      } else {
+        details.push(`[PASS] All ${(nodes?.items || []).length} nodes ready`);
+      }
 
-    return json(res, 200, { success: true, details: details.join("\n"), warnings: hasWarn });
+      try {
+        const mcps = await ocpGet("/apis/machineconfiguration.openshift.io/v1/machineconfigpools");
+        const mcpUpdating = (mcps?.items || []).filter(m =>
+          (m.status?.conditions || []).some(c => c.type === "Updating" && c.status === "True")
+        );
+        if (mcpUpdating.length > 0) {
+          details.push(`[WARN] ${mcpUpdating.length} MachineConfigPool(s) currently updating`);
+        } else {
+          details.push(`[PASS] No MachineConfigPools updating`);
+        }
+      } catch { details.push(`[INFO] MachineConfigPools not available`); }
+
+      details.push(``);
+      const hasWarn = details.some(d => d.includes("[WARN]"));
+      details.push(hasWarn
+        ? `DRY RUN RESULT: PASSED WITH WARNINGS — review warnings before proceeding`
+        : `DRY RUN RESULT: PASSED — safe to proceed with upgrade to ${version}`);
+
+      return { success: true, details: details.join("\n"), warnings: hasWarn };
+    });
+
+    return json(res, result.success ? 200 : 200, result);
   } catch (err) {
     return json(res, 500, { error: err.message });
   }
@@ -1645,10 +1663,12 @@ export async function handleUpgradeChannel(req, res) {
     const { channel } = body;
     if (!channel) return json(res, 400, { error: "Missing 'channel' field" });
 
-    await ocpFetch("/apis/config.openshift.io/v1/clusterversions/version", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/merge-patch+json" },
-      body: JSON.stringify({ spec: { channel } }),
+    await withRequestClusterContext(req, async () => {
+      await ocpFetch("/apis/config.openshift.io/v1/clusterversions/version", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/merge-patch+json" },
+        body: JSON.stringify({ spec: { channel } }),
+      });
     });
 
     json(res, 200, { success: true, channel, message: `Channel switched to ${channel}` });

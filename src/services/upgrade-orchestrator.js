@@ -869,15 +869,82 @@ export async function stepDryRun(sessionId) {
   const session = await getSession(sessionId);
   if (!session) throw new Error("Session not found");
 
-  const port = process.env.PORT || 3001;
-  const result = await fetch(`http://localhost:${port}/api/upgrade/dryrun`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      version: session.targetVersion,
-      channel: session.channel,
-    }),
-  }).then(r => r.json());
+  const result = await withClusterContext(session.cluster, async () => {
+    const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+    const currentVersion = cv?.status?.desired?.version || "unknown";
+    const currentChannel = cv?.spec?.channel || "";
+    const available = (cv?.status?.availableUpdates || []).map(u => u.version);
+
+    const details = [];
+    details.push(`Current version : ${currentVersion}`);
+    details.push(`Target version  : ${session.targetVersion}`);
+    details.push(`Current channel : ${currentChannel}`);
+    details.push(`Available updates: ${available.length > 0 ? available.join(", ") : "none"}`);
+    details.push(``);
+
+    const progressing = (cv?.status?.conditions || []).find(c => c.type === "Progressing");
+    if (progressing?.status === "True" && (progressing?.message || "").includes("working towards")) {
+      return { success: false, error: `Upgrade already in progress: ${progressing.message}`, details: details.join("\n") };
+    }
+
+    if (!available.includes(session.targetVersion)) {
+      details.push(`[FAIL] Version ${session.targetVersion} is NOT in available updates.`);
+      details.push(`       Available: ${available.join(", ") || "none"}`);
+      return { success: false, error: `Version ${session.targetVersion} not available`, details: details.join("\n") };
+    }
+
+    const ops = await ocpGet("/apis/config.openshift.io/v1/clusteroperators");
+    const degraded = (ops?.items || []).filter(o =>
+      (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True")
+    );
+    const unavailableOps = (ops?.items || []).filter(o =>
+      !(o.status?.conditions || []).some(c => c.type === "Available" && c.status === "True")
+    );
+
+    details.push(`[PASS] Version ${session.targetVersion} is in available updates`);
+    details.push(`[PASS] Cluster version operator is healthy`);
+
+    if (degraded.length > 0) {
+      details.push(`[WARN] ${degraded.length} degraded operator(s): ${degraded.map(o => o.metadata.name).join(", ")}`);
+    } else {
+      details.push(`[PASS] No degraded operators`);
+    }
+    if (unavailableOps.length > 0) {
+      details.push(`[WARN] ${unavailableOps.length} unavailable operator(s): ${unavailableOps.map(o => o.metadata.name).join(", ")}`);
+    } else {
+      details.push(`[PASS] All operators available`);
+    }
+
+    const nodes = await ocpGet("/api/v1/nodes");
+    const notReady = (nodes?.items || []).filter(n =>
+      !(n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True")
+    );
+    if (notReady.length > 0) {
+      details.push(`[WARN] ${notReady.length} node(s) NOT ready: ${notReady.map(n => n.metadata.name).join(", ")}`);
+    } else {
+      details.push(`[PASS] All ${(nodes?.items || []).length} nodes ready`);
+    }
+
+    try {
+      const mcps = await ocpGet("/apis/machineconfiguration.openshift.io/v1/machineconfigpools");
+      const mcpUpdating = (mcps?.items || []).filter(m =>
+        (m.status?.conditions || []).some(c => c.type === "Updating" && c.status === "True")
+      );
+      if (mcpUpdating.length > 0) {
+        details.push(`[WARN] ${mcpUpdating.length} MachineConfigPool(s) currently updating`);
+      } else {
+        details.push(`[PASS] No MachineConfigPools updating`);
+      }
+    } catch { details.push(`[INFO] MachineConfigPools not available`); }
+
+    details.push(``);
+    const hasWarn = details.some(d => d.includes("[WARN]"));
+    details.push(hasWarn
+      ? `DRY RUN RESULT: PASSED WITH WARNINGS — review warnings before proceeding`
+      : `DRY RUN RESULT: PASSED — safe to proceed with upgrade to ${session.targetVersion}`);
+
+    return { success: true, details: details.join("\n"), warnings: hasWarn };
+  });
 
   if (result.success) {
     const updated = await transition(sessionId, UPGRADE_STATES.DRY_RUN_PASSED, {
