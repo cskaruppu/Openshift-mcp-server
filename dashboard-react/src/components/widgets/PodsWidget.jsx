@@ -1,8 +1,9 @@
 import { useClusterQuery } from "../../hooks/useClusterQuery";
 import { WidgetCard } from "../WidgetCard";
+import { formatNumber } from "../../utils/format";
 
 export function PodsWidget() {
-  const { data, isLoading, isError, error } = useClusterQuery("/api/cluster/summary");
+  const { data, isLoading, isError } = useClusterQuery("/api/cluster/summary");
 
   const pods = data?.pods;
   const running = pods?.running ?? 0;
@@ -12,15 +13,15 @@ export function PodsWidget() {
 
   return (
     <WidgetCard title="Pods">
-      {isLoading && <div className="metric muted">Loading…</div>}
-      {isError && <div className="metric err">{String(error.message)}</div>}
+      {isLoading && <div className="metric-skeleton" />}
+      {isError && <div className="metric-error"><span className="metric-error-msg">Couldn’t load data</span></div>}
       {!isLoading && !isError && (
         <>
           <div className={`metric ${allHealthy ? "ok" : notRunning > 0 ? "warn" : "muted"}`}>
-            {total ? running : "--"}
+            {total ? formatNumber(running) : "--"}
           </div>
           <div className="metric-label">
-            {pods ? `Running of ${total} total${notRunning > 0 ? ` · ${notRunning} pending/failed` : ""}` : ""}
+            {pods ? `Running of ${formatNumber(total)} total${notRunning > 0 ? ` · ${formatNumber(notRunning)} pending/failed` : ""}` : ""}
           </div>
         </>
       )}

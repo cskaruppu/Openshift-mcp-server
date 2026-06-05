@@ -3,6 +3,7 @@ import { useClusterQuery } from "../hooks/useClusterQuery";
 import { useActiveCluster } from "../store/clusterStore";
 import { showToast } from "../store/toastStore";
 import { clusterUrl } from "../api/client";
+import { formatTimestamp } from "../utils/format";
 
 const SEV = { critical: "#ef4444", warning: "#f59e0b", info: "#3b82f6" };
 
@@ -31,10 +32,7 @@ function timeAgo(ts) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-function fmt(ts) {
-  if (!ts) return "—";
-  try { return new Date(ts).toLocaleString(); } catch { return String(ts); }
-}
+const fmt = formatTimestamp;
 
 export function IntelligenceView() {
   const cluster = useActiveCluster();
@@ -114,7 +112,11 @@ export function IntelligenceView() {
     }
     items.sort((a, b) => {
       const order = { critical: 0, warning: 1, info: 2 };
-      return (order[a.sevBucket] ?? 2) - (order[b.sevBucket] ?? 2) || new Date(b.timestamp || 0) - new Date(a.timestamp || 0);
+      // Severity first, then recurrence (count), then recency — so a recurring
+      // active critical outranks a stale one-off, like Datadog Watchdog.
+      return (order[a.sevBucket] ?? 2) - (order[b.sevBucket] ?? 2)
+        || (b.count || 1) - (a.count || 1)
+        || new Date(b.timestamp || 0) - new Date(a.timestamp || 0);
     });
     return items;
   }, [insights, alerts]);
@@ -176,6 +178,24 @@ export function IntelligenceView() {
       refetchIntel(); showToast("Insight dismissed", "ok");
     } catch (err) { showToast("Dismiss failed: " + err.message, "err"); }
     finally { setDismissing((p) => ({ ...p, [item.id]: false })); }
+  }, [cluster, refetchIntel]);
+
+  const [fixing, setFixing] = useState({});
+  const handleAutoFix = useCallback(async (item) => {
+    if (!item.fixCommand) return;
+    if (!window.confirm(`Queue this remediation for review?\n\n${item.fixCommand}\n\nIt will be recorded to the audit trail for ${cluster === "local" ? "the hub cluster" : cluster}.`)) return;
+    setFixing((p) => ({ ...p, [item.id]: true }));
+    try {
+      const res = await fetch(clusterUrl("/api/intelligence/insights/fix", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: item.raw.id, command: item.fixCommand }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json.error) throw new Error(json.error || `Server error ${res.status}`);
+      refetchIntel();
+      showToast("Remediation queued for review", "ok");
+    } catch (err) { showToast("Auto-fix failed: " + err.message, "err"); }
+    finally { setFixing((p) => ({ ...p, [item.id]: false })); }
   }, [cluster, refetchIntel]);
 
   const handleRunPredictions = useCallback(async () => {
@@ -492,11 +512,17 @@ export function IntelligenceView() {
                         {item.source && <span className="intel-card-source">{item.source}</span>}
                       </div>
                       {item.message && <div className="intel-card-msg">{item.message}</div>}
+                      {!isExp && item.recommendation && (
+                        <div className="intel-card-reco">
+                          <span className="intel-card-reco-lbl">Recommended</span>
+                          <span className="intel-card-reco-txt">{item.recommendation}</span>
+                        </div>
+                      )}
                       <div className="intel-card-meta">
-                        {item.namespace && <span>NS: {item.namespace}</span>}
-                        {item.resource && <span>Res: {item.resource}</span>}
-                        {item.count > 1 && <span>{item.count}x</span>}
-                        {item.timestamp && <span>{timeAgo(item.timestamp)}</span>}
+                        {item.namespace && <span>NS: <code>{item.namespace}</code></span>}
+                        {item.resource && <span>Res: <code>{item.resource}</code></span>}
+                        {item.count > 1 && <span className="intel-card-count">{item.count}× recurring</span>}
+                        {item.timestamp && <span title={formatTimestamp(item.timestamp)}>{timeAgo(item.timestamp)}</span>}
                       </div>
                     </div>
                     <div className="intel-card-actions">
@@ -511,7 +537,11 @@ export function IntelligenceView() {
                       {item.kind === "alert" && (
                         <button className="intel-card-btn" onClick={(e) => { e.stopPropagation(); setSilenceAlert(item); }}>Silence</button>
                       )}
-                      {item.fixCommand && <button className="intel-card-btn success">Auto-fix</button>}
+                      {item.fixCommand && (
+                        <button className="intel-card-btn success" onClick={(e) => { e.stopPropagation(); handleAutoFix(item); }} disabled={fixing[item.id]}>
+                          {fixing[item.id] ? "Fixing…" : "Auto-fix"}
+                        </button>
+                      )}
                       <span className="intel-card-chevron">{isExp ? "▲" : "▼"}</span>
                     </div>
                   </div>
@@ -690,7 +720,7 @@ export function IntelligenceView() {
                     <div className="intel-tl-row1">
                       <span className="intel-tl-source">{ev.source || ev.type || "event"}</span>
                       {ev.severity && <span className={"intel-card-sev-badge " + sevBucket(ev.severity)}>{ev.severity}</span>}
-                      <span className="intel-tl-time">{fmt(ev.timestamp || ev.time)}</span>
+                      <span className="intel-tl-time intel-ts">{fmt(ev.timestamp || ev.time)}</span>
                     </div>
                     <div className="intel-tl-msg">{ev.message || ev.description || ev.summary || "—"}</div>
                     {(ev.namespace || ev.resource) && (
@@ -736,9 +766,18 @@ export function IntelligenceView() {
                     <div className="intel-pred-detail">{p.reason || p.message || p.prediction || ""}</div>
                     <div className="intel-pred-tags">
                       {score != null && <span className="intel-pred-tag" style={{ color: sc }}>Risk: {score}</span>}
-                      {confidence != null && <span className="intel-pred-tag conf">Conf: {typeof confidence === "number" ? `${Math.round(confidence * 100)}%` : confidence}</span>}
                       {p.hoursRemaining != null && <span className="intel-pred-tag eta">ETA: {p.hoursRemaining}h</span>}
                     </div>
+                    {confidence != null && (() => {
+                      const pct = typeof confidence === "number" ? Math.round(confidence * 100) : parseInt(confidence) || 0;
+                      return (
+                        <div className="intel-pred-conf">
+                          <span className="intel-pred-conf-lbl">Confidence</span>
+                          <div className="intel-pred-conf-bar"><div className="intel-pred-conf-fill" style={{ width: pct + "%", background: sc }} /></div>
+                          <span className="intel-pred-conf-pct">{pct}%</span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               );

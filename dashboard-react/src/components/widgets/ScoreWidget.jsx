@@ -27,13 +27,21 @@ export function ScoreWidget({ title, path, map }) {
 
   return (
     <WidgetCard title={title}>
-      {isLoading && <div className="metric muted">Loading…</div>}
-      {isError && <div className="metric err">{String(error.message)}</div>}
+      {isLoading && <div className="metric-skeleton" />}
+      {isError && (
+        <div className="metric-error">
+          <span className="metric-error-msg">Couldn’t load data</span>
+        </div>
+      )}
       {!isLoading && !isError && view && (
         <>
-          <div className="metric" style={{ color: view.unavailable ? "#888" : gradeColor(view.grade) }}>
+          <div className="metric" style={{ color: view.unavailable ? "#888" : "var(--text)" }}>
             {view.value}
-            {view.grade && !view.unavailable ? <span style={{ fontSize: 18, marginLeft: 8 }}>({view.grade})</span> : null}
+            {view.grade && !view.unavailable ? (
+              <span className="metric-grade-pill" style={{ background: gradeColor(view.grade) + "22", color: gradeColor(view.grade), borderColor: gradeColor(view.grade) + "55" }}>
+                {view.grade}
+              </span>
+            ) : null}
           </div>
           <div className="metric-label">{view.label}</div>
         </>

@@ -2183,6 +2183,27 @@ async function startSSE() {
       const result = await analyzeInsight(body.id, body.llmOpts || {});
       return sendJson(res, 200, result || { error: "Not found" });
     }
+    // Queue an insight's recommended remediation for operator review. We record
+    // it to the immutable audit trail rather than executing a raw command blind,
+    // then dismiss the insight from the active list (it has been actioned).
+    if (url.pathname === "/api/intelligence/insights/fix" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      if (!body.command) return sendJson(res, 400, { error: "command required" });
+      try {
+        await logAuditTrailEvent({
+          type: "action_taken",
+          severity: "info",
+          title: "Remediation queued from AI insight",
+          details: { insightId: body.id || null, command: body.command },
+          username: (req.user && req.user.name) || "dashboard",
+          source: "intelligence",
+        });
+      } catch (err) {
+        return sendJson(res, 500, { error: err.message });
+      }
+      if (body.id) { try { dismissInsight(body.id); } catch { /* best effort */ } }
+      return sendJson(res, 200, { ok: true, queued: true });
+    }
 
     // Knowledge Base
     if (url.pathname === "/api/intelligence/kb" && req.method === "GET") {

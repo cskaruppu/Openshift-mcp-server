@@ -3,6 +3,7 @@ import { useClusterQuery } from "../hooks/useClusterQuery";
 import { useActiveCluster } from "../store/clusterStore";
 import { clusterUrl } from "../api/client";
 import { showToast } from "../store/toastStore";
+import { formatTimestamp, timeAgo } from "../utils/format";
 
 const STATUS_FILTERS = ["All", "Success", "Failed", "ITSM"];
 const TIME_RANGES = [
@@ -27,9 +28,12 @@ const sevColor = (s) => {
 const statusIcon = (st) =>
   st === "PASS" ? "✓" : st === "FAIL" ? "✗" : "!";
 
-function fmt(ts) {
-  if (!ts) return "—";
-  try { return new Date(ts).toLocaleString(); } catch { return String(ts); }
+const fmt = formatTimestamp;
+
+/** Monospace, column-aligned timestamp with a relative-time hint on hover. */
+function TimeCell({ ts }) {
+  if (!ts) return <span className="aud-ts">—</span>;
+  return <span className="aud-ts" title={timeAgo(ts)}>{formatTimestamp(ts)}</span>;
 }
 
 function downloadFile(content, filename, mime) {
@@ -81,6 +85,8 @@ export function AuditView() {
   const [actionType, setActionType] = useState("All");
 
   const [trailType, setTrailType] = useState("all");
+  const [trailSearch, setTrailSearch] = useState("");
+  const [activitySearch, setActivitySearch] = useState("");
   const [crStatusFilter, setCrStatusFilter] = useState("all");
   const [syncingAll, setSyncingAll] = useState(false);
   const [syncingCR, setSyncingCR] = useState({});
@@ -152,8 +158,15 @@ export function AuditView() {
     else if (statusFilter === "Failed") list = list.filter((e) => e.success === false);
     else if (statusFilter === "ITSM") list = list.filter((e) => e.itsm || e.ticketId);
     if (actionType !== "All") list = list.filter((e) => (e.action || "").toLowerCase() === actionType.toLowerCase());
+    const q = activitySearch.trim().toLowerCase();
+    if (q) {
+      list = list.filter((e) =>
+        [e.action, e.target, e.namespace, e.user, e.initiator, e.details, e.message]
+          .filter(Boolean).join(" ").toLowerCase().includes(q)
+      );
+    }
     return list;
-  }, [executed, statusFilter, timeRange, actionType]);
+  }, [executed, statusFilter, timeRange, actionType, activitySearch]);
 
   const total = executed.length;
   const successCount = executed.filter((e) => e.success).length;
@@ -179,9 +192,16 @@ export function AuditView() {
 
   const trailEntries = trailData?.entries || trailData?.events || [];
   const filteredTrail = useMemo(() => {
-    if (trailType === "all") return trailEntries;
-    return trailEntries.filter((e) => e.type === trailType);
-  }, [trailEntries, trailType]);
+    let list = trailType === "all" ? trailEntries : trailEntries.filter((e) => e.type === trailType);
+    const q = trailSearch.trim().toLowerCase();
+    if (q) {
+      list = list.filter((e) =>
+        [e.message, e.description, e.details, e.namespace, e.resource, e.username, e.type]
+          .filter(Boolean).join(" ").toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [trailEntries, trailType, trailSearch]);
 
   const trailStatsData = trailStats || {};
 
@@ -355,7 +375,7 @@ export function AuditView() {
                   <option value="PASS">Passed</option>
                   <option value="WARN">Warning</option>
                 </select>
-                <span className="aud-f-count">{filteredFindings.length} findings</span>
+                <span className="aud-f-count">Showing {Math.min(filteredFindings.length, 60)} of {filteredFindings.length} findings</span>
               </div>
 
               {/* Findings list */}
@@ -526,8 +546,8 @@ export function AuditView() {
                     <div className="aud-cr-meta">
                       {cr.target_version && <span>Target: {cr.target_version}</span>}
                       {cr.cluster && <span>Cluster: {cr.cluster}</span>}
-                      <span>{fmt(cr.created_at || cr.createdAt)}</span>
-                      {cr.scheduled_date && <span>Scheduled: {fmt(cr.scheduled_date)}</span>}
+                      <TimeCell ts={cr.created_at || cr.createdAt} />
+                      {cr.scheduled_date && <span>Scheduled: <TimeCell ts={cr.scheduled_date} /></span>}
                     </div>
                     <div className="aud-cr-actions">
                       <button className="aud-cr-btn" onClick={() => handleSyncCR(cr.ticket_id || cr.ticketId)} disabled={syncingCR[cr.ticket_id || cr.ticketId]}>
@@ -577,13 +597,24 @@ export function AuditView() {
             </div>
           )}
 
-          {/* Trail type filter */}
+          {/* Trail type filter + search */}
           <div className="aud-trail-filters">
             {TRAIL_TYPES.map((t) => (
               <button key={t} className={"aud-trail-pill" + (trailType === t ? " active" : "")} onClick={() => setTrailType(t)}>
                 {t === "all" ? "All Events" : t.replace(/_/g, " ")}
               </button>
             ))}
+          </div>
+          <div className="aud-search-row">
+            <input
+              className="aud-search"
+              type="search"
+              placeholder="Search by actor, resource, namespace or message…"
+              value={trailSearch}
+              onChange={(e) => setTrailSearch(e.target.value)}
+              aria-label="Search audit trail"
+            />
+            <span className="aud-f-count">Showing {Math.min(filteredTrail.length, 80)} of {filteredTrail.length}</span>
           </div>
 
           {/* Trail entries */}
@@ -592,20 +623,20 @@ export function AuditView() {
             {filteredTrail.slice(0, 80).map((e, i) => {
               const ec = e.severity === "critical" ? "#ef4444" : e.severity === "warning" ? "#f59e0b" : "#3b82f6";
               return (
-                <div key={i} className="aud-trail-entry" style={{ "--te-c": ec }}>
+                <div key={e.id || e.event_id || `${e.timestamp || e.created_at}-${i}`} className="aud-trail-entry" style={{ "--te-c": ec }}>
                   <div className="aud-trail-dot" />
                   <div className="aud-trail-content">
                     <div className="aud-trail-row1">
                       <span className="aud-trail-type">{(e.type || "event").replace(/_/g, " ")}</span>
                       {e.severity && <span className={"aud-trail-sev " + e.severity}>{e.severity}</span>}
-                      <span className="aud-trail-time">{fmt(e.timestamp || e.created_at)}</span>
+                      <span className="aud-trail-time"><TimeCell ts={e.timestamp || e.created_at} /></span>
                     </div>
                     <div className="aud-trail-msg">{e.message || e.description || e.details || "—"}</div>
                     {(e.namespace || e.username || e.resource) && (
                       <div className="aud-trail-meta">
-                        {e.namespace && <span>ns: {e.namespace}</span>}
-                        {e.resource && <span>res: {e.resource}</span>}
-                        {e.username && <span>user: {e.username}</span>}
+                        {e.namespace && <span>ns: <code>{e.namespace}</code></span>}
+                        {e.resource && <span>res: <code>{e.resource}</code></span>}
+                        {e.username && <span>user: <code>{e.username}</code></span>}
                       </div>
                     )}
                   </div>
@@ -639,6 +670,14 @@ export function AuditView() {
                 <select className="aud-f-select" value={actionType} onChange={(e) => setActionType(e.target.value)}>
                   {ACTION_TYPES.map((a) => <option key={a} value={a}>{a === "All" ? "All Actions" : a}</option>)}
                 </select>
+                <input
+                  className="aud-search"
+                  type="search"
+                  placeholder="Search actor, target, namespace…"
+                  value={activitySearch}
+                  onChange={(e) => setActivitySearch(e.target.value)}
+                  aria-label="Search activity"
+                />
               </div>
 
               {/* Activity stats */}
@@ -649,7 +688,7 @@ export function AuditView() {
                 <div className="aud-act-stat" style={{ "--as-c": "#f59e0b" }}><span>{pending.length}</span><label>Pending</label></div>
               </div>
 
-              <div className="aud-f-count">Showing {filteredExecuted.length} of {total} actions</div>
+              <div className="aud-f-count">Showing {Math.min(filteredExecuted.length, 50)} of {filteredExecuted.length} filtered · {total} total</div>
 
               {/* Executed actions table */}
               <div className="aud-table-wrap">
@@ -662,12 +701,12 @@ export function AuditView() {
                   <tbody>
                     {filteredExecuted.length === 0 && <tr><td colSpan={6} className="aud-table-empty">No actions match filters</td></tr>}
                     {filteredExecuted.slice(0, 50).map((e, i) => (
-                      <tr key={i}>
-                        <td>{fmt(e.created_at || e.createdAt)}</td>
+                      <tr key={e.id || `${e.created_at || e.createdAt}-${i}`}>
+                        <td><TimeCell ts={e.created_at || e.createdAt} /></td>
                         <td><span className="aud-action-pill">{e.action || "—"}</span></td>
-                        <td>{e.target || "—"}</td>
-                        <td className="aud-muted">{e.namespace || "—"}</td>
-                        <td className="aud-muted">{e.user || e.initiator || "—"}</td>
+                        <td className="aud-mono">{e.target || "—"}</td>
+                        <td className="aud-muted aud-mono">{e.namespace || "—"}</td>
+                        <td className="aud-muted aud-mono">{e.user || e.initiator || "—"}</td>
                         <td><span className={"aud-status-pill " + (e.success ? "ok" : "fail")}>{e.success ? "success" : "failed"}</span></td>
                       </tr>
                     ))}
@@ -736,8 +775,8 @@ export function AuditView() {
                   </thead>
                   <tbody>
                     {queries.slice(0, 25).map((q, i) => (
-                      <tr key={i}>
-                        <td>{fmt(q.created_at || q.createdAt || q.timestamp)}</td>
+                      <tr key={q.id || `${q.created_at || q.timestamp}-${i}`}>
+                        <td><TimeCell ts={q.created_at || q.createdAt || q.timestamp} /></td>
                         <td className="aud-query-text">{q.query || q.prompt || q.text || "—"}</td>
                         <td>{q.responseTime || q.duration ? `${Math.round(q.responseTime || q.duration)}ms` : "—"}</td>
                         <td>{q.cached || q.cacheHit ? <span className="aud-cache-hit">HIT</span> : <span className="aud-cache-miss">MISS</span>}</td>
