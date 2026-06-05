@@ -202,8 +202,13 @@ export default function App() {
           </main>
 
           <footer className="app-footer">
-            Active cluster: <strong>{cluster === "local" ? "Hub" : cluster}</strong>
-            {user && user.name !== "anonymous" && <> — signed in as <strong>{user.name}</strong></>}
+            <span className="app-footer-left">
+              Active cluster: <strong>{cluster === "local" ? "Hub" : cluster}</strong>
+              {user && user.name !== "anonymous" && <> — signed in as <strong>{user.name}</strong></>}
+            </span>
+            <span className="app-footer-right">
+              Powered by <strong>TCS</strong> · &copy; {new Date().getFullYear()} Tata Consultancy Services. All rights reserved.
+            </span>
           </footer>
         </div>
       )}

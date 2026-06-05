@@ -97,6 +97,21 @@ function timeAgo(ts) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+// Bucket a timestamp into a human time group, the way leading AI chat apps do.
+function timeGroup(ts) {
+  if (!ts) return { label: "Older", order: 4 };
+  const now = new Date();
+  const then = new Date(ts);
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const dayMs = 86400000;
+  const t = then.getTime();
+  if (t >= startOfToday) return { label: "Today", order: 0 };
+  if (t >= startOfToday - dayMs) return { label: "Yesterday", order: 1 };
+  if (t >= startOfToday - 7 * dayMs) return { label: "Previous 7 Days", order: 2 };
+  if (t >= startOfToday - 30 * dayMs) return { label: "Previous 30 Days", order: 3 };
+  return { label: "Older", order: 4 };
+}
+
 export function ChatView() {
   const cluster = useActiveCluster();
   const conv = useChatStore((s) => s.byCluster[cluster]) || { messages: [], conversationId: null, chatId: null };
@@ -186,7 +201,10 @@ export function ChatView() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(clusterUrl("/api/chats?limit=30", cluster));
+        // Always scope to the active cluster (incl. "local"/Hub). Omitting the
+        // cluster param makes the backend return EVERY cluster's chats, which is
+        // why history used to leak across clusters.
+        const res = await fetch(`/api/chats?limit=30&cluster=${encodeURIComponent(cluster)}`);
         if (!res.ok || cancelled) return;
         const data = await res.json();
         if (!cancelled && Array.isArray(data.chats)) setSavedChats(data.chats);
@@ -227,22 +245,29 @@ export function ChatView() {
     return () => document.removeEventListener("mousedown", onDoc);
   }, [providerOpen, slashOpen, ctxMenu]);
 
-  const allClusters = useChatStore((s) => s.byCluster);
-  const conversations = useMemo(() => {
-    const list = [];
-    for (const [c, data] of Object.entries(allClusters)) {
-      if (data.messages.length > 0) {
-        const firstUser = data.messages.find((m) => m.role === "user");
-        const preview = firstUser?.text || data.messages[0]?.text || "(empty)";
-        list.push({ cluster: c, preview: preview.slice(0, 80), count: data.messages.length, active: c === cluster });
-      }
+  // Single, unified chat history (source of truth = persisted savedChats).
+  // Starred chats are pinned on top; the rest are bucketed by time, the way
+  // leading AI chat apps (ChatGPT / Claude / Gemini) present history.
+  const { pinnedChats, chatGroups } = useMemo(() => {
+    const q = sidebarSearch.trim().toLowerCase();
+    // Scope to the active cluster (defensive — the backend already filters).
+    const scoped = savedChats.filter((c) => (c.cluster || "local") === cluster);
+    const filtered = q
+      ? scoped.filter((c) => (c.title || "").toLowerCase().includes(q))
+      : scoped;
+    const pinned = filtered.filter((c) => c.starred);
+    const rest = filtered.filter((c) => !c.starred);
+    const buckets = new Map();
+    for (const c of rest) {
+      const g = timeGroup(c.updated_at || c.created_at);
+      if (!buckets.has(g.label)) buckets.set(g.label, { label: g.label, order: g.order, items: [] });
+      buckets.get(g.label).items.push(c);
     }
-    return list;
-  }, [allClusters, cluster]);
+    const groups = [...buckets.values()].sort((a, b) => a.order - b.order);
+    return { pinnedChats: pinned, chatGroups: groups };
+  }, [savedChats, sidebarSearch]);
 
-  const filteredConversations = sidebarSearch
-    ? conversations.filter((c) => c.cluster.toLowerCase().includes(sidebarSearch.toLowerCase()) || c.preview.toLowerCase().includes(sidebarSearch.toLowerCase()))
-    : conversations;
+  const totalChats = savedChats.length;
 
   const filteredSlash = useMemo(() => {
     if (!slashFilter) return SLASH_COMMANDS;
@@ -331,7 +356,7 @@ export function ChatView() {
 
   const reloadSavedChats = useCallback(async () => {
     try {
-      const res = await fetch(clusterUrl("/api/chats?limit=30", cluster));
+      const res = await fetch(`/api/chats?limit=30&cluster=${encodeURIComponent(cluster)}`);
       if (res.ok) { const d = await res.json(); if (Array.isArray(d.chats)) setSavedChats(d.chats); }
     } catch { /* silent */ }
   }, [cluster]);
@@ -597,115 +622,94 @@ export function ChatView() {
 
   const hasMessages = conv.messages.length > 0;
 
+  // A single, plain chat-history row — title only, hover-reveal menu, inline
+  // star/lock markers. Mirrors how ChatGPT / Claude / Gemini render history.
+  function renderHistItem(ch) {
+    const active = conv.chatId === ch.id;
+    const menuKey = `hist-${ch.id}`;
+    return (
+      <div key={ch.id} className={"ac-hist-item" + (active ? " active" : "")} onClick={() => loadSavedChat(ch)}>
+        {renamingId === ch.id ? (
+          <input className="ac-rename-input" value={renameVal} autoFocus
+            onChange={(e) => setRenameVal(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { renameChat(ch.id, renameVal); setRenamingId(null); } if (e.key === "Escape") setRenamingId(null); }}
+            onBlur={() => { renameChat(ch.id, renameVal); setRenamingId(null); }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <>
+            {ch.starred && <span className="ac-hist-icon star" title="Starred">&#9733;</span>}
+            {ch.locked && <span className="ac-hist-icon lock" title="Locked">&#128274;</span>}
+            <span className="ac-hist-title">{ch.title || "New chat"}</span>
+            <button className="ac-hist-menu-btn" title="More" onClick={(e) => { e.stopPropagation(); setCtxMenu(ctxMenu === menuKey ? null : menuKey); }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+            </button>
+          </>
+        )}
+        {ctxMenu === menuKey && (
+          <div className="ac-ctx-menu" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => { starChat(ch.id, !ch.starred); setCtxMenu(null); }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              {ch.starred ? "Unstar" : "Star"}
+            </button>
+            <button onClick={() => { lockChat(ch.id, !ch.locked); setCtxMenu(null); }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              {ch.locked ? "Unlock" : "Lock"}
+            </button>
+            <button onClick={() => { setRenamingId(ch.id); setRenameVal(ch.title || ""); setCtxMenu(null); }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+              Rename
+            </button>
+            <button className="ac-ctx-danger" onClick={() => { deleteSavedChat(ch.id); setCtxMenu(null); }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              Delete
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="ac">
       {/* ── Sidebar toggle (mobile only) ── */}
-      <button className="ac-sidebar-toggle" onClick={() => setSidebarOpen((v) => !v)} title="Conversations">
+      <button className="ac-sidebar-toggle" onClick={() => setSidebarOpen((v) => !v)} title="Chat history">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        {conversations.length > 0 && <span className="ac-sidebar-badge">{conversations.length}</span>}
+        {totalChats > 0 && <span className="ac-sidebar-badge">{totalChats}</span>}
       </button>
 
       {/* ── Left Sidebar (always visible desktop, slide mobile) ── */}
       <aside className={"ac-sidebar" + (sidebarOpen ? " open" : "")}>
-        <div className="ac-sidebar-head">
-          <span className="ac-sidebar-title">Conversations</span>
-          <button className="ac-sidebar-close" onClick={() => setSidebarOpen(false)}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
         <button className="ac-new-btn" onClick={handleNewChat}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          New Chat
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New chat
         </button>
         <div className="ac-sidebar-search">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" placeholder="Search conversations..." value={sidebarSearch} onChange={(e) => setSidebarSearch(e.target.value)} />
+          <input type="text" placeholder="Search chats" value={sidebarSearch} onChange={(e) => setSidebarSearch(e.target.value)} />
         </div>
         <div className="ac-sidebar-list">
-          {filteredConversations.length === 0 && <div className="ac-sidebar-empty">No conversations yet</div>}
-          {filteredConversations.map((c, ci) => (
-            <div key={c.cluster} className={"ac-conv-item" + (c.active ? " active" : "")}>
-              <div className="ac-conv-top">
-                <div className="ac-conv-cluster">{c.cluster === "local" ? "Hub Cluster" : c.cluster}</div>
-                <button className="ac-conv-menu-btn" onClick={(e) => { e.stopPropagation(); setCtxMenu(ctxMenu === ci ? null : ci); }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
-                </button>
-              </div>
-              <div className="ac-conv-preview">{c.preview}</div>
-              <div className="ac-conv-meta">
-                <span className="ac-conv-count">{c.count} messages</span>
-              </div>
-              {ctxMenu === ci && (
-                <div className="ac-ctx-menu">
-                  <button onClick={() => { showToast("Starred", "ok"); setCtxMenu(null); }}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                    Star
-                  </button>
-                  <button onClick={() => { showToast("Locked", "ok"); setCtxMenu(null); }}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                    Lock
-                  </button>
-                  <button onClick={() => { showToast("Rename not yet implemented", "warn"); setCtxMenu(null); }}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
-                    Rename
-                  </button>
-                  <button className="ac-ctx-danger" onClick={() => { clear(c.cluster); showToast("Deleted", "ok"); setCtxMenu(null); }}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                    Delete
-                  </button>
-                </div>
-              )}
+          {totalChats === 0 && (
+            <div className="ac-sidebar-empty">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span>No chats yet</span>
+              <small>Start a conversation and it will be saved here.</small>
+            </div>
+          )}
+
+          {pinnedChats.length > 0 && (
+            <div className="ac-hist-group">
+              <div className="ac-hist-label">Starred</div>
+              {pinnedChats.map((ch) => renderHistItem(ch))}
+            </div>
+          )}
+
+          {chatGroups.map((g) => (
+            <div key={g.label} className="ac-hist-group">
+              <div className="ac-hist-label">{g.label}</div>
+              {g.items.map((ch) => renderHistItem(ch))}
             </div>
           ))}
-          {savedChats.length > 0 && (
-            <>
-              <div className="ac-sidebar-divider">Saved</div>
-              {savedChats.slice(0, 15).map((ch) => (
-                <div key={ch.id} className={"ac-conv-item" + (conv.chatId === ch.id ? " active" : "")} onClick={() => loadSavedChat(ch)} style={{ cursor: "pointer" }}>
-                  <div className="ac-conv-top">
-                    {renamingId === ch.id ? (
-                      <input className="ac-rename-input" value={renameVal} autoFocus
-                        onChange={(e) => setRenameVal(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") { renameChat(ch.id, renameVal); setRenamingId(null); } if (e.key === "Escape") setRenamingId(null); }}
-                        onBlur={() => { renameChat(ch.id, renameVal); setRenamingId(null); }}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    ) : (
-                      <div className="ac-conv-cluster">
-                        {ch.starred && <span className="ac-star-icon" title="Starred">&#9733;</span>}
-                        {ch.locked && <span className="ac-lock-icon" title="Locked">&#128274;</span>}
-                        {ch.title || "Untitled"}
-                      </div>
-                    )}
-                    <button className="ac-conv-menu-btn" onClick={(e) => { e.stopPropagation(); setCtxMenu(ctxMenu === `saved-${ch.id}` ? null : `saved-${ch.id}`); }}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
-                    </button>
-                  </div>
-                  <div className="ac-conv-preview">{ch.cluster} &middot; {timeAgo(ch.updated_at || ch.created_at)}</div>
-                  {ctxMenu === `saved-${ch.id}` && (
-                    <div className="ac-ctx-menu" onClick={(e) => e.stopPropagation()}>
-                      <button onClick={() => { starChat(ch.id, !ch.starred); setCtxMenu(null); }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                        {ch.starred ? "Unstar" : "Star"}
-                      </button>
-                      <button onClick={() => { lockChat(ch.id, !ch.locked); setCtxMenu(null); }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                        {ch.locked ? "Unlock" : "Lock"}
-                      </button>
-                      <button onClick={() => { setRenamingId(ch.id); setRenameVal(ch.title || ""); setCtxMenu(null); }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
-                        Rename
-                      </button>
-                      <button className="ac-ctx-danger" onClick={() => { deleteSavedChat(ch.id); setCtxMenu(null); }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                        Delete
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </>
-          )}
         </div>
       </aside>
       {sidebarOpen && <div className="ac-sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
@@ -716,7 +720,6 @@ export function ChatView() {
         <div className="ac-header">
           <div className="ac-header-left">
             <h2 className="ac-title">AI Chat</h2>
-            <span className="ac-scope-chip">{cluster === "local" ? "Hub" : cluster}</span>
           </div>
           <div className="ac-header-right">
             {busy && (
@@ -942,6 +945,7 @@ export function ChatView() {
           )}
 
           <div className={"ac-input-pill" + (inputFocused ? " focused" : "")}>
+            {/* Row 1 — full-width textarea so typed text never gets squeezed */}
             <textarea
               ref={textareaRef}
               className="ac-textarea"
@@ -954,52 +958,53 @@ export function ChatView() {
               rows={1}
             />
 
-            <div className="ac-input-hint">
-              <kbd>/</kbd> commands
-            </div>
+            {/* Row 2 — toolbar: model selector (left), hint + send (right) */}
+            <div className="ac-input-toolbar">
+              <div className="ac-provider-wrap" ref={providerRef}>
+                <button className="ac-provider-toggle" onClick={() => setProviderOpen((v) => !v)} title={`Model: ${activeMeta.label}`}>
+                  <div className="ac-provider-icon" style={{ background: activeMeta.color }}>{activeMeta.icon}</div>
+                  <span className="ac-provider-toggle-name">{activeMeta.label}</span>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points={providerOpen ? "18 15 12 9 6 15" : "6 9 12 15 18 9"}/></svg>
+                </button>
+                {providerOpen && (
+                  <div className="ac-provider-dropdown">
+                    <div className="ac-provider-dd-head">LLM Provider</div>
+                    {(availableProviders.length > 0 ? availableProviders : Object.keys(PROVIDER_META)).map((key) => {
+                      const meta = PROVIDER_META[key] || PROVIDER_META.builtin;
+                      return (
+                        <button
+                          key={key}
+                          className={"ac-provider-option" + (key === activeProvider ? " active" : "")}
+                          onClick={() => { setActiveProvider(key); setProviderOpen(false); showToast(`Using ${meta.label}`, "ok"); }}
+                        >
+                          <div className="ac-provider-icon" style={{ background: meta.color }}>{meta.icon}</div>
+                          <div className="ac-provider-info">
+                            <div className="ac-provider-name">{meta.label}</div>
+                            <div className="ac-provider-desc">{meta.desc}</div>
+                          </div>
+                          {key === activeProvider && (
+                            <svg className="ac-provider-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
 
-            {/* Provider switcher (right-aligned) */}
-            <div className="ac-provider-wrap" ref={providerRef}>
-              <button className="ac-provider-toggle" onClick={() => setProviderOpen((v) => !v)} title={`Model: ${activeMeta.label}`}>
-                <div className="ac-provider-icon" style={{ background: activeMeta.color }}>{activeMeta.icon}</div>
-                <span className="ac-provider-toggle-name">{activeMeta.label}</span>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points={providerOpen ? "18 15 12 9 6 15" : "6 9 12 15 18 9"}/></svg>
-              </button>
-              {providerOpen && (
-                <div className="ac-provider-dropdown ac-provider-dropdown-right">
-                  <div className="ac-provider-dd-head">LLM Provider</div>
-                  {(availableProviders.length > 0 ? availableProviders : Object.keys(PROVIDER_META)).map((key) => {
-                    const meta = PROVIDER_META[key] || PROVIDER_META.builtin;
-                    return (
-                      <button
-                        key={key}
-                        className={"ac-provider-option" + (key === activeProvider ? " active" : "")}
-                        onClick={() => { setActiveProvider(key); setProviderOpen(false); showToast(`Using ${meta.label}`, "ok"); }}
-                      >
-                        <div className="ac-provider-icon" style={{ background: meta.color }}>{meta.icon}</div>
-                        <div className="ac-provider-info">
-                          <div className="ac-provider-name">{meta.label}</div>
-                          <div className="ac-provider-desc">{meta.desc}</div>
-                        </div>
-                        {key === activeProvider && (
-                          <svg className="ac-provider-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+              <div className="ac-input-toolbar-right">
+                <span className="ac-input-hint"><kbd>/</kbd> commands &middot; <kbd>&#8629;</kbd> send</span>
+                {busy ? (
+                  <button className="ac-send-btn abort" onClick={handleAbort} title="Stop">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                  </button>
+                ) : (
+                  <button className="ac-send-btn" onClick={send} disabled={!input.trim()} title="Send">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                  </button>
+                )}
+              </div>
             </div>
-
-            {busy ? (
-              <button className="ac-send-btn abort" onClick={handleAbort} title="Stop">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-              </button>
-            ) : (
-              <button className="ac-send-btn" onClick={send} disabled={!input.trim()} title="Send">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
-              </button>
-            )}
           </div>
           <div className="ac-input-footer">
             <span className="ac-input-footer-model">
