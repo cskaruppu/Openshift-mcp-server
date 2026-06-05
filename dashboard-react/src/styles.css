@@ -750,7 +750,7 @@ body {
 .ac-win-conf-fill { height: 100%; border-radius: 2px; transition: width .5s ease; }
 .ac-win-time { font-size: 10px; color: var(--text2); }
 
-.ac-win-body { padding: 14px 16px; }
+.ac-win-body { padding: 16px 20px 18px; }
 
 /* AI bubble base (rendered by ChatMessageBody / ChatTokens) */
 .chat-bubble {
@@ -950,24 +950,43 @@ body {
 .ac-slash-cmd { font-size: 13px; font-weight: 700; font-family: 'SF Mono', 'Fira Code', monospace; white-space: nowrap; }
 .ac-slash-desc { font-size: 12px; color: var(--text2); flex: 1; }
 
-/* ── Markdown in AI messages (rich renderer, ported from legacy) ── */
-.md-content { font-size: 14px; line-height: 1.62; color: var(--text); }
-.md-content p { margin: 0 0 10px; }
-.md-content p:last-child { margin-bottom: 0; }
-
-/* Headings */
-.md-content .chat-heading {
-  font-size: 15px; font-weight: 700; margin: 16px 0 8px; padding-bottom: 6px;
-  border-bottom: 1px solid var(--border2); color: var(--text); letter-spacing: -.01em;
+/* ── Markdown in AI messages (rich renderer, global-standard typography) ── */
+.md-content {
+  font-size: 15px; line-height: 1.72; color: var(--text);
+  letter-spacing: .005em;
 }
-.md-content .chat-heading.h2 { font-size: 16px; }
-.md-content .chat-heading.chat-heading-sm { font-size: 13px; border-bottom: none; margin: 10px 0 4px; }
+.md-content > :first-child { margin-top: 0; }
+.md-content > :last-child { margin-bottom: 0; }
+.md-content p { margin: 0 0 14px; }
+.md-content p:last-child { margin-bottom: 0; }
+.md-content strong { font-weight: 650; color: var(--text); }
+.md-content em { font-style: italic; }
+
+/* Headings — clean and bold, no dated underline (ChatGPT / Claude style) */
+.md-content .chat-heading {
+  font-size: 15px; font-weight: 700; margin: 22px 0 8px; padding: 0;
+  border: none; color: var(--text); letter-spacing: -.01em; line-height: 1.35;
+}
+.md-content .chat-heading.h2 { font-size: 17.5px; margin-top: 24px; }
+.md-content .chat-heading.chat-heading-sm {
+  font-size: 13px; margin: 16px 0 6px; color: var(--text2);
+  text-transform: uppercase; letter-spacing: .04em; font-weight: 700;
+}
 .md-content .chat-heading:first-child { margin-top: 0; }
 
-/* Lists */
-.md-content .md-list { margin: 6px 0 10px; padding-left: 22px; }
-.md-content .md-list li { margin: 3px 0; }
-.md-content .md-list .md-list { margin: 3px 0; }
+/* Lists — comfortable spacing and indent */
+.md-content .md-list { margin: 8px 0 14px; padding-left: 24px; }
+.md-content .md-list li { margin: 5px 0; padding-left: 2px; line-height: 1.65; }
+.md-content .md-list .md-list { margin: 5px 0 2px; }
+.md-content ul.md-list { list-style: none; padding-left: 20px; }
+.md-content ul.md-list > li { position: relative; }
+.md-content ul.md-list > li::before {
+  content: ""; position: absolute; left: -14px; top: .68em;
+  width: 5px; height: 5px; border-radius: 50%; background: var(--accent2); opacity: .7;
+}
+.md-content ol.md-list { padding-left: 22px; }
+.md-content ol.md-list > li { padding-left: 4px; }
+.md-content ol.md-list > li::marker { color: var(--text2); font-weight: 600; }
 
 /* Status markers */
 .md-content .status-crit { color: var(--crit); font-weight: 700; }
@@ -981,15 +1000,16 @@ body {
 
 /* Blockquote + rule */
 .md-content blockquote {
-  margin: 10px 0; padding: 8px 14px; border-left: 3px solid var(--accent2);
+  margin: 14px 0; padding: 10px 16px; border-left: 3px solid var(--accent2);
   background: rgba(59,130,246,.06); border-radius: 0 8px 8px 0; color: var(--text2);
 }
-.md-content hr { border: none; border-top: 1px solid var(--border2); margin: 14px 0; }
+.md-content blockquote p:last-child { margin-bottom: 0; }
+.md-content hr { border: none; border-top: 1px solid var(--border2); margin: 18px 0; }
 
 /* Inline code */
 .md-content .md-inline-code {
-  background: rgba(99,102,241,.12); padding: 1.5px 6px; border-radius: 5px;
-  font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12.5px; color: #c4b5fd;
+  background: rgba(99,102,241,.12); padding: 2px 6px; border-radius: 5px;
+  font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; color: #c4b5fd;
   word-break: break-word;
 }
 
@@ -1021,15 +1041,15 @@ body {
 
 /* Markdown tables */
 .md-content .md-table {
-  width: 100%; border-collapse: separate; border-spacing: 0; margin: 12px 0;
-  font-size: 13px; border: 1px solid var(--border2); border-radius: 8px; overflow: hidden;
+  width: 100%; border-collapse: separate; border-spacing: 0; margin: 14px 0;
+  font-size: 13.5px; border: 1px solid var(--border2); border-radius: 10px; overflow: hidden;
 }
 .md-content .md-table th {
-  background: var(--bg-alt); padding: 9px 13px; text-align: left; font-weight: 600;
-  font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--text2);
+  background: var(--bg-alt); padding: 10px 14px; text-align: left; font-weight: 600;
+  font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text2);
   border-bottom: 1px solid var(--border2); white-space: nowrap;
 }
-.md-content .md-table td { padding: 8px 13px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.md-content .md-table td { padding: 9px 14px; border-bottom: 1px solid var(--border); vertical-align: top; line-height: 1.5; }
 .md-content .md-table tr:last-child td { border-bottom: none; }
 .md-content .md-table tr:nth-child(even) td { background: rgba(255,255,255,.02); }
 .md-content .md-table tr:hover td { background: rgba(255,255,255,.04); }
