@@ -665,43 +665,74 @@ body {
 .ac-quick-btn:hover { border-color: rgba(99,102,241,.4); color: var(--text); background: rgba(99,102,241,.05); }
 
 /* ── Message row ── */
-.ac-msg { display: flex; gap: 12px; align-items: flex-start; max-width: 800px; margin: 0 auto; width: 100%; }
-.ac-msg-user { flex-direction: row-reverse; }
+.ac-msg { max-width: 800px; margin: 0 auto; width: 100%; }
+.ac-msg-user { display: flex; justify-content: flex-end; }
+.ac-msg-assistant { display: block; }
 
-.ac-avatar {
-  width: 30px; height: 30px; border-radius: 10px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--card); border: 1px solid var(--border); color: var(--text2);
-}
-.ac-msg-user .ac-avatar { background: rgba(59,130,246,.12); border-color: rgba(59,130,246,.2); color: #60a5fa; }
-.ac-ai-icon {
-  width: 18px; height: 18px; border-radius: 5px; font-size: 8px; font-weight: 800;
-  color: #fff; display: flex; align-items: center; justify-content: center;
-}
-
-.ac-msg-content { max-width: 72%; min-width: 0; }
-.ac-msg-user .ac-msg-content { display: flex; flex-direction: column; align-items: flex-end; }
-
-/* User bubble */
+/* ── User message ── */
+.ac-user-row { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .ac-bubble {
   background: rgba(59,130,246,.08); border: 1px solid rgba(59,130,246,.15);
   border-radius: 16px 16px 4px 16px; padding: 10px 16px;
   font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+  max-width: 70%; color: var(--text);
 }
-.ac-msg-user .ac-bubble { color: var(--text); }
+.ac-user-meta { display: flex; align-items: center; gap: 6px; }
+.ac-msg-time { font-size: 10px; color: var(--text2); }
 
-/* AI bubble (markdown rendered via ChatMessageBody) */
-.chat-bubble {
+/* ── AI Window Card ── */
+.ac-window {
   background: var(--card); border: 1px solid var(--border);
-  border-radius: 4px 16px 16px 16px; padding: 12px 16px;
+  border-radius: 12px; overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,.08);
+  transition: box-shadow .2s;
+}
+.ac-window:hover { box-shadow: 0 4px 16px rgba(0,0,0,.12); }
+
+.ac-win-header {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, rgba(224,64,64,.04), rgba(59,130,246,.04));
+  border-bottom: 1px solid var(--border);
+}
+.ac-win-identity { display: flex; align-items: center; gap: 8px; }
+.ac-win-icon {
+  width: 24px; height: 24px; border-radius: 7px; font-size: 10px; font-weight: 800;
+  color: #fff; display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.ac-win-name { font-size: 13px; font-weight: 700; color: var(--text); }
+.ac-win-provider-badge {
+  font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 6px;
+  letter-spacing: .2px;
+}
+.ac-win-conf { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.ac-win-conf-label { font-size: 10px; font-weight: 600; white-space: nowrap; }
+.ac-win-conf-bar {
+  width: 60px; height: 4px; border-radius: 2px;
+  background: rgba(255,255,255,.06); overflow: hidden;
+}
+.ac-win-conf-fill { height: 100%; border-radius: 2px; transition: width .5s ease; }
+.ac-win-time { font-size: 10px; color: var(--text2); }
+
+.ac-win-body { padding: 14px 16px; }
+
+/* AI bubble base (rendered by ChatMessageBody / ChatTokens) */
+.chat-bubble {
   font-size: 14px; line-height: 1.7; max-width: 100%; word-break: break-word;
+}
+/* Inside window — no extra card border */
+.ac-win-body .chat-bubble { background: transparent; border: none; border-radius: 0; padding: 0; }
+
+.ac-win-footer {
+  padding: 8px 16px 10px; border-top: 1px solid rgba(255,255,255,.04);
+  display: flex; flex-direction: column; gap: 8px;
 }
 
 /* ── Thinking stages ── */
 .ac-thinking {
-  display: flex; align-items: center; gap: 16px; padding: 10px 14px;
-  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-  margin-bottom: 8px;
+  display: flex; align-items: center; gap: 16px; padding: 10px 16px;
+  border-bottom: 1px solid rgba(255,255,255,.04);
 }
 .ac-think-step {
   display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text2);
@@ -741,15 +772,15 @@ body {
 
 /* ── Message actions ── */
 .ac-msg-actions {
-  display: flex; gap: 2px; margin-top: 6px; opacity: 0; transition: opacity .2s;
+  display: flex; gap: 2px; opacity: 0; transition: opacity .2s;
 }
-.ac-msg:hover .ac-msg-actions { opacity: 1; }
+.ac-window:hover .ac-msg-actions { opacity: 1; }
 .ac-action-btn {
   width: 28px; height: 28px; border-radius: 7px; background: none;
   border: 1px solid transparent; color: var(--text2); cursor: pointer;
   display: flex; align-items: center; justify-content: center; transition: all .15s;
 }
-.ac-action-btn:hover { border-color: var(--border); background: var(--card); color: var(--text); }
+.ac-action-btn:hover { border-color: var(--border); background: rgba(255,255,255,.04); color: var(--text); }
 .ac-action-btn.liked { color: var(--ok); }
 .ac-action-btn.disliked { color: var(--crit); }
 
@@ -882,9 +913,22 @@ body {
   background: rgba(99,102,241,.1); padding: 1px 6px; border-radius: 4px;
   font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; color: #c4b5fd;
 }
-.md-content table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 12px; }
-.md-content th { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); color: var(--text2); font-weight: 600; font-size: 11px; }
-.md-content td { padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,.04); }
+.md-content table {
+  border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 13px;
+  background: rgba(255,255,255,.02); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+.md-content th {
+  text-align: left; padding: 8px 12px;
+  background: rgba(255,255,255,.04); border-bottom: 1px solid var(--border);
+  color: var(--text2); font-weight: 700; font-size: 11px;
+  text-transform: uppercase; letter-spacing: .3px;
+}
+.md-content td {
+  padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,.04);
+}
+.md-content tr:last-child td { border-bottom: none; }
+.md-content tr:hover td { background: rgba(255,255,255,.02); }
 
 /* ── Light theme ── */
 .light-theme .ac-sidebar { background: #f8fafc; border-color: #e5e7eb; box-shadow: 4px 0 24px rgba(0,0,0,.08); }
@@ -901,8 +945,12 @@ body {
 .light-theme .ac-quick-btn { border-color: #e5e7eb; }
 .light-theme .ac-quick-btn:hover { background: rgba(99,102,241,.04); border-color: rgba(99,102,241,.3); }
 .light-theme .ac-bubble { background: rgba(59,130,246,.06); border-color: rgba(59,130,246,.12); }
-.light-theme .chat-bubble { background: #fff; border-color: #e5e7eb; }
-.light-theme .ac-thinking { background: #fff; border-color: #e5e7eb; }
+.light-theme .ac-window { background: #fff; border-color: #e5e7eb; box-shadow: 0 2px 8px rgba(0,0,0,.04); }
+.light-theme .ac-win-header { background: linear-gradient(135deg, rgba(224,64,64,.03), rgba(59,130,246,.03)); border-color: #e5e7eb; }
+.light-theme .ac-win-conf-bar { background: rgba(0,0,0,.06); }
+.light-theme .ac-win-footer { border-color: #f3f4f6; }
+.light-theme .ac-win-body .chat-bubble { background: transparent; }
+.light-theme .ac-thinking { border-color: #e5e7eb; }
 .light-theme .ac-tool-card { background: rgba(99,102,241,.04); border-color: rgba(99,102,241,.1); }
 .light-theme .ac-input-area { background: linear-gradient(to top, #fafbfc 60%, transparent); }
 .light-theme .ac-input-pill { background: #fff; border-color: #e5e7eb; }
@@ -915,6 +963,10 @@ body {
 .light-theme .ac-conv-item.active { background: rgba(59,130,246,.06); }
 .light-theme .md-content .md-pre { background: #f1f5f9; border-color: #e5e7eb; }
 .light-theme .md-content .md-inline-code { background: rgba(99,102,241,.08); color: #6366f1; }
+.light-theme .md-content table { background: #fafbfc; border-color: #e5e7eb; }
+.light-theme .md-content th { background: #f1f5f9; border-color: #e5e7eb; color: #64748b; }
+.light-theme .md-content td { border-color: #f3f4f6; }
+.light-theme .md-content tr:hover td { background: #f8fafc; }
 .light-theme .ac-new-btn { background: rgba(59,130,246,.06); border-color: rgba(59,130,246,.15); }
 .light-theme .ac-action-btn:hover { background: #f1f5f9; border-color: #e5e7eb; }
 .light-theme .ac-ctx-menu { background: #fff; border-color: #e5e7eb; box-shadow: 0 8px 24px rgba(0,0,0,.12); }
@@ -945,7 +997,9 @@ body {
   .ac-header { padding-left: 52px; }
   .ac-messages { padding: 16px 12px; }
   .ac-input-area { padding: 8px 12px 12px; }
-  .ac-msg-content { max-width: 85%; }
+  .ac-bubble { max-width: 90%; }
+  .ac-win-header { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .ac-win-conf { margin-left: 0; }
   .ac-welcome-grid { gap: 4px; }
   .ac-quick-grid { gap: 4px; }
   .ac-input-hint { display: none; }

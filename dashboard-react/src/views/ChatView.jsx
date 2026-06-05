@@ -126,8 +126,10 @@ export function ChatView() {
   const [pendingCRs, setPendingCRs] = useState([]);
   const [actionHistory, setActionHistory] = useState([]);
   const [ctxMenu, setCtxMenu] = useState(null);
+  const [msgMeta, setMsgMeta] = useState({});
 
   const abortRef = useRef(null);
+  const msgIndexRef = useRef(0);
   const scrollRef = useRef(null);
   const textareaRef = useRef(null);
   const providerRef = useRef(null);
@@ -343,8 +345,17 @@ export function ChatView() {
     setFollowUps([]);
     setToolCalls([]);
     setCompletedStages(new Set());
+    const now = Date.now();
+    const userIdx = conv.messages.length;
+    const aiIdx = userIdx + 1;
+    msgIndexRef.current = aiIdx;
     addMessage(cluster, { role: "user", text: msg });
     addMessage(cluster, { role: "assistant", text: "", toolCalls: [], followUps: [] });
+    setMsgMeta((prev) => ({
+      ...prev,
+      [userIdx]: { timestamp: now },
+      [aiIdx]: { timestamp: now, provider: activeProvider },
+    }));
     setBusy(true);
     setStage("parse");
 
@@ -401,6 +412,15 @@ export function ChatView() {
                 if (evt.conversationId) setConversationId(sendingCluster, evt.conversationId);
                 doneStages.add("parse"); doneStages.add("query"); doneStages.add("generate");
                 setCompletedStages(new Set(doneStages));
+                const resolvedProvider = evt.provider || activeProvider;
+                setMsgMeta((prev) => ({
+                  ...prev,
+                  [msgIndexRef.current]: {
+                    ...prev[msgIndexRef.current],
+                    provider: resolvedProvider,
+                    confidence: full.length > 200 ? "high" : full.length > 50 ? "medium" : "low",
+                  },
+                }));
               }
             } catch { /* ignore */ }
           }
@@ -592,16 +612,45 @@ export function ChatView() {
           {/* Message list */}
           {conv.messages.map((m, i) => {
             const isLastAI = m.role === "assistant" && i === conv.messages.length - 1;
-            return (
-              <div key={i} className={"ac-msg ac-msg-" + m.role}>
-                <div className="ac-avatar">
-                  {m.role === "user" ? (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                  ) : (
-                    <div className="ac-ai-icon" style={{ background: activeMeta.color }}>{activeMeta.icon}</div>
-                  )}
+            const meta = msgMeta[i] || {};
+            const prov = meta.provider || activeProvider;
+            const provMeta = PROVIDER_META[prov] || PROVIDER_META.builtin;
+            const conf = meta.confidence || (m.text?.length > 200 ? "high" : m.text?.length > 50 ? "medium" : "low");
+            const confLabel = conf === "high" ? "High confidence" : conf === "medium" ? "Medium confidence" : "Low confidence";
+            const confColor = conf === "high" ? "#22c55e" : conf === "medium" ? "#f59e0b" : "#ef4444";
+            const confPct = conf === "high" ? 90 : conf === "medium" ? 60 : 30;
+            const ts = meta.timestamp ? new Date(meta.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+
+            if (m.role === "user") {
+              return (
+                <div key={i} className="ac-msg ac-msg-user">
+                  <div className="ac-user-row">
+                    <div className="ac-bubble">{m.text}</div>
+                    <div className="ac-user-meta">
+                      {ts && <span className="ac-msg-time">{ts}</span>}
+                    </div>
+                  </div>
                 </div>
-                <div className="ac-msg-content">
+              );
+            }
+
+            return (
+              <div key={i} className="ac-msg ac-msg-assistant">
+                <div className="ac-window">
+                  {/* Window header */}
+                  <div className="ac-win-header">
+                    <div className="ac-win-identity">
+                      <div className="ac-win-icon" style={{ background: provMeta.color }}>{provMeta.icon}</div>
+                      <span className="ac-win-name">TCS Agentic AI</span>
+                      <span className="ac-win-provider-badge" style={{ background: provMeta.color + "22", color: provMeta.color }}>{prov === "builtin" ? "built-in" : provMeta.label}</span>
+                    </div>
+                    <div className="ac-win-conf">
+                      <span className="ac-win-conf-label" style={{ color: confColor }}>{confLabel}</span>
+                      <div className="ac-win-conf-bar"><div className="ac-win-conf-fill" style={{ width: confPct + "%", background: confColor }} /></div>
+                    </div>
+                    {ts && <span className="ac-win-time">{ts}</span>}
+                  </div>
+
                   {/* Thinking stages */}
                   {busy && isLastAI && stage && (
                     <div className="ac-thinking">
@@ -633,55 +682,54 @@ export function ChatView() {
                     </div>
                   )}
 
-                  {/* Message body */}
-                  {m.role === "assistant" ? (
-                    m.text && <ChatMessageBody text={m.text} cluster={cluster} onQuery={(q) => sendText(q)} />
-                  ) : (
-                    <div className="ac-bubble">{m.text}</div>
-                  )}
+                  {/* Window body */}
+                  <div className="ac-win-body">
+                    {m.text && <ChatMessageBody text={m.text} cluster={cluster} onQuery={(q) => sendText(q)} />}
+                  </div>
 
-                  {/* Message actions */}
-                  {m.role === "assistant" && m.text && !(busy && isLastAI) && (
-                    <div className="ac-msg-actions">
-                      <button className="ac-action-btn" onClick={() => copyMessage(m.text)} title="Copy">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                      </button>
-                      <button
-                        className={"ac-action-btn" + (likedMsgs.has(i) ? " liked" : "")}
-                        onClick={() => {
-                          const wasLiked = likedMsgs.has(i);
-                          setLikedMsgs((p) => { const n = new Set(p); wasLiked ? n.delete(i) : n.add(i); return n; });
-                          setDislikedMsgs((p) => { const n = new Set(p); n.delete(i); return n; });
-                          if (!wasLiked) sendFeedback(i, "like");
-                        }}
-                        title="Helpful"
-                      >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill={likedMsgs.has(i) ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
-                      </button>
-                      <button
-                        className={"ac-action-btn" + (dislikedMsgs.has(i) ? " disliked" : "")}
-                        onClick={() => {
-                          const wasDisliked = dislikedMsgs.has(i);
-                          setDislikedMsgs((p) => { const n = new Set(p); wasDisliked ? n.delete(i) : n.add(i); return n; });
-                          setLikedMsgs((p) => { const n = new Set(p); n.delete(i); return n; });
-                          if (!wasDisliked) sendFeedback(i, "dislike");
-                        }}
-                        title="Not helpful"
-                      >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill={dislikedMsgs.has(i) ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z"/><path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
-                      </button>
-                      <button className="ac-action-btn" onClick={retryLast} title="Retry">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Follow-ups */}
-                  {!busy && isLastAI && followUps.length > 0 && (
-                    <div className="ac-follow-ups">
-                      {followUps.map((fu) => (
-                        <button key={fu} className="ac-follow-btn" onClick={() => sendText(fu)}>{fu}</button>
-                      ))}
+                  {/* Window footer with actions */}
+                  {m.text && !(busy && isLastAI) && (
+                    <div className="ac-win-footer">
+                      <div className="ac-msg-actions">
+                        <button className="ac-action-btn" onClick={() => copyMessage(m.text)} title="Copy">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                        </button>
+                        <button
+                          className={"ac-action-btn" + (likedMsgs.has(i) ? " liked" : "")}
+                          onClick={() => {
+                            const wasLiked = likedMsgs.has(i);
+                            setLikedMsgs((p) => { const n = new Set(p); wasLiked ? n.delete(i) : n.add(i); return n; });
+                            setDislikedMsgs((p) => { const n = new Set(p); n.delete(i); return n; });
+                            if (!wasLiked) sendFeedback(i, "like");
+                          }}
+                          title="Helpful"
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill={likedMsgs.has(i) ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+                        </button>
+                        <button
+                          className={"ac-action-btn" + (dislikedMsgs.has(i) ? " disliked" : "")}
+                          onClick={() => {
+                            const wasDisliked = dislikedMsgs.has(i);
+                            setDislikedMsgs((p) => { const n = new Set(p); wasDisliked ? n.delete(i) : n.add(i); return n; });
+                            setLikedMsgs((p) => { const n = new Set(p); n.delete(i); return n; });
+                            if (!wasDisliked) sendFeedback(i, "dislike");
+                          }}
+                          title="Not helpful"
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill={dislikedMsgs.has(i) ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z"/><path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
+                        </button>
+                        <button className="ac-action-btn" onClick={retryLast} title="Retry">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                        </button>
+                      </div>
+                      {/* Follow-ups */}
+                      {!busy && isLastAI && followUps.length > 0 && (
+                        <div className="ac-follow-ups">
+                          {followUps.map((fu) => (
+                            <button key={fu} className="ac-follow-btn" onClick={() => sendText(fu)}>{fu}</button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
