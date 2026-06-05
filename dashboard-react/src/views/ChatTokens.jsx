@@ -8,10 +8,10 @@ import { showToast } from "../store/toastStore";
 /* ------------------------------------------------------------------ */
 
 const TOKEN_RE =
-  /@@(PREFLIGHT_REPORT|ITSM_FORM|ITSM_SUBMITTED|UPGRADE_EXECUTE|FIX_PROPOSAL|CLARIFY|POD_ISSUE|APPLY_BTN|SUMMARY|SCORE|GRADE|SEC_FIX_CMD|RIGHTSIZE|TRIAGE|VIEW_MORE|VIEW_MORE_REC|PLAN|REASONING|KPI)\|([\s\S]*?)@@/;
+  /@@(PREFLIGHT_REPORT|ITSM_FORM|ITSM_SUBMITTED|UPGRADE_EXECUTE|UPGRADE_PROGRESS|FIX_PROPOSAL|CLARIFY|POD_ISSUE|APPLY_BTN|SUMMARY|SCORE|GRADE|SEC_FIX_CMD|RIGHTSIZE|TRIAGE|VIEW_MORE|VIEW_MORE_REC|PLAN|REASONING|KPI)\|([\s\S]*?)@@/;
 
 const JSON_TOKENS = new Set([
-  "PREFLIGHT_REPORT", "ITSM_FORM", "ITSM_SUBMITTED", "UPGRADE_EXECUTE",
+  "PREFLIGHT_REPORT", "ITSM_FORM", "ITSM_SUBMITTED", "UPGRADE_EXECUTE", "UPGRADE_PROGRESS",
   "FIX_PROPOSAL", "CLARIFY", "PLAN", "REASONING", "RIGHTSIZE", "TRIAGE",
 ]);
 
@@ -52,7 +52,7 @@ export function parseSegments(text) {
  *   - "narrow": plain prose — best reading line-length (~80 chars)
  * Priority: wide > medium > narrow.
  */
-const WIDE_TOKENS = new Set(["PREFLIGHT_REPORT", "UPGRADE_EXECUTE"]);
+const WIDE_TOKENS = new Set(["PREFLIGHT_REPORT", "UPGRADE_EXECUTE", "UPGRADE_PROGRESS"]);
 const CARD_TOKENS = new Set(["ITSM_FORM", "ITSM_SUBMITTED", "RIGHTSIZE", "TRIAGE", "FIX_PROPOSAL", "CLARIFY", "POD_ISSUE"]);
 
 export function computeResponseWidth(text) {
@@ -130,6 +130,7 @@ function TokenCard({ type, data, cluster, onQuery, onItsmSubmitted }) {
     case "ITSM_FORM":        return data ? <ITSMForm form={data} cluster={cluster} onItsmSubmitted={onItsmSubmitted} /> : null;
     case "ITSM_SUBMITTED":   return data ? <ITSMSubmitted info={data} cluster={cluster} onQuery={onQuery} /> : null;
     case "UPGRADE_EXECUTE":  return data ? <UpgradeExecuteCard data={data} cluster={cluster} /> : null;
+    case "UPGRADE_PROGRESS": return data ? <UpgradeProgressCard data={data} cluster={cluster} onQuery={onQuery} /> : null;
     case "FIX_PROPOSAL":     return data ? <FixProposal diag={data} cluster={cluster} /> : null;
     case "CLARIFY":          return data ? <ClarifyCard data={data} onQuery={onQuery} /> : null;
     case "SEC_FIX_CMD":      return <SecFixCmd cmd={data} cluster={cluster} />;
@@ -618,6 +619,276 @@ function UpgradeExecuteCard({ data, cluster }) {
             {progress !== null && (
               <div className="ux-progress-bar"><div className="ux-progress-fill" style={{ width: progress + "%", background: barColor }} /></div>
             )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Upgrade Progress card (orchestrator state machine)                   */
+/* ------------------------------------------------------------------ */
+
+function UpgradeProgressCard({ data, cluster, onQuery }) {
+  const [session, setSession] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [stepRunning, setStepRunning] = useState(null);
+  const [dryRunResult, setDryRunResult] = useState(null);
+  const [remediationPlan, setRemediationPlan] = useState(null);
+  const [progressData, setProgressData] = useState(null);
+  const pollRef = useRef(null);
+
+  const sessionId = data?.sessionId;
+
+  async function fetchSession() {
+    if (!sessionId) return;
+    try {
+      const res = await fetch(clusterUrl(`/api/upgrade/orchestrator/session?id=${sessionId}`, cluster));
+      const d = await res.json();
+      if (d.session) setSession(d.session);
+    } catch {}
+  }
+
+  useEffect(() => {
+    fetchSession();
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [sessionId]);
+
+  async function runStep(action, extraBody = {}) {
+    setStepRunning(action);
+    try {
+      const res = await fetch(clusterUrl(`/api/upgrade/orchestrator/${action}`, cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, ...extraBody }),
+      });
+      const d = await res.json();
+      if (d.error) { showToast(d.error, "error"); return d; }
+      await fetchSession();
+      return d;
+    } catch (e) {
+      showToast(e.message, "error");
+      return null;
+    } finally { setStepRunning(null); }
+  }
+
+  async function handleValidate() { await runStep("validate"); }
+  async function handlePreAssess() { await runStep("pre-assess"); }
+  async function handleComponentAnalysis() { await runStep("component-analysis"); }
+  async function handleRemediationPlan() {
+    const d = await runStep("remediation-plan");
+    if (d?.plan) setRemediationPlan(d.plan);
+  }
+  async function handleDryRun() {
+    const d = await runStep("dry-run");
+    if (d) setDryRunResult(d);
+  }
+  async function handleExecute() {
+    if (!window.confirm(`Execute upgrade to ${session?.targetVersion || data.targetVersion}?\n\nThis will patch ClusterVersion and begin the rolling upgrade. Proceed?`)) return;
+    await runStep("execute");
+    // Start progress polling
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(clusterUrl(`/api/upgrade/orchestrator/progress?sessionId=${sessionId}`, cluster));
+        const d = await res.json();
+        setProgressData(d);
+        await fetchSession();
+        if (d.phase === "complete" || d.phase === "failed") {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+        }
+      } catch {}
+    }, 30000);
+  }
+  async function handlePostAssess() { await runStep("post-assess"); }
+  async function handleCheckCR() { await runStep("cr-status"); }
+
+  async function handleExecuteFix(fixId) {
+    const d = await runStep("execute-fix", { fixId });
+    if (d) {
+      setRemediationPlan(prev => {
+        if (!prev) return prev;
+        return { ...prev, fixes: prev.fixes.map(f => f.id === fixId ? { ...f, _result: d.result } : f) };
+      });
+    }
+  }
+
+  const s = session || {};
+  const state = s.state || data?.state || "idle";
+  const fromVer = s.fromVersion || data?.fromVersion || "";
+  const targetVer = s.targetVersion || data?.targetVersion || "";
+
+  const STEPS = [
+    { key: "version_validated", label: "Version Validation", action: handleValidate, actionLabel: "Validate" },
+    { key: "pre_assessed", label: "Pre-Assessment (22 checks)", action: handlePreAssess, actionLabel: "Run Assessment" },
+    { key: "component_analyzed", label: "Component Analysis", action: handleComponentAnalysis, actionLabel: "Analyze" },
+    { key: "remediation_proposed", label: "Remediation Plan", action: handleRemediationPlan, actionLabel: "Build Plan" },
+    { key: "cr_submitted", label: "Change Request", action: null },
+    { key: "cr_approved", label: "CR Approved", action: handleCheckCR, actionLabel: "Check Status" },
+    { key: "dry_run_passed", label: "Dry Run", action: handleDryRun, actionLabel: "Run Dry Run" },
+    { key: "executing", label: "Execute Upgrade", action: handleExecute, actionLabel: "Execute" },
+    { key: "completed", label: "Post-Assessment", action: handlePostAssess, actionLabel: "Run Post-Assessment" },
+  ];
+
+  const STATE_ORDER = ["idle", "version_validated", "channel_switched", "pre_assessed", "component_analyzed",
+    "remediation_proposed", "remediated", "cr_submitted", "cr_approved", "dry_run_passed", "executing", "monitoring", "completed"];
+  const currentIdx = STATE_ORDER.indexOf(state);
+
+  const stateColors = {
+    idle: "var(--text2)", version_validated: "var(--ok)", channel_switched: "var(--accent2)",
+    pre_assessed: "var(--ok)", component_analyzed: "var(--ok)", remediation_proposed: "var(--warn)",
+    remediated: "var(--ok)", cr_submitted: "var(--accent2)", cr_approved: "var(--ok)",
+    dry_run_passed: "var(--ok)", executing: "var(--accent2)", monitoring: "var(--accent2)",
+    completed: "var(--ok)", failed: "var(--crit)", cancelled: "var(--text2)",
+  };
+
+  return (
+    <div className="ux-card" style={{ maxWidth: 1000 }}>
+      <div className="ux-header">
+        <span style={{ fontSize: 20 }}>🔄</span>
+        <div style={{ flex: 1 }}>
+          <h4 style={{ margin: 0 }}>Automated Cluster Upgrade</h4>
+          <div style={{ fontSize: 11, opacity: .8, marginTop: 2 }}>
+            {fromVer} → {targetVer} | {s.upgradeType || "patch"} | {s.channel || ""}
+          </div>
+        </div>
+        <span style={{ fontSize: 12, padding: "4px 12px", borderRadius: 12, background: `color-mix(in srgb, ${stateColors[state] || "var(--text2)"} 20%, transparent)`, color: stateColors[state] || "var(--text2)", fontWeight: 600 }}>
+          {state.replace(/_/g, " ").toUpperCase()}
+        </span>
+      </div>
+
+      <div className="ux-body" style={{ padding: "12px 18px" }}>
+        {/* Step progress timeline */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+          {STEPS.map((step, i) => {
+            const stepIdx = STATE_ORDER.indexOf(step.key);
+            const done = stepIdx <= currentIdx && stepIdx >= 0;
+            const active = step.key === state || (state === "monitoring" && step.key === "executing");
+            const icon = done ? "✅" : active ? "▶" : "⬜";
+            const isNext = !done && !active && stepIdx === currentIdx + 1;
+
+            return (
+              <div key={step.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, opacity: done || active || isNext ? 1 : 0.5 }}>
+                <span style={{ width: 24, textAlign: "center" }}>{icon}</span>
+                <span style={{ flex: 1, fontWeight: active ? 600 : 400 }}>{step.label}</span>
+                {isNext && step.action && (
+                  <button className="ux-btn ux-btn-dryrun" style={{ padding: "3px 10px", fontSize: 11 }}
+                    onClick={step.action} disabled={!!stepRunning}>
+                    {stepRunning === step.key ? "Running…" : step.actionLabel}
+                  </button>
+                )}
+                {active && step.action && step.key !== "cr_submitted" && (
+                  <button className="ux-btn ux-btn-dryrun" style={{ padding: "3px 10px", fontSize: 11 }}
+                    onClick={step.action} disabled={!!stepRunning}>
+                    {stepRunning ? "Running…" : step.actionLabel}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Remediation plan details */}
+        {remediationPlan && state === "remediation_proposed" && (
+          <div style={{ background: "var(--bg2)", borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 12 }}>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>Remediation Plan ({remediationPlan.totalFixes} fixes)</div>
+            {remediationPlan.fixes.map(fix => (
+              <div key={fix.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+                <span style={{ color: fix.severity === "critical" ? "var(--crit)" : fix.severity === "warning" ? "var(--warn)" : "var(--text2)", fontSize: 11, fontWeight: 600, width: 60 }}>
+                  {fix.severity.toUpperCase()}
+                </span>
+                <span style={{ flex: 1 }}>{fix.description}</span>
+                {fix._result ? (
+                  <span style={{ color: fix._result.success ? "var(--ok)" : "var(--crit)", fontSize: 11 }}>
+                    {fix._result.success ? "✅ Done" : "❌ Failed"}
+                  </span>
+                ) : (
+                  <button className="ux-btn ux-btn-dryrun" style={{ padding: "2px 8px", fontSize: 10 }}
+                    onClick={() => handleExecuteFix(fix.id)} disabled={!!stepRunning}>
+                    Fix
+                  </button>
+                )}
+              </div>
+            ))}
+            <button className="ux-btn ux-btn-execute" style={{ marginTop: 8, padding: "4px 12px", fontSize: 11 }}
+              onClick={() => runStep("complete-remediation")} disabled={!!stepRunning}>
+              Mark Remediation Complete
+            </button>
+          </div>
+        )}
+
+        {/* Dry run result */}
+        {dryRunResult && (
+          <div style={{ background: "var(--bg2)", borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 12 }}>
+            <div style={{ fontWeight: 600, color: dryRunResult.passed ? "var(--ok)" : "var(--crit)", marginBottom: 4 }}>
+              {dryRunResult.passed ? "✅ Dry Run Passed" : "❌ Dry Run Failed"}
+            </div>
+            {dryRunResult.result?.details && (
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 11, color: "var(--text2)" }}>
+                {dryRunResult.result.details}
+              </pre>
+            )}
+          </div>
+        )}
+
+        {/* Live progress during execution */}
+        {progressData && (state === "executing" || state === "monitoring") && (
+          <div style={{ background: "var(--bg2)", borderRadius: 8, padding: 12, fontSize: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontWeight: 600 }}>Upgrade Progress</span>
+              <span>{progressData.progress || 0}%</span>
+            </div>
+            <div className="ux-progress-bar">
+              <div className="ux-progress-fill" style={{
+                width: (progressData.progress || 0) + "%",
+                background: progressData.phase === "complete" ? "var(--ok)" : progressData.phase === "failed" ? "var(--crit)" : "var(--accent2)",
+              }} />
+            </div>
+            {progressData.operators && (
+              <div style={{ marginTop: 6, fontSize: 11, color: "var(--text2)" }}>
+                Operators: {progressData.operators.updating} updating / {progressData.operators.degraded} degraded / {progressData.operators.total} total
+              </div>
+            )}
+            {progressData.nodes && (
+              <div style={{ fontSize: 11, color: "var(--text2)" }}>
+                Nodes: {progressData.nodes.ready}/{progressData.nodes.total} ready
+              </div>
+            )}
+            {progressData.message && (
+              <div style={{ marginTop: 4, fontSize: 11, color: "var(--text2)" }}>{progressData.message.slice(0, 200)}</div>
+            )}
+          </div>
+        )}
+
+        {/* Post-assessment comparison */}
+        {s.postAssessment && (
+          <div style={{ background: "var(--bg2)", borderRadius: 8, padding: 12, fontSize: 12 }}>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>Post-Upgrade Assessment</div>
+            <div>Duration: {s.postAssessment.duration}</div>
+            <div style={{ color: "var(--ok)" }}>Resolved: {(s.postAssessment.comparison?.resolved || []).join(", ") || "none"}</div>
+            {(s.postAssessment.comparison?.newIssues || []).length > 0 && (
+              <div style={{ color: "var(--warn)" }}>New Issues: {s.postAssessment.comparison.newIssues.join(", ")}</div>
+            )}
+            {(s.postAssessment.comparison?.persistent || []).length > 0 && (
+              <div style={{ color: "var(--text2)" }}>Persistent: {s.postAssessment.comparison.persistent.join(", ")}</div>
+            )}
+          </div>
+        )}
+
+        {/* Error display */}
+        {s.errorMessage && (
+          <div style={{ padding: "8px 12px", background: "color-mix(in srgb, var(--crit) 10%, transparent)", borderRadius: 6, fontSize: 12, color: "var(--crit)", marginTop: 8 }}>
+            {s.errorMessage}
+          </div>
+        )}
+
+        {/* Report link */}
+        {s.preflightReport && (
+          <div style={{ marginTop: 8, fontSize: 11 }}>
+            <a href={clusterUrl(`/api/upgrade/orchestrator/report?sessionId=${sessionId}`, cluster)}
+              target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent2)" }}>
+              📄 View HTML Report
+            </a>
           </div>
         )}
       </div>

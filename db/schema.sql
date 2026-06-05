@@ -67,3 +67,29 @@ CREATE TABLE IF NOT EXISTS pending_actions (
 );
 CREATE INDEX IF NOT EXISTS idx_pending_actions_conv ON pending_actions(conversation_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pending_actions_status ON pending_actions(status, updated_at DESC);
+
+-- Upgrade orchestrator — state machine for automated cluster upgrade lifecycle.
+-- Each conversation can have at most one active upgrade session.
+CREATE TABLE IF NOT EXISTS upgrade_sessions (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT,
+  state TEXT NOT NULL DEFAULT 'idle',
+  from_version TEXT,
+  target_version TEXT,
+  channel TEXT,
+  upgrade_type TEXT,
+  preflight_report JSONB,
+  component_analysis JSONB,
+  remediation_plan JSONB,
+  remediation_results JSONB,
+  cr_ticket_id TEXT,
+  cr_sys_id TEXT,
+  dry_run_result JSONB,
+  post_assessment JSONB,
+  monitoring_data JSONB,
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_upgrade_sessions_conv ON upgrade_sessions(conversation_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_upgrade_sessions_state ON upgrade_sessions(state, updated_at DESC);

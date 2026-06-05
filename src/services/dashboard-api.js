@@ -1729,3 +1729,196 @@ export async function handleCRStatusCheck(req, res) {
     return json(res, 200, { status: "error", error: err.message });
   }
 }
+
+// ---------------------------------------------------------------------------
+// Upgrade Orchestrator API
+// ---------------------------------------------------------------------------
+
+import {
+  createSession as uoCreateSession,
+  getSession as uoGetSession,
+  getActiveSession as uoGetActiveSession,
+  listSessions as uoListSessions,
+  stepValidateVersion,
+  stepSwitchChannel,
+  stepPreAssessment,
+  stepComponentAnalysis,
+  getVersionDiff,
+  stepBuildRemediationPlan,
+  stepExecuteFix,
+  stepCompleteRemediation,
+  buildCRFormData,
+  stepLinkCR,
+  stepCheckCRStatus,
+  stepDryRun,
+  stepExecuteUpgrade,
+  stepCheckUpgradeProgress,
+  stepPostAssessment,
+  generateHTMLReport,
+  formatSessionSummary,
+  buildUpgradeProgressToken,
+} from "./upgrade-orchestrator.js";
+
+export async function handleUpgradeOrchestrator(req, res, action) {
+  try {
+    const body = req.method === "POST" ? await readJsonBody(req) : {};
+    const params = new URL(req.url, "http://localhost").searchParams;
+
+    switch (action) {
+      case "create": {
+        const { conversationId, fromVersion, targetVersion, channel } = body;
+        if (!targetVersion) return json(res, 400, { error: "Missing 'targetVersion'" });
+        const session = await uoCreateSession(conversationId, { fromVersion, targetVersion, channel });
+        return json(res, 200, { session });
+      }
+
+      case "session": {
+        const id = params.get("id");
+        const convId = params.get("conversationId");
+        const session = id ? await uoGetSession(id) : await uoGetActiveSession(convId);
+        if (!session) return json(res, 404, { error: "No active upgrade session" });
+        return json(res, 200, { session, summary: formatSessionSummary(session) });
+      }
+
+      case "list": {
+        const state = params.get("state") || undefined;
+        const sessions = await uoListSessions({ state });
+        return json(res, 200, { sessions });
+      }
+
+      case "validate": {
+        const { sessionId } = body;
+        if (!sessionId) return json(res, 400, { error: "Missing 'sessionId'" });
+        const result = await stepValidateVersion(sessionId);
+        return json(res, 200, result);
+      }
+
+      case "channel-switch": {
+        const { sessionId, channel } = body;
+        if (!sessionId || !channel) return json(res, 400, { error: "Missing 'sessionId' or 'channel'" });
+        const result = await stepSwitchChannel(sessionId, channel);
+        return json(res, 200, result);
+      }
+
+      case "pre-assess": {
+        const { sessionId } = body;
+        if (!sessionId) return json(res, 400, { error: "Missing 'sessionId'" });
+        const result = await stepPreAssessment(sessionId);
+        return json(res, 200, { session: result.session, overallStatus: result.report?.overallStatus });
+      }
+
+      case "component-analysis": {
+        const { sessionId } = body;
+        if (!sessionId) return json(res, 400, { error: "Missing 'sessionId'" });
+        const result = await stepComponentAnalysis(sessionId);
+        return json(res, 200, result);
+      }
+
+      case "version-diff": {
+        const from = params.get("from") || body.fromVersion;
+        const to = params.get("to") || body.targetVersion;
+        if (!from || !to) return json(res, 400, { error: "Missing 'from' or 'to' version" });
+        const diff = await getVersionDiff(from, to);
+        return json(res, 200, diff);
+      }
+
+      case "remediation-plan": {
+        const { sessionId } = body;
+        if (!sessionId) return json(res, 400, { error: "Missing 'sessionId'" });
+        const result = await stepBuildRemediationPlan(sessionId);
+        return json(res, 200, result);
+      }
+
+      case "execute-fix": {
+        const { sessionId, fixId } = body;
+        if (!sessionId || !fixId) return json(res, 400, { error: "Missing 'sessionId' or 'fixId'" });
+        const result = await stepExecuteFix(sessionId, fixId);
+        return json(res, 200, result);
+      }
+
+      case "complete-remediation": {
+        const { sessionId } = body;
+        if (!sessionId) return json(res, 400, { error: "Missing 'sessionId'" });
+        const session = await stepCompleteRemediation(sessionId);
+        return json(res, 200, { session });
+      }
+
+      case "cr-form": {
+        const { sessionId } = body;
+        if (!sessionId) return json(res, 400, { error: "Missing 'sessionId'" });
+        const session = await uoGetSession(sessionId);
+        if (!session) return json(res, 404, { error: "Session not found" });
+        const formData = buildCRFormData(session);
+        return json(res, 200, formData);
+      }
+
+      case "link-cr": {
+        const { sessionId, ticketId, sysId } = body;
+        if (!sessionId || !ticketId) return json(res, 400, { error: "Missing 'sessionId' or 'ticketId'" });
+        const session = await stepLinkCR(sessionId, ticketId, sysId);
+        return json(res, 200, { session });
+      }
+
+      case "cr-status": {
+        const { sessionId } = body;
+        if (!sessionId) return json(res, 400, { error: "Missing 'sessionId'" });
+        const result = await stepCheckCRStatus(sessionId);
+        return json(res, 200, result);
+      }
+
+      case "dry-run": {
+        const { sessionId } = body;
+        if (!sessionId) return json(res, 400, { error: "Missing 'sessionId'" });
+        const result = await stepDryRun(sessionId);
+        return json(res, 200, result);
+      }
+
+      case "execute": {
+        const { sessionId } = body;
+        if (!sessionId) return json(res, 400, { error: "Missing 'sessionId'" });
+        const result = await stepExecuteUpgrade(sessionId);
+        return json(res, 200, result);
+      }
+
+      case "progress": {
+        const { sessionId } = body;
+        const sid = sessionId || params.get("sessionId");
+        if (!sid) return json(res, 400, { error: "Missing 'sessionId'" });
+        const result = await stepCheckUpgradeProgress(sid);
+        return json(res, 200, result);
+      }
+
+      case "post-assess": {
+        const { sessionId } = body;
+        if (!sessionId) return json(res, 400, { error: "Missing 'sessionId'" });
+        const result = await stepPostAssessment(sessionId);
+        return json(res, 200, result);
+      }
+
+      case "report": {
+        const sid = params.get("sessionId") || body.sessionId;
+        if (!sid) return json(res, 400, { error: "Missing 'sessionId'" });
+        const session = await uoGetSession(sid);
+        if (!session) return json(res, 404, { error: "Session not found" });
+        const html = generateHTMLReport(session);
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(html);
+        return;
+      }
+
+      case "token": {
+        const sid = params.get("sessionId") || body.sessionId;
+        if (!sid) return json(res, 400, { error: "Missing 'sessionId'" });
+        const session = await uoGetSession(sid);
+        if (!session) return json(res, 404, { error: "Session not found" });
+        return json(res, 200, buildUpgradeProgressToken(session));
+      }
+
+      default:
+        return json(res, 404, { error: `Unknown orchestrator action: ${action}` });
+    }
+  } catch (err) {
+    console.error(`[upgrade-orchestrator/${action}] error:`, err.message);
+    return json(res, 500, { error: err.message });
+  }
+}

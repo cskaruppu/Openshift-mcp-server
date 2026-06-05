@@ -219,6 +219,30 @@ CREATE TABLE IF NOT EXISTS change_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_cr_status ON change_requests (status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_cr_ticket ON change_requests (ticket_id);
+
+CREATE TABLE IF NOT EXISTS upgrade_sessions (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT,
+  state TEXT NOT NULL DEFAULT 'idle',
+  from_version TEXT,
+  target_version TEXT,
+  channel TEXT,
+  upgrade_type TEXT,
+  preflight_report JSONB,
+  component_analysis JSONB,
+  remediation_plan JSONB,
+  remediation_results JSONB,
+  cr_ticket_id TEXT,
+  cr_sys_id TEXT,
+  dry_run_result JSONB,
+  post_assessment JSONB,
+  monitoring_data JSONB,
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_upgrade_sessions_conv ON upgrade_sessions(conversation_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_upgrade_sessions_state ON upgrade_sessions(state, updated_at DESC);
 `;
 
 async function ensureSchema() {

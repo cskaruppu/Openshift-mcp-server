@@ -14995,6 +14995,111 @@ export async function handleChatAPI(req, res) {
       }
     }
 
+    // ---- Automated upgrade flow: "automate upgrade", "automated upgrade", "upgrade automation" ----
+    const AUTO_UPGRADE_PAT = /\b(?:automat(?:e|ed|ic)\s+(?:(?:cluster\s+)?upgrade|the\s+upgrade)|upgrade\s+automat(?:ion|e|ed)|full\s+upgrade\s+(?:flow|process|workflow)|start\s+upgrade\s+(?:flow|automation|process|workflow)|begin\s+(?:automated|full)\s+upgrade|orchestrat(?:e|ed)\s+(?:the\s+)?upgrade)\b/i;
+    if (AUTO_UPGRADE_PAT.test(userMessage)) {
+      try {
+        const { createSession, getActiveSession, stepValidateVersion, formatSessionSummary, buildUpgradeProgressToken } = await import("./upgrade-orchestrator.js");
+
+        // Check for existing active session
+        let session = await getActiveSession(conversationId);
+
+        if (!session) {
+          // Parse target version from message
+          const versionMatch = userMessage.match(/(\d+\.\d+\.\d+)/g);
+          let targetVer = "";
+          let fromVer = "";
+          if (versionMatch && versionMatch.length >= 2) {
+            fromVer = versionMatch[0];
+            targetVer = versionMatch[1];
+          } else if (versionMatch && versionMatch.length === 1) {
+            targetVer = versionMatch[0];
+          }
+
+          // Auto-detect versions if not specified
+          if (!targetVer) {
+            try {
+              const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+              fromVer = cv?.status?.desired?.version || "";
+              const updates = cv?.status?.availableUpdates || [];
+              if (updates.length > 0) {
+                const sorted = [...updates].sort((a, b) => {
+                  const pa = (a.version || "").split(".").map(Number);
+                  const pb = (b.version || "").split(".").map(Number);
+                  for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0); }
+                  return 0;
+                });
+                targetVer = sorted[0].version;
+              }
+            } catch { /* ignore */ }
+          }
+
+          if (!targetVer) {
+            const reply = `### Automated Upgrade\n\nI couldn't detect an available target version. Please specify the version you want to upgrade to, e.g.:\n\n> "Automate upgrade to 4.19.28"`;
+            const provider = "built-in";
+            if (conversationId) histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+            if (wantsStream) { sseStart(res); sseSend(res, { delta: reply }); sseSend(res, { done: true, provider, conversationId }); sseEnd(res); return; }
+            return json(res, 200, { reply, provider, contextKeys: ["upgrade", "orchestrator"], cached: false, conversationId });
+          }
+
+          // If no fromVer, fetch it
+          if (!fromVer) {
+            try {
+              const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+              fromVer = cv?.status?.desired?.version || "";
+            } catch { /* ignore */ }
+          }
+
+          session = await createSession(conversationId, {
+            fromVersion: fromVer,
+            targetVersion: targetVer,
+            channel: "",
+          });
+        }
+
+        if (session) {
+          // Auto-run version validation as the first step
+          const validation = await stepValidateVersion(session.id);
+          const updatedSession = validation.session;
+
+          const progressToken = `@@UPGRADE_PROGRESS|${JSON.stringify(buildUpgradeProgressToken(updatedSession)).replace(/@@/g, "@ @")}@@`;
+
+          let statusText = "";
+          if (validation.valid) {
+            statusText = `### Automated Upgrade Initiated\n\n**${updatedSession.fromVersion} → ${updatedSession.targetVersion}** (${updatedSession.upgradeType || "patch"})\n\n`;
+            statusText += `✅ Version validation passed.\n\n`;
+            if (validation.result.channelChangeNeeded) {
+              statusText += `⚠️ Channel switch required: ${validation.result.channel} → ${validation.result.suggestedChannel}\n\n`;
+            }
+            if (validation.result.adminAcksNeeded?.length) {
+              statusText += `⚠️ ${validation.result.adminAcksNeeded.length} admin acknowledgment(s) required for this minor upgrade.\n\n`;
+            }
+            if (validation.result.isEUSToEUS) {
+              statusText += `📋 ${validation.result.eusNote}\n\n`;
+            }
+            statusText += `Use the upgrade flow below to proceed step by step. Each step requires your confirmation before proceeding.\n\n`;
+          } else {
+            statusText = `### Upgrade Validation Failed\n\n${validation.result.validation.reason}\n\n`;
+            if (validation.result.validation.recommendation) {
+              statusText += `**Recommendation:** ${validation.result.validation.recommendation}\n\n`;
+            }
+          }
+
+          const reply = statusText + progressToken;
+          const provider = "built-in";
+          if (conversationId) histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+          if (wantsStream) {
+            sseStart(res); sseSend(res, { stage: "querying" }); sseSend(res, { stage: "generating" });
+            sseSend(res, { delta: reply }); sseSend(res, { done: true, provider, conversationId }); sseEnd(res); return;
+          }
+          return json(res, 200, { reply, provider, contextKeys: ["upgrade", "orchestrator"], cached: false, conversationId });
+        }
+      } catch (err) {
+        console.warn("[chat-api] upgrade orchestrator failed:", err.message);
+        // Fall through to normal upgrade handling
+      }
+    }
+
     // ---- Upgrade preflight: "precheck upgrade", "cluster upgrade precheck", etc. ----
     const UPGRADE_PREFLIGHT_PAT = /\b(?:pre-?(?:check|flight|upgrade)|upgrade.*(?:pre-?check|assessment|readiness|compatible|compatibility)|check.*(?:before|prior).*upgrade|upgrade\s+cluster.*(?:from|to)\s+\d+\.\d+|cluster\s+(?:upgrade\s+)?pre-?check)\b/i;
     if (UPGRADE_PREFLIGHT_PAT.test(userMessage)) {

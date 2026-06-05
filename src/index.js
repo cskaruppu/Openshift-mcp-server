@@ -74,7 +74,7 @@ import { extractAIS, validateAIS, calculateConfidence } from "./services/ais-ext
 import { generateManifests, renderYaml, renderSingleYaml } from "./services/manifest-generator.js";
 import { createDeployment, executeDeployment, rollbackDeployment, getDeployment, listDeployments } from "./services/deployment-orchestrator.js";
 import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
-import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings } from "./services/dashboard-api.js";
+import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleOptimizationAnalysisAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import {
   listActions,
@@ -4040,6 +4040,13 @@ async function startSSE() {
     }
     if (req.method === "POST" && url.pathname === "/api/upgrade/channel") {
       await handleUpgradeChannel(req, res);
+      return;
+    }
+
+    // Upgrade Orchestrator API — /api/upgrade/orchestrator/<action>
+    const orchMatch = url.pathname.match(/^\/api\/upgrade\/orchestrator\/(\w[\w-]*)$/);
+    if (orchMatch) {
+      await handleUpgradeOrchestrator(req, res, orchMatch[1]);
       return;
     }
 
