@@ -19,6 +19,25 @@ const NLU_VERBS_COMMON = {
   kubectl:     { resource: null,          intent: "help",    w: 20 },
   helm:        { resource: null,          intent: "help",    w: 20 },
   kustomize:   { resource: null,          intent: "help",    w: 20 },
+  // Cross-platform lifecycle
+  canary:      { resource: "deployment",  intent: "deploy_strategy", w: 55 },
+  "blue-green":{ resource: "deployment",  intent: "deploy_strategy", w: 55 },
+  progressive: { resource: "deployment",  intent: "deploy_strategy", w: 50 },
+  expose:      { resource: "service",     intent: "expose_service",  w: 55 },
+  loadbalancer:{ resource: "service",     intent: "expose_service",  w: 50 },
+  vpa:         { resource: "pod",         intent: "vpa",             w: 55 },
+  "vertical-autoscaler":{ resource: "pod",intent: "vpa",             w: 55 },
+  finops:      { resource: null,          intent: "cost_optimization",w: 50 },
+  cost:        { resource: null,          intent: "cost_optimization",w: 40 },
+  mesh:        { resource: null,          intent: "service_mesh",    w: 50 },
+  istio:       { resource: null,          intent: "service_mesh",    w: 55 },
+  envoy:       { resource: null,          intent: "service_mesh",    w: 45 },
+  sidecar:     { resource: "pod",         intent: "service_mesh",    w: 40 },
+  isolate:     { resource: null,          intent: "incident_response",w: 55 },
+  quarantine:  { resource: null,          intent: "incident_response",w: 55 },
+  "external-secret":{ resource: null,     intent: "secret_management",w: 55 },
+  "sealed-secret":{ resource: null,       intent: "secret_management",w: 55 },
+  vault:       { resource: null,          intent: "secret_management",w: 50 },
 };
 
 const NLU_VERBS_EKS = {
@@ -35,8 +54,14 @@ const NLU_VERBS_EKS = {
   "security-group":{ resource: null,         intent: "network",   w: 45 },
   eks:           { resource: null,           intent: "help",      w: 30 },
   fargate:       { resource: "pod",          intent: "list",      w: 40 },
-  "ebs-csi":     { resource: null,           intent: "storage",   w: 45 },
-  addon:         { resource: null,           intent: "list",      w: 40 },
+  "ebs-csi":     { resource: null,           intent: "storage_config",w: 45 },
+  addon:         { resource: null,           intent: "addon_management",w: 45 },
+  "eks-addon":   { resource: null,           intent: "addon_management",w: 50 },
+  guardduty:     { resource: null,           intent: "cloud_imagescan",w: 50 },
+  "ecr-scan":    { resource: null,           intent: "cloud_imagescan",w: 50 },
+  cloudwatch:    { resource: null,           intent: "cloud_monitoring",w: 50 },
+  "container-insights":{ resource: null,     intent: "cloud_monitoring",w: 55 },
+  "secrets-manager":{ resource: null,        intent: "secret_management",w: 50 },
 };
 
 const NLU_VERBS_AKS = {
@@ -56,7 +81,13 @@ const NLU_VERBS_AKS = {
   aks:            { resource: null,          intent: "help",      w: 30 },
   arc:            { resource: null,          intent: "fleet",     w: 40 },
   "azure-arc":    { resource: null,          intent: "fleet",     w: 45 },
-  defender:       { resource: null,          intent: "security",  w: 40 },
+  defender:       { resource: null,          intent: "cloud_imagescan",w: 45 },
+  "aks-diagnostics":{ resource: null,      intent: "diagnose",  w: 45 },
+  "azure-monitor":{ resource: null,        intent: "cloud_monitoring",w: 50 },
+  "azure-disk":   { resource: null,        intent: "storage_config",w: 45 },
+  "azure-file":   { resource: null,        intent: "storage_config",w: 45 },
+  "key-vault":    { resource: null,        intent: "secret_management",w: 50 },
+  "aks-extension":{ resource: null,        intent: "addon_management",w: 50 },
 };
 
 const NLU_VERBS_GKE = {
@@ -78,6 +109,12 @@ const NLU_VERBS_GKE = {
   anthos:          { resource: null,         intent: "fleet",     w: 45 },
   "config-sync":   { resource: null,         intent: "gitops",    w: 50 },
   "managed-cert":  { resource: null,         intent: "certlife",  w: 50 },
+  "artifact-analysis":{ resource: null,    intent: "cloud_imagescan",w: 50 },
+  "cloud-operations":{ resource: null,     intent: "cloud_monitoring",w: 50 },
+  "cloud-logging":{ resource: null,        intent: "cloud_monitoring",w: 45 },
+  "gce-pd":       { resource: null,        intent: "storage_config",w: 45 },
+  "secret-manager":{ resource: null,       intent: "secret_management",w: 50 },
+  "gke-addon":    { resource: null,        intent: "addon_management",w: 50 },
 };
 
 /**

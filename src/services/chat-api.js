@@ -77,6 +77,12 @@ import { incCounter, observeHistogram } from "./metrics.js";
 import { enforce as enforceRateLimit } from "./rate-limit.js";
 import { runPreflightChecks, formatPreflightReport, checkCertificateExpiry, validateUpgradeVersion } from "../tools/upgrade-preflight.js";
 import { generateTraceId, recordTrace } from "./query-tracer.js";
+import { compressContext, buildDiagnosticBrief, buildTieredContext } from "./context-optimizer.js";
+import { getFewShotExamples } from "./few-shot-examples.js";
+import { tryShortcut } from "./intent-shortcuts.js";
+import { lookupError, findMatchingErrors, getErrorsForReason } from "./error-knowledge.js";
+import { buildIncidentContext, recordIncidentResolution } from "./incident-rag.js";
+import { buildPlatformPromptSection, getPlatformCommands } from "../platform/intent-router.js";
 
 // Build agent trace: maps tools used in a chat response back to their owning agents.
 async function buildAgentTrace(toolsUsed, contextKeys, durationMs) {
@@ -7571,6 +7577,78 @@ async function gatherClusterContext(userMessage, nluParsed = null, remoteCache =
     context.intents.push("governance");
   }
 
+  // --- Multi-platform lifecycle intents ---
+
+  // Intent: cluster provisioning / node pool management
+  if (lower.match(/\bcreate.cluster|\bdestroy.cluster|\bprovision.cluster|\bnode.?pool|\bnodegroup|\badd.node|\bresize.node|\bscale.node/)) {
+    context.intents.push("cluster_lifecycle");
+  }
+
+  // Intent: add-on / extension management
+  if (lower.match(/\baddon|\badd-on|\bextension|\bplugin|\beks.addon|\baks.extension|\bgke.addon|\binstall.addon|\bremove.addon|\bupgrade.addon/)) {
+    context.intents.push("addon_management");
+  }
+
+  // Intent: deployment strategies (canary, blue-green, rollout)
+  if (lower.match(/\bcanary|\bblue.green|\brolling.update|\brollout.status|\brollout.pause|\brollout.resume|\bprogressive/)) {
+    context.intents.push("deploy_strategy");
+  }
+
+  // Intent: service exposure / ingress / load balancer
+  if (lower.match(/\bexpose|\bload.?balancer|\bexternal.access|\bpublic.endpoint|\balb\b|\bnlb\b|\bazure.lb|\bgateway.api/)) {
+    context.intents.push("expose_service");
+  }
+
+  // Intent: identity / service account security (cross-platform)
+  if (lower.match(/\birsa\b|\bworkload.identity|\bpod.identity|\bmanaged.identity|\bgcp.sa|\biam.role|\bservice.?account.?secur/)) {
+    context.intents.push("sa_security");
+  }
+
+  // Intent: node autoscaling (cross-platform)
+  if (lower.match(/\bkarpenter|\bcluster.?autoscal|\bnode.?autoscal|\bmachine.?autoscal|\bscale.to.zero|\bspot.instance|\bpreemptible/)) {
+    context.intents.push("node_autoscale");
+  }
+
+  // Intent: cloud-native monitoring
+  if (lower.match(/\bcloudwatch|\bazure.monitor|\bcloud.operations|\bcontainer.insights|\bcloud.logging|\bcloud.monitoring|\bstack.?driver/)) {
+    context.intents.push("cloud_monitoring");
+  }
+
+  // Intent: cloud-native image scanning
+  if (lower.match(/\becr.scan|\bacr.scan|\bartifact.analysis|\bdefender.for.container|\bguardduty|\bbinary.auth/)) {
+    context.intents.push("cloud_imagescan");
+  }
+
+  // Intent: cloud secret management
+  if (lower.match(/\bsecrets?.manager|\bkey.vault|\bsecret.manager|\bexternal.secret|\bsealed.secret|\bvault\b/)) {
+    context.intents.push("secret_management");
+  }
+
+  // Intent: storage configuration (cross-platform)
+  if (lower.match(/\bebs.csi|\bazure.disk|\bazure.file|\bgce.pd|\bodf\b|\bocs\b|\bstorage.config|\bcsi.driver/)) {
+    context.intents.push("storage_config");
+  }
+
+  // Intent: cost optimization / FinOps
+  if (lower.match(/\bcost|\bfinops|\bspend|\bbudget|\bchargeback|\bshowback|\bcost.alloc|\bsaving/)) {
+    context.intents.push("cost_optimization");
+  }
+
+  // Intent: VPA / vertical autoscaling
+  if (lower.match(/\bvpa\b|\bvertical.pod.auto|\bvertical.autoscal|\bvpa.recommend/)) {
+    context.intents.push("vpa");
+  }
+
+  // Intent: service mesh / tracing
+  if (lower.match(/\bservice.mesh|\bistio|\benvoy|\bsidecar|\bmtls|\btrace.request|\bjaeger|\btempo|\bkiali/)) {
+    context.intents.push("service_mesh");
+  }
+
+  // Intent: incident isolation / containment
+  if (lower.match(/\bisolate|\bcontain.incident|\bquarantine|\bcordon.namespace|\bnetwork.isolat|\bfence/)) {
+    context.intents.push("incident_response");
+  }
+
   // If no intent detected, default to a help response
   if (context.intents.length === 0) {
     context.intents.push("help");
@@ -8437,7 +8515,16 @@ IMPORTANT: You are given REAL-TIME cluster data as JSON context from the user's 
 - Use conversation history for follow-up questions
 - Carry forward namespace/cluster context from prior turns
 - "show its logs", "restart it", "fix it" → refer to previous resource
-- If intent is ambiguous, ask a brief clarifying question with 2-4 numbered options`;
+- If intent is ambiguous, ask a brief clarifying question with 2-4 numbered options
+
+## Grounding Rules (STRICT):
+- Every claim MUST reference a specific resource name, namespace, and metric value from the provided data
+- If the data doesn't contain enough information to answer, say so explicitly — never fabricate
+- When mentioning pod counts, cross-check against the actual problemPods array length
+- When mentioning node conditions, verify against the actual node data
+- Never invent resource names, namespaces, or metric values not present in context
+- If auto-diagnosis is present, use it as ground truth — do not contradict it
+- Quote exact values: memory limits, CPU requests, restart counts, exit codes`;
 
 const PROMPT_SUPPLEMENT_DIAGNOSE = `
 
@@ -8591,6 +8678,37 @@ const PROMPT_SUPPLEMENT_WORKLOAD = `
 - For orphaned resources, filter out system namespaces
 - Present findings as actionable cleanup recommendations`;
 
+const PROMPT_SUPPLEMENT_MULTIPLATFORM = `
+
+## Multi-Platform Awareness:
+- Detect the active platform (OpenShift/EKS/AKS/GKE/K8s) from context and tailor commands accordingly
+- OpenShift: oc, Routes, SCCs, BuildConfigs, MachineConfig, ClusterVersion
+- EKS: kubectl/eksctl, ALB Ingress, IRSA, Karpenter, EKS add-ons, VPC CNI
+- AKS: kubectl/az, Azure LB, Workload Identity, Node pools, Azure Policy
+- GKE: kubectl/gcloud, Gateway API, Workload Identity Federation, Autopilot constraints
+- Vanilla K8s: kubectl, Ingress, Pod Security Standards, Cluster Autoscaler
+- When showing remediation commands, use the correct CLI for the detected platform
+- Cross-platform concepts: map OpenShift Routes → Ingress, SCCs → PSS, MachineSet → node pools`;
+
+const PROMPT_SUPPLEMENT_DEPLOY_STRATEGY = `
+
+## Deployment Strategy Guidance:
+- For canary: recommend Flagger or Argo Rollouts with traffic splitting percentages
+- For blue-green: show how to use service selector swaps or Argo Rollouts
+- Always recommend rollback plan before proceeding
+- Show rollout status monitoring commands
+- For progressive delivery, mention metric-based promotion gates`;
+
+const PROMPT_SUPPLEMENT_COST = `
+
+## Cost Optimization / FinOps:
+- Focus on resource efficiency, not dollar amounts
+- Identify overprovisioned pods (using <10% of limits)
+- Highlight pods without resource requests/limits
+- Recommend right-sizing based on actual usage patterns
+- Mention spot/preemptible instances for fault-tolerant workloads
+- Show namespace-level resource consumption breakdowns`;
+
 const PROMPT_SUPPLEMENT_AMBIGUITY = `
 
 ## Missing information / ambiguity:
@@ -8678,6 +8796,18 @@ function buildSystemPrompt(userMessage, context) {
     prompt += PROMPT_SUPPLEMENT_WORKLOAD;
   }
 
+  if (/\bcanary|\bblue.green|\brolling|\bprogressive|\bdeploy.*strat/i.test(lower)) {
+    prompt += PROMPT_SUPPLEMENT_DEPLOY_STRATEGY;
+  }
+
+  if (/\bcost|\bfinops|\bspend|\bbudget|\bchargeback|\bshowback/i.test(lower)) {
+    prompt += PROMPT_SUPPLEMENT_COST;
+  }
+
+  if (!isOCP || /\beks\b|\baks\b|\bgke\b|\bkubernetes\b|\bk8s\b|\bmulti.*platform|\bcross.*platform/i.test(lower)) {
+    prompt += PROMPT_SUPPLEMENT_MULTIPLATFORM;
+  }
+
   if (!isOCP) {
     prompt = prompt.replace(/Use `oc` commands \(not `kubectl`\) in all examples/g,
       `Use \`${cli}\` commands in all examples. This is a ${platform.toUpperCase()} cluster.`);
@@ -8694,6 +8824,36 @@ You are answering about the REMOTE cluster **"${context._remoteCluster}"** (plat
 - Use \`${rcli}\` commands in examples for this cluster.
 - Always identify the cluster by name in your response header.
 - If the cached data doesn't contain enough detail for the question, say so clearly rather than guessing.`;
+  }
+
+  // Cross-platform guidance — injects platform-specific CLI, resources, and best practices
+  const intents = context?.intents || [];
+  try {
+    const platformSection = buildPlatformPromptSection(platform, intents);
+    if (platformSection) prompt += "\n\n" + platformSection;
+  } catch { /* platform router optional */ }
+
+  // Few-shot examples — anchors LLM output format for known intent patterns
+  try {
+    const examples = getFewShotExamples(intents, platform);
+    if (examples) prompt += "\n\n" + examples;
+  } catch { /* few-shot optional */ }
+
+  // Error knowledge — inject known error patterns when diagnosing
+  if (context?._autoDiagnosis || context?._focusPod || context?.targetPod) {
+    try {
+      const pod = context._focusPod || context.targetPod;
+      const reason = pod?.containers?.[0]?.state || pod?.phase || context?._autoDiagnosis?.rootCause;
+      if (reason) {
+        const errors = getErrorsForReason(reason);
+        if (errors && errors.length > 0) {
+          const knowledgeLines = errors.slice(0, 3).map(e =>
+            `- **${e.pattern}**: ${e.rootCause} → ${e.remediation[0] || "investigate"}`
+          );
+          prompt += `\n\n## Known Error Patterns\n${knowledgeLines.join("\n")}`;
+        }
+      }
+    } catch { /* error knowledge optional */ }
   }
 
   return prompt;
@@ -8751,6 +8911,20 @@ async function augmentSystemPrompt(basePrompt, { parsed, userId, conversationId 
           additions.push("## User Profile (Pillar 3)\n" + ctxString.trim());
         }
       } catch { /* memory unavailable */ }
+    }
+
+    // Incident RAG — inject past incident intelligence for diagnostic queries
+    if (parsed && /diagnos|list|get|pod_issues|specific_pod|triage/.test(parsed.intent || "")) {
+      try {
+        const reason = parsed.filter || "";
+        const podPattern = parsed.name?.replace(/-[a-z0-9]{8,10}(-[a-z0-9]{5})?$/, "") || "";
+        const ns = parsed.namespace || "";
+        const incidentCtx = await buildIncidentContext(
+          { reason, podPattern, namespace: ns, exitCode: null },
+          ns, getPlatform()
+        );
+        if (incidentCtx) additions.push(incidentCtx);
+      } catch { /* incident RAG optional */ }
     }
 
     if (additions.length === 0) return basePrompt;
@@ -9332,7 +9506,29 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
     ctx._autoDiagnosis = autoFix;
   }
 
-  const contextStr = summarizeContext(ctx);
+  // Apply context optimizations
+  try { Object.assign(ctx, compressContext(ctx)); } catch { /* optimizer optional */ }
+  if (ctx._focusPod || ctx.targetPod) {
+    try {
+      ctx._diagnosticBrief = buildDiagnosticBrief(
+        ctx._focusPod || ctx.targetPod,
+        ctx._focusPodEvents || ctx.targetPodEvents || [],
+        ctx._focusPodLogs || ctx.targetPodLogs || "",
+        ctx._autoDiagnosis
+      );
+    } catch { /* brief optional */ }
+  }
+
+  let contextStr;
+  try {
+    const primaryIntent = (ctx.intents || [])[0] || "cluster_health";
+    contextStr = buildTieredContext(ctx, primaryIntent);
+  } catch {
+    contextStr = summarizeContext(ctx);
+  }
+  if (ctx._diagnosticBrief) {
+    contextStr += `\n\n## Diagnostic Brief\n${JSON.stringify(ctx._diagnosticBrief, null, 2)}`;
+  }
   const userContent = `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;
 
   // Build messages array, optionally including conversation history
@@ -13981,6 +14177,11 @@ export async function handleChatAPI(req, res) {
       "probes", "hpa", "orphaned", "governance",
       "alerts", "gitops", "imagescan", "backup", "fleet",
       "compliance", "automation", "optimize", "network", "identity", "certlife",
+      "cluster_lifecycle", "addon_management", "deploy_strategy",
+      "expose_service", "sa_security", "node_autoscale",
+      "cloud_monitoring", "cloud_imagescan", "secret_management",
+      "storage_config", "cost_optimization", "vpa", "service_mesh",
+      "incident_response",
     ]);
     const isHealthScope = parsed.scope === "health" || /\bhealth\b|\bstatus\b|\bdiagnos|\btroubleshoot/.test(userMessage.toLowerCase());
     const isMutating = CACHE_BYPASS_INTENTS.has(parsed.intent) || isHealthScope;
@@ -14027,6 +14228,33 @@ export async function handleChatAPI(req, res) {
     // Adapt the parsed NLU result to the legacy command shape used by the
     // direct/list handlers below.
     const cmd = nluToCommand(parsed);
+
+    // ---- Intent Shortcut: bypass LLM for simple list/count queries ----
+    // For queries that are pure data formatting (list pods, count nodes, etc.),
+    // gather context and format directly without calling the LLM.
+    if (!_remoteClusterContext && parsed.intent === "list" && !llmActive) {
+      try {
+        const shortcutCtx = await gatherClusterContext(userMessage, parsed, null);
+        const shortcut = tryShortcut(parsed, shortcutCtx, getPlatform());
+        if (shortcut.handled) {
+          const provider = "built-in";
+          const payload = { reply: shortcut.reply, provider, contextKeys: [parsed.intent, parsed.resource].filter(Boolean) };
+          cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
+          if (conversationId) {
+            histAddMessage(conversationId, { role: "assistant", content: shortcut.reply, provider }).catch(() => {});
+          }
+          if (wantsStream) {
+            sseStart(res);
+            sseSend(res, { stage: "querying" });
+            sseSend(res, { delta: shortcut.reply });
+            sseSend(res, { done: true, provider, conversationId });
+            sseEnd(res);
+            return;
+          }
+          return json(res, 200, { ...payload, cached: false, conversationId });
+        }
+      } catch { /* shortcut failed, continue to normal path */ }
+    }
 
     // Help intent gets a curated cheat-sheet, no cluster call.
     if (parsed.intent === "help") {
@@ -15073,9 +15301,51 @@ export async function handleChatAPI(req, res) {
             });
             context._autoDiagnosis = autoFix;
           }
+          // Compress context: strip metadata, deduplicate events, cap arrays
+          try { Object.assign(context, compressContext(context)); } catch { /* optimizer optional */ }
+          // Build diagnostic brief for focused pods
+          if (context._focusPod || context.targetPod) {
+            try {
+              const pod = context._focusPod || context.targetPod;
+              context._diagnosticBrief = buildDiagnosticBrief(
+                pod,
+                context._focusPodEvents || context.targetPodEvents || [],
+                context._focusPodLogs || context.targetPodLogs || "",
+                context._autoDiagnosis
+              );
+            } catch { /* diagnostic brief optional */ }
+          }
+          // Inject error knowledge matches from logs/events
+          if (context._focusPodLogs || context.targetPodLogs) {
+            try {
+              const logs = (context._focusPodLogs || context.targetPodLogs || "").split("\n");
+              const events = (context._focusPodEvents || context.targetPodEvents || [])
+                .map(e => `${e.reason}: ${e.message || ""}`);
+              const matches = findMatchingErrors(logs, events);
+              if (matches.length > 0) {
+                context._errorKnowledge = matches.slice(0, 5);
+              }
+            } catch { /* error matching optional */ }
+          }
           const priorMessages = historyToMessages(llmOpts.history);
           const isFollowUp = priorMessages.length > 0;
-          const contextStr = summarizeContext(context);
+          // Use tiered context for better signal-to-noise ratio
+          let contextStr;
+          try {
+            const primaryIntent = (context.intents || [])[0] || "cluster_health";
+            contextStr = buildTieredContext(context, primaryIntent);
+          } catch {
+            contextStr = summarizeContext(context);
+          }
+          // Append diagnostic brief and error knowledge if available
+          if (context._diagnosticBrief) {
+            contextStr += `\n\n## Diagnostic Brief\n${JSON.stringify(context._diagnosticBrief, null, 2)}`;
+          }
+          if (context._errorKnowledge && context._errorKnowledge.length > 0) {
+            contextStr += `\n\n## Known Error Matches\n${context._errorKnowledge.map(e =>
+              `- **${e.entry.pattern}** (${e.entry.severity}): ${e.entry.rootCause}\n  Fix: ${e.entry.remediation[0] || "investigate"}`
+            ).join("\n")}`;
+          }
           const userContent = isFollowUp && contextStr.length > 800
             ? `${userMessage}\n\n--- Updated Cluster Data (changes only) ---\n${summarizeContextDelta(context)}`
             : `${userMessage}\n\n--- Live Cluster Data ---\n${contextStr}`;

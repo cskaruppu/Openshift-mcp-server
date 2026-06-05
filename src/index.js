@@ -63,6 +63,7 @@ import { defineSLO, getSLOStatus, getAllSLOs, deleteSLO, calculateErrorBudget, l
 import { loadPolicies, getPolicies, getPolicy, createPolicy, updatePolicy, deletePolicy, evaluatePolicies, getClusterPolicies } from "./tools/policy-engine.js";
 import { loadChannels, getChannels, createChannel, updateChannel, deleteChannel, testChannel, notify, getNotificationHistory } from "./services/notifications.js";
 import { initAuditLog, logAuditEvent as logAuditTrailEvent, queryAuditLog, getAuditStats, exportAuditLog } from "./services/audit-log.js";
+import { recordIncidentResolution } from "./services/incident-rag.js";
 import { initQueryTracer, getTraces, getTrace, getAgentAnalytics, getTraceStats } from "./services/query-tracer.js";
 import { initIncidentManager, declareIncident, updateIncident, addTimelineEvent, getIncident, listIncidents, getIncidentStats as getLifecycleIncidentStats, resolveIncident, closeIncident } from "./services/incident-manager.js";
 import { initChangeTimeline, recordChangeEvent, getTimeline as getChangeTimelineUnified, correlateAroundTime, getTimelineStats as getChangeTimelineStats } from "./services/change-timeline.js";
@@ -3522,6 +3523,21 @@ async function startSSE() {
             namespace: body.namespace || null,
             username: body.userId || body.user || "dashboard",
             source: "ai-remediation",
+          }).catch(() => {});
+          // Record to incident RAG for future retrieval
+          recordIncidentResolution({
+            symptom: {
+              reason: body.reason || body.auditTitle?.match(/OOM|Crash|ImagePull|triage|rightsize/i)?.[0] || "remediation",
+              podPattern: body.podName || command?.match(/(?:deployment|sts|ds)\/([^\s]+)/)?.[1] || "",
+              namespace: body.namespace || "",
+              exitCode: body.exitCode ?? null,
+            },
+            rootCause: body.auditTitle || command || "",
+            resolution: command || "",
+            outcome: result.success !== false ? "success" : "failed",
+            resolvedAt: new Date().toISOString(),
+            resolvedBy: "ai-remediation",
+            timeToResolveMs: Date.now() - auditStart,
           }).catch(() => {});
         }
         return sendJson(res, 200, { ...result, classification: preflight?.classification });
