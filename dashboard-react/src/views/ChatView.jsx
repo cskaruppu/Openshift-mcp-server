@@ -120,6 +120,13 @@ export function ChatView() {
 
   const [savedChats, setSavedChats] = useState([]);
 
+  const [rightOpen, setRightOpen] = useState(true);
+  const [rightTab, setRightTab] = useState("actions");
+  const [pendingActions, setPendingActions] = useState([]);
+  const [pendingCRs, setPendingCRs] = useState([]);
+  const [actionHistory, setActionHistory] = useState([]);
+  const [ctxMenu, setCtxMenu] = useState(null);
+
   const abortRef = useRef(null);
   const scrollRef = useRef(null);
   const textareaRef = useRef(null);
@@ -168,14 +175,37 @@ export function ChatView() {
     return () => { cancelled = true; };
   }, [cluster]);
 
+  const refreshPending = useCallback(async () => {
+    try {
+      const [aRes, cRes] = await Promise.all([
+        fetch(clusterUrl("/api/actions", cluster)),
+        fetch(clusterUrl("/api/cr/pending", cluster)),
+      ]);
+      if (aRes.ok) {
+        const d = await aRes.json();
+        const all = d.actions || [];
+        setPendingActions(all.filter((a) => a.status === "pending_confirmation" || a.status === "awaiting_approval"));
+        setActionHistory(all.filter((a) => a.status === "executed" || a.status === "cancelled" || a.status === "failed"));
+      }
+      if (cRes.ok) { const d = await cRes.json(); setPendingCRs(d.crs || []); }
+    } catch { /* silent */ }
+  }, [cluster]);
+
+  useEffect(() => {
+    refreshPending();
+    const iv = setInterval(refreshPending, 30000);
+    return () => clearInterval(iv);
+  }, [refreshPending]);
+
   useEffect(() => {
     function onDoc(e) {
       if (providerOpen && providerRef.current && !providerRef.current.contains(e.target)) setProviderOpen(false);
       if (slashOpen && slashRef.current && !slashRef.current.contains(e.target)) setSlashOpen(false);
+      if (ctxMenu && !e.target.closest(".ac-ctx-menu")) setCtxMenu(null);
     }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
-  }, [providerOpen, slashOpen]);
+  }, [providerOpen, slashOpen, ctxMenu]);
 
   const allClusters = useChatStore((s) => s.byCluster);
   const conversations = useMemo(() => {
@@ -246,6 +276,37 @@ export function ChatView() {
     a.href = url; a.download = `chat-${cluster}-${Date.now()}.json`; a.click();
     URL.revokeObjectURL(url);
     showToast("Exported", "ok");
+  }
+
+  async function confirmPendingAction(id) {
+    try {
+      const res = await fetch(clusterUrl(`/api/actions/${id}/confirm`, cluster), { method: "POST" });
+      if (res.ok) { showToast("Action confirmed", "ok"); refreshPending(); }
+      else showToast("Failed to confirm action", "error");
+    } catch { showToast("Failed to confirm action", "error"); }
+  }
+
+  async function cancelPendingAction(id) {
+    try {
+      const res = await fetch(clusterUrl(`/api/actions/${id}/cancel`, cluster), { method: "POST" });
+      if (res.ok) { showToast("Action cancelled", "ok"); refreshPending(); }
+      else showToast("Failed to cancel", "error");
+    } catch { showToast("Failed to cancel", "error"); }
+  }
+
+  async function syncAllPendingCRs() {
+    try {
+      const res = await fetch(clusterUrl("/api/cr/sync-all", cluster), { method: "POST" });
+      if (res.ok) { showToast("CRs synced", "ok"); refreshPending(); }
+      else showToast("Sync failed", "error");
+    } catch { showToast("Sync failed", "error"); }
+  }
+
+  async function syncSingleCR(ticketId) {
+    try {
+      const res = await fetch(clusterUrl(`/api/cr/${ticketId}/sync`, cluster), { method: "POST" });
+      if (res.ok) { showToast("CR synced", "ok"); refreshPending(); }
+    } catch { /* silent */ }
   }
 
   function copyMessage(text) {
@@ -388,13 +449,13 @@ export function ChatView() {
 
   return (
     <div className="ac">
-      {/* ── Sidebar toggle (mobile + desktop) ── */}
+      {/* ── Sidebar toggle (mobile only) ── */}
       <button className="ac-sidebar-toggle" onClick={() => setSidebarOpen((v) => !v)} title="Conversations">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         {conversations.length > 0 && <span className="ac-sidebar-badge">{conversations.length}</span>}
       </button>
 
-      {/* ── Sidebar ── */}
+      {/* ── Left Sidebar (always visible desktop, slide mobile) ── */}
       <aside className={"ac-sidebar" + (sidebarOpen ? " open" : "")}>
         <div className="ac-sidebar-head">
           <span className="ac-sidebar-title">Conversations</span>
@@ -408,15 +469,42 @@ export function ChatView() {
         </button>
         <div className="ac-sidebar-search">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" placeholder="Search..." value={sidebarSearch} onChange={(e) => setSidebarSearch(e.target.value)} />
+          <input type="text" placeholder="Search conversations..." value={sidebarSearch} onChange={(e) => setSidebarSearch(e.target.value)} />
         </div>
         <div className="ac-sidebar-list">
-          {filteredConversations.length === 0 && <div className="ac-sidebar-empty">No conversations</div>}
-          {filteredConversations.map((c) => (
+          {filteredConversations.length === 0 && <div className="ac-sidebar-empty">No conversations yet</div>}
+          {filteredConversations.map((c, ci) => (
             <div key={c.cluster} className={"ac-conv-item" + (c.active ? " active" : "")}>
-              <div className="ac-conv-cluster">{c.cluster === "local" ? "Hub Cluster" : c.cluster}</div>
+              <div className="ac-conv-top">
+                <div className="ac-conv-cluster">{c.cluster === "local" ? "Hub Cluster" : c.cluster}</div>
+                <button className="ac-conv-menu-btn" onClick={(e) => { e.stopPropagation(); setCtxMenu(ctxMenu === ci ? null : ci); }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                </button>
+              </div>
               <div className="ac-conv-preview">{c.preview}</div>
-              <span className="ac-conv-count">{c.count}</span>
+              <div className="ac-conv-meta">
+                <span className="ac-conv-count">{c.count} messages</span>
+              </div>
+              {ctxMenu === ci && (
+                <div className="ac-ctx-menu">
+                  <button onClick={() => { showToast("Starred", "ok"); setCtxMenu(null); }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                    Star
+                  </button>
+                  <button onClick={() => { showToast("Locked", "ok"); setCtxMenu(null); }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                    Lock
+                  </button>
+                  <button onClick={() => { showToast("Rename not yet implemented", "warn"); setCtxMenu(null); }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                    Rename
+                  </button>
+                  <button className="ac-ctx-danger" onClick={() => { clear(c.cluster); showToast("Deleted", "ok"); setCtxMenu(null); }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    Delete
+                  </button>
+                </div>
+              )}
             </div>
           ))}
           {savedChats.length > 0 && (
@@ -454,6 +542,9 @@ export function ChatView() {
             </button>
             <button className="ac-header-btn" onClick={handleNewChat} title="New chat">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+            <button className={"ac-header-btn" + (rightOpen ? " active" : "")} onClick={() => setRightOpen((v) => !v)} title="Actions panel">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
             </button>
           </div>
         </div>
@@ -691,6 +782,169 @@ export function ChatView() {
           </div>
         </div>
       </div>
+
+      {/* ── Right Panel ── */}
+      {rightOpen && (
+        <aside className="ac-right">
+          <div className="ac-right-tabs">
+            {[
+              { key: "actions", label: "Actions" },
+              { key: "cluster", label: "Hub Cluster" },
+              { key: "fixes", label: "Fixes" },
+              { key: "servicenow", label: "ServiceNow" },
+            ].map((t) => (
+              <button key={t.key} className={"ac-right-tab" + (rightTab === t.key ? " active" : "")} onClick={() => setRightTab(t.key)}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="ac-right-body">
+            {rightTab === "actions" && (
+              <>
+                {/* Pending CRs */}
+                <div className="ac-rp-section">
+                  <div className="ac-rp-section-head">
+                    <span className="ac-rp-section-title" style={{ color: "#3b82f6" }}>Pending CRs ({pendingCRs.length})</span>
+                    <button className="ac-rp-sync-btn" onClick={syncAllPendingCRs}>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                      Sync
+                    </button>
+                  </div>
+                  {pendingCRs.length === 0 ? (
+                    <p className="ac-rp-empty">No pending change requests. Ask me to create a workload and it will appear here for confirmation.</p>
+                  ) : (
+                    <div className="ac-rp-list">
+                      {pendingCRs.map((cr) => (
+                        <div key={cr.ticket_id || cr.ticketId} className="ac-rp-card">
+                          <div className="ac-rp-card-head">
+                            <span className="ac-rp-card-id">{cr.ticket_id || cr.ticketId}</span>
+                            <span className="ac-rp-card-status">{(cr.status || "pending").toUpperCase()}</span>
+                          </div>
+                          <div className="ac-rp-card-title">{cr.title || "Change Request"}</div>
+                          {cr.snow_number && <div className="ac-rp-card-snow">SN: {cr.snow_number}</div>}
+                          <div className="ac-rp-card-actions">
+                            <button className="ac-rp-action" onClick={() => syncSingleCR(cr.ticket_id || cr.ticketId)}>Sync</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Pending Actions */}
+                <div className="ac-rp-section">
+                  <div className="ac-rp-section-head">
+                    <span className="ac-rp-section-title">PENDING</span>
+                  </div>
+                  {pendingActions.length === 0 ? (
+                    <p className="ac-rp-empty">No pending actions. Ask me to restart, scale or edit a workload and it will appear here for confirmation.</p>
+                  ) : (
+                    <div className="ac-rp-list">
+                      {pendingActions.map((act) => (
+                        <div key={act.id} className="ac-rp-card">
+                          <div className="ac-rp-card-head">
+                            <span className="ac-rp-card-id">{act.action || act.resourceType}</span>
+                            <span className="ac-rp-card-status">{(act.status || "pending").replace(/_/g, " ").toUpperCase()}</span>
+                          </div>
+                          <div className="ac-rp-card-title">{act.resourceName || act.description || "Action"}</div>
+                          {act.namespace && <div className="ac-rp-card-snow">ns: {act.namespace}</div>}
+                          <div className="ac-rp-card-actions">
+                            <button className="ac-rp-action confirm" onClick={() => confirmPendingAction(act.id)}>Confirm</button>
+                            <button className="ac-rp-action cancel" onClick={() => cancelPendingAction(act.id)}>Cancel</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* History */}
+                <div className="ac-rp-section">
+                  <div className="ac-rp-section-head">
+                    <span className="ac-rp-section-title">HISTORY</span>
+                  </div>
+                  {actionHistory.length === 0 ? (
+                    <p className="ac-rp-empty">Action history will appear here</p>
+                  ) : (
+                    <div className="ac-rp-list">
+                      {actionHistory.slice(0, 10).map((act) => (
+                        <div key={act.id} className="ac-rp-history-item">
+                          <span className={"ac-rp-dot " + (act.status === "executed" ? "ok" : act.status === "failed" ? "fail" : "muted")} />
+                          <div className="ac-rp-hist-body">
+                            <div className="ac-rp-hist-title">{act.action} {act.resourceName}</div>
+                            <div className="ac-rp-hist-meta">{act.status} {act.completedAt ? `· ${timeAgo(act.completedAt)}` : ""}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {rightTab === "cluster" && (
+              <div className="ac-rp-section">
+                <div className="ac-rp-section-head">
+                  <span className="ac-rp-section-title">Cluster Info</span>
+                </div>
+                <div className="ac-rp-cluster-info">
+                  <div className="ac-rp-info-row"><span className="ac-rp-info-label">Cluster</span><span className="ac-rp-info-val">{cluster === "local" ? "Hub Cluster" : cluster}</span></div>
+                  <div className="ac-rp-info-row"><span className="ac-rp-info-label">Context</span><span className="ac-rp-info-val">{cluster}</span></div>
+                  <div className="ac-rp-info-row"><span className="ac-rp-info-label">Provider</span><span className="ac-rp-info-val">{activeMeta.label}</span></div>
+                </div>
+                <div className="ac-rp-quick-actions">
+                  <button className="ac-rp-quick" onClick={() => sendText("/health")}>Check Health</button>
+                  <button className="ac-rp-quick" onClick={() => sendText("/nodes")}>List Nodes</button>
+                  <button className="ac-rp-quick" onClick={() => sendText("/pods")}>Show Pods</button>
+                  <button className="ac-rp-quick" onClick={() => sendText("/events")}>Recent Events</button>
+                </div>
+              </div>
+            )}
+
+            {rightTab === "fixes" && (
+              <div className="ac-rp-section">
+                <div className="ac-rp-section-head">
+                  <span className="ac-rp-section-title">Fix Proposals</span>
+                </div>
+                <p className="ac-rp-empty">Fix proposals from AI analysis will appear here. Use <code>/security</code> or <code>/compliance</code> to generate fixes.</p>
+                <div className="ac-rp-quick-actions">
+                  <button className="ac-rp-quick" onClick={() => sendText("/security")}>Security Audit</button>
+                  <button className="ac-rp-quick" onClick={() => sendText("/compliance")}>Compliance Check</button>
+                  <button className="ac-rp-quick" onClick={() => sendText("/operator-health")}>Operator Health</button>
+                </div>
+              </div>
+            )}
+
+            {rightTab === "servicenow" && (
+              <div className="ac-rp-section">
+                <div className="ac-rp-section-head">
+                  <span className="ac-rp-section-title" style={{ color: "#22c55e" }}>ServiceNow</span>
+                </div>
+                <div className="ac-rp-snow-stats">
+                  <div className="ac-rp-snow-stat"><span className="ac-rp-snow-val">{pendingCRs.length}</span><label>Pending CRs</label></div>
+                  <div className="ac-rp-snow-stat"><span className="ac-rp-snow-val">{actionHistory.filter((a) => a.status === "executed").length}</span><label>Executed</label></div>
+                </div>
+                {pendingCRs.length === 0 ? (
+                  <p className="ac-rp-empty">No ServiceNow tickets in progress. CRs created through chat will appear here.</p>
+                ) : (
+                  <div className="ac-rp-list">
+                    {pendingCRs.map((cr) => (
+                      <div key={cr.ticket_id || cr.ticketId} className="ac-rp-card">
+                        <div className="ac-rp-card-head">
+                          <span className="ac-rp-card-id">{cr.snow_number || cr.ticket_id || cr.ticketId}</span>
+                          <span className="ac-rp-card-status">{(cr.status || "pending").toUpperCase()}</span>
+                        </div>
+                        <div className="ac-rp-card-title">{cr.title || "—"}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </aside>
+      )}
     </div>
   );
 }
