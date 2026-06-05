@@ -73,6 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_pending_actions_status ON pending_actions(status,
 CREATE TABLE IF NOT EXISTS upgrade_sessions (
   id TEXT PRIMARY KEY,
   conversation_id TEXT,
+  cluster TEXT NOT NULL DEFAULT 'local',
   state TEXT NOT NULL DEFAULT 'idle',
   from_version TEXT,
   target_version TEXT,

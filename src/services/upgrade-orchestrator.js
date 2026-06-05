@@ -10,10 +10,24 @@
  */
 
 import { query, isEnabled as dbEnabled } from "../utils/db.js";
-import { ocpGet, ocpFetch } from "../utils/openshift-client.js";
+import { ocpGet, ocpFetch, withRemoteClusterBridge } from "../utils/openshift-client.js";
+import { hasActiveChannel } from "../index.js";
 import { runPreflightChecks, formatPreflightReport, validateUpgradeVersion } from "../tools/upgrade-preflight.js";
 import { trackCR, getCR, updateCRStatus, syncCRFromServiceNow } from "./cr-tracker.js";
 import { getRecord, updateRecord } from "../utils/servicenow-client.js";
+
+/**
+ * Run `fn` in the correct cluster context. If cluster is "local" or falsy,
+ * run directly. Otherwise, route all ocpGet/ocpFetch calls through the
+ * agent bridge for that cluster.
+ */
+function withClusterContext(cluster, fn) {
+  if (!cluster || cluster === "local") return fn();
+  if (!hasActiveChannel(cluster)) {
+    throw new Error(`Agent for cluster "${cluster}" is not connected. Ensure it shows Active in AI Hub.`);
+  }
+  return withRemoteClusterBridge(cluster, fn);
+}
 
 // ── States ──────────────────────────────────────────────────────────────────
 export const UPGRADE_STATES = {
@@ -61,6 +75,7 @@ async function ensureTable() {
     CREATE TABLE IF NOT EXISTS upgrade_sessions (
       id TEXT PRIMARY KEY,
       conversation_id TEXT,
+      cluster TEXT NOT NULL DEFAULT 'local',
       state TEXT NOT NULL DEFAULT 'idle',
       from_version TEXT,
       target_version TEXT,
@@ -80,6 +95,8 @@ async function ensureTable() {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
+  // Migration: add cluster column if table existed before this change
+  await query(`ALTER TABLE upgrade_sessions ADD COLUMN IF NOT EXISTS cluster TEXT NOT NULL DEFAULT 'local'`).catch(() => {});
   return true;
 }
 
@@ -97,21 +114,23 @@ function genId() {
 
 // ── Session CRUD ────────────────────────────────────────────────────────────
 
-export async function createSession(conversationId, { fromVersion, targetVersion, channel }) {
+export async function createSession(conversationId, { fromVersion, targetVersion, channel, cluster }) {
   if (!(await init())) return null;
 
-  // Cancel any existing active session for this conversation
+  const clusterName = cluster || "local";
+
+  // Cancel any existing active session for this conversation + cluster
   await query(
     `UPDATE upgrade_sessions SET state = 'cancelled', updated_at = NOW()
-     WHERE conversation_id = $1 AND state NOT IN ('completed','failed','cancelled')`,
-    [conversationId]
+     WHERE conversation_id = $1 AND cluster = $2 AND state NOT IN ('completed','failed','cancelled')`,
+    [conversationId, clusterName]
   );
 
   const id = genId();
   const result = await query(
-    `INSERT INTO upgrade_sessions (id, conversation_id, state, from_version, target_version, channel)
-     VALUES ($1, $2, 'idle', $3, $4, $5) RETURNING *`,
-    [id, conversationId, fromVersion, targetVersion, channel]
+    `INSERT INTO upgrade_sessions (id, conversation_id, cluster, state, from_version, target_version, channel)
+     VALUES ($1, $2, $3, 'idle', $4, $5, $6) RETURNING *`,
+    [id, conversationId, clusterName, fromVersion, targetVersion, channel]
   );
   return result?.rows?.[0] ? mapSession(result.rows[0]) : null;
 }
@@ -122,14 +141,24 @@ export async function getSession(sessionId) {
   return result?.rows?.[0] ? mapSession(result.rows[0]) : null;
 }
 
-export async function getActiveSession(conversationId) {
+export async function getActiveSession(conversationId, cluster) {
   if (!(await init())) return null;
-  const result = await query(
-    `SELECT * FROM upgrade_sessions
-     WHERE conversation_id = $1 AND state NOT IN ('completed','failed','cancelled')
-     ORDER BY updated_at DESC LIMIT 1`,
-    [conversationId]
-  );
+  let result;
+  if (cluster) {
+    result = await query(
+      `SELECT * FROM upgrade_sessions
+       WHERE conversation_id = $1 AND cluster = $2 AND state NOT IN ('completed','failed','cancelled')
+       ORDER BY updated_at DESC LIMIT 1`,
+      [conversationId, cluster]
+    );
+  } else {
+    result = await query(
+      `SELECT * FROM upgrade_sessions
+       WHERE conversation_id = $1 AND state NOT IN ('completed','failed','cancelled')
+       ORDER BY updated_at DESC LIMIT 1`,
+      [conversationId]
+    );
+  }
   return result?.rows?.[0] ? mapSession(result.rows[0]) : null;
 }
 
@@ -176,6 +205,7 @@ function mapSession(row) {
   return {
     id: row.id,
     conversationId: row.conversation_id,
+    cluster: row.cluster || "local",
     state: row.state,
     fromVersion: row.from_version,
     targetVersion: row.target_version,
@@ -217,7 +247,8 @@ export async function stepValidateVersion(sessionId) {
   const session = await getSession(sessionId);
   if (!session) throw new Error("Session not found");
 
-  const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+  const cv = await withClusterContext(session.cluster, () =>
+    ocpGet("/apis/config.openshift.io/v1/clusterversions/version"));
   const currentVersion = cv?.status?.desired?.version || "";
   const channel = cv?.spec?.channel || "";
   const availableUpdates = cv?.status?.availableUpdates || [];
@@ -260,7 +291,8 @@ export async function stepValidateVersion(sessionId) {
   let adminAcksNeeded = [];
   if (upgradeType === "minor") {
     try {
-      const acks = await ocpGet("/api/v1/namespaces/openshift-config-managed/configmaps/admin-acks");
+      const acks = await withClusterContext(session.cluster, () =>
+        ocpGet("/api/v1/namespaces/openshift-config-managed/configmaps/admin-acks"));
       const ackData = acks?.data || {};
       const currentMinorNum = parseInt((currentVersion.match(/^4\.(\d+)/) || [])[1] || "0", 10);
       const targetMinorNum = parseInt((targetVersion.match(/^4\.(\d+)/) || [])[1] || "0", 10);
@@ -320,16 +352,18 @@ export async function stepSwitchChannel(sessionId, newChannel) {
   const session = await getSession(sessionId);
   if (!session) throw new Error("Session not found");
 
-  await ocpFetch("/apis/config.openshift.io/v1/clusterversions/version", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/merge-patch+json" },
-    body: JSON.stringify({ spec: { channel: newChannel } }),
-  });
+  await withClusterContext(session.cluster, () =>
+    ocpFetch("/apis/config.openshift.io/v1/clusterversions/version", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/merge-patch+json" },
+      body: JSON.stringify({ spec: { channel: newChannel } }),
+    }));
 
   // Wait briefly for available updates to refresh
   await new Promise(r => setTimeout(r, 5000));
 
-  const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+  const cv = await withClusterContext(session.cluster, () =>
+    ocpGet("/apis/config.openshift.io/v1/clusterversions/version"));
   const updatedAvailable = (cv?.status?.availableUpdates || []).map(u => u.version);
 
   const updated = await transition(sessionId, UPGRADE_STATES.CHANNEL_SWITCHED, {
@@ -345,7 +379,8 @@ export async function stepPreAssessment(sessionId) {
   const session = await getSession(sessionId);
   if (!session) throw new Error("Session not found");
 
-  const report = await runPreflightChecks(session.targetVersion, session.fromVersion);
+  const report = await withClusterContext(session.cluster, () =>
+    runPreflightChecks(session.targetVersion, session.fromVersion));
 
   const updated = await transition(sessionId, UPGRADE_STATES.PRE_ASSESSED, {
     preflightReport: report,
@@ -381,13 +416,16 @@ export async function stepComponentAnalysis(sessionId) {
     for (const item of opCheck.items) {
       if (item.issue === "Degraded" || item.issue === "Unavailable") {
         try {
-          const pods = await ocpGet(`/api/v1/namespaces/openshift-${item.name}/pods?limit=20`);
+          const [pods, events] = await withClusterContext(session.cluster, () =>
+            Promise.all([
+              ocpGet(`/api/v1/namespaces/openshift-${item.name}/pods?limit=20`),
+              ocpGet(`/api/v1/namespaces/openshift-${item.name}/events?limit=20`),
+            ]));
           const badPods = (pods?.items || []).filter(p => {
             const phase = p.status?.phase;
             const ready = (p.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True");
             return phase !== "Running" || !ready;
           });
-          const events = await ocpGet(`/api/v1/namespaces/openshift-${item.name}/events?limit=20`);
           const recentEvents = (events?.items || [])
             .filter(e => e.type === "Warning")
             .slice(0, 5)
@@ -455,12 +493,13 @@ export async function stepComponentAnalysis(sessionId) {
 
 // ── Step 4: Version Diff ────────────────────────────────────────────────────
 
-export async function getVersionDiff(fromVersion, targetVersion) {
+export async function getVersionDiff(fromVersion, targetVersion, cluster) {
   const report = { fromVersion, targetVersion, components: [], apiChanges: [], features: [] };
 
   // Query ClusterVersion for release image metadata
   try {
-    const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+    const cv = await withClusterContext(cluster, () =>
+      ocpGet("/apis/config.openshift.io/v1/clusterversions/version"));
     const history = cv?.status?.history || [];
     const currentEntry = history.find(h => h.version === fromVersion);
     const availableUpdates = cv?.status?.availableUpdates || [];
@@ -474,7 +513,8 @@ export async function getVersionDiff(fromVersion, targetVersion) {
     }
 
     // Get current operator versions for comparison
-    const ops = await ocpGet("/apis/config.openshift.io/v1/clusteroperators");
+    const ops = await withClusterContext(cluster, () =>
+      ocpGet("/apis/config.openshift.io/v1/clusteroperators"));
     report.components = (ops?.items || []).map(op => {
       const versions = (op.status?.versions || []).reduce((acc, v) => {
         acc[v.name] = v.version;
@@ -611,7 +651,8 @@ export async function stepBuildRemediationPlan(sessionId) {
 
   // Pending CSRs
   try {
-    const csrs = await ocpGet("/apis/certificates.k8s.io/v1/certificatesigningrequests");
+    const csrs = await withClusterContext(session.cluster, () =>
+      ocpGet("/apis/certificates.k8s.io/v1/certificatesigningrequests"));
     const pending = (csrs?.items || []).filter(c => {
       const conditions = c.status?.conditions || [];
       return !conditions.some(cond => cond.type === "Approved" || cond.type === "Denied");
@@ -845,7 +886,8 @@ export async function stepExecuteUpgrade(sessionId) {
   if (!session) throw new Error("Session not found");
 
   // Re-validate right before execution
-  const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+  const cv = await withClusterContext(session.cluster, () =>
+    ocpGet("/apis/config.openshift.io/v1/clusterversions/version"));
   const currentVer = cv?.status?.desired?.version || "";
   const availableUpdates = cv?.status?.availableUpdates || [];
   const channel = cv?.spec?.channel || "";
@@ -857,11 +899,12 @@ export async function stepExecuteUpgrade(sessionId) {
   }
 
   // Patch ClusterVersion
-  await ocpFetch("/apis/config.openshift.io/v1/clusterversions/version", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/merge-patch+json" },
-    body: JSON.stringify({ spec: { desiredUpdate: { version: session.targetVersion } } }),
-  });
+  await withClusterContext(session.cluster, () =>
+    ocpFetch("/apis/config.openshift.io/v1/clusterversions/version", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/merge-patch+json" },
+      body: JSON.stringify({ spec: { desiredUpdate: { version: session.targetVersion } } }),
+    }));
 
   const updated = await transition(sessionId, UPGRADE_STATES.EXECUTING);
   return { session: updated, success: true };
@@ -873,10 +916,11 @@ export async function stepCheckUpgradeProgress(sessionId) {
   const session = await getSession(sessionId);
   if (!session) throw new Error("Session not found");
 
-  const [cv, ops] = await Promise.all([
-    ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
-    ocpGet("/apis/config.openshift.io/v1/clusteroperators"),
-  ]);
+  const [cv, ops] = await withClusterContext(session.cluster, () =>
+    Promise.all([
+      ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
+      ocpGet("/apis/config.openshift.io/v1/clusteroperators"),
+    ]));
 
   const conditions = (cv?.status?.conditions || []).reduce((acc, c) => {
     acc[c.type] = { status: c.status, message: c.message || "" };
@@ -928,7 +972,8 @@ export async function stepCheckUpgradeProgress(sessionId) {
   // Nodes status during upgrade
   let nodeStatus = null;
   try {
-    const nodes = await ocpGet("/api/v1/nodes");
+    const nodes = await withClusterContext(session.cluster, () =>
+      ocpGet("/api/v1/nodes"));
     const nodeItems = nodes?.items || [];
     const readyCount = nodeItems.filter(n =>
       (n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True")
@@ -983,11 +1028,13 @@ export async function stepPostAssessment(sessionId) {
   // Re-run preflight checks against the (now current) target version to verify health
   let postReport = null;
   try {
-    const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
+    const cv = await withClusterContext(session.cluster, () =>
+      ocpGet("/apis/config.openshift.io/v1/clusterversions/version"));
     const newCurrent = cv?.status?.desired?.version || session.targetVersion;
     const availableUpdates = cv?.status?.availableUpdates || [];
     const nextTarget = availableUpdates.length > 0 ? availableUpdates[0].version : newCurrent;
-    postReport = await runPreflightChecks(nextTarget, newCurrent);
+    postReport = await withClusterContext(session.cluster, () =>
+      runPreflightChecks(nextTarget, newCurrent));
   } catch (err) {
     postReport = { error: err.message };
   }
@@ -1118,9 +1165,13 @@ export function formatSessionSummary(session) {
   };
 
   const lines = [];
-  lines.push(`### Upgrade Session: ${session.fromVersion} → ${session.targetVersion}`);
+  const clusterLabel = session.cluster && session.cluster !== "local" ? ` (${session.cluster})` : "";
+  lines.push(`### Upgrade Session: ${session.fromVersion} → ${session.targetVersion}${clusterLabel}`);
   lines.push("");
   lines.push(`**State:** ${stateEmoji[session.state] || "❓"} ${session.state.replace(/_/g, " ").toUpperCase()}`);
+  if (session.cluster && session.cluster !== "local") {
+    lines.push(`**Cluster:** ${session.cluster}`);
+  }
   lines.push(`**Type:** ${session.upgradeType || "patch"} | **Channel:** ${session.channel || "N/A"}`);
 
   if (session.crTicketId) {
@@ -1176,6 +1227,7 @@ export function formatSessionSummary(session) {
 export function buildUpgradeProgressToken(session) {
   return {
     sessionId: session.id,
+    cluster: session.cluster || "local",
     state: session.state,
     fromVersion: session.fromVersion,
     targetVersion: session.targetVersion,

@@ -15001,8 +15001,9 @@ export async function handleChatAPI(req, res) {
       try {
         const { createSession, getActiveSession, stepValidateVersion, formatSessionSummary, buildUpgradeProgressToken } = await import("./upgrade-orchestrator.js");
 
-        // Check for existing active session
-        let session = await getActiveSession(conversationId);
+        // Check for existing active session on this cluster
+        const activeCluster = _remoteClusterContext?.clusterName || body.cluster || "local";
+        let session = await getActiveSession(conversationId, activeCluster);
 
         if (!session) {
           // Parse target version from message
@@ -15054,6 +15055,7 @@ export async function handleChatAPI(req, res) {
             fromVersion: fromVer,
             targetVersion: targetVer,
             channel: "",
+            cluster: activeCluster,
           });
         }
 

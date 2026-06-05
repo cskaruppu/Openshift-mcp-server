@@ -1766,16 +1766,17 @@ export async function handleUpgradeOrchestrator(req, res, action) {
 
     switch (action) {
       case "create": {
-        const { conversationId, fromVersion, targetVersion, channel } = body;
+        const { conversationId, fromVersion, targetVersion, channel, cluster } = body;
         if (!targetVersion) return json(res, 400, { error: "Missing 'targetVersion'" });
-        const session = await uoCreateSession(conversationId, { fromVersion, targetVersion, channel });
+        const session = await uoCreateSession(conversationId, { fromVersion, targetVersion, channel, cluster });
         return json(res, 200, { session });
       }
 
       case "session": {
         const id = params.get("id");
         const convId = params.get("conversationId");
-        const session = id ? await uoGetSession(id) : await uoGetActiveSession(convId);
+        const cluster = params.get("cluster");
+        const session = id ? await uoGetSession(id) : await uoGetActiveSession(convId, cluster);
         if (!session) return json(res, 404, { error: "No active upgrade session" });
         return json(res, 200, { session, summary: formatSessionSummary(session) });
       }
@@ -1817,8 +1818,9 @@ export async function handleUpgradeOrchestrator(req, res, action) {
       case "version-diff": {
         const from = params.get("from") || body.fromVersion;
         const to = params.get("to") || body.targetVersion;
+        const diffCluster = params.get("cluster") || body.cluster;
         if (!from || !to) return json(res, 400, { error: "Missing 'from' or 'to' version" });
-        const diff = await getVersionDiff(from, to);
+        const diff = await getVersionDiff(from, to, diffCluster);
         return json(res, 200, diff);
       }
 

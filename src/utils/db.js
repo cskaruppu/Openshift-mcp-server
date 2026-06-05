@@ -223,6 +223,7 @@ CREATE INDEX IF NOT EXISTS idx_cr_ticket ON change_requests (ticket_id);
 CREATE TABLE IF NOT EXISTS upgrade_sessions (
   id TEXT PRIMARY KEY,
   conversation_id TEXT,
+  cluster TEXT NOT NULL DEFAULT 'local',
   state TEXT NOT NULL DEFAULT 'idle',
   from_version TEXT,
   target_version TEXT,
