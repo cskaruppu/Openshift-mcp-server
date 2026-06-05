@@ -1003,13 +1003,6 @@ export function ChatView() {
               </div>
             </div>
           </div>
-          <div className="ac-input-footer">
-            <span className="ac-input-footer-model">
-              <span className="ac-input-footer-dot" style={{ background: activeMeta.color }} />
-              Powered by {activeMeta.label}
-            </span>
-            <span className="ac-input-footer-scope">Scoped to {clusterLabel(cluster)}</span>
-          </div>
         </div>
       </div>
 

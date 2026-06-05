@@ -1,11 +1,16 @@
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 
 /**
  * Per-cluster chat state. Conversations are stored keyed by cluster id, so the
  * AI Chat for cluster A is never visible while cluster B is active — chat
  * isolation by construction. Switching clusters swaps the whole conversation.
+ *
+ * The active conversation is persisted to localStorage so a page refresh keeps
+ * the on-screen messages (the backend remains the durable source of truth for
+ * saved chat history).
  */
-export const useChatStore = create((set, get) => ({
+export const useChatStore = create(persist((set, get) => ({
   byCluster: {}, // { [cluster]: { messages: [{role,text}], conversationId, chatId } }
   seedByCluster: {}, // { [cluster]: "draft message" } — set by Emergency Actions
 
@@ -67,4 +72,9 @@ export const useChatStore = create((set, get) => ({
   clear(cluster) {
     set((state) => ({ byCluster: { ...state.byCluster, [cluster]: { messages: [], conversationId: null, chatId: null } } }));
   },
+}), {
+  name: "tcs-chat-store",
+  storage: createJSONStorage(() => localStorage),
+  // Only the conversations survive a refresh — not transient draft seeds.
+  partialize: (s) => ({ byCluster: s.byCluster }),
 }));

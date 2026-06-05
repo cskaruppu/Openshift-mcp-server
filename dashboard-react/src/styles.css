@@ -814,7 +814,9 @@ body {
 .ac-quick-btn:hover { border-color: rgba(99,102,241,.4); color: var(--text); background: rgba(99,102,241,.05); }
 
 /* ── Message row ── */
-.ac-msg { max-width: 760px; margin: 0 auto; width: 100%; }
+/* Fill the available width between the sidebar and right panel rather than a
+   narrow centered column (which left large empty gaps on both sides). */
+.ac-msg { max-width: 100%; margin: 0; width: 100%; }
 .ac-msg-user { display: flex; justify-content: flex-end; }
 .ac-msg-assistant { display: block; }
 
@@ -969,7 +971,7 @@ body {
   display: flex; flex-direction: column; gap: 4px;
   background: var(--card); border: 1px solid var(--border); border-radius: 18px;
   padding: 8px 10px 8px 14px; transition: border-color .3s cubic-bezier(.4,0,.2,1), box-shadow .3s cubic-bezier(.4,0,.2,1);
-  max-width: 760px; margin: 0 auto;
+  max-width: 100%; margin: 0;
 }
 .ac-input-pill.focused {
   border-color: rgba(99,102,241,.5);
