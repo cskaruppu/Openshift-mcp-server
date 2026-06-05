@@ -126,6 +126,8 @@ export function ChatView() {
   const [followUps, setFollowUps] = useState([]);
   const [inputFocused, setInputFocused] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
 
   const [providers, setProviders] = useState({});
   const [activeProvider, setActiveProvider] = useState("builtin");
@@ -161,6 +163,16 @@ export function ChatView() {
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [conv.messages, stage, toolCalls]);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setShowScrollBtn(el.scrollHeight - el.scrollTop - el.clientHeight > 200);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, []);
 
   useEffect(() => {
     return () => { if (abortRef.current) abortRef.current.abort(); };
@@ -759,7 +771,7 @@ export function ChatView() {
       </button>
 
       {/* ── Left Sidebar (always visible desktop, slide mobile) ── */}
-      <aside className={"ac-sidebar" + (sidebarOpen ? " open" : "")}>
+      <aside className={"ac-sidebar" + (sidebarOpen ? " open" : "") + (sidebarCollapsed ? " collapsed" : "")}>
         <button className="ac-new-btn" onClick={handleNewChat}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           New chat
@@ -799,6 +811,13 @@ export function ChatView() {
         {/* Header */}
         <div className="ac-header">
           <div className="ac-header-left">
+            <button className="ac-sidebar-collapse-btn" onClick={() => setSidebarCollapsed((v) => !v)} title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                {sidebarCollapsed
+                  ? <><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><polyline points="14 8 18 12 14 16"/></>
+                  : <><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><polyline points="16 8 12 12 16 16"/></>}
+              </svg>
+            </button>
             <h2 className="ac-title">AI Chat</h2>
           </div>
           <div className="ac-header-right">
@@ -821,7 +840,8 @@ export function ChatView() {
         </div>
 
         {/* Messages */}
-        <div className="ac-messages" ref={scrollRef}>
+        <div className="ac-messages-wrap">
+        <div className="ac-messages" ref={scrollRef} onScroll={handleScroll}>
           {/* Welcome */}
           {!hasMessages && (
             <div className="ac-welcome">
@@ -830,7 +850,7 @@ export function ChatView() {
                 {clusterLabel(cluster)} · {activeMeta.label}
               </div>
               <div className="ac-welcome-icon">
-                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                   <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/>
                   <line x1="10" y1="22" x2="14" y2="22"/>
                   <line x1="9" y1="9" x2="9.01" y2="9"/>
@@ -938,7 +958,7 @@ export function ChatView() {
                   )}
 
                   {/* Window body */}
-                  <div className="ac-win-body">
+                  <div className={"ac-win-body" + (busy && isLastAI ? " ac-streaming-cursor" : "")}>
                     {m.text && <ChatMessageBody text={m.text} cluster={cluster} onQuery={(q) => sendText(q)} />}
                   </div>
 
@@ -991,6 +1011,13 @@ export function ChatView() {
               </div>
             );
           })}
+        </div>
+        <div className={"ac-scroll-fade" + (showScrollBtn ? " visible" : "")} />
+        {showScrollBtn && (
+          <button className="ac-scroll-bottom" onClick={scrollToBottom} title="Scroll to bottom">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        )}
         </div>
 
         {/* Input area */}

@@ -21,7 +21,7 @@
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
 }
@@ -364,11 +364,27 @@ body {
   padding: 0 4px;
 }
 
+/* ── Sidebar collapse (desktop only) ── */
+.ac-sidebar-collapse-btn {
+  display: none; width: 28px; height: 28px; border-radius: 7px; border: 1px solid transparent;
+  background: none; color: var(--text2); cursor: pointer; align-items: center; justify-content: center;
+  transition: all .15s;
+}
+.ac-sidebar-collapse-btn:hover { border-color: var(--border); background: var(--card); color: var(--text); }
+@media (min-width: 769px) { .ac-sidebar-collapse-btn { display: flex; } }
+
 /* ── Left Sidebar (persistent desktop, slide mobile) ── */
 .ac-sidebar {
   width: 288px; flex-shrink: 0;
   background: var(--bg-deep); border-right: 1px solid var(--border);
   display: flex; flex-direction: column;
+  transition: width .25s cubic-bezier(.4,0,.2,1), opacity .2s, padding .25s;
+}
+@media (min-width: 769px) {
+  .ac-sidebar.collapsed {
+    width: 0 !important; min-width: 0; opacity: 0; overflow: hidden;
+    padding: 0; border: none;
+  }
 }
 .ac-sidebar-overlay { display: none; }
 .ac-new-btn {
@@ -625,15 +641,17 @@ body {
 .ac-messages {
   flex: 1; overflow-y: auto; padding: 24px 28px;
   display: flex; flex-direction: column; gap: 22px;
-  scroll-behavior: smooth;
+  scroll-behavior: smooth; position: relative;
 }
 
 /* ── Welcome screen ── */
 .ac-welcome {
   max-width: 680px; margin: auto; padding: 48px 24px;
   text-align: center; animation: acFadeIn .4s ease;
+  background: radial-gradient(ellipse at 50% 30%, rgba(99,102,241,.06) 0%, transparent 70%);
 }
 @keyframes acFadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes acFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
 .ac-welcome-badge {
   display: inline-flex; align-items: center; gap: 7px; margin: 0 auto 20px;
   padding: 5px 14px; border-radius: 20px; font-size: 11.5px; font-weight: 600;
@@ -645,11 +663,12 @@ body {
   box-shadow: 0 0 0 3px rgba(34,197,94,.18);
 }
 .ac-welcome-icon {
-  width: 60px; height: 60px; border-radius: 18px; margin: 0 auto 18px;
-  background: linear-gradient(135deg, rgba(59,130,246,.16), rgba(139,92,246,.16));
+  width: 80px; height: 80px; border-radius: 22px; margin: 0 auto 20px;
+  background: linear-gradient(135deg, rgba(59,130,246,.18), rgba(139,92,246,.18));
   border: 1px solid rgba(99,102,241,.22); color: var(--accent2);
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 8px 28px rgba(99,102,241,.14);
+  box-shadow: 0 0 60px rgba(99,102,241,.18), 0 8px 28px rgba(99,102,241,.14);
+  animation: acFloat 6s ease-in-out infinite;
 }
 .ac-welcome-title {
   font-size: 26px; font-weight: 800; margin: 0 0 10px; letter-spacing: -.4px;
@@ -707,28 +726,30 @@ body {
 /* ── User message ── */
 .ac-user-row { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: 80%; margin-left: auto; }
 .ac-bubble {
-  background: rgba(59,130,246,.08); border: 1px solid rgba(59,130,246,.15);
-  border-radius: 16px 16px 4px 16px; padding: 11px 16px;
+  background: rgba(59,130,246,.14); border: none;
+  border-radius: 18px 18px 4px 18px; padding: 12px 18px;
   font-size: 14.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
   color: var(--text);
 }
 .ac-user-meta { display: flex; align-items: center; gap: 6px; }
 .ac-msg-time { font-size: 10px; color: var(--text2); }
 
-/* ── AI Window Card ── */
+/* ── AI Response (borderless, ChatGPT/Claude style) ── */
 .ac-window {
-  background: var(--card); border: 1px solid var(--border);
-  border-radius: 12px; overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0,0,0,.08);
-  transition: box-shadow .2s;
+  background: transparent; border: none;
+  border-left: 3px solid rgba(99,102,241,.18);
+  border-radius: 0 12px 12px 0;
+  overflow: hidden;
+  box-shadow: none;
+  transition: border-color .2s;
 }
-.ac-window:hover { box-shadow: 0 4px 16px rgba(0,0,0,.12); }
+.ac-window:hover { border-left-color: rgba(99,102,241,.35); box-shadow: none; }
 
 .ac-win-header {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 10px 16px;
-  background: linear-gradient(135deg, rgba(224,64,64,.04), rgba(59,130,246,.04));
-  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 4px 16px 6px;
+  background: none;
+  border-bottom: none;
 }
 .ac-win-identity { display: flex; align-items: center; gap: 8px; }
 .ac-win-icon {
@@ -764,12 +785,19 @@ body {
   display: flex; flex-direction: column; gap: 8px;
 }
 
-/* ── Thinking stages ── */
+/* ── Thinking stages (with progress connector line) ── */
 .ac-thinking {
   display: flex; align-items: center; gap: 16px; padding: 10px 16px;
   border-bottom: 1px solid rgba(255,255,255,.04);
+  position: relative;
+}
+.ac-thinking::before {
+  content: ""; position: absolute; top: 50%; left: 32px; right: 32px;
+  height: 2px; background: var(--border); border-radius: 1px;
+  z-index: 0;
 }
 .ac-think-step {
+  position: relative; z-index: 1; background: var(--bg); padding: 0 4px;
   display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text2);
   transition: all .2s;
 }
@@ -805,11 +833,13 @@ body {
   text-overflow: ellipsis; max-width: 320px;
 }
 
-/* ── Message actions ── */
+/* ── Message actions (hover-reveal with fade-up) ── */
 .ac-msg-actions {
-  display: flex; gap: 2px; opacity: 0; transition: opacity .2s;
+  display: flex; gap: 2px; opacity: 0;
+  transform: translateY(4px);
+  transition: opacity .15s, transform .15s;
 }
-.ac-window:hover .ac-msg-actions { opacity: 1; }
+.ac-window:hover .ac-msg-actions { opacity: 1; transform: translateY(0); }
 .ac-action-btn {
   width: 28px; height: 28px; border-radius: 7px; background: none;
   border: 1px solid transparent; color: var(--text2); cursor: pointer;
@@ -838,12 +868,12 @@ body {
 .ac-input-pill {
   display: flex; flex-direction: column; gap: 4px;
   background: var(--card); border: 1px solid var(--border); border-radius: 18px;
-  padding: 8px 10px 8px 14px; transition: border-color .2s, box-shadow .2s;
+  padding: 8px 10px 8px 14px; transition: border-color .3s cubic-bezier(.4,0,.2,1), box-shadow .3s cubic-bezier(.4,0,.2,1);
   max-width: 760px; margin: 0 auto;
 }
 .ac-input-pill.focused {
-  border-color: rgba(99,102,241,.45);
-  box-shadow: 0 0 0 3px rgba(99,102,241,.08), 0 6px 22px rgba(0,0,0,.12);
+  border-color: rgba(99,102,241,.5);
+  box-shadow: 0 0 0 2px rgba(99,102,241,.15), 0 0 20px rgba(99,102,241,.08), 0 8px 32px rgba(0,0,0,.15);
 }
 .ac-textarea {
   width: 100%; background: transparent; border: none; padding: 4px 2px;
@@ -1026,6 +1056,11 @@ body {
 .md-content .md-codeblock-lang {
   font-size: 11px; font-weight: 700; color: var(--text2);
   text-transform: uppercase; letter-spacing: .4px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.md-content .md-codeblock-lang::before {
+  content: ""; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent2); display: inline-block; flex-shrink: 0;
 }
 .md-content .md-codeblock-copy {
   background: var(--card); border: 1px solid var(--border2); color: var(--text2);
@@ -1057,6 +1092,39 @@ body {
   font-size: 11.5px; white-space: nowrap;
 }
 
+/* ── Streaming cursor (blinking caret at end of streaming text) ── */
+.ac-streaming-cursor .md-content::after {
+  content: "\25CB"; display: inline; color: var(--accent2);
+  animation: cursorBlink .53s steps(1) infinite;
+  margin-left: 2px; font-size: 13px;
+}
+@keyframes cursorBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+/* ── Scroll-to-bottom pill ── */
+.ac-messages-wrap { position: relative; flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.ac-scroll-fade {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 60px; z-index: 2;
+  background: linear-gradient(transparent, var(--bg));
+  pointer-events: none; opacity: 0; transition: opacity .2s;
+}
+.ac-scroll-fade.visible { opacity: 1; }
+.ac-scroll-bottom {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  z-index: 3; width: 36px; height: 36px; border-radius: 50%;
+  background: var(--card); border: 1px solid var(--border);
+  color: var(--text2); cursor: pointer; display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 16px rgba(0,0,0,.2); transition: all .2s;
+  animation: acFadeIn .2s ease;
+}
+.ac-scroll-bottom:hover { border-color: var(--accent2); color: var(--text); box-shadow: 0 4px 20px rgba(99,102,241,.2); }
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .ac-welcome-icon, .ac-think-step.active .ac-think-icon { animation: none !important; }
+  .ac-streaming-cursor .md-content::after { animation: none !important; opacity: 1; }
+  .ac-sidebar, .ac-input-pill, .ac-window, .ac-msg-actions { transition: none !important; }
+}
+
 /* ── Light theme ── */
 .light-theme .ac-sidebar { background: #f8fafc; border-color: #e5e7eb; box-shadow: 4px 0 24px rgba(0,0,0,.08); }
 .light-theme .ac-sidebar-toggle { background: #fff; border-color: #e5e7eb; }
@@ -1071,9 +1139,10 @@ body {
 .light-theme .ac-welcome-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,.06); }
 .light-theme .ac-quick-btn { border-color: #e5e7eb; }
 .light-theme .ac-quick-btn:hover { background: rgba(99,102,241,.04); border-color: rgba(99,102,241,.3); }
-.light-theme .ac-bubble { background: rgba(59,130,246,.06); border-color: rgba(59,130,246,.12); }
-.light-theme .ac-window { background: #fff; border-color: #e5e7eb; box-shadow: 0 2px 8px rgba(0,0,0,.04); }
-.light-theme .ac-win-header { background: linear-gradient(135deg, rgba(224,64,64,.03), rgba(59,130,246,.03)); border-color: #e5e7eb; }
+.light-theme .ac-bubble { background: #eff4ff; border: none; }
+.light-theme .ac-window { background: transparent; border-color: transparent; border-left-color: rgba(99,102,241,.15); box-shadow: none; }
+.light-theme .ac-window:hover { border-left-color: rgba(99,102,241,.3); }
+.light-theme .ac-win-header { background: none; border-color: transparent; }
 .light-theme .ac-win-conf-bar { background: rgba(0,0,0,.06); }
 .light-theme .ac-win-footer { border-color: #f3f4f6; }
 .light-theme .ac-win-body .chat-bubble { background: transparent; }
@@ -1081,7 +1150,14 @@ body {
 .light-theme .ac-tool-card { background: rgba(99,102,241,.04); border-color: rgba(99,102,241,.1); }
 .light-theme .ac-input-area { background: linear-gradient(to top, #fafbfc 60%, transparent); }
 .light-theme .ac-input-pill { background: #fff; border-color: #e5e7eb; }
-.light-theme .ac-input-pill.focused { border-color: rgba(99,102,241,.4); }
+.light-theme .ac-input-pill.focused {
+  border-color: rgba(99,102,241,.45);
+  box-shadow: 0 0 0 2px rgba(99,102,241,.1), 0 0 16px rgba(99,102,241,.06), 0 6px 24px rgba(0,0,0,.06);
+}
+.light-theme .ac-think-step { background: #fafbfc; }
+.light-theme .ac-scroll-bottom { background: #fff; border-color: #e5e7eb; }
+.light-theme .ac-scroll-fade { background: linear-gradient(transparent, #fafbfc); }
+.light-theme .ac-sidebar-collapse-btn:hover { background: #f1f5f9; border-color: #e5e7eb; }
 .light-theme .ac-provider-dropdown { background: #fff; border-color: #e5e7eb; }
 .light-theme .ac-provider-toggle { background: #f8fafc; border-color: #e5e7eb; }
 .light-theme .ac-provider-toggle:hover { border-color: var(--accent2); }
