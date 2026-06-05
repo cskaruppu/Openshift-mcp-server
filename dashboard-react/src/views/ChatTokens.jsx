@@ -43,6 +43,50 @@ export function parseSegments(text) {
   return segments;
 }
 
+/**
+ * Decide how wide the response window should be, based on WHAT the response
+ * contains (Option A — content-type-aware width):
+ *   - "wide"   (full): wide markdown tables (4+ cols), code/log blocks, or
+ *              cards that render their own tables/terminal output
+ *   - "medium": interactive cards (forms, fix/rightsize/triage) and small tables
+ *   - "narrow": plain prose — best reading line-length (~80 chars)
+ * Priority: wide > medium > narrow.
+ */
+const WIDE_TOKENS = new Set(["PREFLIGHT_REPORT", "UPGRADE_EXECUTE"]);
+const CARD_TOKENS = new Set(["ITSM_FORM", "ITSM_SUBMITTED", "RIGHTSIZE", "TRIAGE", "FIX_PROPOSAL", "CLARIFY", "POD_ISSUE"]);
+
+export function computeResponseWidth(text) {
+  if (!text) return "narrow";
+  const segments = parseSegments(text);
+  let hasWide = false, hasMedium = false;
+
+  for (const seg of segments) {
+    if (seg.kind === "token") {
+      if (WIDE_TOKENS.has(seg.type)) hasWide = true;
+      else if (CARD_TOKENS.has(seg.type)) hasMedium = true;
+      continue;
+    }
+    const t = seg.text || "";
+    // Fenced code / YAML / logs need room to avoid wrapping commands.
+    if (/```/.test(t)) { hasWide = true; continue; }
+    // Markdown table: a separator row (|---|---|) signals a real table.
+    if (/^\s*\|?[\s:|-]*\|[\s:|-]*$/m.test(t) && /\|/.test(t)) {
+      let maxCols = 0;
+      for (const line of t.split("\n")) {
+        if (!/\|/.test(line)) continue;
+        const cols = line.split("|").filter((c) => c.trim() !== "").length;
+        if (cols > maxCols) maxCols = cols;
+      }
+      if (maxCols >= 4) hasWide = true;
+      else if (maxCols >= 2) hasMedium = true;
+    }
+  }
+
+  if (hasWide) return "wide";
+  if (hasMedium) return "medium";
+  return "narrow";
+}
+
 /* ------------------------------------------------------------------ */
 /*  Segment renderer                                                    */
 /* ------------------------------------------------------------------ */

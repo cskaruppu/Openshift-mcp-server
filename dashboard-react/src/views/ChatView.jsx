@@ -3,7 +3,7 @@ import { useActiveCluster } from "../store/clusterStore";
 import { useChatStore } from "../store/chatStore";
 import { clusterUrl } from "../api/client";
 import { showToast } from "../store/toastStore";
-import { ChatMessageBody } from "./ChatTokens";
+import { ChatMessageBody, computeResponseWidth } from "./ChatTokens";
 
 const PROVIDER_META = {
   builtin:   { icon: "TA", color: "#e04040",  label: "Built-in Analysis", desc: "No API key needed" },
@@ -815,9 +815,10 @@ export function ChatView() {
               );
             }
 
+            const widthCls = "ac-w-" + computeResponseWidth(m.text);
             return (
               <div key={i} className="ac-msg ac-msg-assistant">
-                <div className="ac-window">
+                <div className={"ac-window " + widthCls}>
                   {/* Window header */}
                   <div className="ac-win-header">
                     <div className="ac-win-identity">

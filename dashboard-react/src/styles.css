@@ -839,8 +839,14 @@ body {
   border-radius: 0;
   overflow: hidden;
   box-shadow: none;
+  transition: max-width .2s ease;
 }
 .ac-window:hover { box-shadow: none; }
+/* Content-type-aware response width (Option A). The window expands smoothly
+   to fit tables/code/cards and contracts to a readable column for prose. */
+.ac-window.ac-w-narrow { max-width: 760px; }
+.ac-window.ac-w-medium { max-width: 920px; }
+.ac-window.ac-w-wide   { max-width: 1100px; }
 
 .ac-win-header {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
