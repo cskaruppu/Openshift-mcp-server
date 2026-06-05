@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { clusterUrl } from "../api/client";
 import { renderMarkdown } from "../utils/markdown";
 import { showToast } from "../store/toastStore";
@@ -128,7 +128,7 @@ function TokenCard({ type, data, cluster, onQuery, onItsmSubmitted }) {
   switch (type) {
     case "PREFLIGHT_REPORT": return data ? <PreflightReport report={data} /> : null;
     case "ITSM_FORM":        return data ? <ITSMForm form={data} cluster={cluster} onItsmSubmitted={onItsmSubmitted} /> : null;
-    case "ITSM_SUBMITTED":   return data ? <ITSMSubmitted info={data} onQuery={onQuery} /> : null;
+    case "ITSM_SUBMITTED":   return data ? <ITSMSubmitted info={data} cluster={cluster} onQuery={onQuery} /> : null;
     case "UPGRADE_EXECUTE":  return data ? <UpgradeExecuteCard data={data} cluster={cluster} /> : null;
     case "FIX_PROPOSAL":     return data ? <FixProposal diag={data} cluster={cluster} /> : null;
     case "CLARIFY":          return data ? <ClarifyCard data={data} onQuery={onQuery} /> : null;
@@ -293,6 +293,8 @@ function ITSMForm({ form, cluster, onItsmSubmitted }) {
             title: values.short_description || values.title || values.summary || label,
             isUpgrade: !!(form._upgradeInfo || form._preflightReport),
             targetVersion: form._upgradeInfo?.targetVersion || form._preflightReport?.targetVersion || null,
+            fromVersion: form._upgradeInfo?.fromVersion || form._preflightReport?.fromVersion || null,
+            channel: form._upgradeInfo?.channel || form._preflightReport?.channel || null,
             servicenowEnabled: !!form.servicenowEnabled,
             attachmentId: data.attachmentId || null,
           });
@@ -373,38 +375,116 @@ function ITSMForm({ form, cluster, onItsmSubmitted }) {
   );
 }
 
-function ITSMSubmitted({ info, onQuery }) {
+function ITSMSubmitted({ info, cluster, onQuery }) {
   const isCR = info.type === "change_request";
   const label = isCR ? "Change Request" : "Incident";
+  const isLocal = !info.sysId;                       // local-only mode: no ServiceNow approval workflow
+  const canUpgradeFlow = isCR && info.isUpgrade && !!info.targetVersion;
+
+  const [checking, setChecking] = useState(false);
+  const [status, setStatus] = useState(null);        // { status, stateLabel, approval } | { status:"error", error }
+  const [showUpgrade, setShowUpgrade] = useState(false);
+
+  const approved = status?.status === "approved";
+  // Upgrade is gated on approval; local-only CRs have no approval gate.
+  const canUpgrade = canUpgradeFlow && (approved || isLocal);
+
+  async function checkStatus() {
+    if (isLocal) { setStatus({ status: "local", stateLabel: "Saved locally", approval: "n/a" }); return; }
+    setChecking(true);
+    try {
+      const res = await fetch(clusterUrl("/api/itsm/cr-status", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sysId: info.sysId, ticketId: info.ticketId }),
+      });
+      const d = await res.json();
+      if (d.status === "error" || d.error) throw new Error(d.error || "Status check failed");
+      setStatus(d);
+      // Immediate upgrade option the moment approval is detected.
+      if (d.status === "approved" && canUpgradeFlow) setShowUpgrade(true);
+    } catch (e) {
+      setStatus({ status: "error", error: e.message });
+    } finally { setChecking(false); }
+  }
+
+  // Auto-check once on mount for upgrade CRs so an already-approved request
+  // surfaces the upgrade option immediately (e.g. after a page refresh).
+  useEffect(() => {
+    if (canUpgradeFlow && !isLocal) checkStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function statusBadge() {
+    const s = status?.status;
+    const sty = (c) => ({ background: `color-mix(in srgb,${c} 20%,transparent)`, color: c });
+    if (s === "approved") return <span className="itsm-badge" style={sty("var(--ok)")}>✓ Approved</span>;
+    if (s === "rejected") return <span className="itsm-badge" style={sty("var(--crit)")}>Rejected</span>;
+    if (s === "closed")   return <span className="itsm-badge" style={sty("var(--text2)")}>Closed</span>;
+    if (s === "error")    return <span className="itsm-badge" style={sty("var(--crit)")}>Status error</span>;
+    if (s === "local")    return <span className="itsm-badge" style={sty("var(--warn)")}>Local only</span>;
+    if (s)                return <span className="itsm-badge" style={sty("var(--warn)")}>Awaiting approval</span>;
+    return <span className="itsm-badge" style={sty("var(--ok)")}>Submitted</span>;
+  }
+
   return (
-    <div className="itsm-form" style={{ opacity: .92 }}>
+    <div className="itsm-form" style={{ opacity: .98 }}>
       <div className="itsm-form-header">
         <div className={"itsm-icon " + (isCR ? "cr" : "inc")}>{isCR ? "📋" : "🚨"}</div>
         <div style={{ flex: 1 }}>
           <h4>{label} Submitted</h4>
           <div style={{ fontSize: 12, color: "var(--ok)", marginTop: 2, fontWeight: 600 }}>{info.ticketId}</div>
         </div>
-        <span className="itsm-badge" style={{ background: "color-mix(in srgb,var(--ok) 20%,transparent)", color: "var(--ok)" }}>Submitted</span>
+        {statusBadge()}
       </div>
-      {info.title && <div style={{ padding: "8px 16px 4px", fontSize: 12, color: "var(--text2)" }}>{info.title}</div>}
-      {info.attachmentId && <div style={{ padding: "0 16px 4px", fontSize: 11, color: "var(--ok)" }}>📎 Pre-Assessment report attached</div>}
+
+      {info.title && <div style={{ padding: "8px 18px 4px", fontSize: 12, color: "var(--text2)" }}>{info.title}</div>}
+      {info.targetVersion && (
+        <div style={{ padding: "0 18px 4px", fontSize: 12, color: "var(--text)" }}>
+          OpenShift Cluster Upgrade: <strong>{info.fromVersion || "current"} → {info.targetVersion}</strong>
+        </div>
+      )}
+      {info.attachmentId && <div style={{ padding: "0 18px 4px", fontSize: 11, color: "var(--ok)" }}>📎 Pre-Assessment report attached</div>}
+
+      {/* Live status line */}
+      {status && status.stateLabel && status.status !== "error" && (
+        <div style={{ padding: "2px 18px 4px", fontSize: 11, color: "var(--text2)" }}>
+          State: <strong style={{ color: "var(--text)" }}>{status.stateLabel}</strong>
+          {status.approval && status.approval !== "n/a" ? ` · Approval: ${status.approval}` : ""}
+        </div>
+      )}
+      {status?.status === "error" && (
+        <div style={{ padding: "2px 18px 4px", fontSize: 11, color: "var(--crit)" }}>❌ {status.error}</div>
+      )}
+
       {isCR && (
-        <div style={{ padding: "4px 16px 14px" }}>
-          <div style={{ fontSize: 11, color: "var(--accent2)", marginBottom: 8 }}>
-            🔍 Once the change request is approved{info.targetVersion ? ` for upgrade to ${info.targetVersion}` : ""}, proceed to the dry-run + execute step.
-          </div>
-          {typeof onQuery === "function" && (
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button className="itsm-submit" style={{ flex: "0 0 auto", padding: "6px 14px", fontSize: 12 }}
-                onClick={() => onQuery("check CR status")}>
-                Check CR status
-              </button>
-              <button className="itsm-submit" style={{ flex: "0 0 auto", padding: "6px 14px", fontSize: 12 }}
-                onClick={() => onQuery(info.targetVersion ? `proceed with upgrade to ${info.targetVersion}` : "proceed with upgrade")}>
-                ⬆ Proceed with upgrade
-              </button>
+        <div style={{ padding: "8px 18px 14px" }}>
+          {canUpgradeFlow && !approved && !isLocal && (
+            <div style={{ fontSize: 11, color: "var(--accent2)", marginBottom: 8 }}>
+              🔒 Upgrade unlocks automatically once the change request is approved.
             </div>
           )}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button className="itsm-submit" style={{ flex: "0 0 auto", minWidth: 0, padding: "6px 14px", fontSize: 12 }}
+              onClick={checkStatus} disabled={checking}>
+              {checking ? "Checking…" : "Check CR status"}
+            </button>
+            {canUpgradeFlow && (
+              <button className="itsm-submit" style={{ flex: "0 0 auto", minWidth: 0, padding: "6px 14px", fontSize: 12 }}
+                onClick={() => setShowUpgrade(true)} disabled={!canUpgrade}
+                title={canUpgrade ? "" : "Available once the change request is approved"}>
+                ⬆ Proceed with upgrade
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Immediate dry-run + execute card, shown inline once approved */}
+      {showUpgrade && canUpgrade && info.targetVersion && (
+        <div style={{ padding: "0 18px 16px" }}>
+          <UpgradeExecuteCard
+            data={{ targetVersion: info.targetVersion, fromVersion: info.fromVersion, channel: info.channel, ticketId: info.ticketId, sysId: info.sysId }}
+            cluster={cluster} />
         </div>
       )}
     </div>

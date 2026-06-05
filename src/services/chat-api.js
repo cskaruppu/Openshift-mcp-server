@@ -219,6 +219,31 @@ function getTrackedCR(conversationId, cluster) {
   return entry;
 }
 
+// Resilient CR resolution for chat. The in-memory map is fast but volatile
+// (lost on restart, or never populated if conversationId wasn't passed at
+// submit time). Fall back to the persistent CR tracker so "check CR status"
+// works reliably and can also resolve an explicit CHG number from the message.
+async function resolveTrackedCR(conversationId, cluster, userMessage) {
+  const mem = getTrackedCR(conversationId, cluster);
+  if (mem && mem.sysId) return mem;
+  try {
+    const { getCR, listCRs } = await import("./cr-tracker.js");
+    const explicit = (userMessage.match(/CHG\d{7}/i) || [])[0] || (userMessage.match(/CR-[A-Z0-9]+/i) || [])[0];
+    if (explicit) {
+      const cr = await getCR(explicit);
+      if (cr) return cr;
+    }
+    const crs = await listCRs({ limit: 25 });
+    const pick =
+      crs.find((c) => c.conversationId === conversationId && (c.targetVersion || c.upgradeType)) ||
+      crs.find((c) => c.conversationId === conversationId) ||
+      crs.find((c) => c.targetVersion || c.upgradeType) ||
+      crs[0];
+    if (pick) return pick;
+  } catch { /* persistent tracker optional */ }
+  return mem || null;
+}
+
 // Map an NLU intent to the legacy "operation" string used by the response
 // handlers below, plus a few normalizations.
 // Common English words the NLU sometimes mistakes for resource/namespace names
@@ -14788,11 +14813,14 @@ export async function handleChatAPI(req, res) {
     //      "proceed with upgrade", "execute upgrade", "start the upgrade" ----
     const CR_STATUS_PAT = /\b(?:(?:check|status|track|monitor|poll)\s+(?:cr|change\s*request|ticket|CHG)|(?:cr|change\s*request|CHG)\s+(?:status|approved|rejected|state)|(?:is|has)\s+(?:the\s+)?(?:cr|change\s*request|ticket)\s+(?:been\s+)?(?:approved|rejected)|(?:proceed|execute|start|run|initiate|trigger)\s+(?:(?:the|with)\s+)?(?:(?:the|cluster)\s+)?(?:upgrade|cluster\s+upgrade)|(?:upgrade|go\s+ahead)\s+(?:the\s+)?cluster|CHG\d{7})\b/i;
     if (CR_STATUS_PAT.test(userMessage)) {
-      const trackedCR = getTrackedCR(conversationId, body.cluster);
+      const trackedCR = await resolveTrackedCR(conversationId, body.cluster, userMessage);
       const crNumberMatch = userMessage.match(/CHG\d{7}/i);
 
       // If user is asking about CR status (not explicitly asking to execute)
       const wantsExec = /(?:proceed|execute|start|run|initiate|trigger|go\s+ahead)\s+(?:(?:the|with)\s+)?(?:(?:the|cluster)\s+)?(?:upgrade|cluster)/i.test(userMessage);
+      // True only when the user explicitly references a change request — so a
+      // generic "upgrade the cluster" still falls through to the preflight path.
+      const mentionsCR = /\b(?:cr|change\s*request|ticket)\b|CHG\d{7}/i.test(userMessage);
 
       if (trackedCR && trackedCR.sysId) {
         try {
@@ -14945,6 +14973,25 @@ export async function handleChatAPI(req, res) {
             return json(res, 200, { reply, provider, contextKeys: ["upgrade", "execute"], cached: false, conversationId });
           }
         } catch { /* fall through */ }
+      }
+
+      // Explicit CR status query that we couldn't resolve — return a clear
+      // message instead of falling through to a generic resource lookup, which
+      // would mis-read "CR" as a pod name ("Pod Not Found: cr").
+      if (!wantsExec && mentionsCR) {
+        let reply;
+        if (trackedCR && !trackedCR.sysId) {
+          reply = `### Change Request ${trackedCR.ticketId}\n\nThis change request was saved locally (ServiceNow is not connected), so there is no approval workflow to poll.\n\nYou can proceed with the upgrade when ready — say **"proceed with upgrade${trackedCR.targetVersion ? ` to ${trackedCR.targetVersion}` : ""}"**.`;
+        } else {
+          reply = `### No Change Request Found\n\nI don't have a change request tracked for this conversation yet.\n\n- Raise one first — ask me to **"raise a change request for the upgrade"**, or\n- Tell me the CR number directly, e.g. **"check CHG0030045"**.`;
+        }
+        const provider = "built-in";
+        if (conversationId) histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+        if (wantsStream) {
+          sseStart(res); sseSend(res, { stage: "querying" }); sseSend(res, { delta: reply });
+          sseSend(res, { done: true, provider, conversationId }); sseEnd(res); return;
+        }
+        return json(res, 200, { reply, provider, contextKeys: ["itsm", "cr-status", "unresolved"], cached: false, conversationId });
       }
     }
 
