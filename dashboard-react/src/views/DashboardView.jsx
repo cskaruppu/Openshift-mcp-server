@@ -12,6 +12,7 @@ import { AppChangesWidget } from "../components/widgets/AppChangesWidget";
 import { ImageVulnsWidget } from "../components/widgets/ImageVulnsWidget";
 import { HealthTimelineWidget } from "../components/widgets/HealthTimelineWidget";
 import { ResourceOptimizationWidget } from "../components/widgets/ResourceOptimizationWidget";
+import { CapacityWidget } from "../components/widgets/CapacityWidget";
 import { EmergencyActionsWidget } from "../components/widgets/EmergencyActionsWidget";
 
 /**
@@ -21,7 +22,7 @@ import { EmergencyActionsWidget } from "../components/widgets/EmergencyActionsWi
  *   2. What needs attention       — active alerts & pods at risk
  *   3. Governance posture         — CIS / GitOps / DR scorecards
  *   4. Security & change risk     — image vulns, app changes
- *   5. Capacity & efficiency      — resource optimization
+ *   5. Capacity & utilization     — live CPU/mem/headroom + resource optimization
  *   6. Trends & topology          — health timeline, node topology, heatmap
  *   7. Operator actions           — emergency actions (last, deliberate)
  *
@@ -114,11 +115,14 @@ export function DashboardView() {
         </div>
       </section>
 
-      {/* ── 5. Capacity & Efficiency ── */}
+      {/* ── 5. Capacity & Resource Utilization ── */}
       <section className="dash-section">
         <div className="dash-section-header">
-          <h2 className="dash-section-title">Capacity &amp; Efficiency</h2>
+          <h2 className="dash-section-title">Capacity &amp; Resource Utilization</h2>
         </div>
+        <CapacityWidget />
+      </section>
+      <section className="dash-section">
         <ResourceOptimizationWidget />
       </section>
 

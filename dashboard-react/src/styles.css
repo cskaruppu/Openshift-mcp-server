@@ -335,6 +335,72 @@ body {
   grid-column: unset;
 }
 
+/* ── Capacity & Utilization widget ── */
+.cap-grid {
+  display: grid;
+  grid-template-columns: auto 1.2fr 1fr 1fr;
+  gap: 24px; align-items: start;
+}
+.cap-block { min-width: 0; }
+.cap-block-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--text2); margin-bottom: 12px;
+}
+.cap-gauges { display: flex; gap: 20px; }
+.cap-gauge { position: relative; text-align: center; width: 80px; }
+.cap-gauge-center {
+  position: absolute; top: 0; left: 0; width: 80px; height: 80px;
+  display: flex; align-items: center; justify-content: center; pointer-events: none;
+}
+.cap-gauge-val { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.cap-gauge-label { font-size: 12px; font-weight: 600; color: var(--text); margin-top: 6px; }
+.cap-gauge-sub { font-size: 10.5px; color: var(--text2); margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+.cap-hr { margin-bottom: 14px; }
+.cap-hr-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; gap: 8px; }
+.cap-hr-label { font-size: 12px; font-weight: 600; color: var(--text); }
+.cap-hr-val { font-size: 11px; color: var(--text2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cap-hr-free { font-weight: 700; }
+.cap-hr-track { height: 7px; border-radius: 4px; background: rgba(255,255,255,.06); overflow: hidden; }
+.cap-hr-fill { height: 100%; border-radius: 4px; transition: width .6s ease, background .4s; }
+.cap-note { font-size: 11px; color: var(--warn); margin-top: 8px; }
+
+.cap-chips { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cap-chip {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  border-radius: 9px; background: var(--bg-alt); border: 1px solid var(--border);
+}
+.cap-chip.hot { border-color: color-mix(in srgb, var(--chip-c) 50%, transparent); background: color-mix(in srgb, var(--chip-c) 10%, var(--bg-alt)); }
+.cap-chip-n {
+  font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums;
+  color: var(--text2); min-width: 20px; text-align: center;
+}
+.cap-chip.hot .cap-chip-n { color: var(--chip-c); }
+.cap-chip-k { font-size: 10.5px; color: var(--text2); line-height: 1.25; }
+
+.cap-cta-row { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
+.cap-cta {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: rgba(99,102,241,.1); border: 1px solid rgba(99,102,241,.3);
+  color: #a5b4fc; border-radius: 10px; padding: 9px 16px; cursor: pointer;
+  font-size: 12.5px; font-weight: 600; font-family: inherit; transition: all .15s;
+}
+.cap-cta:hover { background: rgba(99,102,241,.18); border-color: rgba(99,102,241,.5); color: #c7d2fe; }
+
+@media (max-width: 1100px) {
+  .cap-grid { grid-template-columns: 1fr 1fr; }
+  .cap-gauges { justify-content: flex-start; }
+}
+@media (max-width: 640px) {
+  .cap-grid { grid-template-columns: 1fr; }
+  .cap-chips { grid-template-columns: 1fr 1fr; }
+}
+.light-theme .cap-hr-track { background: rgba(0,0,0,.06); }
+.light-theme .cap-chip { background: #f8fafc; border-color: #e5e7eb; }
+@media (prefers-reduced-motion: reduce) {
+  .cap-gauge circle, .cap-hr-fill { transition: none !important; }
+}
+
 /* View panes (audit, etc.) */
 .view-pane { padding: 24px; }
 .view-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
