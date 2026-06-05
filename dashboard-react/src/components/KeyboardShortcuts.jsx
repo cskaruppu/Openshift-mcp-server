@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useViewStore } from "../store/viewStore";
 
 const SHORTCUTS = [
+  { keys: "Ctrl+K", desc: "Command palette" },
   { keys: "Ctrl+1", desc: "Dashboard" },
   { keys: "Ctrl+2", desc: "AI Chat" },
   { keys: "Ctrl+3", desc: "Audit" },

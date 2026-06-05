@@ -1993,6 +1993,79 @@ h3.widget-title {
 }
 
 /* ── Keyboard Shortcuts Overlay ── */
+/* ── Command palette (⌘K) ── */
+.cmdk-trigger {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: rgba(255,255,255,.05); border: 1px solid var(--border);
+  color: var(--text2); border-radius: 9px; padding: 6px 9px; cursor: pointer;
+  font-family: inherit; font-size: 12px; transition: all .15s;
+}
+.cmdk-trigger:hover { border-color: var(--accent2); color: var(--text); background: rgba(99,102,241,.1); }
+.cmdk-trigger-label { font-weight: 500; }
+.cmdk-trigger kbd {
+  font-family: inherit; font-size: 10.5px; font-weight: 600; color: var(--text2);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px;
+}
+.light-theme .cmdk-trigger { background: #fff; }
+@media (max-width: 900px) { .cmdk-trigger-label { display: none; } }
+
+.cmdk-overlay {
+  position: fixed; inset: 0; z-index: 100001;
+  background: rgba(0,0,0,.45); backdrop-filter: blur(3px);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 12vh; animation: cmdkFade .12s ease;
+}
+@keyframes cmdkFade { from { opacity: 0; } to { opacity: 1; } }
+.cmdk-panel {
+  width: 600px; max-width: 92vw; max-height: 70vh;
+  background: var(--card); border: 1px solid var(--border2); border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0,0,0,.5); overflow: hidden;
+  display: flex; flex-direction: column; animation: cmdkPop .14s cubic-bezier(.4,0,.2,1);
+}
+@keyframes cmdkPop { from { transform: translateY(-8px) scale(.98); opacity: 0; } to { transform: none; opacity: 1; } }
+.cmdk-input-row { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.cmdk-search-icon { color: var(--text2); flex-shrink: 0; }
+.cmdk-input {
+  flex: 1; background: none; border: none; outline: none; color: var(--text);
+  font-size: 15px; font-family: inherit;
+}
+.cmdk-input::placeholder { color: var(--text2); }
+.cmdk-esc { font-family: inherit; font-size: 10.5px; color: var(--text2); background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 2px 7px; }
+.cmdk-list { overflow-y: auto; padding: 6px; }
+.cmdk-list::-webkit-scrollbar { width: 8px; }
+.cmdk-list::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+.cmdk-empty { padding: 28px; text-align: center; color: var(--text2); font-size: 13px; }
+.cmdk-group { margin-bottom: 4px; }
+.cmdk-group-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--text2); padding: 8px 12px 4px;
+}
+.cmdk-item {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 9px 12px; border: none; background: none; cursor: pointer;
+  border-radius: 9px; color: var(--text); font-family: inherit; font-size: 13.5px; text-align: left;
+}
+.cmdk-item.active { background: rgba(99,102,241,.14); }
+.cmdk-item-icon {
+  width: 26px; height: 26px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 14px; border-radius: 7px; background: var(--bg-alt); color: var(--accent2);
+}
+.cmdk-item-label { flex: 1; font-weight: 500; }
+.cmdk-item-hint {
+  font-family: 'SF Mono', monospace; font-size: 11px; color: var(--text2);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 2px 7px;
+}
+.cmdk-footer {
+  display: flex; gap: 16px; padding: 9px 16px; border-top: 1px solid var(--border);
+  font-size: 11px; color: var(--text2);
+}
+.cmdk-footer kbd {
+  font-family: inherit; font-size: 10px; color: var(--text2);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; margin-right: 3px;
+}
+.light-theme .cmdk-item-icon { background: #f1f5f9; }
+@media (prefers-reduced-motion: reduce) { .cmdk-overlay, .cmdk-panel { animation: none; } }
+
 .kbd-overlay {
   position: fixed; inset: 0; z-index: 100000;
   background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center;

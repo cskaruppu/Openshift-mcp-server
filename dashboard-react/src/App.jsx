@@ -7,6 +7,7 @@ import { UserManagementPanel } from "./components/UserManagementPanel";
 import { AgentRegistryModal } from "./components/AgentRegistryModal";
 import { ToastStack } from "./components/ToastStack";
 import { KbdOverlay, useKeyboardShortcuts } from "./components/KeyboardShortcuts";
+import { CommandPalette } from "./components/CommandPalette";
 import { ClusterPickerView } from "./views/ClusterPickerView";
 import { DashboardView } from "./views/DashboardView";
 import { AuditView } from "./views/AuditView";
@@ -180,6 +181,15 @@ export default function App() {
                 title="Toggle theme"
                 dangerouslySetInnerHTML={{ __html: theme === "light" ? "&#x2600;" : "&#x263E;" }}
               />
+              <button
+                className="cmdk-trigger"
+                onClick={() => window.dispatchEvent(new Event("open-command-palette"))}
+                title="Command palette (Ctrl+K)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <span className="cmdk-trigger-label">Search</span>
+                <kbd>⌘K</kbd>
+              </button>
               <button className="icon-btn" onClick={() => setKbdOpen(true)} title="Keyboard shortcuts (Ctrl+/)">
                 &#x2328;
               </button>
@@ -204,6 +214,8 @@ export default function App() {
           <footer className="app-footer">
             Powered by <strong>TCS</strong> · &copy; {new Date().getFullYear()} Tata Consultancy Services. All rights reserved.
           </footer>
+
+          <CommandPalette />
         </div>
       )}
 
