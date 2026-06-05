@@ -47,6 +47,20 @@ export function parseSegments(text) {
 /*  Segment renderer                                                    */
 /* ------------------------------------------------------------------ */
 
+// Delegated click handler for the Copy button rendered inside code blocks
+// (renderMarkdown emits <button data-copy="..."> since it returns raw HTML).
+function handleMdClick(e) {
+  const btn = e.target.closest("[data-copy]");
+  if (!btn) return;
+  const txt = btn.getAttribute("data-copy")
+    .replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  navigator.clipboard.writeText(txt).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = "Copied";
+    setTimeout(() => { btn.textContent = orig; }, 1500);
+  }).catch(() => {});
+}
+
 export function ChatMessageBody({ text, cluster, onQuery }) {
   const segments = parseSegments(text);
   return (
@@ -56,6 +70,7 @@ export function ChatMessageBody({ text, cluster, onQuery }) {
           if (!seg.text.trim()) return null;
           return (
             <div key={i} className="chat-bubble md-content"
+              onClick={handleMdClick}
               dangerouslySetInnerHTML={{ __html: renderMarkdown(seg.text) }} />
           );
         }

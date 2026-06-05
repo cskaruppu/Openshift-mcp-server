@@ -483,10 +483,14 @@ export function ChatView() {
     const currentToolCalls = [];
 
     try {
+      // The backend treats provider "none" as the built-in analysis path and
+      // resolves stored credentials for any real provider (azure/openai/...) so
+      // the request routes through MCP → the configured agentic AI LLM.
+      const wireProvider = activeProvider === "builtin" ? "none" : activeProvider;
       const res = await fetch(clusterUrl("/api/chat", cluster), {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream", "X-Cluster-Context": cluster },
-        body: JSON.stringify({ message: msg, conversationId: conv.conversationId, stream: true, provider: activeProvider, cluster }),
+        body: JSON.stringify({ message: msg, conversationId: conv.conversationId, stream: true, provider: wireProvider, cluster }),
         signal: ctrl.signal,
       });
 
@@ -530,7 +534,10 @@ export function ChatView() {
                 if (evt.conversationId) setConversationId(sendingCluster, evt.conversationId);
                 doneStages.add("parse"); doneStages.add("query"); doneStages.add("generate");
                 setCompletedStages(new Set(doneStages));
-                const resolvedProvider = evt.provider || activeProvider;
+                // Normalize the built-in identifiers back to "builtin" so the
+                // response window shows the correct provider identity badge.
+                const rawProv = evt.provider || activeProvider;
+                const resolvedProvider = (rawProv === "none" || rawProv === "built-in") ? "builtin" : rawProv;
                 setMsgMeta((prev) => ({
                   ...prev,
                   [msgIndexRef.current]: {
