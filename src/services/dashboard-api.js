@@ -959,13 +959,35 @@ export async function handleDashboardAPI(pathname, req, res) {
       // ---- Resource optimization widget ----
       case "/api/dashboard/optimization": {
         try {
-          const [pods, metricsData, nodes, pvcs, pvs] = await Promise.all([
+          const [pods, metricsData, nodes, pvcs, pvs, replicasets] = await Promise.all([
             ocpGet("/api/v1/pods"),
             ocpGet("/apis/metrics.k8s.io/v1beta1/pods").catch(() => ({ items: [] })),
             ocpGet("/api/v1/nodes"),
             ocpGet("/api/v1/persistentvolumeclaims").catch(() => ({ items: [] })),
             ocpGet("/api/v1/persistentvolumes").catch(() => ({ items: [] })),
+            ocpGet("/apis/apps/v1/replicasets").catch(() => ({ items: [] })),
           ]);
+
+          // Map ReplicaSet → its owning Deployment so a pod's right-size patch
+          // targets the actual workload, not the ephemeral pod.
+          const rsOwnerMap = {};
+          for (const rs of (replicasets.items || [])) {
+            const owner = (rs.metadata?.ownerReferences || [])[0];
+            if (owner) rsOwnerMap[`${rs.metadata.namespace}/${rs.metadata.name}`] = { kind: owner.kind, name: owner.name };
+          }
+          // Resolve a pod to its top-level workload {kind, name} or null.
+          const resolveWorkload = (pod) => {
+            const owner = (pod.metadata?.ownerReferences || [])[0];
+            if (!owner) return null;
+            if (owner.kind === "ReplicaSet") {
+              const dep = rsOwnerMap[`${pod.metadata.namespace}/${owner.name}`];
+              return dep ? { kind: dep.kind, name: dep.name } : null;
+            }
+            if (["StatefulSet", "DaemonSet", "DeploymentConfig"].includes(owner.kind)) {
+              return { kind: owner.kind, name: owner.name };
+            }
+            return null;
+          };
           const podItems = (pods.items || []).filter(
             (p) => p.status?.phase === "Running" && !p.metadata.namespace?.startsWith("openshift-") && !p.metadata.namespace?.startsWith("kube-")
           );
@@ -1007,6 +1029,7 @@ export async function handleDashboardAPI(pathname, req, res) {
                 name: p.metadata.name,
                 ns: p.metadata.namespace,
                 type: "over",
+                workload: resolveWorkload(p),
                 cpuReq: Math.round(reqCpu * 1000),
                 cpuUsed: Math.round(usage.cpu * 1000),
                 memReq: Math.round(reqMem / (1024 * 1024)),
@@ -1022,6 +1045,7 @@ export async function handleDashboardAPI(pathname, req, res) {
                 name: p.metadata.name,
                 ns: p.metadata.namespace,
                 type: "under",
+                workload: resolveWorkload(p),
                 cpuReq: Math.round(reqCpu * 1000),
                 cpuUsed: Math.round(usage.cpu * 1000),
                 memReq: Math.round(reqMem / (1024 * 1024)),

@@ -10557,6 +10557,35 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
     return { reply: "```\n" + renderMetrics().slice(0, 3000) + "\n```", contextKeys: ["slash", "metrics"] };
   }
 
+  // --- Right-size: emit interactive apply cards from real optimization data ---
+  if (cmd === "rightsize" || cmd === "right-size") {
+    try {
+      const { handleDashboardAPI } = await import("./dashboard-api.js");
+      // Capture the optimization JSON without an HTTP round-trip — reuses the
+      // exact same analysis the dashboard uses (no logic duplication).
+      let captured = null;
+      const fakeRes = { writeHead() {}, setHeader() {}, end(b) { captured = b; } };
+      await handleDashboardAPI("/api/dashboard/optimization", { method: "GET" }, fakeRes);
+      const data = captured ? JSON.parse(captured) : {};
+      const problems = (data.topProblems || []).filter((p) => p.type === "over" || p.type === "under");
+      if (problems.length === 0) {
+        return { reply: "### Right-sizing\n[OK] No workloads need right-sizing — requests are well matched to actual usage.", contextKeys: ["slash", "rightsize"] };
+      }
+      const lines = [
+        "### Right-sizing recommendations",
+        "",
+        `I analyzed running workloads and found **${problems.length}** that should be right-sized. Each card shows the current vs recommended requests — dry-run first, then apply through the guardrailed execution path.`,
+        "",
+      ];
+      for (const p of problems.slice(0, 8)) {
+        lines.push("@@RIGHTSIZE|" + JSON.stringify(p) + "@@");
+      }
+      return { reply: lines.join("\n"), contextKeys: ["slash", "rightsize"] };
+    } catch (e) {
+      return { reply: `[ERROR] Right-sizing analysis unavailable: ${e.message}`, contextKeys: ["slash", "rightsize"] };
+    }
+  }
+
   // --- Plan: decompose a goal into executable steps (Pillar 4) ---
   if (cmd === "plan") {
     const goal = rest.join(" ").trim();

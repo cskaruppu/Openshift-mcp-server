@@ -8,11 +8,11 @@ import { showToast } from "../store/toastStore";
 /* ------------------------------------------------------------------ */
 
 const TOKEN_RE =
-  /@@(PREFLIGHT_REPORT|ITSM_FORM|ITSM_SUBMITTED|UPGRADE_EXECUTE|FIX_PROPOSAL|CLARIFY|POD_ISSUE|APPLY_BTN|SUMMARY|SCORE|GRADE|SEC_FIX_CMD|VIEW_MORE|VIEW_MORE_REC|PLAN|REASONING|KPI)\|([\s\S]*?)@@/;
+  /@@(PREFLIGHT_REPORT|ITSM_FORM|ITSM_SUBMITTED|UPGRADE_EXECUTE|FIX_PROPOSAL|CLARIFY|POD_ISSUE|APPLY_BTN|SUMMARY|SCORE|GRADE|SEC_FIX_CMD|RIGHTSIZE|VIEW_MORE|VIEW_MORE_REC|PLAN|REASONING|KPI)\|([\s\S]*?)@@/;
 
 const JSON_TOKENS = new Set([
   "PREFLIGHT_REPORT", "ITSM_FORM", "ITSM_SUBMITTED", "UPGRADE_EXECUTE",
-  "FIX_PROPOSAL", "CLARIFY", "PLAN", "REASONING",
+  "FIX_PROPOSAL", "CLARIFY", "PLAN", "REASONING", "RIGHTSIZE",
 ]);
 
 function safeJson(raw) {
@@ -89,6 +89,7 @@ function TokenCard({ type, data, cluster, onQuery }) {
     case "FIX_PROPOSAL":     return data ? <FixProposal diag={data} cluster={cluster} /> : null;
     case "CLARIFY":          return data ? <ClarifyCard data={data} onQuery={onQuery} /> : null;
     case "SEC_FIX_CMD":      return <SecFixCmd cmd={data} cluster={cluster} />;
+    case "RIGHTSIZE":        return data ? <RightSizeCard rec={data} cluster={cluster} /> : null;
     case "POD_ISSUE":        return <PodIssue raw={data} />;
     case "APPLY_BTN":        return <ApplyBtn raw={data} cluster={cluster} />;
     case "SUMMARY":          return <SummaryBar raw={data} />;
@@ -534,6 +535,92 @@ function SecFixCmd({ cmd, cluster }) {
           {result.running ? <span>⏳ {result.text}</span> : <pre className={result.cls}>{result.text}</pre>}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  RIGHTSIZE — interactive right-sizing card with dry-run + apply       */
+/* ------------------------------------------------------------------ */
+
+function RightSizeCard({ rec, cluster }) {
+  const [result, setResult] = useState(null); // { running, cls, text }
+  const wl = rec.workload; // { kind, name } | null
+  const cli = "oc"; // works as kubectl too; oc is a superset on OpenShift
+
+  // Build the right-sizing command against the owning workload.
+  const command = wl
+    ? `${cli} set resources ${wl.kind.toLowerCase()}/${wl.name} -n ${rec.ns} ` +
+      `--requests=cpu=${rec.cpuRecommend}m,memory=${rec.memRecommend}Mi`
+    : null;
+
+  async function run(dryRun) {
+    if (!command) return;
+    if (!dryRun && !window.confirm(`Apply right-sizing to ${wl.kind}/${wl.name} in ${rec.ns}?\n\n${command}\n\nThis updates resource requests on the live workload. Proceed?`)) return;
+    setResult({ running: true, text: dryRun ? "Running server-side dry run…" : "Applying to cluster…" });
+    try {
+      const res = await fetch(clusterUrl("/api/alerts/execute-fix", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command: dryRun ? command + " --dry-run=server" : command, dryRun }),
+      });
+      const d = await res.json();
+      if (d.blocked) { setResult({ cls: "t-err", text: "Blocked by guardrails: " + (d.reason || "unknown") }); return; }
+      const out = d.output || d.stdout || d.result || (d.success ? "Applied successfully." : d.error || "No output");
+      setResult({ cls: d.success === false ? "t-err" : "t-ok", text: String(out).slice(0, 2000) });
+    } catch (e) {
+      setResult({ cls: "t-err", text: "Network error: " + e.message });
+    }
+  }
+
+  const overProvisioned = rec.type === "over";
+  return (
+    <div className="rsz-card">
+      <div className="rsz-head">
+        <span className={"rsz-tag " + (overProvisioned ? "over" : "under")}>
+          {overProvisioned ? "Over-provisioned" : "Under-provisioned"}
+        </span>
+        <span className="rsz-target">
+          {wl ? `${wl.kind}/${wl.name}` : rec.name} <span className="rsz-ns">· {rec.ns}</span>
+        </span>
+      </div>
+
+      <div className="rsz-rows">
+        <RszRow label="CPU" used={`${rec.cpuUsed}m`} from={`${rec.cpuReq}m`} to={`${rec.cpuRecommend}m`} />
+        <RszRow label="Memory" used={`${rec.memUsed}Mi`} from={`${rec.memReq}Mi`} to={`${rec.memRecommend}Mi`} />
+      </div>
+
+      {command ? (
+        <>
+          <div className="rsz-cmd"><span className="rsz-cmd-prompt">$</span> {command}</div>
+          <div className="rsz-actions">
+            <button className="rsz-btn dry" onClick={() => run(true)} disabled={result?.running}>Dry Run</button>
+            <button className="rsz-btn apply" onClick={() => run(false)} disabled={result?.running}>Apply</button>
+            <button className="rsz-btn ghost" onClick={() => { navigator.clipboard?.writeText(command); showToast("Command copied", "ok"); }}>Copy</button>
+          </div>
+        </>
+      ) : (
+        <div className="rsz-note">Couldn’t resolve the owning workload for this pod — apply manually via its Deployment/StatefulSet.</div>
+      )}
+
+      {result && (
+        <div className={"aic-fix-result " + (result.running ? "running" : "")}>
+          {result.running ? <span>⏳ {result.text}</span> : <pre className={result.cls}>{result.text}</pre>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RszRow({ label, used, from, to }) {
+  return (
+    <div className="rsz-row">
+      <span className="rsz-row-label">{label}</span>
+      <span className="rsz-row-used">using {used}</span>
+      <span className="rsz-row-change">
+        <span className="rsz-from">{from}</span>
+        <span className="rsz-arrow">→</span>
+        <span className="rsz-to">{to}</span>
+      </span>
     </div>
   );
 }

@@ -129,19 +129,10 @@ export function CapacityWidget() {
     };
   }, [summary, nm, opt, issues, nodes]);
 
-  // Feed the agent: hand the capacity picture to the AI chat for right-sizing.
+  // Feed the agent: jump to chat with the deterministic /rightsize command,
+  // which returns interactive apply cards built from live optimization data.
   function askAI() {
-    const v = view;
-    const lines = [
-      "Analyze this cluster's capacity and recommend right-sizing actions.",
-      v.cpuPct != null ? `CPU utilization ${v.cpuPct}% (${v.cpuReq ?? "?"}% requested, ${v.cpuHeadroom ?? "?"}% headroom).` : "",
-      v.memPct != null ? `Memory utilization ${v.memPct}% (${v.memReq ?? "?"}% requested, ${v.memHeadroom ?? "?"}% headroom).` : "",
-      v.noLimits != null ? `${v.noLimits} pods have no resource limits.` : "",
-      (v.reclaimCpu || v.reclaimMemGi) ? `Reclaimable: ~${v.reclaimCpu || 0}m CPU and ${v.reclaimMemGi || 0}Gi memory.` : "",
-      `Pod failures — CrashLoopBackOff ${v.fail.crash}, OOMKilled ${v.fail.oom}, ImagePullBackOff ${v.fail.imgpull}, ErrImagePull ${v.fail.errimg}.`,
-      "Which workloads should I right-size, and what are the recommended requests/limits?",
-    ].filter(Boolean);
-    setSeed(cluster, lines.join(" "));
+    setSeed(cluster, "/rightsize");
     setActiveView("chat");
   }
 
