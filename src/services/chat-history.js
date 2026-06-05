@@ -307,6 +307,46 @@ export async function logExecutedAction({
   );
 }
 
+/** Replace all messages in a conversation (bulk persist from frontend). */
+export async function replaceAllMessages(conversationId, messages, cluster) {
+  if (!conversationId || !Array.isArray(messages)) return false;
+
+  await query(
+    `INSERT INTO conversations (id, title, cluster) VALUES ($1, $2, $3)
+     ON CONFLICT (id) DO NOTHING`,
+    [conversationId, "New chat", cluster || "local"]
+  );
+
+  await query(`DELETE FROM messages WHERE conversation_id = $1`, [conversationId]);
+
+  for (const m of messages) {
+    await query(
+      `INSERT INTO messages (conversation_id, role, content, html, provider)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [conversationId, m.role || "user", m.content || m.text || "", m.html || null, m.provider || null]
+    );
+  }
+
+  const firstUser = messages.find((m) => m.role === "user");
+  if (firstUser) {
+    await query(
+      `UPDATE conversations
+          SET title = CASE
+                        WHEN title = 'New chat' OR title IS NULL OR title = ''
+                        THEN $2
+                        ELSE title
+                      END,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [conversationId, truncateTitle(firstUser.content || firstUser.text || "")]
+    );
+  } else {
+    await query(`UPDATE conversations SET updated_at = NOW() WHERE id = $1`, [conversationId]);
+  }
+
+  return true;
+}
+
 function truncateTitle(s) {
   if (!s) return "New chat";
   const t = String(s).replace(/\s+/g, " ").trim();

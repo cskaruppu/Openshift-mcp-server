@@ -275,7 +275,7 @@ export function ChatView() {
     const rest = filtered.filter((c) => !c.starred);
     const buckets = new Map();
     for (const c of rest) {
-      const g = timeGroup(c.updated_at || c.created_at);
+      const g = timeGroup(c.updatedAt || c.updated_at || c.createdAt || c.created_at);
       if (!buckets.has(g.label)) buckets.set(g.label, { label: g.label, order: g.order, items: [] });
       buckets.get(g.label).items.push(c);
     }
@@ -284,6 +284,11 @@ export function ChatView() {
   }, [savedChats, sidebarSearch]);
 
   const totalChats = savedChats.length;
+
+  const activeCRs = useMemo(
+    () => allCRs.filter((c) => !/(cancel|dismiss)/i.test(c.status || "")),
+    [allCRs]
+  );
 
   const filteredSlash = useMemo(() => {
     if (!slashFilter) return SLASH_COMMANDS;
@@ -419,7 +424,10 @@ export function ChatView() {
       await fetch(clusterUrl(`/api/chats/${chatId}/messages`, cluster), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: msgs }),
+        body: JSON.stringify({
+          messages: msgs.map((m) => ({ role: m.role, content: m.text || "" })),
+          cluster,
+        }),
       });
     } catch { /* silent */ }
   }
@@ -1109,17 +1117,17 @@ export function ChatView() {
                 {/* Change Requests (ServiceNow) */}
                 <div className="ac-rp-section">
                   <div className="ac-rp-section-head">
-                    <span className="ac-rp-section-title" style={{ color: "#3b82f6" }}>Change Requests ({allCRs.length})</span>
+                    <span className="ac-rp-section-title" style={{ color: "#3b82f6" }}>Change Requests ({activeCRs.length})</span>
                     <button className={"ac-rp-sync-btn" + (crSyncing ? " spinning" : "")} onClick={syncAllPendingCRs} disabled={crSyncing} title="Pull latest statuses from ServiceNow">
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
                       {crSyncing ? "Syncing" : "Sync"}
                     </button>
                   </div>
-                  {allCRs.length === 0 ? (
+                  {activeCRs.length === 0 ? (
                     <p className="ac-rp-empty">No change requests yet. Ask me to create or modify a workload and the ServiceNow CR will appear here — with options to verify status or cancel.</p>
                   ) : (
                     <div className="ac-rp-list">
-                      {allCRs.map((cr) => renderCRCard(cr))}
+                      {activeCRs.map((cr) => renderCRCard(cr))}
                     </div>
                   )}
                 </div>
@@ -1177,15 +1185,15 @@ export function ChatView() {
                   </button>
                 </div>
                 <div className="ac-rp-snow-stats">
-                  <div className="ac-rp-snow-stat"><span className="ac-rp-snow-val">{allCRs.length}</span><label>Total CRs</label></div>
+                  <div className="ac-rp-snow-stat"><span className="ac-rp-snow-val">{activeCRs.length}</span><label>Active</label></div>
                   <div className="ac-rp-snow-stat"><span className="ac-rp-snow-val">{pendingCRs.length}</span><label>Open</label></div>
-                  <div className="ac-rp-snow-stat"><span className="ac-rp-snow-val">{allCRs.filter((c) => /(implement|closed|complete)/.test((c.status || "").toLowerCase())).length}</span><label>Done</label></div>
+                  <div className="ac-rp-snow-stat"><span className="ac-rp-snow-val">{activeCRs.filter((c) => /(implement|closed|complete)/.test((c.status || "").toLowerCase())).length}</span><label>Done</label></div>
                 </div>
-                {allCRs.length === 0 ? (
+                {activeCRs.length === 0 ? (
                   <p className="ac-rp-empty">No ServiceNow change requests yet. CRs created through chat will appear here, with options to verify status or cancel.</p>
                 ) : (
                   <div className="ac-rp-list">
-                    {allCRs.map((cr) => renderCRCard(cr))}
+                    {activeCRs.map((cr) => renderCRCard(cr))}
                   </div>
                 )}
               </div>

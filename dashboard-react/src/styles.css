@@ -1191,16 +1191,8 @@ h3.widget-title {
   font-size: 11px;
   color: var(--text2);
   background: var(--bg-deep);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.app-footer-left { display: inline-flex; align-items: center; gap: 4px; }
-.app-footer-right { opacity: .85; white-space: nowrap; }
-@media (max-width: 640px) {
-  .app-footer { flex-direction: column; align-items: flex-start; gap: 4px; }
-  .app-footer-right { white-space: normal; }
+  text-align: center;
+  opacity: .85;
 }
 
 /* Full-width widgets span the whole grid */

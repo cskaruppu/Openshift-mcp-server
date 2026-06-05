@@ -102,6 +102,7 @@ import {
   updateMessage,
   replaceMessageContent,
   addMessage,
+  replaceAllMessages,
   isHistoryEnabled,
 } from "./services/chat-history.js";
 import { initDb, query as dbQuery, isEnabled as dbEnabled, saveClusterSnapshot, loadClusterSnapshot, loadAllClusterSnapshots, deleteClusterSnapshot } from "./utils/db.js";
@@ -1420,6 +1421,10 @@ async function handleChatHistoryAPI(url, req, res) {
     if (req.method === "POST") {
       try {
         const body = await readJsonBody(req);
+        if (Array.isArray(body.messages)) {
+          const ok = await replaceAllMessages(chatId, body.messages, body.cluster);
+          return sendJson(res, ok ? 200 : 400, { success: ok });
+        }
         if (!body.role || !body.content) return sendJson(res, 400, { error: "role and content required" });
         const result = await addMessage(chatId, {
           role: body.role,
