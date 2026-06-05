@@ -10586,6 +10586,61 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
     }
   }
 
+  // --- Triage: emit interactive fix cards for failing pods ---
+  if (cmd === "triage") {
+    try {
+      const { handleDashboardAPI } = await import("./dashboard-api.js");
+      let captured = null;
+      const fakeRes = { writeHead() {}, setHeader() {}, end(b) { captured = b; } };
+      await handleDashboardAPI("/api/pods/issues", { method: "GET" }, fakeRes);
+      const pods = captured ? JSON.parse(captured) : [];
+      const parseMi = (s) => {
+        if (!s) return 0;
+        const m = String(s).match(/^(\d+(?:\.\d+)?)\s*(Gi|Mi|G|M|Ki|K)?$/i);
+        if (!m) return 0;
+        const n = parseFloat(m[1]); const u = (m[2] || "Mi").toLowerCase();
+        if (u === "gi" || u === "g") return Math.round(n * 1024);
+        if (u === "ki" || u === "k") return Math.round(n / 1024);
+        return Math.round(n);
+      };
+      const cards = [];
+      for (const p of pods) {
+        const wl = p.workload; // {kind,name} | null
+        for (const it of (p.issues || [])) {
+          const reason = String(it.reason || "");
+          let fixKind = null, memNew = null;
+          if (/OOMKilled/i.test(reason)) {
+            fixKind = "memory";
+            const cur = parseMi(it.memLimit) || parseMi(it.memReq) || 256;
+            memNew = Math.max(128, cur * 2);
+          } else if (/CrashLoopBackOff/i.test(reason) || /restarts/i.test(reason)) {
+            fixKind = "restart";
+          } else if (/ImagePullBackOff|ErrImagePull/i.test(reason)) {
+            fixKind = "investigate";
+          } else continue;
+          cards.push({
+            pod: p.name, ns: p.namespace, workload: wl, container: it.container,
+            reason, restarts: it.restarts, fixKind,
+            memLimit: it.memLimit || "", memNew, image: it.image || "",
+          });
+        }
+      }
+      if (cards.length === 0) {
+        return { reply: "### Pod triage\n[OK] No failing pods — nothing to triage.", contextKeys: ["slash", "triage"] };
+      }
+      const lines = [
+        "### Pod failure triage",
+        "",
+        `Found **${cards.length}** failing container${cards.length === 1 ? "" : "s"}. Each card proposes a remediation — dry-run, then apply and verify through the guardrailed path.`,
+        "",
+      ];
+      for (const c of cards.slice(0, 10)) lines.push("@@TRIAGE|" + JSON.stringify(c) + "@@");
+      return { reply: lines.join("\n"), contextKeys: ["slash", "triage"] };
+    } catch (e) {
+      return { reply: `[ERROR] Triage unavailable: ${e.message}`, contextKeys: ["slash", "triage"] };
+    }
+  }
+
   // --- Plan: decompose a goal into executable steps (Pillar 4) ---
   if (cmd === "plan") {
     const goal = rest.join(" ").trim();

@@ -345,7 +345,14 @@ body {
 .cap-block-title {
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
   color: var(--text2); margin-bottom: 12px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
 }
+.cap-block-action {
+  background: none; border: none; color: var(--accent2); cursor: pointer;
+  font-size: 10.5px; font-weight: 700; text-transform: none; letter-spacing: 0;
+  font-family: inherit; padding: 2px 4px; border-radius: 5px; transition: all .15s;
+}
+.cap-block-action:hover { background: rgba(59,130,246,.12); }
 .cap-gauges { display: flex; gap: 20px; }
 .cap-gauge { position: relative; text-align: center; width: 80px; }
 .cap-gauge-center {
@@ -3307,6 +3314,24 @@ h3.widget-title {
 }
 .rsz-progress { color: var(--text2); font-size: 12px; }
 .aic-fix-result pre.t-warn { color: var(--warn); }
+
+/* Triage-specific */
+.rsz-card.triage { border-left-color: var(--crit); }
+.rsz-card.triage.verified { border-left-color: var(--ok); }
+.trg-reason {
+  font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+  padding: 3px 8px; border-radius: 5px;
+}
+.trg-reason.crit { background: rgba(239,68,68,.16); color: #ef4444; }
+.trg-reason.warn { background: rgba(245,158,11,.16); color: #f59e0b; }
+.trg-restarts {
+  font-size: 10.5px; font-weight: 700; color: #f59e0b;
+  background: rgba(245,158,11,.12); padding: 2px 7px; border-radius: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.trg-blurb { font-size: 12px; color: var(--text2); line-height: 1.5; margin-bottom: 10px; }
+.trg-action { font-size: 12.5px; color: var(--text); margin-bottom: 8px; }
+.trg-action strong { color: var(--ok); }
 .light-theme .rsz-cmd { background: #f1f5f9; }
 
 /* Pod issue / apply / clarify / summary / score / grade */

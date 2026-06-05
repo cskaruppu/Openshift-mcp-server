@@ -686,7 +686,23 @@ export async function handleDashboardAPI(pathname, req, res) {
 
       // ---- Pods with issues ----
       case "/api/pods/issues": {
-        const pods = await ocpGet("/api/v1/pods");
+        const [pods, podIssueRs] = await Promise.all([
+          ocpGet("/api/v1/pods"),
+          ocpGet("/apis/apps/v1/replicasets").catch(() => ({ items: [] })),
+        ]);
+        // ReplicaSet → owning Deployment, so a fix targets the real workload.
+        const piRsMap = {};
+        for (const rs of (podIssueRs.items || [])) {
+          const o = (rs.metadata?.ownerReferences || [])[0];
+          if (o) piRsMap[`${rs.metadata.namespace}/${rs.metadata.name}`] = { kind: o.kind, name: o.name };
+        }
+        const piResolveWorkload = (pod) => {
+          const o = (pod.metadata?.ownerReferences || [])[0];
+          if (!o) return null;
+          if (o.kind === "ReplicaSet") return piRsMap[`${pod.metadata.namespace}/${o.name}`] || null;
+          if (["StatefulSet", "DaemonSet", "DeploymentConfig"].includes(o.kind)) return { kind: o.kind, name: o.name };
+          return null;
+        };
         const issues = (pods.items || [])
           .filter((p) => {
             const phase = p.status?.phase;
@@ -714,9 +730,8 @@ export async function handleDashboardAPI(pathname, req, res) {
                 const memLimit = (p.spec?.containers || []).find(
                   (sc) => sc.name === c.name
                 )?.resources?.limits?.memory || "";
-                const memReq = (p.spec?.containers || []).find(
-                  (sc) => sc.name === c.name
-                )?.resources?.requests?.memory || "";
+                const specC = (p.spec?.containers || []).find((sc) => sc.name === c.name);
+                const memReq = specC?.resources?.requests?.memory || "";
                 return {
                   container: c.name,
                   reason:
@@ -730,6 +745,7 @@ export async function handleDashboardAPI(pathname, req, res) {
                   lastExitCode: c.lastState?.terminated?.exitCode ?? null,
                   memLimit,
                   memReq,
+                  image: specC?.image || "",
                 };
               });
             const podAge = p.metadata?.creationTimestamp
@@ -746,6 +762,7 @@ export async function handleDashboardAPI(pathname, req, res) {
               podAgeHours: podAge,
               ownerKind,
               ownerName,
+              workload: piResolveWorkload(p),
               issues: problems,
             };
           });

@@ -39,6 +39,7 @@ const SLASH_COMMANDS = [
   { cmd: "/cost",            desc: "Analyze workload cost efficiency",       cat: "intelligence" },
   { cmd: "/topology",        desc: "Service dependency map for a namespace", cat: "intelligence" },
   { cmd: "/rightsize",       desc: "Right-size workloads with one-click apply", cat: "intelligence" },
+  { cmd: "/triage",          desc: "Triage failing pods with one-click fixes", cat: "intelligence" },
 ];
 
 const CAT_COLORS = { general: "#94a3b8", cluster: "#3b82f6", security: "#ef4444", intelligence: "#8b5cf6" };

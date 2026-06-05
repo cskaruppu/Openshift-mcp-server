@@ -136,6 +136,14 @@ export function CapacityWidget() {
     setActiveView("chat");
   }
 
+  // Hand failing pods to the agent for one-click triage fixes.
+  function triage() {
+    setSeed(cluster, "/triage");
+    setActiveView("chat");
+  }
+
+  const totalFailures = view.fail.crash + view.fail.oom + view.fail.imgpull + view.fail.errimg;
+
   const failItems = [
     { k: "CrashLoopBackOff", n: view.fail.crash, c: "#ef4444" },
     { k: "OOMKilled", n: view.fail.oom, c: "#f97316" },
@@ -186,7 +194,12 @@ export function CapacityWidget() {
 
           {/* Pod failures by reason */}
           <div className="cap-block">
-            <div className="cap-block-title">Pod Failures</div>
+            <div className="cap-block-title">
+              Pod Failures
+              {totalFailures > 0 && (
+                <button className="cap-block-action" onClick={triage}>Triage →</button>
+              )}
+            </div>
             <div className="cap-chips">
               {failItems.map((f) => (
                 <div key={f.k} className={"cap-chip" + (f.n > 0 ? " hot" : "")} style={f.n > 0 ? { "--chip-c": f.c } : {}}>

@@ -8,11 +8,11 @@ import { showToast } from "../store/toastStore";
 /* ------------------------------------------------------------------ */
 
 const TOKEN_RE =
-  /@@(PREFLIGHT_REPORT|ITSM_FORM|ITSM_SUBMITTED|UPGRADE_EXECUTE|FIX_PROPOSAL|CLARIFY|POD_ISSUE|APPLY_BTN|SUMMARY|SCORE|GRADE|SEC_FIX_CMD|RIGHTSIZE|VIEW_MORE|VIEW_MORE_REC|PLAN|REASONING|KPI)\|([\s\S]*?)@@/;
+  /@@(PREFLIGHT_REPORT|ITSM_FORM|ITSM_SUBMITTED|UPGRADE_EXECUTE|FIX_PROPOSAL|CLARIFY|POD_ISSUE|APPLY_BTN|SUMMARY|SCORE|GRADE|SEC_FIX_CMD|RIGHTSIZE|TRIAGE|VIEW_MORE|VIEW_MORE_REC|PLAN|REASONING|KPI)\|([\s\S]*?)@@/;
 
 const JSON_TOKENS = new Set([
   "PREFLIGHT_REPORT", "ITSM_FORM", "ITSM_SUBMITTED", "UPGRADE_EXECUTE",
-  "FIX_PROPOSAL", "CLARIFY", "PLAN", "REASONING", "RIGHTSIZE",
+  "FIX_PROPOSAL", "CLARIFY", "PLAN", "REASONING", "RIGHTSIZE", "TRIAGE",
 ]);
 
 function safeJson(raw) {
@@ -90,6 +90,7 @@ function TokenCard({ type, data, cluster, onQuery }) {
     case "CLARIFY":          return data ? <ClarifyCard data={data} onQuery={onQuery} /> : null;
     case "SEC_FIX_CMD":      return <SecFixCmd cmd={data} cluster={cluster} />;
     case "RIGHTSIZE":        return data ? <RightSizeCard rec={data} cluster={cluster} /> : null;
+    case "TRIAGE":           return data ? <TriageCard t={data} cluster={cluster} onQuery={onQuery} /> : null;
     case "POD_ISSUE":        return <PodIssue raw={data} />;
     case "APPLY_BTN":        return <ApplyBtn raw={data} cluster={cluster} />;
     case "SUMMARY":          return <SummaryBar raw={data} />;
@@ -659,6 +660,121 @@ function RszRow({ label, used, from, to }) {
         <span className="rsz-arrow">→</span>
         <span className="rsz-to">{to}</span>
       </span>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  TRIAGE — pod failure remediation (restart / memory / investigate)   */
+/* ------------------------------------------------------------------ */
+
+const TRIAGE_META = {
+  OOMKilled:         { tone: "crit", blurb: "Container was killed for exceeding its memory limit." },
+  CrashLoopBackOff:  { tone: "crit", blurb: "Container keeps crashing on start." },
+  ImagePullBackOff:  { tone: "warn", blurb: "Cluster can't pull the container image." },
+  ErrImagePull:      { tone: "warn", blurb: "Image pull failed — bad name, registry or pull secret." },
+};
+
+function TriageCard({ t, cluster, onQuery }) {
+  const [result, setResult] = useState(null);
+  const wl = t.workload; // {kind,name} | null
+  const meta = TRIAGE_META[t.reason] || { tone: "warn", blurb: "" };
+  const supportsSet = wl && ["Deployment", "StatefulSet", "DaemonSet"].includes(wl.kind);
+
+  let command = null, action = null;
+  if (t.fixKind === "restart" && wl) {
+    action = "Rolling restart";
+    command = `oc rollout restart ${wl.kind.toLowerCase()}/${wl.name} -n ${t.ns}`;
+  } else if (t.fixKind === "memory" && supportsSet && t.memNew) {
+    action = `Raise memory limit to ${t.memNew}Mi`;
+    command = `oc set resources ${wl.kind.toLowerCase()}/${wl.name} -n ${t.ns} --containers=${t.container} --limits=memory=${t.memNew}Mi`;
+  }
+
+  async function execFix(cmd, dryRun) {
+    const res = await fetch(clusterUrl("/api/alerts/execute-fix", cluster), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: cmd, dryRun }),
+    });
+    return res.json();
+  }
+
+  async function verify() {
+    setResult({ phase: "verifying", running: true, text: "Applied — verifying workload…" });
+    try {
+      const d = await execFix(`oc get ${wl.kind.toLowerCase()}/${wl.name} -n ${t.ns}`, true);
+      if (d.success !== false) {
+        const note = t.fixKind === "memory"
+          ? `memory limit is now ${t.memNew}Mi`
+          : "a fresh rollout was triggered";
+        setResult({ phase: "verified", verified: true, cls: "t-ok", text: `Verified — ${wl.kind}/${wl.name} is reachable and ${note}.` });
+      } else {
+        setResult({ phase: "verified", cls: "t-warn", text: "Applied, but the workload re-check did not confirm. Inspect it manually." });
+      }
+    } catch (e) {
+      setResult({ phase: "verified", cls: "t-warn", text: "Applied, but verification request failed: " + e.message });
+    }
+  }
+
+  async function run(dryRun) {
+    if (!command) return;
+    if (!dryRun && !window.confirm(`${action} on ${wl.kind}/${wl.name} in ${t.ns}?\n\n${command}\n\nProceed?`)) return;
+    setResult({ phase: dryRun ? "dry" : "apply", running: true, text: dryRun ? "Running server-side dry run…" : "Applying to cluster…" });
+    try {
+      const d = await execFix(command, dryRun);
+      if (d.blocked) { setResult({ cls: "t-err", text: "Blocked by guardrails: " + (d.reason || "unknown") }); return; }
+      if (d.success === false) { setResult({ cls: "t-err", text: String(d.output || d.stderr || d.error || "Command failed").slice(0, 2000) }); return; }
+      if (dryRun) setResult({ phase: "dry", cls: "t-ok", text: String(d.output || d.stdout || "Dry run passed — no errors.").slice(0, 2000) });
+      else await verify();
+    } catch (e) {
+      setResult({ cls: "t-err", text: "Network error: " + e.message });
+    }
+  }
+
+  const verified = result?.verified;
+  return (
+    <div className={"rsz-card triage" + (verified ? " verified" : "")}>
+      <div className="rsz-head">
+        <span className={"trg-reason " + meta.tone}>{t.reason}</span>
+        <span className="rsz-target">
+          {wl ? `${wl.kind}/${wl.name}` : t.pod} <span className="rsz-ns">· {t.ns}</span>
+        </span>
+        {t.restarts > 0 && <span className="trg-restarts">{t.restarts} restarts</span>}
+        {verified && <span className="rsz-verified-badge">✓ Applied &amp; Verified</span>}
+      </div>
+
+      {meta.blurb && <div className="trg-blurb">{meta.blurb}{t.container ? ` (container: ${t.container})` : ""}</div>}
+
+      {t.fixKind === "investigate" ? (
+        <>
+          {t.image && <div className="rsz-cmd"><span className="rsz-cmd-prompt">image</span> {t.image}</div>}
+          <div className="rsz-actions">
+            <button className="rsz-btn dry" onClick={() => onQuery?.(`Why is pod ${t.pod} in namespace ${t.ns} failing with ${t.reason}? Check its image ${t.image} and pull secrets.`)}>Investigate in chat</button>
+          </div>
+          <div className="rsz-note" style={{ marginTop: 8 }}>Image-pull failures need a corrected image or pull secret — not auto-applied.</div>
+        </>
+      ) : command ? (
+        <>
+          <div className="trg-action">Recommended: <strong>{action}</strong></div>
+          <div className="rsz-cmd"><span className="rsz-cmd-prompt">$</span> {command}</div>
+          {!verified && (
+            <div className="rsz-actions">
+              <button className="rsz-btn dry" onClick={() => run(true)} disabled={result?.running}>Dry Run</button>
+              <button className="rsz-btn apply" onClick={() => run(false)} disabled={result?.running}>Apply</button>
+              <button className="rsz-btn ghost" onClick={() => { navigator.clipboard?.writeText(command); showToast("Command copied", "ok"); }}>Copy</button>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="rsz-note">Couldn’t resolve a safe automated fix for this workload — investigate manually.</div>
+      )}
+
+      {result && (
+        <div className={"aic-fix-result " + (result.running ? "running" : "")}>
+          {result.running
+            ? <span className="rsz-progress">{result.phase === "verifying" ? "🔎" : "⏳"} {result.text}</span>
+            : <pre className={result.cls}>{result.text}</pre>}
+        </div>
+      )}
     </div>
   );
 }
