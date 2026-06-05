@@ -34,6 +34,20 @@ export const useChatStore = create(persist((set, get) => ({
     });
   },
 
+  // Patch a specific message by index (used to swap interactive tokens to
+  // their resolved/read-only form, e.g. ITSM_FORM → ITSM_SUBMITTED, so the
+  // resolved state survives a page refresh via the persisted store).
+  updateMessage(cluster, index, patch) {
+    set((state) => {
+      const conv = state.byCluster[cluster] || { messages: [], conversationId: null, chatId: null };
+      const msgs = conv.messages.slice();
+      if (index >= 0 && index < msgs.length) {
+        msgs[index] = { ...msgs[index], ...patch };
+      }
+      return { byCluster: { ...state.byCluster, [cluster]: { ...conv, messages: msgs } } };
+    });
+  },
+
   // Replace the last assistant message's text (used while streaming the reply).
   updateLastAssistant(cluster, text) {
     set((state) => {

@@ -61,7 +61,7 @@ function handleMdClick(e) {
   }).catch(() => {});
 }
 
-export function ChatMessageBody({ text, cluster, onQuery }) {
+export function ChatMessageBody({ text, cluster, onQuery, onItsmSubmitted }) {
   const segments = parseSegments(text);
   return (
     <>
@@ -74,17 +74,17 @@ export function ChatMessageBody({ text, cluster, onQuery }) {
               dangerouslySetInnerHTML={{ __html: renderMarkdown(seg.text) }} />
           );
         }
-        return <TokenCard key={i} type={seg.type} data={seg.data} cluster={cluster} onQuery={onQuery} />;
+        return <TokenCard key={i} type={seg.type} data={seg.data} cluster={cluster} onQuery={onQuery} onItsmSubmitted={onItsmSubmitted} />;
       })}
     </>
   );
 }
 
-function TokenCard({ type, data, cluster, onQuery }) {
+function TokenCard({ type, data, cluster, onQuery, onItsmSubmitted }) {
   switch (type) {
     case "PREFLIGHT_REPORT": return data ? <PreflightReport report={data} /> : null;
-    case "ITSM_FORM":        return data ? <ITSMForm form={data} cluster={cluster} /> : null;
-    case "ITSM_SUBMITTED":   return data ? <ITSMSubmitted info={data} /> : null;
+    case "ITSM_FORM":        return data ? <ITSMForm form={data} cluster={cluster} onItsmSubmitted={onItsmSubmitted} /> : null;
+    case "ITSM_SUBMITTED":   return data ? <ITSMSubmitted info={data} onQuery={onQuery} /> : null;
     case "UPGRADE_EXECUTE":  return data ? <UpgradeExecuteCard data={data} cluster={cluster} /> : null;
     case "FIX_PROPOSAL":     return data ? <FixProposal diag={data} cluster={cluster} /> : null;
     case "CLARIFY":          return data ? <ClarifyCard data={data} onQuery={onQuery} /> : null;
@@ -210,7 +210,7 @@ function PreflightReport({ report }) {
 /*  ServiceNow ITSM form                                                */
 /* ------------------------------------------------------------------ */
 
-function ITSMForm({ form, cluster }) {
+function ITSMForm({ form, cluster, onItsmSubmitted }) {
   const isCR = form.type === "change_request";
   const label = isCR ? "Change Request" : "Incident";
   const [values, setValues] = useState(() => {
@@ -238,6 +238,21 @@ function ITSMForm({ form, cluster }) {
       if (data.success) {
         setResult({ ok: true, ...data });
         showToast(`${label} ${data.ticketId} created`, "ok");
+        // Persist the submitted state by swapping the interactive form token
+        // for a read-only ITSM_SUBMITTED card, so a page refresh doesn't
+        // re-show the form (the store persists message text to localStorage).
+        if (typeof onItsmSubmitted === "function") {
+          onItsmSubmitted({
+            type: form.type,
+            ticketId: data.ticketId,
+            sysId: data.sysId || null,
+            title: values.short_description || values.title || values.summary || label,
+            isUpgrade: !!(form._upgradeInfo || form._preflightReport),
+            targetVersion: form._upgradeInfo?.targetVersion || form._preflightReport?.targetVersion || null,
+            servicenowEnabled: !!form.servicenowEnabled,
+            attachmentId: data.attachmentId || null,
+          });
+        }
       } else throw new Error(data.error || "Submission failed");
     } catch (e) {
       let msg = e.message || "Unknown error";
@@ -314,11 +329,11 @@ function ITSMForm({ form, cluster }) {
   );
 }
 
-function ITSMSubmitted({ info }) {
+function ITSMSubmitted({ info, onQuery }) {
   const isCR = info.type === "change_request";
   const label = isCR ? "Change Request" : "Incident";
   return (
-    <div className="itsm-form" style={{ opacity: .85 }}>
+    <div className="itsm-form" style={{ opacity: .92 }}>
       <div className="itsm-form-header">
         <div className={"itsm-icon " + (isCR ? "cr" : "inc")}>{isCR ? "📋" : "🚨"}</div>
         <div style={{ flex: 1 }}>
@@ -327,7 +342,27 @@ function ITSMSubmitted({ info }) {
         </div>
         <span className="itsm-badge" style={{ background: "color-mix(in srgb,var(--ok) 20%,transparent)", color: "var(--ok)" }}>Submitted</span>
       </div>
-      {info.title && <div style={{ padding: "8px 16px 12px", fontSize: 12, color: "var(--text2)" }}>{info.title}</div>}
+      {info.title && <div style={{ padding: "8px 16px 4px", fontSize: 12, color: "var(--text2)" }}>{info.title}</div>}
+      {info.attachmentId && <div style={{ padding: "0 16px 4px", fontSize: 11, color: "var(--ok)" }}>📎 Pre-Assessment report attached</div>}
+      {isCR && (
+        <div style={{ padding: "4px 16px 14px" }}>
+          <div style={{ fontSize: 11, color: "var(--accent2)", marginBottom: 8 }}>
+            🔍 Once the change request is approved{info.targetVersion ? ` for upgrade to ${info.targetVersion}` : ""}, proceed to the dry-run + execute step.
+          </div>
+          {typeof onQuery === "function" && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="itsm-submit" style={{ flex: "0 0 auto", padding: "6px 14px", fontSize: 12 }}
+                onClick={() => onQuery("check CR status")}>
+                Check CR status
+              </button>
+              <button className="itsm-submit" style={{ flex: "0 0 auto", padding: "6px 14px", fontSize: 12 }}
+                onClick={() => onQuery(info.targetVersion ? `proceed with upgrade to ${info.targetVersion}` : "proceed with upgrade")}>
+                ⬆ Proceed with upgrade
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

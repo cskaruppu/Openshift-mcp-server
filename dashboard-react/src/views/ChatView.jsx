@@ -106,7 +106,7 @@ function timeGroup(ts) {
 export function ChatView() {
   const cluster = useActiveCluster();
   const conv = useChatStore((s) => s.byCluster[cluster]) || { messages: [], conversationId: null, chatId: null };
-  const { addMessage, updateLastAssistant, setConversationId, setChatId, loadChat, clear } = useChatStore();
+  const { addMessage, updateLastAssistant, updateMessage, setConversationId, setChatId, loadChat, clear } = useChatStore();
 
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -370,6 +370,22 @@ export function ChatView() {
         }),
       });
     } catch { /* silent */ }
+  }
+
+  // When an ITSM form is submitted, swap its interactive token for a read-only
+  // ITSM_SUBMITTED card in the stored message. This keeps the submitted state
+  // across a page refresh (store persists to localStorage) and prevents the
+  // form from re-appearing as submittable. Also re-persists to the backend.
+  function handleItsmSubmitted(index, info) {
+    const conv = useChatStore.getState().getConversation(cluster);
+    const msg = conv.messages[index];
+    if (!msg || !msg.text) return;
+    const submittedToken = `@@ITSM_SUBMITTED|${JSON.stringify(info).replace(/@@/g, "@ @")}@@`;
+    const newText = msg.text.replace(/@@ITSM_FORM\|[\s\S]*?@@/, submittedToken);
+    if (newText === msg.text) return;
+    updateMessage(cluster, index, { text: newText });
+    const cid = useChatStore.getState().getConversation(cluster).chatId;
+    if (cid) persistMessages(cid);
   }
 
   async function loadSavedChat(chat) {
@@ -845,7 +861,7 @@ export function ChatView() {
 
                   {/* Window body */}
                   <div className={"ac-win-body" + (busy && isLastAI ? " ac-streaming-cursor" : "")}>
-                    {m.text && <ChatMessageBody text={m.text} cluster={cluster} onQuery={(q) => sendText(q)} />}
+                    {m.text && <ChatMessageBody text={m.text} cluster={cluster} onQuery={(q) => sendText(q)} onItsmSubmitted={(info) => handleItsmSubmitted(i, info)} />}
                   </div>
 
                   {/* Window footer with actions */}
