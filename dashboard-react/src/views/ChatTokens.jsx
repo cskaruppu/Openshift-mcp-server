@@ -544,7 +544,7 @@ function SecFixCmd({ cmd, cluster }) {
 /* ------------------------------------------------------------------ */
 
 function RightSizeCard({ rec, cluster }) {
-  const [result, setResult] = useState(null); // { running, cls, text }
+  const [result, setResult] = useState(null); // { phase, cls, text, verified }
   const wl = rec.workload; // { kind, name } | null
   const cli = "oc"; // works as kubectl too; oc is a superset on OpenShift
 
@@ -554,27 +554,60 @@ function RightSizeCard({ rec, cluster }) {
       `--requests=cpu=${rec.cpuRecommend}m,memory=${rec.memRecommend}Mi`
     : null;
 
+  async function execFix(cmd, dryRun) {
+    const res = await fetch(clusterUrl("/api/alerts/execute-fix", cluster), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: cmd, dryRun }),
+    });
+    return res.json();
+  }
+
+  // Close the loop: after a successful apply, re-read the workload to confirm
+  // it is reachable and healthy post-change, then report the new requests.
+  async function verify() {
+    setResult({ phase: "verifying", running: true, text: "Applied — verifying workload…" });
+    try {
+      const d = await execFix(`${cli} get ${wl.kind.toLowerCase()}/${wl.name} -n ${rec.ns}`, true);
+      if (d.success !== false) {
+        setResult({
+          phase: "verified", verified: true, cls: "t-ok",
+          text: `Verified — ${wl.kind}/${wl.name} is reachable and now requests CPU ${rec.cpuRecommend}m, Memory ${rec.memRecommend}Mi.`,
+        });
+      } else {
+        setResult({ phase: "verified", cls: "t-warn", text: "Applied, but the workload re-check did not confirm. Inspect it manually." });
+      }
+    } catch (e) {
+      setResult({ phase: "verified", cls: "t-warn", text: "Applied, but verification request failed: " + e.message });
+    }
+  }
+
   async function run(dryRun) {
     if (!command) return;
     if (!dryRun && !window.confirm(`Apply right-sizing to ${wl.kind}/${wl.name} in ${rec.ns}?\n\n${command}\n\nThis updates resource requests on the live workload. Proceed?`)) return;
-    setResult({ running: true, text: dryRun ? "Running server-side dry run…" : "Applying to cluster…" });
+    setResult({ phase: dryRun ? "dry" : "apply", running: true, text: dryRun ? "Running server-side dry run…" : "Applying to cluster…" });
     try {
-      const res = await fetch(clusterUrl("/api/alerts/execute-fix", cluster), {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: dryRun ? command + " --dry-run=server" : command, dryRun }),
-      });
-      const d = await res.json();
+      const d = await execFix(dryRun ? command + " --dry-run=server" : command, dryRun);
       if (d.blocked) { setResult({ cls: "t-err", text: "Blocked by guardrails: " + (d.reason || "unknown") }); return; }
-      const out = d.output || d.stdout || d.result || (d.success ? "Applied successfully." : d.error || "No output");
-      setResult({ cls: d.success === false ? "t-err" : "t-ok", text: String(out).slice(0, 2000) });
+      if (d.success === false) {
+        setResult({ cls: "t-err", text: String(d.output || d.stderr || d.error || "Command failed").slice(0, 2000) });
+        return;
+      }
+      if (dryRun) {
+        const out = d.output || d.stdout || d.result || "Dry run passed — no errors.";
+        setResult({ phase: "dry", cls: "t-ok", text: String(out).slice(0, 2000) });
+      } else {
+        // Apply succeeded → run the verify step.
+        await verify();
+      }
     } catch (e) {
       setResult({ cls: "t-err", text: "Network error: " + e.message });
     }
   }
 
   const overProvisioned = rec.type === "over";
+  const verified = result?.verified;
   return (
-    <div className="rsz-card">
+    <div className={"rsz-card" + (verified ? " verified" : "")}>
       <div className="rsz-head">
         <span className={"rsz-tag " + (overProvisioned ? "over" : "under")}>
           {overProvisioned ? "Over-provisioned" : "Under-provisioned"}
@@ -582,6 +615,7 @@ function RightSizeCard({ rec, cluster }) {
         <span className="rsz-target">
           {wl ? `${wl.kind}/${wl.name}` : rec.name} <span className="rsz-ns">· {rec.ns}</span>
         </span>
+        {verified && <span className="rsz-verified-badge">✓ Applied &amp; Verified</span>}
       </div>
 
       <div className="rsz-rows">
@@ -592,11 +626,13 @@ function RightSizeCard({ rec, cluster }) {
       {command ? (
         <>
           <div className="rsz-cmd"><span className="rsz-cmd-prompt">$</span> {command}</div>
-          <div className="rsz-actions">
-            <button className="rsz-btn dry" onClick={() => run(true)} disabled={result?.running}>Dry Run</button>
-            <button className="rsz-btn apply" onClick={() => run(false)} disabled={result?.running}>Apply</button>
-            <button className="rsz-btn ghost" onClick={() => { navigator.clipboard?.writeText(command); showToast("Command copied", "ok"); }}>Copy</button>
-          </div>
+          {!verified && (
+            <div className="rsz-actions">
+              <button className="rsz-btn dry" onClick={() => run(true)} disabled={result?.running}>Dry Run</button>
+              <button className="rsz-btn apply" onClick={() => run(false)} disabled={result?.running}>Apply</button>
+              <button className="rsz-btn ghost" onClick={() => { navigator.clipboard?.writeText(command); showToast("Command copied", "ok"); }}>Copy</button>
+            </div>
+          )}
         </>
       ) : (
         <div className="rsz-note">Couldn’t resolve the owning workload for this pod — apply manually via its Deployment/StatefulSet.</div>
@@ -604,7 +640,9 @@ function RightSizeCard({ rec, cluster }) {
 
       {result && (
         <div className={"aic-fix-result " + (result.running ? "running" : "")}>
-          {result.running ? <span>⏳ {result.text}</span> : <pre className={result.cls}>{result.text}</pre>}
+          {result.running
+            ? <span className="rsz-progress">{result.phase === "verifying" ? "🔎" : "⏳"} {result.text}</span>
+            : <pre className={result.cls}>{result.text}</pre>}
         </div>
       )}
     </div>
