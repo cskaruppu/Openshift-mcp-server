@@ -3504,6 +3504,26 @@ async function startSSE() {
             user: body.user || body.conversationId || "",
           }).catch(() => {});
         }
+
+        // Governance: record governed AI remediations (right-size / triage) to
+        // the persistent audit trail so they surface in Audit → Audit Trail.
+        // Cards opt in via `auditTitle`; dry-runs and read-only verifies are
+        // never logged here.
+        if (!dryRun && body.auditTitle) {
+          logAuditTrailEvent({
+            type: "action_taken",
+            severity: result.success === false ? "warning" : "info",
+            title: String(body.auditTitle).slice(0, 160),
+            details: {
+              command,
+              success: result.success !== false,
+              classification: preflight?.classification || null,
+            },
+            namespace: body.namespace || null,
+            username: body.userId || body.user || "dashboard",
+            source: "ai-remediation",
+          }).catch(() => {});
+        }
         return sendJson(res, 200, { ...result, classification: preflight?.classification });
       } catch (e) {
         if (featureFlags.pillar7AuditLog()) logAuditEvent({

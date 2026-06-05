@@ -555,10 +555,10 @@ function RightSizeCard({ rec, cluster }) {
       `--requests=cpu=${rec.cpuRecommend}m,memory=${rec.memRecommend}Mi`
     : null;
 
-  async function execFix(cmd, dryRun) {
+  async function execFix(cmd, dryRun, extra = {}) {
     const res = await fetch(clusterUrl("/api/alerts/execute-fix", cluster), {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ command: cmd, dryRun }),
+      body: JSON.stringify({ command: cmd, dryRun, ...extra }),
     });
     return res.json();
   }
@@ -587,7 +587,8 @@ function RightSizeCard({ rec, cluster }) {
     if (!dryRun && !window.confirm(`Apply right-sizing to ${wl.kind}/${wl.name} in ${rec.ns}?\n\n${command}\n\nThis updates resource requests on the live workload. Proceed?`)) return;
     setResult({ phase: dryRun ? "dry" : "apply", running: true, text: dryRun ? "Running server-side dry run…" : "Applying to cluster…" });
     try {
-      const d = await execFix(dryRun ? command + " --dry-run=server" : command, dryRun);
+      const extra = dryRun ? {} : { auditTitle: `Right-sized ${wl.kind}/${wl.name} (${rec.ns}) → CPU ${rec.cpuRecommend}m, Mem ${rec.memRecommend}Mi`, namespace: rec.ns };
+      const d = await execFix(command, dryRun, extra);
       if (d.blocked) { setResult({ cls: "t-err", text: "Blocked by guardrails: " + (d.reason || "unknown") }); return; }
       if (d.success === false) {
         setResult({ cls: "t-err", text: String(d.output || d.stderr || d.error || "Command failed").slice(0, 2000) });
@@ -690,10 +691,10 @@ function TriageCard({ t, cluster, onQuery }) {
     command = `oc set resources ${wl.kind.toLowerCase()}/${wl.name} -n ${t.ns} --containers=${t.container} --limits=memory=${t.memNew}Mi`;
   }
 
-  async function execFix(cmd, dryRun) {
+  async function execFix(cmd, dryRun, extra = {}) {
     const res = await fetch(clusterUrl("/api/alerts/execute-fix", cluster), {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ command: cmd, dryRun }),
+      body: JSON.stringify({ command: cmd, dryRun, ...extra }),
     });
     return res.json();
   }
@@ -720,7 +721,8 @@ function TriageCard({ t, cluster, onQuery }) {
     if (!dryRun && !window.confirm(`${action} on ${wl.kind}/${wl.name} in ${t.ns}?\n\n${command}\n\nProceed?`)) return;
     setResult({ phase: dryRun ? "dry" : "apply", running: true, text: dryRun ? "Running server-side dry run…" : "Applying to cluster…" });
     try {
-      const d = await execFix(command, dryRun);
+      const extra = dryRun ? {} : { auditTitle: `Triage (${t.reason}): ${action} — ${wl.kind}/${wl.name} (${t.ns})`, namespace: t.ns };
+      const d = await execFix(command, dryRun, extra);
       if (d.blocked) { setResult({ cls: "t-err", text: "Blocked by guardrails: " + (d.reason || "unknown") }); return; }
       if (d.success === false) { setResult({ cls: "t-err", text: String(d.output || d.stderr || d.error || "Command failed").slice(0, 2000) }); return; }
       if (dryRun) setResult({ phase: "dry", cls: "t-ok", text: String(d.output || d.stdout || "Dry run passed — no errors.").slice(0, 2000) });
