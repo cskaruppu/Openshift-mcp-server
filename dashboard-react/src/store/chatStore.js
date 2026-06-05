@@ -6,7 +6,7 @@ import { create } from "zustand";
  * isolation by construction. Switching clusters swaps the whole conversation.
  */
 export const useChatStore = create((set, get) => ({
-  byCluster: {}, // { [cluster]: { messages: [{role,text}], conversationId } }
+  byCluster: {}, // { [cluster]: { messages: [{role,text}], conversationId, chatId } }
   seedByCluster: {}, // { [cluster]: "draft message" } — set by Emergency Actions
 
   setSeed(cluster, text) {
@@ -19,12 +19,12 @@ export const useChatStore = create((set, get) => ({
   },
 
   getConversation(cluster) {
-    return get().byCluster[cluster] || { messages: [], conversationId: null };
+    return get().byCluster[cluster] || { messages: [], conversationId: null, chatId: null };
   },
 
   addMessage(cluster, message) {
     set((state) => {
-      const conv = state.byCluster[cluster] || { messages: [], conversationId: null };
+      const conv = state.byCluster[cluster] || { messages: [], conversationId: null, chatId: null };
       return { byCluster: { ...state.byCluster, [cluster]: { ...conv, messages: [...conv.messages, message] } } };
     });
   },
@@ -32,7 +32,7 @@ export const useChatStore = create((set, get) => ({
   // Replace the last assistant message's text (used while streaming the reply).
   updateLastAssistant(cluster, text) {
     set((state) => {
-      const conv = state.byCluster[cluster] || { messages: [], conversationId: null };
+      const conv = state.byCluster[cluster] || { messages: [], conversationId: null, chatId: null };
       const msgs = conv.messages.slice();
       for (let i = msgs.length - 1; i >= 0; i--) {
         if (msgs[i].role === "assistant") { msgs[i] = { ...msgs[i], text }; break; }
@@ -43,12 +43,28 @@ export const useChatStore = create((set, get) => ({
 
   setConversationId(cluster, conversationId) {
     set((state) => {
-      const conv = state.byCluster[cluster] || { messages: [], conversationId: null };
+      const conv = state.byCluster[cluster] || { messages: [], conversationId: null, chatId: null };
       return { byCluster: { ...state.byCluster, [cluster]: { ...conv, conversationId } } };
     });
   },
 
+  setChatId(cluster, chatId) {
+    set((state) => {
+      const conv = state.byCluster[cluster] || { messages: [], conversationId: null, chatId: null };
+      return { byCluster: { ...state.byCluster, [cluster]: { ...conv, chatId } } };
+    });
+  },
+
+  loadChat(cluster, chatId, conversationId, messages) {
+    set((state) => ({
+      byCluster: {
+        ...state.byCluster,
+        [cluster]: { messages, conversationId: conversationId || chatId, chatId },
+      },
+    }));
+  },
+
   clear(cluster) {
-    set((state) => ({ byCluster: { ...state.byCluster, [cluster]: { messages: [], conversationId: null } } }));
+    set((state) => ({ byCluster: { ...state.byCluster, [cluster]: { messages: [], conversationId: null, chatId: null } } }));
   },
 }));

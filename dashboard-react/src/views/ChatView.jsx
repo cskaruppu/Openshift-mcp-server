@@ -94,8 +94,8 @@ function timeAgo(ts) {
 
 export function ChatView() {
   const cluster = useActiveCluster();
-  const conv = useChatStore((s) => s.byCluster[cluster]) || { messages: [], conversationId: null };
-  const { addMessage, updateLastAssistant, setConversationId, clear } = useChatStore();
+  const conv = useChatStore((s) => s.byCluster[cluster]) || { messages: [], conversationId: null, chatId: null };
+  const { addMessage, updateLastAssistant, setConversationId, setChatId, loadChat, clear } = useChatStore();
 
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -127,6 +127,8 @@ export function ChatView() {
   const [actionHistory, setActionHistory] = useState([]);
   const [ctxMenu, setCtxMenu] = useState(null);
   const [msgMeta, setMsgMeta] = useState({});
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameVal, setRenameVal] = useState("");
 
   const abortRef = useRef(null);
   const msgIndexRef = useRef(0);
@@ -171,7 +173,7 @@ export function ChatView() {
         const res = await fetch(clusterUrl("/api/chats?limit=30", cluster));
         if (!res.ok || cancelled) return;
         const data = await res.json();
-        if (!cancelled && Array.isArray(data.conversations)) setSavedChats(data.conversations);
+        if (!cancelled && Array.isArray(data.chats)) setSavedChats(data.chats);
       } catch { /* silent */ }
     })();
     return () => { cancelled = true; };
@@ -311,6 +313,106 @@ export function ChatView() {
     } catch { /* silent */ }
   }
 
+  const reloadSavedChats = useCallback(async () => {
+    try {
+      const res = await fetch(clusterUrl("/api/chats?limit=30", cluster));
+      if (res.ok) { const d = await res.json(); if (Array.isArray(d.chats)) setSavedChats(d.chats); }
+    } catch { /* silent */ }
+  }, [cluster]);
+
+  async function ensureChatRecord(firstMsg) {
+    if (conv.chatId) return conv.chatId;
+    const id = `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    try {
+      await fetch(clusterUrl("/api/chats", cluster), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, title: firstMsg.slice(0, 60), cluster }),
+      });
+    } catch { /* silent */ }
+    setChatId(cluster, id);
+    return id;
+  }
+
+  async function persistMessages(chatId) {
+    const msgs = useChatStore.getState().getConversation(cluster).messages;
+    try {
+      await fetch(clusterUrl(`/api/chats/${chatId}/messages`, cluster), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: msgs }),
+      });
+    } catch { /* silent */ }
+  }
+
+  async function loadSavedChat(chat) {
+    try {
+      const res = await fetch(clusterUrl(`/api/chats/${chat.id}`, cluster));
+      if (!res.ok) { showToast("Failed to load chat", "error"); return; }
+      const d = await res.json();
+      const ch = d.chat || d;
+      const msgs = (ch.messages || []).map((m) => ({
+        role: m.role || "user",
+        text: m.text || m.content || "",
+      }));
+      loadChat(cluster, chat.id, ch.conversationId || chat.id, msgs);
+      showToast("Loaded: " + (chat.title || "Untitled"), "ok");
+    } catch { showToast("Failed to load chat", "error"); }
+  }
+
+  async function starChat(id, starred) {
+    try {
+      const res = await fetch(clusterUrl(`/api/chats/${id}`, cluster), {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ starred }),
+      });
+      if (res.ok) {
+        showToast(starred ? "Starred" : "Unstarred", "ok");
+        reloadSavedChats();
+      }
+    } catch { showToast("Failed to update", "error"); }
+  }
+
+  async function lockChat(id, locked) {
+    try {
+      const res = await fetch(clusterUrl(`/api/chats/${id}`, cluster), {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ locked }),
+      });
+      if (res.ok) {
+        showToast(locked ? "Locked" : "Unlocked", "ok");
+        reloadSavedChats();
+      }
+    } catch { showToast("Failed to update", "error"); }
+  }
+
+  async function renameChat(id, title) {
+    try {
+      const res = await fetch(clusterUrl(`/api/chats/${id}`, cluster), {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+      });
+      if (res.ok) {
+        showToast("Renamed", "ok");
+        reloadSavedChats();
+      }
+    } catch { showToast("Failed to rename", "error"); }
+  }
+
+  async function deleteSavedChat(id) {
+    try {
+      const res = await fetch(clusterUrl(`/api/chats/${id}`, cluster), { method: "DELETE" });
+      if (res.ok) {
+        showToast("Deleted", "ok");
+        reloadSavedChats();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        if (d.locked) showToast("Chat is locked — unlock first", "warn");
+        else showToast("Failed to delete", "error");
+      }
+    } catch { showToast("Failed to delete", "error"); }
+  }
+
   function copyMessage(text) {
     navigator.clipboard.writeText(text).then(() => showToast("Copied", "ok")).catch(() => {});
   }
@@ -434,6 +536,11 @@ export function ChatView() {
       setBusy(false);
       setStage("");
       abortRef.current = null;
+      try {
+        const cid = await ensureChatRecord(msg);
+        await persistMessages(cid);
+        reloadSavedChats();
+      } catch { /* silent */ }
     }
   }
 
@@ -531,9 +638,47 @@ export function ChatView() {
             <>
               <div className="ac-sidebar-divider">Saved</div>
               {savedChats.slice(0, 15).map((ch) => (
-                <div key={ch.id} className="ac-conv-item">
-                  <div className="ac-conv-cluster">{ch.title || "Untitled"}</div>
+                <div key={ch.id} className={"ac-conv-item" + (conv.chatId === ch.id ? " active" : "")} onClick={() => loadSavedChat(ch)} style={{ cursor: "pointer" }}>
+                  <div className="ac-conv-top">
+                    {renamingId === ch.id ? (
+                      <input className="ac-rename-input" value={renameVal} autoFocus
+                        onChange={(e) => setRenameVal(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") { renameChat(ch.id, renameVal); setRenamingId(null); } if (e.key === "Escape") setRenamingId(null); }}
+                        onBlur={() => { renameChat(ch.id, renameVal); setRenamingId(null); }}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    ) : (
+                      <div className="ac-conv-cluster">
+                        {ch.starred && <span className="ac-star-icon" title="Starred">&#9733;</span>}
+                        {ch.locked && <span className="ac-lock-icon" title="Locked">&#128274;</span>}
+                        {ch.title || "Untitled"}
+                      </div>
+                    )}
+                    <button className="ac-conv-menu-btn" onClick={(e) => { e.stopPropagation(); setCtxMenu(ctxMenu === `saved-${ch.id}` ? null : `saved-${ch.id}`); }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                    </button>
+                  </div>
                   <div className="ac-conv-preview">{ch.cluster} &middot; {timeAgo(ch.updated_at || ch.created_at)}</div>
+                  {ctxMenu === `saved-${ch.id}` && (
+                    <div className="ac-ctx-menu" onClick={(e) => e.stopPropagation()}>
+                      <button onClick={() => { starChat(ch.id, !ch.starred); setCtxMenu(null); }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                        {ch.starred ? "Unstar" : "Star"}
+                      </button>
+                      <button onClick={() => { lockChat(ch.id, !ch.locked); setCtxMenu(null); }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        {ch.locked ? "Unlock" : "Lock"}
+                      </button>
+                      <button onClick={() => { setRenamingId(ch.id); setRenameVal(ch.title || ""); setCtxMenu(null); }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                        Rename
+                      </button>
+                      <button className="ac-ctx-danger" onClick={() => { deleteSavedChat(ch.id); setCtxMenu(null); }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        Delete
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </>
