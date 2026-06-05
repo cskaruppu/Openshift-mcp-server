@@ -86,17 +86,6 @@ function clusterLabel(cluster) {
   return cluster;
 }
 
-function timeAgo(ts) {
-  if (!ts) return "";
-  const d = Date.now() - new Date(ts).getTime();
-  if (d < 60000) return "just now";
-  const m = Math.floor(d / 60000);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
-
 // Bucket a timestamp into a human time group, the way leading AI chat apps do.
 function timeGroup(ts) {
   if (!ts) return { label: "Older", order: 4 };
@@ -143,11 +132,7 @@ export function ChatView() {
   const [savedChats, setSavedChats] = useState([]);
 
   const [rightOpen, setRightOpen] = useState(false);
-  const [rightTab, setRightTab] = useState("actions");
   const [pendingActions, setPendingActions] = useState([]);
-  const [pendingCRs, setPendingCRs] = useState([]);
-  const [allCRs, setAllCRs] = useState([]);
-  const [crSyncing, setCrSyncing] = useState(false);
   const [ctxMenu, setCtxMenu] = useState(null);
   const [msgMeta, setMsgMeta] = useState({});
   const [renamingId, setRenamingId] = useState(null);
@@ -226,42 +211,24 @@ export function ChatView() {
     return () => { cancelled = true; };
   }, [cluster]);
 
+  // Only workload actions awaiting confirmation are surfaced in chat; CR/
+  // ServiceNow lifecycle is owned by Audit → Change Requests.
   const refreshPending = useCallback(async () => {
     try {
-      const [aRes, cRes, crRes] = await Promise.all([
-        fetch(clusterUrl("/api/actions", cluster)),
-        fetch(clusterUrl("/api/cr/pending", cluster)),
-        fetch(clusterUrl("/api/cr?limit=50", cluster)),
-      ]);
+      const aRes = await fetch(clusterUrl("/api/actions", cluster));
       if (aRes.ok) {
         const d = await aRes.json();
         const all = d.actions || [];
         setPendingActions(all.filter((a) => a.status === "pending_confirmation" || a.status === "awaiting_approval"));
       }
-      if (cRes.ok) { const d = await cRes.json(); setPendingCRs(d.crs || []); }
-      if (crRes.ok) { const d = await crRes.json(); setAllCRs(d.crs || []); }
     } catch { /* silent */ }
   }, [cluster]);
-
-  // Auto-update CR statuses from ServiceNow on a slower cadence, then refresh.
-  const autoSyncCRs = useCallback(async () => {
-    try {
-      await fetch(clusterUrl("/api/cr/sync-all", cluster), { method: "POST" });
-      refreshPending();
-    } catch { /* silent */ }
-  }, [cluster, refreshPending]);
 
   useEffect(() => {
     refreshPending();
     const iv = setInterval(refreshPending, 30000);
     return () => clearInterval(iv);
   }, [refreshPending]);
-
-  // Pull fresh ServiceNow statuses periodically so the CR list auto-updates.
-  useEffect(() => {
-    const iv = setInterval(autoSyncCRs, 90000);
-    return () => clearInterval(iv);
-  }, [autoSyncCRs]);
 
   useEffect(() => {
     function onDoc(e) {
@@ -296,11 +263,6 @@ export function ChatView() {
   }, [savedChats, sidebarSearch]);
 
   const totalChats = savedChats.length;
-
-  const activeCRs = useMemo(
-    () => allCRs.filter((c) => !/(cancel|dismiss)/i.test(c.status || "")),
-    [allCRs]
-  );
 
   const filteredSlash = useMemo(() => {
     if (!slashFilter) return SLASH_COMMANDS;
@@ -372,42 +334,6 @@ export function ChatView() {
     } catch { showToast("Failed to cancel", "error"); }
   }
 
-  async function syncAllPendingCRs() {
-    setCrSyncing(true);
-    try {
-      const res = await fetch(clusterUrl("/api/cr/sync-all", cluster), { method: "POST" });
-      if (res.ok) { showToast("CR statuses updated from ServiceNow", "ok"); await refreshPending(); }
-      else showToast("Sync failed", "error");
-    } catch { showToast("Sync failed", "error"); }
-    finally { setCrSyncing(false); }
-  }
-
-  // Verify a single CR's status against ServiceNow and auto-update it.
-  async function verifyCR(ticketId) {
-    try {
-      const res = await fetch(clusterUrl(`/api/cr/${ticketId}/sync`, cluster), { method: "POST" });
-      if (res.ok) {
-        const d = await res.json().catch(() => ({}));
-        const st = d?.result?.status ? ` → ${d.result.status}` : "";
-        showToast(`Status verified${st}`, "ok");
-        refreshPending();
-      } else showToast("Verify failed", "error");
-    } catch { showToast("Verify failed", "error"); }
-  }
-
-  // Cancel a CR (e.g. not implemented / opened in duplicate). This also cancels
-  // the change request in ServiceNow when it is still open.
-  async function cancelCR(ticketId) {
-    if (!window.confirm(`Cancel change request ${ticketId}? This will also cancel it in ServiceNow if it is still open.`)) return;
-    try {
-      const res = await fetch(clusterUrl(`/api/cr/${ticketId}`, cluster), { method: "DELETE" });
-      if (res.ok) {
-        const d = await res.json().catch(() => ({}));
-        showToast(d.snowCancelled ? "CR cancelled in ServiceNow" : "CR cancelled", "ok");
-        refreshPending();
-      } else showToast("Cancel failed", "error");
-    } catch { showToast("Cancel failed", "error"); }
-  }
 
   const reloadSavedChats = useCallback(async () => {
     try {
@@ -724,40 +650,6 @@ export function ChatView() {
             </button>
           </div>
         )}
-      </div>
-    );
-  }
-
-  // Status → badge tone for ServiceNow change requests.
-  function crStatusTone(status) {
-    const s = (status || "").toLowerCase();
-    if (/(implement|closed|complete|approved|executed|success)/.test(s)) return "ok";
-    if (/(cancel|reject|fail|error)/.test(s)) return "bad";
-    if (/(approval|await|review|hold)/.test(s)) return "warn";
-    return "info"; // new / pending / scheduled / in_progress
-  }
-
-  // A ServiceNow CR card with Verify (sync status) + Cancel actions.
-  function renderCRCard(cr) {
-    const id = cr.ticket_id || cr.ticketId;
-    const isFinal = /(implement|closed|complete|cancel|reject)/.test((cr.status || "").toLowerCase());
-    return (
-      <div key={id} className="ac-rp-card">
-        <div className="ac-rp-card-head">
-          <span className="ac-rp-card-id">{cr.snow_number || id}</span>
-          <span className={"ac-rp-badge " + crStatusTone(cr.status)}>{(cr.status || "pending").replace(/_/g, " ")}</span>
-        </div>
-        <div className="ac-rp-card-title">{cr.title || "Change Request"}</div>
-        <div className="ac-rp-card-sub">
-          {cr.snow_number && <span>{id}</span>}
-          {cr.updated_at && <span>· {timeAgo(cr.updated_at)}</span>}
-        </div>
-        <div className="ac-rp-card-actions">
-          <button className="ac-rp-action" onClick={() => verifyCR(id)} title="Check the latest status in ServiceNow">Verify status</button>
-          {!isFinal && (
-            <button className="ac-rp-action cancel" onClick={() => cancelCR(id)} title="Cancel this CR (and in ServiceNow)">Cancel</button>
-          )}
-        </div>
       </div>
     );
   }
@@ -1119,108 +1011,46 @@ export function ChatView() {
         </div>
       </div>
 
-      {/* ── Right Panel ── */}
+      {/* ── Right Panel: workload confirmations only ──
+         CR / ServiceNow lifecycle lives in Audit → Change Requests (single
+         source of truth); Fix Proposals are handled in AI Intelligence. This
+         panel is scoped to actions that need the user's confirmation right now. */}
       {rightOpen && (
         <aside className="ac-right">
-          <div className="ac-right-tabs">
-            {[
-              { key: "actions", label: "Actions" },
-              { key: "fixes", label: "Fixes" },
-              { key: "servicenow", label: "ServiceNow" },
-            ].map((t) => (
-              <button key={t.key} className={"ac-right-tab" + (rightTab === t.key ? " active" : "")} onClick={() => setRightTab(t.key)}>
-                {t.label}
-              </button>
-            ))}
+          <div className="ac-right-head">
+            <span className="ac-right-title">Awaiting your confirmation</span>
           </div>
 
           <div className="ac-right-body">
-            {rightTab === "actions" && (
-              <>
-                {/* Change Requests (ServiceNow) */}
-                <div className="ac-rp-section">
-                  <div className="ac-rp-section-head">
-                    <span className="ac-rp-section-title" style={{ color: "#3b82f6" }}>Change Requests ({activeCRs.length})</span>
-                    <button className={"ac-rp-sync-btn" + (crSyncing ? " spinning" : "")} onClick={syncAllPendingCRs} disabled={crSyncing} title="Pull latest statuses from ServiceNow">
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-                      {crSyncing ? "Syncing" : "Sync"}
-                    </button>
-                  </div>
-                  {activeCRs.length === 0 ? (
-                    <p className="ac-rp-empty">No change requests yet. Ask me to create or modify a workload and the ServiceNow CR will appear here — with options to verify status or cancel.</p>
-                  ) : (
-                    <div className="ac-rp-list">
-                      {activeCRs.map((cr) => renderCRCard(cr))}
+            <div className="ac-rp-section">
+              {pendingActions.length === 0 ? (
+                <p className="ac-rp-empty">No actions awaiting confirmation. Ask me to restart, scale or edit a workload and it will appear here for you to approve.</p>
+              ) : (
+                <div className="ac-rp-list">
+                  {pendingActions.map((act) => (
+                    <div key={act.id} className="ac-rp-card">
+                      <div className="ac-rp-card-head">
+                        <span className="ac-rp-card-id">{act.action || act.resourceType}</span>
+                        <span className="ac-rp-badge warn">{(act.status || "pending").replace(/_/g, " ")}</span>
+                      </div>
+                      <div className="ac-rp-card-title">{act.resourceName || act.description || "Action"}</div>
+                      {act.namespace && <div className="ac-rp-card-sub">ns: {act.namespace}</div>}
+                      <div className="ac-rp-card-actions">
+                        <button className="ac-rp-action confirm" onClick={() => confirmPendingAction(act.id)}>Confirm</button>
+                        <button className="ac-rp-action cancel" onClick={() => cancelPendingAction(act.id)}>Cancel</button>
+                      </div>
                     </div>
-                  )}
+                  ))}
                 </div>
+              )}
+            </div>
 
-                {/* Pending Actions (workload confirmations) */}
-                <div className="ac-rp-section">
-                  <div className="ac-rp-section-head">
-                    <span className="ac-rp-section-title">Pending Actions</span>
-                  </div>
-                  {pendingActions.length === 0 ? (
-                    <p className="ac-rp-empty">No pending actions. Ask me to restart, scale or edit a workload and it will appear here for confirmation.</p>
-                  ) : (
-                    <div className="ac-rp-list">
-                      {pendingActions.map((act) => (
-                        <div key={act.id} className="ac-rp-card">
-                          <div className="ac-rp-card-head">
-                            <span className="ac-rp-card-id">{act.action || act.resourceType}</span>
-                            <span className="ac-rp-badge warn">{(act.status || "pending").replace(/_/g, " ")}</span>
-                          </div>
-                          <div className="ac-rp-card-title">{act.resourceName || act.description || "Action"}</div>
-                          {act.namespace && <div className="ac-rp-card-sub">ns: {act.namespace}</div>}
-                          <div className="ac-rp-card-actions">
-                            <button className="ac-rp-action confirm" onClick={() => confirmPendingAction(act.id)}>Confirm</button>
-                            <button className="ac-rp-action cancel" onClick={() => cancelPendingAction(act.id)}>Cancel</button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-
-            {rightTab === "fixes" && (
-              <div className="ac-rp-section">
-                <div className="ac-rp-section-head">
-                  <span className="ac-rp-section-title">Fix Proposals</span>
-                </div>
-                <p className="ac-rp-empty">Fix proposals from AI analysis will appear here. Use <code>/security</code> or <code>/compliance</code> to generate fixes.</p>
-                <div className="ac-rp-quick-actions">
-                  <button className="ac-rp-quick" onClick={() => sendText("/security")}>Security Audit</button>
-                  <button className="ac-rp-quick" onClick={() => sendText("/compliance")}>Compliance Check</button>
-                  <button className="ac-rp-quick" onClick={() => sendText("/operator-health")}>Operator Health</button>
-                </div>
-              </div>
-            )}
-
-            {rightTab === "servicenow" && (
-              <div className="ac-rp-section">
-                <div className="ac-rp-section-head">
-                  <span className="ac-rp-section-title" style={{ color: "#22c55e" }}>ServiceNow</span>
-                  <button className={"ac-rp-sync-btn" + (crSyncing ? " spinning" : "")} onClick={syncAllPendingCRs} disabled={crSyncing}>
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-                    {crSyncing ? "Syncing" : "Sync"}
-                  </button>
-                </div>
-                <div className="ac-rp-snow-stats">
-                  <div className="ac-rp-snow-stat"><span className="ac-rp-snow-val">{activeCRs.length}</span><label>Active</label></div>
-                  <div className="ac-rp-snow-stat"><span className="ac-rp-snow-val">{pendingCRs.length}</span><label>Open</label></div>
-                  <div className="ac-rp-snow-stat"><span className="ac-rp-snow-val">{activeCRs.filter((c) => /(implement|closed|complete)/.test((c.status || "").toLowerCase())).length}</span><label>Done</label></div>
-                </div>
-                {activeCRs.length === 0 ? (
-                  <p className="ac-rp-empty">No ServiceNow change requests yet. CRs created through chat will appear here, with options to verify status or cancel.</p>
-                ) : (
-                  <div className="ac-rp-list">
-                    {activeCRs.map((cr) => renderCRCard(cr))}
-                  </div>
-                )}
-              </div>
-            )}
+            <div className="ac-rp-section">
+              <p className="ac-rp-hint">
+                Change requests &amp; their ServiceNow lifecycle are tracked in
+                <strong> Audit → Change Requests</strong>.
+              </p>
+            </div>
           </div>
         </aside>
       )}

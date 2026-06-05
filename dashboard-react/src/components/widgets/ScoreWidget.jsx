@@ -13,8 +13,8 @@ const gradeColor = (g) =>
  * @param {string} path - API endpoint
  * @param {(d:any)=>{value:string,grade?:string,label:string,unavailable?:boolean}} map
  */
-export function ScoreWidget({ title, path, map }) {
-  const { data, isLoading, isError, error } = useClusterQuery(path);
+export function ScoreWidget({ title, path, map, linkTo, linkLabel }) {
+  const { data, isLoading, isError } = useClusterQuery(path);
 
   let view = null;
   if (data) {
@@ -26,7 +26,7 @@ export function ScoreWidget({ title, path, map }) {
   }
 
   return (
-    <WidgetCard title={title}>
+    <WidgetCard title={title} linkTo={linkTo} linkLabel={linkLabel}>
       {isLoading && <div className="metric-skeleton" />}
       {isError && (
         <div className="metric-error">

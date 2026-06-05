@@ -8,17 +8,30 @@ import { PodsAtRiskWidget } from "../components/widgets/PodsAtRiskWidget";
 import { ScoreWidget } from "../components/widgets/ScoreWidget";
 import { NodeTopologyWidget } from "../components/widgets/NodeTopologyWidget";
 import { NamespaceHeatmapWidget } from "../components/widgets/NamespaceHeatmapWidget";
-import { RiskPredictionsWidget } from "../components/widgets/RiskPredictionsWidget";
 import { AppChangesWidget } from "../components/widgets/AppChangesWidget";
 import { ImageVulnsWidget } from "../components/widgets/ImageVulnsWidget";
 import { HealthTimelineWidget } from "../components/widgets/HealthTimelineWidget";
 import { ResourceOptimizationWidget } from "../components/widgets/ResourceOptimizationWidget";
 import { EmergencyActionsWidget } from "../components/widgets/EmergencyActionsWidget";
 
+/**
+ * Dashboard — a single pane ordered by operational priority, top to bottom:
+ *
+ *   1. Cluster vitals (hero)      — is the cluster healthy right now?
+ *   2. What needs attention       — active alerts & pods at risk
+ *   3. Governance posture         — CIS / GitOps / DR scorecards
+ *   4. Security & change risk     — image vulns, app changes
+ *   5. Capacity & efficiency      — resource optimization
+ *   6. Trends & topology          — health timeline, node topology, heatmap
+ *   7. Operator actions           — emergency actions (last, deliberate)
+ *
+ * Risk predictions live in AI Intelligence, ServiceNow CRs in Audit — they are
+ * intentionally not duplicated here.
+ */
 export function DashboardView() {
   return (
     <div className="dash">
-      {/* ── Primary Metrics (hero row) ── */}
+      {/* ── 1. Cluster Vitals (hero) ── */}
       <section className="dash-section">
         <div className="dash-hero-row">
           <div className="dash-hero-card hero-health">
@@ -39,8 +52,11 @@ export function DashboardView() {
         </div>
       </section>
 
-      {/* ── Alerts & Risk Row ── */}
+      {/* ── 2. Needs Attention ── */}
       <section className="dash-section">
+        <div className="dash-section-header">
+          <h2 className="dash-section-title">Needs Attention</h2>
+        </div>
         <div className="dash-alerts-row">
           <div className="dash-alert-card alert-active">
             <ActiveAlertsWidget />
@@ -51,16 +67,18 @@ export function DashboardView() {
         </div>
       </section>
 
-      {/* ── Score Cards Grid ── */}
+      {/* ── 3. Governance Posture (compliance & operations scorecards) ── */}
       <section className="dash-section">
         <div className="dash-section-header">
-          <h2 className="dash-section-title">Compliance & Operations</h2>
+          <h2 className="dash-section-title">Governance Posture</h2>
         </div>
         <div className="dash-scores-grid">
           <div className="dash-score-card score-cis">
             <ScoreWidget
               title="CIS Compliance / Security"
               path="/api/dashboard/security"
+              linkTo="audit"
+              linkLabel="View in Audit"
               map={(d) => ({ value: `${d.score}/100`, grade: d.grade, label: `${(d.findings || []).length} findings` })}
             />
           </div>
@@ -78,51 +96,33 @@ export function DashboardView() {
               map={(d) => ({ value: `${d.score}/100`, grade: d.grade, label: `${d.completed || 0} backups · ${d.failed || 0} failed` })}
             />
           </div>
-          <div className="dash-score-card score-opt">
-            <ScoreWidget
-              title="Resource Optimization"
-              path="/api/dashboard/optimization"
-              map={(d) => ({ value: `${d.efficiencyScore}/100`, grade: d.grade, label: `Reclaim ${d.reclaimCpu || 0}m CPU · ${d.reclaimMemGi || 0}Gi` })}
-            />
-          </div>
-          <div className="dash-score-card score-vuln">
-            <ScoreWidget
-              title="Image Vulnerability Scanner"
-              path="/api/dashboard/image-vulns"
-              map={(d) => ({ value: `${d.riskScore}/100`, grade: d.grade, label: `${d.critical || 0} critical · ${d.high || 0} high · ${d.totalImages || 0} images` })}
-            />
-          </div>
-          <div className="dash-score-card score-app">
-            <ScoreWidget
-              title="Application Changes"
-              path="/api/dashboard/app-changes"
-              map={(d) => ({
-                value: `${d.totalChanges ?? 0}`,
-                grade: (d.critical ?? 0) > 0 ? "F" : (d.warning ?? 0) > 0 ? "C" : "A",
-                label: `${d.critical ?? 0} critical · ${d.trackedWorkloads ?? 0} tracked`,
-              })}
-            />
-          </div>
         </div>
       </section>
 
-      {/* ── Application Change Watcher (full feature) ── */}
+      {/* ── 4. Security & Change Risk ── */}
+      <section className="dash-section">
+        <div className="dash-section-header">
+          <h2 className="dash-section-title">Security &amp; Change Risk</h2>
+        </div>
+        <ImageVulnsWidget />
+      </section>
       <section className="dash-section">
         <AppChangesWidget />
       </section>
 
-      {/* ── Image Vulnerability Scanner (full feature) ── */}
+      {/* ── 5. Capacity & Efficiency ── */}
       <section className="dash-section">
-        <ImageVulnsWidget />
-      </section>
-
-      {/* ── Resource Optimization (full feature) ── */}
-      <section className="dash-section">
+        <div className="dash-section-header">
+          <h2 className="dash-section-title">Capacity &amp; Efficiency</h2>
+        </div>
         <ResourceOptimizationWidget />
       </section>
 
-      {/* ── Health & Topology (side by side) ── */}
+      {/* ── 6. Trends & Topology ── */}
       <section className="dash-section">
+        <div className="dash-section-header">
+          <h2 className="dash-section-title">Trends &amp; Topology</h2>
+        </div>
         <div className="dash-twin-row">
           <div className="dash-twin-card">
             <HealthTimelineWidget />
@@ -132,19 +132,15 @@ export function DashboardView() {
           </div>
         </div>
       </section>
-
-      {/* ── Namespace Heatmap ── */}
       <section className="dash-section">
         <NamespaceHeatmapWidget />
       </section>
 
-      {/* ── AI Risk Predictions ── */}
+      {/* ── 7. Operator Actions (deliberate, last) ── */}
       <section className="dash-section">
-        <RiskPredictionsWidget />
-      </section>
-
-      {/* ── Emergency Actions ── */}
-      <section className="dash-section">
+        <div className="dash-section-header">
+          <h2 className="dash-section-title">Operator Actions</h2>
+        </div>
         <EmergencyActionsWidget />
       </section>
     </div>

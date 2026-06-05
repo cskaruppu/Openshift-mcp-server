@@ -53,8 +53,6 @@ export function IntelligenceView() {
     useClusterQuery("/api/intelligence/playbook?limit=10&sinceDays=90", { refetchInterval: 120_000 });
   const { data: silencesData, refetch: refetchSilences } =
     useClusterQuery("/api/alerts/silences", { refetchInterval: 30_000 });
-  const { data: clusterSummary } =
-    useClusterQuery("/api/cluster/summary", { refetchInterval: 30_000 });
   const { data: timelineData, refetch: refetchTimeline } =
     useClusterQuery("/api/change-timeline?window=24h&limit=50", { refetchInterval: 60_000 });
 
@@ -333,7 +331,6 @@ export function IntelligenceView() {
   const playbook = playbookData?.playbook || {};
   const playbookStats = playbookData?.stats || {};
   const silences = silencesData?.silences || [];
-  const cs = clusterSummary || {};
   const tlEvents = timelineData?.events || [];
   const tlStats = timelineData?.stats || {};
   const iStats = incStats || {};
@@ -412,22 +409,6 @@ export function IntelligenceView() {
             </div>
           </div>
 
-          {/* Live cluster status bar */}
-          {cs.pods && (
-            <div className="intel-live-bar">
-              <span className="intel-live-dot" />
-              <span>{cs.pods?.total || 0} pods</span>
-              <span className="intel-live-sep">&bull;</span>
-              <span style={{ color: (cs.pods?.failed || 0) > 0 ? "#ef4444" : "#22c55e" }}>{cs.pods?.failed || 0} problem</span>
-              <span className="intel-live-sep">&bull;</span>
-              <span>{cs.nodes?.total || 0} nodes ({cs.nodes?.ready || 0} ready)</span>
-              <span className="intel-live-sep">&bull;</span>
-              <span>{cs.operators?.total || 0} operators</span>
-              {(cs.operators?.degraded || 0) > 0 && (
-                <span style={{ color: "#ef4444" }}> ({cs.operators.degraded} degraded)</span>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
