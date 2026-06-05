@@ -81,6 +81,11 @@ function getFollowUps(text) {
   return ["Show cluster health", "List recent events", "Check resource usage"];
 }
 
+function clusterLabel(cluster) {
+  if (!cluster || cluster === "local") return "Hub Cluster";
+  return cluster;
+}
+
 function timeAgo(ts) {
   if (!ts) return "";
   const d = Date.now() - new Date(ts).getTime();
@@ -160,7 +165,18 @@ export function ChatView() {
         const data = await res.json();
         if (cancelled) return;
         if (data.providers) setProviders(data.providers);
-        if (data.defaultProvider) setActiveProvider(data.defaultProvider);
+        // Default to whichever LLM is configured: explicit default first,
+        // otherwise the first enabled non-builtin provider, else built-in.
+        if (data.defaultProvider && data.providers?.[data.defaultProvider]?.enabled) {
+          setActiveProvider(data.defaultProvider);
+        } else if (data.defaultProvider && data.defaultProvider !== "builtin") {
+          setActiveProvider(data.defaultProvider);
+        } else {
+          const firstEnabled = Object.keys(data.providers || {}).find(
+            (k) => k !== "builtin" && data.providers[k]?.enabled
+          );
+          setActiveProvider(firstEnabled || data.defaultProvider || "builtin");
+        }
       } catch { /* silent */ }
     })();
     return () => { cancelled = true; };
@@ -719,18 +735,22 @@ export function ChatView() {
           {/* Welcome */}
           {!hasMessages && (
             <div className="ac-welcome">
+              <div className="ac-welcome-badge">
+                <span className="ac-welcome-badge-dot" />
+                {clusterLabel(cluster)} · {activeMeta.label}
+              </div>
               <div className="ac-welcome-icon">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                   <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/>
                   <line x1="10" y1="22" x2="14" y2="22"/>
                   <line x1="9" y1="9" x2="9.01" y2="9"/>
                   <line x1="15" y1="9" x2="15.01" y2="9"/>
                 </svg>
               </div>
-              <h2 className="ac-welcome-title">What can I help you with?</h2>
+              <h2 className="ac-welcome-title">Welcome to {clusterLabel(cluster)}</h2>
               <p className="ac-welcome-desc">
-                AI-powered cluster intelligence scoped to <strong>{cluster === "local" ? "the hub cluster" : cluster}</strong>.
-                Ask anything or use <code>/</code> commands.
+                Your AI operations copilot for this cluster. Ask about health, workloads,
+                security and upgrades — or start with a suggestion below.
               </p>
 
               <div className="ac-welcome-grid">
@@ -915,14 +935,31 @@ export function ChatView() {
           )}
 
           <div className={"ac-input-pill" + (inputFocused ? " focused" : "")}>
-            {/* Provider switcher */}
+            <textarea
+              ref={textareaRef}
+              className="ac-textarea"
+              placeholder={`Ask about ${clusterLabel(cluster)}...`}
+              value={input}
+              onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              onFocus={() => setInputFocused(true)}
+              onBlur={() => setInputFocused(false)}
+              rows={1}
+            />
+
+            <div className="ac-input-hint">
+              <kbd>/</kbd> commands
+            </div>
+
+            {/* Provider switcher (right-aligned) */}
             <div className="ac-provider-wrap" ref={providerRef}>
-              <button className="ac-provider-toggle" onClick={() => setProviderOpen((v) => !v)} title={activeMeta.label}>
+              <button className="ac-provider-toggle" onClick={() => setProviderOpen((v) => !v)} title={`Model: ${activeMeta.label}`}>
                 <div className="ac-provider-icon" style={{ background: activeMeta.color }}>{activeMeta.icon}</div>
+                <span className="ac-provider-toggle-name">{activeMeta.label}</span>
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points={providerOpen ? "18 15 12 9 6 15" : "6 9 12 15 18 9"}/></svg>
               </button>
               {providerOpen && (
-                <div className="ac-provider-dropdown">
+                <div className="ac-provider-dropdown ac-provider-dropdown-right">
                   <div className="ac-provider-dd-head">LLM Provider</div>
                   {(availableProviders.length > 0 ? availableProviders : Object.keys(PROVIDER_META)).map((key) => {
                     const meta = PROVIDER_META[key] || PROVIDER_META.builtin;
@@ -947,22 +984,6 @@ export function ChatView() {
               )}
             </div>
 
-            <textarea
-              ref={textareaRef}
-              className="ac-textarea"
-              placeholder={`Ask about ${cluster === "local" ? "the hub cluster" : cluster}...`}
-              value={input}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              onFocus={() => setInputFocused(true)}
-              onBlur={() => setInputFocused(false)}
-              rows={1}
-            />
-
-            <div className="ac-input-hint">
-              <kbd>/</kbd> commands
-            </div>
-
             {busy ? (
               <button className="ac-send-btn abort" onClick={handleAbort} title="Stop">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
@@ -972,6 +993,13 @@ export function ChatView() {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
               </button>
             )}
+          </div>
+          <div className="ac-input-footer">
+            <span className="ac-input-footer-model">
+              <span className="ac-input-footer-dot" style={{ background: activeMeta.color }} />
+              Powered by {activeMeta.label}
+            </span>
+            <span className="ac-input-footer-scope">Scoped to {clusterLabel(cluster)}</span>
           </div>
         </div>
       </div>
