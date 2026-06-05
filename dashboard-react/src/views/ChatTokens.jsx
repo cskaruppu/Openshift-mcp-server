@@ -284,7 +284,7 @@ function ITSMForm({ form, cluster, onItsmSubmitted }) {
           const val = values[key];
           const isLong = (val && (val.indexOf("\n") !== -1 || val.length > 80));
           return (
-            <div className="itsm-field" key={key}>
+            <div className={"itsm-field" + (isLong ? " full" : "")} key={key}>
               <label htmlFor={id}>{f.label}</label>
               {Array.isArray(f.options) && f.options.length > 0 ? (
                 <select id={id} value={val} disabled={submitted} onChange={(e) => setField(key, e.target.value)}>

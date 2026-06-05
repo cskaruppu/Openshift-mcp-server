@@ -3268,23 +3268,27 @@ h3.widget-title {
 .preflight-footer { display: flex; gap: 16px; flex-wrap: wrap; padding: 10px 18px; border-top: 1px solid var(--border); font-size: 10px; color: var(--text2); }
 
 /* ITSM form */
-.itsm-form { background: var(--card); border: 1px solid var(--border); border-radius: 12px; margin: 10px 0; overflow: hidden; max-width: 560px; }
-.itsm-form-header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.itsm-form { background: var(--card); border: 1px solid var(--border); border-radius: 12px; margin: 10px 0; overflow: hidden; max-width: 100%; width: 100%; }
+.itsm-form-header { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
 .itsm-icon { width: 36px; height: 36px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
 .itsm-icon.cr { background: color-mix(in srgb, var(--accent2) 15%, transparent); }
 .itsm-icon.inc { background: color-mix(in srgb, var(--crit) 15%, transparent); }
 .itsm-form-header h4 { margin: 0; font-size: 14px; }
 .itsm-badge { font-size: 10px; font-weight: 700; border-radius: 8px; padding: 4px 9px; white-space: nowrap; }
-.itsm-form-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
-.itsm-field { display: flex; flex-direction: column; gap: 4px; }
+/* Two-column field layout — uses the full chat-window width; long
+   fields (textareas) span both columns. Collapses to one column when narrow. */
+.itsm-form-body { padding: 16px 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 22px; }
+.itsm-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.itsm-field.full { grid-column: 1 / -1; }
+@media (max-width: 720px) { .itsm-form-body { grid-template-columns: 1fr; } }
 .itsm-field label { font-size: 11px; color: var(--text2); font-weight: 600; }
 .itsm-field input, .itsm-field select, .itsm-field textarea {
   background: var(--bg); border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px;
   color: var(--text); font-size: 13px; font-family: inherit; outline: none; resize: vertical;
 }
 .itsm-field input:focus, .itsm-field select:focus, .itsm-field textarea:focus { border-color: var(--accent2); }
-.itsm-actions { display: flex; gap: 8px; padding: 0 16px 14px; }
-.itsm-submit { flex: 1; background: var(--accent2); color: #fff; border: none; border-radius: 8px; padding: 10px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.itsm-actions { display: flex; gap: 8px; padding: 0 18px 16px; }
+.itsm-submit { flex: 0 0 auto; min-width: 240px; background: var(--accent2); color: #fff; border: none; border-radius: 8px; padding: 10px 24px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .itsm-submit:hover:not(:disabled) { opacity: .9; }
 .itsm-submit:disabled { opacity: .6; cursor: default; }
 .itsm-cancel { background: none; border: 1px solid var(--border); color: var(--text2); border-radius: 8px; padding: 10px 18px; font-size: 13px; cursor: pointer; }
