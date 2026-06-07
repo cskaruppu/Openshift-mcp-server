@@ -41,32 +41,44 @@ export async function snowFetch(path, options = {}) {
   }
   if (!resp.ok) {
     const body = await resp.text();
-    throw new Error(`ServiceNow API ${resp.status}: ${body}`);
+    if (resp.status === 500) {
+      let hint = "Server error — check ServiceNow instance logs.";
+      if (/ACL/.test(body)) hint = "ACL denied — API user needs 'itil' role. Go to User Administration > Users > (your API user) > Roles > add 'itil'.";
+      else if (/caller_id|assignment_group/.test(body)) hint = "A reference field has an invalid value. Check caller_id and assignment_group.";
+      else if (/mandatory/i.test(body)) hint = "A mandatory field is missing. Check your instance's incident form configuration.";
+      throw new Error(`ServiceNow API 500: ${hint} Raw: ${body.slice(0, 200)}`);
+    }
+    if (resp.status === 401) throw new Error(`ServiceNow auth failed (401). Check SERVICENOW_USERNAME and SERVICENOW_PASSWORD.`);
+    if (resp.status === 403) throw new Error(`ServiceNow forbidden (403). API user needs 'itil' role for incident table access.`);
+    throw new Error(`ServiceNow API ${resp.status}: ${body.slice(0, 300)}`);
   }
   return resp.json();
 }
 
-/** Create an incident */
+/** Create an incident.
+ *  Only sends non-empty optional fields to avoid triggering ServiceNow
+ *  business rules that fail on empty string references (common on PDIs). */
 export async function createIncident({
   shortDescription,
   description,
   urgency = "2",
   impact = "2",
-  category = "Infrastructure",
+  category = "",
   assignmentGroup = "",
   callerID = "",
 }) {
+  const payload = {
+    short_description: shortDescription,
+    description,
+    urgency,
+    impact,
+  };
+  if (category) payload.category = category;
+  if (assignmentGroup) payload.assignment_group = assignmentGroup;
+  if (callerID) payload.caller_id = callerID;
   return snowFetch("/now/table/incident", {
     method: "POST",
-    body: JSON.stringify({
-      short_description: shortDescription,
-      description,
-      urgency,
-      impact,
-      category,
-      assignment_group: assignmentGroup,
-      caller_id: callerID,
-    }),
+    body: JSON.stringify(payload),
   });
 }
 
@@ -141,6 +153,25 @@ export async function cancelChangeRequest(sysId, { reason = "Cancelled by user f
     close_notes: reason,
     work_notes: `[AI Hub] Change request cancelled: ${reason}`,
   });
+}
+
+/** Test ServiceNow connectivity and permissions.
+ *  Returns { ok, instance, user, canCreateIncident, error }. */
+export async function healthCheck() {
+  const { instance, user } = getConfig();
+  if (!instance) return { ok: false, error: "SERVICENOW_INSTANCE not set" };
+  if (!user) return { ok: false, error: "SERVICENOW_USERNAME not set" };
+  try {
+    const me = await snowFetch("/now/table/sys_user?sysparm_query=user_name=" + encodeURIComponent(user) + "&sysparm_limit=1&sysparm_fields=sys_id,user_name,roles");
+    const userRecord = me?.result?.[0];
+    if (!userRecord) return { ok: false, instance, user, error: "API user not found in sys_user table" };
+    const roles = userRecord.roles || "";
+    const hasItil = /\bitil\b/i.test(roles) || /\badmin\b/i.test(roles);
+    return { ok: true, instance, user, userSysId: userRecord.sys_id, hasItilRole: hasItil, canCreateIncident: hasItil };
+  } catch (e) {
+    const hibernated = /502|503|ECONNREFUSED|ENOTFOUND/.test(e.message);
+    return { ok: false, instance, user, error: e.message, hibernated };
+  }
 }
 
 /** Resolve a ServiceNow incident.

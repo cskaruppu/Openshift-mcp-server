@@ -428,9 +428,23 @@ export async function handleServiceNowSettingsTest(req, res) {
     }
     if (!resp.ok) {
       const text = await resp.text();
+      if (resp.status === 502 || resp.status === 503) {
+        return json(res, 200, { success: false, error: `Instance may be hibernated (${resp.status}). Wake it at: ${instance} in your browser, wait 2-3 min, then retry.`, durationMs });
+      }
       return json(res, 200, { success: false, error: `ServiceNow returned ${resp.status}: ${text.substring(0, 200)}`, durationMs });
     }
-    return json(res, 200, { success: true, message: `Connected to ${instance}`, durationMs });
+    // Also verify incident table access (common failure point)
+    let incidentAccess = "unknown";
+    try {
+      const incResp = await fetch(`${instance}/api/now/table/incident?sysparm_limit=1`, {
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`,
+          Accept: "application/json",
+        },
+      });
+      incidentAccess = incResp.ok ? "ok" : `denied (${incResp.status})`;
+    } catch { incidentAccess = "error"; }
+    return json(res, 200, { success: true, message: `Connected to ${instance}`, durationMs, incidentAccess });
   } catch (err) {
     return json(res, 200, { success: false, error: err.message });
   }

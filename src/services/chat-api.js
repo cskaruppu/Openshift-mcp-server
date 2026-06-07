@@ -5106,7 +5106,7 @@ EOF@@`);
             description: [
               `Severity: ${severity}`,
               `Scope: ${targetNs ? `Namespace ${targetNs}` : "Cluster-wide"}`,
-              `Root Causes: ${rootCauses.map(r => `${r.signal}: ${r.detail}`).join("\n  ")}`,
+              `Root Causes:\n  ${rootCauses.map(r => `${r.signal}: ${r.detail}`).join("\n  ")}`,
               `Affected Namespaces: ${[...affectedNamespaces].join(", ") || "none"}`,
               `Firing Alerts: ${firingAlerts.length}`,
               `Warning Events: ${warningEvents.length}`,
@@ -5117,7 +5117,6 @@ EOF@@`);
             ].join("\n"),
             urgency: severity === "SEV-1" ? "1" : "2",
             impact: severity === "SEV-1" ? "1" : "2",
-            category: "Infrastructure",
           });
         } catch (snowErr) {
           snowTicket = { error: snowErr.message };
