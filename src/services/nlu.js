@@ -790,6 +790,14 @@ const COMPOUND_TERMS = [
   [/\binstall\s+plans?\b/gi, "installplan"],
   [/\boperator\s+groups?\b/gi, "operatorgroup"],
   [/\bingress\s+controllers?\b/gi, "ingresscontroller"],
+  // Incident response — detect problem statements (negative lookbehind prevents matching inside hyphenated names)
+  [/(?<![a-z0-9-])app(?:lication)?\s+(?:is\s+)?(?:down|crash\w*|fail\w*|slow|unresponsive|broken|hang\w*|not\s+respond\w*)\b/gi, "incident_response"],
+  [/(?<![a-z0-9-])service\s+(?:is\s+)?(?:down|crash\w*|fail\w*|slow|unresponsive|broken|hang\w*|degraded|not\s+respond\w*)\b/gi, "incident_response"],
+  [/\bproduction\s+(?:issue|incident|outage|problem|down|failure|crash\w*)\b/gi, "incident_response"],
+  [/(?<![a-z0-9-])pod\s+(?:is\s+)?(?:down|crash\w*|fail\w*|slow|unresponsive|broken|not\s+respond\w*|oom\w*)\b/gi, "incident_response"],
+  [/(?<![a-z0-9-])(?:deploy(?:ment)?|job|cronjob|daemonset|statefulset|replicaset)\s+(?:is\s+)?(?:down|crash\w*|fail\w*|slow|unresponsive|broken|not\s+respond\w*)\b/gi, "incident_response"],
+  [/(?<![a-z0-9-])(?:is|are)\s+(?:crash\w*|fail\w*|down|unresponsive|broken|degraded|hang\w*|slow|not\s+respond\w*)\b/gi, "incident_response"],
+  [/\bcluster\s+(?:brief(?:ing)?|daily\s*report|morning\s*report|health\s*report|overview\s*report)\b/gi, "cluster_briefing"],
 ];
 
 function normalizeCompounds(text) {
@@ -1096,13 +1104,25 @@ export function parse(message, memory = {}) {
     "taint", "untaint", "approve", "compare", "export", "snapshot",
     "resize", "bulk", "changes", "forecast", "kb", "provision",
     "logs", "top", "exec", "delete", "create", "update", "start", "stop",
-    "label", "annotate", "evict", "run",
+    "label", "annotate", "evict", "run", "timesync", "incident_response", "cluster_briefing",
   ]);
+  if (resource === "incident_response") {
+    return makeResult({
+      intent: "incident_response", resource: null, scope: "health", raw,
+      confidence: 0.88, namespace, name,
+    });
+  }
+  if (resource === "cluster_briefing") {
+    return makeResult({
+      intent: "cluster_briefing", resource: null, scope: "health", raw,
+      confidence: 0.88, namespace, name,
+    });
+  }
   if (!resource && !SPECIFIC_INTENTS.has(intent) &&
       (scope === "health" || /\b(cluster|overview|status)\b/.test(lower))) {
     intent = intent || "list";
     return makeResult({
-      intent, resource: "cluster", scope: "health", raw, confidence: 0.7,
+      intent, resource: "cluster", scope: "health", raw, confidence: 0.7, namespace, name,
     });
   }
 
@@ -1114,7 +1134,7 @@ export function parse(message, memory = {}) {
   // ---- 11. Final fallback ----
   if (!intent && resource) intent = "list";
   if (!intent) {
-    return makeResult({ intent: "unknown", raw, confidence: 0 });
+    return makeResult({ intent: "unknown", raw, confidence: 0, namespace, name });
   }
 
   // ---- 12. Implicit context carryover from memory ----

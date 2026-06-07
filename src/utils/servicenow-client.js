@@ -143,6 +143,23 @@ export async function cancelChangeRequest(sysId, { reason = "Cancelled by user f
   });
 }
 
+/** Resolve a ServiceNow incident.
+ *  Sets state to Resolved (6) with close code, notes, and detailed work notes. */
+export async function resolveIncident(sysId, {
+  closeCode = "Solved (Permanently)",
+  closeNotes = "Resolved by TCS Agentic AI",
+  workNotes = "",
+} = {}) {
+  if (workNotes) {
+    await updateRecord("incident", sysId, { work_notes: workNotes });
+  }
+  return updateRecord("incident", sysId, {
+    state: "6",
+    close_code: closeCode,
+    close_notes: closeNotes,
+  });
+}
+
 /** Attach a file to a ServiceNow record */
 export async function attachFile(table, sysId, fileName, contentType, fileBuffer) {
   const { instance } = getConfig();

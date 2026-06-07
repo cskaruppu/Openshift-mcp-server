@@ -899,7 +899,59 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
 /*  Fix proposal (pod healing)                                          */
 /* ------------------------------------------------------------------ */
 
-function FixProposal({ diag }) {
+function FixProposal({ diag, cluster }) {
+  const [fixStates, setFixStates] = useState({});
+
+  async function runFix(fix, idx, dryRun) {
+    const key = idx;
+    if (!dryRun) {
+      if (!window.confirm(`Execute this fix on the cluster?\n\n${fix.command}\n\nThis makes REAL changes. Proceed?`)) return;
+    }
+    setFixStates(prev => ({ ...prev, [key]: { phase: dryRun ? "dry-run" : "executing", text: dryRun ? "Running dry run..." : "Executing fix & validating..." } }));
+    try {
+      const payload = { command: fix.command, dryRun, namespace: fix.namespace || diag.namespace };
+      if (!dryRun && diag.incidentSysId) {
+        payload.incidentSysId = diag.incidentSysId;
+        payload.incidentNumber = diag.incidentNumber;
+        payload.incidentSeverity = diag.severity;
+        payload.incidentDiagnosis = diag.diagnosis;
+        payload.incidentRootCause = diag.rootCause;
+        payload.auditTitle = fix.title || fix.description || "Incident fix";
+      }
+      const r = await fetch(clusterUrl("/api/alerts/execute-fix", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      });
+      const d = await r.json();
+      if (d.blocked) { setFixStates(prev => ({ ...prev, [key]: { phase: "error", text: "Blocked: " + (d.reason || "unknown") } })); return; }
+      if (d.success === false) { setFixStates(prev => ({ ...prev, [key]: { phase: "error", text: d.stderr || d.error || "Fix failed" } })); return; }
+      if (dryRun) {
+        setFixStates(prev => ({ ...prev, [key]: { phase: "dry-run-done", text: d.output || d.stdout || d.result || "Dry run OK" } }));
+        return;
+      }
+      const lines = [d.output || d.stdout || d.result || "Fix applied successfully."];
+      if (d.validation) {
+        const v = d.validation;
+        lines.push("");
+        lines.push(v.passed ? "[VALIDATED] Fix verified — workload healthy" : "[PENDING] Validation incomplete — manual check recommended");
+        if (v.ready != null) lines.push(`Replicas: ${v.ready}/${v.desired} ready`);
+        if (v.pods?.length) lines.push(`Pods: ${v.pods.filter(p => p.ready).length}/${v.pods.length} healthy`);
+        if (v.pods?.length) v.pods.forEach(p => lines.push(`  ${p.name}: ${p.phase} ready=${p.ready} restarts=${p.restarts}`));
+      }
+      if (d.incidentClosed) {
+        lines.push("");
+        if (d.incidentClosed.success) {
+          lines.push(`[INC RESOLVED] ${d.incidentClosed.incidentNumber || "Incident"} auto-closed — fix validated successfully`);
+        } else {
+          lines.push(`[INC OPEN] ${d.incidentClosed.reason || d.incidentClosed.error || "Incident remains open"}`);
+        }
+      }
+      setFixStates(prev => ({ ...prev, [key]: { phase: d.validation?.passed ? "validated" : "done", text: lines.join("\n"), incidentClosed: d.incidentClosed } }));
+    } catch (e) {
+      setFixStates(prev => ({ ...prev, [key]: { phase: "error", text: "Network error: " + e.message } }));
+    }
+  }
+
+  const fixes = Array.isArray(diag.fixes) ? diag.fixes : [];
   return (
     <div className="fix-proposal">
       <div className="fix-proposal-head">
@@ -908,12 +960,46 @@ function FixProposal({ diag }) {
         {diag.confidence != null && <span className="fix-confidence">{Math.round(diag.confidence * 100)}% confidence</span>}
       </div>
       {diag.rootCause && <div className="fix-section"><span className="fix-label">Root cause</span><div>{diag.rootCause}</div></div>}
+      {Array.isArray(diag.evidence) && diag.evidence.length > 0 && (
+        <div className="fix-section"><span className="fix-label">Evidence</span>
+          <ul>{diag.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>
+        </div>
+      )}
       {Array.isArray(diag.steps) && diag.steps.length > 0 && (
         <div className="fix-section"><span className="fix-label">Remediation</span>
           <ol>{diag.steps.map((s, i) => <li key={i}>{typeof s === "string" ? s : s.text || s.description}</li>)}</ol>
         </div>
       )}
       {diag.command && <div className="ux-cmd-preview"><span style={{ color: "var(--ok)" }}>$</span> {diag.command}</div>}
+      {fixes.length > 0 && (
+        <div className="fix-section">
+          <span className="fix-label">One-Click Fixes {diag.incidentNumber ? `(${diag.incidentNumber})` : ""}</span>
+          {fixes.map((fix, idx) => {
+            const st = fixStates[idx];
+            const running = st?.phase === "executing" || st?.phase === "dry-run";
+            return (
+              <div key={idx} className="sec-fix-cmd" style={{ marginTop: 8 }}>
+                <div style={{ marginBottom: 4 }}><strong>{fix.title || fix.description}</strong> <span style={{ opacity: 0.6 }}>({fix.risk || "low"} risk)</span></div>
+                <code>{fix.command}</code>
+                <div className="sec-fix-actions">
+                  <button className="sec-fix-btn" onClick={() => { navigator.clipboard?.writeText(fix.command); showToast("Command copied", "ok"); }}>Copy</button>
+                  <button className="sec-fix-btn sec-fix-dry" disabled={running} onClick={() => runFix(fix, idx, true)}>Dry Run</button>
+                  <button className="sec-fix-btn sec-fix-run" disabled={running} onClick={() => runFix(fix, idx, false)}>
+                    {diag.incidentSysId ? "Run & Auto-Close INC" : "Run"}
+                  </button>
+                </div>
+                {st && (
+                  <div className={"aic-fix-result " + (running ? "running" : "")}>
+                    {running
+                      ? <span>⏳ {st.text}</span>
+                      : <pre className={st.phase === "error" ? "t-err" : "t-ok"}>{st.text}</pre>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

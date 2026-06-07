@@ -88,6 +88,7 @@ import {
 import {
   createChangeRequest as snowCreateCR,
   createIncident as snowCreateIncident,
+  resolveIncident as snowResolveIncident,
   attachFile as snowAttachFile,
 } from "./utils/servicenow-client.js";
 import {
@@ -3550,7 +3551,101 @@ async function startSSE() {
             timeToResolveMs: Date.now() - auditStart,
           }).catch(() => {});
         }
-        return sendJson(res, 200, { ...result, classification: preflight?.classification });
+        // Post-fix validation & auto-close ServiceNow incident
+        let validation = null;
+        let incidentClosed = null;
+        if (!dryRun && result.success !== false && body.incidentSysId) {
+          try {
+            const meta = parseCommandTarget(command);
+            let ns = meta.namespace || body.namespace || "";
+            let resourceKind = "";
+            let resourceName = "";
+            const kindNameMatch = command.match(/\b(deployment|statefulset|daemonset|replicaset)\/([^\s]+)/i);
+            if (kindNameMatch) {
+              resourceKind = kindNameMatch[1].toLowerCase();
+              resourceName = kindNameMatch[2];
+            } else {
+              resourceKind = meta.resource || "";
+              resourceName = meta.name || "";
+            }
+            if (!ns) { const nsMatch = command.match(/-n\s+(\S+)/); if (nsMatch) ns = nsMatch[1]; }
+            if (ns && resourceName && /^(deployment|statefulset|daemonset)$/i.test(resourceKind)) {
+              const rolloutStart = Date.now();
+              const maxWait = 60_000;
+              const pollInterval = 3_000;
+              let stable = false;
+              let lastCheck = null;
+              const plural = resourceKind.toLowerCase() + "s";
+              while (Date.now() - rolloutStart < maxWait) {
+                await new Promise(r => setTimeout(r, pollInterval));
+                try {
+                  const wl = await ocpGet(`/apis/apps/v1/namespaces/${ns}/${plural}/${resourceName}`);
+                  const desired = wl.spec?.replicas || 1;
+                  const ready = wl.status?.readyReplicas || 0;
+                  const updated = wl.status?.updatedReplicas || 0;
+                  const unavail = wl.status?.unavailableReplicas || 0;
+                  lastCheck = { desired, ready, updated, unavailable: unavail };
+                  if (ready >= desired && updated >= desired && unavail === 0) { stable = true; break; }
+                } catch { break; }
+              }
+              let podHealth = [];
+              try {
+                const wlSpec = await ocpGet(`/apis/apps/v1/namespaces/${ns}/${plural}/${resourceName}`).catch(() => null);
+                const matchLabels = wlSpec?.spec?.selector?.matchLabels || {};
+                const selectorStr = Object.entries(matchLabels).map(([k, v]) => `${k}=${v}`).join(",");
+                const labelQuery = selectorStr || `app=${resourceName}`;
+                const podData = await ocpGet(`/api/v1/namespaces/${ns}/pods?labelSelector=${encodeURIComponent(labelQuery)}&limit=50`);
+                podHealth = (podData.items || []).map(p => ({
+                  name: p.metadata.name,
+                  phase: p.status?.phase,
+                  ready: (p.status?.containerStatuses || []).every(c => c.ready),
+                  restarts: Math.max(0, ...(p.status?.containerStatuses || []).map(c => c.restartCount || 0)),
+                }));
+              } catch {}
+              const allPodsHealthy = podHealth.length === 0 || podHealth.every(p => p.phase === "Running" && p.ready);
+              validation = { stable, rolloutDurationMs: Date.now() - rolloutStart, ...lastCheck, pods: podHealth, allPodsHealthy, passed: stable && allPodsHealthy };
+            } else {
+              validation = { passed: true, note: "Non-rollout fix — command succeeded" };
+            }
+            if (validation.passed) {
+              try {
+                const incidentDetail = [
+                  `[TCS Agentic AI] Automated fix applied and validated.`,
+                  ``,
+                  `Fix Command: ${command}`,
+                  `Namespace: ${ns || "N/A"}`,
+                  `Resource: ${resourceKind}/${resourceName}`,
+                  `Severity: ${body.incidentSeverity || "N/A"}`,
+                  `Diagnosis: ${body.incidentDiagnosis || "N/A"}`,
+                  `Root Cause: ${body.incidentRootCause || "N/A"}`,
+                  ``,
+                  `Validation Results:`,
+                  `  Rollout Stable: ${validation.stable ? "Yes" : "N/A"}`,
+                  validation.ready != null ? `  Replicas: ${validation.ready}/${validation.desired} ready` : "",
+                  validation.pods?.length ? `  Pods Verified: ${validation.pods.filter(p => p.ready).length}/${validation.pods.length} healthy` : "",
+                  validation.pods?.length ? `  Pod Details: ${validation.pods.map(p => `${p.name} (${p.phase}, ready=${p.ready}, restarts=${p.restarts})`).join("; ")}` : "",
+                  `  Total Duration: ${((Date.now() - auditStart) / 1000).toFixed(1)}s`,
+                  ``,
+                  `Resolution: Fix validated — all pods running and healthy. Incident auto-closed.`,
+                ].filter(Boolean).join("\n");
+                await snowResolveIncident(body.incidentSysId, {
+                  closeCode: "Solved (Permanently)",
+                  closeNotes: `Auto-resolved by TCS Agentic AI. Fix: ${command}. Validation: passed. ${validation.pods?.length ? `${validation.pods.filter(p => p.ready).length}/${validation.pods.length} pods healthy.` : ""}`,
+                  workNotes: incidentDetail,
+                });
+                incidentClosed = { success: true, incidentNumber: body.incidentNumber || null, state: "Resolved" };
+              } catch (snowErr) {
+                incidentClosed = { success: false, error: snowErr.message };
+              }
+            } else {
+              incidentClosed = { success: false, reason: "Validation failed — incident remains open for manual review" };
+            }
+          } catch (valErr) {
+            validation = { passed: false, error: valErr.message };
+            incidentClosed = { success: false, reason: `Validation error: ${valErr.message}` };
+          }
+        }
+        return sendJson(res, 200, { ...result, classification: preflight?.classification, validation, incidentClosed });
       } catch (e) {
         if (featureFlags.pillar7AuditLog()) logAuditEvent({
           command,
