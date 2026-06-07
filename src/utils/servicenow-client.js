@@ -75,7 +75,8 @@ export async function createIncident({
   };
   if (category) payload.category = category;
   if (assignmentGroup) payload.assignment_group = assignmentGroup;
-  if (callerID) payload.caller_id = callerID;
+  const effectiveCaller = callerID || getConfig().user;
+  if (effectiveCaller) payload.caller_id = effectiveCaller;
   return snowFetch("/now/table/incident", {
     method: "POST",
     body: JSON.stringify(payload),
