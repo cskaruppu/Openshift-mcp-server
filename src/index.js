@@ -88,8 +88,8 @@ import {
 import {
   createChangeRequest as snowCreateCR,
   createIncident as snowCreateIncident,
-  resolveIncident as snowResolveIncident,
   attachFile as snowAttachFile,
+  resolveIncident as snowResolveIncident,
 } from "./utils/servicenow-client.js";
 import {
   listChats,
@@ -3820,6 +3820,22 @@ async function startSSE() {
           status: "submitted",
           message: `${type === "change_request" ? "Change Request" : "Incident"} ${number} created in ServiceNow.`,
         });
+      } catch (e) {
+        return sendJson(res, 500, { error: e.message });
+      }
+    }
+
+    // POST /api/servicenow/resolve-incident — close an incident after successful fix
+    if (req.method === "POST" && url.pathname === "/api/servicenow/resolve-incident") {
+      try {
+        const body = await readJsonBody(req);
+        const { sysId, closeNotes, workNotes } = body;
+        if (!sysId) return sendJson(res, 400, { error: "sysId required" });
+        const result = await snowResolveIncident(sysId, {
+          closeNotes: closeNotes || "Resolved by TCS Agentic AI — fix applied and validated",
+          workNotes: workNotes || "",
+        });
+        return sendJson(res, 200, { success: true, result: result?.result || result });
       } catch (e) {
         return sendJson(res, 500, { error: e.message });
       }

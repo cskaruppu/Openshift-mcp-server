@@ -43,13 +43,13 @@ export async function snowFetch(path, options = {}) {
     const body = await resp.text();
     if (resp.status === 500) {
       let hint = "Server error — check ServiceNow instance logs.";
-      if (/ACL/.test(body)) hint = "ACL denied — API user needs 'itil' role. Go to User Administration > Users > (your API user) > Roles > add 'itil'.";
+      if (/ACL/.test(body)) hint = "ACL denied — API user needs 'itil' role.";
       else if (/caller_id|assignment_group/.test(body)) hint = "A reference field has an invalid value. Check caller_id and assignment_group.";
-      else if (/mandatory/i.test(body)) hint = "A mandatory field is missing. Check your instance's incident form configuration.";
+      else if (/mandatory/i.test(body)) hint = "A mandatory field is missing. Check your instance's form configuration.";
       throw new Error(`ServiceNow API 500: ${hint} Raw: ${body.slice(0, 200)}`);
     }
     if (resp.status === 401) throw new Error(`ServiceNow auth failed (401). Check SERVICENOW_USERNAME and SERVICENOW_PASSWORD.`);
-    if (resp.status === 403) throw new Error(`ServiceNow forbidden (403). API user needs 'itil' role for incident table access.`);
+    if (resp.status === 403) throw new Error(`ServiceNow forbidden (403). API user needs 'itil' role for table access.`);
     throw new Error(`ServiceNow API ${resp.status}: ${body.slice(0, 300)}`);
   }
   return resp.json();
@@ -156,25 +156,6 @@ export async function cancelChangeRequest(sysId, { reason = "Cancelled by user f
   });
 }
 
-/** Test ServiceNow connectivity and permissions.
- *  Returns { ok, instance, user, canCreateIncident, error }. */
-export async function healthCheck() {
-  const { instance, user } = getConfig();
-  if (!instance) return { ok: false, error: "SERVICENOW_INSTANCE not set" };
-  if (!user) return { ok: false, error: "SERVICENOW_USERNAME not set" };
-  try {
-    const me = await snowFetch("/now/table/sys_user?sysparm_query=user_name=" + encodeURIComponent(user) + "&sysparm_limit=1&sysparm_fields=sys_id,user_name,roles");
-    const userRecord = me?.result?.[0];
-    if (!userRecord) return { ok: false, instance, user, error: "API user not found in sys_user table" };
-    const roles = userRecord.roles || "";
-    const hasItil = /\bitil\b/i.test(roles) || /\badmin\b/i.test(roles);
-    return { ok: true, instance, user, userSysId: userRecord.sys_id, hasItilRole: hasItil, canCreateIncident: hasItil };
-  } catch (e) {
-    const hibernated = /502|503|ECONNREFUSED|ENOTFOUND/.test(e.message);
-    return { ok: false, instance, user, error: e.message, hibernated };
-  }
-}
-
 /** Resolve a ServiceNow incident.
  *  Sets state to Resolved (6) with close code, notes, and detailed work notes. */
 export async function resolveIncident(sysId, {
@@ -190,6 +171,24 @@ export async function resolveIncident(sysId, {
     close_code: closeCode,
     close_notes: closeNotes,
   });
+}
+
+/** Test ServiceNow connectivity and permissions. */
+export async function healthCheck() {
+  const { instance, user } = getConfig();
+  if (!instance) return { ok: false, error: "SERVICENOW_INSTANCE not set" };
+  if (!user) return { ok: false, error: "SERVICENOW_USERNAME not set" };
+  try {
+    const me = await snowFetch("/now/table/sys_user?sysparm_query=user_name=" + encodeURIComponent(user) + "&sysparm_limit=1&sysparm_fields=sys_id,user_name,roles");
+    const userRecord = me?.result?.[0];
+    if (!userRecord) return { ok: false, instance, user, error: "API user not found in sys_user table" };
+    const roles = userRecord.roles || "";
+    const hasItil = /\bitil\b/i.test(roles) || /\badmin\b/i.test(roles);
+    return { ok: true, instance, user, userSysId: userRecord.sys_id, hasItilRole: hasItil };
+  } catch (e) {
+    const hibernated = /502|503|ECONNREFUSED|ENOTFOUND/.test(e.message);
+    return { ok: false, instance, user, error: e.message, hibernated };
+  }
 }
 
 /** Attach a file to a ServiceNow record */
