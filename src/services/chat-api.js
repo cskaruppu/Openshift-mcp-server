@@ -6663,8 +6663,13 @@ function handleRemoteCacheQuery(message, parsed, remoteCtx, opts = {}) {
 
   // ---------------------------------------------------------------------------
   // (a) Cluster status / health / overview
+  //     NOTE: must NOT hijack version/upgrade queries — "check cluster version
+  //     and upgrade status" contains both "cluster"+"check"/"status" AND
+  //     "version"/"upgrade". The upgrade/version branch (h) below owns those,
+  //     so we exclude those keywords here to keep parity with the hub.
   // ---------------------------------------------------------------------------
-  if (/\bcluster\b/.test(lower) && /\bstatus\b|\bhealth\b|\boverview\b|\bcheck\b/.test(lower)) {
+  const mentionsVersionUpgrade = /\bversion\b|\bupgrade\b|\bupdate\b|\bchannel\b|\bprecheck\b|\bpre-?check\b|\bpre.?flight\b/.test(lower);
+  if (!mentionsVersionUpgrade && /\bcluster\b/.test(lower) && /\bstatus\b|\bhealth\b|\boverview\b|\bcheck\b/.test(lower)) {
     const parts = [header];
     parts.push(`### Cluster Status Overview`);
     parts.push("");
@@ -15760,18 +15765,31 @@ export async function handleChatAPI(req, res) {
       //     run live via the agent bridge — double-gated by RBAC + opt-in.
       // (1) Cache-based handler — fast, no network round-trip.
       // (2) LIVE agent bridge for real-time reads (feature parity with hub).
+      //
+      // Hub parity: when a LIVE bridge is active, read-only version/upgrade
+      // status queries should be served by the SAME live handler the hub uses
+      // (handleDirectCommand → clusterversion handler) so the response is
+      // identical across clusters — not a thinner cache-derived summary.
+      const _lowerMsg = userMessage.toLowerCase();
+      const _isUpgradeStatusRead =
+        !isMutating &&
+        /\bversion\b|\bupgrade\b|\bupdate\b|\bchannel\b/.test(_lowerMsg) &&
+        !/\bupgrade\s+(?:cluster\s+)?to\b|\bstart\b|\bexecute\b|\bautomate\b|\bapply\b/.test(_lowerMsg);
+      const _preferLiveDirect = _remoteBridgeActive && _isUpgradeStatusRead;
+
       let remoteCacheReply = null;
-      if (isMutating || /\bscale\b|\brestart\b|\bredeploy\b|\bcordon\b|\bupgrade\b|\b(delete|remove|kill)\b/.test(userMessage.toLowerCase())) {
+      if (!_preferLiveDirect &&
+          (isMutating || /\bscale\b|\brestart\b|\bredeploy\b|\bcordon\b|\bupgrade\b|\b(delete|remove|kill)\b/.test(_lowerMsg))) {
         try {
           remoteCacheReply = await handleRemoteMutation(userMessage, parsed, _remoteClusterContext, { userId: llmOpts.userId });
         } catch (mutErr) {
           console.error(`[chat] Remote mutation failed for ${_remoteClusterContext.clusterName}: ${mutErr.message}`);
         }
       }
-      if (!remoteCacheReply) {
+      if (!remoteCacheReply && !_preferLiveDirect) {
         remoteCacheReply = handleRemoteCacheQuery(userMessage, parsed, _remoteClusterContext, { llmAvailable: llmActive });
       }
-      if (!remoteCacheReply) {
+      if (!remoteCacheReply && !_preferLiveDirect) {
         try {
           remoteCacheReply = await handleRemoteLiveQuery(userMessage, parsed, _remoteClusterContext);
         } catch (liveErr) {
