@@ -5905,26 +5905,6 @@ async function handleListCommand(message, preParsed, opts = {}) {
       parts.push(`\n@@VIEW_MORE|${cmd.resourceType}|${cmd.namespace || '_all'}|${displayLimit}|${items.length}@@`);
     }
 
-    // Auto-escalate to incident response when pod listing reveals critical issues
-    if (cmd.resourceType === "pod" || cmd.resourceType === "pods") {
-      const crashPods = items.filter(p => (p.status?.containerStatuses || []).some(cs => cs.state?.waiting?.reason === "CrashLoopBackOff"));
-      const oomPods = items.filter(p => (p.status?.containerStatuses || []).some(cs => cs.state?.terminated?.reason === "OOMKilled" || cs.lastState?.terminated?.reason === "OOMKilled"));
-      const failedPods = items.filter(p => p.status?.phase === "Failed");
-      const criticalCount = crashPods.length + oomPods.length + failedPods.length;
-      if (criticalCount > 0) {
-        try {
-          const irCmd = { operation: "incident_response", namespace: cmd.namespace, resourceName: cmd.resourceName };
-          const irResult = await handleDirectCommand(message, irCmd, opts);
-          if (irResult) {
-            parts.push("");
-            parts.push("---");
-            parts.push("");
-            parts.push(irResult);
-          }
-        } catch { /* incident response is best-effort — pod listing still returns */ }
-      }
-    }
-
     return parts.join("\n");
   } catch (err) {
     return `### ${resInfo.resource}\n${formatApiError(err, resInfo.resource)}`;
