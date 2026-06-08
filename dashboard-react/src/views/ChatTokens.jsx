@@ -901,112 +901,182 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
 
 function FixProposal({ diag, cluster }) {
   const [fixStates, setFixStates] = useState({});
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [copied, setCopied] = useState(null);
+
+  const sevColors = { critical: "#dc2626", warning: "#f59e0b", info: "#3b82f6" };
+  const sevBg = { critical: "rgba(220,38,38,0.08)", warning: "rgba(245,158,11,0.08)", info: "rgba(59,130,246,0.08)" };
+  const sevColor = sevColors[diag.severity] || sevColors.info;
+  const sevBgColor = sevBg[diag.severity] || sevBg.info;
+
+  function copyCmd(cmd) {
+    navigator.clipboard?.writeText(cmd);
+    setCopied(cmd);
+    setTimeout(() => setCopied(null), 2000);
+  }
 
   async function runFix(fix, dryRun) {
     const key = fix.command;
-    setFixStates(prev => ({ ...prev, [key]: { running: true, text: dryRun ? "Dry run…" : "Applying fix…" } }));
+    setFixStates(prev => ({ ...prev, [key]: { running: true, phase: dryRun ? "dry-run" : "applying", text: dryRun ? "Running dry run..." : "Applying fix..." } }));
     try {
       const res = await fetch(clusterUrl("/api/alerts/execute-fix", cluster), {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          command: fix.command, dryRun,
-          namespace: fix.namespace, resourceName: fix.resource,
-          auditTitle: fix.title,
-        }),
+        body: JSON.stringify({ command: fix.command, dryRun, namespace: fix.namespace, resourceName: fix.resource, auditTitle: fix.title }),
       });
       const d = await res.json();
-      if (d.blocked) {
-        setFixStates(prev => ({ ...prev, [key]: { cls: "t-err", text: "Blocked: " + (d.reason || "") } }));
-        return;
-      }
+      if (d.blocked) { setFixStates(prev => ({ ...prev, [key]: { phase: "blocked", text: d.reason || "Blocked by policy" } })); return; }
       const out = d.output || d.stdout || d.result || (d.success ? "Done." : d.error || "No output");
       if (!dryRun && d.success !== false && diag.incidentSysId) {
-        setFixStates(prev => ({ ...prev, [key]: { cls: "t-ok", text: out + "\n\nClosing ServiceNow incident…" } }));
+        setFixStates(prev => ({ ...prev, [key]: { running: true, phase: "closing-inc", text: out + "\n\nClosing ServiceNow incident..." } }));
         try {
           const closeRes = await fetch(clusterUrl("/api/servicenow/resolve-incident", cluster), {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              sysId: diag.incidentSysId,
-              closeNotes: `Resolved by TCS Agentic AI — ${fix.title}`,
-              workNotes: [
-                `[AI Hub] Fix applied: ${fix.command}`,
-                `Result: ${String(out).slice(0, 500)}`,
-                `Root cause: ${diag.rootCause || diag.diagnosis || "see incident response report"}`,
-              ].join("\n"),
-            }),
+            body: JSON.stringify({ sysId: diag.incidentSysId, closeNotes: `Resolved by TCS Agentic AI — ${fix.title}`, workNotes: `[AI Hub] Fix: ${fix.command}\nResult: ${String(out).slice(0, 500)}\nRoot cause: ${diag.rootCause || diag.diagnosis || "see report"}` }),
           });
           const closeData = await closeRes.json();
-          if (closeData.success) {
-            setFixStates(prev => ({ ...prev, [key]: { cls: "t-ok", text: out + `\n\n✅ ${diag.incidentNumber || "Incident"} resolved in ServiceNow` } }));
-          } else {
-            setFixStates(prev => ({ ...prev, [key]: { cls: "t-ok", text: out + `\n\n⚠️ Fix applied but incident close failed: ${closeData.error || "unknown"}` } }));
-          }
+          setFixStates(prev => ({ ...prev, [key]: { phase: closeData.success ? "resolved" : "applied", text: out, incClosed: closeData.success, incError: closeData.success ? null : (closeData.error || "close failed") } }));
         } catch (e) {
-          setFixStates(prev => ({ ...prev, [key]: { cls: "t-ok", text: out + `\n\n⚠️ Fix applied but could not reach ServiceNow: ${e.message}` } }));
+          setFixStates(prev => ({ ...prev, [key]: { phase: "applied", text: out, incError: e.message } }));
         }
       } else {
-        setFixStates(prev => ({ ...prev, [key]: { cls: d.success === false ? "t-err" : "t-ok", text: String(out).slice(0, 4000) } }));
+        setFixStates(prev => ({ ...prev, [key]: { phase: dryRun ? "dry-done" : (d.success === false ? "failed" : "applied"), text: String(out).slice(0, 4000) } }));
       }
     } catch (e) {
-      setFixStates(prev => ({ ...prev, [key]: { cls: "t-err", text: "Error: " + e.message } }));
+      setFixStates(prev => ({ ...prev, [key]: { phase: "failed", text: e.message } }));
     }
   }
 
   const fixes = diag.fixes || [];
   const hasIncident = diag.incidentSysId && diag.incidentNumber;
+  const logData = diag.logAnalysis;
+
+  const phaseIcon = { "dry-run": "⏳", applying: "⏳", "closing-inc": "⏳", "dry-done": "✅", applied: "✅", resolved: "✅", failed: "❌", blocked: "⛔" };
+  const phaseLabel = { "dry-run": "Running dry run...", applying: "Applying...", "closing-inc": "Closing incident...", "dry-done": "Dry run complete", applied: "Fix applied", resolved: "Fix applied & incident closed", failed: "Failed", blocked: "Blocked" };
 
   return (
-    <div className="fix-proposal">
-      <div className="fix-proposal-head">
-        <span style={{ fontSize: 16 }}>🩺</span>
-        <strong>{diag.title || "Diagnosis & Fix Proposal"}</strong>
-        {diag.severity && <span className="fix-confidence">{diag.severity}</span>}
+    <div style={{ border: `1px solid ${sevColor}33`, borderRadius: 10, overflow: "hidden", marginTop: 8 }}>
+      {/* Header bar */}
+      <div style={{ background: sevBgColor, borderBottom: `1px solid ${sevColor}22`, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ width: 36, height: 36, borderRadius: "50%", background: sevColor, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>
+          {diag.severityLevel || (diag.severity === "critical" ? "S2" : "S3")}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: "1.05em" }}>{diag.podName && diag.podName !== "incident_response" ? `Incident: ${diag.podName}` : "Incident Response"}</div>
+          <div style={{ fontSize: "0.82em", color: "var(--muted)", marginTop: 2 }}>
+            {diag.namespace}{diag.deploymentName ? ` / ${diag.deploymentName}` : ""} {hasIncident ? `· ${diag.incidentNumber}` : ""}
+          </div>
+        </div>
+        <div style={{ background: sevColor, color: "#fff", padding: "3px 10px", borderRadius: 12, fontSize: "0.75em", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+          {diag.severity || "info"}
+        </div>
       </div>
-      {hasIncident && (
-        <div className="fix-section" style={{ background: "var(--card-bg)", padding: "8px 12px", borderRadius: 6, marginBottom: 8 }}>
-          <span className="fix-label">ServiceNow Incident</span>
-          <div><strong>{diag.incidentNumber}</strong> — auto-created. Will be resolved when fix is applied.</div>
+      <div style={{ padding: "12px 16px" }}>
+        {/* ServiceNow badge */}
+        {hasIncident && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.2)", borderRadius: 8, marginBottom: 12, fontSize: "0.88em" }}>
+            <span style={{ color: "#16a34a", fontWeight: 600 }}>☑</span>
+            <span><strong>{diag.incidentNumber}</strong> auto-created in ServiceNow — will auto-resolve when fix is applied</span>
+          </div>
+        )}
+        {/* Root cause + diagnosis */}
+        <div style={{ display: "grid", gridTemplateColumns: diag.rootCause && diag.diagnosis ? "1fr 1fr" : "1fr", gap: 10, marginBottom: 12 }}>
+          {diag.rootCause && (
+            <div style={{ padding: "8px 12px", background: "var(--card-bg)", borderRadius: 8, borderLeft: `3px solid ${sevColor}` }}>
+              <div style={{ fontSize: "0.72em", fontWeight: 600, textTransform: "uppercase", color: "var(--muted)", letterSpacing: "0.5px", marginBottom: 4 }}>Root Cause</div>
+              <div style={{ fontWeight: 600 }}>{diag.rootCause}</div>
+            </div>
+          )}
+          {diag.diagnosis && (
+            <div style={{ padding: "8px 12px", background: "var(--card-bg)", borderRadius: 8, borderLeft: "3px solid var(--muted)" }}>
+              <div style={{ fontSize: "0.72em", fontWeight: 600, textTransform: "uppercase", color: "var(--muted)", letterSpacing: "0.5px", marginBottom: 4 }}>Diagnosis</div>
+              <div>{diag.diagnosis}</div>
+            </div>
+          )}
         </div>
-      )}
-      {diag.rootCause && <div className="fix-section"><span className="fix-label">Root cause</span><div>{diag.rootCause}</div></div>}
-      {diag.diagnosis && <div className="fix-section"><span className="fix-label">Diagnosis</span><div>{diag.diagnosis}</div></div>}
-      {Array.isArray(diag.evidence) && diag.evidence.length > 0 && (
-        <div className="fix-section"><span className="fix-label">Evidence</span>
-          <ul style={{ margin: "4px 0", paddingLeft: 20 }}>{diag.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>
-        </div>
-      )}
-      {fixes.length > 0 && (
-        <div className="fix-section"><span className="fix-label">Fix Proposals ({fixes.length})</span>
-          {fixes.map((fix, i) => {
-            const st = fixStates[fix.command];
-            return (
-              <div key={i} style={{ marginTop: 8, padding: "8px 12px", background: "var(--card-bg)", borderRadius: 6 }}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>{fix.title}</div>
-                <div style={{ fontSize: "0.85em", color: "var(--muted)", marginBottom: 6 }}>{fix.description}</div>
-                <code style={{ display: "block", padding: "4px 8px", background: "var(--bg)", borderRadius: 4, fontSize: "0.85em", marginBottom: 6 }}>{fix.command}</code>
-                <div className="sec-fix-actions">
-                  <button className="sec-fix-btn" onClick={() => { navigator.clipboard?.writeText(fix.command); }}>Copy</button>
-                  <button className="sec-fix-btn sec-fix-dry" onClick={() => runFix(fix, true)}>Dry Run</button>
-                  <button className="sec-fix-btn sec-fix-run" onClick={() => runFix(fix, false)}>
-                    {hasIncident ? "Run & Auto-Close INC" : "Apply Fix"}
-                  </button>
-                </div>
-                {st && (
-                  <div className={"aic-fix-result " + (st.running ? "running" : "")} style={{ marginTop: 6 }}>
-                    {st.running ? <span>{st.text}</span> : <pre className={st.cls} style={{ whiteSpace: "pre-wrap" }}>{st.text}</pre>}
+        {/* Evidence */}
+        {Array.isArray(diag.evidence) && diag.evidence.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: "0.72em", fontWeight: 600, textTransform: "uppercase", color: "var(--muted)", letterSpacing: "0.5px", marginBottom: 6 }}>Evidence</div>
+            {diag.evidence.map((e, i) => (
+              <div key={i} style={{ padding: "4px 10px", fontSize: "0.88em", borderLeft: "2px solid var(--border)", marginBottom: 3, color: "var(--fg)" }}>{e}</div>
+            ))}
+          </div>
+        )}
+        {/* Log analysis (collapsible) */}
+        {logData && (logData.errors?.length > 0 || logData.errorLines?.length > 0) && (
+          <div style={{ marginBottom: 12, border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+            <button onClick={() => setLogsOpen(v => !v)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "var(--card-bg)", border: "none", cursor: "pointer", color: "var(--fg)", fontSize: "0.88em", fontWeight: 600 }}>
+              <span style={{ transform: logsOpen ? "rotate(90deg)" : "rotate(0)", transition: "transform 0.15s" }}>▶</span>
+              Log Analysis ({logData.totalLines || 0} lines scanned{logData.previous ? ", previous container" : ""})
+              {logData.errors?.length > 0 && <span style={{ marginLeft: "auto", background: sevColor, color: "#fff", padding: "1px 8px", borderRadius: 10, fontSize: "0.75em" }}>{logData.errors.length} pattern{logData.errors.length > 1 ? "s" : ""}</span>}
+            </button>
+            {logsOpen && (
+              <div style={{ padding: "8px 12px", borderTop: "1px solid var(--border)" }}>
+                {logData.errors?.map((err, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, padding: "6px 0", borderBottom: i < logData.errors.length - 1 ? "1px solid var(--border)" : "none", fontSize: "0.85em" }}>
+                    <span style={{ fontWeight: 600, color: sevColor, minWidth: 140 }}>{err.category}</span>
+                    <code style={{ flex: 1, background: "var(--bg)", padding: "2px 6px", borderRadius: 4 }}>{err.snippet}</code>
+                    <span style={{ color: "var(--muted)", fontSize: "0.9em" }}>{err.fix}</span>
                   </div>
+                ))}
+                {logData.errorLines?.length > 0 && (
+                  <pre style={{ margin: "8px 0 0", padding: "8px 10px", background: "#1e1e1e", color: "#d4d4d4", borderRadius: 6, fontSize: "0.78em", maxHeight: 160, overflow: "auto", whiteSpace: "pre-wrap" }}>
+                    {logData.errorLines.join("\n")}
+                  </pre>
                 )}
               </div>
-            );
-          })}
-        </div>
-      )}
-      {!fixes.length && diag.command && <div className="ux-cmd-preview"><span style={{ color: "var(--ok)" }}>$</span> {diag.command}</div>}
-      {Array.isArray(diag.steps) && diag.steps.length > 0 && (
-        <div className="fix-section"><span className="fix-label">Remediation</span>
-          <ol>{diag.steps.map((s, i) => <li key={i}>{typeof s === "string" ? s : s.text || s.description}</li>)}</ol>
-        </div>
-      )}
+            )}
+          </div>
+        )}
+        {/* Fix proposals */}
+        {fixes.length > 0 && (
+          <div>
+            <div style={{ fontSize: "0.72em", fontWeight: 600, textTransform: "uppercase", color: "var(--muted)", letterSpacing: "0.5px", marginBottom: 8 }}>
+              Remediation ({fixes.length} fix{fixes.length > 1 ? "es" : ""})
+            </div>
+            {fixes.map((fix, i) => {
+              const st = fixStates[fix.command];
+              const riskColor = fix.risk === "high" ? "#dc2626" : fix.risk === "medium" ? "#f59e0b" : "#16a34a";
+              return (
+                <div key={i} style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", marginBottom: 8 }}>
+                  <div style={{ padding: "10px 14px", background: "var(--card-bg)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <span style={{ fontWeight: 700, fontSize: "0.95em" }}>{fix.title}</span>
+                      <span style={{ fontSize: "0.7em", padding: "1px 8px", borderRadius: 10, border: `1px solid ${riskColor}40`, color: riskColor, fontWeight: 600, textTransform: "uppercase" }}>{fix.risk || "low"} risk</span>
+                    </div>
+                    <div style={{ fontSize: "0.82em", color: "var(--muted)", marginBottom: 8 }}>{fix.description}</div>
+                    <div style={{ display: "flex", alignItems: "center", background: "#1e1e1e", borderRadius: 6, overflow: "hidden" }}>
+                      <code style={{ flex: 1, padding: "8px 12px", color: "#d4d4d4", fontSize: "0.82em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{fix.command}</code>
+                      <button onClick={() => copyCmd(fix.command)} style={{ padding: "6px 12px", background: "transparent", border: "none", borderLeft: "1px solid #333", color: copied === fix.command ? "#16a34a" : "#888", cursor: "pointer", fontSize: "0.78em", fontWeight: 600, whiteSpace: "nowrap" }}>
+                        {copied === fix.command ? "✓ Copied" : "Copy"}
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 0, borderTop: "1px solid var(--border)" }}>
+                    <button onClick={() => runFix(fix, true)} disabled={st?.running} style={{ flex: 1, padding: "8px 0", background: "transparent", border: "none", borderRight: "1px solid var(--border)", cursor: st?.running ? "default" : "pointer", color: "var(--fg)", fontWeight: 600, fontSize: "0.82em", opacity: st?.running ? 0.5 : 1 }}>
+                      {st?.phase === "dry-run" ? "⏳ Running..." : "▷ Dry Run"}
+                    </button>
+                    <button onClick={() => runFix(fix, false)} disabled={st?.running} style={{ flex: 1, padding: "8px 0", background: hasIncident ? "rgba(34,197,94,0.06)" : "rgba(59,130,246,0.06)", border: "none", cursor: st?.running ? "default" : "pointer", color: hasIncident ? "#16a34a" : "#3b82f6", fontWeight: 700, fontSize: "0.82em", opacity: st?.running ? 0.5 : 1 }}>
+                      {st?.phase === "applying" || st?.phase === "closing-inc" ? "⏳ Applying..." : hasIncident ? "▶ Apply & Close INC" : "▶ Apply Fix"}
+                    </button>
+                  </div>
+                  {st && !st.running && (
+                    <div style={{ padding: "8px 14px", borderTop: "1px solid var(--border)", background: st.phase === "failed" || st.phase === "blocked" ? "rgba(220,38,38,0.04)" : "rgba(34,197,94,0.04)" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, fontSize: "0.82em", fontWeight: 600 }}>
+                        <span>{phaseIcon[st.phase] || ""}</span>
+                        <span style={{ color: st.phase === "failed" || st.phase === "blocked" ? "#dc2626" : "#16a34a" }}>{phaseLabel[st.phase] || st.phase}</span>
+                        {st.incClosed && <span style={{ marginLeft: "auto", fontSize: "0.85em", color: "#16a34a" }}>{diag.incidentNumber} resolved</span>}
+                        {st.incError && <span style={{ marginLeft: "auto", fontSize: "0.85em", color: "#f59e0b" }}>INC close: {st.incError}</span>}
+                      </div>
+                      <pre style={{ margin: 0, fontSize: "0.78em", whiteSpace: "pre-wrap", color: "var(--fg)", maxHeight: 200, overflow: "auto" }}>{st.text}</pre>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

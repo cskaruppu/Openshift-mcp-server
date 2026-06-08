@@ -4011,6 +4011,60 @@ EOF@@`);
         }
       }
 
+      // Phase 2b: Deep log analysis for target pod
+      let logAnalysis = null;
+      if (targetPod) {
+        try {
+          const containers = (targetPod.spec?.containers || []).map(c => c.name);
+          const prevTerminated = (targetPod.status?.containerStatuses || []).some(cs => cs.lastState?.terminated);
+          const logLines = [];
+          for (const cn of containers.slice(0, 2)) {
+            try {
+              const logUrl = `/api/v1/namespaces/${targetPod.metadata.namespace}/pods/${targetPod.metadata.name}/log?container=${cn}&tailLines=80&timestamps=true${prevTerminated ? "&previous=true" : ""}`;
+              const raw = await ocpFetch(logUrl, { headers: { Accept: "text/plain" } }).catch(() => "");
+              if (raw) logLines.push({ container: cn, text: typeof raw === "string" ? raw : JSON.stringify(raw), previous: prevTerminated });
+            } catch {}
+          }
+          if (logLines.length > 0) {
+            const ERROR_PATTERNS = [
+              { re: /\b(OutOfMemoryError|OOM|Cannot allocate memory|memory allocation failed)\b/i, category: "Memory Exhaustion", fix: "Increase memory limits or fix memory leak" },
+              { re: /\b(ECONNREFUSED|connection refused|Connection timed out|dial tcp.*connection refused)\b/i, category: "Connection Refused", fix: "Check dependent service availability and network policies" },
+              { re: /\b(ENOTFOUND|no such host|could not resolve|Name or service not known)\b/i, category: "DNS Resolution Failure", fix: "Check service names, DNS policy, and CoreDNS pods" },
+              { re: /\b(permission denied|EACCES|forbidden|403 Forbidden|cannot open|Access denied)\b/i, category: "Permission Denied", fix: "Check RBAC, SecurityContext, and file permissions" },
+              { re: /\b(no space left|disk full|ENOSPC)\b/i, category: "Disk Full", fix: "Increase PVC size or clean up storage" },
+              { re: /\b(CrashLoopBackOff|panic:|FATAL|fatal error|segmentation fault|core dumped)\b/i, category: "Application Crash", fix: "Check application code, dependencies, and startup config" },
+              { re: /\b(ImagePullBackOff|ErrImagePull|unauthorized|authentication required|manifest unknown)\b/i, category: "Image Pull Failure", fix: "Check image name/tag, registry credentials, and pull secrets" },
+              { re: /\b(readiness probe failed|liveness probe failed|startup probe failed)\b/i, category: "Health Check Failure", fix: "Adjust probe timing or fix the health endpoint" },
+              { re: /\b(deadline exceeded|context deadline|timeout|timed out|request timeout)\b/i, category: "Timeout", fix: "Check upstream latency, increase timeout, or scale resources" },
+              { re: /\b(NullPointerException|TypeError|ReferenceError|undefined is not|AttributeError|KeyError|IndexError)\b/i, category: "Application Error", fix: "Fix application code — null/type error in business logic" },
+              { re: /\b(SSL|TLS|certificate|x509|cert verify|handshake failure)\b/i, category: "TLS/Certificate Error", fix: "Check certificate expiry, CA trust chain, and TLS config" },
+              { re: /\b(quota exceeded|resource quota|LimitRange|insufficient)\b/i, category: "Resource Quota", fix: "Increase namespace resource quotas or reduce resource requests" },
+            ];
+            const detectedErrors = [];
+            const errorLines = [];
+            const allText = logLines.map(l => l.text).join("\n");
+            for (const pat of ERROR_PATTERNS) {
+              const match = pat.re.exec(allText);
+              if (match) detectedErrors.push({ category: pat.category, fix: pat.fix, snippet: match[0] });
+            }
+            const lines = allText.split("\n");
+            for (const line of lines) {
+              if (/\b(error|exception|fatal|panic|fail|warn|critical)\b/i.test(line) && !/^[\s]*$/i.test(line)) {
+                errorLines.push(line.trim().slice(0, 200));
+                if (errorLines.length >= 10) break;
+              }
+            }
+            logAnalysis = {
+              containers: logLines.map(l => l.container),
+              previous: prevTerminated,
+              errors: detectedErrors,
+              errorLines: errorLines.slice(0, 8),
+              totalLines: lines.length,
+            };
+          }
+        } catch {}
+      }
+
       // Phase 3: Compute severity — target-aware
       const targetCritical = targetIssues.some(i => ["CrashLoopBackOff", "OOMKilled", "Failed"].includes(i.signal));
       const targetWarning = targetIssues.some(i => ["Pending", "ImagePullBackOff", "High Restart Count"].includes(i.signal));
@@ -4075,6 +4129,29 @@ EOF@@`);
         parts.push(`| Signal | Detail |`);
         parts.push(`| --- | --- |`);
         rootCauses.forEach(r => parts.push(`| ${r.signal} | ${r.detail} |`));
+        parts.push("");
+      }
+
+      // Log-based root cause (deep analysis)
+      if (logAnalysis && logAnalysis.errors.length > 0) {
+        parts.push(`**Log Analysis** (${logAnalysis.totalLines} lines scanned${logAnalysis.previous ? ", previous container" : ""})`);
+        parts.push("");
+        parts.push(`| Category | Detail | Recommended Fix |`);
+        parts.push(`| --- | --- | --- |`);
+        logAnalysis.errors.forEach(e => parts.push(`| ${e.category} | \`${e.snippet}\` | ${e.fix} |`));
+        parts.push("");
+        if (logAnalysis.errorLines.length > 0) {
+          parts.push(`**Error Log Excerpts:**`);
+          parts.push("```");
+          logAnalysis.errorLines.forEach(l => parts.push(l));
+          parts.push("```");
+          parts.push("");
+        }
+      } else if (logAnalysis && logAnalysis.errorLines.length > 0) {
+        parts.push(`**Log Excerpts** (${logAnalysis.totalLines} lines scanned)`);
+        parts.push("```");
+        logAnalysis.errorLines.slice(0, 5).forEach(l => parts.push(l));
+        parts.push("```");
         parts.push("");
       }
 
@@ -4249,13 +4326,16 @@ EOF@@`);
         const diagPayload = {
           podName: targetName || "incident_response",
           namespace: targetNs || "cluster-wide",
+          deploymentName: targetDeploy || null,
           severity: severity === "SEV-1" || severity === "SEV-2" ? "critical" : "warning",
+          severityLevel: severity,
           diagnosis: `${severity} — ${rootCauses.map(r => r.signal).join(", ")}`,
           rootCause: rootCauses[0]?.signal || "multiple",
           evidence: rootCauses.map(r => r.detail),
           fixes: fixProposals,
           incidentSysId: snowRec?.sys_id || null,
           incidentNumber: snowRec?.number || null,
+          logAnalysis: logAnalysis || null,
         };
         parts.push(`@@FIX_PROPOSAL|${JSON.stringify(diagPayload).replace(/@@/g, "@ @")}@@`);
       }
