@@ -637,6 +637,7 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
   const [dryRunResult, setDryRunResult] = useState(null);
   const [remediationPlan, setRemediationPlan] = useState(null);
   const [progressData, setProgressData] = useState(null);
+  const [expandedStep, setExpandedStep] = useState("pre_assessed");
   const pollRef = useRef(null);
 
   const sessionId = data?.sessionId;
@@ -746,6 +747,151 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     completed: "var(--ok)", failed: "var(--crit)", cancelled: "var(--text2)",
   };
 
+  const checkIcon = (st) => (st === "pass" ? "✅" : st === "warning" ? "⚠️" : "❌");
+  const checkColor = (st) => (st === "pass" ? "var(--ok)" : st === "warning" ? "var(--warn)" : "var(--crit)");
+
+  // Short status badge shown on the right of each completed step
+  function stepBadge(key) {
+    if (key === "pre_assessed" && s.preflightReport?.summary) {
+      const sm = s.preflightReport.summary;
+      const color = sm.fail > 0 ? "var(--crit)" : sm.warning > 0 ? "var(--warn)" : "var(--ok)";
+      return { text: `${sm.pass}/${sm.total} pass`, color };
+    }
+    if (key === "component_analyzed" && s.componentAnalysis) {
+      const a = s.componentAnalysis;
+      const issues = (a.degradedOperators?.length || 0) + (a.failingPods?.length || 0) + (a.certificateIssues?.length || 0) + (a.mcpIssues?.length || 0) + (a.storageIssues?.length || 0) + (a.networkIssues?.length || 0);
+      return { text: issues > 0 ? `${issues} issues` : "clean", color: issues > 0 ? "var(--warn)" : "var(--ok)" };
+    }
+    const plan = s.remediationPlan || remediationPlan;
+    if (key === "remediation_proposed" && plan) {
+      return { text: `${plan.totalFixes || plan.fixes?.length || 0} fixes`, color: "var(--warn)" };
+    }
+    return null;
+  }
+
+  // Expandable detail panel content for a completed step (persisted via session)
+  function stepDetail(key) {
+    // ── Pre-Assessment: the 22 checks ──
+    if (key === "pre_assessed" && s.preflightReport?.checks?.length) {
+      const r = s.preflightReport;
+      const sm = r.summary || {};
+      const overallColor = r.overallStatus === "NOT_READY" ? "var(--crit)" : r.overallStatus === "READY_WITH_WARNINGS" ? "var(--warn)" : "var(--ok)";
+      return (
+        <div>
+          <div style={{ display: "flex", gap: 12, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontWeight: 700, color: overallColor }}>{(r.overallStatus || "").replace(/_/g, " ")}</span>
+            <span style={{ color: "var(--ok)" }}>✅ {sm.pass || 0} passed</span>
+            <span style={{ color: "var(--warn)" }}>⚠️ {sm.warning || 0} warnings</span>
+            <span style={{ color: "var(--crit)" }}>❌ {sm.fail || 0} failed</span>
+            <span style={{ color: "var(--text2)" }}>· {sm.total || r.checks.length} checks</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {r.checks.map((c, idx) => (
+              <div key={idx} style={{ display: "flex", gap: 8, alignItems: "flex-start", paddingBottom: 6, borderBottom: idx < r.checks.length - 1 ? "1px solid var(--border)" : "none" }}>
+                <span style={{ flexShrink: 0 }}>{checkIcon(c.status)}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ fontWeight: 600, color: checkColor(c.status) }}>{c.category}</span>
+                  <div style={{ color: "var(--text2)", marginTop: 1, lineHeight: 1.45 }}>{c.details}</div>
+                  {c.recommendation && (
+                    <div style={{ color: "var(--accent2)", marginTop: 2 }}>↳ {c.recommendation}</div>
+                  )}
+                  {Array.isArray(c.items) && c.items.length > 0 && (
+                    <div style={{ marginTop: 3, color: "var(--text2)" }}>
+                      {c.items.slice(0, 6).map((it, j) => (
+                        <div key={j}>• {it.name || it.message || JSON.stringify(it).slice(0, 100)}{it.issue ? ` — ${it.issue}` : ""}</div>
+                      ))}
+                      {c.items.length > 6 && <div>…and {c.items.length - 6} more</div>}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ── Component Analysis: deep-dive findings ──
+    if (key === "component_analyzed" && s.componentAnalysis) {
+      const a = s.componentAnalysis;
+      const sections = [
+        { label: "Degraded Operators", items: a.degradedOperators, render: (o) => `${o.name} — ${o.issue}${o.unhealthyPods?.length ? ` (${o.unhealthyPods.length} unhealthy pods)` : ""}` },
+        { label: "Failing Pods", items: a.failingPods, render: (p) => `${p.namespace || ""}/${p.name || p}` },
+        { label: "Certificate Issues", items: a.certificateIssues, render: (x) => x.message || x.name || JSON.stringify(x).slice(0, 80) },
+        { label: "MachineConfigPool Issues", items: a.mcpIssues, render: (x) => x.name ? `${x.name} — ${x.issue || x.message || ""}` : JSON.stringify(x).slice(0, 80) },
+        { label: "Storage Issues", items: a.storageIssues, render: (x) => x.message || x.name || JSON.stringify(x).slice(0, 80) },
+        { label: "Network Issues", items: a.networkIssues, render: (x) => x.message || x.name || JSON.stringify(x).slice(0, 80) },
+      ].filter((sec) => Array.isArray(sec.items) && sec.items.length > 0);
+      if (sections.length === 0) {
+        return <div style={{ color: "var(--ok)" }}>✅ No component-level issues found. All operators, pods, certificates, MCPs, storage and network checks are clean.</div>;
+      }
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {sections.map((sec) => (
+            <div key={sec.label}>
+              <div style={{ fontWeight: 600, color: "var(--warn)", marginBottom: 3 }}>{sec.label} ({sec.items.length})</div>
+              {sec.items.slice(0, 8).map((it, j) => (
+                <div key={j} style={{ color: "var(--text2)", paddingLeft: 8 }}>• {sec.render(it)}</div>
+              ))}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ── Remediation Plan: persisted from session so it never vanishes ──
+    const plan = s.remediationPlan || remediationPlan;
+    if (key === "remediation_proposed" && plan?.fixes?.length) {
+      const results = s.remediationResults || {};
+      return (
+        <div>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>Remediation Plan ({plan.totalFixes || plan.fixes.length} fixes)</div>
+          {plan.fixes.map((fix) => {
+            const res = fix._result || results[fix.id];
+            return (
+              <div key={fix.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
+                <span style={{ color: fix.severity === "critical" ? "var(--crit)" : fix.severity === "warning" ? "var(--warn)" : "var(--text2)", fontSize: 10.5, fontWeight: 700, width: 58, flexShrink: 0 }}>
+                  {(fix.severity || "info").toUpperCase()}
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div>{fix.description}</div>
+                  {fix.command && <code style={{ fontSize: 10.5, color: "var(--accent3, #10b981)", wordBreak: "break-all" }}>{fix.command}</code>}
+                </div>
+                {res ? (
+                  <span style={{ color: res.success ? "var(--ok)" : "var(--crit)", fontSize: 11, flexShrink: 0 }}>{res.success ? "✅ Done" : "❌ Failed"}</span>
+                ) : (state === "remediation_proposed" && (
+                  <button className="ux-btn ux-btn-dryrun" style={{ padding: "2px 8px", fontSize: 10, flexShrink: 0 }}
+                    onClick={(e) => { e.stopPropagation(); handleExecuteFix(fix.id); }} disabled={!!stepRunning}>Fix</button>
+                ))}
+              </div>
+            );
+          })}
+          {state === "remediation_proposed" && (
+            <button className="ux-btn ux-btn-execute" style={{ marginTop: 8, padding: "4px 12px", fontSize: 11 }}
+              onClick={(e) => { e.stopPropagation(); runStep("complete-remediation"); }} disabled={!!stepRunning}>
+              Mark Remediation Complete
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    // ── Post-Assessment: before/after comparison ──
+    if (key === "completed" && s.postAssessment) {
+      const pa = s.postAssessment;
+      return (
+        <div>
+          <div>Duration: {pa.duration || "—"}</div>
+          <div style={{ color: "var(--ok)" }}>Resolved: {(pa.comparison?.resolved || []).join(", ") || "none"}</div>
+          {(pa.comparison?.newIssues || []).length > 0 && <div style={{ color: "var(--warn)" }}>New issues: {pa.comparison.newIssues.join(", ")}</div>}
+          {(pa.comparison?.persistent || []).length > 0 && <div style={{ color: "var(--text2)" }}>Persistent: {pa.comparison.persistent.join(", ")}</div>}
+        </div>
+      );
+    }
+
+    return null;
+  }
+
   return (
     <div className="ux-card" style={{ maxWidth: 1000 }}>
       <div className="ux-header">
@@ -762,8 +908,8 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
       </div>
 
       <div className="ux-body" style={{ padding: "12px 18px" }}>
-        {/* Step progress timeline */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+        {/* Step progress timeline — each completed step with data is expandable */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 16 }}>
           {STEPS.map((step, i) => {
             const stepIdx = STATE_ORDER.indexOf(step.key);
             const done = stepIdx >= 0 && stepIdx <= currentIdx;
@@ -771,50 +917,45 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
             const isNextAction = !!step.action && step.fromStates.includes(state);
             const active = isNextAction || (state === "monitoring" && step.key === "executing");
             const icon = done ? "✅" : isNextAction ? "▶" : "⬜";
+            const detail = stepDetail(step.key);
+            const badge = stepBadge(step.key);
+            const isOpen = expandedStep === step.key;
 
             return (
-              <div key={step.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, opacity: done || active ? 1 : 0.5 }}>
-                <span style={{ width: 24, textAlign: "center" }}>{icon}</span>
-                <span style={{ flex: 1, fontWeight: isNextAction ? 600 : 400 }}>{step.label}</span>
-                {isNextAction && (
-                  <button className="ux-btn ux-btn-dryrun" style={{ padding: "3px 10px", fontSize: 11 }}
-                    onClick={step.action} disabled={!!stepRunning}>
-                    {stepRunning ? "Running…" : step.actionLabel}
-                  </button>
+              <div key={step.key}>
+                <div
+                  style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, opacity: done || active ? 1 : 0.5, padding: "4px 0", cursor: detail ? "pointer" : "default", borderRadius: 6 }}
+                  onClick={detail ? () => setExpandedStep(isOpen ? null : step.key) : undefined}
+                >
+                  <span style={{ width: 24, textAlign: "center" }}>{icon}</span>
+                  <span style={{ flex: 1, fontWeight: isNextAction ? 600 : 400 }}>{step.label}</span>
+                  {badge && (
+                    <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: `color-mix(in srgb, ${badge.color} 16%, transparent)`, color: badge.color }}>
+                      {badge.text}
+                    </span>
+                  )}
+                  {isNextAction && (
+                    <button className="ux-btn ux-btn-dryrun" style={{ padding: "3px 10px", fontSize: 11 }}
+                      onClick={(e) => { e.stopPropagation(); step.action(); }} disabled={!!stepRunning}>
+                      {stepRunning ? "Running…" : step.actionLabel}
+                    </button>
+                  )}
+                  {detail && (
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+                      style={{ transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s", opacity: .6 }}>
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  )}
+                </div>
+                {detail && isOpen && (
+                  <div style={{ margin: "2px 0 8px 32px", padding: "10px 12px", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}>
+                    {detail}
+                  </div>
                 )}
               </div>
             );
           })}
         </div>
-
-        {/* Remediation plan details */}
-        {remediationPlan && state === "remediation_proposed" && (
-          <div style={{ background: "var(--bg2)", borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 12 }}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>Remediation Plan ({remediationPlan.totalFixes} fixes)</div>
-            {remediationPlan.fixes.map(fix => (
-              <div key={fix.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
-                <span style={{ color: fix.severity === "critical" ? "var(--crit)" : fix.severity === "warning" ? "var(--warn)" : "var(--text2)", fontSize: 11, fontWeight: 600, width: 60 }}>
-                  {fix.severity.toUpperCase()}
-                </span>
-                <span style={{ flex: 1 }}>{fix.description}</span>
-                {fix._result ? (
-                  <span style={{ color: fix._result.success ? "var(--ok)" : "var(--crit)", fontSize: 11 }}>
-                    {fix._result.success ? "✅ Done" : "❌ Failed"}
-                  </span>
-                ) : (
-                  <button className="ux-btn ux-btn-dryrun" style={{ padding: "2px 8px", fontSize: 10 }}
-                    onClick={() => handleExecuteFix(fix.id)} disabled={!!stepRunning}>
-                    Fix
-                  </button>
-                )}
-              </div>
-            ))}
-            <button className="ux-btn ux-btn-execute" style={{ marginTop: 8, padding: "4px 12px", fontSize: 11 }}
-              onClick={() => runStep("complete-remediation")} disabled={!!stepRunning}>
-              Mark Remediation Complete
-            </button>
-          </div>
-        )}
 
         {/* Dry run result */}
         {dryRunResult && (
@@ -855,21 +996,6 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
             )}
             {progressData.message && (
               <div style={{ marginTop: 4, fontSize: 11, color: "var(--text2)" }}>{progressData.message.slice(0, 200)}</div>
-            )}
-          </div>
-        )}
-
-        {/* Post-assessment comparison */}
-        {s.postAssessment && (
-          <div style={{ background: "var(--bg2)", borderRadius: 8, padding: 12, fontSize: 12 }}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>Post-Upgrade Assessment</div>
-            <div>Duration: {s.postAssessment.duration}</div>
-            <div style={{ color: "var(--ok)" }}>Resolved: {(s.postAssessment.comparison?.resolved || []).join(", ") || "none"}</div>
-            {(s.postAssessment.comparison?.newIssues || []).length > 0 && (
-              <div style={{ color: "var(--warn)" }}>New Issues: {s.postAssessment.comparison.newIssues.join(", ")}</div>
-            )}
-            {(s.postAssessment.comparison?.persistent || []).length > 0 && (
-              <div style={{ color: "var(--text2)" }}>Persistent: {s.postAssessment.comparison.persistent.join(", ")}</div>
             )}
           </div>
         )}
