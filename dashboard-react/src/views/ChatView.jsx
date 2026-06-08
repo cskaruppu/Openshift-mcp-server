@@ -523,7 +523,13 @@ export function ChatView() {
 
       const ct = res.headers.get("content-type") || "";
       if (!res.ok || !ct.includes("text/event-stream")) {
-        const data = res.ok ? await res.json() : { error: `Server error ${res.status}` };
+        let data;
+        if (res.ok) {
+          data = await res.json();
+        } else {
+          try { data = await res.json(); } catch { data = {}; }
+          data.error = data.error || `Server error ${res.status}`;
+        }
         updateLastAssistant(sendingCluster, data.reply || data.error || "No response");
       } else {
         const reader = res.body.getReader();
