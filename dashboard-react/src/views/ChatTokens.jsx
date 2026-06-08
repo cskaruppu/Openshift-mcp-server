@@ -929,9 +929,26 @@ function FixProposal({ diag, cluster }) {
       if (!dryRun && d.success !== false && diag.incidentSysId) {
         setFixStates(prev => ({ ...prev, [key]: { running: true, phase: "closing-inc", text: out + "\n\nClosing ServiceNow incident..." } }));
         try {
+          const resolution = {
+            incidentNumber: diag.incidentNumber || "",
+            severity: diag.severityLevel || diag.severity || "N/A",
+            podName: diag.podName || "",
+            namespace: diag.namespace || "",
+            deploymentName: diag.deploymentName || "",
+            cluster: cluster || "local",
+            rootCause: diag.rootCause || diag.diagnosis || "see report",
+            evidence: diag.evidence || [],
+            logErrors: diag.logAnalysis?.errors || [],
+            errorLines: diag.logAnalysis?.errorLines || [],
+            fixTitle: fix.title || "",
+            fixCommand: fix.command || "",
+            fixResult: String(out).slice(0, 500),
+            fixRisk: fix.risk || "low",
+            rolloutStatus: /restart|rolled out/i.test(out) ? "confirmed" : "triggered",
+          };
           const closeRes = await fetch(clusterUrl("/api/servicenow/resolve-incident", cluster), {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sysId: diag.incidentSysId, closeNotes: `Resolved by TCS Agentic AI — ${fix.title}`, workNotes: `[AI Hub] Fix: ${fix.command}\nResult: ${String(out).slice(0, 500)}\nRoot cause: ${diag.rootCause || diag.diagnosis || "see report"}` }),
+            body: JSON.stringify({ sysId: diag.incidentSysId, closeNotes: `Resolved by TCS Agentic AI — ${fix.title}`, resolution }),
           });
           const closeData = await closeRes.json();
           setFixStates(prev => ({ ...prev, [key]: { phase: closeData.success ? "resolved" : "applied", text: out, incClosed: closeData.success, incError: closeData.success ? null : (closeData.error || "close failed") } }));

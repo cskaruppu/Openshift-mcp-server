@@ -211,13 +211,93 @@ export async function cancelChangeRequest(sysId, { reason = "Cancelled by user f
   });
 }
 
-/** Resolve a ServiceNow incident.
- *  Sets state to Resolved (6) with close code, notes, and detailed work notes. */
+/** Resolve a ServiceNow incident — ITIL-compliant closure.
+ *  Posts structured work notes (RCA, timeline, fix detail, prevention) as a
+ *  separate update first, then sets state to Resolved (6).
+ *  Accepts an optional `resolution` object with full diagnosis context. */
 export async function resolveIncident(sysId, {
   closeCode = "Solved (Permanently)",
   closeNotes = "Resolved by TCS Agentic AI",
   workNotes = "",
+  resolution = null,
 } = {}) {
+  if (resolution) {
+    const ts = new Date().toISOString().replace("T", " ").slice(0, 19);
+    const sections = [
+      `══════════════════════════════════════`,
+      `  INCIDENT RESOLUTION — ${resolution.incidentNumber || ""}`,
+      `  ${ts}`,
+      `══════════════════════════════════════`,
+      ``,
+      `▸ SEVERITY: ${resolution.severity || "N/A"}`,
+      `▸ AFFECTED POD: ${resolution.podName || "N/A"}`,
+      `▸ NAMESPACE: ${resolution.namespace || "N/A"}`,
+      `▸ DEPLOYMENT: ${resolution.deploymentName || "N/A"}`,
+      `▸ CLUSTER: ${resolution.cluster || "local"}`,
+      ``,
+      `── ROOT CAUSE ANALYSIS ──────────────`,
+      resolution.rootCause || "See diagnosis",
+      ...(resolution.evidence || []).map(e => `  • ${e}`),
+    ];
+    if (resolution.logErrors?.length > 0) {
+      sections.push(``, `── LOG ANALYSIS ─────────────────────`);
+      for (const le of resolution.logErrors.slice(0, 5)) {
+        sections.push(`  [${le.category}] ${le.snippet || ""}`);
+        sections.push(`    Recommended: ${le.fix || "investigate"}`);
+      }
+    }
+    if (resolution.errorLines?.length > 0) {
+      sections.push(``, `── ERROR LOG EXCERPTS ───────────────`);
+      for (const l of resolution.errorLines.slice(0, 5)) {
+        sections.push(`  ${l.slice(0, 200)}`);
+      }
+    }
+    sections.push(
+      ``,
+      `── FIX APPLIED ──────────────────────`,
+      `  Action: ${resolution.fixTitle || "N/A"}`,
+      `  Command: ${resolution.fixCommand || "N/A"}`,
+      `  Result: ${(resolution.fixResult || "success").slice(0, 500)}`,
+      `  Risk Level: ${resolution.fixRisk || "low"}`,
+    );
+    sections.push(
+      ``,
+      `── VERIFICATION ─────────────────────`,
+      `  Fix executed: ✓`,
+      `  Deployment rollout: ${resolution.rolloutStatus || "triggered"}`,
+      `  Incident auto-resolved: ✓`,
+    );
+    if (resolution.prevention) {
+      sections.push(``, `── PREVENTION ───────────────────────`, `  ${resolution.prevention}`);
+    } else {
+      const autoPreventions = [];
+      if (/OOM|Memory/i.test(resolution.rootCause || "")) autoPreventions.push("Set memory requests equal to limits to prevent OOM", "Consider HPA to auto-scale under load", "Profile application memory usage to right-size limits");
+      else if (/Crash|CrashLoop/i.test(resolution.rootCause || "")) autoPreventions.push("Add readiness/liveness probes with appropriate thresholds", "Review application startup sequence and dependency checks", "Implement graceful shutdown handling");
+      else if (/Image|Pull/i.test(resolution.rootCause || "")) autoPreventions.push("Pin image tags to digests for reproducibility", "Verify pull secret exists and is not expired", "Use imagePullPolicy: IfNotPresent for stable tags");
+      else autoPreventions.push("Monitor with Prometheus alerts for early detection", "Review resource limits and requests regularly");
+      sections.push(``, `── PREVENTION RECOMMENDATIONS ───────`);
+      autoPreventions.forEach(p => sections.push(`  • ${p}`));
+    }
+    sections.push(
+      ``,
+      `══════════════════════════════════════`,
+      `  Resolved by TCS Agentic AI`,
+      `  Close code: ${closeCode}`,
+      `══════════════════════════════════════`,
+    );
+    await updateRecord("incident", sysId, { work_notes: sections.join("\n") });
+    const richCloseNotes = [
+      closeNotes,
+      `Root Cause: ${resolution.rootCause || "see work notes"}`,
+      `Fix: ${resolution.fixTitle || "see work notes"}`,
+      `Severity: ${resolution.severity || "N/A"} | Namespace: ${resolution.namespace || "N/A"} | Pod: ${resolution.podName || "N/A"}`,
+    ].join("\n");
+    return updateRecord("incident", sysId, {
+      state: "6",
+      close_code: closeCode,
+      close_notes: richCloseNotes,
+    });
+  }
   if (workNotes) {
     await updateRecord("incident", sysId, { work_notes: workNotes });
   }

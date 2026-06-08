@@ -3829,11 +3829,12 @@ async function startSSE() {
     if (req.method === "POST" && url.pathname === "/api/servicenow/resolve-incident") {
       try {
         const body = await readJsonBody(req);
-        const { sysId, closeNotes, workNotes } = body;
+        const { sysId, closeNotes, workNotes, resolution } = body;
         if (!sysId) return sendJson(res, 400, { error: "sysId required" });
         const result = await snowResolveIncident(sysId, {
           closeNotes: closeNotes || "Resolved by TCS Agentic AI — fix applied and validated",
           workNotes: workNotes || "",
+          resolution: resolution || null,
         });
         return sendJson(res, 200, { success: true, result: result?.result || result });
       } catch (e) {
