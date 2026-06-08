@@ -404,6 +404,8 @@ export function ChatView() {
   }
 
   async function starChat(id, starred) {
+    // Optimistic UI — reflect the change instantly, then persist.
+    setSavedChats((prev) => prev.map((c) => (c.id === id ? { ...c, starred } : c)));
     try {
       const res = await fetch(clusterUrl(`/api/chats/${id}`, cluster), {
         method: "PATCH", headers: { "Content-Type": "application/json" },
@@ -412,21 +414,36 @@ export function ChatView() {
       if (res.ok) {
         showToast(starred ? "Starred" : "Unstarred", "ok");
         reloadSavedChats();
+      } else {
+        setSavedChats((prev) => prev.map((c) => (c.id === id ? { ...c, starred: !starred } : c)));
+        showToast("Failed to update — is chat history persistence enabled?", "error");
       }
-    } catch { showToast("Failed to update", "error"); }
+    } catch {
+      setSavedChats((prev) => prev.map((c) => (c.id === id ? { ...c, starred: !starred } : c)));
+      showToast("Failed to update", "error");
+    }
   }
 
   async function lockChat(id, locked) {
+    // Optimistic UI — show the lock badge immediately so it never looks like a no-op.
+    setSavedChats((prev) => prev.map((c) => (c.id === id ? { ...c, locked } : c)));
     try {
       const res = await fetch(clusterUrl(`/api/chats/${id}`, cluster), {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ locked }),
       });
       if (res.ok) {
-        showToast(locked ? "Locked" : "Unlocked", "ok");
+        showToast(locked ? "Chat locked — protected from deletion" : "Chat unlocked", "ok");
         reloadSavedChats();
+      } else {
+        // Revert on failure and tell the user why (DB persistence likely off).
+        setSavedChats((prev) => prev.map((c) => (c.id === id ? { ...c, locked: !locked } : c)));
+        showToast("Lock failed — chat history persistence not enabled", "error");
       }
-    } catch { showToast("Failed to update", "error"); }
+    } catch {
+      setSavedChats((prev) => prev.map((c) => (c.id === id ? { ...c, locked: !locked } : c)));
+      showToast("Failed to update", "error");
+    }
   }
 
   async function renameChat(id, title) {
@@ -443,17 +460,36 @@ export function ChatView() {
   }
 
   async function deleteSavedChat(id) {
+    const chat = savedChats.find((c) => c.id === id);
+    const title = chat?.title || "this chat";
+    // A locked chat must be explicitly unlocked first — mirror that in the prompt.
+    if (chat?.locked) {
+      showToast("Chat is locked — unlock it before deleting", "warn");
+      return;
+    }
+    // Confirmation gate — deletion is permanent and cannot be undone.
+    if (!window.confirm(`Delete "${title}"?\n\nThis permanently removes the conversation and all its messages. This cannot be undone.`)) {
+      return;
+    }
+    // Optimistic removal for instant feedback.
+    const snapshot = savedChats;
+    setSavedChats((prev) => prev.filter((c) => c.id !== id));
     try {
       const res = await fetch(clusterUrl(`/api/chats/${id}`, cluster), { method: "DELETE" });
       if (res.ok) {
-        showToast("Deleted", "ok");
+        showToast("Chat deleted", "ok");
+        if (conv.chatId === id) handleNewChat();
         reloadSavedChats();
       } else {
         const d = await res.json().catch(() => ({}));
+        setSavedChats(snapshot);
         if (d.locked) showToast("Chat is locked — unlock first", "warn");
         else showToast("Failed to delete", "error");
       }
-    } catch { showToast("Failed to delete", "error"); }
+    } catch {
+      setSavedChats(snapshot);
+      showToast("Failed to delete", "error");
+    }
   }
 
   function copyMessage(text) {
@@ -668,6 +704,7 @@ export function ChatView() {
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
               Rename
             </button>
+            <div className="ac-ctx-divider" />
             <button className="ac-ctx-danger" onClick={() => { deleteSavedChat(ch.id); setCtxMenu(null); }}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
               Delete
