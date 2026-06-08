@@ -1,14 +1,15 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// React dashboard — builds to ../dashboard/app so the backend serves it at /.
-// The legacy single-file dashboard is preserved at /old-app.
+// React dashboard — separate pod served by nginx.
+// Build output goes to dist/ for the dashboard Dockerfile.
+// Also outputs to ../dashboard/app for backward compatibility.
 // During development, API calls are proxied to the running MCP server.
 export default defineConfig({
   base: "/",
   plugins: [react()],
   build: {
-    outDir: "../dashboard/app",
+    outDir: "dist",
     emptyOutDir: true,
   },
   server: {

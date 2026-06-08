@@ -5421,9 +5421,10 @@ async function startSSE() {
       return;
     }
 
-    // Serve dashboard HTML — fallback for any non-API, non-MCP route
-    // In spoke mode, redirect to hub dashboard (unless SPOKE_SERVE_DASHBOARD=true)
-    if (req.method === "GET" && MCP_MODE === "spoke" && process.env.SPOKE_SERVE_DASHBOARD !== "true") {
+    // Dashboard is now a separate pod (nginx + React). The MCP server is API-only.
+    // If dashboard files still exist in the image (backward compat), serve them.
+    // In spoke mode, return a JSON pointer to the hub dashboard.
+    if (req.method === "GET" && MCP_MODE === "spoke") {
       const hubUrl = process.env.HUB_URL || process.env.HUB_SERVER_URL;
       if (hubUrl && !url.pathname.startsWith("/api/") && !url.pathname.startsWith("/sse") && !url.pathname.startsWith("/message") && !url.pathname.startsWith("/mcp/") && url.pathname !== "/healthz" && url.pathname !== "/readyz") {
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -5431,6 +5432,22 @@ async function startSSE() {
         return;
       }
     }
+    if (req.method === "GET" && MCP_MODE === "hub" && !url.pathname.startsWith("/api/")) {
+      // In the separated architecture, dashboard is served by nginx.
+      // If someone hits the MCP server directly (not through nginx), return API info.
+      if (url.pathname === "/" || url.pathname === "/index.html") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          service: "TCS Agentic AI — MCP Server",
+          mode: MCP_MODE,
+          version: "1.2.0",
+          message: "This is the API server. Access the dashboard via the tcs-dashboard service/route.",
+          endpoints: { health: "/healthz", spokeStatus: "/api/spoke/status", agentStatus: "/api/agent/status" },
+        }));
+        return;
+      }
+    }
+    // Backward compatibility: serve dashboard files if they exist in the image
     if (req.method === "GET") {
       const DASHBOARD_DIR = process.env.DASHBOARD_DIR || resolve(process.cwd(), "dashboard");
       const MIME = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon" };

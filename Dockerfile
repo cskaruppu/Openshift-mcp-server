@@ -1,37 +1,27 @@
 # ============================================================================
-# Stage 1 — Build the React dashboard (dashboard-react -> dashboard/app)
-# Self-contained: the UI is always built reproducibly inside the image, so no
-# host Node toolchain is required and a stale committed build can never ship.
+# TCS Agentic AI — MCP Server (API-only)
+#
+# The dashboard is now a separate image (dashboard-react/Dockerfile).
+# This image contains only the Node.js MCP server for cluster operations.
+# Deployable on hub (MCP_MODE=hub) or spoke (MCP_MODE=spoke) clusters.
 # ============================================================================
-FROM node:20-alpine AS ui-build
-WORKDIR /app/dashboard-react
-COPY dashboard-react/package.json dashboard-react/package-lock.json* ./
-RUN npm ci
-COPY dashboard-react/ ./
-# vite.config.js outDir is ../dashboard/app, so this writes to /app/dashboard/app
-RUN npm run build
 
-# ============================================================================
-# Stage 2 — Install hub server production dependencies
-# ============================================================================
+# Stage 1 — Install production dependencies
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 COPY src/ src/
 
-# ============================================================================
-# Stage 3 — Final runtime image
-# ============================================================================
+# Stage 2 — Final runtime image
 FROM node:20-alpine
+LABEL maintainer="TCS Agentic AI <tcs-agentic-ai@tcs.com>"
+LABEL description="TCS Agentic AI — MCP Server (cluster operations)"
+
 RUN addgroup -g 1001 -S appgroup && adduser -u 1001 -S appuser -G appgroup
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/src ./src
-# Legacy dashboard (accessible at /old-app)
-COPY dashboard/index.html dashboard/index.html
-# React app (accessible at /)
-COPY --from=ui-build /app/dashboard/app ./dashboard/app
 COPY package.json .
 USER 1001
 ENV NODE_ENV=production
