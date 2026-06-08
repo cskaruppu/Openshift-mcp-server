@@ -14,6 +14,23 @@ function getConfig() {
   };
 }
 
+let _callerSysIdCache = null;
+async function resolveCallerSysId() {
+  if (_callerSysIdCache) return _callerSysIdCache;
+  const { user } = getConfig();
+  if (!user) return "";
+  try {
+    const data = await snowFetch(
+      `/now/table/sys_user?sysparm_query=user_name=${encodeURIComponent(user)}&sysparm_limit=1&sysparm_fields=sys_id`
+    );
+    const sysId = data?.result?.[0]?.sys_id || "";
+    if (sysId) _callerSysIdCache = sysId;
+    return sysId;
+  } catch {
+    return "";
+  }
+}
+
 function authHeader() {
   const { user, pass } = getConfig();
   return `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
@@ -46,7 +63,7 @@ export async function snowFetch(path, options = {}) {
       if (/ACL/.test(body)) hint = "ACL denied — API user needs 'itil' role.";
       else if (/caller_id|assignment_group/.test(body)) hint = "A reference field has an invalid value. Check caller_id and assignment_group.";
       else if (/mandatory/i.test(body)) hint = "A mandatory field is missing. Check your instance's form configuration.";
-      throw new Error(`ServiceNow API 500: ${hint} Raw: ${body.slice(0, 200)}`);
+      throw new Error(`ServiceNow API 500: ${hint} Raw: ${body.slice(0, 500)}`);
     }
     if (resp.status === 401) throw new Error(`ServiceNow auth failed (401). Check SERVICENOW_USERNAME and SERVICENOW_PASSWORD.`);
     if (resp.status === 403) throw new Error(`ServiceNow forbidden (403). API user needs 'itil' role for table access.`);
@@ -56,8 +73,11 @@ export async function snowFetch(path, options = {}) {
 }
 
 /** Create an incident.
- *  Only sends non-empty optional fields to avoid triggering ServiceNow
- *  business rules that fail on empty string references (common on PDIs). */
+ *  Resolves caller_id to sys_id (ServiceNow reference fields require sys_id,
+ *  not username strings — sending a username causes 500 on many PDIs).
+ *  If creation returns 500 but the record was actually committed (common PDI
+ *  behavior due to post-insert business rules), queries for the incident
+ *  and returns it instead of throwing. */
 export async function createIncident({
   shortDescription,
   description,
@@ -75,12 +95,27 @@ export async function createIncident({
   };
   if (category) payload.category = category;
   if (assignmentGroup) payload.assignment_group = assignmentGroup;
-  const effectiveCaller = callerID || getConfig().user;
-  if (effectiveCaller) payload.caller_id = effectiveCaller;
-  return snowFetch("/now/table/incident", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  const callerSysId = callerID || await resolveCallerSysId();
+  if (callerSysId) payload.caller_id = callerSysId;
+
+  try {
+    return await snowFetch("/now/table/incident", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    if (/500/.test(err.message)) {
+      try {
+        const q = `short_description=${encodeURIComponent(shortDescription)}&sysparm_limit=1&sysparm_orderby=DESC:sys_created_on`;
+        const recent = await snowFetch(`/now/table/incident?sysparm_query=${q}`);
+        if (recent?.result?.[0]?.sys_id) {
+          console.warn("[servicenow] Incident created despite 500 — recovered via query:", recent.result[0].number);
+          return recent;
+        }
+      } catch { /* recovery query failed too */ }
+    }
+    throw err;
+  }
 }
 
 /** Create a change request */
