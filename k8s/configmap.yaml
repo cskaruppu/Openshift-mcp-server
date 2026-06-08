@@ -4,6 +4,7 @@ metadata:
   name: mcp-server-config
   namespace: openshift-mcp
 data:
+  MCP_MODE: "hub"
   MCP_TRANSPORT: "sse"
   MCP_SERVER_PORT: "3000"
   LOG_LEVEL: "info"

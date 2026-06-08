@@ -332,6 +332,12 @@ export function getConnectedAgents() {
 // Re-export bridge functions so other modules (e.g. chat-api) can invoke agent tools
 export { invokeAgentTool, hasActiveChannel } from "./services/agent-bridge.js";
 
+// Hub/Spoke federation — proxy API calls to spoke MCP servers for identical results
+import { registerSpoke, unregisterSpoke, hasSpoke, proxyToSpoke, getSpokeStatus, updateSpokeHeartbeat, getAllSpokes, startSpokeMode } from "./services/spoke-proxy.js";
+export { hasSpoke, getSpokeStatus };
+
+const MCP_MODE = (process.env.MCP_MODE || "hub").toLowerCase(); // hub | spoke | standalone
+
 // Wire ocpGet() bridge routing → remote agent api_get tool. This lets the
 // existing preflight/upgrade/CR logic run against remote clusters unchanged.
 setBridgeInvoker(async (cluster, path, opts = {}) => {
@@ -1846,6 +1852,23 @@ async function startSSE() {
   setTimeout(() => runClusterHealthProbes().catch(() => {}), 5000);
   setInterval(() => runClusterHealthProbes().catch(() => {}), 60000);
 
+  // Hub/Spoke mode logging
+  console.log(`[startup] MCP_MODE=${MCP_MODE}`);
+  if (MCP_MODE === "spoke") {
+    const hubUrl = process.env.HUB_URL || process.env.HUB_SERVER_URL;
+    const clusterName = process.env.CLUSTER_NAME || "unknown";
+    const spokeUrl = process.env.SPOKE_EXTERNAL_URL || `http://localhost:${PORT}`;
+    const platform = process.env.CLUSTER_PLATFORM || "k8s";
+    if (hubUrl) {
+      console.log(`[spoke] Registering with hub: ${hubUrl} as "${clusterName}" (${spokeUrl})`);
+      startSpokeMode(hubUrl, clusterName, spokeUrl, platform).catch((e) =>
+        console.error(`[spoke] Registration failed: ${e.message}`)
+      );
+    } else {
+      console.warn("[spoke] HUB_URL not set — running in standalone mode (no federation)");
+    }
+  }
+
   // Track active transports so each SSE session gets its own MCP server
   // instance (the SDK ties one transport to one server).
   const sessions = new Map();
@@ -1897,14 +1920,21 @@ async function startSSE() {
       }
     }
 
-    // ── Universal cluster bridge ──────────────────────────────────────────
-    // When a request targets a remote cluster via ?cluster=<name>, set up the
-    // agent bridge so ALL ocpGet/ocpFetch calls in this request automatically
-    // route through the remote agent — no per-endpoint wiring needed.
-    // Works for any cluster name, any endpoint, present or future.
+    // ── Universal cluster routing ─────────────────────────────────────────
+    // When a request targets a remote cluster via ?cluster=<name>, route it:
+    //   1. Spoke proxy (preferred) — same MCP server image, identical results
+    //   2. Agent bridge (fallback) — lightweight agent, may produce different results
     const _reqCluster = queryCluster || headerCluster;
-    if (_reqCluster && _reqCluster !== "local" && hasActiveChannel(_reqCluster)) {
-      enterRemoteClusterBridge(_reqCluster);
+    if (_reqCluster && _reqCluster !== "local") {
+      // Spoke proxy: forward the entire API request to the spoke's MCP server
+      if (hasSpoke(_reqCluster) && url.pathname.startsWith("/api/")) {
+        const proxied = await proxyToSpoke(_reqCluster, req, res, url);
+        if (proxied) return;
+      }
+      // Fallback: agent bridge (legacy lightweight agents)
+      if (hasActiveChannel(_reqCluster)) {
+        enterRemoteClusterBridge(_reqCluster);
+      }
     }
 
     // User management routes (after auth middleware)
@@ -2562,6 +2592,63 @@ async function startSSE() {
         errors,
         recentEvents: recent,
       });
+    }
+
+    // -----------------------------------------------------------------------
+    // Spoke API — Hub/Spoke federation (same MCP server image on every cluster)
+    // Spokes register their URL; hub proxies API calls to them for identical results.
+    // -----------------------------------------------------------------------
+    if (url.pathname === "/api/spoke/register" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const { clusterName, spokeUrl, platform, version } = body;
+      if (!clusterName || !spokeUrl) return sendJson(res, 400, { error: "clusterName and spokeUrl required" });
+      const entry = registerSpoke(clusterName, spokeUrl, { platform, version });
+      // Also register in _connectedAgents so the cluster picker sees it
+      const existingKey = findClusterKey(clusterName);
+      const existing = existingKey ? _connectedAgents.get(existingKey) : null;
+      _connectedAgents.set(existingKey || clusterName, {
+        ...(existing || {}),
+        clusterName: existingKey || clusterName,
+        platform: platform || "k8s",
+        agentVersion: version || "1.2.0",
+        agentType: "spoke-mcp",
+        capabilities: ["full-mcp", "scan", "events", "metrics", "ai-reasoning", "actions"],
+        actionsEnabled: true,
+        registeredAt: entry.registeredAt,
+        status: "live",
+        source: "spoke",
+        spokeUrl: entry.spokeUrl,
+        lastHeartbeat: new Date().toISOString(),
+      });
+      saveClustersToDB().catch(() => {});
+      return sendJson(res, 200, { ok: true, message: `Spoke "${clusterName}" registered`, hubVersion: "1.2.0" });
+    }
+
+    if (url.pathname === "/api/spoke/heartbeat" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const { clusterName, ts, uptime, memMB, healthy } = body;
+      if (!clusterName) return sendJson(res, 400, { error: "clusterName required" });
+      updateSpokeHeartbeat(clusterName, { healthy, uptime, memMB });
+      // Also update _connectedAgents heartbeat
+      const key = findClusterKey(clusterName) || clusterName;
+      const agent = _connectedAgents.get(key);
+      if (agent) {
+        agent.lastHeartbeat = new Date().toISOString();
+        agent.agentHealthy = healthy !== false;
+        agent.status = "live";
+        _connectedAgents.set(key, agent);
+      }
+      return sendJson(res, 200, { ok: true });
+    }
+
+    if (url.pathname === "/api/spoke/status" && req.method === "GET") {
+      return sendJson(res, 200, { spokes: getSpokeStatus() });
+    }
+
+    if (url.pathname.match(/^\/api\/spoke\/[^/]+$/) && req.method === "DELETE") {
+      const spokeName = decodeURIComponent(url.pathname.split("/").pop());
+      unregisterSpoke(spokeName);
+      return sendJson(res, 200, { ok: true, message: `Spoke "${spokeName}" removed` });
     }
 
     // -----------------------------------------------------------------------
@@ -5335,6 +5422,15 @@ async function startSSE() {
     }
 
     // Serve dashboard HTML — fallback for any non-API, non-MCP route
+    // In spoke mode, redirect to hub dashboard (unless SPOKE_SERVE_DASHBOARD=true)
+    if (req.method === "GET" && MCP_MODE === "spoke" && process.env.SPOKE_SERVE_DASHBOARD !== "true") {
+      const hubUrl = process.env.HUB_URL || process.env.HUB_SERVER_URL;
+      if (hubUrl && !url.pathname.startsWith("/api/") && !url.pathname.startsWith("/sse") && !url.pathname.startsWith("/message") && !url.pathname.startsWith("/mcp/") && url.pathname !== "/healthz" && url.pathname !== "/readyz") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ mode: "spoke", hubUrl, message: "This is a spoke MCP server. Access the dashboard at the hub." }));
+        return;
+      }
+    }
     if (req.method === "GET") {
       const DASHBOARD_DIR = process.env.DASHBOARD_DIR || resolve(process.cwd(), "dashboard");
       const MIME = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon" };
