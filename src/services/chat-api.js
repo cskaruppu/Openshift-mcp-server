@@ -15636,9 +15636,6 @@ export async function handleChatAPI(req, res) {
       }
     }
 
-    // Try direct command handler first (for specific CRUD operations)
-    // This handles: logs, top, delete, run, exec, update
-
     // ---- Remote cluster: answer from cached agent data ----
     // When the user has selected a remote (spoke) cluster, ocpGet() still
     // hits the local hub — so we intercept recognized query types here and
@@ -15699,11 +15696,10 @@ export async function handleChatAPI(req, res) {
       }
     }
 
-    // Rule-based handlers — only for LOCAL cluster. These call ocpGet()
-    // which always hits the hub's own K8s API, returning wrong data for
-    // remote clusters. Remote queries are handled above via handleRemoteCacheQuery
-    // or fall through to the LLM path with cached context.
-    if (!_remoteClusterContext) {
+    // Rule-based handlers — for LOCAL cluster, or remote clusters with an
+    // active agent bridge (ocpGet() is routed through the bridge so data
+    // is fetched from the correct cluster).
+    if (!_remoteClusterContext || _remoteBridgeActive) {
       const directResult = await handleDirectCommand(userMessage, cmd, { llmAvailable: llmActive });
       if (directResult) {
         const provider = llmActive ? activeProvider : "built-in";
