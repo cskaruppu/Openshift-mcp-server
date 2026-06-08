@@ -1858,7 +1858,7 @@ async function startSSE() {
     // CORS headers for browser-based clients
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, X-Cluster-Context, X-User-Id");
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -5400,10 +5400,10 @@ async function startSSE() {
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Not found" }));
    } catch (err) {
-    console.error(`[server] Unhandled error on ${req.method} ${req.url}:`, err.message);
+    console.error(`[server] Unhandled error on ${req.method} ${req.url}:`, err?.stack || err);
     if (!res.headersSent) {
       res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: err.message }));
+      res.end(JSON.stringify({ error: `${err.message} [at ${(err.stack || "").split("\n")[1]?.trim() || "unknown"}]` }));
     }
    }
   });

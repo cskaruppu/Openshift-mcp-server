@@ -14502,7 +14502,7 @@ export async function handleChatAPI(req, res) {
 
     // ---- NLU: parse the message once, with conversation memory for
     // follow-up resolution ("show its logs", "delete it", "same in prod").
-    const memory = await getMemory(conversationId);
+    const memory = await getMemory(conversationId).catch(() => null);
     let parsed = nluParse(userMessage, memory);
     if (parsed.confidence < 0.45 && typeof nluEnhanceWithLLM === 'function') {
       try { parsed = await nluEnhanceWithLLM(parsed, userMessage, llmOpts || {}); } catch(e) {}
@@ -16115,13 +16115,13 @@ export async function handleChatAPI(req, res) {
     observeHistogram("mcp_chat_latency_seconds", { provider: activeProvider }, (Date.now() - startedAt) / 1000);
     json(res, 200, { ...payload, cached: false, conversationId });
   } catch (err) {
-    console.error("Chat API error:", err);
+    console.error("Chat API error:", err?.stack || err);
     const isNetworkError = /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ECONNRESET|network error|fetch failed/i.test(err.message);
     if (isNetworkError) {
       const fallbackReply = `### LLM Service Unavailable\n\nThe AI analysis service is currently unreachable. Your query **"${userMessage}"** requires LLM processing but the configured provider could not be contacted.\n\n**What you can try:**\n- Use direct queries like \`list pods\`, \`node status\`, \`cluster status\` (these work without LLM)\n- Check your LLM provider configuration (\`LLM_PROVIDER\`, \`LLM_API_URL\`, \`LLM_API_KEY\`)\n- Verify network connectivity from the pod to the LLM endpoint\n- Set \`LLM_PROVIDER=none\` to use built-in analysis`;
       json(res, 200, { reply: fallbackReply, provider: "built-in", error: "llm_unreachable", conversationId });
     } else {
-      json(res, 500, { error: err.message });
+      json(res, 500, { error: `${err.message} [at ${(err.stack || "").split("\n")[1]?.trim() || "unknown"}]` });
     }
     _traceStatus = "error";
   } finally {
