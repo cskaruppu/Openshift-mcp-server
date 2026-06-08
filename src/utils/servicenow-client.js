@@ -42,10 +42,14 @@ export async function snowFetch(path, options = {}) {
     throw new Error("ServiceNow instance URL not configured. Set SERVICENOW_INSTANCE via the dashboard Settings panel or environment variable.");
   }
   const url = `${instance}/api${path}`;
+  const timeoutMs = options.timeoutMs || 15000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let resp;
   try {
     resp = await fetch(url, {
       ...options,
+      signal: controller.signal,
       headers: {
         Authorization: authHeader(),
         Accept: "application/json",
@@ -54,8 +58,11 @@ export async function snowFetch(path, options = {}) {
       },
     });
   } catch (e) {
+    clearTimeout(timer);
+    if (e.name === "AbortError") throw new Error(`ServiceNow request timed out after ${timeoutMs / 1000}s. Instance may be hibernating — visit ${instance} in a browser to wake it.`);
     throw new Error(`Cannot connect to ServiceNow (${instance}): ${e.message}. Verify SERVICENOW_INSTANCE is correct and reachable.`);
   }
+  clearTimeout(timer);
   if (!resp.ok) {
     const body = await resp.text();
     if (resp.status === 500) {
@@ -105,14 +112,24 @@ export async function createIncident({
     });
   } catch (err) {
     if (/500/.test(err.message)) {
-      try {
-        const q = `short_description=${encodeURIComponent(shortDescription)}&sysparm_limit=1&sysparm_orderby=DESC:sys_created_on`;
-        const recent = await snowFetch(`/now/table/incident?sysparm_query=${q}`);
-        if (recent?.result?.[0]?.sys_id) {
-          console.warn("[servicenow] Incident created despite 500 — recovered via query:", recent.result[0].number);
-          return recent;
-        }
-      } catch { /* recovery query failed too */ }
+      await new Promise(r => setTimeout(r, 1500));
+      const prefix = shortDescription.slice(0, 60);
+      const queries = [
+        `short_descriptionLIKE${prefix}^ORDERBYDESCsys_created_on`,
+        callerSysId ? `caller_id=${callerSysId}^ORDERBYDESCsys_created_on` : null,
+      ].filter(Boolean);
+      for (const q of queries) {
+        try {
+          const recent = await snowFetch(
+            `/now/table/incident?sysparm_query=${encodeURIComponent(q)}&sysparm_limit=1&sysparm_fields=sys_id,number,short_description,state`,
+            { timeoutMs: 8000 }
+          );
+          if (recent?.result?.[0]?.sys_id) {
+            console.warn("[servicenow] Incident created despite 500 — recovered:", recent.result[0].number);
+            return recent;
+          }
+        } catch { /* recovery query failed, try next */ }
+      }
     }
     throw err;
   }
