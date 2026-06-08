@@ -21,7 +21,8 @@ async function resolveCallerSysId() {
   if (!user) return "";
   try {
     const data = await snowFetch(
-      `/now/table/sys_user?sysparm_query=user_name=${encodeURIComponent(user)}&sysparm_limit=1&sysparm_fields=sys_id`
+      `/now/table/sys_user?sysparm_query=user_name=${encodeURIComponent(user)}&sysparm_limit=1&sysparm_fields=sys_id`,
+      { timeoutMs: 20000 }
     );
     const sysId = data?.result?.[0]?.sys_id || "";
     if (sysId) _callerSysIdCache = sysId;
@@ -109,10 +110,12 @@ export async function createIncident({
     return await snowFetch("/now/table/incident", {
       method: "POST",
       body: JSON.stringify(payload),
+      timeoutMs: 30000,
     });
   } catch (err) {
-    if (/500/.test(err.message)) {
-      await new Promise(r => setTimeout(r, 1500));
+    if (/500|timed out/.test(err.message)) {
+      const waitMs = /timed out/.test(err.message) ? 3000 : 1500;
+      await new Promise(r => setTimeout(r, waitMs));
       const prefix = shortDescription.slice(0, 60);
       const queries = [
         `short_descriptionLIKE${prefix}^ORDERBYDESCsys_created_on`,
@@ -122,10 +125,10 @@ export async function createIncident({
         try {
           const recent = await snowFetch(
             `/now/table/incident?sysparm_query=${encodeURIComponent(q)}&sysparm_limit=1&sysparm_fields=sys_id,number,short_description,state`,
-            { timeoutMs: 8000 }
+            { timeoutMs: 10000 }
           );
           if (recent?.result?.[0]?.sys_id) {
-            console.warn("[servicenow] Incident created despite 500 — recovered:", recent.result[0].number);
+            console.warn("[servicenow] Incident created despite error — recovered:", recent.result[0].number);
             return recent;
           }
         } catch { /* recovery query failed, try next */ }
