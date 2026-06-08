@@ -14499,6 +14499,7 @@ export async function handleChatAPI(req, res) {
     }
 
     activeProvider = llmOpts.provider || LLM_PROVIDER;
+    const llmActive = activeProvider && activeProvider !== "none";
 
     // ---- NLU: parse the message once, with conversation memory for
     // follow-up resolution ("show its logs", "delete it", "same in prod").
@@ -15616,7 +15617,6 @@ export async function handleChatAPI(req, res) {
 
     // Try direct command handler first (for specific CRUD operations)
     // This handles: logs, top, delete, run, exec, update
-    const llmActive = activeProvider && activeProvider !== "none";
 
     // ---- Remote cluster: answer from cached agent data ----
     // When the user has selected a remote (spoke) cluster, ocpGet() still
