@@ -517,7 +517,7 @@ export function ChatView() {
       const res = await fetch(clusterUrl("/api/chat", cluster), {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream", "X-Cluster-Context": cluster },
-        body: JSON.stringify({ message: msg, conversationId: conv.conversationId, stream: true, provider: wireProvider, cluster }),
+        body: JSON.stringify({ message: msg, conversationId: conv.conversationId, stream: true, provider: wireProvider, cluster, history: conv.messages.slice(-10).map(m => ({ role: m.role, content: m.text || m.content || "" })) }),
         signal: ctrl.signal,
       });
 

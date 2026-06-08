@@ -3907,22 +3907,26 @@ EOF@@`);
   // -----------------------------------------------------------------------
   if (cmd.operation === "incident_response") {
     try {
-      const targetNs = cmd.namespace || null;
+      let targetNs = cmd.namespace || null;
       const targetName = cmd.resourceName || null;
       const cli = "oc";
 
-      // Phase 1: Parallel data collection
-      const alertmanagerPaths = [
-        "/api/v1/namespaces/openshift-monitoring/services/alertmanager-main:web/proxy/api/v2/alerts",
-        "/api/v1/namespaces/monitoring/services/alertmanager-main:web/proxy/api/v2/alerts",
-      ];
+      // Auto-resolve namespace when pod name given but no namespace
+      if (targetName && !targetNs) {
+        try {
+          const lookup = await ocpGet(`/api/v1/pods?fieldSelector=metadata.name=${encodeURIComponent(targetName)}&limit=1`);
+          if (lookup?.items?.[0]) targetNs = lookup.items[0].metadata.namespace;
+        } catch {}
+      }
+
+      // Phase 1: Parallel data collection (scoped to namespace when available)
+      const nsPath = targetNs ? `namespaces/${targetNs}/` : "";
       const fetchAlerts = async () => {
-        for (const p of alertmanagerPaths) {
+        for (const p of ["/api/v1/namespaces/openshift-monitoring/services/alertmanager-main:web/proxy/api/v2/alerts", "/api/v1/namespaces/monitoring/services/alertmanager-main:web/proxy/api/v2/alerts"]) {
           try { const r = await ocpGet(p); if (Array.isArray(r)) return r; } catch {}
         }
         return [];
       };
-      const nsPath = targetNs ? `namespaces/${targetNs}/` : "";
       const [events, nodes, nodeMetrics, pods, deploys, alertsData, pvcs, podMetricsData] = await Promise.all([
         ocpGet(`/api/v1/${nsPath}events?fieldSelector=type=Warning&limit=100`).catch(() => ({ items: [] })),
         ocpGet("/api/v1/nodes").catch(() => ({ items: [] })),
@@ -3941,7 +3945,32 @@ EOF@@`);
       const warningEvents = (events.items || []).sort((a, b) => new Date(b.lastTimestamp || 0) - new Date(a.lastTimestamp || 0));
       const firingAlerts = Array.isArray(alertsData) ? alertsData.filter(a => a.status?.state === "active") : [];
 
-      // Phase 2: Classify problem signals
+      // Metrics-based memory sizing
+      const podMetricsMap = new Map();
+      for (const pm of (podMetricsData.items || [])) {
+        podMetricsMap.set(`${pm.metadata.namespace}/${pm.metadata.name}`, pm);
+      }
+      function smartMemoryLimit(pod, containerName) {
+        const spec = (pod.spec?.containers || []).find(c => c.name === containerName);
+        const currentLimit = spec?.resources?.limits?.memory || "";
+        const currentLimitBytes = parseMemBytes(currentLimit);
+        const pm = podMetricsMap.get(`${pod.metadata.namespace}/${pod.metadata.name}`);
+        const actualUsage = (pm?.containers || []).find(c => c.name === containerName);
+        const actualBytes = actualUsage ? parseMemBytes(actualUsage.usage?.memory) : 0;
+        const baseBytes = actualBytes > 0 ? actualBytes : currentLimitBytes;
+        if (baseBytes === 0) return { limit: "512Mi", basis: "default (no metrics available)" };
+        const recommended = Math.ceil((baseBytes * 1.5) / (1024 * 1024));
+        const rounded = recommended <= 128 ? 128 : recommended <= 256 ? 256 : recommended <= 512 ? 512 : recommended <= 1024 ? 1024 : Math.ceil(recommended / 256) * 256;
+        const limitStr = rounded >= 1024 ? `${(rounded / 1024).toFixed(0)}Gi` : `${rounded}Mi`;
+        if (actualBytes > 0) return { limit: limitStr, basis: `actual usage ${Math.round(actualBytes / (1024 * 1024))}Mi + 50% headroom` };
+        return { limit: limitStr, basis: `previous limit ${Math.round(currentLimitBytes / (1024 * 1024)) || "?"}Mi × 1.5` };
+      }
+      function getDeployName(pod) {
+        const rs = (pod.metadata?.ownerReferences || []).find(o => o.kind === "ReplicaSet");
+        return rs ? rs.name.replace(/-[a-f0-9]+$/, "") : null;
+      }
+
+      // Phase 2: Classify ALL problem signals in scope
       const crashPods = podItems.filter(p => (p.status?.containerStatuses || []).some(cs => cs.state?.waiting?.reason === "CrashLoopBackOff"));
       const oomPods = podItems.filter(p => (p.status?.containerStatuses || []).some(cs => cs.state?.terminated?.reason === "OOMKilled" || cs.lastState?.terminated?.reason === "OOMKilled"));
       const imagePullPods = podItems.filter(p => (p.status?.containerStatuses || []).some(cs => cs.state?.waiting?.reason === "ImagePullBackOff" || cs.state?.waiting?.reason === "ErrImagePull"));
@@ -3954,53 +3983,94 @@ EOF@@`);
       const zeroDeploys = deployItems.filter(d => (d.status?.readyReplicas || 0) === 0 && (d.spec?.replicas || 0) > 0);
       const boundlessPVCs = pvcItems.filter(p => p.status?.phase !== "Bound");
 
-      // Phase 3: Compute severity
-      const nsCriticals = crashPods.length + zeroDeploys.length + oomPods.length;
-      const nsWarnings = pendingPods.length + imagePullPods.length + unavailDeploys.length + highRestartPods.length + boundlessPVCs.length;
-      const criticals = targetNs ? nsCriticals : nsCriticals + notReadyNodes.length;
-      const warnings = targetNs ? nsWarnings : nsWarnings + pressureNodes.length;
-      const severity = criticals >= 3 ? "SEV-1" : criticals >= 1 ? "SEV-2" : warnings >= 3 ? "SEV-3" : warnings >= 1 ? "SEV-4" : "SEV-5";
-      const severityLabel = { "SEV-1": "[CRITICAL] SEV-1 — Major Outage", "SEV-2": "[CRITICAL] SEV-2 — Significant Impact", "SEV-3": "[WARNING] SEV-3 — Moderate Impact", "SEV-4": "[WARNING] SEV-4 — Low Impact", "SEV-5": "[OK] SEV-5 — No Issues Detected" }[severity];
+      // --- TARGET-AWARE ANALYSIS ---
+      // When user names a specific pod, focus diagnosis + fix on THAT pod
+      let targetPod = null;
+      let targetDeploy = null;
+      const targetIssues = [];
+      if (targetName) {
+        targetPod = podItems.find(p => p.metadata.name === targetName);
+        if (!targetPod) {
+          const prefix = targetName.replace(/-[a-f0-9]{6,10}(-[a-z0-9]{5})?$/, "");
+          targetPod = podItems.find(p => p.metadata.name.startsWith(prefix));
+        }
+        if (targetPod) {
+          targetDeploy = getDeployName(targetPod);
+          const cs = targetPod.status?.containerStatuses || [];
+          for (const c of cs) {
+            if (c.state?.waiting?.reason === "CrashLoopBackOff") targetIssues.push({ signal: "CrashLoopBackOff", container: c.name, restarts: c.restartCount || 0 });
+            if (c.state?.terminated?.reason === "OOMKilled" || c.lastState?.terminated?.reason === "OOMKilled") targetIssues.push({ signal: "OOMKilled", container: c.name });
+            if (c.state?.waiting?.reason === "ImagePullBackOff" || c.state?.waiting?.reason === "ErrImagePull") targetIssues.push({ signal: "ImagePullBackOff", container: c.name });
+          }
+          if (targetPod.status?.phase === "Pending") targetIssues.push({ signal: "Pending" });
+          if (targetPod.status?.phase === "Failed") targetIssues.push({ signal: "Failed" });
+          if (cs.some(c => (c.restartCount || 0) >= 10)) targetIssues.push({ signal: "High Restart Count", restarts: Math.max(...cs.map(c => c.restartCount || 0)) });
+          if (targetIssues.length === 0 && targetPod.status?.phase === "Running") {
+            targetIssues.push({ signal: "Running (check logs)", detail: "Pod is running but may have application-level errors" });
+          }
+        }
+      }
 
-      // Phase 4: Root cause analysis
+      // Phase 3: Compute severity — target-aware
+      const targetCritical = targetIssues.some(i => ["CrashLoopBackOff", "OOMKilled", "Failed"].includes(i.signal));
+      const targetWarning = targetIssues.some(i => ["Pending", "ImagePullBackOff", "High Restart Count"].includes(i.signal));
+      let severity, severityLabel;
+      if (targetName && targetPod) {
+        severity = targetCritical ? "SEV-2" : targetWarning ? "SEV-3" : "SEV-4";
+        if (targetCritical && (crashPods.length + oomPods.length + zeroDeploys.length) >= 3) severity = "SEV-1";
+      } else {
+        const nsCriticals = crashPods.length + zeroDeploys.length + oomPods.length;
+        const nsWarnings = pendingPods.length + imagePullPods.length + unavailDeploys.length + highRestartPods.length + boundlessPVCs.length;
+        const criticals = targetNs ? nsCriticals : nsCriticals + notReadyNodes.length;
+        const warnings = targetNs ? nsWarnings : nsWarnings + pressureNodes.length;
+        severity = criticals >= 3 ? "SEV-1" : criticals >= 1 ? "SEV-2" : warnings >= 3 ? "SEV-3" : warnings >= 1 ? "SEV-4" : "SEV-5";
+      }
+      severityLabel = { "SEV-1": "[CRITICAL] SEV-1 — Major Outage", "SEV-2": "[CRITICAL] SEV-2 — Significant Impact", "SEV-3": "[WARNING] SEV-3 — Moderate Impact", "SEV-4": "[WARNING] SEV-4 — Low Impact", "SEV-5": "[OK] SEV-5 — No Issues Detected" }[severity];
+
+      // Phase 4: Root cause analysis — target first, then broader context
       const rootCauses = [];
-      if (notReadyNodes.length) rootCauses.push({ signal: "Node Failure", detail: `${notReadyNodes.length} NotReady node(s): ${notReadyNodes.map(n => n.metadata.name).join(", ")}` });
-      if (pressureNodes.length) rootCauses.push({ signal: "Resource Pressure", detail: `${pressureNodes.length} node(s) under pressure` });
-      if (oomPods.length) rootCauses.push({ signal: "OOMKilled", detail: `${oomPods.length} pod(s): ${oomPods.slice(0, 3).map(p => `${p.metadata.namespace}/${p.metadata.name}`).join(", ")}` });
-      if (crashPods.length) rootCauses.push({ signal: "CrashLoopBackOff", detail: `${crashPods.length} pod(s): ${crashPods.slice(0, 3).map(p => `${p.metadata.namespace}/${p.metadata.name}`).join(", ")}` });
-      if (imagePullPods.length) rootCauses.push({ signal: "ImagePullBackOff", detail: `${imagePullPods.length} pod(s)` });
-      if (zeroDeploys.length) rootCauses.push({ signal: "Zero-Ready Deployments", detail: `${zeroDeploys.length}: ${zeroDeploys.slice(0, 3).map(d => `${d.metadata.namespace}/${d.metadata.name}`).join(", ")}` });
-      if (unavailDeploys.length) rootCauses.push({ signal: "Partially Unavailable", detail: `${unavailDeploys.length} deployment(s)` });
-      if (pendingPods.length) rootCauses.push({ signal: "Scheduling Failures", detail: `${pendingPods.length} Pending pod(s)` });
-      if (boundlessPVCs.length) rootCauses.push({ signal: "Unbound PVCs", detail: `${boundlessPVCs.length} PVC(s) not bound` });
-      if (highRestartPods.length) rootCauses.push({ signal: "High Restart Count", detail: `${highRestartPods.length} pod(s) with ≥10 restarts` });
+      if (targetName && targetPod) {
+        for (const issue of targetIssues) {
+          const cDetail = issue.container ? ` (container: ${issue.container})` : "";
+          const rDetail = issue.restarts ? ` — ${issue.restarts} restarts` : "";
+          rootCauses.push({ signal: issue.signal, detail: `**${targetPod.metadata.name}**${cDetail}${rDetail} in ${targetPod.metadata.namespace}` });
+        }
+      }
+      const otherCauses = [];
+      const isTarget = (p) => targetPod && p.metadata.name === targetPod.metadata.name;
+      if (notReadyNodes.length) otherCauses.push({ signal: "Node Failure", detail: `${notReadyNodes.length} NotReady node(s)` });
+      if (oomPods.filter(p => !isTarget(p)).length) otherCauses.push({ signal: "OOMKilled", detail: `${oomPods.filter(p => !isTarget(p)).length} other pod(s): ${oomPods.filter(p => !isTarget(p)).slice(0, 2).map(p => p.metadata.name).join(", ")}` });
+      if (crashPods.filter(p => !isTarget(p)).length) otherCauses.push({ signal: "CrashLoopBackOff", detail: `${crashPods.filter(p => !isTarget(p)).length} other pod(s): ${crashPods.filter(p => !isTarget(p)).slice(0, 2).map(p => p.metadata.name).join(", ")}` });
+      if (imagePullPods.filter(p => !isTarget(p)).length) otherCauses.push({ signal: "ImagePullBackOff", detail: `${imagePullPods.filter(p => !isTarget(p)).length} pod(s)` });
+      if (zeroDeploys.length) otherCauses.push({ signal: "Zero-Ready Deployments", detail: `${zeroDeploys.length} deployment(s)` });
+      if (unavailDeploys.length) otherCauses.push({ signal: "Partially Unavailable", detail: `${unavailDeploys.length} deployment(s)` });
+      if (pendingPods.filter(p => !isTarget(p)).length) otherCauses.push({ signal: "Scheduling Failures", detail: `${pendingPods.filter(p => !isTarget(p)).length} Pending pod(s)` });
+      if (highRestartPods.filter(p => !isTarget(p)).length) otherCauses.push({ signal: "High Restart Count", detail: `${highRestartPods.filter(p => !isTarget(p)).length} pod(s)` });
+      if (!targetName) rootCauses.push(...otherCauses);
 
-      // Phase 5: Blast radius
-      const affectedNs = new Set([
-        ...crashPods.map(p => p.metadata.namespace),
-        ...oomPods.map(p => p.metadata.namespace),
-        ...zeroDeploys.map(d => d.metadata.namespace),
-        ...failedPods.map(p => p.metadata.namespace),
-      ]);
-
-      // Phase 6: Event fingerprint
-      const topEvents = warningEvents.slice(0, 10);
-
-      // Phase 7: Node utilization
-      const nodeMetricItems = nodeMetrics.items || [];
+      const affectedNs = new Set([...crashPods, ...oomPods, ...zeroDeploys, ...failedPods].map(p => p.metadata?.namespace).filter(Boolean));
 
       // Phase 8: Build triage report
       const scope = targetNs ? `namespace \`${targetNs}\`` : "cluster-wide";
-      parts.push(`### Incident Response Report — ${severity}`);
-      parts.push("");
-      parts.push(`**Severity:** ${severityLabel}`);
-      parts.push(`**Scope:** ${scope}${targetName ? ` (target: \`${targetName}\`)` : ""}`);
-      parts.push(`**Affected Namespaces:** ${affectedNs.size > 0 ? [...affectedNs].map(n => `\`${n}\``).join(", ") : "none"}`);
-      parts.push(`**Blast Radius:** ${affectedNs.size} namespace(s), ${criticals + warnings} signal(s)`);
+      if (targetName && targetPod) {
+        parts.push(`### Incident Response — \`${targetPod.metadata.name}\``);
+        parts.push("");
+        parts.push(`**Severity:** ${severityLabel}`);
+        parts.push(`**Pod:** \`${targetPod.metadata.name}\` in namespace \`${targetPod.metadata.namespace}\``);
+        parts.push(`**Phase:** ${targetPod.status?.phase || "Unknown"} | **Deployment:** ${targetDeploy ? `\`${targetDeploy}\`` : "standalone"}`);
+        const restarts = (targetPod.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0);
+        parts.push(`**Restarts:** ${restarts} | **Node:** \`${targetPod.spec?.nodeName || "unscheduled"}\``);
+      } else {
+        parts.push(`### Incident Response Report — ${severity}`);
+        parts.push("");
+        parts.push(`**Severity:** ${severityLabel}`);
+        parts.push(`**Scope:** ${scope}`);
+        parts.push(`**Affected Namespaces:** ${affectedNs.size > 0 ? [...affectedNs].map(n => `\`${n}\``).join(", ") : "none"}`);
+      }
       parts.push("");
 
       if (rootCauses.length > 0) {
-        parts.push(`**Root Cause Analysis**`);
+        parts.push(`**Root Cause Analysis${targetName ? ` — ${targetName}` : ""}**`);
         parts.push("");
         parts.push(`| Signal | Detail |`);
         parts.push(`| --- | --- |`);
@@ -4008,12 +4078,17 @@ EOF@@`);
         parts.push("");
       }
 
+      // Target-specific events
+      const targetEvents = targetName
+        ? warningEvents.filter(e => e.involvedObject?.name === targetName || e.involvedObject?.name === targetDeploy)
+        : warningEvents;
+      const topEvents = targetEvents.slice(0, 8);
       if (topEvents.length > 0) {
-        parts.push(`**Recent Warning Events** (top ${topEvents.length})`);
+        parts.push(`**Recent Warning Events${targetName ? ` for ${targetName}` : ""}** (${topEvents.length})`);
         parts.push("");
         topEvents.forEach(e => {
           const age = e.lastTimestamp ? `${Math.round((Date.now() - new Date(e.lastTimestamp)) / 60000)}m ago` : "?";
-          parts.push(`  - **${e.reason}** on \`${e.involvedObject?.name || "?"}\` (${e.involvedObject?.namespace || "?"}): ${(e.message || "").slice(0, 120)} — ${age}`);
+          parts.push(`  - **${e.reason}** on \`${e.involvedObject?.name || "?"}\`: ${(e.message || "").slice(0, 120)} — ${age}`);
         });
         parts.push("");
       }
@@ -4021,117 +4096,96 @@ EOF@@`);
       if (firingAlerts.length > 0) {
         parts.push(`**Firing Alerts** (${firingAlerts.length})`);
         parts.push("");
-        firingAlerts.slice(0, 10).forEach(a => {
-          const name = a.labels?.alertname || "unknown";
-          const ns = a.labels?.namespace || "";
-          parts.push(`  - **${name}** ${ns ? `(${ns})` : ""}`);
-        });
+        firingAlerts.slice(0, 5).forEach(a => parts.push(`  - **${a.labels?.alertname || "unknown"}** ${a.labels?.namespace ? `(${a.labels.namespace})` : ""}`));
         parts.push("");
       }
 
-      // Metrics-based memory sizing for recommendations
-      const podMetricsItems = (podMetricsData.items || []);
-      const podMetricsMap = new Map();
-      for (const pm of podMetricsItems) {
-        podMetricsMap.set(`${pm.metadata.namespace}/${pm.metadata.name}`, pm);
+      // Other namespace issues (secondary context when target specified)
+      if (targetName && otherCauses.length > 0) {
+        parts.push(`**Other Issues in Scope** (${otherCauses.length} additional signal${otherCauses.length > 1 ? "s" : ""})`);
+        parts.push("");
+        parts.push(`| Signal | Detail |`);
+        parts.push(`| --- | --- |`);
+        otherCauses.forEach(r => parts.push(`| ${r.signal} | ${r.detail} |`));
+        parts.push("");
       }
 
-      function smartMemoryLimit(pod, containerName) {
-        const spec = (pod.spec?.containers || []).find(c => c.name === containerName);
-        const currentLimit = spec?.resources?.limits?.memory || "";
-        const currentLimitBytes = parseMemBytes(currentLimit);
-        const pm = podMetricsMap.get(`${pod.metadata.namespace}/${pod.metadata.name}`);
-        const actualUsage = (pm?.containers || []).find(c => c.name === containerName);
-        const actualBytes = actualUsage ? parseMemBytes(actualUsage.usage?.memory) : 0;
-        const baseBytes = actualBytes > 0 ? actualBytes : currentLimitBytes;
-        if (baseBytes === 0) return { limit: "512Mi", basis: "default (no metrics available)" };
-        const recommended = Math.ceil((baseBytes * 1.5) / (1024 * 1024));
-        const rounded = recommended <= 128 ? 128
-          : recommended <= 256 ? 256
-          : recommended <= 512 ? 512
-          : recommended <= 1024 ? 1024
-          : Math.ceil(recommended / 256) * 256;
-        const limitStr = rounded >= 1024 ? `${(rounded / 1024).toFixed(0)}Gi` : `${rounded}Mi`;
-        if (actualBytes > 0) {
-          const usageMi = Math.round(actualBytes / (1024 * 1024));
-          return { limit: limitStr, basis: `actual usage ${usageMi}Mi + 50% headroom` };
-        }
-        const prevMi = Math.round(currentLimitBytes / (1024 * 1024));
-        return { limit: limitStr, basis: `previous limit ${prevMi || "?"}Mi × 1.5` };
-      }
-
-      // Phase 9: Recommended Actions
-      parts.push(`**Recommended Actions**`);
+      // Phase 9: Recommended Actions — TARGET-SPECIFIC when pod named
+      parts.push(`**Recommended Actions${targetName ? ` for ${targetDeploy || targetName}` : ""}**`);
       parts.push("");
       let actionNum = 1;
-      if (oomPods.length > 0) {
-        const p0 = oomPods[0];
-        const oomCs = (p0.status?.containerStatuses || []).find(cs =>
-          cs.state?.terminated?.reason === "OOMKilled" || cs.lastState?.terminated?.reason === "OOMKilled"
-        );
-        const container = oomCs?.name || (p0.spec?.containers || [])[0]?.name || "main";
-        const ownerDeploy = (p0.metadata?.ownerReferences || []).find(o => o.kind === "ReplicaSet");
-        const deployName = ownerDeploy ? ownerDeploy.name.replace(/-[a-f0-9]+$/, "") : null;
-        if (deployName) {
-          const { limit, basis } = smartMemoryLimit(p0, container);
-          parts.push(`${actionNum++}. Fix OOMKilled Pods — set memory to **${limit}** (${basis})`);
+      if (targetName && targetPod && targetDeploy) {
+        const hasOom = targetIssues.some(i => i.signal === "OOMKilled");
+        const hasCrash = targetIssues.some(i => i.signal === "CrashLoopBackOff");
+        if (hasOom) {
+          const oomIssue = targetIssues.find(i => i.signal === "OOMKilled");
+          const container = oomIssue?.container || (targetPod.spec?.containers || [])[0]?.name || "main";
+          const { limit, basis } = smartMemoryLimit(targetPod, container);
+          parts.push(`${actionNum++}. **Fix OOMKilled** — set memory to **${limit}** (${basis})`);
           parts.push("");
-          parts.push(`@@SEC_FIX_CMD|${cli} set resources deployment/${deployName} -n ${p0.metadata.namespace} -c ${container} --limits=memory=${limit}@@`);
+          parts.push(`@@SEC_FIX_CMD|${cli} set resources deployment/${targetDeploy} -n ${targetPod.metadata.namespace} -c ${container} --limits=memory=${limit}@@`);
           parts.push("");
         }
-      }
-      if (crashPods.length > 0) {
-        const p0 = crashPods[0];
-        const ownerDeploy = (p0.metadata?.ownerReferences || []).find(o => o.kind === "ReplicaSet");
-        const deployName = ownerDeploy ? ownerDeploy.name.replace(/-[a-f0-9]+$/, "") : null;
-        if (deployName) {
-          parts.push(`${actionNum++}. Restart CrashLooping Deployment`);
+        if (hasCrash || (!hasOom && targetIssues.length > 0)) {
+          parts.push(`${actionNum++}. **Restart deployment** \`${targetDeploy}\``);
           parts.push("");
-          parts.push(`@@SEC_FIX_CMD|${cli} rollout restart deployment/${deployName} -n ${p0.metadata.namespace}@@`);
+          parts.push(`@@SEC_FIX_CMD|${cli} rollout restart deployment/${targetDeploy} -n ${targetPod.metadata.namespace}@@`);
           parts.push("");
         }
-      }
-      if (zeroDeploys.length > 0) {
-        const d0 = zeroDeploys[0];
-        parts.push(`${actionNum++}. Restart Zero-Ready Deployment`);
+        parts.push(`${actionNum++}. **Check logs** for \`${targetPod.metadata.name}\``);
         parts.push("");
-        parts.push(`@@SEC_FIX_CMD|${cli} rollout restart deployment/${d0.metadata.name} -n ${d0.metadata.namespace}@@`);
+        parts.push(`@@SEC_FIX_CMD|${cli} logs ${targetPod.metadata.name} -n ${targetPod.metadata.namespace} --tail=50@@`);
         parts.push("");
+        parts.push(`${actionNum++}. **Describe pod** for full event history`);
+        parts.push("");
+        parts.push(`@@SEC_FIX_CMD|${cli} describe pod ${targetPod.metadata.name} -n ${targetPod.metadata.namespace}@@`);
+        parts.push("");
+      } else {
+        if (oomPods.length > 0) {
+          const p0 = oomPods[0]; const container = ((p0.status?.containerStatuses || []).find(cs => cs.state?.terminated?.reason === "OOMKilled" || cs.lastState?.terminated?.reason === "OOMKilled"))?.name || (p0.spec?.containers || [])[0]?.name || "main";
+          const dn = getDeployName(p0);
+          if (dn) { const { limit, basis } = smartMemoryLimit(p0, container); parts.push(`${actionNum++}. Fix OOMKilled — set memory to **${limit}** (${basis})`); parts.push(""); parts.push(`@@SEC_FIX_CMD|${cli} set resources deployment/${dn} -n ${p0.metadata.namespace} -c ${container} --limits=memory=${limit}@@`); parts.push(""); }
+        }
+        if (crashPods.length > 0) { const dn = getDeployName(crashPods[0]); if (dn) { parts.push(`${actionNum++}. Restart CrashLooping Deployment`); parts.push(""); parts.push(`@@SEC_FIX_CMD|${cli} rollout restart deployment/${dn} -n ${crashPods[0].metadata.namespace}@@`); parts.push(""); } }
+        if (zeroDeploys.length > 0) { parts.push(`${actionNum++}. Restart Zero-Ready Deployment`); parts.push(""); parts.push(`@@SEC_FIX_CMD|${cli} rollout restart deployment/${zeroDeploys[0].metadata.name} -n ${zeroDeploys[0].metadata.namespace}@@`); parts.push(""); }
       }
 
-      // Phase 10–12: ServiceNow + Notification run in PARALLEL for speed
+      // Phase 10–12: ServiceNow + Notification in PARALLEL
       const snowEnabled = (severity === "SEV-1" || severity === "SEV-2") && isServiceNowEnabled();
       const notifyEnabled = severity === "SEV-1" || severity === "SEV-2" || severity === "SEV-3";
-      const fixSummary = oomPods.length > 0 ? "Increase memory limits based on actual usage metrics"
-        : crashPods.length > 0 ? "Restart affected deployments"
-        : zeroDeploys.length > 0 ? "Scale up zero-ready deployments" : "Investigate and remediate";
+      const podLabel = targetName && targetDeploy ? `${targetDeploy} (${targetName})` : (targetNs || "cluster-wide");
+      const snowShortDesc = targetName
+        ? `[${severity}] ${targetIssues[0]?.signal || "Issue"} — ${podLabel} — Auto-generated by TCS Agentic AI`
+        : `[${severity}] ${rootCauses[0]?.signal || "Cluster Issue"} — ${targetNs || "cluster-wide"} — Auto-generated by TCS Agentic AI`;
+      const fixSummary = (targetName && targetIssues.some(i => i.signal === "OOMKilled")) ? `Increase memory for ${targetDeploy || targetName}`
+        : (targetName && targetIssues.length > 0) ? `Restart ${targetDeploy || targetName}`
+        : oomPods.length > 0 ? "Increase memory limits" : crashPods.length > 0 ? "Restart affected deployments" : "Investigate and remediate";
 
       const snowPromise = snowEnabled ? createServiceNowIncident({
-        shortDescription: `[${severity}] ${rootCauses[0]?.signal || "Cluster Issue"} — ${targetNs || "cluster-wide"} — Auto-generated by TCS Agentic AI`,
+        shortDescription: snowShortDesc,
         description: [
           `Severity: ${severity}`,
           `Scope: ${scope}`,
-          `Affected Namespaces: ${[...affectedNs].join(", ") || "none"}`,
+          targetName ? `Target Pod: ${targetName}` : null,
+          targetDeploy ? `Deployment: ${targetDeploy}` : null,
           ``,
           `ROOT CAUSE ANALYSIS:`,
           ...rootCauses.map(r => `  - ${r.signal}: ${r.detail}`),
-          ``,
-          `BLAST RADIUS: ${affectedNs.size} namespace(s), ${criticals} critical + ${warnings} warning signal(s)`,
+          ...(otherCauses.length > 0 && targetName ? [``, `ADDITIONAL ISSUES:`, ...otherCauses.map(r => `  - ${r.signal}: ${r.detail}`)] : []),
           ``,
           `RECOMMENDED FIX: ${fixSummary}`,
           ``,
           `Auto-generated by TCS Agentic AI incident response pipeline.`,
-        ].join("\n"),
+        ].filter(Boolean).join("\n"),
         urgency: severity === "SEV-1" ? "1" : "2",
         impact: severity === "SEV-1" ? "1" : "2",
       }).catch(e => ({ error: e.message })) : Promise.resolve(null);
 
       const notifyPromise = notifyEnabled ? notifyAll({
-        title: `[${severity}] Incident Response — ${targetNs || "cluster-wide"}`,
+        title: `[${severity}] ${targetName ? targetName : "Cluster Incident"} — ${targetNs || "cluster-wide"}`,
         text: rootCauses.map(r => `${r.signal}: ${r.detail}`).join("\n"),
         severity: severity === "SEV-1" ? "critical" : severity === "SEV-2" ? "high" : "warning",
-        namespace: targetNs || undefined,
-        cluster: "local",
+        namespace: targetNs || undefined, cluster: "local",
       }).catch(() => ({ failed: true })) : Promise.resolve(null);
 
       const [snowResult, notifyResult] = await Promise.all([snowPromise, notifyPromise]);
@@ -4142,104 +4196,58 @@ EOF@@`);
       parts.push(`| Step | Action | Status |`);
       parts.push(`| --- | --- | --- |`);
       if (snowEnabled) {
-        if (snowResult?.error) {
-          snowTicket = { error: snowResult.error };
-          parts.push(`| ServiceNow Incident | Failed | ${snowResult.error.slice(0, 100)} |`);
-        } else if (snowResult?.result) {
-          snowTicket = snowResult;
-          const incNumber = snowResult.result?.number || snowResult.result?.[0]?.number || "created";
-          parts.push(`| ServiceNow Incident | Auto-created | **${incNumber}** — ${severity} |`);
-        } else {
-          parts.push(`| ServiceNow Incident | Skipped | ServiceNow returned empty response |`);
-        }
+        if (snowResult?.error) { snowTicket = { error: snowResult.error }; parts.push(`| ServiceNow Incident | Failed | ${snowResult.error.slice(0, 100)} |`); }
+        else if (snowResult?.result) { snowTicket = snowResult; const incNumber = snowResult.result?.number || snowResult.result?.[0]?.number || "created"; parts.push(`| ServiceNow Incident | Auto-created | **${incNumber}** — ${severity} |`); }
+        else { parts.push(`| ServiceNow Incident | Skipped | ServiceNow returned empty response |`); }
       } else if (severity === "SEV-1" || severity === "SEV-2") {
         parts.push(`| ServiceNow Incident | Skipped | ServiceNow not configured (set SERVICENOW_INSTANCE) |`);
       } else {
         parts.push(`| ServiceNow Incident | Skipped | Auto-ticket only for SEV-1/SEV-2 (current: ${severity}) |`);
       }
-      if (notifyEnabled) {
-        parts.push(`| Team Notification | ${notifyResult?.failed ? "Failed" : "Sent"} | Slack/Teams/PagerDuty alert dispatched |`);
-      } else {
-        parts.push(`| Team Notification | Skipped | Auto-notify only for SEV-1/SEV-2/SEV-3 |`);
-      }
+      parts.push(`| Team Notification | ${notifyEnabled ? (notifyResult?.failed ? "Failed" : "Sent") : "Skipped"} | ${notifyEnabled ? "Slack/Teams/PagerDuty alert dispatched" : "Auto-notify only for SEV-1/SEV-2/SEV-3"} |`);
       parts.push("");
 
-      // Phase 13: Fix proposals with metrics-based sizing
+      // Phase 13: Fix proposals — TARGET-SPECIFIC when pod named
       const fixProposals = [];
-      crashPods.slice(0, 3).forEach(p => {
-        const ownerDeploy = (p.metadata?.ownerReferences || []).find(o => o.kind === "ReplicaSet");
-        const deployName = ownerDeploy ? ownerDeploy.name.replace(/-[a-f0-9]+$/, "") : null;
-        if (deployName) {
-          fixProposals.push({
-            title: `Restart deployment ${deployName}`,
-            action: "restart_deployment", resource: deployName, namespace: p.metadata.namespace,
-            resourceType: "deployment",
-            command: `${cli} rollout restart deployment/${deployName} -n ${p.metadata.namespace}`,
-            risk: "low",
-            description: `Restart ${deployName} to recover from CrashLoopBackOff`,
-          });
+      if (targetName && targetPod && targetDeploy) {
+        for (const issue of targetIssues) {
+          if (issue.signal === "OOMKilled") {
+            const container = issue.container || (targetPod.spec?.containers || [])[0]?.name || "main";
+            const { limit, basis } = smartMemoryLimit(targetPod, container);
+            fixProposals.push({ title: `Increase memory for ${targetDeploy} → ${limit}`, action: "set_resources", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: "deployment", command: `${cli} set resources deployment/${targetDeploy} -n ${targetPod.metadata.namespace} -c ${container} --limits=memory=${limit}`, risk: "low", description: `Set memory limit to ${limit} (${basis})` });
+          } else if (issue.signal === "CrashLoopBackOff" || issue.signal === "Failed") {
+            fixProposals.push({ title: `Restart deployment ${targetDeploy}`, action: "restart_deployment", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: "deployment", command: `${cli} rollout restart deployment/${targetDeploy} -n ${targetPod.metadata.namespace}`, risk: "low", description: `Restart ${targetDeploy} to recover from ${issue.signal}` });
+          }
         }
-      });
-      oomPods.slice(0, 3).forEach(p => {
-        const oomCs = (p.status?.containerStatuses || []).find(cs =>
-          cs.state?.terminated?.reason === "OOMKilled" || cs.lastState?.terminated?.reason === "OOMKilled"
-        );
-        const containerName = oomCs?.name || (p.spec?.containers || [])[0]?.name || "main";
-        const ownerDeploy = (p.metadata?.ownerReferences || []).find(o => o.kind === "ReplicaSet");
-        const deployName = ownerDeploy ? ownerDeploy.name.replace(/-[a-f0-9]+$/, "") : p.metadata.name;
-        const { limit, basis } = smartMemoryLimit(p, containerName);
-        fixProposals.push({
-          title: `Increase memory for ${deployName} → ${limit}`,
-          action: "set_resources", resource: deployName, namespace: p.metadata.namespace,
-          resourceType: "deployment",
-          command: `${cli} set resources deployment/${deployName} -n ${p.metadata.namespace} -c ${containerName} --limits=memory=${limit}`,
-          risk: "low",
-          description: `Set memory limit to ${limit} (${basis})`,
-        });
-      });
-      zeroDeploys.slice(0, 3).forEach(d => {
-        fixProposals.push({
-          title: `Restart deployment ${d.metadata.name}`,
-          action: "restart_deployment", resource: d.metadata.name, namespace: d.metadata.namespace,
-          resourceType: "deployment",
-          command: `${cli} rollout restart deployment/${d.metadata.name} -n ${d.metadata.namespace}`,
-          risk: "low",
-          description: `Restart ${d.metadata.name} (0/${d.spec?.replicas || 0} replicas ready)`,
-        });
-      });
+        if (fixProposals.length === 0) {
+          fixProposals.push({ title: `Restart deployment ${targetDeploy}`, action: "restart_deployment", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: "deployment", command: `${cli} rollout restart deployment/${targetDeploy} -n ${targetPod.metadata.namespace}`, risk: "low", description: `Restart ${targetDeploy} to recover` });
+        }
+      } else {
+        crashPods.slice(0, 3).forEach(p => { const dn = getDeployName(p); if (dn) fixProposals.push({ title: `Restart deployment ${dn}`, action: "restart_deployment", resource: dn, namespace: p.metadata.namespace, resourceType: "deployment", command: `${cli} rollout restart deployment/${dn} -n ${p.metadata.namespace}`, risk: "low", description: `Restart ${dn} to recover from CrashLoopBackOff` }); });
+        oomPods.slice(0, 3).forEach(p => { const cn = ((p.status?.containerStatuses || []).find(cs => cs.state?.terminated?.reason === "OOMKilled" || cs.lastState?.terminated?.reason === "OOMKilled"))?.name || (p.spec?.containers || [])[0]?.name || "main"; const dn = getDeployName(p) || p.metadata.name; const { limit, basis } = smartMemoryLimit(p, cn); fixProposals.push({ title: `Increase memory for ${dn} → ${limit}`, action: "set_resources", resource: dn, namespace: p.metadata.namespace, resourceType: "deployment", command: `${cli} set resources deployment/${dn} -n ${p.metadata.namespace} -c ${cn} --limits=memory=${limit}`, risk: "low", description: `Set memory limit to ${limit} (${basis})` }); });
+        zeroDeploys.slice(0, 3).forEach(d => fixProposals.push({ title: `Restart deployment ${d.metadata.name}`, action: "restart_deployment", resource: d.metadata.name, namespace: d.metadata.namespace, resourceType: "deployment", command: `${cli} rollout restart deployment/${d.metadata.name} -n ${d.metadata.namespace}`, risk: "low", description: `Restart ${d.metadata.name} (0/${d.spec?.replicas || 0} replicas ready)` }));
+      }
 
-      // Normalize ServiceNow result — recovery queries return result as array
-      const snowRec = snowTicket?.result
-        ? (Array.isArray(snowTicket.result) ? snowTicket.result[0] : snowTicket.result)
-        : null;
+      const snowRec = snowTicket?.result ? (Array.isArray(snowTicket.result) ? snowTicket.result[0] : snowTicket.result) : null;
 
       // Phase 14: Automation Status summary
       parts.push(`### Automation Status`);
       parts.push("");
       parts.push(`| Action | Status | Detail |`);
       parts.push(`| --- | --- | --- |`);
-      parts.push(`| Diagnose | [DONE] | ${rootCauses.length} root cause(s) identified |`);
-      if (snowRec?.sys_id) {
-        parts.push(`| ServiceNow Ticket | [DONE] | **${snowRec.number || "created"}** — auto-raised for ${severity} |`);
-      } else if (snowTicket?.error) {
-        parts.push(`| ServiceNow Ticket | [SKIP] | ServiceNow error: ${snowTicket.error.slice(0, 80)} |`);
-      } else if (severity === "SEV-1" || severity === "SEV-2") {
-        parts.push(`| ServiceNow Ticket | [SKIP] | ServiceNow not configured (set SERVICENOW_INSTANCE) |`);
-      } else {
-        parts.push(`| ServiceNow Ticket | [SKIP] | Auto-ticket only for SEV-1/SEV-2 |`);
-      }
-      if (notifyEnabled) {
-        parts.push(`| Team Notification | [SENT] | Slack/Teams/PagerDuty alert dispatched |`);
-      } else {
-        parts.push(`| Team Notification | [SKIP] | Auto-notify only for SEV-1/SEV-2/SEV-3 |`);
-      }
-      parts.push(`| Fix Proposals | [READY] | ${fixProposals.length} one-click fix(es) available below |`);
+      parts.push(`| Diagnose | [DONE] | ${rootCauses.length} root cause(s) for ${targetName || "scope"} |`);
+      if (snowRec?.sys_id) { parts.push(`| ServiceNow Ticket | [DONE] | **${snowRec.number || "created"}** — auto-raised for ${severity} |`); }
+      else if (snowTicket?.error) { parts.push(`| ServiceNow Ticket | [SKIP] | ServiceNow error: ${snowTicket.error.slice(0, 80)} |`); }
+      else if (severity === "SEV-1" || severity === "SEV-2") { parts.push(`| ServiceNow Ticket | [SKIP] | ServiceNow not configured |`); }
+      else { parts.push(`| ServiceNow Ticket | [SKIP] | Auto-ticket only for SEV-1/SEV-2 |`); }
+      parts.push(`| Team Notification | ${notifyEnabled ? "[SENT]" : "[SKIP]"} | ${notifyEnabled ? "Slack/Teams/PagerDuty alert dispatched" : "Auto-notify only for SEV-1/SEV-2/SEV-3"} |`);
+      parts.push(`| Fix Proposals | [READY] | ${fixProposals.length} fix(es) for ${targetDeploy || targetName || "scope"} |`);
       parts.push("");
 
-      // Phase 15: FIX_PROPOSAL card with incident context for auto-close
+      // Phase 15: FIX_PROPOSAL card with incident context
       if (fixProposals.length > 0) {
         const diagPayload = {
-          podName: "incident_response",
+          podName: targetName || "incident_response",
           namespace: targetNs || "cluster-wide",
           severity: severity === "SEV-1" || severity === "SEV-2" ? "critical" : "warning",
           diagnosis: `${severity} — ${rootCauses.map(r => r.signal).join(", ")}`,
@@ -4249,8 +4257,7 @@ EOF@@`);
           incidentSysId: snowRec?.sys_id || null,
           incidentNumber: snowRec?.number || null,
         };
-        const fixJson = JSON.stringify(diagPayload).replace(/@@/g, "@ @");
-        parts.push(`@@FIX_PROPOSAL|${fixJson}@@`);
+        parts.push(`@@FIX_PROPOSAL|${JSON.stringify(diagPayload).replace(/@@/g, "@ @")}@@`);
       }
 
       return parts.join("\n");
