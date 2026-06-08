@@ -46,8 +46,8 @@ GIT_PULL=true
 ACTION="deploy"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-K8S_DIR="$REPO_ROOT/k8s"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+K8S_DIR="$SCRIPT_DIR/manifests"
 
 # Detect CLI (oc or kubectl)
 if command -v oc &>/dev/null; then
@@ -226,7 +226,7 @@ if $BUILD; then
   echo "  [a] Building MCP server image..."
   $RUNTIME build -t "$MCP_IMAGE" -f Dockerfile .
   echo "  [b] Building Dashboard image..."
-  $RUNTIME build -t "$DASHBOARD_IMAGE" -f dashboard-react/Dockerfile dashboard-react/
+  $RUNTIME build -t "$DASHBOARD_IMAGE" -f console/Dockerfile console/
 
   echo "  Pushing images..."
   push_with_retry "$MCP_IMAGE"
@@ -410,5 +410,5 @@ echo ""
 echo " Commit: $(git -C "$REPO_ROOT" log --oneline -1 2>/dev/null || echo 'N/A')"
 echo ""
 echo " Next: Deploy spokes on secondary clusters:"
-echo "   ./deploy-spoke.sh --hub-url $URL --cluster-name <name> --platform <platform>"
+echo "   ./deploy/spoke/deploy.sh --hub-url $URL --cluster-name <name> --platform <platform>"
 echo "============================================"

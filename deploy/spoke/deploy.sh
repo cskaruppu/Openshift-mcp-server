@@ -18,11 +18,11 @@
 #   - Hub deployed and reachable from this cluster
 #
 # Usage:
-#   ./deploy-spoke.sh --hub-url https://hub.example.com --cluster-name prod-east --platform openshift
-#   ./deploy-spoke.sh --hub-url https://hub.example.com --cluster-name staging-gke --platform gke
-#   ./deploy-spoke.sh --status                     # Check spoke status
-#   ./deploy-spoke.sh --rollback                   # Rollback spoke
-#   ./deploy-spoke.sh --uninstall                  # Remove spoke from cluster
+#   ./deploy/spoke/deploy.sh --hub-url https://hub.example.com --cluster-name prod-east --platform openshift
+#   ./deploy/spoke/deploy.sh --hub-url https://hub.example.com --cluster-name staging-gke --platform gke
+#   ./deploy/spoke/deploy.sh --status                     # Check spoke status
+#   ./deploy/spoke/deploy.sh --rollback                   # Rollback spoke
+#   ./deploy/spoke/deploy.sh --uninstall                  # Remove spoke from cluster
 #
 # Options:
 #   --hub-url URL          Hub server URL (required for deploy)
@@ -53,7 +53,7 @@ ACTION="deploy"
 WITH_DB=false
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Detect CLI
 if command -v oc &>/dev/null; then
@@ -176,12 +176,12 @@ fi
 # ---------------------------------------------------------------------------
 if [ -z "$HUB_URL" ]; then
   echo "ERROR: --hub-url is required."
-  echo "Usage: ./deploy-spoke.sh --hub-url https://hub.example.com --cluster-name my-cluster --platform openshift"
+  echo "Usage: ./deploy/spoke/deploy.sh --hub-url https://hub.example.com --cluster-name my-cluster --platform openshift"
   exit 1
 fi
 if [ -z "$CLUSTER_NAME" ]; then
   echo "ERROR: --cluster-name is required."
-  echo "Usage: ./deploy-spoke.sh --hub-url https://hub.example.com --cluster-name my-cluster --platform openshift"
+  echo "Usage: ./deploy/spoke/deploy.sh --hub-url https://hub.example.com --cluster-name my-cluster --platform openshift"
   exit 1
 fi
 
@@ -573,8 +573,8 @@ echo ""
 echo " The cluster now appears in the hub's 'Select a Cluster' workspace."
 echo ""
 echo " Management:"
-echo "   ./deploy-spoke.sh --status               # Check spoke status"
-echo "   ./deploy-spoke.sh --rollback              # Rollback spoke"
-echo "   ./deploy-spoke.sh --uninstall             # Remove spoke"
+echo "   ./deploy/spoke/deploy.sh --status               # Check spoke status"
+echo "   ./deploy/spoke/deploy.sh --rollback              # Rollback spoke"
+echo "   ./deploy/spoke/deploy.sh --uninstall             # Remove spoke"
 echo "   $CLI logs -n $NS -l app.kubernetes.io/name=openshift-mcp-server -f"
 echo "============================================"
