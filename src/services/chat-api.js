@@ -4908,7 +4908,7 @@ EOF@@`);
         }
         return [];
       };
-      const [events, nodes, nodeMetrics, pods, deploys, alertsData, pvcs] = await Promise.all([
+      const [events, nodes, nodeMetrics, pods, deploys, alertsData, pvcs, podMetricsData] = await Promise.all([
         ocpGet(`/api/v1/${targetNs ? `namespaces/${targetNs}/` : ""}events?fieldSelector=type=Warning&limit=300`).catch(() => ({ items: [] })),
         ocpGet("/api/v1/nodes").catch(() => ({ items: [] })),
         ocpGet("/apis/metrics.k8s.io/v1beta1/nodes").catch(() => ({ items: [] })),
@@ -4916,6 +4916,7 @@ EOF@@`);
         ocpGet(`/apis/apps/v1/${targetNs ? `namespaces/${targetNs}/` : ""}deployments`).catch(() => ({ items: [] })),
         fetchAlerts(),
         ocpGet(`/api/v1/${targetNs ? `namespaces/${targetNs}/` : ""}persistentvolumeclaims`).catch(() => ({ items: [] })),
+        ocpGet(`/apis/metrics.k8s.io/v1beta1/${targetNs ? `namespaces/${targetNs}/` : ""}pods`).catch(() => ({ items: [] })),
       ]);
 
       const podItems = pods.items || [];
@@ -5043,19 +5044,54 @@ EOF@@`);
         parts.push("");
       }
 
+      // Metrics-based memory sizing — used by Phase 9 and Phase 13
+      const podMetricsItems = podMetricsData.items || [];
+      const podMetricsMap = new Map();
+      for (const pm of podMetricsItems) {
+        podMetricsMap.set(`${pm.metadata.namespace}/${pm.metadata.name}`, pm);
+      }
+
+      function smartMemoryLimit(pod, containerName) {
+        const spec = (pod.spec?.containers || []).find(c => c.name === containerName);
+        const currentLimit = spec?.resources?.limits?.memory || "";
+        const currentLimitBytes = parseMemBytes(currentLimit);
+        const pm = podMetricsMap.get(`${pod.metadata.namespace}/${pod.metadata.name}`);
+        const actualUsage = (pm?.containers || []).find(c => c.name === containerName);
+        const actualBytes = actualUsage ? parseMemBytes(actualUsage.usage?.memory) : 0;
+        const baseBytes = actualBytes > 0 ? actualBytes : currentLimitBytes;
+        if (baseBytes === 0) return { limit: "512Mi", basis: "default (no metrics available)" };
+        const recommended = Math.ceil((baseBytes * 1.5) / (1024 * 1024));
+        const rounded = recommended <= 128 ? 128
+          : recommended <= 256 ? 256
+          : recommended <= 512 ? 512
+          : recommended <= 1024 ? 1024
+          : Math.ceil(recommended / 256) * 256;
+        const limitStr = rounded >= 1024 ? `${(rounded / 1024).toFixed(0)}Gi` : `${rounded}Mi`;
+        if (actualBytes > 0) {
+          const usageMi = Math.round(actualBytes / (1024 * 1024));
+          return { limit: limitStr, basis: `actual usage ${usageMi}Mi + 50% headroom` };
+        }
+        const prevMi = Math.round(currentLimitBytes / (1024 * 1024));
+        return { limit: limitStr, basis: `previous limit ${prevMi || "?"}Mi × 1.5` };
+      }
+
       // Phase 9: Recommended Actions with runnable commands
       parts.push(`**Recommended Actions**`);
       parts.push("");
       let actionNum = 1;
       if (oomPods.length > 0) {
         const p0 = oomPods[0];
-        const container = (p0.spec?.containers || [])[0]?.name || "main";
+        const oomCs = (p0.status?.containerStatuses || []).find(cs =>
+          cs.state?.terminated?.reason === "OOMKilled" || cs.lastState?.terminated?.reason === "OOMKilled"
+        );
+        const container = oomCs?.name || (p0.spec?.containers || [])[0]?.name || "main";
         const ownerDeploy = (p0.metadata?.ownerReferences || []).find(o => o.kind === "ReplicaSet");
         const deployName = ownerDeploy ? ownerDeploy.name.replace(/-[a-f0-9]+$/, "") : null;
         if (deployName) {
-          parts.push(`${actionNum++}. Fix OOMKilled Pods (increase memory limits)`);
+          const { limit, basis } = smartMemoryLimit(p0, container);
+          parts.push(`${actionNum++}. Fix OOMKilled Pods — set memory to **${limit}** (${basis})`);
           parts.push("");
-          parts.push(`@@SEC_FIX_CMD|${cli} set resources deployment/${deployName} -n ${p0.metadata.namespace} -c ${container} --limits=memory=512Mi@@`);
+          parts.push(`@@SEC_FIX_CMD|${cli} set resources deployment/${deployName} -n ${p0.metadata.namespace} -c ${container} --limits=memory=${limit}@@`);
           parts.push("");
         }
       }
@@ -5136,7 +5172,7 @@ EOF@@`);
         }).catch(() => {});
       }
 
-      // Phase 13: Fix proposals
+      // Phase 13: Fix proposals — uses live metrics for smart sizing
       const fixProposals = [];
       crashPods.slice(0, 3).forEach(p => {
         const ownerDeploy = (p.metadata?.ownerReferences || []).find(o => o.kind === "ReplicaSet");
@@ -5153,16 +5189,20 @@ EOF@@`);
         }
       });
       oomPods.slice(0, 3).forEach(p => {
-        const container = (p.spec?.containers || [])[0]?.name || "main";
+        const oomContainer = (p.status?.containerStatuses || []).find(cs =>
+          cs.state?.terminated?.reason === "OOMKilled" || cs.lastState?.terminated?.reason === "OOMKilled"
+        );
+        const containerName = oomContainer?.name || (p.spec?.containers || [])[0]?.name || "main";
         const ownerDeploy = (p.metadata?.ownerReferences || []).find(o => o.kind === "ReplicaSet");
         const deployName = ownerDeploy ? ownerDeploy.name.replace(/-[a-f0-9]+$/, "") : p.metadata.name;
+        const { limit, basis } = smartMemoryLimit(p, containerName);
         fixProposals.push({
-          title: `Increase memory for ${deployName}`,
+          title: `Increase memory for ${deployName} → ${limit}`,
           action: "set_resources", resource: deployName, namespace: p.metadata.namespace,
           resourceType: "deployment",
-          command: `${cli} set resources deployment/${deployName} -n ${p.metadata.namespace} -c ${container} --limits=memory=512Mi`,
+          command: `${cli} set resources deployment/${deployName} -n ${p.metadata.namespace} -c ${containerName} --limits=memory=${limit}`,
           risk: "low",
-          description: `Increase memory limit to prevent OOMKilled`,
+          description: `Set memory limit to ${limit} (${basis})`,
         });
       });
       zeroDeploys.slice(0, 3).forEach(d => {
