@@ -2287,6 +2287,39 @@ h3.widget-title {
   max-height: 240px; overflow-y: auto; color: var(--text);
 }
 
+/* Cluster Picker footer — central management icons */
+.cp-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 32px;
+  border-top: 1px solid var(--border);
+  background: rgba(2,6,23,.35);
+  font-size: 11px; color: var(--text2);
+}
+.cp-footer-left { opacity: .6; }
+.cp-footer-actions { display: flex; align-items: center; gap: 4px; }
+.cp-footer-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: none; border: 1px solid transparent;
+  color: var(--text2); font-size: 11px;
+  padding: 4px 10px; border-radius: 6px;
+  cursor: pointer; transition: all .15s;
+}
+.cp-footer-btn:hover {
+  background: rgba(99,102,241,.08);
+  border-color: rgba(99,102,241,.2);
+  color: var(--text);
+}
+.cp-footer-btn svg { opacity: .7; }
+.cp-footer-btn:hover svg { opacity: 1; }
+.cp-footer-badge {
+  font-size: 9px; font-weight: 700; min-width: 16px; height: 16px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: #6366f1; color: #fff; border-radius: 8px;
+  padding: 0 4px; line-height: 1;
+}
+.light-theme .cp-footer { background: rgba(241,245,249,.6); }
+.light-theme .cp-footer-btn:hover { background: rgba(99,102,241,.06); }
+
 /* Workspace breadcrumb bar */
 .workspace-breadcrumb {
   display: flex; align-items: center; justify-content: space-between;
