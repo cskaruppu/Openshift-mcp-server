@@ -1,0 +1,40 @@
+# ============================================================
+# TEST FIXTURE 3: ImagePullBackOff on a StatefulSet
+# Validates: SEV-3 INC creation + StatefulSet workload support
+# ============================================================
+# Deploy:  oc apply -f 03-imagepull-statefulset-test.yaml
+# Trigger: in chat type →  "pulltest pod is failing"
+# Expect:  SEV-3 → ServiceNow INC created (was previously skipped!)
+#          → Fix command uses statefulset/ not deployment/
+# Cleanup: oc delete namespace e2e-imagepull-test
+# ------------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: e2e-imagepull-test
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pulltest
+  namespace: e2e-imagepull-test
+  labels:
+    app: pulltest
+spec:
+  serviceName: pulltest
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pulltest
+  template:
+    metadata:
+      labels:
+        app: pulltest
+    spec:
+      containers:
+        - name: pulltest
+          # Non-existent image → ImagePullBackOff
+          image: registry.example.com/does-not-exist/fake-image:v9.9.9
+          resources:
+            limits:
+              memory: "64Mi"

@@ -1,0 +1,47 @@
+# ============================================================
+# TEST FIXTURE 1: OOMKilled Pod — validates Use Case 1
+# ============================================================
+# Deploy:  oc apply -f 01-oomkill-test.yaml
+# Trigger: in chat type →  "oomtest pod is crashing"
+# Expect:  SEV-2 → smart memory recommendation → ServiceNow INC
+#          → Fix Proposal card with Dry Run + Apply & Close INC
+# Cleanup: oc delete namespace e2e-oomkill-test
+# ------------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: e2e-oomkill-test
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oomtest
+  namespace: e2e-oomkill-test
+  labels:
+    app: oomtest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oomtest
+  template:
+    metadata:
+      labels:
+        app: oomtest
+    spec:
+      containers:
+        - name: oomtest
+          image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+          # Intentionally tiny limit so the workload is OOMKilled
+          resources:
+            limits:
+              memory: "32Mi"
+            requests:
+              memory: "16Mi"
+          # Allocate ~200Mi to blow past the 32Mi limit → OOMKilled
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "Starting memory hog — will be OOMKilled";
+              tail /dev/zero | head -c 200000000 | tail;
+              sleep 3600

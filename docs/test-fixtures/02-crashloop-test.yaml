@@ -1,0 +1,42 @@
+# ============================================================
+# TEST FIXTURE 2: CrashLoopBackOff Pod — validates log analysis
+# ============================================================
+# Deploy:  oc apply -f 02-crashloop-test.yaml
+# Trigger: in chat type →  "crashtest pod is crashing"
+# Expect:  SEV-2 → log analysis detects "Application Crash" / FATAL
+#          → Fix Proposal = rollout restart → ServiceNow INC
+# Cleanup: oc delete namespace e2e-crashloop-test
+# ------------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: e2e-crashloop-test
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crashtest
+  namespace: e2e-crashloop-test
+  labels:
+    app: crashtest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: crashtest
+  template:
+    metadata:
+      labels:
+        app: crashtest
+    spec:
+      containers:
+        - name: crashtest
+          image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+          # Print a fatal error to logs, then exit non-zero → CrashLoopBackOff
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "FATAL: java.lang.OutOfMemoryError: connection refused to db:5432";
+              echo "ERROR: ECONNREFUSED — could not connect to upstream service";
+              echo "panic: application failed to start";
+              exit 1
