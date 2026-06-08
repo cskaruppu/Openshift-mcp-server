@@ -261,6 +261,10 @@ export const RESOURCE_ALIASES = {
   template:            ["template", "templates"],
   catalogsource:       ["catalogsource", "catalogsources"],
   packagemanifest:     ["packagemanifest", "packagemanifests"],
+
+  // ---- Pseudo-resources synthesized by COMPOUND_TERMS ----
+  incident_response:   ["incident_response"],
+  cluster_briefing:    ["cluster_briefing"],
 };
 
 // Build a flat token → canonical map for O(1) lookup.
