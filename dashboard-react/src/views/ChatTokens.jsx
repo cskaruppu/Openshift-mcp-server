@@ -1007,12 +1007,23 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
           </div>
         )}
 
-        {/* Report link */}
+        {/* Full assessment report — prominent action bar */}
         {s.preflightReport && (
-          <div style={{ marginTop: 8, fontSize: 11 }}>
+          <div style={{ marginTop: 12, padding: "10px 14px", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 10, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <div style={{ fontWeight: 600, fontSize: 12.5 }}>Full Pre-Upgrade Assessment Report</div>
+              {s.preflightReport.summary && (
+                <div style={{ fontSize: 11, color: "var(--text2)", marginTop: 2 }}>
+                  {s.preflightReport.summary.total} checks · {s.preflightReport.summary.pass} passed · {s.preflightReport.summary.warning} warnings · {s.preflightReport.summary.fail} failed
+                </div>
+              )}
+            </div>
             <a href={clusterUrl(`/api/upgrade/orchestrator/report?sessionId=${sessionId}`, cluster)}
-              target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent2)" }}>
-              📄 View HTML Report
+              target="_blank" rel="noopener noreferrer"
+              className="ux-btn ux-btn-execute"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              Open Full Report
             </a>
           </div>
         )}
