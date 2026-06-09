@@ -460,6 +460,10 @@ function _formatAge(date) {
 const CHAT_CACHE_TTL = parseInt(process.env.CHAT_CACHE_TTL || "300", 10);
 const CONTEXT_CACHE_TTL = parseInt(process.env.CONTEXT_CACHE_TTL || "120", 10);
 
+// Phase B: hub-cluster chat is served by the hub-agent pod when registered,
+// using the same spoke pipeline as every other cluster.
+const HUB_AGENT_CLUSTER = process.env.HUB_AGENT_CLUSTER || "hub-cluster";
+
 // Pre-computed cluster digest — per-cluster, refreshed by agent reports.
 // Keyed by cluster name to prevent cross-cluster data bleed.
 const _clusterDigests = new Map();
@@ -14550,8 +14554,15 @@ export async function handleChatAPI(req, res) {
     // the same chat-api code, so responses are identical to a local query.
     // We resolve LLM credentials first so the spoke can use the same provider
     // (spokes don't store LLM settings — the hub is the single config point).
+    //
+    // Phase B: hub-cluster chat routes through the hub-agent pod (when
+    // registered) so the hub uses the SAME pipeline as every other cluster.
+    // _chatCluster keeps the original value ("local") for history tagging.
     const _chatCluster = body.cluster;
-    if (_chatCluster && _chatCluster !== "local" && hasSpokeCluster(_chatCluster)) {
+    const _chatTarget = (_chatCluster === "local" && hasSpokeCluster(HUB_AGENT_CLUSTER))
+      ? HUB_AGENT_CLUSTER
+      : _chatCluster;
+    if (_chatTarget && _chatTarget !== "local" && hasSpokeCluster(_chatTarget)) {
       const _spokeOpts = {};
       if (body.provider) _spokeOpts.provider = body.provider;
       if (body.apiKey) _spokeOpts.apiKey = body.apiKey;
@@ -14561,7 +14572,7 @@ export async function handleChatAPI(req, res) {
       if (body.azureApiVersion) _spokeOpts.azureApiVersion = body.azureApiVersion;
       await resolveLLMOpts(_spokeOpts);
       const enrichedBody = { ...body, ..._spokeOpts };
-      const proxied = await proxyChatToSpoke(_chatCluster, enrichedBody, req, res);
+      const proxied = await proxyChatToSpoke(_chatTarget, enrichedBody, req, res);
       if (proxied) {
         incCounter("mcp_chat_requests_total", { status: "spoke_proxied" });
         return;
@@ -16363,9 +16374,10 @@ export async function handleChatCompareAPI(req, res) {
 
     // Spoke proxy — forward to spoke for identical results
     const _cmpCluster = body.cluster;
-    if (_cmpCluster && _cmpCluster !== "local" && hasSpokeCluster(_cmpCluster)) {
+    const _cmpTarget = (_cmpCluster === "local" && hasSpokeCluster(HUB_AGENT_CLUSTER)) ? HUB_AGENT_CLUSTER : _cmpCluster;
+    if (_cmpTarget && _cmpTarget !== "local" && hasSpokeCluster(_cmpTarget)) {
       await Promise.all((providers || []).map((p) => resolveLLMOpts(p)));
-      const proxied = await proxyChatToSpoke(_cmpCluster, body, req, res);
+      const proxied = await proxyChatToSpoke(_cmpTarget, body, req, res);
       if (proxied) return;
     }
 
@@ -16471,7 +16483,8 @@ export async function handleChatInvestigateAPI(req, res) {
 
     // Spoke proxy — forward to spoke for identical results
     const _invCluster = body.cluster;
-    if (_invCluster && _invCluster !== "local" && hasSpokeCluster(_invCluster)) {
+    const _invTarget = (_invCluster === "local" && hasSpokeCluster(HUB_AGENT_CLUSTER)) ? HUB_AGENT_CLUSTER : _invCluster;
+    if (_invTarget && _invTarget !== "local" && hasSpokeCluster(_invTarget)) {
       const _invOpts = {};
       if (provider) _invOpts.provider = provider;
       if (apiKey) _invOpts.apiKey = apiKey;
@@ -16480,7 +16493,7 @@ export async function handleChatInvestigateAPI(req, res) {
       if (body.azureDeployment) _invOpts.azureDeployment = body.azureDeployment;
       if (body.azureApiVersion) _invOpts.azureApiVersion = body.azureApiVersion;
       await resolveLLMOpts(_invOpts);
-      const proxied = await proxyChatToSpoke(_invCluster, { ...body, ..._invOpts }, req, res);
+      const proxied = await proxyChatToSpoke(_invTarget, { ...body, ..._invOpts }, req, res);
       if (proxied) return;
     }
 

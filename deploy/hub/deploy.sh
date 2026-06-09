@@ -352,6 +352,14 @@ if [ "$CLI" = "oc" ]; then
   oc delete route agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
 fi
 
+# 7b. Hub Agent — the hub cluster's own stateless data-plane pod (same image,
+#     spoke mode). Registers as "hub-cluster" so the control plane serves the
+#     hub through the SAME spoke pipeline as every other cluster.
+next "Deploying Hub Agent (local data plane, spoke mode)..."
+sed -i "s|image:.*openshift-mcp-server:.*|image: ${MCP_IMAGE}|" "$K8S_DIR/hub-agent.yaml"
+$CLI apply -f "$K8S_DIR/hub-agent.yaml"
+$CLI set image deployment/mcp-hub-agent mcp-hub-agent="$MCP_IMAGE" -n "$NS" 2>/dev/null || true
+
 # 8. Dashboard deployment (separate pod — React + Nginx + 50Gi PVC)
 #    Applies deploy/hub/manifests/dashboard-deployment.yaml, which carries the
 #    PersistentVolumeClaim (persistence) + OpenShift-safe volume mounts
@@ -369,9 +377,12 @@ $CLI set image deployment/mcp-dashboard dashboard="$DASHBOARD_IMAGE" -n "$NS" 2>
 # 9. Rollout and verify
 next "Rolling out and verifying..."
 $CLI rollout restart deployment/agentic-ai-server -n "$NS"
+$CLI rollout restart deployment/mcp-hub-agent -n "$NS" 2>/dev/null || true
 $CLI rollout restart deployment/mcp-dashboard -n "$NS"
 echo "  Waiting for MCP server..."
 $CLI rollout status deployment/agentic-ai-server -n "$NS" --timeout=180s
+echo "  Waiting for Hub Agent..."
+$CLI rollout status deployment/mcp-hub-agent -n "$NS" --timeout=120s 2>/dev/null || true
 echo "  Waiting for Dashboard..."
 $CLI rollout status deployment/mcp-dashboard -n "$NS" --timeout=120s
 

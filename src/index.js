@@ -339,7 +339,12 @@ export { invokeAgentTool, hasActiveChannel } from "./services/agent-bridge.js";
 import { registerSpoke, unregisterSpoke, hasSpoke, proxyToSpoke, proxyChatToSpoke, getSpokeStatus, updateSpokeHeartbeat, getAllSpokes, startSpokeMode, fedFetch } from "./services/spoke-proxy.js";
 export { hasSpoke, getSpokeStatus };
 
-const MCP_MODE = (process.env.MCP_MODE || "hub").toLowerCase(); // hub | spoke | standalone
+const MCP_MODE = (process.env.MCP_MODE || "hub").toLowerCase(); // hub | spoke | control | standalone
+
+// Phase B: name under which the hub cluster's own stateless data-plane pod
+// (hub-agent) registers. Requests with ?cluster=local are routed to it via
+// the same spoke pipeline as any other cluster when it is registered.
+const HUB_AGENT_CLUSTER = process.env.HUB_AGENT_CLUSTER || "hub-cluster";
 
 // MCP server version — used for drift detection across clusters
 const _MCP_PKG_VERSION = (() => {
@@ -2035,7 +2040,16 @@ async function startSSE() {
     //
     // Hub-local paths (records stored in hub PostgreSQL) are NEVER proxied —
     // the cluster param is used for DB filtering, not for routing.
-    const _reqCluster = queryCluster || headerCluster;
+    //
+    // Phase B: the hub cluster is "just another spoke". When the hub-agent
+    // pod is registered (HUB_AGENT_CLUSTER), explicit ?cluster=local data-
+    // plane requests are routed through the SAME spoke pipeline as every
+    // other cluster — identical code path, identical answers. If the agent
+    // is not deployed/registered, behavior falls back to in-process (legacy).
+    let _reqCluster = queryCluster || headerCluster;
+    if (_reqCluster === "local" && MCP_MODE !== "spoke" && hasSpoke(HUB_AGENT_CLUSTER)) {
+      _reqCluster = HUB_AGENT_CLUSTER;
+    }
     if (_reqCluster && _reqCluster !== "local") {
       const p = url.pathname;
       const isHubLocal =
@@ -2509,6 +2523,8 @@ async function startSSE() {
       try {
         const cli = await detectCLI();
         const result = await runExec(cli, ["rollout", "restart", `deployment/${deployName}`, "-n", ns]);
+        // Also restart the hub-agent (local data plane) when present.
+        await runExec(cli, ["rollout", "restart", "deployment/mcp-hub-agent", "-n", ns]).catch(() => {});
         return sendJson(res, 200, { ok: true, message: `Rollout restart triggered for ${deployName} in ${ns}`, output: result });
       } catch (err) {
         return sendJson(res, 500, { ok: false, error: err.message });
@@ -2763,6 +2779,12 @@ async function startSSE() {
       const { clusterName, spokeUrl, platform, version } = body;
       if (!clusterName || !spokeUrl) return sendJson(res, 400, { error: "clusterName and spokeUrl required" });
       const entry = registerSpoke(clusterName, spokeUrl, { platform, version });
+      // The hub-agent is the hub cluster's own data-plane pod — it must NOT
+      // appear as a separate cluster card (the picker already shows the hub).
+      if (clusterName === HUB_AGENT_CLUSTER || clusterName.toLowerCase() === HUB_AGENT_CLUSTER.toLowerCase()) {
+        console.log(`[spoke] Hub-agent registered: ${spokeUrl} — local data plane now served by the spoke pipeline`);
+        return sendJson(res, 200, { ok: true, message: `Hub-agent "${clusterName}" registered`, hubVersion: "1.2.0" });
+      }
       // Also register in _connectedAgents so the cluster picker sees it
       const existingKey = findClusterKey(clusterName);
       const existing = existingKey ? _connectedAgents.get(existingKey) : null;
@@ -2792,8 +2814,14 @@ async function startSSE() {
 
     if (url.pathname === "/api/spoke/heartbeat" && req.method === "POST") {
       const body = await readJsonBody(req);
-      const { clusterName, ts, uptime, memMB, healthy, mcpVersion, buildHash, startedAt: spokeStartedAt } = body;
+      const { clusterName, spokeUrl: hbSpokeUrl, platform: hbPlatform, ts, uptime, memMB, healthy, mcpVersion, buildHash, startedAt: spokeStartedAt } = body;
       if (!clusterName) return sendJson(res, 400, { error: "clusterName required" });
+      // Self-healing: re-register the spoke if the registry was lost (e.g.
+      // control-plane restart) — the heartbeat carries everything needed.
+      if (hbSpokeUrl && !hasSpoke(clusterName)) {
+        registerSpoke(clusterName, hbSpokeUrl, { platform: hbPlatform });
+        console.log(`[spoke] Re-registered from heartbeat: ${clusterName} (${hbSpokeUrl})`);
+      }
       updateSpokeHeartbeat(clusterName, { healthy, uptime, memMB });
       const key = findClusterKey(clusterName) || clusterName;
       const agent = _connectedAgents.get(key);

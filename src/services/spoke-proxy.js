@@ -427,6 +427,10 @@ export async function startSpokeMode(hubUrl, clusterName, spokeUrl, platform) {
         headers: authHeaders(),
         body: JSON.stringify({
           clusterName,
+          // spokeUrl/platform let the hub re-register this spoke after a
+          // control-plane restart without waiting for this pod to restart.
+          spokeUrl,
+          platform,
           ts: new Date().toISOString(),
           uptime: Math.floor(process.uptime()),
           memMB: Math.round(process.memoryUsage().rss / 1048576),
