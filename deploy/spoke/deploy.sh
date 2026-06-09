@@ -217,6 +217,19 @@ metadata:
     app.kubernetes.io/part-of: tcs-agentic-ai
 EOF
 
+# 1b. Clean up stale resources from prior naming scheme (mcp-server → agentic-ai-server)
+echo "  Removing legacy mcp-server resources (if any)..."
+$CLI delete deployment mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete service mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete configmap mcp-server-config -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete secret mcp-server-secrets -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete serviceaccount mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete clusterrolebinding mcp-server-reader-binding --ignore-not-found 2>/dev/null || true
+$CLI delete clusterrole mcp-server-reader --ignore-not-found 2>/dev/null || true
+if [ "$CLI" = "oc" ]; then
+  oc delete route mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+fi
+
 # 2. ServiceAccount + RBAC (same as hub — full cluster-reader)
 next "Creating service account and RBAC..."
 cat <<EOF | $CLI apply -f -
@@ -389,17 +402,6 @@ EOF
 
 # 4. Deployment + Service (+ Route for OpenShift)
 next "Deploying MCP server (spoke mode)..."
-# Clean up stale deployments from prior naming schemes
-$CLI delete deployment mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete service mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete configmap mcp-server-config -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete secret mcp-server-secrets -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete serviceaccount mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete clusterrolebinding mcp-server-reader-binding --ignore-not-found 2>/dev/null || true
-$CLI delete clusterrole mcp-server-reader --ignore-not-found 2>/dev/null || true
-if [ "$CLI" = "oc" ]; then
-  oc delete route mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
-fi
 cat <<EOF | $CLI apply -f -
 apiVersion: apps/v1
 kind: Deployment

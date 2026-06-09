@@ -242,6 +242,24 @@ fi
 # 3. Namespace and RBAC
 next "Applying namespace, service account, RBAC..."
 $CLI apply -f "$K8S_DIR/namespace.yaml"
+
+# Clean up stale resources from prior naming schemes (mcp-server → agentic-ai-server)
+echo "  Removing legacy mcp-server resources (if any)..."
+$CLI delete deployment mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete service mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete configmap mcp-server-config -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete secret mcp-server-secrets -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete serviceaccount mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete clusterrolebinding mcp-server-reader-binding --ignore-not-found 2>/dev/null || true
+$CLI delete clusterrolebinding mcp-server-remediator-binding --ignore-not-found 2>/dev/null || true
+$CLI delete clusterrole mcp-server-reader --ignore-not-found 2>/dev/null || true
+$CLI delete clusterrole mcp-server-remediator --ignore-not-found 2>/dev/null || true
+$CLI delete deployment tcs-dashboard -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete service tcs-dashboard -n "$NS" --ignore-not-found 2>/dev/null || true
+if [ "$CLI" = "oc" ]; then
+  oc delete route mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+fi
+
 if [ "$NS" != "openshift-mcp" ]; then
   echo "  (Patching manifests for namespace: $NS)"
   for f in "$K8S_DIR"/*.yaml; do
@@ -269,23 +287,9 @@ $CLI apply -f "$K8S_DIR/deployment.yaml"
 $CLI apply -f "$K8S_DIR/service.yaml"
 $CLI set image deployment/agentic-ai-server agentic-ai-server="$MCP_IMAGE" -n "$NS" 2>/dev/null || true
 # MCP server is internal-only — remove any legacy external route from prior deploys.
-# All external traffic now enters through the dashboard route (which proxies /api, /sse, ...).
 if [ "$CLI" = "oc" ]; then
   oc delete route agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
-  oc delete route mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
 fi
-# Clean up stale resources from prior naming schemes (mcp-server, tcs-dashboard)
-$CLI delete deployment mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete service mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete configmap mcp-server-config -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete secret mcp-server-secrets -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete serviceaccount mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete clusterrolebinding mcp-server-reader-binding --ignore-not-found 2>/dev/null || true
-$CLI delete clusterrolebinding mcp-server-remediator-binding --ignore-not-found 2>/dev/null || true
-$CLI delete clusterrole mcp-server-reader --ignore-not-found 2>/dev/null || true
-$CLI delete clusterrole mcp-server-remediator --ignore-not-found 2>/dev/null || true
-$CLI delete deployment tcs-dashboard -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete service tcs-dashboard -n "$NS" --ignore-not-found 2>/dev/null || true
 
 # 7. Dashboard deployment (separate pod — React + Nginx + 50Gi PVC)
 #    Applies deploy/hub/manifests/dashboard-deployment.yaml, which carries the
