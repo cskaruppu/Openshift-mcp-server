@@ -2010,8 +2010,8 @@ async function startSSE() {
     if (_reqCluster && _reqCluster !== "local") {
       const p = url.pathname;
       const isHubLocal =
-        p.startsWith("/api/chats") ||
-        p === "/api/chat/feedback" || p === "/api/chat/feedback/stats" ||
+        p.startsWith("/api/chat") ||
+        p === "/api/execute" ||
         p === "/api/audit" ||
         p.startsWith("/api/audit-log") || p.startsWith("/api/audit-trail") ||
         p.startsWith("/api/cr") ||
