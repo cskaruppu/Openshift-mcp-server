@@ -183,7 +183,7 @@ fi
 # ---------------------------------------------------------------------------
 # Deploy
 # ---------------------------------------------------------------------------
-STEPS=9
+STEPS=10
 
 echo "============================================"
 echo " TCS Agentic AI — Hub Deployment"
@@ -291,13 +291,48 @@ fi
 $CLI apply -f "$K8S_DIR/configmap.yaml"
 $CLI apply -f "$K8S_DIR/networkpolicy.yaml" 2>/dev/null || true
 
-# 5. Persistent storage and data stores
+# 5. DNS forwarding for spoke cluster hostnames
+next "Configuring DNS forwarding for spoke clusters..."
+# Extract SPOKE_DNS_SERVER from configmap (hardcoded 10.131.19.154 for caaslab)
+SPOKE_DNS=$($CLI get configmap agentic-ai-server-config -n "$NS" -o jsonpath='{.data.SPOKE_DNS_SERVER}' 2>/dev/null || echo "")
+if [ "$CLI" = "oc" ] && [ -n "$SPOKE_DNS" ]; then
+  # Add DNS Operator forwarding rules for spoke zones so CoreDNS can resolve
+  # spoke Route hostnames (e.g. *.apps.ocp.caaslab.local) via the custom DNS.
+  echo "  Adding DNS forwarding rules for spoke zones → $SPOKE_DNS"
+  # Check current forwarding config
+  EXISTING_FWD=$(oc get dns.operator/default -o jsonpath='{.spec.servers}' 2>/dev/null || echo "")
+  if echo "$EXISTING_FWD" | grep -q "$SPOKE_DNS" 2>/dev/null; then
+    echo "  DNS forwarding already configured for $SPOKE_DNS — skipping"
+  else
+    oc patch dns.operator/default --type=merge -p "$(cat <<DNSPATCH
+{
+  "spec": {
+    "servers": [
+      {
+        "name": "spoke-caaslab-dns",
+        "zones": ["ocp.caaslab.local"],
+        "forwardPlugin": {
+          "upstreams": ["$SPOKE_DNS"],
+          "policy": "Random"
+        }
+      }
+    ]
+  }
+}
+DNSPATCH
+)" 2>/dev/null && echo "  ✓ DNS Operator forwarding configured" || echo "  ⚠  DNS Operator patch skipped (may need admin privileges)"
+  fi
+else
+  echo "  Skipped (not OpenShift or no SPOKE_DNS_SERVER configured)"
+fi
+
+# 6. Persistent storage and data stores (was step 5)
 next "Deploying PostgreSQL and Redis..."
 $CLI apply -f "$K8S_DIR/pvc.yaml"
 $CLI apply -f "$K8S_DIR/postgres.yaml" 2>&1 | grep -v "is invalid" || true
 $CLI apply -f "$K8S_DIR/redis.yaml" 2>&1 | grep -v "is invalid" || true
 
-# 6. MCP Server deployment
+# 7. MCP Server deployment
 next "Deploying MCP server (API-only)..."
 sed -i "s|image:.*openshift-mcp-server:.*|image: ${MCP_IMAGE}|" "$K8S_DIR/deployment.yaml"
 $CLI apply -f "$K8S_DIR/deployment.yaml"
@@ -308,7 +343,7 @@ if [ "$CLI" = "oc" ]; then
   oc delete route agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
 fi
 
-# 7. Dashboard deployment (separate pod — React + Nginx + 50Gi PVC)
+# 8. Dashboard deployment (separate pod — React + Nginx + 50Gi PVC)
 #    Applies deploy/hub/manifests/dashboard-deployment.yaml, which carries the
 #    PersistentVolumeClaim (persistence) + OpenShift-safe volume mounts
 #    (/tmp, /var/cache/nginx, /var/run) so Nginx runs under a random UID.
@@ -322,7 +357,7 @@ else
 fi
 $CLI set image deployment/mcp-dashboard dashboard="$DASHBOARD_IMAGE" -n "$NS" 2>/dev/null || true
 
-# 8. Rollout and verify
+# 9. Rollout and verify
 next "Rolling out and verifying..."
 $CLI rollout restart deployment/agentic-ai-server -n "$NS"
 $CLI rollout restart deployment/mcp-dashboard -n "$NS"
@@ -338,7 +373,7 @@ echo ""
 
 URL=$(hub_url)
 
-# 9. Summary
+# 10. Summary
 next "Deployment complete!"
 
 echo ""

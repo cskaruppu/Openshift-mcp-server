@@ -17,6 +17,8 @@
  */
 
 import { Agent } from "undici";
+import { Resolver as DnsResolver } from "node:dns";
+import { lookup as defaultLookup } from "node:dns";
 
 const _spokes = new Map();
 
@@ -36,17 +38,50 @@ const _skipTLS =
     ""
   ).toLowerCase() === "true";
 
-const _insecureDispatcher = _skipTLS
-  ? new Agent({ connect: { rejectUnauthorized: false } })
-  : undefined;
+// ---------------------------------------------------------------------------
+// Custom DNS for spoke hostname resolution.
+// Hub cluster CoreDNS returns NXDOMAIN for spoke Route hostnames because they
+// live in a different DNS zone. SPOKE_DNS_SERVER points to a DNS server that
+// can resolve those external hostnames (e.g. *.apps.ocp.caaslab.local).
+// Cluster-internal names (.svc.cluster.local) still go through default DNS.
+// ---------------------------------------------------------------------------
+const _spokeDnsServer = process.env.SPOKE_DNS_SERVER || "";
+let _spokeResolver = null;
+
+if (_spokeDnsServer) {
+  _spokeResolver = new DnsResolver();
+  _spokeResolver.setServers([_spokeDnsServer]);
+  console.log(`[federation] Custom DNS resolver configured: ${_spokeDnsServer}`);
+}
+
+function customLookup(hostname, opts, cb) {
+  if (!_spokeResolver || hostname.endsWith(".svc.cluster.local") || hostname === "localhost") {
+    return defaultLookup(hostname, opts, cb);
+  }
+  _spokeResolver.resolve4(hostname, (err, addresses) => {
+    if (!err && addresses.length > 0) {
+      return cb(null, addresses[0], 4);
+    }
+    defaultLookup(hostname, opts, cb);
+  });
+}
+
+const _connectOpts = {};
+if (_skipTLS) _connectOpts.rejectUnauthorized = false;
+if (_spokeResolver) _connectOpts.lookup = customLookup;
+
+const _fedDispatcher =
+  (_skipTLS || _spokeResolver)
+    ? new Agent({ connect: _connectOpts })
+    : undefined;
 
 if (_skipTLS) {
   console.log("[federation] TLS verification disabled for hub/spoke calls (HUB_TLS_SKIP_VERIFY=true)");
 }
 
-/** fetch() wrapper that applies the insecure dispatcher when TLS skip is enabled. */
+/** fetch() wrapper that applies the federation dispatcher (TLS skip + custom DNS). */
 export function fedFetch(url, opts = {}) {
-  if (_insecureDispatcher) opts.dispatcher = _insecureDispatcher;
+  if (_fedDispatcher) opts.dispatcher = _fedDispatcher;
   return fetch(url, opts);
 }
 

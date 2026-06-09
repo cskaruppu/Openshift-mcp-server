@@ -21,6 +21,10 @@ data:
   # internal/.local clusters use the router's self-signed default cert. Set to
   # "false" if all spoke Routes present certs trusted by the hub.
   FEDERATION_TLS_SKIP_VERIFY: "true"
+  # DNS server for resolving spoke cluster hostnames that are outside the hub's
+  # CoreDNS zone (e.g. *.apps.ocp.caaslab.local). Set to a DNS IP reachable
+  # from the hub pod that can resolve spoke Route hostnames.
+  SPOKE_DNS_SERVER: "10.131.19.154"
   # LLM Provider: "azure", "openai", "anthropic", "ollama", or "none" (built-in analysis)
   LLM_PROVIDER: "azure"
   # LLM_API_URL: Azure OpenAI endpoint (e.g. https://<resource>.openai.azure.com)

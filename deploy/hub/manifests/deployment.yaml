@@ -22,16 +22,22 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      dnsPolicy: "None"
       dnsConfig:
         nameservers:
+          - "172.30.0.10"
           - "10.131.19.154"
+        searches:
+          - "openshift-mcp.svc.cluster.local"
+          - "svc.cluster.local"
+          - "cluster.local"
         options:
           - name: timeout
             value: "5"
           - name: attempts
-            value: "5"
+            value: "3"
           - name: ndots
-            value: "2"
+            value: "5"
       containers:
         - name: agentic-ai-server
           image: quay.io/karuppucs/openshift-mcp-server:latest
