@@ -5369,7 +5369,7 @@ async function runDiagnostics() {
     if (el) { el.textContent = msg; el.style.color = d.k8sApiReachable ? 'var(--ok)' : 'var(--crit)'; }
     if (d.k8sApiReachable) { setConnected(true); refreshAll(); }
   } catch (e) {
-    if (el) { el.textContent = 'Diag failed: ' + e.message + ' — check pod logs with: oc logs deployment/mcp-server -n openshift-mcp'; el.style.color = 'var(--crit)'; }
+    if (el) { el.textContent = 'Diag failed: ' + e.message + ' — check pod logs with: oc logs deployment/agentic-ai-server -n openshift-mcp'; el.style.color = 'var(--crit)'; }
   }
 }
 

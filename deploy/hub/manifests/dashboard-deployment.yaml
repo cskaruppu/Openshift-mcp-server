@@ -35,7 +35,7 @@ spec:
       labels:
         app.kubernetes.io/name: mcp-dashboard
     spec:
-      serviceAccountName: mcp-server
+      serviceAccountName: agentic-ai-server
       securityContext:
         runAsNonRoot: true
         seccompProfile:
