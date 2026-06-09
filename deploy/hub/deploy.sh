@@ -336,7 +336,8 @@ fi
 
 # 6. Persistent storage and data stores (was step 5)
 next "Deploying PostgreSQL and Redis..."
-$CLI apply -f "$K8S_DIR/pvc.yaml"
+# pvc.yaml no longer applied — the MCP server is stateless (state in PostgreSQL).
+# Existing agentic-ai-server-data PVCs are left untouched for manual cleanup.
 $CLI apply -f "$K8S_DIR/postgres.yaml" 2>&1 | grep -v "is invalid" || true
 $CLI apply -f "$K8S_DIR/redis.yaml" 2>&1 | grep -v "is invalid" || true
 

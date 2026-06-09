@@ -105,8 +105,9 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 30
       volumes:
+        # STATELESS: all durable state lives in PostgreSQL (kv_store + tables).
+        # /data is an ephemeral scratch dir kept only as a no-DB dev fallback.
         - name: data
-          persistentVolumeClaim:
-            claimName: agentic-ai-server-data
+          emptyDir: {}
         - name: tmp
           emptyDir: {}

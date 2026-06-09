@@ -65,6 +65,7 @@ import { defineSLO, getSLOStatus, getAllSLOs, deleteSLO, calculateErrorBudget, l
 import { loadPolicies, getPolicies, getPolicy, createPolicy, updatePolicy, deletePolicy, evaluatePolicies, getClusterPolicies } from "./tools/policy-engine.js";
 import { loadChannels, getChannels, createChannel, updateChannel, deleteChannel, testChannel, notify, getNotificationHistory } from "./services/notifications.js";
 import { initAuditLog, logAuditEvent as logAuditTrailEvent, queryAuditLog, getAuditStats, exportAuditLog } from "./services/audit-log.js";
+import { loadState, saveState } from "./utils/state-store.js";
 import { recordIncidentResolution } from "./services/incident-rag.js";
 import { initQueryTracer, getTraces, getTrace, getAgentAnalytics, getTraceStats } from "./services/query-tracer.js";
 import { initIncidentManager, declareIncident, updateIncident, addTimelineEvent, getIncident, listIncidents, getIncidentStats as getLifecycleIncidentStats, resolveIncident, closeIncident } from "./services/incident-manager.js";
@@ -4533,12 +4534,8 @@ spec:
     if (url.pathname === "/api/settings/notifications") {
       const NOTIF_PATH = process.env.NOTIF_SETTINGS_PATH || "/data/mcp-notification-settings.json";
       if (req.method === "GET") {
-        try {
-          const raw = await readFile(NOTIF_PATH, "utf8");
-          return sendJson(res, 200, JSON.parse(raw));
-        } catch {
-          return sendJson(res, 200, { webhookUrl: "", channel: "", enabled: false, severities: ["critical"] });
-        }
+        const cfg = await loadState("notification_settings", NOTIF_PATH).catch(() => null);
+        return sendJson(res, 200, cfg || { webhookUrl: "", channel: "", enabled: false, severities: ["critical"] });
       }
       if (req.method === "POST") {
         try {
@@ -4549,7 +4546,7 @@ spec:
             enabled: !!body.enabled,
             severities: Array.isArray(body.severities) ? body.severities : ["critical"],
           };
-          await writeFile(NOTIF_PATH, JSON.stringify(cfg, null, 2));
+          await saveState("notification_settings", cfg, NOTIF_PATH);
           return sendJson(res, 200, { ok: true, config: cfg });
         } catch (err) {
           return sendJson(res, 500, { error: err.message });
@@ -4561,10 +4558,8 @@ spec:
     if (req.method === "POST" && url.pathname === "/api/settings/notifications/test") {
       try {
         const NOTIF_PATH = process.env.NOTIF_SETTINGS_PATH || "/data/mcp-notification-settings.json";
-        let cfg;
-        try {
-          cfg = JSON.parse(await readFile(NOTIF_PATH, "utf8"));
-        } catch {
+        const cfg = await loadState("notification_settings", NOTIF_PATH).catch(() => null);
+        if (!cfg) {
           return sendJson(res, 400, { error: "No notification settings configured" });
         }
         if (!cfg.webhookUrl) return sendJson(res, 400, { error: "No webhook URL configured" });

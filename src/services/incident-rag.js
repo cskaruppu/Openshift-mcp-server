@@ -104,13 +104,13 @@ const BEST_PRACTICES = {
 async function loadFromDisk() {
   if (_loaded) return;
   try {
-    const raw = await readFile(HISTORY_PATH, "utf8");
-    const parsed = JSON.parse(raw);
+    const { loadState } = await import("../utils/state-store.js");
+    const parsed = await loadState("incident_rag_history", HISTORY_PATH);
     if (Array.isArray(parsed)) {
       _ring = parsed.slice(-RING_MAX);
     }
   } catch {
-    // File doesn't exist or is corrupt — start fresh
+    // Nothing stored or corrupt — start fresh
     _ring = [];
   }
   _loaded = true;
@@ -120,10 +120,10 @@ async function flushToDisk() {
   if (_flushPending) return;
   _flushPending = true;
   try {
-    await mkdir(DATA_DIR, { recursive: true });
-    await writeFile(HISTORY_PATH, JSON.stringify(_ring, null, 2));
+    const { saveState } = await import("../utils/state-store.js");
+    await saveState("incident_rag_history", _ring, HISTORY_PATH);
   } catch (err) {
-    console.error("[incident-rag] flush to disk failed:", err.message);
+    console.error("[incident-rag] flush failed:", err.message);
   } finally {
     _flushPending = false;
   }

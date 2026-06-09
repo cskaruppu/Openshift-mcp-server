@@ -235,9 +235,8 @@ async function saveConfig() {
     });
   }
   try {
-    const dir = resolve(CONFIG_PATH, "..");
-    await mkdir(dir, { recursive: true }).catch(() => {});
-    await writeFile(CONFIG_PATH, JSON.stringify(configs, null, 2));
+    const { saveState } = await import("../utils/state-store.js");
+    await saveState("mcp_hub_servers", configs, CONFIG_PATH);
   } catch (err) {
     console.error(`[mcp-hub] Failed to save config:`, err.message);
   }
@@ -247,9 +246,9 @@ export async function loadAndReconnect() {
   if (_configLoaded) return;
   _configLoaded = true;
   try {
-    const raw = await readFile(CONFIG_PATH, "utf8");
-    const configs = JSON.parse(raw);
-    for (const cfg of configs) {
+    const { loadState } = await import("../utils/state-store.js");
+    const configs = await loadState("mcp_hub_servers", CONFIG_PATH);
+    for (const cfg of configs || []) {
       try {
         await connectServer(cfg);
       } catch (err) {

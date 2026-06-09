@@ -220,9 +220,9 @@ export async function executeRuleActions(triggered) {
 
 async function executeSlackAction(rule, insight, config) {
   try {
-    const { readFile } = await import("node:fs/promises");
-    const notifCfg = JSON.parse(await readFile(process.env.NOTIF_SETTINGS_PATH || "/data/mcp-notification-settings.json", "utf8"));
-    if (!notifCfg.webhookUrl) return { ok: false, message: "No Slack webhook configured" };
+    const { loadState } = await import("../utils/state-store.js");
+    const notifCfg = await loadState("notification_settings", process.env.NOTIF_SETTINGS_PATH || "/data/mcp-notification-settings.json");
+    if (!notifCfg?.webhookUrl) return { ok: false, message: "No Slack webhook configured" };
 
     const payload = {
       text: `*[TCS Agentic AI — Automation]*\nRule: ${rule.name}\n${insight.title}\n${insight.detail}\n*Action:* ${insight.recommendation}`,

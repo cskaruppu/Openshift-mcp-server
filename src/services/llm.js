@@ -592,10 +592,9 @@ const LLM_SETTINGS_PATH = process.env.LLM_SETTINGS_PATH || "/data/mcp-llm-settin
 
 async function loadFallbackChain() {
   try {
-    const { readFile } = await import("node:fs/promises");
-    const raw = await readFile(LLM_SETTINGS_PATH, "utf8");
-    const settings = JSON.parse(raw);
-    return settings.fallbackChain || null;
+    const { loadState } = await import("../utils/state-store.js");
+    const settings = await loadState("llm_settings", LLM_SETTINGS_PATH);
+    return settings?.fallbackChain || null;
   } catch {
     return null;
   }
@@ -603,10 +602,9 @@ async function loadFallbackChain() {
 
 async function loadProviderSettings() {
   try {
-    const { readFile } = await import("node:fs/promises");
-    const raw = await readFile(LLM_SETTINGS_PATH, "utf8");
-    const settings = JSON.parse(raw);
-    return settings.providers || {};
+    const { loadState } = await import("../utils/state-store.js");
+    const settings = await loadState("llm_settings", LLM_SETTINGS_PATH);
+    return settings?.providers || {};
   } catch {
     return {};
   }
