@@ -17,6 +17,10 @@ data:
   PASSWORD_MAX_AGE_DAYS: "90"
   # Allow hub to connect to clusters on private IPs (10.x, 172.16-31.x, 192.168.x)
   ALLOW_PRIVATE_CLUSTER_IPS: "true"
+  # Skip TLS verification for hub->spoke federation proxy calls. Spoke Routes on
+  # internal/.local clusters use the router's self-signed default cert. Set to
+  # "false" if all spoke Routes present certs trusted by the hub.
+  FEDERATION_TLS_SKIP_VERIFY: "true"
   # LLM Provider: "azure", "openai", "anthropic", "ollama", or "none" (built-in analysis)
   LLM_PROVIDER: "azure"
   # LLM_API_URL: Azure OpenAI endpoint (e.g. https://<resource>.openai.azure.com)

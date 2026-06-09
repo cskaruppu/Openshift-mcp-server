@@ -16,9 +16,49 @@
  *   4. Returns response to dashboard — identical to local query
  */
 
+import { Agent } from "undici";
+
 const _spokes = new Map();
 
 let _heartbeatCheckTimer = null;
+
+// ---------------------------------------------------------------------------
+// TLS handling for federation traffic (spoke→hub register/heartbeat and
+// hub→spoke proxy). OpenShift Routes on internal/.local clusters terminate
+// TLS with the router's self-signed default cert, which a fresh Node process
+// does not trust. Set HUB_TLS_SKIP_VERIFY=true (spoke deploy --tls-skip) to
+// disable verification for these in-cluster federation calls.
+// ---------------------------------------------------------------------------
+const _skipTLS =
+  String(
+    process.env.HUB_TLS_SKIP_VERIFY ||
+    process.env.FEDERATION_TLS_SKIP_VERIFY ||
+    ""
+  ).toLowerCase() === "true";
+
+const _insecureDispatcher = _skipTLS
+  ? new Agent({ connect: { rejectUnauthorized: false } })
+  : undefined;
+
+if (_skipTLS) {
+  console.log("[federation] TLS verification disabled for hub/spoke calls (HUB_TLS_SKIP_VERIFY=true)");
+}
+
+/** fetch() wrapper that applies the insecure dispatcher when TLS skip is enabled. */
+function fedFetch(url, opts = {}) {
+  if (_insecureDispatcher) opts.dispatcher = _insecureDispatcher;
+  return fetch(url, opts);
+}
+
+/** Build a readable reason from a fetch error — undici hides the real cause. */
+function fetchErrorDetail(err) {
+  const cause = err && err.cause;
+  if (cause) {
+    const code = cause.code || cause.reason || cause.message;
+    if (code) return `${err.message} (${code})`;
+  }
+  return err.message;
+}
 
 export function registerSpoke(clusterName, spokeUrl, metadata = {}) {
   const existing = findSpokeKey(clusterName);
@@ -139,7 +179,7 @@ export async function proxyToSpoke(clusterName, req, res, url) {
       fetchOpts.body = await readRequestBody(req);
     }
 
-    const proxyRes = await fetch(targetUrl.toString(), fetchOpts);
+    const proxyRes = await fedFetch(targetUrl.toString(), fetchOpts);
 
     const contentType = proxyRes.headers.get("content-type") || "application/json";
     const body = await proxyRes.text();
@@ -152,12 +192,12 @@ export async function proxyToSpoke(clusterName, req, res, url) {
     res.end(body);
     return true;
   } catch (err) {
-    console.error(`[spoke-proxy] Proxy to ${clusterName} (${spokeUrl}) failed: ${err.message}`);
+    console.error(`[spoke-proxy] Proxy to ${clusterName} (${spokeUrl}) failed: ${fetchErrorDetail(err)}`);
     res.writeHead(502, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
       error: `Spoke cluster "${clusterName}" is unreachable`,
       spokeUrl,
-      detail: err.message,
+      detail: fetchErrorDetail(err),
     }));
     return true;
   }
@@ -201,7 +241,7 @@ export async function startSpokeMode(hubUrl, clusterName, spokeUrl, platform) {
 
   async function register() {
     try {
-      const resp = await fetch(`${hubUrl}/api/spoke/register`, {
+      const resp = await fedFetch(`${hubUrl}/api/spoke/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -217,17 +257,22 @@ export async function startSpokeMode(hubUrl, clusterName, spokeUrl, platform) {
         console.log(`[spoke] Registered with hub: ${hubUrl}`);
         startHeartbeatLoop();
       } else {
-        console.error(`[spoke] Registration failed: ${resp.status}`);
+        const bodyText = await resp.text().catch(() => "");
+        console.error(`[spoke] Registration rejected by hub: HTTP ${resp.status} ${bodyText.slice(0, 200)}`);
+        setTimeout(register, 10_000);
       }
     } catch (err) {
-      console.error(`[spoke] Cannot reach hub ${hubUrl}: ${err.message}`);
+      console.error(`[spoke] Cannot reach hub ${hubUrl}: ${fetchErrorDetail(err)}`);
+      if (/self.signed|self_signed|CERT|TLS|SSL/i.test(fetchErrorDetail(err))) {
+        console.error("[spoke] Hint: hub uses a self-signed cert. Redeploy the spoke with --tls-skip.");
+      }
       setTimeout(register, 10_000);
     }
   }
 
   async function sendHeartbeat() {
     try {
-      await fetch(`${hubUrl}/api/spoke/heartbeat`, {
+      await fedFetch(`${hubUrl}/api/spoke/heartbeat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
