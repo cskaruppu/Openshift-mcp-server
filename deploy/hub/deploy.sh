@@ -348,6 +348,27 @@ fi
 echo ""
 echo " Commit: $(git -C "$REPO_ROOT" log --oneline -1 2>/dev/null || echo 'N/A')"
 echo ""
-echo " Next: Deploy spokes on secondary clusters:"
-echo "   ./deploy/spoke/deploy.sh --hub-url $URL --cluster-name <name> --platform <platform>"
+
+# Extract hub token for spoke deploy command
+HUB_TOKEN=$($CLI get secret agentic-ai-server-secrets -n "$NS" -o jsonpath='{.data.MCP_API_TOKEN}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+if [ -n "$HUB_TOKEN" ] && [ "$HUB_TOKEN" != "CHANGEME" ]; then
+  echo " Next: Deploy spokes on secondary clusters:"
+  echo "   ./deploy/spoke/deploy.sh \\"
+  echo "     --hub-url $URL \\"
+  echo "     --hub-token $HUB_TOKEN \\"
+  echo "     --cluster-name <name> --platform <platform>"
+  echo ""
+  echo " Or auto-fetch the token from this cluster's context:"
+  echo "   ./deploy/spoke/deploy.sh \\"
+  echo "     --hub-url $URL \\"
+  echo "     --hub-context $(kubectl config current-context 2>/dev/null || echo '<hub-context>') \\"
+  echo "     --cluster-name <name> --platform <platform>"
+else
+  echo " ⚠  Hub token is not set. Update the secret before deploying spokes:"
+  echo "   $CLI -n $NS create secret generic agentic-ai-server-secrets \\"
+  echo "     --from-literal=MCP_API_TOKEN=<your-token> --dry-run=client -o yaml | $CLI apply -f -"
+  echo ""
+  echo " Then deploy spokes:"
+  echo "   ./deploy/spoke/deploy.sh --hub-url $URL --hub-token <token> --cluster-name <name> --platform <platform>"
+fi
 echo "============================================"

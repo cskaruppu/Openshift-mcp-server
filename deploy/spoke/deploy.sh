@@ -32,6 +32,8 @@
 #   -n, --namespace NS     Namespace (default: openshift-mcp for OpenShift, tcs-agentic-system otherwise)
 #   --image IMAGE          Override image (default: same as hub image)
 #   --hub-token TOKEN      Hub API token (MCP_API_TOKEN from hub) for spoke auth
+#   --hub-context CTX      Auto-fetch hub token from hub cluster K8s secret (kubectl context name)
+#   --hub-namespace NS     Hub namespace when using --hub-context (default: openshift-mcp)
 #   --status               Show spoke deployment status
 #   --rollback             Rollback to previous revision
 #   --uninstall            Remove spoke from this cluster
@@ -45,6 +47,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 HUB_URL=""
 HUB_TOKEN=""
+HUB_CONTEXT=""
+HUB_NS="openshift-mcp"
 CLUSTER_NAME=""
 PLATFORM="k8s"
 NS=""
@@ -72,6 +76,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --hub-url)        HUB_URL="$2"; shift 2 ;;
     --hub-token)      HUB_TOKEN="$2"; shift 2 ;;
+    --hub-context)    HUB_CONTEXT="$2"; shift 2 ;;
+    --hub-namespace)  HUB_NS="$2"; shift 2 ;;
     --cluster-name)   CLUSTER_NAME="$2"; shift 2 ;;
     --platform)       PLATFORM="$2"; shift 2 ;;
     --tls-skip)       TLS_SKIP=true; shift ;;
@@ -98,6 +104,23 @@ if [ -z "$NS" ]; then
 fi
 
 DEPLOY_NAME="agentic-ai-server"
+
+# ---------------------------------------------------------------------------
+# Auto-fetch hub token from hub cluster's K8s secret (if --hub-context given)
+# ---------------------------------------------------------------------------
+if [ -n "$HUB_CONTEXT" ] && [ -z "$HUB_TOKEN" ]; then
+  echo "Fetching hub token from context '$HUB_CONTEXT' (namespace: $HUB_NS)..."
+  HUB_TOKEN=$(kubectl --context="$HUB_CONTEXT" get secret agentic-ai-server-secrets \
+    -n "$HUB_NS" -o jsonpath='{.data.MCP_API_TOKEN}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+  if [ -n "$HUB_TOKEN" ] && [ "$HUB_TOKEN" != "CHANGEME" ]; then
+    echo "  ✓ Hub token retrieved successfully"
+  else
+    echo "  ✗ Could not retrieve hub token from context '$HUB_CONTEXT'."
+    echo "    Ensure the secret 'agentic-ai-server-secrets' exists in namespace '$HUB_NS'"
+    echo "    and MCP_API_TOKEN is set. Use --hub-token <token> as fallback."
+    HUB_TOKEN=""
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # Status

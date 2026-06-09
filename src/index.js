@@ -2645,6 +2645,197 @@ async function startSSE() {
       return sendJson(res, 200, { spokes: getSpokeStatus() });
     }
 
+    if (url.pathname === "/api/spoke/join-config" && req.method === "GET") {
+      const platform = url.searchParams.get("platform") || "openshift";
+      const clusterName = url.searchParams.get("clusterName") || "<cluster-name>";
+      const hubToken = process.env.MCP_API_TOKEN || "";
+      const hubHost = req.headers.host || "hub.example.com";
+      const hubProto = req.headers["x-forwarded-proto"] || "https";
+      const hubUrl = `${hubProto}://${hubHost}`;
+      const image = process.env.MCP_IMAGE || "quay.io/karuppucs/openshift-mcp-server:latest";
+      const spokeNs = platform === "openshift" ? "openshift-mcp" : "tcs-agentic-system";
+
+      const command = [
+        "./deploy/spoke/deploy.sh",
+        `--hub-url ${hubUrl}`,
+        `--hub-token ${hubToken || "<hub-token>"}`,
+        `--cluster-name ${clusterName}`,
+        `--platform ${platform}`,
+        ...(platform === "openshift" ? ["--tls-skip"] : []),
+      ].join(" \\\n  ");
+
+      const yaml = `# TCS Agentic AI — Spoke deployment for ${clusterName} (${platform})
+# Apply on the secondary cluster: kubectl apply -f spoke-join.yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${spokeNs}
+  labels:
+    app.kubernetes.io/name: agentic-ai-server
+    app.kubernetes.io/part-of: tcs-agentic-ai
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agentic-ai-server
+  namespace: ${spokeNs}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agentic-ai-server-reader
+rules:
+  - apiGroups: [""]
+    resources: [nodes, pods, pods/log, services, namespaces, events, resourcequotas,
+                limitranges, configmaps, secrets, serviceaccounts, persistentvolumeclaims,
+                persistentvolumes, endpoints, replicationcontrollers]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies, ingresses]
+    verbs: [get, list, watch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings, clusterroles, clusterrolebindings]
+    verbs: [get, list, watch]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses, volumeattachments]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets, podsecuritypolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes, pods]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agentic-ai-server-reader-binding
+subjects:
+  - kind: ServiceAccount
+    name: agentic-ai-server
+    namespace: ${spokeNs}
+roleRef:
+  kind: ClusterRole
+  name: agentic-ai-server-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentic-ai-server-config
+  namespace: ${spokeNs}
+data:
+  MCP_MODE: "spoke"
+  MCP_TRANSPORT: "sse"
+  MCP_SERVER_PORT: "3000"
+  LOG_LEVEL: "info"
+  HUB_URL: "${hubUrl}"
+  CLUSTER_NAME: "${clusterName}"
+  CLUSTER_PLATFORM: "${platform}"
+  HUB_TLS_SKIP_VERIFY: "${platform === "openshift" ? "true" : "false"}"
+  AUTH_MODE: "none"
+  EMERGENCY_AUTO_FIX: "false"
+  ALLOW_PRIVATE_CLUSTER_IPS: "true"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agentic-ai-server-secrets
+  namespace: ${spokeNs}
+type: Opaque
+stringData:
+  MCP_API_TOKEN: ""
+  HUB_API_TOKEN: "${hubToken}"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentic-ai-server
+  namespace: ${spokeNs}
+  labels:
+    app.kubernetes.io/name: agentic-ai-server
+    app.kubernetes.io/part-of: tcs-agentic-ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agentic-ai-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agentic-ai-server
+    spec:
+      serviceAccountName: agentic-ai-server
+      containers:
+        - name: agentic-ai-server
+          image: ${image}
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: agentic-ai-server-config
+            - secretRef:
+                name: agentic-ai-server-secrets
+          env:
+            - name: NODE_EXTRA_CA_CERTS
+              value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+            - name: NODE_OPTIONS
+              value: "--max-old-space-size=768"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1"
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentic-ai-server
+  namespace: ${spokeNs}
+spec:
+  selector:
+    app.kubernetes.io/name: agentic-ai-server
+  ports:
+    - port: 3000
+      targetPort: 3000
+      name: http`;
+
+      return sendJson(res, 200, {
+        hubUrl,
+        hubTokenSet: !!hubToken,
+        platform,
+        clusterName,
+        namespace: spokeNs,
+        image,
+        command,
+        yaml,
+      });
+    }
+
     if (url.pathname.match(/^\/api\/spoke\/[^/]+$/) && req.method === "DELETE") {
       const spokeName = decodeURIComponent(url.pathname.split("/").pop());
       unregisterSpoke(spokeName);
