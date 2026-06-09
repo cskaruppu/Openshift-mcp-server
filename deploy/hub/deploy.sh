@@ -39,7 +39,7 @@ set -euo pipefail
 # Defaults
 # ---------------------------------------------------------------------------
 NS="${NAMESPACE:-openshift-mcp}"
-MCP_IMAGE="${MCP_IMAGE:-quay.io/karuppucs/agentic-ai-server:latest}"
+MCP_IMAGE="${MCP_IMAGE:-quay.io/karuppucs/openshift-mcp-server:latest}"
 DASHBOARD_IMAGE="${DASHBOARD_IMAGE:-quay.io/karuppucs/mcp-dashboard:latest}"
 BUILD=true
 GIT_PULL=true
@@ -260,7 +260,7 @@ $CLI apply -f "$K8S_DIR/redis.yaml" 2>&1 | grep -v "is invalid" || true
 
 # 6. MCP Server deployment
 next "Deploying MCP server (API-only)..."
-sed -i "s|image:.*agentic-ai-server:.*|image: ${MCP_IMAGE}|" "$K8S_DIR/deployment.yaml"
+sed -i "s|image:.*openshift-mcp-server:.*|image: ${MCP_IMAGE}|" "$K8S_DIR/deployment.yaml"
 $CLI apply -f "$K8S_DIR/deployment.yaml"
 $CLI apply -f "$K8S_DIR/service.yaml"
 $CLI set image deployment/agentic-ai-server agentic-ai-server="$MCP_IMAGE" -n "$NS" 2>/dev/null || true
@@ -268,7 +268,13 @@ $CLI set image deployment/agentic-ai-server agentic-ai-server="$MCP_IMAGE" -n "$
 # All external traffic now enters through the dashboard route (which proxies /api, /sse, ...).
 if [ "$CLI" = "oc" ]; then
   oc delete route agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
+  oc delete route mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
 fi
+# Clean up stale deployments from prior naming schemes
+$CLI delete deployment mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete service mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete deployment tcs-dashboard -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete service tcs-dashboard -n "$NS" --ignore-not-found 2>/dev/null || true
 
 # 7. Dashboard deployment (separate pod — React + Nginx + 50Gi PVC)
 #    Applies deploy/hub/manifests/dashboard-deployment.yaml, which carries the

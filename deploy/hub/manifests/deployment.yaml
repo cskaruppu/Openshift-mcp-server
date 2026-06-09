@@ -34,7 +34,7 @@ spec:
             value: "2"
       containers:
         - name: agentic-ai-server
-          image: quay.io/karuppucs/agentic-ai-server:latest
+          image: quay.io/karuppucs/openshift-mcp-server:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 3000

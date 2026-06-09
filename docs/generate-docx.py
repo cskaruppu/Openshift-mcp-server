@@ -346,7 +346,7 @@ def create_product_overview():
     add_heading_styled(doc, '9.1 OpenShift Deployment Components', 2)
     deploy_arch = [
         ['Ingress Layer', 'DNS (*.apps.cluster) → OpenShift Route (TLS: edge) → Service (ClusterIP:3000)'],
-        ['Compute', 'Deployment: agentic-ai-server (quay.io/karuppucs/agentic-ai-server:latest, Replicas: 1, Port: 3000, '
+        ['Compute', 'Deployment: agentic-ai-server (quay.io/karuppucs/openshift-mcp-server:latest, Replicas: 1, Port: 3000, '
          'SA: agentic-ai-server with cluster-admin RBAC, Liveness: /healthz, Readiness: /readyz)'],
         ['Stateful Services', 'PostgreSQL StatefulSet (Port 5432) + Redis StatefulSet (Port 6379)'],
         ['Configuration', 'ConfigMap (environment vars), Secret (API keys, DB credentials), '
@@ -367,7 +367,7 @@ def create_product_overview():
         ['ITSM', 'ServiceNow (Change Requests, Incidents)'],
         ['Automation', 'Ansible Automation Platform'],
         ['Monitoring', 'Prometheus, AlertManager'],
-        ['Container', 'quay.io/karuppucs/agentic-ai-server'],
+        ['Container', 'quay.io/karuppucs/openshift-mcp-server'],
     ]
     add_table_from_data(doc, ['Category', 'Technology'], tech_stack)
 

@@ -47,7 +47,7 @@ CLUSTER_NAME=""
 PLATFORM="k8s"
 NS=""
 TLS_SKIP=false
-IMAGE="${IMAGE:-quay.io/karuppucs/agentic-ai-server:latest}"
+IMAGE="${IMAGE:-quay.io/karuppucs/openshift-mcp-server:latest}"
 ACTION="deploy"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

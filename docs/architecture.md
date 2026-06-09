@@ -184,7 +184,7 @@ flowchart TB
 
             subgraph COMPUTE["🚀 Compute"]
                 direction LR
-                DEP["📦 Deployment: agentic-ai-server<br/><i>Image: quay.io/karuppucs/agentic-ai-server:latest</i><br/><i>Replicas: 1 &nbsp;•&nbsp; Port: 3000</i><br/><i>SA: agentic-ai-server (cluster-admin RBAC)</i><br/><i>Liveness: /healthz &nbsp;•&nbsp; Readiness: /readyz</i>"]
+                DEP["📦 Deployment: agentic-ai-server<br/><i>Image: quay.io/karuppucs/openshift-mcp-server:latest</i><br/><i>Replicas: 1 &nbsp;•&nbsp; Port: 3000</i><br/><i>SA: agentic-ai-server (cluster-admin RBAC)</i><br/><i>Liveness: /healthz &nbsp;•&nbsp; Readiness: /readyz</i>"]
             end
 
             subgraph STATEFUL["🗄️ Stateful Services"]
@@ -319,7 +319,7 @@ flowchart LR
 | **ITSM** | ServiceNow (Change Requests, Incidents) |
 | **Automation** | Ansible Automation Platform |
 | **Monitoring** | Prometheus, AlertManager |
-| **Container** | quay.io/karuppucs/agentic-ai-server |
+| **Container** | quay.io/karuppucs/openshift-mcp-server |
 
 ---
 
