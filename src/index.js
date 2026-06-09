@@ -398,6 +398,27 @@ async function loadClustersFromDB() {
       if (_connectedAgents.size > 0) {
         console.log(`[startup] Restored ${_connectedAgents.size} cluster registrations from DB`);
       }
+
+      // Rebuild the in-memory spoke registry (_spokes) from the persisted
+      // cluster data. _spokes lives only in memory and is otherwise wiped on
+      // every hub restart/redeploy — which silently drops the LIVE hub->spoke
+      // proxy and makes dashboards fall back to the stale agent-cache path
+      // ("... not available from this agent"). Restoring it here keeps spoke
+      // clusters fully live across hub restarts without waiting for the spoke
+      // to re-register on its next heartbeat.
+      let restoredSpokes = 0;
+      for (const [name, agent] of _connectedAgents) {
+        if (agent && agent.source === "spoke" && agent.spokeUrl && !hasSpoke(name)) {
+          registerSpoke(name, agent.spokeUrl, {
+            platform: agent.platform,
+            version: agent.version,
+          });
+          restoredSpokes++;
+        }
+      }
+      if (restoredSpokes > 0) {
+        console.log(`[startup] Restored ${restoredSpokes} spoke proxy registration(s) from DB`);
+      }
     }
   } catch (err) {
     console.warn("[hub] Failed to load clusters from DB:", err.message);
