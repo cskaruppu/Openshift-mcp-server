@@ -1924,8 +1924,13 @@ async function startSSE() {
   setTimeout(() => runClusterHealthProbes().catch(() => {}), 5000);
   setInterval(() => runClusterHealthProbes().catch(() => {}), 60000);
 
-  // Hub/Spoke mode logging
-  console.log(`[startup] MCP_MODE=${MCP_MODE}`);
+  // Mode + state logging — verify at a glance whether this MCP server is the
+  // stateful management plane (owns PostgreSQL/Redis) or a stateless cluster
+  // agent (no DB, queries only its own cluster live).
+  const _hasDB = !!(process.env.DATABASE_URL || process.env.PGUSER);
+  const _hasRedis = !!process.env.REDIS_URL;
+  const _stateMode = _hasDB ? "STATEFUL (owns PostgreSQL)" : "STATELESS (no database)";
+  console.log(`[startup] MCP_MODE=${MCP_MODE} | ${_stateMode}${_hasRedis ? " | Redis cache" : ""}`);
   if (MCP_MODE === "spoke") {
     const hubUrl = process.env.HUB_URL || process.env.HUB_SERVER_URL;
     const clusterName = process.env.CLUSTER_NAME || "unknown";

@@ -1,20 +1,7 @@
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: mcp-dashboard-data
-  namespace: openshift-mcp
-  labels:
-    app.kubernetes.io/name: mcp-dashboard
-    app.kubernetes.io/component: dashboard
-    app.kubernetes.io/part-of: mcp-ai-assistant
-spec:
-  storageClassName: vxflexos-xfs
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 50Gi
+# The dashboard is a STATELESS nginx pod serving the static React build.
+# It holds no persistent state — all state lives in PostgreSQL (management
+# plane). nginx only needs writable emptyDir mounts for /tmp, cache and run.
+# (Previously carried a 50Gi PVC at /data that nothing ever wrote to.)
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -59,8 +46,6 @@ spec:
             capabilities:
               drop: ["ALL"]
           volumeMounts:
-            - name: dashboard-data
-              mountPath: /data
             - name: nginx-tmp
               mountPath: /tmp
             - name: nginx-cache
@@ -80,9 +65,6 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 30
       volumes:
-        - name: dashboard-data
-          persistentVolumeClaim:
-            claimName: mcp-dashboard-data
         - name: nginx-tmp
           emptyDir: {}
         - name: nginx-cache
