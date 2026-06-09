@@ -238,6 +238,93 @@ export async function proxyToSpoke(clusterName, req, res, url) {
   }
 }
 
+/**
+ * Proxy a chat SSE stream from hub to a spoke MCP server.
+ * Unlike proxyToSpoke() which buffers the full response, this pipes the
+ * SSE event stream in real time so the dashboard sees live token deltas.
+ *
+ * The spoke runs the same image + same chat-api code, so responses are
+ * identical to what you'd get querying the spoke directly.
+ *
+ * @param {string} clusterName - spoke cluster name
+ * @param {object} chatBody    - parsed POST body from the client
+ * @param {object} req         - original HTTP request (for auth headers)
+ * @param {object} res         - HTTP response to stream SSE back to
+ * @param {string} [path]      - API path to proxy (default: /api/chat)
+ * @returns {boolean} true if handled, false if no spoke found
+ */
+export async function proxyChatToSpoke(clusterName, chatBody, req, res, path) {
+  const spokeUrl = getSpokeUrl(clusterName);
+  if (!spokeUrl) return false;
+
+  const apiPath = path || req.url?.split("?")[0] || "/api/chat";
+  const targetUrl = `${spokeUrl}${apiPath}`;
+
+  // Remove the cluster field so the spoke processes it as a local query
+  const spokeBody = { ...chatBody };
+  delete spokeBody.cluster;
+
+  try {
+    const headers = {
+      "Content-Type": "application/json",
+      "Accept": req.headers.accept || "text/event-stream",
+    };
+    if (req.headers.authorization) {
+      headers["Authorization"] = req.headers.authorization;
+    }
+
+    const proxyRes = await fedFetch(targetUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(spokeBody),
+      signal: AbortSignal.timeout(120_000),
+    });
+
+    const contentType = proxyRes.headers.get("content-type") || "text/event-stream";
+
+    res.writeHead(proxyRes.status, {
+      "Content-Type": contentType,
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Proxied-From": clusterName,
+      "X-Spoke-Url": spokeUrl,
+    });
+
+    // Pipe the SSE stream from the spoke directly to the client
+    const reader = proxyRes.body.getReader();
+    const decoder = new TextDecoder();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        res.write(chunk);
+      }
+    } catch (streamErr) {
+      // Client disconnected or spoke stream broke — best-effort
+      console.warn(`[spoke-proxy] Chat stream from ${clusterName} interrupted: ${streamErr.message}`);
+    }
+    res.end();
+    return true;
+  } catch (err) {
+    console.error(`[spoke-proxy] Chat proxy to ${clusterName} (${spokeUrl}) failed: ${fetchErrorDetail(err)}`);
+    // Return error as SSE so the frontend can display it
+    if (!res.headersSent) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+      });
+    }
+    res.write(`data: ${JSON.stringify({ stage: "error" })}\n\n`);
+    res.write(`data: ${JSON.stringify({ delta: `⚠ Spoke cluster "${clusterName}" is unreachable: ${fetchErrorDetail(err)}` })}\n\n`);
+    res.write(`data: ${JSON.stringify({ done: true, provider: "spoke-proxy", conversationId: chatBody.conversationId || null })}\n\n`);
+    res.write("data: [DONE]\n\n");
+    res.end();
+    return true;
+  }
+}
+
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];

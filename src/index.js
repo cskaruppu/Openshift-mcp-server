@@ -333,7 +333,7 @@ export function getConnectedAgents() {
 export { invokeAgentTool, hasActiveChannel } from "./services/agent-bridge.js";
 
 // Hub/Spoke federation — proxy API calls to spoke MCP servers for identical results
-import { registerSpoke, unregisterSpoke, hasSpoke, proxyToSpoke, getSpokeStatus, updateSpokeHeartbeat, getAllSpokes, startSpokeMode, fedFetch } from "./services/spoke-proxy.js";
+import { registerSpoke, unregisterSpoke, hasSpoke, proxyToSpoke, proxyChatToSpoke, getSpokeStatus, updateSpokeHeartbeat, getAllSpokes, startSpokeMode, fedFetch } from "./services/spoke-proxy.js";
 export { hasSpoke, getSpokeStatus };
 
 const MCP_MODE = (process.env.MCP_MODE || "hub").toLowerCase(); // hub | spoke | standalone
