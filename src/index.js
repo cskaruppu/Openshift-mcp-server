@@ -2017,7 +2017,8 @@ async function startSSE() {
         p.startsWith("/api/cr") ||
         p.startsWith("/api/incidents") ||
         p.startsWith("/api/change-timeline") ||
-        p.startsWith("/api/actions");
+        p.startsWith("/api/actions") ||
+        p.startsWith("/api/intelligence");
 
       // Spoke proxy: forward live-data API requests to the spoke's MCP server
       if (!isHubLocal && hasSpoke(_reqCluster) && p.startsWith("/api/")) {
