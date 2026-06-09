@@ -31,6 +31,7 @@
 #   --tls-skip             Skip TLS verification for hub connection
 #   -n, --namespace NS     Namespace (default: openshift-mcp for OpenShift, tcs-agentic-system otherwise)
 #   --image IMAGE          Override image (default: same as hub image)
+#   --hub-token TOKEN      Hub API token (MCP_API_TOKEN from hub) for spoke auth
 #   --status               Show spoke deployment status
 #   --rollback             Rollback to previous revision
 #   --uninstall            Remove spoke from this cluster
@@ -43,6 +44,7 @@ set -euo pipefail
 # Defaults
 # ---------------------------------------------------------------------------
 HUB_URL=""
+HUB_TOKEN=""
 CLUSTER_NAME=""
 PLATFORM="k8s"
 NS=""
@@ -69,6 +71,7 @@ fi
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --hub-url)        HUB_URL="$2"; shift 2 ;;
+    --hub-token)      HUB_TOKEN="$2"; shift 2 ;;
     --cluster-name)   CLUSTER_NAME="$2"; shift 2 ;;
     --platform)       PLATFORM="$2"; shift 2 ;;
     --tls-skip)       TLS_SKIP=true; shift ;;
@@ -195,12 +198,20 @@ echo "============================================"
 echo " Cluster   : $CLUSTER_NAME"
 echo " Platform  : $PLATFORM"
 echo " Hub URL   : $HUB_URL"
+echo " Hub Token : ${HUB_TOKEN:+(set)}${HUB_TOKEN:-(not set)}"
 echo " Namespace : $NS"
 echo " Image     : $IMAGE (same as hub)"
 echo " TLS skip  : $TLS_SKIP"
 echo " Mode      : spoke (full MCP server)"
 echo "============================================"
 echo ""
+
+if [ -n "$HUB_URL" ] && [ -z "$HUB_TOKEN" ]; then
+  echo "WARNING: No --hub-token provided. If the hub has AUTH_MODE=token,"
+  echo "         spoke registration will fail with HTTP 401."
+  echo "         Use: --hub-token <hub MCP_API_TOKEN value>"
+  echo ""
+fi
 
 # Detect spoke external URL (for hub registration)
 SPOKE_URL=""
@@ -398,6 +409,7 @@ metadata:
 type: Opaque
 stringData:
   MCP_API_TOKEN: ""
+  HUB_API_TOKEN: "$HUB_TOKEN"
 EOF
 
 # 4. Deployment + Service (+ Route for OpenShift)

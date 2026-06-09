@@ -238,12 +238,19 @@ export async function startSpokeMode(hubUrl, clusterName, spokeUrl, platform) {
   const HEARTBEAT_MS = 30_000;
   let _registered = false;
   let _hbTimer = null;
+  const hubToken = process.env.HUB_API_TOKEN || process.env.MCP_API_TOKEN || "";
+
+  function authHeaders() {
+    const h = { "Content-Type": "application/json" };
+    if (hubToken) h["Authorization"] = `Bearer ${hubToken}`;
+    return h;
+  }
 
   async function register() {
     try {
       const resp = await fedFetch(`${hubUrl}/api/spoke/register`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({
           clusterName,
           spokeUrl,
@@ -274,7 +281,7 @@ export async function startSpokeMode(hubUrl, clusterName, spokeUrl, platform) {
     try {
       await fedFetch(`${hubUrl}/api/spoke/heartbeat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({
           clusterName,
           ts: new Date().toISOString(),
