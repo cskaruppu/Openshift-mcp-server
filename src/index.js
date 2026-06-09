@@ -1566,7 +1566,8 @@ async function handleCRTrackingAPI(url, req, res) {
   // GET /api/cr/pending — list CRs with pending status
   if (url.pathname === "/api/cr/pending" && req.method === "GET") {
     try {
-      const crs = await getPendingCRs();
+      const crCluster = url.searchParams.get("cluster") || undefined;
+      const crs = await getPendingCRs({ cluster: crCluster });
       return sendJson(res, 200, { crs });
     } catch (e) {
       return sendJson(res, 500, { error: e.message });
@@ -1638,7 +1639,8 @@ async function handleCRTrackingAPI(url, req, res) {
     try {
       const status = url.searchParams.get("status") || undefined;
       const limit = parseInt(url.searchParams.get("limit") || "50", 10);
-      const crs = await listCRs({ status, limit });
+      const crCluster = url.searchParams.get("cluster") || undefined;
+      const crs = await listCRs({ status, limit, cluster: crCluster });
       return sendJson(res, 200, { crs });
     } catch (e) {
       return sendJson(res, 500, { error: e.message });
@@ -2001,15 +2003,29 @@ async function startSSE() {
     // When a request targets a remote cluster via ?cluster=<name>, route it:
     //   1. Spoke proxy (preferred) — same MCP server image, identical results
     //   2. Agent bridge (fallback) — lightweight agent, may produce different results
+    //
+    // Hub-local paths (records stored in hub PostgreSQL) are NEVER proxied —
+    // the cluster param is used for DB filtering, not for routing.
     const _reqCluster = queryCluster || headerCluster;
     if (_reqCluster && _reqCluster !== "local") {
-      // Spoke proxy: forward the entire API request to the spoke's MCP server
-      if (hasSpoke(_reqCluster) && url.pathname.startsWith("/api/")) {
+      const p = url.pathname;
+      const isHubLocal =
+        p.startsWith("/api/chats") ||
+        p === "/api/chat/feedback" || p === "/api/chat/feedback/stats" ||
+        p === "/api/audit" ||
+        p.startsWith("/api/audit-log") || p.startsWith("/api/audit-trail") ||
+        p.startsWith("/api/cr") ||
+        p.startsWith("/api/incidents") ||
+        p.startsWith("/api/change-timeline") ||
+        p.startsWith("/api/actions");
+
+      // Spoke proxy: forward live-data API requests to the spoke's MCP server
+      if (!isHubLocal && hasSpoke(_reqCluster) && p.startsWith("/api/")) {
         const proxied = await proxyToSpoke(_reqCluster, req, res, url);
         if (proxied) return;
       }
       // Fallback: agent bridge (legacy lightweight agents)
-      if (hasActiveChannel(_reqCluster)) {
+      if (!isHubLocal && hasActiveChannel(_reqCluster)) {
         enterRemoteClusterBridge(_reqCluster);
       }
     }
@@ -3534,25 +3550,28 @@ spec:
     if (req.method === "GET" && url.pathname === "/api/audit") {
       try {
         const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10), 200);
+        const auditCluster = url.searchParams.get("cluster") || null;
+        const filterCluster = auditCluster && auditCluster !== "all";
+        const cWhere = filterCluster ? " WHERE cluster = $2" : "";
+        const cParams = filterCluster ? [limit, auditCluster] : [limit];
         const [executed, pending, queries, queryStats] = await Promise.all([
           dbQuery(
-            "SELECT id, action, target, namespace, success, created_at FROM executed_actions ORDER BY id DESC LIMIT $1",
-            [limit]
+            `SELECT id, action, target, namespace, success, cluster, created_at FROM executed_actions${cWhere} ORDER BY id DESC LIMIT $1`,
+            cParams
           ),
           dbQuery(
             "SELECT id, action, resource_type, resource_name, namespace, status, created_at FROM pending_actions ORDER BY created_at DESC LIMIT $1",
             [limit]
           ),
           dbQuery(
-            "SELECT id, query, intents, cache_hit, duration_ms, created_at FROM query_log ORDER BY created_at DESC LIMIT $1",
-            [limit]
+            `SELECT id, query, intents, cache_hit, duration_ms, cluster, created_at FROM query_log${cWhere} ORDER BY created_at DESC LIMIT $1`,
+            cParams
           ),
           dbQuery(
-            `SELECT
-              COUNT(*)::int AS total_queries,
-              COUNT(*) FILTER (WHERE cache_hit)::int AS cache_hits,
-              ROUND(AVG(duration_ms))::int AS avg_duration_ms
-            FROM query_log`
+            filterCluster
+              ? `SELECT COUNT(*)::int AS total_queries, COUNT(*) FILTER (WHERE cache_hit)::int AS cache_hits, ROUND(AVG(duration_ms))::int AS avg_duration_ms FROM query_log WHERE cluster = $1`
+              : `SELECT COUNT(*)::int AS total_queries, COUNT(*) FILTER (WHERE cache_hit)::int AS cache_hits, ROUND(AVG(duration_ms))::int AS avg_duration_ms FROM query_log`,
+            filterCluster ? [auditCluster] : []
           ),
         ]);
         const stats = queryStats?.rows?.[0] || {};
@@ -4145,6 +4164,7 @@ spec:
         }
 
         // Persist CR to tracking table
+        const _snCluster = validateClusterParam(body.cluster || url.searchParams.get("cluster") || "local") || "local";
         try {
           await trackCR({
             ticketId: number,
@@ -4157,20 +4177,22 @@ spec:
             upgradeType: upgradeInfo?.upgradeType || '',
             scheduledDate: fields.planned_start_date || fields.start_date || null,
             preflightReport: preflightReport || null,
+            cluster: _snCluster,
           });
         } catch (e) {}
 
         // Record in audit trail
         if (await dbEnabled()) {
           dbQuery(
-            `INSERT INTO executed_actions (action, target, namespace, success, result)
-             VALUES ($1, $2, $3, $4, $5)`,
+            `INSERT INTO executed_actions (action, target, namespace, success, result, cluster)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
             [
               type === "change_request" ? "create_change_request" : "create_incident",
               number,
               "servicenow",
               true,
               JSON.stringify({ ticketId: number, sysId, title: fields.title || "" }),
+              _snCluster,
             ]
           ).catch(() => {});
         }
@@ -5170,6 +5192,7 @@ spec:
           status: url.searchParams.get("status") || undefined,
           severity: url.searchParams.get("severity") || undefined,
           assignee: url.searchParams.get("assignee") || undefined,
+          cluster: url.searchParams.get("cluster") || undefined,
           limit: parseInt(url.searchParams.get("limit") || "50", 10),
           offset: parseInt(url.searchParams.get("offset") || "0", 10),
         };
@@ -5181,7 +5204,8 @@ spec:
     if (req.method === "GET" && url.pathname === "/api/incidents/stats") {
       try {
         const days = parseInt(url.searchParams.get("days") || "30", 10);
-        sendJson(res, 200, await getLifecycleIncidentStats({ days }));
+        const incCluster = url.searchParams.get("cluster") || undefined;
+        sendJson(res, 200, await getLifecycleIncidentStats({ days, cluster: incCluster }));
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }
@@ -5196,6 +5220,7 @@ spec:
           affectedServices: body.affectedServices || [],
           linkedAlerts: body.linkedAlerts || [],
           declaredBy: body.declaredBy || "dashboard",
+          cluster: body.cluster || url.searchParams.get("cluster") || "local",
         });
         sendJson(res, 201, incident);
       } catch (err) { sendJson(res, 500, { error: err.message }); }

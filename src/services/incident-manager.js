@@ -133,6 +133,7 @@ export async function declareIncident(input = {}) {
     affectedServices = [],
     linkedAlerts = [],
     declaredBy = null,
+    cluster = "local",
   } = input;
 
   if (!title) throw new Error("incident requires 'title'");
@@ -152,8 +153,8 @@ export async function declareIncident(input = {}) {
   if (await dbEnabled()) {
     await ensureSchema();
     const res = await dbQuery(
-      `INSERT INTO incidents (incident_id, title, description, severity, status, affected_namespaces, affected_services, linked_alerts, timeline, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, 'declared', $5, $6, $7, $8::jsonb, $9, $9)
+      `INSERT INTO incidents (incident_id, title, description, severity, status, affected_namespaces, affected_services, linked_alerts, timeline, cluster, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'declared', $5, $6, $7, $8::jsonb, $9, $10, $10)
        RETURNING *`,
       [
         incidentId,
@@ -164,6 +165,7 @@ export async function declareIncident(input = {}) {
         affectedServices,
         linkedAlerts,
         JSON.stringify(timeline),
+        cluster || "local",
         now,
       ]
     );
@@ -186,6 +188,7 @@ export async function declareIncident(input = {}) {
     root_cause: null,
     resolution_note: null,
     postmortem: null,
+    cluster: cluster || "local",
     created_at: now,
     updated_at: now,
     resolved_at: null,
@@ -313,7 +316,7 @@ export async function getIncident(incidentId) {
 }
 
 export async function listIncidents(filters = {}) {
-  const { status, severity, assignee, fromDate, toDate, limit = 50, offset = 0 } = filters;
+  const { status, severity, assignee, fromDate, toDate, cluster, limit = 50, offset = 0 } = filters;
 
   if (await dbEnabled()) {
     await ensureSchema();
@@ -326,6 +329,7 @@ export async function listIncidents(filters = {}) {
     if (assignee) { conditions.push(`assignee = $${idx++}`); params.push(assignee); }
     if (fromDate) { conditions.push(`created_at >= $${idx++}`); params.push(fromDate); }
     if (toDate) { conditions.push(`created_at <= $${idx++}`); params.push(toDate); }
+    if (cluster && cluster !== "all") { conditions.push(`cluster = $${idx++}`); params.push(cluster); }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
@@ -347,13 +351,14 @@ export async function listIncidents(filters = {}) {
   if (assignee) filtered = filtered.filter((e) => e.assignee === assignee);
   if (fromDate) filtered = filtered.filter((e) => new Date(e.created_at) >= new Date(fromDate));
   if (toDate) filtered = filtered.filter((e) => new Date(e.created_at) <= new Date(toDate));
+  if (cluster && cluster !== "all") filtered = filtered.filter((e) => (e.cluster || "local") === cluster);
 
   const total = filtered.length;
   const incidents = filtered.slice().reverse().slice(offset, offset + limit);
   return { incidents, total };
 }
 
-export async function getIncidentStats({ days = 30 } = {}) {
+export async function getIncidentStats({ days = 30, cluster } = {}) {
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
@@ -361,26 +366,33 @@ export async function getIncidentStats({ days = 30 } = {}) {
     await ensureSchema();
     const cutoffIso = cutoff.toISOString();
     const weekIso = weekAgo.toISOString();
+    const cFilter = cluster && cluster !== "all";
+    const cWhere = cFilter ? " AND cluster = $2" : "";
+    const cParams = cFilter ? [cutoffIso, cluster] : [cutoffIso];
+    const cOpenParams = cFilter ? [cluster] : [];
+    const cOpenWhere = cFilter ? " AND cluster = $1" : "";
+    const weekParams = cFilter ? [weekIso, cluster] : [weekIso];
 
     const [totalRes, openRes, bySev, byStat, mttrRes, weekRes] = await Promise.all([
-      dbQuery(`SELECT COUNT(*)::int AS count FROM incidents WHERE created_at >= $1`, [cutoffIso]),
+      dbQuery(`SELECT COUNT(*)::int AS count FROM incidents WHERE created_at >= $1${cWhere}`, cParams),
       dbQuery(
-        `SELECT COUNT(*)::int AS count FROM incidents WHERE status NOT IN ('resolved','closed')`
+        `SELECT COUNT(*)::int AS count FROM incidents WHERE status NOT IN ('resolved','closed')${cOpenWhere}`,
+        cOpenParams
       ),
       dbQuery(
-        `SELECT severity, COUNT(*)::int AS count FROM incidents WHERE created_at >= $1 GROUP BY severity ORDER BY count DESC`,
-        [cutoffIso]
+        `SELECT severity, COUNT(*)::int AS count FROM incidents WHERE created_at >= $1${cWhere} GROUP BY severity ORDER BY count DESC`,
+        cParams
       ),
       dbQuery(
-        `SELECT status, COUNT(*)::int AS count FROM incidents WHERE created_at >= $1 GROUP BY status ORDER BY count DESC`,
-        [cutoffIso]
+        `SELECT status, COUNT(*)::int AS count FROM incidents WHERE created_at >= $1${cWhere} GROUP BY status ORDER BY count DESC`,
+        cParams
       ),
       dbQuery(
         `SELECT AVG(EXTRACT(EPOCH FROM (resolved_at - created_at)) / 60.0) AS mttr
-         FROM incidents WHERE resolved_at IS NOT NULL AND created_at >= $1`,
-        [cutoffIso]
+         FROM incidents WHERE resolved_at IS NOT NULL AND created_at >= $1${cWhere}`,
+        cParams
       ),
-      dbQuery(`SELECT COUNT(*)::int AS count FROM incidents WHERE created_at >= $1`, [weekIso]),
+      dbQuery(`SELECT COUNT(*)::int AS count FROM incidents WHERE created_at >= $1${cWhere}`, weekParams),
     ]);
 
     const mttrRaw = mttrRes?.rows?.[0]?.mttr;
@@ -394,9 +406,11 @@ export async function getIncidentStats({ days = 30 } = {}) {
     };
   }
 
-  const recent = _ring.filter((e) => new Date(e.created_at) >= cutoff);
-  const open = _ring.filter((e) => e.status !== "resolved" && e.status !== "closed");
-  const week = _ring.filter((e) => new Date(e.created_at) >= weekAgo);
+  let base = _ring;
+  if (cluster && cluster !== "all") base = base.filter((e) => (e.cluster || "local") === cluster);
+  const recent = base.filter((e) => new Date(e.created_at) >= cutoff);
+  const open = base.filter((e) => e.status !== "resolved" && e.status !== "closed");
+  const week = base.filter((e) => new Date(e.created_at) >= weekAgo);
 
   const countBy = (arr, key) => {
     const map = {};

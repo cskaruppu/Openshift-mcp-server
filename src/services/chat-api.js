@@ -14748,6 +14748,7 @@ export async function handleChatAPI(req, res) {
           intents: cached.contextKeys || null,
           cacheHit: true,
           durationMs: Date.now() - startedAt,
+          cluster: _chatCluster || "local",
         }).catch(() => {});
         if (wantsStream) {
           sseStart(res);
@@ -16305,6 +16306,7 @@ export async function handleChatAPI(req, res) {
       intents: intentsForLog,
       cacheHit,
       durationMs: Date.now() - startedAt,
+      cluster: _chatCluster || "local",
     }).catch(() => {});
 
     if (userMessage) {
@@ -16963,7 +16965,7 @@ async function gatherDeployContext(namespace, depName, resourceType = "deploymen
 // Supports: delete_pod, restart_deployment, scale_deployment
 // ---------------------------------------------------------------------------
 export async function handleExecuteAPI(req, res) {
-  let action, pod, namespace, deployment, conversationId;
+  let action, pod, namespace, deployment, conversationId, _execCluster;
   let success = false;
   let resultPayload = null;
   try {
@@ -16971,6 +16973,7 @@ export async function handleExecuteAPI(req, res) {
     ({ action, pod, namespace, deployment } = body);
     const { replicas } = body;
     conversationId = body.conversationId || body.chatId || null;
+    _execCluster = body.cluster || "local";
 
     if (!action || !namespace) {
       return json(res, 400, { success: false, error: "Missing action or namespace" });
@@ -17101,6 +17104,7 @@ export async function handleExecuteAPI(req, res) {
         namespace,
         success,
         result: resultPayload,
+        cluster: _execCluster || "local",
       }).catch(() => {});
     }
   }

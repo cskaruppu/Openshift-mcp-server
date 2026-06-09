@@ -1702,14 +1702,15 @@ export async function handleCRStatusCheck(req, res) {
         );
         if (!existing?.rows?.length) {
           await dbQuery(
-            `INSERT INTO executed_actions (action, target, namespace, success, result)
-             VALUES ($1, $2, $3, $4, $5)`,
+            `INSERT INTO executed_actions (action, target, namespace, success, result, cluster)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
             [
               status === "approved" ? "cr_approved" : "cr_rejected",
               tid,
               "servicenow",
               status === "approved",
               JSON.stringify({ ticketId: tid, sysId, stateLabel, shortDescription: record.short_description || "" }),
+              "local",
             ]
           );
         }

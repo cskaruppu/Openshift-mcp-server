@@ -270,16 +270,18 @@ export async function logQuery({
   intents,
   cacheHit,
   durationMs,
+  cluster,
 }) {
   await query(
-    `INSERT INTO query_log (conversation_id, query, intents, cache_hit, duration_ms)
-     VALUES ($1, $2, $3, $4, $5)`,
+    `INSERT INTO query_log (conversation_id, query, intents, cache_hit, duration_ms, cluster)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
     [
       conversationId || null,
       q || "",
       Array.isArray(intents) ? intents : null,
       Boolean(cacheHit),
       Number.isFinite(durationMs) ? Math.round(durationMs) : null,
+      cluster || "local",
     ]
   );
 }
@@ -292,10 +294,11 @@ export async function logExecutedAction({
   namespace,
   success,
   result,
+  cluster,
 }) {
   await query(
-    `INSERT INTO executed_actions (conversation_id, action, target, namespace, success, result)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
+    `INSERT INTO executed_actions (conversation_id, action, target, namespace, success, result, cluster)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [
       conversationId || null,
       action || "",
@@ -303,6 +306,7 @@ export async function logExecutedAction({
       namespace || null,
       success == null ? null : Boolean(success),
       result == null ? null : JSON.stringify(result),
+      cluster || "local",
     ]
   );
 }

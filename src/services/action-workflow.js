@@ -639,6 +639,7 @@ export async function executeAction(id) {
     namespace: act.namespace,
     success,
     result: fullResult,
+    cluster: act.cluster || "local",
   }).catch(() => {});
 
   // Append a follow-up assistant message to the chat so the user sees the

@@ -20,6 +20,7 @@ function mapRow(row) {
     scheduledDate: row.scheduled_date,
     preflightReport: row.preflight_report,
     metadata: row.metadata,
+    cluster: row.cluster || "local",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -37,12 +38,13 @@ export async function trackCR({
   scheduledDate,
   preflightReport,
   metadata,
+  cluster,
 }) {
   if (!(await dbEnabled())) return null;
 
   const result = await query(
-    `INSERT INTO change_requests (id, ticket_id, sys_id, conversation_id, status, title, target_version, from_version, channel, upgrade_type, scheduled_date, preflight_report, metadata)
-     VALUES ($1, $1, $2, $3, 'submitted', $4, $5, $6, $7, $8, $9, $10, $11)
+    `INSERT INTO change_requests (id, ticket_id, sys_id, conversation_id, status, title, target_version, from_version, channel, upgrade_type, scheduled_date, preflight_report, metadata, cluster)
+     VALUES ($1, $1, $2, $3, 'submitted', $4, $5, $6, $7, $8, $9, $10, $11, $12)
      ON CONFLICT (id) DO UPDATE SET
        sys_id = COALESCE(EXCLUDED.sys_id, change_requests.sys_id),
        conversation_id = COALESCE(EXCLUDED.conversation_id, change_requests.conversation_id),
@@ -54,6 +56,7 @@ export async function trackCR({
        scheduled_date = COALESCE(EXCLUDED.scheduled_date, change_requests.scheduled_date),
        preflight_report = COALESCE(EXCLUDED.preflight_report, change_requests.preflight_report),
        metadata = COALESCE(EXCLUDED.metadata, change_requests.metadata),
+       cluster = COALESCE(EXCLUDED.cluster, change_requests.cluster),
        updated_at = NOW()
      RETURNING *`,
     [
@@ -68,6 +71,7 @@ export async function trackCR({
       scheduledDate || null,
       preflightReport ? JSON.stringify(preflightReport) : null,
       metadata ? JSON.stringify(metadata) : null,
+      cluster || "local",
     ]
   );
 
@@ -85,32 +89,42 @@ export async function getCR(ticketId) {
   return result?.rows?.[0] ? mapRow(result.rows[0]) : null;
 }
 
-export async function listCRs({ status, limit = 50 } = {}) {
+export async function listCRs({ status, limit = 50, cluster } = {}) {
   if (!(await dbEnabled())) return [];
 
-  let result;
+  const conditions = [];
+  const params = [];
+  let idx = 1;
+
   if (Array.isArray(status) && status.length > 0) {
-    result = await query(
-      `SELECT * FROM change_requests WHERE status = ANY($1) ORDER BY updated_at DESC LIMIT $2`,
-      [status, limit]
-    );
+    conditions.push(`status = ANY($${idx++})`); params.push(status);
   } else if (typeof status === "string" && status) {
-    result = await query(
-      `SELECT * FROM change_requests WHERE status = $1 ORDER BY updated_at DESC LIMIT $2`,
-      [status, limit]
-    );
-  } else {
-    result = await query(
-      `SELECT * FROM change_requests ORDER BY updated_at DESC LIMIT $1`,
-      [limit]
-    );
+    conditions.push(`status = $${idx++}`); params.push(status);
   }
+  if (cluster && cluster !== "all") {
+    conditions.push(`cluster = $${idx++}`); params.push(cluster);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  params.push(limit);
+  const result = await query(
+    `SELECT * FROM change_requests ${where} ORDER BY updated_at DESC LIMIT $${idx}`,
+    params
+  );
 
   return (result?.rows || []).map(mapRow);
 }
 
-export async function getPendingCRs() {
+export async function getPendingCRs({ cluster } = {}) {
   if (!(await dbEnabled())) return [];
+
+  if (cluster && cluster !== "all") {
+    const result = await query(
+      `SELECT * FROM change_requests WHERE status = ANY($1) AND cluster = $2 ORDER BY created_at DESC`,
+      [PENDING_STATUSES, cluster]
+    );
+    return (result?.rows || []).map(mapRow);
+  }
 
   const result = await query(
     `SELECT * FROM change_requests WHERE status = ANY($1) ORDER BY created_at DESC`,
