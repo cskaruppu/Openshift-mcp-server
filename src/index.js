@@ -333,7 +333,7 @@ export function getConnectedAgents() {
 export { invokeAgentTool, hasActiveChannel } from "./services/agent-bridge.js";
 
 // Hub/Spoke federation — proxy API calls to spoke MCP servers for identical results
-import { registerSpoke, unregisterSpoke, hasSpoke, proxyToSpoke, getSpokeStatus, updateSpokeHeartbeat, getAllSpokes, startSpokeMode } from "./services/spoke-proxy.js";
+import { registerSpoke, unregisterSpoke, hasSpoke, proxyToSpoke, getSpokeStatus, updateSpokeHeartbeat, getAllSpokes, startSpokeMode, fedFetch } from "./services/spoke-proxy.js";
 export { hasSpoke, getSpokeStatus };
 
 const MCP_MODE = (process.env.MCP_MODE || "hub").toLowerCase(); // hub | spoke | standalone
@@ -401,6 +401,38 @@ async function loadClustersFromDB() {
     }
   } catch (err) {
     console.warn("[hub] Failed to load clusters from DB:", err.message);
+  }
+}
+
+/**
+ * Fetch cluster summary from a spoke MCP server (version, nodes, pods)
+ * and populate _connectedAgents so the dashboard card shows real data.
+ */
+async function fetchSpokeSummary(clusterName, spokeUrl) {
+  try {
+    const resp = await fedFetch(`${spokeUrl}/api/cluster/summary`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+
+    const agent = _connectedAgents.get(clusterName);
+    if (!agent) return;
+
+    const isOCP = !!data.isOpenShift;
+    agent.lastReport = {
+      openshiftVersion: isOCP ? (data.cluster?.version || "") : "",
+      kubernetesVersion: data.cluster?.kubernetesVersion || data.cluster?.version || "",
+      clusterHealth: { status: "healthy" },
+      nodes: { ready: data.nodes?.ready || 0, total: data.nodes?.total || 0 },
+      pods: { running: data.pods?.running || 0, total: data.pods?.total || 0 },
+    };
+    agent.platform = data.platform || agent.platform;
+    _connectedAgents.set(clusterName, agent);
+    saveClustersToDB().catch(() => {});
+    console.log(`[hub] Fetched summary from spoke "${clusterName}": ${agent.lastReport.nodes.ready} nodes, ${agent.lastReport.pods.running} pods`);
+  } catch (err) {
+    console.warn(`[hub] Could not fetch summary from spoke "${clusterName}": ${err.message}`);
   }
 }
 
@@ -1821,6 +1853,25 @@ async function startSSE() {
 
   async function runClusterHealthProbes() {
     for (const [name, agent] of _connectedAgents) {
+      // Spoke-registered clusters: probe via spokeUrl and refresh summary
+      if (agent.source === "spoke" && agent.spokeUrl) {
+        try {
+          const resp = await fedFetch(`${agent.spokeUrl}/healthz`, { signal: AbortSignal.timeout(5000) });
+          agent.lastHealthCheck = new Date().toISOString();
+          if (resp.ok) {
+            agent.status = "live";
+            agent.lastReportTime = new Date().toISOString();
+            fetchSpokeSummary(name, agent.spokeUrl).catch(() => {});
+          } else {
+            agent.status = "unreachable";
+          }
+        } catch {
+          agent.status = "unreachable";
+        }
+        _connectedAgents.set(name, agent);
+        continue;
+      }
+
       if (!agent.apiUrl) continue;
       // Skip clusters where the agent reported recently — trust the agent
       if (agent.lastReportTime) {
@@ -2606,6 +2657,7 @@ async function startSSE() {
       // Also register in _connectedAgents so the cluster picker sees it
       const existingKey = findClusterKey(clusterName);
       const existing = existingKey ? _connectedAgents.get(existingKey) : null;
+      const now = new Date().toISOString();
       _connectedAgents.set(existingKey || clusterName, {
         ...(existing || {}),
         clusterName: existingKey || clusterName,
@@ -2618,9 +2670,14 @@ async function startSSE() {
         status: "live",
         source: "spoke",
         spokeUrl: entry.spokeUrl,
-        lastHeartbeat: new Date().toISOString(),
+        lastHeartbeat: now,
+        lastReportTime: now,
       });
       saveClustersToDB().catch(() => {});
+
+      // Fetch summary from spoke so dashboard shows version/nodes/pods immediately
+      fetchSpokeSummary(existingKey || clusterName, entry.spokeUrl).catch(() => {});
+
       return sendJson(res, 200, { ok: true, message: `Spoke "${clusterName}" registered`, hubVersion: "1.2.0" });
     }
 
@@ -2629,11 +2686,13 @@ async function startSSE() {
       const { clusterName, ts, uptime, memMB, healthy } = body;
       if (!clusterName) return sendJson(res, 400, { error: "clusterName required" });
       updateSpokeHeartbeat(clusterName, { healthy, uptime, memMB });
-      // Also update _connectedAgents heartbeat
+      // Also update _connectedAgents heartbeat + lastReportTime so status stays "live"
       const key = findClusterKey(clusterName) || clusterName;
       const agent = _connectedAgents.get(key);
       if (agent) {
-        agent.lastHeartbeat = new Date().toISOString();
+        const now = new Date().toISOString();
+        agent.lastHeartbeat = now;
+        agent.lastReportTime = now;
         agent.agentHealthy = healthy !== false;
         agent.status = "live";
         _connectedAgents.set(key, agent);

@@ -45,7 +45,7 @@ if (_skipTLS) {
 }
 
 /** fetch() wrapper that applies the insecure dispatcher when TLS skip is enabled. */
-function fedFetch(url, opts = {}) {
+export function fedFetch(url, opts = {}) {
   if (_insecureDispatcher) opts.dispatcher = _insecureDispatcher;
   return fetch(url, opts);
 }
