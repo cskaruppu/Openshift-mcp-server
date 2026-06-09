@@ -18,6 +18,7 @@ FROM node:20-alpine
 LABEL maintainer="TCS Agentic AI <tcs-agentic-ai@tcs.com>"
 LABEL description="TCS Agentic AI — MCP Server (cluster operations)"
 
+ARG BUILD_HASH=""
 RUN addgroup -g 1001 -S appgroup && adduser -u 1001 -S appuser -G appgroup
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
@@ -25,5 +26,6 @@ COPY --from=build /app/src ./src
 COPY package.json .
 USER 1001
 ENV NODE_ENV=production
+ENV BUILD_HASH=${BUILD_HASH}
 EXPOSE 3000
 CMD ["node", "src/index.js"]

@@ -495,6 +495,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
   });
 
   const remoteAgents = Array.isArray(agentData?.agents) ? agentData.agents : [];
+  const hubMcpVersion = agentData?.hubVersion || null;
 
   const lci = hubData || {};
   const isOCP = !!lci.isOpenShift;
@@ -590,8 +591,10 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                 <div className="cp-card-platform">{hubPInfo.name}</div>
               </div>
               <KebabMenu items={[
-                { icon: "📊", label: "Open Dashboard", action: () => onSelectCluster("local") },
+                { icon: "📊", label: "Status Check", action: () => { clusterAction("/api/cluster/health-check", "POST", "Hub health check started"); } },
                 { icon: "🔍", label: "Verify Health", action: () => { clusterAction("/api/cluster/health-check", "POST", "Hub health check started"); } },
+                { icon: "🚀", label: "Redeploy", action: () => { clusterAction("/api/cluster/redeploy", "POST", "Rollout restart triggered on hub"); } },
+                { icon: "✏️", label: "Edit Cluster", action: () => { onOpenSettings(); } },
                 { sep: true },
                 { icon: "🔒", label: "Sync RBAC", action: () => { clusterAction("/api/cluster/rbac-sync", "POST", "RBAC sync initiated"); } },
               ]} />
@@ -638,6 +641,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                   <KebabMenu items={[
                     { icon: "📊", label: "Status Check", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/status`, "GET", "Status check complete"); } },
                     { icon: "🔍", label: "Verify Health", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/health-check`, "POST", "Health check started"); } },
+                    { icon: "🚀", label: "Redeploy", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/redeploy`, "POST", "Rollout restart triggered"); } },
                     { icon: "✏️", label: "Edit Cluster", action: () => { onOpenSettings(); } },
                     { icon: "↻", label: "Reconnect", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/reconnect`, "POST", "Reconnect initiated"); } },
                     { sep: true },
@@ -650,6 +654,9 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                     animation: st.pulse ? "pulse 2s infinite" : "none"
                   }} />
                   <span className="cp-card-status-label" style={{ color: st.color }}>{st.label}</span>
+                  {agent.outdated && (
+                    <span className="cp-card-outdated-badge" title={`Running ${agent.mcpVersion || "unknown"} — hub is ${hubMcpVersion || "unknown"}`}>Update Available</span>
+                  )}
                   {agent.lastHeartbeat && (agent.status === "stale" || agent.status === "unreachable") && (
                     <span className="cp-card-last-seen">Last seen: {new Date(agent.lastHeartbeat).toLocaleString()}</span>
                   )}

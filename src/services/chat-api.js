@@ -14530,9 +14530,29 @@ export async function handleChatAPI(req, res) {
       return;
     }
 
-    // Hub processes all LLM chat centrally — it has the credentials, kubeconfig
-    // contexts, and agent bridges. Spokes don't need their own LLM endpoints.
+    // ── Spoke proxy — identical responses across all clusters ───────────
+    // When the target cluster is a registered spoke, proxy the entire chat
+    // request to the spoke's MCP server. The spoke runs the same image and
+    // the same chat-api code, so responses are identical to a local query.
+    // We resolve LLM credentials first so the spoke can use the same provider
+    // (spokes don't store LLM settings — the hub is the single config point).
     const _chatCluster = body.cluster;
+    if (_chatCluster && _chatCluster !== "local" && hasSpokeCluster(_chatCluster)) {
+      const _spokeOpts = {};
+      if (body.provider) _spokeOpts.provider = body.provider;
+      if (body.apiKey) _spokeOpts.apiKey = body.apiKey;
+      if (body.apiUrl) _spokeOpts.apiUrl = body.apiUrl;
+      if (body.model) _spokeOpts.model = body.model;
+      if (body.azureDeployment) _spokeOpts.azureDeployment = body.azureDeployment;
+      if (body.azureApiVersion) _spokeOpts.azureApiVersion = body.azureApiVersion;
+      await resolveLLMOpts(_spokeOpts);
+      const enrichedBody = { ...body, ..._spokeOpts };
+      const proxied = await proxyChatToSpoke(_chatCluster, enrichedBody, req, res);
+      if (proxied) {
+        incCounter("mcp_chat_requests_total", { status: "spoke_proxied" });
+        return;
+      }
+    }
 
     // Remote cluster override — use cached agent data for context
     const _remoteClusterContext = resolveRemoteClusterContext(body);
@@ -16335,7 +16355,13 @@ export async function handleChatCompareAPI(req, res) {
       return json(res, 400, { error: "Provide 1-3 providers in the 'providers' array" });
     }
 
+    // Spoke proxy — forward to spoke for identical results
     const _cmpCluster = body.cluster;
+    if (_cmpCluster && _cmpCluster !== "local" && hasSpokeCluster(_cmpCluster)) {
+      await Promise.all((providers || []).map((p) => resolveLLMOpts(p)));
+      const proxied = await proxyChatToSpoke(_cmpCluster, body, req, res);
+      if (proxied) return;
+    }
 
     // Remote cluster — use cached agent data
     const _remoteCtx = resolveRemoteClusterContext(body);
@@ -16437,7 +16463,20 @@ export async function handleChatInvestigateAPI(req, res) {
 
     if (!message) return json(res, 400, { error: "Missing 'message' field" });
 
+    // Spoke proxy — forward to spoke for identical results
     const _invCluster = body.cluster;
+    if (_invCluster && _invCluster !== "local" && hasSpokeCluster(_invCluster)) {
+      const _invOpts = {};
+      if (provider) _invOpts.provider = provider;
+      if (apiKey) _invOpts.apiKey = apiKey;
+      if (apiUrl) _invOpts.apiUrl = apiUrl;
+      if (model) _invOpts.model = model;
+      if (body.azureDeployment) _invOpts.azureDeployment = body.azureDeployment;
+      if (body.azureApiVersion) _invOpts.azureApiVersion = body.azureApiVersion;
+      await resolveLLMOpts(_invOpts);
+      const proxied = await proxyChatToSpoke(_invCluster, { ...body, ..._invOpts }, req, res);
+      if (proxied) return;
+    }
 
     // Remote cluster — use cached agent data
     const _remoteCtx = resolveRemoteClusterContext(body);

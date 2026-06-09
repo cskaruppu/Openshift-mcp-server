@@ -19,6 +19,8 @@
 import { Agent } from "undici";
 import { Resolver as DnsResolver } from "node:dns";
 import { lookup as defaultLookup } from "node:dns";
+import { readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 
 const _spokes = new Map();
 
@@ -409,6 +411,15 @@ export async function startSpokeMode(hubUrl, clusterName, spokeUrl, platform) {
     }
   }
 
+  const _spokeVersion = (() => {
+    try {
+      const v = JSON.parse(readFileSync(resolvePath(process.cwd(), "package.json"), "utf8")).version;
+      const h = process.env.BUILD_HASH || "";
+      return v + (h ? `+${h}` : "");
+    } catch { return null; }
+  })();
+  const _spokeStartedAt = new Date().toISOString();
+
   async function sendHeartbeat() {
     try {
       await fedFetch(`${hubUrl}/api/spoke/heartbeat`, {
@@ -420,6 +431,9 @@ export async function startSpokeMode(hubUrl, clusterName, spokeUrl, platform) {
           uptime: Math.floor(process.uptime()),
           memMB: Math.round(process.memoryUsage().rss / 1048576),
           healthy: true,
+          mcpVersion: _spokeVersion,
+          buildHash: process.env.BUILD_HASH || null,
+          startedAt: _spokeStartedAt,
         }),
         signal: AbortSignal.timeout(5000),
       });

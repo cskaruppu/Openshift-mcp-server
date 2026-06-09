@@ -8,8 +8,10 @@
 
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve, extname } from "node:path";
+import { execFile } from "node:child_process";
 import { gzipSync } from "node:zlib";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -338,6 +340,15 @@ export { hasSpoke, getSpokeStatus };
 
 const MCP_MODE = (process.env.MCP_MODE || "hub").toLowerCase(); // hub | spoke | standalone
 
+// MCP server version — used for drift detection across clusters
+const _MCP_PKG_VERSION = (() => {
+  try { return JSON.parse(readFileSync(resolve(process.cwd(), "package.json"), "utf8")).version; }
+  catch { return "1.0.0"; }
+})();
+const _MCP_BUILD_HASH = process.env.BUILD_HASH || createHash("sha256").update(String(process.pid) + process.cwd()).digest("hex").slice(0, 8);
+const _MCP_STARTED_AT = new Date().toISOString();
+const MCP_VERSION = `${_MCP_PKG_VERSION}+${_MCP_BUILD_HASH}`;
+
 // Wire ocpGet() bridge routing → remote agent api_get tool. This lets the
 // existing preflight/upgrade/CR logic run against remote clusters unchanged.
 setBridgeInvoker(async (cluster, path, opts = {}) => {
@@ -347,6 +358,23 @@ setBridgeInvoker(async (cluster, path, opts = {}) => {
   }
   return r.data;
 });
+
+async function detectCLI() {
+  for (const cmd of ["oc", "kubectl"]) {
+    try { await runExec("which", [cmd]); return cmd; }
+    catch { /* try next */ }
+  }
+  throw new Error("Neither oc nor kubectl found");
+}
+
+function runExec(cmd, args) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { timeout: 30000 }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(stderr || err.message));
+      resolve((stdout || "").trim());
+    });
+  });
+}
 
 /**
  * Find an existing cluster entry by name (case-insensitive) or API URL.
@@ -2010,8 +2038,8 @@ async function startSSE() {
     if (_reqCluster && _reqCluster !== "local") {
       const p = url.pathname;
       const isHubLocal =
-        p.startsWith("/api/chat") ||
-        p === "/api/execute" ||
+        p.startsWith("/api/chats") ||
+        p === "/api/chat/feedback" || p === "/api/chat/feedback/stats" ||
         p === "/api/audit" ||
         p.startsWith("/api/audit-log") || p.startsWith("/api/audit-trail") ||
         p.startsWith("/api/cr") ||
@@ -2044,6 +2072,9 @@ async function startSSE() {
       res.end(
         JSON.stringify({
           status: "ok",
+          mcpVersion: MCP_VERSION,
+          buildHash: _MCP_BUILD_HASH,
+          startedAt: _MCP_STARTED_AT,
           db: await isHistoryEnabled(),
           cache: await cacheReady(),
         })
@@ -2450,6 +2481,40 @@ async function startSSE() {
     }
 
     // -----------------------------------------------------------------------
+    // MCP Version — used by dashboard to detect image drift across clusters
+    // -----------------------------------------------------------------------
+    if (req.method === "GET" && url.pathname === "/api/cluster/version") {
+      const agents = [];
+      for (const [, agent] of _connectedAgents) {
+        agents.push({
+          clusterName: agent.clusterName,
+          mcpVersion: agent.mcpVersion || null,
+          buildHash: agent.buildHash || null,
+          startedAt: agent.mcpStartedAt || null,
+        });
+      }
+      return sendJson(res, 200, {
+        hub: { mcpVersion: MCP_VERSION, buildHash: _MCP_BUILD_HASH, startedAt: _MCP_STARTED_AT },
+        agents,
+      });
+    }
+
+    // -----------------------------------------------------------------------
+    // Redeploy — trigger rollout restart on local or remote cluster
+    // -----------------------------------------------------------------------
+    if (req.method === "POST" && url.pathname === "/api/cluster/redeploy") {
+      const ns = process.env.NAMESPACE || process.env.MCP_NAMESPACE || (process.env.PLATFORM === "openshift" ? "openshift-mcp" : "tcs-agentic-system");
+      const deployName = process.env.DEPLOYMENT_NAME || "agentic-ai-server";
+      try {
+        const cli = await detectCLI();
+        const result = await runExec(cli, ["rollout", "restart", `deployment/${deployName}`, "-n", ns]);
+        return sendJson(res, 200, { ok: true, message: `Rollout restart triggered for ${deployName} in ${ns}`, output: result });
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: err.message });
+      }
+    }
+
+    // -----------------------------------------------------------------------
     // Cluster Registration — add K8s clusters via dashboard (direct API)
     // -----------------------------------------------------------------------
     if (url.pathname === "/api/hub/clusters" && req.method === "POST") {
@@ -2726,10 +2791,9 @@ async function startSSE() {
 
     if (url.pathname === "/api/spoke/heartbeat" && req.method === "POST") {
       const body = await readJsonBody(req);
-      const { clusterName, ts, uptime, memMB, healthy } = body;
+      const { clusterName, ts, uptime, memMB, healthy, mcpVersion, buildHash, startedAt: spokeStartedAt } = body;
       if (!clusterName) return sendJson(res, 400, { error: "clusterName required" });
       updateSpokeHeartbeat(clusterName, { healthy, uptime, memMB });
-      // Also update _connectedAgents heartbeat + lastReportTime so status stays "live"
       const key = findClusterKey(clusterName) || clusterName;
       const agent = _connectedAgents.get(key);
       if (agent) {
@@ -2738,9 +2802,12 @@ async function startSSE() {
         agent.lastReportTime = now;
         agent.agentHealthy = healthy !== false;
         agent.status = "live";
+        if (mcpVersion) agent.mcpVersion = mcpVersion;
+        if (buildHash) agent.buildHash = buildHash;
+        if (spokeStartedAt) agent.mcpStartedAt = spokeStartedAt;
         _connectedAgents.set(key, agent);
       }
-      return sendJson(res, 200, { ok: true });
+      return sendJson(res, 200, { ok: true, hubVersion: MCP_VERSION });
     }
 
     if (url.pathname === "/api/spoke/status" && req.method === "GET") {
@@ -2988,7 +3055,7 @@ spec:
     // Thresholds: <90 s = healthy, 90-300 s = stale, >300 s = unreachable
     if (url.pathname === "/api/agent/heartbeat" && req.method === "POST") {
       const body = await readJsonBody(req);
-      const { clusterName, seq, ts, uptime, memMB, healthy, lastReportAge } = body;
+      const { clusterName, seq, ts, uptime, memMB, healthy, lastReportAge, mcpVersion, buildHash, startedAt: agentStartedAt } = body;
       if (!clusterName) return sendJson(res, 400, { error: "clusterName required" });
       const key = findClusterKey(clusterName) || clusterName;
       const agent = _connectedAgents.get(key);
@@ -2999,9 +3066,12 @@ spec:
         agent.agentMemMB = memMB;
         agent.agentHealthy = healthy !== false;
         agent.lastReportAge = lastReportAge;
+        if (mcpVersion) agent.mcpVersion = mcpVersion;
+        if (buildHash) agent.buildHash = buildHash;
+        if (agentStartedAt) agent.mcpStartedAt = agentStartedAt;
         _connectedAgents.set(key, agent);
       }
-      return sendJson(res, 200, { ok: true });
+      return sendJson(res, 200, { ok: true, hubVersion: MCP_VERSION });
     }
 
     if (url.pathname === "/api/agent/report" && req.method === "POST") {
@@ -3093,6 +3163,10 @@ spec:
           ...agent,
           token: undefined,
           hasToken: !!agent.token,
+          mcpVersion: agent.mcpVersion || null,
+          buildHash: agent.buildHash || null,
+          mcpStartedAt: agent.mcpStartedAt || null,
+          outdated: agent.mcpVersion ? agent.mcpVersion !== MCP_VERSION : null,
           status: elapsed !== null && elapsed < 300 ? "live" : elapsed !== null ? "stale" : "registered",
           lastReport: undefined,
           summary: agent.lastReport ? {
@@ -3108,7 +3182,7 @@ spec:
           } : null,
         });
       }
-      return sendJson(res, 200, { agents });
+      return sendJson(res, 200, { agents, hubVersion: MCP_VERSION });
     }
 
     if (url.pathname.startsWith("/api/agent/scan/") && req.method === "GET") {
@@ -3219,6 +3293,11 @@ spec:
             clusterName: agent.clusterName,
             platform: agent.platform,
             agentVersion: agent.agentVersion || null,
+            mcpVersion: agent.mcpVersion || null,
+            buildHash: agent.buildHash || null,
+            mcpStartedAt: agent.mcpStartedAt || null,
+            hubVersion: MCP_VERSION,
+            outdated: agent.mcpVersion ? agent.mcpVersion !== MCP_VERSION : null,
             status: elapsed !== null && elapsed < 300 ? "live" : elapsed !== null ? "stale" : "registered",
             registeredAt: agent.registeredAt || null,
             lastReportTime: agent.lastReportTime || null,
@@ -3264,11 +3343,25 @@ spec:
           return sendJson(res, 200, { ok: sent, target: clusterName, message: sent ? "RBAC sync pushed" : "Agent not connected via SSE" });
         }
 
-        // Redeploy — trigger a rolling restart of this agent's deployment
+        // Redeploy — proxy rollout restart to spoke, or push SSE event as fallback
         if (action === "redeploy" && req.method === "POST") {
+          const spokeUrl = hasSpoke(clusterName) ? getAllSpokes().find(s => s.clusterName === clusterName || s.clusterName.toLowerCase() === clusterName.toLowerCase())?.spokeUrl : null;
+          if (spokeUrl) {
+            try {
+              const proxyRes = await fedFetch(`${spokeUrl}/api/cluster/redeploy`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                signal: AbortSignal.timeout(30000),
+              });
+              const data = await proxyRes.json().catch(() => ({}));
+              return sendJson(res, proxyRes.ok ? 200 : 502, { ...data, target: clusterName, proxiedTo: spokeUrl });
+            } catch (err) {
+              return sendJson(res, 502, { ok: false, target: clusterName, error: `Spoke unreachable: ${err.message}` });
+            }
+          }
           const event = { type: "rollout_restart", triggeredAt: new Date().toISOString() };
           const sent = pushEventToAgent(clusterName, event);
-          return sendJson(res, 200, { ok: sent, target: clusterName, message: sent ? "Redeploy (rollout restart) triggered" : "Agent not connected via SSE" });
+          return sendJson(res, 200, { ok: sent, target: clusterName, message: sent ? "Redeploy signal sent via agent bridge" : "No spoke URL or agent bridge — cannot redeploy remotely" });
         }
       }
 
