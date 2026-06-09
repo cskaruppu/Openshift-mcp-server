@@ -4,7 +4,10 @@ metadata:
   name: agentic-ai-server-config
   namespace: openshift-mcp
 data:
-  MCP_MODE: "hub"
+  # "control": stateful management plane (PostgreSQL/Redis/dashboard bundle).
+  # The hub cluster's data plane is the separate mcp-hub-agent pod, so this
+  # pod serves global routes + persistence + federation routing only.
+  MCP_MODE: "control"
   MCP_TRANSPORT: "sse"
   MCP_SERVER_PORT: "3000"
   LOG_LEVEL: "info"

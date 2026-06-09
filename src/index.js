@@ -1967,6 +1967,18 @@ async function startSSE() {
   const _hasRedis = !!process.env.REDIS_URL;
   const _stateMode = _hasDB ? "STATEFUL (owns PostgreSQL)" : "STATELESS (no database)";
   console.log(`[startup] MCP_MODE=${MCP_MODE} | ${_stateMode}${_hasRedis ? " | Redis cache" : ""}`);
+  if (MCP_MODE === "control") {
+    // Control plane: management routes + persistence + federation routing.
+    // The hub cluster's data plane should be the hub-agent pod. Warn (don't
+    // fail) when it hasn't registered — legacy in-process handling still works.
+    setTimeout(() => {
+      if (!hasSpoke(HUB_AGENT_CLUSTER)) {
+        console.warn(`[startup] Control mode: hub-agent "${HUB_AGENT_CLUSTER}" not registered yet — hub-cluster queries fall back to in-process handling until it connects`);
+      } else {
+        console.log(`[startup] Control mode: hub-agent "${HUB_AGENT_CLUSTER}" registered — hub data plane fully delegated`);
+      }
+    }, 60000);
+  }
   if (MCP_MODE === "spoke") {
     const hubUrl = process.env.HUB_URL || process.env.HUB_SERVER_URL;
     const clusterName = process.env.CLUSTER_NAME || "unknown";
@@ -5850,7 +5862,7 @@ spec:
         return;
       }
     }
-    if (req.method === "GET" && MCP_MODE === "hub" && !url.pathname.startsWith("/api/")) {
+    if (req.method === "GET" && (MCP_MODE === "hub" || MCP_MODE === "control") && !url.pathname.startsWith("/api/")) {
       // In the separated architecture, dashboard is served by nginx.
       // If someone hits the MCP server directly (not through nginx), return API info.
       if (url.pathname === "/" || url.pathname === "/index.html") {
