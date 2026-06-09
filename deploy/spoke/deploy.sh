@@ -31,7 +31,6 @@
 #   --tls-skip             Skip TLS verification for hub connection
 #   -n, --namespace NS     Namespace (default: openshift-mcp for OpenShift, tcs-agentic-system otherwise)
 #   --image IMAGE          Override image (default: same as hub image)
-#   --with-db              Deploy PostgreSQL for persistent chat/audit on spoke
 #   --status               Show spoke deployment status
 #   --rollback             Rollback to previous revision
 #   --uninstall            Remove spoke from this cluster
@@ -50,7 +49,6 @@ NS=""
 TLS_SKIP=false
 IMAGE="${IMAGE:-quay.io/karuppucs/openshift-mcp-server:latest}"
 ACTION="deploy"
-WITH_DB=false
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -76,7 +74,6 @@ while [[ $# -gt 0 ]]; do
     --tls-skip)       TLS_SKIP=true; shift ;;
     --image)          IMAGE="$2"; shift 2 ;;
     -n|--namespace)   NS="$2"; shift 2 ;;
-    --with-db)        WITH_DB=true; shift ;;
     --status)         ACTION="status"; shift ;;
     --rollback)       ACTION="rollback"; shift ;;
     --uninstall)      ACTION="uninstall"; shift ;;
@@ -201,7 +198,6 @@ echo " Hub URL   : $HUB_URL"
 echo " Namespace : $NS"
 echo " Image     : $IMAGE (same as hub)"
 echo " TLS skip  : $TLS_SKIP"
-echo " With DB   : $WITH_DB"
 echo " Mode      : spoke (full MCP server)"
 echo "============================================"
 echo ""

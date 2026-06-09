@@ -40,7 +40,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 NS="${NAMESPACE:-openshift-mcp}"
 MCP_IMAGE="${MCP_IMAGE:-quay.io/karuppucs/openshift-mcp-server:latest}"
-DASHBOARD_IMAGE="${DASHBOARD_IMAGE:-quay.io/karuppucs/tcs-agentic-dashboard:latest}"
+DASHBOARD_IMAGE="${DASHBOARD_IMAGE:-quay.io/karuppucs/mcp-dashboard:latest}"
 BUILD=true
 GIT_PULL=true
 ACTION="deploy"
@@ -95,9 +95,9 @@ next() { STEP=$((STEP + 1)); echo ""; echo "[$STEP/$STEPS] $1"; }
 
 hub_url() {
   if [ "$CLI" = "oc" ]; then
-    oc get route tcs-dashboard -n "$NS" -o jsonpath='https://{.spec.host}' 2>/dev/null || echo ""
+    oc get route mcp-dashboard -n "$NS" -o jsonpath='https://{.spec.host}' 2>/dev/null || echo ""
   else
-    kubectl get ingress tcs-dashboard -n "$NS" -o jsonpath='https://{.spec.rules[0].host}' 2>/dev/null || echo ""
+    kubectl get ingress mcp-dashboard -n "$NS" -o jsonpath='https://{.spec.rules[0].host}' 2>/dev/null || echo ""
   fi
 }
 
@@ -170,10 +170,10 @@ if [ "$ACTION" = "rollback" ]; then
   echo "Rolling back MCP server..."
   $CLI rollout undo deployment/mcp-server -n "$NS"
   echo "Rolling back dashboard..."
-  $CLI rollout undo deployment/tcs-dashboard -n "$NS"
+  $CLI rollout undo deployment/mcp-dashboard -n "$NS"
   echo "Waiting for rollout..."
   $CLI rollout status deployment/mcp-server -n "$NS" --timeout=120s
-  $CLI rollout status deployment/tcs-dashboard -n "$NS" --timeout=120s
+  $CLI rollout status deployment/mcp-dashboard -n "$NS" --timeout=120s
   echo ""
   echo "Rollback complete."
   $CLI get pods -n "$NS" -o wide
@@ -265,115 +265,28 @@ $CLI apply -f "$K8S_DIR/deployment.yaml"
 $CLI apply -f "$K8S_DIR/service.yaml"
 $CLI set image deployment/mcp-server mcp-server="$MCP_IMAGE" -n "$NS" 2>/dev/null || true
 
-# 7. Dashboard deployment (separate pod)
+# 7. Dashboard deployment (separate pod — React + Nginx + 50Gi PVC)
+#    Applies deploy/hub/manifests/dashboard-deployment.yaml, which carries the
+#    PersistentVolumeClaim (persistence) + OpenShift-safe volume mounts
+#    (/tmp, /var/cache/nginx, /var/run) so Nginx runs under a random UID.
 next "Deploying Dashboard (React + Nginx)..."
-cat <<EOF | $CLI apply -f -
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: tcs-dashboard
-  namespace: $NS
-  labels:
-    app.kubernetes.io/name: tcs-dashboard
-    app.kubernetes.io/component: dashboard
-    app.kubernetes.io/part-of: mcp-ai-assistant
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: tcs-dashboard
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: tcs-dashboard
-    spec:
-      securityContext:
-        runAsNonRoot: true
-        seccompProfile:
-          type: RuntimeDefault
-      containers:
-        - name: dashboard
-          image: $DASHBOARD_IMAGE
-          imagePullPolicy: Always
-          ports:
-            - containerPort: 8080
-              name: http
-          resources:
-            requests:
-              cpu: 50m
-              memory: 64Mi
-            limits:
-              cpu: 200m
-              memory: 128Mi
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-          readinessProbe:
-            httpGet:
-              path: /nginx-health
-              port: 8080
-            initialDelaySeconds: 3
-            periodSeconds: 10
-          livenessProbe:
-            httpGet:
-              path: /nginx-health
-              port: 8080
-            initialDelaySeconds: 5
-            periodSeconds: 30
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: tcs-dashboard
-  namespace: $NS
-  labels:
-    app.kubernetes.io/name: tcs-dashboard
-    app.kubernetes.io/part-of: mcp-ai-assistant
-spec:
-  selector:
-    app.kubernetes.io/name: tcs-dashboard
-  ports:
-    - port: 8080
-      targetPort: 8080
-      name: http
-EOF
-
-# Route/Ingress — point to dashboard (which proxies /api to MCP server)
+sed -i "s|image:.*mcp-dashboard:.*|image: ${DASHBOARD_IMAGE}|" "$K8S_DIR/dashboard-deployment.yaml"
 if [ "$CLI" = "oc" ]; then
-  cat <<EOF | $CLI apply -f -
-apiVersion: route.openshift.io/v1
-kind: Route
-metadata:
-  name: tcs-dashboard
-  namespace: $NS
-  labels:
-    app.kubernetes.io/name: tcs-dashboard
-    app.kubernetes.io/part-of: mcp-ai-assistant
-  annotations:
-    haproxy.router.openshift.io/timeout: 600s
-    haproxy.router.openshift.io/timeout-tunnel: 600s
-    haproxy.router.openshift.io/disable_cookies: "true"
-spec:
-  to:
-    kind: Service
-    name: tcs-dashboard
-  port:
-    targetPort: http
-  tls:
-    termination: edge
-    insecureEdgeTerminationPolicy: Redirect
-EOF
+  $CLI apply -f "$K8S_DIR/dashboard-deployment.yaml"
+else
+  # Non-OpenShift: apply everything except the Route (Ingress would be set up separately)
+  $CLI apply -f "$K8S_DIR/dashboard-deployment.yaml" 2>&1 | grep -v 'route.openshift.io' || true
 fi
+$CLI set image deployment/mcp-dashboard dashboard="$DASHBOARD_IMAGE" -n "$NS" 2>/dev/null || true
 
 # 8. Rollout and verify
 next "Rolling out and verifying..."
 $CLI rollout restart deployment/mcp-server -n "$NS"
-$CLI rollout restart deployment/tcs-dashboard -n "$NS"
+$CLI rollout restart deployment/mcp-dashboard -n "$NS"
 echo "  Waiting for MCP server..."
 $CLI rollout status deployment/mcp-server -n "$NS" --timeout=180s
 echo "  Waiting for Dashboard..."
-$CLI rollout status deployment/tcs-dashboard -n "$NS" --timeout=120s
+$CLI rollout status deployment/mcp-dashboard -n "$NS" --timeout=120s
 
 echo ""
 echo "--- Pod Status ---"
@@ -404,7 +317,7 @@ if [ -n "$URL" ]; then
   echo " Spoke Status  : $URL/api/spoke/status"
 else
   echo " No route/ingress found."
-  echo " Access via: $CLI port-forward svc/tcs-dashboard 8080:8080 -n $NS"
+  echo " Access via: $CLI port-forward svc/mcp-dashboard 8080:8080 -n $NS"
 fi
 echo ""
 echo " Commit: $(git -C "$REPO_ROOT" log --oneline -1 2>/dev/null || echo 'N/A')"

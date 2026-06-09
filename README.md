@@ -648,12 +648,14 @@ openshift-mcp-server/
 │   ├── package.json
 │   └── vite.config.js
 │
-├── 🚀 deploy/                           # Deployment automation
+├── 🚀 deploy/                           # Deployment automation (all deploy scripts here)
 │   ├── hub/
-│   │   ├── deploy.sh                    # Hub: MCP + Dashboard + DB
-│   │   └── manifests/                   # namespace, RBAC, postgres, redis, etc.
+│   │   ├── deploy.sh                    # Hub: MCP + Dashboard + PostgreSQL + Redis
+│   │   └── manifests/                   # namespace, RBAC, postgres, redis,
+│   │       │                            #   pvc, dashboard-deployment (50Gi PVC), etc.
+│   │       └── dashboard-deployment.yaml
 │   └── spoke/
-│       └── deploy.sh                    # Spoke: MCP server only
+│       └── deploy.sh                    # Spoke: MCP server only (registers with hub)
 │
 ├── ⎈  chart/                            # Helm chart
 │   └── openshift-mcp/
@@ -667,10 +669,9 @@ openshift-mcp-server/
 │   ├── microsoft-agent-framework/       # Microsoft agent orchestrator
 │   └── rest-api/                        # OpenAPI spec
 │
-├── 📚 docs/                             # Documentation
+├── 📚 docs/                             # Documentation + doc generators
 ├── 💾 db/                               # Database schema (PostgreSQL)
-├── 🧪 tests/                            # Test suites
-├── 🔨 hack/                             # Build scripts, legacy tooling
+├── 🧪 tests/                            # Test suites + smoke test
 ├── 📦 backup/                           # Legacy agent & old dashboard
 ├── 📊 data/                             # Sample data (incident history)
 ├── 📝 examples/                         # Client config examples
