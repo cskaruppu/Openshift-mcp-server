@@ -270,7 +270,24 @@ $CLI apply -f "$K8S_DIR/serviceaccount.yaml"
 
 # 4. Secrets and config
 next "Applying secrets, configmap, network policy..."
-$CLI apply -f "$K8S_DIR/secret.yaml"
+
+# Auto-generate a real API token if the secret still has the CHANGEME placeholder
+EXISTING_TOKEN=$($CLI get secret agentic-ai-server-secrets -n "$NS" -o jsonpath='{.data.MCP_API_TOKEN}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+if [ -z "$EXISTING_TOKEN" ] || [ "$EXISTING_TOKEN" = "CHANGEME" ]; then
+  GENERATED_TOKEN=$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 64)
+  echo "  Generating secure API token (MCP_API_TOKEN)..."
+  # Apply the base secret first, then patch with the generated token
+  $CLI apply -f "$K8S_DIR/secret.yaml"
+  $CLI patch secret agentic-ai-server-secrets -n "$NS" --type merge \
+    -p "{\"stringData\":{\"MCP_API_TOKEN\":\"$GENERATED_TOKEN\",\"MCP_ADMIN_PASSWORD\":\"$GENERATED_TOKEN\"}}"
+  echo "  ✓ API token generated and stored in secret"
+else
+  echo "  Using existing API token from secret"
+  $CLI apply -f "$K8S_DIR/secret.yaml"
+  # Restore the real token (apply may have overwritten it with CHANGEME from the manifest)
+  $CLI patch secret agentic-ai-server-secrets -n "$NS" --type merge \
+    -p "{\"stringData\":{\"MCP_API_TOKEN\":\"$EXISTING_TOKEN\"}}"
+fi
 $CLI apply -f "$K8S_DIR/configmap.yaml"
 $CLI apply -f "$K8S_DIR/networkpolicy.yaml" 2>/dev/null || true
 
@@ -349,26 +366,29 @@ echo ""
 echo " Commit: $(git -C "$REPO_ROOT" log --oneline -1 2>/dev/null || echo 'N/A')"
 echo ""
 
-# Extract hub token for spoke deploy command
+# Extract hub token for the spoke deploy command
 HUB_TOKEN=$($CLI get secret agentic-ai-server-secrets -n "$NS" -o jsonpath='{.data.MCP_API_TOKEN}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+
+echo " ─────────────────────────────────────────"
+echo " SPOKE DEPLOYMENT — Copy & paste to deploy on secondary clusters:"
+echo " ─────────────────────────────────────────"
+echo ""
 if [ -n "$HUB_TOKEN" ] && [ "$HUB_TOKEN" != "CHANGEME" ]; then
-  echo " Next: Deploy spokes on secondary clusters:"
   echo "   ./deploy/spoke/deploy.sh \\"
   echo "     --hub-url $URL \\"
   echo "     --hub-token $HUB_TOKEN \\"
-  echo "     --cluster-name <name> --platform <platform>"
+  echo "     --cluster-name <CLUSTER_NAME> \\"
+  echo "     --platform openshift \\"
+  echo "     --tls-skip"
   echo ""
-  echo " Or auto-fetch the token from this cluster's context:"
-  echo "   ./deploy/spoke/deploy.sh \\"
-  echo "     --hub-url $URL \\"
-  echo "     --hub-context $(kubectl config current-context 2>/dev/null || echo '<hub-context>') \\"
-  echo "     --cluster-name <name> --platform <platform>"
+  echo " Replace <CLUSTER_NAME> with the spoke name (e.g. prod-east, staging-gke)"
+  echo ""
+  echo " Hub API Token: $HUB_TOKEN"
 else
-  echo " ⚠  Hub token is not set. Update the secret before deploying spokes:"
+  echo " ⚠  Hub token could not be retrieved. Set it manually:"
   echo "   $CLI -n $NS create secret generic agentic-ai-server-secrets \\"
-  echo "     --from-literal=MCP_API_TOKEN=<your-token> --dry-run=client -o yaml | $CLI apply -f -"
-  echo ""
-  echo " Then deploy spokes:"
-  echo "   ./deploy/spoke/deploy.sh --hub-url $URL --hub-token <token> --cluster-name <name> --platform <platform>"
+  echo "     --from-literal=MCP_API_TOKEN=\$(openssl rand -hex 32) --dry-run=client -o yaml | $CLI apply -f -"
+  echo "   Then re-run this script."
 fi
+echo ""
 echo "============================================"
