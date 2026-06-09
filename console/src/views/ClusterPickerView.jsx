@@ -54,11 +54,12 @@ function KebabMenu({ items }) {
   );
 }
 
-async function clusterAction(url, method, successMsg) {
+async function clusterAction(url, method, successMsg, onDone) {
   try {
     const res = await fetch(url, { method: method || "POST" });
     const data = await res.json().catch(() => ({}));
     showToast(data.message || successMsg, res.ok ? "ok" : "err");
+    if (res.ok && onDone) onDone();
   } catch (err) {
     showToast("Error: " + err.message, "err");
   }
@@ -473,6 +474,11 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
   const toggleTheme = useThemeStore((s) => s.toggle);
   const queryClient = useQueryClient();
   const [connectOpen, setConnectOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const refetchAgents = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["/api/agent/status"] });
+  }, [queryClient]);
 
   const { data: agentData } = useQuery({
     queryKey: ["/api/agent/status"],
@@ -616,8 +622,10 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
             const st = statusDisplay(agent.status);
             const summary = agent.summary || {};
 
+            const staleClass = (agent.status === "stale") ? " cp-card-stale" : (agent.status === "unreachable" || agent.status === "error") ? " cp-card-unreachable" : "";
+
             return (
-              <div className="cp-card" key={clusterName} onClick={() => onSelectCluster(clusterName)}>
+              <div className={"cp-card" + staleClass} key={clusterName} onClick={() => onSelectCluster(clusterName)}>
                 <div className="cp-card-header">
                   <div className="cp-card-icon" style={{ background: pInfo.color + "15", color: pInfo.color }}>
                     {pInfo.icon}
@@ -632,10 +640,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                     { icon: "✏️", label: "Edit Cluster", action: () => { onOpenSettings(); } },
                     { icon: "↻", label: "Reconnect", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/reconnect`, "POST", "Reconnect initiated"); } },
                     { sep: true },
-                    { icon: "🔒", label: "Sync RBAC", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/rbac-sync`, "POST", "RBAC sync initiated"); } },
-                    { icon: "🔄", label: "Redeploy Agent", action: () => { if (confirm(`Redeploy agent on ${clusterName}?`)) clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/redeploy`, "POST", "Redeploy initiated"); } },
-                    { sep: true },
-                    { icon: "🗑️", label: "Remove Cluster", danger: true, action: () => { if (confirm(`Remove cluster "${clusterName}"? This cannot be undone.`)) clusterAction(`/api/agent/${encodeURIComponent(clusterName)}`, "DELETE", `Cluster ${clusterName} removed`); } },
+                    { icon: "🗑", label: "Remove Cluster", danger: true, action: () => setConfirmDelete(clusterName) },
                   ]} />
                 </div>
                 <div className="cp-card-status">
@@ -644,6 +649,9 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                     animation: st.pulse ? "pulse 2s infinite" : "none"
                   }} />
                   <span className="cp-card-status-label" style={{ color: st.color }}>{st.label}</span>
+                  {agent.lastHeartbeat && (agent.status === "stale" || agent.status === "unreachable") && (
+                    <span className="cp-card-last-seen">Last seen: {new Date(agent.lastHeartbeat).toLocaleString()}</span>
+                  )}
                 </div>
                 <div className="cp-card-stats">
                   <div className="cp-card-stat">
@@ -683,6 +691,38 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
 
       {/* Connect Cluster Modal */}
       <ConnectClusterModal open={connectOpen} onClose={() => setConnectOpen(false)} onConnected={handleConnected} />
+
+      {/* Delete Confirmation Dialog */}
+      {confirmDelete && (
+        <div className="cp-confirm-overlay" onClick={() => setConfirmDelete(null)}>
+          <div className="cp-confirm-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="cp-confirm-icon">
+              <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="#ef4444" strokeWidth="1.5">
+                <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="13" /><circle cx="12" cy="16" r="0.5" fill="#ef4444" />
+              </svg>
+            </div>
+            <div className="cp-confirm-title">Remove Cluster</div>
+            <div className="cp-confirm-msg">
+              Are you sure you want to remove <strong>{confirmDelete}</strong> from the fleet?
+              This will unregister the cluster from the hub. The spoke deployment on the remote cluster will not be deleted.
+            </div>
+            <div className="cp-confirm-actions">
+              <button className="cp-confirm-cancel" onClick={() => setConfirmDelete(null)}>Cancel</button>
+              <button className="cp-confirm-delete" onClick={() => {
+                const name = confirmDelete;
+                setConfirmDelete(null);
+                Promise.all([
+                  fetch(`/api/agent/${encodeURIComponent(name)}`, { method: "DELETE" }).catch(() => {}),
+                  fetch(`/api/spoke/${encodeURIComponent(name)}`, { method: "DELETE" }).catch(() => {}),
+                ]).then(() => {
+                  showToast(`Cluster "${name}" removed from fleet`, "ok");
+                  refetchAgents();
+                });
+              }}>Remove Cluster</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
