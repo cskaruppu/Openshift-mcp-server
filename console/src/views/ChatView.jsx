@@ -175,7 +175,12 @@ export function ChatView() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(clusterUrl("/api/settings/llm", cluster));
+        // LLM provider config is MANAGEMENT-PLANE (global) — it lives in the
+        // hub/control-plane DB, not on individual clusters. Always fetch it
+        // hub-global (no cluster param) so the configured providers show up in
+        // AI Chat for EVERY selected cluster, including secondary clusters that
+        // carry no LLM config of their own.
+        const res = await fetch("/api/settings/llm");
         if (!res.ok) return;
         const data = await res.json();
         if (cancelled) return;
