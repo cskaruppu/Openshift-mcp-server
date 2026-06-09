@@ -264,6 +264,11 @@ sed -i "s|image:.*openshift-mcp-server:.*|image: ${MCP_IMAGE}|" "$K8S_DIR/deploy
 $CLI apply -f "$K8S_DIR/deployment.yaml"
 $CLI apply -f "$K8S_DIR/service.yaml"
 $CLI set image deployment/mcp-server mcp-server="$MCP_IMAGE" -n "$NS" 2>/dev/null || true
+# MCP server is internal-only — remove any legacy external route from prior deploys.
+# All external traffic now enters through the dashboard route (which proxies /api, /sse, ...).
+if [ "$CLI" = "oc" ]; then
+  oc delete route mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+fi
 
 # 7. Dashboard deployment (separate pod — React + Nginx + 50Gi PVC)
 #    Applies deploy/hub/manifests/dashboard-deployment.yaml, which carries the
