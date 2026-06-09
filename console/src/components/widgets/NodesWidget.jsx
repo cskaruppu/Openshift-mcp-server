@@ -1,11 +1,11 @@
-import { useClusterQuery } from "../../hooks/useClusterQuery";
+import { useClusterQuery, REFRESH } from "../../hooks/useClusterQuery";
 import { WidgetCard } from "../WidgetCard";
 
 /**
  * Nodes widget. Reads /api/cluster/summary (nodes block) for the active cluster.
  */
 export function NodesWidget() {
-  const { data, isLoading, isError, error } = useClusterQuery("/api/cluster/summary");
+  const { data, isLoading, isError, error } = useClusterQuery("/api/cluster/summary", { refetchInterval: REFRESH.VITALS });
 
   const nodes = data?.nodes;
   const ready = nodes?.ready ?? 0;

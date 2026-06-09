@@ -1,9 +1,9 @@
-import { useClusterQuery } from "../../hooks/useClusterQuery";
+import { useClusterQuery, REFRESH } from "../../hooks/useClusterQuery";
 import { WidgetCard } from "../WidgetCard";
 
 /** Cluster Operators — OpenShift operators health for the active cluster. */
 export function ClusterOperatorsWidget() {
-  const { data, isLoading, isError, error } = useClusterQuery("/api/cluster/operators");
+  const { data, isLoading, isError, error } = useClusterQuery("/api/cluster/operators", { refetchInterval: REFRESH.VITALS });
 
   const ops = Array.isArray(data) ? data : [];
   const total = ops.length;

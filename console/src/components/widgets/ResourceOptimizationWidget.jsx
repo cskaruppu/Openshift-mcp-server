@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useClusterQuery } from "../../hooks/useClusterQuery";
+import { useClusterQuery, REFRESH } from "../../hooks/useClusterQuery";
 import { useActiveCluster } from "../../store/clusterStore";
 import { showToast } from "../../store/toastStore";
 
@@ -28,7 +28,7 @@ export function ResourceOptimizationWidget() {
   const cluster = useActiveCluster();
   const { data, isLoading, isError, error, refetch } = useClusterQuery(
     "/api/dashboard/optimization",
-    { refetchInterval: 60_000 }
+    { refetchInterval: REFRESH.SCAN }
   );
   const [expanded, setExpanded] = useState(null);
   const [showPVCs, setShowPVCs] = useState(false);

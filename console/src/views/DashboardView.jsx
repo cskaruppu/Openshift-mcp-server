@@ -14,6 +14,7 @@ import { HealthTimelineWidget } from "../components/widgets/HealthTimelineWidget
 import { ResourceOptimizationWidget } from "../components/widgets/ResourceOptimizationWidget";
 import { CapacityWidget } from "../components/widgets/CapacityWidget";
 import { EmergencyActionsWidget } from "../components/widgets/EmergencyActionsWidget";
+import { REFRESH } from "../hooks/useClusterQuery";
 
 /**
  * Dashboard — a single pane ordered by operational priority, top to bottom:
@@ -80,6 +81,7 @@ export function DashboardView() {
               path="/api/dashboard/security"
               linkTo="audit"
               linkLabel="View in Audit"
+              refreshMs={REFRESH.SCAN}
               map={(d) => ({ value: `${d.score}/100`, grade: d.grade, label: `${(d.findings || []).length} findings` })}
             />
           </div>

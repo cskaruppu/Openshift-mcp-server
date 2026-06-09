@@ -1,8 +1,8 @@
-import { useClusterQuery } from "../../hooks/useClusterQuery";
+import { useClusterQuery, REFRESH } from "../../hooks/useClusterQuery";
 import { WidgetCard } from "../WidgetCard";
 
 export function ActiveAlertsWidget() {
-  const { data, isLoading, isError, error } = useClusterQuery("/api/alerts");
+  const { data, isLoading, isError, error } = useClusterQuery("/api/alerts", { refetchInterval: REFRESH.VITALS });
 
   const alerts = (data?.alerts || []).filter((a) => !a.silenced);
   const summary = data?.summary || {};

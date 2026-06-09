@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useClusterQuery } from "../../hooks/useClusterQuery";
+import { useClusterQuery, REFRESH } from "../../hooks/useClusterQuery";
 import { useActiveCluster } from "../../store/clusterStore";
 import { useChatStore } from "../../store/chatStore";
 import { useViewStore } from "../../store/viewStore";
@@ -71,11 +71,11 @@ export function CapacityWidget() {
   const setSeed = useChatStore((s) => s.setSeed);
   const setActiveView = useViewStore((s) => s.setActiveView);
 
-  const { data: summary, isLoading: l1, isError: e1 } = useClusterQuery("/api/cluster/summary", { refetchInterval: 30_000 });
-  const { data: nm } = useClusterQuery("/api/node-metrics", { refetchInterval: 30_000 });
-  const { data: opt } = useClusterQuery("/api/dashboard/optimization", { refetchInterval: 60_000 });
-  const { data: issues } = useClusterQuery("/api/pods/issues", { refetchInterval: 30_000 });
-  const { data: nodes } = useClusterQuery("/api/nodes", { refetchInterval: 30_000 });
+  const { data: summary, isLoading: l1, isError: e1 } = useClusterQuery("/api/cluster/summary", { refetchInterval: REFRESH.VITALS });
+  const { data: nm } = useClusterQuery("/api/node-metrics", { refetchInterval: REFRESH.STANDARD });
+  const { data: opt } = useClusterQuery("/api/dashboard/optimization", { refetchInterval: REFRESH.SCAN });
+  const { data: issues } = useClusterQuery("/api/pods/issues", { refetchInterval: REFRESH.VITALS });
+  const { data: nodes } = useClusterQuery("/api/nodes", { refetchInterval: REFRESH.STANDARD });
 
   const view = useMemo(() => {
     // Actual utilization — sum real usage across nodes ÷ cluster capacity.

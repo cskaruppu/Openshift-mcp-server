@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useClusterQuery } from "../../hooks/useClusterQuery";
+import { useClusterQuery, REFRESH } from "../../hooks/useClusterQuery";
 import { useActiveCluster } from "../../store/clusterStore";
 import { showToast } from "../../store/toastStore";
 
@@ -40,7 +40,7 @@ export function ImageVulnsWidget() {
   const cluster = useActiveCluster();
   const { data, isLoading, isError, error, refetch } = useClusterQuery(
     "/api/dashboard/image-vulns",
-    { refetchInterval: 60_000 }
+    { refetchInterval: REFRESH.SCAN }
   );
   const [scanning, setScanning] = useState(false);
   const [expandedImg, setExpandedImg] = useState(null);

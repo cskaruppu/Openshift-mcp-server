@@ -1,9 +1,9 @@
-import { useClusterQuery } from "../../hooks/useClusterQuery";
+import { useClusterQuery, REFRESH } from "../../hooks/useClusterQuery";
 import { WidgetCard } from "../WidgetCard";
 
 /** Pods at Risk — pods with issues for the active cluster. */
 export function PodsAtRiskWidget() {
-  const { data, isLoading, isError, error } = useClusterQuery("/api/pods/issues");
+  const { data, isLoading, isError, error } = useClusterQuery("/api/pods/issues", { refetchInterval: REFRESH.VITALS });
 
   const pods = Array.isArray(data) ? data : [];
   const failed = pods.filter((p) => p.phase === "Failed" || p.phase === "CrashLoopBackOff").length;

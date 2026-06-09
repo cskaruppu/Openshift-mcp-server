@@ -1,4 +1,4 @@
-import { useClusterQuery } from "../../hooks/useClusterQuery";
+import { useClusterQuery, REFRESH } from "../../hooks/useClusterQuery";
 import { WidgetCard } from "../WidgetCard";
 
 /**
@@ -6,7 +6,7 @@ import { WidgetCard } from "../WidgetCard";
  * cluster. No manual guards — useClusterQuery handles isolation.
  */
 export function ClusterHealthWidget() {
-  const { data, isLoading, isError, error } = useClusterQuery("/api/cluster/summary");
+  const { data, isLoading, isError, error } = useClusterQuery("/api/cluster/summary", { refetchInterval: REFRESH.VITALS });
 
   const health = data?.cluster?.health;
   const version = data?.cluster?.version;

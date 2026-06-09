@@ -12,9 +12,10 @@ const gradeColor = (g) =>
  * @param {string} title
  * @param {string} path - API endpoint
  * @param {(d:any)=>{value:string,grade?:string,label:string,unavailable?:boolean}} map
+ * @param {number} [refreshMs] - override poll interval (heavy scans poll slowly)
  */
-export function ScoreWidget({ title, path, map, linkTo, linkLabel }) {
-  const { data, isLoading, isError } = useClusterQuery(path);
+export function ScoreWidget({ title, path, map, linkTo, linkLabel, refreshMs }) {
+  const { data, isLoading, isError } = useClusterQuery(path, refreshMs ? { refetchInterval: refreshMs } : {});
 
   let view = null;
   if (data) {

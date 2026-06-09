@@ -1,9 +1,9 @@
-import { useClusterQuery } from "../../hooks/useClusterQuery";
+import { useClusterQuery, REFRESH } from "../../hooks/useClusterQuery";
 import { WidgetCard } from "../WidgetCard";
 import { formatNumber } from "../../utils/format";
 
 export function PodsWidget() {
-  const { data, isLoading, isError } = useClusterQuery("/api/cluster/summary");
+  const { data, isLoading, isError } = useClusterQuery("/api/cluster/summary", { refetchInterval: REFRESH.VITALS });
 
   const pods = data?.pods;
   const running = pods?.running ?? 0;

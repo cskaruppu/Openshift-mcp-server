@@ -1,9 +1,9 @@
-import { useClusterQuery } from "../../hooks/useClusterQuery";
+import { useClusterQuery, REFRESH } from "../../hooks/useClusterQuery";
 import { WidgetCard } from "../WidgetCard";
 
 /** Namespaces widget. Reads /api/cluster/summary (namespaces block). */
 export function NamespacesWidget() {
-  const { data, isLoading, isError, error } = useClusterQuery("/api/cluster/summary");
+  const { data, isLoading, isError, error } = useClusterQuery("/api/cluster/summary", { refetchInterval: REFRESH.VITALS });
 
   const ns = data?.namespaces;
   const isOCP = data?.isOpenShift;
