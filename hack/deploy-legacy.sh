@@ -25,6 +25,7 @@ NS="openshift-mcp"
 BUILD=true
 GIT_PULL=true
 IMAGE="quay.io/karuppucs/openshift-mcp-server:latest"
+DASHBOARD_IMAGE="quay.io/karuppucs/mcp-dashboard:latest"
 
 # ---------------------------------------------------------------------------
 # Parse arguments
@@ -53,16 +54,17 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 K8S_DIR="$SCRIPT_DIR/k8s"
 
-STEPS=8
+STEPS=9
 STEP=0
 next() { STEP=$((STEP + 1)); echo ""; echo "[$STEP/$STEPS] $1"; }
 
 echo "============================================"
 echo " OpenShift MCP AI Assistant — Deploying"
-echo " Namespace : $NS"
-echo " Image     : $IMAGE"
-echo " Build     : $BUILD"
-echo " Git pull  : $GIT_PULL"
+echo " Namespace       : $NS"
+echo " MCP Image       : $IMAGE"
+echo " Dashboard Image : $DASHBOARD_IMAGE"
+echo " Build           : $BUILD"
+echo " Git pull        : $GIT_PULL"
 echo "============================================"
 
 # ---------------------------------------------------------------------------
@@ -92,13 +94,20 @@ fi
 # ---------------------------------------------------------------------------
 # 2. Build and push container image
 # ---------------------------------------------------------------------------
-next "Building container image..."
+next "Building container images..."
 if $BUILD; then
   cd "$SCRIPT_DIR"
+  echo "       Building MCP server image..."
   podman build -t "$IMAGE" .
-  echo "       Build complete. Pushing to registry..."
+  echo "       MCP server build complete. Pushing..."
   podman push "$IMAGE"
-  echo "       Image pushed: $IMAGE"
+  echo "       MCP server image pushed: $IMAGE"
+  echo ""
+  echo "       Building dashboard image..."
+  podman build -t "$DASHBOARD_IMAGE" ./dashboard-react
+  echo "       Dashboard build complete. Pushing..."
+  podman push "$DASHBOARD_IMAGE"
+  echo "       Dashboard image pushed: $DASHBOARD_IMAGE"
 else
   echo "       Skipped (--no-build)"
 fi
@@ -138,12 +147,23 @@ oc apply -f "$K8S_DIR/service.yaml"
 oc set image deployment/mcp-server mcp-server="$IMAGE" -n "$NS"
 
 # ---------------------------------------------------------------------------
+# 6b. Dashboard pod (React + Nginx) + PVC + Service + Route
+# ---------------------------------------------------------------------------
+next "Deploying dashboard..."
+sed -i "s|image:.*mcp-dashboard:.*|image: ${DASHBOARD_IMAGE}|" "$K8S_DIR/dashboard-deployment.yaml"
+oc apply -f "$K8S_DIR/dashboard-deployment.yaml"
+oc set image deployment/mcp-dashboard dashboard="$DASHBOARD_IMAGE" -n "$NS"
+
+# ---------------------------------------------------------------------------
 # 7. Rollout and verify
 # ---------------------------------------------------------------------------
 next "Rolling out and verifying..."
 oc rollout restart deployment/mcp-server -n "$NS"
-echo "       Waiting for rollout to complete..."
+oc rollout restart deployment/mcp-dashboard -n "$NS"
+echo "       Waiting for MCP server rollout..."
 oc rollout status deployment/mcp-server -n "$NS" --timeout=180s
+echo "       Waiting for dashboard rollout..."
+oc rollout status deployment/mcp-dashboard -n "$NS" --timeout=180s
 
 echo ""
 echo "--- Pod Status ---"
@@ -151,6 +171,7 @@ oc get pods -n "$NS" -o wide
 echo ""
 
 ROUTE=$(oc get route mcp-server -n "$NS" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+DASHBOARD_ROUTE=$(oc get route mcp-dashboard -n "$NS" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
 
 # ---------------------------------------------------------------------------
 # 8. Auto-deploy remote agents (if hub is reachable)
@@ -179,8 +200,10 @@ echo ""
 echo "============================================"
 echo " Deployment complete!"
 echo ""
+if [ -n "$DASHBOARD_ROUTE" ]; then
+  echo " Dashboard:  https://$DASHBOARD_ROUTE"
+fi
 if [ -n "$ROUTE" ]; then
-  echo " Dashboard:  https://$ROUTE"
   echo " API:        https://$ROUTE/api/"
   echo " MCP (SSE):  https://$ROUTE/sse"
   echo " Health:     https://$ROUTE/healthz"

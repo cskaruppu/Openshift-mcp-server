@@ -1,9 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// React dashboard — separate pod served by nginx.
-// Build output goes to dist/ for the dashboard Dockerfile.
-// Also outputs to ../dashboard/app for backward compatibility.
+// React dashboard — builds to dist/ for the Docker image.
 // During development, API calls are proxied to the running MCP server.
 export default defineConfig({
   base: "/",

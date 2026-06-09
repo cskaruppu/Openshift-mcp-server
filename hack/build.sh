@@ -32,6 +32,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 REGISTRY="${QUAY_REGISTRY:-quay.io/karuppucs}"
 HUB_IMAGE_NAME="openshift-mcp-server"
+DASHBOARD_IMAGE_NAME="mcp-dashboard"
 AGENT_IMAGE_NAME="tcs-agentic-ai"
 BRANCH="${BUILD_BRANCH:-claude/setup-mcp-openshift-9JUo7}"
 HUB_NS="${HUB_NAMESPACE:-openshift-mcp}"
@@ -68,6 +69,7 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HUB_FULL="${REGISTRY}/${HUB_IMAGE_NAME}"
+DASHBOARD_FULL="${REGISTRY}/${DASHBOARD_IMAGE_NAME}"
 AGENT_FULL="${REGISTRY}/${AGENT_IMAGE_NAME}"
 
 # ---------------------------------------------------------------------------
@@ -211,6 +213,7 @@ echo ""
 
 if [ "$TARGET" = "all" ] || [ "$TARGET" = "hub" ]; then
   build_image "Hub Server" "${HUB_FULL}" "${SCRIPT_DIR}/Dockerfile" "${SCRIPT_DIR}"
+  build_image "Dashboard" "${DASHBOARD_FULL}" "${SCRIPT_DIR}/dashboard-react/Dockerfile" "${SCRIPT_DIR}/dashboard-react"
 fi
 
 if [ "$TARGET" = "all" ] || [ "$TARGET" = "agent" ]; then
@@ -261,6 +264,7 @@ if [ "$PUSH" = true ]; then
 
   if [ "$TARGET" = "all" ] || [ "$TARGET" = "hub" ]; then
     push_image "Hub Server" "${HUB_FULL}"
+    push_image "Dashboard" "${DASHBOARD_FULL}"
   fi
 
   if [ "$TARGET" = "all" ] || [ "$TARGET" = "agent" ]; then
@@ -296,13 +300,19 @@ deploy_hub() {
     return 1
   }
 
-  echo "  Hub server deployed successfully."
+  # Rollout dashboard
+  ${KUBE} rollout restart deployment/mcp-dashboard -n "${HUB_NS}" 2>/dev/null || {
+    echo "  INFO: Dashboard deployment not found. Apply dashboard-deployment.yaml first."
+  }
+  ${KUBE} rollout status deployment/mcp-dashboard -n "${HUB_NS}" --timeout=120s 2>/dev/null || true
+
+  echo "  Hub server + dashboard deployed successfully."
   DEPLOYED=$((DEPLOYED + 1))
 
   # Show status
   echo ""
   echo "  --- Hub Pod Status ---"
-  ${KUBE} get pods -n "${HUB_NS}" -l app.kubernetes.io/name=openshift-mcp-server -o wide 2>/dev/null || true
+  ${KUBE} get pods -n "${HUB_NS}" -l app.kubernetes.io/part-of=mcp-ai-assistant -o wide 2>/dev/null || true
   return 0
 }
 
@@ -378,10 +388,11 @@ echo "  Commit         : $(git log --oneline -1 2>/dev/null || echo 'N/A')"
 
 if [ "$TARGET" = "all" ] || [ "$TARGET" = "hub" ]; then
   echo ""
-  echo "  Hub image  : ${HUB_FULL}:${TAG}"
+  echo "  Hub image      : ${HUB_FULL}:${TAG}"
+  echo "  Dashboard image: ${DASHBOARD_FULL}:${TAG}"
 fi
 if [ "$TARGET" = "all" ] || [ "$TARGET" = "agent" ]; then
-  echo "  Agent image: ${AGENT_FULL}:${TAG}"
+  echo "  Agent image    : ${AGENT_FULL}:${TAG}"
 fi
 
 if [ -n "$KUBE" ]; then
