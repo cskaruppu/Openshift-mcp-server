@@ -227,8 +227,16 @@ if $BUILD; then
   $RUNTIME rmi quay.io/karuppucs/agentic-ai-server:latest 2>/dev/null || true
   $RUNTIME rmi quay.io/karuppucs/tcs-agentic-dashboard:latest 2>/dev/null || true
 
-  echo "  [a] Building MCP server image..."
-  $RUNTIME build -t "$MCP_IMAGE" -f Dockerfile .
+  # BUILD_HASH is baked into the image and used for: (a) chat cache
+  # invalidation on redeploy, (b) image-drift detection across clusters
+  # ("Update Available" badge). Unique per commit; a time suffix is added
+  # when the working tree has uncommitted changes so rebuilds still differ.
+  BUILD_HASH=$(git rev-parse --short HEAD 2>/dev/null || date +%Y%m%d%H%M%S)
+  if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+    BUILD_HASH="${BUILD_HASH}-$(date +%H%M%S)"
+  fi
+  echo "  [a] Building MCP server image (BUILD_HASH=$BUILD_HASH)..."
+  $RUNTIME build --build-arg BUILD_HASH="$BUILD_HASH" -t "$MCP_IMAGE" -f Dockerfile .
   echo "  [b] Building Dashboard image..."
   $RUNTIME build -t "$DASHBOARD_IMAGE" -f console/Dockerfile console/
 
@@ -382,7 +390,7 @@ echo " Hub deployment complete!"
 echo "============================================"
 echo ""
 echo " Components deployed:"
-echo "   ✓ MCP Server   : $MCP_IMAGE"
+echo "   ✓ MCP Server   : $MCP_IMAGE${BUILD_HASH:+ (build $BUILD_HASH)}"
 echo "   ✓ Dashboard     : $DASHBOARD_IMAGE"
 echo "   ✓ PostgreSQL    : persistent storage"
 echo "   ✓ Redis         : caching"
