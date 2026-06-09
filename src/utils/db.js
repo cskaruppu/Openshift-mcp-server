@@ -95,9 +95,11 @@ CREATE TABLE IF NOT EXISTS query_log (
   intents TEXT[],
   cache_hit BOOLEAN DEFAULT FALSE,
   duration_ms INTEGER,
+  cluster TEXT NOT NULL DEFAULT 'local',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_query_log_created ON query_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_query_log_cluster ON query_log(cluster, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS executed_actions (
   id BIGSERIAL PRIMARY KEY,
@@ -107,9 +109,11 @@ CREATE TABLE IF NOT EXISTS executed_actions (
   namespace TEXT,
   success BOOLEAN,
   result JSONB,
+  cluster TEXT NOT NULL DEFAULT 'local',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_executed_actions_created ON executed_actions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_executed_actions_cluster ON executed_actions(cluster, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS pending_actions (
   id TEXT PRIMARY KEY,
@@ -214,11 +218,13 @@ CREATE TABLE IF NOT EXISTS change_requests (
   scheduled_date TIMESTAMPTZ,
   preflight_report JSONB,
   metadata JSONB,
+  cluster TEXT NOT NULL DEFAULT 'local',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_cr_status ON change_requests (status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_cr_ticket ON change_requests (ticket_id);
+CREATE INDEX IF NOT EXISTS idx_cr_cluster ON change_requests (cluster, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS upgrade_sessions (
   id TEXT PRIMARY KEY,
@@ -267,6 +273,25 @@ async function ensureSchema() {
     `).catch(() => {});
     await _pool.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS force_password_change BOOLEAN DEFAULT FALSE
+    `).catch(() => {});
+    // Phase A: cluster columns for audit/intelligence tables
+    await _pool.query(`
+      ALTER TABLE executed_actions ADD COLUMN IF NOT EXISTS cluster TEXT NOT NULL DEFAULT 'local'
+    `).catch(() => {});
+    await _pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_executed_actions_cluster ON executed_actions(cluster, created_at DESC)
+    `).catch(() => {});
+    await _pool.query(`
+      ALTER TABLE query_log ADD COLUMN IF NOT EXISTS cluster TEXT NOT NULL DEFAULT 'local'
+    `).catch(() => {});
+    await _pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_query_log_cluster ON query_log(cluster, created_at DESC)
+    `).catch(() => {});
+    await _pool.query(`
+      ALTER TABLE change_requests ADD COLUMN IF NOT EXISTS cluster TEXT NOT NULL DEFAULT 'local'
+    `).catch(() => {});
+    await _pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_cr_cluster ON change_requests(cluster, updated_at DESC)
     `).catch(() => {});
     console.log("[db] schema ensured");
   } catch (err) {

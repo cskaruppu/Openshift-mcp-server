@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS incidents (
   root_cause TEXT,
   resolution_note TEXT,
   postmortem TEXT,
+  cluster TEXT NOT NULL DEFAULT 'local',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   resolved_at TIMESTAMPTZ
@@ -65,6 +66,7 @@ CREATE TABLE IF NOT EXISTS incidents (
 CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
 CREATE INDEX IF NOT EXISTS idx_incidents_severity ON incidents(severity);
 CREATE INDEX IF NOT EXISTS idx_incidents_created ON incidents(created_at);
+CREATE INDEX IF NOT EXISTS idx_incidents_cluster ON incidents(cluster, created_at DESC);
 `;
 
 async function ensureSchema() {
@@ -72,6 +74,8 @@ async function ensureSchema() {
   if (!(await dbEnabled())) return;
   try {
     await dbQuery(SCHEMA_SQL);
+    await dbQuery(`ALTER TABLE incidents ADD COLUMN IF NOT EXISTS cluster TEXT NOT NULL DEFAULT 'local'`).catch(() => {});
+    await dbQuery(`CREATE INDEX IF NOT EXISTS idx_incidents_cluster ON incidents(cluster, created_at DESC)`).catch(() => {});
     _schemaReady = true;
   } catch (err) {
     console.error("[incident-manager] schema bootstrap failed:", err.message);
