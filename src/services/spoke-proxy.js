@@ -207,7 +207,10 @@ export async function proxyToSpoke(clusterName, req, res, url) {
     const fetchOpts = {
       method: req.method,
       headers,
-      signal: AbortSignal.timeout(30000),
+      // 60s: dashboard scan endpoints (image vulns, optimization, CIS) run live
+      // scans on the spoke; across two clusters 30s was too tight and produced
+      // blank widgets. Light endpoints still return fast — no downside.
+      signal: AbortSignal.timeout(60000),
     };
 
     if (req.method !== "GET" && req.method !== "HEAD") {
@@ -227,11 +230,18 @@ export async function proxyToSpoke(clusterName, req, res, url) {
     res.end(body);
     return true;
   } catch (err) {
-    console.error(`[spoke-proxy] Proxy to ${clusterName} (${spokeUrl}) failed: ${fetchErrorDetail(err)}`);
-    res.writeHead(502, { "Content-Type": "application/json" });
+    // Distinguish a scan timeout (504) from an unreachable spoke (502) so a
+    // blank widget's Network status reveals the real cause at a glance.
+    const isTimeout = err && (err.name === "TimeoutError" || err.name === "AbortError");
+    const status = isTimeout ? 504 : 502;
+    console.error(`[spoke-proxy] Proxy to ${clusterName} (${spokeUrl}) ${isTimeout ? "timed out" : "failed"} for ${url.pathname}: ${fetchErrorDetail(err)}`);
+    res.writeHead(status, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
-      error: `Spoke cluster "${clusterName}" is unreachable`,
+      error: isTimeout
+        ? `Spoke cluster "${clusterName}" timed out serving ${url.pathname}`
+        : `Spoke cluster "${clusterName}" is unreachable`,
       spokeUrl,
+      path: url.pathname,
       detail: fetchErrorDetail(err),
     }));
     return true;
