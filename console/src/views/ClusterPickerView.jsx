@@ -5,6 +5,7 @@ import { useAuthStore } from "../store/authStore";
 import { useThemeStore } from "../store/themeStore";
 import { showToast } from "../store/toastStore";
 import { PLATFORM_MAP, getPlatformInfo } from "../lib/platforms";
+import { renderMarkdown } from "../utils/markdown";
 
 const PLATFORMS = {
   openshift: { ...PLATFORM_MAP.openshift, ns: "openshift-tcs-agentic", cli: "oc" },
@@ -739,13 +740,13 @@ function FleetAIBar() {
     setLoading(true);
     setResponse("");
     try {
-      const res = await fetch("/api/chat", {
+      const res = await fetch("/api/fleet/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, scope: "fleet" }),
+        body: JSON.stringify({ message: text }),
       });
       const data = await res.json();
-      setResponse(data.response || data.message || JSON.stringify(data));
+      setResponse(data.reply || data.error || "No response from fleet.");
     } catch (err) {
       setResponse("Error: " + err.message);
     } finally {
@@ -798,9 +799,11 @@ function FleetAIBar() {
               ))}
             </div>
             {response && (
-              <div className="cp-fleet-response" style={{ display: "block", marginTop: 12, whiteSpace: "pre-wrap" }}>
-                {response}
-              </div>
+              <div
+                className="cp-fleet-response md-content"
+                style={{ display: "block", marginTop: 12 }}
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(response) }}
+              />
             )}
           </div>
         )}
