@@ -1924,49 +1924,6 @@ async function startSSE() {
   // instance (the SDK ties one transport to one server).
   const sessions = new Map();
 
-  // ── Endpoint classification: management-plane (GLOBAL) vs data-plane ──────
-  // GLOBAL endpoints hold hub-wide state and must ALWAYS be served by the hub,
-  // never proxied/routed to a selected cluster. Adding an endpoint here makes it
-  // immune to the "?cluster=<spoke>" universal routing — the single source of
-  // truth for what is global vs per-cluster.
-  //
-  //   GLOBAL (hub-only): LLM config, all settings, integrations, auth/users,
-  //                      A2A agent registry, chat history (persisted in hub DB)
-  //   DATA-PLANE (per-cluster): cluster health, nodes, pods, live AI chat answers,
-  //                      actions — these DO route to the selected cluster.
-  //
-  // NOTE: "/api/chat" (singular — the live AI answer) is data-plane and is NOT
-  // matched here; only "/api/chats" (plural — saved history in the hub DB) is.
-  const GLOBAL_MANAGEMENT_PREFIXES = [
-    "/api/settings/",    // LLM, ServiceNow, notification config
-    "/api/settings",     // settings root
-    "/api/integrations", // integration config + hub-owned dispatch
-    "/api/auth/",        // login, user management, password policy
-    "/api/agents",       // A2A agent registry (definitions are global)
-    "/api/users",        // user management
-    "/api/chats",        // chat history (hub PostgreSQL, keyed by cluster)
-  ];
-  function isGlobalManagementPath(pathname) {
-    for (const p of GLOBAL_MANAGEMENT_PREFIXES) {
-      if (pathname === p || pathname.startsWith(p)) return true;
-    }
-    return false;
-  }
-
-  // Data-plane endpoints whose DEDICATED handler does its own cluster-aware
-  // proxying (LLM credential resolution + SSE streaming). The generic buffered
-  // proxyToSpoke() must skip these so they reach their handler — otherwise the
-  // spoke receives the UI's masked LLM key and the response is not streamed.
-  // Exact match only: must never catch "/api/chats" (history — that is GLOBAL).
-  const HANDLER_MANAGED_PROXY_PATHS = new Set([
-    "/api/chat",             // live AI chat → handleChatAPI → proxyChatToSpoke
-    "/api/chat/compare",     // multi-LLM compare
-    "/api/chat/investigate", // deep investigation
-  ]);
-  function isHandlerManagedProxy(pathname) {
-    return HANDLER_MANAGED_PROXY_PATHS.has(pathname);
-  }
-
   const httpServer = createServer(async (req, res) => {
    try {
     // Stash accept-encoding so downstream json() helpers can gzip responses
@@ -2018,21 +1975,8 @@ async function startSSE() {
     // When a request targets a remote cluster via ?cluster=<name>, route it:
     //   1. Spoke proxy (preferred) — same MCP server image, identical results
     //   2. Agent bridge (fallback) — lightweight agent, may produce different results
-    //
-    // EXCEPTION — management-plane (GLOBAL) endpoints are NEVER routed to a
-    // cluster. They hold hub-global state (LLM config, settings, user mgmt,
-    // agent registry, chat history in the hub DB) and must always be served by
-    // the hub regardless of the selected cluster. Proxying them to a spoke
-    // returns empty/different data because spokes carry no such config — this
-    // was the root cause of "LLM provider missing on secondary cluster". See
-    // isGlobalManagementPath() for the classification table.
     const _reqCluster = queryCluster || headerCluster;
-    if (
-      _reqCluster &&
-      _reqCluster !== "local" &&
-      !isGlobalManagementPath(url.pathname) &&
-      !isHandlerManagedProxy(url.pathname)
-    ) {
+    if (_reqCluster && _reqCluster !== "local") {
       // Spoke proxy: forward the entire API request to the spoke's MCP server
       if (hasSpoke(_reqCluster) && url.pathname.startsWith("/api/")) {
         const proxied = await proxyToSpoke(_reqCluster, req, res, url);
