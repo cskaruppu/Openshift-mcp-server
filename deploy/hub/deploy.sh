@@ -223,6 +223,10 @@ if $BUILD; then
   fi
   cd "$REPO_ROOT"
 
+  # Remove stale image tags from prior naming schemes (avoids confusing double-tag output)
+  $RUNTIME rmi quay.io/karuppucs/agentic-ai-server:latest 2>/dev/null || true
+  $RUNTIME rmi quay.io/karuppucs/tcs-agentic-dashboard:latest 2>/dev/null || true
+
   echo "  [a] Building MCP server image..."
   $RUNTIME build -t "$MCP_IMAGE" -f Dockerfile .
   echo "  [b] Building Dashboard image..."
