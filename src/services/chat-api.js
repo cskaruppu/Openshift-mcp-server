@@ -18,6 +18,8 @@
  */
 
 import { gzipSync } from "node:zlib";
+import { readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import {
   ocpGet,
   ocpDelete,
@@ -481,10 +483,22 @@ function getClusterDigest(cluster) {
   return d;
 }
 
+// Code-version component for chat cache keys. A new image (different
+// BUILD_HASH or package version) invalidates every reply cached by an older
+// build, so a fix never appears "not to take effect" because of stale cache.
+const CHAT_CACHE_VERSION = (() => {
+  try {
+    const v = JSON.parse(readFileSync(resolvePath(process.cwd(), "package.json"), "utf8")).version;
+    return `${v}-${process.env.BUILD_HASH || "0"}`;
+  } catch {
+    return process.env.BUILD_HASH || "0";
+  }
+})();
+
 function cacheKeyForChat(message, provider) {
   // Normalize whitespace + lowercase so trivial variants share the cache.
   const norm = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
-  return `chat:${provider || "none"}:${norm}`;
+  return `chat:${CHAT_CACHE_VERSION}:${provider || "none"}:${norm}`;
 }
 
 /**
@@ -14782,8 +14796,8 @@ export async function handleChatAPI(req, res) {
         const shortcut = tryShortcut(parsed, shortcutCtx, getPlatform());
         if (shortcut.handled) {
           const provider = "built-in";
+          // Deterministic live read — never cached, always reflects the cluster now.
           const payload = { reply: shortcut.reply, provider, contextKeys: [parsed.intent, parsed.resource].filter(Boolean) };
-          cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
           if (conversationId) {
             histAddMessage(conversationId, { role: "assistant", content: shortcut.reply, provider }).catch(() => {});
           }
@@ -14805,7 +14819,6 @@ export async function handleChatAPI(req, res) {
       const reply = buildHelpMessage();
       const provider = "built-in";
       const payload = { reply, provider, contextKeys: ["help"] };
-      cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
       if (conversationId) {
         histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
       }
@@ -15829,9 +15842,6 @@ export async function handleChatAPI(req, res) {
           provider,
           contextKeys: ["remoteCache", parsed.intent, parsed.resource].filter(Boolean),
         };
-        if (!isMutating) {
-          cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
-        }
         if (conversationId) {
           histAddMessage(conversationId, {
             role: "assistant",
@@ -15865,9 +15875,6 @@ export async function handleChatAPI(req, res) {
           provider,
           contextKeys: ["directCommand", parsed.intent, parsed.resource].filter(Boolean),
         };
-        if (!isMutating) {
-          cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
-        }
         if (conversationId) {
           histAddMessage(conversationId, {
             role: "assistant",
@@ -15897,7 +15904,6 @@ export async function handleChatAPI(req, res) {
           provider,
           contextKeys: ["listCommand", parsed.resource, parsed.scope].filter(Boolean),
         };
-        cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
         if (conversationId) {
           histAddMessage(conversationId, {
             role: "assistant",
