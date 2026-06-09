@@ -270,9 +270,16 @@ if [ "$CLI" = "oc" ]; then
   oc delete route agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
   oc delete route mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
 fi
-# Clean up stale deployments from prior naming schemes
+# Clean up stale resources from prior naming schemes (mcp-server, tcs-dashboard)
 $CLI delete deployment mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
 $CLI delete service mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete configmap mcp-server-config -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete secret mcp-server-secrets -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete serviceaccount mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete clusterrolebinding mcp-server-reader-binding --ignore-not-found 2>/dev/null || true
+$CLI delete clusterrolebinding mcp-server-remediator-binding --ignore-not-found 2>/dev/null || true
+$CLI delete clusterrole mcp-server-reader --ignore-not-found 2>/dev/null || true
+$CLI delete clusterrole mcp-server-remediator --ignore-not-found 2>/dev/null || true
 $CLI delete deployment tcs-dashboard -n "$NS" --ignore-not-found 2>/dev/null || true
 $CLI delete service tcs-dashboard -n "$NS" --ignore-not-found 2>/dev/null || true
 
