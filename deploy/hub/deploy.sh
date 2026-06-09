@@ -39,7 +39,7 @@ set -euo pipefail
 # Defaults
 # ---------------------------------------------------------------------------
 NS="${NAMESPACE:-openshift-mcp}"
-MCP_IMAGE="${MCP_IMAGE:-quay.io/karuppucs/openshift-mcp-server:latest}"
+MCP_IMAGE="${MCP_IMAGE:-quay.io/karuppucs/agentic-ai-server:latest}"
 DASHBOARD_IMAGE="${DASHBOARD_IMAGE:-quay.io/karuppucs/mcp-dashboard:latest}"
 BUILD=true
 GIT_PULL=true
@@ -168,11 +168,11 @@ if [ "$ACTION" = "rollback" ]; then
   echo "============================================"
   echo ""
   echo "Rolling back MCP server..."
-  $CLI rollout undo deployment/mcp-server -n "$NS"
+  $CLI rollout undo deployment/agentic-ai-server -n "$NS"
   echo "Rolling back dashboard..."
   $CLI rollout undo deployment/mcp-dashboard -n "$NS"
   echo "Waiting for rollout..."
-  $CLI rollout status deployment/mcp-server -n "$NS" --timeout=120s
+  $CLI rollout status deployment/agentic-ai-server -n "$NS" --timeout=120s
   $CLI rollout status deployment/mcp-dashboard -n "$NS" --timeout=120s
   echo ""
   echo "Rollback complete."
@@ -260,14 +260,14 @@ $CLI apply -f "$K8S_DIR/redis.yaml" 2>&1 | grep -v "is invalid" || true
 
 # 6. MCP Server deployment
 next "Deploying MCP server (API-only)..."
-sed -i "s|image:.*openshift-mcp-server:.*|image: ${MCP_IMAGE}|" "$K8S_DIR/deployment.yaml"
+sed -i "s|image:.*agentic-ai-server:.*|image: ${MCP_IMAGE}|" "$K8S_DIR/deployment.yaml"
 $CLI apply -f "$K8S_DIR/deployment.yaml"
 $CLI apply -f "$K8S_DIR/service.yaml"
-$CLI set image deployment/mcp-server mcp-server="$MCP_IMAGE" -n "$NS" 2>/dev/null || true
+$CLI set image deployment/agentic-ai-server agentic-ai-server="$MCP_IMAGE" -n "$NS" 2>/dev/null || true
 # MCP server is internal-only — remove any legacy external route from prior deploys.
 # All external traffic now enters through the dashboard route (which proxies /api, /sse, ...).
 if [ "$CLI" = "oc" ]; then
-  oc delete route mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+  oc delete route agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
 fi
 
 # 7. Dashboard deployment (separate pod — React + Nginx + 50Gi PVC)
@@ -286,10 +286,10 @@ $CLI set image deployment/mcp-dashboard dashboard="$DASHBOARD_IMAGE" -n "$NS" 2>
 
 # 8. Rollout and verify
 next "Rolling out and verifying..."
-$CLI rollout restart deployment/mcp-server -n "$NS"
+$CLI rollout restart deployment/agentic-ai-server -n "$NS"
 $CLI rollout restart deployment/mcp-dashboard -n "$NS"
 echo "  Waiting for MCP server..."
-$CLI rollout status deployment/mcp-server -n "$NS" --timeout=180s
+$CLI rollout status deployment/agentic-ai-server -n "$NS" --timeout=180s
 echo "  Waiting for Dashboard..."
 $CLI rollout status deployment/mcp-dashboard -n "$NS" --timeout=120s
 

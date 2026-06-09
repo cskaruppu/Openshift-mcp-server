@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * OpenShift MCP Server
+ * TCS Agentic AI Server
  * Model Context Protocol server for OpenShift Container Platform management
  * with ACM, Ansible Automation Platform, and ServiceNow integration.
  */

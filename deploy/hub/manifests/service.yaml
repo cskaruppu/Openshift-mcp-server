@@ -1,18 +1,18 @@
 # The MCP server is internal-only. It is reached by the dashboard pod over the
-# cluster-internal service DNS (mcp-server:3000), which nginx reverse-proxies for
+# cluster-internal service DNS (agentic-ai-server:3000), which nginx reverse-proxies for
 # /api, /sse, /message, /mcp, etc. No external Route is exposed for the MCP server —
 # all external traffic enters through the dashboard Route.
 apiVersion: v1
 kind: Service
 metadata:
-  name: mcp-server
+  name: agentic-ai-server
   namespace: openshift-mcp
   labels:
-    app.kubernetes.io/name: openshift-mcp-server
-    app.kubernetes.io/part-of: mcp-ai-assistant
+    app.kubernetes.io/name: agentic-ai-server
+    app.kubernetes.io/part-of: tcs-agentic-ai
 spec:
   selector:
-    app.kubernetes.io/name: openshift-mcp-server
+    app.kubernetes.io/name: agentic-ai-server
   ports:
     - port: 3000
       targetPort: 3000

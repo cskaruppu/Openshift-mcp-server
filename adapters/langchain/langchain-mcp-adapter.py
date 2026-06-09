@@ -4,7 +4,7 @@ LangChain + TCS Agentic AI via the MCP adapter.
 Run:
     pip install langchain langchain-anthropic langchain-mcp-adapters
     export ANTHROPIC_API_KEY=...
-    export TCS_AGENTIC_URL="https://mcp-server-openshift-mcp.apps.openshift.caaslab.local"
+    export TCS_AGENTIC_URL="https://agentic-ai-server-openshift-mcp.apps.openshift.caaslab.local"
     python langchain-mcp-adapter.py
 """
 

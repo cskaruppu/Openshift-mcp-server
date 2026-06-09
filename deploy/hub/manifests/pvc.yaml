@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: mcp-server-data
+  name: agentic-ai-server-data
   namespace: openshift-mcp
   labels:
-    app.kubernetes.io/name: openshift-mcp-server
-    app.kubernetes.io/part-of: mcp-ai-assistant
+    app.kubernetes.io/name: agentic-ai-server
+    app.kubernetes.io/part-of: tcs-agentic-ai
 spec:
   storageClassName: vxflexos-xfs
   accessModes:

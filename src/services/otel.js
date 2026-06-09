@@ -23,7 +23,7 @@ let _errorCount = 0;
 let _durationSum = 0;
 
 let _endpoint = null;
-let _serviceName = "openshift-mcp-server";
+let _serviceName = "agentic-ai-server";
 let _samplingRate = 1.0;
 
 /** Buffer of completed spans waiting to be exported. */
@@ -78,7 +78,7 @@ async function flushExport() {
         },
         scopeSpans: [
           {
-            scope: { name: "openshift-mcp-server" },
+            scope: { name: "agentic-ai-server" },
             spans: batch.map(spanToOtlp),
           },
         ],
@@ -158,7 +158,7 @@ function recentTraces(n = 20) {
  * @param {object} opts
  * @param {string} [opts.endpoint]      OTLP HTTP endpoint (e.g. http://localhost:4318).
  *                                      Falls back to OTEL_EXPORTER_OTLP_ENDPOINT env var.
- * @param {string} [opts.serviceName]   Logical service name. Default: openshift-mcp-server.
+ * @param {string} [opts.serviceName]   Logical service name. Default: agentic-ai-server.
  * @param {number} [opts.samplingRate]  Fraction of spans to keep (0..1). Default: 1.0.
  */
 export function initTracing(opts = {}) {

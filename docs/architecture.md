@@ -175,7 +175,7 @@ flowchart TB
         subgraph INGRESS["🌐 Ingress Layer"]
             direction LR
             DNS["📡 DNS<br/><i>*.apps.cluster</i>"]
-            ROUTE["🛣️ Route<br/><i>mcp-server</i><br/><i>TLS: edge</i>"]
+            ROUTE["🛣️ Route<br/><i>agentic-ai-server</i><br/><i>TLS: edge</i>"]
             SVC["⚖️ Service<br/><i>ClusterIP:3000</i>"]
         end
 
@@ -184,7 +184,7 @@ flowchart TB
 
             subgraph COMPUTE["🚀 Compute"]
                 direction LR
-                DEP["📦 Deployment: mcp-server<br/><i>Image: quay.io/karuppucs/openshift-mcp-server:latest</i><br/><i>Replicas: 1 &nbsp;•&nbsp; Port: 3000</i><br/><i>SA: mcp-server (cluster-admin RBAC)</i><br/><i>Liveness: /healthz &nbsp;•&nbsp; Readiness: /readyz</i>"]
+                DEP["📦 Deployment: agentic-ai-server<br/><i>Image: quay.io/karuppucs/agentic-ai-server:latest</i><br/><i>Replicas: 1 &nbsp;•&nbsp; Port: 3000</i><br/><i>SA: agentic-ai-server (cluster-admin RBAC)</i><br/><i>Liveness: /healthz &nbsp;•&nbsp; Readiness: /readyz</i>"]
             end
 
             subgraph STATEFUL["🗄️ Stateful Services"]
@@ -197,7 +197,7 @@ flowchart TB
                 direction LR
                 CM["📋 ConfigMap<br/><i>Environment vars</i>"]
                 SEC["🔑 Secret<br/><i>API keys,</i><br/><i>DB credentials</i>"]
-                SA["👤 ServiceAccount<br/><i>mcp-server</i><br/><i>+ ClusterRoleBinding</i>"]
+                SA["👤 ServiceAccount<br/><i>agentic-ai-server</i><br/><i>+ ClusterRoleBinding</i>"]
             end
 
             subgraph NETPOL["🔒 Network Security"]
@@ -319,7 +319,7 @@ flowchart LR
 | **ITSM** | ServiceNow (Change Requests, Incidents) |
 | **Automation** | Ansible Automation Platform |
 | **Monitoring** | Prometheus, AlertManager |
-| **Container** | quay.io/karuppucs/openshift-mcp-server |
+| **Container** | quay.io/karuppucs/agentic-ai-server |
 
 ---
 

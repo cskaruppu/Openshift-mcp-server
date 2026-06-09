@@ -157,10 +157,10 @@ if [ "$DEPLOY" = true ] && [ "$PUSH" = true ]; then
   HUB_URL="${HUB_URL:-}"
   if [ -z "$HUB_URL" ]; then
     if command -v oc &>/dev/null; then
-      HUB_URL=$(oc get route mcp-server -n openshift-mcp -o jsonpath='https://{.spec.host}' 2>/dev/null || echo "")
+      HUB_URL=$(oc get route agentic-ai-server -n openshift-mcp -o jsonpath='https://{.spec.host}' 2>/dev/null || echo "")
     fi
     if [ -z "$HUB_URL" ] && command -v kubectl &>/dev/null; then
-      HUB_URL=$(kubectl get ingress mcp-server -n openshift-mcp -o jsonpath='https://{.spec.rules[0].host}' 2>/dev/null || echo "")
+      HUB_URL=$(kubectl get ingress agentic-ai-server -n openshift-mcp -o jsonpath='https://{.spec.rules[0].host}' 2>/dev/null || echo "")
     fi
   fi
 

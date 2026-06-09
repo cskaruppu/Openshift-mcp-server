@@ -7,7 +7,7 @@ Run:
     az login
     export FOUNDRY_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/api/projects/your-project"
     export FOUNDRY_MODEL="gpt-4o-mini"
-    export TCS_AGENTIC_URL="https://mcp-server-openshift-mcp.apps.openshift.caaslab.local"
+    export TCS_AGENTIC_URL="https://agentic-ai-server-openshift-mcp.apps.openshift.caaslab.local"
     python single-agent.py
 """
 

@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: mcp-server-config
+  name: agentic-ai-server-config
   namespace: openshift-mcp
 data:
   MCP_MODE: "hub"

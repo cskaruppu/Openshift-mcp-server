@@ -20,7 +20,7 @@ info:
     name: Proprietary
 
 servers:
-  - url: https://mcp-server-openshift-mcp.apps.openshift.caaslab.local
+  - url: https://agentic-ai-server-openshift-mcp.apps.openshift.caaslab.local
     description: On-prem OpenShift cluster
   - url: http://localhost:8080
     description: Local development

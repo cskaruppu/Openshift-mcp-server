@@ -1097,7 +1097,7 @@ function formatApiError(err, resourceType) {
       `**To fix**, apply the updated RBAC manifest:\n` +
       `SEC_FIX_CMD:::oc apply -f k8s/serviceaccount.yaml\n\n` +
       `Or grant access manually:\n` +
-      `SEC_FIX_CMD:::oc adm policy add-cluster-role-to-user mcp-server-reader system:serviceaccount:openshift-mcp:mcp-server`;
+      `SEC_FIX_CMD:::oc adm policy add-cluster-role-to-user agentic-ai-server-reader system:serviceaccount:openshift-mcp:agentic-ai-server`;
   }
   if (msg.includes("OCP API 404") || msg.includes("the server doesn't have a resource type")) {
     const resLabel = resourceType || "resource";

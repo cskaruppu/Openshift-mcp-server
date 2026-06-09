@@ -371,7 +371,7 @@ export function registerNotificationTools(server) {
           message: "If you can read this, the channel is wired up correctly.",
           severity: "info",
           fields: [
-            { name: "Source", value: "openshift-mcp-server" },
+            { name: "Source", value: "agentic-ai-server" },
             { name: "Time", value: new Date().toISOString() },
           ],
           dedupKey: "mcp-test",

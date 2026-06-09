@@ -1,5 +1,5 @@
 {
-  "name": "openshift-mcp-server",
+  "name": "agentic-ai-server",
   "version": "1.0.0",
   "description": "TCS KubeNexus AI — OpenShift Intelligence Platform with MCP Hub, multi-server orchestration, and enterprise integrations",
   "type": "module",

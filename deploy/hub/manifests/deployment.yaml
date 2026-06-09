@@ -1,23 +1,23 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mcp-server
+  name: agentic-ai-server
   namespace: openshift-mcp
   labels:
-    app.kubernetes.io/name: openshift-mcp-server
+    app.kubernetes.io/name: agentic-ai-server
     app.kubernetes.io/component: server
-    app.kubernetes.io/part-of: mcp-ai-assistant
+    app.kubernetes.io/part-of: tcs-agentic-ai
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: openshift-mcp-server
+      app.kubernetes.io/name: agentic-ai-server
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: openshift-mcp-server
+        app.kubernetes.io/name: agentic-ai-server
     spec:
-      serviceAccountName: mcp-server
+      serviceAccountName: agentic-ai-server
       securityContext:
         runAsNonRoot: true
         seccompProfile:
@@ -33,17 +33,17 @@ spec:
           - name: ndots
             value: "2"
       containers:
-        - name: mcp-server
-          image: quay.io/karuppucs/openshift-mcp-server:latest
+        - name: agentic-ai-server
+          image: quay.io/karuppucs/agentic-ai-server:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
               name: http
           envFrom:
             - configMapRef:
-                name: mcp-server-config
+                name: agentic-ai-server-config
             - secretRef:
-                name: mcp-server-secrets
+                name: agentic-ai-server-secrets
           env:
             - name: NODE_EXTRA_CA_CERTS
               value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
@@ -101,6 +101,6 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: mcp-server-data
+            claimName: agentic-ai-server-data
         - name: tmp
           emptyDir: {}

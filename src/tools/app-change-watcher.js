@@ -39,7 +39,7 @@ async function saveToConfigMap(nsList) {
     try {
       await ocpPost(`/api/v1/namespaces/${ns}/configmaps`, {
         apiVersion: "v1", kind: "ConfigMap",
-        metadata: { name: CM_NAME, namespace: ns, labels: { app: "openshift-mcp-server", component: "app-change-watcher" } },
+        metadata: { name: CM_NAME, namespace: ns, labels: { app: "agentic-ai-server", component: "app-change-watcher" } },
         data,
       });
       return true;

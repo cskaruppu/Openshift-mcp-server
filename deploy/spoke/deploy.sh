@@ -47,7 +47,7 @@ CLUSTER_NAME=""
 PLATFORM="k8s"
 NS=""
 TLS_SKIP=false
-IMAGE="${IMAGE:-quay.io/karuppucs/openshift-mcp-server:latest}"
+IMAGE="${IMAGE:-quay.io/karuppucs/agentic-ai-server:latest}"
 ACTION="deploy"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -94,7 +94,7 @@ if [ -z "$NS" ]; then
   fi
 fi
 
-DEPLOY_NAME="mcp-server"
+DEPLOY_NAME="agentic-ai-server"
 
 # ---------------------------------------------------------------------------
 # Status
@@ -115,7 +115,7 @@ if [ "$ACTION" = "status" ]; then
   $CLI get svc -n "$NS" 2>/dev/null || echo "  No services found"
   echo ""
   # Health check
-  POD=$($CLI get pods -n "$NS" -l app.kubernetes.io/name=openshift-mcp-server -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+  POD=$($CLI get pods -n "$NS" -l app.kubernetes.io/name=agentic-ai-server -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
   if [ -n "$POD" ]; then
     echo "--- Spoke Health ---"
     $CLI exec "$POD" -n "$NS" -- wget -qO- http://localhost:3000/healthz 2>/dev/null || echo "  Cannot reach health endpoint"
@@ -154,11 +154,11 @@ if [ "$ACTION" = "uninstall" ]; then
   fi
   $CLI delete deployment "$DEPLOY_NAME" -n "$NS" --ignore-not-found
   $CLI delete service "$DEPLOY_NAME" -n "$NS" --ignore-not-found
-  $CLI delete configmap mcp-server-config -n "$NS" --ignore-not-found
-  $CLI delete secret mcp-server-secrets -n "$NS" --ignore-not-found
-  $CLI delete serviceaccount mcp-server -n "$NS" --ignore-not-found
-  $CLI delete clusterrolebinding mcp-server-reader-binding --ignore-not-found
-  $CLI delete clusterrole mcp-server-reader --ignore-not-found
+  $CLI delete configmap agentic-ai-server-config -n "$NS" --ignore-not-found
+  $CLI delete secret agentic-ai-server-secrets -n "$NS" --ignore-not-found
+  $CLI delete serviceaccount agentic-ai-server -n "$NS" --ignore-not-found
+  $CLI delete clusterrolebinding agentic-ai-server-reader-binding --ignore-not-found
+  $CLI delete clusterrole agentic-ai-server-reader --ignore-not-found
   if [ "$PLATFORM" = "openshift" ]; then
     $CLI delete route "$DEPLOY_NAME" -n "$NS" --ignore-not-found
   fi
@@ -213,8 +213,8 @@ kind: Namespace
 metadata:
   name: $NS
   labels:
-    app.kubernetes.io/name: openshift-mcp-server
-    app.kubernetes.io/part-of: mcp-ai-assistant
+    app.kubernetes.io/name: agentic-ai-server
+    app.kubernetes.io/part-of: tcs-agentic-ai
 EOF
 
 # 2. ServiceAccount + RBAC (same as hub — full cluster-reader)
@@ -223,15 +223,15 @@ cat <<EOF | $CLI apply -f -
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: mcp-server
+  name: agentic-ai-server
   namespace: $NS
   labels:
-    app.kubernetes.io/name: openshift-mcp-server
+    app.kubernetes.io/name: agentic-ai-server
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: mcp-server-reader
+  name: agentic-ai-server-reader
 rules:
   - apiGroups: [""]
     resources: [nodes, pods, pods/log, services, namespaces, events, resourcequotas,
@@ -345,14 +345,14 @@ fi)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: mcp-server-reader-binding
+  name: agentic-ai-server-reader-binding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: mcp-server-reader
+  name: agentic-ai-server-reader
 subjects:
   - kind: ServiceAccount
-    name: mcp-server
+    name: agentic-ai-server
     namespace: $NS
 EOF
 
@@ -362,7 +362,7 @@ cat <<EOF | $CLI apply -f -
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: mcp-server-config
+  name: agentic-ai-server-config
   namespace: $NS
 data:
   MCP_MODE: "spoke"
@@ -380,7 +380,7 @@ data:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: mcp-server-secrets
+  name: agentic-ai-server-secrets
   namespace: $NS
 type: Opaque
 stringData:
@@ -396,28 +396,28 @@ metadata:
   name: $DEPLOY_NAME
   namespace: $NS
   labels:
-    app.kubernetes.io/name: openshift-mcp-server
+    app.kubernetes.io/name: agentic-ai-server
     app.kubernetes.io/component: spoke
-    app.kubernetes.io/part-of: mcp-ai-assistant
+    app.kubernetes.io/part-of: tcs-agentic-ai
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: openshift-mcp-server
+      app.kubernetes.io/name: agentic-ai-server
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: openshift-mcp-server
+        app.kubernetes.io/name: agentic-ai-server
         tcs.com/mcp-mode: spoke
         tcs.com/cluster-name: "$CLUSTER_NAME"
     spec:
-      serviceAccountName: mcp-server
+      serviceAccountName: agentic-ai-server
       securityContext:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: mcp-server
+        - name: agentic-ai-server
           image: $IMAGE
           imagePullPolicy: Always
           ports:
@@ -425,9 +425,9 @@ spec:
               name: http
           envFrom:
             - configMapRef:
-                name: mcp-server-config
+                name: agentic-ai-server-config
             - secretRef:
-                name: mcp-server-secrets
+                name: agentic-ai-server-secrets
           env:
             - name: NODE_EXTRA_CA_CERTS
               value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
@@ -474,10 +474,10 @@ metadata:
   name: $DEPLOY_NAME
   namespace: $NS
   labels:
-    app.kubernetes.io/name: openshift-mcp-server
+    app.kubernetes.io/name: agentic-ai-server
 spec:
   selector:
-    app.kubernetes.io/name: openshift-mcp-server
+    app.kubernetes.io/name: agentic-ai-server
   ports:
     - port: 3000
       targetPort: 3000
@@ -493,7 +493,7 @@ metadata:
   name: $DEPLOY_NAME
   namespace: $NS
   labels:
-    app.kubernetes.io/name: openshift-mcp-server
+    app.kubernetes.io/name: agentic-ai-server
   annotations:
     haproxy.router.openshift.io/timeout: 600s
     haproxy.router.openshift.io/timeout-tunnel: 600s
@@ -528,7 +528,7 @@ fi
 
 # 6. Update ConfigMap with spoke external URL and restart
 next "Configuring spoke external URL and restarting..."
-$CLI patch configmap mcp-server-config -n "$NS" --type merge -p "{\"data\":{\"SPOKE_EXTERNAL_URL\":\"$SPOKE_URL\"}}"
+$CLI patch configmap agentic-ai-server-config -n "$NS" --type merge -p "{\"data\":{\"SPOKE_EXTERNAL_URL\":\"$SPOKE_URL\"}}"
 $CLI rollout restart deployment/"$DEPLOY_NAME" -n "$NS"
 $CLI rollout status deployment/"$DEPLOY_NAME" -n "$NS" --timeout=120s
 
@@ -541,7 +541,7 @@ if echo "$RESP" | grep -q "$CLUSTER_NAME"; then
   echo "  Spoke '$CLUSTER_NAME' registered with hub successfully!"
 else
   echo "  Spoke deployed but hub registration may be pending."
-  echo "  Check spoke logs: $CLI logs -n $NS -l app.kubernetes.io/name=openshift-mcp-server --tail=30"
+  echo "  Check spoke logs: $CLI logs -n $NS -l app.kubernetes.io/name=agentic-ai-server --tail=30"
   echo ""
   echo "  Common issues:"
   echo "    - Hub unreachable from this cluster (network/firewall)"
@@ -572,5 +572,5 @@ echo " Management:"
 echo "   ./deploy/spoke/deploy.sh --status               # Check spoke status"
 echo "   ./deploy/spoke/deploy.sh --rollback              # Rollback spoke"
 echo "   ./deploy/spoke/deploy.sh --uninstall             # Remove spoke"
-echo "   $CLI logs -n $NS -l app.kubernetes.io/name=openshift-mcp-server -f"
+echo "   $CLI logs -n $NS -l app.kubernetes.io/name=agentic-ai-server -f"
 echo "============================================"

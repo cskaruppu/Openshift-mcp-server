@@ -167,7 +167,7 @@ export function registerGitOpsTools(server) {
       try {
         const syncPayload = {
           operation: {
-            initiatedBy: { username: "mcp-server" },
+            initiatedBy: { username: "agentic-ai-server" },
             sync: {
               ...(revision ? { revision } : {}),
               prune: prune || false,
@@ -355,7 +355,7 @@ export function registerGitOpsTools(server) {
         // Then trigger a sync at the new revision
         const syncPatch = {
           operation: {
-            initiatedBy: { username: "mcp-server", automated: false },
+            initiatedBy: { username: "agentic-ai-server", automated: false },
             sync: {
               revision,
               prune: false,

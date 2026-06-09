@@ -553,7 +553,7 @@ curl -X POST https://<hub-url>/api/spoke/register \
 ```bash
 helm install tcs-agentic-ai ./chart/openshift-mcp \
   --set mcpMode=hub \
-  --set image.repository=quay.io/your-org/openshift-mcp-server \
+  --set image.repository=quay.io/your-org/agentic-ai-server \
   --set image.tag=latest
 ```
 
@@ -700,7 +700,7 @@ API-only Node.js server. No dashboard files.
 ```
 
 ```bash
-podman build -t quay.io/your-org/openshift-mcp-server:latest .
+podman build -t quay.io/your-org/agentic-ai-server:latest .
 ```
 
 ### Dashboard (`console/Dockerfile`)
