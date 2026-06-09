@@ -28,6 +28,8 @@
 #   --hub-url URL          Hub server URL (required for deploy)
 #   --cluster-name NAME    Name for this cluster (required for deploy)
 #   --platform PLATFORM    openshift | rancher | eks | aks | gke | k8s (default: k8s)
+#   --spoke-url URL        Override spoke URL that the hub will use to reach this cluster
+#                          (use when hub can't resolve the spoke's Route hostname)
 #   --tls-skip             Skip TLS verification for hub connection
 #   -n, --namespace NS     Namespace (default: openshift-mcp for OpenShift, tcs-agentic-system otherwise)
 #   --image IMAGE          Override image (default: same as hub image)
@@ -53,6 +55,7 @@ CLUSTER_NAME=""
 PLATFORM="k8s"
 NS=""
 TLS_SKIP=false
+SPOKE_URL_OVERRIDE=""
 IMAGE="${IMAGE:-quay.io/karuppucs/openshift-mcp-server:latest}"
 ACTION="deploy"
 
@@ -80,6 +83,7 @@ while [[ $# -gt 0 ]]; do
     --hub-namespace)  HUB_NS="$2"; shift 2 ;;
     --cluster-name)   CLUSTER_NAME="$2"; shift 2 ;;
     --platform)       PLATFORM="$2"; shift 2 ;;
+    --spoke-url)      SPOKE_URL_OVERRIDE="$2"; shift 2 ;;
     --tls-skip)       TLS_SKIP=true; shift ;;
     --image)          IMAGE="$2"; shift 2 ;;
     -n|--namespace)   NS="$2"; shift 2 ;;
@@ -566,12 +570,65 @@ echo "--- Pod Status ---"
 $CLI get pods -n "$NS" -o wide
 echo ""
 
-# Detect external URL
-if [ "$CLI" = "oc" ]; then
-  SPOKE_URL=$(oc get route "$DEPLOY_NAME" -n "$NS" -o jsonpath='https://{.spec.host}' 2>/dev/null || echo "")
-fi
-if [ -z "$SPOKE_URL" ]; then
-  SPOKE_URL="http://${DEPLOY_NAME}.${NS}.svc.cluster.local:3000"
+# Detect external URL that the HUB will use to reach this spoke.
+# Priority: --spoke-url override > Route hostname > internal service DNS
+if [ -n "$SPOKE_URL_OVERRIDE" ]; then
+  SPOKE_URL="$SPOKE_URL_OVERRIDE"
+  echo "  Using provided spoke URL: $SPOKE_URL"
+else
+  if [ "$CLI" = "oc" ]; then
+    SPOKE_URL=$(oc get route "$DEPLOY_NAME" -n "$NS" -o jsonpath='https://{.spec.host}' 2>/dev/null || echo "")
+  fi
+  if [ -z "$SPOKE_URL" ]; then
+    SPOKE_URL="http://${DEPLOY_NAME}.${NS}.svc.cluster.local:3000"
+  fi
+  echo "  Auto-detected spoke URL: $SPOKE_URL"
+
+  # Cross-cluster DNS check: extract hostname and verify the hub can resolve it
+  SPOKE_HOST=$(echo "$SPOKE_URL" | sed 's|https\?://||' | cut -d/ -f1 | cut -d: -f1)
+  HUB_HOST=$(echo "$HUB_URL" | sed 's|https\?://||' | cut -d/ -f1 | cut -d: -f1)
+  SPOKE_DOMAIN=$(echo "$SPOKE_HOST" | sed 's/^[^.]*\.//')
+  HUB_DOMAIN=$(echo "$HUB_HOST" | sed 's/^[^.]*\.//')
+  if [ "$SPOKE_DOMAIN" != "$HUB_DOMAIN" ]; then
+    echo ""
+    echo "  WARNING: Spoke and hub are on different DNS domains:"
+    echo "    Hub:   $HUB_DOMAIN"
+    echo "    Spoke: $SPOKE_DOMAIN"
+    echo ""
+    echo "  The hub may not be able to resolve '$SPOKE_HOST'."
+    echo "  If dashboard shows 502/ENOTFOUND errors, redeploy with:"
+    echo "    --spoke-url http://<spoke-node-ip>:<nodeport>"
+    echo "  or add DNS entries for the spoke domain on the hub cluster."
+    echo ""
+
+    # Try to get a routable IP address as fallback
+    SPOKE_NODE_IP=$($CLI get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || echo "")
+    if [ -n "$SPOKE_NODE_IP" ]; then
+      # Create a NodePort service for cross-cluster access
+      echo "  Creating NodePort service for cross-cluster access..."
+      cat <<NPEOF | $CLI apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentic-ai-server-nodeport
+  namespace: $NS
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: agentic-ai-server
+  ports:
+    - port: 3000
+      targetPort: 3000
+      protocol: TCP
+      name: http
+NPEOF
+      NP=$($CLI get svc agentic-ai-server-nodeport -n "$NS" -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "")
+      if [ -n "$NP" ]; then
+        SPOKE_URL="http://${SPOKE_NODE_IP}:${NP}"
+        echo "  Using NodePort URL: $SPOKE_URL"
+      fi
+    fi
+  fi
 fi
 
 # 6. Update ConfigMap with spoke external URL and restart
@@ -595,6 +652,7 @@ else
   echo "    - Hub unreachable from this cluster (network/firewall)"
   echo "    - TLS errors: add --tls-skip flag"
   echo "    - DNS: verify hub hostname resolves from spoke cluster"
+  echo "    - 502 ENOTFOUND: hub can't resolve spoke URL — use --spoke-url http://<ip>:<port>"
 fi
 
 echo ""
