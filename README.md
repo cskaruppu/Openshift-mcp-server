@@ -39,10 +39,10 @@ Pods you'll see on the hub cluster, in plain terms:
 
 | Pod | In plain words |
 |---|---|
-| `mcp-dashboard` | **The face** — the web console users open |
+| `agentic-ai-dashboard` | **The face** — the web console users open |
 | `agentic-ai-server` | **The brain** — API, login, routing; the console's backend |
-| `mcp-postgres` / `mcp-redis` | **The memory** — database (PVC) + cache |
-| `mcp-server` | **The hands** — this cluster's worker; every cluster runs one |
+| `mcp-postgres` / `agentic-ai-redis` | **The memory** — database (PVC) + cache |
+| `agentic-ai-mcp-server` | **The hands** — this cluster's worker; every cluster runs one |
 
 Image updates need no scripts: outdated clusters show an **"Update Available"** badge — click ⋮ → **Redeploy** on the cluster card.
 
@@ -492,7 +492,7 @@ flowchart LR
     subgraph HUB_DEPLOY["🏢 Hub Cluster — Management Bundle + MCP Server"]
         direction TB
         H1["Control Plane Pod<br/><i>MCP_MODE=control</i>"]
-        H2["Dashboard Pod<br/><i>React + Nginx + 50Gi PVC</i>"]
+        H2["Dashboard Pod<br/><i>React + Nginx, stateless</i>"]
         H3[("PostgreSQL<br/><i>PVC</i>")]
         H4[("Redis")]
         H5["MCP Server Pod<br/><i>MCP_MODE=spoke<br/>registered as hub-cluster</i>"]
@@ -548,7 +548,7 @@ oc get route mcp-dashboard -n openshift-mcp -o jsonpath='{.spec.host}'
 
 # Check all pods
 oc get pods -n openshift-mcp
-# Expected: agentic-ai-server (control plane), mcp-dashboard, mcp-postgres, mcp-redis
+# Expected: agentic-ai-server (control plane), agentic-ai-dashboard, mcp-postgres, agentic-ai-redis
 ```
 
 ### Deploy the MCP Server (every cluster, including the hub)
@@ -575,7 +575,7 @@ Run on each cluster — deploys only the stateless MCP server (no dashboard, no 
 
 ```mermaid
 flowchart LR
-    A["1️⃣ Create Namespace<br/><i>openshift-mcp<br/>+ RBAC (mcp-server)</i>"] --> B["2️⃣ Migrate<br/><i>remove old installs<br/>(control plane protected)</i>"]
+    A["1️⃣ Create Namespace<br/><i>openshift-mcp<br/>+ RBAC</i>"] --> B["2️⃣ Migrate<br/><i>remove old installs<br/>(control plane protected)</i>"]
     B --> C["3️⃣ Deploy MCP Server<br/><i>MCP_MODE=spoke<br/>stateless, no PVC</i>"]
     C --> D["4️⃣ Auto-Detect URL<br/><i>Route / NodePort<br/>reach-back URL</i>"]
     D --> E["5️⃣ Register with Hub<br/><i>POST /api/spoke/register<br/>+ heartbeat loop</i>"]
@@ -713,7 +713,7 @@ openshift-mcp-server/
 │   │   ├── deploy.sh                    # Management Bundle: Dashboard + Control Plane
 │   │   │                                #   + PostgreSQL + Redis (deployed ONCE, PVCs)
 │   │   └── manifests/                   # namespace, RBAC, configmap, postgres,
-│   │       │                            #   redis, dashboard-deployment (50Gi PVC)...
+│   │       │                            #   redis, dashboard-deployment...
 │   │       └── dashboard-deployment.yaml
 │   └── mcp/
 │       └── deploy.sh                    # MCP server: stateless pod, run on EVERY
@@ -774,8 +774,8 @@ React SPA served by Nginx. Reverse proxies API calls to the MCP server.
 │  nginx:1.27-alpine                  │
 │  Non-root (nginx user)              │
 │  Port 8080                          │
-│  Proxies /api/* → mcp-server:3000   │
-│  Proxies /sse   → mcp-server:3000   │
+│  Proxies /api/* → control plane:3000│
+│  Proxies /sse   → control plane:3000│
 │  SPA fallback: try_files → index    │
 └─────────────────────────────────────┘
 ```

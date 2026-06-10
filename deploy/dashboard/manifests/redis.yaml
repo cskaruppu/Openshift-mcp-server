@@ -17,10 +17,12 @@ spec:
       port: 6379
       targetPort: 6379
 ---
+# Deployment named agentic-ai-* so all pods read as one product family.
+# The Service keeps the stable "mcp-redis" name (REDIS_URL references it).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mcp-redis
+  name: agentic-ai-redis
   namespace: openshift-mcp
   labels:
     app.kubernetes.io/name: mcp-redis

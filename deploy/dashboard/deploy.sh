@@ -6,7 +6,7 @@
 # Deploys the complete management plane as ONE unit:
 #
 #   ┌────────────── Management Bundle ───────────────┐
-#   │  Dashboard (React + nginx)    — UI + 50Gi PVC  │
+#   │  Dashboard (React + nginx)    — stateless UI   │
 #   │  Control Plane (MCP_MODE=control) — API + auth │
 #   │  PostgreSQL (StatefulSet PVC) — all state      │
 #   │  Redis                        — LLM reply cache│
@@ -178,10 +178,10 @@ if [ "$ACTION" = "rollback" ]; then
   echo "Rolling back control plane..."
   $CLI rollout undo deployment/agentic-ai-server -n "$NS"
   echo "Rolling back dashboard..."
-  $CLI rollout undo deployment/mcp-dashboard -n "$NS"
+  $CLI rollout undo deployment/agentic-ai-dashboard -n "$NS"
   echo "Waiting for rollout..."
   $CLI rollout status deployment/agentic-ai-server -n "$NS" --timeout=120s
-  $CLI rollout status deployment/mcp-dashboard -n "$NS" --timeout=120s
+  $CLI rollout status deployment/agentic-ai-dashboard -n "$NS" --timeout=120s
   echo ""
   echo "Rollback complete."
   $CLI get pods -n "$NS" -o wide
@@ -205,7 +205,7 @@ echo " Runtime         : ${RUNTIME:-'(none — build disabled)'}"
 echo ""
 echo " Components (deployed once, persisted on PVCs):"
 echo "   [1] Control Plane — API + auth + federation routing (stateless)"
-echo "   [2] Dashboard     — React + Nginx (50Gi PVC)"
+echo "   [2] Dashboard     — React + Nginx (stateless UI)"
 echo "   [3] PostgreSQL    — all state (StatefulSet PVC)"
 echo "   [4] Redis         — LLM reply cache"
 echo ""
@@ -273,6 +273,12 @@ $CLI delete service tcs-dashboard -n "$NS" --ignore-not-found 2>/dev/null || tru
 $CLI delete deployment mcp-hub-agent -n "$NS" --ignore-not-found 2>/dev/null || true
 $CLI delete service mcp-hub-agent -n "$NS" --ignore-not-found 2>/dev/null || true
 $CLI delete configmap mcp-hub-agent-config -n "$NS" --ignore-not-found 2>/dev/null || true
+# Old deployment names (renamed to the agentic-ai-* family). Services, the
+# Route, and the postgres StatefulSet keep their stable names.
+$CLI delete deployment mcp-dashboard -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete deployment mcp-redis -n "$NS" --ignore-not-found 2>/dev/null || true
+# Old unused dashboard PVC (the dashboard is stateless; state is in PostgreSQL)
+$CLI delete pvc mcp-dashboard-data -n "$NS" --ignore-not-found 2>/dev/null || true
 
 if [ "$NS" != "openshift-mcp" ]; then
   echo "  (Patching manifests for namespace: $NS)"
@@ -342,8 +348,8 @@ fi
 
 # 6. Persistent storage and data stores
 next "Deploying PostgreSQL and Redis..."
-# Persistence lives here: PostgreSQL's StatefulSet volumeClaimTemplate and the
-# dashboard's 50Gi PVC. MCP server pods are stateless and carry no PVC.
+# Persistence lives here: PostgreSQL's StatefulSet volumeClaimTemplate.
+# Dashboard and MCP server pods are stateless and carry no PVC.
 $CLI apply -f "$K8S_DIR/postgres.yaml" 2>&1 | grep -v "is invalid" || true
 $CLI apply -f "$K8S_DIR/redis.yaml" 2>&1 | grep -v "is invalid" || true
 
@@ -360,7 +366,7 @@ if [ "$CLI" = "oc" ]; then
   oc delete route agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
 fi
 
-# 8. Dashboard deployment (separate pod — React + Nginx + 50Gi PVC)
+# 8. Dashboard deployment (separate pod — React + Nginx, stateless)
 #    Applies deploy/dashboard/manifests/dashboard-deployment.yaml, which carries the
 #    PersistentVolumeClaim (persistence) + OpenShift-safe volume mounts
 #    (/tmp, /var/cache/nginx, /var/run) so Nginx runs under a random UID.
@@ -372,16 +378,16 @@ else
   # Non-OpenShift: apply everything except the Route (Ingress would be set up separately)
   $CLI apply -f "$K8S_DIR/dashboard-deployment.yaml" 2>&1 | grep -v 'route.openshift.io' || true
 fi
-$CLI set image deployment/mcp-dashboard dashboard="$DASHBOARD_IMAGE" -n "$NS" 2>/dev/null || true
+$CLI set image deployment/agentic-ai-dashboard dashboard="$DASHBOARD_IMAGE" -n "$NS" 2>/dev/null || true
 
 # 9. Rollout and verify
 next "Rolling out and verifying..."
 $CLI rollout restart deployment/agentic-ai-server -n "$NS"
-$CLI rollout restart deployment/mcp-dashboard -n "$NS"
+$CLI rollout restart deployment/agentic-ai-dashboard -n "$NS"
 echo "  Waiting for Control Plane..."
 $CLI rollout status deployment/agentic-ai-server -n "$NS" --timeout=180s
 echo "  Waiting for Dashboard..."
-$CLI rollout status deployment/mcp-dashboard -n "$NS" --timeout=120s
+$CLI rollout status deployment/agentic-ai-dashboard -n "$NS" --timeout=120s
 
 echo ""
 echo "--- Pod Status ---"
@@ -400,7 +406,7 @@ echo "============================================"
 echo ""
 echo " Deployed (once — MCP server refreshes never touch this bundle):"
 echo "   ✓ Control Plane : $MCP_IMAGE${BUILD_HASH:+ (build $BUILD_HASH)}"
-echo "   ✓ Dashboard     : $DASHBOARD_IMAGE (50Gi PVC)"
+echo "   ✓ Dashboard     : $DASHBOARD_IMAGE"
 echo "   ✓ PostgreSQL    : all state — settings, chats, audit, incidents, KB (PVC)"
 echo "   ✓ Redis         : LLM reply cache"
 echo ""

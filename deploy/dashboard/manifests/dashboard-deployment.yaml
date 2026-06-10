@@ -3,10 +3,13 @@
 # plane). nginx only needs writable emptyDir mounts for /tmp, cache and run.
 # (Previously carried a 50Gi PVC at /data that nothing ever wrote to.)
 ---
+# Deployment named agentic-ai-* so all pods read as one product family.
+# Service/Route keep the stable "mcp-dashboard" name — the dashboard URL
+# (HUB_URL for every cluster's MCP server) must never change on a rename.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mcp-dashboard
+  name: agentic-ai-dashboard
   namespace: openshift-mcp
   labels:
     app.kubernetes.io/name: mcp-dashboard

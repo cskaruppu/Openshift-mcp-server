@@ -118,9 +118,9 @@ if [ -z "$NS" ]; then
   fi
 fi
 
-# Distinct name family from the management bundle (agentic-ai-server) so this
-# pod can coexist with the control plane in the same namespace on the hub.
-DEPLOY_NAME="mcp-server"
+# agentic-ai-* family so all pods read as one product family, and distinct
+# from the control plane (agentic-ai-server) so both coexist on the hub.
+DEPLOY_NAME="agentic-ai-mcp-server"
 
 # ---------------------------------------------------------------------------
 # Auto-fetch hub token from hub cluster's K8s secret (if --hub-context given)
@@ -158,7 +158,7 @@ if [ "$ACTION" = "status" ]; then
   $CLI get svc -n "$NS" 2>/dev/null || echo "  No services found"
   echo ""
   # Health check
-  POD=$($CLI get pods -n "$NS" -l app.kubernetes.io/name=mcp-server -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+  POD=$($CLI get pods -n "$NS" -l app.kubernetes.io/name=agentic-ai-mcp-server -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
   if [ -n "$POD" ]; then
     echo "--- Spoke Health ---"
     $CLI exec "$POD" -n "$NS" -- wget -qO- http://localhost:3000/healthz 2>/dev/null || echo "  Cannot reach health endpoint"
@@ -200,11 +200,23 @@ if [ "$ACTION" = "uninstall" ]; then
   $CLI delete deployment "$DEPLOY_NAME" -n "$NS" --ignore-not-found
   $CLI delete service "$DEPLOY_NAME" -n "$NS" --ignore-not-found
   $CLI delete service "$DEPLOY_NAME-nodeport" -n "$NS" --ignore-not-found
+  $CLI delete configmap agentic-ai-mcp-server-config -n "$NS" --ignore-not-found
+  $CLI delete secret agentic-ai-mcp-server-secrets -n "$NS" --ignore-not-found
+  $CLI delete serviceaccount agentic-ai-mcp-server -n "$NS" --ignore-not-found
+  $CLI delete clusterrolebinding agentic-ai-mcp-server-reader-binding --ignore-not-found
+  $CLI delete clusterrole agentic-ai-mcp-server-reader --ignore-not-found
+  # Transitional short-lived "mcp-server" names (renamed to agentic-ai-mcp-server)
+  $CLI delete deployment mcp-server -n "$NS" --ignore-not-found
+  $CLI delete service mcp-server -n "$NS" --ignore-not-found
+  $CLI delete service mcp-server-nodeport -n "$NS" --ignore-not-found
   $CLI delete configmap mcp-server-config -n "$NS" --ignore-not-found
   $CLI delete secret mcp-server-secrets -n "$NS" --ignore-not-found
   $CLI delete serviceaccount mcp-server -n "$NS" --ignore-not-found
   $CLI delete clusterrolebinding mcp-server-reader-binding --ignore-not-found
   $CLI delete clusterrole mcp-server-reader --ignore-not-found
+  if [ "$PLATFORM" = "openshift" ]; then
+    $CLI delete route mcp-server -n "$NS" --ignore-not-found
+  fi
   if [ "$PLATFORM" = "openshift" ]; then
     $CLI delete route "$DEPLOY_NAME" -n "$NS" --ignore-not-found
   fi
@@ -282,7 +294,7 @@ kind: Namespace
 metadata:
   name: $NS
   labels:
-    app.kubernetes.io/name: mcp-server
+    app.kubernetes.io/name: agentic-ai-mcp-server
     app.kubernetes.io/part-of: tcs-agentic-ai
 EOF
 
@@ -310,6 +322,18 @@ echo "  Removing retired hub-agent pod (if any)..."
 $CLI delete deployment mcp-hub-agent -n "$NS" --ignore-not-found 2>/dev/null || true
 $CLI delete service mcp-hub-agent -n "$NS" --ignore-not-found 2>/dev/null || true
 $CLI delete configmap mcp-hub-agent-config -n "$NS" --ignore-not-found 2>/dev/null || true
+# Transitional "mcp-server" names (renamed to agentic-ai-mcp-server)
+$CLI delete deployment mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete service mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete service mcp-server-nodeport -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete configmap mcp-server-config -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete secret mcp-server-secrets -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete serviceaccount mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete clusterrolebinding mcp-server-reader-binding --ignore-not-found 2>/dev/null || true
+$CLI delete clusterrole mcp-server-reader --ignore-not-found 2>/dev/null || true
+if [ "$CLI" = "oc" ]; then
+  oc delete route mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+fi
 
 # 2. ServiceAccount + RBAC (same as hub — full cluster-reader)
 next "Creating service account and RBAC..."
@@ -317,15 +341,15 @@ cat <<EOF | $CLI apply -f -
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: mcp-server
+  name: agentic-ai-mcp-server
   namespace: $NS
   labels:
-    app.kubernetes.io/name: mcp-server
+    app.kubernetes.io/name: agentic-ai-mcp-server
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: mcp-server-reader
+  name: agentic-ai-mcp-server-reader
 rules:
   - apiGroups: [""]
     resources: [nodes, pods, pods/log, services, namespaces, events, resourcequotas,
@@ -439,14 +463,14 @@ fi)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: mcp-server-reader-binding
+  name: agentic-ai-mcp-server-reader-binding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: mcp-server-reader
+  name: agentic-ai-mcp-server-reader
 subjects:
   - kind: ServiceAccount
-    name: mcp-server
+    name: agentic-ai-mcp-server
     namespace: $NS
 EOF
 
@@ -456,7 +480,7 @@ cat <<EOF | $CLI apply -f -
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: mcp-server-config
+  name: agentic-ai-mcp-server-config
   namespace: $NS
 data:
   MCP_MODE: "spoke"
@@ -477,7 +501,7 @@ data:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: mcp-server-secrets
+  name: agentic-ai-mcp-server-secrets
   namespace: $NS
 type: Opaque
 stringData:
@@ -494,28 +518,28 @@ metadata:
   name: $DEPLOY_NAME
   namespace: $NS
   labels:
-    app.kubernetes.io/name: mcp-server
+    app.kubernetes.io/name: agentic-ai-mcp-server
     app.kubernetes.io/component: spoke
     app.kubernetes.io/part-of: tcs-agentic-ai
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: mcp-server
+      app.kubernetes.io/name: agentic-ai-mcp-server
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: mcp-server
+        app.kubernetes.io/name: agentic-ai-mcp-server
         tcs.com/mcp-mode: spoke
         tcs.com/cluster-name: "$CLUSTER_NAME"
     spec:
-      serviceAccountName: mcp-server
+      serviceAccountName: agentic-ai-mcp-server
       securityContext:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: mcp-server
+        - name: agentic-ai-mcp-server
           image: $IMAGE
           imagePullPolicy: Always
           ports:
@@ -523,9 +547,9 @@ spec:
               name: http
           envFrom:
             - configMapRef:
-                name: mcp-server-config
+                name: agentic-ai-mcp-server-config
             - secretRef:
-                name: mcp-server-secrets
+                name: agentic-ai-mcp-server-secrets
           env:
             - name: NODE_EXTRA_CA_CERTS
               value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
@@ -572,10 +596,10 @@ metadata:
   name: $DEPLOY_NAME
   namespace: $NS
   labels:
-    app.kubernetes.io/name: mcp-server
+    app.kubernetes.io/name: agentic-ai-mcp-server
 spec:
   selector:
-    app.kubernetes.io/name: mcp-server
+    app.kubernetes.io/name: agentic-ai-mcp-server
   ports:
     - port: 3000
       targetPort: 3000
@@ -591,7 +615,7 @@ metadata:
   name: $DEPLOY_NAME
   namespace: $NS
   labels:
-    app.kubernetes.io/name: mcp-server
+    app.kubernetes.io/name: agentic-ai-mcp-server
   annotations:
     haproxy.router.openshift.io/timeout: 600s
     haproxy.router.openshift.io/timeout-tunnel: 600s
@@ -656,19 +680,19 @@ else
 apiVersion: v1
 kind: Service
 metadata:
-  name: mcp-server-nodeport
+  name: agentic-ai-mcp-server-nodeport
   namespace: $NS
 spec:
   type: NodePort
   selector:
-    app.kubernetes.io/name: mcp-server
+    app.kubernetes.io/name: agentic-ai-mcp-server
   ports:
     - port: 3000
       targetPort: 3000
       protocol: TCP
       name: http
 NPEOF
-      NP=$($CLI get svc mcp-server-nodeport -n "$NS" -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "")
+      NP=$($CLI get svc agentic-ai-mcp-server-nodeport -n "$NS" -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "")
       if [ -n "$NP" ]; then
         SPOKE_URL="http://${SPOKE_NODE_IP}:${NP}"
         echo "  Using NodePort URL: $SPOKE_URL"
@@ -679,7 +703,7 @@ fi
 
 # 6. Update ConfigMap with spoke external URL and restart
 next "Configuring spoke external URL and restarting..."
-$CLI patch configmap mcp-server-config -n "$NS" --type merge -p "{\"data\":{\"SPOKE_EXTERNAL_URL\":\"$SPOKE_URL\"}}"
+$CLI patch configmap agentic-ai-mcp-server-config -n "$NS" --type merge -p "{\"data\":{\"SPOKE_EXTERNAL_URL\":\"$SPOKE_URL\"}}"
 $CLI rollout restart deployment/"$DEPLOY_NAME" -n "$NS"
 $CLI rollout status deployment/"$DEPLOY_NAME" -n "$NS" --timeout=120s
 
@@ -692,7 +716,7 @@ if echo "$RESP" | grep -q "$CLUSTER_NAME"; then
   echo "  Spoke '$CLUSTER_NAME' registered with hub successfully!"
 else
   echo "  Spoke deployed but hub registration may be pending."
-  echo "  Check spoke logs: $CLI logs -n $NS -l app.kubernetes.io/name=mcp-server --tail=30"
+  echo "  Check spoke logs: $CLI logs -n $NS -l app.kubernetes.io/name=agentic-ai-mcp-server --tail=30"
   echo ""
   echo "  Common issues:"
   echo "    - Hub unreachable from this cluster (network/firewall)"
@@ -729,7 +753,7 @@ echo " Management:"
 echo "   ./deploy/mcp/deploy.sh --status        # Check MCP server status"
 echo "   ./deploy/mcp/deploy.sh --rollback      # Rollback MCP server"
 echo "   ./deploy/mcp/deploy.sh --uninstall     # Remove MCP server"
-echo "   $CLI logs -n $NS -l app.kubernetes.io/name=mcp-server -f"
+echo "   $CLI logs -n $NS -l app.kubernetes.io/name=agentic-ai-mcp-server -f"
 echo ""
 echo " Image updates: click ⋮ → Redeploy on the cluster card — no script rerun."
 echo "============================================"

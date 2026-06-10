@@ -2533,14 +2533,14 @@ async function startSSE() {
     // -----------------------------------------------------------------------
     if (req.method === "POST" && url.pathname === "/api/cluster/redeploy") {
       const ns = process.env.NAMESPACE || process.env.MCP_NAMESPACE || (process.env.PLATFORM === "openshift" ? "openshift-mcp" : "tcs-agentic-system");
-      const deployName = process.env.DEPLOYMENT_NAME || (MCP_MODE === "spoke" ? "mcp-server" : "agentic-ai-server");
+      const deployName = process.env.DEPLOYMENT_NAME || (MCP_MODE === "spoke" ? "agentic-ai-mcp-server" : "agentic-ai-server");
       try {
         const cli = await detectCLI();
         const result = await runExec(cli, ["rollout", "restart", `deployment/${deployName}`, "-n", ns]);
         // Control mode: also restart this cluster's MCP server pod when it
         // shares the namespace (deployed via ./deploy/mcp/deploy.sh).
-        if (deployName !== "mcp-server") {
-          await runExec(cli, ["rollout", "restart", "deployment/mcp-server", "-n", ns]).catch(() => {});
+        if (deployName !== "agentic-ai-mcp-server") {
+          await runExec(cli, ["rollout", "restart", "deployment/agentic-ai-mcp-server", "-n", ns]).catch(() => {});
         }
         return sendJson(res, 200, { ok: true, message: `Rollout restart triggered for ${deployName} in ${ns}`, output: result });
       } catch (err) {
@@ -2888,19 +2888,19 @@ kind: Namespace
 metadata:
   name: ${spokeNs}
   labels:
-    app.kubernetes.io/name: mcp-server
+    app.kubernetes.io/name: agentic-ai-mcp-server
     app.kubernetes.io/part-of: tcs-agentic-ai
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: mcp-server
+  name: agentic-ai-mcp-server
   namespace: ${spokeNs}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: mcp-server-reader
+  name: agentic-ai-mcp-server-reader
 rules:
   - apiGroups: [""]
     resources: [nodes, pods, pods/log, services, namespaces, events, resourcequotas,
@@ -2935,20 +2935,20 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: mcp-server-reader-binding
+  name: agentic-ai-mcp-server-reader-binding
 subjects:
   - kind: ServiceAccount
-    name: mcp-server
+    name: agentic-ai-mcp-server
     namespace: ${spokeNs}
 roleRef:
   kind: ClusterRole
-  name: mcp-server-reader
+  name: agentic-ai-mcp-server-reader
   apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: mcp-server-config
+  name: agentic-ai-mcp-server-config
   namespace: ${spokeNs}
 data:
   MCP_MODE: "spoke"
@@ -2962,13 +2962,13 @@ data:
   AUTH_MODE: "none"
   EMERGENCY_AUTO_FIX: "false"
   ALLOW_PRIVATE_CLUSTER_IPS: "true"
-  DEPLOYMENT_NAME: "mcp-server"
+  DEPLOYMENT_NAME: "agentic-ai-mcp-server"
   MCP_NAMESPACE: "${spokeNs}"
 ---
 apiVersion: v1
 kind: Secret
 metadata:
-  name: mcp-server-secrets
+  name: agentic-ai-mcp-server-secrets
   namespace: ${spokeNs}
 type: Opaque
 stringData:
@@ -2978,32 +2978,32 @@ stringData:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mcp-server
+  name: agentic-ai-mcp-server
   namespace: ${spokeNs}
   labels:
-    app.kubernetes.io/name: mcp-server
+    app.kubernetes.io/name: agentic-ai-mcp-server
     app.kubernetes.io/part-of: tcs-agentic-ai
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: mcp-server
+      app.kubernetes.io/name: agentic-ai-mcp-server
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: mcp-server
+        app.kubernetes.io/name: agentic-ai-mcp-server
     spec:
-      serviceAccountName: mcp-server
+      serviceAccountName: agentic-ai-mcp-server
       containers:
-        - name: mcp-server
+        - name: agentic-ai-mcp-server
           image: ${image}
           ports:
             - containerPort: 3000
           envFrom:
             - configMapRef:
-                name: mcp-server-config
+                name: agentic-ai-mcp-server-config
             - secretRef:
-                name: mcp-server-secrets
+                name: agentic-ai-mcp-server-secrets
           env:
             - name: NODE_EXTRA_CA_CERTS
               value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
@@ -3032,11 +3032,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: mcp-server
+  name: agentic-ai-mcp-server
   namespace: ${spokeNs}
 spec:
   selector:
-    app.kubernetes.io/name: mcp-server
+    app.kubernetes.io/name: agentic-ai-mcp-server
   ports:
     - port: 3000
       targetPort: 3000

@@ -11,7 +11,7 @@ KubeNexus AI separates the platform into two planes (the Red Hat ACM / Rancher p
 
 | Plane | Deployment | Components | State |
 |:------|:-----------|:-----------|:------|
-| **Management Plane** — *Management Bundle* | `./deploy/dashboard/deploy.sh` — deployed **once** | Dashboard (React + Nginx, 50Gi PVC) • Control Plane (`MCP_MODE=control`) • PostgreSQL (StatefulSet PVC) • Redis | **Stateful** — all settings, chats, audit, incidents, knowledge base in PostgreSQL |
+| **Management Plane** — *Management Bundle* | `./deploy/dashboard/deploy.sh` — deployed **once** | Dashboard (React + Nginx) • Control Plane (`MCP_MODE=control`) • PostgreSQL (StatefulSet PVC) • Redis | **Stateful** — all settings, chats, audit, incidents, knowledge base in PostgreSQL |
 | **Data Plane** — *MCP Server* | `./deploy/mcp/deploy.sh` — run on **every** cluster, **including the hub** | One stateless MCP server pod (`MCP_MODE=spoke`) with 40+ tools, executing live against its own cluster | **Stateless** — no DB, no PVC; kill/redeploy anytime |
 
 ```mermaid
@@ -19,7 +19,7 @@ flowchart TB
     subgraph MGMT["🏢 Management Cluster"]
         direction TB
         subgraph BUNDLE["Management Bundle — deployed once, persisted on PVCs"]
-            DASHP["📊 Dashboard<br/><i>React + Nginx · 50Gi PVC</i>"]
+            DASHP["📊 Dashboard<br/><i>React + Nginx · stateless</i>"]
             CTRL["⚙️ Control Plane<br/><i>MCP_MODE=control</i><br/><i>routing · auth · LLM config</i>"]
             PGB[("🐘 PostgreSQL<br/><i>PVC</i>")]
             RDB[("🔴 Redis")]
@@ -59,7 +59,7 @@ flowchart TB
 **Design guarantees:**
 
 1. **Identical answers fleet-wide** — every query (including the hub's own, via the `hub-cluster` pod) flows through the same spoke-proxy pipeline: same image, same code path, same formatting.
-2. **The bundle is never touched by MCP refreshes** — MCP server pods use the `mcp-server` resource name family and carry no state; the bundle keeps its PVCs across any number of data-plane redeploys.
+2. **The bundle is never touched by MCP refreshes** — MCP server pods use the `agentic-ai-mcp-server` resource name family and carry no state; the bundle keeps its PostgreSQL PVC across any number of data-plane redeploys.
 3. **Centralized LLM configuration** — credentials live only in the management plane and are injected per-request when chat is proxied to any cluster's pod.
 4. **Self-healing registry** — heartbeats carry `spokeUrl` + build version; a control-plane restart re-registers every cluster within 30 seconds, and version drift surfaces as an "Update Available" badge with one-click ⋮ → Redeploy.
 
@@ -156,9 +156,7 @@ flowchart TB
 
     subgraph STORAGE["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;💿 PERSISTENT  STORAGE  —  OpenShift PVCs&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"]
         direction LR
-        PV1[("💿 dashboard-data<br/><b>50 Gi RWO</b><br/><i>Dashboard UI</i>")]
         PV2[("💿 postgres-data<br/><b>PVC RWO</b><br/><i>Settings, Chat History,</i><br/><i>Audit, Knowledge Base</i>")]
-        PV3[("💿 redis-data<br/><b>RWO</b><br/><i>Cache, Sessions,</i><br/><i>Rate Limits</i>")]
     end
 
     U1 -->|"HTTPS"| N1
@@ -182,8 +180,6 @@ flowchart TB
 
     MCPSERVER --> DATASTORE
     DB1 --> PV2
-    DB2 --> PV3
-    MCPSERVER -.-> PV1
 
     style USERS fill:#E8F4FD,stroke:#1976D2,stroke-width:3px,color:#0D47A1
     style NETWORK fill:#E0F2F1,stroke:#00897B,stroke-width:3px,color:#004D40
@@ -218,7 +214,7 @@ flowchart TB
     class S1,S2,S3,S4 secNode
     class EX1,EX2,EX3,EX4,EX5 extNode
     class DB1,DB2 dbNode
-    class PV1,PV2,PV3 pvNode
+    class PV2 pvNode
 ```
 
 ---
@@ -245,7 +241,7 @@ flowchart TB
             subgraph COMPUTE["🚀 Compute"]
                 direction LR
                 DEP["📦 Deployment: agentic-ai-server<br/><b>Control Plane — MCP_MODE=control</b><br/><i>Image: quay.io/karuppucs/openshift-mcp-server:latest</i><br/><i>Replicas: 1 &nbsp;•&nbsp; Port: 3000 &nbsp;•&nbsp; stateless (state in PostgreSQL)</i><br/><i>Liveness: /healthz &nbsp;•&nbsp; Readiness: /readyz</i>"]
-                MCPS["📦 Deployment: mcp-server<br/><b>Data Plane — MCP_MODE=spoke</b><br/><i>Same image &nbsp;•&nbsp; stateless, no PVC</i><br/><i>Registered as hub-cluster</i><br/><i>(also deployed on every other cluster)</i>"]
+                MCPS["📦 Deployment: agentic-ai-mcp-server<br/><b>Data Plane — MCP_MODE=spoke</b><br/><i>Same image &nbsp;•&nbsp; stateless, no PVC</i><br/><i>Registered as hub-cluster</i><br/><i>(also deployed on every other cluster)</i>"]
             end
 
             subgraph STATEFUL["🗄️ Stateful Services"]
@@ -267,11 +263,9 @@ flowchart TB
             end
         end
 
-        subgraph VOLUMES["💿 Persistent Volumes — Management Bundle only"]
+        subgraph VOLUMES["💿 Persistent Volumes — PostgreSQL only"]
             direction LR
-            V1[("💿 dashboard-data<br/><b>50Gi RWO</b>")]
             V2[("💿 pg-data<br/><b>PVC RWO</b>")]
-            V3[("💿 redis-data<br/><b>RWO</b>")]
         end
     end
 
@@ -283,7 +277,6 @@ flowchart TB
     DEP -.->|mount| SEC
     DEP -.->|bind| SA
     PG --> V2
-    REDIS --> V3
 
     style OCPCLUSTER fill:#FFF3E0,stroke:#E65100,stroke-width:3px,color:#BF360C
     style INGRESS fill:#E0F2F1,stroke:#00897B,stroke-width:2px,color:#004D40
