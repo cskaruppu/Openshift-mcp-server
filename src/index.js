@@ -461,6 +461,34 @@ async function loadClustersFromDB() {
 }
 
 /**
+ * Probe every spoke restored from the DB and remove entries whose pod is
+ * not actually running.  Runs once at startup so stale registrations from
+ * a previous deployment don't show as ghost cluster cards.
+ */
+async function pruneUnreachableSpokes() {
+  const toRemove = [];
+  for (const [name, agent] of _connectedAgents) {
+    if (!agent?.spokeUrl) continue;
+    try {
+      const resp = await fedFetch(`${agent.spokeUrl}/healthz`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!resp.ok) toRemove.push(name);
+    } catch {
+      toRemove.push(name);
+    }
+  }
+  for (const name of toRemove) {
+    _connectedAgents.delete(name);
+    unregisterSpoke(name);
+    console.log(`[startup] Pruned unreachable cluster "${name}" — spoke pod not running`);
+  }
+  if (toRemove.length > 0) {
+    saveClustersToDB().catch(() => {});
+  }
+}
+
+/**
  * Fetch cluster summary from a spoke MCP server (version, nodes, pods)
  * and populate _connectedAgents so the dashboard card shows real data.
  */
@@ -1832,8 +1860,11 @@ async function startSSE() {
     console.warn("[startup] AI Intelligence init:", err.message);
   }
 
-  // Restore registered clusters from DB
+  // Restore registered clusters from DB, then prune any whose spoke pod is
+  // no longer reachable (prevents ghost cards after a fresh management-bundle
+  // deploy where the MCP agent hasn't been deployed yet).
   await loadClustersFromDB();
+  await pruneUnreachableSpokes();
 
   // Phase 1: hydrate per-cluster snapshots so the dashboard has warm data
   // immediately after a hub restart (no waiting for the next agent report).
