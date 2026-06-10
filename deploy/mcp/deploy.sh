@@ -653,10 +653,16 @@ $CLI get pods -n "$NS" -o wide
 echo ""
 
 # Detect external URL that the HUB will use to reach this spoke.
-# Priority: --spoke-url override > Route hostname > internal service DNS
+# Priority: --spoke-url override > internal service (hub-cluster) > Route > internal service DNS
 if [ -n "$SPOKE_URL_OVERRIDE" ]; then
   SPOKE_URL="$SPOKE_URL_OVERRIDE"
   echo "  Using provided spoke URL: $SPOKE_URL"
+elif [ "$CLUSTER_NAME" = "hub-cluster" ]; then
+  # The hub-cluster agent runs on the SAME cluster as the control plane —
+  # use the internal service DNS so traffic never hairpins through the
+  # external router (avoids DNS/TLS issues entirely).
+  SPOKE_URL="http://${DEPLOY_NAME}.${NS}.svc.cluster.local:3000"
+  echo "  Hub-cluster agent: using internal service URL: $SPOKE_URL"
 else
   if [ "$CLI" = "oc" ]; then
     SPOKE_URL=$(oc get route "$DEPLOY_NAME" -n "$NS" -o jsonpath='https://{.spec.host}' 2>/dev/null || echo "")

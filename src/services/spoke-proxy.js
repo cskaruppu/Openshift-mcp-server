@@ -62,6 +62,12 @@ function customLookup(hostname, opts, cb) {
   }
   _spokeResolver.resolve4(hostname, (err, addresses) => {
     if (!err && addresses.length > 0) {
+      // Node 20+ (autoSelectFamily) calls lookup with opts.all=true and
+      // requires an array of {address, family} — a bare string triggers
+      // ERR_INVALID_IP_ADDRESS on every connection to a hostname spoke URL.
+      if (opts && opts.all) {
+        return cb(null, addresses.map((address) => ({ address, family: 4 })));
+      }
       return cb(null, addresses[0], 4);
     }
     defaultLookup(hostname, opts, cb);
