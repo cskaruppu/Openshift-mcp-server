@@ -176,11 +176,11 @@ if [ "$ACTION" = "rollback" ]; then
   echo "============================================"
   echo ""
   echo "Rolling back control plane..."
-  $CLI rollout undo deployment/agentic-ai-server -n "$NS"
+  $CLI rollout undo deployment/agentic-ai-control-plane -n "$NS"
   echo "Rolling back dashboard..."
   $CLI rollout undo deployment/agentic-ai-dashboard -n "$NS"
   echo "Waiting for rollout..."
-  $CLI rollout status deployment/agentic-ai-server -n "$NS" --timeout=120s
+  $CLI rollout status deployment/agentic-ai-control-plane -n "$NS" --timeout=120s
   $CLI rollout status deployment/agentic-ai-dashboard -n "$NS" --timeout=120s
   echo ""
   echo "Rollback complete."
@@ -360,11 +360,14 @@ next "Deploying Control Plane (MCP_MODE=control)..."
 sed -i "s|image:.*openshift-mcp-server:.*|image: ${MCP_IMAGE}|" "$K8S_DIR/deployment.yaml"
 $CLI apply -f "$K8S_DIR/deployment.yaml"
 $CLI apply -f "$K8S_DIR/service.yaml"
-$CLI set image deployment/agentic-ai-server agentic-ai-server="$MCP_IMAGE" -n "$NS" 2>/dev/null || true
+$CLI set image deployment/agentic-ai-control-plane agentic-ai-control-plane="$MCP_IMAGE" -n "$NS" 2>/dev/null || true
 # Control plane is internal-only — remove any legacy external route from prior deploys.
 if [ "$CLI" = "oc" ]; then
   oc delete route agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
+  oc delete route agentic-ai-control-plane -n "$NS" --ignore-not-found 2>/dev/null || true
 fi
+# Clean up old deployment name (agentic-ai-server → agentic-ai-control-plane)
+$CLI delete deployment agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
 
 # 8. Dashboard deployment (separate pod — React + Nginx, stateless)
 #    Applies deploy/dashboard/manifests/dashboard-deployment.yaml, which carries the
@@ -382,10 +385,10 @@ $CLI set image deployment/agentic-ai-dashboard dashboard="$DASHBOARD_IMAGE" -n "
 
 # 9. Rollout and verify
 next "Rolling out and verifying..."
-$CLI rollout restart deployment/agentic-ai-server -n "$NS"
+$CLI rollout restart deployment/agentic-ai-control-plane -n "$NS"
 $CLI rollout restart deployment/agentic-ai-dashboard -n "$NS"
 echo "  Waiting for Control Plane..."
-$CLI rollout status deployment/agentic-ai-server -n "$NS" --timeout=180s
+$CLI rollout status deployment/agentic-ai-control-plane -n "$NS" --timeout=180s
 echo "  Waiting for Dashboard..."
 $CLI rollout status deployment/agentic-ai-dashboard -n "$NS" --timeout=120s
 

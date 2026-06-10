@@ -1,11 +1,11 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: agentic-ai-server
+  name: agentic-ai-control-plane
   namespace: openshift-mcp
   labels:
     app.kubernetes.io/name: agentic-ai-server
-    app.kubernetes.io/component: server
+    app.kubernetes.io/component: control-plane
     app.kubernetes.io/part-of: tcs-agentic-ai
 spec:
   replicas: 1
@@ -39,7 +39,7 @@ spec:
           - name: ndots
             value: "5"
       containers:
-        - name: agentic-ai-server
+        - name: agentic-ai-control-plane
           image: quay.io/karuppucs/openshift-mcp-server:latest
           imagePullPolicy: Always
           ports:

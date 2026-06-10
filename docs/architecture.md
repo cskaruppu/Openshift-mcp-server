@@ -59,7 +59,7 @@ flowchart TB
 **Design guarantees:**
 
 1. **Identical answers fleet-wide** — every query (including the hub's own, via the `hub-cluster` pod) flows through the same spoke-proxy pipeline: same image, same code path, same formatting.
-2. **The bundle is never touched by MCP refreshes** — MCP server pods use the `agentic-ai-mcp-server` resource name family and carry no state; the bundle keeps its PostgreSQL PVC across any number of data-plane redeploys.
+2. **The bundle is never touched by MCP refreshes** — Agent pods use the `agentic-ai-agent` resource name family and carry no state; the bundle keeps its PostgreSQL PVC across any number of data-plane redeploys.
 3. **Centralized LLM configuration** — credentials live only in the management plane and are injected per-request when chat is proxied to any cluster's pod.
 4. **Self-healing registry** — heartbeats carry `spokeUrl` + build version; a control-plane restart re-registers every cluster within 30 seconds, and version drift surfaces as an "Update Available" badge with one-click ⋮ → Redeploy.
 
@@ -231,7 +231,7 @@ flowchart TB
         subgraph INGRESS["🌐 Ingress Layer"]
             direction LR
             DNS["📡 DNS<br/><i>*.apps.cluster</i>"]
-            ROUTE["🛣️ Route<br/><i>agentic-ai-server</i><br/><i>TLS: edge</i>"]
+            ROUTE["🛣️ Route<br/><i>mcp-dashboard</i><br/><i>TLS: edge</i>"]
             SVC["⚖️ Service<br/><i>ClusterIP:3000</i>"]
         end
 
@@ -240,8 +240,8 @@ flowchart TB
 
             subgraph COMPUTE["🚀 Compute"]
                 direction LR
-                DEP["📦 Deployment: agentic-ai-server<br/><b>Control Plane — MCP_MODE=control</b><br/><i>Image: quay.io/karuppucs/openshift-mcp-server:latest</i><br/><i>Replicas: 1 &nbsp;•&nbsp; Port: 3000 &nbsp;•&nbsp; stateless (state in PostgreSQL)</i><br/><i>Liveness: /healthz &nbsp;•&nbsp; Readiness: /readyz</i>"]
-                MCPS["📦 Deployment: agentic-ai-mcp-server<br/><b>Data Plane — MCP_MODE=spoke</b><br/><i>Same image &nbsp;•&nbsp; stateless, no PVC</i><br/><i>Registered as hub-cluster</i><br/><i>(also deployed on every other cluster)</i>"]
+                DEP["📦 Deployment: agentic-ai-control-plane<br/><b>Control Plane — MCP_MODE=control</b><br/><i>Image: quay.io/karuppucs/openshift-mcp-server:latest</i><br/><i>Replicas: 1 &nbsp;•&nbsp; Port: 3000 &nbsp;•&nbsp; stateless (state in PostgreSQL)</i><br/><i>Liveness: /healthz &nbsp;•&nbsp; Readiness: /readyz</i>"]
+                MCPS["📦 Deployment: agentic-ai-agent<br/><b>Data Plane — MCP_MODE=spoke</b><br/><i>Same image &nbsp;•&nbsp; stateless, no PVC</i><br/><i>Registered as hub-cluster</i><br/><i>(also deployed on every other cluster)</i>"]
             end
 
             subgraph STATEFUL["🗄️ Stateful Services"]

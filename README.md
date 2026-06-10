@@ -39,10 +39,10 @@ Pods you'll see on the hub cluster, in plain terms:
 
 | Pod | In plain words |
 |---|---|
+| `agentic-ai-control-plane` | **The brain** — API, login, routing; the console's backend |
 | `agentic-ai-dashboard` | **The face** — the web console users open |
-| `agentic-ai-server` | **The brain** — API, login, routing; the console's backend |
 | `mcp-postgres` / `agentic-ai-redis` | **The memory** — database (PVC) + cache |
-| `agentic-ai-mcp-server` | **The hands** — this cluster's worker; every cluster runs one |
+| `agentic-ai-agent` | **The hands** — this cluster's worker; every cluster runs one |
 
 Image updates need no scripts: outdated clusters show an **"Update Available"** badge — click ⋮ → **Redeploy** on the cluster card.
 
