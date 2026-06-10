@@ -38,6 +38,8 @@
 #   --platform PLATFORM    openshift | rancher | eks | aks | gke | k8s (default: k8s)
 #   --spoke-url URL        Override URL that the control plane will use to reach this cluster
 #                          (use when the hub can't resolve this cluster's Route hostname)
+#   --https-proxy URL      Egress proxy for LLM calls (auto-inherited from the
+#                          control-plane ConfigMap when deploying on the hub cluster)
 #   --tls-skip             Skip TLS verification for hub connection
 #   -n, --namespace NS     Namespace (default: openshift-mcp for OpenShift, tcs-agentic-system otherwise)
 #   --image IMAGE          Override image (default: same image as control plane)
@@ -67,6 +69,7 @@ PLATFORM="k8s"
 NS=""
 TLS_SKIP=false
 SPOKE_URL_OVERRIDE=""
+HTTPS_PROXY_VAL=""
 IMAGE="${IMAGE:-quay.io/karuppucs/openshift-mcp-server:latest}"
 ACTION="deploy"
 
@@ -95,6 +98,7 @@ while [[ $# -gt 0 ]]; do
     --cluster-name)   CLUSTER_NAME="$2"; shift 2 ;;
     --platform)       PLATFORM="$2"; shift 2 ;;
     --spoke-url)      SPOKE_URL_OVERRIDE="$2"; shift 2 ;;
+    --https-proxy)    HTTPS_PROXY_VAL="$2"; shift 2 ;;
     --tls-skip)       TLS_SKIP=true; shift ;;
     --image)          IMAGE="$2"; shift 2 ;;
     -n|--namespace)   NS="$2"; shift 2 ;;
@@ -488,6 +492,26 @@ EOF
 
 # 3. ConfigMap + Secrets
 next "Creating ConfigMap and Secrets..."
+
+# Egress proxy for LLM calls (Azure/OpenAI/Anthropic). The agent runs the
+# chat pipeline, so it needs the SAME egress path to the LLM provider as the
+# control plane. Priority: --https-proxy flag > inherit from control-plane
+# ConfigMap (same cluster, e.g. hub-cluster deployment) > none.
+if [ -z "$HTTPS_PROXY_VAL" ]; then
+  HTTPS_PROXY_VAL=$($CLI get configmap agentic-ai-server-config -n "$NS" -o jsonpath='{.data.HTTPS_PROXY}' 2>/dev/null || echo "")
+  [ -n "$HTTPS_PROXY_VAL" ] && echo "  Inherited HTTPS_PROXY from control plane: $HTTPS_PROXY_VAL"
+fi
+PROXY_BLOCK=""
+if [ -n "$HTTPS_PROXY_VAL" ]; then
+  NO_PROXY_VAL=$($CLI get configmap agentic-ai-server-config -n "$NS" -o jsonpath='{.data.NO_PROXY}' 2>/dev/null || echo "")
+  [ -z "$NO_PROXY_VAL" ] && NO_PROXY_VAL=".svc,.svc.cluster.local,.cluster.local,localhost,127.0.0.1,10.0.0.0/8,172.30.0.0/16"
+  PROXY_BLOCK="
+  HTTPS_PROXY: \"$HTTPS_PROXY_VAL\"
+  HTTP_PROXY: \"$HTTPS_PROXY_VAL\"
+  NO_PROXY: \"$NO_PROXY_VAL\""
+  echo "  LLM egress proxy configured: $HTTPS_PROXY_VAL"
+fi
+
 cat <<EOF | $CLI apply -f -
 apiVersion: v1
 kind: ConfigMap
@@ -508,7 +532,7 @@ data:
   ALLOW_PRIVATE_CLUSTER_IPS: "true"
   # Used by the self-redeploy endpoint (dashboard ⋮ → Redeploy)
   DEPLOYMENT_NAME: "$DEPLOY_NAME"
-  MCP_NAMESPACE: "$NS"
+  MCP_NAMESPACE: "$NS"$PROXY_BLOCK
 ---
 apiVersion: v1
 kind: Secret
