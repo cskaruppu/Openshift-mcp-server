@@ -3273,7 +3273,9 @@ spec:
           } : null,
         });
       }
-      return sendJson(res, 200, { agents, hubVersion: MCP_VERSION });
+      // hubAgentDeployed: whether this cluster's own MCP agent pod is running.
+      // The picker hides the hub card (like any other cluster) until it registers.
+      return sendJson(res, 200, { agents, hubVersion: MCP_VERSION, hubAgentDeployed: hasSpoke(HUB_AGENT_CLUSTER) });
     }
 
     if (url.pathname.startsWith("/api/agent/scan/") && req.method === "GET") {

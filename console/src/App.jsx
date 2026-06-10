@@ -82,7 +82,10 @@ export default function App() {
     if (authenticated && agentData) {
       autoSkippedRef.current = true;
       const hasRemote = Array.isArray(agentData.agents) && agentData.agents.length > 0;
-      if (!hasRemote) setInClusterPicker(false);
+      // Only auto-enter the hub workspace when its MCP agent is actually
+      // running — otherwise stay on the picker, which shows deploy guidance.
+      const hubReady = agentData.hubAgentDeployed !== false;
+      if (!hasRemote && hubReady) setInClusterPicker(false);
     }
   }, [authenticated, agentData]);
 
