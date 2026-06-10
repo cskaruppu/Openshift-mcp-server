@@ -15,12 +15,29 @@
 import { Agent, ProxyAgent, fetch as undiciFetch } from "undici";
 import { redactIfEnabled } from "./redaction.js";
 
-const DEFAULT_PROVIDER = process.env.LLM_PROVIDER || "none";
-const DEFAULT_API_URL = process.env.LLM_API_URL || "http://localhost:11434";
-const DEFAULT_API_KEY = process.env.LLM_API_KEY || "";
-const DEFAULT_MODEL = process.env.LLM_MODEL || "gpt-4";
-const DEFAULT_AZURE_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || "";
-const DEFAULT_AZURE_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || "2024-12-01-preview";
+let DEFAULT_PROVIDER = process.env.LLM_PROVIDER || "none";
+let DEFAULT_API_URL = process.env.LLM_API_URL || "http://localhost:11434";
+let DEFAULT_API_KEY = process.env.LLM_API_KEY || "";
+let DEFAULT_MODEL = process.env.LLM_MODEL || "gpt-4";
+let DEFAULT_AZURE_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || "";
+let DEFAULT_AZURE_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || "2024-12-01-preview";
+
+/**
+ * Hydrate runtime LLM defaults from stored settings (DB/file). The settings
+ * store is the single source of truth — env vars are only the bootstrap.
+ * Without this, background LLM calls (upgrade analysis, proactive insights)
+ * used env defaults: LLM_PROVIDER=azure with no LLM_API_URL fell back to
+ * http://localhost:11434 → ECONNREFUSED on every call.
+ */
+export function setLLMDefaults({ provider, apiUrl, apiKey, model, azureDeployment, azureApiVersion } = {}) {
+  if (provider) DEFAULT_PROVIDER = provider;
+  if (apiUrl) DEFAULT_API_URL = apiUrl;
+  if (apiKey) DEFAULT_API_KEY = apiKey;
+  if (model) DEFAULT_MODEL = model;
+  if (azureDeployment) DEFAULT_AZURE_DEPLOYMENT = azureDeployment;
+  if (azureApiVersion) DEFAULT_AZURE_API_VERSION = azureApiVersion;
+  console.log(`[llm] Runtime defaults hydrated: provider=${DEFAULT_PROVIDER}, url=${DEFAULT_API_URL ? DEFAULT_API_URL.replace(/\/+$/, "") : "(unset)"}, model=${DEFAULT_AZURE_DEPLOYMENT || DEFAULT_MODEL}`);
+}
 
 const AZURE_USE_MANAGED_IDENTITY = process.env.AZURE_USE_MANAGED_IDENTITY === "true";
 const AZURE_TENANT_ID = process.env.AZURE_TENANT_ID || "";

@@ -8,7 +8,7 @@ import { gzipSync } from "node:zlib";
 import { dirname } from "node:path";
 import { ocpGet, ocpFetch, ocpDelete } from "../utils/openshift-client.js";
 import { getPlatform, isOpenShiftFamily } from "../platform/index.js";
-import { callLLM } from "./llm.js";
+import { callLLM, setLLMDefaults } from "./llm.js";
 import { query as dbQuery, isEnabled as dbEnabled } from "../utils/db.js";
 import { validateUpgradeVersion } from "../tools/upgrade-preflight.js";
 import { getComplianceResults, runComplianceScan } from "../tools/compliance-scanner.js";
@@ -104,6 +104,39 @@ export async function loadStoredLLMSettings() {
     if (parsed && parsed.providers) return parsed;
   } catch { /* fall through */ }
   return DEFAULT_LLM_SETTINGS;
+}
+
+/**
+ * Hydrate the llm.js runtime defaults from stored settings so background
+ * LLM calls (upgrade analysis, proactive insights, alert analysis) use the
+ * SAME provider config as chat — the settings store is the single source
+ * of truth. Called at startup and after every settings save.
+ */
+export async function hydrateLLMDefaults() {
+  try {
+    const stored = await loadStoredLLMSettings();
+    const provider = stored?.defaults?.provider;
+    if (!provider || provider === "none") return false;
+    const cfg = stored?.providers?.[provider];
+    const missingUrl = provider === "azure" && !cfg?.apiUrl; // Azure REQUIRES an endpoint URL
+    if (!cfg || (!cfg.apiKey && !cfg.apiUrl) || missingUrl) {
+      console.warn(`[llm] Default provider "${provider}" is missing ${missingUrl ? "its endpoint URL" : "config"} — background LLM calls disabled until configured in Settings`);
+      setLLMDefaults({ provider: "none" });
+      return false;
+    }
+    setLLMDefaults({
+      provider,
+      apiUrl: cfg.apiUrl,
+      apiKey: cfg.apiKey,
+      model: cfg.model,
+      azureDeployment: cfg.deployment,
+      azureApiVersion: cfg.apiVersion,
+    });
+    return true;
+  } catch (e) {
+    console.warn("[llm] Failed to hydrate defaults from settings store:", e.message);
+    return false;
+  }
 }
 
 /**
@@ -221,6 +254,9 @@ export async function handleLLMSettingsPost(req, res) {
     const savedToFile = await writeFile(LLM_SETTINGS_PATH, JSON.stringify(settings, null, 2), "utf8").then(() => true).catch(() => false);
     const provCount = Object.values(settings.providers).filter(c => c.enabled || c.apiKey).length;
     console.log(`[settings] saved — DB=${savedToDB}, file=${savedToFile}, ${provCount} provider(s) configured`);
+    // Re-hydrate runtime defaults so background LLM calls pick up the new
+    // config immediately (no restart needed).
+    hydrateLLMDefaults().catch(() => {});
     return json(res, 200, { success: true, settings, storage: savedToDB ? "database" : "file" });
   } catch (err) {
     return json(res, 500, { error: err.message });
