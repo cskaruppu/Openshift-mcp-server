@@ -28,6 +28,26 @@ A production-grade **Model Context Protocol (MCP)** server for **Red Hat OpenShi
 
 ## Architecture
 
+### In Plain Words
+
+You deploy **two things**, and users open **one URL**:
+
+1. **Management Bundle** (`./deploy/dashboard/deploy.sh`) — deployed **once**, on one cluster. The web console, its API brain, and its database. All your data lives here on persistent storage.
+2. **MCP Server** (`./deploy/mcp/deploy.sh`) — a small stateless worker pod, deployed on **every** cluster (the hub too). Refresh it as often as you like — the bundle is never touched.
+
+Pods you'll see on the hub cluster, in plain terms:
+
+| Pod | In plain words |
+|---|---|
+| `mcp-dashboard` | **The face** — the web console users open |
+| `agentic-ai-server` | **The brain** — API, login, routing; the console's backend |
+| `mcp-postgres` / `mcp-redis` | **The memory** — database (PVC) + cache |
+| `mcp-server` | **The hands** — this cluster's worker; every cluster runs one |
+
+Image updates need no scripts: outdated clusters show an **"Update Available"** badge — click ⋮ → **Redeploy** on the cluster card.
+
+### The Pattern
+
 TCS Agentic AI uses a **two-plane architecture** — the same pattern as Red Hat ACM, Rancher, and Portainer:
 
 | Plane | Components | Deployed | State |
