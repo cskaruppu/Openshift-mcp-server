@@ -1,9 +1,10 @@
 # ============================================================================
 # TCS Agentic AI — MCP Server (API-only)
 #
-# The dashboard is now a separate image (dashboard-react/Dockerfile).
-# This image contains only the Node.js MCP server for cluster operations.
-# Deployable on hub (MCP_MODE=hub) or spoke (MCP_MODE=spoke) clusters.
+# The dashboard is a separate image (console/Dockerfile).
+# This image contains only the Node.js MCP server: APIs + cluster operations.
+# One image, two roles: control plane (MCP_MODE=control, management bundle)
+# or per-cluster stateless data plane (MCP_MODE=spoke).
 # ============================================================================
 
 # Stage 1 — Install production dependencies
