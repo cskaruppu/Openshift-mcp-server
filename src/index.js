@@ -2936,7 +2936,28 @@ async function startSSE() {
       }
       updateSpokeHeartbeat(clusterName, { healthy, uptime, memMB });
       const key = findClusterKey(clusterName) || clusterName;
-      const agent = _connectedAgents.get(key);
+      const isHub = clusterName === HUB_AGENT_CLUSTER || clusterName.toLowerCase() === HUB_AGENT_CLUSTER.toLowerCase();
+      let agent = _connectedAgents.get(key);
+      if (!agent && !isHub) {
+        const now = new Date().toISOString();
+        agent = {
+          clusterName: key,
+          platform: hbPlatform || "k8s",
+          agentType: "spoke-mcp",
+          capabilities: ["full-mcp", "scan", "events", "metrics", "ai-reasoning", "actions"],
+          actionsEnabled: true,
+          registeredAt: now,
+          status: "live",
+          source: "spoke",
+          spokeUrl: hbSpokeUrl,
+          lastHeartbeat: now,
+          lastReportTime: now,
+        };
+        _connectedAgents.set(key, agent);
+        saveClustersToDB().catch(() => {});
+        fetchSpokeSummary(key, hbSpokeUrl).catch(() => {});
+        console.log(`[spoke] Restored _connectedAgents entry from heartbeat: ${key}`);
+      }
       if (agent) {
         const now = new Date().toISOString();
         agent.lastHeartbeat = now;
