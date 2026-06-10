@@ -14531,6 +14531,7 @@ export async function handleChatAPI(req, res) {
   let _traceContextKeys = [];
   let _traceToolsUsed = [];
   let _traceStatus = "success";
+  let _chatCluster = "local"; // referenced in finally — must be function-scoped
 
   // Rate limit (token bucket per-IP; returns true if limited)
   if (enforceRateLimit(req, res)) {
@@ -14559,7 +14560,7 @@ export async function handleChatAPI(req, res) {
     // Hub-cluster chat routes through this cluster's own MCP server (when
     // registered) so the hub uses the SAME pipeline as every other cluster.
     // _chatCluster keeps the original value ("local") for history tagging.
-    const _chatCluster = body.cluster;
+    _chatCluster = body.cluster || "local";
     const _chatTarget = (_chatCluster === "local" && hasSpokeCluster(HUB_AGENT_CLUSTER))
       ? HUB_AGENT_CLUSTER
       : _chatCluster;
