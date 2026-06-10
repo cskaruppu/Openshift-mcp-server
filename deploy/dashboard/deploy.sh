@@ -277,8 +277,11 @@ $CLI delete configmap mcp-hub-agent-config -n "$NS" --ignore-not-found 2>/dev/nu
 # Route, and the postgres StatefulSet keep their stable names.
 $CLI delete deployment mcp-dashboard -n "$NS" --ignore-not-found 2>/dev/null || true
 $CLI delete deployment mcp-redis -n "$NS" --ignore-not-found 2>/dev/null || true
-# Old unused dashboard PVC (the dashboard is stateless; state is in PostgreSQL)
+# Old control plane deployment (renamed to agentic-ai-control-plane)
+$CLI delete deployment agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
+# Orphaned PVCs — control plane and dashboard are stateless (state in PostgreSQL)
 $CLI delete pvc mcp-dashboard-data -n "$NS" --ignore-not-found 2>/dev/null || true
+$CLI delete pvc agentic-ai-server-data -n "$NS" --ignore-not-found 2>/dev/null || true
 
 if [ "$NS" != "openshift-mcp" ]; then
   echo "  (Patching manifests for namespace: $NS)"
@@ -366,8 +369,6 @@ if [ "$CLI" = "oc" ]; then
   oc delete route agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
   oc delete route agentic-ai-control-plane -n "$NS" --ignore-not-found 2>/dev/null || true
 fi
-# Clean up old deployment name (agentic-ai-server → agentic-ai-control-plane)
-$CLI delete deployment agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
 
 # 8. Dashboard deployment (separate pod — React + Nginx, stateless)
 #    Applies deploy/dashboard/manifests/dashboard-deployment.yaml, which carries the

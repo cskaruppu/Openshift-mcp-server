@@ -14,7 +14,7 @@ metadata:
   labels:
     app.kubernetes.io/name: mcp-dashboard
     app.kubernetes.io/component: dashboard
-    app.kubernetes.io/part-of: mcp-ai-assistant
+    app.kubernetes.io/part-of: tcs-agentic-ai
 spec:
   replicas: 1
   selector:
@@ -82,7 +82,7 @@ metadata:
   namespace: openshift-mcp
   labels:
     app.kubernetes.io/name: mcp-dashboard
-    app.kubernetes.io/part-of: mcp-ai-assistant
+    app.kubernetes.io/part-of: tcs-agentic-ai
 spec:
   selector:
     app.kubernetes.io/name: mcp-dashboard
@@ -98,7 +98,7 @@ metadata:
   namespace: openshift-mcp
   labels:
     app.kubernetes.io/name: mcp-dashboard
-    app.kubernetes.io/part-of: mcp-ai-assistant
+    app.kubernetes.io/part-of: tcs-agentic-ai
   annotations:
     haproxy.router.openshift.io/timeout: 600s
     haproxy.router.openshift.io/timeout-tunnel: 600s
