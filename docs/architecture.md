@@ -1,13 +1,13 @@
-# KubeNexus AI — Reference Architecture
+# TCS Agentic AI — Reference Architecture
 
-> **KubeNexus AI** — Kubernetes Intelligence Platform powered by MCP (Model Context Protocol)
+> **TCS Agentic AI** — Kubernetes Intelligence Platform powered by MCP (Model Context Protocol)
 > for OpenShift Container Platform
 
 ---
 
 ## Two-Plane Multi-Cluster Architecture
 
-KubeNexus AI separates the platform into two planes (the Red Hat ACM / Rancher pattern):
+TCS Agentic AI separates the platform into two planes (the Red Hat ACM / Rancher pattern):
 
 | Plane | Deployment | Components | State |
 |:------|:-----------|:-----------|:------|
@@ -91,7 +91,7 @@ flowchart TB
     subgraph OCP["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;☸️ OPENSHIFT  CLUSTER  —  Namespace: openshift-mcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"]
         direction TB
 
-        subgraph MCPSERVER["🚀 KubeNexus AI MCP Server &nbsp;•&nbsp; Node.js 20 &nbsp;•&nbsp; Port 3000"]
+        subgraph MCPSERVER["🚀 TCS Agentic AI MCP Server &nbsp;•&nbsp; Node.js 20 &nbsp;•&nbsp; Port 3000"]
             direction LR
 
             subgraph CHATENG["💬 Chat Engine"]
@@ -377,4 +377,73 @@ flowchart LR
 
 ---
 
-*Reference Architecture for KubeNexus AI on Red Hat OpenShift Container Platform*
+---
+
+## Kubernetes Resource Naming
+
+Pod names are chosen for immediate role clarity. Service names are decoupled so internal URLs (nginx `proxy_pass`, `REDIS_URL`) never break on a rename.
+
+| Pod prefix | Role | Service DNS | Selector label |
+|:-----------|:-----|:------------|:---------------|
+| `agentic-ai-control-plane-*` | Management plane — API, auth, routing, LLM config injection | `agentic-ai-server` | `app.kubernetes.io/name: agentic-ai-server` |
+| `agentic-ai-dashboard-*` | React SPA + Nginx reverse proxy | `mcp-dashboard` | `app.kubernetes.io/name: mcp-dashboard` |
+| `agentic-ai-agent-*` | Data plane — per-cluster MCP worker (40+ tools) | `agentic-ai-agent` | `app.kubernetes.io/name: agentic-ai-agent` |
+| `mcp-postgres-0` | PostgreSQL (StatefulSet) — single source of truth | `mcp-postgres` | `app: mcp-postgres` |
+| `agentic-ai-redis-*` | Redis — cache and sessions | `mcp-redis` | `app.kubernetes.io/name: mcp-redis` |
+
+Only `data-mcp-postgres-0` (5 Gi PVC) carries persistent storage. All other pods use `emptyDir` — fully stateless.
+
+---
+
+## Persistence Architecture
+
+All platform state is stored in PostgreSQL, accessed exclusively by the control plane (`MCP_MODE=control`).
+
+### Core Tables
+
+| Table | Purpose |
+|:------|:--------|
+| `kv_store` | JSONB settings store — `key TEXT PK`, `value JSONB`, `updated_at TIMESTAMPTZ` |
+| `users` | Authentication — `username TEXT PK`, `password_hash TEXT` (scrypt), `role`, `namespaces`, `active` |
+| `chat_history` | Per-cluster conversation logs |
+| `audit_log` | Compliance trail for all actions |
+| `knowledge_base` | Incident patterns for RAG-based correlation |
+
+### Settings in `kv_store`
+
+| Key | Contents |
+|:----|:---------|
+| `llm_settings` | All LLM provider configs (API keys, models, endpoints, temperature) |
+| `servicenow_settings` | Instance URL, credentials, default assignment group |
+| `connected_clusters` | Spoke registry snapshot (restored on control-plane restart) |
+| `user_roles` | RBAC role assignments |
+| `user_namespaces` | Per-user namespace restrictions |
+
+### LLM Credential Injection
+
+LLM API keys are configured once in the dashboard and stored in `kv_store`. Agent pods **never** store credentials — the control plane injects them per-request:
+
+```mermaid
+sequenceDiagram
+    participant Admin as 👤 Admin
+    participant CP as ⚙️ Control Plane
+    participant DB as 🐘 PostgreSQL
+    participant Agent as 🔵 Agent Pod
+    participant LLM as 🤖 LLM Provider
+
+    Admin->>CP: POST /api/settings/llm { apiKey, model }
+    CP->>DB: UPSERT kv_store key='llm_settings'
+    Note over CP: On chat query...
+    CP->>DB: SELECT value FROM kv_store WHERE key='llm_settings'
+    CP->>CP: resolveLLMOpts() — substitute masked keys with real ones
+    CP->>Agent: POST /api/chat { message, llmOpts: { apiKey, model } }
+    Agent->>LLM: API call with injected credentials
+    LLM-->>Agent: response
+    Agent-->>CP: response (credentials discarded)
+```
+
+**Dual persistence fallback:** LLM settings are also written to `/data/mcp-llm-settings.json`. On startup, the control plane tries PostgreSQL first; if unreachable, it reads the file.
+
+---
+
+*Reference Architecture for TCS Agentic AI on Red Hat OpenShift Container Platform*

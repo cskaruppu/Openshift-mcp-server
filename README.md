@@ -548,7 +548,7 @@ oc get route mcp-dashboard -n openshift-mcp -o jsonpath='{.spec.host}'
 
 # Check all pods
 oc get pods -n openshift-mcp
-# Expected: agentic-ai-server (control plane), agentic-ai-dashboard, mcp-postgres, agentic-ai-redis
+# Expected: agentic-ai-control-plane, agentic-ai-dashboard, mcp-postgres-0, agentic-ai-redis
 ```
 
 ### Deploy the MCP Server (every cluster, including the hub)
@@ -783,6 +783,108 @@ React SPA served by Nginx. Reverse proxies API calls to the MCP server.
 ```bash
 podman build -t quay.io/your-org/mcp-dashboard:latest ./console
 ```
+
+---
+
+## Kubernetes Resource Naming
+
+Each pod family has a Deployment name (what you see in `oc get pods`) and a Service name (the stable DNS endpoint). Service names are decoupled from Deployment names so internal URLs never break on a rename.
+
+| Pod prefix | Role | Service name | Selector label | Image |
+|---|---|---|---|---|
+| `agentic-ai-control-plane-*` | Control plane — API, auth, routing, LLM config | `agentic-ai-server` | `app.kubernetes.io/name: agentic-ai-server` | `openshift-mcp-server` |
+| `agentic-ai-dashboard-*` | Dashboard — React SPA + Nginx reverse proxy | `mcp-dashboard` | `app.kubernetes.io/name: mcp-dashboard` | `mcp-dashboard` |
+| `agentic-ai-agent-*` | MCP agent — per-cluster data plane (40+ tools) | `agentic-ai-agent` | `app.kubernetes.io/name: agentic-ai-agent` | `openshift-mcp-server` |
+| `mcp-postgres-0` | PostgreSQL — single source of truth | `mcp-postgres` | `app: mcp-postgres` | `postgres:15-alpine` |
+| `agentic-ai-redis-*` | Redis — cache and sessions | `mcp-redis` | `app.kubernetes.io/name: mcp-redis` | `redis:7-alpine` |
+
+Expected `oc get pods -n openshift-mcp` on a clean hub cluster:
+
+```
+NAME                                          READY   STATUS    RESTARTS   AGE
+agentic-ai-control-plane-xxxxxxxxxx-xxxxx     1/1     Running   0          5m
+agentic-ai-dashboard-xxxxxxxxxx-xxxxx         1/1     Running   0          5m
+agentic-ai-agent-xxxxxxxxxx-xxxxx             1/1     Running   0          5m
+agentic-ai-redis-xxxxxxxxxx-xxxxx             1/1     Running   0          5m
+mcp-postgres-0                                1/1     Running   0          5m
+```
+
+On spoke clusters, only `agentic-ai-agent-*` runs — no dashboard, no control plane, no databases.
+
+### Persistent Storage
+
+Only one PVC exists in the entire platform — everything else is stateless:
+
+| PVC | Size | Bound to | Contains |
+|---|---|---|---|
+| `data-mcp-postgres-0` | 5 Gi | `mcp-postgres-0` | All platform state (see tables below) |
+
+The control plane, dashboard, agent, and Redis pods use `emptyDir` volumes only. Losing any of them is a restart away from recovery — no data loss.
+
+---
+
+## Persistence & Data Architecture
+
+All platform state lives in PostgreSQL. The control plane (`MCP_MODE=control`) is the only component that reads/writes the database.
+
+### PostgreSQL Tables
+
+| Table | Purpose | Key columns |
+|---|---|---|
+| `kv_store` | Settings store (JSONB) | `key TEXT PK`, `value JSONB`, `updated_at TIMESTAMPTZ` |
+| `users` | Authentication | `username TEXT PK`, `password_hash TEXT`, `role`, `namespaces`, `active`, `force_password_change` |
+| `chat_history` | Per-cluster conversation logs | `cluster_id`, `messages JSONB`, `updated_at` |
+| `audit_log` | Compliance trail | `action`, `user`, `cluster`, `details JSONB`, `timestamp` |
+| `knowledge_base` | Incident patterns for RAG | `id`, `content`, `embedding`, `metadata JSONB` |
+
+### Key stored in `kv_store`
+
+| Key | What it holds |
+|---|---|
+| `llm_settings` | Provider configs — API keys, model names, endpoints, temperature (all providers: OpenAI, Anthropic, Azure, Google, Bedrock, Ollama) |
+| `servicenow_settings` | Instance URL, credentials, default assignment group |
+| `connected_clusters` | Spoke registry snapshot (restored on control-plane restart) |
+| `user_roles` | RBAC role assignments |
+| `user_namespaces` | Per-user namespace restrictions |
+
+### Authentication
+
+Passwords are hashed with Node.js `scryptSync` (16-byte random salt, `salt:hash` format) and verified with `timingSafeEqual`. Auth mode is set via `AUTH_MODE` env var: `password` (default), `token`, or `none`.
+
+### LLM Credential Flow
+
+LLM API keys are configured once in the dashboard and stored in `kv_store`. Agent pods never see or store credentials — the control plane injects them per-request:
+
+```mermaid
+sequenceDiagram
+    participant A as 👤 Admin
+    participant D as 📊 Dashboard
+    participant C as ⚙️ Control Plane
+    participant DB as 🐘 PostgreSQL
+    participant AG as 🔵 Agent Pod<br/>(any cluster)
+    participant LLM as 🤖 LLM Provider
+
+    A->>D: Save LLM settings (API key, model, endpoint)
+    D->>C: POST /api/settings/llm { provider, apiKey, model }
+    C->>DB: UPSERT kv_store SET key='llm_settings', value='{...}'
+    DB-->>C: ✅ saved
+
+    Note over C: Later — user sends a chat query
+
+    C->>DB: SELECT value FROM kv_store WHERE key='llm_settings'
+    DB-->>C: { openai: { apiKey: "sk-..." }, ... }
+    C->>C: resolveLLMOpts() — inject real keys<br/>(dashboard sends masked "****abcd")
+
+    C->>AG: POST /api/chat { message, llmOpts: { apiKey, model, endpoint } }
+    AG->>LLM: Call LLM API with injected credentials
+    LLM-->>AG: AI response
+    AG-->>C: response (credentials discarded)
+    C-->>D: SSE stream → user
+```
+
+### Dual Persistence (Fallback)
+
+The control plane writes LLM settings to both PostgreSQL and a JSON file (`/data/mcp-llm-settings.json`) as a fallback. On startup, it tries the database first; if PostgreSQL is unreachable, it reads the file. This ensures the platform stays functional during brief database outages.
 
 ---
 
