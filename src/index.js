@@ -341,9 +341,10 @@ export { hasSpoke, getSpokeStatus };
 
 const MCP_MODE = (process.env.MCP_MODE || "hub").toLowerCase(); // hub | spoke | control | standalone
 
-// Phase B: name under which the hub cluster's own stateless data-plane pod
-// (hub-agent) registers. Requests with ?cluster=local are routed to it via
-// the same spoke pipeline as any other cluster when it is registered.
+// Name under which the management cluster's own MCP server registers
+// (deployed like any other cluster via ./deploy/mcp/deploy.sh — the ACM
+// "local-cluster" pattern). Requests with ?cluster=local are routed to it
+// through the same spoke pipeline as every other cluster when registered.
 const HUB_AGENT_CLUSTER = process.env.HUB_AGENT_CLUSTER || "hub-cluster";
 
 // MCP server version — used for drift detection across clusters
@@ -1969,13 +1970,14 @@ async function startSSE() {
   console.log(`[startup] MCP_MODE=${MCP_MODE} | ${_stateMode}${_hasRedis ? " | Redis cache" : ""}`);
   if (MCP_MODE === "control") {
     // Control plane: management routes + persistence + federation routing.
-    // The hub cluster's data plane should be the hub-agent pod. Warn (don't
+    // This cluster's data plane should be the MCP server pod deployed via
+    // ./deploy/mcp/deploy.sh with --cluster-name "hub-cluster". Warn (don't
     // fail) when it hasn't registered — legacy in-process handling still works.
     setTimeout(() => {
       if (!hasSpoke(HUB_AGENT_CLUSTER)) {
-        console.warn(`[startup] Control mode: hub-agent "${HUB_AGENT_CLUSTER}" not registered yet — hub-cluster queries fall back to in-process handling until it connects`);
+        console.warn(`[startup] Control mode: local MCP server "${HUB_AGENT_CLUSTER}" not registered yet — run ./deploy/mcp/deploy.sh --cluster-name ${HUB_AGENT_CLUSTER} on this cluster; queries fall back to in-process handling until it connects`);
       } else {
-        console.log(`[startup] Control mode: hub-agent "${HUB_AGENT_CLUSTER}" registered — hub data plane fully delegated`);
+        console.log(`[startup] Control mode: local MCP server "${HUB_AGENT_CLUSTER}" registered — this cluster's data plane fully delegated`);
       }
     }, 60000);
   }
@@ -2053,11 +2055,11 @@ async function startSSE() {
     // Hub-local paths (records stored in hub PostgreSQL) are NEVER proxied —
     // the cluster param is used for DB filtering, not for routing.
     //
-    // Phase B: the hub cluster is "just another spoke". When the hub-agent
-    // pod is registered (HUB_AGENT_CLUSTER), explicit ?cluster=local data-
-    // plane requests are routed through the SAME spoke pipeline as every
-    // other cluster — identical code path, identical answers. If the agent
-    // is not deployed/registered, behavior falls back to in-process (legacy).
+    // The hub cluster is "just another cluster": its own MCP server pod
+    // (deployed via ./deploy/mcp/deploy.sh, registered as HUB_AGENT_CLUSTER)
+    // serves explicit ?cluster=local data-plane requests through the SAME
+    // spoke pipeline as every other cluster — identical code path, identical
+    // answers. If not deployed/registered, falls back to in-process (legacy).
     let _reqCluster = queryCluster || headerCluster;
     if (_reqCluster === "local" && MCP_MODE !== "spoke" && hasSpoke(HUB_AGENT_CLUSTER)) {
       _reqCluster = HUB_AGENT_CLUSTER;
@@ -2531,12 +2533,15 @@ async function startSSE() {
     // -----------------------------------------------------------------------
     if (req.method === "POST" && url.pathname === "/api/cluster/redeploy") {
       const ns = process.env.NAMESPACE || process.env.MCP_NAMESPACE || (process.env.PLATFORM === "openshift" ? "openshift-mcp" : "tcs-agentic-system");
-      const deployName = process.env.DEPLOYMENT_NAME || "agentic-ai-server";
+      const deployName = process.env.DEPLOYMENT_NAME || (MCP_MODE === "spoke" ? "mcp-server" : "agentic-ai-server");
       try {
         const cli = await detectCLI();
         const result = await runExec(cli, ["rollout", "restart", `deployment/${deployName}`, "-n", ns]);
-        // Also restart the hub-agent (local data plane) when present.
-        await runExec(cli, ["rollout", "restart", "deployment/mcp-hub-agent", "-n", ns]).catch(() => {});
+        // Control mode: also restart this cluster's MCP server pod when it
+        // shares the namespace (deployed via ./deploy/mcp/deploy.sh).
+        if (deployName !== "mcp-server") {
+          await runExec(cli, ["rollout", "restart", "deployment/mcp-server", "-n", ns]).catch(() => {});
+        }
         return sendJson(res, 200, { ok: true, message: `Rollout restart triggered for ${deployName} in ${ns}`, output: result });
       } catch (err) {
         return sendJson(res, 500, { ok: false, error: err.message });
@@ -2791,11 +2796,12 @@ async function startSSE() {
       const { clusterName, spokeUrl, platform, version } = body;
       if (!clusterName || !spokeUrl) return sendJson(res, 400, { error: "clusterName and spokeUrl required" });
       const entry = registerSpoke(clusterName, spokeUrl, { platform, version });
-      // The hub-agent is the hub cluster's own data-plane pod — it must NOT
-      // appear as a separate cluster card (the picker already shows the hub).
+      // "hub-cluster" is the management cluster's own MCP server (the ACM
+      // local-cluster pattern) — it must NOT appear as a separate cluster
+      // card (the picker already shows the hub).
       if (clusterName === HUB_AGENT_CLUSTER || clusterName.toLowerCase() === HUB_AGENT_CLUSTER.toLowerCase()) {
-        console.log(`[spoke] Hub-agent registered: ${spokeUrl} — local data plane now served by the spoke pipeline`);
-        return sendJson(res, 200, { ok: true, message: `Hub-agent "${clusterName}" registered`, hubVersion: "1.2.0" });
+        console.log(`[spoke] Local MCP server registered: ${spokeUrl} — this cluster's data plane now served by the spoke pipeline`);
+        return sendJson(res, 200, { ok: true, message: `Local MCP server "${clusterName}" registered`, hubVersion: "1.2.0" });
       }
       // Also register in _connectedAgents so the cluster picker sees it
       const existingKey = findClusterKey(clusterName);
@@ -2866,7 +2872,7 @@ async function startSSE() {
       const spokeNs = platform === "openshift" ? "openshift-mcp" : "tcs-agentic-system";
 
       const command = [
-        "./deploy/spoke/deploy.sh",
+        "./deploy/mcp/deploy.sh",
         `--hub-url ${hubUrl}`,
         `--hub-token ${hubToken || "<hub-token>"}`,
         `--cluster-name ${clusterName}`,
@@ -2874,27 +2880,27 @@ async function startSSE() {
         ...(platform === "openshift" ? ["--tls-skip"] : []),
       ].join(" \\\n  ");
 
-      const yaml = `# TCS Agentic AI — Spoke deployment for ${clusterName} (${platform})
-# Apply on the secondary cluster: kubectl apply -f spoke-join.yaml
+      const yaml = `# TCS Agentic AI — MCP server deployment for ${clusterName} (${platform})
+# Apply on the target cluster: kubectl apply -f mcp-server-join.yaml
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: ${spokeNs}
   labels:
-    app.kubernetes.io/name: agentic-ai-server
+    app.kubernetes.io/name: mcp-server
     app.kubernetes.io/part-of: tcs-agentic-ai
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: agentic-ai-server
+  name: mcp-server
   namespace: ${spokeNs}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: agentic-ai-server-reader
+  name: mcp-server-reader
 rules:
   - apiGroups: [""]
     resources: [nodes, pods, pods/log, services, namespaces, events, resourcequotas,
@@ -2929,20 +2935,20 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: agentic-ai-server-reader-binding
+  name: mcp-server-reader-binding
 subjects:
   - kind: ServiceAccount
-    name: agentic-ai-server
+    name: mcp-server
     namespace: ${spokeNs}
 roleRef:
   kind: ClusterRole
-  name: agentic-ai-server-reader
+  name: mcp-server-reader
   apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: agentic-ai-server-config
+  name: mcp-server-config
   namespace: ${spokeNs}
 data:
   MCP_MODE: "spoke"
@@ -2956,11 +2962,13 @@ data:
   AUTH_MODE: "none"
   EMERGENCY_AUTO_FIX: "false"
   ALLOW_PRIVATE_CLUSTER_IPS: "true"
+  DEPLOYMENT_NAME: "mcp-server"
+  MCP_NAMESPACE: "${spokeNs}"
 ---
 apiVersion: v1
 kind: Secret
 metadata:
-  name: agentic-ai-server-secrets
+  name: mcp-server-secrets
   namespace: ${spokeNs}
 type: Opaque
 stringData:
@@ -2970,32 +2978,32 @@ stringData:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: agentic-ai-server
+  name: mcp-server
   namespace: ${spokeNs}
   labels:
-    app.kubernetes.io/name: agentic-ai-server
+    app.kubernetes.io/name: mcp-server
     app.kubernetes.io/part-of: tcs-agentic-ai
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: agentic-ai-server
+      app.kubernetes.io/name: mcp-server
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: agentic-ai-server
+        app.kubernetes.io/name: mcp-server
     spec:
-      serviceAccountName: agentic-ai-server
+      serviceAccountName: mcp-server
       containers:
-        - name: agentic-ai-server
+        - name: mcp-server
           image: ${image}
           ports:
             - containerPort: 3000
           envFrom:
             - configMapRef:
-                name: agentic-ai-server-config
+                name: mcp-server-config
             - secretRef:
-                name: agentic-ai-server-secrets
+                name: mcp-server-secrets
           env:
             - name: NODE_EXTRA_CA_CERTS
               value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
@@ -3024,11 +3032,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: agentic-ai-server
+  name: mcp-server
   namespace: ${spokeNs}
 spec:
   selector:
-    app.kubernetes.io/name: agentic-ai-server
+    app.kubernetes.io/name: mcp-server
   ports:
     - port: 3000
       targetPort: 3000

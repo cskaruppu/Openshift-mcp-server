@@ -460,7 +460,8 @@ function _formatAge(date) {
 const CHAT_CACHE_TTL = parseInt(process.env.CHAT_CACHE_TTL || "300", 10);
 const CONTEXT_CACHE_TTL = parseInt(process.env.CONTEXT_CACHE_TTL || "120", 10);
 
-// Phase B: hub-cluster chat is served by the hub-agent pod when registered,
+// Hub-cluster chat is served by the management cluster's own MCP server
+// (registered as "hub-cluster" via ./deploy/mcp/deploy.sh) when available,
 // using the same spoke pipeline as every other cluster.
 const HUB_AGENT_CLUSTER = process.env.HUB_AGENT_CLUSTER || "hub-cluster";
 
@@ -14555,7 +14556,7 @@ export async function handleChatAPI(req, res) {
     // We resolve LLM credentials first so the spoke can use the same provider
     // (spokes don't store LLM settings — the hub is the single config point).
     //
-    // Phase B: hub-cluster chat routes through the hub-agent pod (when
+    // Hub-cluster chat routes through this cluster's own MCP server (when
     // registered) so the hub uses the SAME pipeline as every other cluster.
     // _chatCluster keeps the original value ("local") for history tagging.
     const _chatCluster = body.cluster;

@@ -473,10 +473,12 @@ flowchart LR
     class H3,H4 db
 ```
 
-### Deploy Hub Cluster
+### Deploy the Management Bundle (once)
+
+Deploys dashboard + control plane + PostgreSQL + Redis with persistent storage. Deployed once — MCP server refreshes never touch it.
 
 ```bash
-./deploy/hub/deploy.sh
+./deploy/dashboard/deploy.sh
 ```
 
 **What it does:**
@@ -485,7 +487,7 @@ flowchart LR
 flowchart LR
     A["1️⃣ Build Images<br/><i>MCP Server +<br/>Dashboard</i>"] --> B["2️⃣ Create Namespace<br/><i>openshift-mcp<br/>+ RBAC</i>"]
     B --> C["3️⃣ Deploy Data Layer<br/><i>PostgreSQL +<br/>Redis PVCs</i>"]
-    C --> D["4️⃣ Deploy MCP Server<br/><i>MCP_MODE=hub<br/>Port 3000</i>"]
+    C --> D["4️⃣ Deploy Control Plane<br/><i>MCP_MODE=control<br/>Port 3000</i>"]
     D --> E["5️⃣ Deploy Dashboard<br/><i>React + Nginx<br/>Port 8080</i>"]
     E --> F["6️⃣ Create Route<br/><i>HTTPS edge<br/>termination</i>"]
 
@@ -501,15 +503,15 @@ oc get route mcp-dashboard -n openshift-mcp -o jsonpath='{.spec.host}'
 
 # Check all pods
 oc get pods -n openshift-mcp
-# Expected: mcp-server, mcp-dashboard, postgres, redis
+# Expected: agentic-ai-server (control plane), mcp-dashboard, mcp-postgres, mcp-redis
 ```
 
-### Deploy Spoke Cluster
+### Deploy the MCP Server (every cluster, including the hub)
 
-Run on each secondary cluster — deploys only the MCP server (no dashboard, no databases).
+Run on each cluster — deploys only the stateless MCP server (no dashboard, no databases, no PVC). On the management cluster itself, use `--cluster-name hub-cluster` so it registers as that cluster's own data plane (the ACM local-cluster pattern).
 
 ```bash
-./deploy/spoke/deploy.sh
+./deploy/mcp/deploy.sh
 ```
 
 **What it does:**

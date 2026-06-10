@@ -5,8 +5,9 @@ metadata:
   namespace: openshift-mcp
 data:
   # "control": stateful management plane (PostgreSQL/Redis/dashboard bundle).
-  # The hub cluster's data plane is the separate mcp-hub-agent pod, so this
-  # pod serves global routes + persistence + federation routing only.
+  # This pod serves global routes + persistence + federation routing only.
+  # The cluster's data plane is the MCP server pod deployed separately via
+  # ./deploy/mcp/deploy.sh --cluster-name hub-cluster (like every cluster).
   MCP_MODE: "control"
   MCP_TRANSPORT: "sse"
   MCP_SERVER_PORT: "3000"
