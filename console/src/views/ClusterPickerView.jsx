@@ -586,7 +586,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
         <div className="cp-subtitle">Choose a Kubernetes cluster to manage. Each workspace is scoped to the selected cluster.</div>
 
         {!hubAgentDeployed && (
-          <div style={{ maxWidth: 720, margin: "0 auto 20px", padding: "12px 18px", borderRadius: 10, background: "color-mix(in srgb, var(--warn) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--warn) 35%, transparent)", fontSize: 13, color: "var(--text)", textAlign: "center" }}>
+          <div style={{ maxWidth: 720, margin: "0 auto 20px", padding: "12px 18px", borderRadius: 10, background: "color-mix(in srgb, #6366f1 8%, transparent)", border: "1px solid color-mix(in srgb, #6366f1 25%, transparent)", fontSize: 13, color: "var(--text)", textAlign: "center" }}>
             <strong>This cluster's MCP agent is not deployed.</strong> Clusters appear here only when their agent pod is running and reporting live data.
             <div style={{ marginTop: 6, fontSize: 12, color: "var(--text2)" }}>
               Run <code style={{ background: "var(--surface2)", padding: "2px 8px", borderRadius: 4, fontSize: 11 }}>./deploy/mcp/deploy.sh --cluster-name hub-cluster</code> on this cluster to activate it.
@@ -594,7 +594,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
           </div>
         )}
 
-        <div className="cp-grid">
+        <div className={"cp-grid" + (!hubAgentDeployed && remoteAgents.length === 0 ? " cp-grid-empty" : "")}>
           {/* Hub cluster card — rendered only when this cluster's MCP agent pod
               is running and reporting, exactly like remote cluster cards. */}
           {hubAgentDeployed && (
