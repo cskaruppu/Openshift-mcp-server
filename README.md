@@ -60,6 +60,7 @@ Key principles:
 - **The bundle is sacred.** Deployed once; MCP server refreshes never touch it. Every dashboard change (settings, chats, audit, incidents, knowledge base) is stored in PostgreSQL.
 - **The MCP server is cattle.** The same image runs on every cluster. It gathers data live from its own cluster and registers with the control plane (heartbeat every 30s, carrying its build version for "Update Available" drift detection).
 - **The hub is just another cluster.** The management cluster runs its own MCP server pod too, registered as `hub-cluster` (the ACM *local-cluster* pattern). Every query — including hub-cluster queries — flows through the same spoke pipeline, guaranteeing **identical answers fleet-wide**.
+- **Live data only — no agent, no card.** A cluster appears in the picker **only** when its MCP agent pod is running and reporting (the hub included). Without a registered agent, data-plane endpoints return `503 { agentRequired: true }` — the control plane never answers cluster queries in-process or from stale cache. Unreachable registrations are pruned automatically on control-plane startup.
 - **LLM config is centralized.** Credentials live only in the management plane; the control plane injects them per-request when proxying chat to any cluster's MCP pod. Configure once, works everywhere.
 
 ### System Overview
@@ -607,6 +608,18 @@ curl https://<hub-url>/api/cluster/version
 ```
 
 After the image is updated in the registry, **no script reruns are needed** — clusters running an older build show an "Update Available" badge; click ⋮ → Redeploy on the cluster card.
+
+### Cluster Card Lifecycle (Live Data Only)
+
+The dashboard never invents data. A cluster card exists only while its agent does:
+
+| State | Picker shows |
+|---|---|
+| Management bundle only (no agents) | Guidance banner + "Connect a Cluster" card — **zero cluster cards** |
+| Agent deployed on hub (`--cluster-name hub-cluster`) | Hub Cluster card appears with live version/nodes/pods |
+| Agent deployed on remote cluster | That cluster's card appears as it registers |
+| Agent pod stops | Status degrades to stale → unreachable; data is never silently served from cache |
+| Control plane restarts | Registrations restore from PostgreSQL, then unreachable agents are pruned within seconds |
 
 ### Helm Chart
 

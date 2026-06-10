@@ -62,6 +62,7 @@ flowchart TB
 2. **The bundle is never touched by MCP refreshes** — Agent pods use the `agentic-ai-agent` resource name family and carry no state; the bundle keeps its PostgreSQL PVC across any number of data-plane redeploys.
 3. **Centralized LLM configuration** — credentials live only in the management plane and are injected per-request when chat is proxied to any cluster's pod.
 4. **Self-healing registry** — heartbeats carry `spokeUrl` + build version; a control-plane restart re-registers every cluster within 30 seconds, and version drift surfaces as an "Update Available" badge with one-click ⋮ → Redeploy.
+5. **Live data only — agent-required gate** — a cluster card appears in the picker **only** while its MCP agent pod is running and reporting (the hub follows the same rule as every spoke). Without a registered agent, data-plane endpoints return `503 { agentRequired: true }`; the control plane never serves cluster data in-process or from stale cache. Stale registrations are pruned on startup (`/healthz` probe per restored spoke), and their PostgreSQL snapshots are deleted with them.
 
 ---
 
