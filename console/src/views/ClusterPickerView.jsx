@@ -488,22 +488,24 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
     refetchInterval: 15_000,
   });
 
-  const { data: hubData } = useQuery({
+  const { data: hubData, isError: hubError } = useQuery({
     queryKey: ["/api/cluster/summary", "local"],
     queryFn: ({ signal }) => apiGet("/api/cluster/summary", { signal }),
     staleTime: 15_000,
+    retry: 1,
   });
 
   const remoteAgents = Array.isArray(agentData?.agents) ? agentData.agents : [];
   const hubMcpVersion = agentData?.hubVersion || null;
+  const hubAgentDeployed = !!hubData && !hubError;
 
   const lci = hubData || {};
   const isOCP = !!lci.isOpenShift;
-  const hubPInfo = getPlatformInfo(lci.platform);
-  const hubVersion = isOCP ? (lci.cluster?.version || "--") : (lci.cluster?.kubernetesVersion || lci.cluster?.version || "--");
-  const hubNodes = lci.nodes ? `${lci.nodes.ready || 0}/${lci.nodes.total || 0}` : "--";
-  const hubPods = lci.pods ? `${lci.pods.running ?? 0}` : "--";
-  const hubPodsTotal = lci.pods?.total ?? 0;
+  const hubPInfo = hubAgentDeployed ? getPlatformInfo(lci.platform) : getPlatformInfo(null);
+  const hubVersion = hubAgentDeployed ? (isOCP ? (lci.cluster?.version || "--") : (lci.cluster?.kubernetesVersion || lci.cluster?.version || "--")) : "--";
+  const hubNodes = hubAgentDeployed && lci.nodes ? `${lci.nodes.ready || 0}/${lci.nodes.total || 0}` : "--";
+  const hubPods = hubAgentDeployed && lci.pods ? `${lci.pods.running ?? 0}` : "--";
+  const hubPodsTotal = hubAgentDeployed ? (lci.pods?.total ?? 0) : 0;
 
   const handleConnected = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["/api/agent/status"] });
@@ -580,28 +582,39 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
         <div className="cp-subtitle">Choose a Kubernetes cluster to manage. Each workspace is scoped to the selected cluster.</div>
 
         <div className="cp-grid">
-          {/* Hub cluster card */}
-          <div className="cp-card" onClick={() => onSelectCluster("local")}>
+          {/* Hub cluster card — only shows live data when the MCP agent pod is running */}
+          <div className={"cp-card" + (!hubAgentDeployed ? " cp-card-stale" : "")} onClick={() => hubAgentDeployed ? onSelectCluster("local") : null}>
             <div className="cp-card-header">
               <div className="cp-card-icon" style={{ background: hubPInfo.color + "15", color: hubPInfo.color }}>
                 {hubPInfo.icon}
               </div>
               <div className="cp-card-info">
                 <div className="cp-card-name">Hub Cluster <span className="cp-card-primary-badge">PRIMARY</span></div>
-                <div className="cp-card-platform">{hubPInfo.name}</div>
+                <div className="cp-card-platform">{hubAgentDeployed ? hubPInfo.name : "Waiting for agent"}</div>
               </div>
-              <KebabMenu items={[
-                { icon: "📊", label: "Status Check", action: () => { clusterAction("/api/cluster/health-check", "POST", "Hub health check started"); } },
-                { icon: "🔍", label: "Verify Health", action: () => { clusterAction("/api/cluster/health-check", "POST", "Hub health check started"); } },
-                { icon: "🚀", label: "Redeploy", action: () => { clusterAction("/api/cluster/redeploy", "POST", "Rollout restart triggered on hub"); } },
-                { icon: "✏️", label: "Edit Cluster", action: () => { onOpenSettings(); } },
-                { sep: true },
-                { icon: "🔒", label: "Sync RBAC", action: () => { clusterAction("/api/cluster/rbac-sync", "POST", "RBAC sync initiated"); } },
-              ]} />
+              {hubAgentDeployed && (
+                <KebabMenu items={[
+                  { icon: "📊", label: "Status Check", action: () => { clusterAction("/api/cluster/health-check", "POST", "Hub health check started"); } },
+                  { icon: "🔍", label: "Verify Health", action: () => { clusterAction("/api/cluster/health-check", "POST", "Hub health check started"); } },
+                  { icon: "🚀", label: "Redeploy", action: () => { clusterAction("/api/cluster/redeploy", "POST", "Rollout restart triggered on hub"); } },
+                  { icon: "✏️", label: "Edit Cluster", action: () => { onOpenSettings(); } },
+                  { sep: true },
+                  { icon: "🔒", label: "Sync RBAC", action: () => { clusterAction("/api/cluster/rbac-sync", "POST", "RBAC sync initiated"); } },
+                ]} />
+              )}
             </div>
             <div className="cp-card-status">
-              <span className="cp-card-status-dot" style={{ background: "var(--ok)", animation: "pulse 2s infinite" }} />
-              <span className="cp-card-status-label" style={{ color: "var(--ok)" }}>Active</span>
+              {hubAgentDeployed ? (
+                <>
+                  <span className="cp-card-status-dot" style={{ background: "var(--ok)", animation: "pulse 2s infinite" }} />
+                  <span className="cp-card-status-label" style={{ color: "var(--ok)" }}>Active</span>
+                </>
+              ) : (
+                <>
+                  <span className="cp-card-status-dot" style={{ background: "var(--warn)" }} />
+                  <span className="cp-card-status-label" style={{ color: "var(--warn)" }}>Agent Not Deployed</span>
+                </>
+              )}
             </div>
             <div className="cp-card-stats">
               <div className="cp-card-stat">
@@ -617,6 +630,11 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                 <div className="cp-card-stat-lbl">Running Pods{hubPodsTotal > 0 ? ` / ${hubPodsTotal}` : ""}</div>
               </div>
             </div>
+            {!hubAgentDeployed && (
+              <div style={{ padding: "8px 16px 12px", fontSize: 11, color: "var(--text2)", textAlign: "center" }}>
+                Run <code style={{ fontSize: 10, background: "var(--surface2)", padding: "2px 6px", borderRadius: 4 }}>deploy/mcp/deploy.sh --cluster-name hub-cluster</code> to activate
+              </div>
+            )}
           </div>
 
           {/* Remote cluster cards */}

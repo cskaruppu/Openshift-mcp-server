@@ -481,6 +481,7 @@ async function pruneUnreachableSpokes() {
   for (const name of toRemove) {
     _connectedAgents.delete(name);
     unregisterSpoke(name);
+    if (CLUSTER_STORE_ENABLED) deleteClusterSnapshot(name).catch(() => {});
     console.log(`[startup] Pruned unreachable cluster "${name}" — spoke pod not running`);
   }
   if (toRemove.length > 0) {
@@ -679,6 +680,15 @@ const AGENT_CACHE_MAX_AGE_SEC = 300; // 5 minutes
 // dashboard has warm data immediately and survives hub restarts.
 // Feature-flag reversible: set CLUSTER_STORE_ENABLED=false to disable instantly.
 const CLUSTER_STORE_ENABLED = process.env.CLUSTER_STORE_ENABLED !== "false";
+
+// Data-plane endpoints: require a running MCP agent pod. In MCP_MODE=control
+// these must NOT be served in-process — only via the spoke proxy.
+const DATA_PLANE_ENDPOINTS = new Set([
+  "/api/cluster/summary", "/api/cluster/info", "/api/nodes", "/api/node-metrics",
+  "/api/namespaces", "/api/pods/issues", "/api/cluster/operators", "/api/alerts",
+  "/api/dashboard/security", "/api/dashboard/gitops", "/api/dashboard/dr",
+  "/api/dashboard/optimization", "/api/dashboard/image-vulns",
+]);
 
 const _localDashCache = new Map();
 const LOCAL_CACHE_TTL_MS = 30000;
@@ -1874,7 +1884,8 @@ async function startSSE() {
       let hydrated = 0;
       for (const snap of snapshots) {
         const key = findClusterKey(snap.cluster) || snap.cluster;
-        const agent = _connectedAgents.get(key) || { clusterName: key, platform: snap.platform, source: "agent" };
+        const agent = _connectedAgents.get(key);
+        if (!agent) continue; // skip snapshots for pruned/unregistered clusters
         // Only hydrate if we don't already have a fresher in-memory report.
         if (!agent.lastReport || !agent.lastReportTime ||
             new Date(snap.reportedAt).getTime() > new Date(agent.lastReportTime).getTime()) {
@@ -5831,6 +5842,14 @@ spec:
     // Dashboard REST API — /api/...
     if (url.pathname.startsWith("/api/")) {
       const _cl = url.searchParams.get("cluster");
+
+      // In control mode, data-plane endpoints for the local cluster require
+      // the hub-cluster MCP agent to be running. Without it, return 503 so the
+      // dashboard shows "Deploy Agent" instead of stale/in-process data.
+      if (MCP_MODE === "control" && (!_cl || _cl === "local") && DATA_PLANE_ENDPOINTS.has(url.pathname) && !hasSpoke(HUB_AGENT_CLUSTER)) {
+        return sendJson(res, 503, { agentRequired: true, message: "MCP agent not deployed — run deploy/mcp/deploy.sh with --cluster-name hub-cluster" });
+      }
+
       if (_cl && _cl !== "local") {
         const cached = getAgentCachedResponse(_cl, url.pathname);
         if (cached) { sendJson(res, 200, cached); return; }
