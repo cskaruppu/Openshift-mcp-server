@@ -10,9 +10,9 @@
 [![MCP](https://img.shields.io/badge/MCP-Protocol-7C3AED?style=for-the-badge)](https://modelcontextprotocol.io)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 
-A production-grade **Model Context Protocol (MCP)** server for **Red Hat OpenShift** with hub/spoke multi-cluster federation, AI-powered diagnostics, ACM integration, Ansible remediation, and ServiceNow ITSM workflows.
+A production-grade **Model Context Protocol (MCP)** server for **Red Hat OpenShift** with multi-cluster federation, AI-powered diagnostics, ACM integration, Ansible remediation, and ServiceNow ITSM workflows.
 
-*Deployable on any number of clusters using a single container image. Centralized React dashboard for unified management.*
+*One stateful **Management Bundle** (dashboard + PostgreSQL + Redis), one stateless **MCP server** pod on every cluster — including the hub. Same image, same answers, everywhere.*
 
 [![ServiceNow](https://img.shields.io/badge/ServiceNow-ITSM-62D84E?style=flat-square&logo=servicenow&logoColor=white)](https://www.servicenow.com)
 [![Ansible](https://img.shields.io/badge/Ansible-Automation-EE0000?style=flat-square&logo=ansible&logoColor=white)](https://www.ansible.com)
@@ -28,7 +28,19 @@ A production-grade **Model Context Protocol (MCP)** server for **Red Hat OpenShi
 
 ## Architecture
 
-TCS Agentic AI follows the **hub/spoke federation pattern** — the same approach used by Red Hat ACM, Rancher, ArgoCD, and Thanos. The same MCP server image runs on every cluster: the hub aggregates, the spokes execute locally.
+TCS Agentic AI uses a **two-plane architecture** — the same pattern as Red Hat ACM, Rancher, and Portainer:
+
+| Plane | Components | Deployed | State |
+|---|---|---|---|
+| **Management Plane** (Management Bundle) | Dashboard + Control Plane (`MCP_MODE=control`) + PostgreSQL + Redis | **Once**, on one cluster | Stateful — all data on PersistentVolumeClaims |
+| **Data Plane** (MCP Server) | Stateless MCP server pod (`MCP_MODE=spoke`) | On **every** cluster, *including the hub* | Stateless — no DB, no PVC, kill/redeploy anytime |
+
+Key principles:
+
+- **The bundle is sacred.** Deployed once; MCP server refreshes never touch it. Every dashboard change (settings, chats, audit, incidents, knowledge base) is stored in PostgreSQL.
+- **The MCP server is cattle.** The same image runs on every cluster. It gathers data live from its own cluster and registers with the control plane (heartbeat every 30s, carrying its build version for "Update Available" drift detection).
+- **The hub is just another cluster.** The management cluster runs its own MCP server pod too, registered as `hub-cluster` (the ACM *local-cluster* pattern). Every query — including hub-cluster queries — flows through the same spoke pipeline, guaranteeing **identical answers fleet-wide**.
+- **LLM config is centralized.** Credentials live only in the management plane; the control plane injects them per-request when proxying chat to any cluster's MCP pod. Configure once, works everywhere.
 
 ### System Overview
 
@@ -41,23 +53,29 @@ flowchart TB
         copilot["Copilot"]
     end
 
-    subgraph HUB["🏢 Hub Cluster"]
+    subgraph HUB["🏢 Hub Cluster (Management Bundle + its own MCP Server)"]
         direction TB
         subgraph DASH["📊 Dashboard Pod"]
             react["React SPA<br/><i>4-tab UI</i>"]
             nginx["Nginx :8080<br/><i>reverse proxy</i>"]
         end
-        subgraph MCP_HUB["⚙️ MCP Server Pod"]
-            hub_server["MCP Server :3000<br/><i>MCP_MODE=hub</i>"]
+        subgraph MCP_HUB["⚙️ Control Plane Pod"]
+            hub_server["Control Plane :3000<br/><i>MCP_MODE=control</i>"]
             federation["Federation Proxy"]
             spoke_reg["Spoke Registry"]
-            nlu["NLU / AI Chat"]
             audit["Audit Engine"]
-            tools_hub["40+ MCP Tools"]
+            llmcfg["LLM Config<br/><i>single source</i>"]
         end
-        subgraph DATA["💾 Data Layer"]
+        subgraph DATA["💾 Data Layer (PVCs)"]
             pg[("PostgreSQL<br/><i>audit, history,<br/>knowledge base</i>")]
             redis[("Redis<br/><i>cache, sessions,<br/>real-time</i>")]
+        end
+        subgraph MCP_LOCAL["🟣 MCP Server Pod<br/><i>registered as hub-cluster</i>"]
+            mcp_h["MCP Server :3000<br/><i>MCP_MODE=spoke</i>"]
+            tools_hub["40+ MCP Tools<br/><i>local execution</i>"]
+            hb_h["Heartbeat → Control Plane"]
+            mcp_h --> tools_hub
+            mcp_h --> hb_h
         end
 
         react --> nginx
@@ -66,9 +84,8 @@ flowchart TB
         hub_server --> redis
         hub_server --> federation
         hub_server --> spoke_reg
-        hub_server --> nlu
         hub_server --> audit
-        hub_server --> tools_hub
+        hub_server --> llmcfg
     end
 
     subgraph SPOKE_A["🔵 Spoke Cluster A<br/><i>e.g., prod-east</i>"]
@@ -97,9 +114,11 @@ flowchart TB
 
     AI -->|"SSE / stdio / MCP"| hub_server
     AI -->|"HTTPS"| nginx
+    federation -->|"proxy /api/*<br/>(hub-cluster)"| mcp_h
     federation -->|"proxy /api/*"| mcp_a
     federation -->|"proxy /api/*"| mcp_b
     federation -->|"proxy /api/*"| mcp_n
+    hb_h -->|"POST /api/spoke/heartbeat"| spoke_reg
     hb_a -->|"POST /api/spoke/heartbeat"| spoke_reg
     hb_b -->|"POST /api/spoke/heartbeat"| spoke_reg
     hb_n -->|"POST /api/spoke/heartbeat"| spoke_reg
@@ -107,7 +126,7 @@ flowchart TB
     mcp_a -->|"OpenShift API"| k8s_a["☸ Cluster A API"]
     mcp_b -->|"OpenShift API"| k8s_b["☸ Cluster B API"]
     mcp_n -->|"OpenShift API"| k8s_n["☸ Cluster N API"]
-    tools_hub -->|"OpenShift API"| k8s_hub["☸ Hub API"]
+    mcp_h -->|"OpenShift API"| k8s_hub["☸ Hub API"]
 
     classDef ai fill:#7C3AED,stroke:#5B21B6,color:#FFFFFF,stroke-width:2px
     classDef hub fill:#1E40AF,stroke:#1E3A8A,color:#FFFFFF,stroke-width:2px
@@ -119,9 +138,10 @@ flowchart TB
     classDef k8s fill:#326CE5,stroke:#1D4ED8,color:#FFFFFF,stroke-width:2px
 
     class claude,chatgpt,copilot ai
-    class hub_server,federation,spoke_reg,nlu,audit,tools_hub hub
+    class hub_server,federation,spoke_reg,audit,llmcfg hub
     class react,nginx dash
     class pg,redis data
+    class mcp_h,tools_hub,hb_h spoke_a
     class mcp_a,tools_a,hb_a spoke_a
     class mcp_b,tools_b,hb_b spoke_b
     class mcp_n,tools_n,hb_n spoke_n
@@ -130,16 +150,16 @@ flowchart TB
 
 ### Request Proxy Flow
 
-When a user queries a remote cluster, the hub transparently proxies the request to the spoke — ensuring identical results everywhere.
+Every cluster query — **including the hub's own** — is transparently proxied to that cluster's MCP server pod. One pipeline, identical results everywhere. (`?cluster=local` is remapped to the `hub-cluster` pod.)
 
 ```mermaid
 sequenceDiagram
     participant U as 👤 User / AI
     participant D as 📊 Dashboard<br/>(Nginx)
-    participant H as ⚙️ Hub MCP Server<br/>(MCP_MODE=hub)
+    participant H as ⚙️ Control Plane<br/>(MCP_MODE=control)
     participant R as 📋 Spoke Registry
-    participant S as 🔵 Spoke MCP Server<br/>(MCP_MODE=spoke)
-    participant K as ☸ Spoke Cluster API
+    participant S as 🔵 MCP Server<br/>(MCP_MODE=spoke, any cluster)
+    participant K as ☸ Target Cluster API
 
     U->>D: GET /api/health?cluster=prod-east
     D->>H: proxy /api/health?cluster=prod-east
@@ -158,12 +178,12 @@ sequenceDiagram
     D-->>U: Cluster prod-east health report
 ```
 
-### Spoke Registration & Heartbeat
+### MCP Server Registration & Heartbeat
 
 ```mermaid
 sequenceDiagram
-    participant S as 🔵 Spoke MCP Server
-    participant H as ⚙️ Hub MCP Server
+    participant S as 🔵 MCP Server (any cluster)
+    participant H as ⚙️ Control Plane
 
     Note over S: Startup with MCP_MODE=spoke
 
@@ -171,22 +191,25 @@ sequenceDiagram
     H-->>S: 200 OK — registered
 
     loop Every 30 seconds
-        S->>H: POST /api/spoke/heartbeat<br/>{ clusterName, status: "live" }
+        S->>H: POST /api/spoke/heartbeat<br/>{ clusterName, spokeUrl, mcpVersion, buildHash }
         H-->>S: 200 OK
     end
 
-    Note over H: Marks spoke as "stale"<br/>if heartbeat missed > 90s
+    Note over H: Self-healing — re-registers from heartbeat<br/>after a control-plane restart.<br/>Marks cluster "stale" if heartbeat missed > 90s.<br/>Build drift → "Update Available" badge.
 ```
 
-### Why Hub/Spoke?
+> The MCP server registered as **`hub-cluster`** is the management cluster's own data plane — it follows the exact same registration flow but does not appear as a separate cluster card.
 
-| | ❌ Agent Bridge (Old) | ✅ Hub/Spoke Federation (New) |
+### Why This Architecture?
+
+| | ❌ Hub-Special-Path (Old) | ✅ Two-Plane / Local-Cluster Pattern (New) |
 |---|---|---|
-| **Code Path** | Agent on spoke runs different logic | Same MCP server image everywhere |
-| **Query Results** | Secondary clusters return different data | Local execution = identical results |
-| **Data Freshness** | Bridge caches stale data | Hub proxies live requests to spoke |
-| **Scaling** | New agent code per cluster | Deploy same image, auto-registers |
-| **Industry Pattern** | Custom, non-standard | ACM, Rancher, ArgoCD, Thanos |
+| **Code Path** | Hub answered its own queries in-process, spokes via proxy | Same MCP server pod + same spoke pipeline on every cluster, hub included |
+| **Query Results** | Hub and spokes formatted answers differently | Identical answers fleet-wide |
+| **Data Freshness** | Multiple cache layers could serve stale data | Live proxy to the cluster's own pod; only LLM prose cached (build-versioned keys) |
+| **State** | MCP server pods carried file state / PVCs | MCP server fully stateless; all state in the bundle's PostgreSQL |
+| **Upgrades** | Rerun deploy scripts per cluster | ⋮ → Redeploy from the dashboard; "Update Available" badge on version drift |
+| **Industry Pattern** | Custom, non-standard | ACM (`local-cluster`), Rancher, Portainer |
 
 ---
 
@@ -396,11 +419,11 @@ REDIS_URL=redis://localhost:6379
 ### 3. Run Locally
 
 ```bash
-# Hub mode (default)
-MCP_MODE=hub node src/index.js
+# Control mode — the management plane (PostgreSQL/Redis/dashboard bundle)
+MCP_MODE=control node src/index.js
 
-# Spoke mode (connects to hub)
-MCP_MODE=spoke HUB_URL=http://hub-host:3000 CLUSTER_NAME=my-spoke node src/index.js
+# Spoke mode — the per-cluster stateless MCP server (connects to the control plane)
+MCP_MODE=spoke HUB_URL=http://hub-host:3000 CLUSTER_NAME=my-cluster node src/index.js
 
 # Dev mode with auto-reload
 npm run dev
@@ -446,19 +469,21 @@ flowchart LR
         IMG2["🟩 Dashboard<br/><code>console/Dockerfile</code><br/><i>Nginx 1.27 Alpine</i><br/><i>Port 8080 • nginx user</i>"]
     end
 
-    subgraph HUB_DEPLOY["🏢 Hub Cluster"]
+    subgraph HUB_DEPLOY["🏢 Hub Cluster — Management Bundle + MCP Server"]
         direction TB
-        H1["MCP Server Pod<br/><i>MCP_MODE=hub</i>"]
-        H2["Dashboard Pod<br/><i>React + Nginx</i>"]
-        H3[("PostgreSQL")]
+        H1["Control Plane Pod<br/><i>MCP_MODE=control</i>"]
+        H2["Dashboard Pod<br/><i>React + Nginx + 50Gi PVC</i>"]
+        H3[("PostgreSQL<br/><i>PVC</i>")]
         H4[("Redis")]
+        H5["MCP Server Pod<br/><i>MCP_MODE=spoke<br/>registered as hub-cluster</i>"]
     end
 
-    subgraph SPOKE_DEPLOY["🔵 Spoke Cluster(s)"]
+    subgraph SPOKE_DEPLOY["🔵 Every Other Cluster"]
         S1["MCP Server Pod<br/><i>MCP_MODE=spoke</i>"]
     end
 
-    IMG1 -->|"deployed to"| H1
+    IMG1 -->|"control mode"| H1
+    IMG1 -->|"same image"| H5
     IMG1 -->|"same image"| S1
     IMG2 -->|"hub only"| H2
 
@@ -469,7 +494,7 @@ flowchart LR
 
     class IMG1,IMG2 img
     class H1,H2 hub
-    class S1 spoke
+    class S1,H5 spoke
     class H3,H4 db
 ```
 
@@ -511,44 +536,57 @@ oc get pods -n openshift-mcp
 Run on each cluster — deploys only the stateless MCP server (no dashboard, no databases, no PVC). On the management cluster itself, use `--cluster-name hub-cluster` so it registers as that cluster's own data plane (the ACM local-cluster pattern).
 
 ```bash
-./deploy/mcp/deploy.sh
+# On the management cluster (registers as its own data plane):
+./deploy/mcp/deploy.sh \
+  --hub-url https://<dashboard-route> \
+  --hub-token <hub-token> \
+  --cluster-name hub-cluster \
+  --platform openshift --tls-skip
+
+# On each additional cluster:
+./deploy/mcp/deploy.sh \
+  --hub-url https://<dashboard-route> \
+  --hub-token <hub-token> \
+  --cluster-name prod-east \
+  --platform openshift --tls-skip
 ```
 
 **What it does:**
 
 ```mermaid
 flowchart LR
-    A["1️⃣ Build Image<br/><i>Same MCP Server<br/>image</i>"] --> B["2️⃣ Create Namespace<br/><i>openshift-mcp<br/>+ RBAC</i>"]
-    B --> C["3️⃣ Deploy MCP Server<br/><i>MCP_MODE=spoke</i>"]
-    C --> D["4️⃣ Auto-Detect URL<br/><i>Route or Service<br/>external URL</i>"]
+    A["1️⃣ Create Namespace<br/><i>openshift-mcp<br/>+ RBAC (mcp-server)</i>"] --> B["2️⃣ Migrate<br/><i>remove old installs<br/>(control plane protected)</i>"]
+    B --> C["3️⃣ Deploy MCP Server<br/><i>MCP_MODE=spoke<br/>stateless, no PVC</i>"]
+    C --> D["4️⃣ Auto-Detect URL<br/><i>Route / NodePort<br/>reach-back URL</i>"]
     D --> E["5️⃣ Register with Hub<br/><i>POST /api/spoke/register<br/>+ heartbeat loop</i>"]
 
     classDef step fill:#1E293B,stroke:#2563EB,color:#F8FAFC,stroke-width:2px
     class A,B,C,D,E step
 ```
 
-**Spoke ConfigMap variables:**
+**MCP Server ConfigMap variables:**
 
 | Variable | Description |
 |----------|-------------|
 | `MCP_MODE` | `spoke` |
-| `HUB_URL` | Hub MCP server URL (e.g., `https://mcp-server-hub.apps.hub-cluster.com`) |
-| `CLUSTER_NAME` | Unique spoke name (e.g., `prod-east`, `staging-west`) |
-| `CLUSTER_PLATFORM` | Auto-detected: `openshift` or `kubernetes` |
+| `HUB_URL` | Management bundle URL (the dashboard route) |
+| `CLUSTER_NAME` | Unique cluster name (`hub-cluster` on the management cluster; e.g. `prod-east` elsewhere) |
+| `CLUSTER_PLATFORM` | `openshift`, `rancher`, `eks`, `aks`, `gke`, or `k8s` |
+| `DEPLOYMENT_NAME` / `MCP_NAMESPACE` | Used by the dashboard's ⋮ → Redeploy action |
 
-### Adding a Spoke to the Hub
+### Verifying Registration
 
-Spokes register automatically on startup. Verify from the hub:
+MCP servers register automatically on startup. Verify from the hub:
 
 ```bash
-# Check registered spokes
+# Check registered clusters
 curl https://<hub-url>/api/spoke/status
 
-# Manual registration (if needed)
-curl -X POST https://<hub-url>/api/spoke/register \
-  -H "Content-Type: application/json" \
-  -d '{"clusterName":"prod-east","spokeUrl":"https://mcp-spoke.apps.prod-east.com"}'
+# Check per-cluster build versions (drift detection)
+curl https://<hub-url>/api/cluster/version
 ```
+
+After the image is updated in the registry, **no script reruns are needed** — clusters running an older build show an "Update Available" badge; click ⋮ → Redeploy on the cluster card.
 
 ### Helm Chart
 
@@ -651,13 +689,15 @@ openshift-mcp-server/
 │   └── vite.config.js
 │
 ├── 🚀 deploy/                           # Deployment automation (all deploy scripts here)
-│   ├── hub/
-│   │   ├── deploy.sh                    # Hub: MCP + Dashboard + PostgreSQL + Redis
-│   │   └── manifests/                   # namespace, RBAC, postgres, redis,
-│   │       │                            #   pvc, dashboard-deployment (50Gi PVC), etc.
+│   ├── dashboard/
+│   │   ├── deploy.sh                    # Management Bundle: Dashboard + Control Plane
+│   │   │                                #   + PostgreSQL + Redis (deployed ONCE, PVCs)
+│   │   └── manifests/                   # namespace, RBAC, configmap, postgres,
+│   │       │                            #   redis, dashboard-deployment (50Gi PVC)...
 │   │       └── dashboard-deployment.yaml
-│   └── spoke/
-│       └── deploy.sh                    # Spoke: MCP server only (registers with hub)
+│   └── mcp/
+│       └── deploy.sh                    # MCP server: stateless pod, run on EVERY
+│                                        #   cluster incl. hub (--cluster-name hub-cluster)
 │
 ├── ⎈  chart/                            # Helm chart
 │   └── openshift-mcp/
@@ -692,13 +732,13 @@ openshift-mcp-server/
 API-only Node.js server. No dashboard files.
 
 ```
-┌─────────────────────────────────────┐
-│  node:20-alpine                     │
-│  Non-root (UID 1001)                │
-│  Port 3000                          │
-│  Entry: node src/index.js           │
-│  ENV: MCP_MODE=hub|spoke|standalone │
-└─────────────────────────────────────┘
+┌────────────────────────────────────────┐
+│  node:20-alpine                        │
+│  Non-root (UID 1001)                   │
+│  Port 3000                             │
+│  Entry: node src/index.js              │
+│  ENV: MCP_MODE=control|spoke|standalone│
+└────────────────────────────────────────┘
 ```
 
 ```bash

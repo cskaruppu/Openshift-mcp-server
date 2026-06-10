@@ -5,6 +5,66 @@
 
 ---
 
+## Two-Plane Multi-Cluster Architecture
+
+KubeNexus AI separates the platform into two planes (the Red Hat ACM / Rancher pattern):
+
+| Plane | Deployment | Components | State |
+|:------|:-----------|:-----------|:------|
+| **Management Plane** — *Management Bundle* | `./deploy/dashboard/deploy.sh` — deployed **once** | Dashboard (React + Nginx, 50Gi PVC) • Control Plane (`MCP_MODE=control`) • PostgreSQL (StatefulSet PVC) • Redis | **Stateful** — all settings, chats, audit, incidents, knowledge base in PostgreSQL |
+| **Data Plane** — *MCP Server* | `./deploy/mcp/deploy.sh` — run on **every** cluster, **including the hub** | One stateless MCP server pod (`MCP_MODE=spoke`) with 40+ tools, executing live against its own cluster | **Stateless** — no DB, no PVC; kill/redeploy anytime |
+
+```mermaid
+flowchart TB
+    subgraph MGMT["🏢 Management Cluster"]
+        direction TB
+        subgraph BUNDLE["Management Bundle — deployed once, persisted on PVCs"]
+            DASHP["📊 Dashboard<br/><i>React + Nginx · 50Gi PVC</i>"]
+            CTRL["⚙️ Control Plane<br/><i>MCP_MODE=control</i><br/><i>routing · auth · LLM config</i>"]
+            PGB[("🐘 PostgreSQL<br/><i>PVC</i>")]
+            RDB[("🔴 Redis")]
+            DASHP --> CTRL
+            CTRL --> PGB
+            CTRL --> RDB
+        end
+        MCPH["🟣 MCP Server<br/><i>MCP_MODE=spoke</i><br/><i>registered as hub-cluster</i>"]
+    end
+
+    subgraph C1["🔵 Cluster prod-east"]
+        MCP1["MCP Server<br/><i>MCP_MODE=spoke</i>"]
+    end
+    subgraph C2["🟢 Cluster staging-west"]
+        MCP2["MCP Server<br/><i>MCP_MODE=spoke</i>"]
+    end
+    subgraph CN["🟠 Cluster N"]
+        MCPN["MCP Server<br/><i>MCP_MODE=spoke</i>"]
+    end
+
+    CTRL -->|"live proxy<br/>(hub-cluster)"| MCPH
+    CTRL -->|"live proxy"| MCP1
+    CTRL -->|"live proxy"| MCP2
+    CTRL -->|"live proxy"| MCPN
+    MCPH -.->|"heartbeat 30s<br/>+ build version"| CTRL
+    MCP1 -.->|"heartbeat 30s"| CTRL
+    MCP2 -.->|"heartbeat 30s"| CTRL
+    MCPN -.->|"heartbeat 30s"| CTRL
+
+    style MGMT fill:#FFF3E0,stroke:#F57C00,stroke-width:3px,color:#E65100
+    style BUNDLE fill:#F3E5F5,stroke:#7B1FA2,stroke-width:2px,color:#4A148C
+    style C1 fill:#E8F4FD,stroke:#1976D2,stroke-width:2px,color:#0D47A1
+    style C2 fill:#E8F5E9,stroke:#388E3C,stroke-width:2px,color:#1B5E20
+    style CN fill:#FFF8E1,stroke:#F9A825,stroke-width:2px,color:#F57F17
+```
+
+**Design guarantees:**
+
+1. **Identical answers fleet-wide** — every query (including the hub's own, via the `hub-cluster` pod) flows through the same spoke-proxy pipeline: same image, same code path, same formatting.
+2. **The bundle is never touched by MCP refreshes** — MCP server pods use the `mcp-server` resource name family and carry no state; the bundle keeps its PVCs across any number of data-plane redeploys.
+3. **Centralized LLM configuration** — credentials live only in the management plane and are injected per-request when chat is proxied to any cluster's pod.
+4. **Self-healing registry** — heartbeats carry `spokeUrl` + build version; a control-plane restart re-registers every cluster within 30 seconds, and version drift surfaces as an "Update Available" badge with one-click ⋮ → Redeploy.
+
+---
+
 ## Reference Architecture Diagram
 
 ```mermaid
@@ -96,9 +156,9 @@ flowchart TB
 
     subgraph STORAGE["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;💿 PERSISTENT  STORAGE  —  OpenShift PVCs&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"]
         direction LR
-        PV1[("💿 mcp-data<br/><b>50 Gi RWO</b><br/><i>Server State</i>")]
-        PV2[("💿 postgres-data<br/><b>10 Gi RWO</b><br/><i>Chat History, Audit,</i><br/><i>Knowledge Base</i>")]
-        PV3[("💿 redis-data<br/><b>5 Gi RWO</b><br/><i>Cache, Sessions,</i><br/><i>Rate Limits</i>")]
+        PV1[("💿 dashboard-data<br/><b>50 Gi RWO</b><br/><i>Dashboard UI</i>")]
+        PV2[("💿 postgres-data<br/><b>PVC RWO</b><br/><i>Settings, Chat History,</i><br/><i>Audit, Knowledge Base</i>")]
+        PV3[("💿 redis-data<br/><b>RWO</b><br/><i>Cache, Sessions,</i><br/><i>Rate Limits</i>")]
     end
 
     U1 -->|"HTTPS"| N1
@@ -184,7 +244,8 @@ flowchart TB
 
             subgraph COMPUTE["🚀 Compute"]
                 direction LR
-                DEP["📦 Deployment: agentic-ai-server<br/><i>Image: quay.io/karuppucs/openshift-mcp-server:latest</i><br/><i>Replicas: 1 &nbsp;•&nbsp; Port: 3000</i><br/><i>SA: agentic-ai-server (cluster-admin RBAC)</i><br/><i>Liveness: /healthz &nbsp;•&nbsp; Readiness: /readyz</i>"]
+                DEP["📦 Deployment: agentic-ai-server<br/><b>Control Plane — MCP_MODE=control</b><br/><i>Image: quay.io/karuppucs/openshift-mcp-server:latest</i><br/><i>Replicas: 1 &nbsp;•&nbsp; Port: 3000 &nbsp;•&nbsp; stateless (state in PostgreSQL)</i><br/><i>Liveness: /healthz &nbsp;•&nbsp; Readiness: /readyz</i>"]
+                MCPS["📦 Deployment: mcp-server<br/><b>Data Plane — MCP_MODE=spoke</b><br/><i>Same image &nbsp;•&nbsp; stateless, no PVC</i><br/><i>Registered as hub-cluster</i><br/><i>(also deployed on every other cluster)</i>"]
             end
 
             subgraph STATEFUL["🗄️ Stateful Services"]
@@ -206,23 +267,23 @@ flowchart TB
             end
         end
 
-        subgraph VOLUMES["💿 Persistent Volumes"]
+        subgraph VOLUMES["💿 Persistent Volumes — Management Bundle only"]
             direction LR
-            V1[("💿 mcp-data<br/><b>50Gi RWO</b>")]
-            V2[("💿 pg-data<br/><b>10Gi RWO</b>")]
-            V3[("💿 redis-data<br/><b>5Gi RWO</b>")]
+            V1[("💿 dashboard-data<br/><b>50Gi RWO</b>")]
+            V2[("💿 pg-data<br/><b>PVC RWO</b>")]
+            V3[("💿 redis-data<br/><b>RWO</b>")]
         end
     end
 
     DNS --> ROUTE --> SVC --> DEP
     DEP --> PG
     DEP --> REDIS
+    DEP -->|"live proxy<br/>(spoke pipeline)"| MCPS
     DEP -.->|mount| CM
     DEP -.->|mount| SEC
     DEP -.->|bind| SA
     PG --> V2
     REDIS --> V3
-    DEP -.-> V1
 
     style OCPCLUSTER fill:#FFF3E0,stroke:#E65100,stroke-width:3px,color:#BF360C
     style INGRESS fill:#E0F2F1,stroke:#00897B,stroke-width:2px,color:#004D40
@@ -302,7 +363,7 @@ flowchart LR
 | 📡 **Endpoints** | HTTP APIs | 48+ | /api/chat, /api/actions, /api/intelligence/* |
 | 🤖 **LLM** | Providers | 5 | OpenAI, Azure, Anthropic, Ollama, Built-in |
 | 🔗 **External** | Integrations | 6 | OpenShift, LLMs, ServiceNow, Ansible, Prometheus, Redis |
-| 💾 **Data** | Storage | 3 | PostgreSQL (8+ tables), Redis (cache), PVC (state) |
+| 💾 **Data** | Storage | 3 | PostgreSQL (8+ tables), Redis (cache), PVCs (management bundle only — MCP server pods are stateless) |
 
 ---
 
