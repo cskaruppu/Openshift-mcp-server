@@ -3179,6 +3179,9 @@ spec:
     if (url.pathname.match(/^\/api\/spoke\/[^/]+$/) && req.method === "DELETE") {
       const spokeName = decodeURIComponent(url.pathname.split("/").pop());
       unregisterSpoke(spokeName);
+      if (spokeName === HUB_AGENT_CLUSTER || spokeName.toLowerCase() === HUB_AGENT_CLUSTER.toLowerCase()) {
+        dbQuery("DELETE FROM kv_store WHERE key = $1", ["hub_agent_spoke"]).catch(() => {});
+      }
       return sendJson(res, 200, { ok: true, message: `Spoke "${spokeName}" removed` });
     }
 

@@ -614,6 +614,8 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                 { icon: "✏️", label: "Edit Cluster", action: () => { onOpenSettings(); } },
                 { sep: true },
                 { icon: "🔒", label: "Sync RBAC", action: () => { clusterAction("/api/cluster/rbac-sync", "POST", "RBAC sync initiated"); } },
+                { sep: true },
+                { icon: "🗑", label: "Remove Cluster", danger: true, action: () => setConfirmDelete("hub-cluster") },
               ]} />
             </div>
             <div className="cp-card-status">
