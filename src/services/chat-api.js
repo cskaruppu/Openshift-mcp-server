@@ -79,7 +79,6 @@ import { findResource } from "./resource-index.js";
 import { fetchPodStatus } from "./fix-executor.js";
 import { incCounter, observeHistogram } from "./metrics.js";
 import { enforce as enforceRateLimit } from "./rate-limit.js";
-import { proxyChatToSpoke, hasSpoke as hasSpokeCluster } from "./spoke-proxy.js";
 import { runPreflightChecks, formatPreflightReport, checkCertificateExpiry, validateUpgradeVersion } from "../tools/upgrade-preflight.js";
 import { generateTraceId, recordTrace } from "./query-tracer.js";
 import { compressContext, buildDiagnosticBrief, buildTieredContext } from "./context-optimizer.js";
@@ -14550,36 +14549,22 @@ export async function handleChatAPI(req, res) {
       return;
     }
 
-    // ── Spoke proxy — identical responses across all clusters ───────────
-    // When the target cluster is a registered spoke, proxy the entire chat
-    // request to the spoke's MCP server. The spoke runs the same image and
-    // the same chat-api code, so responses are identical to a local query.
-    // We resolve LLM credentials first so the spoke can use the same provider
-    // (spokes don't store LLM settings — the hub is the single config point).
+    // ── Model 1: the LLM "brain" stays on the control-plane ─────────────
+    // The chat pipeline — INCLUDING the LLM call — always runs HERE on the
+    // control plane, the single holder of LLM credentials (hydrated from the
+    // settings store / SQL). We do NOT delegate the whole chat to a spoke:
+    // spokes are stateless executors with no LLM config, so delegating the
+    // LLM call to them caused ECONNREFUSED (no creds → localhost fallback).
     //
-    // Hub-cluster chat routes through this cluster's own MCP server (when
-    // registered) so the hub uses the SAME pipeline as every other cluster.
-    // _chatCluster keeps the original value ("local") for history tagging.
+    // Live cluster reads for a selected spoke are instead routed to its agent
+    // through the read bridge (ocpGet → agent api_get), activated just below
+    // via enterRemoteClusterBridge(). The spoke therefore runs reads/tools
+    // only and never calls the LLM. This makes the stored LLM config
+    // correct-by-construction: config and execution live in the same pod.
+    //
+    // "local" = the hub cluster, served by this pod's native cluster access.
+    // _chatCluster (function-scoped above) is retained for history/cache tagging.
     _chatCluster = body.cluster || "local";
-    const _chatTarget = (_chatCluster === "local" && hasSpokeCluster(HUB_AGENT_CLUSTER))
-      ? HUB_AGENT_CLUSTER
-      : _chatCluster;
-    if (_chatTarget && _chatTarget !== "local" && hasSpokeCluster(_chatTarget)) {
-      const _spokeOpts = {};
-      if (body.provider) _spokeOpts.provider = body.provider;
-      if (body.apiKey) _spokeOpts.apiKey = body.apiKey;
-      if (body.apiUrl) _spokeOpts.apiUrl = body.apiUrl;
-      if (body.model) _spokeOpts.model = body.model;
-      if (body.azureDeployment) _spokeOpts.azureDeployment = body.azureDeployment;
-      if (body.azureApiVersion) _spokeOpts.azureApiVersion = body.azureApiVersion;
-      await resolveLLMOpts(_spokeOpts);
-      const enrichedBody = { ...body, ..._spokeOpts };
-      const proxied = await proxyChatToSpoke(_chatTarget, enrichedBody, req, res);
-      if (proxied) {
-        incCounter("mcp_chat_requests_total", { status: "spoke_proxied" });
-        return;
-      }
-    }
 
     // Remote cluster override — use cached agent data for context
     const _remoteClusterContext = resolveRemoteClusterContext(body);
@@ -16374,14 +16359,9 @@ export async function handleChatCompareAPI(req, res) {
       return json(res, 400, { error: "Provide 1-3 providers in the 'providers' array" });
     }
 
-    // Spoke proxy — forward to spoke for identical results
-    const _cmpCluster = body.cluster;
-    const _cmpTarget = (_cmpCluster === "local" && hasSpokeCluster(HUB_AGENT_CLUSTER)) ? HUB_AGENT_CLUSTER : _cmpCluster;
-    if (_cmpTarget && _cmpTarget !== "local" && hasSpokeCluster(_cmpTarget)) {
-      await Promise.all((providers || []).map((p) => resolveLLMOpts(p)));
-      const proxied = await proxyChatToSpoke(_cmpTarget, body, req, res);
-      if (proxied) return;
-    }
+    // Model 1: the multi-LLM comparison runs on the control-plane (the LLM
+    // credential holder). Remote cluster data is sourced from the agent cache
+    // below; the LLM call is never delegated to a stateless spoke.
 
     // Remote cluster — use cached agent data
     const _remoteCtx = resolveRemoteClusterContext(body);
@@ -16483,21 +16463,9 @@ export async function handleChatInvestigateAPI(req, res) {
 
     if (!message) return json(res, 400, { error: "Missing 'message' field" });
 
-    // Spoke proxy — forward to spoke for identical results
-    const _invCluster = body.cluster;
-    const _invTarget = (_invCluster === "local" && hasSpokeCluster(HUB_AGENT_CLUSTER)) ? HUB_AGENT_CLUSTER : _invCluster;
-    if (_invTarget && _invTarget !== "local" && hasSpokeCluster(_invTarget)) {
-      const _invOpts = {};
-      if (provider) _invOpts.provider = provider;
-      if (apiKey) _invOpts.apiKey = apiKey;
-      if (apiUrl) _invOpts.apiUrl = apiUrl;
-      if (model) _invOpts.model = model;
-      if (body.azureDeployment) _invOpts.azureDeployment = body.azureDeployment;
-      if (body.azureApiVersion) _invOpts.azureApiVersion = body.azureApiVersion;
-      await resolveLLMOpts(_invOpts);
-      const proxied = await proxyChatToSpoke(_invTarget, { ...body, ..._invOpts }, req, res);
-      if (proxied) return;
-    }
+    // Model 1: tool-invocation reasoning runs on the control-plane (the LLM
+    // credential holder). Remote cluster data is sourced from the agent cache
+    // below; the LLM call is never delegated to a stateless spoke.
 
     // Remote cluster — use cached agent data
     const _remoteCtx = resolveRemoteClusterContext(body);
