@@ -663,6 +663,19 @@ export function ChatView() {
     return keys;
   }, [providers]);
 
+  // A provider can be enabled yet unusable (credentials never saved). The
+  // settings endpoint masks keys ("****xxxx" / "configured") but an absent
+  // key comes back empty — enough to tell configured from not, so the user
+  // sees the warning BEFORE sending instead of an error after.
+  function providerConfigured(key) {
+    if (key === "builtin") return true;
+    const cfg = providers[key];
+    if (!cfg) return false;
+    if (key === "ollama") return !!cfg.apiUrl;
+    if (key === "azure") return !!(cfg.apiKey && cfg.apiUrl && (cfg.deployment || cfg.model));
+    return !!cfg.apiKey; // openai, anthropic, google, bedrock
+  }
+
   function stageState(key) {
     if (completedStages.has(key)) return "done";
     if (stage === key) return "active";
@@ -1033,16 +1046,26 @@ export function ChatView() {
                     <div className="ac-provider-dd-head">LLM Provider</div>
                     {(availableProviders.length > 0 ? availableProviders : Object.keys(PROVIDER_META)).map((key) => {
                       const meta = PROVIDER_META[key] || PROVIDER_META.builtin;
+                      const configured = providerConfigured(key);
                       return (
                         <button
                           key={key}
                           className={"ac-provider-option" + (key === activeProvider ? " active" : "")}
-                          onClick={() => { setActiveProvider(key); setProviderOpen(false); showToast(`Using ${meta.label}`, "ok"); }}
+                          style={configured ? undefined : { opacity: 0.65 }}
+                          onClick={() => {
+                            setActiveProvider(key); setProviderOpen(false);
+                            if (configured) showToast(`Using ${meta.label}`, "ok");
+                            else showToast(`${meta.label} is not configured — set it up in Settings`, "warn");
+                          }}
                         >
                           <div className="ac-provider-icon" style={{ background: meta.color }}>{meta.icon}</div>
                           <div className="ac-provider-info">
                             <div className="ac-provider-name">{meta.label}</div>
-                            <div className="ac-provider-desc">{meta.desc}</div>
+                            <div className="ac-provider-desc">
+                              {configured ? meta.desc : (
+                                <span style={{ color: "#d97706", fontWeight: 600 }}>&#9888; Not configured — set up in Settings</span>
+                              )}
+                            </div>
                           </div>
                           {key === activeProvider && (
                             <svg className="ac-provider-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>

@@ -14518,6 +14518,28 @@ export async function handleFleetChatAPI(req, res) {
 }
 
 // ---------------------------------------------------------------------------
+// LLM config-error reply — when the user explicitly picked a provider that is
+// missing credentials, tell them exactly what's wrong and how to fix it
+// instead of surfacing a misleading network error from a fallback URL.
+// ---------------------------------------------------------------------------
+const PROVIDER_LABELS = {
+  azure: "Azure OpenAI", openai: "OpenAI", anthropic: "Anthropic",
+  ollama: "Ollama", google: "Google Gemini", bedrock: "AWS Bedrock",
+};
+
+function llmConfigErrorReply(err) {
+  const label = PROVIDER_LABELS[err.provider] || err.provider || "The selected LLM";
+  const missing = Array.isArray(err.missing) && err.missing.length ? err.missing.join(", ") : "required credentials";
+  return `### [WARNING] ${label} Is Not Configured\n\n` +
+    `The selected LLM provider is missing: **${missing}**.\n\n` +
+    `**What to do:**\n` +
+    `- Open **Settings → LLM Settings** and complete the ${label} configuration, or\n` +
+    `- Pick a different provider from the model selector below the chat input.\n\n` +
+    `_No request was sent to the provider — this is a configuration gap, not an outage. ` +
+    `Direct queries like \`list pods\` or \`cluster status\` work without an LLM._`;
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/chat handler
 // ---------------------------------------------------------------------------
 export async function handleChatAPI(req, res) {
@@ -16131,7 +16153,10 @@ export async function handleChatAPI(req, res) {
         observeHistogram("mcp_chat_latency_seconds", { provider: activeProvider }, (Date.now() - startedAt) / 1000);
       } catch (sseErr) {
         const isNet = /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ECONNRESET|network error|fetch failed/i.test(sseErr.message);
-        if (isNet) {
+        if (sseErr?.llmConfigError) {
+          sseSend(res, { delta: llmConfigErrorReply(sseErr) });
+          sseSend(res, { done: true, provider: "built-in", error: "llm_not_configured", errorProvider: sseErr.provider });
+        } else if (isNet) {
           sseSend(res, { delta: `### LLM Service Unavailable\n\nThe AI analysis service is currently unreachable. Try direct queries like \`list pods\`, \`node status\`, \`cluster status\` which work without LLM.\n\nCheck your LLM provider configuration or set \`LLM_PROVIDER=none\` to use built-in analysis.` });
           sseSend(res, { done: true, provider: "built-in", error: "llm_unreachable" });
         } else {
@@ -16295,7 +16320,9 @@ export async function handleChatAPI(req, res) {
   } catch (err) {
     console.error("Chat API error:", err?.stack || err);
     const isNetworkError = /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ECONNRESET|network error|fetch failed/i.test(err.message);
-    if (isNetworkError) {
+    if (err?.llmConfigError) {
+      json(res, 200, { reply: llmConfigErrorReply(err), provider: "built-in", error: "llm_not_configured", errorProvider: err.provider, conversationId });
+    } else if (isNetworkError) {
       const fallbackReply = `### LLM Service Unavailable\n\nThe AI analysis service is currently unreachable. Your query **"${userMessage}"** requires LLM processing but the configured provider could not be contacted.\n\n**What you can try:**\n- Use direct queries like \`list pods\`, \`node status\`, \`cluster status\` (these work without LLM)\n- Check your LLM provider configuration (\`LLM_PROVIDER\`, \`LLM_API_URL\`, \`LLM_API_KEY\`)\n- Verify network connectivity from the pod to the LLM endpoint\n- Set \`LLM_PROVIDER=none\` to use built-in analysis`;
       json(res, 200, { reply: fallbackReply, provider: "built-in", error: "llm_unreachable", conversationId });
     } else {

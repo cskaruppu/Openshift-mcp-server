@@ -106,11 +106,68 @@ function resolveOpts(opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Fail-fast config validation — runs BEFORE any network call.
+//
+// Without this, a provider with missing credentials silently falls back to
+// the hardcoded Ollama dev default (http://localhost:11434) and dies ~30s
+// later with a misleading ECONNREFUSED after 5 pointless retries. A config
+// gap must surface instantly as a config error, never as a network error.
+// ---------------------------------------------------------------------------
+export class LLMConfigError extends Error {
+  constructor(provider, missing) {
+    super(`LLM provider "${provider}" is not configured — missing: ${missing.join(", ")}`);
+    this.name = "LLMConfigError";
+    this.llmConfigError = true;
+    this.provider = provider;
+    this.missing = missing;
+  }
+}
+
+// The hardcoded dev fallback is an Ollama address. For cloud providers it can
+// never be a real endpoint, so treat it the same as "no URL configured".
+function isOllamaDefaultUrl(url) {
+  return /^https?:\/\/(localhost|127\.0\.0\.1):11434\/?$/.test((url || "").trim());
+}
+
+/**
+ * Validate resolved opts for the selected provider. Throws LLMConfigError
+ * listing every missing field. For openai/anthropic, an unset URL is healed
+ * to the well-known public endpoint instead of failing.
+ */
+export function validateLLMConfig(o) {
+  const missing = [];
+  const url = (o.apiUrl || "").trim();
+  switch (o.provider) {
+    case "azure":
+      if (!url || isOllamaDefaultUrl(url)) missing.push("endpoint URL");
+      if (!o.apiKey && !AZURE_USE_MANAGED_IDENTITY && !o.azureManagedIdentity) missing.push("API key");
+      if (!o.azureDeployment && !o.model) missing.push("deployment name");
+      break;
+    case "openai":
+      if (!o.apiKey) missing.push("API key");
+      if (!url || isOllamaDefaultUrl(url)) o.apiUrl = "https://api.openai.com";
+      break;
+    case "anthropic":
+      if (!o.apiKey) missing.push("API key");
+      if (!url || isOllamaDefaultUrl(url)) o.apiUrl = "https://api.anthropic.com";
+      break;
+    case "ollama":
+      if (!url) missing.push("server URL");
+      break;
+    default:
+      return o; // "none" / unknown — nothing to validate
+  }
+  if (missing.length) throw new LLMConfigError(o.provider, missing);
+  return o;
+}
+
+// ---------------------------------------------------------------------------
 // Non-streaming call — returns { text, toolCalls }
 // ---------------------------------------------------------------------------
 export async function callLLM({ messages, ...opts }) {
   messages = messages.map(m => ({ ...m, content: typeof m.content === "string" ? redactIfEnabled(m.content) : m.content }));
   const o = resolveOpts(opts);
+  validateLLMConfig(o); // fail fast on missing creds — never dial a fallback URL
   const t0 = Date.now();
   let provider = o.provider;
   let model = o.azureDeployment || o.model || null;
@@ -136,6 +193,7 @@ export async function callLLM({ messages, ...opts }) {
 export async function callLLMStream({ messages, onDelta, onToolCall, ...opts }) {
   messages = messages.map(m => ({ ...m, content: typeof m.content === "string" ? redactIfEnabled(m.content) : m.content }));
   const o = resolveOpts(opts);
+  validateLLMConfig(o); // fail fast on missing creds — never dial a fallback URL
   const hooks = { onDelta, onToolCall };
   const t0 = Date.now();
   let provider = o.provider;
@@ -175,6 +233,7 @@ async function _recordTelemetry(params) {
 }
 
 function _classifyErr(err) {
+  if (err?.llmConfigError) return "config";
   const msg = String(err?.message || err).toLowerCase();
   if (msg.includes("timeout") || msg.includes("etimedout")) return "timeout";
   if (msg.includes("rate") || msg.includes("429")) return "rate_limit";
