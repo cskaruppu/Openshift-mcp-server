@@ -188,7 +188,7 @@ export function updateSpokeHeartbeat(clusterName, data = {}) {
  * Proxy an HTTP request from the hub to a spoke MCP server.
  * Returns true if handled, false if no spoke found.
  */
-export async function proxyToSpoke(clusterName, req, res, url) {
+export async function proxyToSpoke(clusterName, req, res, url, opts = {}) {
   const spokeUrl = getSpokeUrl(clusterName);
   if (!spokeUrl) return false;
 
@@ -232,11 +232,12 @@ export async function proxyToSpoke(clusterName, req, res, url) {
     res.end(body);
     return true;
   } catch (err) {
-    // Distinguish a scan timeout (504) from an unreachable spoke (502) so a
-    // blank widget's Network status reveals the real cause at a glance.
     const isTimeout = err && (err.name === "TimeoutError" || err.name === "AbortError");
     const status = isTimeout ? 504 : 502;
     console.error(`[spoke-proxy] Proxy to ${clusterName} (${spokeUrl}) ${isTimeout ? "timed out" : "failed"} for ${url.pathname}: ${fetchErrorDetail(err)}`);
+    if (opts.allowFallback && !res.headersSent) {
+      return false;
+    }
     res.writeHead(status, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
       error: isTimeout

@@ -2165,11 +2165,18 @@ async function startSSE() {
         p.startsWith("/api/incidents") ||
         p.startsWith("/api/change-timeline") ||
         p.startsWith("/api/actions") ||
-        p.startsWith("/api/intelligence");
+        p.startsWith("/api/intelligence") ||
+        p.startsWith("/api/agent") ||
+        p.startsWith("/api/spoke") ||
+        p.startsWith("/api/hub") ||
+        p.startsWith("/api/auth");
 
-      // Spoke proxy: forward live-data API requests to the spoke's MCP server
+      // Spoke proxy: forward live-data API requests to the spoke's MCP server.
+      // For hub-cluster: if the proxy fails (DNS/network), fall through to
+      // local in-process handling instead of returning a 502 to the dashboard.
       if (!isHubLocal && hasSpoke(_reqCluster) && p.startsWith("/api/")) {
-        const proxied = await proxyToSpoke(_reqCluster, req, res, url);
+        const isHubProxy = _reqCluster === HUB_AGENT_CLUSTER || _reqCluster.toLowerCase() === HUB_AGENT_CLUSTER.toLowerCase();
+        const proxied = await proxyToSpoke(_reqCluster, req, res, url, { allowFallback: isHubProxy });
         if (proxied) return;
       }
       // Fallback: agent bridge (legacy lightweight agents)
