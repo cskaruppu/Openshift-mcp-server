@@ -420,9 +420,10 @@ export async function startSpokeMode(hubUrl, clusterName, spokeUrl, platform) {
   })();
   const _spokeStartedAt = new Date().toISOString();
 
+  let _hbFailures = 0;
   async function sendHeartbeat() {
     try {
-      await fedFetch(`${hubUrl}/api/spoke/heartbeat`, {
+      const resp = await fedFetch(`${hubUrl}/api/spoke/heartbeat`, {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
@@ -439,10 +440,21 @@ export async function startSpokeMode(hubUrl, clusterName, spokeUrl, platform) {
           buildHash: process.env.BUILD_HASH || null,
           startedAt: _spokeStartedAt,
         }),
-        signal: AbortSignal.timeout(5000),
+        // Same timeout as registration — a route slow enough to fail this
+        // would have failed registration too. (5s silently dropped every
+        // heartbeat on slow edge routes while registration succeeded.)
+        signal: AbortSignal.timeout(15000),
       });
-    } catch {
-      // best-effort
+      if (!resp.ok) {
+        _hbFailures++;
+        console.warn(`[spoke] Heartbeat rejected by hub: HTTP ${resp.status} (${_hbFailures} consecutive)`);
+      } else {
+        if (_hbFailures > 0) console.log(`[spoke] Heartbeat recovered after ${_hbFailures} failure(s)`);
+        _hbFailures = 0;
+      }
+    } catch (err) {
+      _hbFailures++;
+      console.warn(`[spoke] Heartbeat failed: ${fetchErrorDetail(err)} (${_hbFailures} consecutive)`);
     }
   }
 

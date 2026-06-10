@@ -490,6 +490,51 @@ async function pruneUnreachableSpokes() {
 }
 
 /**
+ * Persist the local (hub-cluster) MCP agent registration. Unlike remote
+ * clusters it never enters _connectedAgents (no separate card), so without
+ * this a control-plane restart silently dropped it and the picker showed
+ * "agent not deployed" until the agent's next heartbeat re-registered it.
+ */
+async function saveHubAgentSpoke(info) {
+  if (!(await dbEnabled())) return;
+  try {
+    await dbQuery(
+      `INSERT INTO kv_store (key, value, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+      ["hub_agent_spoke", JSON.stringify({ ...info, registeredAt: new Date().toISOString() })]
+    );
+  } catch (err) {
+    console.warn("[hub] Failed to persist local MCP agent registration:", err.message);
+  }
+}
+
+/** Restore the local MCP agent registration on startup (probe before trusting). */
+async function restoreHubAgentSpoke() {
+  if (!(await dbEnabled()) || hasSpoke(HUB_AGENT_CLUSTER)) return;
+  try {
+    const result = await dbQuery("SELECT value FROM kv_store WHERE key = $1", ["hub_agent_spoke"]);
+    if (!result?.rows?.length) return;
+    const info = typeof result.rows[0].value === "string"
+      ? JSON.parse(result.rows[0].value)
+      : result.rows[0].value;
+    if (!info?.spokeUrl) return;
+    try {
+      const resp = await fedFetch(`${info.spokeUrl}/healthz`, { signal: AbortSignal.timeout(5000) });
+      if (resp.ok) {
+        registerSpoke(HUB_AGENT_CLUSTER, info.spokeUrl, { platform: info.platform });
+        console.log(`[startup] Restored local MCP agent registration: ${info.spokeUrl}`);
+      } else {
+        console.warn(`[startup] Local MCP agent at ${info.spokeUrl} returned ${resp.status} — waiting for its heartbeat`);
+      }
+    } catch (err) {
+      console.warn(`[startup] Local MCP agent at ${info.spokeUrl} unreachable — waiting for its heartbeat`);
+    }
+  } catch (err) {
+    console.warn("[hub] Failed to restore local MCP agent registration:", err.message);
+  }
+}
+
+/**
  * Fetch cluster summary from a spoke MCP server (version, nodes, pods)
  * and populate _connectedAgents so the dashboard card shows real data.
  */
@@ -1875,6 +1920,9 @@ async function startSSE() {
   // deploy where the MCP agent hasn't been deployed yet).
   await loadClustersFromDB();
   await pruneUnreachableSpokes();
+  // Restore this cluster's own MCP agent registration (probed before trust) —
+  // otherwise a control-plane restart drops it until the agent's next heartbeat.
+  await restoreHubAgentSpoke();
 
   // Phase 1: hydrate per-cluster snapshots so the dashboard has warm data
   // immediately after a hub restart (no waiting for the next agent report).
@@ -2843,6 +2891,7 @@ async function startSSE() {
       // card (the picker already shows the hub).
       if (clusterName === HUB_AGENT_CLUSTER || clusterName.toLowerCase() === HUB_AGENT_CLUSTER.toLowerCase()) {
         console.log(`[spoke] Local MCP server registered: ${spokeUrl} — this cluster's data plane now served by the spoke pipeline`);
+        saveHubAgentSpoke({ spokeUrl, platform }).catch(() => {});
         return sendJson(res, 200, { ok: true, message: `Local MCP server "${clusterName}" registered`, hubVersion: "1.2.0" });
       }
       // Also register in _connectedAgents so the cluster picker sees it
@@ -2881,6 +2930,9 @@ async function startSSE() {
       if (hbSpokeUrl && !hasSpoke(clusterName)) {
         registerSpoke(clusterName, hbSpokeUrl, { platform: hbPlatform });
         console.log(`[spoke] Re-registered from heartbeat: ${clusterName} (${hbSpokeUrl})`);
+        if (clusterName === HUB_AGENT_CLUSTER || clusterName.toLowerCase() === HUB_AGENT_CLUSTER.toLowerCase()) {
+          saveHubAgentSpoke({ spokeUrl: hbSpokeUrl, platform: hbPlatform }).catch(() => {});
+        }
       }
       updateSpokeHeartbeat(clusterName, { healthy, uptime, memMB });
       const key = findClusterKey(clusterName) || clusterName;
