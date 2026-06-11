@@ -29,7 +29,7 @@ export function setDbRelay(url, token, fetchFn) {
   _dbRelayToken = token || "";
   if (fetchFn) _dbRelayFetch = fetchFn;
   _enabled = true;
-  _initFailed = false;
+  _noUrl = false;
   console.log(`[db] Relay mode enabled — queries route through hub: ${_dbRelayUrl}/api/db/query`);
 }
 
