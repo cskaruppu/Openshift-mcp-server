@@ -213,6 +213,12 @@ export async function resolveLLMOpts(opts = {}) {
   } catch (e) {
     console.error(`[resolveLLMOpts] Failed to resolve credentials for "${provider}":`, e.message);
   }
+  // If the key is still masked after resolution, clear it so resolveOpts()
+  // in callLLM falls through to module-level defaults (which may have been
+  // hydrated from the hub via heartbeat on spoke pods).
+  if (opts.apiKey && (/^\*{2,}/.test(opts.apiKey) || opts.apiKey === "configured")) {
+    opts.apiKey = "";
+  }
   return opts;
 }
 
