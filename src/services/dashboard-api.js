@@ -65,11 +65,14 @@ function readJsonBody(req) {
 }
 
 async function loadSettingsFromDB() {
-  if (!await dbEnabled()) return null;
+  const enabled = await dbEnabled();
+  if (!enabled) {
+    console.warn("[loadSettingsFromDB] DB not enabled — skipping");
+    return null;
+  }
   const result = await dbQuery("SELECT value FROM kv_store WHERE key = $1", [SETTINGS_DB_KEY]);
   if (result?.rows?.length) {
     let val = result.rows[0].value;
-    // Guard: if pg returned a string instead of an object (JSONB double-encoding), parse it
     if (typeof val === "string") {
       try { val = JSON.parse(val); } catch { return null; }
     }
@@ -97,12 +100,17 @@ export async function loadStoredLLMSettings() {
   try {
     const fromDB = await loadSettingsFromDB();
     if (fromDB && fromDB.providers) return fromDB;
-  } catch { /* fall through */ }
+  } catch (e) {
+    console.warn("[loadStoredLLMSettings] DB read failed:", e.message);
+  }
   try {
     const raw = await readFile(LLM_SETTINGS_PATH, "utf8");
     const parsed = JSON.parse(raw);
     if (parsed && parsed.providers) return parsed;
-  } catch { /* fall through */ }
+  } catch (e) {
+    console.warn("[loadStoredLLMSettings] File read failed:", e.message);
+  }
+  console.warn("[loadStoredLLMSettings] All sources failed — returning defaults (providers will have empty credentials)");
   return DEFAULT_LLM_SETTINGS;
 }
 
@@ -118,8 +126,9 @@ export async function hydrateLLMDefaults() {
     const provider = stored?.defaults?.provider;
     if (!provider || provider === "none") return false;
     const cfg = stored?.providers?.[provider];
-    const missingUrl = provider === "azure" && !cfg?.apiUrl; // Azure REQUIRES an endpoint URL
-    if (!cfg || (!cfg.apiKey && !cfg.apiUrl) || missingUrl) {
+    const keyIsMasked = cfg?.apiKey && (/^\*{2,}/.test(cfg.apiKey) || cfg.apiKey === "configured");
+    const missingUrl = provider === "azure" && !cfg?.apiUrl;
+    if (!cfg || (!cfg.apiKey && !cfg.apiUrl) || keyIsMasked || missingUrl) {
       console.warn(`[llm] Default provider "${provider}" is missing ${missingUrl ? "its endpoint URL" : "config"} — background LLM calls disabled until configured in Settings`);
       setLLMDefaults({ provider: "none" });
       return false;
@@ -154,15 +163,22 @@ export async function resolveLLMOpts(opts = {}) {
     const stored = await loadStoredLLMSettings();
     const cfg = stored?.providers?.[provider];
     if (cfg) {
-      if (keyLooksMasked && cfg.apiKey) opts.apiKey = cfg.apiKey;
+      if (keyLooksMasked && cfg.apiKey && !/^\*{2,}/.test(cfg.apiKey) && cfg.apiKey !== "configured") {
+        opts.apiKey = cfg.apiKey;
+      }
       if (!opts.apiUrl && cfg.apiUrl) opts.apiUrl = cfg.apiUrl;
       if (!opts.model && cfg.model) opts.model = cfg.model;
       if (provider === "azure") {
         if (!opts.azureDeployment && cfg.deployment) opts.azureDeployment = cfg.deployment;
         if (!opts.azureApiVersion && cfg.apiVersion) opts.azureApiVersion = cfg.apiVersion;
       }
+      console.log(`[resolveLLMOpts] Resolved "${provider}" — url=${cfg.apiUrl ? "✓" : "✗"}, key=${cfg.apiKey && !/^\*/.test(cfg.apiKey) ? "✓" : "✗"}, model=${cfg.model || "(unset)"}`);
+    } else {
+      console.warn(`[resolveLLMOpts] No config found for provider "${provider}" in stored settings`);
     }
-  } catch { /* best effort — fall back to whatever the client sent */ }
+  } catch (e) {
+    console.error(`[resolveLLMOpts] Failed to resolve credentials for "${provider}":`, e.message);
+  }
   return opts;
 }
 
@@ -184,12 +200,15 @@ export async function handleLLMSettingsGet(req, res) {
     return masked;
   }
 
+  function addDefaultProvider(settings) {
+    return { ...settings, defaultProvider: settings.defaults?.provider || null };
+  }
   try {
     const fromDB = await loadSettingsFromDB();
     if (fromDB && fromDB.providers) {
       const provCount = Object.values(fromDB.providers).filter(c => c.enabled || c.apiKey).length;
       console.log(`[settings] loaded from DB — ${provCount} provider(s) configured`);
-      return json(res, 200, { ...maskApiKeys(fromDB), _storage: "database" });
+      return json(res, 200, addDefaultProvider({ ...maskApiKeys(fromDB), _storage: "database" }));
     }
   } catch (e) {
     console.warn("[settings] DB read failed:", e.message);
@@ -200,11 +219,11 @@ export async function handleLLMSettingsGet(req, res) {
     if (parsed && parsed.providers) {
       const provCount = Object.values(parsed.providers).filter(c => c.enabled || c.apiKey).length;
       console.log(`[settings] loaded from file — ${provCount} provider(s) configured`);
-      return json(res, 200, { ...maskApiKeys(parsed), _storage: "file" });
+      return json(res, 200, addDefaultProvider({ ...maskApiKeys(parsed), _storage: "file" }));
     }
   } catch { /* fall through */ }
   console.log("[settings] no saved settings found — returning defaults");
-  return json(res, 200, { ...DEFAULT_LLM_SETTINGS, _storage: "defaults" });
+  return json(res, 200, addDefaultProvider({ ...DEFAULT_LLM_SETTINGS, _storage: "defaults" }));
 }
 
 /**
@@ -226,10 +245,13 @@ export async function handleLLMSettingsPost(req, res) {
     const existingProviders = existing?.providers || {};
 
     const providers = body.providers || {};
-    // Merge: if the UI sends an empty apiKey but the provider was previously configured,
-    // preserve the existing key so URL-only updates don't break validation.
+    // Merge: if the UI sends an empty or MASKED apiKey but the provider was
+    // previously configured, preserve the existing real key. The Settings GET
+    // endpoint masks keys ("****abcd" / "configured") before returning them to
+    // the UI, so a save round-trip always echoes masked values back.
     for (const [name, cfg] of Object.entries(providers)) {
-      if (!cfg.apiKey && existingProviders[name]?.apiKey) {
+      const keyIsMasked = !cfg.apiKey || /^\*{2,}/.test(cfg.apiKey) || cfg.apiKey === "configured";
+      if (keyIsMasked && existingProviders[name]?.apiKey && !/^\*{2,}/.test(existingProviders[name].apiKey)) {
         cfg.apiKey = existingProviders[name].apiKey;
       }
     }
@@ -244,9 +266,16 @@ export async function handleLLMSettingsPost(req, res) {
       return json(res, 400, { error: "Validation failed", details: errors });
     }
 
+    const enabledProvider = Object.entries(providers).find(([, cfg]) => cfg.enabled)?.[0] || "none";
     const settings = {
       providers: { ...DEFAULT_LLM_SETTINGS.providers, ...providers },
-      defaults: { ...DEFAULT_LLM_SETTINGS.defaults, ...(body.defaults || {}) },
+      defaults: {
+        ...DEFAULT_LLM_SETTINGS.defaults,
+        ...(body.defaults || {}),
+        provider: body.defaults?.provider || enabledProvider,
+        temperature: body.temperature ?? body.defaults?.temperature ?? DEFAULT_LLM_SETTINGS.defaults.temperature,
+        maxTokens: body.maxTokens ?? body.defaults?.maxTokens ?? DEFAULT_LLM_SETTINGS.defaults.maxTokens,
+      },
       fallbackChain: body.fallbackChain || DEFAULT_LLM_SETTINGS.fallbackChain,
     };
 
