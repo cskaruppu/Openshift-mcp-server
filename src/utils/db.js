@@ -14,11 +14,9 @@ let _lastAttempt = 0;
 const RETRY_INTERVAL_MS = 5000;
 
 function getDatabaseUrl() {
-  return (
-    process.env.DATABASE_URL ||
-    process.env.POSTGRES_URL ||
-    null
-  );
+  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL || null;
+  if (url && url.includes("$(")) return null;
+  return url;
 }
 
 async function init() {

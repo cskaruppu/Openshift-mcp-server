@@ -8,10 +8,10 @@
 # cluster — OpenShift, Rancher, EKS, AKS, GKE, or vanilla K8s.
 #
 #   Management Bundle (dashboard + PostgreSQL + Redis, deployed once)
-#          ▲ register + heartbeat (30s, carries build version)
-#          │ live proxy for widgets/chat — no caching, no local state
+#          ▲ register + heartbeat (30s, carries build version + LLM config)
+#          │ live proxy for widgets/chat — shares hub PostgreSQL for LLM config
 #   ┌──────┴───────┐
-#   │  MCP Server  │  MCP_MODE=spoke — stateless, no DB, no PVC
+#   │  MCP Server  │  MCP_MODE=spoke — connects to hub DB for LLM settings
 #   └──────────────┘
 #
 # Run this on the management cluster TOO, with --cluster-name hub-cluster —
@@ -526,6 +526,27 @@ EOF
 
 # 4. Deployment + Service (+ Route for OpenShift)
 next "Deploying MCP server (spoke mode)..."
+
+# Detect cluster DNS service IP for custom dnsConfig (prevents EAI_AGAIN errors
+# when resolving mcp-postgres or external LLM endpoints).
+DNS_SVC_IP=""
+if [ "$PLATFORM" = "openshift" ]; then
+  DNS_SVC_IP=$($CLI get svc dns-default -n openshift-dns -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+fi
+if [ -z "$DNS_SVC_IP" ]; then
+  DNS_SVC_IP=$($CLI get svc kube-dns -n kube-system -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "172.30.0.10")
+fi
+echo "  Cluster DNS IP: $DNS_SVC_IP"
+
+# Check if mcp-postgres secret exists (hub-cluster deploys it; cross-cluster
+# agents won't have it — they fall back to the heartbeat-based LLM config).
+HAS_PG_SECRET=$($CLI get secret mcp-postgres -n "$NS" -o name 2>/dev/null || echo "")
+if [ -n "$HAS_PG_SECRET" ]; then
+  echo "  PostgreSQL secret found — agent will connect to shared DB"
+else
+  echo "  No PostgreSQL secret — agent will use hub heartbeat for LLM config"
+fi
+
 cat <<EOF | $CLI apply -f -
 apiVersion: apps/v1
 kind: Deployment
@@ -553,6 +574,21 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      dnsPolicy: "None"
+      dnsConfig:
+        nameservers:
+          - "$DNS_SVC_IP"
+        searches:
+          - "$NS.svc.cluster.local"
+          - "svc.cluster.local"
+          - "cluster.local"
+        options:
+          - name: timeout
+            value: "5"
+          - name: attempts
+            value: "3"
+          - name: ndots
+            value: "5"
       containers:
         - name: agentic-ai-agent
           image: $IMAGE
@@ -568,6 +604,26 @@ spec:
           env:
             - name: NODE_EXTRA_CA_CERTS
               value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-postgres
+                  key: POSTGRES_USER
+                  optional: true
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-postgres
+                  key: POSTGRES_PASSWORD
+                  optional: true
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-postgres
+                  key: POSTGRES_DB
+                  optional: true
+            - name: DATABASE_URL
+              value: "postgres://\$(PGUSER):\$(PGPASSWORD)@mcp-postgres.$NS.svc.cluster.local:5432/\$(PGDATABASE)"
             - name: NODE_OPTIONS
               value: "--max-old-space-size=768"
           resources:
