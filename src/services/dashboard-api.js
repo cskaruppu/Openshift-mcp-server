@@ -169,7 +169,9 @@ export async function getActiveLLMConfig() {
     if (!cfg) return null;
     const keyIsMasked = cfg.apiKey && (/^\*{2,}/.test(cfg.apiKey) || cfg.apiKey === "configured");
     if (keyIsMasked || !cfg.apiKey) return null;
-    return {
+    const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY
+      || process.env.https_proxy || process.env.http_proxy || "";
+    const result = {
       provider,
       apiUrl: cfg.apiUrl || "",
       apiKey: cfg.apiKey,
@@ -177,6 +179,8 @@ export async function getActiveLLMConfig() {
       azureDeployment: cfg.deployment || "",
       azureApiVersion: cfg.apiVersion || "",
     };
+    if (proxy) result.proxy = proxy;
+    return result;
   } catch {
     return null;
   }

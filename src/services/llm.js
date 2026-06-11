@@ -43,22 +43,43 @@ const AZURE_USE_MANAGED_IDENTITY = process.env.AZURE_USE_MANAGED_IDENTITY === "t
 const AZURE_TENANT_ID = process.env.AZURE_TENANT_ID || "";
 const AZURE_CLIENT_ID = process.env.AZURE_CLIENT_ID || "";
 
-const HTTPS_PROXY = process.env.HTTPS_PROXY || process.env.HTTP_PROXY
+let _activeProxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY
   || process.env.https_proxy || process.env.http_proxy || "";
 
-if (HTTPS_PROXY) {
-  console.error(`[llm] Using proxy for external LLM calls: ${HTTPS_PROXY}`);
+if (_activeProxy) {
+  console.error(`[llm] Using proxy for external LLM calls: ${_activeProxy}`);
 }
 
-const llmDispatcher = HTTPS_PROXY
-  ? new ProxyAgent({ uri: HTTPS_PROXY, requestTls: { rejectUnauthorized: false } })
-  : new Agent({
-      connect: { rejectUnauthorized: false, timeout: 30_000 },
-      bodyTimeout: 120_000,
-      headersTimeout: 90_000,
-      keepAliveTimeout: 10_000,
-      pipelining: 0,
-    });
+function makeDispatcher(proxyUri) {
+  if (proxyUri) {
+    return new ProxyAgent({ uri: proxyUri, requestTls: { rejectUnauthorized: false } });
+  }
+  return new Agent({
+    connect: { rejectUnauthorized: false, timeout: 30_000 },
+    bodyTimeout: 120_000,
+    headersTimeout: 90_000,
+    keepAliveTimeout: 10_000,
+    pipelining: 0,
+  });
+}
+
+let llmDispatcher = makeDispatcher(_activeProxy);
+
+/**
+ * Update the LLM egress proxy at runtime (e.g. from hub heartbeat).
+ * Recreates the HTTP dispatcher so subsequent LLM calls route through
+ * the new proxy.
+ */
+export function setLLMProxy(proxyUri) {
+  if (!proxyUri || proxyUri === _activeProxy) return;
+  _activeProxy = proxyUri;
+  llmDispatcher = makeDispatcher(proxyUri);
+  console.log(`[llm] Proxy updated at runtime: ${proxyUri}`);
+}
+
+export function getActiveProxy() {
+  return _activeProxy;
+}
 
 const DNS_RETRY_CODES = new Set(["EAI_AGAIN", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "ECONNREFUSED", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT"]);
 const MAX_RETRIES = 5;

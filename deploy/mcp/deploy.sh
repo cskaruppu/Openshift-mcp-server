@@ -578,6 +578,7 @@ spec:
       dnsConfig:
         nameservers:
           - "$DNS_SVC_IP"
+          - "8.8.8.8"
         searches:
           - "$NS.svc.cluster.local"
           - "svc.cluster.local"
