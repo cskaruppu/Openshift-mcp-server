@@ -112,6 +112,7 @@ import {
   isHistoryEnabled,
 } from "./services/chat-history.js";
 import { initDb, query as dbQuery, isEnabled as dbEnabled, saveClusterSnapshot, loadClusterSnapshot, loadAllClusterSnapshots, deleteClusterSnapshot } from "./utils/db.js";
+import { loadAll as loadClusterCreds, upsert as clusterCredsUpsert, remove as clusterCredsRemove, list as clusterCredsList } from "./utils/cluster-credentials.js";
 import { initCache, isEnabled as cacheReady } from "./utils/cache.js";
 import { handleMetricsRequest } from "./services/metrics.js";
 import { enforce as enforceRateLimit } from "./services/rate-limit.js";
@@ -1920,6 +1921,7 @@ async function startSSE() {
   // no longer reachable (prevents ghost cards after a fresh management-bundle
   // deploy where the MCP agent hasn't been deployed yet).
   await loadClustersFromDB();
+  await loadClusterCreds();
   await pruneUnreachableSpokes();
   // Restore this cluster's own MCP agent registration (probed before trust) —
   // otherwise a control-plane restart drops it until the agent's next heartbeat.
@@ -2890,6 +2892,56 @@ async function startSSE() {
         errors,
         recentEvents: recent,
       });
+    }
+
+    // -----------------------------------------------------------------------
+    // Cluster Credentials — direct-access pattern (industry-standard Rancher/ArgoCD style)
+    // Control plane stores cluster API URLs + SA tokens and calls OCP APIs directly.
+    // -----------------------------------------------------------------------
+    if (url.pathname === "/api/clusters/register" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const { clusterName, apiUrl, token, platform, displayName } = body || {};
+      if (!clusterName || !apiUrl || !token) return sendJson(res, 400, { error: "clusterName, apiUrl, and token are required" });
+      try {
+        const row = await clusterCredsUpsert(clusterName, apiUrl, token, platform || "openshift", displayName || "");
+        if (!row) return sendJson(res, 503, { error: "Database unavailable" });
+        console.log(`[cluster-creds] Registered: ${clusterName} → ${apiUrl}`);
+        return sendJson(res, 200, { ok: true, cluster: { clusterName, apiUrl, platform: platform || "openshift", displayName: displayName || clusterName } });
+      } catch (err) {
+        console.error(`[cluster-creds] Register error: ${err.message}`);
+        return sendJson(res, 500, { error: err.message });
+      }
+    }
+
+    if (url.pathname === "/api/clusters/list" && req.method === "GET") {
+      try {
+        const clusters = await clusterCredsList();
+        return sendJson(res, 200, { clusters });
+      } catch (err) {
+        return sendJson(res, 500, { error: err.message });
+      }
+    }
+
+    if (url.pathname === "/api/clusters/test" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const { clusterName, apiUrl, token } = body || {};
+      if (!apiUrl || !token) return sendJson(res, 400, { error: "apiUrl and token required" });
+      try {
+        const { withRemoteCluster } = await import("./utils/openshift-client.js");
+        const cv = await withRemoteCluster(apiUrl.replace(/\/+$/, ""), token, () =>
+          import("./utils/openshift-client.js").then(m => m.ocpGet("/apis/config.openshift.io/v1/clusterversions/version"))
+        );
+        const ver = cv?.status?.desired?.version || "unknown";
+        return sendJson(res, 200, { ok: true, version: ver, message: `Connected to ${clusterName || "cluster"} (OCP ${ver})` });
+      } catch (err) {
+        return sendJson(res, 200, { ok: false, error: err.message, message: `Connection failed: ${err.message}` });
+      }
+    }
+
+    if (url.pathname.match(/^\/api\/clusters\/[^/]+$/) && req.method === "DELETE") {
+      const name = decodeURIComponent(url.pathname.split("/").pop());
+      const removed = await clusterCredsRemove(name);
+      return sendJson(res, 200, { ok: removed, message: removed ? `Cluster "${name}" removed` : `Cluster "${name}" not found` });
     }
 
     // -----------------------------------------------------------------------

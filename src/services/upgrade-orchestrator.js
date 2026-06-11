@@ -12,21 +12,20 @@
 import { query, isEnabled as dbEnabled } from "../utils/db.js";
 import { ocpGet, ocpFetch, withRemoteClusterBridge } from "../utils/openshift-client.js";
 import { hasActiveChannel } from "../index.js";
+import { withClusterDirect, hasCredentials } from "../utils/cluster-credentials.js";
 import { runPreflightChecks, formatPreflightReport, validateUpgradeVersion } from "../tools/upgrade-preflight.js";
 import { trackCR, getCR, updateCRStatus, syncCRFromServiceNow } from "./cr-tracker.js";
 import { getRecord, updateRecord } from "../utils/servicenow-client.js";
 
 /**
- * Run `fn` in the correct cluster context. If cluster is "local" or falsy,
- * run directly. Otherwise, route all ocpGet/ocpFetch calls through the
- * agent bridge for that cluster.
+ * Run `fn` in the correct cluster context.
+ * Priority: local → direct-access (stored creds) → agent bridge (legacy).
  */
 function withClusterContext(cluster, fn) {
   if (!cluster || cluster === "local") return fn();
-  if (!hasActiveChannel(cluster)) {
-    throw new Error(`Agent for cluster "${cluster}" is not connected. Ensure it shows Active in AI Hub.`);
-  }
-  return withRemoteClusterBridge(cluster, fn);
+  if (hasCredentials(cluster)) return withClusterDirect(cluster, fn);
+  if (hasActiveChannel(cluster)) return withRemoteClusterBridge(cluster, fn);
+  throw new Error(`No credentials or agent bridge for cluster "${cluster}". Register it via Settings → Clusters.`);
 }
 
 // ── States ──────────────────────────────────────────────────────────────────

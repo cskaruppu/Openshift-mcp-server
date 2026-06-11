@@ -160,6 +160,14 @@ export function enterRemoteClusterBridge(cluster) {
 }
 
 /**
+ * Route all subsequent ocpGet/ocpFetch calls to a remote cluster using
+ * direct API credentials. Persists across awaits within this request only.
+ */
+export function enterRemoteClusterDirect(apiUrl, token) {
+  clusterStore.enterWith({ apiUrl, token });
+}
+
+/**
  * Set a remote cluster override (legacy — prefer withRemoteCluster).
  * Kept for backward compatibility but now uses AsyncLocalStorage internally.
  */

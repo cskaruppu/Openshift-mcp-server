@@ -31,8 +31,10 @@ import {
   setRemoteCluster,
   clearRemoteCluster,
   enterRemoteClusterBridge,
+  enterRemoteClusterDirect,
   withRemoteClusterBridge,
 } from "../utils/openshift-client.js";
+import { withClusterDirect, hasCredentials, getCredentials } from "../utils/cluster-credentials.js";
 import { getConnectedAgents, getAgentCachedResponse, invokeAgentTool, hasActiveChannel, hasSpoke, proxyChatToSpoke } from "../index.js";
 import { cacheGet, cacheSet, isEnabled as cacheEnabled } from "../utils/cache.js";
 import {
@@ -14324,10 +14326,12 @@ async function enrichFleetUpgrades(snapshot) {
   await Promise.allSettled(snapshot.map(async (c) => {
     if (!c.isOpenShift || Array.isArray(c.availableUpdates)) return;
     if (c.role === "hub") return; // already done in snapshot
-    if (!hasActiveChannel(c.name)) { c.availableUpdates = null; return; }
+    if (!hasCredentials(c.name) && !hasActiveChannel(c.name)) { c.availableUpdates = null; return; }
     try {
-      const cv = await withRemoteClusterBridge(c.name, () =>
-        ocpGet("/apis/config.openshift.io/v1/clusterversions/version"));
+      const fetchVersion = hasCredentials(c.name)
+        ? () => withClusterDirect(c.name, () => ocpGet("/apis/config.openshift.io/v1/clusterversions/version"))
+        : () => withRemoteClusterBridge(c.name, () => ocpGet("/apis/config.openshift.io/v1/clusterversions/version"));
+      const cv = await fetchVersion();
       c.availableUpdates = (cv.status?.availableUpdates || []).map(u => u.version);
       c.channel = cv.spec?.channel || c.channel;
     } catch { c.availableUpdates = null; }
@@ -14592,13 +14596,15 @@ export async function handleChatAPI(req, res) {
     // Remote cluster override — use cached agent data for context
     const _remoteClusterContext = resolveRemoteClusterContext(body);
 
-    // When a remote cluster with a LIVE bridge is selected, route every
-    // ocpGet() in this request through the agent bridge. This makes the
-    // existing preflight / upgrade-validation / CR logic operate on the
-    // remote cluster unchanged (industry-standard agent-pull pattern).
-    const _remoteBridgeActive = !!(_remoteClusterContext && hasActiveChannel(_remoteClusterContext.clusterName));
-    if (_remoteBridgeActive) {
-      enterRemoteClusterBridge(_remoteClusterContext.clusterName);
+    // When a remote cluster is selected, route ocpGet() in this request to it.
+    // Priority: direct-access (stored creds) → agent bridge (SSE) → none.
+    const _remoteClusterName = _remoteClusterContext?.clusterName || (_chatCluster !== "local" ? _chatCluster : null);
+    const _remoteCreds = _remoteClusterName ? getCredentials(_remoteClusterName) : null;
+    const _remoteBridgeActive = !!(_remoteClusterName && (hasCredentials(_remoteClusterName) || hasActiveChannel(_remoteClusterName)));
+    if (_remoteCreds) {
+      enterRemoteClusterDirect(_remoteCreds.apiUrl, _remoteCreds.token);
+    } else if (_remoteClusterName && hasActiveChannel(_remoteClusterName)) {
+      enterRemoteClusterBridge(_remoteClusterName);
     }
 
     // Slash commands — fast-path for dashboard shortcuts
@@ -15570,9 +15576,11 @@ export async function handleChatAPI(req, res) {
             targetVer = versionMatch[0];
           }
 
-          // Auto-detect versions if not specified — route through bridge for remote clusters
+          // Auto-detect versions — use direct-access creds, fall back to bridge
           const clusterOcpGet = activeCluster && activeCluster !== "local"
-            ? (path) => withRemoteClusterBridge(activeCluster, () => ocpGet(path))
+            ? (path) => hasCredentials(activeCluster)
+              ? withClusterDirect(activeCluster, () => ocpGet(path))
+              : withRemoteClusterBridge(activeCluster, () => ocpGet(path))
             : ocpGet;
 
           if (!targetVer) {

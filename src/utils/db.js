@@ -223,6 +223,16 @@ CREATE TABLE IF NOT EXISTS kv_store (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS cluster_credentials (
+  cluster_name TEXT PRIMARY KEY,
+  api_url TEXT NOT NULL,
+  token TEXT NOT NULL,
+  platform TEXT NOT NULL DEFAULT 'openshift',
+  display_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Phase 1: per-cluster snapshot store (ACM/Rancher-style warm cache).
 -- One row per cluster, upserted on every agent report. Scales to any number
 -- of clusters without write amplification, survives hub restarts, and is the
