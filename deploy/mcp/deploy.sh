@@ -201,43 +201,34 @@ if [ "$ACTION" = "uninstall" ]; then
     echo "Cancelled."
     exit 0
   fi
+  # Current resources
   $CLI delete deployment "$DEPLOY_NAME" -n "$NS" --ignore-not-found
-  $CLI delete service "$DEPLOY_NAME" -n "$NS" --ignore-not-found
-  $CLI delete service "$DEPLOY_NAME-nodeport" -n "$NS" --ignore-not-found
+  $CLI delete service "$DEPLOY_NAME" "${DEPLOY_NAME}-nodeport" -n "$NS" --ignore-not-found
   $CLI delete configmap agentic-ai-agent-config -n "$NS" --ignore-not-found
   $CLI delete secret agentic-ai-agent-secrets -n "$NS" --ignore-not-found
-  $CLI delete serviceaccount agentic-ai-agent -n "$NS" --ignore-not-found
+  $CLI delete sa agentic-ai-agent -n "$NS" --ignore-not-found
   $CLI delete clusterrolebinding agentic-ai-agent-reader-binding --ignore-not-found
   $CLI delete clusterrole agentic-ai-agent-reader --ignore-not-found
-  # Transitional short-lived "mcp-server" names (renamed to agentic-ai-agent)
-  $CLI delete deployment mcp-server -n "$NS" --ignore-not-found
-  $CLI delete service mcp-server -n "$NS" --ignore-not-found
-  $CLI delete service mcp-server-nodeport -n "$NS" --ignore-not-found
-  $CLI delete configmap mcp-server-config -n "$NS" --ignore-not-found
-  $CLI delete secret mcp-server-secrets -n "$NS" --ignore-not-found
-  $CLI delete serviceaccount mcp-server -n "$NS" --ignore-not-found
-  $CLI delete clusterrolebinding mcp-server-reader-binding --ignore-not-found
-  $CLI delete clusterrole mcp-server-reader --ignore-not-found
-  if [ "$PLATFORM" = "openshift" ]; then
-    $CLI delete route mcp-server -n "$NS" --ignore-not-found
-  fi
-  if [ "$PLATFORM" = "openshift" ]; then
-    $CLI delete route "$DEPLOY_NAME" -n "$NS" --ignore-not-found
-  fi
-  # Also remove an old-named spoke install, but never the control plane.
+  # Legacy name families (batch)
+  $CLI delete deployment mcp-server agentic-ai-mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+  $CLI delete service mcp-server mcp-server-nodeport agentic-ai-mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+  $CLI delete configmap mcp-server-config agentic-ai-mcp-server-config -n "$NS" --ignore-not-found 2>/dev/null || true
+  $CLI delete secret mcp-server-secrets agentic-ai-mcp-server-secrets -n "$NS" --ignore-not-found 2>/dev/null || true
+  $CLI delete sa mcp-server agentic-ai-mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+  $CLI delete clusterrolebinding mcp-server-reader-binding agentic-ai-mcp-server-reader-binding --ignore-not-found 2>/dev/null || true
+  $CLI delete clusterrole mcp-server-reader agentic-ai-mcp-server-reader --ignore-not-found 2>/dev/null || true
   OLD_MODE=$($CLI get configmap agentic-ai-server-config -n "$NS" -o jsonpath='{.data.MCP_MODE}' 2>/dev/null || echo "")
   if [ "$OLD_MODE" = "spoke" ]; then
-    $CLI delete deployment agentic-ai-server -n "$NS" --ignore-not-found
-    $CLI delete service agentic-ai-server -n "$NS" --ignore-not-found
-    $CLI delete service agentic-ai-server-nodeport -n "$NS" --ignore-not-found
-    $CLI delete configmap agentic-ai-server-config -n "$NS" --ignore-not-found
-    $CLI delete secret agentic-ai-server-secrets -n "$NS" --ignore-not-found
-    $CLI delete serviceaccount agentic-ai-server -n "$NS" --ignore-not-found
-    $CLI delete clusterrolebinding agentic-ai-server-reader-binding --ignore-not-found
-    $CLI delete clusterrole agentic-ai-server-reader --ignore-not-found
-    if [ "$PLATFORM" = "openshift" ]; then
-      $CLI delete route agentic-ai-server -n "$NS" --ignore-not-found
-    fi
+    $CLI delete deployment agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
+    $CLI delete service agentic-ai-server agentic-ai-server-nodeport -n "$NS" --ignore-not-found 2>/dev/null || true
+    $CLI delete configmap agentic-ai-server-config -n "$NS" --ignore-not-found 2>/dev/null || true
+    $CLI delete secret agentic-ai-server-secrets -n "$NS" --ignore-not-found 2>/dev/null || true
+    $CLI delete sa agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
+    $CLI delete clusterrolebinding agentic-ai-server-reader-binding --ignore-not-found 2>/dev/null || true
+    $CLI delete clusterrole agentic-ai-server-reader --ignore-not-found 2>/dev/null || true
+  fi
+  if [ "$PLATFORM" = "openshift" ]; then
+    $CLI delete route "$DEPLOY_NAME" mcp-server agentic-ai-mcp-server agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
   fi
   echo ""
   echo "MCP server removed. The dashboard will mark this cluster as unreachable."
@@ -264,6 +255,7 @@ fi
 # ---------------------------------------------------------------------------
 STEPS=6
 STEP=0
+# Steps: 1.namespace 2.rbac 3.config 4.deploy 5.url+rollout 6.verify
 next() { STEP=$((STEP + 1)); echo ""; echo "[$STEP/$STEPS] $1"; }
 
 echo "============================================"
@@ -302,53 +294,40 @@ metadata:
     app.kubernetes.io/part-of: tcs-agentic-ai
 EOF
 
-# 1b. Migrate from earlier installs.
-#   - Old per-cluster installs used the "agentic-ai-server" name family.
-#     Remove them ONLY when they are spoke-mode — on the hub cluster that
-#     name is the control plane (MCP_MODE=control) and must never be touched.
-#   - The retired bundled hub-agent pod is replaced by this script.
+# 1b. Legacy name migration — only runs if old resources actually exist.
+# Checks once, batch-deletes, saves ~25s on repeat deploys.
+NEEDS_MIGRATION=false
+for OLD_DEP in mcp-hub-agent mcp-server agentic-ai-mcp-server; do
+  if $CLI get deployment "$OLD_DEP" -n "$NS" &>/dev/null 2>&1; then NEEDS_MIGRATION=true; break; fi
+done
 OLD_MODE=$($CLI get configmap agentic-ai-server-config -n "$NS" -o jsonpath='{.data.MCP_MODE}' 2>/dev/null || echo "")
-if [ "$OLD_MODE" = "spoke" ]; then
-  echo "  Migrating: removing old spoke install (agentic-ai-server name family)..."
-  $CLI delete deployment agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
-  $CLI delete service agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
-  $CLI delete service agentic-ai-server-nodeport -n "$NS" --ignore-not-found 2>/dev/null || true
-  $CLI delete configmap agentic-ai-server-config -n "$NS" --ignore-not-found 2>/dev/null || true
-  $CLI delete secret agentic-ai-server-secrets -n "$NS" --ignore-not-found 2>/dev/null || true
-  $CLI delete serviceaccount agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
-  $CLI delete clusterrolebinding agentic-ai-server-reader-binding --ignore-not-found 2>/dev/null || true
-  $CLI delete clusterrole agentic-ai-server-reader --ignore-not-found 2>/dev/null || true
-  if [ "$CLI" = "oc" ]; then
-    oc delete route agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
+if [ "$OLD_MODE" = "spoke" ]; then NEEDS_MIGRATION=true; fi
+
+if $NEEDS_MIGRATION; then
+  echo "  Cleaning up legacy resources..."
+  if [ "$OLD_MODE" = "spoke" ]; then
+    $CLI delete deployment agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
+    $CLI delete service agentic-ai-server agentic-ai-server-nodeport -n "$NS" --ignore-not-found 2>/dev/null || true
+    $CLI delete configmap agentic-ai-server-config -n "$NS" --ignore-not-found 2>/dev/null || true
+    $CLI delete secret agentic-ai-server-secrets -n "$NS" --ignore-not-found 2>/dev/null || true
+    $CLI delete sa agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
+    $CLI delete clusterrolebinding agentic-ai-server-reader-binding --ignore-not-found 2>/dev/null || true
+    $CLI delete clusterrole agentic-ai-server-reader --ignore-not-found 2>/dev/null || true
+    [ "$CLI" = "oc" ] && oc delete route agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
   fi
-fi
-echo "  Removing retired hub-agent pod (if any)..."
-$CLI delete deployment mcp-hub-agent -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete service mcp-hub-agent -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete configmap mcp-hub-agent-config -n "$NS" --ignore-not-found 2>/dev/null || true
-# Transitional "mcp-server" names (renamed to agentic-ai-agent)
-$CLI delete deployment mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete service mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete service mcp-server-nodeport -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete configmap mcp-server-config -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete secret mcp-server-secrets -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete serviceaccount mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete clusterrolebinding mcp-server-reader-binding --ignore-not-found 2>/dev/null || true
-$CLI delete clusterrole mcp-server-reader --ignore-not-found 2>/dev/null || true
-if [ "$CLI" = "oc" ]; then
-  oc delete route mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
-fi
-# Transitional "agentic-ai-mcp-server" names (renamed to agentic-ai-agent)
-$CLI delete deployment agentic-ai-mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete service agentic-ai-mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete service agentic-ai-mcp-server-nodeport -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete configmap agentic-ai-mcp-server-config -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete secret agentic-ai-mcp-server-secrets -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete serviceaccount agentic-ai-mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete clusterrolebinding agentic-ai-mcp-server-reader-binding --ignore-not-found 2>/dev/null || true
-$CLI delete clusterrole agentic-ai-mcp-server-reader --ignore-not-found 2>/dev/null || true
-if [ "$CLI" = "oc" ]; then
-  oc delete route agentic-ai-mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+  # Batch-delete all three retired name families
+  $CLI delete deployment mcp-hub-agent mcp-server agentic-ai-mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+  $CLI delete service mcp-hub-agent mcp-server mcp-server-nodeport agentic-ai-mcp-server agentic-ai-mcp-server-nodeport -n "$NS" --ignore-not-found 2>/dev/null || true
+  $CLI delete configmap mcp-hub-agent-config mcp-server-config agentic-ai-mcp-server-config -n "$NS" --ignore-not-found 2>/dev/null || true
+  $CLI delete secret mcp-server-secrets agentic-ai-mcp-server-secrets -n "$NS" --ignore-not-found 2>/dev/null || true
+  $CLI delete sa mcp-server agentic-ai-mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+  $CLI delete clusterrolebinding mcp-server-reader-binding agentic-ai-mcp-server-reader-binding --ignore-not-found 2>/dev/null || true
+  $CLI delete clusterrole mcp-server-reader agentic-ai-mcp-server-reader --ignore-not-found 2>/dev/null || true
+  if [ "$CLI" = "oc" ]; then
+    oc delete route mcp-server agentic-ai-mcp-server -n "$NS" --ignore-not-found 2>/dev/null || true
+  fi
+else
+  echo "  No legacy resources found — skipped"
 fi
 
 # 2. ServiceAccount + RBAC (same as hub — full cluster-reader)
@@ -667,17 +646,9 @@ spec:
 EOF
 fi
 
-# 5. Wait for rollout + detect spoke URL
-next "Waiting for spoke to start..."
-$CLI rollout status deployment/"$DEPLOY_NAME" -n "$NS" --timeout=180s
-
-echo ""
-echo "--- Pod Status ---"
-$CLI get pods -n "$NS" -o wide
-echo ""
-
-# Detect external URL that the HUB will use to reach this spoke.
+# 5. Detect spoke URL, patch ConfigMap, then single rollout.
 # Priority: --spoke-url override > internal service (hub-cluster) > Route > internal service DNS
+next "Detecting spoke URL and rolling out..."
 if [ -n "$SPOKE_URL_OVERRIDE" ]; then
   SPOKE_URL="$SPOKE_URL_OVERRIDE"
   echo "  Using provided spoke URL: $SPOKE_URL"
@@ -695,76 +666,46 @@ else
     SPOKE_URL="http://${DEPLOY_NAME}.${NS}.svc.cluster.local:3000"
   fi
   echo "  Auto-detected spoke URL: $SPOKE_URL"
-
-  # Cross-cluster DNS check: extract hostname and verify the hub can resolve it
+  # Cross-cluster DNS warning (informational only)
   SPOKE_HOST=$(echo "$SPOKE_URL" | sed 's|https\?://||' | cut -d/ -f1 | cut -d: -f1)
   HUB_HOST=$(echo "$HUB_URL" | sed 's|https\?://||' | cut -d/ -f1 | cut -d: -f1)
   SPOKE_DOMAIN=$(echo "$SPOKE_HOST" | sed 's/^[^.]*\.//')
   HUB_DOMAIN=$(echo "$HUB_HOST" | sed 's/^[^.]*\.//')
   if [ "$SPOKE_DOMAIN" != "$HUB_DOMAIN" ]; then
     echo ""
-    echo "  WARNING: Spoke and hub are on different DNS domains:"
-    echo "    Hub:   $HUB_DOMAIN"
-    echo "    Spoke: $SPOKE_DOMAIN"
+    echo "  NOTE: Spoke and hub on different DNS domains ($SPOKE_DOMAIN vs $HUB_DOMAIN)."
+    echo "  If the hub can't resolve the spoke, redeploy with --spoke-url http://<ip>:<port>"
+    echo "  or ensure DNS forwarding is configured on the hub."
     echo ""
-    echo "  The hub may not be able to resolve '$SPOKE_HOST'."
-    echo "  If dashboard shows 502/ENOTFOUND errors, redeploy with:"
-    echo "    --spoke-url http://<spoke-node-ip>:<nodeport>"
-    echo "  or add DNS entries for the spoke domain on the hub cluster."
-    echo ""
-
-    # Try to get a routable IP address as fallback
-    SPOKE_NODE_IP=$($CLI get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || echo "")
-    if [ -n "$SPOKE_NODE_IP" ]; then
-      # Create a NodePort service for cross-cluster access
-      echo "  Creating NodePort service for cross-cluster access..."
-      cat <<NPEOF | $CLI apply -f -
-apiVersion: v1
-kind: Service
-metadata:
-  name: agentic-ai-agent-nodeport
-  namespace: $NS
-spec:
-  type: NodePort
-  selector:
-    app.kubernetes.io/name: agentic-ai-agent
-  ports:
-    - port: 3000
-      targetPort: 3000
-      protocol: TCP
-      name: http
-NPEOF
-      NP=$($CLI get svc agentic-ai-agent-nodeport -n "$NS" -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "")
-      if [ -n "$NP" ]; then
-        SPOKE_URL="http://${SPOKE_NODE_IP}:${NP}"
-        echo "  Using NodePort URL: $SPOKE_URL"
-      fi
-    fi
   fi
 fi
 
-# 6. Update ConfigMap with spoke external URL and restart
-next "Configuring spoke external URL and restarting..."
-$CLI patch configmap agentic-ai-agent-config -n "$NS" --type merge -p "{\"data\":{\"SPOKE_EXTERNAL_URL\":\"$SPOKE_URL\"}}"
-$CLI rollout restart deployment/"$DEPLOY_NAME" -n "$NS"
-$CLI rollout status deployment/"$DEPLOY_NAME" -n "$NS" --timeout=120s
+# Patch URL into ConfigMap before rollout so the pod starts with it
+$CLI patch configmap agentic-ai-agent-config -n "$NS" --type merge \
+  -p "{\"data\":{\"SPOKE_EXTERNAL_URL\":\"$SPOKE_URL\"}}"
+$CLI rollout status deployment/"$DEPLOY_NAME" -n "$NS" --timeout=180s
 
-# Verify registration
 echo ""
-echo "--- Verifying hub registration ---"
-sleep 8
-RESP=$(curl -sk "${HUB_URL}/api/spoke/status" 2>/dev/null || echo "")
-if echo "$RESP" | grep -q "$CLUSTER_NAME"; then
+echo "--- Pod Status ---"
+$CLI get pods -n "$NS" -o wide
+echo ""
+
+# 6. Verify registration (retry instead of hard sleep)
+next "Verifying hub registration..."
+REGISTERED=false
+for i in 1 2 3; do
+  RESP=$(curl -sk "${HUB_URL}/api/spoke/status" 2>/dev/null || echo "")
+  if echo "$RESP" | grep -q "$CLUSTER_NAME"; then
+    REGISTERED=true; break
+  fi
+  sleep 3
+done
+if $REGISTERED; then
   echo "  Spoke '$CLUSTER_NAME' registered with hub successfully!"
 else
   echo "  Spoke deployed but hub registration may be pending."
   echo "  Check spoke logs: $CLI logs -n $NS -l app.kubernetes.io/name=agentic-ai-agent --tail=30"
-  echo ""
-  echo "  Common issues:"
-  echo "    - Hub unreachable from this cluster (network/firewall)"
-  echo "    - TLS errors: add --tls-skip flag"
-  echo "    - DNS: verify hub hostname resolves from spoke cluster"
-  echo "    - 502 ENOTFOUND: hub can't resolve spoke URL — use --spoke-url http://<ip>:<port>"
+  echo "  Common issues: hub unreachable, TLS (add --tls-skip), DNS, or --spoke-url needed"
 fi
 
 echo ""

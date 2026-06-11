@@ -215,14 +215,14 @@ echo "============================================"
 
 # 1. Git pull
 next "Pulling latest code..."
-if $GIT_PULL && [ -d "$REPO_ROOT/.git" ]; then
+if $GIT_PULL && $BUILD && [ -d "$REPO_ROOT/.git" ]; then
   cd "$REPO_ROOT"
   BRANCH="${DEPLOY_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
   git fetch origin "$BRANCH" 2>/dev/null || true
   git pull origin "$BRANCH" --rebase 2>/dev/null || echo "  (pull skipped)"
   echo "  Branch: $BRANCH — $(git log --oneline -1)"
 else
-  echo "  Skipped"
+  echo "  Skipped (--no-build or --no-pull)"
 fi
 
 # 2. Build and push BOTH images
@@ -262,26 +262,19 @@ fi
 next "Applying namespace, service account, RBAC..."
 $CLI apply -f "$K8S_DIR/namespace.yaml"
 
-# Clean up retired resources. NOTE: the "mcp-server" name family now belongs
-# to the per-cluster MCP server (./deploy/mcp/deploy.sh) and must NOT be
-# deleted here — the bundle never touches the data plane.
-echo "  Removing retired resources (if any)..."
-$CLI delete deployment tcs-dashboard -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete service tcs-dashboard -n "$NS" --ignore-not-found 2>/dev/null || true
-# Retired bundled hub-agent — replaced by running ./deploy/mcp/deploy.sh on
-# this cluster like any other (registers as "hub-cluster").
-$CLI delete deployment mcp-hub-agent -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete service mcp-hub-agent -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete configmap mcp-hub-agent-config -n "$NS" --ignore-not-found 2>/dev/null || true
-# Old deployment names (renamed to the agentic-ai-* family). Services, the
-# Route, and the postgres StatefulSet keep their stable names.
-$CLI delete deployment mcp-dashboard -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete deployment mcp-redis -n "$NS" --ignore-not-found 2>/dev/null || true
-# Old control plane deployment (renamed to agentic-ai-control-plane)
-$CLI delete deployment agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
-# Orphaned PVCs — control plane and dashboard are stateless (state in PostgreSQL)
-$CLI delete pvc mcp-dashboard-data -n "$NS" --ignore-not-found 2>/dev/null || true
-$CLI delete pvc agentic-ai-server-data -n "$NS" --ignore-not-found 2>/dev/null || true
+# Legacy name cleanup — only runs if the old resources actually exist,
+# otherwise skipped entirely. Saves ~15s on repeat deploys.
+if $CLI get deployment tcs-dashboard -n "$NS" &>/dev/null 2>&1 || \
+   $CLI get deployment mcp-hub-agent -n "$NS" &>/dev/null 2>&1 || \
+   $CLI get deployment agentic-ai-server -n "$NS" &>/dev/null 2>&1; then
+  echo "  Removing retired resources..."
+  $CLI delete deployment tcs-dashboard mcp-hub-agent mcp-dashboard mcp-redis agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
+  $CLI delete service tcs-dashboard mcp-hub-agent -n "$NS" --ignore-not-found 2>/dev/null || true
+  $CLI delete configmap mcp-hub-agent-config -n "$NS" --ignore-not-found 2>/dev/null || true
+  $CLI delete pvc mcp-dashboard-data agentic-ai-server-data -n "$NS" --ignore-not-found 2>/dev/null || true
+else
+  echo "  No legacy resources found — skipped"
+fi
 
 if [ "$NS" != "openshift-mcp" ]; then
   echo "  (Patching manifests for namespace: $NS)"
@@ -360,7 +353,6 @@ $CLI apply -f "$K8S_DIR/redis.yaml" 2>&1 | grep -v "is invalid" || true
 #    federation routing only; data-plane queries are delegated to the MCP
 #    server pods registered from each cluster)
 next "Deploying Control Plane (MCP_MODE=control)..."
-sed -i "s|image:.*openshift-mcp-server:.*|image: ${MCP_IMAGE}|" "$K8S_DIR/deployment.yaml"
 $CLI apply -f "$K8S_DIR/deployment.yaml"
 $CLI apply -f "$K8S_DIR/service.yaml"
 $CLI set image deployment/agentic-ai-control-plane agentic-ai-control-plane="$MCP_IMAGE" -n "$NS" 2>/dev/null || true
@@ -375,7 +367,6 @@ fi
 #    PersistentVolumeClaim (persistence) + OpenShift-safe volume mounts
 #    (/tmp, /var/cache/nginx, /var/run) so Nginx runs under a random UID.
 next "Deploying Dashboard (React + Nginx)..."
-sed -i "s|image:.*mcp-dashboard:.*|image: ${DASHBOARD_IMAGE}|" "$K8S_DIR/dashboard-deployment.yaml"
 if [ "$CLI" = "oc" ]; then
   $CLI apply -f "$K8S_DIR/dashboard-deployment.yaml"
 else
@@ -385,9 +376,7 @@ fi
 $CLI set image deployment/agentic-ai-dashboard dashboard="$DASHBOARD_IMAGE" -n "$NS" 2>/dev/null || true
 
 # 9. Rollout and verify
-next "Rolling out and verifying..."
-$CLI rollout restart deployment/agentic-ai-control-plane -n "$NS"
-$CLI rollout restart deployment/agentic-ai-dashboard -n "$NS"
+next "Verifying rollout..."
 echo "  Waiting for Control Plane..."
 $CLI rollout status deployment/agentic-ai-control-plane -n "$NS" --timeout=180s
 echo "  Waiting for Dashboard..."
