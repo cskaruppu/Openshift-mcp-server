@@ -375,8 +375,10 @@ else
 fi
 $CLI set image deployment/agentic-ai-dashboard dashboard="$DASHBOARD_IMAGE" -n "$NS" 2>/dev/null || true
 
-# 9. Rollout and verify
-next "Verifying rollout..."
+# 9. Restart and verify
+next "Restarting deployments to pick up new images..."
+$CLI rollout restart deployment/agentic-ai-control-plane -n "$NS"
+$CLI rollout restart deployment/agentic-ai-dashboard -n "$NS"
 echo "  Waiting for Control Plane..."
 $CLI rollout status deployment/agentic-ai-control-plane -n "$NS" --timeout=180s
 echo "  Waiting for Dashboard..."

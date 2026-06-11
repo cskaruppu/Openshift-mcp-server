@@ -683,6 +683,7 @@ fi
 # Patch URL into ConfigMap before rollout so the pod starts with it
 $CLI patch configmap agentic-ai-agent-config -n "$NS" --type merge \
   -p "{\"data\":{\"SPOKE_EXTERNAL_URL\":\"$SPOKE_URL\"}}"
+$CLI rollout restart deployment/"$DEPLOY_NAME" -n "$NS"
 $CLI rollout status deployment/"$DEPLOY_NAME" -n "$NS" --timeout=180s
 
 echo ""
