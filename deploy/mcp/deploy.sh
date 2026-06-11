@@ -46,6 +46,8 @@
 #   --hub-token TOKEN      Hub API token (MCP_API_TOKEN from hub) for registration auth
 #   --hub-context CTX      Auto-fetch hub token from hub cluster K8s secret (kubectl context name)
 #   --hub-namespace NS     Hub namespace when using --hub-context (default: openshift-mcp)
+#   --build                Build and push the image before deploying (pulls git too)
+#   --no-pull              Skip git pull (use local working tree as-is)
 #   --status               Show MCP server deployment status
 #   --rollback             Rollback to previous revision
 #   --uninstall            Remove MCP server from this cluster
@@ -72,6 +74,8 @@ SPOKE_URL_OVERRIDE=""
 HTTPS_PROXY_VAL=""
 IMAGE="${IMAGE:-quay.io/karuppucs/openshift-mcp-server:latest}"
 ACTION="deploy"
+BUILD=false
+GIT_PULL=true
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -102,6 +106,8 @@ while [[ $# -gt 0 ]]; do
     --tls-skip)       TLS_SKIP=true; shift ;;
     --image)          IMAGE="$2"; shift 2 ;;
     -n|--namespace)   NS="$2"; shift 2 ;;
+    --build)          BUILD=true; shift ;;
+    --no-pull)        GIT_PULL=false; shift ;;
     --status)         ACTION="status"; shift ;;
     --rollback)       ACTION="rollback"; shift ;;
     --uninstall)      ACTION="uninstall"; shift ;;
@@ -267,6 +273,7 @@ echo " Hub URL   : $HUB_URL"
 echo " Hub Token : ${HUB_TOKEN:+(set)}${HUB_TOKEN:-(not set)}"
 echo " Namespace : $NS"
 echo " Image     : $IMAGE (same image on every cluster)"
+echo " Build     : $BUILD"
 echo " TLS skip  : $TLS_SKIP"
 echo " Mode      : spoke (stateless — no DB, no PVC)"
 echo "============================================"
@@ -277,6 +284,40 @@ if [ -n "$HUB_URL" ] && [ -z "$HUB_TOKEN" ]; then
   echo "         spoke registration will fail with HTTP 401."
   echo "         Use: --hub-token <hub MCP_API_TOKEN value>"
   echo ""
+fi
+
+# ── Git pull + Image build (optional) ──────────────────────────────────────
+if $GIT_PULL && $BUILD && [ -d "$REPO_ROOT/.git" ]; then
+  echo "[0/7] Pulling latest code..."
+  cd "$REPO_ROOT"
+  BRANCH="${DEPLOY_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
+  git fetch origin "$BRANCH" 2>/dev/null || true
+  git reset --hard "origin/$BRANCH" 2>/dev/null || git pull origin "$BRANCH" --rebase 2>/dev/null || echo "  (pull skipped)"
+  echo "  Branch: $BRANCH — $(git log --oneline -1)"
+elif $BUILD; then
+  echo "[0/7] Building from local working tree (--no-pull or not a git repo)"
+fi
+
+if $BUILD; then
+  RUNTIME=""
+  if command -v podman &>/dev/null; then RUNTIME="podman"
+  elif command -v docker &>/dev/null; then RUNTIME="docker"
+  else echo "ERROR: --build requires podman or docker."; exit 1; fi
+
+  BUILD_HASH=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || date +%Y%m%d%H%M%S)
+  if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null || ! git -C "$REPO_ROOT" diff --cached --quiet 2>/dev/null; then
+    BUILD_HASH="${BUILD_HASH}-$(date +%H%M%S)"
+  fi
+  echo "  Building MCP server image (BUILD_HASH=$BUILD_HASH)..."
+  $RUNTIME build --build-arg BUILD_HASH="$BUILD_HASH" --no-cache -t "$IMAGE" -f "$REPO_ROOT/Dockerfile" "$REPO_ROOT"
+  echo "  Pushing image..."
+  attempt=0; max=4; delay=2
+  while [ $attempt -lt $max ]; do
+    if $RUNTIME push "$IMAGE" 2>&1; then echo "  Push complete: $IMAGE"; break; fi
+    attempt=$((attempt + 1))
+    if [ $attempt -lt $max ]; then echo "  Push failed ($attempt/$max). Retrying in ${delay}s..."; sleep $delay; delay=$((delay * 2))
+    else echo "  ERROR: Push failed after $max attempts."; exit 1; fi
+  done
 fi
 
 # Detect spoke external URL (for hub registration)
@@ -713,7 +754,10 @@ fi
 # Patch URL into ConfigMap before rollout so the pod starts with it
 $CLI patch configmap agentic-ai-agent-config -n "$NS" --type merge \
   -p "{\"data\":{\"SPOKE_EXTERNAL_URL\":\"$SPOKE_URL\"}}"
-$CLI rollout restart deployment/"$DEPLOY_NAME" -n "$NS"
+# Force pod recreation with timestamp annotation — guarantees fresh image pull
+# even when manifest is unchanged and registry cache is stale.
+$CLI patch deployment "$DEPLOY_NAME" -n "$NS" --type merge \
+  -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"tcs.com/redeployed-at\":\"$(date -u +'%Y-%m-%dT%H:%M:%SZ')\"}}}}}"
 $CLI rollout status deployment/"$DEPLOY_NAME" -n "$NS" --timeout=180s
 
 echo ""

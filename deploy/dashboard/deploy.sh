@@ -213,13 +213,13 @@ echo " The per-cluster MCP server is deployed separately:"
 echo "   ./deploy/mcp/deploy.sh   (run on EVERY cluster, incl. this one)"
 echo "============================================"
 
-# 1. Git pull
+# 1. Git pull — force-match remote so the build always uses the latest code
 next "Pulling latest code..."
 if $GIT_PULL && $BUILD && [ -d "$REPO_ROOT/.git" ]; then
   cd "$REPO_ROOT"
   BRANCH="${DEPLOY_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
   git fetch origin "$BRANCH" 2>/dev/null || true
-  git pull origin "$BRANCH" --rebase 2>/dev/null || echo "  (pull skipped)"
+  git reset --hard "origin/$BRANCH" 2>/dev/null || git pull origin "$BRANCH" --rebase 2>/dev/null || echo "  (pull skipped)"
   echo "  Branch: $BRANCH — $(git log --oneline -1)"
 else
   echo "  Skipped (--no-build or --no-pull)"
@@ -247,9 +247,9 @@ if $BUILD; then
     BUILD_HASH="${BUILD_HASH}-$(date +%H%M%S)"
   fi
   echo "  [a] Building MCP server image (BUILD_HASH=$BUILD_HASH)..."
-  $RUNTIME build --build-arg BUILD_HASH="$BUILD_HASH" -t "$MCP_IMAGE" -f Dockerfile .
+  $RUNTIME build --no-cache --build-arg BUILD_HASH="$BUILD_HASH" -t "$MCP_IMAGE" -f Dockerfile .
   echo "  [b] Building Dashboard image..."
-  $RUNTIME build -t "$DASHBOARD_IMAGE" -f console/Dockerfile console/
+  $RUNTIME build --no-cache -t "$DASHBOARD_IMAGE" -f console/Dockerfile console/
 
   echo "  Pushing images..."
   push_with_retry "$MCP_IMAGE"
@@ -375,10 +375,14 @@ else
 fi
 $CLI set image deployment/agentic-ai-dashboard dashboard="$DASHBOARD_IMAGE" -n "$NS" 2>/dev/null || true
 
-# 9. Restart and verify
+# 9. Restart and verify — timestamp annotation forces pod recreation and
+#    guarantees fresh image pull even when manifest/tag haven't changed.
 next "Restarting deployments to pick up new images..."
-$CLI rollout restart deployment/agentic-ai-control-plane -n "$NS"
-$CLI rollout restart deployment/agentic-ai-dashboard -n "$NS"
+REDEPLOY_TS="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+$CLI patch deployment agentic-ai-control-plane -n "$NS" --type merge \
+  -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"tcs.com/redeployed-at\":\"$REDEPLOY_TS\"}}}}}"
+$CLI patch deployment agentic-ai-dashboard -n "$NS" --type merge \
+  -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"tcs.com/redeployed-at\":\"$REDEPLOY_TS\"}}}}}"
 echo "  Waiting for Control Plane..."
 $CLI rollout status deployment/agentic-ai-control-plane -n "$NS" --timeout=180s
 echo "  Waiting for Dashboard..."
