@@ -232,18 +232,30 @@ async function callViaRelay(messages, opts) {
   const hubToken = process.env.HUB_API_TOKEN || process.env.MCP_API_TOKEN || "";
   const headers = { "Content-Type": "application/json" };
   if (hubToken) headers["Authorization"] = `Bearer ${hubToken}`;
-  const resp = await undiciFetch(_relayUrl, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-    dispatcher: _relayDispatcher,
-    signal: AbortSignal.timeout(120_000),
-  });
+  const t0 = Date.now();
+  console.log(`[llm] Relay call → ${_relayUrl} (provider=${opts.provider}, model=${opts.azureDeployment || opts.model})`);
+  let resp;
+  try {
+    resp = await undiciFetch(_relayUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      dispatcher: _relayDispatcher,
+      signal: AbortSignal.timeout(120_000),
+    });
+  } catch (err) {
+    const detail = err.cause?.code || err.cause?.message || err.message;
+    console.error(`[llm] Relay call FAILED after ${Date.now() - t0}ms: ${detail}`);
+    throw new Error(`LLM relay network error: ${detail} (relay: ${_relayUrl})`);
+  }
   if (!resp.ok) {
     const errText = await resp.text().catch(() => "");
+    console.error(`[llm] Relay returned HTTP ${resp.status} in ${Date.now() - t0}ms: ${errText.slice(0, 200)}`);
     throw new Error(`LLM relay error: HTTP ${resp.status} ${errText.slice(0, 300)}`);
   }
-  return resp.json();
+  const json = await resp.json();
+  console.log(`[llm] Relay response OK in ${Date.now() - t0}ms (${json.text ? json.text.length + " chars" : "no text"})`);
+  return json;
 }
 
 // ---------------------------------------------------------------------------

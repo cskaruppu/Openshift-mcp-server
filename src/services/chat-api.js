@@ -16152,6 +16152,7 @@ export async function handleChatAPI(req, res) {
         updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
         observeHistogram("mcp_chat_latency_seconds", { provider: activeProvider }, (Date.now() - startedAt) / 1000);
       } catch (sseErr) {
+        console.error(`[chat] LLM stream failed: ${sseErr.message}${sseErr.cause ? ` (cause: ${sseErr.cause.code || sseErr.cause.message})` : ""}`);
         const isNet = /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ECONNRESET|network error|fetch failed/i.test(sseErr.message);
         if (sseErr?.llmConfigError) {
           sseSend(res, { delta: llmConfigErrorReply(sseErr) });

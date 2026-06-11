@@ -3005,6 +3005,7 @@ async function startSSE() {
     // need direct network egress to Azure/OpenAI.
     if (url.pathname === "/api/llm/relay" && req.method === "POST") {
       const body = await readJsonBody(req);
+      console.log(`[llm-relay] Request received: provider=${body?.provider || "?"}, messages=${body?.messages?.length ?? 0}`);
       if (!body || !body.messages) return sendJson(res, 400, { error: "messages required" });
       try {
         const result = await callLLM({
