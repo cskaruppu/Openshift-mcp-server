@@ -21,6 +21,7 @@ import { Resolver as DnsResolver } from "node:dns";
 import { lookup as defaultLookup } from "node:dns";
 import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
+import { setLLMDefaults } from "./llm.js";
 
 const _spokes = new Map();
 
@@ -371,6 +372,23 @@ function startHealthCheck() {
   }, 30_000);
 }
 
+let _lastLLMConfigHash = "";
+function applyHubLLMConfig(cfg) {
+  if (!cfg || !cfg.provider || cfg.provider === "none" || !cfg.apiKey) return;
+  const hash = `${cfg.provider}|${cfg.apiUrl}|${cfg.apiKey?.slice(-4)}|${cfg.model}`;
+  if (hash === _lastLLMConfigHash) return;
+  _lastLLMConfigHash = hash;
+  setLLMDefaults({
+    provider: cfg.provider,
+    apiUrl: cfg.apiUrl,
+    apiKey: cfg.apiKey,
+    model: cfg.model,
+    azureDeployment: cfg.azureDeployment,
+    azureApiVersion: cfg.azureApiVersion,
+  });
+  console.log(`[spoke] LLM config received from hub: provider=${cfg.provider}, url=${cfg.apiUrl ? "✓" : "✗"}, model=${cfg.model || "(default)"}`);
+}
+
 /**
  * Spoke startup — called when MCP_MODE=spoke.
  * Registers this instance with the hub and starts heartbeat.
@@ -402,7 +420,9 @@ export async function startSpokeMode(hubUrl, clusterName, spokeUrl, platform) {
       });
       if (resp.ok) {
         _registered = true;
+        const regData = await resp.json().catch(() => ({}));
         console.log(`[spoke] Registered with hub: ${hubUrl}`);
+        applyHubLLMConfig(regData.llmConfig);
         startHeartbeatLoop();
       } else {
         const bodyText = await resp.text().catch(() => "");
@@ -458,6 +478,8 @@ export async function startSpokeMode(hubUrl, clusterName, spokeUrl, platform) {
       } else {
         if (_hbFailures > 0) console.log(`[spoke] Heartbeat recovered after ${_hbFailures} failure(s)`);
         _hbFailures = 0;
+        const hbData = await resp.json().catch(() => ({}));
+        applyHubLLMConfig(hbData.llmConfig);
       }
     } catch (err) {
       _hbFailures++;

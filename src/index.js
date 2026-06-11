@@ -77,7 +77,7 @@ import { extractAIS, validateAIS, calculateConfidence } from "./services/ais-ext
 import { generateManifests, renderYaml, renderSingleYaml } from "./services/manifest-generator.js";
 import { createDeployment, executeDeployment, rollbackDeployment, getDeployment, listDeployments } from "./services/deployment-orchestrator.js";
 import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
-import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults } from "./services/dashboard-api.js";
+import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleOptimizationAnalysisAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import {
   listActions,
@@ -2906,7 +2906,8 @@ async function startSSE() {
       if (clusterName === HUB_AGENT_CLUSTER || clusterName.toLowerCase() === HUB_AGENT_CLUSTER.toLowerCase()) {
         console.log(`[spoke] Local MCP server registered: ${spokeUrl} — this cluster's data plane now served by the spoke pipeline`);
         saveHubAgentSpoke({ spokeUrl, platform }).catch(() => {});
-        return sendJson(res, 200, { ok: true, message: `Local MCP server "${clusterName}" registered`, hubVersion: "1.2.0" });
+        const localLlmCfg = await getActiveLLMConfig().catch(() => null);
+        return sendJson(res, 200, { ok: true, message: `Local MCP server "${clusterName}" registered`, hubVersion: "1.2.0", llmConfig: localLlmCfg });
       }
       // Also register in _connectedAgents so the cluster picker sees it
       const existingKey = findClusterKey(clusterName);
@@ -2932,7 +2933,8 @@ async function startSSE() {
       // Fetch summary from spoke so dashboard shows version/nodes/pods immediately
       fetchSpokeSummary(existingKey || clusterName, entry.spokeUrl).catch(() => {});
 
-      return sendJson(res, 200, { ok: true, message: `Spoke "${clusterName}" registered`, hubVersion: "1.2.0" });
+      const regLlmCfg = await getActiveLLMConfig().catch(() => null);
+      return sendJson(res, 200, { ok: true, message: `Spoke "${clusterName}" registered`, hubVersion: "1.2.0", llmConfig: regLlmCfg });
     }
 
     if (url.pathname === "/api/spoke/heartbeat" && req.method === "POST") {
@@ -2983,7 +2985,8 @@ async function startSSE() {
         if (spokeStartedAt) agent.mcpStartedAt = spokeStartedAt;
         _connectedAgents.set(key, agent);
       }
-      return sendJson(res, 200, { ok: true, hubVersion: MCP_VERSION });
+      const hbLlmCfg = await getActiveLLMConfig().catch(() => null);
+      return sendJson(res, 200, { ok: true, hubVersion: MCP_VERSION, llmConfig: hbLlmCfg });
     }
 
     if (url.pathname === "/api/spoke/status" && req.method === "GET") {

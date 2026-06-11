@@ -126,25 +126,59 @@ export async function hydrateLLMDefaults() {
     const provider = stored?.defaults?.provider;
     if (!provider || provider === "none") return false;
     const cfg = stored?.providers?.[provider];
-    const keyIsMasked = cfg?.apiKey && (/^\*{2,}/.test(cfg.apiKey) || cfg.apiKey === "configured");
-    const missingUrl = provider === "azure" && !cfg?.apiUrl;
-    if (!cfg || (!cfg.apiKey && !cfg.apiUrl) || keyIsMasked || missingUrl) {
-      console.warn(`[llm] Default provider "${provider}" is missing ${missingUrl ? "its endpoint URL" : "config"} — background LLM calls disabled until configured in Settings`);
+    if (!cfg) {
+      console.warn(`[llm] Default provider "${provider}" has no config — LLM calls disabled until configured in Settings`);
+      setLLMDefaults({ provider: "none" });
+      return false;
+    }
+    const keyIsMasked = cfg.apiKey && (/^\*{2,}/.test(cfg.apiKey) || cfg.apiKey === "configured");
+    const hasRealKey = cfg.apiKey && !keyIsMasked;
+    const hasUrl = !!cfg.apiUrl;
+    if (keyIsMasked) {
+      console.warn(`[llm] Default provider "${provider}" has a masked API key in storage — please re-enter the real key in Settings`);
+    }
+    if (!hasRealKey && !hasUrl) {
       setLLMDefaults({ provider: "none" });
       return false;
     }
     setLLMDefaults({
       provider,
-      apiUrl: cfg.apiUrl,
-      apiKey: cfg.apiKey,
-      model: cfg.model,
-      azureDeployment: cfg.deployment,
-      azureApiVersion: cfg.apiVersion,
+      apiUrl: cfg.apiUrl || undefined,
+      apiKey: hasRealKey ? cfg.apiKey : undefined,
+      model: cfg.model || undefined,
+      azureDeployment: cfg.deployment || undefined,
+      azureApiVersion: cfg.apiVersion || undefined,
     });
-    return true;
+    return hasRealKey;
   } catch (e) {
     console.warn("[llm] Failed to hydrate defaults from settings store:", e.message);
     return false;
+  }
+}
+
+/**
+ * Return the active LLM provider config (UNMASKED) for internal use.
+ * Used by the hub to share config with spoke pods via heartbeat.
+ */
+export async function getActiveLLMConfig() {
+  try {
+    const stored = await loadStoredLLMSettings();
+    const provider = stored?.defaults?.provider;
+    if (!provider || provider === "none") return null;
+    const cfg = stored?.providers?.[provider];
+    if (!cfg) return null;
+    const keyIsMasked = cfg.apiKey && (/^\*{2,}/.test(cfg.apiKey) || cfg.apiKey === "configured");
+    if (keyIsMasked || !cfg.apiKey) return null;
+    return {
+      provider,
+      apiUrl: cfg.apiUrl || "",
+      apiKey: cfg.apiKey,
+      model: cfg.model || "",
+      azureDeployment: cfg.deployment || "",
+      azureApiVersion: cfg.apiVersion || "",
+    };
+  } catch {
+    return null;
   }
 }
 
