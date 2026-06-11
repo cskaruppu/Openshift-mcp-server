@@ -78,6 +78,7 @@ import { generateManifests, renderYaml, renderSingleYaml } from "./services/mani
 import { createDeployment, executeDeployment, rollbackDeployment, getDeployment, listDeployments } from "./services/deployment-orchestrator.js";
 import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
+import { callLLM } from "./services/llm.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleOptimizationAnalysisAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import {
   listActions,
@@ -2907,6 +2908,9 @@ async function startSSE() {
         console.log(`[spoke] Local MCP server registered: ${spokeUrl} — this cluster's data plane now served by the spoke pipeline`);
         saveHubAgentSpoke({ spokeUrl, platform }).catch(() => {});
         const localLlmCfg = await getActiveLLMConfig().catch(() => null);
+        const regHubProto = req.headers["x-forwarded-proto"] || "https";
+        const regHubHost = req.headers.host || "";
+        if (localLlmCfg && regHubHost) localLlmCfg.relayUrl = `${regHubProto}://${regHubHost}/api/llm/relay`;
         return sendJson(res, 200, { ok: true, message: `Local MCP server "${clusterName}" registered`, hubVersion: "1.2.0", llmConfig: localLlmCfg });
       }
       // Also register in _connectedAgents so the cluster picker sees it
@@ -2934,6 +2938,9 @@ async function startSSE() {
       fetchSpokeSummary(existingKey || clusterName, entry.spokeUrl).catch(() => {});
 
       const regLlmCfg = await getActiveLLMConfig().catch(() => null);
+      const regProto = req.headers["x-forwarded-proto"] || "https";
+      const regHost = req.headers.host || "";
+      if (regLlmCfg && regHost) regLlmCfg.relayUrl = `${regProto}://${regHost}/api/llm/relay`;
       return sendJson(res, 200, { ok: true, message: `Spoke "${clusterName}" registered`, hubVersion: "1.2.0", llmConfig: regLlmCfg });
     }
 
@@ -2986,7 +2993,38 @@ async function startSSE() {
         _connectedAgents.set(key, agent);
       }
       const hbLlmCfg = await getActiveLLMConfig().catch(() => null);
+      const hubProto = req.headers["x-forwarded-proto"] || "https";
+      const hubHost = req.headers.host || "";
+      if (hbLlmCfg && hubHost) {
+        hbLlmCfg.relayUrl = `${hubProto}://${hubHost}/api/llm/relay`;
+      }
       return sendJson(res, 200, { ok: true, hubVersion: MCP_VERSION, llmConfig: hbLlmCfg });
+    }
+
+    // LLM relay — spoke pods route LLM calls through the hub so they don't
+    // need direct network egress to Azure/OpenAI.
+    if (url.pathname === "/api/llm/relay" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      if (!body || !body.messages) return sendJson(res, 400, { error: "messages required" });
+      try {
+        const result = await callLLM({
+          messages: body.messages,
+          provider: body.provider,
+          apiUrl: body.apiUrl,
+          apiKey: body.apiKey,
+          model: body.model,
+          maxTokens: body.maxTokens || 2000,
+          temperature: body.temperature ?? 0.3,
+          system: body.system || null,
+          tools: body.tools || null,
+          azureDeployment: body.azureDeployment,
+          azureApiVersion: body.azureApiVersion,
+        });
+        return sendJson(res, 200, result);
+      } catch (err) {
+        console.error(`[llm-relay] Error: ${err.message}`);
+        return sendJson(res, 502, { error: err.message });
+      }
     }
 
     if (url.pathname === "/api/spoke/status" && req.method === "GET") {

@@ -21,7 +21,7 @@ import { Resolver as DnsResolver } from "node:dns";
 import { lookup as defaultLookup } from "node:dns";
 import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
-import { setLLMDefaults, setLLMProxy } from "./llm.js";
+import { setLLMDefaults, setLLMProxy, setLLMRelay } from "./llm.js";
 
 const _spokes = new Map();
 
@@ -386,10 +386,9 @@ function applyHubLLMConfig(cfg) {
     azureDeployment: cfg.azureDeployment,
     azureApiVersion: cfg.azureApiVersion,
   });
-  if (cfg.proxy) {
-    setLLMProxy(cfg.proxy);
-  }
-  console.log(`[spoke] LLM config received from hub: provider=${cfg.provider}, url=${cfg.apiUrl ? "✓" : "✗"}, model=${cfg.model || "(default)"}${cfg.proxy ? ", proxy=✓" : ""}`);
+  if (cfg.proxy) setLLMProxy(cfg.proxy);
+  if (cfg.relayUrl) setLLMRelay(cfg.relayUrl);
+  console.log(`[spoke] LLM config received from hub: provider=${cfg.provider}, url=${cfg.apiUrl ? "✓" : "✗"}, model=${cfg.model || "(default)"}${cfg.relayUrl ? ", relay=✓" : ""}${cfg.proxy ? ", proxy=✓" : ""}`);
 }
 
 /**

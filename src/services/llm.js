@@ -81,6 +81,24 @@ export function getActiveProxy() {
   return _activeProxy;
 }
 
+let _relayUrl = "";
+
+/**
+ * Route all LLM calls through a hub relay endpoint instead of calling the
+ * LLM provider directly. Spoke pods use this so they never need direct
+ * network access to Azure/OpenAI — the hub (which has working egress)
+ * makes the actual provider call.
+ */
+export function setLLMRelay(url) {
+  if (!url) return;
+  _relayUrl = url.replace(/\/+$/, "");
+  console.log(`[llm] Relay mode enabled — LLM calls will route through: ${_relayUrl}`);
+}
+
+export function getLLMRelayUrl() {
+  return _relayUrl;
+}
+
 const DNS_RETRY_CODES = new Set(["EAI_AGAIN", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "ECONNREFUSED", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT"]);
 const MAX_RETRIES = 5;
 
@@ -188,18 +206,61 @@ export function validateLLMConfig(o) {
 }
 
 // ---------------------------------------------------------------------------
+// Hub relay — spoke pods call the hub's /api/llm/relay instead of Azure
+// directly, because the hub has network egress and the spoke may not.
+// ---------------------------------------------------------------------------
+const _relayDispatcher = new Agent({
+  connect: { rejectUnauthorized: false, timeout: 30_000 },
+  bodyTimeout: 180_000,
+  headersTimeout: 90_000,
+});
+
+async function callViaRelay(messages, opts) {
+  const payload = {
+    messages,
+    provider: opts.provider,
+    apiUrl: opts.apiUrl,
+    apiKey: opts.apiKey,
+    model: opts.model,
+    maxTokens: opts.maxTokens,
+    temperature: opts.temperature,
+    system: opts.system,
+    azureDeployment: opts.azureDeployment,
+    azureApiVersion: opts.azureApiVersion,
+  };
+  if (opts.tools && opts.tools.length) payload.tools = opts.tools;
+  const hubToken = process.env.HUB_API_TOKEN || process.env.MCP_API_TOKEN || "";
+  const headers = { "Content-Type": "application/json" };
+  if (hubToken) headers["Authorization"] = `Bearer ${hubToken}`;
+  const resp = await undiciFetch(_relayUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+    dispatcher: _relayDispatcher,
+    signal: AbortSignal.timeout(120_000),
+  });
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => "");
+    throw new Error(`LLM relay error: HTTP ${resp.status} ${errText.slice(0, 300)}`);
+  }
+  return resp.json();
+}
+
+// ---------------------------------------------------------------------------
 // Non-streaming call — returns { text, toolCalls }
 // ---------------------------------------------------------------------------
 export async function callLLM({ messages, ...opts }) {
   messages = messages.map(m => ({ ...m, content: typeof m.content === "string" ? redactIfEnabled(m.content) : m.content }));
   const o = resolveOpts(opts);
-  validateLLMConfig(o); // fail fast on missing creds — never dial a fallback URL
+  validateLLMConfig(o);
   const t0 = Date.now();
   let provider = o.provider;
   let model = o.azureDeployment || o.model || null;
   try {
     let result;
-    if (o.provider === "azure") result = await callAzureOpenAI(messages, o, false);
+    if (_relayUrl) {
+      result = await callViaRelay(messages, o);
+    } else if (o.provider === "azure") result = await callAzureOpenAI(messages, o, false);
     else if (o.provider === "openai") result = await callOpenAI(messages, o, false);
     else if (o.provider === "anthropic") result = await callAnthropic(messages, o, false);
     else if (o.provider === "ollama") result = await callOllama(messages, o, false);
@@ -215,18 +276,22 @@ export async function callLLM({ messages, ...opts }) {
 // ---------------------------------------------------------------------------
 // Streaming call — invokes `onDelta(text)` for each token chunk and
 // `onToolCall(tc)` for tool-use blocks. Returns final aggregated result.
+// When relay is active, streaming falls back to non-streaming via relay.
 // ---------------------------------------------------------------------------
 export async function callLLMStream({ messages, onDelta, onToolCall, ...opts }) {
   messages = messages.map(m => ({ ...m, content: typeof m.content === "string" ? redactIfEnabled(m.content) : m.content }));
   const o = resolveOpts(opts);
-  validateLLMConfig(o); // fail fast on missing creds — never dial a fallback URL
+  validateLLMConfig(o);
   const hooks = { onDelta, onToolCall };
   const t0 = Date.now();
   let provider = o.provider;
   let model = o.azureDeployment || o.model || null;
   try {
     let result;
-    if (o.provider === "azure") result = await callAzureOpenAI(messages, o, true, hooks);
+    if (_relayUrl) {
+      result = await callViaRelay(messages, o);
+      if (onDelta && result.text) onDelta(result.text);
+    } else if (o.provider === "azure") result = await callAzureOpenAI(messages, o, true, hooks);
     else if (o.provider === "openai") result = await callOpenAI(messages, o, true, hooks);
     else if (o.provider === "anthropic") result = await callAnthropic(messages, o, true, hooks);
     else if (o.provider === "ollama") result = await callOllama(messages, o, true, hooks);
