@@ -128,7 +128,7 @@ import { loadConfig } from "./utils/config.js";
 import { validateCommand, getAccessLevel, isToolAllowed } from "./security/command-validator.js";
 import { initComponents, isToolRegistrationEnabled, getComponentCatalog, getComponentSummary } from "./security/component-registry.js";
 import { initTelemetry, shutdownTelemetry, startSpan, traceChatRequest, traceToolCall, getTelemetryStatus } from "./utils/telemetry-otel.js";
-import { ocpGet, ocpPost, ocpPatch, ocpDelete, ocpFetch, withRemoteCluster, setRemoteCluster, clearRemoteCluster, setBridgeInvoker, enterRemoteClusterBridge } from "./utils/openshift-client.js";
+import { ocpGet, ocpPost, ocpPatch, ocpDelete, ocpFetch, withRemoteCluster, setRemoteCluster, clearRemoteCluster, setBridgeInvoker, enterRemoteClusterBridge, enterRemoteClusterDirect } from "./utils/openshift-client.js";
 import { initPlatform, getPlatform } from "./platform/index.js";
 import {
   connectServer as hubConnect,
@@ -674,22 +674,30 @@ async function withClusterContext(url, handler) {
       const toolResult = await tryAgentBridgeTool(url.pathname, clusterName);
       if (toolResult !== null) return toolResult;
     }
-    // Fall back to direct API proxy
+    // Direct-access via stored credentials (Rancher/ArgoCD pattern)
+    const { hasCredentials: _hasCreds, withClusterDirect: _withDirect } = await import("./utils/cluster-credentials.js");
+    if (_hasCreds(clusterName)) {
+      try {
+        return await _withDirect(clusterName, handler);
+      } catch (err) {
+        console.error(`[hub] Direct-access to ${clusterName} failed (${err.message}), falling back to cached data`);
+        return null;
+      }
+    }
+    // Fall back to agent's stored apiUrl/token from _connectedAgents
     const resolvedKey = findClusterKey(clusterName) || clusterName;
     const agent = _connectedAgents.get(resolvedKey);
     if (!agent) {
       throw Object.assign(new Error("Cluster not found"), { status: 404 });
     }
-    // If we have recent agent data, try proxy but fall back to cache on failure
     if (agent.apiUrl && agent.token) {
       try {
         return await withRemoteCluster(agent.apiUrl, agent.token, handler);
       } catch (proxyErr) {
         console.error(`[hub] Proxy to ${clusterName} failed (${proxyErr.message}), falling back to cached agent data`);
-        return null; // signal caller to use cached data
+        return null;
       }
     }
-    // No API URL or token — signal caller to use cached data (never fall through to local)
     return null;
   }
   return handler();
@@ -2189,8 +2197,14 @@ async function startSSE() {
         const proxied = await proxyToSpoke(_reqCluster, req, res, url, { allowFallback: isHubProxy });
         if (proxied) return;
       }
+      // Direct-access: route OCP calls using stored credentials
+      const { hasCredentials: _hasCreds2, getCredentials: _getCreds2 } = await import("./utils/cluster-credentials.js");
+      if (!isHubLocal && _hasCreds2(_reqCluster)) {
+        const _c = _getCreds2(_reqCluster);
+        enterRemoteClusterDirect(_c.apiUrl, _c.token);
+      }
       // Fallback: agent bridge (legacy lightweight agents)
-      if (!isHubLocal && hasActiveChannel(_reqCluster)) {
+      else if (!isHubLocal && hasActiveChannel(_reqCluster)) {
         enterRemoteClusterBridge(_reqCluster);
       }
     }
@@ -2721,6 +2735,10 @@ async function startSSE() {
       });
 
       saveClustersToDB().catch(() => {});
+      if (token && apiUrl) {
+        clusterCredsUpsert(name, apiUrl, token, platform || "openshift", name).catch(err =>
+          console.warn(`[hub] Failed to save cluster credentials: ${err.message}`));
+      }
       console.error(`[hub] Cluster registered: ${name} (${platform}) — test: ${testResult?.ok ? "OK" : "skipped/failed"}${kubeconfigDetected ? " (kubeconfig parsed)" : ""}`);
       return sendJson(res, 200, {
         ok: true,

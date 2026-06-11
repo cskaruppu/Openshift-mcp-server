@@ -7476,11 +7476,82 @@ function handleRemoteCacheQuery(message, parsed, remoteCtx, opts = {}) {
 // Returns a formatted markdown string, or null to fall through to the
 // cache-based handler / LLM path.
 // ---------------------------------------------------------------------------
+
+/**
+ * Invoke an agent tool — or translate to a direct OCP API call when no bridge
+ * exists but stored credentials are available (direct-access pattern).
+ */
+async function invokeOrDirect(cluster, toolName, args, timeoutMs) {
+  if (hasActiveChannel && hasActiveChannel(cluster)) {
+    return invokeAgentTool(cluster, toolName, args, timeoutMs);
+  }
+  if (!hasCredentials(cluster)) return null;
+  return withClusterDirect(cluster, async () => {
+    const ns = args?.namespace;
+    switch (toolName) {
+      case "get_pods": {
+        const path = ns ? `/api/v1/namespaces/${ns}/pods` : "/api/v1/pods";
+        const data = await ocpGet(path);
+        const items = (data?.items || []);
+        const running = items.filter(p => p.status?.phase === "Running").length;
+        const pending = items.filter(p => p.status?.phase === "Pending").length;
+        const failed = items.filter(p => p.status?.phase === "Failed").length;
+        const problems = items.filter(p => p.status?.phase !== "Running" && p.status?.phase !== "Succeeded");
+        return { success: true, data: {
+          total: items.length, running, pending, failed,
+          items: problems.slice(0, 50).map(p => ({
+            name: p.metadata?.name, phase: p.status?.phase,
+            restarts: (p.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0),
+            node: p.spec?.nodeName,
+            containers: (p.status?.containerStatuses || []).map(c => ({ state: Object.keys(c.state || {})[0] || "Unknown" })),
+          })),
+        }};
+      }
+      case "get_logs": {
+        const name = args?.name || "";
+        const tail = args?.tail || 100;
+        const logPath = `/api/v1/namespaces/${ns || "default"}/pods/${name}/log?tailLines=${tail}`;
+        const logs = await ocpFetch(logPath, { headers: { Accept: "text/plain" } });
+        return { success: true, data: { logs } };
+      }
+      case "list_resources": {
+        const kind = (args?.kind || "").toLowerCase();
+        const apiMap = {
+          deployments: ns ? `/apis/apps/v1/namespaces/${ns}/deployments` : "/apis/apps/v1/deployments",
+          statefulsets: ns ? `/apis/apps/v1/namespaces/${ns}/statefulsets` : "/apis/apps/v1/statefulsets",
+          daemonsets: ns ? `/apis/apps/v1/namespaces/${ns}/daemonsets` : "/apis/apps/v1/daemonsets",
+          replicasets: ns ? `/apis/apps/v1/namespaces/${ns}/replicasets` : "/apis/apps/v1/replicasets",
+          services: ns ? `/api/v1/namespaces/${ns}/services` : "/api/v1/services",
+          configmaps: ns ? `/api/v1/namespaces/${ns}/configmaps` : "/api/v1/configmaps",
+          secrets: ns ? `/api/v1/namespaces/${ns}/secrets` : "/api/v1/secrets",
+          ingresses: ns ? `/apis/networking.k8s.io/v1/namespaces/${ns}/ingresses` : "/apis/networking.k8s.io/v1/ingresses",
+          routes: ns ? `/apis/route.openshift.io/v1/namespaces/${ns}/routes` : "/apis/route.openshift.io/v1/routes",
+          persistentvolumeclaims: ns ? `/api/v1/namespaces/${ns}/persistentvolumeclaims` : "/api/v1/persistentvolumeclaims",
+          jobs: ns ? `/apis/batch/v1/namespaces/${ns}/jobs` : "/apis/batch/v1/jobs",
+          cronjobs: ns ? `/apis/batch/v1/namespaces/${ns}/cronjobs` : "/apis/batch/v1/cronjobs",
+          serviceaccounts: ns ? `/api/v1/namespaces/${ns}/serviceaccounts` : "/api/v1/serviceaccounts",
+        };
+        const apiPath = apiMap[kind];
+        if (!apiPath) return null;
+        const data = await ocpGet(apiPath);
+        const items = (data?.items || []).map(i => ({
+          name: i.metadata?.name, namespace: i.metadata?.namespace,
+          created: i.metadata?.creationTimestamp,
+        }));
+        return { success: true, data: { kind, count: items.length, items: items.slice(0, 50) } };
+      }
+      default:
+        return null;
+    }
+  });
+}
+
 async function handleRemoteLiveQuery(message, parsed, remoteCtx) {
   if (!remoteCtx) return null;
   const cluster = remoteCtx.clusterName;
-  // Only use the live path when the agent bridge is connected.
-  if (!hasActiveChannel || !hasActiveChannel(cluster)) return null;
+  const hasBridge = hasActiveChannel && hasActiveChannel(cluster);
+  const hasCreds = hasCredentials(cluster);
+  if (!hasBridge && !hasCreds) return null;
 
   const lower = message.toLowerCase();
   const summary = remoteCtx.summary || {};
@@ -7522,7 +7593,7 @@ async function handleRemoteLiveQuery(message, parsed, remoteCtx) {
   // ---- Pod logs (live only) ----
   if (/\blogs?\b/.test(lower) && parsed?.name) {
     try {
-      const r = await invokeAgentTool(cluster, "get_logs", { name: parsed.name, namespace: ns || "default", tail: 100 }, 15000);
+      const r = await invokeOrDirect(cluster, "get_logs", { name: parsed.name, namespace: ns || "default", tail: 100 }, 15000);
       if (r?.success && r.data?.logs != null) {
         const logs = String(r.data.logs).slice(-6000);
         return `${header}\n### Logs: \`${parsed.name}\`${ns ? " (" + ns + ")" : ""}\n\n\`\`\`\n${logs || "(no output)"}\n\`\`\``;
@@ -7533,7 +7604,7 @@ async function handleRemoteLiveQuery(message, parsed, remoteCtx) {
   // ---- Pods (namespace-specific or named) ----
   if (/\bpods?\b/.test(lower) && (isListIntent || ns || parsed?.name)) {
     try {
-      const r = await invokeAgentTool(cluster, "get_pods", ns ? { namespace: ns } : {}, 15000);
+      const r = await invokeOrDirect(cluster, "get_pods", ns ? { namespace: ns } : {}, 15000);
       if (r?.success && r.data) {
         const d = r.data;
         const parts = [header];
@@ -7567,7 +7638,7 @@ async function handleRemoteLiveQuery(message, parsed, remoteCtx) {
   const kindMatch = RESOURCE_KEYWORDS.find(k => k.re.test(lower) && k.kind !== "pods");
   if (kindMatch && (isListIntent || ns)) {
     try {
-      const r = await invokeAgentTool(cluster, "list_resources", ns ? { kind: kindMatch.kind, namespace: ns } : { kind: kindMatch.kind }, 15000);
+      const r = await invokeOrDirect(cluster, "list_resources", ns ? { kind: kindMatch.kind, namespace: ns } : { kind: kindMatch.kind }, 15000);
       if (r?.success && Array.isArray(r.data)) {
         const items = r.data;
         const parts = [header];
@@ -7583,7 +7654,7 @@ async function handleRemoteLiveQuery(message, parsed, remoteCtx) {
           parts.push(`| --- | --- | --- |`);
           const top = items.slice(0, 25);
           const details = await Promise.all(top.map(it =>
-            invokeAgentTool(cluster, "describe_resource", { kind: kindMatch.kind, name: it.name, namespace: it.namespace }, 10000)
+            invokeOrDirect(cluster, "describe_resource", { kind: kindMatch.kind, name: it.name, namespace: it.namespace }, 10000)
               .then(dr => ({ it, dr })).catch(() => ({ it, dr: null }))
           ));
           details.forEach(({ it, dr }) => {
@@ -7612,7 +7683,7 @@ async function handleRemoteLiveQuery(message, parsed, remoteCtx) {
     const kindEntry = RESOURCE_KEYWORDS.find(k => k.re.test(parsed.resource.toLowerCase()));
     if (kindEntry) {
       try {
-        const r = await invokeAgentTool(cluster, "describe_resource", { kind: kindEntry.kind, name: parsed.name, namespace: ns || undefined }, 12000);
+        const r = await invokeOrDirect(cluster, "describe_resource", { kind: kindEntry.kind, name: parsed.name, namespace: ns || undefined }, 12000);
         if (r?.success && r.data) {
           const obj = r.data;
           const parts = [header];
@@ -7658,7 +7729,9 @@ function _ageFromTimestamp(ts) {
 async function handleRemoteMutation(message, parsed, remoteCtx, opts = {}) {
   if (!remoteCtx) return null;
   const cluster = remoteCtx.clusterName;
-  if (!hasActiveChannel || !hasActiveChannel(cluster)) return null;
+  const hasBridge = hasActiveChannel && hasActiveChannel(cluster);
+  const hasCreds = hasCredentials(cluster);
+  if (!hasBridge && !hasCreds) return null;
 
   const lower = message.toLowerCase();
   const summary = remoteCtx.summary || {};
@@ -7698,7 +7771,7 @@ async function handleRemoteMutation(message, parsed, remoteCtx, opts = {}) {
 
   const runTool = async (tool, args, successFmt) => {
     try {
-      const r = await invokeAgentTool(cluster, tool, args, 20000);
+      const r = await invokeOrDirect(cluster, tool, args, 20000);
       if (r?.success) {
         auditLog(tool, JSON.stringify(args));
         return `${header}\n${successFmt(r.data)}`;
