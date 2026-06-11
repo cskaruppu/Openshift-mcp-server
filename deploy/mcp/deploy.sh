@@ -569,12 +569,34 @@ EOF
 next "Deploying MCP server (spoke mode)..."
 
 # Check if mcp-postgres secret exists (hub-cluster deploys it; cross-cluster
-# agents won't have it — they fall back to the heartbeat-based LLM config).
+# agents won't have it — they use DB relay through the hub instead).
 HAS_PG_SECRET=$($CLI get secret mcp-postgres -n "$NS" -o name 2>/dev/null || echo "")
 if [ -n "$HAS_PG_SECRET" ]; then
-  echo "  PostgreSQL secret found — agent will connect to shared DB"
+  echo "  PostgreSQL secret found — agent will connect to shared DB directly"
+  DB_ENV_BLOCK='
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-postgres
+                  key: POSTGRES_USER
+                  optional: true
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-postgres
+                  key: POSTGRES_PASSWORD
+                  optional: true
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-postgres
+                  key: POSTGRES_DB
+                  optional: true
+            - name: DATABASE_URL
+              value: "postgres://$(PGUSER):$(PGPASSWORD)@mcp-postgres.'"$NS"'.svc.cluster.local:5432/$(PGDATABASE)"'
 else
-  echo "  No PostgreSQL secret — agent will use hub heartbeat for LLM config"
+  echo "  No PostgreSQL secret — agent will use DB relay through hub"
+  DB_ENV_BLOCK=""
 fi
 
 cat <<EOF | $CLI apply -f -
@@ -618,27 +640,7 @@ spec:
                 name: agentic-ai-agent-secrets
           env:
             - name: NODE_EXTRA_CA_CERTS
-              value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
-            - name: PGUSER
-              valueFrom:
-                secretKeyRef:
-                  name: mcp-postgres
-                  key: POSTGRES_USER
-                  optional: true
-            - name: PGPASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: mcp-postgres
-                  key: POSTGRES_PASSWORD
-                  optional: true
-            - name: PGDATABASE
-              valueFrom:
-                secretKeyRef:
-                  name: mcp-postgres
-                  key: POSTGRES_DB
-                  optional: true
-            - name: DATABASE_URL
-              value: "postgres://\$(PGUSER):\$(PGPASSWORD)@mcp-postgres.$NS.svc.cluster.local:5432/\$(PGDATABASE)"
+              value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"$DB_ENV_BLOCK
             - name: NODE_OPTIONS
               value: "--max-old-space-size=768"
           resources:
