@@ -286,16 +286,16 @@ if [ -n "$HUB_URL" ] && [ -z "$HUB_TOKEN" ]; then
   echo ""
 fi
 
-# ── Git pull + Image build (optional) ──────────────────────────────────────
-if $GIT_PULL && $BUILD && [ -d "$REPO_ROOT/.git" ]; then
+# ── Git pull (default: always pull latest before deploy) ───────────────────
+if $GIT_PULL && [ -d "$REPO_ROOT/.git" ]; then
   echo "[0/7] Pulling latest code..."
   cd "$REPO_ROOT"
   BRANCH="${DEPLOY_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
   git fetch origin "$BRANCH" 2>/dev/null || true
   git reset --hard "origin/$BRANCH" 2>/dev/null || git pull origin "$BRANCH" --rebase 2>/dev/null || echo "  (pull skipped)"
   echo "  Branch: $BRANCH — $(git log --oneline -1)"
-elif $BUILD; then
-  echo "[0/7] Building from local working tree (--no-pull or not a git repo)"
+else
+  echo "[0/7] Git pull skipped (--no-pull or not a git repo)"
 fi
 
 if $BUILD; then
