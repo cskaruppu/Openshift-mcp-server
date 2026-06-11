@@ -33,7 +33,7 @@ import {
   enterRemoteClusterBridge,
   withRemoteClusterBridge,
 } from "../utils/openshift-client.js";
-import { getConnectedAgents, getAgentCachedResponse, invokeAgentTool, hasActiveChannel } from "../index.js";
+import { getConnectedAgents, getAgentCachedResponse, invokeAgentTool, hasActiveChannel, hasSpoke, proxyChatToSpoke } from "../index.js";
 import { cacheGet, cacheSet, isEnabled as cacheEnabled } from "../utils/cache.js";
 import {
   addMessage as histAddMessage,
@@ -14571,22 +14571,20 @@ export async function handleChatAPI(req, res) {
       return;
     }
 
-    // ── Model 1: the LLM "brain" stays on the control-plane ─────────────
-    // The chat pipeline — INCLUDING the LLM call — always runs HERE on the
-    // control plane, the single holder of LLM credentials (hydrated from the
-    // settings store / SQL). We do NOT delegate the whole chat to a spoke:
-    // spokes are stateless executors with no LLM config, so delegating the
-    // LLM call to them caused ECONNREFUSED (no creds → localhost fallback).
-    //
-    // Live cluster reads for a selected spoke are instead routed to its agent
-    // through the read bridge (ocpGet → agent api_get), activated just below
-    // via enterRemoteClusterBridge(). The spoke therefore runs reads/tools
-    // only and never calls the LLM. This makes the stored LLM config
-    // correct-by-construction: config and execution live in the same pod.
-    //
-    // "local" = the hub cluster, served by this pod's native cluster access.
-    // _chatCluster (function-scoped above) is retained for history/cache tagging.
+    // ── Cluster routing ──────────────────────────────────────────────────
+    // Spoke clusters with LLM relay + DB relay get the full chat proxied to
+    // them (handled above). Agent-bridge clusters use enterRemoteClusterBridge
+    // to route ocpGet() through the bridge. "local" runs directly on the hub.
     _chatCluster = body.cluster || "local";
+
+    // Spoke proxy — if the target cluster is a registered spoke without an
+    // agent bridge, proxy the entire chat to the spoke. The spoke now has
+    // LLM relay + DB relay + local OCP access, so it handles the full
+    // pipeline (upgrade orchestrator, preflight checks, etc.) locally.
+    if (_chatCluster !== "local" && hasSpoke(_chatCluster) && !hasActiveChannel(_chatCluster)) {
+      const proxied = await proxyChatToSpoke(_chatCluster, body, req, res);
+      if (proxied) return;
+    }
 
     // Remote cluster override — use cached agent data for context
     const _remoteClusterContext = resolveRemoteClusterContext(body);
