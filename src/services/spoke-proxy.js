@@ -373,7 +373,7 @@ function startHealthCheck() {
 }
 
 let _lastLLMConfigHash = "";
-function applyHubLLMConfig(cfg) {
+function applyHubLLMConfig(cfg, hubUrl) {
   if (!cfg || !cfg.provider || cfg.provider === "none" || !cfg.apiKey) return;
   const hash = `${cfg.provider}|${cfg.apiUrl}|${cfg.apiKey?.slice(-4)}|${cfg.model}`;
   if (hash === _lastLLMConfigHash) return;
@@ -387,8 +387,15 @@ function applyHubLLMConfig(cfg) {
     azureApiVersion: cfg.azureApiVersion,
   });
   if (cfg.proxy) setLLMProxy(cfg.proxy);
-  if (cfg.relayUrl) setLLMRelay(cfg.relayUrl);
-  console.log(`[spoke] LLM config received from hub: provider=${cfg.provider}, url=${cfg.apiUrl ? "✓" : "✗"}, model=${cfg.model || "(default)"}${cfg.relayUrl ? ", relay=✓" : ""}${cfg.proxy ? ", proxy=✓" : ""}`);
+  // Build the relay URL from HUB_URL — the address that registration and
+  // heartbeats already reach successfully. The hub's header-derived relayUrl
+  // can have the wrong scheme (http behind an edge-terminated route), which
+  // the router rejects/redirects for POSTs.
+  const relay = hubUrl
+    ? `${hubUrl.replace(/\/+$/, "")}/api/llm/relay`
+    : cfg.relayUrl;
+  if (relay) setLLMRelay(relay);
+  console.log(`[spoke] LLM config received from hub: provider=${cfg.provider}, url=${cfg.apiUrl ? "✓" : "✗"}, model=${cfg.model || "(default)"}${relay ? ", relay=✓" : ""}${cfg.proxy ? ", proxy=✓" : ""}`);
 }
 
 /**
@@ -424,7 +431,7 @@ export async function startSpokeMode(hubUrl, clusterName, spokeUrl, platform) {
         _registered = true;
         const regData = await resp.json().catch(() => ({}));
         console.log(`[spoke] Registered with hub: ${hubUrl}`);
-        applyHubLLMConfig(regData.llmConfig);
+        applyHubLLMConfig(regData.llmConfig, hubUrl);
         startHeartbeatLoop();
       } else {
         const bodyText = await resp.text().catch(() => "");
@@ -481,7 +488,7 @@ export async function startSpokeMode(hubUrl, clusterName, spokeUrl, platform) {
         if (_hbFailures > 0) console.log(`[spoke] Heartbeat recovered after ${_hbFailures} failure(s)`);
         _hbFailures = 0;
         const hbData = await resp.json().catch(() => ({}));
-        applyHubLLMConfig(hbData.llmConfig);
+        applyHubLLMConfig(hbData.llmConfig, hubUrl);
       }
     } catch (err) {
       _hbFailures++;
