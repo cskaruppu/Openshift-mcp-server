@@ -8,7 +8,10 @@
 let _pool = null;
 let _initPromise = null;
 let _enabled = false;
-let _initFailed = false;
+let _noUrl = false;
+let _lastAttempt = 0;
+
+const RETRY_INTERVAL_MS = 5000;
 
 function getDatabaseUrl() {
   return (
@@ -19,20 +22,25 @@ function getDatabaseUrl() {
 }
 
 async function init() {
-  if (_pool || _initFailed) return _pool;
+  if (_pool) return _pool;
+  if (_noUrl) return null;
   if (_initPromise) return _initPromise;
+
+  const now = Date.now();
+  if (_lastAttempt && now - _lastAttempt < RETRY_INTERVAL_MS) return null;
 
   const url = getDatabaseUrl();
   if (!url) {
-    _initFailed = true;
+    _noUrl = true;
     return null;
   }
 
+  _lastAttempt = now;
   _initPromise = (async () => {
     try {
       const pgModule = await import("pg");
       const { Pool } = pgModule.default || pgModule;
-      _pool = new Pool({
+      const pool = new Pool({
         connectionString: url,
         max: parseInt(process.env.DATABASE_POOL_MAX || "10", 10),
         idleTimeoutMillis: 30000,
@@ -42,24 +50,22 @@ async function init() {
             ? { rejectUnauthorized: false }
             : undefined,
       });
-      _pool.on("error", (err) => {
+      pool.on("error", (err) => {
         console.error("[db] unexpected pool error:", err.message);
       });
-      // Ping
-      await _pool.query("SELECT 1");
+      await pool.query("SELECT 1");
+      _pool = pool;
       _enabled = true;
       console.log("[db] PostgreSQL connected");
       await ensureSchema();
       return _pool;
     } catch (err) {
-      console.warn(
-        "[db] PostgreSQL unavailable, running in stateless mode:",
-        err.message
-      );
-      _initFailed = true;
+      console.warn("[db] PostgreSQL not ready, will retry:", err.message);
       _pool = null;
       _enabled = false;
       return null;
+    } finally {
+      _initPromise = null;
     }
   })();
 
@@ -319,10 +325,21 @@ export async function isEnabled() {
   return _enabled;
 }
 
-/** Eager initialization — call at startup. */
+/** Eager initialization — call at startup with retry for PostgreSQL readiness. */
 export async function initDb() {
-  await init();
-  return _enabled;
+  const url = getDatabaseUrl();
+  if (!url) { console.warn("[db] No DATABASE_URL — running in stateless mode"); return false; }
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    await init();
+    if (_enabled) return true;
+    if (attempt < 6) {
+      const delay = attempt * 2;
+      console.log(`[db] Waiting for PostgreSQL (attempt ${attempt}/6, retry in ${delay}s)...`);
+      await new Promise((r) => setTimeout(r, delay * 1000));
+    }
+  }
+  console.warn("[db] PostgreSQL not available after retries — running in stateless mode");
+  return false;
 }
 
 export async function closeDb() {
