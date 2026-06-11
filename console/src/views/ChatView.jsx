@@ -610,7 +610,9 @@ export function ChatView() {
                 setCompletedStages(new Set(doneStages));
                 // Normalize the built-in identifiers back to "builtin" so the
                 // response window shows the correct provider identity badge.
-                const rawProv = evt.provider || activeProvider;
+                // When an LLM config error fires, errorProvider carries the
+                // real provider name — show it so the user knows what failed.
+                const rawProv = evt.errorProvider || evt.provider || activeProvider;
                 const resolvedProvider = (rawProv === "none" || rawProv === "built-in") ? "builtin" : rawProv;
                 setMsgMeta((prev) => ({
                   ...prev,

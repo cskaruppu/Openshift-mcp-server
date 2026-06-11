@@ -283,9 +283,26 @@ export async function handleLLMSettingsPost(req, res) {
     const savedToFile = await writeFile(LLM_SETTINGS_PATH, JSON.stringify(settings, null, 2), "utf8").then(() => true).catch(() => false);
     const provCount = Object.values(settings.providers).filter(c => c.enabled || c.apiKey).length;
     console.log(`[settings] saved — DB=${savedToDB}, file=${savedToFile}, ${provCount} provider(s) configured`);
-    // Re-hydrate runtime defaults so background LLM calls pick up the new
-    // config immediately (no restart needed).
-    hydrateLLMDefaults().catch(() => {});
+    // Hydrate runtime defaults DIRECTLY from the just-saved data — never
+    // re-read from DB/file. We have the real unmasked credentials in memory;
+    // going through loadStoredLLMSettings() risks hitting the same read
+    // failure that prevents chat from resolving credentials.
+    const defProvider = settings.defaults?.provider;
+    const defCfg = defProvider && defProvider !== "none" ? settings.providers?.[defProvider] : null;
+    if (defCfg && defCfg.apiKey && defCfg.apiUrl) {
+      setLLMDefaults({
+        provider: defProvider,
+        apiUrl: defCfg.apiUrl,
+        apiKey: defCfg.apiKey,
+        model: defCfg.model,
+        azureDeployment: defCfg.deployment,
+        azureApiVersion: defCfg.apiVersion,
+      });
+      console.log(`[settings] LLM defaults hydrated directly: provider=${defProvider}, url=${defCfg.apiUrl.replace(/\/+$/, "")}`);
+    } else {
+      setLLMDefaults({ provider: "none" });
+      console.log("[settings] No complete provider config — LLM defaults set to none");
+    }
     return json(res, 200, { success: true, settings, storage: savedToDB ? "database" : "file" });
   } catch (err) {
     return json(res, 500, { error: err.message });
