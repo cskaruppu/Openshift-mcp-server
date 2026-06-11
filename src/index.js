@@ -2941,7 +2941,8 @@ async function startSSE() {
       const regProto = req.headers["x-forwarded-proto"] || "https";
       const regHost = req.headers.host || "";
       if (regLlmCfg && regHost) regLlmCfg.relayUrl = `${regProto}://${regHost}/api/llm/relay`;
-      return sendJson(res, 200, { ok: true, message: `Spoke "${clusterName}" registered`, hubVersion: "1.2.0", llmConfig: regLlmCfg });
+      const _regDbReady = await dbEnabled();
+      return sendJson(res, 200, { ok: true, message: `Spoke "${clusterName}" registered`, hubVersion: "1.2.0", llmConfig: regLlmCfg, dbRelay: _regDbReady });
     }
 
     if (url.pathname === "/api/spoke/heartbeat" && req.method === "POST") {
@@ -2998,7 +2999,8 @@ async function startSSE() {
       if (hbLlmCfg && hubHost) {
         hbLlmCfg.relayUrl = `${hubProto}://${hubHost}/api/llm/relay`;
       }
-      return sendJson(res, 200, { ok: true, hubVersion: MCP_VERSION, llmConfig: hbLlmCfg });
+      const _hbDbReady = await dbEnabled();
+      return sendJson(res, 200, { ok: true, hubVersion: MCP_VERSION, llmConfig: hbLlmCfg, dbRelay: _hbDbReady });
     }
 
     // LLM relay — spoke pods route LLM calls through the hub so they don't
@@ -3025,6 +3027,22 @@ async function startSSE() {
       } catch (err) {
         console.error(`[llm-relay] Error: ${err.message}`);
         return sendJson(res, 502, { error: err.message });
+      }
+    }
+
+    // DB relay — spokes route all DB queries through hub (no credentials leave hub).
+    // Only hub (MCP_MODE !== spoke) serves this; prevents relay loops.
+    if (url.pathname === "/api/db/query" && req.method === "POST") {
+      if (MCP_MODE === "spoke") return sendJson(res, 403, { error: "relay not available on spoke" });
+      const body = await readJsonBody(req);
+      if (!body || !body.text) return sendJson(res, 400, { error: "text required" });
+      try {
+        const result = await dbQuery(body.text, body.params || []);
+        if (!result) return sendJson(res, 503, { error: "database unavailable" });
+        return sendJson(res, 200, { rows: result.rows, rowCount: result.rowCount });
+      } catch (err) {
+        console.error(`[db-relay] Query error: ${err.message}`);
+        return sendJson(res, 500, { error: err.message });
       }
     }
 

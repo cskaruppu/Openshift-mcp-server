@@ -13,6 +13,49 @@ let _lastAttempt = 0;
 
 const RETRY_INTERVAL_MS = 5000;
 
+// DB relay mode — spoke routes queries through hub's /api/db/query endpoint.
+// No credentials leave the hub; spoke never touches PostgreSQL directly.
+let _dbRelayUrl = "";
+let _dbRelayToken = "";
+let _dbRelayFetch = globalThis.fetch;
+
+/**
+ * Enable DB relay mode. All query() calls will route through the hub.
+ * Called from spoke-proxy.js when hub confirms DB is available.
+ */
+export function setDbRelay(url, token, fetchFn) {
+  if (!url) return;
+  _dbRelayUrl = url.replace(/\/+$/, "");
+  _dbRelayToken = token || "";
+  if (fetchFn) _dbRelayFetch = fetchFn;
+  _enabled = true;
+  _initFailed = false;
+  console.log(`[db] Relay mode enabled — queries route through hub: ${_dbRelayUrl}/api/db/query`);
+}
+
+async function queryViaRelay(text, params) {
+  const headers = { "Content-Type": "application/json" };
+  if (_dbRelayToken) headers["Authorization"] = `Bearer ${_dbRelayToken}`;
+  try {
+    const resp = await _dbRelayFetch(`${_dbRelayUrl}/api/db/query`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ text, params }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      console.error(`[db] Relay HTTP ${resp.status}: ${errText.slice(0, 200)}`);
+      return null;
+    }
+    return await resp.json();
+  } catch (err) {
+    const detail = err.cause?.code || err.cause?.message || err.message;
+    console.error(`[db] Relay query failed: ${detail}`);
+    return null;
+  }
+}
+
 function getDatabaseUrl() {
   const url = process.env.DATABASE_URL || process.env.POSTGRES_URL || null;
   if (url && url.includes("$(")) return null;
@@ -290,8 +333,10 @@ async function ensureSchema() {
 
 /**
  * Run a parameterized query. Returns { rows, rowCount } or null if DB disabled.
+ * In relay mode, routes through hub's /api/db/query endpoint.
  */
 export async function query(text, params = []) {
+  if (_dbRelayUrl) return queryViaRelay(text, params);
   await init();
   if (!_pool) return null;
   try {
@@ -302,14 +347,16 @@ export async function query(text, params = []) {
   }
 }
 
-/** Returns true if the DB is configured and reachable. */
+/** Returns true if the DB is configured and reachable (or relay is active). */
 export async function isEnabled() {
+  if (_dbRelayUrl) return true;
   await init();
   return _enabled;
 }
 
 /** Eager initialization — call at startup with retry for PostgreSQL readiness. */
 export async function initDb() {
+  if (_dbRelayUrl) return true;
   const url = getDatabaseUrl();
   if (!url) { console.warn("[db] No DATABASE_URL — running in stateless mode"); return false; }
   for (let attempt = 1; attempt <= 6; attempt++) {

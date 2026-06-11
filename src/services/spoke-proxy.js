@@ -22,6 +22,7 @@ import { lookup as defaultLookup } from "node:dns";
 import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { setLLMDefaults, setLLMProxy, setLLMRelay } from "./llm.js";
+import { setDbRelay } from "../utils/db.js";
 
 const _spokes = new Map();
 
@@ -406,6 +407,7 @@ export async function startSpokeMode(hubUrl, clusterName, spokeUrl, platform) {
   const HEARTBEAT_MS = 30_000;
   let _registered = false;
   let _hbTimer = null;
+  let _dbRelayActive = false;
   const hubToken = process.env.HUB_API_TOKEN || process.env.MCP_API_TOKEN || "";
 
   function authHeaders() {
@@ -432,6 +434,11 @@ export async function startSpokeMode(hubUrl, clusterName, spokeUrl, platform) {
         const regData = await resp.json().catch(() => ({}));
         console.log(`[spoke] Registered with hub: ${hubUrl}`);
         applyHubLLMConfig(regData.llmConfig, hubUrl);
+        if (regData.dbRelay && !_dbRelayActive) {
+          setDbRelay(hubUrl, hubToken, fedFetch);
+          _dbRelayActive = true;
+          console.log(`[spoke] DB relay enabled via hub`);
+        }
         startHeartbeatLoop();
       } else {
         const bodyText = await resp.text().catch(() => "");
@@ -464,8 +471,6 @@ export async function startSpokeMode(hubUrl, clusterName, spokeUrl, platform) {
         headers: authHeaders(),
         body: JSON.stringify({
           clusterName,
-          // spokeUrl/platform let the hub re-register this spoke after a
-          // control-plane restart without waiting for this pod to restart.
           spokeUrl,
           platform,
           ts: new Date().toISOString(),
@@ -489,6 +494,11 @@ export async function startSpokeMode(hubUrl, clusterName, spokeUrl, platform) {
         _hbFailures = 0;
         const hbData = await resp.json().catch(() => ({}));
         applyHubLLMConfig(hbData.llmConfig, hubUrl);
+        if (hbData.dbRelay && !_dbRelayActive) {
+          setDbRelay(hubUrl, hubToken, fedFetch);
+          _dbRelayActive = true;
+          console.log(`[spoke] DB relay enabled via heartbeat`);
+        }
       }
     } catch (err) {
       _hbFailures++;
