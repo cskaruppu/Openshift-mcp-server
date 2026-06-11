@@ -216,9 +216,14 @@ export async function resolveLLMOpts(opts = {}) {
   // If the key is still masked after resolution, clear it so resolveOpts()
   // in callLLM falls through to module-level defaults (which may have been
   // hydrated from the hub via heartbeat on spoke pods).
-  if (opts.apiKey && (/^\*{2,}/.test(opts.apiKey) || opts.apiKey === "configured")) {
+  const keyStillMasked = opts.apiKey && (/^\*{2,}/.test(opts.apiKey) || opts.apiKey === "configured");
+  if (keyStillMasked) {
     opts.apiKey = "";
+    console.log(`[resolveLLMOpts] Cleared masked key for "${provider}" — will use module defaults`);
   }
+  const finalUrl = opts.apiUrl ? "✓(opts)" : "(will use DEFAULT)";
+  const finalKey = opts.apiKey ? "✓(opts)" : "(will use DEFAULT)";
+  console.log(`[resolveLLMOpts] Final state for "${provider}": url=${finalUrl}, key=${finalKey}, model=${opts.model || "(will use DEFAULT)"}`);
   return opts;
 }
 

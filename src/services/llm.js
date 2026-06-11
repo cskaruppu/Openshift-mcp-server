@@ -90,7 +90,7 @@ export function getSupportedProviders() {
 }
 
 function resolveOpts(opts = {}) {
-  return {
+  const resolved = {
     provider: opts.provider || DEFAULT_PROVIDER,
     apiUrl: opts.apiUrl || DEFAULT_API_URL,
     apiKey: opts.apiKey || DEFAULT_API_KEY,
@@ -103,6 +103,11 @@ function resolveOpts(opts = {}) {
     azureApiVersion: opts.azureApiVersion || opts.apiVersion || DEFAULT_AZURE_API_VERSION,
     maxRetries: opts.maxRetries ?? MAX_RETRIES,
   };
+  const urlSrc = opts.apiUrl ? "request" : "default";
+  const keySrc = opts.apiKey ? "request" : "default";
+  const keyOk = resolved.apiKey && !/^\*{2,}/.test(resolved.apiKey) && resolved.apiKey !== "configured";
+  console.log(`[llm] resolveOpts: provider=${resolved.provider}, url=${resolved.apiUrl ? "✓" : "✗"}(${urlSrc}), key=${keyOk ? "✓" : "✗"}(${keySrc}), model=${resolved.azureDeployment || resolved.model}`);
+  return resolved;
 }
 
 // ---------------------------------------------------------------------------
