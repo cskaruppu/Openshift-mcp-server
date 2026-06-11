@@ -258,45 +258,30 @@ CREATE INDEX IF NOT EXISTS idx_upgrade_sessions_state ON upgrade_sessions(state,
 
 async function ensureSchema() {
   if (!_pool) return;
+  const migrate = async (sql, label) => {
+    try { await _pool.query(sql); }
+    catch (e) { console.warn(`[db] migration "${label}" failed:`, e.message); }
+  };
+  const addCol = async (table, col, type) => {
+    await migrate(
+      `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='${table}' AND column_name='${col}') THEN ALTER TABLE ${table} ADD COLUMN ${col} ${type}; END IF; END $$`,
+      `${table}.${col}`
+    );
+  };
   try {
     await _pool.query(SCHEMA_SQL);
-    await _pool.query(`
-      ALTER TABLE conversations ADD COLUMN IF NOT EXISTS starred BOOLEAN NOT NULL DEFAULT FALSE
-    `).catch(() => {});
-    await _pool.query(`
-      ALTER TABLE conversations ADD COLUMN IF NOT EXISTS locked BOOLEAN NOT NULL DEFAULT FALSE
-    `).catch(() => {});
-    await _pool.query(`
-      ALTER TABLE conversations ADD COLUMN IF NOT EXISTS cluster TEXT NOT NULL DEFAULT 'local'
-    `).catch(() => {});
-    await _pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_conversations_cluster ON conversations(cluster, updated_at DESC)
-    `).catch(() => {});
-    await _pool.query(`
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ DEFAULT NOW()
-    `).catch(() => {});
-    await _pool.query(`
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS force_password_change BOOLEAN DEFAULT FALSE
-    `).catch(() => {});
-    // Phase A: cluster columns for audit/intelligence tables
-    await _pool.query(`
-      ALTER TABLE executed_actions ADD COLUMN IF NOT EXISTS cluster TEXT NOT NULL DEFAULT 'local'
-    `).catch(() => {});
-    await _pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_executed_actions_cluster ON executed_actions(cluster, created_at DESC)
-    `).catch(() => {});
-    await _pool.query(`
-      ALTER TABLE query_log ADD COLUMN IF NOT EXISTS cluster TEXT NOT NULL DEFAULT 'local'
-    `).catch(() => {});
-    await _pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_query_log_cluster ON query_log(cluster, created_at DESC)
-    `).catch(() => {});
-    await _pool.query(`
-      ALTER TABLE change_requests ADD COLUMN IF NOT EXISTS cluster TEXT NOT NULL DEFAULT 'local'
-    `).catch(() => {});
-    await _pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_cr_cluster ON change_requests(cluster, updated_at DESC)
-    `).catch(() => {});
+    await addCol("conversations", "starred", "BOOLEAN NOT NULL DEFAULT FALSE");
+    await addCol("conversations", "locked", "BOOLEAN NOT NULL DEFAULT FALSE");
+    await addCol("conversations", "cluster", "TEXT NOT NULL DEFAULT 'local'");
+    await migrate("CREATE INDEX IF NOT EXISTS idx_conversations_cluster ON conversations(cluster, updated_at DESC)", "idx_conversations_cluster");
+    await addCol("users", "password_changed_at", "TIMESTAMPTZ DEFAULT NOW()");
+    await addCol("users", "force_password_change", "BOOLEAN DEFAULT FALSE");
+    await addCol("executed_actions", "cluster", "TEXT NOT NULL DEFAULT 'local'");
+    await migrate("CREATE INDEX IF NOT EXISTS idx_executed_actions_cluster ON executed_actions(cluster, created_at DESC)", "idx_executed_actions_cluster");
+    await addCol("query_log", "cluster", "TEXT NOT NULL DEFAULT 'local'");
+    await migrate("CREATE INDEX IF NOT EXISTS idx_query_log_cluster ON query_log(cluster, created_at DESC)", "idx_query_log_cluster");
+    await addCol("change_requests", "cluster", "TEXT NOT NULL DEFAULT 'local'");
+    await migrate("CREATE INDEX IF NOT EXISTS idx_cr_cluster ON change_requests(cluster, updated_at DESC)", "idx_cr_cluster");
     console.log("[db] schema ensured");
   } catch (err) {
     console.error("[db] failed to ensure schema:", err.message);
