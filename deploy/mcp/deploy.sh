@@ -527,17 +527,6 @@ EOF
 # 4. Deployment + Service (+ Route for OpenShift)
 next "Deploying MCP server (spoke mode)..."
 
-# Detect cluster DNS service IP for custom dnsConfig (prevents EAI_AGAIN errors
-# when resolving mcp-postgres or external LLM endpoints).
-DNS_SVC_IP=""
-if [ "$PLATFORM" = "openshift" ]; then
-  DNS_SVC_IP=$($CLI get svc dns-default -n openshift-dns -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
-fi
-if [ -z "$DNS_SVC_IP" ]; then
-  DNS_SVC_IP=$($CLI get svc kube-dns -n kube-system -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "172.30.0.10")
-fi
-echo "  Cluster DNS IP: $DNS_SVC_IP"
-
 # Check if mcp-postgres secret exists (hub-cluster deploys it; cross-cluster
 # agents won't have it — they fall back to the heartbeat-based LLM config).
 HAS_PG_SECRET=$($CLI get secret mcp-postgres -n "$NS" -o name 2>/dev/null || echo "")
@@ -574,23 +563,6 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
-      dnsPolicy: "None"
-      dnsConfig:
-        nameservers:
-          - "$DNS_SVC_IP"
-          - "208.67.222.222"
-          - "10.131.19.154"
-        searches:
-          - "$NS.svc.cluster.local"
-          - "svc.cluster.local"
-          - "cluster.local"
-        options:
-          - name: timeout
-            value: "5"
-          - name: attempts
-            value: "3"
-          - name: ndots
-            value: "5"
       containers:
         - name: agentic-ai-agent
           image: $IMAGE
