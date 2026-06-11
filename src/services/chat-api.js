@@ -463,6 +463,7 @@ const CONTEXT_CACHE_TTL = parseInt(process.env.CONTEXT_CACHE_TTL || "120", 10);
 // (registered as "hub-cluster" via ./deploy/mcp/deploy.sh) when available,
 // using the same spoke pipeline as every other cluster.
 const HUB_AGENT_CLUSTER = process.env.HUB_AGENT_CLUSTER || "hub-cluster";
+const SELF_CLUSTER_NAME = process.env.CLUSTER_NAME || "";
 
 // Pre-computed cluster digest — per-cluster, refreshed by agent reports.
 // Keyed by cluster name to prevent cross-cluster data bleed.
@@ -14572,10 +14573,12 @@ export async function handleChatAPI(req, res) {
     }
 
     // ── Cluster routing ──────────────────────────────────────────────────
-    // Spoke clusters with LLM relay + DB relay get the full chat proxied to
-    // them (handled above). Agent-bridge clusters use enterRemoteClusterBridge
-    // to route ocpGet() through the bridge. "local" runs directly on the hub.
-    _chatCluster = body.cluster || "local";
+    // Normalize: if the request targets THIS pod's own cluster, treat it as
+    // "local" so withClusterContext() / upgrade orchestrator run directly
+    // instead of looking for a non-existent agent bridge to ourselves.
+    const rawCluster = body.cluster || "local";
+    _chatCluster = (SELF_CLUSTER_NAME && rawCluster.toLowerCase() === SELF_CLUSTER_NAME.toLowerCase()) ? "local" : rawCluster;
+    body.cluster = _chatCluster;
 
     // Spoke proxy — if the target cluster is a registered spoke without an
     // agent bridge, proxy the entire chat to the spoke. The spoke now has
@@ -14760,7 +14763,7 @@ export async function handleChatAPI(req, res) {
     ]);
     const isHealthScope = parsed.scope === "health" || /\bhealth\b|\bstatus\b|\bdiagnos|\btroubleshoot/.test(userMessage.toLowerCase());
     const isMutating = CACHE_BYPASS_INTENTS.has(parsed.intent) || isHealthScope;
-    const activeClusterForCache = _remoteClusterContext?.clusterName || body.cluster || "local";
+    const activeClusterForCache = _remoteClusterContext?.clusterName || _chatCluster;
     const cacheKey = `${activeClusterForCache}:${cacheKeyForChat(userMessage, activeProvider)}`;
 
     if (!isMutating) {
@@ -15552,7 +15555,7 @@ export async function handleChatAPI(req, res) {
         const { createSession, getActiveSession, stepValidateVersion, stepPreAssessment, stepComponentAnalysis, stepBuildRemediationPlan, formatSessionSummary, buildUpgradeProgressToken } = await import("./upgrade-orchestrator.js");
 
         // Check for existing active session on this cluster
-        const activeCluster = _remoteClusterContext?.clusterName || body.cluster || "local";
+        const activeCluster = _remoteClusterContext?.clusterName || _chatCluster;
         let session = await getActiveSession(conversationId, activeCluster);
 
         if (!session) {
@@ -16177,7 +16180,7 @@ export async function handleChatAPI(req, res) {
       const needsClusterData = !KNOWLEDGE_INTENTS.test(userMessage) ||
         /\b(show|list|get|describe|check|status|health|my\s+cluster|this\s+cluster|our\s+cluster)\b/i.test(userMessage);
 
-      const activeCluster = _remoteClusterContext?.clusterName || body.cluster || "local";
+      const activeCluster = _remoteClusterContext?.clusterName || _chatCluster;
       const ctxKey = `ctx:${activeCluster}:${cacheKeyForChat(userMessage, "ctx")}`;
       let context;
       if (!needsClusterData) {
@@ -16988,7 +16991,8 @@ export async function handleExecuteAPI(req, res) {
     ({ action, pod, namespace, deployment } = body);
     const { replicas } = body;
     conversationId = body.conversationId || body.chatId || null;
-    _execCluster = body.cluster || "local";
+    const rawExecCluster = body.cluster || "local";
+    _execCluster = (SELF_CLUSTER_NAME && rawExecCluster.toLowerCase() === SELF_CLUSTER_NAME.toLowerCase()) ? "local" : rawExecCluster;
 
     if (!action || !namespace) {
       return json(res, 400, { success: false, error: "Missing action or namespace" });
