@@ -112,7 +112,7 @@ import {
   isHistoryEnabled,
 } from "./services/chat-history.js";
 import { initDb, query as dbQuery, isEnabled as dbEnabled, saveClusterSnapshot, loadClusterSnapshot, loadAllClusterSnapshots, deleteClusterSnapshot } from "./utils/db.js";
-import { loadAll as loadClusterCreds, upsert as clusterCredsUpsert, remove as clusterCredsRemove, list as clusterCredsList } from "./utils/cluster-credentials.js";
+import { loadAll as loadClusterCreds, upsert as clusterCredsUpsert, remove as clusterCredsRemove, list as clusterCredsList, hasCredentials } from "./utils/cluster-credentials.js";
 import { initCache, isEnabled as cacheReady } from "./utils/cache.js";
 import { handleMetricsRequest } from "./services/metrics.js";
 import { enforce as enforceRateLimit } from "./services/rate-limit.js";
@@ -3507,17 +3507,30 @@ spec:
           outdated: agent.mcpVersion ? agent.mcpVersion !== MCP_VERSION : null,
           status: elapsed !== null && elapsed < 300 ? "live" : elapsed !== null ? "stale" : "registered",
           lastReport: undefined,
-          summary: agent.lastReport ? {
-            version: agent.lastReport.openshiftVersion || agent.lastReport.kubernetesVersion || "",
-            health: agent.lastReport.clusterHealth?.status || "",
-            nodes: `${agent.lastReport.nodes?.ready || 0}/${agent.lastReport.nodes?.total || 0}`,
-            pods: {
-              running: agent.lastReport.pods?.running || 0,
-              total: agent.lastReport.pods?.total || 0,
-            },
-            issues: agent.lastReport.pods?.issues?.length || 0,
-            warnings: agent.lastReport.events?.warnings || 0,
-          } : null,
+          summary: agent.lastReport ? (() => {
+            const _rpt = agent.lastReport;
+            const _degOps = _rpt.clusterOperators?.degraded || 0;
+            const _totN = _rpt.nodes?.total || 0;
+            const _rdyN = _rpt.nodes?.ready || 0;
+            const _hlth = _degOps > 0 ? "degraded" : (_rdyN < _totN ? "warning" : "healthy");
+            const _evts = _rpt.events?.recent || [];
+            const _critAlerts = _evts.filter(e => e.reason === "BackOff" || e.reason === "Failed" || e.reason === "Unhealthy" || e.reason === "OOMKilling").length + (_degOps > 0 ? _degOps : 0);
+            const _warnAlerts = _evts.filter(e => e.reason !== "Normal" && e.reason !== "BackOff" && e.reason !== "Failed" && e.reason !== "Unhealthy" && e.reason !== "OOMKilling").length;
+            const _connType = hasCredentials(agent.clusterName) ? "direct" : hasActiveChannel(agent.clusterName) ? "agent" : "spoke";
+            return {
+              version: _rpt.openshiftVersion || _rpt.kubernetesVersion || "",
+              health: _hlth,
+              nodes: `${_rdyN}/${_totN}`,
+              pods: { running: _rpt.pods?.running || 0, total: _rpt.pods?.total || 0 },
+              issues: _rpt.pods?.issues?.length || 0,
+              warnings: _rpt.events?.warnings || 0,
+              operators: { total: _rpt.clusterOperators?.total || 0, healthy: _rpt.clusterOperators?.healthy || 0, degraded: _degOps },
+              alerts: { critical: _critAlerts, warning: _warnAlerts },
+              cpu: _rpt.resourceSummary?.cpuPercent || null,
+              memory: _rpt.resourceSummary?.memoryPercent || null,
+              connectionType: _connType,
+            };
+          })() : null,
         });
       }
       // hubAgentDeployed: whether this cluster's own MCP agent pod is running.

@@ -26,6 +26,63 @@ function statusDisplay(status) {
   return { label: status || "Connecting", color: "var(--text2)", pulse: false };
 }
 
+function healthColor(health) {
+  if (health === "degraded" || health === "critical") return "#ef4444";
+  if (health === "warning") return "#f59e0b";
+  return "#22c55e";
+}
+
+function healthPercent(health) {
+  if (health === "degraded" || health === "critical") return 33;
+  if (health === "warning") return 66;
+  return 100;
+}
+
+function HealthRing({ health, icon, color }) {
+  const pct = healthPercent(health);
+  const r = 23;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (pct / 100) * circ;
+  const hc = healthColor(health);
+  return (
+    <div className="cp-card-health-ring">
+      <svg viewBox="0 0 52 52" width="52" height="52">
+        <circle cx="26" cy="26" r={r} className="cp-health-track" />
+        <circle cx="26" cy="26" r={r} className="cp-health-bar" stroke={hc}
+          strokeDasharray={circ} strokeDashoffset={offset} />
+      </svg>
+      <div className="cp-card-icon" style={{ background: color + "15", color }}>
+        {icon}
+      </div>
+    </div>
+  );
+}
+
+function AlertBadges({ critical, warning }) {
+  if (!critical && !warning) return null;
+  return (
+    <div className="cp-card-alerts">
+      {critical > 0 && <span className="cp-alert-badge crit">{critical} crit</span>}
+      {warning > 0 && <span className="cp-alert-badge warn">{warning} warn</span>}
+    </div>
+  );
+}
+
+function UtilBar({ percent, color }) {
+  const p = Math.min(100, Math.max(0, percent || 0));
+  const barColor = p > 85 ? "#ef4444" : p > 65 ? "#f59e0b" : (color || "#22c55e");
+  return (
+    <div className="cp-util-bar">
+      <div className="cp-util-fill" style={{ width: `${p}%`, background: barColor }} />
+    </div>
+  );
+}
+
+function ConnBadge({ type }) {
+  const labels = { direct: "Direct", agent: "Agent", spoke: "Spoke" };
+  return <span className={`cp-conn-badge ${type || "spoke"}`}>{labels[type] || "Spoke"}</span>;
+}
+
 function KebabMenu({ items }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -510,6 +567,8 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
   const hubNodes = hubAgentDeployed && lci.nodes ? `${lci.nodes.ready || 0}/${lci.nodes.total || 0}` : "--";
   const hubPods = hubAgentDeployed && lci.pods ? `${lci.pods.running ?? 0}` : "--";
   const hubPodsTotal = hubAgentDeployed ? (lci.pods?.total ?? 0) : 0;
+  const hubOps = lci.operators || {};
+  const hubHealth = lci.cluster?.health || "healthy";
 
   const handleConnected = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["/api/agent/status"] });
@@ -600,13 +659,12 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
           {hubAgentDeployed && (
           <div className="cp-card" onClick={() => onSelectCluster("local")}>
             <div className="cp-card-header">
-              <div className="cp-card-icon" style={{ background: hubPInfo.color + "15", color: hubPInfo.color }}>
-                {hubPInfo.icon}
-              </div>
+              <HealthRing health={hubHealth} icon={hubPInfo.icon} color={hubPInfo.color} />
               <div className="cp-card-info">
                 <div className="cp-card-name">Hub Cluster <span className="cp-card-primary-badge">PRIMARY</span></div>
-                <div className="cp-card-platform">{hubPInfo.name}</div>
+                <div className="cp-card-platform">{hubPInfo.name}<ConnBadge type="direct" /></div>
               </div>
+              <AlertBadges critical={hubOps.degraded || 0} warning={lci.pods?.failed || 0} />
               <KebabMenu items={[
                 { icon: "📊", label: "Status Check", action: () => { clusterAction("/api/cluster/health-check", "POST", "Hub health check started"); } },
                 { icon: "🔍", label: "Verify Health", action: () => { clusterAction("/api/cluster/health-check", "POST", "Hub health check started"); } },
@@ -622,7 +680,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
               <span className="cp-card-status-dot" style={{ background: "var(--ok)", animation: "pulse 2s infinite" }} />
               <span className="cp-card-status-label" style={{ color: "var(--ok)" }}>Active</span>
             </div>
-            <div className="cp-card-stats">
+            <div className="cp-card-stats-ext">
               <div className="cp-card-stat">
                 <div className="cp-card-stat-val">{hubVersion}</div>
                 <div className="cp-card-stat-lbl">Version</div>
@@ -633,7 +691,15 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
               </div>
               <div className="cp-card-stat">
                 <div className="cp-card-stat-val">{hubPods}</div>
-                <div className="cp-card-stat-lbl">Running Pods{hubPodsTotal > 0 ? ` / ${hubPodsTotal}` : ""}</div>
+                <div className="cp-card-stat-lbl">Pods{hubPodsTotal > 0 ? ` / ${hubPodsTotal}` : ""}</div>
+              </div>
+              <div className="cp-card-stat">
+                <div className="cp-card-stat-val">{hubOps.total ? `${hubOps.healthy || 0}/${hubOps.total}` : "--"}</div>
+                <div className="cp-card-stat-lbl">Operators</div>
+              </div>
+              <div className="cp-card-stat">
+                <div className="cp-card-stat-val">{lci.nodes?.totalCPU ? `${lci.nodes.totalCPU}c` : "--"}</div>
+                <div className="cp-card-stat-lbl">CPU Cap</div>
               </div>
             </div>
           </div>
@@ -651,13 +717,12 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
             return (
               <div className={"cp-card" + staleClass} key={clusterName} onClick={() => onSelectCluster(clusterName)}>
                 <div className="cp-card-header">
-                  <div className="cp-card-icon" style={{ background: pInfo.color + "15", color: pInfo.color }}>
-                    {pInfo.icon}
-                  </div>
+                  <HealthRing health={summary.health || "healthy"} icon={pInfo.icon} color={pInfo.color} />
                   <div className="cp-card-info">
                     <div className="cp-card-name">{clusterName}</div>
-                    <div className="cp-card-platform">{pInfo.name}</div>
+                    <div className="cp-card-platform">{pInfo.name}<ConnBadge type={summary.connectionType || "spoke"} /></div>
                   </div>
+                  <AlertBadges critical={summary.alerts?.critical || 0} warning={summary.alerts?.warning || 0} />
                   <KebabMenu items={[
                     { icon: "📊", label: "Status Check", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/status`, "GET", "Status check complete"); } },
                     { icon: "🔍", label: "Verify Health", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/health-check`, "POST", "Health check started"); } },
@@ -681,7 +746,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                     <span className="cp-card-last-seen">Last seen: {new Date(agent.lastHeartbeat).toLocaleString()}</span>
                   )}
                 </div>
-                <div className="cp-card-stats">
+                <div className="cp-card-stats-ext">
                   <div className="cp-card-stat">
                     <div className="cp-card-stat-val">{summary.version || agent.version || "--"}</div>
                     <div className="cp-card-stat-lbl">Version</div>
@@ -692,7 +757,16 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                   </div>
                   <div className="cp-card-stat">
                     <div className="cp-card-stat-val">{typeof summary.pods === "object" ? (summary.pods.running ?? 0) : (summary.pods ?? "--")}</div>
-                    <div className="cp-card-stat-lbl">Running Pods{typeof summary.pods === "object" && summary.pods.total > 0 ? ` / ${summary.pods.total}` : ""}</div>
+                    <div className="cp-card-stat-lbl">Pods{typeof summary.pods === "object" && summary.pods.total > 0 ? ` / ${summary.pods.total}` : ""}</div>
+                  </div>
+                  <div className="cp-card-stat">
+                    <div className="cp-card-stat-val">{summary.operators?.total ? `${summary.operators.healthy || 0}/${summary.operators.total}` : "--"}</div>
+                    <div className="cp-card-stat-lbl">Operators</div>
+                  </div>
+                  <div className="cp-card-stat">
+                    <div className="cp-card-stat-val">{summary.cpu != null ? `${summary.cpu}%` : "--"}</div>
+                    <div className="cp-card-stat-lbl">CPU</div>
+                    {summary.cpu != null && <UtilBar percent={summary.cpu} />}
                   </div>
                 </div>
               </div>
