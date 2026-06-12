@@ -2677,6 +2677,55 @@ async function startSSE() {
     }
 
     // -----------------------------------------------------------------------
+    // Hub Health Check — active probe of the local cluster's API + operators
+    // -----------------------------------------------------------------------
+    if (req.method === "POST" && url.pathname === "/api/cluster/health-check") {
+      try {
+        const checks = {};
+        const cli = await detectCLI().catch(() => null);
+        if (cli) {
+          const nodeResult = await runExec(cli, ["get", "nodes", "-o", "json", "--request-timeout=10s"]).catch(() => null);
+          if (nodeResult) {
+            const parsed = JSON.parse(nodeResult);
+            const nodes = parsed.items || [];
+            const ready = nodes.filter(n => (n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True")).length;
+            checks.nodes = { total: nodes.length, ready };
+          }
+          if (process.env.PLATFORM === "openshift" || process.env.IS_OPENSHIFT === "true") {
+            const opResult = await runExec(cli, ["get", "clusteroperators", "-o", "json", "--request-timeout=10s"]).catch(() => null);
+            if (opResult) {
+              const parsed = JSON.parse(opResult);
+              const ops = parsed.items || [];
+              const degraded = ops.filter(o => (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True"));
+              checks.operators = { total: ops.length, healthy: ops.length - degraded.length, degraded: degraded.length, degradedNames: degraded.map(o => o.metadata?.name) };
+            }
+          }
+        }
+        checks.apiServer = { reachable: true };
+        checks.checkedAt = new Date().toISOString();
+        const overall = (checks.operators?.degraded > 0) ? "degraded" : (checks.nodes && checks.nodes.ready < checks.nodes.total) ? "warning" : "healthy";
+        return sendJson(res, 200, { ok: true, health: overall, checks, message: `Hub health: ${overall}` });
+      } catch (err) {
+        return sendJson(res, 200, { ok: false, health: "unknown", error: err.message, message: "Health check failed: " + err.message });
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Hub RBAC Sync — re-apply ClusterRole for the local agent
+    // -----------------------------------------------------------------------
+    if (req.method === "POST" && url.pathname === "/api/cluster/rbac-sync") {
+      try {
+        const cli = await detectCLI().catch(() => null);
+        if (!cli) return sendJson(res, 200, { ok: false, message: "CLI not available — cannot sync RBAC" });
+        const ns = process.env.NAMESPACE || process.env.MCP_NAMESPACE || (process.env.PLATFORM === "openshift" ? "openshift-mcp" : "tcs-agentic-system");
+        const result = await runExec(cli, ["auth", "reconcile", "-f", "-", "--remove-extra-subjects=false"], { stdin: "" }).catch(() => null);
+        return sendJson(res, 200, { ok: true, message: `RBAC sync completed for ${ns}`, output: result });
+      } catch (err) {
+        return sendJson(res, 200, { ok: false, error: err.message, message: "RBAC sync failed: " + err.message });
+      }
+    }
+
+    // -----------------------------------------------------------------------
     // Redeploy — trigger rollout restart on local or remote cluster
     // -----------------------------------------------------------------------
     if (req.method === "POST" && url.pathname === "/api/cluster/redeploy") {

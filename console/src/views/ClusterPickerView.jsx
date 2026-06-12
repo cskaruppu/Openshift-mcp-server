@@ -275,7 +275,7 @@ function generateAgentYAML(platform, clusterName, apiUrl, allowActions) {
 
 
 // ─── Connect Cluster Modal ──────────────────────────────────────────────
-function ConnectClusterModal({ open, onClose, onConnected }) {
+function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
   const [step, setStep] = useState("platform"); // platform | form | yaml
   const [platform, setPlatform] = useState(null);
   const [name, setName] = useState("");
@@ -286,13 +286,27 @@ function ConnectClusterModal({ open, onClose, onConnected }) {
   const [kcParsed, setKcParsed] = useState(null);
   const [status, setStatus] = useState(null);
   const [connecting, setConnecting] = useState(false);
+  const isEdit = !!editCluster;
   const fileRef = useRef(null);
 
   const reset = useCallback(() => {
-    setStep("platform"); setPlatform(null); setName(""); setApiUrl("");
-    setToken(""); setAuthTab("token"); setAllowActions(false); setKcParsed(null);
-    setStatus(null); setConnecting(false);
-  }, []);
+    if (editCluster) {
+      setStep("form");
+      setPlatform(editCluster.platform || "k8s");
+      setName(editCluster.name || "");
+      setApiUrl(editCluster.apiUrl || "");
+      setToken("");
+      setAuthTab("token");
+      setAllowActions(false);
+      setKcParsed(null);
+      setStatus(null);
+      setConnecting(false);
+    } else {
+      setStep("platform"); setPlatform(null); setName(""); setApiUrl("");
+      setToken(""); setAuthTab("token"); setAllowActions(false); setKcParsed(null);
+      setStatus(null); setConnecting(false);
+    }
+  }, [editCluster]);
 
   useEffect(() => { if (open) reset(); }, [open, reset]);
 
@@ -397,7 +411,7 @@ function ConnectClusterModal({ open, onClose, onConnected }) {
             )}
             <h2>
               {step === "platform" && "Connect New Cluster"}
-              {step === "form" && pInfo && <><span style={{ color: pInfo.color }}>{pInfo.icon}</span>{" "}Connect {pInfo.name} Cluster</>}
+              {step === "form" && pInfo && <><span style={{ color: pInfo.color }}>{pInfo.icon}</span>{" "}{isEdit ? "Edit" : "Connect"} {pInfo.name} Cluster</>}
               {step === "yaml" && "Agent Deployment YAML"}
             </h2>
           </div>
@@ -431,7 +445,7 @@ function ConnectClusterModal({ open, onClose, onConnected }) {
             <div className="ccm-form">
               <div className="ccm-field">
                 <label>Cluster Name</label>
-                <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. production-east" autoFocus />
+                <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. production-east" autoFocus readOnly={isEdit} style={isEdit ? { opacity: .6, cursor: "not-allowed" } : undefined} />
               </div>
               <div className="ccm-field">
                 <label>API Server URL</label>
@@ -490,7 +504,7 @@ function ConnectClusterModal({ open, onClose, onConnected }) {
               {/* Actions */}
               <div className="ccm-actions">
                 <button className="ccm-connect-btn" onClick={handleConnect} disabled={connecting}>
-                  {connecting ? "Connecting…" : "Register & Test Connection"}
+                  {connecting ? "Connecting…" : isEdit ? "Update & Test Connection" : "Register & Test Connection"}
                 </button>
                 <button className="ccm-yaml-btn" onClick={() => setStep("yaml")}>View Agent YAML</button>
               </div>
@@ -532,6 +546,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
   const toggleTheme = useThemeStore((s) => s.toggle);
   const queryClient = useQueryClient();
   const [connectOpen, setConnectOpen] = useState(false);
+  const [editCluster, setEditCluster] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
 
   const refetchAgents = useCallback(() => {
@@ -666,10 +681,10 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
               </div>
               <AlertBadges critical={hubOps.degraded || 0} warning={lci.pods?.failed || 0} />
               <KebabMenu items={[
-                { icon: "📊", label: "Status Check", action: () => { clusterAction("/api/cluster/health-check", "POST", "Hub health check started"); } },
-                { icon: "🔍", label: "Verify Health", action: () => { clusterAction("/api/cluster/health-check", "POST", "Hub health check started"); } },
+                { icon: "📊", label: "Status Check", action: () => { clusterAction("/api/cluster/summary", "GET", "Hub status fetched"); } },
+                { icon: "🔍", label: "Verify Health", action: () => { clusterAction("/api/cluster/health-check", "POST", "Hub health check complete"); } },
                 { icon: "🚀", label: "Redeploy", action: () => { clusterAction("/api/cluster/redeploy", "POST", "Rollout restart triggered on hub"); } },
-                { icon: "✏️", label: "Edit Cluster", action: () => { onOpenSettings(); } },
+                { icon: "✏️", label: "Edit Settings", action: () => { onOpenSettings(); } },
                 { sep: true },
                 { icon: "🔒", label: "Sync RBAC", action: () => { clusterAction("/api/cluster/rbac-sync", "POST", "RBAC sync initiated"); } },
                 { sep: true },
@@ -727,7 +742,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                     { icon: "📊", label: "Status Check", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/status`, "GET", "Status check complete"); } },
                     { icon: "🔍", label: "Verify Health", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/health-check`, "POST", "Health check started"); } },
                     { icon: "🚀", label: "Redeploy", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/redeploy`, "POST", "Rollout restart triggered"); } },
-                    { icon: "✏️", label: "Edit Cluster", action: () => { onOpenSettings(); } },
+                    { icon: "✏️", label: "Edit Cluster", action: () => { setEditCluster({ name: clusterName, platform: agent.platform, apiUrl: agent.apiUrl || "" }); setConnectOpen(true); } },
                     { icon: "↻", label: "Reconnect", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/reconnect`, "POST", "Reconnect initiated"); } },
                     { sep: true },
                     { icon: "🗑", label: "Remove Cluster", danger: true, action: () => setConfirmDelete(clusterName) },
@@ -774,7 +789,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
           })}
 
           {/* Add Cluster card */}
-          <div className="cp-card-add" onClick={() => setConnectOpen(true)}>
+          <div className="cp-card-add" onClick={() => { setEditCluster(null); setConnectOpen(true); }}>
             <div className="cp-card-add-icon">+</div>
             <div className="cp-card-add-label">Connect a Cluster</div>
             <div className="cp-card-add-platforms">
@@ -792,7 +807,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
       </div>
 
       {/* Connect Cluster Modal */}
-      <ConnectClusterModal open={connectOpen} onClose={() => setConnectOpen(false)} onConnected={handleConnected} />
+      <ConnectClusterModal open={connectOpen} onClose={() => { setConnectOpen(false); setEditCluster(null); }} onConnected={handleConnected} editCluster={editCluster} />
 
       {/* Delete Confirmation Dialog */}
       {confirmDelete && (
