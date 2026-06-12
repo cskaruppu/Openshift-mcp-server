@@ -236,7 +236,7 @@ function generateAgentYAML(platform, clusterName, apiUrl, allowActions) {
 
   // ConfigMap
   L.push("---", "apiVersion: v1", "kind: ConfigMap", "metadata:", "  name: tcs-agentic-ai-config", `  namespace: ${ns}`, "  labels:", "    app.kubernetes.io/name: tcs-agentic-ai", "data:");
-  L.push(`  HUB_SERVER_URL: "${serverUrl}"`, `  CLUSTER_NAME: "${safeName}"`, `  CLUSTER_PLATFORM: "${platform}"`, '  SCAN_INTERVAL: "60"', '  LOG_LEVEL: "info"', '  HUB_TLS_SKIP_VERIFY: "true"', `  ALLOW_REMOTE_ACTIONS: "${allowActions ? "true" : "false"}"`);
+  L.push(`  HUB_SERVER_URL: "${serverUrl}"`, `  CLUSTER_NAME: "${safeName}"`, `  CLUSTER_PLATFORM: "${platform}"`, '  DEPLOYMENT_NAME: "tcs-agentic-ai"', '  SCAN_INTERVAL: "60"', '  LOG_LEVEL: "info"', '  HUB_TLS_SKIP_VERIFY: "true"', `  ALLOW_REMOTE_ACTIONS: "${allowActions ? "true" : "false"}"`);
   if (apiUrl) L.push(`  API_SERVER_URL: "${apiUrl}"`);
   L.push("");
 
@@ -825,16 +825,17 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
             </div>
             <div className="cp-confirm-actions">
               <button className="cp-confirm-cancel" onClick={() => setConfirmDelete(null)}>Cancel</button>
-              <button className="cp-confirm-delete" onClick={() => {
+              <button className="cp-confirm-delete" onClick={async () => {
                 const name = confirmDelete;
                 setConfirmDelete(null);
-                Promise.all([
-                  fetch(`/api/agent/${encodeURIComponent(name)}`, { method: "DELETE" }).catch(() => {}),
-                  fetch(`/api/spoke/${encodeURIComponent(name)}`, { method: "DELETE" }).catch(() => {}),
-                ]).then(() => {
-                  showToast(`Cluster "${name}" removed from fleet`, "ok");
-                  refetchAgents();
-                });
+                try {
+                  const resp = await fetch(`/api/agent/${encodeURIComponent(name)}`, { method: "DELETE" });
+                  const data = await resp.json().catch(() => ({}));
+                  showToast(data.message || `Cluster "${name}" removed from fleet`, resp.ok ? "ok" : "err");
+                } catch (err) {
+                  showToast("Error removing cluster: " + err.message, "err");
+                }
+                refetchAgents();
               }}>Remove Cluster</button>
             </div>
           </div>

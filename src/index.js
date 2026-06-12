@@ -2733,15 +2733,23 @@ async function startSSE() {
       const deployName = process.env.DEPLOYMENT_NAME || (MCP_MODE === "spoke" ? "agentic-ai-agent" : "agentic-ai-control-plane");
       try {
         const cli = await detectCLI();
-        const result = await runExec(cli, ["rollout", "restart", `deployment/${deployName}`, "-n", ns]);
-        // Control mode: also restart this cluster's agent pod when it
-        // shares the namespace (deployed via ./deploy/mcp/deploy.sh).
+        const restarted = [];
+        // Restart primary deployment
+        await runExec(cli, ["rollout", "restart", `deployment/${deployName}`, "-n", ns]);
+        restarted.push(deployName);
+        // Also restart the agent pod in the same namespace (if separate)
         if (deployName !== "agentic-ai-agent") {
           await runExec(cli, ["rollout", "restart", "deployment/agentic-ai-agent", "-n", ns]).catch(() => {});
+          restarted.push("agentic-ai-agent");
         }
-        return sendJson(res, 200, { ok: true, message: `Rollout restart triggered for ${deployName} in ${ns}`, output: result });
+        // Also restart tcs-agentic-ai deployment (YAML generator name)
+        if (deployName !== "tcs-agentic-ai") {
+          const tcsNs = process.env.PLATFORM === "openshift" ? "openshift-tcs-agentic" : "tcs-agentic-system";
+          await runExec(cli, ["rollout", "restart", "deployment/tcs-agentic-ai", "-n", tcsNs]).catch(() => {});
+        }
+        return sendJson(res, 200, { ok: true, message: `Rollout restart triggered for ${restarted.join(", ")} in ${ns}` });
       } catch (err) {
-        return sendJson(res, 500, { ok: false, error: err.message });
+        return sendJson(res, 500, { ok: false, error: err.message, message: "Redeploy failed: " + err.message });
       }
     }
 
@@ -3745,8 +3753,9 @@ spec:
           return sendJson(res, 200, { ok: sent, target: clusterName, message: sent ? "RBAC sync pushed" : "Agent not connected via SSE" });
         }
 
-        // Redeploy — proxy rollout restart to spoke, or push SSE event as fallback
+        // Redeploy — proxy rollout restart to spoke, SSE bridge, or direct API
         if (action === "redeploy" && req.method === "POST") {
+          // 1. Try spoke proxy
           const spokeUrl = hasSpoke(clusterName) ? getAllSpokes().find(s => s.clusterName === clusterName || s.clusterName.toLowerCase() === clusterName.toLowerCase())?.spokeUrl : null;
           if (spokeUrl) {
             try {
@@ -3758,31 +3767,60 @@ spec:
               const data = await proxyRes.json().catch(() => ({}));
               return sendJson(res, proxyRes.ok ? 200 : 502, { ...data, target: clusterName, proxiedTo: spokeUrl });
             } catch (err) {
-              return sendJson(res, 502, { ok: false, target: clusterName, error: `Spoke unreachable: ${err.message}` });
+              // Fall through to SSE/direct
             }
           }
+          // 2. Try SSE agent bridge
           const event = { type: "rollout_restart", triggeredAt: new Date().toISOString() };
           const sent = pushEventToAgent(clusterName, event);
-          return sendJson(res, 200, { ok: sent, target: clusterName, message: sent ? "Redeploy signal sent via agent bridge" : "No spoke URL or agent bridge — cannot redeploy remotely" });
+          if (sent) return sendJson(res, 200, { ok: true, target: clusterName, message: "Redeploy signal sent via agent bridge" });
+          // 3. Try direct API access (Kubernetes PATCH to restart deployment)
+          if (hasCredentials(clusterName)) {
+            try {
+              const { withClusterDirect } = await import("./utils/cluster-credentials.js");
+              const { ocpFetch } = await import("./utils/openshift-client.js");
+              const result = await withClusterDirect(clusterName, async () => {
+                const nsRes = await ocpFetch("/api/v1/namespaces").catch(() => null);
+                const nsList = nsRes ? (await nsRes.json().catch(() => ({}))).items || [] : [];
+                const agentNs = nsList.find(n => n.metadata?.name === "tcs-agentic-system" || n.metadata?.name === "openshift-tcs-agentic");
+                const ns = agentNs?.metadata?.name || "tcs-agentic-system";
+                const patch = JSON.stringify({ spec: { template: { metadata: { annotations: { "kubectl.kubernetes.io/restartedAt": new Date().toISOString() } } } } });
+                const patchRes = await ocpFetch(`/apis/apps/v1/namespaces/${ns}/deployments/tcs-agentic-ai`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/strategic-merge-patch+json" },
+                  body: patch,
+                });
+                if (!patchRes.ok) throw new Error(`Patch failed: ${patchRes.status}`);
+                return { ok: true, namespace: ns };
+              });
+              return sendJson(res, 200, { ok: true, target: clusterName, message: `Rollout restart triggered via direct API on ${result.namespace}` });
+            } catch (err) {
+              return sendJson(res, 200, { ok: false, target: clusterName, message: `Direct API redeploy failed: ${err.message}` });
+            }
+          }
+          return sendJson(res, 200, { ok: false, target: clusterName, message: "No spoke, agent bridge, or direct API credentials — cannot redeploy remotely" });
         }
       }
 
-      // Remove Cluster — DELETE /api/agent/:name — drop from registry + close channel
+      // Remove Cluster — DELETE /api/agent/:name — drop from all registries
       const delMatch = url.pathname.match(/^\/api\/agent\/([^/]+)$/);
       if (delMatch && req.method === "DELETE") {
         const rawName = decodeURIComponent(delMatch[1]);
         const clusterName = findClusterKey(rawName) || rawName;
         const existed = _connectedAgents.delete(clusterName);
-        // Best-effort: tell the agent to stop reporting; its SSE channel closes
-        // itself on disconnect (agent-bridge cleans up _channels on 'close').
         try { pushEventToAgent(clusterName, { type: "deregister", triggeredAt: new Date().toISOString() }); } catch { /* best effort */ }
+        // Clean up spoke registry
+        try { unregisterSpoke(clusterName); } catch { /* best effort */ }
+        // Clean up stored credentials (direct-access)
+        try { await clusterCredsRemove(clusterName); } catch { /* best effort */ }
+        // Clean up cluster snapshot from DB
         if (CLUSTER_STORE_ENABLED) {
           try { await deleteClusterSnapshot(clusterName); } catch { /* best effort */ }
         }
         return sendJson(res, existed ? 200 : 404, {
           ok: existed,
           target: clusterName,
-          message: existed ? `Cluster "${clusterName}" removed` : `Cluster "${rawName}" not found`,
+          message: existed ? `Cluster "${clusterName}" removed from all registries` : `Cluster "${rawName}" not found`,
         });
       }
     }
