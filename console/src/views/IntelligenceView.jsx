@@ -55,6 +55,8 @@ export function IntelligenceView() {
     useClusterQuery("/api/alerts/silences", { refetchInterval: 30_000 });
   const { data: timelineData, refetch: refetchTimeline } =
     useClusterQuery("/api/change-timeline?window=24h&limit=50", { refetchInterval: 60_000 });
+  const { data: corrData, refetch: refetchCorr } =
+    useClusterQuery("/api/intelligence/correlations", { refetchInterval: 30_000 });
 
   const [activeTab, setActiveTab] = useState("insights");
   const [sevFilter, setSevFilter] = useState("all");
@@ -78,6 +80,8 @@ export function IntelligenceView() {
 
   const [silenceAlert, setSilenceAlert] = useState(null);
   const [silenceHours, setSilenceHours] = useState(4);
+  const [corrAnalyzing, setCorrAnalyzing] = useState({});
+  const [corrAnalyses, setCorrAnalyses] = useState({});
 
   const insights = intelData?.insights || [];
   const predictions = intelData?.predictions || [];
@@ -438,6 +442,7 @@ export function IntelligenceView() {
           { key: "rules", label: "Automation Rules", count: rules.length },
           { key: "kb", label: "Knowledge Base", count: kbEntries.length },
           { key: "playbook", label: "Team Playbook" },
+          { key: "correlation", label: "Cross-Cluster", count: corrData?.correlationCount || 0 },
         ].map((t) => (
           <button key={t.key} className={"intel-tab" + (activeTab === t.key ? " active" : "")} onClick={() => setActiveTab(t.key)}>
             {t.label}
@@ -919,6 +924,140 @@ export function IntelligenceView() {
                       <div className="intel-card-meta"><span>Common NS: {p.commonNamespaces.join(", ")}</span></div>
                     )}
                   </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ 8. CROSS-CLUSTER CORRELATION ═══ */}
+      {activeTab === "correlation" && (
+        <div className="intel-section">
+          <div className="intel-section-head">
+            <div className="intel-section-title">
+              <div className="intel-section-icon" style={{ background: "linear-gradient(135deg, #ec4899, #8b5cf6)" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="8.5" y1="8.5" x2="15.5" y2="15.5"/><line x1="15.5" y1="8.5" x2="8.5" y2="15.5"/></svg>
+              </div>
+              <div>
+                <h3>Cross-Cluster Anomaly Correlation</h3>
+                <p>AI-detected patterns spanning multiple clusters — shared root causes that single-cluster tools miss</p>
+              </div>
+            </div>
+            <button className="intel-btn" onClick={() => refetchCorr()} style={{ marginLeft: "auto" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              Refresh
+            </button>
+          </div>
+
+          {/* Summary stats */}
+          {corrData && (
+            <div className="intel-inc-stats" style={{ marginBottom: 14 }}>
+              <div className="intel-inc-stat" style={{ "--is-c": "#8b5cf6" }}>
+                <span>{corrData.totalSignals || 0}</span><label>Signals</label>
+              </div>
+              <div className="intel-inc-stat" style={{ "--is-c": "#3b82f6" }}>
+                <span>{(corrData.clustersCovered || []).length}</span><label>Clusters</label>
+              </div>
+              <div className="intel-inc-stat" style={{ "--is-c": "#ef4444" }}>
+                <span>{corrData.criticalCount || 0}</span><label>Critical</label>
+              </div>
+              <div className="intel-inc-stat" style={{ "--is-c": "#f59e0b" }}>
+                <span>{corrData.correlationCount || 0}</span><label>Correlations</label>
+              </div>
+            </div>
+          )}
+
+          {/* Correlations list */}
+          <div className="intel-card-list">
+            {(!corrData?.correlations || corrData.correlations.length === 0) && (
+              <div className="intel-empty">
+                {corrData?.totalSignals === 0
+                  ? "No signals detected — cluster data will appear as agents report"
+                  : "No cross-cluster correlations detected — all anomalies appear isolated to individual clusters"}
+              </div>
+            )}
+            {(corrData?.correlations || []).map((c) => (
+              <div key={c.id} className="intel-card" style={{ "--card-sev": c.severity === "critical" ? "#ef4444" : "#f59e0b" }}>
+                <div className="intel-card-head">
+                  <div className="intel-card-body">
+                    <div className="intel-card-row1">
+                      <span className="intel-card-sev" style={{ background: c.severity === "critical" ? "#ef4444" : "#f59e0b", color: "#fff", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700 }}>
+                        {c.severity?.toUpperCase()}
+                      </span>
+                      <span className="intel-card-title" style={{ marginLeft: 8 }}>
+                        {c.types?.join(", ") || "Correlated Anomaly"}
+                      </span>
+                      <span className="intel-card-source" style={{ marginLeft: "auto" }}>
+                        {c.signalCount} signals · {c.clusterCount} clusters
+                      </span>
+                    </div>
+                    <div className="intel-card-msg" style={{ marginTop: 6 }}>{c.summary}</div>
+                    <div className="intel-card-meta" style={{ marginTop: 6 }}>
+                      <span style={{ display: "inline-flex", gap: 6 }}>
+                        {(c.clusters || []).map((cl) => (
+                          <span key={cl} style={{ background: "#1e293b", color: "#94a3b8", padding: "2px 8px", borderRadius: 4, fontSize: 11 }}>{cl}</span>
+                        ))}
+                      </span>
+                      <span style={{ marginLeft: 12, fontSize: 11, color: "#64748b" }}>
+                        {c.spreadMinutes === 0 ? "Simultaneous" : `Spread: ${c.spreadMinutes}m`} · First: {timeAgo(c.firstSeen)}
+                      </span>
+                    </div>
+
+                    {/* Signal details (expandable) */}
+                    {expandedCards[c.id] && (
+                      <div style={{ marginTop: 10, padding: "8px 10px", background: "#0f172a", borderRadius: 6, fontSize: 12 }}>
+                        <div style={{ fontWeight: 600, marginBottom: 6, color: "#94a3b8" }}>Signals:</div>
+                        {(c.signals || []).map((s, si) => (
+                          <div key={si} style={{ padding: "3px 0", color: "#cbd5e1", borderBottom: si < c.signals.length - 1 ? "1px solid #1e293b" : "none" }}>
+                            <span style={{ color: SEV[s.severity] || "#3b82f6", fontWeight: 600 }}>[{s.cluster}]</span>{" "}
+                            <span style={{ color: "#e2e8f0" }}>{s.type}</span>: {s.summary}
+                            <span style={{ color: "#475569", marginLeft: 8 }}>{timeAgo(s.timestamp)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* AI Analysis result */}
+                    {corrAnalyses[c.id] && (
+                      <div style={{ marginTop: 10, padding: "10px 12px", background: "linear-gradient(135deg, #1e1b4b, #0f172a)", borderRadius: 6, border: "1px solid #4c1d95" }}>
+                        <div style={{ fontWeight: 600, marginBottom: 6, color: "#a78bfa", fontSize: 12 }}>AI Root Cause Analysis</div>
+                        <div style={{ fontSize: 12, color: "#e2e8f0", whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
+                          {corrAnalyses[c.id]}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="intel-card-actions" style={{ borderTop: "1px solid #1e293b", padding: "6px 12px", display: "flex", gap: 8 }}>
+                  <button className="intel-btn" onClick={() => setExpandedCards(p => ({ ...p, [c.id]: !p[c.id] }))}>
+                    {expandedCards[c.id] ? "Collapse" : "Details"}
+                  </button>
+                  <button
+                    className="intel-btn"
+                    disabled={corrAnalyzing[c.id]}
+                    onClick={async () => {
+                      setCorrAnalyzing(p => ({ ...p, [c.id]: true }));
+                      try {
+                        const resp = await fetch(clusterUrl("/api/intelligence/correlations/investigate"), {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ correlationId: c.id }),
+                        });
+                        const data = await resp.json();
+                        if (data.analysis?.analysis) {
+                          setCorrAnalyses(p => ({ ...p, [c.id]: data.analysis.analysis }));
+                        } else {
+                          showToast("AI analysis unavailable — check LLM configuration", "warning");
+                        }
+                      } catch (err) {
+                        showToast("Analysis failed: " + err.message, "error");
+                      }
+                      setCorrAnalyzing(p => ({ ...p, [c.id]: false }));
+                    }}
+                  >
+                    {corrAnalyzing[c.id] ? "Analyzing..." : "AI Investigate"}
+                  </button>
                 </div>
               </div>
             ))}

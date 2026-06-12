@@ -185,6 +185,11 @@ import {
   getPredictions,
   getTrends,
 } from "./services/predictive-intel.js";
+import {
+  runCorrelationAnalysis as runCorrelation,
+  investigateCorrelation as investigateCorrelationById,
+  getClusterSignalSummary as getSignalSummary,
+} from "./services/cross-cluster-correlation.js";
 import { trackCR, getCR, listCRs, getPendingCRs, updateCRStatus, syncCRFromServiceNow, syncAllPendingCRs, cleanupOldCRs, backfillFromAuditTrail, dismissCR, deleteCR } from "./services/cr-tracker.js";
 import {
   getMetricsSummary,
@@ -2583,7 +2588,10 @@ async function startSSE() {
 
     // Combined intelligence dashboard
     if (url.pathname === "/api/intelligence/dashboard" && req.method === "GET") {
-      const [predictions] = await Promise.allSettled([runPredictiveAnalysis()]);
+      const [predictions, correlationResult] = await Promise.allSettled([
+        runPredictiveAnalysis(),
+        runCorrelation(),
+      ]);
       return sendJson(res, 200, {
         proactive: getInsightsSummary(),
         insights: getInsights().slice(0, 10),
@@ -2591,7 +2599,26 @@ async function startSSE() {
         knowledgeBase: kbGetStats(),
         automationRules: listRules().length,
         monitoring: isMonitorRunning(),
+        crossCluster: correlationResult.status === "fulfilled" ? correlationResult.value : null,
       });
+    }
+
+    if (url.pathname === "/api/intelligence/correlations" && req.method === "GET") {
+      const force = url.searchParams.get("force") === "true";
+      const result = await runCorrelation({ force });
+      return sendJson(res, 200, result);
+    }
+
+    if (url.pathname === "/api/intelligence/correlations/investigate" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      if (!body?.correlationId) return sendJson(res, 400, { error: "correlationId required" });
+      const result = await investigateCorrelationById(body.correlationId);
+      return sendJson(res, 200, result);
+    }
+
+    if (url.pathname === "/api/intelligence/correlations/signals" && req.method === "GET") {
+      const summary = await getSignalSummary();
+      return sendJson(res, 200, summary);
     }
 
     // -----------------------------------------------------------------------
