@@ -6188,6 +6188,46 @@ spec:
       return;
     }
 
+    // ── Docs download ──────────────────────────────────────────────
+    if (req.method === "GET" && url.pathname === "/api/docs/download") {
+      try {
+        const docName = url.searchParams.get("doc") || "hld-lld";
+        const docMap = {
+          "hld-lld": "TCS-KubeNexus-AI-HLD-LLD-Design.docx",
+          "network-arch": "TCS-KubeNexus-AI-Multi-Cluster-Network-Architecture.docx",
+          "product-overview": "TCS-KubeNexus-AI-Product-Overview.docx",
+          "customer-benefits": "TCS-KubeNexus-AI-Customer-Benefits.docx",
+          "mcp-comparison": "TCS-KubeNexus-AI-vs-Official-MCP-Comparison.docx",
+        };
+        const fileName = docMap[docName];
+        if (!fileName) { sendJson(res, 404, { error: "Unknown document: " + docName, available: Object.keys(docMap) }); return; }
+        const filePath = resolve("docs", fileName);
+        const fileData = await readFile(filePath);
+        res.writeHead(200, {
+          "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "Content-Disposition": `attachment; filename="${fileName}"`,
+          "Content-Length": fileData.length,
+        });
+        res.end(fileData);
+      } catch (err) {
+        if (err.code === "ENOENT") sendJson(res, 404, { error: "Document not generated yet. Run: node docs/gen-hld-lld-doc.js" });
+        else sendJson(res, 500, { error: err.message });
+      }
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/docs/list") {
+      const docs = [
+        { id: "hld-lld", title: "HLD & LLD Architecture Design", description: "Complete high-level and low-level design with architecture diagrams" },
+        { id: "network-arch", title: "Multi-Cluster Network Architecture", description: "Network connectivity, firewall rules, DNS, and TLS requirements" },
+        { id: "product-overview", title: "Product Overview", description: "TCS KubeNexus AI product capabilities and features" },
+        { id: "customer-benefits", title: "Customer Benefits", description: "Business value and ROI analysis" },
+        { id: "mcp-comparison", title: "MCP Comparison", description: "TCS KubeNexus AI vs Official MCP feature comparison" },
+      ];
+      sendJson(res, 200, { docs });
+      return;
+    }
+
     // Dashboard REST API — /api/...
     if (url.pathname.startsWith("/api/")) {
       const _cl = url.searchParams.get("cluster");

@@ -29,6 +29,7 @@ const TABS = [
   { key: "notifications", label: "Notifications" },
   { key: "flags", label: "Feature Flags" },
   { key: "appearance", label: "Appearance" },
+  { key: "docs", label: "Documents" },
 ];
 
 const LLM_PROVIDERS = [
@@ -990,6 +991,81 @@ function AppearanceTab({ theme, toggleTheme }) {
 
 
 /* ------------------------------------------------------------------ */
+/*  Documents Tab                                                      */
+/* ------------------------------------------------------------------ */
+
+const DOCS = [
+  { id: "hld-lld", title: "HLD & LLD Architecture Design", desc: "Complete high-level and low-level design with architecture diagrams", icon: "\u{1F3D7}" },
+  { id: "network-arch", title: "Multi-Cluster Network Architecture", desc: "Network connectivity, firewall rules, DNS, and TLS requirements", icon: "\u{1F310}" },
+  { id: "product-overview", title: "Product Overview", desc: "TCS KubeNexus AI product capabilities and features", icon: "\u{1F4CB}" },
+  { id: "customer-benefits", title: "Customer Benefits", desc: "Business value and ROI analysis", icon: "\u{1F4C8}" },
+  { id: "mcp-comparison", title: "MCP Comparison", desc: "TCS KubeNexus AI vs Official MCP feature comparison", icon: "\u{1F50D}" },
+];
+
+function DocumentsTab() {
+  const [downloading, setDownloading] = useState(null);
+
+  const downloadDoc = async (docId) => {
+    setDownloading(docId);
+    try {
+      const res = await fetch(`/api/docs/download?doc=${docId}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Download failed" }));
+        showToast(err.error || "Download failed", "error");
+        return;
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition") || "";
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      const filename = match ? match[1] : `${docId}.docx`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      showToast(`Downloaded ${filename}`, "ok");
+    } catch {
+      showToast("Download failed — check server connection", "error");
+    } finally {
+      setDownloading(null);
+    }
+  };
+
+  return (
+    <div>
+      <p style={{ fontSize: 12, color: "var(--text2)", marginBottom: 12 }}>
+        Download architecture and design documents in DOCX format.
+        Open in Word, LibreOffice, or Google Docs. Use "Save as PDF" for PDF format.
+      </p>
+      {DOCS.map((doc) => (
+        <div key={doc.id} style={S.card}>
+          <div style={S.cardHeader}>
+            <div style={S.cardTitle}>
+              <span style={{ fontSize: 20 }}>{doc.icon}</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{doc.title}</div>
+                <div style={{ fontSize: 11, color: "var(--text2)", fontWeight: 400, marginTop: 2 }}>{doc.desc}</div>
+              </div>
+            </div>
+            <button
+              style={{ ...S.btnPrimary, opacity: downloading === doc.id ? 0.6 : 1, minWidth: 90 }}
+              disabled={downloading === doc.id}
+              onClick={() => downloadDoc(doc.id)}
+            >
+              {downloading === doc.id ? "..." : "Download"}
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
+/* ------------------------------------------------------------------ */
 /*  Main Panel                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -1033,6 +1109,7 @@ export function SettingsPanel({ open, onClose }) {
       case "notifications": return <NotificationsTab />;
       case "flags": return <FeatureFlagsTab />;
       case "appearance": return <AppearanceTab theme={theme} toggleTheme={toggleTheme} />;
+      case "docs": return <DocumentsTab />;
       default: return null;
     }
   };
