@@ -471,7 +471,10 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
     );
   }, [curlCmd]);
 
-  return (
+  // Portal to document.body — the `.cluster-picker > *` rule forces
+  // `position: relative; z-index: 1` on direct children, trapping this
+  // fixed-position overlay in a low stacking context. Portal escapes it.
+  return createPortal(
     <div className="ccm-overlay" onClick={onClose}>
       <div className="ccm" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
@@ -718,7 +721,8 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
