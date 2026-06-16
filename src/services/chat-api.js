@@ -10055,7 +10055,7 @@ function summarizeContext(ctx) {
 async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
   const provider = opts.provider || LLM_PROVIDER;
   if (!provider || provider === "none") {
-    return builtInAnalysis(userMessage, clusterContext);
+    return { text: builtInAnalysis(userMessage, clusterContext), usage: null };
   }
 
   // When a specific resource is the target, filter out unrelated cluster-wide
@@ -10171,11 +10171,11 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
     });
     let reply = validateResponse(r.text, clusterContext) || builtInAnalysis(userMessage, clusterContext);
     reply = appendFixProposals(reply, ctx);
-    return reply;
+    return { text: reply, usage: r.usage || null };
   } catch (err) {
     let reply = `LLM Error: ${err.message}\n\n---\n\n${builtInAnalysis(userMessage, clusterContext)}`;
     reply = appendFixProposals(reply, clusterContext);
-    return reply;
+    return { text: reply, usage: null };
   }
 }
 
@@ -16181,7 +16181,7 @@ export async function handleChatAPI(req, res) {
             parsed, userId: body.userId || null, conversationId,
           });
           let fullText = "";
-          await callLLMStream({
+          const _streamResult = await callLLMStream({
             messages: [...priorMessages, { role: "user", content: userContent }],
             system: augmentedSystem,
             maxTokens: 2000,
@@ -16192,9 +16192,9 @@ export async function handleChatAPI(req, res) {
               sseSend(res, { delta: chunk });
             },
           });
-          return { context, fullText };
+          return { context, fullText, usage: _streamResult?.usage || null };
         });
-        const { context, fullText } = sseTraced;
+        const { context, fullText, usage: _streamUsage } = sseTraced;
         // Post-stream grounding validation — append disclaimer if needed
         const validatedFull = validateResponse(fullText, context);
         if (validatedFull && validatedFull.length > fullText.length) {
@@ -16225,7 +16225,7 @@ export async function handleChatAPI(req, res) {
         if (fixBlock) sseSend(res, { delta: fixBlock });
         const traceMd = renderTraceMarkdown(sseTrace);
         if (traceMd) sseSend(res, { delta: "\n" + traceMd });
-        sseSend(res, { done: true, provider: activeProvider, conversationId });
+        sseSend(res, { done: true, provider: activeProvider, conversationId, usage: _streamUsage || null });
         sseEnd(res);
         if (conversationId) {
           const savedText = sseTraced.fullText + (fixBlock || "");
@@ -16281,6 +16281,7 @@ export async function handleChatAPI(req, res) {
         llmEnabled(llmOpts) &&
         /\b(diagnose|root\s*cause|why\b|what'?s\s+wrong|troubleshoot)\b/i.test(userMessage);
       let replyText;
+      let _lastUsage = null;
       let toolsUsed = [];
 
       const hintPods = context.targetPodName
@@ -16313,7 +16314,9 @@ export async function handleChatAPI(req, res) {
           toolsUsed = (orchRes?.toolCalls || []).map((tc) => tc.name);
         } catch (e) {
           console.warn("[chat-api] orchestrator failed, falling back:", e.message);
-          replyText = await callLLMWithContext(userMessage, context, llmOpts);
+          const _llmResult = await callLLMWithContext(userMessage, context, llmOpts);
+          replyText = _llmResult.text || _llmResult;
+          _lastUsage = _llmResult.usage || null;
         }
       } else if (wantsDiagnose) {
         try {
@@ -16326,22 +16329,32 @@ export async function handleChatAPI(req, res) {
             },
             llmOpts,
           });
-          replyText = agentRes?.text || (await callLLMWithContext(userMessage, context, llmOpts));
+          if (agentRes?.text) {
+            replyText = agentRes.text;
+          } else {
+            const _llmResult = await callLLMWithContext(userMessage, context, llmOpts);
+            replyText = _llmResult.text || _llmResult;
+            _lastUsage = _llmResult.usage || null;
+          }
           toolsUsed = (agentRes?.toolCalls || []).map((tc) => tc.name);
         } catch (e) {
           console.warn("[chat-api] agent loop failed, falling back:", e.message);
-          replyText = await callLLMWithContext(userMessage, context, llmOpts);
+          const _llmResult = await callLLMWithContext(userMessage, context, llmOpts);
+          replyText = _llmResult.text || _llmResult;
+          _lastUsage = _llmResult.usage || null;
         }
       } else {
-        replyText = await callLLMWithContext(userMessage, context, llmOpts);
+        const _llmResult = await callLLMWithContext(userMessage, context, llmOpts);
+        replyText = _llmResult.text || _llmResult;
+        _lastUsage = _llmResult.usage || null;
       }
       // Label knowledge-only responses that skipped cluster data
       if (context._skippedClusterContext && replyText) {
         replyText += "\n\n> *This is general knowledge and has not been verified against your cluster.*";
       }
-      return { context, replyText, toolsUsed };
+      return { context, replyText, toolsUsed, _lastUsage };
     });
-    let { context, replyText: reply, toolsUsed = [] } = traced;
+    let { context, replyText: reply, toolsUsed = [], _lastUsage: nonStreamUsage } = traced;
     // Post-response grounding validation for non-streaming path
     reply = validateResponse(reply, context);
     intentsForLog = Array.isArray(context?.intents) ? context.intents : Object.keys(context || {});
@@ -16387,6 +16400,7 @@ export async function handleChatAPI(req, res) {
       trace: trace.slice(0, 20),
       toolsUsed: toolsUsed || [],
       agentTrace,
+      usage: nonStreamUsage || null,
     };
     cacheSet(cacheKey, payload, CHAT_CACHE_TTL).catch(() => {});
     if (conversationId) {

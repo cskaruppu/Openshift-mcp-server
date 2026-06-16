@@ -620,6 +620,7 @@ export function ChatView() {
                     ...prev[msgIndexRef.current],
                     provider: resolvedProvider,
                     confidence: full.length > 200 ? "high" : full.length > 50 ? "medium" : "low",
+                    usage: evt.usage || null,
                   },
                 }));
               }
@@ -888,6 +889,12 @@ export function ChatView() {
                       <div className="ac-win-icon" style={{ background: provMeta.color }}>{provMeta.icon}</div>
                       <span className="ac-win-name">TCS Agentic AI</span>
                       <span className="ac-win-provider-badge" style={{ background: provMeta.color + "22", color: provMeta.color }}>{prov === "builtin" ? "built-in" : provMeta.label}</span>
+                      {meta.usage && (
+                        <span className="ac-token-pill">
+                          {meta.usage.total_tokens ? `${meta.usage.total_tokens} tokens` :
+                           meta.usage.prompt_tokens ? `${meta.usage.prompt_tokens + (meta.usage.completion_tokens || 0)} tokens` : null}
+                        </span>
+                      )}
                     </div>
                     {ts && <span className="ac-win-time">{ts}</span>}
                   </div>

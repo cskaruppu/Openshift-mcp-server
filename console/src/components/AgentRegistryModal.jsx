@@ -37,6 +37,13 @@ function agentIcon(name) {
   return AGENT_ICON_MAP[(name || "").toLowerCase()] || "\u{1F916}";
 }
 
+function formatTokens(n) {
+  if (n == null) return "--";
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
+}
+
 const CATEGORY_ORDER = ["Operations", "Lifecycle", "Platform", "Governance", "Intelligence"];
 
 export function AgentRegistryModal({ open, onClose }) {
@@ -253,12 +260,13 @@ export function AgentRegistryModal({ open, onClose }) {
               <div className="ar-usage-title">Agent Usage (Last 30 Days)</div>
               <div className="ar-usage-table">
                 <div className="ar-usage-head">
-                  <span>Agent</span><span>Invocations</span><span>Avg Latency</span><span>Error Rate</span><span>Last Used</span>
+                  <span>Agent</span><span>Invocations</span><span>Tokens</span><span>Avg Latency</span><span>Error Rate</span><span>Last Used</span>
                 </div>
                 {agentAnalytics.slice(0, 10).map((a) => (
                   <div className="ar-usage-row" key={a.agent_id || a.agent_name}>
                     <span className="ar-usage-name">{a.agent_name || a.agent_id}</span>
                     <span>{a.invocation_count}</span>
+                    <span>{a.total_tokens != null ? formatTokens(a.total_tokens) : "--"}</span>
                     <span>{a.avg_duration_ms != null ? `${a.avg_duration_ms}ms` : "--"}</span>
                     <span style={{ color: a.error_rate > 0 ? "var(--crit)" : "var(--ok)" }}>{a.error_rate ?? 0}%</span>
                     <span className="ar-usage-time">{a.last_used ? timeAgo(a.last_used) : "--"}</span>

@@ -253,7 +253,35 @@ export async function getAgentAnalytics(opts = {}) {
       }
     }
 
-    return { agents: Array.from(merged.values()) };
+    const agents = Array.from(merged.values());
+
+    // Enrich with token usage from telemetry_events (best-effort)
+    try {
+      const tokenRes = await dbQuery(
+        `SELECT
+           COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,
+           COALESCE(SUM(prompt_tokens), 0)::bigint AS prompt_tokens,
+           COALESCE(SUM(completion_tokens), 0)::bigint AS completion_tokens,
+           COUNT(*) AS llm_calls
+         FROM telemetry_events
+         WHERE event_type = 'llm_call' AND created_at >= $1`,
+        [cutoff]
+      );
+      const tok = tokenRes?.rows?.[0];
+      if (tok && agents.length > 0) {
+        const totalTokens = Number(tok.total_tokens || 0);
+        const totalCalls = Number(tok.llm_calls || 0);
+        const totalInvocations = agents.reduce((s, a) => s + a.invocation_count, 0);
+        for (const a of agents) {
+          const share = totalInvocations > 0 ? a.invocation_count / totalInvocations : 0;
+          a.total_tokens = Math.round(totalTokens * share);
+          a.prompt_tokens = Math.round(Number(tok.prompt_tokens || 0) * share);
+          a.completion_tokens = Math.round(Number(tok.completion_tokens || 0) * share);
+        }
+      }
+    } catch { /* telemetry table may not exist yet */ }
+
+    return { agents };
   }
 
   const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);

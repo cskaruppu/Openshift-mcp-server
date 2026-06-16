@@ -865,6 +865,19 @@ body {
   font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 6px;
   letter-spacing: .2px;
 }
+.ac-token-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text2);
+  margin-left: 6px;
+}
 .ac-win-time { font-size: 11px; color: var(--text2); margin-left: auto; font-variant-numeric: tabular-nums; }
 
 .ac-win-body { padding: 16px 20px 18px; }
@@ -3803,14 +3816,14 @@ h3.widget-title {
   border-radius: 10px; overflow: hidden;
 }
 .ar-usage-head {
-  display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
+  display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr;
   padding: 8px 14px; font-size: 10px; font-weight: 700;
   color: var(--text2); text-transform: uppercase;
   border-bottom: 1px solid var(--border);
   background: var(--card);
 }
 .ar-usage-row {
-  display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
+  display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr;
   padding: 8px 14px; font-size: 12px; color: var(--text);
   border-bottom: 1px solid var(--border);
 }
