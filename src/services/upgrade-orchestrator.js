@@ -1208,12 +1208,12 @@ export async function stepPostAssessment(sessionId) {
       const updatedSession = await getSession(sessionId);
       const preBuffer = await generatePreAssessmentReport(updatedSession);
       await snowAttachFile("change_request", session.crSysId,
-        `Pre-Assessment-${session.cluster}-${session.fromVersion}-to-${session.targetVersion}.docx`,
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document", preBuffer);
+        `Pre-Assessment-${session.cluster}-${session.fromVersion}-to-${session.targetVersion}.pdf`,
+        "application/pdf", preBuffer);
       const postBuffer = await generatePostAssessmentReport(updatedSession);
       await snowAttachFile("change_request", session.crSysId,
-        `Post-Assessment-${session.cluster}-${session.fromVersion}-to-${session.targetVersion}.docx`,
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document", postBuffer);
+        `Post-Assessment-${session.cluster}-${session.fromVersion}-to-${session.targetVersion}.pdf`,
+        "application/pdf", postBuffer);
     } catch (attErr) {
       console.warn(`[upgrade] Failed to attach reports to CR: ${attErr.message}`);
     }

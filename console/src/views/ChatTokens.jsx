@@ -1132,14 +1132,14 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
             <button className="ux-btn ux-btn-outline" onClick={() => {
               const a = document.createElement("a");
               a.href = `/api/upgrade/report?session=${sessionId}&type=pre`;
-              a.download = "pre-assessment.docx";
+              a.download = "pre-assessment.pdf";
               a.click();
             }}>Download Pre-Assessment</button>
             {state === "completed" && (
               <button className="ux-btn ux-btn-outline" onClick={() => {
                 const a = document.createElement("a");
                 a.href = `/api/upgrade/report?session=${sessionId}&type=post`;
-                a.download = "post-assessment.docx";
+                a.download = "post-assessment.pdf";
                 a.click();
               }}>Download Post-Assessment</button>
             )}

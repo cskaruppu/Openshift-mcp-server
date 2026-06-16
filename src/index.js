@@ -5092,9 +5092,9 @@ spec:
           ? await generatePostAssessmentReport(session)
           : await generatePreAssessmentReport(session);
 
-        const filename = `TCS-KubeNexus-${type === "post" ? "Post" : "Pre"}-Assessment-${session.cluster}-${session.targetVersion}-${Date.now()}.docx`;
+        const filename = `TCS-KubeNexus-${type === "post" ? "Post" : "Pre"}-Assessment-${session.cluster}-${session.targetVersion}-${Date.now()}.pdf`;
         res.writeHead(200, {
-          "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "Content-Type": "application/pdf",
           "Content-Disposition": `attachment; filename="${filename}"`,
           "Content-Length": buffer.length,
         });
