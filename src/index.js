@@ -5154,14 +5154,30 @@ spec:
     // Upgrade milestone notifications (polled by frontend)
     if (req.method === "GET" && url.pathname === "/api/upgrade/notifications") {
       try {
-        const { getActiveSession, listSessions } = await import("./services/upgrade-orchestrator.js");
+        const { listSessions, stepCheckCRStatus } = await import("./services/upgrade-orchestrator.js");
         const clusterName = url.searchParams.get("cluster") || "local";
-        const sessions = listSessions().filter(s =>
-          s.cluster === clusterName && !["COMPLETED", "FAILED", "CANCELLED", "IDLE"].includes(s.state)
+        const allSessions = await listSessions({ limit: 50 });
+        const sessions = allSessions.filter(s =>
+          s.cluster === clusterName && !["completed", "failed", "cancelled", "idle"].includes(s.state)
         );
         const notifications = [];
         for (const s of sessions) {
-          // Check for state transitions
+          // If CR is submitted and has a ServiceNow sysId, auto-check approval
+          if (s.state === "cr_submitted" && s.crSysId) {
+            try {
+              const crResult = await stepCheckCRStatus(s.id);
+              notifications.push({
+                sessionId: s.id,
+                state: crResult.session?.state || s.state,
+                fromVersion: s.fromVersion,
+                targetVersion: s.targetVersion,
+                crTicketId: s.crTicketId || null,
+                crStatus: crResult.status || null,
+                crApproval: crResult.approval || null,
+              });
+              continue;
+            } catch {}
+          }
           const lastSnapshot = s.monitoringSnapshots?.slice(-1)[0];
           notifications.push({
             sessionId: s.id,
@@ -5176,7 +5192,7 @@ spec:
             hasPostReport: !!s.postAssessment,
           });
         }
-        sendJson(res, 200, { notifications });
+        sendJson(res, 200, { notifications, state: sessions[0]?.state, sessionState: sessions[0]?.state });
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }

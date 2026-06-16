@@ -726,8 +726,8 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
   }, [sessionId]);
 
   // Auto-poll for state transitions during active upgrade sessions.
-  // When the state changes (e.g. CR_SUBMITTED -> CR_APPROVED), trigger
-  // a chat follow-up so the user sees a live update.
+  // When in cr_submitted, actively poll ServiceNow via cr-status endpoint.
+  // For executing/monitoring, poll notifications for progress updates.
   useEffect(() => {
     const activeStates = ["cr_submitted", "executing", "monitoring"];
     const currentState = session?.state || data?.state || "idle";
@@ -735,23 +735,37 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
 
     const poll = async () => {
       try {
-        const r = await fetch(clusterUrl(`/api/upgrade/notifications?cluster=${cluster}`, cluster));
-        const d = await r.json();
-        const newState = d.state || d.sessionState;
-        if (newState && prevStateRef.current && newState !== prevStateRef.current) {
-          // State transitioned — trigger a chat update
-          if (prevStateRef.current === "cr_submitted" && newState === "cr_approved") {
-            if (onQuery) onQuery("check CR status");
-          } else if (newState === "completed" || newState === "monitoring") {
-            if (onQuery) onQuery("check upgrade status");
+        if (currentState === "cr_submitted") {
+          const r = await fetch(clusterUrl(`/api/upgrade/orchestrator/cr-status`, cluster), {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionId }),
+          });
+          const d = await r.json();
+          const newState = d.session?.state;
+          if (newState && newState !== prevStateRef.current) {
+            if (newState === "cr_approved") {
+              showToast(`CR ${d.ticketId || ""} approved — ready for dry run`, "ok");
+            }
+            await fetchSession();
           }
-          await fetchSession();
+          prevStateRef.current = newState || currentState;
+        } else {
+          const r = await fetch(clusterUrl(`/api/upgrade/notifications?cluster=${cluster}`, cluster));
+          const d = await r.json();
+          const newState = d.state || d.sessionState;
+          if (newState && prevStateRef.current && newState !== prevStateRef.current) {
+            if (newState === "completed" || newState === "monitoring") {
+              if (onQuery) onQuery("check upgrade status");
+            }
+            await fetchSession();
+          }
+          prevStateRef.current = newState || currentState;
         }
-        prevStateRef.current = newState || currentState;
       } catch {}
     };
     prevStateRef.current = currentState;
-    const timer = setInterval(poll, 15000);
+    poll();
+    const timer = setInterval(poll, 20000);
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.state, data?.state, sessionId, cluster]);
@@ -1021,15 +1035,32 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
 
     // ── Change Request: show ticket ID, status, and approval state ──
     if (key === "cr_submitted" && s.crTicketId) {
+      const isLocal = !s.crSysId;
       return (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
             <span style={{ fontWeight: 700 }}>Ticket:</span>
-            <span style={{ color: "var(--accent2)", fontWeight: 600, fontFamily: "'SF Mono', 'Fira Code', monospace", fontSize: 12 }}>{s.crTicketId}</span>
-            {s.crSysId && <span style={{ color: "var(--text2)", fontSize: 10.5 }}>sys_id: {s.crSysId.slice(0, 12)}…</span>}
+            <span style={{ color: "var(--accent2)", fontWeight: 600, fontFamily: "'SF Mono', 'Fira Code', monospace", fontSize: 13 }}>{s.crTicketId}</span>
+            {isLocal && <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 600, background: "color-mix(in srgb, var(--warn) 15%, transparent)", color: "var(--warn)" }}>Local</span>}
+            {!isLocal && <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 600, background: "color-mix(in srgb, var(--ok) 15%, transparent)", color: "var(--ok)" }}>ServiceNow</span>}
           </div>
-          <div style={{ fontSize: 11.5, color: "var(--text2)" }}>
-            Waiting for CAB approval. The system polls ServiceNow every 30 seconds for status changes.
+          {!isLocal && (
+            <div style={{ fontSize: 11.5, color: "var(--text2)" }}>
+              Waiting for CAB approval. Auto-polling ServiceNow every 20 seconds for status changes.
+            </div>
+          )}
+          {isLocal && (
+            <div style={{ fontSize: 11.5, color: "var(--text2)" }}>
+              Local CR created (ServiceNow not configured). You can proceed directly or configure ServiceNow in Settings.
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+            {!isLocal && (
+              <button className="ux-btn ux-btn-dryrun" style={{ padding: "4px 12px", fontSize: 11 }}
+                onClick={(e) => { e.stopPropagation(); handleCheckCR(); }} disabled={!!stepRunning}>
+                {stepRunning === "cr-status" ? "Checking…" : "Check CR Status"}
+              </button>
+            )}
           </div>
         </div>
       );
