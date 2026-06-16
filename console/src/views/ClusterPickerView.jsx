@@ -115,23 +115,27 @@ function KebabMenu({ items }) {
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  const handleOpen = () => {
-    if (!open && btnRef.current) {
+  useEffect(() => {
+    if (!open || !btnRef.current) return;
+    const recalc = () => {
       const rect = btnRef.current.getBoundingClientRect();
       const dropH = Math.min(items.length * 38, 320);
       const spaceBelow = window.innerHeight - rect.bottom - 8;
       const top = spaceBelow >= dropH ? rect.bottom + 4 : rect.top - dropH - 4;
       const left = Math.max(8, rect.right - 200);
       setPos({ top, left });
-    }
-    setOpen(!open);
-  };
+    };
+    recalc();
+    window.addEventListener("scroll", recalc, true);
+    window.addEventListener("resize", recalc);
+    return () => { window.removeEventListener("scroll", recalc, true); window.removeEventListener("resize", recalc); };
+  }, [open, items.length]);
 
   return (
     <div className="kebab-menu" ref={ref} onClick={(e) => e.stopPropagation()}>
-      <button ref={btnRef} className="kebab-btn" onClick={handleOpen} title="Cluster actions">&#x22EE;</button>
+      <button ref={btnRef} className="kebab-btn" onClick={() => setOpen(!open)} title="Cluster actions">&#x22EE;</button>
       {open && (
-        <div className="kebab-dropdown open" style={{ position: "fixed", top: pos.top, left: pos.left, right: "auto" }}>
+        <div className="kebab-dropdown open" style={{ position: "fixed", top: pos.top, left: pos.left, right: "auto", zIndex: 99999 }}>
           {items.map((item, i) =>
             item.sep ? <div key={i} className="kebab-sep" /> : (
               <button key={i} className={"kebab-item" + (item.danger ? " danger" : "")} onClick={() => { setOpen(false); item.action(); }}>
