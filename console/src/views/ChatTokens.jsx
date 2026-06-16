@@ -665,6 +665,36 @@ function UpgradeExecuteCard({ data, cluster, onQuery }) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Upgrade type & time estimation (client-side, from version strings)   */
+/* ------------------------------------------------------------------ */
+
+function parseSemver(v) {
+  const m = String(v || "").match(/(\d+)\.(\d+)\.(\d+)/);
+  return m ? { major: +m[1], minor: +m[2], patch: +m[3] } : null;
+}
+
+function computeUpgradeType(from, to) {
+  const a = parseSemver(from), b = parseSemver(to);
+  if (!a || !b) return "patch";
+  if (b.major !== a.major) return "major";
+  if (b.minor !== a.minor) return "minor";
+  return "patch";
+}
+
+function computeEstimatedTime(from, to, fallbackType) {
+  const a = parseSemver(from), b = parseSemver(to);
+  let type = fallbackType || "patch";
+  if (a && b) {
+    if (b.major !== a.major) type = "major";
+    else if (b.minor !== a.minor) type = "minor";
+    else type = "patch";
+  }
+  if (type === "major") return "3–6 hrs";
+  if (type === "minor") return "90–180 min";
+  return "30–90 min";
+}
+
+/* ------------------------------------------------------------------ */
 /*  Upgrade Progress card (orchestrator state machine)                   */
 /* ------------------------------------------------------------------ */
 
@@ -864,8 +894,8 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     return null;
   }
 
-  const upgradeType = s.upgradeType || data?.upgradeType || "patch";
-  const estimatedTime = upgradeType === "minor" ? "90–180 min" : "30–90 min";
+  const upgradeType = s.upgradeType || data?.upgradeType || computeUpgradeType(fromVer, targetVer);
+  const estimatedTime = computeEstimatedTime(fromVer, targetVer, upgradeType);
 
   function stepDetail(key) {
     // ── Version Validation: show what was checked ──
