@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet } from "../api/client";
 import { useAuthStore } from "../store/authStore";
@@ -104,13 +105,17 @@ function ConnBadge({ type }) {
 
 function KebabMenu({ items }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
   const btnRef = useRef(null);
+  const dropRef = useRef(null);
   const [pos, setPos] = useState({ top: 0, left: 0 });
 
   useEffect(() => {
     if (!open) return;
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const handler = (e) => {
+      if (btnRef.current?.contains(e.target)) return;
+      if (dropRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
@@ -119,7 +124,7 @@ function KebabMenu({ items }) {
     if (!open || !btnRef.current) return;
     const recalc = () => {
       const rect = btnRef.current.getBoundingClientRect();
-      const dropH = Math.min(items.length * 38, 320);
+      const dropH = Math.min(items.length * 42, 320);
       const spaceBelow = window.innerHeight - rect.bottom - 8;
       const top = spaceBelow >= dropH ? rect.bottom + 4 : rect.top - dropH - 4;
       const left = Math.max(8, rect.right - 200);
@@ -131,20 +136,23 @@ function KebabMenu({ items }) {
     return () => { window.removeEventListener("scroll", recalc, true); window.removeEventListener("resize", recalc); };
   }, [open, items.length]);
 
-  return (
-    <div className="kebab-menu" ref={ref} onClick={(e) => e.stopPropagation()}>
-      <button ref={btnRef} className="kebab-btn" onClick={() => setOpen(!open)} title="Cluster actions">&#x22EE;</button>
-      {open && (
-        <div className="kebab-dropdown open" style={{ position: "fixed", top: pos.top, left: pos.left, right: "auto", zIndex: 99999 }}>
-          {items.map((item, i) =>
-            item.sep ? <div key={i} className="kebab-sep" /> : (
-              <button key={i} className={"kebab-item" + (item.danger ? " danger" : "")} onClick={() => { setOpen(false); item.action(); }}>
-                <span>{item.icon}</span> {item.label}
-              </button>
-            )
-          )}
-        </div>
+  const dropdown = open ? createPortal(
+    <div ref={dropRef} className="kebab-dropdown open" style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 99999 }}>
+      {items.map((item, i) =>
+        item.sep ? <div key={i} className="kebab-sep" /> : (
+          <button key={i} className={"kebab-item" + (item.danger ? " danger" : "")} onClick={() => { setOpen(false); item.action(); }}>
+            <span>{item.icon}</span> {item.label}
+          </button>
+        )
       )}
+    </div>,
+    document.body
+  ) : null;
+
+  return (
+    <div className="kebab-menu" onClick={(e) => e.stopPropagation()}>
+      <button ref={btnRef} className="kebab-btn" onClick={() => setOpen(!open)} title="Cluster actions">&#x22EE;</button>
+      {dropdown}
     </div>
   );
 }
