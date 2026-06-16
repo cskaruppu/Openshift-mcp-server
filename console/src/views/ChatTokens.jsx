@@ -836,6 +836,23 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     if (key === "remediation_proposed" && plan) {
       return { text: `${plan.totalFixes || plan.fixes?.length || 0} fixes`, color: "var(--warn)" };
     }
+    if (key === "cr_submitted" && s.crTicketId) {
+      return { text: s.crTicketId, color: "var(--accent2)" };
+    }
+    if (key === "cr_approved" && s.crTicketId) {
+      return { text: "Approved", color: "var(--ok)" };
+    }
+    if (key === "dry_run_passed" && s.dryRunResult) {
+      return { text: s.dryRunResult.passed !== false ? "Passed" : "Failed", color: s.dryRunResult.passed !== false ? "var(--ok)" : "var(--crit)" };
+    }
+    if (key === "executing" && state === "executing") {
+      return { text: "In Progress", color: "var(--accent2)" };
+    }
+    if (key === "completed" && s.postAssessment) {
+      const res = s.postAssessment.comparison?.resolved?.length || 0;
+      const nw = s.postAssessment.comparison?.newIssues?.length || 0;
+      return { text: nw > 0 ? `${nw} new issues` : `${res} resolved`, color: nw > 0 ? "var(--warn)" : "var(--ok)" };
+    }
     return null;
   }
 
@@ -942,6 +959,71 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
               Mark Remediation Complete
             </button>
           )}
+        </div>
+      );
+    }
+
+    // ── Change Request: show ticket ID, status, and approval state ──
+    if (key === "cr_submitted" && s.crTicketId) {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontWeight: 700 }}>Ticket:</span>
+            <span style={{ color: "var(--accent2)", fontWeight: 600, fontFamily: "'SF Mono', 'Fira Code', monospace", fontSize: 12 }}>{s.crTicketId}</span>
+            {s.crSysId && <span style={{ color: "var(--text2)", fontSize: 10.5 }}>sys_id: {s.crSysId.slice(0, 12)}…</span>}
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--text2)" }}>
+            Waiting for CAB approval. The system polls ServiceNow every 30 seconds for status changes.
+          </div>
+        </div>
+      );
+    }
+
+    // ── CR Approved: confirmation ──
+    if (key === "cr_approved" && s.crTicketId) {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ color: "var(--ok)", fontWeight: 600 }}>✅ Change Request {s.crTicketId} approved</div>
+          <div style={{ fontSize: 11.5, color: "var(--text2)" }}>Proceed with dry run or execute upgrade directly.</div>
+        </div>
+      );
+    }
+
+    // ── Dry Run: show result details ──
+    if (key === "dry_run_passed" && s.dryRunResult) {
+      const dr = s.dryRunResult;
+      return (
+        <div>
+          <div style={{ fontWeight: 600, color: dr.passed !== false ? "var(--ok)" : "var(--crit)", marginBottom: 4 }}>
+            {dr.passed !== false ? "✅ Dry Run Passed" : "❌ Dry Run Failed"}
+          </div>
+          {dr.result?.details && (
+            <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 11, color: "var(--text2)", background: "var(--bg-deep)", padding: 8, borderRadius: 6, maxHeight: 150, overflow: "auto" }}>
+              {dr.result.details}
+            </pre>
+          )}
+          {dr.error && <div style={{ color: "var(--crit)", fontSize: 11.5, marginTop: 4 }}>{dr.error}</div>}
+        </div>
+      );
+    }
+
+    // ── Executing / Monitoring: live progress summary ──
+    if ((key === "executing") && (state === "executing" || state === "monitoring") && progressData) {
+      return (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+            <span style={{ fontWeight: 600 }}>Upgrade Progress</span>
+            <span style={{ fontWeight: 700, color: "var(--accent2)" }}>{progressData.progress || 0}%</span>
+          </div>
+          <div style={{ height: 6, background: "var(--border)", borderRadius: 3, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${progressData.progress || 0}%`, background: "var(--accent2)", borderRadius: 3, transition: "width 0.5s" }} />
+          </div>
+          {progressData.operators && (
+            <div style={{ marginTop: 6, fontSize: 11, color: "var(--text2)" }}>
+              Operators: {progressData.operators.updating} updating / {progressData.operators.degraded} degraded / {progressData.operators.total} total
+            </div>
+          )}
+          {progressData.message && <div style={{ marginTop: 3, fontSize: 11, color: "var(--text2)" }}>{progressData.message.slice(0, 200)}</div>}
         </div>
       );
     }
