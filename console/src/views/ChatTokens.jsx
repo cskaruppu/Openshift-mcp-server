@@ -1205,8 +1205,30 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
           </div>
         )}
 
-        {/* Error display */}
-        {s.errorMessage && (
+        {/* Cancelled state banner */}
+        {state === "cancelled" && (
+          <div style={{ marginTop: 12, padding: "12px 16px", background: "color-mix(in srgb, var(--warn) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--warn) 25%, transparent)", borderRadius: 10, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 18 }}>⚠️</span>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13, color: "var(--warn)" }}>Upgrade Cancelled</div>
+              <div style={{ fontSize: 12, color: "var(--text2)", marginTop: 2 }}>{s.errorMessage || "This upgrade was cancelled by the user."} To restart, initiate a new upgrade session.</div>
+            </div>
+          </div>
+        )}
+
+        {/* Failed state banner */}
+        {state === "failed" && (
+          <div style={{ marginTop: 12, padding: "12px 16px", background: "color-mix(in srgb, var(--crit) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--crit) 25%, transparent)", borderRadius: 10, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 18 }}>❌</span>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13, color: "var(--crit)" }}>Upgrade Failed</div>
+              <div style={{ fontSize: 12, color: "var(--text2)", marginTop: 2 }}>{s.errorMessage || "The upgrade encountered an error."}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Error display (non-terminal) */}
+        {s.errorMessage && !["cancelled", "failed"].includes(state) && (
           <div style={{ padding: "8px 12px", background: "color-mix(in srgb, var(--crit) 10%, transparent)", borderRadius: 6, fontSize: 12, color: "var(--crit)", marginTop: 8 }}>
             {s.errorMessage}
           </div>
