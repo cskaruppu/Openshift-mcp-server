@@ -752,7 +752,8 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
   }
   async function handleRaiseCR() {
     if (!window.confirm("Submit a Change Request to ServiceNow for this upgrade?\n\nThis will create a CR with the pre-assessment report and upgrade details.")) return;
-    await runStep("raise-cr");
+    const d = await runStep("raise-cr");
+    if (d?.ticketId) showToast(`CR ${d.ticketId} created in ServiceNow`, "ok");
   }
   async function handleDryRun() {
     const d = await runStep("dry-run");
@@ -1053,15 +1054,35 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
       );
     }
 
-    // ── Post-Assessment: before/after comparison ──
-    if (key === "completed" && s.postAssessment) {
-      const pa = s.postAssessment;
+    // ── Post-Assessment: before/after comparison + total duration ──
+    if (key === "completed") {
+      const pa = s.postAssessment || {};
+      const started = s.createdAt ? new Date(s.createdAt) : null;
+      const ended = s.updatedAt ? new Date(s.updatedAt) : null;
+      let totalDuration = "—";
+      if (started && ended) {
+        const diffMs = ended - started;
+        const mins = Math.floor(diffMs / 60000);
+        const hrs = Math.floor(mins / 60);
+        totalDuration = hrs > 0 ? `${hrs}h ${mins % 60}m` : `${mins}m`;
+      }
       return (
-        <div>
-          <div>Duration: {pa.duration || "—"}</div>
-          <div style={{ color: "var(--ok)" }}>Resolved: {(pa.comparison?.resolved || []).join(", ") || "none"}</div>
-          {(pa.comparison?.newIssues || []).length > 0 && <div style={{ color: "var(--warn)" }}>New issues: {pa.comparison.newIssues.join(", ")}</div>}
-          {(pa.comparison?.persistent || []).length > 0 && <div style={{ color: "var(--text2)" }}>Persistent: {pa.comparison.persistent.join(", ")}</div>}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 12 }}>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", padding: "8px 12px", background: "color-mix(in srgb, var(--ok) 8%, transparent)", borderRadius: 8 }}>
+            <div><span style={{ fontWeight: 600 }}>Total Upgrade Duration:</span> <span style={{ fontWeight: 700, color: "var(--ok)" }}>{totalDuration}</span></div>
+            <div><span style={{ fontWeight: 600 }}>From:</span> {fromVer}</div>
+            <div><span style={{ fontWeight: 600 }}>To:</span> {targetVer}</div>
+            {started && <div><span style={{ fontWeight: 600 }}>Started:</span> {started.toLocaleString()}</div>}
+            {ended && <div><span style={{ fontWeight: 600 }}>Completed:</span> {ended.toLocaleString()}</div>}
+          </div>
+          {pa.comparison && (
+            <div>
+              {(pa.comparison.resolved || []).length > 0 && <div style={{ color: "var(--ok)" }}>Resolved: {pa.comparison.resolved.join(", ")}</div>}
+              {(pa.comparison.newIssues || []).length > 0 && <div style={{ color: "var(--warn)" }}>New issues: {pa.comparison.newIssues.join(", ")}</div>}
+              {(pa.comparison.persistent || []).length > 0 && <div style={{ color: "var(--text2)" }}>Persistent: {pa.comparison.persistent.join(", ")}</div>}
+            </div>
+          )}
+          {!pa.comparison && <div style={{ color: "var(--ok)" }}>Upgrade completed successfully. All operators healthy on {targetVer}.</div>}
         </div>
       );
     }
