@@ -794,15 +794,15 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
   // action button only shows when the current state is one of them, so we never
   // re-fire a step that already ran (which would be an invalid transition).
   const STEPS = [
-    { key: "version_validated", label: "Version Validation", fromStates: ["idle"], action: handleValidate, actionLabel: "Validate" },
-    { key: "pre_assessed", label: "Pre-Assessment (22 checks)", fromStates: ["version_validated", "channel_switched"], action: handlePreAssess, actionLabel: "Run Assessment" },
-    { key: "component_analyzed", label: "Component Analysis", fromStates: ["pre_assessed"], action: handleComponentAnalysis, actionLabel: "Analyze" },
-    { key: "remediation_proposed", label: "Remediation Plan", fromStates: ["pre_assessed", "component_analyzed"], action: handleRemediationPlan, actionLabel: "Build Plan" },
-    { key: "cr_submitted", label: "Change Request", fromStates: [], action: null },
-    { key: "cr_approved", label: "CR Approved", fromStates: ["cr_submitted"], action: handleCheckCR, actionLabel: "Check Status" },
-    { key: "dry_run_passed", label: "Dry Run", fromStates: ["cr_approved"], action: handleDryRun, actionLabel: "Run Dry Run" },
-    { key: "executing", label: "Execute Upgrade", fromStates: ["cr_approved", "dry_run_passed"], action: handleExecute, actionLabel: "Execute" },
-    { key: "completed", label: "Post-Assessment", fromStates: ["monitoring", "executing"], action: handlePostAssess, actionLabel: "Run Post-Assessment" },
+    { key: "version_validated", label: "Version Validation", desc: "Confirm target version is available in the upgrade graph", fromStates: ["idle"], action: handleValidate, actionLabel: "Validate" },
+    { key: "pre_assessed", label: "Pre-Assessment (22 checks)", desc: "Operators, nodes, etcd, certs, storage, MCPs health check", fromStates: ["version_validated", "channel_switched"], action: handlePreAssess, actionLabel: "Run Assessment" },
+    { key: "component_analyzed", label: "Component Analysis", desc: "Deep inspection of degraded operators, failing pods, cert expiry", fromStates: ["pre_assessed"], action: handleComponentAnalysis, actionLabel: "Analyze" },
+    { key: "remediation_proposed", label: "Remediation Plan", desc: "AI-generated fix plan for all detected issues", fromStates: ["pre_assessed", "component_analyzed"], action: handleRemediationPlan, actionLabel: "Build Plan" },
+    { key: "cr_submitted", label: "Change Request", desc: "ServiceNow CR submitted — awaiting CAB approval", fromStates: [], action: null },
+    { key: "cr_approved", label: "CR Approved", desc: "Change Request approved — cleared for execution", fromStates: ["cr_submitted"], action: handleCheckCR, actionLabel: "Check Status" },
+    { key: "dry_run_passed", label: "Dry Run", desc: "Simulate upgrade to validate no blocking conditions", fromStates: ["cr_approved"], action: handleDryRun, actionLabel: "Run Dry Run" },
+    { key: "executing", label: "Execute Upgrade", desc: "ClusterVersion patched — rolling upgrade in progress", fromStates: ["cr_approved", "dry_run_passed"], action: handleExecute, actionLabel: "Execute" },
+    { key: "completed", label: "Post-Assessment", desc: "Verify all operators healthy on target version", fromStates: ["monitoring", "executing"], action: handlePostAssess, actionLabel: "Run Post-Assessment" },
   ];
 
   const STATE_ORDER = ["idle", "version_validated", "channel_switched", "pre_assessed", "component_analyzed",
@@ -998,7 +998,12 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
                   onClick={detail ? () => setExpandedStep(isOpen ? null : step.key) : undefined}
                 >
                   <span style={{ width: 24, textAlign: "center" }}>{icon}</span>
-                  <span style={{ flex: 1, fontWeight: isNextAction ? 600 : 400 }}>{step.label}</span>
+                  <span style={{ flex: 1, fontWeight: isNextAction ? 600 : 400 }}>
+                    {step.label}
+                    {(step.key === state || expandedStep === step.key) && step.desc && (
+                      <div style={{ fontSize: 10.5, color: "var(--text2)", marginTop: 2, lineHeight: 1.35 }}>{step.desc}</div>
+                    )}
+                  </span>
                   {badge && (
                     <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: `color-mix(in srgb, ${badge.color} 16%, transparent)`, color: badge.color }}>
                       {badge.text}
@@ -1067,6 +1072,29 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
             {progressData.message && (
               <div style={{ marginTop: 4, fontSize: 11, color: "var(--text2)" }}>{progressData.message.slice(0, 200)}</div>
             )}
+          </div>
+        )}
+
+        {/* Cancel upgrade button */}
+        {!["completed", "failed", "cancelled", "idle"].includes(state) && (
+          <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+            <button
+              className="ux-btn"
+              style={{ background: "color-mix(in srgb, var(--crit) 15%, transparent)", color: "var(--crit)", border: "1px solid color-mix(in srgb, var(--crit) 30%, transparent)", padding: "6px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+              onClick={async () => {
+                if (!window.confirm("Cancel this upgrade? This will abort the current operation.")) return;
+                try {
+                  const r = await fetch(clusterUrl("/api/upgrade/cancel", cluster), {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ sessionId, reason: "Cancelled by user from upgrade dashboard" }),
+                  });
+                  const d = await r.json();
+                  if (d.error) showToast(d.error, "error");
+                  else { showToast("Upgrade cancelled", "info"); await fetchSession(); }
+                } catch (e) { showToast(e.message, "error"); }
+              }}>
+              Cancel Upgrade
+            </button>
           </div>
         )}
 

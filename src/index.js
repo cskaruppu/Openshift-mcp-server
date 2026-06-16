@@ -5133,6 +5133,29 @@ spec:
       return;
     }
 
+    // Upgrade history — completed/failed/cancelled sessions
+    if (req.method === "GET" && url.pathname === "/api/upgrade/history") {
+      try {
+        const { getUpgradeHistory } = await import("./services/upgrade-orchestrator.js");
+        const clusterName = url.searchParams.get("cluster") || null;
+        const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+        const history = await getUpgradeHistory({ cluster: clusterName, limit });
+        sendJson(res, 200, { history });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // Cancel an active upgrade session
+    if (req.method === "POST" && url.pathname === "/api/upgrade/cancel") {
+      try {
+        const body = await readBody(req);
+        const { cancelSession } = await import("./services/upgrade-orchestrator.js");
+        const session = await cancelSession(body.sessionId, body.reason || "Cancelled by user");
+        sendJson(res, 200, { session, message: "Upgrade cancelled" });
+      } catch (err) { sendJson(res, 400, { error: err.message }); }
+      return;
+    }
+
     // Upgrade Orchestrator API — /api/upgrade/orchestrator/<action>
     const orchMatch = url.pathname.match(/^\/api\/upgrade\/orchestrator\/(\w[\w-]*)$/);
     if (orchMatch) {
@@ -6520,7 +6543,11 @@ spec:
 
   async function pollUpgradeSessions() {
     try {
-      const { listSessions, stepCheckCRStatus, stepCheckUpgradeProgress } = await import("./services/upgrade-orchestrator.js");
+      const { listSessions, stepCheckCRStatus, stepCheckUpgradeProgress, checkStageTimeouts } = await import("./services/upgrade-orchestrator.js");
+      const timedOut = await checkStageTimeouts();
+      if (timedOut.length > 0) {
+        console.log(`[upgrade-poller] ${timedOut.length} session(s) timed out:`, timedOut.map(t => `${t.sessionId}@${t.state}`).join(", "));
+      }
       const sessions = listSessions();
       for (const s of sessions) {
         try {

@@ -15,7 +15,8 @@ import { hasActiveChannel } from "../index.js";
 import { withClusterDirect, hasCredentials } from "../utils/cluster-credentials.js";
 import { runPreflightChecks, formatPreflightReport, validateUpgradeVersion } from "../tools/upgrade-preflight.js";
 import { trackCR, getCR, updateCRStatus, syncCRFromServiceNow } from "./cr-tracker.js";
-import { getRecord, updateRecord } from "../utils/servicenow-client.js";
+import { getRecord, updateRecord, attachFile as snowAttachFile } from "../utils/servicenow-client.js";
+import { logAuditEvent as logAuditTrailEvent } from "./audit-log.js";
 
 /**
  * Run `fn` in the correct cluster context.
@@ -64,6 +65,31 @@ const TRANSITIONS = {
   [UPGRADE_STATES.COMPLETED]:            [],
   [UPGRADE_STATES.FAILED]:               [UPGRADE_STATES.IDLE],
   [UPGRADE_STATES.CANCELLED]:            [UPGRADE_STATES.IDLE],
+};
+
+const STAGE_TIMEOUTS = {
+  [UPGRADE_STATES.CR_SUBMITTED]: 24 * 60 * 60 * 1000,  // 24h for CR approval
+  [UPGRADE_STATES.EXECUTING]:    4 * 60 * 60 * 1000,    // 4h for upgrade execution
+  [UPGRADE_STATES.MONITORING]:   2 * 60 * 60 * 1000,    // 2h for post-upgrade monitoring
+  [UPGRADE_STATES.DRY_RUN_PASSED]: 30 * 60 * 1000,      // 30m to proceed after dry run
+};
+
+export const STAGE_DESCRIPTIONS = {
+  idle: "Waiting to begin — target version and cluster not yet validated",
+  version_validated: "Target version confirmed available in the upgrade graph",
+  channel_switched: "Update channel aligned with target version stream",
+  pre_assessed: "22-point health check: operators, nodes, etcd, certs, storage, MCPs",
+  component_analyzed: "Deep inspection of degraded operators, failing pods, cert expiry, MCPs",
+  remediation_proposed: "AI-generated fix plan for all detected issues",
+  remediated: "All critical fixes applied and verified",
+  cr_submitted: "ServiceNow Change Request submitted — awaiting CAB approval",
+  cr_approved: "Change Request approved — cleared for execution",
+  dry_run_passed: "Simulated upgrade validated — no blocking conditions",
+  executing: "ClusterVersion patched — rolling upgrade in progress",
+  monitoring: "Operators reconverging — watching for degradation",
+  completed: "Upgrade verified — all operators healthy on target version",
+  failed: "Upgrade failed — manual intervention required",
+  cancelled: "Upgrade cancelled — session can be restarted from idle",
 };
 
 // ── DB helpers ──────────────────────────────────────────────────────────────
@@ -237,6 +263,15 @@ async function transition(sessionId, newState, patch = {}) {
   }
 
   await updateSession(sessionId, { ...patch, state: newState });
+  try {
+    await logAuditTrailEvent({
+      action: "upgrade_state_transition",
+      resource: `upgrade_session/${sessionId}`,
+      cluster: session.cluster || "local",
+      details: `${session.state} → ${newState}`,
+      metadata: { sessionId, fromState: session.state, toState: newState, fromVersion: session.fromVersion, targetVersion: session.targetVersion, crTicketId: session.crTicketId || null },
+    });
+  } catch {}
   return getSession(sessionId);
 }
 
@@ -1166,6 +1201,22 @@ export async function stepPostAssessment(sessionId) {
         close_notes: `Upgrade ${session.fromVersion} → ${session.targetVersion} completed successfully. Duration: ${postAssessment.duration}. Post-assessment: ${comparison.resolved.length} issues resolved, ${comparison.newIssues.length} new issues, ${comparison.persistent.length} persistent.`,
       });
     } catch { /* ServiceNow update failed — non-critical */ }
+
+    // Attach pre/post assessment DOCX reports to the CR
+    try {
+      const { generatePreAssessmentReport, generatePostAssessmentReport } = await import("./upgrade-report.js");
+      const updatedSession = await getSession(sessionId);
+      const preBuffer = await generatePreAssessmentReport(updatedSession);
+      await snowAttachFile("change_request", session.crSysId,
+        `Pre-Assessment-${session.cluster}-${session.fromVersion}-to-${session.targetVersion}.docx`,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document", preBuffer);
+      const postBuffer = await generatePostAssessmentReport(updatedSession);
+      await snowAttachFile("change_request", session.crSysId,
+        `Post-Assessment-${session.cluster}-${session.fromVersion}-to-${session.targetVersion}.docx`,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document", postBuffer);
+    } catch (attErr) {
+      console.warn(`[upgrade] Failed to attach reports to CR: ${attErr.message}`);
+    }
   }
 
   return { session: await getSession(sessionId), postAssessment };
@@ -1297,6 +1348,60 @@ export function formatSessionSummary(session) {
   }
 
   return lines.join("\n");
+}
+
+// ── Stage Timeout Checker ──────────────────────────────────────────────────
+
+export async function checkStageTimeouts() {
+  if (!(await init())) return [];
+  const timedOut = [];
+  const sessions = await listSessions();
+  for (const s of sessions) {
+    const timeout = STAGE_TIMEOUTS[s.state];
+    if (!timeout) continue;
+    const elapsed = Date.now() - new Date(s.updatedAt).getTime();
+    if (elapsed > timeout) {
+      try {
+        await transition(s.id, UPGRADE_STATES.FAILED, {
+          errorMessage: `Stage "${s.state}" timed out after ${Math.round(elapsed / 60000)} minutes (limit: ${Math.round(timeout / 60000)}m)`,
+        });
+        timedOut.push({ sessionId: s.id, state: s.state, elapsed: Math.round(elapsed / 60000) });
+      } catch {}
+    }
+  }
+  return timedOut;
+}
+
+// ── Cancel Session ─────────────────────────────────────────────────────────
+
+export async function cancelSession(sessionId, reason) {
+  const session = await getSession(sessionId);
+  if (!session) throw new Error("Session not found");
+  if (["completed", "failed", "cancelled"].includes(session.state)) {
+    throw new Error(`Cannot cancel session in "${session.state}" state`);
+  }
+  return transition(sessionId, UPGRADE_STATES.CANCELLED, {
+    errorMessage: reason || "Cancelled by user",
+  });
+}
+
+// ── Upgrade History ────────────────────────────────────────────────────────
+
+export async function getUpgradeHistory({ cluster, limit = 50 } = {}) {
+  if (!(await init())) return [];
+  let result;
+  if (cluster) {
+    result = await query(
+      `SELECT * FROM upgrade_sessions WHERE state IN ('completed','failed','cancelled') AND cluster = $1 ORDER BY updated_at DESC LIMIT $2`,
+      [cluster, limit]
+    );
+  } else {
+    result = await query(
+      `SELECT * FROM upgrade_sessions WHERE state IN ('completed','failed','cancelled') ORDER BY updated_at DESC LIMIT $1`,
+      [limit]
+    );
+  }
+  return (result?.rows || []).map(mapSession);
 }
 
 // ── New Token: UPGRADE_PROGRESS ─────────────────────────────────────────────
