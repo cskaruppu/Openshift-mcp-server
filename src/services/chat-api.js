@@ -14537,6 +14537,347 @@ async function handleFleetQuery(message, snapshot) {
     return parts.join("\n");
   }
 
+  // --- Cross-Cluster Drift Detection ---
+  if (/drift|compare.*cluster|config.*drift|version.*drift|inconsistenc/.test(lower)) {
+    await enrichFleetUpgrades(snapshot);
+    const parts = [hdr, `### Cross-Cluster Drift Detection`, ""];
+
+    // Version comparison
+    parts.push(`#### Version Comparison`);
+    parts.push(`| Cluster | Version | Channel |`);
+    parts.push(`| --- | --- | --- |`);
+    const versionCounts = {};
+    snapshot.forEach(c => { versionCounts[c.version] = (versionCounts[c.version] || 0) + 1; });
+    const majorityVersion = Object.entries(versionCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+    snapshot.forEach(c => {
+      const drift = c.version !== majorityVersion ? " **[DRIFT]**" : "";
+      parts.push(`| \`${c.name}\` | ${c.version}${drift} | ${c.channel || "n/a"} |`);
+    });
+
+    // Operator count comparison
+    parts.push("");
+    parts.push(`#### Operator Comparison`);
+    parts.push(`| Cluster | Total Operators | Degraded |`);
+    parts.push(`| --- | --- | --- |`);
+    const majorityOps = Math.round(snapshot.reduce((s, c) => s + c.operatorsTotal, 0) / total);
+    snapshot.forEach(c => {
+      const opDrift = Math.abs(c.operatorsTotal - majorityOps) > 2 ? " **[DRIFT]**" : "";
+      parts.push(`| \`${c.name}\` | ${c.operatorsTotal}${opDrift} | ${c.operatorsDegraded > 0 ? `**${c.operatorsDegraded}**` : "0"} |`);
+    });
+
+    // Node configuration comparison
+    parts.push("");
+    parts.push(`#### Node Configuration Comparison`);
+    parts.push(`| Cluster | Nodes | CPU | Memory (Gi) |`);
+    parts.push(`| --- | --- | --- | --- |`);
+    snapshot.forEach(c => {
+      parts.push(`| \`${c.name}\` | ${c.nodesReady}/${c.nodesTotal} | ${c.cpu} | ${c.memGi} |`);
+    });
+
+    // Drift Score calculation
+    parts.push("");
+    parts.push(`#### Drift Scores`);
+    parts.push(`| Cluster | Drift Score | Details |`);
+    parts.push(`| --- | --- | --- |`);
+    let driftingCount = 0;
+    snapshot.forEach(c => {
+      let score = 100;
+      const details = [];
+      if (c.version !== majorityVersion) { score -= 30; details.push("version mismatch"); }
+      if (Math.abs(c.operatorsTotal - majorityOps) > 2) { score -= 20; details.push("operator count differs"); }
+      if (c.operatorsDegraded > 0) { score -= 15; details.push("degraded operators"); }
+      if (c.nodesReady < c.nodesTotal) { score -= 10; details.push("nodes not ready"); }
+      if ((c.channel || "") !== (snapshot[0]?.channel || "")) { score -= 10; details.push("channel mismatch"); }
+      score = Math.max(0, score);
+      if (score < 100) driftingCount++;
+      parts.push(`| \`${c.name}\` | ${score}/100 | ${details.length ? details.join(", ") : "aligned"} |`);
+    });
+
+    parts.push("");
+    parts.push(driftingCount > 0
+      ? `**${driftingCount} cluster(s) show configuration drift.** Majority version: \`${majorityVersion}\`. Review drifted clusters and align configurations.`
+      : `[OK] All clusters are aligned — no drift detected.`);
+    return parts.join("\n");
+  }
+
+  // --- Fleet Rollout Planner ---
+  if (/rollout.*plan|upgrade.*plan.*fleet|upgrade.*all|fleet.*upgrade.*order|sequenc.*upgrade/.test(lower)) {
+    await enrichFleetUpgrades(snapshot);
+    const parts = [hdr, `### Fleet Rollout Planner`, ""];
+
+    // Group clusters by current version
+    const byVersion = {};
+    snapshot.forEach(c => {
+      if (!byVersion[c.version]) byVersion[c.version] = [];
+      byVersion[c.version].push(c);
+    });
+
+    parts.push(`#### Current Version Distribution`);
+    Object.entries(byVersion).forEach(([ver, clusters]) => {
+      parts.push(`- **${ver}**: ${clusters.map(c => c.name).join(", ")} (${clusters.length} cluster${clusters.length > 1 ? "s" : ""})`);
+    });
+    parts.push("");
+
+    // Determine target version (latest available across all clusters)
+    const allAvail = snapshot.flatMap(c => Array.isArray(c.availableUpdates) ? c.availableUpdates : []);
+    const targetVersion = _latestVersion(allAvail) || "current";
+
+    // Build sequenced upgrade plan: non-prod/spoke first, hub last
+    const rolePriority = { spoke: 1, managed: 2, standalone: 3, hub: 4 };
+    const ordered = [...snapshot]
+      .filter(c => c.isOpenShift && Array.isArray(c.availableUpdates) && c.availableUpdates.length > 0)
+      .sort((a, b) => (rolePriority[a.role] || 3) - (rolePriority[b.role] || 3));
+
+    parts.push(`#### Recommended Upgrade Sequence`);
+    parts.push(`| Order | Cluster | Role | Current | Target | Est. Time | Risk |`);
+    parts.push(`| --- | --- | --- | --- | --- | --- | --- |`);
+
+    let totalMinutes = 0;
+    if (ordered.length === 0) {
+      parts.push(`| — | *No clusters have available upgrades* | — | — | — | — | — |`);
+    } else {
+      ordered.forEach((c, i) => {
+        const latest = _latestVersion(c.availableUpdates) || targetVersion;
+        const estMinutes = c.nodesTotal <= 3 ? 45 : c.nodesTotal <= 10 ? 90 : 120;
+        totalMinutes += estMinutes;
+        const risk = c.role === "hub" ? "**HIGH**" : c.health !== "healthy" ? "**MEDIUM**" : "LOW";
+        parts.push(`| ${i + 1} | \`${c.name}\` | ${c.role} | ${c.version} | ${latest} | ~${estMinutes} min | ${risk} |`);
+      });
+    }
+
+    const upToDate = snapshot.filter(c => !c.isOpenShift || !Array.isArray(c.availableUpdates) || c.availableUpdates.length === 0);
+    if (upToDate.length > 0) {
+      parts.push("");
+      parts.push(`**Already up to date:** ${upToDate.map(c => `\`${c.name}\``).join(", ")}`);
+    }
+
+    parts.push("");
+    const totalHrs = (totalMinutes / 60).toFixed(1);
+    parts.push(`**Total estimated fleet upgrade time:** ~${totalMinutes} minutes (~${totalHrs} hours)`);
+    parts.push("");
+    parts.push(`#### Recommended Maintenance Window`);
+    parts.push(`- **Schedule:** Weekend or low-traffic period`);
+    parts.push(`- **Strategy:** Rolling upgrade — complete one cluster before starting the next`);
+    parts.push(`- **Pre-flight:** Run \`precheck upgrade\` on each cluster before proceeding`);
+    parts.push(`- **Rollback:** Keep previous version available for 24h post-upgrade`);
+    parts.push(`- **Order rationale:** Spoke/non-production clusters first to validate, hub cluster last to minimize control-plane risk`);
+    return parts.join("\n");
+  }
+
+  // --- Resource Rebalancing / Capacity Heatmap ---
+  if (/rebalanc|capacity.*imbalance|resource.*distribut|fleet.*utiliz|heatmap|workload.*spread/.test(lower)) {
+    const parts = [hdr, `### Fleet Resource Utilization & Capacity Heatmap`, ""];
+
+    parts.push(`| Cluster | CPU Cores | Mem (Gi) | Namespaces | Pods | Est. CPU Util | Est. Mem Util | Status |`);
+    parts.push(`| --- | --- | --- | --- | --- | --- | --- | --- |`);
+
+    const recommendations = [];
+    let fleetCpu = 0, fleetMem = 0, fleetPods = 0;
+
+    snapshot.forEach(c => {
+      // Estimate utilization: assume ~0.25 CPU and ~0.5 Gi per pod as a rough average
+      const estCpuUtil = c.cpu > 0 ? Math.min(100, Math.round((c.podsTotal * 0.25 / c.cpu) * 100)) : 0;
+      const estMemUtil = c.memGi > 0 ? Math.min(100, Math.round((c.podsTotal * 0.5 / c.memGi) * 100)) : 0;
+
+      let status;
+      if (estCpuUtil > 80 || estMemUtil > 80) {
+        status = "**[OVERLOADED]**";
+        recommendations.push(`- \`${c.name}\` is overloaded (CPU ~${estCpuUtil}%, Mem ~${estMemUtil}%) — consider migrating workloads to underutilized clusters or scaling up nodes.`);
+      } else if (estCpuUtil < 30 && estMemUtil < 30) {
+        status = "[UNDERUTILIZED]";
+        recommendations.push(`- \`${c.name}\` is underutilized (CPU ~${estCpuUtil}%, Mem ~${estMemUtil}%) — candidate to receive workloads from overloaded clusters or scale down.`);
+      } else {
+        status = "[OK]";
+      }
+
+      fleetCpu += c.cpu;
+      fleetMem += c.memGi;
+      fleetPods += c.podsTotal;
+
+      parts.push(`| \`${c.name}\` | ${c.cpu} | ${c.memGi} | ${c.namespaces} | ${c.podsTotal} | ~${estCpuUtil}% | ~${estMemUtil}% | ${status} |`);
+    });
+
+    // Fleet-wide totals and averages
+    const avgCpuUtil = fleetCpu > 0 ? Math.round((fleetPods * 0.25 / fleetCpu) * 100) : 0;
+    const avgMemUtil = fleetMem > 0 ? Math.round((fleetPods * 0.5 / fleetMem) * 100) : 0;
+
+    parts.push("");
+    parts.push(`#### Fleet Totals`);
+    parts.push(`- **Total CPU:** ${Math.round(fleetCpu)} cores · **Total Memory:** ${Math.round(fleetMem)} Gi · **Total Pods:** ${fleetPods}`);
+    parts.push(`- **Fleet-wide estimated utilization:** CPU ~${avgCpuUtil}% · Memory ~${avgMemUtil}%`);
+
+    if (recommendations.length > 0) {
+      parts.push("");
+      parts.push(`#### Rebalancing Recommendations`);
+      recommendations.forEach(r => parts.push(r));
+    } else {
+      parts.push("");
+      parts.push(`[OK] Resource distribution is balanced across the fleet — no rebalancing needed.`);
+    }
+    return parts.join("\n");
+  }
+
+  // --- Incident Correlation ---
+  if (/correlat|pattern|common.*issue|shared.*problem|fleet.*alert|cross.*cluster.*issue/.test(lower)) {
+    const parts = [hdr, `### Fleet Incident Correlation`, ""];
+
+    const findings = [];
+
+    // Check for common degraded operators across clusters
+    const clustersWithDegradedOps = snapshot.filter(c => c.operatorsDegraded > 0);
+    if (clustersWithDegradedOps.length > 1) {
+      findings.push({
+        type: "Operator Issues",
+        severity: clustersWithDegradedOps.length >= Math.ceil(total / 2) ? "HIGH" : "MEDIUM",
+        detail: `${clustersWithDegradedOps.length}/${total} clusters have degraded operators`,
+        clusters: clustersWithDegradedOps.map(c => `\`${c.name}\` (${c.operatorsDegraded} degraded)`)
+      });
+    } else if (clustersWithDegradedOps.length === 1) {
+      findings.push({
+        type: "Operator Issues",
+        severity: "LOW",
+        detail: `Isolated operator degradation on 1 cluster`,
+        clusters: clustersWithDegradedOps.map(c => `\`${c.name}\` (${c.operatorsDegraded} degraded)`)
+      });
+    }
+
+    // Check for pod failure patterns
+    const clustersWithPodFailures = snapshot.filter(c => c.podsFailed > 0);
+    if (clustersWithPodFailures.length > 1) {
+      const totalFailed = clustersWithPodFailures.reduce((s, c) => s + c.podsFailed, 0);
+      findings.push({
+        type: "Pod Health",
+        severity: totalFailed > 10 ? "HIGH" : "MEDIUM",
+        detail: `${totalFailed} failed pods across ${clustersWithPodFailures.length} clusters — possible systemic issue`,
+        clusters: clustersWithPodFailures.map(c => `\`${c.name}\` (${c.podsFailed} failed)`)
+      });
+    }
+
+    // Check for pending pods pattern
+    const clustersWithPending = snapshot.filter(c => c.podsPending > 5);
+    if (clustersWithPending.length > 1) {
+      findings.push({
+        type: "Pod Health",
+        severity: "MEDIUM",
+        detail: `Multiple clusters have high pending pod counts — possible scheduling or resource issue`,
+        clusters: clustersWithPending.map(c => `\`${c.name}\` (${c.podsPending} pending)`)
+      });
+    }
+
+    // Check for node health patterns
+    const clustersWithNodeIssues = snapshot.filter(c => c.nodesReady < c.nodesTotal);
+    if (clustersWithNodeIssues.length > 1) {
+      findings.push({
+        type: "Node Health",
+        severity: "HIGH",
+        detail: `${clustersWithNodeIssues.length} clusters have unready nodes — potential infrastructure issue`,
+        clusters: clustersWithNodeIssues.map(c => `\`${c.name}\` (${c.nodesReady}/${c.nodesTotal} ready)`)
+      });
+    } else if (clustersWithNodeIssues.length === 1) {
+      findings.push({
+        type: "Node Health",
+        severity: "LOW",
+        detail: `Isolated node issue on 1 cluster`,
+        clusters: clustersWithNodeIssues.map(c => `\`${c.name}\` (${c.nodesReady}/${c.nodesTotal} ready)`)
+      });
+    }
+
+    // Check for unhealthy cluster concentration
+    const unhealthyClusters = snapshot.filter(c => c.health === "degraded" || c.health === "critical");
+    if (unhealthyClusters.length > 1) {
+      findings.push({
+        type: "Cluster Health",
+        severity: "HIGH",
+        detail: `${unhealthyClusters.length} clusters are degraded/critical — investigate common root cause`,
+        clusters: unhealthyClusters.map(c => `\`${c.name}\` (${c.health})`)
+      });
+    }
+
+    if (findings.length === 0) {
+      parts.push(`[OK] No correlated incidents detected across the fleet. All clusters appear to have independent operational profiles.`);
+      return parts.join("\n");
+    }
+
+    // Group findings by type
+    const byType = {};
+    findings.forEach(f => {
+      if (!byType[f.type]) byType[f.type] = [];
+      byType[f.type].push(f);
+    });
+
+    Object.entries(byType).forEach(([type, items]) => {
+      parts.push(`#### ${type}`);
+      items.forEach(f => {
+        const sevIcon = f.severity === "HIGH" ? "[CRITICAL]" : f.severity === "MEDIUM" ? "[WARNING]" : "[INFO]";
+        parts.push(`- ${sevIcon} **${f.severity}** — ${f.detail}`);
+        parts.push(`  - Affected: ${f.clusters.join(", ")}`);
+      });
+      parts.push("");
+    });
+
+    parts.push(`**${findings.length} correlated finding(s)** detected. Investigate shared infrastructure, networking, or recent changes that may affect multiple clusters.`);
+    return parts.join("\n");
+  }
+
+  // --- Fleet Compliance Summary ---
+  if (/compliance.*summary|fleet.*compliance|audit.*fleet|benchmark/.test(lower)) {
+    await enrichFleetUpgrades(snapshot);
+    const parts = [hdr, `### Fleet Compliance Summary`, ""];
+
+    parts.push(`| Cluster | Security Score | Grade | Version | Up-to-date? | Nodes Ready? | Compliant? |`);
+    parts.push(`| --- | --- | --- | --- | --- | --- | --- |`);
+
+    let totalScore = 0, scoredCount = 0, nonCompliant = 0;
+    const recommendations = [];
+
+    snapshot.forEach(c => {
+      const hasScore = c.securityScore != null;
+      const score = hasScore ? `${c.securityScore}/100` : "n/a";
+      const grade = hasScore ? c.securityGrade : "n/a";
+      if (hasScore) { totalScore += c.securityScore; scoredCount++; }
+
+      const hasUpgrades = Array.isArray(c.availableUpdates) && c.availableUpdates.length > 0;
+      const upToDate = hasUpgrades ? "**No**" : "Yes";
+
+      const nodesOk = c.nodesReady === c.nodesTotal;
+      const nodesStatus = nodesOk ? `Yes (${c.nodesReady}/${c.nodesTotal})` : `**No** (${c.nodesReady}/${c.nodesTotal})`;
+
+      const isCompliant = hasScore && c.securityScore >= 70 && !hasUpgrades && nodesOk;
+      if (!isCompliant) {
+        nonCompliant++;
+        const reasons = [];
+        if (hasScore && c.securityScore < 70) reasons.push(`low security score (${c.securityScore})`);
+        if (!hasScore) reasons.push("no security data");
+        if (hasUpgrades) reasons.push("upgrades available");
+        if (!nodesOk) reasons.push("nodes not ready");
+        recommendations.push(`- \`${c.name}\`: ${reasons.join(", ")}`);
+      }
+
+      parts.push(`| \`${c.name}\` | ${score} | ${grade} | ${c.version} | ${upToDate} | ${nodesStatus} | ${isCompliant ? "[OK]" : "**[FAIL]**"} |`);
+    });
+
+    const avgScore = scoredCount > 0 ? Math.round(totalScore / scoredCount) : 0;
+    const compliantCount = total - nonCompliant;
+
+    parts.push("");
+    parts.push(`#### Fleet Compliance Score`);
+    parts.push(`- **Average security score:** ${avgScore}/100`);
+    parts.push(`- **Compliant clusters:** ${compliantCount}/${total} (${Math.round((compliantCount / total) * 100)}%)`);
+    parts.push(`- **Non-compliant clusters:** ${nonCompliant}`);
+
+    if (recommendations.length > 0) {
+      parts.push("");
+      parts.push(`#### Non-Compliant Clusters & Recommendations`);
+      recommendations.forEach(r => parts.push(r));
+      parts.push("");
+      parts.push(`**Action items:** Address security findings, apply pending upgrades, and ensure all nodes are in ready state.`);
+    } else {
+      parts.push("");
+      parts.push(`[OK] All clusters meet compliance baseline — security score >= 70, up-to-date versions, all nodes ready.`);
+    }
+    return parts.join("\n");
+  }
+
   // --- Inventory / versions / capacity ---
   if (/\binventory|\blist.+cluster|\ball.+cluster|\bversion|\bwhat.+cluster|\bcapacity|\bnodes?\b|\bcpu|\bmemory/.test(lower)) {
     const parts = [hdr, `### Fleet Inventory`, ""];

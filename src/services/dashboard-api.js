@@ -2005,18 +2005,24 @@ export async function handleUpgradeOrchestrator(req, res, action) {
         const session = await uoGetSession(sessionId);
         if (!session) return json(res, 404, { error: "Session not found" });
         const formData = buildCRFormData(session);
+        let ticketId, sysId;
         try {
           const { createChangeRequest } = await import("../utils/servicenow-client.js");
           const result = await createChangeRequest(formData);
           const record = result?.result || result;
-          const ticketId = record.number || record.task_effective_number || "";
-          const sysId = record.sys_id || "";
+          ticketId = record.number || record.task_effective_number || "";
+          sysId = record.sys_id || "";
           if (!ticketId) return json(res, 500, { error: "CR created but no ticket number returned", raw: record });
-          const updated = await stepLinkCR(sessionId, ticketId, sysId);
-          return json(res, 200, { session: updated, ticketId, sysId });
         } catch (err) {
-          return json(res, 500, { error: `ServiceNow CR creation failed: ${err.message}` });
+          if (/not configured|not set/i.test(err.message)) {
+            ticketId = `LOCAL-CR-${Date.now().toString(36).toUpperCase()}`;
+            sysId = "";
+          } else {
+            return json(res, 500, { error: `ServiceNow CR creation failed: ${err.message}` });
+          }
         }
+        const updated = await stepLinkCR(sessionId, ticketId, sysId);
+        return json(res, 200, { session: updated, ticketId, sysId, local: !sysId });
       }
 
       case "cr-status": {

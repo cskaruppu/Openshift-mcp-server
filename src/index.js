@@ -66,6 +66,7 @@ import { loadPolicies, getPolicies, getPolicy, createPolicy, updatePolicy, delet
 import { loadChannels, getChannels, createChannel, updateChannel, deleteChannel, testChannel, notify, getNotificationHistory } from "./services/notifications.js";
 import { initAuditLog, logAuditEvent as logAuditTrailEvent, queryAuditLog, getAuditStats, exportAuditLog } from "./services/audit-log.js";
 import { loadState, saveState } from "./utils/state-store.js";
+import { generateAgentYAML } from "./utils/generate-agent-yaml.js";
 import { recordIncidentResolution } from "./services/incident-rag.js";
 import { initQueryTracer, getTraces, getTrace, getAgentAnalytics, getTraceStats } from "./services/query-tracer.js";
 import { initIncidentManager, declareIncident, updateIncident, addTimelineEvent, getIncident, listIncidents, getIncidentStats as getLifecycleIncidentStats, resolveIncident, closeIncident } from "./services/incident-manager.js";
@@ -3658,6 +3659,48 @@ spec:
       const agent = clusterParam ? _connectedAgents.get(findClusterKey(clusterParam) || clusterParam) : null;
       const withActions = url.searchParams.get("actions") === "true" || agent?.actionsEnabled === true;
       return sendJson(res, 200, { version: "1.2.0", actions: withActions, rules: buildDesiredRBACRules(platform, withActions) });
+    }
+
+    // Agent YAML download — returns the full deployment manifest for a registered cluster.
+    // Usage: curl -O <hub>/api/agent/yaml/<clusterName>
+    {
+      const yamlMatch = url.pathname.match(/^\/api\/agent\/yaml\/([^/]+)$/);
+      if (yamlMatch && req.method === "GET") {
+        const rawName = decodeURIComponent(yamlMatch[1]);
+        const clusterName = findClusterKey(rawName) || rawName;
+        const agent = _connectedAgents.get(clusterName);
+        if (!agent) return sendJson(res, 404, { error: `Cluster "${rawName}" not found` });
+        const hubUrl = process.env.HUB_EXTERNAL_URL || process.env.HUB_SERVER_URL || "http://localhost:3001";
+        const platform = agent.platform || "k8s";
+        const yaml = generateAgentYAML(platform, agent.clusterName || clusterName, agent.apiUrl || "", !!agent.actionsEnabled, hubUrl);
+        res.writeHead(200, {
+          "Content-Type": "application/x-yaml",
+          "Content-Disposition": `attachment; filename=tcs-agentic-ai-${platform}.yaml`,
+        });
+        return res.end(yaml);
+      }
+    }
+
+    // Agent YAML command helper — returns JSON with curl, kubectl/oc apply, and the full YAML.
+    // Usage: curl <hub>/api/agent/yaml-cmd/<clusterName>
+    {
+      const yamlCmdMatch = url.pathname.match(/^\/api\/agent\/yaml-cmd\/([^/]+)$/);
+      if (yamlCmdMatch && req.method === "GET") {
+        const rawName = decodeURIComponent(yamlCmdMatch[1]);
+        const clusterName = findClusterKey(rawName) || rawName;
+        const agent = _connectedAgents.get(clusterName);
+        if (!agent) return sendJson(res, 404, { error: `Cluster "${rawName}" not found` });
+        const hubUrl = process.env.HUB_EXTERNAL_URL || process.env.HUB_SERVER_URL || "http://localhost:3001";
+        const platform = agent.platform || "k8s";
+        const cli = platform === "openshift" ? "oc" : "kubectl";
+        const yaml = generateAgentYAML(platform, agent.clusterName || clusterName, agent.apiUrl || "", !!agent.actionsEnabled, hubUrl);
+        const encodedName = encodeURIComponent(clusterName);
+        return sendJson(res, 200, {
+          curl: `curl -sO ${hubUrl}/api/agent/yaml/${encodedName}`,
+          apply: `${cli} apply -f tcs-agentic-ai-${platform}.yaml`,
+          yaml,
+        });
+      }
     }
 
     // Sync RBAC — push RBAC update to a specific agent or all agents (manual trigger)

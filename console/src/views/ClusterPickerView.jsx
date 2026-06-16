@@ -433,6 +433,32 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
 
   const pInfo = platform ? PLATFORMS[platform] : null;
 
+  const STEP_LIST = [
+    { id: "platform", num: 1, label: "Platform" },
+    { id: "form", num: 2, label: "Configure" },
+    { id: "review", num: 3, label: "Review" },
+    { id: "yaml", num: 4, label: "Deploy" },
+  ];
+  const stepIdx = STEP_LIST.findIndex(s => s.id === step);
+
+  const goBack = () => {
+    if (step === "yaml") setStep("review");
+    else if (step === "review") setStep("form");
+    else if (step === "form") setStep("platform");
+  };
+
+  const hubUrl = window.location.origin;
+  const cliTool = PLATFORMS[platform]?.cli || "kubectl";
+  const safeClusterName = (name || "cluster").replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase();
+  const curlCmd = `curl -sL ${hubUrl}/api/agent/yaml/${encodeURIComponent(safeClusterName)} | ${cliTool} apply -f -`;
+
+  const copyCurl = useCallback(() => {
+    navigator.clipboard.writeText(curlCmd).then(
+      () => showToast("Command copied to clipboard", "ok"),
+      () => showToast("Copy failed", "err")
+    );
+  }, [curlCmd]);
+
   return (
     <div className="ccm-overlay" onClick={onClose}>
       <div className="ccm" onClick={(e) => e.stopPropagation()}>
@@ -440,15 +466,31 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
         <div className="ccm-header">
           <div className="ccm-header-left">
             {step !== "platform" && (
-              <button className="ccm-back" onClick={() => setStep(step === "yaml" ? "form" : "platform")}>←</button>
+              <button className="ccm-back" onClick={goBack}>←</button>
             )}
             <h2>
               {step === "platform" && "Connect New Cluster"}
               {step === "form" && pInfo && <><span style={{ color: pInfo.color }}>{pInfo.icon}</span>{" "}{isEdit ? "Edit" : "Connect"} {pInfo.name} Cluster</>}
-              {step === "yaml" && "Agent Deployment YAML"}
+              {step === "review" && "Review Configuration"}
+              {step === "yaml" && "Deploy Agent"}
             </h2>
           </div>
           <button className="ccm-close" onClick={onClose}>×</button>
+        </div>
+
+        {/* Step Progress Bar */}
+        <div className="ccm-steps">
+          {STEP_LIST.map((s, i) => {
+            const done = i < stepIdx;
+            const active = i === stepIdx;
+            return (
+              <div key={s.id} className={"ccm-step" + (done ? " done" : "") + (active ? " active" : "")}>
+                <div className="ccm-step-circle">{done ? "✓" : s.num}</div>
+                <span className="ccm-step-label">{s.label}</span>
+                {i < STEP_LIST.length - 1 && <div className={"ccm-step-line" + (done ? " done" : "")} />}
+              </div>
+            );
+          })}
         </div>
 
         {/* Step 1: Platform Selection */}
@@ -529,40 +571,137 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
                 <span>Enable remote actions (scale, restart, cordon) from hub AI Chat</span>
               </label>
 
-              {/* Status */}
+              {/* Actions */}
+              <div className="ccm-actions">
+                <button className="ccm-connect-btn" onClick={() => { if (!name.trim()) { setStatus({ type: "err", msg: "Please enter a cluster name" }); return; } setStep("review"); }}>
+                  Next: Review
+                </button>
+              </div>
+
               {status && (
                 <div className={"ccm-status ccm-status-" + status.type}>{status.msg}</div>
               )}
+            </div>
+          </div>
+        )}
 
-              {/* Actions */}
-              <div className="ccm-actions">
+        {/* Step 3: Review */}
+        {step === "review" && (
+          <div className="ccm-body">
+            <div className="ccm-review">
+              <div className="ccm-review-card">
+                <div className="ccm-review-header">
+                  {pInfo && <span style={{ fontSize: 28 }}>{pInfo.icon}</span>}
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 16 }}>{name || "—"}</div>
+                    <div style={{ fontSize: 12, color: "var(--text2)" }}>{pInfo?.name || platform} Cluster</div>
+                  </div>
+                </div>
+                <div className="ccm-review-grid">
+                  <div className="ccm-review-item">
+                    <span className="ccm-review-label">Platform</span>
+                    <span className="ccm-review-value" style={{ color: pInfo?.color }}>{pInfo?.name || platform}</span>
+                  </div>
+                  <div className="ccm-review-item">
+                    <span className="ccm-review-label">API Server</span>
+                    <span className="ccm-review-value" style={{ fontFamily: "'SF Mono', 'Fira Code', monospace", fontSize: 11 }}>{apiUrl || "Auto-detect via agent"}</span>
+                  </div>
+                  <div className="ccm-review-item">
+                    <span className="ccm-review-label">Authentication</span>
+                    <span className="ccm-review-value">{token ? (kcParsed ? "Kubeconfig" : "Bearer Token") : "ServiceAccount (in-cluster)"}</span>
+                  </div>
+                  <div className="ccm-review-item">
+                    <span className="ccm-review-label">Remote Actions</span>
+                    <span className="ccm-review-value" style={{ color: allowActions ? "var(--ok)" : "var(--text2)" }}>{allowActions ? "Enabled" : "Disabled"}</span>
+                  </div>
+                  <div className="ccm-review-item">
+                    <span className="ccm-review-label">CLI Tool</span>
+                    <span className="ccm-review-value" style={{ fontFamily: "'SF Mono', 'Fira Code', monospace" }}>{cliTool}</span>
+                  </div>
+                  <div className="ccm-review-item">
+                    <span className="ccm-review-label">Agent Namespace</span>
+                    <span className="ccm-review-value" style={{ fontFamily: "'SF Mono', 'Fira Code', monospace", fontSize: 11 }}>{PLATFORMS[platform]?.ns || "tcs-agentic-system"}</span>
+                  </div>
+                </div>
+
+                <div className="ccm-review-what">
+                  <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6, color: "var(--text)" }}>What will be created:</div>
+                  <div className="ccm-review-resources">
+                    <span>Namespace</span><span>ServiceAccount</span><span>ClusterRole</span><span>ClusterRoleBinding</span>
+                    <span>ConfigMap</span><span>Secret</span><span>Deployment</span><span>Service</span>
+                    {platform === "openshift" && <span>Route</span>}
+                  </div>
+                </div>
+              </div>
+
+              {status && (
+                <div className={"ccm-status ccm-status-" + status.type} style={{ marginTop: 12 }}>{status.msg}</div>
+              )}
+
+              <div className="ccm-actions" style={{ marginTop: 16 }}>
                 <button className="ccm-connect-btn" onClick={handleConnect} disabled={connecting}>
-                  {connecting ? "Connecting…" : isEdit ? "Update & Test Connection" : "Register & Test Connection"}
+                  {connecting ? "Registering…" : isEdit ? "Update & Register" : "Register Cluster"}
                 </button>
-                <button className="ccm-yaml-btn" onClick={() => setStep("yaml")}>View Agent YAML</button>
+                <button className="ccm-yaml-btn" onClick={() => setStep("yaml")}>Skip to YAML</button>
               </div>
             </div>
           </div>
         )}
 
-        {/* Step 3: YAML output */}
+        {/* Step 4: Deploy Agent */}
         {step === "yaml" && (
           <div className="ccm-body">
             {status && (
               <div className={"ccm-status ccm-status-" + status.type} style={{ marginBottom: 12 }}>{status.msg}</div>
             )}
-            <div className="ccm-yaml-header">
-              <span className="ccm-yaml-filename">tcs-agentic-ai-{platform || "k8s"}.yaml</span>
-              <div className="ccm-yaml-actions">
-                <button className="ccm-copy-btn" onClick={copyYAML}>Copy</button>
-                <button className="ccm-download-btn" onClick={downloadYAML}>Download</button>
+
+            {/* Quick Deploy — curl one-liner */}
+            <div className="ccm-deploy-section">
+              <div className="ccm-deploy-header">
+                <span style={{ fontSize: 16 }}>&#9889;</span>
+                <span style={{ fontWeight: 700, fontSize: 14 }}>Quick Deploy (One Command)</span>
+              </div>
+              <p className="ccm-deploy-desc">Run this on the target cluster to download and apply the agent YAML in one step:</p>
+              <div className="ccm-curl-box">
+                <code>{curlCmd}</code>
+                <button className="ccm-curl-copy" onClick={copyCurl} title="Copy command">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                </button>
               </div>
             </div>
-            <pre className="ccm-yaml-block"><code>{yaml}</code></pre>
-            <div className="ccm-yaml-instructions">
-              <h4>Deploy the agent:</h4>
-              <code className="ccm-cmd">{PLATFORMS[platform]?.cli || "kubectl"} apply -f tcs-agentic-ai-{platform || "k8s"}.yaml</code>
-              <p>The agent will register with this hub automatically and begin reporting cluster telemetry.</p>
+
+            {/* OR separator */}
+            <div className="ccm-or-divider"><span>OR</span></div>
+
+            {/* Manual Deploy — download/copy YAML */}
+            <div className="ccm-deploy-section">
+              <div className="ccm-deploy-header">
+                <span style={{ fontSize: 16 }}>&#128196;</span>
+                <span style={{ fontWeight: 700, fontSize: 14 }}>Manual Deploy</span>
+              </div>
+              <div className="ccm-yaml-header">
+                <span className="ccm-yaml-filename">tcs-agentic-ai-{platform || "k8s"}.yaml</span>
+                <div className="ccm-yaml-actions">
+                  <button className="ccm-copy-btn" onClick={copyYAML}>Copy YAML</button>
+                  <button className="ccm-download-btn" onClick={downloadYAML}>Download</button>
+                </div>
+              </div>
+              <pre className="ccm-yaml-block" style={{ maxHeight: 220 }}><code>{yaml}</code></pre>
+              <div className="ccm-yaml-instructions">
+                <h4>Then apply:</h4>
+                <code className="ccm-cmd">{cliTool} apply -f tcs-agentic-ai-{platform || "k8s"}.yaml</code>
+              </div>
+            </div>
+
+            {/* What happens next */}
+            <div className="ccm-next-steps">
+              <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8 }}>What happens next:</div>
+              <div className="ccm-next-list">
+                <div className="ccm-next-item"><span className="ccm-next-num">1</span><span>Agent pod starts in the target cluster</span></div>
+                <div className="ccm-next-item"><span className="ccm-next-num">2</span><span>Connects back to this hub via WebSocket</span></div>
+                <div className="ccm-next-item"><span className="ccm-next-num">3</span><span>Cluster card turns <strong style={{ color: "var(--ok)" }}>Active</strong> within 60 seconds</span></div>
+                <div className="ccm-next-item"><span className="ccm-next-num">4</span><span>Full telemetry, AI Chat, and Fleet AI available</span></div>
+              </div>
             </div>
           </div>
         )}

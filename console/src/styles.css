@@ -2661,18 +2661,125 @@ h3.widget-title {
   font-size: 12px; color: var(--accent3, #06b6d4);
 }
 
+/* ── Step Progress Bar ── */
+.ccm-steps {
+  display: flex; align-items: center; padding: 12px 24px; gap: 0;
+  border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--bg2) 50%, transparent);
+}
+.ccm-step {
+  display: flex; align-items: center; gap: 6px; flex: 1; position: relative;
+}
+.ccm-step:last-child { flex: 0 0 auto; }
+.ccm-step-circle {
+  width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; flex-shrink: 0;
+  background: var(--bg2); border: 2px solid var(--border); color: var(--text2);
+  transition: all .2s;
+}
+.ccm-step.active .ccm-step-circle {
+  background: var(--accent2); border-color: var(--accent2); color: #fff;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent2) 20%, transparent);
+}
+.ccm-step.done .ccm-step-circle {
+  background: var(--ok); border-color: var(--ok); color: #fff;
+}
+.ccm-step-label {
+  font-size: 11px; font-weight: 600; color: var(--text2); white-space: nowrap;
+}
+.ccm-step.active .ccm-step-label { color: var(--accent2); }
+.ccm-step.done .ccm-step-label { color: var(--ok); }
+.ccm-step-line {
+  flex: 1; height: 2px; background: var(--border); margin: 0 8px; min-width: 20px;
+  transition: background .2s;
+}
+.ccm-step-line.done { background: var(--ok); }
+
+/* ── Review Step ── */
+.ccm-review { display: flex; flex-direction: column; gap: 12px; }
+.ccm-review-card {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+  padding: 18px 20px; display: flex; flex-direction: column; gap: 16px;
+}
+.ccm-review-header {
+  display: flex; align-items: center; gap: 12px;
+  padding-bottom: 14px; border-bottom: 1px solid var(--border);
+}
+.ccm-review-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px;
+}
+.ccm-review-item { display: flex; flex-direction: column; gap: 2px; }
+.ccm-review-label { font-size: 10.5px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .5px; }
+.ccm-review-value { font-size: 13px; color: var(--text); word-break: break-all; }
+.ccm-review-what {
+  padding-top: 14px; border-top: 1px solid var(--border);
+}
+.ccm-review-resources {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.ccm-review-resources span {
+  padding: 3px 10px; border-radius: 6px; font-size: 11px; font-weight: 600;
+  background: color-mix(in srgb, var(--accent2) 12%, transparent);
+  color: var(--accent2); border: 1px solid color-mix(in srgb, var(--accent2) 25%, transparent);
+}
+
+/* ── Deploy Step ── */
+.ccm-deploy-section {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px 18px; margin-bottom: 0;
+}
+.ccm-deploy-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+}
+.ccm-deploy-desc { font-size: 12px; color: var(--text2); margin: 0 0 10px; }
+.ccm-curl-box {
+  display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+  background: var(--bg-deep, #0a0e1a); border: 1px solid var(--border); border-radius: 8px;
+  font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; color: var(--accent3, #06b6d4);
+  overflow-x: auto; white-space: nowrap;
+}
+.ccm-curl-box code { flex: 1; min-width: 0; }
+.ccm-curl-copy {
+  flex-shrink: 0; background: none; border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 6px; color: var(--text2); cursor: pointer; display: flex; align-items: center;
+  transition: all .15s;
+}
+.ccm-curl-copy:hover { border-color: var(--accent2); color: var(--accent2); }
+.ccm-or-divider {
+  display: flex; align-items: center; gap: 12px; margin: 14px 0;
+  color: var(--text2); font-size: 11px; font-weight: 600;
+}
+.ccm-or-divider::before, .ccm-or-divider::after {
+  content: ""; flex: 1; height: 1px; background: var(--border);
+}
+.ccm-next-steps {
+  margin-top: 14px; padding: 14px 16px; background: color-mix(in srgb, var(--ok) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ok) 20%, transparent); border-radius: 10px;
+}
+.ccm-next-list { display: flex; flex-direction: column; gap: 8px; }
+.ccm-next-item { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text); }
+.ccm-next-num {
+  width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: var(--ok); color: #fff; font-size: 11px; font-weight: 700; flex-shrink: 0;
+}
+
 /* Light theme overrides */
 .light-theme .ccm { background: #fff; border-color: #e5e7eb; }
 .light-theme .ccm-header { background: #f8fafc; }
 .light-theme .ccm-platform-card { background: #f8fafc; border-color: #e5e7eb; }
 .light-theme .ccm-field input, .light-theme .ccm-field textarea { background: #fff; border-color: #e5e7eb; color: #1e293b; }
 .light-theme .ccm-yaml-block { background: #f1f5f9; color: #1e293b; }
+.light-theme .ccm-review-card { background: #f8fafc; }
+.light-theme .ccm-deploy-section { background: #f8fafc; }
+.light-theme .ccm-curl-box { background: #1e293b; }
 
 /* Responsive */
 @media (max-width: 600px) {
   .ccm-platform-grid { grid-template-columns: repeat(2, 1fr); }
   .ccm { max-width: 100%; }
   .ccm-actions { flex-direction: column; }
+  .ccm-review-grid { grid-template-columns: 1fr; }
+  .ccm-steps { padding: 10px 12px; }
+  .ccm-step-label { display: none; }
 }
 
 /* ── Enhanced Audit View ── */
