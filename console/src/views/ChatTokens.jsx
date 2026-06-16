@@ -842,13 +842,14 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
   // are the states from which the step's action is a valid next move — the
   // action button only shows when the current state is one of them, so we never
   // re-fire a step that already ran (which would be an invalid transition).
+  const isLocalCR = s.crTicketId && !s.crSysId;
   const STEPS = [
     { key: "version_validated", label: "Version Validation", desc: "Confirm target version is available in the upgrade graph", fromStates: ["idle"], action: handleValidate, actionLabel: "Validate" },
     { key: "pre_assessed", label: "Pre-Assessment (22 checks)", desc: "Operators, nodes, etcd, certs, storage, MCPs health check", fromStates: ["version_validated", "channel_switched"], action: handlePreAssess, actionLabel: "Run Assessment" },
     { key: "component_analyzed", label: "Component Analysis", desc: "Deep inspection of degraded operators, failing pods, cert expiry", fromStates: ["pre_assessed"], action: handleComponentAnalysis, actionLabel: "Analyze" },
     { key: "remediation_proposed", label: "Remediation Plan", desc: "AI-generated fix plan for all detected issues", fromStates: ["pre_assessed", "component_analyzed"], action: handleRemediationPlan, actionLabel: "Build Plan" },
     { key: "cr_submitted", label: "Change Request", desc: "Raise ServiceNow CR with pre-assessment report and upgrade plan", fromStates: ["remediation_proposed", "remediated"], action: handleRaiseCR, actionLabel: "Raise CR" },
-    { key: "cr_approved", label: "CR Approved", desc: "Change Request approved — cleared for execution", fromStates: ["cr_submitted"], action: handleCheckCR, actionLabel: "Check Status" },
+    { key: "cr_approved", label: "CR Approved", desc: isLocalCR ? "Blocked — ServiceNow CR required for approval gate" : "Change Request approved — cleared for execution", fromStates: ["cr_submitted"], action: isLocalCR ? null : handleCheckCR, actionLabel: "Check Status" },
     { key: "dry_run_passed", label: "Dry Run", desc: "Simulate upgrade to validate no blocking conditions", fromStates: ["cr_approved"], action: handleDryRun, actionLabel: "Run Dry Run" },
     { key: "executing", label: "Execute Upgrade", desc: "ClusterVersion patched — rolling upgrade in progress", fromStates: ["cr_approved", "dry_run_passed"], action: handleExecute, actionLabel: "Execute" },
     { key: "completed", label: "Post-Assessment", desc: "Verify all operators healthy on target version", fromStates: ["monitoring", "executing"], action: handlePostAssess, actionLabel: "Run Post-Assessment" },
@@ -889,10 +890,18 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
       return { text: `${plan.totalFixes || plan.fixes?.length || 0} fixes`, color: "var(--warn)" };
     }
     if (key === "cr_submitted" && s.crTicketId) {
-      return { text: s.crTicketId, color: "var(--accent2)" };
+      const isLocal = !s.crSysId;
+      return { text: isLocal ? `${s.crTicketId} (Local)` : s.crTicketId, color: isLocal ? "var(--warn)" : "var(--accent2)" };
     }
-    if (key === "cr_approved" && s.crTicketId) {
-      return { text: "Approved", color: "var(--ok)" };
+    if (key === "cr_approved") {
+      const crApprovedIdx = STATE_ORDER.indexOf("cr_approved");
+      if (currentIdx >= crApprovedIdx) {
+        return { text: "Approved", color: "var(--ok)" };
+      }
+      if (state === "cr_submitted" && s.crTicketId) {
+        return { text: s.crSysId ? "Awaiting Approval" : "Local — No Gate", color: s.crSysId ? "var(--warn)" : "var(--text2)" };
+      }
+      return null;
     }
     if (key === "dry_run_passed" && s.dryRunResult) {
       return { text: s.dryRunResult.passed !== false ? "Passed" : "Failed", color: s.dryRunResult.passed !== false ? "var(--ok)" : "var(--crit)" };
@@ -1050,8 +1059,9 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
             </div>
           )}
           {isLocal && (
-            <div style={{ fontSize: 11.5, color: "var(--text2)" }}>
-              Local CR created (ServiceNow not configured). You can proceed directly or configure ServiceNow in Settings.
+            <div style={{ fontSize: 11.5, color: "var(--warn)", lineHeight: 1.5 }}>
+              <strong>Blocked:</strong> Local CR created because ServiceNow is not configured. The upgrade cannot proceed without a real ServiceNow Change Request and CAB approval.
+              <br />Configure ServiceNow credentials in <strong>Settings → ServiceNow</strong> and re-raise the CR.
             </div>
           )}
           <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
@@ -1061,13 +1071,30 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
                 {stepRunning === "cr-status" ? "Checking…" : "Check CR Status"}
               </button>
             )}
+            {isLocal && (
+              <button className="ux-btn ux-btn-dryrun" style={{ padding: "4px 12px", fontSize: 11, borderColor: "var(--warn)" }}
+                onClick={(e) => { e.stopPropagation(); handleRaiseCR(); }} disabled={!!stepRunning}>
+                {stepRunning === "raise-cr" ? "Raising…" : "Re-raise CR (ServiceNow)"}
+              </button>
+            )}
           </div>
         </div>
       );
     }
 
-    // ── CR Approved: confirmation ──
+    // ── CR Approved: confirmation or blocked state ──
     if (key === "cr_approved" && s.crTicketId) {
+      if (!s.crSysId && state === "cr_submitted") {
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ color: "var(--crit)", fontWeight: 600 }}>🚫 Upgrade Blocked — CR Approval Required</div>
+            <div style={{ fontSize: 11.5, color: "var(--text2)", lineHeight: 1.5 }}>
+              This upgrade cannot proceed without a real ServiceNow Change Request and CAB approval.
+              Configure ServiceNow in <strong>Settings → ServiceNow</strong>, then re-raise the CR from the step above.
+            </div>
+          </div>
+        );
+      }
       return (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <div style={{ color: "var(--ok)", fontWeight: 600 }}>✅ Change Request {s.crTicketId} approved</div>

@@ -2007,6 +2007,11 @@ export async function handleUpgradeOrchestrator(req, res, action) {
         const formData = buildCRFormData(session);
         let ticketId, sysId;
         try {
+          // Re-restore ServiceNow settings from DB/file in case env vars were
+          // lost (e.g. startup restore failed, container recycled without env).
+          if (!process.env.SERVICENOW_INSTANCE) {
+            await restoreServiceNowSettings();
+          }
           const { createChangeRequest } = await import("../utils/servicenow-client.js");
           const result = await createChangeRequest(formData);
           const record = result?.result || result;
@@ -2021,7 +2026,18 @@ export async function handleUpgradeOrchestrator(req, res, action) {
             return json(res, 500, { error: `ServiceNow CR creation failed: ${err.message}` });
           }
         }
-        const updated = await stepLinkCR(sessionId, ticketId, sysId);
+        let updated;
+        if (session.state === "cr_submitted") {
+          // Re-raising: session is already in cr_submitted, update CR fields directly
+          const { query: dbQ } = await import("../utils/db.js");
+          await dbQ(
+            `UPDATE upgrade_sessions SET cr_ticket_id = $1, cr_sys_id = $2, updated_at = NOW() WHERE id = $3`,
+            [ticketId, sysId, sessionId]
+          );
+          updated = await uoGetSession(sessionId);
+        } else {
+          updated = await stepLinkCR(sessionId, ticketId, sysId);
+        }
         return json(res, 200, { session: updated, ticketId, sysId, local: !sysId });
       }
 

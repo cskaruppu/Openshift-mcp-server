@@ -16043,7 +16043,7 @@ export async function handleChatAPI(req, res) {
 
           if (!targetVer) {
             const reply = `### Automated Upgrade\n\nI couldn't detect an available target version. Please specify the version you want to upgrade to, e.g.:\n\n> "Automate upgrade to 4.19.28"`;
-            const provider = "built-in";
+            const provider = llmActive ? activeProvider : "built-in";
             if (conversationId) histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
             if (wantsStream) { sseStart(res); sseSend(res, { delta: reply }); sseSend(res, { done: true, provider, conversationId }); sseEnd(res); return; }
             return json(res, 200, { reply, provider, contextKeys: ["upgrade", "orchestrator"], cached: false, conversationId });
@@ -16112,6 +16112,49 @@ export async function handleChatAPI(req, res) {
               }
             }
 
+            // Use LLM to generate executive summary if available
+            if (llmActive && latestSession.preflightReport) {
+              try {
+                const report = latestSession.preflightReport;
+                const compAnalysis = latestSession.componentAnalysis;
+                const remPlan = latestSession.remediationPlan;
+                const checks = report.checks || [];
+                const passCount = checks.filter(c => c.status === "pass").length;
+                const warnCount = checks.filter(c => c.status === "warning").length;
+                const failCount = checks.filter(c => c.status === "fail").length;
+
+                const summaryPrompt = [
+                  `You are an OpenShift upgrade advisor. Analyze this pre-upgrade assessment and provide a concise executive summary with actionable recommendations.`,
+                  ``,
+                  `Upgrade: ${latestSession.fromVersion} → ${latestSession.targetVersion} (${latestSession.upgradeType || "patch"})`,
+                  `Pre-Assessment: ${passCount} passed, ${warnCount} warnings, ${failCount} failures out of ${checks.length} checks`,
+                  `Overall Status: ${report.overallStatus || "UNKNOWN"}`,
+                  compAnalysis?.degradedOperators?.length ? `Degraded Operators: ${compAnalysis.degradedOperators.map(o => o.name).join(", ")}` : "",
+                  compAnalysis?.certificateIssues?.length ? `Certificate Issues: ${compAnalysis.certificateIssues.length}` : "",
+                  remPlan ? `Remediation Plan: ${remPlan.totalFixes || 0} fixes (${remPlan.critical || 0} critical, ${remPlan.warnings || 0} warnings)` : "",
+                  ``,
+                  `Provide:`,
+                  `1. Risk assessment (Low/Medium/High) with brief justification`,
+                  `2. Top 2-3 recommendations before proceeding`,
+                  `3. Estimated impact and maintenance window advice`,
+                  ``,
+                  `Keep response under 150 words. Use markdown formatting.`,
+                ].filter(Boolean).join("\n");
+
+                if (wantsStream) sseSend(res, { delta: `\n**AI Analysis:**\n` });
+                statusText += `\n**AI Analysis:**\n`;
+
+                const llmResult = await callLLM(summaryPrompt, { ...llmOpts, maxTokens: 400, temperature: 0.2 });
+                const aiSummary = (typeof llmResult === "string" ? llmResult : llmResult?.text || "").trim();
+                if (aiSummary) {
+                  statusText += aiSummary + "\n\n";
+                  if (wantsStream) sseSend(res, { delta: aiSummary + "\n\n" });
+                }
+              } catch (llmErr) {
+                console.warn("[chat-api] LLM upgrade summary failed:", llmErr.message);
+              }
+            }
+
             statusText += `AI has completed the assessment. Review the results below and proceed with the remaining steps when ready.\n\n`;
             if (wantsStream) sseSend(res, { delta: `AI has completed the assessment. Review the results below and proceed with the remaining steps when ready.\n\n` });
           } else {
@@ -16129,7 +16172,7 @@ export async function handleChatAPI(req, res) {
 
           const progressToken = `@@UPGRADE_PROGRESS|${JSON.stringify(buildUpgradeProgressToken(latestSession)).replace(/@@/g, "@ @")}@@`;
           const reply = statusText + progressToken;
-          const provider = "built-in";
+          const provider = llmActive ? activeProvider : "built-in";
           if (conversationId) histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
           if (wantsStream) {
             sseSend(res, { delta: progressToken }); sseSend(res, { done: true, provider, conversationId }); sseEnd(res); return;
