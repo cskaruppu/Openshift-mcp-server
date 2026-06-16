@@ -36,6 +36,7 @@ import {
 } from "../utils/openshift-client.js";
 import { withClusterDirect, hasCredentials, getCredentials } from "../utils/cluster-credentials.js";
 import { getConnectedAgents, getAgentCachedResponse, invokeAgentTool, hasActiveChannel, hasSpoke, proxyChatToSpoke } from "../index.js";
+import { getSpokeUrl, fedFetch } from "./spoke-proxy.js";
 import { cacheGet, cacheSet, isEnabled as cacheEnabled } from "../utils/cache.js";
 import {
   addMessage as histAddMessage,
@@ -14394,17 +14395,28 @@ async function buildFleetSnapshot() {
   return clusters;
 }
 
-/** Fetch availableUpdates live for OpenShift clusters (hub + bridged agents). */
+/** Fetch availableUpdates live for OpenShift clusters (hub + bridged agents + spokes). */
 async function enrichFleetUpgrades(snapshot) {
   await Promise.allSettled(snapshot.map(async (c) => {
     if (!c.isOpenShift || Array.isArray(c.availableUpdates)) return;
-    if (c.role === "hub") return; // already done in snapshot
-    if (!hasCredentials(c.name) && !hasActiveChannel(c.name)) { c.availableUpdates = null; return; }
+    if (c.role === "hub") return;
+    const hasCreds = hasCredentials(c.name);
+    const hasBridge = hasActiveChannel(c.name);
+    const spokeUrl = !hasCreds && !hasBridge ? getSpokeUrl(c.name) : null;
+    if (!hasCreds && !hasBridge && !spokeUrl) { c.availableUpdates = null; return; }
     try {
-      const fetchVersion = hasCredentials(c.name)
-        ? () => withClusterDirect(c.name, () => ocpGet("/apis/config.openshift.io/v1/clusterversions/version"))
-        : () => withRemoteClusterBridge(c.name, () => ocpGet("/apis/config.openshift.io/v1/clusterversions/version"));
-      const cv = await fetchVersion();
+      let cv;
+      if (hasCreds) {
+        cv = await withClusterDirect(c.name, () => ocpGet("/apis/config.openshift.io/v1/clusterversions/version"));
+      } else if (hasBridge) {
+        cv = await withRemoteClusterBridge(c.name, () => ocpGet("/apis/config.openshift.io/v1/clusterversions/version"));
+      } else {
+        const resp = await fedFetch(`${spokeUrl}/api/cluster/summary`, { signal: AbortSignal.timeout(8000) });
+        const data = await resp.json();
+        c.availableUpdates = Array.isArray(data.availableUpdates) ? data.availableUpdates.map(u => typeof u === "string" ? u : u.version) : [];
+        c.channel = data.cluster?.channel || c.channel;
+        return;
+      }
       c.availableUpdates = (cv.status?.availableUpdates || []).map(u => u.version);
       c.channel = cv.spec?.channel || c.channel;
     } catch { c.availableUpdates = null; }
@@ -14443,7 +14455,7 @@ async function handleFleetQuery(message, snapshot) {
         return;
       }
       if (!Array.isArray(c.availableUpdates)) {
-        parts.push(`| \`${c.name}\` | OCP | ${c.version} | ? | ${c.role === "hub" ? "—" : "agent offline"} |`);
+        parts.push(`| \`${c.name}\` | OCP | ${c.version} | ? | ${c.role === "hub" ? "—" : "unable to query"} |`);
         return;
       }
       const latest = _latestVersion(c.availableUpdates);
