@@ -14354,10 +14354,11 @@ async function buildFleetSnapshot() {
       nodesTotal: 0, nodesReady: 0, podsTotal: 0, podsFailed: 0, podsPending: 0,
       podIssues: 0, operatorsTotal: 0, operatorsDegraded: 0, namespaces: 0,
       cpu: 0, memGi: 0, securityScore: null, securityGrade: null, availableUpdates: null };
-    const [cvR, verR, nodesR] = await Promise.allSettled([
+    const [cvR, verR, nodesR, nsR] = await Promise.allSettled([
       ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
       ocpGet("/version"),
       ocpGet("/api/v1/nodes"),
+      ocpGet("/api/v1/namespaces"),
     ]);
     if (cvR.status === "fulfilled" && cvR.value) {
       hub.isOpenShift = true;
@@ -14377,6 +14378,20 @@ async function buildFleetSnapshot() {
       hub.nodesTotal = items.length;
       hub.nodesReady = items.filter(n => (n.status?.conditions || []).find(c => c.type === "Ready")?.status === "True").length;
       if (hub.nodesReady < hub.nodesTotal && hub.health === "healthy") hub.health = "warning";
+      let totalCPU = 0, totalMemBytes = 0;
+      for (const n of items) {
+        totalCPU += parseInt(n.status?.capacity?.cpu || "0", 10);
+        const mem = n.status?.capacity?.memory || "0";
+        if (mem.endsWith("Ki")) totalMemBytes += parseInt(mem) * 1024;
+        else if (mem.endsWith("Mi")) totalMemBytes += parseInt(mem) * 1024 * 1024;
+        else if (mem.endsWith("Gi")) totalMemBytes += parseInt(mem) * 1024 * 1024 * 1024;
+        else totalMemBytes += parseInt(mem) || 0;
+      }
+      hub.cpu = totalCPU;
+      hub.memGi = Math.round(totalMemBytes / (1024 * 1024 * 1024));
+    }
+    if (nsR.status === "fulfilled" && nsR.value) {
+      hub.namespaces = (nsR.value.items || []).length;
     }
     clusters.push(hub);
   } catch { /* hub summary best-effort */ }

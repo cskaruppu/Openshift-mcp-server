@@ -561,9 +561,15 @@ async function fetchSpokeSummary(clusterName, spokeUrl) {
     agent.lastReport = {
       openshiftVersion: isOCP ? (data.cluster?.version || "") : "",
       kubernetesVersion: data.cluster?.kubernetesVersion || data.cluster?.version || "",
-      clusterHealth: { status: "healthy" },
+      clusterHealth: { status: data.cluster?.health || "healthy" },
       nodes: { ready: data.nodes?.ready || 0, total: data.nodes?.total || 0 },
       pods: { running: data.pods?.running || 0, total: data.pods?.total || 0 },
+      clusterOperators: data.operators || {},
+      namespaces: data.namespaces || { total: 0 },
+      resourceSummary: {
+        totalCPU: data.nodes?.totalCPU || 0,
+        totalMemoryGi: data.nodes?.totalMemGi || 0,
+      },
     };
     agent.platform = data.platform || agent.platform;
     _connectedAgents.set(clusterName, agent);
