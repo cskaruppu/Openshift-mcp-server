@@ -2381,8 +2381,7 @@ async function startSSE() {
     }
 
     if (req.method === "POST" && url.pathname === "/api/validate-command") {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body);
+      const parsed = await readJsonBody(req);
       const result = validateCommand(parsed.command, {
         accessLevel: parsed.accessLevel,
         allowedNamespaces: parsed.allowedNamespaces,
@@ -5197,7 +5196,7 @@ spec:
     // Cancel an active upgrade session
     if (req.method === "POST" && url.pathname === "/api/upgrade/cancel") {
       try {
-        const body = await readBody(req);
+        const body = await readJsonBody(req);
         const { cancelSession } = await import("./services/upgrade-orchestrator.js");
         const session = await cancelSession(body.sessionId, body.reason || "Cancelled by user");
         sendJson(res, 200, { session, message: "Upgrade cancelled" });
