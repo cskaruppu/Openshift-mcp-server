@@ -114,7 +114,23 @@ function overallBadge(overall) {
 // ═══════════════════════════════════════════
 
 /**
- * Draws a table on the PDF document.
+ * Measures the height needed for a cell's text to fit within a given width.
+ * @param {PDFDocument} doc
+ * @param {string} text
+ * @param {number} width - Available cell width (excluding padding)
+ * @param {number} fontSize
+ * @returns {number} Required cell height in points
+ */
+function measureCellHeight(doc, text, width, fontSize) {
+  doc.save();
+  doc.font("Helvetica").fontSize(fontSize);
+  const h = doc.heightOfString(String(text || ""), { width: width - 8 });
+  doc.restore();
+  return Math.max(h + 12, 22); // minimum 22px
+}
+
+/**
+ * Draws a table on the PDF document with auto-sizing row heights.
  *
  * Each cell in `rows` can be either a plain string or an object:
  *   { text, bg, color, bold, mono }
@@ -128,14 +144,18 @@ function drawTable(doc, headers, rows, opts = {}) {
   const startX = opts.x || 50;
   let startY = opts.y || doc.y;
   const colWidths = opts.colWidths || headers.map(() => (doc.page.width - 100) / headers.length);
-  const rowHeight = opts.rowHeight || 25;
   const headerBg = opts.headerBg || "#" + C.navy;
   const fontSize = opts.fontSize || 9;
 
   let y = startY;
 
+  // Measure header row height
+  const headerRowHeight = Math.max(...headers.map((h, i) =>
+    measureCellHeight(doc, h, colWidths[i], fontSize)
+  ));
+
   // Header row — check for page break first
-  if (y + rowHeight > doc.page.height - 60) {
+  if (y + headerRowHeight > doc.page.height - 60) {
     doc.addPage();
     y = 50;
   }
@@ -143,19 +163,25 @@ function drawTable(doc, headers, rows, opts = {}) {
   let x = startX;
   doc.save();
   for (let i = 0; i < headers.length; i++) {
-    doc.rect(x, y, colWidths[i], rowHeight).fill(headerBg);
+    doc.rect(x, y, colWidths[i], headerRowHeight).fill(headerBg);
     doc.fillColor("#FFFFFF").fontSize(fontSize).font("Helvetica-Bold")
-      .text(headers[i], x + 4, y + 6, { width: colWidths[i] - 8, height: rowHeight - 8 });
+      .text(headers[i], x + 4, y + 6, { width: colWidths[i] - 8 });
     x += colWidths[i];
   }
   doc.restore();
-  y += rowHeight;
+  y += headerRowHeight;
 
   // Data rows
   for (let ri = 0; ri < rows.length; ri++) {
     const row = rows[ri];
     x = startX;
     const bgColor = ri % 2 === 1 ? "#" + C.grayLight : "#FFFFFF";
+
+    // Auto-calculate row height based on content
+    const rowHeight = Math.max(...row.map((cell, ci) => {
+      const cellText = (typeof cell === "object" && cell !== null) ? String(cell.text || "") : String(cell || "");
+      return measureCellHeight(doc, cellText, colWidths[ci], fontSize);
+    }));
 
     // Check if we need a new page
     if (y + rowHeight > doc.page.height - 60) {
@@ -177,7 +203,7 @@ function drawTable(doc, headers, rows, opts = {}) {
       doc.rect(x, y, colWidths[ci], rowHeight).fill(cellBg);
       doc.rect(x, y, colWidths[ci], rowHeight).stroke("#" + C.grayBorder);
       doc.fillColor(cellColor).fontSize(fontSize).font(cellFont)
-        .text(cellText, x + 4, y + 6, { width: colWidths[ci] - 8, height: rowHeight - 8 });
+        .text(cellText, x + 4, y + 6, { width: colWidths[ci] - 8 });
       doc.restore();
       x += colWidths[ci];
     }
@@ -547,6 +573,31 @@ function drawIssueList(doc, title, issues, color) {
   }
 }
 
+/**
+ * Draws a detailed component table with structured columns.
+ * Used for richer component analysis sections instead of simple bullet lists.
+ *
+ * @param {PDFDocument} doc
+ * @param {string} title - Section heading
+ * @param {Array} items - Array of data items
+ * @param {Array<{header: string, width: number, accessor: function, colored?: boolean}>} columns
+ */
+function drawComponentTable(doc, title, items, columns) {
+  drawHeading(doc, title, 3);
+  if (!items || items.length === 0) {
+    drawParagraph(doc, "None detected.", { italic: true, color: C.gray });
+    return;
+  }
+  const tableWidth = doc.page.width - 100;
+  const colWidths = columns.map(c => tableWidth * (c.width || (1 / columns.length)));
+  const headers = columns.map(c => c.header);
+  const rows = items.map(item => columns.map(c => {
+    const val = c.accessor(item);
+    return c.colored ? { text: String(val || ""), color: "#" + C.red, bold: true } : String(val || "");
+  }));
+  drawTable(doc, headers, rows, { colWidths, fontSize: 8.5 });
+}
+
 // ═══════════════════════════════════════════
 // Core PDF generation wrapper
 // ═══════════════════════════════════════════
@@ -627,6 +678,29 @@ export async function generatePreAssessmentReport(session) {
       ["Risk Level", safe(crForm.riskLevel, "Not assessed")],
     ], { headerBg: "#" + C.blue });
 
+    // Summary statistics with colored boxes
+    doc.moveDown(0.5);
+    ensureSpace(doc, 70);
+    const preBoxY = doc.y;
+    const preBoxW = (doc.page.width - 120) / 4;
+    const preStats = [
+      { label: "Passed", value: String(preflight.passed || 0), color: C.green, bg: C.greenBg },
+      { label: "Warnings", value: String(preflight.warnings || 0), color: C.orange, bg: C.orangeBg },
+      { label: "Failed", value: String(preflight.failed || 0), color: C.red, bg: C.redBg },
+      { label: "Total", value: String(preflight.total || 0), color: C.navy, bg: C.blueBg },
+    ];
+    preStats.forEach((stat, i) => {
+      const x = 55 + i * (preBoxW + 8);
+      doc.save();
+      doc.roundedRect(x, preBoxY, preBoxW, 50, 4).fill("#" + stat.bg);
+      doc.fontSize(20).font("Helvetica-Bold").fillColor("#" + stat.color)
+        .text(stat.value, x, preBoxY + 8, { width: preBoxW, align: "center" });
+      doc.fontSize(9).font("Helvetica").fillColor("#" + stat.color)
+        .text(stat.label, x, preBoxY + 34, { width: preBoxW, align: "center" });
+      doc.restore();
+    });
+    doc.y = preBoxY + 65;
+
     // ── Cluster Information ──
     doc.moveDown(0.8);
     drawHeading(doc, "2. Cluster Information", 1);
@@ -653,11 +727,59 @@ export async function generatePreAssessmentReport(session) {
     drawParagraph(doc, "Detailed analysis of cluster components that may affect the upgrade:");
     doc.moveDown(0.3);
 
-    drawIssueList(doc, "4.1 Degraded Operators", component.degradedOperators, C.red);
+    // 4.1 Degraded Operators
+    drawComponentTable(doc, "4.1 Degraded Operators", component.degradedOperators, [
+      { header: "Operator", width: 0.35, accessor: o => o.name || String(o) },
+      { header: "Condition", width: 0.25, accessor: o => o.issue || o.condition || "Degraded" },
+      { header: "Details", width: 0.40, accessor: o => o.message || (o.unhealthyPods?.length ? `${o.unhealthyPods.length} unhealthy pods` : "—") },
+    ]);
     doc.moveDown(0.5);
-    drawIssueList(doc, "4.2 Certificate Issues", component.certificateIssues, C.orange);
+
+    // 4.2 Certificate Issues
+    drawComponentTable(doc, "4.2 Certificate Issues", component.certificateIssues, [
+      { header: "Certificate", width: 0.35, accessor: c => c.name || c.secret || String(c) },
+      { header: "Namespace", width: 0.25, accessor: c => c.namespace || "—" },
+      { header: "Issue", width: 0.40, accessor: c => c.message || c.issue || "Expiring" },
+    ]);
     doc.moveDown(0.5);
-    drawIssueList(doc, "4.3 Machine Config Pool Issues", component.mcpIssues, C.orange);
+
+    // 4.3 MCP Issues
+    drawComponentTable(doc, "4.3 Machine Config Pool Issues", component.mcpIssues, [
+      { header: "Pool", width: 0.25, accessor: m => m.name || String(m) },
+      { header: "Status", width: 0.25, accessor: m => m.status || m.issue || "—", colored: true },
+      { header: "Details", width: 0.50, accessor: m => m.message || m.details || "—" },
+    ]);
+
+    // 4.4 Storage Issues (if present)
+    if (component.storageIssues?.length) {
+      doc.moveDown(0.5);
+      drawComponentTable(doc, "4.4 Storage Issues", component.storageIssues, [
+        { header: "Resource", width: 0.30, accessor: s => s.name || s.pvc || String(s) },
+        { header: "Namespace", width: 0.25, accessor: s => s.namespace || "—" },
+        { header: "Issue", width: 0.45, accessor: s => s.message || s.issue || s.status || "—" },
+      ]);
+    }
+
+    // 4.5 Network Issues (if present)
+    if (component.networkIssues?.length) {
+      doc.moveDown(0.5);
+      drawComponentTable(doc, "4.5 Network Issues", component.networkIssues, [
+        { header: "Resource", width: 0.30, accessor: n => n.name || String(n) },
+        { header: "Type", width: 0.20, accessor: n => n.type || n.kind || "—" },
+        { header: "Issue", width: 0.50, accessor: n => n.message || n.issue || n.details || "—" },
+      ]);
+    }
+
+    // 4.6 Failing Pods (if present)
+    if (component.failingPods?.length) {
+      doc.moveDown(0.5);
+      drawComponentTable(doc, "4.6 Failing Pods", component.failingPods, [
+        { header: "Pod", width: 0.30, accessor: p => p.name || String(p) },
+        { header: "Namespace", width: 0.25, accessor: p => p.namespace || "—" },
+        { header: "Status", width: 0.20, accessor: p => p.status || p.phase || "—" },
+        { header: "Restarts", width: 0.25, accessor: p => String(p.restarts ?? p.restartCount ?? "—") },
+      ]);
+    }
 
     // ── Remediation Plan ──
     doc.addPage();
@@ -665,6 +787,22 @@ export async function generatePreAssessmentReport(session) {
     drawParagraph(doc, "The following remediation actions are recommended before proceeding with the upgrade:");
     doc.moveDown(0.3);
     drawRemediationTable(doc, remediation.fixes);
+
+    // ── Remediation Execution Results (if available) ──
+    if (session.remediationResults && Object.keys(session.remediationResults).length > 0) {
+      const tw = doc.page.width - 100;
+      doc.moveDown(0.5);
+      drawHeading(doc, "5.1 Remediation Execution Results", 2);
+      const resRows = Object.entries(session.remediationResults).map(([fixId, result]) => {
+        const fix = (remediation.fixes || []).find(f => f.id === fixId) || {};
+        return [
+          fix.title || fixId,
+          { text: result.success ? "Success" : "Failed", bg: result.success ? "#" + C.greenBg : "#" + C.redBg, color: result.success ? "#" + C.green : "#" + C.red, bold: true },
+          result.output || result.message || "—",
+        ];
+      });
+      drawTable(doc, ["Fix", "Result", "Output"], resRows, { colWidths: [tw * 0.25, tw * 0.15, tw * 0.60] });
+    }
 
     // ── Cluster Topology ──
     doc.moveDown(0.8);
@@ -695,6 +833,19 @@ export async function generatePreAssessmentReport(session) {
       drawKVTable(doc, topologyRows, { headerBg: "#" + C.blue });
     } else {
       drawParagraph(doc, "Topology data not available in the current session.", { italic: true, color: C.gray });
+    }
+
+    // ── Change Request ──
+    if (session.crTicketId) {
+      doc.moveDown(0.8);
+      drawHeading(doc, "7. Change Request", 1);
+      drawKVTable(doc, [
+        ["Ticket ID", session.crTicketId],
+        ["System ID", safe(session.crSysId)],
+        ["Risk Level", safe(crForm.riskLevel, "Standard")],
+        ["Estimated Duration", safe(crForm.estimatedDuration, "N/A")],
+        ["Justification", safe(crForm.justification, "Cluster upgrade")],
+      ], { headerBg: "#" + C.blue });
     }
 
     // ── Footer ──
@@ -767,6 +918,29 @@ export async function generatePostAssessmentReport(session) {
       ["New Issues", String((comparison.newIssues || []).length)],
     ], { headerBg: "#" + (isSuccess ? C.green : C.red) });
 
+    // Summary statistics with colored boxes
+    doc.moveDown(0.5);
+    ensureSpace(doc, 70);
+    const postBoxY = doc.y;
+    const postBoxW = (doc.page.width - 120) / 4;
+    const postStats = [
+      { label: "Passed", value: String(postChecks.passed || 0), color: C.green, bg: C.greenBg },
+      { label: "Warnings", value: String(postChecks.warnings || 0), color: C.orange, bg: C.orangeBg },
+      { label: "Failed", value: String(postChecks.failed || 0), color: C.red, bg: C.redBg },
+      { label: "Resolved", value: String((comparison.resolved || []).length), color: C.navy, bg: C.blueBg },
+    ];
+    postStats.forEach((stat, i) => {
+      const x = 55 + i * (postBoxW + 8);
+      doc.save();
+      doc.roundedRect(x, postBoxY, postBoxW, 50, 4).fill("#" + stat.bg);
+      doc.fontSize(20).font("Helvetica-Bold").fillColor("#" + stat.color)
+        .text(stat.value, x, postBoxY + 8, { width: postBoxW, align: "center" });
+      doc.fontSize(9).font("Helvetica").fillColor("#" + stat.color)
+        .text(stat.label, x, postBoxY + 34, { width: postBoxW, align: "center" });
+      doc.restore();
+    });
+    doc.y = postBoxY + 65;
+
     // ── Pre vs Post Comparison ──
     doc.addPage();
     drawHeading(doc, "2. Pre vs Post Comparison", 1);
@@ -781,12 +955,20 @@ export async function generatePostAssessmentReport(session) {
     doc.moveDown(0.3);
 
     if (comparison.resolved && comparison.resolved.length > 0) {
-      for (const issue of comparison.resolved) {
-        const text = typeof issue === "string"
-          ? issue
-          : (issue.item || issue.name || issue.title || JSON.stringify(issue));
-        drawBullet(doc, text, { color: C.green });
-      }
+      const resolvedTw = doc.page.width - 100;
+      const resolvedRows = comparison.resolved.map(issue => {
+        const name = typeof issue === "string" ? issue : (issue.item || issue.name || issue.title || JSON.stringify(issue));
+        const pre = typeof issue === "object" ? safe(issue.preStatus || issue.pre_status, "—") : "—";
+        const post = typeof issue === "object" ? safe(issue.postStatus || issue.post_status, "Resolved") : "Resolved";
+        return [
+          name,
+          pre,
+          { text: post, bg: "#" + C.greenBg, color: "#" + C.green, bold: true },
+        ];
+      });
+      drawTable(doc, ["Issue", "Pre-Status", "Post-Status"], resolvedRows, {
+        colWidths: [resolvedTw * 0.50, resolvedTw * 0.25, resolvedTw * 0.25],
+      });
     } else {
       drawParagraph(doc, "No issues were resolved during the upgrade.", { italic: true, color: C.gray });
     }
@@ -798,12 +980,20 @@ export async function generatePostAssessmentReport(session) {
     doc.moveDown(0.3);
 
     if (comparison.persistent && comparison.persistent.length > 0) {
-      for (const issue of comparison.persistent) {
-        const text = typeof issue === "string"
-          ? issue
-          : (issue.item || issue.name || issue.title || JSON.stringify(issue));
-        drawBullet(doc, text, { color: C.orange });
-      }
+      const persistentTw = doc.page.width - 100;
+      const persistentRows = comparison.persistent.map(issue => {
+        const name = typeof issue === "string" ? issue : (issue.item || issue.name || issue.title || JSON.stringify(issue));
+        const status = typeof issue === "object" ? safe(issue.postStatus || issue.status, "Persistent") : "Persistent";
+        const details = typeof issue === "object" ? safe(issue.details || issue.message, "—") : "—";
+        return [
+          name,
+          { text: status, bg: "#" + C.orangeBg, color: "#" + C.orange, bold: true },
+          details,
+        ];
+      });
+      drawTable(doc, ["Issue", "Status", "Details"], persistentRows, {
+        colWidths: [persistentTw * 0.35, persistentTw * 0.20, persistentTw * 0.45],
+      });
     } else {
       drawParagraph(doc, "No persistent issues detected.", { italic: true, color: C.gray });
     }
@@ -815,12 +1005,20 @@ export async function generatePostAssessmentReport(session) {
     doc.moveDown(0.3);
 
     if (comparison.newIssues && comparison.newIssues.length > 0) {
-      for (const issue of comparison.newIssues) {
-        const text = typeof issue === "string"
-          ? issue
-          : (issue.item || issue.name || issue.title || JSON.stringify(issue));
-        drawBullet(doc, text, { color: C.red });
-      }
+      const newTw = doc.page.width - 100;
+      const newRows = comparison.newIssues.map(issue => {
+        const name = typeof issue === "string" ? issue : (issue.item || issue.name || issue.title || JSON.stringify(issue));
+        const severity = typeof issue === "object" ? safe(issue.severity || issue.status, "New") : "New";
+        const details = typeof issue === "object" ? safe(issue.details || issue.message, "—") : "—";
+        return [
+          name,
+          { text: severity, bg: "#" + C.redBg, color: "#" + C.red, bold: true },
+          details,
+        ];
+      });
+      drawTable(doc, ["Issue", "Severity", "Details"], newRows, {
+        colWidths: [newTw * 0.35, newTw * 0.20, newTw * 0.45],
+      });
     } else {
       drawParagraph(doc, "No new issues detected after the upgrade.", { italic: true, color: C.gray });
     }
