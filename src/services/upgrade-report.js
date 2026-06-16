@@ -1,29 +1,15 @@
 /**
- * Upgrade Report Generator — Professional DOCX reports for OpenShift cluster upgrades.
+ * Upgrade Report Generator — Professional PDF reports for OpenShift cluster upgrades.
  *
  * Generates two report types:
  *   1. Pre-Assessment Report  — before upgrade execution
  *   2. Post-Assessment Report — after upgrade completion
  *
- * Uses the same styling conventions as docs/gen-hld-lld-doc.js.
+ * Uses pdfkit to produce A4 PDF documents with tables, colored status badges,
+ * and the TCS KubeNexus AI branding.
  */
 
-import {
-  Document,
-  Packer,
-  Paragraph,
-  Table,
-  TableRow,
-  TableCell,
-  TextRun,
-  HeadingLevel,
-  WidthType,
-  BorderStyle,
-  AlignmentType,
-  PageBreak,
-  ShadingType,
-  VerticalAlign,
-} from "docx";
+import PDFDocument from "pdfkit";
 
 // ═══════════════════════════════════════════
 // Color palette (matches TCS design system)
@@ -46,15 +32,6 @@ const C = {
   white: "FFFFFF",
   black: "111827",
 };
-
-// ═══════════════════════════════════════════
-// Border presets
-// ═══════════════════════════════════════════
-
-const noBorder = { style: BorderStyle.NONE, size: 0, color: C.white };
-const noBorders = { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder };
-const thinBorder = { style: BorderStyle.SINGLE, size: 1, color: C.grayBorder };
-const thinBorders = { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder };
 
 // ═══════════════════════════════════════════
 // Status color helper
@@ -80,176 +57,8 @@ export function getStatusColor(status) {
 }
 
 // ═══════════════════════════════════════════
-// Shared docx helper functions
+// Utility helpers
 // ═══════════════════════════════════════════
-
-function heading(text, level) {
-  const map = { 1: HeadingLevel.HEADING_1, 2: HeadingLevel.HEADING_2, 3: HeadingLevel.HEADING_3 };
-  return new Paragraph({
-    text,
-    heading: map[level] || HeadingLevel.HEADING_1,
-    spacing: { before: 300, after: 100 },
-  });
-}
-
-function para(text, opts = {}) {
-  return new Paragraph({
-    children: [
-      new TextRun({
-        text,
-        bold: opts.bold,
-        italics: opts.italic,
-        size: opts.size || 22,
-        font: opts.font || "Calibri",
-        color: opts.color,
-      }),
-    ],
-    spacing: { after: opts.after || 80, before: opts.before || 0 },
-    alignment: opts.align,
-  });
-}
-
-function bulletPara(text, opts = {}) {
-  return new Paragraph({
-    children: [new TextRun({ text, bold: opts.bold, size: opts.size || 22, color: opts.color })],
-    bullet: { level: opts.level || 0 },
-    spacing: { after: 40 },
-  });
-}
-
-function styledCell(content, opts = {}) {
-  const children =
-    typeof content === "string"
-      ? [
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: content,
-                bold: opts.bold,
-                size: opts.size || 20,
-                color: opts.color || C.black,
-                font: opts.font || "Calibri",
-              }),
-            ],
-            alignment: opts.align || AlignmentType.LEFT,
-            spacing: { after: 0, before: 0 },
-          }),
-        ]
-      : Array.isArray(content)
-        ? content
-        : [content];
-  return new TableCell({
-    children,
-    width: opts.width ? { size: opts.width, type: WidthType.PERCENTAGE } : undefined,
-    borders: opts.borders || thinBorders,
-    shading: opts.shading ? { fill: opts.shading, type: ShadingType.CLEAR } : undefined,
-    verticalAlign: opts.vAlign || VerticalAlign.CENTER,
-    columnSpan: opts.colSpan,
-    margins: opts.margins || { top: 60, bottom: 60, left: 100, right: 100 },
-  });
-}
-
-function headerCell(text, opts = {}) {
-  return styledCell(text, {
-    bold: true,
-    color: C.white,
-    shading: opts.shading || C.navy,
-    align: opts.align || AlignmentType.LEFT,
-    width: opts.width,
-    size: opts.size || 20,
-    colSpan: opts.colSpan,
-  });
-}
-
-function dataTable(headers, dataRows, colWidths, opts = {}) {
-  const w = colWidths || headers.map(() => Math.floor(100 / headers.length));
-  const headerColor = opts.headerColor || C.navy;
-  return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({
-        children: headers.map((h, i) => headerCell(h, { width: w[i], shading: headerColor })),
-      }),
-      ...dataRows.map((row, ri) =>
-        new TableRow({
-          children: row.map((c, i) =>
-            styledCell(c, { width: w[i], shading: ri % 2 === 1 ? C.grayLight : C.white })
-          ),
-        })
-      ),
-    ],
-  });
-}
-
-function kvTable(rows, opts = {}) {
-  const color = opts.color || C.navy;
-  return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({
-        children: [
-          headerCell("Parameter", { width: 35, shading: color }),
-          headerCell("Value", { width: 65, shading: color }),
-        ],
-      }),
-      ...rows.map(([k, v], i) =>
-        new TableRow({
-          children: [
-            styledCell(k, { width: 35, bold: true, shading: i % 2 === 1 ? C.grayLight : C.white }),
-            styledCell(v, { width: 65, shading: i % 2 === 1 ? C.grayLight : C.white }),
-          ],
-        })
-      ),
-    ],
-  });
-}
-
-/**
- * Creates a status-colored cell (text + background shading).
- */
-function statusCell(status, opts = {}) {
-  const sc = getStatusColor(status);
-  return styledCell(status, {
-    bold: true,
-    color: sc.text,
-    shading: sc.bg,
-    width: opts.width,
-    align: AlignmentType.CENTER,
-  });
-}
-
-/**
- * Creates a code-style block (monospace, light background, accent left border).
- */
-function codeBlock(lines, accentColor) {
-  const accent = accentColor || C.blue;
-  return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({
-        children: [
-          new TableCell({
-            children: lines.map(
-              (l) =>
-                new Paragraph({
-                  children: [new TextRun({ text: l, size: 18, color: C.black, font: "Consolas" })],
-                  spacing: { after: 8 },
-                })
-            ),
-            shading: { fill: "F8FAFC", type: ShadingType.CLEAR },
-            borders: {
-              top: { style: BorderStyle.SINGLE, size: 1, color: C.grayBorder },
-              bottom: { style: BorderStyle.SINGLE, size: 1, color: C.grayBorder },
-              left: { style: BorderStyle.SINGLE, size: 4, color: accent },
-              right: { style: BorderStyle.SINGLE, size: 1, color: C.grayBorder },
-            },
-            margins: { top: 80, bottom: 80, left: 140, right: 140 },
-          }),
-        ],
-      }),
-    ],
-  });
-}
 
 /**
  * Formats a date for display in the report.
@@ -289,147 +98,9 @@ function safe(val, fallback = "N/A") {
   return String(val);
 }
 
-// ═══════════════════════════════════════════
-// Cover page builder
-// ═══════════════════════════════════════════
-
-function buildCoverPage({ title, subtitle, cluster, versionRange, date, classification, badgeText, badgeColor }) {
-  const children = [
-    new Paragraph({ spacing: { before: 400 } }),
-    new Paragraph({
-      children: [new TextRun({ text: "TCS KubeNexus AI", bold: true, size: 56, color: C.white, font: "Calibri" })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 80 },
-    }),
-    new Paragraph({
-      children: [new TextRun({ text: title, size: 36, color: "93C5FD", font: "Calibri" })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 120 },
-    }),
-    new Paragraph({
-      children: [new TextRun({ text: "──────────────────────────────", size: 20, color: "3B82F6" })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 120 },
-    }),
-  ];
-
-  if (subtitle) {
-    children.push(
-      new Paragraph({
-        children: [new TextRun({ text: subtitle, size: 28, color: C.white, font: "Calibri", italics: true })],
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 120 },
-      })
-    );
-  }
-
-  if (cluster) {
-    children.push(
-      new Paragraph({
-        children: [new TextRun({ text: `Cluster: ${cluster}`, size: 24, color: "93C5FD" })],
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 40 },
-      })
-    );
-  }
-
-  if (versionRange) {
-    children.push(
-      new Paragraph({
-        children: [new TextRun({ text: versionRange, size: 24, color: "93C5FD" })],
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 40 },
-      })
-    );
-  }
-
-  // Status badge
-  if (badgeText) {
-    const bColor = badgeColor || C.blue;
-    children.push(
-      new Paragraph({ spacing: { before: 80 } }),
-      new Paragraph({
-        children: [new TextRun({ text: `[ ${badgeText} ]`, bold: true, size: 32, color: bColor, font: "Calibri" })],
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 80 },
-      })
-    );
-  }
-
-  children.push(
-    new Paragraph({
-      children: [new TextRun({ text: `Date: ${date || formatDate()}`, size: 22, color: "93C5FD" })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 40 },
-    }),
-    new Paragraph({
-      children: [
-        new TextRun({
-          text: classification || "Classification: Internal — Upgrade Assessment Document",
-          size: 20,
-          color: "60A5FA",
-          italics: true,
-        }),
-      ],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 400 },
-    })
-  );
-
-  return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({
-        children: [
-          new TableCell({
-            children,
-            shading: { fill: C.navyDark, type: ShadingType.CLEAR },
-            borders: noBorders,
-            margins: { top: 200, bottom: 200, left: 300, right: 300 },
-          }),
-        ],
-      }),
-    ],
-  });
-}
-
-// ═══════════════════════════════════════════
-// Footer builder
-// ═══════════════════════════════════════════
-
-function buildFooter() {
-  return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({
-        children: [
-          new TableCell({
-            children: [
-              new Paragraph({
-                children: [new TextRun({ text: "— End of Document —", size: 20, color: C.white, italics: true })],
-                alignment: AlignmentType.CENTER,
-                spacing: { after: 20 },
-              }),
-              new Paragraph({
-                children: [new TextRun({ text: "Generated by TCS KubeNexus AI Platform", size: 18, color: "93C5FD" })],
-                alignment: AlignmentType.CENTER,
-                spacing: { after: 0 },
-              }),
-            ],
-            shading: { fill: C.navyDark, type: ShadingType.CLEAR },
-            borders: noBorders,
-            margins: { top: 80, bottom: 80, left: 100, right: 100 },
-          }),
-        ],
-      }),
-    ],
-  });
-}
-
-// ═══════════════════════════════════════════
-// Build status badge color for cover pages
-// ═══════════════════════════════════════════
-
+/**
+ * Build status badge color for cover pages.
+ */
 function overallBadge(overall) {
   const s = (overall || "").toUpperCase();
   if (s === "READY" || s === "SUCCESS" || s === "PASS") return { text: "READY", color: "22C55E" };
@@ -439,218 +110,465 @@ function overallBadge(overall) {
 }
 
 // ═══════════════════════════════════════════
-// Pre-Assessment checks table with colored status
+// PDF Table helper
 // ═══════════════════════════════════════════
 
-function buildChecksTable(checks, headerColor) {
+/**
+ * Draws a table on the PDF document.
+ *
+ * Each cell in `rows` can be either a plain string or an object:
+ *   { text, bg, color, bold, mono }
+ *
+ * @param {PDFDocument} doc
+ * @param {string[]} headers
+ * @param {Array<Array<string|object>>} rows
+ * @param {object} opts
+ */
+function drawTable(doc, headers, rows, opts = {}) {
+  const startX = opts.x || 50;
+  let startY = opts.y || doc.y;
+  const colWidths = opts.colWidths || headers.map(() => (doc.page.width - 100) / headers.length);
+  const rowHeight = opts.rowHeight || 25;
+  const headerBg = opts.headerBg || "#" + C.navy;
+  const fontSize = opts.fontSize || 9;
+
+  let y = startY;
+
+  // Header row — check for page break first
+  if (y + rowHeight > doc.page.height - 60) {
+    doc.addPage();
+    y = 50;
+  }
+
+  let x = startX;
+  doc.save();
+  for (let i = 0; i < headers.length; i++) {
+    doc.rect(x, y, colWidths[i], rowHeight).fill(headerBg);
+    doc.fillColor("#FFFFFF").fontSize(fontSize).font("Helvetica-Bold")
+      .text(headers[i], x + 4, y + 6, { width: colWidths[i] - 8, height: rowHeight - 8 });
+    x += colWidths[i];
+  }
+  doc.restore();
+  y += rowHeight;
+
+  // Data rows
+  for (let ri = 0; ri < rows.length; ri++) {
+    const row = rows[ri];
+    x = startX;
+    const bgColor = ri % 2 === 1 ? "#" + C.grayLight : "#FFFFFF";
+
+    // Check if we need a new page
+    if (y + rowHeight > doc.page.height - 60) {
+      doc.addPage();
+      y = 50;
+    }
+
+    for (let ci = 0; ci < row.length; ci++) {
+      const cell = row[ci];
+      const cellBg = (typeof cell === "object" && cell !== null && cell.bg) ? cell.bg : bgColor;
+      const cellColor = (typeof cell === "object" && cell !== null && cell.color) ? cell.color : "#" + C.black;
+      const cellText = (typeof cell === "object" && cell !== null) ? String(cell.text || "") : String(cell || "");
+      const cellBold = (typeof cell === "object" && cell !== null && cell.bold);
+      const cellFont = (typeof cell === "object" && cell !== null && cell.mono)
+        ? "Courier"
+        : (cellBold ? "Helvetica-Bold" : "Helvetica");
+
+      doc.save();
+      doc.rect(x, y, colWidths[ci], rowHeight).fill(cellBg);
+      doc.rect(x, y, colWidths[ci], rowHeight).stroke("#" + C.grayBorder);
+      doc.fillColor(cellColor).fontSize(fontSize).font(cellFont)
+        .text(cellText, x + 4, y + 6, { width: colWidths[ci] - 8, height: rowHeight - 8 });
+      doc.restore();
+      x += colWidths[ci];
+    }
+    y += rowHeight;
+  }
+
+  doc.y = y + 10;
+  return y;
+}
+
+/**
+ * Draws a key-value parameter table.
+ */
+function drawKVTable(doc, rows, opts = {}) {
+  const headers = ["Parameter", "Value"];
+  const data = rows.map(([k, v]) => [{ text: k, bold: true }, v]);
+  return drawTable(doc, headers, data, { colWidths: [180, doc.page.width - 280], ...opts });
+}
+
+// ═══════════════════════════════════════════
+// PDF section helpers
+// ═══════════════════════════════════════════
+
+/**
+ * Draws a section heading (e.g. "1. Executive Summary").
+ */
+function drawHeading(doc, text, level) {
+  const sizeMap = { 1: 18, 2: 15, 3: 13 };
+  const size = sizeMap[level] || 18;
+
+  ensureSpace(doc, size + 30);
+
+  doc.font("Helvetica-Bold")
+    .fontSize(size)
+    .fillColor("#" + C.navy)
+    .text(text, 50, doc.y, { width: doc.page.width - 100 });
+  doc.moveDown(0.5);
+}
+
+/**
+ * Draws a paragraph of body text.
+ */
+function drawParagraph(doc, text, opts = {}) {
+  const color = opts.color ? "#" + opts.color : "#" + C.black;
+  const font = opts.italic ? "Helvetica-Oblique" : (opts.bold ? "Helvetica-Bold" : "Helvetica");
+  const fontSize = opts.fontSize || 10;
+
+  ensureSpace(doc, fontSize + 10);
+
+  doc.font(font)
+    .fontSize(fontSize)
+    .fillColor(color)
+    .text(text, 50, doc.y, { width: doc.page.width - 100 });
+  doc.moveDown(0.4);
+}
+
+/**
+ * Draws a bullet item.
+ */
+function drawBullet(doc, text, opts = {}) {
+  const color = opts.color ? "#" + opts.color : "#" + C.black;
+  const fontSize = opts.fontSize || 10;
+
+  ensureSpace(doc, fontSize + 10);
+
+  const bulletChar = "•";
+  doc.font("Helvetica")
+    .fontSize(fontSize)
+    .fillColor(color)
+    .text(bulletChar + "  " + text, 60, doc.y, { width: doc.page.width - 120, indent: 10 });
+  doc.moveDown(0.2);
+}
+
+/**
+ * Ensures there is at least `needed` vertical points left on the page.
+ * If not, adds a new page.
+ */
+function ensureSpace(doc, needed) {
+  if (doc.y + needed > doc.page.height - 60) {
+    doc.addPage();
+  }
+}
+
+// ═══════════════════════════════════════════
+// Cover page builder
+// ═══════════════════════════════════════════
+
+function drawCoverPage(doc, { title, subtitle, cluster, versionRange, date, classification, badgeText, badgeColor }) {
+  const pw = doc.page.width;
+  const ph = doc.page.height;
+  const ml = doc.page.margins.left;
+  const mt = doc.page.margins.top;
+  const mr = doc.page.margins.right;
+  const mb = doc.page.margins.bottom;
+
+  // Navy dark background covering the entire page area
+  doc.save();
+  doc.rect(0, 0, pw, ph).fill("#" + C.navyDark);
+  doc.restore();
+
+  let y = ph * 0.20;
+
+  // "TCS KubeNexus AI"
+  doc.save();
+  doc.font("Helvetica-Bold").fontSize(28).fillColor("#FFFFFF");
+  doc.text("TCS KubeNexus AI", 0, y, { width: pw, align: "center" });
+  doc.restore();
+  y += 50;
+
+  // Title (light blue)
+  doc.save();
+  doc.font("Helvetica").fontSize(18).fillColor("#93C5FD");
+  doc.text(title, 0, y, { width: pw, align: "center" });
+  doc.restore();
+  y += 35;
+
+  // Horizontal line
+  doc.save();
+  doc.strokeColor("#3B82F6").lineWidth(1);
+  doc.moveTo(pw * 0.25, y).lineTo(pw * 0.75, y).stroke();
+  doc.restore();
+  y += 20;
+
+  // Version range (subtitle)
+  if (subtitle) {
+    doc.save();
+    doc.font("Helvetica-Oblique").fontSize(14).fillColor("#FFFFFF");
+    doc.text(subtitle, 0, y, { width: pw, align: "center" });
+    doc.restore();
+    y += 28;
+  }
+
+  // Cluster name
+  if (cluster) {
+    doc.save();
+    doc.font("Helvetica").fontSize(12).fillColor("#93C5FD");
+    doc.text("Cluster: " + cluster, 0, y, { width: pw, align: "center" });
+    doc.restore();
+    y += 22;
+  }
+
+  // Version range line
+  if (versionRange) {
+    doc.save();
+    doc.font("Helvetica").fontSize(12).fillColor("#93C5FD");
+    doc.text(versionRange, 0, y, { width: pw, align: "center" });
+    doc.restore();
+    y += 30;
+  }
+
+  // Status badge
+  if (badgeText) {
+    const bColor = badgeColor ? "#" + badgeColor : "#" + C.blue;
+    doc.save();
+    doc.font("Helvetica-Bold").fontSize(16).fillColor(bColor);
+    doc.text("[ " + badgeText + " ]", 0, y, { width: pw, align: "center" });
+    doc.restore();
+    y += 35;
+  }
+
+  // Date
+  doc.save();
+  doc.font("Helvetica").fontSize(11).fillColor("#93C5FD");
+  doc.text("Date: " + (date || formatDate()), 0, y, { width: pw, align: "center" });
+  doc.restore();
+  y += 22;
+
+  // Classification
+  doc.save();
+  doc.font("Helvetica-Oblique").fontSize(10).fillColor("#60A5FA");
+  doc.text(classification || "Classification: Internal — Upgrade Assessment Document", 0, y, { width: pw, align: "center" });
+  doc.restore();
+
+  // Move cursor past the cover page content
+  doc.y = ph - mb - 10;
+}
+
+// ═══════════════════════════════════════════
+// Footer builder
+// ═══════════════════════════════════════════
+
+function drawFooter(doc) {
+  ensureSpace(doc, 70);
+
+  const startY = doc.y + 20;
+  const pw = doc.page.width;
+  const barHeight = 60;
+
+  doc.save();
+  doc.rect(0, startY, pw, barHeight).fill("#" + C.navyDark);
+  doc.restore();
+
+  doc.save();
+  doc.font("Helvetica-Oblique").fontSize(10).fillColor("#FFFFFF");
+  doc.text("— End of Document —", 0, startY + 12, { width: pw, align: "center" });
+  doc.restore();
+
+  doc.save();
+  doc.font("Helvetica").fontSize(9).fillColor("#93C5FD");
+  doc.text("Generated by TCS KubeNexus AI Platform", 0, startY + 30, { width: pw, align: "center" });
+  doc.restore();
+
+  doc.y = startY + barHeight + 10;
+}
+
+// ═══════════════════════════════════════════
+// Checks table builder (colored status cells)
+// ═══════════════════════════════════════════
+
+function drawChecksTable(doc, checks) {
   if (!checks || checks.length === 0) {
-    return para("No checks available.", { italic: true, color: C.gray });
+    drawParagraph(doc, "No checks available.", { italic: true, color: C.gray });
+    return;
   }
 
-  const w = [18, 25, 12, 45];
-  const hColor = headerColor || C.navy;
+  const tableWidth = doc.page.width - 100;
+  const colWidths = [
+    tableWidth * 0.18,
+    tableWidth * 0.25,
+    tableWidth * 0.12,
+    tableWidth * 0.45,
+  ];
 
-  return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({
-        children: [
-          headerCell("Category", { width: w[0], shading: hColor }),
-          headerCell("Item", { width: w[1], shading: hColor }),
-          headerCell("Status", { width: w[2], shading: hColor }),
-          headerCell("Details", { width: w[3], shading: hColor }),
-        ],
-      }),
-      ...checks.map((check, ri) => {
-        const sc = getStatusColor(check.status);
-        return new TableRow({
-          children: [
-            styledCell(safe(check.category), { width: w[0], shading: ri % 2 === 1 ? C.grayLight : C.white }),
-            styledCell(safe(check.item), { width: w[1], shading: ri % 2 === 1 ? C.grayLight : C.white }),
-            styledCell(safe(check.status), {
-              width: w[2],
-              bold: true,
-              color: sc.text,
-              shading: sc.bg,
-              align: AlignmentType.CENTER,
-            }),
-            styledCell(safe(check.details, "—"), { width: w[3], shading: ri % 2 === 1 ? C.grayLight : C.white }),
-          ],
-        });
-      }),
-    ],
+  const rows = checks.map((check) => {
+    const sc = getStatusColor(check.status);
+    return [
+      safe(check.category),
+      safe(check.item),
+      { text: safe(check.status), bg: "#" + sc.bg, color: "#" + sc.text, bold: true },
+      safe(check.details, "—"),
+    ];
   });
+
+  drawTable(doc, ["Category", "Item", "Status", "Details"], rows, { colWidths });
 }
 
 // ═══════════════════════════════════════════
-// Remediation table
+// Remediation table builder
 // ═══════════════════════════════════════════
 
-function buildRemediationTable(fixes) {
+function drawRemediationTable(doc, fixes) {
   if (!fixes || fixes.length === 0) {
-    return para("No remediation actions required.", { italic: true, color: C.gray });
+    drawParagraph(doc, "No remediation actions required.", { italic: true, color: C.gray });
+    return;
   }
 
-  const w = [10, 20, 35, 35];
+  const tableWidth = doc.page.width - 100;
+  const colWidths = [
+    tableWidth * 0.10,
+    tableWidth * 0.20,
+    tableWidth * 0.35,
+    tableWidth * 0.35,
+  ];
 
-  return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({
-        children: [
-          headerCell("Severity", { width: w[0], shading: C.navy }),
-          headerCell("Title", { width: w[1], shading: C.navy }),
-          headerCell("Description", { width: w[2], shading: C.navy }),
-          headerCell("Command", { width: w[3], shading: C.navy }),
-        ],
-      }),
-      ...fixes.map((fix, ri) => {
-        const sc = getStatusColor(fix.severity);
-        return new TableRow({
-          children: [
-            styledCell(safe(fix.severity), {
-              width: w[0],
-              bold: true,
-              color: sc.text,
-              shading: sc.bg,
-              align: AlignmentType.CENTER,
-            }),
-            styledCell(safe(fix.title), {
-              width: w[1],
-              bold: true,
-              shading: ri % 2 === 1 ? C.grayLight : C.white,
-            }),
-            styledCell(safe(fix.description, "—"), {
-              width: w[2],
-              shading: ri % 2 === 1 ? C.grayLight : C.white,
-            }),
-            styledCell(safe(fix.command, "—"), {
-              width: w[3],
-              font: "Consolas",
-              size: 18,
-              shading: ri % 2 === 1 ? C.grayLight : C.white,
-            }),
-          ],
-        });
-      }),
-    ],
+  const rows = fixes.map((fix) => {
+    const sc = getStatusColor(fix.severity);
+    return [
+      { text: safe(fix.severity), bg: "#" + sc.bg, color: "#" + sc.text, bold: true },
+      { text: safe(fix.title), bold: true },
+      safe(fix.description, "—"),
+      { text: safe(fix.command, "—"), mono: true },
+    ];
   });
+
+  drawTable(doc, ["Severity", "Title", "Description", "Command"], rows, { colWidths });
 }
 
 // ═══════════════════════════════════════════
-// Issue list (for component analysis sections)
+// Comparison table builder (pre vs post)
 // ═══════════════════════════════════════════
 
-function buildIssueList(title, issues, color) {
-  const children = [heading(title, 3)];
-  if (!issues || issues.length === 0) {
-    children.push(para("None detected.", { italic: true, color: C.gray }));
-    return children;
-  }
-  for (const issue of issues) {
-    const text = typeof issue === "string" ? issue : (issue.name || issue.title || issue.message || JSON.stringify(issue));
-    children.push(bulletPara(text, { color }));
-  }
-  return children;
-}
-
-// ═══════════════════════════════════════════
-// Comparison table (pre vs post)
-// ═══════════════════════════════════════════
-
-function buildComparisonTable(comparison) {
+function drawComparisonTable(doc, comparison) {
   if (!comparison) {
-    return para("No comparison data available.", { italic: true, color: C.gray });
+    drawParagraph(doc, "No comparison data available.", { italic: true, color: C.gray });
+    return;
   }
 
-  const rows = [];
-  const addRows = (items, changeLabel) => {
-    if (!items || items.length === 0) return;
-    for (const item of items) {
+  const items = [];
+  const addItems = (list, changeLabel) => {
+    if (!list || list.length === 0) return;
+    for (const item of list) {
       const name = typeof item === "string" ? item : (item.item || item.name || item.title || JSON.stringify(item));
       const preStatus = typeof item === "object" ? safe(item.preStatus || item.pre_status, "—") : "—";
       const postStatus = typeof item === "object" ? safe(item.postStatus || item.post_status, "—") : "—";
-      rows.push({ name, preStatus, postStatus, change: changeLabel });
+      items.push({ name, preStatus, postStatus, change: changeLabel });
     }
   };
 
-  addRows(comparison.resolved, "Resolved");
-  addRows(comparison.persistent, "Persistent");
-  addRows(comparison.newIssues, "New");
+  addItems(comparison.resolved, "Resolved");
+  addItems(comparison.persistent, "Persistent");
+  addItems(comparison.newIssues, "New");
 
-  if (rows.length === 0) {
-    return para("No changes detected between pre and post assessment.", { italic: true, color: C.gray });
+  if (items.length === 0) {
+    drawParagraph(doc, "No changes detected between pre and post assessment.", { italic: true, color: C.gray });
+    return;
   }
 
-  const w = [30, 18, 18, 14];
+  const tableWidth = doc.page.width - 100;
+  const colWidths = [
+    tableWidth * 0.34,
+    tableWidth * 0.20,
+    tableWidth * 0.20,
+    tableWidth * 0.16,
+  ];
 
-  return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({
-        children: [
-          headerCell("Check", { width: w[0], shading: C.navy }),
-          headerCell("Pre-Status", { width: w[1], shading: C.navy }),
-          headerCell("Post-Status", { width: w[2], shading: C.navy }),
-          headerCell("Change", { width: w[3], shading: C.navy }),
-        ],
-      }),
-      ...rows.map((row, ri) => {
-        const changeSc = getStatusColor(row.change);
-        return new TableRow({
-          children: [
-            styledCell(row.name, { width: w[0], shading: ri % 2 === 1 ? C.grayLight : C.white }),
-            styledCell(row.preStatus, { width: w[1], shading: ri % 2 === 1 ? C.grayLight : C.white, align: AlignmentType.CENTER }),
-            styledCell(row.postStatus, { width: w[2], shading: ri % 2 === 1 ? C.grayLight : C.white, align: AlignmentType.CENTER }),
-            styledCell(row.change, {
-              width: w[3],
-              bold: true,
-              color: changeSc.text,
-              shading: changeSc.bg,
-              align: AlignmentType.CENTER,
-            }),
-          ],
-        });
-      }),
-    ],
+  // Extra 10% left unallocated by rounding — redistribute to first column
+  colWidths[0] = tableWidth - colWidths[1] - colWidths[2] - colWidths[3];
+
+  const rows = items.map((row) => {
+    const changeSc = getStatusColor(row.change);
+    return [
+      row.name,
+      row.preStatus,
+      row.postStatus,
+      { text: row.change, bg: "#" + changeSc.bg, color: "#" + changeSc.text, bold: true },
+    ];
   });
+
+  drawTable(doc, ["Check", "Pre-Status", "Post-Status", "Change"], rows, { colWidths });
 }
 
 // ═══════════════════════════════════════════
-// Timeline table (monitoring snapshots)
+// Timeline table builder
 // ═══════════════════════════════════════════
 
-function buildTimelineTable(snapshots) {
+function drawTimelineTable(doc, snapshots) {
   if (!snapshots || snapshots.length === 0) {
-    return para("No monitoring snapshots available.", { italic: true, color: C.gray });
+    drawParagraph(doc, "No monitoring snapshots available.", { italic: true, color: C.gray });
+    return;
   }
 
-  const w = [22, 18, 12, 18, 30];
+  const tableWidth = doc.page.width - 100;
+  const colWidths = [
+    tableWidth * 0.22,
+    tableWidth * 0.18,
+    tableWidth * 0.12,
+    tableWidth * 0.18,
+    tableWidth * 0.30,
+  ];
 
-  return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({
-        children: [
-          headerCell("Timestamp", { width: w[0], shading: C.navy }),
-          headerCell("Phase", { width: w[1], shading: C.navy }),
-          headerCell("Progress", { width: w[2], shading: C.navy }),
-          headerCell("Version", { width: w[3], shading: C.navy }),
-          headerCell("Message", { width: w[4], shading: C.navy }),
-        ],
-      }),
-      ...snapshots.map((snap, ri) =>
-        new TableRow({
-          children: [
-            styledCell(formatTimestamp(snap.timestamp), { width: w[0], size: 18, shading: ri % 2 === 1 ? C.grayLight : C.white }),
-            styledCell(safe(snap.phase), { width: w[1], bold: true, shading: ri % 2 === 1 ? C.grayLight : C.white }),
-            styledCell(safe(snap.progress, "—"), { width: w[2], align: AlignmentType.CENTER, shading: ri % 2 === 1 ? C.grayLight : C.white }),
-            styledCell(safe(snap.version, "—"), { width: w[3], shading: ri % 2 === 1 ? C.grayLight : C.white }),
-            styledCell(safe(snap.message, "—"), { width: w[4], shading: ri % 2 === 1 ? C.grayLight : C.white }),
-          ],
-        })
-      ),
-    ],
+  const rows = snapshots.map((snap) => [
+    formatTimestamp(snap.timestamp),
+    { text: safe(snap.phase), bold: true },
+    safe(snap.progress, "—"),
+    safe(snap.version, "—"),
+    safe(snap.message, "—"),
+  ]);
+
+  drawTable(doc, ["Timestamp", "Phase", "Progress", "Version", "Message"], rows, { colWidths });
+}
+
+// ═══════════════════════════════════════════
+// Issue list helper (for component analysis)
+// ═══════════════════════════════════════════
+
+function drawIssueList(doc, title, issues, color) {
+  drawHeading(doc, title, 3);
+  if (!issues || issues.length === 0) {
+    drawParagraph(doc, "None detected.", { italic: true, color: C.gray });
+    return;
+  }
+  for (const issue of issues) {
+    const text = typeof issue === "string"
+      ? issue
+      : (issue.name || issue.title || issue.message || JSON.stringify(issue));
+    drawBullet(doc, text, { color });
+  }
+}
+
+// ═══════════════════════════════════════════
+// Core PDF generation wrapper
+// ═══════════════════════════════════════════
+
+function generatePDF(buildContent) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({
+      size: "A4",
+      margins: { top: 50, bottom: 50, left: 50, right: 50 },
+      bufferPages: true,
+    });
+    const chunks = [];
+    doc.on("data", (chunk) => chunks.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    try {
+      buildContent(doc);
+      doc.end();
+    } catch (err) {
+      reject(err);
+    }
   });
 }
 
@@ -659,10 +577,10 @@ function buildTimelineTable(snapshots) {
 // ═══════════════════════════════════════════
 
 /**
- * Generates a professional DOCX pre-assessment report for a cluster upgrade.
+ * Generates a professional PDF pre-assessment report for a cluster upgrade.
  *
  * @param {Object} session - The upgrade orchestrator session object
- * @returns {Promise<Buffer>} DOCX file buffer
+ * @returns {Promise<Buffer>} PDF file buffer
  */
 export async function generatePreAssessmentReport(session) {
   if (!session) throw new Error("generatePreAssessmentReport: session is required");
@@ -673,128 +591,116 @@ export async function generatePreAssessmentReport(session) {
   const crForm = session.crFormData || {};
   const badge = overallBadge(preflight.overall);
 
-  const children = [
+  return generatePDF((doc) => {
     // ── Cover Page ──
-    new Paragraph({ spacing: { before: 1200 } }),
-    buildCoverPage({
+    drawCoverPage(doc, {
       title: "Cluster Upgrade Pre-Assessment Report",
-      subtitle: `${safe(session.fromVersion, "current")} → ${safe(session.targetVersion, "target")}`,
+      subtitle: safe(session.fromVersion, "current") + " → " + safe(session.targetVersion, "target"),
       cluster: safe(session.cluster, "local"),
-      versionRange: `Upgrade Path: ${safe(session.fromVersion)} → ${safe(session.targetVersion)}`,
+      versionRange: "Upgrade Path: " + safe(session.fromVersion) + " → " + safe(session.targetVersion),
       date: formatDate(),
       badgeText: badge.text,
       badgeColor: badge.color,
       classification: "Classification: Internal — Upgrade Assessment Document",
-    }),
+    });
 
-    // ── Executive Summary ──
-    new Paragraph({ children: [new PageBreak()] }),
-    heading("1. Executive Summary", 1),
-    para(`This pre-assessment report evaluates the readiness of cluster "${safe(session.cluster, "local")}" for an upgrade from OpenShift ${safe(session.fromVersion)} to ${safe(session.targetVersion)}.`, { after: 120 }),
-    kvTable([
+    // ── Page 2: Executive Summary ──
+    doc.addPage();
+    drawHeading(doc, "1. Executive Summary", 1);
+    drawParagraph(doc,
+      "This pre-assessment report evaluates the readiness of cluster \"" +
+      safe(session.cluster, "local") +
+      "\" for an upgrade from OpenShift " +
+      safe(session.fromVersion) +
+      " to " +
+      safe(session.targetVersion) +
+      "."
+    );
+    doc.moveDown(0.3);
+
+    drawKVTable(doc, [
       ["Overall Status", badge.text],
       ["Checks Passed", String(preflight.passed || 0)],
       ["Warnings", String(preflight.warnings || 0)],
       ["Failures", String(preflight.failed || 0)],
       ["Total Checks", String(preflight.total || 0)],
       ["Risk Level", safe(crForm.riskLevel, "Not assessed")],
-    ], { color: C.blue }),
+    ], { headerBg: "#" + C.blue });
 
     // ── Cluster Information ──
-    para(""),
-    heading("2. Cluster Information", 1),
-    kvTable([
+    doc.moveDown(0.8);
+    drawHeading(doc, "2. Cluster Information", 1);
+
+    drawKVTable(doc, [
       ["Cluster Name", safe(session.cluster, "local")],
       ["Current Version", safe(session.fromVersion)],
       ["Target Version", safe(session.targetVersion)],
       ["Update Channel", safe(session.channel)],
       ["Upgrade Type", safe(session.upgradeType, "standard")],
       ["Session ID", safe(session.id)],
-    ]),
+    ]);
 
     // ── Pre-Assessment Checks ──
-    para(""),
-    new Paragraph({ children: [new PageBreak()] }),
-    heading("3. Pre-Assessment Checks", 1),
-    para("The following checks were performed to assess the cluster's upgrade readiness:", { after: 120 }),
-    buildChecksTable(preflight.checks),
+    doc.addPage();
+    drawHeading(doc, "3. Pre-Assessment Checks", 1);
+    drawParagraph(doc, "The following checks were performed to assess the cluster's upgrade readiness:");
+    doc.moveDown(0.3);
+    drawChecksTable(doc, preflight.checks);
 
     // ── Component Analysis ──
-    para(""),
-    new Paragraph({ children: [new PageBreak()] }),
-    heading("4. Component Analysis", 1),
-    para("Detailed analysis of cluster components that may affect the upgrade:", { after: 120 }),
+    doc.addPage();
+    drawHeading(doc, "4. Component Analysis", 1);
+    drawParagraph(doc, "Detailed analysis of cluster components that may affect the upgrade:");
+    doc.moveDown(0.3);
 
-    // Degraded operators
-    ...buildIssueList("4.1 Degraded Operators", component.degradedOperators, C.red),
-
-    para(""),
-
-    // Certificate issues
-    ...buildIssueList("4.2 Certificate Issues", component.certificateIssues, C.orange),
-
-    para(""),
-
-    // MCP issues
-    ...buildIssueList("4.3 Machine Config Pool Issues", component.mcpIssues, C.orange),
+    drawIssueList(doc, "4.1 Degraded Operators", component.degradedOperators, C.red);
+    doc.moveDown(0.5);
+    drawIssueList(doc, "4.2 Certificate Issues", component.certificateIssues, C.orange);
+    doc.moveDown(0.5);
+    drawIssueList(doc, "4.3 Machine Config Pool Issues", component.mcpIssues, C.orange);
 
     // ── Remediation Plan ──
-    para(""),
-    new Paragraph({ children: [new PageBreak()] }),
-    heading("5. Remediation Plan", 1),
-    para("The following remediation actions are recommended before proceeding with the upgrade:", { after: 120 }),
-    buildRemediationTable(remediation.fixes),
+    doc.addPage();
+    drawHeading(doc, "5. Remediation Plan", 1);
+    drawParagraph(doc, "The following remediation actions are recommended before proceeding with the upgrade:");
+    doc.moveDown(0.3);
+    drawRemediationTable(doc, remediation.fixes);
 
     // ── Cluster Topology ──
-    para(""),
-    heading("6. Cluster Topology", 1),
-    para("Node overview and estimated upgrade duration:", { after: 120 }),
-  ];
+    doc.moveDown(0.8);
+    drawHeading(doc, "6. Cluster Topology", 1);
+    drawParagraph(doc, "Node overview and estimated upgrade duration:");
+    doc.moveDown(0.3);
 
-  // Build topology data from preflight checks if available
-  const topologyRows = [];
-  if (preflight.checks) {
-    const nodeCheck = preflight.checks.find((c) => c.category === "nodes" || c.item === "node_count" || (c.details && c.details.includes("node")));
-    if (nodeCheck) {
-      topologyRows.push(["Node Information", safe(nodeCheck.details)]);
+    const topologyRows = [];
+    if (preflight.checks) {
+      const nodeCheck = preflight.checks.find(
+        (c) => c.category === "nodes" || c.item === "node_count" || (c.details && c.details.includes("node"))
+      );
+      if (nodeCheck) {
+        topologyRows.push(["Node Information", safe(nodeCheck.details)]);
+      }
     }
-  }
-  // Add CR form data if available
-  if (crForm.estimatedDuration) {
-    topologyRows.push(["Estimated Duration", crForm.estimatedDuration]);
-  }
-  if (crForm.justification) {
-    topologyRows.push(["Upgrade Justification", crForm.justification]);
-  }
-  if (crForm.riskLevel) {
-    topologyRows.push(["Risk Level", crForm.riskLevel]);
-  }
+    if (crForm.estimatedDuration) {
+      topologyRows.push(["Estimated Duration", crForm.estimatedDuration]);
+    }
+    if (crForm.justification) {
+      topologyRows.push(["Upgrade Justification", crForm.justification]);
+    }
+    if (crForm.riskLevel) {
+      topologyRows.push(["Risk Level", crForm.riskLevel]);
+    }
 
-  if (topologyRows.length > 0) {
-    children.push(kvTable(topologyRows, { color: C.blue }));
-  } else {
-    children.push(para("Topology data not available in the current session.", { italic: true, color: C.gray }));
-  }
+    if (topologyRows.length > 0) {
+      drawKVTable(doc, topologyRows, { headerBg: "#" + C.blue });
+    } else {
+      drawParagraph(doc, "Topology data not available in the current session.", { italic: true, color: C.gray });
+    }
 
-  // ── Footer ──
-  children.push(
-    new Paragraph({ spacing: { before: 600 } }),
-    buildFooter()
-  );
-
-  const doc = new Document({
-    styles: { default: { document: { run: { font: "Calibri", size: 22 } } } },
-    sections: [
-      {
-        properties: {
-          page: { margin: { top: 1200, bottom: 1200, left: 1200, right: 1200 } },
-        },
-        children,
-      },
-    ],
+    // ── Footer ──
+    doc.moveDown(1);
+    drawFooter(doc);
   });
-
-  return Packer.toBuffer(doc);
 }
 
 // ═══════════════════════════════════════════
@@ -802,10 +708,10 @@ export async function generatePreAssessmentReport(session) {
 // ═══════════════════════════════════════════
 
 /**
- * Generates a professional DOCX post-assessment report after a cluster upgrade.
+ * Generates a professional PDF post-assessment report after a cluster upgrade.
  *
  * @param {Object} session - The upgrade orchestrator session object (after completion)
- * @returns {Promise<Buffer>} DOCX file buffer
+ * @returns {Promise<Buffer>} PDF file buffer
  */
 export async function generatePostAssessmentReport(session) {
   if (!session) throw new Error("generatePostAssessmentReport: session is required");
@@ -824,25 +730,30 @@ export async function generatePostAssessmentReport(session) {
     ? { text: "SUCCESS", color: "22C55E" }
     : { text: "FAILED", color: "EF4444" };
 
-  const children = [
+  return generatePDF((doc) => {
     // ── Cover Page ──
-    new Paragraph({ spacing: { before: 1200 } }),
-    buildCoverPage({
+    drawCoverPage(doc, {
       title: "Cluster Upgrade Post-Assessment Report",
-      subtitle: `${safe(session.fromVersion, "current")} → ${safe(session.targetVersion, "target")}`,
+      subtitle: safe(session.fromVersion, "current") + " → " + safe(session.targetVersion, "target"),
       cluster: safe(session.cluster, "local"),
-      versionRange: `Upgrade Path: ${safe(session.fromVersion)} → ${safe(session.targetVersion)}`,
+      versionRange: "Upgrade Path: " + safe(session.fromVersion) + " → " + safe(session.targetVersion),
       date: formatDate(),
       badgeText: outcomeBadge.text,
       badgeColor: outcomeBadge.color,
       classification: "Classification: Internal — Post-Upgrade Assessment Document",
-    }),
+    });
 
     // ── Executive Summary ──
-    new Paragraph({ children: [new PageBreak()] }),
-    heading("1. Executive Summary", 1),
-    para(`This post-assessment report summarizes the outcome of the OpenShift cluster upgrade for "${safe(session.cluster, "local")}".`, { after: 120 }),
-    kvTable([
+    doc.addPage();
+    drawHeading(doc, "1. Executive Summary", 1);
+    drawParagraph(doc,
+      "This post-assessment report summarizes the outcome of the OpenShift cluster upgrade for \"" +
+      safe(session.cluster, "local") +
+      "\"."
+    );
+    doc.moveDown(0.3);
+
+    drawKVTable(doc, [
       ["Upgrade Outcome", outcomeBadge.text],
       ["Duration", safe(postAssessment.duration, "Not recorded")],
       ["From Version", safe(session.fromVersion)],
@@ -854,97 +765,82 @@ export async function generatePostAssessmentReport(session) {
       ["Issues Resolved", String((comparison.resolved || []).length)],
       ["Persistent Issues", String((comparison.persistent || []).length)],
       ["New Issues", String((comparison.newIssues || []).length)],
-    ], { color: isSuccess ? C.green : C.red }),
+    ], { headerBg: "#" + (isSuccess ? C.green : C.red) });
 
     // ── Pre vs Post Comparison ──
-    para(""),
-    new Paragraph({ children: [new PageBreak()] }),
-    heading("2. Pre vs Post Comparison", 1),
-    para("Side-by-side comparison of cluster health checks before and after the upgrade:", { after: 120 }),
-    buildComparisonTable(comparison),
+    doc.addPage();
+    drawHeading(doc, "2. Pre vs Post Comparison", 1);
+    drawParagraph(doc, "Side-by-side comparison of cluster health checks before and after the upgrade:");
+    doc.moveDown(0.3);
+    drawComparisonTable(doc, comparison);
 
     // ── Resolved Issues ──
-    para(""),
-    heading("3. Resolved Issues", 1),
-    para("Issues from the pre-assessment that were resolved during the upgrade:", { after: 120 }),
-  ];
+    doc.moveDown(0.8);
+    drawHeading(doc, "3. Resolved Issues", 1);
+    drawParagraph(doc, "Issues from the pre-assessment that were resolved during the upgrade:");
+    doc.moveDown(0.3);
 
-  if (comparison.resolved && comparison.resolved.length > 0) {
-    for (const issue of comparison.resolved) {
-      const text = typeof issue === "string" ? issue : (issue.item || issue.name || issue.title || JSON.stringify(issue));
-      children.push(bulletPara(text, { color: C.green }));
+    if (comparison.resolved && comparison.resolved.length > 0) {
+      for (const issue of comparison.resolved) {
+        const text = typeof issue === "string"
+          ? issue
+          : (issue.item || issue.name || issue.title || JSON.stringify(issue));
+        drawBullet(doc, text, { color: C.green });
+      }
+    } else {
+      drawParagraph(doc, "No issues were resolved during the upgrade.", { italic: true, color: C.gray });
     }
-  } else {
-    children.push(para("No issues were resolved during the upgrade.", { italic: true, color: C.gray }));
-  }
 
-  // ── Persistent Issues ──
-  children.push(
-    para(""),
-    heading("4. Persistent Issues", 1),
-    para("Issues that remain after the upgrade and may require manual attention:", { after: 120 })
-  );
+    // ── Persistent Issues ──
+    doc.moveDown(0.8);
+    drawHeading(doc, "4. Persistent Issues", 1);
+    drawParagraph(doc, "Issues that remain after the upgrade and may require manual attention:");
+    doc.moveDown(0.3);
 
-  if (comparison.persistent && comparison.persistent.length > 0) {
-    for (const issue of comparison.persistent) {
-      const text = typeof issue === "string" ? issue : (issue.item || issue.name || issue.title || JSON.stringify(issue));
-      children.push(bulletPara(text, { color: C.orange }));
+    if (comparison.persistent && comparison.persistent.length > 0) {
+      for (const issue of comparison.persistent) {
+        const text = typeof issue === "string"
+          ? issue
+          : (issue.item || issue.name || issue.title || JSON.stringify(issue));
+        drawBullet(doc, text, { color: C.orange });
+      }
+    } else {
+      drawParagraph(doc, "No persistent issues detected.", { italic: true, color: C.gray });
     }
-  } else {
-    children.push(para("No persistent issues detected.", { italic: true, color: C.gray }));
-  }
 
-  // ── New Issues ──
-  children.push(
-    para(""),
-    heading("5. New Issues", 1),
-    para("New issues detected after the upgrade that were not present before:", { after: 120 })
-  );
+    // ── New Issues ──
+    doc.moveDown(0.8);
+    drawHeading(doc, "5. New Issues", 1);
+    drawParagraph(doc, "New issues detected after the upgrade that were not present before:");
+    doc.moveDown(0.3);
 
-  if (comparison.newIssues && comparison.newIssues.length > 0) {
-    for (const issue of comparison.newIssues) {
-      const text = typeof issue === "string" ? issue : (issue.item || issue.name || issue.title || JSON.stringify(issue));
-      children.push(bulletPara(text, { color: C.red }));
+    if (comparison.newIssues && comparison.newIssues.length > 0) {
+      for (const issue of comparison.newIssues) {
+        const text = typeof issue === "string"
+          ? issue
+          : (issue.item || issue.name || issue.title || JSON.stringify(issue));
+        drawBullet(doc, text, { color: C.red });
+      }
+    } else {
+      drawParagraph(doc, "No new issues detected after the upgrade.", { italic: true, color: C.gray });
     }
-  } else {
-    children.push(para("No new issues detected after the upgrade.", { italic: true, color: C.gray }));
-  }
 
-  // ── Upgrade Timeline ──
-  children.push(
-    para(""),
-    new Paragraph({ children: [new PageBreak()] }),
-    heading("6. Upgrade Timeline", 1),
-    para("Monitoring snapshots captured during the upgrade process:", { after: 120 }),
-    buildTimelineTable(Array.isArray(snapshots) ? snapshots : [])
-  );
+    // ── Upgrade Timeline ──
+    doc.addPage();
+    drawHeading(doc, "6. Upgrade Timeline", 1);
+    drawParagraph(doc, "Monitoring snapshots captured during the upgrade process:");
+    doc.moveDown(0.3);
+    drawTimelineTable(doc, Array.isArray(snapshots) ? snapshots : []);
 
-  // ── Post-Assessment Checks ──
-  children.push(
-    para(""),
-    new Paragraph({ children: [new PageBreak()] }),
-    heading("7. Post-Assessment Checks", 1),
-    para("Detailed results of all checks performed after the upgrade:", { after: 120 }),
-    buildChecksTable(postChecks.checks)
-  );
+    // ── Post-Assessment Checks ──
+    doc.addPage();
+    drawHeading(doc, "7. Post-Assessment Checks", 1);
+    drawParagraph(doc, "Detailed results of all checks performed after the upgrade:");
+    doc.moveDown(0.3);
+    drawChecksTable(doc, postChecks.checks);
 
-  // ── Footer ──
-  children.push(
-    new Paragraph({ spacing: { before: 600 } }),
-    buildFooter()
-  );
-
-  const doc = new Document({
-    styles: { default: { document: { run: { font: "Calibri", size: 22 } } } },
-    sections: [
-      {
-        properties: {
-          page: { margin: { top: 1200, bottom: 1200, left: 1200, right: 1200 } },
-        },
-        children,
-      },
-    ],
+    // ── Footer ──
+    doc.moveDown(1);
+    drawFooter(doc);
   });
-
-  return Packer.toBuffer(doc);
 }
