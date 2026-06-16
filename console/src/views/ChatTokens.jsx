@@ -129,7 +129,7 @@ function TokenCard({ type, data, cluster, onQuery, onItsmSubmitted }) {
     case "PREFLIGHT_REPORT": return data ? <PreflightReport report={data} /> : null;
     case "ITSM_FORM":        return data ? <ITSMForm form={data} cluster={cluster} onItsmSubmitted={onItsmSubmitted} /> : null;
     case "ITSM_SUBMITTED":   return data ? <ITSMSubmitted info={data} cluster={cluster} onQuery={onQuery} /> : null;
-    case "UPGRADE_EXECUTE":  return data ? <UpgradeExecuteCard data={data} cluster={cluster} /> : null;
+    case "UPGRADE_EXECUTE":  return data ? <UpgradeExecuteCard data={data} cluster={cluster} onQuery={onQuery} /> : null;
     case "UPGRADE_PROGRESS": return data ? <UpgradeProgressCard data={data} cluster={cluster} onQuery={onQuery} /> : null;
     case "FIX_PROPOSAL":     return data ? <FixProposal diag={data} cluster={cluster} /> : null;
     case "CLARIFY":          return data ? <ClarifyCard data={data} onQuery={onQuery} /> : null;
@@ -385,6 +385,7 @@ function ITSMSubmitted({ info, cluster, onQuery }) {
   const [checking, setChecking] = useState(false);
   const [status, setStatus] = useState(null);        // { status, stateLabel, approval } | { status:"error", error }
   const [showUpgrade, setShowUpgrade] = useState(false);
+  const approvedNotified = useRef(false);
 
   const approved = status?.status === "approved";
   // Upgrade is gated on approval; local-only CRs have no approval gate.
@@ -408,12 +409,30 @@ function ITSMSubmitted({ info, cluster, onQuery }) {
     } finally { setChecking(false); }
   }
 
-  // Auto-check once on mount for upgrade CRs so an already-approved request
-  // surfaces the upgrade option immediately (e.g. after a page refresh).
+  // Auto-poll CR status every 30 seconds so approval is detected without
+  // manual clicks. Replaces the old one-shot mount check.
   useEffect(() => {
-    if (canUpgradeFlow && !isLocal) checkStatus();
+    if (!info?.sysId || info?.type !== "change_request") return;
+    const check = async () => {
+      try {
+        const r = await fetch(clusterUrl("/api/itsm/cr-status", cluster), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sysId: info.sysId, ticketId: info.ticketId }),
+        });
+        const d = await r.json();
+        setStatus(d);
+        if (d.status === "approved" && !approvedNotified.current) {
+          approvedNotified.current = true;
+          if (canUpgradeFlow) setShowUpgrade(true);
+        }
+      } catch {}
+    };
+    check();
+    const timer = setInterval(check, 30000); // poll every 30s
+    return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [info?.sysId]);
 
   function statusBadge() {
     const s = status?.status;
@@ -485,7 +504,7 @@ function ITSMSubmitted({ info, cluster, onQuery }) {
         <div style={{ padding: "0 18px 16px" }}>
           <UpgradeExecuteCard
             data={{ targetVersion: info.targetVersion, fromVersion: info.fromVersion, channel: info.channel, ticketId: info.ticketId, sysId: info.sysId }}
-            cluster={cluster} />
+            cluster={cluster} onQuery={onQuery} />
         </div>
       )}
     </div>
@@ -496,7 +515,7 @@ function ITSMSubmitted({ info, cluster, onQuery }) {
 /*  Upgrade execute card (dry-run + execute with SSE progress)          */
 /* ------------------------------------------------------------------ */
 
-function UpgradeExecuteCard({ data, cluster }) {
+function UpgradeExecuteCard({ data, cluster, onQuery }) {
   const [lines, setLines] = useState([]);      // [{ cls, text }]
   const [progress, setProgress] = useState(null); // null | number
   const [barColor, setBarColor] = useState("var(--accent2)");
@@ -508,6 +527,25 @@ function UpgradeExecuteCard({ data, cluster }) {
   const [channel, setChannel] = useState(data.channel || "stable-" + (data.targetVersion || "").split(".").slice(0, 2).join("."));
   const [force, setForce] = useState(false);
   const esRef = useRef(null);
+
+  // Auto-poll upgrade progress during execution as a fallback alongside SSE
+  useEffect(() => {
+    if (phase !== "executing") return;
+    const poll = async () => {
+      try {
+        const r = await fetch(clusterUrl(`/api/upgrade/status?session=${data.sessionId || ""}&cluster=${cluster}`, cluster));
+        const d = await r.json();
+        if (typeof d.progress === "number") setProgress(d.progress);
+        if (d.phase === "complete" || d.state === "COMPLETED") {
+          setPhase("complete");
+          setBarColor("var(--ok)");
+          if (onQuery) onQuery("check upgrade status");
+        }
+      } catch {}
+    };
+    const timer = setInterval(poll, 15000);
+    return () => clearInterval(timer);
+  }, [phase, data.sessionId, cluster, onQuery]);
 
   const push = (cls, text) => setLines((l) => [...l, { cls, text }]);
 
@@ -641,6 +679,7 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
   const pollRef = useRef(null);
 
   const sessionId = data?.sessionId;
+  const prevStateRef = useRef(null);
 
   async function fetchSession() {
     if (!sessionId) return;
@@ -655,6 +694,37 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     fetchSession();
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [sessionId]);
+
+  // Auto-poll for state transitions during active upgrade sessions.
+  // When the state changes (e.g. CR_SUBMITTED -> CR_APPROVED), trigger
+  // a chat follow-up so the user sees a live update.
+  useEffect(() => {
+    const activeStates = ["cr_submitted", "executing", "monitoring"];
+    const currentState = session?.state || data?.state || "idle";
+    if (!activeStates.includes(currentState) || !sessionId) return;
+
+    const poll = async () => {
+      try {
+        const r = await fetch(clusterUrl(`/api/upgrade/notifications?cluster=${cluster}`, cluster));
+        const d = await r.json();
+        const newState = d.state || d.sessionState;
+        if (newState && prevStateRef.current && newState !== prevStateRef.current) {
+          // State transitioned — trigger a chat update
+          if (prevStateRef.current === "cr_submitted" && newState === "cr_approved") {
+            if (onQuery) onQuery("check CR status");
+          } else if (newState === "completed" || newState === "monitoring") {
+            if (onQuery) onQuery("check upgrade status");
+          }
+          await fetchSession();
+        }
+        prevStateRef.current = newState || currentState;
+      } catch {}
+    };
+    prevStateRef.current = currentState;
+    const timer = setInterval(poll, 15000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.state, data?.state, sessionId, cluster]);
 
   async function runStep(action, extraBody = {}) {
     setStepRunning(action);
@@ -1025,6 +1095,26 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
               Open Full Report
             </a>
+          </div>
+        )}
+
+        {/* Report download buttons (pre-assessment / post-assessment DOCX) */}
+        {(data.preflightStatus || state === "completed") && (
+          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+            <button className="ux-btn ux-btn-outline" onClick={() => {
+              const a = document.createElement("a");
+              a.href = `/api/upgrade/report?session=${sessionId}&type=pre`;
+              a.download = "pre-assessment.docx";
+              a.click();
+            }}>Download Pre-Assessment</button>
+            {state === "completed" && (
+              <button className="ux-btn ux-btn-outline" onClick={() => {
+                const a = document.createElement("a");
+                a.href = `/api/upgrade/report?session=${sessionId}&type=post`;
+                a.download = "post-assessment.docx";
+                a.click();
+              }}>Download Post-Assessment</button>
+            )}
           </div>
         )}
       </div>

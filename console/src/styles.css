@@ -3409,6 +3409,8 @@ h3.widget-title {
 .ux-btn-execute { background: var(--ok); color: #fff; border-color: var(--ok); }
 .ux-btn-execute:hover:not(:disabled) { opacity: .9; }
 .ux-btn-cancel:hover:not(:disabled) { border-color: var(--crit); color: var(--crit); }
+.ux-btn-outline { padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+.ux-btn-outline:hover { background: var(--hover); border-color: var(--accent); color: var(--accent); }
 .ux-advanced-toggle { font-size: 12px; color: var(--text2); cursor: pointer; user-select: none; margin-top: 4px; }
 .ux-advanced { display: flex; flex-direction: column; gap: 8px; padding: 10px 0; font-size: 12px; }
 .ux-advanced label { display: flex; align-items: center; gap: 6px; }

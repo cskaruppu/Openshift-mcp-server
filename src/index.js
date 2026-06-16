@@ -79,6 +79,7 @@ import { createDeployment, executeDeployment, rollbackDeployment, getDeployment,
 import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
 import { callLLM } from "./services/llm.js";
+import { generatePreAssessmentReport, generatePostAssessmentReport } from "./services/upgrade-report.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleOptimizationAnalysisAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import {
   listActions,
@@ -5078,6 +5079,60 @@ spec:
       return;
     }
 
+    // Upgrade report download (DOCX)
+    if (req.method === "GET" && url.pathname === "/api/upgrade/report") {
+      try {
+        const sessionId = url.searchParams.get("session");
+        const type = url.searchParams.get("type") || "pre"; // "pre" or "post"
+        const { getSession } = await import("./services/upgrade-orchestrator.js");
+        const session = getSession(sessionId);
+        if (!session) return sendJson(res, 404, { error: "Upgrade session not found" });
+
+        const buffer = type === "post"
+          ? await generatePostAssessmentReport(session)
+          : await generatePreAssessmentReport(session);
+
+        const filename = `TCS-KubeNexus-${type === "post" ? "Post" : "Pre"}-Assessment-${session.cluster}-${session.targetVersion}-${Date.now()}.docx`;
+        res.writeHead(200, {
+          "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "Content-Disposition": `attachment; filename="${filename}"`,
+          "Content-Length": buffer.length,
+        });
+        res.end(buffer);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // Upgrade milestone notifications (polled by frontend)
+    if (req.method === "GET" && url.pathname === "/api/upgrade/notifications") {
+      try {
+        const { getActiveSession, listSessions } = await import("./services/upgrade-orchestrator.js");
+        const clusterName = url.searchParams.get("cluster") || "local";
+        const sessions = listSessions().filter(s =>
+          s.cluster === clusterName && !["COMPLETED", "FAILED", "CANCELLED", "IDLE"].includes(s.state)
+        );
+        const notifications = [];
+        for (const s of sessions) {
+          // Check for state transitions
+          const lastSnapshot = s.monitoringSnapshots?.slice(-1)[0];
+          notifications.push({
+            sessionId: s.id,
+            state: s.state,
+            fromVersion: s.fromVersion,
+            targetVersion: s.targetVersion,
+            crTicketId: s.crTicketId || null,
+            crStatus: s.crStatus || null,
+            progress: lastSnapshot || null,
+            preflightStatus: s.preflightReport?.overall || null,
+            hasPreReport: !!s.preflightReport,
+            hasPostReport: !!s.postAssessment,
+          });
+        }
+        sendJson(res, 200, { notifications });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
     // Upgrade Orchestrator API — /api/upgrade/orchestrator/<action>
     const orchMatch = url.pathname.match(/^\/api\/upgrade\/orchestrator\/(\w[\w-]*)$/);
     if (orchMatch) {
@@ -6460,6 +6515,33 @@ spec:
     try { await cleanupOldCRs(90); } catch (e) {}
   }, 24 * 60 * 60 * 1000);
 
+  // Background upgrade session poller — checks CR status and upgrade progress
+  const UPGRADE_POLL_INTERVAL = 60_000; // 60 seconds
+
+  async function pollUpgradeSessions() {
+    try {
+      const { listSessions, stepCheckCRStatus, stepCheckUpgradeProgress } = await import("./services/upgrade-orchestrator.js");
+      const sessions = listSessions();
+      for (const s of sessions) {
+        try {
+          if (s.state === "CR_SUBMITTED" && s.crTicketId) {
+            const result = await stepCheckCRStatus(s.id);
+            if (result?.status === "approved") {
+              console.log(`[upgrade-poller] CR ${s.crTicketId} approved for ${s.cluster}`);
+            }
+          }
+          if (s.state === "EXECUTING" || s.state === "MONITORING") {
+            await stepCheckUpgradeProgress(s.id);
+          }
+        } catch (err) {
+          console.error(`[upgrade-poller] Session ${s.id}: ${err.message}`);
+        }
+      }
+    } catch {}
+  }
+
+  _upgradePollTimer = setInterval(pollUpgradeSessions, UPGRADE_POLL_INTERVAL);
+
   // Reload config on SIGHUP (e.g. after ConfigMap update)
   process.on("SIGHUP", () => {
     console.error("[SIGHUP] Reloading configuration...");
@@ -6477,8 +6559,10 @@ const mode =
   (process.env.KUBERNETES_SERVICE_HOST ? "sse" : "stdio");
 
 let _httpServer = null;
+let _upgradePollTimer = null;
 function gracefulShutdown(signal) {
   console.error(`[${signal}] Shutting down gracefully...`);
+  if (_upgradePollTimer) clearInterval(_upgradePollTimer);
   if (_httpServer) _httpServer.close(() => console.error("[shutdown] HTTP server closed"));
   setTimeout(() => { console.error("[shutdown] Forcing exit"); process.exit(0); }, 10_000);
 }
