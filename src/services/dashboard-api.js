@@ -1999,6 +1999,26 @@ export async function handleUpgradeOrchestrator(req, res, action) {
         return json(res, 200, { session });
       }
 
+      case "raise-cr": {
+        const { sessionId } = body;
+        if (!sessionId) return json(res, 400, { error: "Missing 'sessionId'" });
+        const session = await uoGetSession(sessionId);
+        if (!session) return json(res, 404, { error: "Session not found" });
+        const formData = buildCRFormData(session);
+        try {
+          const { createChangeRequest } = await import("../utils/servicenow-client.js");
+          const result = await createChangeRequest(formData);
+          const record = result?.result || result;
+          const ticketId = record.number || record.task_effective_number || "";
+          const sysId = record.sys_id || "";
+          if (!ticketId) return json(res, 500, { error: "CR created but no ticket number returned", raw: record });
+          const updated = await stepLinkCR(sessionId, ticketId, sysId);
+          return json(res, 200, { session: updated, ticketId, sysId });
+        } catch (err) {
+          return json(res, 500, { error: `ServiceNow CR creation failed: ${err.message}` });
+        }
+      }
+
       case "cr-status": {
         const { sessionId } = body;
         if (!sessionId) return json(res, 400, { error: "Missing 'sessionId'" });

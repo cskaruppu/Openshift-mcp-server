@@ -26,29 +26,48 @@ function statusDisplay(status) {
   return { label: status || "Connecting", color: "var(--text2)", pulse: false };
 }
 
-function healthColor(health) {
-  if (health === "degraded" || health === "critical") return "#ef4444";
-  if (health === "warning") return "#f59e0b";
-  return "#22c55e";
+function computeHealthScore(data) {
+  if (!data || typeof data !== "object") return { score: 0, label: "--", color: "#64748b" };
+  let total = 0, weight = 0;
+  const nodes = data.nodes || {};
+  if (nodes.total > 0) {
+    total += ((nodes.ready || 0) / nodes.total) * 100 * 40;
+    weight += 40;
+  }
+  const ops = data.operators || {};
+  if (ops.total > 0) {
+    total += ((ops.healthy || 0) / ops.total) * 100 * 40;
+    weight += 40;
+  }
+  const pods = data.pods || {};
+  if (pods.total > 0) {
+    const running = pods.running ?? 0;
+    total += (running / pods.total) * 100 * 20;
+    weight += 20;
+  }
+  const score = weight > 0 ? Math.round(total / weight) : 0;
+  const color = score >= 90 ? "#22c55e" : score >= 70 ? "#f59e0b" : "#ef4444";
+  const label = score >= 90 ? "Healthy" : score >= 70 ? "Warning" : "Degraded";
+  return { score, label, color };
 }
 
-function healthPercent(health) {
-  if (health === "degraded" || health === "critical") return 33;
-  if (health === "warning") return 66;
-  return 100;
+function parseNodeStr(str) {
+  if (!str || str === "--") return { ready: 0, total: 0 };
+  const m = String(str).match(/(\d+)\s*\/\s*(\d+)/);
+  return m ? { ready: parseInt(m[1]), total: parseInt(m[2]) } : { ready: 0, total: 0 };
 }
 
-function HealthRing({ health, icon, color }) {
-  const pct = healthPercent(health);
+function HealthRing({ score, icon, color }) {
+  const pct = Math.min(100, Math.max(0, score || 0));
   const r = 23;
   const circ = 2 * Math.PI * r;
   const offset = circ - (pct / 100) * circ;
-  const hc = healthColor(health);
+  const ringColor = pct >= 90 ? "#22c55e" : pct >= 70 ? "#f59e0b" : pct > 0 ? "#ef4444" : "#64748b";
   return (
     <div className="cp-card-health-ring">
       <svg viewBox="0 0 52 52" width="52" height="52">
         <circle cx="26" cy="26" r={r} className="cp-health-track" />
-        <circle cx="26" cy="26" r={r} className="cp-health-bar" stroke={hc}
+        <circle cx="26" cy="26" r={r} className="cp-health-bar" stroke={ringColor}
           strokeDasharray={circ} strokeDashoffset={offset} />
       </svg>
       <div className="cp-card-icon" style={{ background: color + "15", color }}>
@@ -594,7 +613,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
   const hubPInfo = hubAgentDeployed ? getPlatformInfo(lci.platform) : getPlatformInfo(null);
   const hubVersion = hubAgentDeployed ? (isOCP ? (lci.cluster?.version || "--") : (lci.cluster?.kubernetesVersion || lci.cluster?.version || "--")) : "--";
   const hubNodes = hubAgentDeployed && lci.nodes ? `${lci.nodes.ready || 0}/${lci.nodes.total || 0}` : "--";
-  const hubHealth = lci.cluster?.health || "healthy";
+  const hubHealthData = hubAgentDeployed ? computeHealthScore({ nodes: lci.nodes, operators: lci.operators, pods: lci.pods }) : { score: 0, label: "--", color: "#64748b" };
 
   const handleConnected = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["/api/agent/status"] });
@@ -685,7 +704,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
           {hubAgentDeployed && (
           <div className="cp-card" onClick={() => onSelectCluster("local")}>
             <div className="cp-card-header">
-              <HealthRing health={hubHealth} icon={hubPInfo.icon} color={hubPInfo.color} />
+              <HealthRing score={hubHealthData.score} icon={hubPInfo.icon} color={hubPInfo.color} />
               <div className="cp-card-info">
                 <div className="cp-card-name">Hub Cluster <span className="cp-card-primary-badge">PRIMARY</span></div>
                 <div className="cp-card-platform">{hubPInfo.name}<ConnBadge type="direct" /></div>
@@ -715,8 +734,8 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                 <div className="cp-card-stat-lbl">Nodes</div>
               </div>
               <div className="cp-card-stat">
-                <div className="cp-card-stat-val" style={{ color: healthColor(hubHealth) }}>{hubHealth === "healthy" ? "Healthy" : hubHealth === "warning" ? "Warning" : "Degraded"}</div>
-                <div className="cp-card-stat-lbl">Health</div>
+                <div className="cp-card-stat-val" style={{ color: hubHealthData.color }}>{hubHealthData.score}%</div>
+                <div className="cp-card-stat-lbl">{hubHealthData.label}</div>
               </div>
             </div>
           </div>
@@ -728,13 +747,19 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
             const pInfo = getPlatformInfo(agent.platform);
             const st = statusDisplay(agent.status);
             const summary = agent.summary || {};
+            const parsedNodes = parseNodeStr(summary.nodes);
+            const remoteHealthData = computeHealthScore({
+              nodes: parsedNodes,
+              operators: summary.operators,
+              pods: typeof summary.pods === "object" ? summary.pods : { running: summary.pods || 0, total: summary.pods || 0 },
+            });
 
             const staleClass = (agent.status === "stale") ? " cp-card-stale" : (agent.status === "unreachable" || agent.status === "error") ? " cp-card-unreachable" : "";
 
             return (
               <div className={"cp-card" + staleClass} key={clusterName} onClick={() => onSelectCluster(clusterName)}>
                 <div className="cp-card-header">
-                  <HealthRing health={summary.health || "healthy"} icon={pInfo.icon} color={pInfo.color} />
+                  <HealthRing score={remoteHealthData.score} icon={pInfo.icon} color={pInfo.color} />
                   <div className="cp-card-info">
                     <div className="cp-card-name">{clusterName}</div>
                     <div className="cp-card-platform">{pInfo.name}<ConnBadge type={summary.connectionType || "spoke"} /></div>
@@ -772,10 +797,8 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                     <div className="cp-card-stat-lbl">Nodes</div>
                   </div>
                   <div className="cp-card-stat">
-                    <div className="cp-card-stat-val" style={{ color: healthColor(summary.health || "healthy") }}>
-                      {(summary.health || "healthy") === "healthy" ? "Healthy" : (summary.health || "healthy") === "warning" ? "Warning" : "Degraded"}
-                    </div>
-                    <div className="cp-card-stat-lbl">Health</div>
+                    <div className="cp-card-stat-val" style={{ color: remoteHealthData.color }}>{remoteHealthData.score}%</div>
+                    <div className="cp-card-stat-lbl">{remoteHealthData.label}</div>
                   </div>
                 </div>
               </div>

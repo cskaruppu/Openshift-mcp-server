@@ -750,6 +750,10 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     const d = await runStep("remediation-plan");
     if (d?.plan) setRemediationPlan(d.plan);
   }
+  async function handleRaiseCR() {
+    if (!window.confirm("Submit a Change Request to ServiceNow for this upgrade?\n\nThis will create a CR with the pre-assessment report and upgrade details.")) return;
+    await runStep("raise-cr");
+  }
   async function handleDryRun() {
     const d = await runStep("dry-run");
     if (d) setDryRunResult(d);
@@ -798,7 +802,7 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     { key: "pre_assessed", label: "Pre-Assessment (22 checks)", desc: "Operators, nodes, etcd, certs, storage, MCPs health check", fromStates: ["version_validated", "channel_switched"], action: handlePreAssess, actionLabel: "Run Assessment" },
     { key: "component_analyzed", label: "Component Analysis", desc: "Deep inspection of degraded operators, failing pods, cert expiry", fromStates: ["pre_assessed"], action: handleComponentAnalysis, actionLabel: "Analyze" },
     { key: "remediation_proposed", label: "Remediation Plan", desc: "AI-generated fix plan for all detected issues", fromStates: ["pre_assessed", "component_analyzed"], action: handleRemediationPlan, actionLabel: "Build Plan" },
-    { key: "cr_submitted", label: "Change Request", desc: "ServiceNow CR submitted — awaiting CAB approval", fromStates: [], action: null },
+    { key: "cr_submitted", label: "Change Request", desc: "Raise ServiceNow CR with pre-assessment report and upgrade plan", fromStates: ["remediation_proposed", "remediated"], action: handleRaiseCR, actionLabel: "Raise CR" },
     { key: "cr_approved", label: "CR Approved", desc: "Change Request approved — cleared for execution", fromStates: ["cr_submitted"], action: handleCheckCR, actionLabel: "Check Status" },
     { key: "dry_run_passed", label: "Dry Run", desc: "Simulate upgrade to validate no blocking conditions", fromStates: ["cr_approved"], action: handleDryRun, actionLabel: "Run Dry Run" },
     { key: "executing", label: "Execute Upgrade", desc: "ClusterVersion patched — rolling upgrade in progress", fromStates: ["cr_approved", "dry_run_passed"], action: handleExecute, actionLabel: "Execute" },
@@ -822,6 +826,9 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
 
   // Short status badge shown on the right of each completed step
   function stepBadge(key) {
+    if (key === "version_validated" && state !== "idle") {
+      return { text: upgradeType === "minor" ? "Y-stream" : "z-stream", color: "var(--ok)" };
+    }
     if (key === "pre_assessed" && s.preflightReport?.summary) {
       const sm = s.preflightReport.summary;
       const color = sm.fail > 0 ? "var(--crit)" : sm.warning > 0 ? "var(--warn)" : "var(--ok)";
@@ -856,8 +863,26 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     return null;
   }
 
-  // Expandable detail panel content for a completed step (persisted via session)
+  const upgradeType = s.upgradeType || data?.upgradeType || "patch";
+  const estimatedTime = upgradeType === "minor" ? "90–180 min" : "30–90 min";
+
   function stepDetail(key) {
+    // ── Version Validation: show what was checked ──
+    if (key === "version_validated" && (state !== "idle")) {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
+          <div><span style={{ fontWeight: 600 }}>Current Version:</span> {fromVer}</div>
+          <div><span style={{ fontWeight: 600 }}>Target Version:</span> {targetVer}</div>
+          <div><span style={{ fontWeight: 600 }}>Upgrade Type:</span> {upgradeType} ({upgradeType === "minor" ? "Y-stream" : "z-stream"})</div>
+          <div><span style={{ fontWeight: 600 }}>Channel:</span> {s.channel || data?.channel || "stable"}</div>
+          <div><span style={{ fontWeight: 600 }}>Estimated Duration:</span> {estimatedTime}</div>
+          <div style={{ marginTop: 4, color: "var(--text2)" }}>
+            Validated: target version exists in upgrade graph, channel is correct, no blocked versions in path.
+          </div>
+        </div>
+      );
+    }
+
     // ── Pre-Assessment: the 22 checks ──
     if (key === "pre_assessed" && s.preflightReport?.checks?.length) {
       const r = s.preflightReport;
@@ -1051,7 +1076,7 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
         <div style={{ flex: 1 }}>
           <h4 style={{ margin: 0 }}>Automated Cluster Upgrade</h4>
           <div style={{ fontSize: 11, opacity: .8, marginTop: 2 }}>
-            {fromVer} → {targetVer} | {s.upgradeType || "patch"} | {s.channel || ""}
+            {fromVer} → {targetVer} | {upgradeType} | {s.channel || data?.channel || ""} | Est. {estimatedTime}
           </div>
         </div>
         <span style={{ fontSize: 12, padding: "4px 12px", borderRadius: 12, background: `color-mix(in srgb, ${stateColors[state] || "var(--text2)"} 20%, transparent)`, color: stateColors[state] || "var(--text2)", fontWeight: 600 }}>
