@@ -1184,21 +1184,30 @@ function ActionResultContent({ title, data }) {
 
   // Verify Health — /api/cluster/health-check or /api/agent/{name}/health-check
   if (title === "Verify Health") {
-    const result = data.result || data;
-    const okStyle = { color: "var(--ok)", fontWeight: 700 };
-    const failStyle = { color: "var(--crit)", fontWeight: 700 };
+    const checks = data.checks || data.result || {};
+    const healthColor = data.health === "healthy" ? "var(--ok)" : data.health === "degraded" ? "var(--crit)" : data.health === "warning" ? "var(--warn)" : "var(--text2)";
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        {kvRow("Result", data.ok !== false ? "PASSED" : "ISSUES FOUND", data.ok !== false ? "var(--ok)" : "var(--crit)")}
+        {kvRow("Result", data.ok !== false ? "HEALTHY" : "ISSUES FOUND", data.ok !== false ? "var(--ok)" : "var(--crit)")}
+        {data.health && kvRow("Overall Health", data.health.toUpperCase(), healthColor)}
         {data.message && kvRow("Message", data.message)}
-        {result && typeof result === "object" && Object.entries(result).filter(([k]) => !["ok", "message", "target"].includes(k)).map(([k, v]) => (
-          <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid var(--border)", fontSize: 13 }}>
-            <span style={{ color: "var(--text2)", fontWeight: 500 }}>{k.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase())}</span>
-            <span style={typeof v === "boolean" ? (v ? okStyle : failStyle) : { color: "var(--text)" }}>
-              {typeof v === "boolean" ? (v ? "OK" : "FAIL") : typeof v === "object" ? JSON.stringify(v) : String(v)}
-            </span>
+        {data.via && kvRow("Source", data.via === "direct-api" ? "Direct API" : data.via === "cached-report" ? "Cached Report" : data.via)}
+        {checks.nodes && kvRow("Nodes", `${checks.nodes.ready || 0} / ${checks.nodes.total || 0} ready`, checks.nodes.ready === checks.nodes.total ? "var(--ok)" : "var(--warn)")}
+        {checks.operators && kvRow("Operators", `${checks.operators.healthy || 0} / ${checks.operators.total || 0} healthy`, checks.operators.degraded > 0 ? "var(--crit)" : "var(--ok)")}
+        {checks.operators?.degraded > 0 && (
+          <div style={{ padding: "6px 0", borderBottom: "1px solid var(--border)", fontSize: 12 }}>
+            <span style={{ color: "var(--text2)" }}>Degraded: </span>
+            {(checks.operators.degradedNames || []).map((n, i) => (
+              <span key={i} style={{ display: "inline-block", background: "color-mix(in srgb, var(--crit) 12%, transparent)", color: "var(--crit)", padding: "1px 8px", borderRadius: 8, fontSize: 11, fontWeight: 600, marginRight: 4, marginBottom: 2 }}>
+                {n}
+              </span>
+            ))}
           </div>
-        ))}
+        )}
+        {checks.pods && kvRow("Pods", typeof checks.pods === "object" ? `${checks.pods.running || checks.pods.total || 0} total` : checks.pods)}
+        {checks.apiServer && kvRow("API Server", checks.apiServer.reachable ? "Reachable" : "Unreachable", checks.apiServer.reachable ? "var(--ok)" : "var(--crit)")}
+        {checks.cachedAt && kvRow("Data From", new Date(checks.cachedAt).toLocaleString())}
+        {data.proxiedTo && kvRow("Proxied To", data.proxiedTo)}
       </div>
     );
   }
@@ -1219,8 +1228,17 @@ function ActionResultContent({ title, data }) {
         </div>
       </div>
       {data.target && kvRow("Target", data.target)}
+      {data.via && kvRow("Via", data.via === "direct-api" ? "Direct API" : data.via)}
       {data.namespace && kvRow("Namespace", data.namespace)}
       {data.proxiedTo && kvRow("Proxied To", data.proxiedTo)}
+      {data.guidance && (
+        <div style={{ marginTop: 8, padding: "10px 12px", borderRadius: 8, background: "var(--bg2)", border: "1px solid var(--border)", fontSize: 12 }}>
+          <div style={{ fontWeight: 600, marginBottom: 6, color: "var(--text)" }}>Troubleshooting Steps:</div>
+          {data.guidance.map((g, i) => (
+            <div key={i} style={{ color: "var(--text2)", marginBottom: 3, fontFamily: "'SF Mono', 'Fira Code', monospace", fontSize: 11 }}>{g}</div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

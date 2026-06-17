@@ -3775,24 +3775,150 @@ spec:
           });
         }
 
-        // Verify Health — invoke the agent's health_check tool over the SSE bridge
+        // Verify Health — 3-tier: spoke proxy → SSE bridge → direct API
         if (action === "health-check" && req.method === "POST") {
           if (!agent) return sendJson(res, 404, { error: `Agent "${rawName}" not found` });
+
+          // 1. Try spoke proxy
+          const spokeUrl = hasSpoke(clusterName) ? getAllSpokes().find(s => s.clusterName === clusterName || s.clusterName.toLowerCase() === clusterName.toLowerCase())?.spokeUrl : null;
+          if (spokeUrl) {
+            try {
+              const proxyRes = await fedFetch(`${spokeUrl}/api/cluster/health-check`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                signal: AbortSignal.timeout(30000),
+              });
+              const data = await proxyRes.json().catch(() => ({}));
+              agent.lastHealthCheck = new Date().toISOString();
+              agent.lastHealthResult = data;
+              return sendJson(res, 200, { ...data, ok: data.ok !== false, target: clusterName, proxiedTo: spokeUrl });
+            } catch (err) {
+              // Fall through
+            }
+          }
+
+          // 2. Try SSE agent bridge
           try {
             const result = await invokeAgentTool(clusterName, "health_check", {});
             agent.lastHealthCheck = new Date().toISOString();
             agent.lastHealthResult = result;
             return sendJson(res, 200, { ok: true, target: clusterName, message: "Health check complete", result });
           } catch (e) {
-            return sendJson(res, 200, { ok: false, target: clusterName, message: e.message || "Health check failed — agent not connected via SSE" });
+            // Fall through to direct API
           }
+
+          // 3. Try direct API (read nodes + operators)
+          if (hasCredentials(clusterName)) {
+            try {
+              const { withClusterDirect } = await import("./utils/cluster-credentials.js");
+              const { ocpFetch } = await import("./utils/openshift-client.js");
+              const checks = await withClusterDirect(clusterName, async () => {
+                const result = {};
+                const nodesRes = await ocpFetch("/api/v1/nodes").catch(() => null);
+                if (nodesRes?.ok) {
+                  const parsed = await nodesRes.json().catch(() => ({}));
+                  const nodes = parsed.items || [];
+                  const ready = nodes.filter(n => (n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True")).length;
+                  result.nodes = { total: nodes.length, ready };
+                }
+                const opsRes = await ocpFetch("/apis/config.openshift.io/v1/clusteroperators").catch(() => null);
+                if (opsRes?.ok) {
+                  const parsed = await opsRes.json().catch(() => ({}));
+                  const ops = parsed.items || [];
+                  const degraded = ops.filter(o => (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True"));
+                  result.operators = { total: ops.length, healthy: ops.length - degraded.length, degraded: degraded.length, degradedNames: degraded.map(o => o.metadata?.name) };
+                }
+                result.apiServer = { reachable: true };
+                return result;
+              });
+              const overall = (checks.operators?.degraded > 0) ? "degraded" : (checks.nodes && checks.nodes.ready < checks.nodes.total) ? "warning" : "healthy";
+              agent.lastHealthCheck = new Date().toISOString();
+              agent.lastHealthResult = checks;
+              return sendJson(res, 200, { ok: true, target: clusterName, health: overall, checks, message: `Health via direct API: ${overall}`, via: "direct-api" });
+            } catch (err) {
+              return sendJson(res, 200, { ok: false, target: clusterName, message: `Direct API health check failed: ${err.message}` });
+            }
+          }
+
+          // 4. Fall back to last cached report
+          if (agent.lastReport) {
+            const lr = agent.lastReport;
+            const health = lr.clusterHealth?.status || "unknown";
+            return sendJson(res, 200, {
+              ok: true,
+              target: clusterName,
+              health,
+              via: "cached-report",
+              message: `Using cached agent report (${agent.lastReportTime ? new Date(agent.lastReportTime).toLocaleString() : "unknown time"})`,
+              checks: {
+                nodes: lr.nodes || {},
+                operators: lr.operators || {},
+                pods: lr.pods || {},
+                cachedAt: agent.lastReportTime,
+              },
+            });
+          }
+
+          return sendJson(res, 200, { ok: false, target: clusterName, message: "No spoke, SSE bridge, direct API credentials, or cached data available. Deploy the agent YAML on the target cluster to enable health checks." });
         }
 
-        // Reconnect — ask the agent to drop and re-establish its SSE channel
+        // Reconnect — 3-tier: SSE signal → spoke proxy restart → direct API pod restart
         if (action === "reconnect" && req.method === "POST") {
+          // 1. Try SSE signal
           const event = { type: "reconnect", triggeredAt: new Date().toISOString() };
           const sent = pushEventToAgent(clusterName, event);
-          return sendJson(res, 200, { ok: sent, target: clusterName, message: sent ? "Reconnect signal sent" : "Agent not connected via SSE" });
+          if (sent) return sendJson(res, 200, { ok: true, target: clusterName, message: "Reconnect signal sent — agent will re-establish its connection" });
+
+          // 2. Try spoke proxy restart (triggers agent pod restart which forces reconnect)
+          const spokeUrl = hasSpoke(clusterName) ? getAllSpokes().find(s => s.clusterName === clusterName || s.clusterName.toLowerCase() === clusterName.toLowerCase())?.spokeUrl : null;
+          if (spokeUrl) {
+            try {
+              const proxyRes = await fedFetch(`${spokeUrl}/api/cluster/redeploy`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                signal: AbortSignal.timeout(30000),
+              });
+              const data = await proxyRes.json().catch(() => ({}));
+              if (proxyRes.ok) return sendJson(res, 200, { ok: true, target: clusterName, message: "Agent pod restarted via spoke — will reconnect within 60 seconds", proxiedTo: spokeUrl });
+            } catch (err) {
+              // Fall through
+            }
+          }
+
+          // 3. Try direct API to restart agent pod
+          if (hasCredentials(clusterName)) {
+            try {
+              const { withClusterDirect } = await import("./utils/cluster-credentials.js");
+              const { ocpFetch } = await import("./utils/openshift-client.js");
+              await withClusterDirect(clusterName, async () => {
+                const nsRes = await ocpFetch("/api/v1/namespaces").catch(() => null);
+                const nsList = nsRes ? (await nsRes.json().catch(() => ({}))).items || [] : [];
+                const agentNs = nsList.find(n => n.metadata?.name === "tcs-agentic-system" || n.metadata?.name === "openshift-tcs-agentic");
+                const ns = agentNs?.metadata?.name || "tcs-agentic-system";
+                const patch = JSON.stringify({ spec: { template: { metadata: { annotations: { "kubectl.kubernetes.io/restartedAt": new Date().toISOString() } } } } });
+                const patchRes = await ocpFetch(`/apis/apps/v1/namespaces/${ns}/deployments/tcs-agentic-ai`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/strategic-merge-patch+json" },
+                  body: patch,
+                });
+                if (!patchRes.ok) throw new Error(`Patch failed: ${patchRes.status}`);
+              });
+              return sendJson(res, 200, { ok: true, target: clusterName, message: "Agent pod restarted via direct API — will reconnect within 60 seconds", via: "direct-api" });
+            } catch (err) {
+              return sendJson(res, 200, { ok: false, target: clusterName, message: `Direct API reconnect failed: ${err.message}` });
+            }
+          }
+
+          return sendJson(res, 200, {
+            ok: false,
+            target: clusterName,
+            message: "Agent is not connected via SSE and no spoke or direct API credentials are available to restart it. Ensure the agent pod is deployed and running on the target cluster.",
+            guidance: [
+              "1. Verify agent pod is running: kubectl get pods -n tcs-agentic-system",
+              "2. Check agent logs: kubectl logs -n tcs-agentic-system deploy/tcs-agentic-ai",
+              "3. If not deployed, use 'Connect a Cluster' to get the deployment YAML",
+            ],
+          });
         }
 
         // Sync RBAC — push an RBAC update event to this agent
