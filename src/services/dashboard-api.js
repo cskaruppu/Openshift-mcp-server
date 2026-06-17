@@ -1923,8 +1923,30 @@ export async function handleUpgradeOrchestrator(req, res, action) {
       case "create": {
         const { conversationId, fromVersion, targetVersion, channel, cluster } = body;
         if (!targetVersion) return json(res, 400, { error: "Missing 'targetVersion'" });
-        const session = await uoCreateSession(conversationId, { fromVersion, targetVersion, channel, cluster });
-        return json(res, 200, { session });
+        const result = await uoCreateSession(conversationId, { fromVersion, targetVersion, channel, cluster });
+        if (result?.existingUpgrade) {
+          // Fetch live progress for the active session
+          try {
+            const progress = await stepCheckUpgradeProgress(result.session.id);
+            return json(res, 409, {
+              existingUpgrade: true,
+              session: result.session,
+              liveStatus: {
+                message: progress.message || "Upgrade in progress",
+                progress: progress.progress || 0,
+                phase: progress.phase || "updating",
+                manifests: progress.manifests || null,
+                waitingOperators: progress.waitingOperators || [],
+                operators: progress.operators || null,
+                fromVersion: progress.fromVersion || result.session.fromVersion,
+                targetVersion: progress.targetVersion || result.session.targetVersion,
+              },
+            });
+          } catch {
+            return json(res, 409, { existingUpgrade: true, session: result.session });
+          }
+        }
+        return json(res, 200, { session: result });
       }
 
       case "session": {

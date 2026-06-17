@@ -144,7 +144,20 @@ export async function createSession(conversationId, { fromVersion, targetVersion
 
   const clusterName = cluster || "local";
 
-  // Cancel any existing active session for this conversation + cluster
+  // Check for active upgrade sessions on this cluster across ALL conversations
+  const activeResult = await query(
+    `SELECT * FROM upgrade_sessions
+     WHERE cluster = $1 AND state IN ('executing','monitoring')
+     ORDER BY updated_at DESC LIMIT 1`,
+    [clusterName]
+  );
+  const activeSession = activeResult?.rows?.[0] ? mapSession(activeResult.rows[0]) : null;
+  if (activeSession) {
+    // Return the existing active session with progress info instead of creating a new one
+    return { existingUpgrade: true, session: activeSession };
+  }
+
+  // Cancel any existing idle/pending sessions for this conversation + cluster
   await query(
     `UPDATE upgrade_sessions SET state = 'cancelled', updated_at = NOW()
      WHERE conversation_id = $1 AND cluster = $2 AND state NOT IN ('completed','failed','cancelled')`,
@@ -286,6 +299,33 @@ export async function stepValidateVersion(sessionId) {
   const currentVersion = cv?.status?.desired?.version || "";
   const channel = cv?.spec?.channel || "";
   const availableUpdates = cv?.status?.availableUpdates || [];
+
+  // Check if an upgrade is already in progress on this cluster
+  const progressingCond = (cv?.status?.conditions || []).find(c => c.type === "Progressing");
+  if (progressingCond?.status === "True" && (progressingCond?.message || "").includes("working towards")) {
+    const pctMatch = progressingCond.message.match(/\((\d+)%\s*complete\)/i);
+    const countMatch = progressingCond.message.match(/(\d+)\s+of\s+(\d+)\s+done/i);
+    const waitMatch = progressingCond.message.match(/waiting on\s+(.+)/i);
+    const ops = await withClusterContext(session.cluster, () =>
+      ocpGet("/apis/config.openshift.io/v1/clusteroperators"));
+    const opItems = ops?.items || [];
+    const updating = opItems.filter(o => (o.status?.conditions || []).some(c => c.type === "Progressing" && c.status === "True")).length;
+    const degraded = opItems.filter(o => (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True")).length;
+
+    return {
+      session,
+      upgradeInProgress: true,
+      error: "An upgrade is already in progress on this cluster",
+      liveStatus: {
+        message: progressingCond.message,
+        progress: pctMatch ? parseInt(pctMatch[1], 10) : null,
+        manifests: countMatch ? { done: parseInt(countMatch[1], 10), total: parseInt(countMatch[2], 10) } : null,
+        waitingOperators: waitMatch ? waitMatch[1].split(",").map(s => s.trim()).filter(Boolean) : [],
+        operators: { updating, degraded, total: opItems.length, available: opItems.length - updating - degraded },
+        currentVersion,
+      },
+    };
+  }
 
   // Update from_version if not set
   if (!session.fromVersion && currentVersion) {
@@ -1151,11 +1191,41 @@ export async function stepExecuteUpgrade(sessionId) {
   if (!session) throw new Error("Session not found");
 
   // Re-validate right before execution
-  const cv = await withClusterContext(session.cluster, () =>
-    ocpGet("/apis/config.openshift.io/v1/clusterversions/version"));
+  const [cv, ops] = await withClusterContext(session.cluster, () =>
+    Promise.all([
+      ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
+      ocpGet("/apis/config.openshift.io/v1/clusteroperators"),
+    ]));
   const currentVer = cv?.status?.desired?.version || "";
   const availableUpdates = cv?.status?.availableUpdates || [];
   const channel = cv?.spec?.channel || "";
+
+  // Check if upgrade is already in progress on this cluster
+  const progressingCond = (cv?.status?.conditions || []).find(c => c.type === "Progressing");
+  if (progressingCond?.status === "True" && (progressingCond?.message || "").includes("working towards")) {
+    const pctMatch = progressingCond.message.match(/\((\d+)%\s*complete\)/i);
+    const countMatch = progressingCond.message.match(/(\d+)\s+of\s+(\d+)\s+done/i);
+    const waitMatch = progressingCond.message.match(/waiting on\s+(.+)/i);
+    const opItems = ops?.items || [];
+    const updating = opItems.filter(o => (o.status?.conditions || []).some(c => c.type === "Progressing" && c.status === "True")).length;
+    const degraded = opItems.filter(o => (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True")).length;
+
+    return {
+      session,
+      success: false,
+      upgradeInProgress: true,
+      error: "An upgrade is already in progress on this cluster",
+      liveStatus: {
+        message: progressingCond.message,
+        progress: pctMatch ? parseInt(pctMatch[1], 10) : 0,
+        manifests: countMatch ? { done: parseInt(countMatch[1], 10), total: parseInt(countMatch[2], 10) } : null,
+        waitingOperators: waitMatch ? waitMatch[1].split(",").map(s => s.trim()).filter(Boolean) : [],
+        operators: { updating, degraded, total: opItems.length, available: opItems.length - updating - degraded },
+        currentVersion: currentVer,
+      },
+    };
+  }
+
   const validation = validateUpgradeVersion(currentVer, session.targetVersion, availableUpdates, channel);
 
   if (!validation.valid) {

@@ -16057,12 +16057,27 @@ export async function handleChatAPI(req, res) {
             } catch { /* ignore */ }
           }
 
-          session = await createSession(conversationId, {
+          const createResult = await createSession(conversationId, {
             fromVersion: fromVer,
             targetVersion: targetVer,
             channel: "",
             cluster: activeCluster,
           });
+
+          if (createResult?.existingUpgrade) {
+            const existingSession = createResult.session;
+            let statusText = `### Upgrade Already In Progress\n\n`;
+            statusText += `An upgrade is currently running on this cluster (**${existingSession.fromVersion} → ${existingSession.targetVersion}**).\n\n`;
+            statusText += `Cannot start a new upgrade until the current one completes.\n\n`;
+            const progressToken = `@@UPGRADE_PROGRESS|${JSON.stringify(buildUpgradeProgressToken(existingSession)).replace(/@@/g, "@ @")}@@`;
+            const reply = statusText + progressToken;
+            const provider = llmActive ? activeProvider : "built-in";
+            if (conversationId) histAddMessage(conversationId, { role: "assistant", content: reply, provider }).catch(() => {});
+            if (wantsStream) { sseStart(res); sseSend(res, { delta: statusText }); sseSend(res, { delta: progressToken }); sseSend(res, { done: true, provider, conversationId }); sseEnd(res); return; }
+            return json(res, 200, { reply, provider, contextKeys: ["upgrade", "orchestrator", "in_progress"], cached: false, conversationId });
+          }
+
+          session = createResult;
         }
 
         if (session) {

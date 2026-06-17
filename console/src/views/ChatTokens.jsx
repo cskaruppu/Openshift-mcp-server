@@ -706,6 +706,7 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
   const [remediationPlan, setRemediationPlan] = useState(null);
   const [progressData, setProgressData] = useState(null);
   const [expandedStep, setExpandedStep] = useState("pre_assessed");
+  const [inProgressAlert, setInProgressAlert] = useState(null);
   const pollRef = useRef(null);
 
   const sessionId = data?.sessionId;
@@ -817,7 +818,13 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     } finally { setStepRunning(null); }
   }
 
-  async function handleValidate() { await runStep("validate"); }
+  async function handleValidate() {
+    const d = await runStep("validate");
+    if (d?.upgradeInProgress) {
+      setInProgressAlert(d.liveStatus);
+      return;
+    }
+  }
   async function handlePreAssess() { await runStep("pre-assess"); }
   async function handleComponentAnalysis() { await runStep("component-analysis"); }
   async function handleRemediationPlan() {
@@ -836,8 +843,11 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
   async function handleExecute() {
     if (!window.confirm(`Execute upgrade to ${session?.targetVersion || data.targetVersion}?\n\nThis will patch ClusterVersion and begin the rolling upgrade. Proceed?`)) return;
     const d = await runStep("execute");
+    if (d?.upgradeInProgress) {
+      setInProgressAlert(d.liveStatus);
+      return;
+    }
     if (!d || d.error) return;
-    // useEffect auto-poll will detect state=executing and start live polling
   }
 
   async function handleCheckProgress() {
@@ -1507,6 +1517,55 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
       </div>
 
       <div className="ux-body" style={{ padding: "12px 18px" }}>
+        {/* Upgrade already in progress alert */}
+        {inProgressAlert && (
+          <div style={{ background: "color-mix(in srgb, var(--warn) 12%, transparent)", border: "1px solid var(--warn)", borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 18 }}>⚠️</span>
+              <span style={{ fontWeight: 700, fontSize: 14, color: "var(--warn)" }}>Upgrade Already In Progress</span>
+              <button style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "var(--text2)", fontSize: 16 }}
+                onClick={() => setInProgressAlert(null)}>✕</button>
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text1)", marginBottom: 10 }}>
+              A cluster upgrade is currently running. Cannot start another upgrade until the current one completes.
+            </div>
+            {typeof inProgressAlert.progress === "number" && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                  <span>Progress</span>
+                  <span>{inProgressAlert.progress}%</span>
+                </div>
+                <div className="ux-progress-bar"><div className="ux-progress-fill" style={{ width: inProgressAlert.progress + "%", background: "var(--accent2)" }} /></div>
+              </div>
+            )}
+            {inProgressAlert.manifests && (
+              <div style={{ fontSize: 11, color: "var(--text2)", marginBottom: 4 }}>
+                CVO Manifests: {inProgressAlert.manifests.done} / {inProgressAlert.manifests.total} applied
+              </div>
+            )}
+            {inProgressAlert.operators && (
+              <div style={{ fontSize: 11, color: "var(--text2)", marginBottom: 4 }}>
+                Operators: {inProgressAlert.operators.updating} updating / {inProgressAlert.operators.degraded} degraded / {inProgressAlert.operators.total} total
+              </div>
+            )}
+            {inProgressAlert.waitingOperators?.length > 0 && (
+              <div style={{ fontSize: 11, marginBottom: 4 }}>
+                <span style={{ color: "var(--text2)" }}>Waiting on: </span>
+                {inProgressAlert.waitingOperators.map((op, i) => (
+                  <span key={i} style={{ display: "inline-block", background: "color-mix(in srgb, var(--accent2) 18%, transparent)", color: "var(--accent2)", padding: "1px 7px", borderRadius: 8, fontSize: 10, fontWeight: 600, marginRight: 4, marginBottom: 2 }}>
+                    {op}
+                  </span>
+                ))}
+              </div>
+            )}
+            {inProgressAlert.message && (
+              <div style={{ fontSize: 11, color: "var(--text2)", marginTop: 6, fontFamily: "'SF Mono', 'Fira Code', monospace", background: "var(--bg2)", padding: "6px 8px", borderRadius: 6, wordBreak: "break-word" }}>
+                {inProgressAlert.message.slice(0, 300)}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Step progress timeline — each completed step with data is expandable */}
         <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 16 }}>
           {STEPS.map((step, i) => {
