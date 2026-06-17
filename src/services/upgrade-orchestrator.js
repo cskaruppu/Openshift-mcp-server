@@ -1296,18 +1296,27 @@ export async function stepCheckUpgradeProgress(sessionId) {
   const allStable = phase === "complete" && degradedCount === 0 && updatingCount === 0 &&
     availableCount === opItems.length && (nodeStatus ? nodeStatus.notReady === 0 : true);
 
+  // Parse "waiting on X, Y, Z" from CVO message for pending operator visibility
+  let waitingOperators = [];
+  const waitMatch = progressMsg.match(/waiting on\s+(.+)/i);
+  if (waitMatch) {
+    waitingOperators = waitMatch[1].split(",").map(s => s.trim()).filter(Boolean);
+  }
+
   const monitorData = {
     timestamp: new Date().toISOString(),
     phase,
     progress,
     allStable,
+    fromVersion: session.fromVersion || "",
     targetVersion,
     currentVersion: cvoDesiredVersion,
     cvoAccepted,
     message: progressMsg,
     manifests: manifestsTotal > 0 ? { done: manifestsDone, total: manifestsTotal } : null,
     operators: { updating: updatingCount, degraded: degradedCount, available: availableCount, total: opItems.length },
-    operatorDetails: operatorDetails.slice(0, 10),
+    operatorDetails: operatorDetails.slice(0, 15),
+    waitingOperators,
     nodes: nodeStatus,
   };
 

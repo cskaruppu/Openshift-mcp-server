@@ -727,29 +727,22 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     } catch {}
   }
 
+  // Initial session load
   useEffect(() => {
-    fetchSession().then(() => {
-      // Restore last progress snapshot from session's monitoringData
-      const s = session || data;
-      const snaps = s?.monitoringData?.snapshots;
-      if (snaps?.length && !progressData) {
-        setProgressData(snaps[snaps.length - 1]);
-      }
-    });
+    fetchSession();
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [sessionId]);
 
-  // Auto-poll for state transitions during active upgrade sessions.
-  // When in cr_submitted, actively poll ServiceNow via cr-status endpoint.
-  // For executing/monitoring, poll notifications for progress updates.
+  // Unified auto-poll: handles CR status checks AND live upgrade progress.
+  // Runs every 15s while in any active state. Restarts on state changes and page refresh.
   useEffect(() => {
-    const activeStates = ["cr_submitted", "executing", "monitoring"];
     const currentState = session?.state || data?.state || "idle";
-    if (!activeStates.includes(currentState) || !sessionId) return;
+    if (!sessionId) return;
 
-    const poll = async () => {
-      try {
-        if (currentState === "cr_submitted") {
+    // CR submitted → poll ServiceNow for approval
+    if (currentState === "cr_submitted") {
+      const poll = async () => {
+        try {
           const r = await fetch(clusterUrl(`/api/upgrade/orchestrator/cr-status`, cluster), {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ sessionId }),
@@ -757,37 +750,53 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
           const d = await r.json();
           const newState = d.session?.state;
           if (newState && newState !== prevStateRef.current) {
-            if (newState === "cr_approved") {
-              showToast(`CR ${d.ticketId || ""} approved — ready for dry run`, "ok");
-            }
+            if (newState === "cr_approved") showToast(`CR ${d.ticketId || ""} approved — ready for dry run`, "ok");
             await fetchSession();
           }
           prevStateRef.current = newState || currentState;
-        } else {
-          // Poll actual cluster progress during executing/monitoring
+        } catch {}
+      };
+      prevStateRef.current = currentState;
+      poll();
+      const timer = setInterval(poll, 15000);
+      return () => clearInterval(timer);
+    }
+
+    // Executing/Monitoring → poll LIVE cluster progress from CVO + operators
+    if (currentState === "executing" || currentState === "monitoring") {
+      if (pollRef.current) clearInterval(pollRef.current);
+      const pollFn = async () => {
+        try {
           const r = await fetch(clusterUrl(`/api/upgrade/orchestrator/progress`, cluster), {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ sessionId }),
           });
           const d = await r.json();
-          if (!d.error) setProgressData(d);
+          if (!d.error && typeof d.progress === "number") {
+            setProgressData(d);
+          }
           const newState = d.session?.state;
           if (newState && newState !== prevStateRef.current) {
             if (newState === "completed") {
-              showToast("Upgrade complete — ready for post-assessment", "ok");
+              showToast("Upgrade complete — all operators healthy, all nodes ready. Run post-assessment.", "ok");
             } else if (newState === "monitoring") {
-              showToast(`Upgrade progress: ${d.progress || 0}% — operators stabilizing`, "info");
+              showToast(`Upgrade progress: ${d.progress || 0}% — CVO applying manifests`, "info");
             }
             await fetchSession();
           }
           prevStateRef.current = newState || currentState;
-        }
-      } catch {}
-    };
-    prevStateRef.current = currentState;
-    poll();
-    const timer = setInterval(poll, 15000);
-    return () => clearInterval(timer);
+          // Stop polling once truly completed
+          if (d.phase === "complete" && d.allStable) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+          }
+        } catch {}
+      };
+      prevStateRef.current = currentState;
+      pollFn();
+      pollRef.current = setInterval(pollFn, 15000);
+      return () => { clearInterval(pollRef.current); pollRef.current = null; };
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.state, data?.state, sessionId, cluster]);
 
@@ -828,34 +837,7 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     if (!window.confirm(`Execute upgrade to ${session?.targetVersion || data.targetVersion}?\n\nThis will patch ClusterVersion and begin the rolling upgrade. Proceed?`)) return;
     const d = await runStep("execute");
     if (!d || d.error) return;
-    // Start progress polling — checks real cluster state every 30s
-    startProgressPolling();
-  }
-
-  function startProgressPolling() {
-    if (pollRef.current) clearInterval(pollRef.current);
-    const pollFn = async () => {
-      try {
-        const res = await fetch(clusterUrl(`/api/upgrade/orchestrator/progress`, cluster), {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId }),
-        });
-        const d = await res.json();
-        if (!d.error) setProgressData(d);
-        await fetchSession();
-        if (d.phase === "complete" && d.allStable) {
-          clearInterval(pollRef.current);
-          pollRef.current = null;
-          showToast("Upgrade complete — all operators stable. Ready for post-assessment.", "ok");
-        } else if (d.phase === "failed") {
-          clearInterval(pollRef.current);
-          pollRef.current = null;
-          showToast(`Upgrade failed: ${d.message || "check cluster status"}`, "error");
-        }
-      } catch {}
-    };
-    pollFn();
-    pollRef.current = setInterval(pollFn, 15000);
+    // useEffect auto-poll will detect state=executing and start live polling
   }
 
   async function handleCheckProgress() {
@@ -866,15 +848,16 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
         body: JSON.stringify({ sessionId }),
       });
       const d = await res.json();
-      setProgressData(d);
+      if (!d.error && typeof d.progress === "number") setProgressData(d);
       await fetchSession();
       if (d.phase === "complete" && d.allStable) {
         showToast("Upgrade complete — all operators stable. Ready for post-assessment.", "ok");
       } else if (d.phase === "failed") {
         showToast(`Upgrade failed: ${d.message || "check cluster status"}`, "error");
       } else {
-        showToast(`Upgrade in progress: ${d.progress || 0}% — ${d.operators?.updating || 0} operators updating`, "info");
-        if (!pollRef.current) startProgressPolling();
+        const mf = d.manifests;
+        const detail = mf ? `${mf.done}/${mf.total} manifests` : `${d.operators?.updating || 0} operators updating`;
+        showToast(`Upgrade in progress: ${d.progress || 0}% — ${detail}`, "info");
       }
     } catch (e) {
       showToast(e.message, "error");
@@ -1224,19 +1207,20 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
       const phases = ["preparing", "updating", "completing", "complete"];
       const phaseIdx = phases.indexOf(pd.phase === "failed" ? "completing" : pd.phase || "preparing");
       const phaseLabel = pd.phase === "complete" ? "Complete" : pd.phase === "failed" ? "Failed" : pd.phase === "preparing" ? "Preparing" : pd.phase === "completing" ? "Finalizing" : "Updating";
-      const isComplete = pd.phase === "complete";
+      const isComplete = pd.phase === "complete" && pd.allStable;
       const isFailed = pd.phase === "failed";
       const gaugeColor = isComplete ? "#22c55e" : isFailed ? "#ef4444" : "#3b82f6";
       const ops = pd.operators || {};
       const opDetails = pd.operatorDetails || [];
       const nodes = pd.nodes || {};
+      const waiting = pd.waitingOperators || [];
+      const fromVer = pd.fromVersion || s.fromVersion || "";
+      const tgtVer = pd.targetVersion || targetVer;
 
       // SVG gauge arc math (semi-circle)
       const gaugeR = 58, gaugeCx = 70, gaugeCy = 65, gaugeStroke = 10;
-      const arcStart = Math.PI, arcEnd = 0;
       const arcLen = Math.PI * gaugeR;
       const dashLen = (pct / 100) * arcLen;
-      const arcPath = `M ${gaugeCx - gaugeR} ${gaugeCy} A ${gaugeR} ${gaugeR} 0 ${pct > 50 ? 1 : 0} 1 ${gaugeCx + gaugeR * Math.cos(Math.PI * (1 - pct / 100))} ${gaugeCy - gaugeR * Math.sin(Math.PI * (pct / 100))}`;
       const bgArcPath = `M ${gaugeCx - gaugeR} ${gaugeCy} A ${gaugeR} ${gaugeR} 0 1 1 ${gaugeCx + gaugeR} ${gaugeCy}`;
 
       // Donut chart for operators
@@ -1250,11 +1234,25 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
       const seg2 = (opUpdating / opTotal) * donutCirc;
       const seg3 = (opDegraded / opTotal) * donutCirc;
 
+      const mono = { fontFamily: "'SF Mono', 'Fira Code', monospace" };
+
       return (
         <div style={{ display: "flex", flexDirection: "column", gap: 12, fontSize: 12 }}>
+          {/* Version comparison banner */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, background: "var(--bg-deep)", borderRadius: 10, padding: "8px 14px" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 10, color: "var(--text2)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Current Version</div>
+              <div style={{ ...mono, fontWeight: 700, fontSize: 14, color: "var(--text1)" }}>{fromVer || pd.currentVersion || "—"}</div>
+            </div>
+            <div style={{ fontSize: 18, color: isComplete ? "#22c55e" : "var(--text2)" }}>{isComplete ? "✓" : "→"}</div>
+            <div style={{ flex: 1, textAlign: "right" }}>
+              <div style={{ fontSize: 10, color: "var(--text2)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Target Version</div>
+              <div style={{ ...mono, fontWeight: 700, fontSize: 14, color: gaugeColor }}>{tgtVer}</div>
+            </div>
+          </div>
+
           {/* Top row: Gauge + Operator Donut + Node bar */}
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
-
             {/* Gauge meter */}
             <div style={{ background: "var(--bg-deep)", borderRadius: 12, padding: "12px 16px", textAlign: "center", minWidth: 150 }}>
               <svg width="140" height="80" viewBox="0 0 140 80">
@@ -1263,7 +1261,7 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
                   strokeDasharray={`${dashLen} ${arcLen}`}
                   style={{ transition: "stroke-dasharray 1s ease, stroke 0.5s" }} />
                 <text x={gaugeCx} y={gaugeCy - 12} textAnchor="middle" fontSize="26" fontWeight="800" fill={gaugeColor}
-                  style={{ fontFamily: "'SF Mono', 'Fira Code', monospace" }}>{pct}%</text>
+                  style={mono}>{pct}%</text>
                 <text x={gaugeCx} y={gaugeCy + 6} textAnchor="middle" fontSize="10" fontWeight="600" fill="var(--text2)">{phaseLabel.toUpperCase()}</text>
               </svg>
               <div style={{ fontSize: 10, color: "var(--text2)", marginTop: -4 }}>Cluster Upgrade</div>
@@ -1286,9 +1284,9 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
                   <text x={donutCx} y={donutCy + 4} textAnchor="middle" fontSize="14" fontWeight="800" fill="var(--text1)">{ops.total}</text>
                 </svg>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 4, fontSize: 10 }}>
-                  <span style={{ color: "#22c55e" }}>● {opAvail}</span>
-                  <span style={{ color: "#3b82f6" }}>● {opUpdating}</span>
-                  <span style={{ color: "#ef4444" }}>● {opDegraded}</span>
+                  <span style={{ color: "#22c55e" }}>● {opAvail} ok</span>
+                  <span style={{ color: "#3b82f6" }}>● {opUpdating} updating</span>
+                  <span style={{ color: "#ef4444" }}>● {opDegraded} degraded</span>
                 </div>
                 <div style={{ fontSize: 10, color: "var(--text2)", marginTop: 2 }}>Operators</div>
               </div>
@@ -1296,7 +1294,6 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
 
             {/* Node + stats cards */}
             <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minWidth: 160 }}>
-              {/* Node readiness bar */}
               {nodes.total > 0 && (
                 <div style={{ background: "var(--bg-deep)", borderRadius: 10, padding: "10px 14px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 11, fontWeight: 600 }}>
@@ -1307,16 +1304,21 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
                     <div style={{ width: `${(nodes.ready / nodes.total) * 100}%`, background: "#22c55e", transition: "width 0.8s" }} />
                     {nodes.notReady > 0 && <div style={{ width: `${(nodes.notReady / nodes.total) * 100}%`, background: "#ef4444" }} />}
                   </div>
-                  <div style={{ display: "flex", gap: 10, marginTop: 4, fontSize: 10, color: "var(--text2)" }}>
-                    <span>✅ {nodes.ready} ready</span>
-                    {nodes.notReady > 0 && <span style={{ color: "#ef4444" }}>❌ {nodes.notReady} updating</span>}
-                  </div>
                 </div>
               )}
-              {/* Version card */}
-              <div style={{ background: "var(--bg-deep)", borderRadius: 10, padding: "8px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 11, fontWeight: 600 }}>Target</span>
-                <span style={{ fontFamily: "'SF Mono', 'Fira Code', monospace", fontWeight: 700, fontSize: 13, color: gaugeColor }}>{pd.targetVersion || targetVer}</span>
+              {/* Completion checklist */}
+              <div style={{ background: "var(--bg-deep)", borderRadius: 10, padding: "8px 12px", fontSize: 11 }}>
+                <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 10, textTransform: "uppercase", color: "var(--text2)", letterSpacing: 0.5 }}>Completion Criteria</div>
+                {[
+                  { label: `CVO history: ${tgtVer}`, ok: pd.phase === "complete" },
+                  { label: `All ${ops.total} operators available`, ok: opAvail === ops.total && opUpdating === 0 && opDegraded === 0 },
+                  { label: `All ${nodes.total || "?"} nodes ready`, ok: nodes.total > 0 && nodes.notReady === 0 },
+                ].map((c, i) => (
+                  <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", padding: "2px 0" }}>
+                    <span style={{ fontSize: 12 }}>{c.ok ? "✅" : "⬜"}</span>
+                    <span style={{ color: c.ok ? "var(--ok)" : "var(--text2)" }}>{c.label}</span>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -1326,11 +1328,12 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
             <div style={{ background: "var(--bg-deep)", borderRadius: 10, padding: "8px 14px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 11 }}>
                 <span style={{ fontWeight: 600 }}>CVO Manifests Applied</span>
-                <span style={{ fontFamily: "'SF Mono', 'Fira Code', monospace", fontWeight: 700, color: gaugeColor }}>{mf.done} / {mf.total}</span>
+                <span style={{ ...mono, fontWeight: 700, color: gaugeColor }}>{mf.done} / {mf.total}</span>
               </div>
               <div style={{ height: 6, background: "var(--border)", borderRadius: 3, overflow: "hidden" }}>
                 <div style={{ height: "100%", width: `${(mf.done / mf.total) * 100}%`, background: gaugeColor, borderRadius: 3, transition: "width 1s ease" }} />
               </div>
+              <div style={{ fontSize: 10, color: "var(--text2)", marginTop: 3 }}>{mf.total - mf.done} manifests remaining</div>
             </div>
           )}
 
@@ -1360,7 +1363,19 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
             })}
           </div>
 
-          {/* Live activity feed — operators updating */}
+          {/* Waiting operators — parsed from CVO "waiting on X, Y, Z" */}
+          {waiting.length > 0 && (
+            <div style={{ background: "var(--bg-deep)", borderRadius: 10, padding: "10px 14px" }}>
+              <div style={{ fontWeight: 700, fontSize: 11, color: "#f59e0b", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Pending Operators ({waiting.length})</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                {waiting.map((w, i) => (
+                  <span key={i} style={{ ...mono, fontSize: 10, padding: "2px 8px", borderRadius: 4, background: "color-mix(in srgb, #f59e0b 12%, transparent)", color: "#f59e0b", fontWeight: 500 }}>{w}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Live activity feed — operators actively updating/degraded */}
           {opDetails.length > 0 && (
             <div style={{ background: "var(--bg-deep)", borderRadius: 10, padding: "10px 14px", maxHeight: 160, overflowY: "auto" }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
@@ -1386,22 +1401,13 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
             </div>
           )}
 
-          {/* CVO status message + version tracking */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {/* Version acceptance status */}
-            {pd.currentVersion && pd.targetVersion && pd.currentVersion !== pd.targetVersion && !isComplete && (
-              <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "6px 12px", background: "color-mix(in srgb, #f59e0b 10%, var(--bg-deep))", borderRadius: 8, fontSize: 11 }}>
-                <span style={{ fontSize: 12 }}>⏳</span>
-                <span>CVO desired: <b style={{ fontFamily: "'SF Mono', 'Fira Code', monospace" }}>{pd.currentVersion}</b> → target: <b style={{ fontFamily: "'SF Mono', 'Fira Code', monospace" }}>{pd.targetVersion}</b></span>
-              </div>
-            )}
-            {pd.message && (
-              <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "8px 12px", background: "var(--bg-deep)", borderRadius: 10, borderLeft: `3px solid ${gaugeColor}` }}>
-                <span style={{ flexShrink: 0, fontSize: 14 }}>{isComplete ? "✅" : isFailed ? "❌" : "⏳"}</span>
-                <div style={{ fontSize: 11, color: "var(--text2)", lineHeight: 1.4, fontFamily: "'SF Mono', 'Fira Code', monospace" }}>{pd.message.slice(0, 400)}</div>
-              </div>
-            )}
-          </div>
+          {/* CVO raw status message */}
+          {pd.message && (
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "8px 12px", background: "var(--bg-deep)", borderRadius: 10, borderLeft: `3px solid ${gaugeColor}` }}>
+              <span style={{ flexShrink: 0, fontSize: 14 }}>{isComplete ? "✅" : isFailed ? "❌" : "⏳"}</span>
+              <div style={{ ...mono, fontSize: 11, color: "var(--text2)", lineHeight: 1.4 }}>{pd.message.slice(0, 500)}</div>
+            </div>
+          )}
 
           {/* Footer: last updated + polling indicator */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, color: "var(--text2)" }}>
@@ -1409,10 +1415,10 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
               {state !== "completed" && (
                 <>
                   <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e", animation: "pulse 2s infinite" }} />
-                  <span>Auto-refreshing every 15s</span>
+                  <span>Live — polling cluster every 15s</span>
                 </>
               )}
-              {state === "completed" && <span>Monitoring complete</span>}
+              {state === "completed" && <span>Upgrade verified complete</span>}
             </div>
             {pd.timestamp && <span>Last: {new Date(pd.timestamp).toLocaleTimeString()}</span>}
           </div>
