@@ -716,12 +716,26 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     try {
       const res = await fetch(clusterUrl(`/api/upgrade/orchestrator/session?id=${sessionId}`, cluster));
       const d = await res.json();
-      if (d.session) setSession(d.session);
+      if (d.session) {
+        setSession(d.session);
+        // Restore last progress snapshot if monitoring dashboard has no data yet
+        const snaps = d.session?.monitoringData?.snapshots;
+        if (snaps?.length && !progressData) {
+          setProgressData(snaps[snaps.length - 1]);
+        }
+      }
     } catch {}
   }
 
   useEffect(() => {
-    fetchSession();
+    fetchSession().then(() => {
+      // Restore last progress snapshot from session's monitoringData
+      const s = session || data;
+      const snaps = s?.monitoringData?.snapshots;
+      if (snaps?.length && !progressData) {
+        setProgressData(snaps[snaps.length - 1]);
+      }
+    });
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [sessionId]);
 
@@ -756,7 +770,7 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
             body: JSON.stringify({ sessionId }),
           });
           const d = await r.json();
-          setProgressData(d);
+          if (!d.error) setProgressData(d);
           const newState = d.session?.state;
           if (newState && newState !== prevStateRef.current) {
             if (newState === "completed") {
@@ -772,7 +786,7 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     };
     prevStateRef.current = currentState;
     poll();
-    const timer = setInterval(poll, 20000);
+    const timer = setInterval(poll, 15000);
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.state, data?.state, sessionId, cluster]);
@@ -827,7 +841,7 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
           body: JSON.stringify({ sessionId }),
         });
         const d = await res.json();
-        setProgressData(d);
+        if (!d.error) setProgressData(d);
         await fetchSession();
         if (d.phase === "complete" && d.allStable) {
           clearInterval(pollRef.current);
@@ -1207,6 +1221,7 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     if (key === "monitoring" && (state === "executing" || state === "monitoring" || state === "completed")) {
       const pd = progressData || {};
       const pct = pd.progress || 0;
+      const mf = pd.manifests || null;
       const phases = ["preparing", "updating", "completing", "complete"];
       const phaseIdx = phases.indexOf(pd.phase === "failed" ? "completing" : pd.phase || "preparing");
       const phaseLabel = pd.phase === "complete" ? "Complete" : pd.phase === "failed" ? "Failed" : pd.phase === "preparing" ? "Preparing" : pd.phase === "completing" ? "Finalizing" : "Updating";
@@ -1306,6 +1321,19 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
               </div>
             </div>
           </div>
+
+          {/* Manifest progress bar (CVO payloads) */}
+          {mf && mf.total > 0 && (
+            <div style={{ background: "var(--bg-deep)", borderRadius: 10, padding: "8px 14px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 11 }}>
+                <span style={{ fontWeight: 600 }}>CVO Manifests Applied</span>
+                <span style={{ fontFamily: "'SF Mono', 'Fira Code', monospace", fontWeight: 700, color: gaugeColor }}>{mf.done} / {mf.total}</span>
+              </div>
+              <div style={{ height: 6, background: "var(--border)", borderRadius: 3, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${(mf.done / mf.total) * 100}%`, background: gaugeColor, borderRadius: 3, transition: "width 1s ease" }} />
+              </div>
+            </div>
+          )}
 
           {/* Phase timeline */}
           <div style={{ display: "flex", alignItems: "center", gap: 0, background: "var(--bg-deep)", borderRadius: 10, padding: "8px 12px" }}>

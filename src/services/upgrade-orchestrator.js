@@ -1232,18 +1232,37 @@ export async function stepCheckUpgradeProgress(sessionId) {
 
   let phase = "unknown";
   let progress = 0;
+  let manifestsDone = 0, manifestsTotal = 0;
   const progressing = conditions.Progressing;
+  const progressMsg = progressing?.message || "";
 
   if (currentHistory?.state === "Completed") {
     phase = "complete";
     progress = 100;
-  } else if (conditions.Failing?.status === "True" || conditions.Degraded?.status === "True") {
-    phase = "failed";
   } else if (progressing?.status === "True") {
-    const totalOps = opItems.length || 1;
-    const doneOps = totalOps - updatingCount;
-    progress = Math.min(95, Math.round((doneOps / totalOps) * 90) + 5);
-    phase = progress < 20 ? "preparing" : progress < 80 ? "updating" : "completing";
+    // Parse real progress from CVO message: "Working towards 4.20.23: 141 of 959 done (14% complete)"
+    const pctMatch = progressMsg.match(/\((\d+)%\s*complete\)/i);
+    const countMatch = progressMsg.match(/(\d+)\s+of\s+(\d+)\s+done/i);
+    if (pctMatch) {
+      progress = Math.min(99, parseInt(pctMatch[1], 10));
+    } else if (countMatch) {
+      manifestsDone = parseInt(countMatch[1], 10);
+      manifestsTotal = parseInt(countMatch[2], 10);
+      progress = manifestsTotal > 0 ? Math.min(99, Math.round((manifestsDone / manifestsTotal) * 100)) : 5;
+    } else {
+      // Fallback: estimate from operator counts
+      const totalOps = opItems.length || 1;
+      const doneOps = totalOps - updatingCount;
+      progress = Math.min(95, Math.round((doneOps / totalOps) * 90) + 5);
+    }
+    if (countMatch) {
+      manifestsDone = parseInt(countMatch[1], 10);
+      manifestsTotal = parseInt(countMatch[2], 10);
+    }
+    phase = progress < 15 ? "preparing" : progress < 85 ? "updating" : "completing";
+  } else if (conditions.Failing?.status === "True" ||
+    (conditions.Degraded?.status === "True" && progressing?.status !== "True")) {
+    phase = "failed";
   } else if (conditions.Available?.status === "True") {
     phase = "complete";
     progress = 100;
@@ -1269,7 +1288,8 @@ export async function stepCheckUpgradeProgress(sessionId) {
     progress,
     allStable,
     version: desiredVersion,
-    message: progressing?.message || "",
+    message: progressMsg,
+    manifests: manifestsTotal > 0 ? { done: manifestsDone, total: manifestsTotal } : null,
     operators: { updating: updatingCount, degraded: degradedCount, available: availableCount, total: opItems.length },
     operatorDetails: operatorDetails.slice(0, 10),
     nodes: nodeStatus,

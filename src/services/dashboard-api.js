@@ -1607,33 +1607,39 @@ export function handleUpgradeStatus(req, res) {
       // Determine phase
       let phase = "unknown";
       let progress = 0;
+      let manifestsDone = 0, manifestsTotal = 0;
       const progressing = conditions.Progressing;
       const available = conditions.Available;
-      const failing = conditions.Failing || conditions.Degraded;
+      const progressMsg = progressing?.message || "";
 
       if (currentHistory?.state === "Completed") {
         phase = "complete";
         progress = 100;
-      } else if (failing?.status === "True") {
-        phase = "failed";
-        progress = 0;
       } else if (progressing?.status === "True") {
-        const msg = (progressing.message || "").toLowerCase();
-        if (msg.includes("working towards")) {
-          // Estimate progress based on operator counts
+        // Parse real progress from CVO message: "Working towards 4.20.23: 141 of 959 done (14% complete)"
+        const pctMatch = progressMsg.match(/\((\d+)%\s*complete\)/i);
+        const countMatch = progressMsg.match(/(\d+)\s+of\s+(\d+)\s+done/i);
+        if (pctMatch) {
+          progress = Math.min(99, parseInt(pctMatch[1], 10));
+        } else if (countMatch) {
+          manifestsDone = parseInt(countMatch[1], 10);
+          manifestsTotal = parseInt(countMatch[2], 10);
+          progress = manifestsTotal > 0 ? Math.min(99, Math.round((manifestsDone / manifestsTotal) * 100)) : 5;
+        } else {
           const totalOps = opItems.length || 1;
           const doneOps = totalOps - updatingCount;
           progress = Math.min(95, Math.round((doneOps / totalOps) * 90) + 5);
-
-          if (progress < 20) phase = "preparing";
-          else if (progress < 80) phase = "updating";
-          else phase = "completing";
-        } else {
-          phase = "preparing";
-          progress = 5;
         }
+        if (countMatch) {
+          manifestsDone = parseInt(countMatch[1], 10);
+          manifestsTotal = parseInt(countMatch[2], 10);
+        }
+        phase = progress < 15 ? "preparing" : progress < 85 ? "updating" : "completing";
+      } else if ((conditions.Failing?.status === "True" ||
+        conditions.Degraded?.status === "True") && progressing?.status !== "True") {
+        phase = "failed";
+        progress = 0;
       } else if (available?.status === "True" && progressing?.status !== "True") {
-        // Not progressing and available — likely complete or idle
         phase = "complete";
         progress = 100;
       }
@@ -1641,8 +1647,9 @@ export function handleUpgradeStatus(req, res) {
       const eventData = {
         phase,
         version: desiredVersion,
-        message: progressing?.message || "",
+        message: progressMsg,
         progress,
+        manifests: manifestsTotal > 0 ? { done: manifestsDone, total: manifestsTotal } : null,
         operators: { updating: updatingCount, degraded: degradedCount, total: opItems.length },
         conditions: Object.entries(conditions).map(([type, c]) => ({
           type,
