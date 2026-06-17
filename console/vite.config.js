@@ -13,9 +13,9 @@ export default defineConfig({
   server: {
     port: 5174,
     proxy: {
-      "/api": { target: "http://localhost:8080", changeOrigin: true },
-      "/intelligence": { target: "http://localhost:8080", changeOrigin: true },
-      "/hub": { target: "http://localhost:8080", changeOrigin: true },
+      "/api": { target: `http://localhost:${process.env.MCP_SERVER_PORT || 3000}`, changeOrigin: true },
+      "/intelligence": { target: `http://localhost:${process.env.MCP_SERVER_PORT || 3000}`, changeOrigin: true },
+      "/hub": { target: `http://localhost:${process.env.MCP_SERVER_PORT || 3000}`, changeOrigin: true },
     },
   },
 });
