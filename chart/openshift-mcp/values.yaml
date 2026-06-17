@@ -126,6 +126,13 @@ resources:
     cpu: 500m
     memory: 512Mi
 
+# ── RBAC ────────────────────────────────────────────────────────────────────
+# Creates ClusterRole + ClusterRoleBinding for cluster-wide read access
+# and a remediator role for upgrade execution, pod restarts, scaling, etc.
+
+rbac:
+  create: true
+
 # ── Service Account ─────────────────────────────────────────────────────────
 
 serviceAccount:

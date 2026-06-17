@@ -426,6 +426,10 @@ $(if [ "$PLATFORM" = "openshift" ]; then cat <<OSEOF
   - apiGroups: [config.openshift.io]
     resources: [clusterversions, clusteroperators, infrastructures, oauths, ingresses, networks, proxies, schedulers, apiservers]
     verbs: [get, list]
+  # Cluster version upgrade (patch desiredUpdate)
+  - apiGroups: [config.openshift.io]
+    resources: [clusterversions]
+    verbs: [patch, update]
   - apiGroups: [route.openshift.io]
     resources: [routes]
     verbs: [get, list]
@@ -447,6 +451,10 @@ $(if [ "$PLATFORM" = "openshift" ]; then cat <<OSEOF
   - apiGroups: [operators.coreos.com]
     resources: [subscriptions, clusterserviceversions, installplans, operatorgroups, catalogsources]
     verbs: [get, list, watch]
+  # InstallPlan approval (OLM operator upgrades)
+  - apiGroups: [operators.coreos.com]
+    resources: [installplans]
+    verbs: [patch, update]
   - apiGroups: [packages.operators.coreos.com]
     resources: [packagemanifests]
     verbs: [get, list]
@@ -482,11 +490,7 @@ $(if [ "$PLATFORM" = "openshift" ]; then cat <<OSEOF
     verbs: [create]
 OSEOF
 fi)
-  # Cluster version upgrade (patch desiredUpdate)
-  - apiGroups: [config.openshift.io]
-    resources: [clusterversions]
-    verbs: [patch, update]
-  # Remediation — same as hub
+  # Remediation — matches hub remediator role
   - apiGroups: [""]
     resources: [pods]
     verbs: [delete]
@@ -496,9 +500,20 @@ fi)
   - apiGroups: [""]
     resources: [pods/eviction]
     verbs: [create]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [patch, update]
   - apiGroups: [apps]
     resources: [deployments, deployments/scale, statefulsets/scale]
     verbs: [patch, update]
+  # CSR approval (node certificate rotation during upgrades)
+  - apiGroups: [certificates.k8s.io]
+    resources: [certificatesigningrequests/status]
+    verbs: [update]
+  # Volume snapshots (pre-upgrade backups)
+  - apiGroups: [snapshot.storage.k8s.io]
+    resources: [volumesnapshots]
+    verbs: [create]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

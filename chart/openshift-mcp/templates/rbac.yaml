@@ -1,0 +1,182 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "tcs-agentic-ai.fullname" . }}-reader
+  labels:
+    {{- include "tcs-agentic-ai.labels" . | nindent 4 }}
+rules:
+  # Core API — read
+  - apiGroups: [""]
+    resources: [nodes, pods, pods/log, services, namespaces, events, resourcequotas,
+                limitranges, configmaps, secrets, serviceaccounts, persistentvolumeclaims,
+                persistentvolumes, endpoints, replicationcontrollers]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets, daemonsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings, clusterroles, clusterrolebindings]
+    verbs: [get, list]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies, ingresses, ingressclasses]
+    verbs: [get, list]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets, podsecuritypolicies]
+    verbs: [get, list]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses, csidrivers, csinodes]
+    verbs: [get, list]
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes, pods]
+    verbs: [get, list]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list]
+  - apiGroups: [apiregistration.k8s.io]
+    resources: [apiservices]
+    verbs: [get, list]
+  - apiGroups: [certificates.k8s.io]
+    resources: [certificatesigningrequests]
+    verbs: [get, list, watch]
+  - apiGroups: [authorization.k8s.io]
+    resources: [subjectaccessreviews]
+    verbs: [create]
+  - apiGroups: [admissionregistration.k8s.io]
+    resources: [mutatingwebhookconfigurations, validatingwebhookconfigurations]
+    verbs: [get, list]
+  - apiGroups: [scheduling.k8s.io]
+    resources: [priorityclasses]
+    verbs: [get, list]
+  # OpenShift-specific (ignored on non-OCP clusters)
+  - apiGroups: [config.openshift.io]
+    resources: [clusterversions, clusteroperators, infrastructures, oauths, ingresses, networks, proxies, schedulers, apiservers]
+    verbs: [get, list]
+  - apiGroups: [route.openshift.io]
+    resources: [routes]
+    verbs: [get, list]
+  - apiGroups: [apps.openshift.io]
+    resources: [deploymentconfigs]
+    verbs: [get, list]
+  - apiGroups: [project.openshift.io]
+    resources: [projects]
+    verbs: [get, list]
+  - apiGroups: [image.openshift.io]
+    resources: [imagestreams, imagestreamtags]
+    verbs: [get, list, watch]
+  - apiGroups: [build.openshift.io]
+    resources: [builds, buildconfigs]
+    verbs: [get, list, watch]
+  - apiGroups: [security.openshift.io]
+    resources: [securitycontextconstraints]
+    verbs: [get, list]
+  - apiGroups: [operators.coreos.com]
+    resources: [subscriptions, clusterserviceversions, installplans, operatorgroups, catalogsources]
+    verbs: [get, list, watch]
+  - apiGroups: [packages.operators.coreos.com]
+    resources: [packagemanifests]
+    verbs: [get, list]
+  - apiGroups: [machine.openshift.io]
+    resources: [machines, machinesets, machinehealthchecks]
+    verbs: [get, list]
+  - apiGroups: [machineconfiguration.openshift.io]
+    resources: [machineconfigs, machineconfigpools]
+    verbs: [get, list]
+  - apiGroups: [monitoring.coreos.com]
+    resources: [prometheuses, alertmanagers, servicemonitors, prometheusrules, podmonitors]
+    verbs: [get, list]
+  - apiGroups: [compliance.openshift.io]
+    resources: [compliancesuites, compliancescans, profiles, profilebundles, compliancecheckresults]
+    verbs: [get, list]
+  - apiGroups: [user.openshift.io]
+    resources: [users, groups, identities]
+    verbs: [get, list]
+  - apiGroups: [quota.openshift.io]
+    resources: [clusterresourcequotas]
+    verbs: [get, list]
+  - apiGroups: [operator.openshift.io]
+    resources: [ingresscontrollers]
+    verbs: [get, list]
+  - apiGroups: [apiserver.openshift.io]
+    resources: [apirequestcounts]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "tcs-agentic-ai.fullname" . }}-remediator
+  labels:
+    {{- include "tcs-agentic-ai.labels" . | nindent 4 }}
+rules:
+  # Cluster version upgrade (OpenShift)
+  - apiGroups: [config.openshift.io]
+    resources: [clusterversions]
+    verbs: [patch, update]
+  # Pod delete (restart)
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [delete]
+  # Patch deployments (scale, rollback)
+  - apiGroups: [apps]
+    resources: [deployments, deployments/scale, statefulsets/scale]
+    verbs: [patch, update]
+  # Cordon/drain nodes + evictions
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [patch, update]
+  - apiGroups: [""]
+    resources: [pods/eviction]
+    verbs: [create]
+  # PVC resize
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [patch, update]
+  # CSR approval (node cert rotation during upgrades)
+  - apiGroups: [certificates.k8s.io]
+    resources: [certificatesigningrequests/status]
+    verbs: [update]
+  # InstallPlan approval (OLM operator upgrades)
+  - apiGroups: [operators.coreos.com]
+    resources: [installplans]
+    verbs: [patch, update]
+  # Volume snapshots (pre-upgrade backups)
+  - apiGroups: [snapshot.storage.k8s.io]
+    resources: [volumesnapshots]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "tcs-agentic-ai.fullname" . }}-reader-binding
+  labels:
+    {{- include "tcs-agentic-ai.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "tcs-agentic-ai.fullname" . }}-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "tcs-agentic-ai.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "tcs-agentic-ai.fullname" . }}-remediator-binding
+  labels:
+    {{- include "tcs-agentic-ai.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "tcs-agentic-ai.fullname" . }}-remediator
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "tcs-agentic-ai.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
