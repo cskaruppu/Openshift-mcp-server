@@ -2078,8 +2078,23 @@ export async function handleUpgradeOrchestrator(req, res, action) {
       case "execute": {
         const { sessionId } = body;
         if (!sessionId) return json(res, 400, { error: "Missing 'sessionId'" });
-        const result = await stepExecuteUpgrade(sessionId);
-        return json(res, 200, result);
+        try {
+          const result = await stepExecuteUpgrade(sessionId);
+          if (result && !result.success) {
+            return json(res, 200, result);
+          }
+          return json(res, 200, result);
+        } catch (execErr) {
+          const msg = execErr.message || String(execErr);
+          if (/403|forbidden/i.test(msg)) {
+            return json(res, 403, {
+              error: "RBAC permission denied: service account cannot patch clusterversions",
+              fix: "Run: oc adm policy add-cluster-role-to-user agentic-ai-server-remediator -z <sa-name> -n <namespace>",
+              detail: msg,
+            });
+          }
+          return json(res, 500, { error: `Upgrade execution failed: ${msg}` });
+        }
       }
 
       case "progress": {

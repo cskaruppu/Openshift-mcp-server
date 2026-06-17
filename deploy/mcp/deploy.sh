@@ -482,6 +482,10 @@ $(if [ "$PLATFORM" = "openshift" ]; then cat <<OSEOF
     verbs: [create]
 OSEOF
 fi)
+  # Cluster version upgrade (patch desiredUpdate)
+  - apiGroups: [config.openshift.io]
+    resources: [clusterversions]
+    verbs: [patch, update]
   # Remediation — same as hub
   - apiGroups: [""]
     resources: [pods]

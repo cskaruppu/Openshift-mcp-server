@@ -1164,12 +1164,27 @@ export async function stepExecuteUpgrade(sessionId) {
   }
 
   // Patch ClusterVersion
-  await withClusterContext(session.cluster, () =>
-    ocpFetch("/apis/config.openshift.io/v1/clusterversions/version", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/merge-patch+json" },
-      body: JSON.stringify({ spec: { desiredUpdate: { version: session.targetVersion } } }),
-    }));
+  try {
+    await withClusterContext(session.cluster, () =>
+      ocpFetch("/apis/config.openshift.io/v1/clusterversions/version", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/merge-patch+json" },
+        body: JSON.stringify({ spec: { desiredUpdate: { version: session.targetVersion } } }),
+      }));
+  } catch (err) {
+    const msg = err.message || String(err);
+    if (/403|forbidden/i.test(msg)) {
+      const rbacFix = [
+        `The service account lacks permission to patch clusterversions.`,
+        `Run this on the cluster to grant it:`,
+        `  oc adm policy add-cluster-role-to-user agentic-ai-server-remediator -z agentic-ai-server -n openshift-mcp`,
+        `Or apply the updated serviceaccount.yaml from deploy/dashboard/manifests/`,
+      ].join("\n");
+      await updateSession(sessionId, { errorMessage: rbacFix });
+      return { session: await getSession(sessionId), success: false, error: rbacFix };
+    }
+    throw err;
+  }
 
   const updated = await transition(sessionId, UPGRADE_STATES.EXECUTING);
   return { session: updated, success: true };
