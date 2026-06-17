@@ -78,7 +78,13 @@ function computeHealthScore(data) {
   const score = weight > 0 ? Math.round(total / weight) : 0;
   const color = score >= 90 ? "#22c55e" : score >= 70 ? "#f59e0b" : "#ef4444";
   const label = score >= 90 ? "Healthy" : score >= 70 ? "Warning" : "Degraded";
-  return { score, label, color, breakdown: { nodes, ops, pods } };
+  const bd = { nodes, ops, pods };
+  const titleParts = [];
+  if (nodes.total > 0) titleParts.push(`Nodes: ${nodes.ready || 0}/${nodes.total} (${Math.round(((nodes.ready||0)/nodes.total)*100)}%) — weight 40%`);
+  if (ops.total > 0) titleParts.push(`Operators: ${ops.healthy || 0}/${ops.total} (${Math.round(((ops.healthy||0)/ops.total)*100)}%) — weight 40%`);
+  if (pods.total > 0) titleParts.push(`Pods: ${pods.running ?? 0}/${pods.total} (${Math.round(((pods.running??0)/pods.total)*100)}%) — weight 20%`);
+  const title = titleParts.length > 0 ? `Health Breakdown:\n${titleParts.join("\n")}` : "";
+  return { score, label, color, breakdown: bd, title };
 }
 
 function parseNodeStr(str) {
@@ -963,7 +969,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                 <div className="cp-card-stat-val">{hubNodes}</div>
                 <div className="cp-card-stat-lbl">Nodes</div>
               </div>
-              <div className="cp-card-stat cp-health-stat">
+              <div className="cp-card-stat cp-health-stat" title={hubHealthData.title} onClick={e => e.stopPropagation()}>
                 <div className="cp-card-stat-val" style={{ color: hubHealthData.color }}>{hubHealthData.score}%</div>
                 <div className="cp-card-stat-lbl">{hubHealthData.label}</div>
                 <HealthTooltip breakdown={hubHealthData.breakdown} />
@@ -1046,7 +1052,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                     <div className="cp-card-stat-val">{summary.nodes || "--"}</div>
                     <div className="cp-card-stat-lbl">Nodes</div>
                   </div>
-                  <div className="cp-card-stat cp-health-stat">
+                  <div className="cp-card-stat cp-health-stat" title={remoteHealthData.title} onClick={e => e.stopPropagation()}>
                     <div className="cp-card-stat-val" style={{ color: remoteHealthData.color }}>{remoteHealthData.score}%</div>
                     <div className="cp-card-stat-lbl">{remoteHealthData.label}</div>
                     <HealthTooltip breakdown={remoteHealthData.breakdown} />
