@@ -145,24 +145,28 @@ export async function createChangeRequest({
   type = "normal",
   priority = "3",
   assignmentGroup = "",
-  risk = "moderate",
+  risk = "3",
   justification = "",
   implementationPlan = "",
   backoutPlan = "",
   testPlan = "",
   impact = "3",
-  category = "Infrastructure",
+  category = "Software",
   startDate = "",
   endDate = "",
   workNotes = "",
 }) {
+  // ServiceNow risk: 1=Very High, 2=High, 3=Moderate, 4=Low
+  const RISK_MAP = { "very high": "1", high: "2", moderate: "3", low: "4" };
+  const riskValue = RISK_MAP[String(risk).toLowerCase()] || (/^[1-4]$/.test(risk) ? risk : "3");
+
   const payload = {
     short_description: shortDescription,
     description,
     type,
     priority,
     assignment_group: assignmentGroup,
-    risk,
+    risk: riskValue,
     justification,
     impact,
     category,

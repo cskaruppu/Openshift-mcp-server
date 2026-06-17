@@ -2007,8 +2007,6 @@ export async function handleUpgradeOrchestrator(req, res, action) {
         const formData = buildCRFormData(session);
         let ticketId, sysId;
         try {
-          // Re-restore ServiceNow settings from DB/file in case env vars were
-          // lost (e.g. startup restore failed, container recycled without env).
           if (!process.env.SERVICENOW_INSTANCE) {
             await restoreServiceNowSettings();
           }
@@ -2026,9 +2024,31 @@ export async function handleUpgradeOrchestrator(req, res, action) {
             return json(res, 500, { error: `ServiceNow CR creation failed: ${err.message}` });
           }
         }
+
+        // Attach pre-assessment PDF + HTML reports to ServiceNow CR
+        if (sysId) {
+          try {
+            const { attachFile: snowAttach } = await import("../utils/servicenow-client.js");
+            const { generatePreAssessmentReport } = await import("./upgrade-report.js");
+            const { generateHTMLReport } = await import("./upgrade-orchestrator.js");
+
+            const pdfBuffer = await generatePreAssessmentReport(session);
+            await snowAttach("change_request", sysId,
+              `Pre-Assessment-${session.cluster || "local"}-${session.fromVersion}-to-${session.targetVersion}.pdf`,
+              "application/pdf", pdfBuffer);
+
+            const htmlContent = generateHTMLReport(session);
+            const htmlBuffer = Buffer.from(htmlContent, "utf-8");
+            await snowAttach("change_request", sysId,
+              `Pre-Assessment-${session.cluster || "local"}-${session.fromVersion}-to-${session.targetVersion}.html`,
+              "text/html", htmlBuffer);
+          } catch (attErr) {
+            console.warn(`[raise-cr] Failed to attach reports to CR ${ticketId}: ${attErr.message}`);
+          }
+        }
+
         let updated;
         if (session.state === "cr_submitted") {
-          // Re-raising: session is already in cr_submitted, update CR fields directly
           const { query: dbQ } = await import("../utils/db.js");
           await dbQ(
             `UPDATE upgrade_sessions SET cr_ticket_id = $1, cr_sys_id = $2, updated_at = NOW() WHERE id = $3`,

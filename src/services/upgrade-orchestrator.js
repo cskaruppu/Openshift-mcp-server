@@ -807,6 +807,151 @@ export function buildCRFormData(session) {
 
   const riskLevel = failCount > 0 ? "high" : warnCount > 3 ? "moderate" : "low";
   const estimatedDuration = report.versionDelta?.estimatedDuration || "~60 minutes";
+  const topo = report.nodeTopology || {};
+  const components = session.componentAnalysis || [];
+  const remediation = session.remediationPlan || session.remediations || [];
+
+  // ServiceNow risk field: 1=Very High, 2=High, 3=Moderate, 4=Low
+  const riskNumeric = riskLevel === "high" ? "2" : riskLevel === "moderate" ? "3" : "4";
+
+  // Maintenance window: start now + 30 min prep, end = start + estimated duration
+  const startTime = new Date(Date.now() + 30 * 60000);
+  const durationMinutes = parseInt(estimatedDuration) || 60;
+  const endTime = new Date(startTime.getTime() + durationMinutes * 60000);
+  const fmtDate = (d) => d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
+
+  const failChecks = checks.filter(c => c.status === "fail");
+  const warnChecks = checks.filter(c => c.status === "warning");
+
+  const implementationPlan = [
+    `=== OpenShift Cluster Upgrade Implementation Plan ===`,
+    `Target: ${session.fromVersion} → ${session.targetVersion}`,
+    `Type: ${session.upgradeType || "patch"} | Channel: ${session.channel || "stable"}`,
+    `Estimated Duration: ${estimatedDuration}`,
+    ``,
+    `--- Pre-Upgrade Steps ---`,
+    `1. Validate cluster health via 22-point pre-assessment (Status: ${report.overallStatus || "N/A"})`,
+    `2. Verify etcd backup and node drain readiness`,
+    `3. Review deprecated API usage and operator compatibility`,
+    `4. Confirm resource capacity (CPU/Memory/Storage headroom)`,
+    ...(components.length ? [
+      ``,
+      `--- Component Impact Analysis ---`,
+      ...components.slice(0, 10).map((c, i) => `${i + 1}. ${c.name || c.component}: ${c.status || c.impact || "reviewed"}`),
+    ] : []),
+    ...(remediation.length ? [
+      ``,
+      `--- Pre-Upgrade Remediations ---`,
+      ...remediation.slice(0, 10).map((r, i) => `${i + 1}. ${r.title || r.description || r.action || "Remediation step"} — ${r.status || "pending"}`),
+    ] : []),
+    ``,
+    `--- Upgrade Execution ---`,
+    `1. Switch update channel to ${session.channel || "stable"}-${session.targetVersion}`,
+    `2. Initiate cluster version update via oc adm upgrade --to=${session.targetVersion}`,
+    `3. Monitor ClusterVersion operator progress`,
+    `4. Verify master nodes upgrade (${topo.masters || "N/A"} control plane nodes)`,
+    `5. Verify worker nodes upgrade (${topo.workers || "N/A"} worker nodes)`,
+    `6. Run post-upgrade health validation`,
+    ``,
+    `--- Post-Upgrade Verification ---`,
+    `1. Re-run 22-point health assessment`,
+    `2. Verify all ClusterOperators reporting Available=True`,
+    `3. Confirm no degraded operators or pending machine configs`,
+    `4. Validate application workload health`,
+    `5. Generate post-assessment report and attach to this CR`,
+  ].join("\n");
+
+  const backoutPlan = [
+    `=== Backout / Rollback Plan ===`,
+    ``,
+    `Note: OpenShift cluster version downgrades are not supported.`,
+    `The following rollback procedures apply:`,
+    ``,
+    `1. ETCD RESTORE: If critical failure during upgrade:`,
+    `   - Stop kubelet on all masters`,
+    `   - Restore etcd snapshot from pre-upgrade backup`,
+    `   - Restart control plane components`,
+    `   - Verify cluster recovery`,
+    ``,
+    `2. WORKLOAD ROLLBACK:`,
+    `   - Revert application deployments to pre-upgrade versions`,
+    `   - Restore any modified ConfigMaps/Secrets`,
+    `   - Re-apply previous network policies if changed`,
+    ``,
+    `3. NODE RECOVERY:`,
+    `   - If worker nodes fail: cordon, drain, and replace`,
+    `   - If master node fails: restore from etcd backup`,
+    ``,
+    `4. ESCALATION:`,
+    `   - Contact Red Hat Support (case ref attached)`,
+    `   - Engage cluster operations team`,
+    `   - RTO: 2 hours | RPO: Pre-upgrade etcd snapshot`,
+  ].join("\n");
+
+  const testPlan = [
+    `=== Post-Upgrade Test Plan ===`,
+    ``,
+    `1. CLUSTER HEALTH:`,
+    `   [ ] All ${topo.total || "N/A"} nodes in Ready state`,
+    `   [ ] All ClusterOperators Available=True, Degraded=False`,
+    `   [ ] No pending MachineConfigPool updates`,
+    `   [ ] API server responding (oc get clusterversion)`,
+    ``,
+    `2. WORKLOAD VALIDATION:`,
+    `   [ ] Critical pods running in all namespaces`,
+    `   [ ] No CrashLoopBackOff or ImagePullBackOff pods`,
+    `   [ ] Persistent volumes mounted and accessible`,
+    `   [ ] Ingress/Routes responding to traffic`,
+    ``,
+    `3. SECURITY & COMPLIANCE:`,
+    `   [ ] Certificate validity confirmed`,
+    `   [ ] OAuth/authentication functional`,
+    `   [ ] Network policies enforced`,
+    `   [ ] RBAC roles intact`,
+    ``,
+    `4. MONITORING:`,
+    `   [ ] Prometheus/Alertmanager operational`,
+    `   [ ] No critical alerts firing`,
+    `   [ ] Cluster metrics flowing`,
+    ``,
+    `5. AUTOMATED VALIDATION:`,
+    `   [ ] 22-point post-assessment passed`,
+    `   [ ] Pre vs Post comparison report generated`,
+  ].join("\n");
+
+  const workNotes = [
+    `[TCS Agentic AI — Automated Upgrade Assessment]`,
+    ``,
+    `Cluster: ${session.cluster || "local"}`,
+    `Upgrade: ${session.fromVersion} → ${session.targetVersion}`,
+    `Type: ${session.upgradeType || "patch"} | Channel: ${session.channel || "stable"}`,
+    `Assessment Time: ${new Date().toISOString()}`,
+    ``,
+    `=== Pre-Assessment Results (22 Checks) ===`,
+    `Overall: ${report.overallStatus || "UNKNOWN"}`,
+    `Pass: ${passCount} | Warning: ${warnCount} | Fail: ${failCount}`,
+    `Risk Level: ${riskLevel.toUpperCase()}`,
+    ``,
+    `Node Topology: ${topo.masters || 0} masters, ${topo.workers || 0} workers, ${topo.infra || 0} infra (${topo.total || 0} total)`,
+    `Estimated Duration: ${estimatedDuration}`,
+    ...(failChecks.length ? [
+      ``,
+      `=== Blocking Issues (${failChecks.length}) ===`,
+      ...failChecks.map(c => `- ${c.category}: ${c.details}`),
+    ] : []),
+    ...(warnChecks.length ? [
+      ``,
+      `=== Warnings (${warnChecks.length}) ===`,
+      ...warnChecks.map(c => `- ${c.category}: ${c.details}`),
+    ] : []),
+    ...(components.length ? [
+      ``,
+      `=== Component Analysis (${components.length} components) ===`,
+      ...components.slice(0, 15).map(c => `- ${c.name || c.component}: ${c.status || c.impact || "reviewed"}`),
+    ] : []),
+    ``,
+    `PDF pre-assessment report and HTML report attached to this CR.`,
+  ].join("\n");
 
   return {
     shortDescription: `OpenShift Cluster Upgrade: ${session.fromVersion} → ${session.targetVersion}`,
@@ -820,12 +965,20 @@ export function buildCRFormData(session) {
       `  Overall Status: ${report.overallStatus || "UNKNOWN"}`,
       "",
       `Estimated Duration: ${estimatedDuration}`,
-      `Node Topology: ${report.nodeTopology?.masters || 0} masters, ${report.nodeTopology?.workers || 0} workers`,
+      `Node Topology: ${topo.masters || 0} masters, ${topo.workers || 0} workers`,
     ].join("\n"),
     type: "normal",
     priority: riskLevel === "high" ? "2" : riskLevel === "moderate" ? "3" : "4",
-    risk: riskLevel,
+    risk: riskNumeric,
+    impact: riskLevel === "high" ? "2" : "3",
     justification: `22-point pre-upgrade assessment completed. Status: ${report.overallStatus || "N/A"}. ${failCount} blocking issues, ${warnCount} warnings.`,
+    implementationPlan,
+    backoutPlan,
+    testPlan,
+    workNotes,
+    startDate: fmtDate(startTime),
+    endDate: fmtDate(endTime),
+    category: "Software",
     targetVersion: session.targetVersion,
     fromVersion: session.fromVersion,
     channel: session.channel,
