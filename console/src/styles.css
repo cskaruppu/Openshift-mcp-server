@@ -930,6 +930,13 @@ body {
 @keyframes acSpin { to { transform: rotate(360deg); } }
 
 /* ── Tool calls ── */
+.ac-tool-progress {
+  width: 100%; padding: 6px 10px; margin-top: 4px;
+  font-size: 11px; color: #818cf8; font-weight: 500;
+  background: rgba(99,102,241,.06); border-radius: 6px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  animation: pulse 1.5s ease-in-out infinite;
+}
 .ac-tool-calls { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
 .ac-tool-card {
   display: flex; align-items: baseline; gap: 8px; padding: 6px 10px;

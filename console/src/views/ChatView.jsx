@@ -62,9 +62,10 @@ const QUICK_PROMPTS = [
 ];
 
 const STAGE_DEFS = [
-  { key: "parse",    label: "Parsing" },
-  { key: "query",    label: "Querying" },
-  { key: "generate", label: "Generating" },
+  { key: "parse",          label: "Parsing" },
+  { key: "query",          label: "Querying" },
+  { key: "investigating",  label: "Investigating" },
+  { key: "generate",       label: "Generating" },
 ];
 
 function getFollowUps(text) {
@@ -114,6 +115,7 @@ export function ChatView() {
   const [completedStages, setCompletedStages] = useState(new Set());
   const [sidebarSearch, setSidebarSearch] = useState("");
   const [toolCalls, setToolCalls] = useState([]);
+  const [toolProgress, setToolProgress] = useState("");
   const [followUps, setFollowUps] = useState([]);
   const [inputFocused, setInputFocused] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -530,6 +532,7 @@ export function ChatView() {
     setSlashOpen(false);
     setFollowUps([]);
     setToolCalls([]);
+    setToolProgress("");
     setCompletedStages(new Set());
     const now = Date.now();
     const userIdx = conv.messages.length;
@@ -596,6 +599,9 @@ export function ChatView() {
                 setStage(evt.stage);
                 setCompletedStages(new Set(doneStages));
               }
+              if (evt.toolProgress) {
+                setToolProgress(evt.toolProgress);
+              }
               if (evt.delta) {
                 full += evt.delta;
                 updateLastAssistant(sendingCluster, full);
@@ -606,8 +612,11 @@ export function ChatView() {
               }
               if (evt.done) {
                 if (evt.conversationId) setConversationId(sendingCluster, evt.conversationId);
-                doneStages.add("parse"); doneStages.add("query"); doneStages.add("generate");
+                doneStages.add("parse"); doneStages.add("query"); doneStages.add("investigating"); doneStages.add("generate");
                 setCompletedStages(new Set(doneStages));
+                if (evt.toolsUsed?.length > 0) {
+                  setToolCalls(evt.toolsUsed.map(name => ({ name })));
+                }
                 // Normalize the built-in identifiers back to "builtin" so the
                 // response window shows the correct provider identity badge.
                 // When an LLM config error fires, errorProvider carries the
@@ -911,6 +920,9 @@ export function ChatView() {
                           </div>
                         );
                       })}
+                      {toolProgress && (
+                        <div className="ac-tool-progress">{toolProgress}</div>
+                      )}
                     </div>
                   )}
 

@@ -9099,6 +9099,7 @@ IMPORTANT: You are given REAL-TIME cluster data as JSON context from the user's 
 - Container resource limits, restart counts, OOMKill history, and events
 - Node capacity, pod scheduling, cluster version
 - Remediation via MCP tools (emergency_fix, restart_pod, scale_deployment)
+- **INVESTIGATION TOOLS**: You can call tools to fetch additional cluster data mid-conversation. Use them when the initial context doesn't have what you need.
 
 ## OpenShift-specific:
 - Use \`oc\` commands (not \`kubectl\`) in all examples
@@ -9109,9 +9110,7 @@ IMPORTANT: You are given REAL-TIME cluster data as JSON context from the user's 
 
 ## CRITICAL RULE — NEVER tell users to run commands to get information:
 - You have LIVE cluster data in the context below. ALWAYS analyze it directly.
-- NEVER say "run this command to check" or "use oc top pods" — YOU must provide the answer from the data you have.
-- NEVER say "I do not see direct metrics" — if metrics data is in your context, analyze it; if not, say what you CAN tell from the pod/node status data you have.
-- If the user asks about CPU/memory usage and you have pod resource requests/limits in context, analyze THOSE. Show requests vs limits, identify pods close to limits.
+- If you need MORE data that isn't in the context, use your investigation tools to fetch it — NEVER ask the user to run commands.
 - Only include \`oc\` commands as REMEDIATION steps (to fix a problem), never as diagnostic steps.
 
 ## Response style:
@@ -9123,6 +9122,20 @@ IMPORTANT: You are given REAL-TIME cluster data as JSON context from the user's 
 - If risky (upgrade, delete, scale down), warn about impact and suggest precheck/dry-run
 - Never show raw image SHA hashes or internal registry URLs
 - Never dump raw technical data without analysis — summarize, compare, recommend
+
+## Follow-Up Questions:
+- When the user's question is vague or ambiguous, ask 1-2 specific clarifying questions BEFORE providing an answer
+- Format follow-ups naturally within the conversation — e.g. "I can see several issues. To give you the most relevant analysis, could you clarify: which namespace are you asking about? I see issues in both \`production\` and \`staging\`."
+- ONLY ask follow-ups when truly needed — if you have enough data to give a good answer, just answer
+- If you DO ask follow-ups, still provide your best preliminary analysis based on available data
+
+## Structured Fix Proposals:
+When you identify a fixable issue, provide a structured fix with these sections:
+1. **Root Cause** — What specifically is wrong and why (reference exact metrics/events)
+2. **Impact** — What's affected, severity (critical/warning/info), blast radius
+3. **Recommended Fix** — The exact YAML patch, oc command, or config change
+4. **Verification** — How to confirm the fix worked (what metric/status to check)
+5. **Risk** — What could go wrong, rollback steps if needed
 
 ## Conversation continuity:
 - Use conversation history for follow-up questions
@@ -10053,6 +10066,172 @@ function summarizeContext(ctx) {
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// Investigation Tools — the LLM can call these mid-conversation to fetch
+// additional cluster data that wasn't in the initial context.
+// ---------------------------------------------------------------------------
+const INVESTIGATION_TOOLS = [
+  {
+    name: "get_pod_details",
+    description: "Get detailed information about a specific pod including status, containers, resource limits, restart counts, and conditions. Use when you need specifics about a pod mentioned by the user.",
+    input_schema: { type: "object", properties: { pod_name: { type: "string", description: "Pod name (or prefix)" }, namespace: { type: "string", description: "Kubernetes namespace" } }, required: ["pod_name"] },
+  },
+  {
+    name: "get_pod_logs",
+    description: "Fetch recent logs from a pod's containers. Use to diagnose crashes, errors, or application issues.",
+    input_schema: { type: "object", properties: { pod_name: { type: "string" }, namespace: { type: "string" }, container: { type: "string", description: "Container name (optional — defaults to first)" }, lines: { type: "number", description: "Number of log lines (default 80)" }, previous: { type: "boolean", description: "Get logs from the previous terminated container (useful for CrashLoopBackOff)" } }, required: ["pod_name"] },
+  },
+  {
+    name: "get_events",
+    description: "Get recent Kubernetes events, optionally filtered by namespace or resource. Use to find warnings, scheduling failures, and state transitions.",
+    input_schema: { type: "object", properties: { namespace: { type: "string", description: "Filter by namespace (omit for cluster-wide)" }, resource_name: { type: "string", description: "Filter events involving this resource name" }, event_type: { type: "string", enum: ["Warning", "Normal"], description: "Filter by event type" } } },
+  },
+  {
+    name: "get_node_status",
+    description: "Get detailed node information including conditions (Ready, MemoryPressure, DiskPressure), capacity, allocatable resources, and running pod count.",
+    input_schema: { type: "object", properties: { node_name: { type: "string", description: "Specific node name (omit to get all nodes)" } } },
+  },
+  {
+    name: "get_resource_usage",
+    description: "Check CPU and memory usage metrics for pods or nodes. Use to identify resource pressure, pods near their limits, or capacity issues.",
+    input_schema: { type: "object", properties: { resource_type: { type: "string", enum: ["pods", "nodes"], description: "What to check metrics for" }, namespace: { type: "string", description: "Namespace filter (for pods)" }, name: { type: "string", description: "Specific pod or node name" } }, required: ["resource_type"] },
+  },
+  {
+    name: "describe_resource",
+    description: "Describe any Kubernetes resource (deployment, service, configmap, route, operator, etc.). Returns the resource spec, status, and conditions.",
+    input_schema: { type: "object", properties: { kind: { type: "string", description: "Resource kind: deployment, service, configmap, route, statefulset, daemonset, ingress, pvc, job, cronjob, clusteroperator, etc." }, name: { type: "string" }, namespace: { type: "string", description: "Namespace (omit for cluster-scoped resources)" } }, required: ["kind", "name"] },
+  },
+  {
+    name: "list_resources",
+    description: "List resources of a given kind in a namespace. Use for discovery — e.g. listing deployments, pods, services in a namespace.",
+    input_schema: { type: "object", properties: { kind: { type: "string", description: "Resource kind: pods, deployments, services, routes, configmaps, secrets, jobs, etc." }, namespace: { type: "string", description: "Namespace (omit for all namespaces — limited to 50 results)" }, label_selector: { type: "string", description: "Label selector filter, e.g. app=nginx" } }, required: ["kind"] },
+  },
+];
+
+const RESOURCE_API_MAP = {
+  pods: "/api/v1", deployments: "/apis/apps/v1", services: "/api/v1",
+  configmaps: "/api/v1", secrets: "/api/v1", routes: "/apis/route.openshift.io/v1",
+  statefulsets: "/apis/apps/v1", daemonsets: "/apis/apps/v1", replicasets: "/apis/apps/v1",
+  jobs: "/apis/batch/v1", cronjobs: "/apis/batch/v1", ingresses: "/apis/networking.k8s.io/v1",
+  pvcs: "/api/v1/persistentvolumeclaims", clusteroperators: "/apis/config.openshift.io/v1",
+  nodes: "/api/v1", namespaces: "/api/v1", events: "/api/v1",
+  horizontalpodautoscalers: "/apis/autoscaling/v2",
+};
+
+async function executeInvestigationTool(toolName, args) {
+  try {
+    switch (toolName) {
+      case "get_pod_details": {
+        const ns = args.namespace || "default";
+        const pods = await ocpGet(`/api/v1/namespaces/${ns}/pods`).catch(() => ({ items: [] }));
+        const match = (pods.items || []).find(p => p.metadata?.name === args.pod_name || p.metadata?.name?.startsWith(args.pod_name));
+        if (!match) return JSON.stringify({ error: `Pod "${args.pod_name}" not found in namespace "${ns}"`, available_pods: (pods.items || []).slice(0, 10).map(p => p.metadata?.name) });
+        const p = match;
+        return JSON.stringify({
+          name: p.metadata.name, namespace: p.metadata.namespace, phase: p.status?.phase,
+          hostIP: p.status?.hostIP, podIP: p.status?.podIP, nodeName: p.spec?.nodeName,
+          startTime: p.status?.startTime,
+          containers: (p.spec?.containers || []).map((c, i) => ({
+            name: c.name, image: c.image?.split("@")[0],
+            resources: c.resources, ports: c.ports,
+            state: p.status?.containerStatuses?.[i]?.state,
+            ready: p.status?.containerStatuses?.[i]?.ready,
+            restartCount: p.status?.containerStatuses?.[i]?.restartCount || 0,
+            lastState: p.status?.containerStatuses?.[i]?.lastState,
+          })),
+          conditions: (p.status?.conditions || []).map(c => ({ type: c.type, status: c.status, reason: c.reason, message: c.message })),
+          ownerReferences: (p.metadata?.ownerReferences || []).map(o => ({ kind: o.kind, name: o.name })),
+        });
+      }
+      case "get_pod_logs": {
+        const ns = args.namespace || "default";
+        const lines = args.lines || 80;
+        let logUrl = `/api/v1/namespaces/${ns}/pods/${args.pod_name}/log?tailLines=${lines}&timestamps=true`;
+        if (args.container) logUrl += `&container=${encodeURIComponent(args.container)}`;
+        if (args.previous) logUrl += "&previous=true";
+        const logResp = await ocpFetch(logUrl).catch(() => null);
+        if (!logResp?.ok) return JSON.stringify({ error: `Could not fetch logs for ${args.pod_name}${args.previous ? " (previous)" : ""}`, status: logResp?.status });
+        const text = await logResp.text();
+        return text.slice(-4000) || "(empty logs)";
+      }
+      case "get_events": {
+        let evUrl = "/api/v1/events?limit=50";
+        if (args.namespace) evUrl = `/api/v1/namespaces/${args.namespace}/events?limit=50`;
+        if (args.event_type) evUrl += `&fieldSelector=type=${args.event_type}`;
+        const events = await ocpGet(evUrl).catch(() => ({ items: [] }));
+        let items = (events.items || []).sort((a, b) => new Date(b.lastTimestamp || b.metadata?.creationTimestamp || 0) - new Date(a.lastTimestamp || a.metadata?.creationTimestamp || 0));
+        if (args.resource_name) items = items.filter(e => e.involvedObject?.name?.includes(args.resource_name));
+        return JSON.stringify(items.slice(0, 30).map(e => ({
+          type: e.type, reason: e.reason, message: e.message,
+          object: `${e.involvedObject?.kind}/${e.involvedObject?.name}`,
+          namespace: e.involvedObject?.namespace, count: e.count,
+          lastSeen: e.lastTimestamp || e.metadata?.creationTimestamp,
+        })));
+      }
+      case "get_node_status": {
+        const nodesData = await ocpGet("/api/v1/nodes").catch(() => ({ items: [] }));
+        let nodes = nodesData.items || [];
+        if (args.node_name) nodes = nodes.filter(n => n.metadata?.name === args.node_name || n.metadata?.name?.includes(args.node_name));
+        return JSON.stringify(nodes.slice(0, 20).map(n => ({
+          name: n.metadata?.name,
+          conditions: (n.status?.conditions || []).map(c => ({ type: c.type, status: c.status, reason: c.reason })),
+          capacity: n.status?.capacity, allocatable: n.status?.allocatable,
+          labels: { role: Object.keys(n.metadata?.labels || {}).filter(l => l.startsWith("node-role.kubernetes.io/")).map(l => l.split("/")[1]).join(",") },
+          kubeletVersion: n.status?.nodeInfo?.kubeletVersion,
+          osImage: n.status?.nodeInfo?.osImage,
+        })));
+      }
+      case "get_resource_usage": {
+        if (args.resource_type === "nodes") {
+          const metrics = await ocpGet("/apis/metrics.k8s.io/v1beta1/nodes").catch(() => ({ items: [] }));
+          let items = metrics.items || [];
+          if (args.name) items = items.filter(n => n.metadata?.name?.includes(args.name));
+          return JSON.stringify(items.slice(0, 20).map(n => ({ name: n.metadata?.name, cpu: n.usage?.cpu, memory: n.usage?.memory, timestamp: n.timestamp })));
+        }
+        let metricUrl = "/apis/metrics.k8s.io/v1beta1/pods";
+        if (args.namespace) metricUrl = `/apis/metrics.k8s.io/v1beta1/namespaces/${args.namespace}/pods`;
+        const metrics = await ocpGet(metricUrl).catch(() => ({ items: [] }));
+        let items = metrics.items || [];
+        if (args.name) items = items.filter(p => p.metadata?.name?.includes(args.name));
+        return JSON.stringify(items.slice(0, 30).map(p => ({
+          name: p.metadata?.name, namespace: p.metadata?.namespace,
+          containers: (p.containers || []).map(c => ({ name: c.name, cpu: c.usage?.cpu, memory: c.usage?.memory })),
+        })));
+      }
+      case "describe_resource": {
+        const kind = (args.kind || "").toLowerCase().replace(/s$/, "");
+        const plural = kind + "s";
+        const api = RESOURCE_API_MAP[plural] || RESOURCE_API_MAP[kind] || "/api/v1";
+        let url;
+        if (args.namespace) url = `${api}/namespaces/${args.namespace}/${plural}/${args.name}`;
+        else url = `${api}/${plural}/${args.name}`;
+        const resource = await ocpGet(url).catch(() => null);
+        if (!resource) return JSON.stringify({ error: `Resource ${args.kind}/${args.name} not found${args.namespace ? ` in ${args.namespace}` : ""}` });
+        return JSON.stringify({ kind: resource.kind, name: resource.metadata?.name, namespace: resource.metadata?.namespace, spec: resource.spec, status: resource.status, conditions: resource.status?.conditions }, null, 1).slice(0, 4000);
+      }
+      case "list_resources": {
+        const kind = (args.kind || "").toLowerCase();
+        const api = RESOURCE_API_MAP[kind] || "/api/v1";
+        let url = args.namespace ? `${api}/namespaces/${args.namespace}/${kind}` : `${api}/${kind}`;
+        if (args.label_selector) url += `?labelSelector=${encodeURIComponent(args.label_selector)}`;
+        const data = await ocpGet(url).catch(() => ({ items: [] }));
+        const items = (data.items || []).slice(0, 50);
+        return JSON.stringify(items.map(i => ({
+          name: i.metadata?.name, namespace: i.metadata?.namespace,
+          status: i.status?.phase || (i.status?.conditions || []).find(c => c.type === "Ready" || c.type === "Available")?.status,
+          created: i.metadata?.creationTimestamp,
+        })));
+      }
+      default:
+        return JSON.stringify({ error: `Unknown tool: ${toolName}` });
+    }
+  } catch (err) {
+    return JSON.stringify({ error: `Tool execution failed: ${err.message}` });
+  }
+}
+
+const MAX_TOOL_ITERATIONS = 5;
+
 async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
   const provider = opts.provider || LLM_PROVIDER;
   if (!provider || provider === "none") {
@@ -10158,8 +10337,7 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
       userId: opts.userId || null,
       conversationId: opts.conversationId || null,
     });
-    const r = await callLLM({
-      messages,
+    const llmCallOpts = {
       system: augmentedSystem,
       maxTokens: 2000,
       temperature: 0.15,
@@ -10169,10 +10347,50 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
       model: opts.model,
       azureDeployment: opts.azureDeployment,
       azureApiVersion: opts.azureApiVersion,
-    });
-    let reply = validateResponse(r.text, clusterContext) || builtInAnalysis(userMessage, clusterContext);
+      tools: INVESTIGATION_TOOLS,
+    };
+
+    // Agentic loop: let the LLM call investigation tools up to MAX_TOOL_ITERATIONS times
+    let loopMessages = [...messages];
+    let totalUsage = null;
+    let toolsUsed = [];
+
+    for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+      const r = await callLLM({ messages: loopMessages, ...llmCallOpts });
+      if (r.usage) {
+        if (!totalUsage) totalUsage = { ...r.usage };
+        else { totalUsage.input_tokens = (totalUsage.input_tokens || 0) + (r.usage.input_tokens || 0); totalUsage.output_tokens = (totalUsage.output_tokens || 0) + (r.usage.output_tokens || 0); }
+      }
+      if (!r.toolCalls || r.toolCalls.length === 0) {
+        let reply = validateResponse(r.text, clusterContext) || builtInAnalysis(userMessage, clusterContext);
+        reply = appendFixProposals(reply, ctx);
+        if (toolsUsed.length > 0) {
+          reply = `<!--tools:${toolsUsed.join(",")}-->\n` + reply;
+        }
+        return { text: reply, usage: totalUsage, toolsUsed };
+      }
+      // Execute tool calls and feed results back to the LLM
+      if (r.text) loopMessages.push({ role: "assistant", content: r.text });
+      for (const tc of r.toolCalls) {
+        toolsUsed.push(tc.name);
+        const toolResult = await executeInvestigationTool(tc.name, tc.arguments || {});
+        // Anthropic format: tool_result content block
+        // OpenAI format: tool role message
+        if (opts.provider === "anthropic") {
+          loopMessages.push({ role: "assistant", content: [{ type: "tool_use", id: tc.id, name: tc.name, input: tc.arguments || {} }] });
+          loopMessages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: toolResult }] });
+        } else {
+          loopMessages.push({ role: "assistant", content: null, tool_calls: [{ id: tc.id, type: "function", function: { name: tc.name, arguments: JSON.stringify(tc.arguments || {}) } }] });
+          loopMessages.push({ role: "tool", tool_call_id: tc.id, content: toolResult });
+        }
+      }
+    }
+    // If we exhausted iterations, return whatever we have
+    const finalR = await callLLM({ messages: loopMessages, ...llmCallOpts, tools: null });
+    let reply = validateResponse(finalR.text, clusterContext) || builtInAnalysis(userMessage, clusterContext);
     reply = appendFixProposals(reply, ctx);
-    return { text: reply, usage: r.usage || null };
+    if (toolsUsed.length > 0) reply = `<!--tools:${toolsUsed.join(",")}-->\n` + reply;
+    return { text: reply, usage: totalUsage, toolsUsed };
   } catch (err) {
     let reply = `LLM Error: ${err.message}\n\n---\n\n${builtInAnalysis(userMessage, clusterContext)}`;
     reply = appendFixProposals(reply, clusterContext);
@@ -16607,20 +16825,59 @@ export async function handleChatAPI(req, res) {
             parsed, userId: body.userId || null, conversationId,
           });
           let fullText = "";
-          const _streamResult = await callLLMStream({
-            messages: [...priorMessages, { role: "user", content: userContent }],
+          let toolsUsed = [];
+          const streamLlmOpts = {
             system: augmentedSystem,
             maxTokens: 2000,
             temperature: 0.15,
             ...llmOpts,
-            onDelta: (chunk) => {
-              fullText += chunk;
-              sseSend(res, { delta: chunk });
-            },
-          });
-          return { context, fullText, usage: _streamResult?.usage || null };
+            tools: INVESTIGATION_TOOLS,
+          };
+
+          // Agentic streaming loop — LLM can call tools, then we continue streaming
+          let loopMessages = [...priorMessages, { role: "user", content: userContent }];
+          let totalUsage = null;
+
+          for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+            let iterText = "";
+            let iterToolCalls = [];
+            const iterResult = await callLLMStream({
+              messages: loopMessages,
+              ...streamLlmOpts,
+              onDelta: (chunk) => {
+                iterText += chunk;
+                fullText += chunk;
+                sseSend(res, { delta: chunk });
+              },
+              onToolCall: (tc) => { iterToolCalls.push(tc); },
+            });
+            if (iterResult?.usage) {
+              if (!totalUsage) totalUsage = { ...iterResult.usage };
+              else { totalUsage.input_tokens = (totalUsage.input_tokens || 0) + (iterResult.usage.input_tokens || 0); totalUsage.output_tokens = (totalUsage.output_tokens || 0) + (iterResult.usage.output_tokens || 0); }
+            }
+            // Check for tool calls from the response
+            const allToolCalls = iterToolCalls.length > 0 ? iterToolCalls : (iterResult?.toolCalls || []);
+            if (allToolCalls.length === 0) break;
+
+            // Execute tool calls and show progress
+            for (const tc of allToolCalls) {
+              toolsUsed.push(tc.name);
+              sseSend(res, { stage: "investigating", toolProgress: `Investigating: ${tc.name}(${Object.values(tc.arguments || {}).filter(v => typeof v === "string").join(", ")})...` });
+              const toolResult = await executeInvestigationTool(tc.name, tc.arguments || {});
+              if (llmOpts.provider === "anthropic") {
+                loopMessages.push({ role: "assistant", content: [{ type: "tool_use", id: tc.id, name: tc.name, input: tc.arguments || {} }] });
+                loopMessages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: toolResult }] });
+              } else {
+                loopMessages.push({ role: "assistant", content: iterText || null, tool_calls: [{ id: tc.id, type: "function", function: { name: tc.name, arguments: JSON.stringify(tc.arguments || {}) } }] });
+                loopMessages.push({ role: "tool", tool_call_id: tc.id, content: toolResult });
+              }
+            }
+            sseSend(res, { stage: "generating", toolProgress: `Analyzed ${toolsUsed.length} data sources — generating response...` });
+          }
+
+          return { context, fullText, usage: totalUsage, toolsUsed };
         });
-        const { context, fullText, usage: _streamUsage } = sseTraced;
+        const { context, fullText, usage: _streamUsage, toolsUsed: _toolsUsed } = sseTraced;
         // Post-stream grounding validation — append disclaimer if needed
         const validatedFull = validateResponse(fullText, context);
         if (validatedFull && validatedFull.length > fullText.length) {
@@ -16651,7 +16908,7 @@ export async function handleChatAPI(req, res) {
         if (fixBlock) sseSend(res, { delta: fixBlock });
         const traceMd = renderTraceMarkdown(sseTrace);
         if (traceMd) sseSend(res, { delta: "\n" + traceMd });
-        sseSend(res, { done: true, provider: activeProvider, conversationId, usage: _streamUsage || null });
+        sseSend(res, { done: true, provider: activeProvider, conversationId, usage: _streamUsage || null, toolsUsed: _toolsUsed || [] });
         sseEnd(res);
         if (conversationId) {
           const savedText = sseTraced.fullText + (fixBlock || "");
