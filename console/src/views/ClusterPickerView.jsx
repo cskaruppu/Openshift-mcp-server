@@ -1167,14 +1167,16 @@ function ActionResultContent({ title, data }) {
     const c = data.cluster || {};
     const n = data.nodes || {};
     const o = data.operators || {};
-    const healthColor = data.health === "healthy" ? "var(--ok)" : data.health === "degraded" ? "var(--crit)" : "var(--warn)";
+    const health = c.health || data.health || "unknown";
+    const healthColor = health === "healthy" ? "var(--ok)" : health === "degraded" ? "var(--crit)" : "var(--warn)";
+    const nsCount = typeof data.namespaces === "object" ? data.namespaces.total : data.namespaces;
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
         {kvRow("Platform", data.isOpenShift ? "OpenShift" : "Kubernetes")}
         {kvRow("Version", c.version || c.kubernetesVersion || "—")}
-        {kvRow("Health", (data.health || "unknown").toUpperCase(), healthColor)}
+        {kvRow("Health", health.toUpperCase(), healthColor)}
         {kvRow("Nodes", `${n.ready || 0} / ${n.total || 0} ready`)}
-        {data.namespaces != null && kvRow("Namespaces", data.namespaces)}
+        {nsCount != null && kvRow("Namespaces", nsCount)}
         {o.total != null && kvRow("Operators", `${o.healthy || 0} / ${o.total || 0} healthy`)}
         {o.degraded != null && o.degraded > 0 && kvRow("Degraded Operators", o.degraded, "var(--crit)")}
         {data.pods != null && kvRow("Pods", typeof data.pods === "object" ? `${data.pods.running || 0} running / ${data.pods.total || 0} total` : data.pods)}
@@ -1185,12 +1187,13 @@ function ActionResultContent({ title, data }) {
   // Verify Health — /api/cluster/health-check or /api/agent/{name}/health-check
   if (title === "Verify Health") {
     const checks = data.checks || data.result || {};
+    const isOk = data.ok !== false;
     const healthColor = data.health === "healthy" ? "var(--ok)" : data.health === "degraded" ? "var(--crit)" : data.health === "warning" ? "var(--warn)" : "var(--text2)";
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        {kvRow("Result", data.ok !== false ? "HEALTHY" : "ISSUES FOUND", data.ok !== false ? "var(--ok)" : "var(--crit)")}
+        {kvRow("Result", isOk ? "HEALTHY" : "ISSUES FOUND", isOk ? "var(--ok)" : "var(--crit)")}
         {data.health && kvRow("Overall Health", data.health.toUpperCase(), healthColor)}
-        {data.message && kvRow("Message", data.message)}
+        {data.target && kvRow("Target", data.target)}
         {data.via && kvRow("Source", data.via === "direct-api" ? "Direct API" : data.via === "cached-report" ? "Cached Report" : data.via)}
         {checks.nodes && kvRow("Nodes", `${checks.nodes.ready || 0} / ${checks.nodes.total || 0} ready`, checks.nodes.ready === checks.nodes.total ? "var(--ok)" : "var(--warn)")}
         {checks.operators && kvRow("Operators", `${checks.operators.healthy || 0} / ${checks.operators.total || 0} healthy`, checks.operators.degraded > 0 ? "var(--crit)" : "var(--ok)")}
@@ -1208,6 +1211,11 @@ function ActionResultContent({ title, data }) {
         {checks.apiServer && kvRow("API Server", checks.apiServer.reachable ? "Reachable" : "Unreachable", checks.apiServer.reachable ? "var(--ok)" : "var(--crit)")}
         {checks.cachedAt && kvRow("Data From", new Date(checks.cachedAt).toLocaleString())}
         {data.proxiedTo && kvRow("Proxied To", data.proxiedTo)}
+        {data.message && (
+          <div style={{ marginTop: 6, padding: "8px 12px", borderRadius: 8, background: isOk ? "color-mix(in srgb, var(--ok) 8%, transparent)" : "color-mix(in srgb, var(--crit) 8%, transparent)", border: `1px solid ${isOk ? "var(--ok)" : "var(--crit)"}`, fontSize: 12, color: isOk ? "var(--ok)" : "var(--text)" }}>
+            {data.message}
+          </div>
+        )}
       </div>
     );
   }

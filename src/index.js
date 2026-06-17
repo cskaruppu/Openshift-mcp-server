@@ -3808,10 +3808,14 @@ spec:
           }
 
           // 3. Try direct API (read nodes + operators)
-          if (hasCredentials(clusterName)) {
+          const _hasCreds = hasCredentials(clusterName) || (agent.apiUrl && agent.token);
+          if (_hasCreds) {
             try {
-              const { withClusterDirect } = await import("./utils/cluster-credentials.js");
-              const { ocpFetch } = await import("./utils/openshift-client.js");
+              const { withClusterDirect, upsert: _credsUpsert } = await import("./utils/cluster-credentials.js");
+              const { withRemoteCluster, ocpFetch } = await import("./utils/openshift-client.js");
+              if (!hasCredentials(clusterName) && agent.apiUrl && agent.token) {
+                await _credsUpsert(clusterName, agent.apiUrl, agent.token, agent.platform || "openshift", clusterName);
+              }
               const checks = await withClusterDirect(clusterName, async () => {
                 const result = {};
                 const nodesRes = await ocpFetch("/api/v1/nodes").catch(() => null);
@@ -3836,7 +3840,7 @@ spec:
               agent.lastHealthResult = checks;
               return sendJson(res, 200, { ok: true, target: clusterName, health: overall, checks, message: `Health via direct API: ${overall}`, via: "direct-api" });
             } catch (err) {
-              return sendJson(res, 200, { ok: false, target: clusterName, message: `Direct API health check failed: ${err.message}` });
+              // Fall through to cached report
             }
           }
 
@@ -3886,10 +3890,14 @@ spec:
           }
 
           // 3. Try direct API to restart agent pod
-          if (hasCredentials(clusterName)) {
+          const _hasReconnCreds = hasCredentials(clusterName) || (agent?.apiUrl && agent?.token);
+          if (_hasReconnCreds) {
             try {
-              const { withClusterDirect } = await import("./utils/cluster-credentials.js");
+              const { withClusterDirect, upsert: _credsUpsert2 } = await import("./utils/cluster-credentials.js");
               const { ocpFetch } = await import("./utils/openshift-client.js");
+              if (!hasCredentials(clusterName) && agent?.apiUrl && agent?.token) {
+                await _credsUpsert2(clusterName, agent.apiUrl, agent.token, agent.platform || "openshift", clusterName);
+              }
               await withClusterDirect(clusterName, async () => {
                 const nsRes = await ocpFetch("/api/v1/namespaces").catch(() => null);
                 const nsList = nsRes ? (await nsRes.json().catch(() => ({}))).items || [] : [];
@@ -3905,7 +3913,7 @@ spec:
               });
               return sendJson(res, 200, { ok: true, target: clusterName, message: "Agent pod restarted via direct API — will reconnect within 60 seconds", via: "direct-api" });
             } catch (err) {
-              return sendJson(res, 200, { ok: false, target: clusterName, message: `Direct API reconnect failed: ${err.message}` });
+              // Fall through to guidance
             }
           }
 
@@ -3950,10 +3958,14 @@ spec:
           const sent = pushEventToAgent(clusterName, event);
           if (sent) return sendJson(res, 200, { ok: true, target: clusterName, message: "Redeploy signal sent via agent bridge" });
           // 3. Try direct API access (Kubernetes PATCH to restart deployment)
-          if (hasCredentials(clusterName)) {
+          const _hasDeployCreds = hasCredentials(clusterName) || (agent?.apiUrl && agent?.token);
+          if (_hasDeployCreds) {
             try {
-              const { withClusterDirect } = await import("./utils/cluster-credentials.js");
+              const { withClusterDirect, upsert: _credsUpsert3 } = await import("./utils/cluster-credentials.js");
               const { ocpFetch } = await import("./utils/openshift-client.js");
+              if (!hasCredentials(clusterName) && agent?.apiUrl && agent?.token) {
+                await _credsUpsert3(clusterName, agent.apiUrl, agent.token, agent.platform || "openshift", clusterName);
+              }
               const result = await withClusterDirect(clusterName, async () => {
                 const nsRes = await ocpFetch("/api/v1/namespaces").catch(() => null);
                 const nsList = nsRes ? (await nsRes.json().catch(() => ({}))).items || [] : [];
@@ -3970,7 +3982,7 @@ spec:
               });
               return sendJson(res, 200, { ok: true, target: clusterName, message: `Rollout restart triggered via direct API on ${result.namespace}` });
             } catch (err) {
-              return sendJson(res, 200, { ok: false, target: clusterName, message: `Direct API redeploy failed: ${err.message}` });
+              // Fall through to failure message
             }
           }
           return sendJson(res, 200, { ok: false, target: clusterName, message: "No spoke, agent bridge, or direct API credentials — cannot redeploy remotely" });

@@ -36,6 +36,14 @@ export async function loadAll() {
 }
 
 export async function upsert(clusterName, apiUrl, token, platform = "openshift", displayName = "") {
+  const cleanUrl = apiUrl.replace(/\/+$/, "");
+  _cache.set(clusterName.toLowerCase(), {
+    clusterName,
+    apiUrl: cleanUrl,
+    token,
+    platform,
+    displayName: displayName || clusterName,
+  });
   if (!(await dbEnabled())) return null;
   const res = await query(
     `INSERT INTO cluster_credentials (cluster_name, api_url, token, platform, display_name, updated_at)
@@ -43,18 +51,8 @@ export async function upsert(clusterName, apiUrl, token, platform = "openshift",
      ON CONFLICT (cluster_name) DO UPDATE
        SET api_url = $2, token = $3, platform = $4, display_name = $5, updated_at = NOW()
      RETURNING *`,
-    [clusterName, apiUrl.replace(/\/+$/, ""), token, platform, displayName || clusterName]
+    [clusterName, cleanUrl, token, platform, displayName || clusterName]
   );
-  if (res?.rows?.[0]) {
-    const row = res.rows[0];
-    _cache.set(clusterName.toLowerCase(), {
-      clusterName: row.cluster_name,
-      apiUrl: row.api_url,
-      token: row.token,
-      platform: row.platform,
-      displayName: row.display_name,
-    });
-  }
   return res?.rows?.[0] || null;
 }
 
