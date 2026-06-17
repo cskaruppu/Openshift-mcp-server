@@ -429,7 +429,7 @@ function ITSMSubmitted({ info, cluster, onQuery }) {
       } catch {}
     };
     check();
-    const timer = setInterval(check, 30000); // poll every 30s
+    const timer = setInterval(check, 15000);
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [info?.sysId]);
@@ -841,7 +841,7 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
       } catch {}
     };
     pollFn();
-    pollRef.current = setInterval(pollFn, 30000);
+    pollRef.current = setInterval(pollFn, 15000);
   }
 
   async function handleCheckProgress() {
@@ -1203,79 +1203,183 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
       );
     }
 
-    // ── Monitoring: live progress with operator detail ──
+    // ── Monitoring: enterprise-grade live dashboard ──
     if (key === "monitoring" && (state === "executing" || state === "monitoring" || state === "completed")) {
       const pd = progressData || {};
       const pct = pd.progress || 0;
+      const phases = ["preparing", "updating", "completing", "complete"];
+      const phaseIdx = phases.indexOf(pd.phase === "failed" ? "completing" : pd.phase || "preparing");
       const phaseLabel = pd.phase === "complete" ? "Complete" : pd.phase === "failed" ? "Failed" : pd.phase === "preparing" ? "Preparing" : pd.phase === "completing" ? "Finalizing" : "Updating";
-      const phaseColor = pd.phase === "complete" ? "var(--ok)" : pd.phase === "failed" ? "var(--crit)" : "var(--accent2)";
+      const isComplete = pd.phase === "complete";
+      const isFailed = pd.phase === "failed";
+      const gaugeColor = isComplete ? "#22c55e" : isFailed ? "#ef4444" : "#3b82f6";
       const ops = pd.operators || {};
       const opDetails = pd.operatorDetails || [];
       const nodes = pd.nodes || {};
 
+      // SVG gauge arc math (semi-circle)
+      const gaugeR = 58, gaugeCx = 70, gaugeCy = 65, gaugeStroke = 10;
+      const arcStart = Math.PI, arcEnd = 0;
+      const arcLen = Math.PI * gaugeR;
+      const dashLen = (pct / 100) * arcLen;
+      const arcPath = `M ${gaugeCx - gaugeR} ${gaugeCy} A ${gaugeR} ${gaugeR} 0 ${pct > 50 ? 1 : 0} 1 ${gaugeCx + gaugeR * Math.cos(Math.PI * (1 - pct / 100))} ${gaugeCy - gaugeR * Math.sin(Math.PI * (pct / 100))}`;
+      const bgArcPath = `M ${gaugeCx - gaugeR} ${gaugeCy} A ${gaugeR} ${gaugeR} 0 1 1 ${gaugeCx + gaugeR} ${gaugeCy}`;
+
+      // Donut chart for operators
+      const opTotal = ops.total || 1;
+      const opAvail = ops.available || 0;
+      const opUpdating = ops.updating || 0;
+      const opDegraded = ops.degraded || 0;
+      const donutR = 30, donutCx = 36, donutCy = 36, donutStroke = 10;
+      const donutCirc = 2 * Math.PI * donutR;
+      const seg1 = (opAvail / opTotal) * donutCirc;
+      const seg2 = (opUpdating / opTotal) * donutCirc;
+      const seg3 = (opDegraded / opTotal) * donutCirc;
+
       return (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 12 }}>
-          {/* Progress bar */}
-          <div>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-              <span style={{ fontWeight: 600, color: phaseColor }}>{phaseLabel}</span>
-              <span style={{ fontWeight: 700, color: phaseColor }}>{pct}%</span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, fontSize: 12 }}>
+          {/* Top row: Gauge + Operator Donut + Node bar */}
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
+
+            {/* Gauge meter */}
+            <div style={{ background: "var(--bg-deep)", borderRadius: 12, padding: "12px 16px", textAlign: "center", minWidth: 150 }}>
+              <svg width="140" height="80" viewBox="0 0 140 80">
+                <path d={bgArcPath} fill="none" stroke="var(--border)" strokeWidth={gaugeStroke} strokeLinecap="round" />
+                <path d={bgArcPath} fill="none" stroke={gaugeColor} strokeWidth={gaugeStroke} strokeLinecap="round"
+                  strokeDasharray={`${dashLen} ${arcLen}`}
+                  style={{ transition: "stroke-dasharray 1s ease, stroke 0.5s" }} />
+                <text x={gaugeCx} y={gaugeCy - 12} textAnchor="middle" fontSize="26" fontWeight="800" fill={gaugeColor}
+                  style={{ fontFamily: "'SF Mono', 'Fira Code', monospace" }}>{pct}%</text>
+                <text x={gaugeCx} y={gaugeCy + 6} textAnchor="middle" fontSize="10" fontWeight="600" fill="var(--text2)">{phaseLabel.toUpperCase()}</text>
+              </svg>
+              <div style={{ fontSize: 10, color: "var(--text2)", marginTop: -4 }}>Cluster Upgrade</div>
             </div>
-            <div style={{ height: 8, background: "var(--border)", borderRadius: 4, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${pct}%`, background: phaseColor, borderRadius: 4, transition: "width 0.8s ease" }} />
+
+            {/* Operator donut */}
+            {ops.total > 0 && (
+              <div style={{ background: "var(--bg-deep)", borderRadius: 12, padding: "12px 16px", textAlign: "center", minWidth: 150 }}>
+                <svg width="72" height="72" viewBox="0 0 72 72">
+                  <circle cx={donutCx} cy={donutCy} r={donutR} fill="none" stroke="var(--border)" strokeWidth={donutStroke} />
+                  <circle cx={donutCx} cy={donutCy} r={donutR} fill="none" stroke="#22c55e" strokeWidth={donutStroke}
+                    strokeDasharray={`${seg1} ${donutCirc - seg1}`} strokeDashoffset={donutCirc * 0.25}
+                    style={{ transition: "stroke-dasharray 0.8s" }} />
+                  {opUpdating > 0 && <circle cx={donutCx} cy={donutCy} r={donutR} fill="none" stroke="#3b82f6" strokeWidth={donutStroke}
+                    strokeDasharray={`${seg2} ${donutCirc - seg2}`} strokeDashoffset={donutCirc * 0.25 - seg1}
+                    style={{ transition: "stroke-dasharray 0.8s" }} />}
+                  {opDegraded > 0 && <circle cx={donutCx} cy={donutCy} r={donutR} fill="none" stroke="#ef4444" strokeWidth={donutStroke}
+                    strokeDasharray={`${seg3} ${donutCirc - seg3}`} strokeDashoffset={donutCirc * 0.25 - seg1 - seg2}
+                    style={{ transition: "stroke-dasharray 0.8s" }} />}
+                  <text x={donutCx} y={donutCy + 4} textAnchor="middle" fontSize="14" fontWeight="800" fill="var(--text1)">{ops.total}</text>
+                </svg>
+                <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 4, fontSize: 10 }}>
+                  <span style={{ color: "#22c55e" }}>● {opAvail}</span>
+                  <span style={{ color: "#3b82f6" }}>● {opUpdating}</span>
+                  <span style={{ color: "#ef4444" }}>● {opDegraded}</span>
+                </div>
+                <div style={{ fontSize: 10, color: "var(--text2)", marginTop: 2 }}>Operators</div>
+              </div>
+            )}
+
+            {/* Node + stats cards */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minWidth: 160 }}>
+              {/* Node readiness bar */}
+              {nodes.total > 0 && (
+                <div style={{ background: "var(--bg-deep)", borderRadius: 10, padding: "10px 14px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 11, fontWeight: 600 }}>
+                    <span>Node Readiness</span>
+                    <span style={{ color: nodes.notReady > 0 ? "#ef4444" : "#22c55e" }}>{nodes.ready}/{nodes.total}</span>
+                  </div>
+                  <div style={{ display: "flex", height: 8, borderRadius: 4, overflow: "hidden", background: "var(--border)" }}>
+                    <div style={{ width: `${(nodes.ready / nodes.total) * 100}%`, background: "#22c55e", transition: "width 0.8s" }} />
+                    {nodes.notReady > 0 && <div style={{ width: `${(nodes.notReady / nodes.total) * 100}%`, background: "#ef4444" }} />}
+                  </div>
+                  <div style={{ display: "flex", gap: 10, marginTop: 4, fontSize: 10, color: "var(--text2)" }}>
+                    <span>✅ {nodes.ready} ready</span>
+                    {nodes.notReady > 0 && <span style={{ color: "#ef4444" }}>❌ {nodes.notReady} updating</span>}
+                  </div>
+                </div>
+              )}
+              {/* Version card */}
+              <div style={{ background: "var(--bg-deep)", borderRadius: 10, padding: "8px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 11, fontWeight: 600 }}>Target</span>
+                <span style={{ fontFamily: "'SF Mono', 'Fira Code', monospace", fontWeight: 700, fontSize: 13, color: gaugeColor }}>{pd.version || targetVer}</span>
+              </div>
             </div>
           </div>
 
-          {/* Operator summary */}
-          {ops.total > 0 && (
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "6px 10px", background: "var(--bg-deep)", borderRadius: 6 }}>
-              <span style={{ color: "var(--ok)" }}>✅ {ops.available || 0} available</span>
-              <span style={{ color: "var(--accent2)" }}>🔄 {ops.updating || 0} updating</span>
-              <span style={{ color: "var(--crit)" }}>⚠️ {ops.degraded || 0} degraded</span>
-              <span style={{ color: "var(--text2)" }}>· {ops.total} total</span>
-            </div>
-          )}
+          {/* Phase timeline */}
+          <div style={{ display: "flex", alignItems: "center", gap: 0, background: "var(--bg-deep)", borderRadius: 10, padding: "8px 12px" }}>
+            {phases.map((p, i) => {
+              const done = i <= phaseIdx;
+              const active = i === phaseIdx && !isComplete;
+              const pColor = done ? (isFailed && i === phaseIdx ? "#ef4444" : "#22c55e") : "var(--border)";
+              const labels = ["Preparing", "Updating Operators", "Finalizing", "Complete"];
+              return (
+                <div key={p} style={{ display: "flex", alignItems: "center", flex: 1 }}>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                    <div style={{ width: 20, height: 20, borderRadius: "50%", background: pColor, display: "flex", alignItems: "center", justifyContent: "center",
+                      border: active ? "2px solid var(--accent2)" : "none",
+                      boxShadow: active ? "0 0 0 3px color-mix(in srgb, var(--accent2) 30%, transparent)" : "none",
+                      animation: active ? "pulse 2s infinite" : "none" }}>
+                      {done && <span style={{ color: "white", fontSize: 11, fontWeight: 700 }}>✓</span>}
+                    </div>
+                    <span style={{ fontSize: 9, fontWeight: done ? 600 : 400, color: done ? "var(--text1)" : "var(--text2)", textAlign: "center", maxWidth: 70 }}>{labels[i]}</span>
+                  </div>
+                  {i < phases.length - 1 && (
+                    <div style={{ flex: 1, height: 2, background: i < phaseIdx ? "#22c55e" : "var(--border)", margin: "0 4px", marginBottom: 16, transition: "background 0.5s" }} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
 
-          {/* Node status */}
-          {nodes.total > 0 && (
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "6px 10px", background: "var(--bg-deep)", borderRadius: 6 }}>
-              <span style={{ fontWeight: 600 }}>Nodes:</span>
-              <span style={{ color: "var(--ok)" }}>{nodes.ready || 0} ready</span>
-              {nodes.notReady > 0 && <span style={{ color: "var(--crit)" }}>{nodes.notReady} not ready</span>}
-              <span style={{ color: "var(--text2)" }}>· {nodes.total} total</span>
-            </div>
-          )}
-
-          {/* Operators currently updating/degraded */}
+          {/* Live activity feed — operators updating */}
           {opDetails.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-              <div style={{ fontWeight: 600, fontSize: 11, color: "var(--text2)", marginBottom: 2 }}>Operators in progress:</div>
+            <div style={{ background: "var(--bg-deep)", borderRadius: 10, padding: "10px 14px", maxHeight: 160, overflowY: "auto" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ fontWeight: 700, fontSize: 11, color: "var(--text2)", textTransform: "uppercase", letterSpacing: 0.5 }}>Live Activity</span>
+                <span style={{ fontSize: 10, color: "var(--text2)" }}>{opDetails.length} operator{opDetails.length !== 1 ? "s" : ""} in progress</span>
+              </div>
               {opDetails.map((op, i) => (
-                <div key={i} style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 11, paddingLeft: 8 }}>
-                  <span style={{ flexShrink: 0, color: op.degraded ? "var(--crit)" : "var(--accent2)" }}>
-                    {op.degraded ? "⚠️" : "🔄"}
+                <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 11, padding: "4px 0", borderBottom: i < opDetails.length - 1 ? "1px solid var(--border)" : "none" }}>
+                  <div style={{ width: 6, height: 6, borderRadius: "50%", marginTop: 4, flexShrink: 0,
+                    background: op.degraded ? "#ef4444" : "#3b82f6",
+                    animation: !op.degraded ? "pulse 1.5s infinite" : "none" }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, color: op.degraded ? "#ef4444" : "var(--text1)" }}>{op.name}</div>
+                    {op.message && <div style={{ color: "var(--text2)", fontSize: 10, marginTop: 1, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{op.message}</div>}
+                  </div>
+                  <span style={{ flexShrink: 0, fontSize: 10, padding: "1px 6px", borderRadius: 4, fontWeight: 600,
+                    background: op.degraded ? "color-mix(in srgb, #ef4444 15%, transparent)" : "color-mix(in srgb, #3b82f6 15%, transparent)",
+                    color: op.degraded ? "#ef4444" : "#3b82f6" }}>
+                    {op.degraded ? "DEGRADED" : "UPDATING"}
                   </span>
-                  <span style={{ fontWeight: 500 }}>{op.name}</span>
-                  {op.message && <span style={{ color: "var(--text2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 500 }}>{op.message}</span>}
                 </div>
               ))}
             </div>
           )}
 
-          {/* Progress message from ClusterVersion */}
+          {/* ClusterVersion progress message */}
           {pd.message && (
-            <div style={{ fontSize: 11, color: "var(--text2)", fontStyle: "italic", padding: "4px 10px", background: "var(--bg-deep)", borderRadius: 6, borderLeft: "3px solid var(--accent2)" }}>
-              {pd.message.slice(0, 300)}
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "8px 12px", background: "var(--bg-deep)", borderRadius: 10, borderLeft: `3px solid ${gaugeColor}` }}>
+              <span style={{ flexShrink: 0, fontSize: 14 }}>{isComplete ? "✅" : isFailed ? "❌" : "⏳"}</span>
+              <div style={{ fontSize: 11, color: "var(--text2)", lineHeight: 1.4, fontFamily: "'SF Mono', 'Fira Code', monospace" }}>{pd.message.slice(0, 400)}</div>
             </div>
           )}
 
-          {/* Last updated timestamp */}
-          {pd.timestamp && (
-            <div style={{ fontSize: 10, color: "var(--text2)", textAlign: "right" }}>
-              Last checked: {new Date(pd.timestamp).toLocaleTimeString()}
-              {state !== "completed" && " · Auto-refreshing every 30s"}
+          {/* Footer: last updated + polling indicator */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, color: "var(--text2)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              {state !== "completed" && (
+                <>
+                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e", animation: "pulse 2s infinite" }} />
+                  <span>Auto-refreshing every 15s</span>
+                </>
+              )}
+              {state === "completed" && <span>Monitoring complete</span>}
             </div>
-          )}
+            {pd.timestamp && <span>Last: {new Date(pd.timestamp).toLocaleTimeString()}</span>}
+          </div>
         </div>
       );
     }
