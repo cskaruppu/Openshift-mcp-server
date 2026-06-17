@@ -2,6 +2,7 @@
   --bg: #0f1117;
   --bg-deep: #0a0c10;
   --bg-alt: #161b22;
+  --bg2: #161b22;
   --card: #1a1d27;
   --card-deep: #0d1117;
   --border: #2a2d3a;
@@ -2410,7 +2411,7 @@ h3.widget-title {
 
 /* ── Light Theme ── */
 .light-theme {
-  --bg: #f8f9fc; --bg-deep: #f0f2f6; --bg-alt: #ffffff;
+  --bg: #f8f9fc; --bg-deep: #f0f2f6; --bg-alt: #ffffff; --bg2: #f1f5f9;
   --card: #ffffff; --card-deep: #f9fafb; --border: #e5e7eb; --border2: #d1d5db;
   --hover: #f3f4f6; --text: #1e293b; --text2: #6b7280;
 }

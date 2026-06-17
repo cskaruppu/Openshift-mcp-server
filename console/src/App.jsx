@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, Component } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "./api/client";
 import { LoginOverlay } from "./components/LoginOverlay";
@@ -18,6 +18,30 @@ import { useThemeStore } from "./store/themeStore";
 import { showToast } from "./store/toastStore";
 import { useClusterStore, useActiveCluster } from "./store/clusterStore";
 import { useViewStore } from "./store/viewStore";
+
+class ErrorBoundary extends Component {
+  state = { error: null };
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(err, info) { console.error("[ErrorBoundary]", err, info?.componentStack); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div style={{ padding: 40, fontFamily: "Inter, system-ui, sans-serif", maxWidth: 600, margin: "60px auto" }}>
+        <h2 style={{ color: "#ef4444", marginBottom: 12 }}>Something went wrong</h2>
+        <p style={{ color: "#64748b", marginBottom: 16 }}>The application encountered an unexpected error. Try refreshing the page.</p>
+        <pre style={{ background: "#1e293b", color: "#f8fafc", padding: 16, borderRadius: 8, fontSize: 12, overflow: "auto", maxHeight: 200 }}>
+          {this.state.error?.message || "Unknown error"}
+        </pre>
+        <button onClick={() => window.location.reload()} style={{ marginTop: 16, padding: "10px 24px", background: "#6366f1", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 14 }}>
+          Reload Page
+        </button>
+        <button onClick={() => this.setState({ error: null })} style={{ marginTop: 16, marginLeft: 12, padding: "10px 24px", background: "transparent", color: "#6366f1", border: "1px solid #6366f1", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 14 }}>
+          Try Again
+        </button>
+      </div>
+    );
+  }
+}
 
 // Per-cluster views only. AI Hub / Agent Registry / Settings are fleet-level
 // and live on the centralized cluster-picker screen, not inside a cluster.
@@ -131,7 +155,7 @@ export default function App() {
   }
 
   return (
-    <>
+    <ErrorBoundary>
       <LoginOverlay />
       {authenticated && inClusterPicker && (
         <ClusterPickerView
@@ -227,7 +251,7 @@ export default function App() {
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <KbdOverlay open={kbdOpen} onClose={() => setKbdOpen(false)} />
       <ToastStack />
-    </>
+    </ErrorBoundary>
   );
 }
 

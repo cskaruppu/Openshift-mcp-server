@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, Component } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet } from "../api/client";
@@ -7,6 +7,35 @@ import { useThemeStore } from "../store/themeStore";
 import { showToast } from "../store/toastStore";
 import { PLATFORM_MAP, getPlatformInfo } from "../lib/platforms";
 import { renderMarkdown } from "../utils/markdown";
+
+class ModalErrorBoundary extends Component {
+  state = { error: null };
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(err, info) { console.error("[ConnectClusterModal]", err, info?.componentStack); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return createPortal(
+      <div className="ccm-overlay" onClick={this.props.onClose}>
+        <div className="ccm" onClick={(e) => e.stopPropagation()} style={{ padding: 32, textAlign: "center" }}>
+          <h3 style={{ color: "#ef4444", marginBottom: 12 }}>Modal Error</h3>
+          <p style={{ color: "#94a3b8", fontSize: 13, marginBottom: 12 }}>Something went wrong while rendering the cluster connection form.</p>
+          <pre style={{ background: "#1e293b", color: "#f8fafc", padding: 12, borderRadius: 8, fontSize: 11, textAlign: "left", overflow: "auto", maxHeight: 120 }}>
+            {this.state.error?.message || "Unknown error"}
+          </pre>
+          <div style={{ marginTop: 16, display: "flex", gap: 10, justifyContent: "center" }}>
+            <button onClick={() => this.setState({ error: null })} style={{ padding: "8px 20px", background: "#6366f1", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600 }}>
+              Try Again
+            </button>
+            <button onClick={this.props.onClose} style={{ padding: "8px 20px", background: "transparent", color: "#94a3b8", border: "1px solid #334155", borderRadius: 8, cursor: "pointer", fontWeight: 600 }}>
+              Close
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body
+    );
+  }
+}
 
 const PLATFORMS = {
   openshift: { ...PLATFORM_MAP.openshift, ns: "openshift-tcs-agentic", cli: "oc" },
@@ -474,6 +503,9 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
   // Portal to document.body — the `.cluster-picker > *` rule forces
   // `position: relative; z-index: 1` on direct children, trapping this
   // fixed-position overlay in a low stacking context. Portal escapes it.
+  const portalTarget = typeof document !== "undefined" ? document.body : null;
+  if (!portalTarget) return null;
+
   return createPortal(
     <div className="ccm-overlay" onClick={onClose}>
       <div className="ccm" onClick={(e) => e.stopPropagation()}>
@@ -979,7 +1011,11 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
       </div>
 
       {/* Connect Cluster Modal */}
-      <ConnectClusterModal open={connectOpen} onClose={() => { setConnectOpen(false); setEditCluster(null); }} onConnected={handleConnected} editCluster={editCluster} />
+      {connectOpen && (
+        <ModalErrorBoundary onClose={() => { setConnectOpen(false); setEditCluster(null); }}>
+          <ConnectClusterModal open={connectOpen} onClose={() => { setConnectOpen(false); setEditCluster(null); }} onConnected={handleConnected} editCluster={editCluster} />
+        </ModalErrorBoundary>
+      )}
 
       {/* Delete Confirmation Dialog */}
       {confirmDelete && (
