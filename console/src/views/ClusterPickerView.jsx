@@ -190,10 +190,11 @@ async function clusterAction(url, method, successMsg, onDone) {
   try {
     const res = await fetch(url, { method: method || "POST" });
     const data = await res.json().catch(() => ({}));
-    showToast(data.message || successMsg, res.ok ? "ok" : "err");
-    if (res.ok && onDone) onDone();
+    if (res.ok && onDone) onDone(data);
+    return { ok: res.ok, data };
   } catch (err) {
     showToast("Error: " + err.message, "err");
+    return { ok: false, error: err.message };
   }
 }
 
@@ -768,6 +769,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
   const [connectOpen, setConnectOpen] = useState(false);
   const [editCluster, setEditCluster] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [actionResult, setActionResult] = useState(null); // { title, cluster, loading, data, error }
 
   const refetchAgents = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["/api/agent/status"] });
@@ -897,12 +899,30 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                 <div className="cp-card-platform">{hubPInfo.name}<ConnBadge type="direct" /></div>
               </div>
               <KebabMenu items={[
-                { icon: "📊", label: "Status Check", action: () => { clusterAction("/api/cluster/summary", "GET", "Hub status fetched"); } },
-                { icon: "🔍", label: "Verify Health", action: () => { clusterAction("/api/cluster/health-check", "POST", "Hub health check complete"); } },
-                { icon: "🚀", label: "Redeploy", action: () => { clusterAction("/api/cluster/redeploy", "POST", "Rollout restart triggered on hub"); } },
+                { icon: "📊", label: "Status Check", action: async () => {
+                  setActionResult({ title: "Status Check", cluster: "Hub Cluster", loading: true });
+                  const r = await clusterAction("/api/cluster/summary", "GET");
+                  setActionResult(prev => ({ ...prev, loading: false, data: r.ok ? r.data : null, error: r.ok ? null : (r.data?.error || r.error || "Failed") }));
+                }},
+                { icon: "🔍", label: "Verify Health", action: async () => {
+                  setActionResult({ title: "Verify Health", cluster: "Hub Cluster", loading: true });
+                  const r = await clusterAction("/api/cluster/health-check", "POST");
+                  setActionResult(prev => ({ ...prev, loading: false, data: r.ok ? r.data : null, error: r.ok ? null : (r.data?.error || r.error || "Failed") }));
+                }},
+                { icon: "🚀", label: "Redeploy", action: async () => {
+                  if (!window.confirm("Trigger a rollout restart on the Hub Cluster agent?\n\nThis will restart the agent pod.")) return;
+                  setActionResult({ title: "Redeploy", cluster: "Hub Cluster", loading: true });
+                  const r = await clusterAction("/api/cluster/redeploy", "POST");
+                  setActionResult(prev => ({ ...prev, loading: false, data: r.ok ? r.data : null, error: r.ok ? null : (r.data?.error || r.error || "Failed") }));
+                  if (r.ok) refetchAgents();
+                }},
                 { icon: "✏️", label: "Edit Settings", action: () => { onOpenSettings(); } },
                 { sep: true },
-                { icon: "🔒", label: "Sync RBAC", action: () => { clusterAction("/api/cluster/rbac-sync", "POST", "RBAC sync initiated"); } },
+                { icon: "🔒", label: "Sync RBAC", action: async () => {
+                  setActionResult({ title: "Sync RBAC", cluster: "Hub Cluster", loading: true });
+                  const r = await clusterAction("/api/cluster/rbac-sync", "POST");
+                  setActionResult(prev => ({ ...prev, loading: false, data: r.ok ? r.data : null, error: r.ok ? null : (r.data?.error || r.error || "Failed") }));
+                }},
                 { sep: true },
                 { icon: "🗑", label: "Remove Cluster", danger: true, action: () => setConfirmDelete("hub-cluster") },
               ]} />
@@ -952,11 +972,30 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                     <div className="cp-card-platform">{pInfo.name}<ConnBadge type={summary.connectionType || "spoke"} /></div>
                   </div>
                   <KebabMenu items={[
-                    { icon: "📊", label: "Status Check", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/status`, "GET", "Status check complete"); } },
-                    { icon: "🔍", label: "Verify Health", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/health-check`, "POST", "Health check started"); } },
-                    { icon: "🚀", label: "Redeploy", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/redeploy`, "POST", "Rollout restart triggered"); } },
+                    { icon: "📊", label: "Status Check", action: async () => {
+                      setActionResult({ title: "Status Check", cluster: clusterName, loading: true });
+                      const r = await clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/status`, "GET");
+                      setActionResult(prev => ({ ...prev, loading: false, data: r.ok ? r.data : null, error: r.ok ? null : (r.data?.error || r.error || "Failed") }));
+                    }},
+                    { icon: "🔍", label: "Verify Health", action: async () => {
+                      setActionResult({ title: "Verify Health", cluster: clusterName, loading: true });
+                      const r = await clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/health-check`, "POST");
+                      setActionResult(prev => ({ ...prev, loading: false, data: r.ok ? r.data : null, error: r.ok ? null : (r.data?.error || r.error || "Failed") }));
+                    }},
+                    { icon: "🚀", label: "Redeploy", action: async () => {
+                      if (!window.confirm(`Trigger a rollout restart on ${clusterName}?\n\nThis will restart the agent pod on the remote cluster.`)) return;
+                      setActionResult({ title: "Redeploy", cluster: clusterName, loading: true });
+                      const r = await clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/redeploy`, "POST");
+                      setActionResult(prev => ({ ...prev, loading: false, data: r.ok ? r.data : null, error: r.ok ? null : (r.data?.error || r.error || "Failed") }));
+                      if (r.ok) refetchAgents();
+                    }},
                     { icon: "✏️", label: "Edit Cluster", action: () => { setEditCluster({ name: clusterName, platform: agent.platform, apiUrl: agent.apiUrl || "" }); setConnectOpen(true); } },
-                    { icon: "↻", label: "Reconnect", action: () => { clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/reconnect`, "POST", "Reconnect initiated"); } },
+                    { icon: "↻", label: "Reconnect", action: async () => {
+                      setActionResult({ title: "Reconnect", cluster: clusterName, loading: true });
+                      const r = await clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/reconnect`, "POST");
+                      setActionResult(prev => ({ ...prev, loading: false, data: r.ok ? r.data : null, error: r.ok ? null : (r.data?.error || r.error || "Failed") }));
+                      if (r.ok) setTimeout(refetchAgents, 3000);
+                    }},
                     { sep: true },
                     { icon: "🗑", label: "Remove Cluster", danger: true, action: () => setConfirmDelete(clusterName) },
                   ]} />
@@ -1049,6 +1088,139 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
           </div>
         </div>
       )}
+
+      {/* Action Result Modal */}
+      {actionResult && createPortal(
+        <div className="ccm-overlay" onClick={() => setActionResult(null)}>
+          <div className="ccm" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
+            <div className="ccm-header">
+              <div className="ccm-header-left">
+                <h2>{actionResult.title} — {actionResult.cluster}</h2>
+              </div>
+              <button className="ccm-close" onClick={() => setActionResult(null)}>x</button>
+            </div>
+            <div className="ccm-body" style={{ padding: 20 }}>
+              {actionResult.loading && (
+                <div style={{ textAlign: "center", padding: 30 }}>
+                  <div style={{ fontSize: 28, marginBottom: 12, animation: "pulse 1.5s infinite" }}>...</div>
+                  <div style={{ color: "var(--text2)", fontSize: 13 }}>Running {actionResult.title.toLowerCase()} on {actionResult.cluster}...</div>
+                </div>
+              )}
+              {actionResult.error && (
+                <div style={{ background: "color-mix(in srgb, var(--crit) 10%, transparent)", border: "1px solid var(--crit)", borderRadius: 8, padding: 14, marginBottom: 12 }}>
+                  <div style={{ fontWeight: 600, color: "var(--crit)", marginBottom: 4 }}>Error</div>
+                  <div style={{ fontSize: 13, color: "var(--text)" }}>{actionResult.error}</div>
+                </div>
+              )}
+              {actionResult.data && !actionResult.loading && (
+                <ActionResultContent title={actionResult.title} data={actionResult.data} />
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
+function ActionResultContent({ title, data }) {
+  const kvRow = (label, value, color) => (
+    <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid var(--border)", fontSize: 13 }}>
+      <span style={{ color: "var(--text2)", fontWeight: 500 }}>{label}</span>
+      <span style={{ color: color || "var(--text)", fontWeight: 600 }}>{value ?? "—"}</span>
+    </div>
+  );
+
+  // Status Check (remote) — /api/agent/{name}/status
+  if (title === "Status Check" && (data.clusterName || data.summary)) {
+    const s = data.summary || data;
+    const statusColor = data.status === "live" ? "var(--ok)" : data.status === "stale" ? "var(--warn)" : "var(--crit)";
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        {kvRow("Cluster", data.clusterName || data.cluster || "—")}
+        {kvRow("Status", (data.status || "unknown").toUpperCase(), statusColor)}
+        {kvRow("Platform", data.platform || s.platform || "—")}
+        {kvRow("Version", s.version || data.version || "—")}
+        {kvRow("Health", s.health || data.health || "—", s.health === "healthy" ? "var(--ok)" : s.health === "degraded" ? "var(--crit)" : "var(--warn)")}
+        {kvRow("Nodes", s.nodes || "—")}
+        {kvRow("Pods", s.pods ?? s.totalPods ?? "—")}
+        {kvRow("Issues", s.issues ?? "0", (s.issues || 0) > 0 ? "var(--crit)" : "var(--ok)")}
+        {kvRow("Warnings", s.warnings ?? "0", (s.warnings || 0) > 0 ? "var(--warn)" : "var(--ok)")}
+        {data.agentVersion && kvRow("Agent Version", data.agentVersion)}
+        {data.mcpVersion && kvRow("MCP Version", data.mcpVersion)}
+        {kvRow("Bridge Connected", data.bridgeConnected ? "Yes" : "No", data.bridgeConnected ? "var(--ok)" : "var(--warn)")}
+        {kvRow("Actions Enabled", data.actionsEnabled ? "Yes" : "No")}
+        {data.lastReportTime && kvRow("Last Report", new Date(data.lastReportTime).toLocaleString())}
+        {data.lastReportAgeSec != null && kvRow("Report Age", data.lastReportAgeSec < 60 ? `${data.lastReportAgeSec}s ago` : `${Math.round(data.lastReportAgeSec / 60)}m ago`)}
+        {data.outdated && (
+          <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "color-mix(in srgb, var(--warn) 10%, transparent)", border: "1px solid var(--warn)", fontSize: 12, color: "var(--warn)" }}>
+            Agent is outdated (running {data.mcpVersion}, hub is {data.hubVersion}). Consider redeploying.
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Status Check (hub) — /api/cluster/summary
+  if (title === "Status Check" && (data.isOpenShift !== undefined || data.cluster)) {
+    const c = data.cluster || {};
+    const n = data.nodes || {};
+    const o = data.operators || {};
+    const healthColor = data.health === "healthy" ? "var(--ok)" : data.health === "degraded" ? "var(--crit)" : "var(--warn)";
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        {kvRow("Platform", data.isOpenShift ? "OpenShift" : "Kubernetes")}
+        {kvRow("Version", c.version || c.kubernetesVersion || "—")}
+        {kvRow("Health", (data.health || "unknown").toUpperCase(), healthColor)}
+        {kvRow("Nodes", `${n.ready || 0} / ${n.total || 0} ready`)}
+        {data.namespaces != null && kvRow("Namespaces", data.namespaces)}
+        {o.total != null && kvRow("Operators", `${o.healthy || 0} / ${o.total || 0} healthy`)}
+        {o.degraded != null && o.degraded > 0 && kvRow("Degraded Operators", o.degraded, "var(--crit)")}
+        {data.pods != null && kvRow("Pods", typeof data.pods === "object" ? `${data.pods.running || 0} running / ${data.pods.total || 0} total` : data.pods)}
+      </div>
+    );
+  }
+
+  // Verify Health — /api/cluster/health-check or /api/agent/{name}/health-check
+  if (title === "Verify Health") {
+    const result = data.result || data;
+    const okStyle = { color: "var(--ok)", fontWeight: 700 };
+    const failStyle = { color: "var(--crit)", fontWeight: 700 };
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        {kvRow("Result", data.ok !== false ? "PASSED" : "ISSUES FOUND", data.ok !== false ? "var(--ok)" : "var(--crit)")}
+        {data.message && kvRow("Message", data.message)}
+        {result && typeof result === "object" && Object.entries(result).filter(([k]) => !["ok", "message", "target"].includes(k)).map(([k, v]) => (
+          <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid var(--border)", fontSize: 13 }}>
+            <span style={{ color: "var(--text2)", fontWeight: 500 }}>{k.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase())}</span>
+            <span style={typeof v === "boolean" ? (v ? okStyle : failStyle) : { color: "var(--text)" }}>
+              {typeof v === "boolean" ? (v ? "OK" : "FAIL") : typeof v === "object" ? JSON.stringify(v) : String(v)}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // Redeploy / Reconnect / Sync RBAC — generic action result
+  const isOk = data.ok !== false;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 0" }}>
+        <span style={{ fontSize: 24 }}>{isOk ? "✅" : "❌"}</span>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 15, color: isOk ? "var(--ok)" : "var(--crit)" }}>
+            {isOk ? "Success" : "Failed"}
+          </div>
+          <div style={{ fontSize: 13, color: "var(--text2)", marginTop: 2 }}>
+            {data.message || (isOk ? `${title} completed successfully` : `${title} failed`)}
+          </div>
+        </div>
+      </div>
+      {data.target && kvRow("Target", data.target)}
+      {data.namespace && kvRow("Namespace", data.namespace)}
+      {data.proxiedTo && kvRow("Proxied To", data.proxiedTo)}
     </div>
   );
 }
