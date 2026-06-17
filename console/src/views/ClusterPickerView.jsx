@@ -78,7 +78,7 @@ function computeHealthScore(data) {
   const score = weight > 0 ? Math.round(total / weight) : 0;
   const color = score >= 90 ? "#22c55e" : score >= 70 ? "#f59e0b" : "#ef4444";
   const label = score >= 90 ? "Healthy" : score >= 70 ? "Warning" : "Degraded";
-  return { score, label, color };
+  return { score, label, color, breakdown: { nodes, ops, pods } };
 }
 
 function parseNodeStr(str) {
@@ -103,6 +103,29 @@ function HealthRing({ score, icon, color }) {
       <div className="cp-card-icon" style={{ background: color + "15", color }}>
         {icon}
       </div>
+    </div>
+  );
+}
+
+function HealthTooltip({ breakdown }) {
+  if (!breakdown) return null;
+  const { nodes, ops, pods } = breakdown;
+  const pct = (a, b) => b > 0 ? Math.round((a / b) * 100) : null;
+  const rows = [];
+  if (nodes.total > 0) rows.push({ label: "Nodes", val: `${nodes.ready || 0}/${nodes.total}`, pct: pct(nodes.ready || 0, nodes.total), w: "40%" });
+  if (ops.total > 0) rows.push({ label: "Operators", val: `${ops.healthy || 0}/${ops.total}`, pct: pct(ops.healthy || 0, ops.total), w: "40%" });
+  if (pods.total > 0) rows.push({ label: "Pods", val: `${pods.running ?? 0}/${pods.total}`, pct: pct(pods.running ?? 0, pods.total), w: "20%" });
+  if (rows.length === 0) return null;
+  return (
+    <div className="cp-health-tooltip">
+      {rows.map(r => (
+        <div key={r.label} className="cp-ht-row">
+          <span className="cp-ht-label">{r.label}</span>
+          <span className="cp-ht-val">{r.val}</span>
+          <span className="cp-ht-pct" style={{ color: r.pct >= 95 ? "#22c55e" : r.pct >= 80 ? "#f59e0b" : "#ef4444" }}>{r.pct}%</span>
+          <span className="cp-ht-weight">{r.w}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -940,9 +963,10 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                 <div className="cp-card-stat-val">{hubNodes}</div>
                 <div className="cp-card-stat-lbl">Nodes</div>
               </div>
-              <div className="cp-card-stat">
+              <div className="cp-card-stat cp-health-stat">
                 <div className="cp-card-stat-val" style={{ color: hubHealthData.color }}>{hubHealthData.score}%</div>
                 <div className="cp-card-stat-lbl">{hubHealthData.label}</div>
+                <HealthTooltip breakdown={hubHealthData.breakdown} />
               </div>
             </div>
           </div>
@@ -1022,9 +1046,10 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                     <div className="cp-card-stat-val">{summary.nodes || "--"}</div>
                     <div className="cp-card-stat-lbl">Nodes</div>
                   </div>
-                  <div className="cp-card-stat">
+                  <div className="cp-card-stat cp-health-stat">
                     <div className="cp-card-stat-val" style={{ color: remoteHealthData.color }}>{remoteHealthData.score}%</div>
                     <div className="cp-card-stat-lbl">{remoteHealthData.label}</div>
+                    <HealthTooltip breakdown={remoteHealthData.breakdown} />
                   </div>
                 </div>
               </div>

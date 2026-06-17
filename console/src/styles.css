@@ -2227,6 +2227,25 @@ h3.widget-title {
 .cp-card-stat-val { font-size: 15px; font-weight: 800; color: var(--text); line-height: 1.1; }
 .cp-card-stat-lbl { font-size: 9px; color: var(--text2); text-transform: uppercase; letter-spacing: .5px; margin-top: 3px; }
 
+/* ── Health tooltip on hover ── */
+.cp-health-stat { position: relative; cursor: default; }
+.cp-health-tooltip {
+  display: none; position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; min-width: 190px; z-index: 50;
+  box-shadow: 0 4px 16px rgba(0,0,0,.18); pointer-events: none;
+}
+.cp-health-tooltip::after {
+  content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: var(--border);
+}
+.cp-health-stat:hover .cp-health-tooltip { display: block; }
+.cp-ht-row { display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 2px 0; }
+.cp-ht-label { flex: 1; color: var(--text2); font-weight: 500; }
+.cp-ht-val { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 10px; color: var(--text); }
+.cp-ht-pct { font-weight: 700; font-size: 11px; min-width: 30px; text-align: right; }
+.cp-ht-weight { font-size: 9px; color: var(--text2); opacity: .6; min-width: 24px; text-align: right; }
+
 /* ── Cluster card enhancements ── */
 .cp-card-health-ring { position: relative; width: 52px; height: 52px; flex-shrink: 0; }
 .cp-card-health-ring svg { position: absolute; top: 0; left: 0; transform: rotate(-90deg); }
