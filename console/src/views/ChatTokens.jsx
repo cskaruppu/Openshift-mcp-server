@@ -1316,7 +1316,7 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
               {/* Version card */}
               <div style={{ background: "var(--bg-deep)", borderRadius: 10, padding: "8px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 11, fontWeight: 600 }}>Target</span>
-                <span style={{ fontFamily: "'SF Mono', 'Fira Code', monospace", fontWeight: 700, fontSize: 13, color: gaugeColor }}>{pd.version || targetVer}</span>
+                <span style={{ fontFamily: "'SF Mono', 'Fira Code', monospace", fontWeight: 700, fontSize: 13, color: gaugeColor }}>{pd.targetVersion || targetVer}</span>
               </div>
             </div>
           </div>
@@ -1386,13 +1386,22 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
             </div>
           )}
 
-          {/* ClusterVersion progress message */}
-          {pd.message && (
-            <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "8px 12px", background: "var(--bg-deep)", borderRadius: 10, borderLeft: `3px solid ${gaugeColor}` }}>
-              <span style={{ flexShrink: 0, fontSize: 14 }}>{isComplete ? "✅" : isFailed ? "❌" : "⏳"}</span>
-              <div style={{ fontSize: 11, color: "var(--text2)", lineHeight: 1.4, fontFamily: "'SF Mono', 'Fira Code', monospace" }}>{pd.message.slice(0, 400)}</div>
-            </div>
-          )}
+          {/* CVO status message + version tracking */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {/* Version acceptance status */}
+            {pd.currentVersion && pd.targetVersion && pd.currentVersion !== pd.targetVersion && !isComplete && (
+              <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "6px 12px", background: "color-mix(in srgb, #f59e0b 10%, var(--bg-deep))", borderRadius: 8, fontSize: 11 }}>
+                <span style={{ fontSize: 12 }}>⏳</span>
+                <span>CVO desired: <b style={{ fontFamily: "'SF Mono', 'Fira Code', monospace" }}>{pd.currentVersion}</b> → target: <b style={{ fontFamily: "'SF Mono', 'Fira Code', monospace" }}>{pd.targetVersion}</b></span>
+              </div>
+            )}
+            {pd.message && (
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "8px 12px", background: "var(--bg-deep)", borderRadius: 10, borderLeft: `3px solid ${gaugeColor}` }}>
+                <span style={{ flexShrink: 0, fontSize: 14 }}>{isComplete ? "✅" : isFailed ? "❌" : "⏳"}</span>
+                <div style={{ fontSize: 11, color: "var(--text2)", lineHeight: 1.4, fontFamily: "'SF Mono', 'Fira Code', monospace" }}>{pd.message.slice(0, 400)}</div>
+              </div>
+            )}
+          </div>
 
           {/* Footer: last updated + polling indicator */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, color: "var(--text2)" }}>

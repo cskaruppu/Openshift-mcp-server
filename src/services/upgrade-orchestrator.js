@@ -1207,8 +1207,13 @@ export async function stepCheckUpgradeProgress(sessionId) {
     return acc;
   }, {});
 
-  const desiredVersion = cv?.status?.desired?.version || "";
-  const currentHistory = (cv?.status?.history || []).find(h => h.version === desiredVersion);
+  // CRITICAL: Use the session's targetVersion, NOT cv.status.desired.version.
+  // After PATCH, the CVO may still report the OLD version as desired until it
+  // reconciles. Checking history for the old version yields "Completed" → false positive.
+  const targetVersion = session.targetVersion;
+  const cvoDesiredVersion = cv?.status?.desired?.version || "";
+  const targetHistory = (cv?.status?.history || []).find(h => h.version === targetVersion);
+  const cvoAccepted = cvoDesiredVersion === targetVersion;
 
   const opItems = ops?.items || [];
   let updatingCount = 0, degradedCount = 0, availableCount = 0;
@@ -1236,14 +1241,19 @@ export async function stepCheckUpgradeProgress(sessionId) {
   const progressing = conditions.Progressing;
   const progressMsg = progressing?.message || "";
 
-  // The ONLY reliable completion signal is currentHistory.state === "Completed".
-  // Available=True is normal during an upgrade — the cluster stays available.
-  // Progressing=False + Available=True right after PATCH means CVO hasn't started yet.
-  if (currentHistory?.state === "Completed") {
+  // Phase determination — always checks TARGET version, not CVO's current desired.
+  // CVO may still report the old version for seconds after PATCH.
+  if (targetHistory?.state === "Completed") {
+    // Target version is fully installed and confirmed in CVO history
     phase = "complete";
     progress = 100;
+  } else if (!cvoAccepted) {
+    // CVO hasn't even acknowledged the target version yet — still shows old desired
+    phase = "preparing";
+    progress = 0;
   } else if (progressing?.status === "True") {
-    // Parse real progress from CVO message: "Working towards 4.20.23: 141 of 959 done (14% complete)"
+    // CVO is actively working — parse real progress from message:
+    // "Working towards 4.20.23: 735 of 959 done (76% complete), waiting on ..."
     const pctMatch = progressMsg.match(/\((\d+)%\s*complete\)/i);
     const countMatch = progressMsg.match(/(\d+)\s+of\s+(\d+)\s+done/i);
     if (pctMatch) {
@@ -1266,8 +1276,7 @@ export async function stepCheckUpgradeProgress(sessionId) {
     (conditions.Degraded?.status === "True" && progressing?.status !== "True")) {
     phase = "failed";
   } else {
-    // Progressing=False, Available=True, history not "Completed"
-    // → CVO hasn't started yet or is between reconcile loops
+    // CVO accepted target but not actively progressing yet — still spinning up
     phase = "preparing";
     progress = 0;
   }
@@ -1292,7 +1301,9 @@ export async function stepCheckUpgradeProgress(sessionId) {
     phase,
     progress,
     allStable,
-    version: desiredVersion,
+    targetVersion,
+    currentVersion: cvoDesiredVersion,
+    cvoAccepted,
     message: progressMsg,
     manifests: manifestsTotal > 0 ? { done: manifestsDone, total: manifestsTotal } : null,
     operators: { updating: updatingCount, degraded: degradedCount, available: availableCount, total: opItems.length },
@@ -1307,9 +1318,9 @@ export async function stepCheckUpgradeProgress(sessionId) {
     existingData.snapshots = existingData.snapshots.slice(-100);
   }
 
-  // Transition on terminal states — only based on CVO history, never Available alone.
+  // Transition on terminal states — only when TARGET version confirmed in CVO history.
   // Re-fetch session state after each transition to avoid stale state.
-  const historyConfirmed = currentHistory?.state === "Completed";
+  const historyConfirmed = targetHistory?.state === "Completed";
   const nodesAllReady = nodeStatus ? nodeStatus.notReady === 0 : true;
   const opsAllHealthy = degradedCount === 0 && updatingCount === 0 && availableCount === opItems.length;
   const trulyComplete = historyConfirmed && opsAllHealthy && nodesAllReady;

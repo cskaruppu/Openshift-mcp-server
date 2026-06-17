@@ -1590,8 +1590,12 @@ export function handleUpgradeStatus(req, res) {
       }, {});
 
       const desiredVersion = cv?.status?.desired?.version || "unknown";
+      // Extract actual target from Progressing message to avoid stale desired version
+      const progMsgForVersion = (cv?.status?.conditions || []).find(c => c.type === "Progressing")?.message || "";
+      const targetMatch = progMsgForVersion.match(/Working towards\s+([\d.]+)/i);
+      const effectiveTarget = targetMatch ? targetMatch[1] : desiredVersion;
       const currentHistory = (cv?.status?.history || []).find(
-        (h) => h.version === desiredVersion
+        (h) => h.version === effectiveTarget
       );
 
       // Operator counts
@@ -1615,6 +1619,10 @@ export function handleUpgradeStatus(req, res) {
       if (currentHistory?.state === "Completed") {
         phase = "complete";
         progress = 100;
+      } else if (!currentHistory && progressing?.status !== "True") {
+        // Target version not in history and CVO not progressing — hasn't started
+        phase = "preparing";
+        progress = 0;
       } else if (progressing?.status === "True") {
         // Parse real progress from CVO message: "Working towards 4.20.23: 141 of 959 done (14% complete)"
         const pctMatch = progressMsg.match(/\((\d+)%\s*complete\)/i);
