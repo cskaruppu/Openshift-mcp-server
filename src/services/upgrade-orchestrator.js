@@ -1383,55 +1383,224 @@ export function generateHTMLReport(session) {
   const pass = checks.filter(c => c.status === "pass").length;
   const warn = checks.filter(c => c.status === "warning").length;
   const fail = checks.filter(c => c.status === "fail").length;
+  const topo = report.nodeTopology || {};
+  const vd = report.versionDelta || {};
+  const allOps = report.allClusterOperators || [];
+  const components = session.componentAnalysis || {};
+  const remediation = session.remediationPlan || session.remediations || {};
+  const riskLevel = fail > 0 ? "HIGH" : warn > 3 ? "MODERATE" : "LOW";
 
   const statusColor = report.overallStatus === "READY" ? "#22c55e"
     : report.overallStatus === "READY_WITH_WARNINGS" ? "#f59e0b" : "#ef4444";
+  const riskColor = riskLevel === "HIGH" ? "#ef4444" : riskLevel === "MODERATE" ? "#f59e0b" : "#22c55e";
+
+  const esc = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
   const checkRows = checks.map(c => {
-    const icon = c.status === "pass" ? "✅" : c.status === "warning" ? "⚠️" : "❌";
+    const icon = c.status === "pass" ? "&#x2705;" : c.status === "warning" ? "&#x26A0;&#xFE0F;" : "&#x274C;";
     const color = c.status === "pass" ? "#22c55e" : c.status === "warning" ? "#f59e0b" : "#ef4444";
     const items = (c.items || []).map(i =>
-      `<li style="margin:2px 0;font-size:12px">${i.name}: ${i.issue}${i.message ? ` — ${i.message}` : ""}</li>`
+      `<li style="margin:2px 0;font-size:12px">${esc(i.name)}: ${esc(i.issue)}${i.message ? ` &mdash; ${esc(i.message)}` : ""}</li>`
     ).join("");
     return `<tr>
       <td style="padding:8px;border-bottom:1px solid #e5e7eb">${icon}</td>
-      <td style="padding:8px;border-bottom:1px solid #e5e7eb;font-weight:600">${c.category}</td>
-      <td style="padding:8px;border-bottom:1px solid #e5e7eb;color:${color}">${c.status.toUpperCase()}</td>
-      <td style="padding:8px;border-bottom:1px solid #e5e7eb;font-size:13px">${c.details}${items ? `<ul style="margin:4px 0;padding-left:20px">${items}</ul>` : ""}</td>
+      <td style="padding:8px;border-bottom:1px solid #e5e7eb;font-weight:600">${esc(c.category)}</td>
+      <td style="padding:8px;border-bottom:1px solid #e5e7eb;color:${color};font-weight:600">${c.status.toUpperCase()}</td>
+      <td style="padding:8px;border-bottom:1px solid #e5e7eb;font-size:13px">${esc(c.details)}${items ? `<ul style="margin:4px 0;padding-left:20px">${items}</ul>` : ""}</td>
     </tr>`;
   }).join("");
 
+  // Cluster Operators table
+  const opRows = allOps.map(op => {
+    const avColor = op.available ? "#22c55e" : "#ef4444";
+    const degColor = op.degraded ? "#ef4444" : "#22c55e";
+    return `<tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-weight:500">${esc(op.name)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-size:12px">${esc(op.version || "—")}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;color:${avColor};font-weight:600">${op.available ? "Available" : "Unavailable"}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;color:${degColor};font-weight:600">${op.degraded ? "Yes" : "No"}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;color:${op.progressing ? "#f59e0b" : "inherit"}">${op.progressing ? "Yes" : "No"}</td>
+    </tr>`;
+  }).join("");
+
+  // Remediation rows
+  const fixes = remediation.fixes || (Array.isArray(remediation) ? remediation : []);
+  const remRows = fixes.map(f => {
+    const sevColor = /critical|high|fail/i.test(f.severity) ? "#ef4444" : /warn|moderate/i.test(f.severity) ? "#f59e0b" : "#6b7280";
+    return `<tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;color:${sevColor};font-weight:600">${esc(f.severity || "—")}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-weight:500">${esc(f.title || "—")}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-size:12px">${esc(f.description || "—")}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:11px">${esc(f.command || "—")}</td>
+    </tr>`;
+  }).join("");
+
+  // Component issues summary
+  const degradedOps = components.degradedOperators || [];
+  const certIssues = components.certificateIssues || [];
+  const mcpIssues = components.mcpIssues || [];
+  const failingPods = components.failingPods || [];
+
   return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Pre-Upgrade Assessment — ${session.fromVersion} → ${session.targetVersion}</title>
-<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:20px;background:#f9fafb;color:#111827}
-.header{background:#1e293b;color:white;padding:24px;border-radius:8px;margin-bottom:20px}
-.summary{display:flex;gap:16px;margin:16px 0}
-.stat{background:white;border-radius:8px;padding:16px;flex:1;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.1)}
-.stat h3{margin:0;font-size:24px}.stat p{margin:4px 0 0;font-size:12px;color:#6b7280}
-table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1)}
-th{background:#f3f4f6;padding:10px;text-align:left;font-size:13px;border-bottom:2px solid #e5e7eb}</style></head>
-<body>
+<html><head><meta charset="utf-8"><title>Pre-Upgrade Assessment &mdash; ${esc(session.fromVersion)} &rarr; ${esc(session.targetVersion)}</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:0;background:#f9fafb;color:#111827}
+.page{max-width:1100px;margin:0 auto;padding:20px}
+.header{background:linear-gradient(135deg,#0f172a,#1e3a5f);color:white;padding:32px;border-radius:12px;margin-bottom:24px}
+.header h1{margin:0;font-size:24px;font-weight:700}.header .sub{margin:8px 0 0;opacity:.8;font-size:14px}
+.badge{display:inline-block;padding:6px 20px;border-radius:20px;font-weight:700;font-size:14px;margin-top:14px}
+.section{margin:24px 0}.section h2{color:#1e3a5f;font-size:18px;border-bottom:2px solid #e5e7eb;padding-bottom:8px;margin:0 0 12px}
+.section h3{color:#374151;font-size:15px;margin:16px 0 8px}
+.summary{display:flex;gap:16px;margin:16px 0;flex-wrap:wrap}
+.stat{background:white;border-radius:10px;padding:18px;flex:1;min-width:120px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.08);border:1px solid #e5e7eb}
+.stat h3{margin:0;font-size:28px;font-weight:800}.stat p{margin:4px 0 0;font-size:12px;color:#6b7280;font-weight:500}
+table{width:100%;border-collapse:collapse;background:white;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);border:1px solid #e5e7eb;margin:8px 0}
+th{background:#1e3a5f;color:white;padding:10px;text-align:left;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+td{padding:8px;border-bottom:1px solid #e5e7eb;font-size:13px}
+.kv{width:100%}.kv td:first-child{font-weight:600;width:220px;background:#f8fafc;color:#374151}
+.risk-box{padding:16px;border-radius:10px;border-left:4px solid;margin:12px 0}
+.risk-high{border-color:#ef4444;background:#fef2f2}.risk-moderate{border-color:#f59e0b;background:#fffbeb}.risk-low{border-color:#22c55e;background:#f0fdf4}
+.footer{background:#0f172a;color:white;padding:20px;border-radius:10px;margin-top:32px;text-align:center;font-size:13px}
+.footer .brand{font-weight:700;font-size:15px;margin-bottom:6px}
+@media print{body{background:white}.page{padding:10px}table{page-break-inside:auto}tr{page-break-inside:avoid}}
+</style></head>
+<body><div class="page">
+
+<!-- Header -->
 <div class="header">
-  <h1 style="margin:0;font-size:22px">OpenShift Pre-Upgrade Assessment Report</h1>
-  <p style="margin:8px 0 0;opacity:.8">${session.fromVersion} → ${session.targetVersion} | ${report.channel || ""} | Generated: ${new Date().toISOString()}</p>
-  <div style="margin-top:12px;display:inline-block;padding:6px 16px;border-radius:20px;background:${statusColor};font-weight:700;font-size:14px">${report.overallStatus || "UNKNOWN"}</div>
+  <div style="font-size:13px;font-weight:600;letter-spacing:1px;opacity:.7;margin-bottom:8px">TCS AGENTIC AI</div>
+  <h1>OpenShift Pre-Upgrade Assessment Report</h1>
+  <div class="sub">${esc(session.fromVersion)} &rarr; ${esc(session.targetVersion)} &nbsp;|&nbsp; Channel: ${esc(report.channel || "stable")} &nbsp;|&nbsp; Cluster: ${esc(session.cluster || "local")} &nbsp;|&nbsp; Generated: ${new Date().toISOString()}</div>
+  <div class="badge" style="background:${statusColor}">${report.overallStatus || "UNKNOWN"}</div>
 </div>
+
+<!-- Executive Summary -->
+<div class="section">
+<h2>1. Executive Summary</h2>
 <div class="summary">
   <div class="stat"><h3 style="color:#22c55e">${pass}</h3><p>Passed</p></div>
   <div class="stat"><h3 style="color:#f59e0b">${warn}</h3><p>Warnings</p></div>
   <div class="stat"><h3 style="color:#ef4444">${fail}</h3><p>Failed</p></div>
   <div class="stat"><h3>${checks.length}</h3><p>Total Checks</p></div>
 </div>
+<table class="kv">
+  <tr><td>Cluster</td><td>${esc(session.cluster || "local")}</td></tr>
+  <tr><td>Current Version</td><td>${esc(session.fromVersion)}</td></tr>
+  <tr><td>Target Version</td><td>${esc(session.targetVersion)}</td></tr>
+  <tr><td>Upgrade Type</td><td>${esc(session.upgradeType || "patch")}</td></tr>
+  <tr><td>Update Channel</td><td>${esc(session.channel || "stable")}</td></tr>
+  <tr><td>Estimated Duration</td><td>${esc(vd.estimatedDuration || "~60 minutes")}</td></tr>
+  <tr><td>Session ID</td><td style="font-family:monospace;font-size:12px">${esc(session.id)}</td></tr>
+</table>
+</div>
+
+<!-- Risk Assessment -->
+<div class="section">
+<h2>2. Risk Assessment &amp; Impact Analysis</h2>
+<div class="risk-box risk-${riskLevel.toLowerCase()}">
+  <strong style="font-size:16px;color:${riskColor}">Risk Level: ${riskLevel}</strong>
+  <p style="margin:8px 0 0;font-size:13px">${fail > 0 ? `${fail} blocking issue(s) detected. Upgrade may fail without remediation.` : warn > 0 ? `${warn} non-critical warning(s) present. Upgrade can proceed with caution.` : "Cluster is ready for upgrade. No blocking issues detected."}</p>
+</div>
+<table class="kv">
+  <tr><td>Blocking Issues</td><td style="color:${fail > 0 ? "#ef4444" : "#22c55e"};font-weight:600">${fail}</td></tr>
+  <tr><td>Warnings</td><td style="color:${warn > 0 ? "#f59e0b" : "#22c55e"};font-weight:600">${warn}</td></tr>
+  <tr><td>Rollback Strategy</td><td>etcd snapshot restore (RPO: pre-upgrade snapshot)</td></tr>
+  <tr><td>Estimated RTO</td><td>2 hours (etcd restore + cluster recovery)</td></tr>
+  <tr><td>Maintenance Window</td><td>${esc(vd.estimatedDuration || "~60 minutes")}</td></tr>
+</table>
+</div>
+
+<!-- Node Topology -->
+<div class="section">
+<h2>3. Cluster Topology</h2>
+<div class="summary">
+  <div class="stat"><h3>${topo.masters || 0}</h3><p>Control Plane</p></div>
+  <div class="stat"><h3>${topo.workers || 0}</h3><p>Workers</p></div>
+  <div class="stat"><h3>${topo.infra || 0}</h3><p>Infrastructure</p></div>
+  <div class="stat"><h3>${topo.total || 0}</h3><p>Total Nodes</p></div>
+</div>
+${vd.kubeFrom ? `<table class="kv">
+  <tr><td>Kubernetes (Current)</td><td>${esc(vd.kubeFrom)}</td></tr>
+  <tr><td>Kubernetes (Target)</td><td>${esc(vd.kubeTo)}</td></tr>
+  <tr><td>Kubernetes Skew</td><td>${vd.kubeSkew || 0} minor version(s)</td></tr>
+  <tr><td>RHEL Base</td><td>${esc(vd.rhelBase || "N/A")}</td></tr>
+  <tr><td>CRI-O Version</td><td>${esc(vd.criO || "N/A")}</td></tr>
+</table>` : ""}
+</div>
+
+<!-- Cluster Operators -->
+${allOps.length > 0 ? `<div class="section">
+<h2>4. Cluster Operators Status (${allOps.length})</h2>
+<p style="font-size:13px;color:#6b7280;margin:0 0 8px">${allOps.filter(o => o.available).length} available, ${allOps.filter(o => o.degraded).length} degraded, ${allOps.filter(o => o.progressing).length} progressing</p>
+<table>
+  <thead><tr><th>Operator</th><th>Version</th><th>Available</th><th>Degraded</th><th>Progressing</th></tr></thead>
+  <tbody>${opRows}</tbody>
+</table>
+</div>` : ""}
+
+<!-- Pre-Assessment Checks -->
+<div class="section">
+<h2>5. Pre-Assessment Checks (22-Point)</h2>
+<p style="font-size:13px;color:#6b7280;margin:0 0 8px">Comprehensive checks to assess cluster upgrade readiness</p>
 <table>
   <thead><tr><th width="40"></th><th>Category</th><th width="100">Status</th><th>Details</th></tr></thead>
   <tbody>${checkRows}</tbody>
 </table>
-<div style="margin-top:20px;padding:16px;background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1)">
-  <h3 style="margin:0 0 8px">Cluster Topology</h3>
-  <p style="margin:0;font-size:13px">Masters: ${report.nodeTopology?.masters || "N/A"} | Workers: ${report.nodeTopology?.workers || "N/A"} | Infra: ${report.nodeTopology?.infra || 0} | Total: ${report.nodeTopology?.total || "N/A"}</p>
-  <p style="margin:4px 0 0;font-size:13px">Estimated Duration: ${report.versionDelta?.estimatedDuration || "N/A"}</p>
 </div>
-</body></html>`;
+
+<!-- Component Analysis -->
+<div class="section">
+<h2>6. Component Analysis</h2>
+${degradedOps.length > 0 ? `<h3>6.1 Degraded Operators (${degradedOps.length})</h3>
+<table><thead><tr><th>Operator</th><th>Condition</th><th>Details</th></tr></thead><tbody>${degradedOps.map(o =>
+  `<tr><td style="font-weight:500">${esc(o.name || o)}</td><td style="color:#ef4444;font-weight:600">${esc(o.issue || o.condition || "Degraded")}</td><td style="font-size:12px">${esc(o.message || "—")}</td></tr>`
+).join("")}</tbody></table>` : "<p style='font-size:13px;color:#6b7280'>No degraded operators detected.</p>"}
+
+${certIssues.length > 0 ? `<h3>6.2 Certificate Issues (${certIssues.length})</h3>
+<table><thead><tr><th>Certificate</th><th>Namespace</th><th>Issue</th></tr></thead><tbody>${certIssues.map(c =>
+  `<tr><td style="font-weight:500">${esc(c.name || c.secret || c)}</td><td>${esc(c.namespace || "—")}</td><td style="font-size:12px">${esc(c.message || c.issue || "—")}</td></tr>`
+).join("")}</tbody></table>` : ""}
+
+${mcpIssues.length > 0 ? `<h3>6.3 Machine Config Pool Issues (${mcpIssues.length})</h3>
+<table><thead><tr><th>Pool</th><th>Status</th><th>Details</th></tr></thead><tbody>${mcpIssues.map(m =>
+  `<tr><td style="font-weight:500">${esc(m.name || m)}</td><td style="color:#ef4444;font-weight:600">${esc(m.status || m.issue || "—")}</td><td style="font-size:12px">${esc(m.message || m.details || "—")}</td></tr>`
+).join("")}</tbody></table>` : ""}
+
+${failingPods.length > 0 ? `<h3>6.4 Failing Pods (${failingPods.length})</h3>
+<table><thead><tr><th>Pod</th><th>Namespace</th><th>Status</th><th>Restarts</th></tr></thead><tbody>${failingPods.map(p =>
+  `<tr><td style="font-weight:500">${esc(p.name || p)}</td><td>${esc(p.namespace || "—")}</td><td style="color:#ef4444">${esc(p.status || p.phase || "—")}</td><td>${p.restarts ?? p.restartCount ?? "—"}</td></tr>`
+).join("")}</tbody></table>` : ""}
+</div>
+
+<!-- Remediation Plan -->
+${fixes.length > 0 ? `<div class="section">
+<h2>7. Remediation Plan (${fixes.length} actions)</h2>
+<table>
+  <thead><tr><th width="80">Severity</th><th>Title</th><th>Description</th><th>Command</th></tr></thead>
+  <tbody>${remRows}</tbody>
+</table>
+</div>` : ""}
+
+<!-- Change Request -->
+${session.crTicketId ? `<div class="section">
+<h2>8. Change Request</h2>
+<table class="kv">
+  <tr><td>Ticket ID</td><td style="font-weight:700">${esc(session.crTicketId)}</td></tr>
+  <tr><td>System ID</td><td style="font-family:monospace;font-size:12px">${esc(session.crSysId || "N/A")}</td></tr>
+  <tr><td>Risk Level</td><td style="color:${riskColor};font-weight:600">${riskLevel}</td></tr>
+  <tr><td>CR Type</td><td>Normal</td></tr>
+  <tr><td>Category</td><td>Software</td></tr>
+</table>
+</div>` : ""}
+
+<!-- Footer -->
+<div class="footer">
+  <div class="brand">TCS Agentic AI</div>
+  <div style="opacity:.7">Generated by TCS Agentic AI Platform &mdash; ${new Date().toISOString()}</div>
+  <div style="opacity:.5;margin-top:4px;font-size:11px">Classification: Internal &mdash; Upgrade Assessment Document</div>
+</div>
+
+</div></body></html>`;
 }
 
 // ── Upgrade Session Summary (for chat) ──────────────────────────────────────

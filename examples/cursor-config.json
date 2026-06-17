@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "kubenexus": {
+    "agentic-ai": {
       "command": "node",
       "args": ["/path/to/openshift-mcp-server/src/index.js"],
       "env": {

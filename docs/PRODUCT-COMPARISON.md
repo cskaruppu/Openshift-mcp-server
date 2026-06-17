@@ -1,8 +1,8 @@
-# TCS KubeNexus AI vs OpenShift MCP Server — Product Comparison
+# TCS Agentic AI vs OpenShift MCP Server — Product Comparison
 
 ## Executive Summary
 
-| Aspect | OpenShift MCP Server (Official) | TCS KubeNexus AI (Our Product) |
+| Aspect | OpenShift MCP Server (Official) | TCS Agentic AI (Our Product) |
 |--------|--------------------------------|-------------------------------|
 | **Purpose** | CLI tool for AI IDEs to query K8s clusters | Full enterprise platform for AI-powered cluster operations |
 | **Interface** | No UI — MCP protocol only (used inside IDEs) | Web dashboard + AI chat + MCP server + SSE live streaming |
@@ -17,7 +17,7 @@
 
 ### 1. Core Kubernetes Operations
 
-| Capability | Official | TCS KubeNexus AI |
+| Capability | Official | TCS Agentic AI |
 |-----------|----------|-----------------|
 | List/Get/Delete pods | Yes | Yes |
 | Pod logs retrieval | Yes | Yes + AI-analyzed logs |
@@ -35,7 +35,7 @@
 
 ### 2. AI & Intelligence (NOT in Official)
 
-| Capability | Official | TCS KubeNexus AI |
+| Capability | Official | TCS Agentic AI |
 |-----------|----------|-----------------|
 | AI Chat Interface | No | Yes — natural language cluster management |
 | Multi-LLM Support | No | Claude, Watsonx, Ollama, Azure OpenAI, OpenAI, Groq |
@@ -50,7 +50,7 @@
 
 ### 3. Dashboard & Visualization (NOT in Official)
 
-| Capability | Official | TCS KubeNexus AI |
+| Capability | Official | TCS Agentic AI |
 |-----------|----------|-----------------|
 | Web Dashboard | No | Yes — full-featured SPA |
 | Cluster Health Overview | No | Yes — real-time health cards |
@@ -65,7 +65,7 @@
 
 ### 4. Live Streaming & Monitoring (NOT in Official)
 
-| Capability | Official | TCS KubeNexus AI |
+| Capability | Official | TCS Agentic AI |
 |-----------|----------|-----------------|
 | SSE Live Cluster Stream | No | Yes — 15s real-time updates |
 | Live Pulse Indicator | No | Yes — connection status |
@@ -75,7 +75,7 @@
 
 ### 5. Remediation & Fix Execution (NOT in Official)
 
-| Capability | Official | TCS KubeNexus AI |
+| Capability | Official | TCS Agentic AI |
 |-----------|----------|-----------------|
 | One-click Fix Application | No | Yes — Apply Fix buttons |
 | Dry Run Mode | No | Yes — preview changes safely |
@@ -88,7 +88,7 @@
 
 ### 6. Enterprise Integrations (NOT in Official)
 
-| Capability | Official | TCS KubeNexus AI |
+| Capability | Official | TCS Agentic AI |
 |-----------|----------|-----------------|
 | ServiceNow (ITSM) | No | Yes — incident/change request creation |
 | Ansible Automation | No | Yes — playbook execution |
@@ -101,7 +101,7 @@
 
 ### 7. Knowledge & Learning (NOT in Official)
 
-| Capability | Official | TCS KubeNexus AI |
+| Capability | Official | TCS Agentic AI |
 |-----------|----------|-----------------|
 | Knowledge Base | No | Yes — learned resolutions |
 | Learning Engine | No | Yes — improves from past incidents |
@@ -112,7 +112,7 @@
 
 ### 8. Security & Compliance (NOT in Official)
 
-| Capability | Official | TCS KubeNexus AI |
+| Capability | Official | TCS Agentic AI |
 |-----------|----------|-----------------|
 | Security Audit | No | Yes — SCC, RBAC, image analysis |
 | Compliance Scanning | No | Yes — CIS benchmarks |
@@ -124,7 +124,7 @@
 
 ### 9. Advanced Operations (NOT in Official)
 
-| Capability | Official | TCS KubeNexus AI |
+| Capability | Official | TCS Agentic AI |
 |-----------|----------|-----------------|
 | Upgrade Advisor | No | Yes — cluster upgrade risk analysis |
 | Upgrade Preflight Checks | No | Yes — pre-upgrade validation |
@@ -137,7 +137,7 @@
 
 ### 10. AI Agent Architecture (NOT in Official)
 
-| Capability | Official | TCS KubeNexus AI |
+| Capability | Official | TCS Agentic AI |
 |-----------|----------|-----------------|
 | MCP Hub (multi-server) | No | Yes — orchestrate multiple MCP servers |
 | Agent Registry | No | Yes — 12 specialized AI agents |
@@ -166,12 +166,12 @@
 
 ### 1. Reduced Mean Time to Resolution (MTTR)
 
-| Traditional Approach | With TCS KubeNexus AI |
+| Traditional Approach | With TCS Agentic AI |
 |---------------------|----------------------|
 | Engineer notices alert → SSH into cluster → run multiple kubectl commands → analyze logs → identify root cause → apply fix | AI detects issue → auto-investigates → presents root cause + fix → one-click apply |
 | **Average: 30-60 minutes** | **Average: 2-5 minutes** |
 
-**Industry benchmark**: Gartner reports that AIOps platforms reduce MTTR by 50-70%. TCS KubeNexus AI achieves this through automated diagnosis and one-click remediation.
+**Industry benchmark**: Gartner reports that AIOps platforms reduce MTTR by 50-70%. TCS Agentic AI achieves this through automated diagnosis and one-click remediation.
 
 ### 2. Proactive Risk Prevention
 
@@ -227,9 +227,9 @@ Official OpenShift MCP Server:
 └─────────────┘     └──────────────┘     └────────────────┘
   Client only          Stateless              Cluster
 
-TCS KubeNexus AI:
+TCS Agentic AI:
 ┌──────────────┐     ┌──────────────────────────────────────────────┐     ┌────────────────┐
-│ Web Browser  │────>│ TCS KubeNexus AI Platform                    │────>│ K8s API Server │
+│ Web Browser  │────>│ TCS Agentic AI Platform                    │────>│ K8s API Server │
 │              │<────│ ┌────────────┐ ┌───────────┐ ┌────────────┐ │<────│                │
 │ Dashboard    │     │ │ Dashboard  │ │ Chat API  │ │ MCP Hub    │ │     ├────────────────┤
 │ AI Chat      │     │ │ API        │ │ + NLU     │ │ + Agents   │ │     │ Prometheus     │
@@ -250,9 +250,9 @@ TCS KubeNexus AI:
 
 The official OpenShift MCP Server is an excellent **developer tool** — a lightweight, portable binary that gives AI IDEs read/write access to Kubernetes clusters. It excels at what it does: providing raw cluster data to AI assistants.
 
-**TCS KubeNexus AI is an enterprise operations platform** that goes far beyond MCP protocol support:
+**TCS Agentic AI is an enterprise operations platform** that goes far beyond MCP protocol support:
 
-| Dimension | Official MCP Server | TCS KubeNexus AI |
+| Dimension | Official MCP Server | TCS Agentic AI |
 |-----------|-------------------|-----------------|
 | **Scope** | CLI tool for developers | Enterprise platform for operations |
 | **Intelligence** | None (raw data) | AI diagnosis, RCA, predictions, learning |
@@ -263,9 +263,9 @@ The official OpenShift MCP Server is an excellent **developer tool** — a light
 | **Enterprise** | Single user tool | Multi-user, RBAC, approval chains, audit |
 | **Monitoring** | Snapshot queries | Real-time SSE streaming, proactive scanning |
 
-**TCS KubeNexus AI uses the MCP protocol as one component** of a much larger platform — it's not a replacement for the official server, it's a completely different category of product that happens to also support MCP.
+**TCS Agentic AI uses the MCP protocol as one component** of a much larger platform — it's not a replacement for the official server, it's a completely different category of product that happens to also support MCP.
 
 ---
 
 *Document generated: May 2026*
-*TCS KubeNexus AI v1.0.0*
+*TCS Agentic AI v1.0.0*

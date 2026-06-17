@@ -997,9 +997,9 @@ function AppearanceTab({ theme, toggleTheme }) {
 const DOCS = [
   { id: "hld-lld", title: "HLD & LLD Architecture Design", desc: "Complete high-level and low-level design with architecture diagrams", icon: "\u{1F3D7}" },
   { id: "network-arch", title: "Multi-Cluster Network Architecture", desc: "Network connectivity, firewall rules, DNS, and TLS requirements", icon: "\u{1F310}" },
-  { id: "product-overview", title: "Product Overview", desc: "TCS KubeNexus AI product capabilities and features", icon: "\u{1F4CB}" },
+  { id: "product-overview", title: "Product Overview", desc: "TCS Agentic AI product capabilities and features", icon: "\u{1F4CB}" },
   { id: "customer-benefits", title: "Customer Benefits", desc: "Business value and ROI analysis", icon: "\u{1F4C8}" },
-  { id: "mcp-comparison", title: "MCP Comparison", desc: "TCS KubeNexus AI vs Official MCP feature comparison", icon: "\u{1F50D}" },
+  { id: "mcp-comparison", title: "MCP Comparison", desc: "TCS Agentic AI vs Official MCP feature comparison", icon: "\u{1F50D}" },
 ];
 
 function DocumentsTab() {

@@ -1,8 +1,8 @@
-# TCS KubeNexus AI — Customer Benefits & Industry Value Proposition
+# TCS Agentic AI — Customer Benefits & Industry Value Proposition
 
 ---
 
-## Why TCS KubeNexus AI?
+## Why TCS Agentic AI?
 
 ### The Industry Challenge
 
@@ -22,7 +22,7 @@ Organizations running OpenShift/Kubernetes at scale face a common set of operati
 
 ### For Platform Engineering / SRE Teams
 
-| Benefit | How KubeNexus AI Delivers |
+| Benefit | How Agentic AI Delivers |
 |---------|--------------------------|
 | **50-70% MTTR reduction** | AI diagnoses root cause in seconds, not minutes. Pod Doctor auto-analyzes container states, logs, events, and metrics to identify the exact failure reason |
 | **Proactive risk detection** | 100% evidence-based risk predictions from live cluster APIs catch issues before users report them. Node CPU/memory saturation, operator degradation, pending pods — detected automatically |
@@ -32,7 +32,7 @@ Organizations running OpenShift/Kubernetes at scale face a common set of operati
 
 ### For L1/L2 Support Teams
 
-| Benefit | How KubeNexus AI Delivers |
+| Benefit | How Agentic AI Delivers |
 |---------|--------------------------|
 | **No kubectl expertise required** | Natural language interface: "Show me all crashing pods" works just like talking to a senior engineer |
 | **Guided remediation** | AI provides step-by-step fix instructions with one-click apply. L1 support can resolve issues that previously required L3 escalation |
@@ -42,7 +42,7 @@ Organizations running OpenShift/Kubernetes at scale face a common set of operati
 
 ### For Engineering Managers / Directors
 
-| Benefit | How KubeNexus AI Delivers |
+| Benefit | How Agentic AI Delivers |
 |---------|--------------------------|
 | **Operational cost reduction** | AI automates L1/L2 tasks — skilled engineers focus on architecture and innovation, not firefighting |
 | **Knowledge retention** | When engineers leave, their troubleshooting expertise stays in the Knowledge Base and Playbooks — not in their heads |
@@ -52,7 +52,7 @@ Organizations running OpenShift/Kubernetes at scale face a common set of operati
 
 ### For CTO / CIO / IT Leadership
 
-| Benefit | How KubeNexus AI Delivers |
+| Benefit | How Agentic AI Delivers |
 |---------|--------------------------|
 | **ROI within 3 months** | MTTR reduction + automation of L1/L2 tasks = measurable cost savings from day one |
 | **Data sovereignty** | Ollama/Watsonx on-premises support means AI processing stays within your infrastructure. Data redaction masks sensitive info before any cloud LLM call |
@@ -66,7 +66,7 @@ Organizations running OpenShift/Kubernetes at scale face a common set of operati
 
 ### SRE Best Practices (Google SRE Book)
 
-| SRE Principle | KubeNexus AI Implementation |
+| SRE Principle | Agentic AI Implementation |
 |--------------|----------------------------|
 | **Reduce toil** | AI automates repetitive diagnosis and remediation |
 | **Monitor meaningfully** | Evidence-based alerts, not threshold-based noise |
@@ -76,7 +76,7 @@ Organizations running OpenShift/Kubernetes at scale face a common set of operati
 
 ### ITIL / ITSM Alignment
 
-| ITIL Process | KubeNexus AI Integration |
+| ITIL Process | Agentic AI Integration |
 |-------------|--------------------------|
 | **Incident Management** | AI-powered triage, auto-diagnosis, guided resolution |
 | **Change Management** | ServiceNow integration, approval chains, change request tracking |
@@ -86,7 +86,7 @@ Organizations running OpenShift/Kubernetes at scale face a common set of operati
 
 ### AIOps Market Standards (Gartner / Forrester)
 
-| AIOps Capability | KubeNexus AI |
+| AIOps Capability | Agentic AI |
 |-----------------|-------------|
 | **Data ingestion** | Direct Kubernetes API + Prometheus + Alertmanager + Events |
 | **Pattern recognition** | LLM-powered correlation across pods, nodes, events, operators |
@@ -101,7 +101,7 @@ Organizations running OpenShift/Kubernetes at scale face a common set of operati
 
 ### vs Traditional Monitoring (Datadog, Dynatrace, New Relic)
 
-| Aspect | Traditional Monitoring | TCS KubeNexus AI |
+| Aspect | Traditional Monitoring | TCS Agentic AI |
 |--------|----------------------|-----------------|
 | **Pricing** | Per-host / per-GB licensing (expensive at scale) | Fixed deployment cost — no per-host fees |
 | **Data residency** | SaaS — data leaves your environment | On-premises option — data stays internal |
@@ -112,7 +112,7 @@ Organizations running OpenShift/Kubernetes at scale face a common set of operati
 
 ### vs kubectl / oc CLI
 
-| Aspect | CLI | TCS KubeNexus AI |
+| Aspect | CLI | TCS Agentic AI |
 |--------|-----|-----------------|
 | **Learning curve** | Steep — hundreds of commands and flags | Natural language — "show crashing pods" |
 | **Diagnosis** | Manual — run multiple commands, correlate manually | Automated — AI correlates across all data sources |
@@ -122,7 +122,7 @@ Organizations running OpenShift/Kubernetes at scale face a common set of operati
 
 ### vs Official OpenShift MCP Server
 
-| Aspect | Official MCP Server | TCS KubeNexus AI |
+| Aspect | Official MCP Server | TCS Agentic AI |
 |--------|-------------------|-----------------|
 | **Interface** | IDE-only (Claude Desktop, VS Code) | Web dashboard + Chat + IDE + API |
 | **Users** | Individual developers | SRE teams, L1-L3 support, management |
@@ -160,22 +160,22 @@ Organizations running OpenShift/Kubernetes at scale face a common set of operati
 ### Use Case 1: OOMKill Resolution
 **Before**: Engineer gets paged at 2 AM. SSH into cluster. Run `oc get pods`. Find crashing pod. Run `oc describe pod`. Check memory limits. Run `oc logs`. Google the error. Manually calculate new limits. Edit deployment YAML. Apply. Watch rollout. Total: 35 minutes.
 
-**With KubeNexus AI**: Dashboard shows OOMKill finding with 100% confidence. AI recommends exact memory limit based on actual usage metrics and restart count (smart recommendation, not blindly doubling). One click "Dry Run" to preview. One click "Apply Fix". Auto-poll shows pods returning to Running. Total: 2 minutes.
+**With Agentic AI**: Dashboard shows OOMKill finding with 100% confidence. AI recommends exact memory limit based on actual usage metrics and restart count (smart recommendation, not blindly doubling). One click "Dry Run" to preview. One click "Apply Fix". Auto-poll shows pods returning to Running. Total: 2 minutes.
 
 ### Use Case 2: CrashLoopBackOff Investigation
 **Before**: Alert fires. Engineer runs `oc logs pod -c container --previous`. Reads 500 lines of logs. Checks events. Checks node conditions. Checks if other pods in same namespace are affected. May need to check Prometheus for resource metrics. Total: 45 minutes.
 
-**With KubeNexus AI**: Click "Root Cause" on the finding. AI automatically correlates pod logs + events + node conditions + operator status + metrics. Returns: "Root cause: Dynatrace bootstrapper secret missing in sock-shop namespace. 6 pods affected. Fix: recreate the secret from the dynatrace namespace." Total: 30 seconds.
+**With Agentic AI**: Click "Root Cause" on the finding. AI automatically correlates pod logs + events + node conditions + operator status + metrics. Returns: "Root cause: Dynatrace bootstrapper secret missing in sock-shop namespace. 6 pods affected. Fix: recreate the secret from the dynatrace namespace." Total: 30 seconds.
 
 ### Use Case 3: Cluster Upgrade Planning
 **Before**: Read release notes manually. Check operator compatibility. Verify node health. Check for deprecated APIs. Test in staging. Create change request manually. Total: 2-3 days.
 
-**With KubeNexus AI**: Upgrade Advisor analyzes current cluster state, identifies deprecated APIs, runs preflight checks, assesses risk for each operator, generates a change request with all evidence — all from a single chat command: "Plan upgrade to 4.16." Total: 15 minutes.
+**With Agentic AI**: Upgrade Advisor analyzes current cluster state, identifies deprecated APIs, runs preflight checks, assesses risk for each operator, generates a change request with all evidence — all from a single chat command: "Plan upgrade to 4.16." Total: 15 minutes.
 
 ### Use Case 4: New Team Member Onboarding
 **Before**: 4 weeks reading documentation, learning kubectl commands, understanding cluster architecture, memorizing troubleshooting procedures.
 
-**With KubeNexus AI**: Day 1 — use natural language to explore the cluster. "Show me cluster health." "What pods have issues?" "Why is this pod crashing?" The AI explains everything in context, suggests next steps, and guides remediation. Knowledge Base provides institutional knowledge from day one.
+**With Agentic AI**: Day 1 — use natural language to explore the cluster. "Show me cluster health." "What pods have issues?" "Why is this pod crashing?" The AI explains everything in context, suggests next steps, and guides remediation. Knowledge Base provides institutional knowledge from day one.
 
 ---
 
@@ -183,7 +183,7 @@ Organizations running OpenShift/Kubernetes at scale face a common set of operati
 
 | Phase | Duration | Deliverables |
 |-------|----------|-------------|
-| **Phase 1: Deploy** | 1 day | KubeNexus AI deployed on OpenShift, connected to cluster |
+| **Phase 1: Deploy** | 1 day | Agentic AI deployed on OpenShift, connected to cluster |
 | **Phase 2: Configure** | 1-2 days | LLM provider configured, ServiceNow connected, RBAC set up |
 | **Phase 3: Adopt** | 1 week | Team onboarded, initial Knowledge Base populated |
 | **Phase 4: Optimize** | 2-4 weeks | Automation rules created, playbooks documented, feedback loop active |
@@ -191,5 +191,5 @@ Organizations running OpenShift/Kubernetes at scale face a common set of operati
 
 ---
 
-*TCS KubeNexus AI v1.0.0 | May 2026*
+*TCS Agentic AI v1.0.0 | May 2026*
 *Tata Consultancy Services*

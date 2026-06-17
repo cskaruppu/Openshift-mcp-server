@@ -1,7 +1,7 @@
 version: "3.8"
 
 services:
-  kubenexus:
+  agentic-ai:
     build: ..
     ports:
       - "3001:3001"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Word (.docx) documents for TCS KubeNexus AI product documentation."""
+"""Generate Word (.docx) documents for TCS Agentic AI product documentation."""
 
 from docx import Document
 from docx.shared import Inches, Pt, Cm, RGBColor
@@ -69,7 +69,7 @@ def create_product_overview():
     doc.add_paragraph()
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = title.add_run('TCS KubeNexus AI')
+    run = title.add_run('TCS Agentic AI')
     run.font.size = Pt(36)
     run.font.color.rgb = RGBColor(0x1F, 0x4E, 0x79)
     run.bold = True
@@ -105,12 +105,12 @@ def create_product_overview():
     # 1. Executive Summary
     add_heading_styled(doc, '1. Executive Summary', 1)
     doc.add_paragraph(
-        'TCS KubeNexus AI is an enterprise-grade AI-powered operations platform for Red Hat OpenShift '
+        'TCS Agentic AI is an enterprise-grade AI-powered operations platform for Red Hat OpenShift '
         'and Kubernetes clusters. It transforms cluster management from a manual, command-line-driven '
         'process into an intelligent, conversational, and automated experience.'
     )
     doc.add_paragraph(
-        'Built on the Model Context Protocol (MCP), KubeNexus AI connects directly to cluster APIs and '
+        'Built on the Model Context Protocol (MCP), Agentic AI connects directly to cluster APIs and '
         'combines real-time observability with AI-powered diagnosis, remediation, and predictive '
         'intelligence — all through a unified web dashboard.'
     )
@@ -130,7 +130,7 @@ def create_product_overview():
         ]
     )
 
-    add_heading_styled(doc, 'How TCS KubeNexus AI Solves It', 2)
+    add_heading_styled(doc, 'How TCS Agentic AI Solves It', 2)
     add_table_from_data(doc,
         ['Solution', 'How'],
         [
@@ -148,7 +148,7 @@ def create_product_overview():
     doc.add_page_break()
     add_heading_styled(doc, '3. Reference Architecture', 1)
     doc.add_paragraph(
-        'TCS KubeNexus AI follows a layered architecture deployed natively on OpenShift. '
+        'TCS Agentic AI follows a layered architecture deployed natively on OpenShift. '
         'The platform sits within the cluster as a first-class citizen, accessing Kubernetes APIs '
         'directly via a service account with appropriate RBAC bindings.'
     )
@@ -158,7 +158,7 @@ def create_product_overview():
         ['Users & Clients', 'Web Browser (Dashboard UI), Claude CLI, VS Code / JetBrains IDE Extensions, MCP Client (SDK / stdio)'],
         ['Network Layer', 'TLS Termination (HTTPS/WSS), OpenShift Route (Edge TLS), HAProxy Load Balancer, stdio Direct Transport'],
         ['Middleware', 'Token/SA Authentication, Token Bucket Rate Limiting, Safety Guardrails, Secret Redaction Filter'],
-        ['KubeNexus AI MCP Server', 'Chat Engine (NLU Parser, Context Memory, ITSM Handler, Action Workflow, Fix Executor), '
+        ['Agentic AI MCP Server', 'Chat Engine (NLU Parser, Context Memory, ITSM Handler, Action Workflow, Fix Executor), '
          'MCP Tools (33 Modules: Cluster Mgmt, Observability, App Lifecycle, Security & Governance, Operations), '
          'Dashboard (6 Views, Architecture, Heatmap, AI Predictions, Command Bar), '
          'Intelligence (Proactive Agent, Learning Engine, Knowledge Base, Predictive Intel)'],
@@ -228,7 +228,7 @@ def create_product_overview():
     add_heading_styled(doc, '4.2 AI Chat Interface', 2)
     doc.add_paragraph(
         'Natural language cluster management. Engineers describe what they need in plain English, '
-        'and KubeNexus AI translates it into cluster operations with AI-powered analysis.'
+        'and Agentic AI translates it into cluster operations with AI-powered analysis.'
     )
     examples = [
         '"Troubleshoot pod mlflow-server in namespace mlflow"',
@@ -294,7 +294,7 @@ def create_product_overview():
 
     # 6. LLM Providers
     add_heading_styled(doc, '6. Supported LLM Providers', 1)
-    doc.add_paragraph('KubeNexus AI is vendor-neutral — choose the AI provider that fits your organization:')
+    doc.add_paragraph('Agentic AI is vendor-neutral — choose the AI provider that fits your organization:')
     providers = [
         ['Anthropic Claude (Opus/Sonnet/Haiku)', 'Cloud', 'Highest accuracy, complex analysis'],
         ['IBM Watsonx', 'Cloud / On-prem', 'Enterprise AI with IBM support'],
@@ -339,7 +339,7 @@ def create_product_overview():
     doc.add_page_break()
     add_heading_styled(doc, '9. Deployment Architecture', 1)
     doc.add_paragraph(
-        'TCS KubeNexus AI deploys natively on OpenShift as a set of coordinated resources within '
+        'TCS Agentic AI deploys natively on OpenShift as a set of coordinated resources within '
         'a dedicated namespace (openshift-mcp).'
     )
 
@@ -381,7 +381,7 @@ def create_product_overview():
     ]
     add_table_from_data(doc, ['Option', 'Description'], deploy)
 
-    path = os.path.join(OUT_DIR, 'TCS-KubeNexus-AI-Product-Overview.docx')
+    path = os.path.join(OUT_DIR, 'TCS-Agentic-AI-Product-Overview.docx')
     doc.save(path)
     print(f'Created: {path}')
     return path
@@ -398,7 +398,7 @@ def create_comparison():
 
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = title.add_run('TCS KubeNexus AI\nvs\nOfficial OpenShift MCP Server')
+    run = title.add_run('TCS Agentic AI\nvs\nOfficial OpenShift MCP Server')
     run.font.size = Pt(28)
     run.font.color.rgb = RGBColor(0x1F, 0x4E, 0x79)
     run.bold = True
@@ -412,7 +412,7 @@ def create_comparison():
 
     add_heading_styled(doc, 'Executive Summary', 1)
     add_table_from_data(doc,
-        ['Aspect', 'Official OpenShift MCP Server', 'TCS KubeNexus AI'],
+        ['Aspect', 'Official OpenShift MCP Server', 'TCS Agentic AI'],
         [
             ['Purpose', 'CLI tool for AI IDEs to query K8s clusters', 'Full enterprise platform for AI-powered cluster operations'],
             ['Interface', 'No UI — MCP protocol only (used inside IDEs)', 'Web dashboard + AI chat + MCP server + SSE live streaming'],
@@ -496,7 +496,7 @@ def create_comparison():
         doc.add_page_break()
         add_heading_styled(doc, cat_name, 1)
         add_table_from_data(doc,
-            ['Capability', 'Official MCP Server', 'TCS KubeNexus AI'],
+            ['Capability', 'Official MCP Server', 'TCS Agentic AI'],
             rows
         )
 
@@ -508,9 +508,9 @@ def create_comparison():
     doc.add_paragraph('AI IDE (Claude/VS Code) --> MCP Server (Go binary) --> K8s API Server')
     doc.add_paragraph('Single binary, stateless, IDE-only access. No dashboard, no chat, no persistence.')
 
-    add_heading_styled(doc, 'TCS KubeNexus AI', 2)
+    add_heading_styled(doc, 'TCS Agentic AI', 2)
     arch_text = (
-        'Web Browser / AI IDE --> TCS KubeNexus AI Platform --> K8s API Server + Prometheus + '
+        'Web Browser / AI IDE --> TCS Agentic AI Platform --> K8s API Server + Prometheus + '
         'Alertmanager + ServiceNow + ArgoCD\n\n'
         'Platform includes: Dashboard API, Chat API + NLU, MCP Hub + 12 Agents, Pod Doctor, '
         'RCA Engine, Fix Executor, Knowledge Base, Guardrails, LLM Layer (multi-provider), '
@@ -522,12 +522,12 @@ def create_comparison():
     doc.add_paragraph(
         'The official OpenShift MCP Server is an excellent developer tool — a lightweight, portable '
         'binary that gives AI IDEs read/write access to Kubernetes clusters. '
-        'TCS KubeNexus AI is an enterprise operations platform that goes far beyond MCP protocol '
+        'TCS Agentic AI is an enterprise operations platform that goes far beyond MCP protocol '
         'support, providing AI intelligence, auto-remediation, enterprise integrations, and a full '
         'web-based operations center.'
     )
 
-    path = os.path.join(OUT_DIR, 'TCS-KubeNexus-AI-vs-Official-MCP-Comparison.docx')
+    path = os.path.join(OUT_DIR, 'TCS-Agentic-AI-vs-Official-MCP-Comparison.docx')
     doc.save(path)
     print(f'Created: {path}')
     return path
@@ -544,7 +544,7 @@ def create_benefits():
 
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = title.add_run('TCS KubeNexus AI')
+    run = title.add_run('TCS Agentic AI')
     run.font.size = Pt(32)
     run.font.color.rgb = RGBColor(0x1F, 0x4E, 0x79)
     run.bold = True
@@ -561,7 +561,7 @@ def create_benefits():
 
     add_heading_styled(doc, 'For Platform Engineering / SRE Teams', 2)
     add_table_from_data(doc,
-        ['Benefit', 'How KubeNexus AI Delivers'],
+        ['Benefit', 'How Agentic AI Delivers'],
         [
             ['50-70% MTTR reduction', 'AI diagnoses root cause in seconds. Pod Doctor auto-analyzes container states, logs, events, and metrics'],
             ['Proactive risk detection', '100% evidence-based risk predictions from live cluster APIs. Node saturation, operator degradation detected automatically'],
@@ -573,7 +573,7 @@ def create_benefits():
 
     add_heading_styled(doc, 'For L1/L2 Support Teams', 2)
     add_table_from_data(doc,
-        ['Benefit', 'How KubeNexus AI Delivers'],
+        ['Benefit', 'How Agentic AI Delivers'],
         [
             ['No kubectl expertise required', 'Natural language: "Show me all crashing pods" works like talking to a senior engineer'],
             ['Guided remediation', 'AI provides step-by-step fix with one-click apply. L1 resolves issues that previously needed L3'],
@@ -585,7 +585,7 @@ def create_benefits():
 
     add_heading_styled(doc, 'For Engineering Managers / Directors', 2)
     add_table_from_data(doc,
-        ['Benefit', 'How KubeNexus AI Delivers'],
+        ['Benefit', 'How Agentic AI Delivers'],
         [
             ['Operational cost reduction', 'AI automates L1/L2 tasks — skilled engineers focus on architecture'],
             ['Knowledge retention', 'Expertise stays in Knowledge Base when engineers leave'],
@@ -597,7 +597,7 @@ def create_benefits():
 
     add_heading_styled(doc, 'For CTO / CIO / IT Leadership', 2)
     add_table_from_data(doc,
-        ['Benefit', 'How KubeNexus AI Delivers'],
+        ['Benefit', 'How Agentic AI Delivers'],
         [
             ['ROI within 3 months', 'MTTR reduction + L1/L2 automation = measurable savings from day one'],
             ['Data sovereignty', 'Ollama/Watsonx on-prem: AI stays within infrastructure. Data redaction masks sensitive info'],
@@ -613,7 +613,7 @@ def create_benefits():
 
     add_heading_styled(doc, 'SRE Best Practices (Google SRE Book)', 2)
     add_table_from_data(doc,
-        ['SRE Principle', 'KubeNexus AI Implementation'],
+        ['SRE Principle', 'Agentic AI Implementation'],
         [
             ['Reduce toil', 'AI automates repetitive diagnosis and remediation'],
             ['Monitor meaningfully', 'Evidence-based alerts, not threshold-based noise'],
@@ -625,7 +625,7 @@ def create_benefits():
 
     add_heading_styled(doc, 'ITIL / ITSM Alignment', 2)
     add_table_from_data(doc,
-        ['ITIL Process', 'KubeNexus AI Integration'],
+        ['ITIL Process', 'Agentic AI Integration'],
         [
             ['Incident Management', 'AI-powered triage, auto-diagnosis, guided resolution'],
             ['Change Management', 'ServiceNow integration, approval chains, CR tracking'],
@@ -637,7 +637,7 @@ def create_benefits():
 
     add_heading_styled(doc, 'AIOps Market Standards (Gartner / Forrester)', 2)
     add_table_from_data(doc,
-        ['AIOps Capability', 'KubeNexus AI'],
+        ['AIOps Capability', 'Agentic AI'],
         [
             ['Data ingestion', 'Direct Kubernetes API + Prometheus + Alertmanager + Events'],
             ['Pattern recognition', 'LLM-powered correlation across pods, nodes, events, operators'],
@@ -654,7 +654,7 @@ def create_benefits():
 
     add_heading_styled(doc, 'vs Traditional Monitoring (Datadog, Dynatrace, New Relic)', 2)
     add_table_from_data(doc,
-        ['Aspect', 'Traditional Monitoring', 'TCS KubeNexus AI'],
+        ['Aspect', 'Traditional Monitoring', 'TCS Agentic AI'],
         [
             ['Pricing', 'Per-host / per-GB licensing', 'Fixed deployment cost — no per-host fees'],
             ['Data residency', 'SaaS — data leaves your environment', 'On-premises option — data stays internal'],
@@ -666,7 +666,7 @@ def create_benefits():
 
     add_heading_styled(doc, 'vs kubectl / oc CLI', 2)
     add_table_from_data(doc,
-        ['Aspect', 'CLI', 'TCS KubeNexus AI'],
+        ['Aspect', 'CLI', 'TCS Agentic AI'],
         [
             ['Learning curve', 'Steep — hundreds of commands', 'Natural language — "show crashing pods"'],
             ['Diagnosis', 'Manual correlation', 'Automated across all data sources'],
@@ -697,22 +697,22 @@ def create_benefits():
 
     add_heading_styled(doc, 'Use Case 1: OOMKill Resolution', 2)
     doc.add_paragraph('Before: Engineer paged at 2 AM. SSH into cluster. Run multiple oc commands. Analyze logs. Calculate new limits. Edit YAML. Apply. Watch rollout. Total: 35 minutes.')
-    doc.add_paragraph('With KubeNexus AI: Dashboard shows OOMKill with 100% confidence. AI recommends exact memory limit based on actual usage metrics. Dry Run preview. One-click Apply. Auto-poll shows pods Running. Total: 2 minutes.')
+    doc.add_paragraph('With Agentic AI: Dashboard shows OOMKill with 100% confidence. AI recommends exact memory limit based on actual usage metrics. Dry Run preview. One-click Apply. Auto-poll shows pods Running. Total: 2 minutes.')
 
     add_heading_styled(doc, 'Use Case 2: CrashLoopBackOff Investigation', 2)
     doc.add_paragraph('Before: Read 500 lines of logs. Check events. Check node conditions. Check Prometheus. Total: 45 minutes.')
-    doc.add_paragraph('With KubeNexus AI: Click "Root Cause". AI correlates pod logs + events + node conditions + metrics. Returns full causal chain with recommended fix. Total: 30 seconds.')
+    doc.add_paragraph('With Agentic AI: Click "Root Cause". AI correlates pod logs + events + node conditions + metrics. Returns full causal chain with recommended fix. Total: 30 seconds.')
 
     add_heading_styled(doc, 'Use Case 3: Cluster Upgrade Planning', 2)
     doc.add_paragraph('Before: Read release notes. Check compatibility. Verify node health. Check deprecated APIs. Create CR manually. Total: 2-3 days.')
-    doc.add_paragraph('With KubeNexus AI: Single command: "Plan upgrade to 4.16." AI runs preflight checks, assesses risk, generates change request. Total: 15 minutes.')
+    doc.add_paragraph('With Agentic AI: Single command: "Plan upgrade to 4.16." AI runs preflight checks, assesses risk, generates change request. Total: 15 minutes.')
 
     # Implementation Timeline
     add_heading_styled(doc, 'Implementation Timeline', 1)
     add_table_from_data(doc,
         ['Phase', 'Duration', 'Deliverables'],
         [
-            ['Phase 1: Deploy', '1 day', 'KubeNexus AI deployed on OpenShift'],
+            ['Phase 1: Deploy', '1 day', 'Agentic AI deployed on OpenShift'],
             ['Phase 2: Configure', '1-2 days', 'LLM provider, ServiceNow, RBAC configured'],
             ['Phase 3: Adopt', '1 week', 'Team onboarded, Knowledge Base populated'],
             ['Phase 4: Optimize', '2-4 weeks', 'Automation rules, playbooks, feedback loop'],
@@ -720,7 +720,7 @@ def create_benefits():
         ]
     )
 
-    path = os.path.join(OUT_DIR, 'TCS-KubeNexus-AI-Customer-Benefits.docx')
+    path = os.path.join(OUT_DIR, 'TCS-Agentic-AI-Customer-Benefits.docx')
     doc.save(path)
     print(f'Created: {path}')
     return path

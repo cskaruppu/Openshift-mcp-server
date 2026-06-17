@@ -1,6 +1,6 @@
 # TCS Agentic AI — High-Level & Low-Level Design
 
-> **TCS Agentic AI** (a.k.a. *TCS KubeNexus AI*) — an AI-native, multi-cluster
+> **TCS Agentic AI** (a.k.a. *TCS Agentic AI*) — an AI-native, multi-cluster
 > intelligence and operations platform for OpenShift and Kubernetes, built on the
 > **Model Context Protocol (MCP)**.
 >

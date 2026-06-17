@@ -1,14 +1,14 @@
-# TCS KubeNexus AI — Product Overview
+# TCS Agentic AI — Product Overview
 
 ## OpenShift Intelligence Platform with AI-Powered Cluster Operations
 
 ---
 
-### What is TCS KubeNexus AI?
+### What is TCS Agentic AI?
 
-TCS KubeNexus AI is an enterprise-grade AI-powered operations platform for Red Hat OpenShift and Kubernetes clusters. It transforms cluster management from a manual, command-line-driven process into an intelligent, conversational, and automated experience.
+TCS Agentic AI is an enterprise-grade AI-powered operations platform for Red Hat OpenShift and Kubernetes clusters. It transforms cluster management from a manual, command-line-driven process into an intelligent, conversational, and automated experience.
 
-Built on the Model Context Protocol (MCP), KubeNexus AI connects directly to cluster APIs and combines real-time observability with AI-powered diagnosis, remediation, and predictive intelligence — all through a unified web dashboard.
+Built on the Model Context Protocol (MCP), Agentic AI connects directly to cluster APIs and combines real-time observability with AI-powered diagnosis, remediation, and predictive intelligence — all through a unified web dashboard.
 
 ---
 
@@ -24,7 +24,7 @@ Built on the Model Context Protocol (MCP), KubeNexus AI connects directly to clu
 | Multiple tools for different tasks | Context switching, fragmented workflow |
 | Compliance audits require manual evidence gathering | Time-consuming, error-prone |
 
-### How TCS KubeNexus AI Solves It
+### How TCS Agentic AI Solves It
 
 | Solution | How |
 |----------|-----|
@@ -55,7 +55,7 @@ The command center for cluster operations. Real-time visibility across pods, nod
 - Multi-cluster management (ACM)
 
 #### 2. AI Chat Interface
-Natural language cluster management. Engineers describe what they need in plain English, and KubeNexus AI translates it into cluster operations.
+Natural language cluster management. Engineers describe what they need in plain English, and Agentic AI translates it into cluster operations.
 
 **Capabilities:**
 - "Troubleshoot pod mlflow-server in namespace mlflow"
@@ -114,7 +114,7 @@ Safe, controlled cluster modifications with multiple layers of protection.
 
 ### Supported LLM Providers
 
-KubeNexus AI is vendor-neutral — choose the AI provider that fits your organization:
+Agentic AI is vendor-neutral — choose the AI provider that fits your organization:
 
 | Provider | Deployment | Best For |
 |----------|-----------|----------|
@@ -170,4 +170,4 @@ KubeNexus AI is vendor-neutral — choose the AI provider that fits your organiz
 
 ---
 
-*TCS KubeNexus AI v1.0.0 | May 2026*
+*TCS Agentic AI v1.0.0 | May 2026*
