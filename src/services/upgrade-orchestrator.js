@@ -1373,6 +1373,7 @@ export async function stepPostAssessment(sessionId) {
   // Verify the actual cluster version matches the target
   let verifiedVersion = null;
   let operatorSummary = null;
+  let nodeStatus = null;
   let postReport = null;
   try {
     const [cv, ops] = await withClusterContext(session.cluster, () =>
@@ -1401,6 +1402,11 @@ export async function stepPostAssessment(sessionId) {
     const degraded = opItems.filter(o => (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True")).length;
     const progressing = opItems.filter(o => (o.status?.conditions || []).some(c => c.type === "Progressing" && c.status === "True")).length;
     operatorSummary = { total: opItems.length, available, degraded, progressing };
+
+    // Node readiness for closure validation
+    const nodeItems = (await withClusterContext(session.cluster, () => ocpGet("/api/v1/nodes")))?.items || [];
+    const nodeReady = nodeItems.filter(n => (n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True")).length;
+    nodeStatus = { total: nodeItems.length, ready: nodeReady, notReady: nodeItems.length - nodeReady };
 
     const availableUpdates = cv?.status?.availableUpdates || [];
     const nextTarget = availableUpdates.length > 0 ? availableUpdates[0].version : actualVersion;
@@ -1453,30 +1459,84 @@ export async function stepPostAssessment(sessionId) {
 
   await updateSession(sessionId, { postAssessment });
 
-  // Update ServiceNow CR with outcome
+  // ── ServiceNow CR: update with post-assessment details, attach reports, then close ──
   if (session.crSysId) {
-    try {
-      await updateRecord("change_request", session.crSysId, {
-        state: "3",
-        close_code: "successful",
-        close_notes: `Upgrade ${session.fromVersion} → ${session.targetVersion} completed successfully. Duration: ${postAssessment.duration}. Post-assessment: ${comparison.resolved.length} issues resolved, ${comparison.newIssues.length} new issues, ${comparison.persistent.length} persistent.`,
-      });
-    } catch { /* ServiceNow update failed — non-critical */ }
+    const isSuccess = verifiedVersion === session.targetVersion &&
+      operatorSummary && operatorSummary.degraded === 0 && operatorSummary.progressing === 0;
 
-    // Attach pre/post assessment DOCX reports to the CR
+    // 1. Add structured work notes with post-assessment summary
     try {
-      const { generatePreAssessmentReport, generatePostAssessmentReport } = await import("./upgrade-report.js");
+      const workNotes = [
+        `[TCS Agentic AI] Post-Upgrade Assessment — ${session.cluster || "local"}`,
+        `─────────────────────────────────────────`,
+        `Upgrade Path: ${session.fromVersion} → ${session.targetVersion}`,
+        `Duration: ${postAssessment.duration}`,
+        `Outcome: ${isSuccess ? "SUCCESS" : "REQUIRES REVIEW"}`,
+        ``,
+        `Verified Cluster Version: ${verifiedVersion}`,
+        `Target Version Match: ${verifiedVersion === session.targetVersion ? "YES ✓" : "NO ✗ — Expected " + session.targetVersion}`,
+        ``,
+        `Operators: ${operatorSummary?.total || 0} total, ${operatorSummary?.available || 0} available, ${operatorSummary?.degraded || 0} degraded, ${operatorSummary?.progressing || 0} progressing`,
+        `Nodes: ${nodeStatus?.total || "N/A"} total, ${nodeStatus?.ready || "N/A"} ready`,
+        ``,
+        `Pre → Post Comparison:`,
+        `  Resolved Issues: ${comparison.resolved.length} (${comparison.resolved.join(", ") || "none"})`,
+        `  New Issues: ${comparison.newIssues.length} (${comparison.newIssues.join(", ") || "none"})`,
+        `  Persistent: ${comparison.persistent.length} (${comparison.persistent.join(", ") || "none"})`,
+      ].join("\n");
+
+      await updateRecord("change_request", session.crSysId, { work_notes: workNotes });
+    } catch (wnErr) {
+      console.warn(`[post-assess] Failed to add work notes to CR: ${wnErr.message}`);
+    }
+
+    // 2. Attach post-assessment PDF + HTML reports
+    try {
+      const { generatePostAssessmentReport } = await import("./upgrade-report.js");
       const updatedSession = await getSession(sessionId);
-      const preBuffer = await generatePreAssessmentReport(updatedSession);
-      await snowAttachFile("change_request", session.crSysId,
-        `Pre-Assessment-${session.cluster}-${session.fromVersion}-to-${session.targetVersion}.pdf`,
-        "application/pdf", preBuffer);
+
       const postBuffer = await generatePostAssessmentReport(updatedSession);
       await snowAttachFile("change_request", session.crSysId,
-        `Post-Assessment-${session.cluster}-${session.fromVersion}-to-${session.targetVersion}.pdf`,
+        `Post-Assessment-${session.cluster || "local"}-${session.fromVersion}-to-${session.targetVersion}.pdf`,
         "application/pdf", postBuffer);
+
+      const htmlContent = generateHTMLReport(updatedSession);
+      const htmlBuffer = Buffer.from(htmlContent, "utf-8");
+      await snowAttachFile("change_request", session.crSysId,
+        `Post-Assessment-${session.cluster || "local"}-${session.fromVersion}-to-${session.targetVersion}.html`,
+        "text/html", htmlBuffer);
     } catch (attErr) {
-      console.warn(`[upgrade] Failed to attach reports to CR: ${attErr.message}`);
+      console.warn(`[post-assess] Failed to attach reports to CR: ${attErr.message}`);
+    }
+
+    // 3. Close the CR only if upgrade verified successful
+    try {
+      if (isSuccess) {
+        await updateRecord("change_request", session.crSysId, {
+          state: "3",
+          close_code: "successful",
+          close_notes: [
+            `Upgrade ${session.fromVersion} → ${session.targetVersion} completed and verified.`,
+            `Cluster version confirmed: ${verifiedVersion}.`,
+            `All ${operatorSummary?.total || 0} operators available, 0 degraded.`,
+            `Duration: ${postAssessment.duration}.`,
+            `Pre/post assessment reports attached.`,
+            `${comparison.resolved.length} pre-upgrade issues resolved, ${comparison.newIssues.length} new issues.`,
+          ].join(" "),
+        });
+      } else {
+        await updateRecord("change_request", session.crSysId, {
+          work_notes: [
+            `[TCS Agentic AI] WARNING: Post-assessment detected issues.`,
+            `Current version: ${verifiedVersion}, Expected: ${session.targetVersion}.`,
+            operatorSummary?.degraded > 0 ? `${operatorSummary.degraded} operator(s) degraded.` : "",
+            operatorSummary?.progressing > 0 ? `${operatorSummary.progressing} operator(s) still progressing.` : "",
+            `CR NOT auto-closed — manual review required.`,
+          ].filter(Boolean).join(" "),
+        });
+      }
+    } catch (closeErr) {
+      console.warn(`[post-assess] Failed to close CR: ${closeErr.message}`);
     }
   }
 

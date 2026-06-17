@@ -1468,6 +1468,19 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
               )}
             </div>
           )}
+          {/* ServiceNow CR closure status */}
+          {s.crTicketId && pa.verifiedVersion && (
+            <div style={{ padding: "6px 10px", background: "color-mix(in srgb, var(--accent2) 8%, transparent)", borderRadius: 6 }}>
+              <span style={{ fontWeight: 600 }}>ServiceNow CR: </span>
+              <span style={{ fontWeight: 700, color: "var(--accent2)" }}>{s.crTicketId}</span>
+              {pa.verifiedVersion === targetVer && pa.operatorSummary?.degraded === 0 ? (
+                <span style={{ marginLeft: 8, color: "var(--ok)", fontWeight: 600 }}>✅ Auto-closed (successful)</span>
+              ) : (
+                <span style={{ marginLeft: 8, color: "var(--warn)", fontWeight: 600 }}>⚠ Requires manual review</span>
+              )}
+              <div style={{ marginTop: 3, fontSize: 10, color: "var(--text2)" }}>Post-assessment report and HTML report attached to CR</div>
+            </div>
+          )}
           {!pa.comparison && !pa.verifiedVersion && (
             <div style={{ color: "var(--text2)", fontStyle: "italic" }}>Post-assessment data pending — click "Run Post-Assessment" to verify cluster health.</div>
           )}
