@@ -750,12 +750,19 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
           }
           prevStateRef.current = newState || currentState;
         } else {
-          const r = await fetch(clusterUrl(`/api/upgrade/notifications?cluster=${cluster}`, cluster));
+          // Poll actual cluster progress during executing/monitoring
+          const r = await fetch(clusterUrl(`/api/upgrade/orchestrator/progress`, cluster), {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionId }),
+          });
           const d = await r.json();
-          const newState = d.state || d.sessionState;
-          if (newState && prevStateRef.current && newState !== prevStateRef.current) {
-            if (newState === "completed" || newState === "monitoring") {
-              if (onQuery) onQuery("check upgrade status");
+          setProgressData(d);
+          const newState = d.session?.state;
+          if (newState && newState !== prevStateRef.current) {
+            if (newState === "completed") {
+              showToast("Upgrade complete — ready for post-assessment", "ok");
+            } else if (newState === "monitoring") {
+              showToast(`Upgrade progress: ${d.progress || 0}% — operators stabilizing`, "info");
             }
             await fetchSession();
           }
@@ -805,22 +812,69 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
   }
   async function handleExecute() {
     if (!window.confirm(`Execute upgrade to ${session?.targetVersion || data.targetVersion}?\n\nThis will patch ClusterVersion and begin the rolling upgrade. Proceed?`)) return;
-    await runStep("execute");
-    // Start progress polling
-    pollRef.current = setInterval(async () => {
+    const d = await runStep("execute");
+    if (!d || d.error) return;
+    // Start progress polling — checks real cluster state every 30s
+    startProgressPolling();
+  }
+
+  function startProgressPolling() {
+    if (pollRef.current) clearInterval(pollRef.current);
+    const pollFn = async () => {
       try {
-        const res = await fetch(clusterUrl(`/api/upgrade/orchestrator/progress?sessionId=${sessionId}`, cluster));
+        const res = await fetch(clusterUrl(`/api/upgrade/orchestrator/progress`, cluster), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId }),
+        });
         const d = await res.json();
         setProgressData(d);
         await fetchSession();
-        if (d.phase === "complete" || d.phase === "failed") {
+        if (d.phase === "complete" && d.allStable) {
           clearInterval(pollRef.current);
           pollRef.current = null;
+          showToast("Upgrade complete — all operators stable. Ready for post-assessment.", "ok");
+        } else if (d.phase === "failed") {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+          showToast(`Upgrade failed: ${d.message || "check cluster status"}`, "error");
         }
       } catch {}
-    }, 30000);
+    };
+    pollFn();
+    pollRef.current = setInterval(pollFn, 30000);
   }
-  async function handlePostAssess() { await runStep("post-assess"); }
+
+  async function handleCheckProgress() {
+    setStepRunning("progress");
+    try {
+      const res = await fetch(clusterUrl(`/api/upgrade/orchestrator/progress`, cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      });
+      const d = await res.json();
+      setProgressData(d);
+      await fetchSession();
+      if (d.phase === "complete" && d.allStable) {
+        showToast("Upgrade complete — all operators stable. Ready for post-assessment.", "ok");
+      } else if (d.phase === "failed") {
+        showToast(`Upgrade failed: ${d.message || "check cluster status"}`, "error");
+      } else {
+        showToast(`Upgrade in progress: ${d.progress || 0}% — ${d.operators?.updating || 0} operators updating`, "info");
+        if (!pollRef.current) startProgressPolling();
+      }
+    } catch (e) {
+      showToast(e.message, "error");
+    } finally { setStepRunning(null); }
+  }
+
+  async function handlePostAssess() {
+    const currentState = session?.state || data?.state;
+    if (currentState === "executing") {
+      showToast("Upgrade is still in progress. Wait for monitoring to confirm completion before running post-assessment.", "error");
+      return;
+    }
+    await runStep("post-assess");
+  }
   async function handleCheckCR() { await runStep("cr-status"); }
 
   async function handleExecuteFix(fixId) {
@@ -852,7 +906,8 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     { key: "cr_approved", label: "CR Approved", desc: isLocalCR ? "Blocked — ServiceNow CR required for approval gate" : "Change Request approved — cleared for execution", fromStates: ["cr_submitted"], action: isLocalCR ? null : handleCheckCR, actionLabel: "Check Status" },
     { key: "dry_run_passed", label: "Dry Run", desc: "Simulate upgrade to validate no blocking conditions", fromStates: ["cr_approved"], action: handleDryRun, actionLabel: "Run Dry Run" },
     { key: "executing", label: "Execute Upgrade", desc: "ClusterVersion patched — rolling upgrade in progress", fromStates: ["cr_approved", "dry_run_passed"], action: handleExecute, actionLabel: "Execute" },
-    { key: "completed", label: "Post-Assessment", desc: "Verify all operators healthy on target version", fromStates: ["monitoring", "executing"], action: handlePostAssess, actionLabel: "Run Post-Assessment" },
+    { key: "monitoring", label: "Monitoring", desc: "Watching operator and node rollout progress until completion", fromStates: ["executing"], action: handleCheckProgress, actionLabel: "Check Progress" },
+    { key: "completed", label: "Post-Assessment", desc: "Verify all operators healthy on target version", fromStates: ["monitoring"], action: handlePostAssess, actionLabel: "Run Post-Assessment" },
   ];
 
   const STATE_ORDER = ["idle", "version_validated", "channel_switched", "pre_assessed", "component_analyzed",
@@ -906,8 +961,25 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     if (key === "dry_run_passed" && s.dryRunResult) {
       return { text: s.dryRunResult.passed !== false ? "Passed" : "Failed", color: s.dryRunResult.passed !== false ? "var(--ok)" : "var(--crit)" };
     }
-    if (key === "executing" && state === "executing") {
+    if (key === "executing" && (state === "executing" || state === "monitoring")) {
+      if (progressData?.progress >= 100 || state === "monitoring") {
+        return { text: "Patched", color: "var(--ok)" };
+      }
       return { text: "In Progress", color: "var(--accent2)" };
+    }
+    if (key === "monitoring") {
+      if (state === "completed" || currentIdx > STATE_ORDER.indexOf("monitoring")) {
+        return { text: "Complete", color: "var(--ok)" };
+      }
+      if (state === "monitoring") {
+        const pct = progressData?.progress || 0;
+        return { text: `${pct}%`, color: pct >= 100 ? "var(--ok)" : "var(--accent2)" };
+      }
+      if (state === "executing") {
+        const pct = progressData?.progress || 0;
+        return { text: `${pct}%`, color: "var(--accent2)" };
+      }
+      return null;
     }
     if (key === "completed" && s.postAssessment) {
       const res = s.postAssessment.comparison?.resolved?.length || 0;
@@ -1121,23 +1193,89 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
       );
     }
 
-    // ── Executing / Monitoring: live progress summary ──
-    if ((key === "executing") && (state === "executing" || state === "monitoring") && progressData) {
+    // ── Executing: shows that ClusterVersion was patched ──
+    if (key === "executing" && currentIdx >= STATE_ORDER.indexOf("executing")) {
       return (
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-            <span style={{ fontWeight: 600 }}>Upgrade Progress</span>
-            <span style={{ fontWeight: 700, color: "var(--accent2)" }}>{progressData.progress || 0}%</span>
+        <div style={{ fontSize: 12 }}>
+          <div style={{ color: "var(--ok)", fontWeight: 600 }}>ClusterVersion patched — upgrade initiated</div>
+          <div style={{ color: "var(--text2)", marginTop: 2 }}>Target: {targetVer} | Channel: {s.channel || data?.channel || "stable"}</div>
+        </div>
+      );
+    }
+
+    // ── Monitoring: live progress with operator detail ──
+    if (key === "monitoring" && (state === "executing" || state === "monitoring" || state === "completed")) {
+      const pd = progressData || {};
+      const pct = pd.progress || 0;
+      const phaseLabel = pd.phase === "complete" ? "Complete" : pd.phase === "failed" ? "Failed" : pd.phase === "preparing" ? "Preparing" : pd.phase === "completing" ? "Finalizing" : "Updating";
+      const phaseColor = pd.phase === "complete" ? "var(--ok)" : pd.phase === "failed" ? "var(--crit)" : "var(--accent2)";
+      const ops = pd.operators || {};
+      const opDetails = pd.operatorDetails || [];
+      const nodes = pd.nodes || {};
+
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 12 }}>
+          {/* Progress bar */}
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+              <span style={{ fontWeight: 600, color: phaseColor }}>{phaseLabel}</span>
+              <span style={{ fontWeight: 700, color: phaseColor }}>{pct}%</span>
+            </div>
+            <div style={{ height: 8, background: "var(--border)", borderRadius: 4, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${pct}%`, background: phaseColor, borderRadius: 4, transition: "width 0.8s ease" }} />
+            </div>
           </div>
-          <div style={{ height: 6, background: "var(--border)", borderRadius: 3, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${progressData.progress || 0}%`, background: "var(--accent2)", borderRadius: 3, transition: "width 0.5s" }} />
-          </div>
-          {progressData.operators && (
-            <div style={{ marginTop: 6, fontSize: 11, color: "var(--text2)" }}>
-              Operators: {progressData.operators.updating} updating / {progressData.operators.degraded} degraded / {progressData.operators.total} total
+
+          {/* Operator summary */}
+          {ops.total > 0 && (
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "6px 10px", background: "var(--bg-deep)", borderRadius: 6 }}>
+              <span style={{ color: "var(--ok)" }}>✅ {ops.available || 0} available</span>
+              <span style={{ color: "var(--accent2)" }}>🔄 {ops.updating || 0} updating</span>
+              <span style={{ color: "var(--crit)" }}>⚠️ {ops.degraded || 0} degraded</span>
+              <span style={{ color: "var(--text2)" }}>· {ops.total} total</span>
             </div>
           )}
-          {progressData.message && <div style={{ marginTop: 3, fontSize: 11, color: "var(--text2)" }}>{progressData.message.slice(0, 200)}</div>}
+
+          {/* Node status */}
+          {nodes.total > 0 && (
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "6px 10px", background: "var(--bg-deep)", borderRadius: 6 }}>
+              <span style={{ fontWeight: 600 }}>Nodes:</span>
+              <span style={{ color: "var(--ok)" }}>{nodes.ready || 0} ready</span>
+              {nodes.notReady > 0 && <span style={{ color: "var(--crit)" }}>{nodes.notReady} not ready</span>}
+              <span style={{ color: "var(--text2)" }}>· {nodes.total} total</span>
+            </div>
+          )}
+
+          {/* Operators currently updating/degraded */}
+          {opDetails.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+              <div style={{ fontWeight: 600, fontSize: 11, color: "var(--text2)", marginBottom: 2 }}>Operators in progress:</div>
+              {opDetails.map((op, i) => (
+                <div key={i} style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 11, paddingLeft: 8 }}>
+                  <span style={{ flexShrink: 0, color: op.degraded ? "var(--crit)" : "var(--accent2)" }}>
+                    {op.degraded ? "⚠️" : "🔄"}
+                  </span>
+                  <span style={{ fontWeight: 500 }}>{op.name}</span>
+                  {op.message && <span style={{ color: "var(--text2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 500 }}>{op.message}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Progress message from ClusterVersion */}
+          {pd.message && (
+            <div style={{ fontSize: 11, color: "var(--text2)", fontStyle: "italic", padding: "4px 10px", background: "var(--bg-deep)", borderRadius: 6, borderLeft: "3px solid var(--accent2)" }}>
+              {pd.message.slice(0, 300)}
+            </div>
+          )}
+
+          {/* Last updated timestamp */}
+          {pd.timestamp && (
+            <div style={{ fontSize: 10, color: "var(--text2)", textAlign: "right" }}>
+              Last checked: {new Date(pd.timestamp).toLocaleTimeString()}
+              {state !== "completed" && " · Auto-refreshing every 30s"}
+            </div>
+          )}
         </div>
       );
     }
@@ -1170,7 +1308,23 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
               {(pa.comparison.persistent || []).length > 0 && <div style={{ color: "var(--text2)" }}>Persistent: {pa.comparison.persistent.join(", ")}</div>}
             </div>
           )}
-          {!pa.comparison && <div style={{ color: "var(--ok)" }}>Upgrade completed successfully. All operators healthy on {targetVer}.</div>}
+          {pa.verifiedVersion && (
+            <div style={{ padding: "6px 10px", background: "color-mix(in srgb, var(--ok) 10%, transparent)", borderRadius: 6, marginTop: 4 }}>
+              <span style={{ fontWeight: 600 }}>Verified Cluster Version: </span>
+              <span style={{ fontWeight: 700, color: pa.verifiedVersion === targetVer ? "var(--ok)" : "var(--crit)" }}>
+                {pa.verifiedVersion} {pa.verifiedVersion === targetVer ? "✅" : `❌ (expected ${targetVer})`}
+              </span>
+              {pa.operatorSummary && (
+                <div style={{ marginTop: 4, fontSize: 11, color: "var(--text2)" }}>
+                  Operators: {pa.operatorSummary.available}/{pa.operatorSummary.total} available
+                  {pa.operatorSummary.degraded > 0 && <span style={{ color: "var(--crit)" }}> · {pa.operatorSummary.degraded} degraded</span>}
+                </div>
+              )}
+            </div>
+          )}
+          {!pa.comparison && !pa.verifiedVersion && (
+            <div style={{ color: "var(--text2)", fontStyle: "italic" }}>Post-assessment data pending — click "Run Post-Assessment" to verify cluster health.</div>
+          )}
         </div>
       );
     }

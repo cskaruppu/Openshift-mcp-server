@@ -1261,10 +1261,13 @@ export async function stepCheckUpgradeProgress(sessionId) {
     nodeStatus = { total: nodeItems.length, ready: readyCount, notReady: nodeItems.length - readyCount };
   } catch { /* ignore */ }
 
+  const allStable = phase === "complete" && degradedCount === 0 && updatingCount === 0;
+
   const monitorData = {
     timestamp: new Date().toISOString(),
     phase,
     progress,
+    allStable,
     version: desiredVersion,
     message: progressing?.message || "",
     operators: { updating: updatingCount, degraded: degradedCount, available: availableCount, total: opItems.length },
@@ -1305,16 +1308,42 @@ export async function stepPostAssessment(sessionId) {
   const session = await getSession(sessionId);
   if (!session) throw new Error("Session not found");
 
-  // Re-run preflight checks against the (now current) target version to verify health
+  // Verify the actual cluster version matches the target
+  let verifiedVersion = null;
+  let operatorSummary = null;
   let postReport = null;
   try {
-    const cv = await withClusterContext(session.cluster, () =>
-      ocpGet("/apis/config.openshift.io/v1/clusterversions/version"));
-    const newCurrent = cv?.status?.desired?.version || session.targetVersion;
+    const [cv, ops] = await withClusterContext(session.cluster, () =>
+      Promise.all([
+        ocpGet("/apis/config.openshift.io/v1/clusterversions/version"),
+        ocpGet("/apis/config.openshift.io/v1/clusteroperators"),
+      ]));
+
+    const currentHistory = (cv?.status?.history || []).find(h => h.version === session.targetVersion);
+    const actualVersion = cv?.status?.desired?.version || "";
+    verifiedVersion = actualVersion;
+
+    // Check if upgrade actually completed
+    if (currentHistory?.state !== "Completed" && actualVersion !== session.targetVersion) {
+      return {
+        session,
+        success: false,
+        error: `Upgrade not yet complete. Current version: ${actualVersion}. ` +
+          (currentHistory ? `State: ${currentHistory.state}` : "Target version not found in history."),
+      };
+    }
+
+    // Operator summary
+    const opItems = ops?.items || [];
+    const available = opItems.filter(o => (o.status?.conditions || []).some(c => c.type === "Available" && c.status === "True")).length;
+    const degraded = opItems.filter(o => (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True")).length;
+    const progressing = opItems.filter(o => (o.status?.conditions || []).some(c => c.type === "Progressing" && c.status === "True")).length;
+    operatorSummary = { total: opItems.length, available, degraded, progressing };
+
     const availableUpdates = cv?.status?.availableUpdates || [];
-    const nextTarget = availableUpdates.length > 0 ? availableUpdates[0].version : newCurrent;
+    const nextTarget = availableUpdates.length > 0 ? availableUpdates[0].version : actualVersion;
     postReport = await withClusterContext(session.cluster, () =>
-      runPreflightChecks(nextTarget, newCurrent));
+      runPreflightChecks(nextTarget, actualVersion));
   } catch (err) {
     postReport = { error: err.message };
   }
@@ -1351,6 +1380,8 @@ export async function stepPostAssessment(sessionId) {
     timestamp: new Date().toISOString(),
     report: postReport,
     comparison,
+    verifiedVersion,
+    operatorSummary,
     fromVersion: session.fromVersion,
     toVersion: session.targetVersion,
     duration: session.monitoringData?.snapshots?.length
