@@ -975,23 +975,22 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     if (key === "dry_run_passed" && s.dryRunResult) {
       return { text: s.dryRunResult.passed !== false ? "Passed" : "Failed", color: s.dryRunResult.passed !== false ? "var(--ok)" : "var(--crit)" };
     }
-    if (key === "executing" && (state === "executing" || state === "monitoring")) {
-      if (progressData?.progress >= 100 || state === "monitoring") {
+    if (key === "executing") {
+      if (currentIdx > STATE_ORDER.indexOf("executing")) {
         return { text: "Patched", color: "var(--ok)" };
       }
-      return { text: "In Progress", color: "var(--accent2)" };
+      if (state === "executing") {
+        return { text: "In Progress", color: "var(--accent2)" };
+      }
+      return null;
     }
     if (key === "monitoring") {
-      if (state === "completed" || currentIdx > STATE_ORDER.indexOf("monitoring")) {
+      if (state === "completed") {
         return { text: "Complete", color: "var(--ok)" };
       }
-      if (state === "monitoring") {
+      if (state === "executing" || state === "monitoring") {
         const pct = progressData?.progress || 0;
-        return { text: `${pct}%`, color: pct >= 100 ? "var(--ok)" : "var(--accent2)" };
-      }
-      if (state === "executing") {
-        const pct = progressData?.progress || 0;
-        return { text: `${pct}%`, color: "var(--accent2)" };
+        return { text: `${pct}%`, color: pct >= 95 ? "var(--ok)" : "var(--accent2)" };
       }
       return null;
     }

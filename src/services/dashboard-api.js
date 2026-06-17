@@ -1639,9 +1639,11 @@ export function handleUpgradeStatus(req, res) {
         conditions.Degraded?.status === "True") && progressing?.status !== "True") {
         phase = "failed";
         progress = 0;
-      } else if (available?.status === "True" && progressing?.status !== "True") {
-        phase = "complete";
-        progress = 100;
+      } else {
+        // Progressing=False, Available=True, but history not "Completed"
+        // → CVO hasn't started yet or is between reconcile loops
+        phase = "preparing";
+        progress = 0;
       }
 
       const eventData = {

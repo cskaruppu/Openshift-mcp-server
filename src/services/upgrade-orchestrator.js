@@ -1236,6 +1236,9 @@ export async function stepCheckUpgradeProgress(sessionId) {
   const progressing = conditions.Progressing;
   const progressMsg = progressing?.message || "";
 
+  // The ONLY reliable completion signal is currentHistory.state === "Completed".
+  // Available=True is normal during an upgrade — the cluster stays available.
+  // Progressing=False + Available=True right after PATCH means CVO hasn't started yet.
   if (currentHistory?.state === "Completed") {
     phase = "complete";
     progress = 100;
@@ -1250,7 +1253,6 @@ export async function stepCheckUpgradeProgress(sessionId) {
       manifestsTotal = parseInt(countMatch[2], 10);
       progress = manifestsTotal > 0 ? Math.min(99, Math.round((manifestsDone / manifestsTotal) * 100)) : 5;
     } else {
-      // Fallback: estimate from operator counts
       const totalOps = opItems.length || 1;
       const doneOps = totalOps - updatingCount;
       progress = Math.min(95, Math.round((doneOps / totalOps) * 90) + 5);
@@ -1263,9 +1265,11 @@ export async function stepCheckUpgradeProgress(sessionId) {
   } else if (conditions.Failing?.status === "True" ||
     (conditions.Degraded?.status === "True" && progressing?.status !== "True")) {
     phase = "failed";
-  } else if (conditions.Available?.status === "True") {
-    phase = "complete";
-    progress = 100;
+  } else {
+    // Progressing=False, Available=True, history not "Completed"
+    // → CVO hasn't started yet or is between reconcile loops
+    phase = "preparing";
+    progress = 0;
   }
 
   // Nodes status during upgrade
@@ -1280,7 +1284,8 @@ export async function stepCheckUpgradeProgress(sessionId) {
     nodeStatus = { total: nodeItems.length, ready: readyCount, notReady: nodeItems.length - readyCount };
   } catch { /* ignore */ }
 
-  const allStable = phase === "complete" && degradedCount === 0 && updatingCount === 0;
+  const allStable = phase === "complete" && degradedCount === 0 && updatingCount === 0 &&
+    availableCount === opItems.length && (nodeStatus ? nodeStatus.notReady === 0 : true);
 
   const monitorData = {
     timestamp: new Date().toISOString(),
@@ -1302,13 +1307,25 @@ export async function stepCheckUpgradeProgress(sessionId) {
     existingData.snapshots = existingData.snapshots.slice(-100);
   }
 
-  // Transition on terminal states
-  if (phase === "complete") {
-    await transition(sessionId, UPGRADE_STATES.MONITORING, { monitoringData: existingData });
-    // Wait for operator stabilization then auto-complete
-    const allStable = degradedCount === 0 && updatingCount === 0;
-    if (allStable) {
+  // Transition on terminal states — only based on CVO history, never Available alone.
+  // Re-fetch session state after each transition to avoid stale state.
+  const historyConfirmed = currentHistory?.state === "Completed";
+  const nodesAllReady = nodeStatus ? nodeStatus.notReady === 0 : true;
+  const opsAllHealthy = degradedCount === 0 && updatingCount === 0 && availableCount === opItems.length;
+  const trulyComplete = historyConfirmed && opsAllHealthy && nodesAllReady;
+  let currentSessionState = session.state;
+
+  if (historyConfirmed) {
+    // CVO confirms target version fully applied
+    if (currentSessionState === "executing") {
+      await transition(sessionId, UPGRADE_STATES.MONITORING, { monitoringData: existingData });
+      currentSessionState = "monitoring";
+    }
+    // Only auto-complete when ALL operators healthy + ALL nodes ready + CVO history confirmed
+    if (currentSessionState === "monitoring" && trulyComplete) {
       await transition(sessionId, UPGRADE_STATES.COMPLETED, { monitoringData: existingData });
+    } else {
+      await updateSession(sessionId, { monitoringData: existingData });
     }
   } else if (phase === "failed") {
     await transition(sessionId, UPGRADE_STATES.FAILED, {
@@ -1316,7 +1333,12 @@ export async function stepCheckUpgradeProgress(sessionId) {
       errorMessage: progressing?.message || "Upgrade failed",
     });
   } else {
-    await updateSession(sessionId, { monitoringData: existingData });
+    // Upgrade still in progress — move to monitoring once CVO starts progressing
+    if (currentSessionState === "executing" && progress > 0) {
+      await transition(sessionId, UPGRADE_STATES.MONITORING, { monitoringData: existingData });
+    } else {
+      await updateSession(sessionId, { monitoringData: existingData });
+    }
   }
 
   return { session: await getSession(sessionId), ...monitorData };
