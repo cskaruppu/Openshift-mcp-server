@@ -468,7 +468,19 @@ const GITOPS_NS = process.env.ARGOCD_NAMESPACE || "openshift-gitops";
 export { ensurePersistedLoad as initTrackedNamespaces };
 export function getWatchedNamespaces(cluster) { return [..._cs(cluster).watchedNamespaces]; }
 export function getBaselines(cluster) { return Object.fromEntries(_cs(cluster).baselines); }
-export function getChangeLog(cluster) { return _cs(cluster).changeLog.slice(); }
+export function getChangeLog(cluster) {
+  const s = _cs(cluster);
+  const seen = new Set();
+  const deduped = [];
+  for (const e of s.changeLog) {
+    const k = `${e.namespace}/${e.kind}/${e.name}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    deduped.push(e);
+  }
+  if (deduped.length < s.changeLog.length) s.changeLog.length = 0, s.changeLog.push(...deduped);
+  return deduped;
+}
 export function getChangeTimeline(cluster) { return _cs(cluster).changeTimeline.slice(); }
 export function getGitOpsDrift(cluster) { return Object.fromEntries(_cs(cluster).gitopsDriftCache); }
 
@@ -972,6 +984,11 @@ export async function scanForChanges(cluster) {
         }
         const diffs = diffSpecs(baseline, current, w.kind, w.metadata.name, ns);
         if (diffs.length > 0) {
+          const existingPending = s.changeLog.find(e => e.namespace === ns && e.kind === w.kind && e.name === w.metadata.name && !e.acknowledged);
+          if (existingPending) {
+            s.baselines.set(key, current);
+            continue;
+          }
           const changeType = classifyChangeType(diffs);
           const severity = diffs.some(d => d.severity === "critical") ? "critical" : diffs.some(d => d.severity === "warning") ? "warning" : "info";
           const dismissed = s.dismissedKeys.get(key);
@@ -1066,6 +1083,8 @@ export async function scanConfigChanges(cluster) {
           else if (oldData[k] !== newData[k]) diffs.push({ field: `data/${k}`, old: oldData[k]?.substring(0, 80) || "", new: newData[k]?.substring(0, 80) || "", severity: "info" });
         }
         if (diffs.length > 0) {
+          const existingCM = s.changeLog.find(e => e.namespace === ns && e.kind === "ConfigMap" && e.name === cm.metadata.name && !e.acknowledged);
+          if (existingCM) { s.baselines.set(key + ":hash", currentHash); continue; }
           const riskScore = calculateRiskScore("config-change", "warning", false, diffs.length);
           const entry = {
             id: `chg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -1112,6 +1131,8 @@ export async function scanConfigChanges(cluster) {
           diffs.push({ field: "data/(values)", old: "(changed)", new: "(updated)", severity: "warning" });
         }
         if (diffs.length > 0) {
+          const existingSec = s.changeLog.find(e => e.namespace === ns && e.kind === "Secret" && e.name === sec.metadata.name && !e.acknowledged);
+          if (existingSec) { s.baselines.set(key + ":hash", currentHash); continue; }
           const riskScore = calculateRiskScore("config-change", "critical", false, diffs.length);
           const entry = {
             id: `chg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
