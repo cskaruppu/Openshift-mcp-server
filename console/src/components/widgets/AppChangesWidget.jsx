@@ -37,6 +37,10 @@ export function AppChangesWidget() {
   const [scanning, setScanning] = useState(false);
   const [expandedChange, setExpandedChange] = useState(null);
   const [workloadsOpen, setWorkloadsOpen] = useState(false);
+  const [filterType, setFilterType] = useState("all");
+  const [filterRisk, setFilterRisk] = useState("all");
+  const [confirmDismiss, setConfirmDismiss] = useState(null);
+  const [bulkRunning, setBulkRunning] = useState(false);
 
   const unavailable = data && data.available === false;
   const total = data?.totalChanges ?? 0;
@@ -82,6 +86,39 @@ export function AppChangesWidget() {
       showToast("Action failed: " + err.message, "err");
     }
   };
+
+  const handleBulkAction = async (action) => {
+    setBulkRunning(true);
+    try {
+      const filter = {};
+      if (filterType !== "all") filter.changeType = filterType;
+      if (filterRisk !== "all") filter.riskLevel = filterRisk;
+      const res = await fetch(clusterUrl("/api/dashboard/app-changes/bulk-action", cluster), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, filter }),
+      });
+      const d = await res.json().catch(() => ({}));
+      showToast(d.message || `Bulk ${action} complete`, res.ok ? "ok" : "err");
+      refetch();
+    } catch (err) {
+      showToast("Bulk action failed: " + err.message, "err");
+    } finally {
+      setBulkRunning(false);
+    }
+  };
+
+  const handleDismissConfirm = async () => {
+    if (!confirmDismiss) return;
+    await handleAction(confirmDismiss.id, "dismiss");
+    setConfirmDismiss(null);
+  };
+
+  const filteredChanges = (data?.recentChanges || []).filter(c => {
+    if (filterType !== "all" && c.changeType !== filterType) return false;
+    if (filterRisk !== "all" && c.riskLevel !== filterRisk) return false;
+    return true;
+  });
 
   if (isLoading) {
     return (
@@ -195,15 +232,56 @@ export function AppChangesWidget() {
       {changes.length > 0 && (
         <div className="acw-changes">
           <div className="acw-changes-title">Pending Changes</div>
-          {changes.map((c) => (
+
+          {/* Filter Bar */}
+          <div className="acw-filter-bar">
+            {[["all", "All"], ["image-update", "Image"], ["config-change", "Config"], ["scale", "Scale"], ["resource-tune", "Resource"]].map(([k, l]) => (
+              <button key={k} className={"acw-filter-chip" + (filterType === k ? " active" : "")} onClick={() => setFilterType(k)}>{l}</button>
+            ))}
+            <span style={{ width: 1, height: 16, background: "var(--border)", margin: "0 2px" }} />
+            {[["all", "All Risk"], ["critical", "Critical"], ["high", "High"], ["medium", "Med"], ["low", "Low"]].map(([k, l]) => (
+              <button key={k} className={"acw-filter-chip" + (filterRisk === k ? " active" : "")} onClick={() => setFilterRisk(k)}>{l}</button>
+            ))}
+          </div>
+
+          {/* Bulk Actions */}
+          {filteredChanges.length > 1 && (
+            <div className="acw-bulk-bar">
+              <span className="acw-bulk-label">Bulk</span>
+              <button className="acw-bulk-btn agree" disabled={bulkRunning} onClick={() => handleBulkAction("agree")}>Agree All</button>
+              <button className="acw-bulk-btn ack" disabled={bulkRunning} onClick={() => handleBulkAction("acknowledge")}>Ack All</button>
+              <button className="acw-bulk-btn dismiss" disabled={bulkRunning} onClick={() => handleBulkAction("dismiss")}>Dismiss All</button>
+              <span className="acw-bulk-count">{filteredChanges.length} changes</span>
+            </div>
+          )}
+
+          {filteredChanges.map((c) => (
             <ChangeCard
               key={c.id}
               change={c}
               expanded={expandedChange === c.id}
               onToggle={() => setExpandedChange(expandedChange === c.id ? null : c.id)}
               onAction={handleAction}
+              onDismissConfirm={setConfirmDismiss}
+              cluster={cluster}
             />
           ))}
+        </div>
+      )}
+
+      {/* Dismiss Confirmation */}
+      {confirmDismiss && (
+        <div className="acw-confirm-overlay" onClick={() => setConfirmDismiss(null)}>
+          <div className="acw-confirm-dialog" onClick={e => e.stopPropagation()}>
+            <div className="acw-confirm-title">Confirm Rollback</div>
+            <div className="acw-confirm-msg">
+              This will roll back <strong>{confirmDismiss.kind}/{confirmDismiss.name}</strong> in <strong>{confirmDismiss.namespace}</strong> to its previous baseline state. This action modifies the live cluster.
+            </div>
+            <div className="acw-confirm-actions">
+              <button className="acw-confirm-cancel" onClick={() => setConfirmDismiss(null)}>Cancel</button>
+              <button className="acw-confirm-proceed" onClick={handleDismissConfirm}>Rollback</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -527,9 +605,40 @@ function VelocityBar({ buckets }) {
 }
 
 /* ── Change Card ── */
-function ChangeCard({ change, expanded, onToggle, onAction }) {
+function ChangeCard({ change, expanded, onToggle, onAction, onDismissConfirm, cluster }) {
   const c = change;
   const typeInfo = CHANGE_ICONS[c.changeType] || CHANGE_ICONS.other;
+  const [aiAnalysis, setAiAnalysis] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [timelineData, setTimelineData] = useState(null);
+  const [showTimeline, setShowTimeline] = useState(false);
+
+  const handleAnalyze = async () => {
+    setAiLoading(true);
+    try {
+      const res = await fetch(clusterUrl("/api/dashboard/app-changes/analyze", cluster), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ changeId: c.id }),
+      });
+      const d = await res.json().catch(() => ({}));
+      setAiAnalysis(d.analysis || d.error || "Analysis unavailable");
+    } catch (err) {
+      setAiAnalysis("Failed: " + err.message);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const loadTimeline = async () => {
+    if (timelineData) { setShowTimeline(!showTimeline); return; }
+    try {
+      const res = await fetch(clusterUrl(`/api/dashboard/app-changes/timeline?namespace=${encodeURIComponent(c.namespace)}&kind=${encodeURIComponent(c.kind)}&name=${encodeURIComponent(c.name)}`, cluster));
+      const d = await res.json().catch(() => ({}));
+      setTimelineData(d);
+      setShowTimeline(true);
+    } catch { setTimelineData({ changes: [], resolutions: [] }); setShowTimeline(true); }
+  };
 
   return (
     <div className={"acw-change-card" + (expanded ? " expanded" : "")} style={{ borderLeftColor: typeInfo.color }}>
@@ -585,6 +694,17 @@ function ChangeCard({ change, expanded, onToggle, onAction }) {
             </div>
           )}
 
+          {/* AI Impact Analysis */}
+          <div className="acw-ai-section">
+            <div className="acw-ai-title"><span className="acw-ai-icon">{"🤖"}</span> AI Impact Analysis</div>
+            {!aiAnalysis && (
+              <button className="acw-ai-btn" onClick={handleAnalyze} disabled={aiLoading}>
+                {aiLoading ? "Analyzing..." : "Analyze Impact"}
+              </button>
+            )}
+            {aiAnalysis && <div className="acw-ai-result">{aiAnalysis}</div>}
+          </div>
+
           {/* Rollback Preview */}
           {c.rollbackPreview && (
             <div className="acw-rollback-section">
@@ -600,12 +720,42 @@ function ChangeCard({ change, expanded, onToggle, onAction }) {
             </div>
           )}
 
+          {/* Workload Timeline */}
+          <div className="acw-timeline-section">
+            <button className="acw-timeline-toggle" onClick={loadTimeline}>
+              {showTimeline ? "Hide" : "Show"} Change History
+            </button>
+            {showTimeline && timelineData && (
+              <div style={{ marginTop: 6 }}>
+                <div className="acw-timeline-title">Recent Changes for {c.kind}/{c.name}</div>
+                {(timelineData.changes || []).length === 0 && (timelineData.resolutions || []).length === 0 && (
+                  <div style={{ fontSize: 11, color: "var(--text2)" }}>No prior changes recorded</div>
+                )}
+                {(timelineData.changes || []).slice(0, 8).map((t, i) => (
+                  <div key={i} className="acw-timeline-row">
+                    <span className={"acw-timeline-dot " + (t.severity || "info")} />
+                    <span className="acw-timeline-time">{relTime(t.timestamp)}</span>
+                    <span className="acw-timeline-desc">{t.changeType} — {t.changeCount} field(s), RSK {t.riskScore}</span>
+                  </div>
+                ))}
+                {(timelineData.resolutions || []).slice(0, 5).map((r, i) => (
+                  <div key={`r${i}`} className="acw-timeline-row">
+                    <span className={"acw-timeline-dot info"} />
+                    <span className="acw-timeline-time">{relTime(r.resolvedAt)}</span>
+                    <span className="acw-timeline-desc">{r.changeSummary || r.changeType}</span>
+                    <span className={"acw-timeline-badge " + r.action}>{r.action}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Action Buttons */}
           <div className="acw-action-row">
             <button className="acw-action-btn agree" onClick={() => onAction(c.id, "agree")}>
               {"✓"} Agree
             </button>
-            <button className="acw-action-btn dismiss" onClick={() => onAction(c.id, "dismiss")}>
+            <button className="acw-action-btn dismiss" onClick={() => onDismissConfirm({ id: c.id, kind: c.kind, name: c.name, namespace: c.namespace })}>
               {"✗"} Dismiss
             </button>
             <button className="acw-action-btn ack" onClick={() => onAction(c.id, "acknowledge")}>

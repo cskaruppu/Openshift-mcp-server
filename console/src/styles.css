@@ -4147,6 +4147,117 @@ h3.widget-title {
 .acw-action-badge.acknowledged { background: rgba(99,102,241,.2); color: var(--accent2); }
 .acw-history-time { margin-left: auto; font-size: 10px; color: var(--text2); }
 
+/* ── Bulk Actions Bar ── */
+.acw-bulk-bar {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  background: color-mix(in srgb, var(--accent2) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent2) 20%, transparent);
+  border-radius: 8px; margin-bottom: 10px; flex-wrap: wrap;
+}
+.acw-bulk-label { font-size: 11px; font-weight: 700; color: var(--text2); text-transform: uppercase; letter-spacing: .3px; }
+.acw-bulk-select {
+  font-size: 11px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); cursor: pointer;
+}
+.acw-bulk-btn {
+  font-size: 11px; font-weight: 600; padding: 4px 12px; border-radius: 6px;
+  border: 1px solid var(--border); cursor: pointer; transition: all .15s;
+  background: transparent; color: var(--text);
+}
+.acw-bulk-btn.agree { color: #22c55e; border-color: rgba(34,197,94,.4); }
+.acw-bulk-btn.agree:hover { background: #22c55e; color: #fff; }
+.acw-bulk-btn.dismiss { color: #ef4444; border-color: rgba(239,68,68,.4); }
+.acw-bulk-btn.dismiss:hover { background: #ef4444; color: #fff; }
+.acw-bulk-btn.ack { color: var(--accent2); border-color: color-mix(in srgb, var(--accent2) 40%, transparent); }
+.acw-bulk-btn.ack:hover { background: var(--accent2); color: #fff; }
+.acw-bulk-count { font-size: 10px; color: var(--text2); margin-left: auto; }
+
+/* ── AI Analysis ── */
+.acw-ai-section { margin-top: 10px; }
+.acw-ai-title { font-size: 10px; font-weight: 700; color: var(--accent2); text-transform: uppercase; margin-bottom: 6px; letter-spacing: .5px; display: flex; align-items: center; gap: 6px; }
+.acw-ai-title .acw-ai-icon { font-size: 14px; }
+.acw-ai-btn {
+  font-size: 11px; font-weight: 600; padding: 4px 12px; border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent2) 40%, transparent);
+  background: color-mix(in srgb, var(--accent2) 10%, transparent);
+  color: var(--accent2); cursor: pointer; transition: all .15s;
+}
+.acw-ai-btn:hover { background: var(--accent2); color: #fff; }
+.acw-ai-btn:disabled { opacity: .5; cursor: not-allowed; }
+.acw-ai-result {
+  font-size: 12px; line-height: 1.6; color: var(--text);
+  padding: 8px 10px; border-radius: 6px;
+  background: color-mix(in srgb, var(--accent2) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent2) 15%, transparent);
+  white-space: pre-wrap;
+}
+.acw-ai-result strong { color: var(--accent2); }
+
+/* ── Dismiss Confirmation ── */
+.acw-confirm-overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,.5); z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+}
+.acw-confirm-dialog {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 20px 24px; max-width: 400px; width: 90%;
+  box-shadow: 0 8px 32px rgba(0,0,0,.3);
+}
+.acw-confirm-title { font-size: 15px; font-weight: 700; color: var(--crit); margin-bottom: 8px; }
+.acw-confirm-msg { font-size: 13px; color: var(--text2); line-height: 1.5; margin-bottom: 16px; }
+.acw-confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.acw-confirm-cancel {
+  padding: 6px 16px; border-radius: 8px; font-size: 12px; font-weight: 600;
+  border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;
+}
+.acw-confirm-proceed {
+  padding: 6px 16px; border-radius: 8px; font-size: 12px; font-weight: 600;
+  border: none; background: #ef4444; color: #fff; cursor: pointer;
+}
+.acw-confirm-proceed:hover { background: #dc2626; }
+
+/* ── Workload Timeline ── */
+.acw-timeline-section { margin-top: 10px; }
+.acw-timeline-title { font-size: 10px; font-weight: 700; color: var(--text2); text-transform: uppercase; margin-bottom: 6px; letter-spacing: .5px; }
+.acw-timeline-row {
+  display: flex; align-items: center; gap: 8px; font-size: 11px; padding: 3px 0;
+  border-left: 2px solid var(--border); padding-left: 10px; margin-left: 4px;
+}
+.acw-timeline-row:last-child { border-left-color: transparent; }
+.acw-timeline-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  margin-left: -15px;
+}
+.acw-timeline-dot.critical { background: var(--crit); }
+.acw-timeline-dot.warning { background: var(--warn); }
+.acw-timeline-dot.info { background: var(--ok); }
+.acw-timeline-time { font-size: 10px; color: var(--text2); min-width: 50px; }
+.acw-timeline-desc { flex: 1; color: var(--text); }
+.acw-timeline-badge {
+  font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: 3px;
+  text-transform: uppercase;
+}
+.acw-timeline-badge.agreed { background: rgba(34,197,94,.2); color: var(--ok); }
+.acw-timeline-badge.dismissed { background: rgba(239,68,68,.2); color: var(--crit); }
+.acw-timeline-badge.acknowledged { background: rgba(99,102,241,.2); color: var(--accent2); }
+.acw-timeline-toggle {
+  font-size: 11px; color: var(--accent2); cursor: pointer; background: none;
+  border: none; font-weight: 600; padding: 2px 0; margin-top: 4px;
+}
+
+/* ── Filter Bar ── */
+.acw-filter-bar {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap;
+}
+.acw-filter-chip {
+  font-size: 10px; font-weight: 600; padding: 3px 10px; border-radius: 12px;
+  border: 1px solid var(--border); cursor: pointer; transition: all .15s;
+  background: transparent; color: var(--text2);
+}
+.acw-filter-chip.active { background: var(--accent2); color: #fff; border-color: var(--accent2); }
+.acw-filter-chip:hover:not(.active) { border-color: var(--accent2); color: var(--accent2); }
+
 /* ── Namespace Manager Panel ── */
 .acw-ns-panel {
   background: var(--bg); border: 1px solid var(--border);

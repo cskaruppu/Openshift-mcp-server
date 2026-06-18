@@ -5,6 +5,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { query as dbQuery } from "../utils/db.js";
 import { recordChangeEvent as recordTimelineEvent } from "../services/change-timeline.js";
+import { callLLM } from "../services/llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PERSIST_DIR = join(__dirname, "..", "..", "data");
@@ -240,6 +241,37 @@ const BUSINESS_HOURS = {
   end: parseInt(process.env.CHANGE_FREEZE_END || "22", 10),
   timezone: process.env.CHANGE_FREEZE_TZ || "UTC",
 };
+
+const WEBHOOK_URL = process.env.CHANGE_WEBHOOK_URL || "";
+const WEBHOOK_EVENTS = (process.env.CHANGE_WEBHOOK_EVENTS || "critical,high").split(",").map(s => s.trim());
+
+async function sendWebhook(entry) {
+  if (!WEBHOOK_URL) return;
+  if (!WEBHOOK_EVENTS.includes(entry.riskLevel) && !WEBHOOK_EVENTS.includes("all")) return;
+  const payload = {
+    event: "change_detected",
+    timestamp: entry.timestamp,
+    cluster: "local",
+    workload: `${entry.kind}/${entry.name}`,
+    namespace: entry.namespace,
+    changeType: entry.changeType,
+    riskScore: entry.riskScore,
+    riskLevel: entry.riskLevel,
+    severity: entry.severity,
+    changedBy: entry.changedBy?.user || "unknown",
+    changes: entry.changes.slice(0, 5).map(c => ({ field: c.field, old: c.old, new: c.new })),
+    dashboardUrl: `${process.env.DASHBOARD_URL || ""}/dashboard?change=${entry.id}`,
+  };
+  try {
+    await fetch(WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    console.warn("[app-watcher] Webhook failed:", err.message);
+  }
+}
 
 function calculateRiskScore(changeType, severity, followUp, changeCount) {
   let score = RISK_WEIGHTS[changeType] || 50;
@@ -541,6 +573,101 @@ export async function dismissChange(changeId, cluster) {
   return { found: true, id: changeId, action: "dismissed", rolledBack: true, resolved: true, message: `Rolled back ${entry.kind}/${entry.name} to baseline` };
 }
 
+export async function analyzeChangeImpact(changeId, cluster) {
+  const s = _cs(cluster);
+  const entry = s.changeLog.find(e => e.id === changeId);
+  if (!entry) return { found: false, error: "Change not found" };
+
+  const changesText = entry.changes.map(c => `- ${c.field}: ${c.old} → ${c.new} (${c.severity})`).join("\n");
+  const eventsText = (entry.correlatedEvents || []).map(e => `- ${e.type} ${e.reason}: ${e.message || ""}`).join("\n");
+
+  const prompt = `You are a Kubernetes operations expert. Analyze this workload change and provide a brief impact assessment.
+
+Workload: ${entry.kind}/${entry.name} in namespace ${entry.namespace}
+Risk Score: ${entry.riskScore}/100 (${entry.riskLevel})
+Change Type: ${entry.changeType}
+Changed By: ${entry.changedBy?.user || "unknown"} via ${entry.changedBy?.method || "unknown"}
+Detected: ${entry.timestamp}
+
+Changes:
+${changesText}
+
+${eventsText ? `Correlated Events:\n${eventsText}` : "No correlated events."}
+
+Provide a concise analysis in this exact format:
+**Impact**: [One sentence: what this change does and its blast radius]
+**Risk Assessment**: [One sentence: why this risk level is appropriate or needs adjustment]
+**Recommendation**: [One sentence: what the operator should do - agree, dismiss, or investigate further]
+**Watch For**: [One sentence: what symptoms to monitor after this change]`;
+
+  try {
+    const result = await callLLM({
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 400,
+      temperature: 0.3,
+    });
+    return {
+      found: true,
+      id: changeId,
+      analysis: result.text || result.content || "Analysis unavailable",
+      analyzedAt: new Date().toISOString(),
+    };
+  } catch (err) {
+    return { found: true, id: changeId, error: `AI analysis failed: ${err.message}` };
+  }
+}
+
+export async function bulkAction(action, filter, cluster) {
+  const s = _cs(cluster);
+  const targets = s.changeLog.filter(e => {
+    if (filter.namespace && e.namespace !== filter.namespace) return false;
+    if (filter.changeType && e.changeType !== filter.changeType) return false;
+    if (filter.maxRisk != null && e.riskScore > filter.maxRisk) return false;
+    if (filter.minRisk != null && e.riskScore < filter.minRisk) return false;
+    if (filter.riskLevel && e.riskLevel !== filter.riskLevel) return false;
+    return true;
+  });
+
+  if (targets.length === 0) return { processed: 0, message: "No matching changes" };
+
+  const results = [];
+  for (const entry of [...targets]) {
+    try {
+      let r;
+      if (action === "dismiss") r = await dismissChange(entry.id, cluster);
+      else if (action === "agree") r = await agreeChange(entry.id, cluster);
+      else if (action === "acknowledge") r = await acknowledgeChange(entry.id, cluster);
+      else return { error: `Unknown action: ${action}` };
+      results.push({ id: entry.id, name: `${entry.kind}/${entry.name}`, success: r.resolved || false, error: r.error });
+    } catch (err) {
+      results.push({ id: entry.id, name: `${entry.kind}/${entry.name}`, success: false, error: err.message });
+    }
+  }
+
+  const succeeded = results.filter(r => r.success).length;
+  const failed = results.filter(r => !r.success).length;
+  return {
+    processed: results.length,
+    succeeded,
+    failed,
+    results,
+    message: `Bulk ${action}: ${succeeded} succeeded, ${failed} failed`,
+  };
+}
+
+export function getWorkloadTimeline(namespace, kind, name, cluster) {
+  const s = _cs(cluster);
+  const key = workloadKey(namespace, kind, name);
+  const entries = s.changeTimeline
+    .filter(e => e.namespace === namespace && e.kind === kind && e.name === name)
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+    .slice(0, 20);
+  const historyEntries = s.changeHistory
+    .filter(e => e.namespace === namespace && e.kind === kind && e.name === name)
+    .slice(0, 10);
+  return { workload: `${kind}/${name}`, namespace, changes: entries, resolutions: historyEntries };
+}
+
 export function getWorkloadsByNamespace(cluster) {
   const s = _cs(cluster);
   const byNs = {};
@@ -794,6 +921,7 @@ function recordChange(entry, cluster) {
     details: { changes: entry.changes, riskScore: entry.riskScore, changedBy: entry.changedBy },
     severity: entry.severity || "info",
   }).catch((err) => console.warn("[app-change-watcher] timeline persist failed:", err.message));
+  sendWebhook(entry);
 }
 
 function recordHistory(entry, action, cluster) {
@@ -837,6 +965,11 @@ export async function scanForChanges(cluster) {
           continue;
         }
         if (baseline.generation === current.generation && baseline.resourceVersion === current.resourceVersion) continue;
+        const dismissCooldown = s.dismissedKeys.get(key);
+        if (dismissCooldown && (Date.now() - dismissCooldown.dismissedAt < 90000)) {
+          s.baselines.set(key, current);
+          continue;
+        }
         const diffs = diffSpecs(baseline, current, w.kind, w.metadata.name, ns);
         if (diffs.length > 0) {
           const changeType = classifyChangeType(diffs);
@@ -890,6 +1023,117 @@ export async function scanForChanges(cluster) {
     }
   }
   if (results.length > 0 && (!cluster || cluster === "local")) persistWatcherState().catch(() => {});
+  return results;
+}
+
+export async function scanConfigChanges(cluster) {
+  const s = _cs(cluster);
+  const results = [];
+  const namespaces = [...s.watchedNamespaces];
+  if (namespaces.length === 0) return results;
+
+  for (const ns of namespaces) {
+    try {
+      const [cms, secrets] = await Promise.allSettled([
+        ocpGet(`/api/v1/namespaces/${ns}/configmaps`),
+        ocpGet(`/api/v1/namespaces/${ns}/secrets`),
+      ]);
+
+      const configMaps = cms.status === "fulfilled" ? (cms.value.items || []) : [];
+      for (const cm of configMaps) {
+        if (cm.metadata.name.startsWith("kube-") || cm.metadata.name.startsWith("openshift-")) continue;
+        const key = `${ns}/ConfigMap/${cm.metadata.name}`;
+        const currentHash = JSON.stringify(cm.data || {});
+        const baselineHash = s.baselines.get(key + ":hash");
+        if (!baselineHash) {
+          s.baselines.set(key + ":hash", currentHash);
+          continue;
+        }
+        if (baselineHash === currentHash) continue;
+        const dismissCooldown = s.dismissedKeys.get(key);
+        if (dismissCooldown && (Date.now() - dismissCooldown.dismissedAt < 90000)) {
+          s.baselines.set(key + ":hash", currentHash);
+          continue;
+        }
+
+        const oldData = JSON.parse(baselineHash);
+        const newData = cm.data || {};
+        const diffs = [];
+        const allKeys = new Set([...Object.keys(oldData), ...Object.keys(newData)]);
+        for (const k of allKeys) {
+          if (!(k in oldData)) diffs.push({ field: `data/${k}`, old: "(none)", new: "(added)", severity: "warning" });
+          else if (!(k in newData)) diffs.push({ field: `data/${k}`, old: "(removed)", new: "(none)", severity: "warning" });
+          else if (oldData[k] !== newData[k]) diffs.push({ field: `data/${k}`, old: oldData[k]?.substring(0, 80) || "", new: newData[k]?.substring(0, 80) || "", severity: "info" });
+        }
+        if (diffs.length > 0) {
+          const riskScore = calculateRiskScore("config-change", "warning", false, diffs.length);
+          const entry = {
+            id: `chg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            namespace: ns, kind: "ConfigMap", name: cm.metadata.name,
+            timestamp: new Date().toISOString(), changes: diffs,
+            changeType: "config-change", baseline: { hash: baselineHash },
+            currentSpec: { hash: currentHash }, severity: "warning",
+            acknowledged: false, followUp: false, followUpCount: 0,
+            changedBy: { user: "unknown", method: "api" },
+            riskScore, riskLevel: getRiskLevel(riskScore),
+            changeFreezeViolation: isOutsideBusinessHours() || isWeekend(),
+            correlatedEvents: [],
+          };
+          recordChange(entry, cluster);
+          results.push(entry);
+        }
+        s.baselines.set(key + ":hash", currentHash);
+      }
+
+      const secretList = secrets.status === "fulfilled" ? (secrets.value.items || []) : [];
+      for (const sec of secretList) {
+        if (sec.type === "kubernetes.io/service-account-token") continue;
+        if (sec.metadata.name.startsWith("builder-") || sec.metadata.name.startsWith("deployer-")) continue;
+        const key = `${ns}/Secret/${sec.metadata.name}`;
+        const dataKeys = Object.keys(sec.data || {}).sort().join(",");
+        const currentHash = `keys:${dataKeys}:rv:${sec.metadata.resourceVersion}`;
+        const baselineHash = s.baselines.get(key + ":hash");
+        if (!baselineHash) {
+          s.baselines.set(key + ":hash", currentHash);
+          continue;
+        }
+        if (baselineHash === currentHash) continue;
+        const dismissCooldown = s.dismissedKeys.get(key);
+        if (dismissCooldown && (Date.now() - dismissCooldown.dismissedAt < 90000)) {
+          s.baselines.set(key + ":hash", currentHash);
+          continue;
+        }
+        const oldKeys = (baselineHash.match(/keys:([^:]*)/)?.[1] || "").split(",").filter(Boolean);
+        const newKeys = dataKeys.split(",").filter(Boolean);
+        const diffs = [];
+        for (const k of newKeys) { if (!oldKeys.includes(k)) diffs.push({ field: `data/${k}`, old: "(none)", new: "(added)", severity: "critical" }); }
+        for (const k of oldKeys) { if (!newKeys.includes(k)) diffs.push({ field: `data/${k}`, old: "(removed)", new: "(none)", severity: "critical" }); }
+        if (diffs.length === 0 && baselineHash !== currentHash) {
+          diffs.push({ field: "data/(values)", old: "(changed)", new: "(updated)", severity: "warning" });
+        }
+        if (diffs.length > 0) {
+          const riskScore = calculateRiskScore("config-change", "critical", false, diffs.length);
+          const entry = {
+            id: `chg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            namespace: ns, kind: "Secret", name: sec.metadata.name,
+            timestamp: new Date().toISOString(), changes: diffs,
+            changeType: "config-change", baseline: { hash: baselineHash },
+            currentSpec: { hash: currentHash }, severity: "critical",
+            acknowledged: false, followUp: false, followUpCount: 0,
+            changedBy: { user: "unknown", method: "api" },
+            riskScore, riskLevel: getRiskLevel(riskScore),
+            changeFreezeViolation: isOutsideBusinessHours() || isWeekend(),
+            correlatedEvents: [],
+          };
+          recordChange(entry, cluster);
+          results.push(entry);
+        }
+        s.baselines.set(key + ":hash", currentHash);
+      }
+    } catch (e) {
+      console.warn(`[app-watcher] Config scan error in ${ns}:`, e.message);
+    }
+  }
   return results;
 }
 

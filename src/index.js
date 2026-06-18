@@ -54,7 +54,7 @@ import { registerUpgradeAdvisorTools } from "./tools/upgrade-advisor.js";
 import { registerBenchmarkTools } from "./tools/benchmarks.js";
 import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
-import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, agreeChange, dismissChange, getWorkloadsByNamespace, initTrackedNamespaces, getChangeHistory, getLastScanTime, getLastChangeTime, getHealthStreak } from "./tools/app-change-watcher.js";
+import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, agreeChange, dismissChange, getWorkloadsByNamespace, initTrackedNamespaces, getChangeHistory, getLastScanTime, getLastChangeTime, getHealthStreak, analyzeChangeImpact, bulkAction, getWorkloadTimeline, scanConfigChanges } from "./tools/app-change-watcher.js";
 import { registerImageVulnScannerTools, runImageScan, getScanResults, getScanHistory, getComplianceCache, getImageAgeCache } from "./tools/image-vulnerability-scanner.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, handleUserManagement, getAuthMode, loadUserRoles, getUserRole, setUserRole, getAllUserRoles, checkPermission, getRoles, getUserNamespaces, canAccessNamespace, filterByNamespace, createUser, listUsers, changePassword } from "./services/auth.js";
 import { runRCA, runNamespaceRCA, getActiveInvestigations, getRCAHistory } from "./tools/rca-engine.js";
@@ -5408,6 +5408,7 @@ spec:
           } catch {};
 
           const changes = await scanForChanges(clusterName);
+          const configChanges = await scanConfigChanges(clusterName);
           const log = getChangeLog(clusterName);
           namespaces = getWatchedNamespaces(clusterName);
           const filtered = ns ? log.filter(e => e.namespace === ns) : log;
@@ -5624,6 +5625,50 @@ spec:
         console.error(`[app-changes] action error:`, err.message);
         sendJson(res, 500, { found: false, error: err.message });
       }
+      return;
+    }
+
+    // ── App Change Watcher — AI impact analysis ────────────────────
+    if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/analyze") {
+      const _acCluster = url.searchParams.get("cluster") || "local";
+      try {
+        const body = await readJsonBody(req);
+        const { changeId } = body;
+        if (!changeId) { sendJson(res, 400, { error: "Missing changeId" }); return; }
+        const result = await analyzeChangeImpact(changeId, _acCluster);
+        sendJson(res, result.error ? 500 : 200, result);
+      } catch (err) {
+        sendJson(res, 500, { error: err.message });
+      }
+      return;
+    }
+
+    // ── App Change Watcher — Bulk actions ──────────────────────────
+    if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/bulk-action") {
+      const _acCluster = url.searchParams.get("cluster") || "local";
+      try {
+        const body = await readJsonBody(req);
+        const { action, filter } = body;
+        if (!action) { sendJson(res, 400, { error: "Missing action" }); return; }
+        const result = await withClusterContext(url, async () => {
+          return await bulkAction(action, filter || {}, _acCluster);
+        });
+        sendJson(res, result?.error ? 500 : 200, result || { error: "Agent offline" });
+      } catch (err) {
+        sendJson(res, 500, { error: err.message });
+      }
+      return;
+    }
+
+    // ── App Change Watcher — Workload timeline ─────────────────────
+    if (req.method === "GET" && url.pathname === "/api/dashboard/app-changes/timeline") {
+      const _acCluster = url.searchParams.get("cluster") || "local";
+      const ns = url.searchParams.get("namespace");
+      const kind = url.searchParams.get("kind");
+      const name = url.searchParams.get("name");
+      if (!ns || !kind || !name) { sendJson(res, 400, { error: "Missing namespace, kind, or name" }); return; }
+      const result = getWorkloadTimeline(ns, kind, name, _acCluster);
+      sendJson(res, 200, result);
       return;
     }
 
