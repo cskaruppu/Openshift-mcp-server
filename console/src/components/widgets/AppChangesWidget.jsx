@@ -72,7 +72,11 @@ export function AppChangesWidget() {
         body: JSON.stringify({ changeId, action }),
       });
       const d = await res.json().catch(() => ({}));
-      showToast(d.message || `Change ${action}d`, res.ok ? "ok" : "err");
+      if (!res.ok || d.error) {
+        showToast(d.error || `${action} failed (HTTP ${res.status})`, "err");
+      } else {
+        showToast(d.message || `Change ${action}d successfully`, "ok");
+      }
       refetch();
     } catch (err) {
       showToast("Action failed: " + err.message, "err");

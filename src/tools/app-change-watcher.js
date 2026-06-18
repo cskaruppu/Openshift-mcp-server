@@ -476,33 +476,33 @@ export async function initNamespaceBaselines(nsList, cluster) {
 export async function acknowledgeChange(changeId, cluster) {
   const s = _cs(cluster);
   const entry = s.changeLog.find(e => e.id === changeId);
-  if (!entry) return { found: false };
+  if (!entry) return { found: false, error: "Change not found" };
   s.resolvedIds.add(changeId);
   recordHistory(entry, "acknowledged", cluster);
   const idx = s.changeLog.indexOf(entry);
   if (idx >= 0) s.changeLog.splice(idx, 1);
-  if (!cluster || cluster === "local") persistWatcherState().catch(() => {});
-  return { found: true, id: changeId, action: "acknowledged", resolved: true };
+  if (!cluster || cluster === "local") await persistWatcherState().catch(e => console.error("[watcher] persist error:", e.message));
+  return { found: true, id: changeId, action: "acknowledged", resolved: true, message: `Acknowledged ${entry.kind}/${entry.name}` };
 }
 
 export async function agreeChange(changeId, cluster) {
   const s = _cs(cluster);
   const entry = s.changeLog.find(e => e.id === changeId);
-  if (!entry) return { found: false };
+  if (!entry) return { found: false, error: "Change not found" };
   s.resolvedIds.add(changeId);
   recordHistory(entry, "agreed", cluster);
   const key = workloadKey(entry.namespace, entry.kind, entry.name);
   if (entry.currentSpec) s.baselines.set(key, entry.currentSpec);
   const idx = s.changeLog.indexOf(entry);
   if (idx >= 0) s.changeLog.splice(idx, 1);
-  if (!cluster || cluster === "local") persistWatcherState().catch(() => {});
-  return { found: true, id: changeId, action: "agreed", resolved: true };
+  if (!cluster || cluster === "local") await persistWatcherState().catch(e => console.error("[watcher] persist error:", e.message));
+  return { found: true, id: changeId, action: "agreed", resolved: true, message: `Agreed to ${entry.kind}/${entry.name} — baseline updated` };
 }
 
 export async function dismissChange(changeId, cluster) {
   const s = _cs(cluster);
   const entry = s.changeLog.find(e => e.id === changeId);
-  if (!entry) return { found: false };
+  if (!entry) return { found: false, error: "Change not found" };
   const kindPath = entry.kind === "Deployment" ? "deployments" : entry.kind === "StatefulSet" ? "statefulsets" : "daemonsets";
   const apiPath = `/apis/apps/v1/namespaces/${entry.namespace}/${kindPath}/${entry.name}`;
 
@@ -524,15 +524,21 @@ export async function dismissChange(changeId, cluster) {
     patch.spec.template.spec.containers.push(container);
   }
 
-  await ocpPatch(apiPath, patch, "application/strategic-merge-patch+json");
+  try {
+    await ocpPatch(apiPath, patch, "application/strategic-merge-patch+json");
+  } catch (patchErr) {
+    console.error(`[watcher] dismiss rollback failed for ${entry.kind}/${entry.name}:`, patchErr.message);
+    return { found: true, id: changeId, action: "dismiss", resolved: false, error: `Rollback failed: ${patchErr.message}` };
+  }
+
   const key = workloadKey(entry.namespace, entry.kind, entry.name);
   s.baselines.set(key, baselineSpec);
   s.dismissedKeys.set(key, { baseline: baselineSpec, dismissedAt: Date.now(), followUpCount: 0 });
   recordHistory(entry, "dismissed", cluster);
   const idx = s.changeLog.indexOf(entry);
   if (idx >= 0) s.changeLog.splice(idx, 1);
-  if (!cluster || cluster === "local") persistWatcherState().catch(() => {});
-  return { found: true, id: changeId, action: "dismissed", rolledBack: true, resolved: true };
+  if (!cluster || cluster === "local") await persistWatcherState().catch(e => console.error("[watcher] persist error:", e.message));
+  return { found: true, id: changeId, action: "dismissed", rolledBack: true, resolved: true, message: `Rolled back ${entry.kind}/${entry.name} to baseline` };
 }
 
 export function getWorkloadsByNamespace(cluster) {

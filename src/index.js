@@ -5603,15 +5603,26 @@ spec:
       try {
         const body = await readJsonBody(req);
         const { changeId, action } = body;
+        if (!changeId || !action) {
+          sendJson(res, 400, { found: false, error: "Missing changeId or action" });
+          return;
+        }
         const result = await withClusterContext(url, async () => {
           if (action === "dismiss") return await dismissChange(changeId, _acCluster);
-          if (action === "agree") return agreeChange(changeId, _acCluster);
-          if (action === "acknowledge") return acknowledgeChange(changeId, _acCluster);
+          if (action === "agree") return await agreeChange(changeId, _acCluster);
+          if (action === "acknowledge") return await acknowledgeChange(changeId, _acCluster);
           return { found: false, error: "Unknown action. Use: agree, dismiss, acknowledge" };
         });
-        sendJson(res, 200, result || { found: false, error: "Agent offline" });
+        if (!result || !result.found) {
+          sendJson(res, 404, result || { found: false, error: "Change not found or agent offline" });
+        } else if (result.error) {
+          sendJson(res, 500, result);
+        } else {
+          sendJson(res, 200, result);
+        }
       } catch (err) {
-        sendJson(res, 200, { found: false, error: err.message });
+        console.error(`[app-changes] action error:`, err.message);
+        sendJson(res, 500, { found: false, error: err.message });
       }
       return;
     }
