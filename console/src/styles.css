@@ -336,6 +336,67 @@ body {
   grid-column: unset;
 }
 
+/* ── Widget Focus / Spotlight ── */
+.dash-focusable {
+  position: relative;
+}
+.dash-focus-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 5;
+  width: 26px; height: 26px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  border: 1px solid var(--border); cursor: pointer;
+  opacity: 0; transition: opacity .2s, background .15s;
+  color: var(--text2); backdrop-filter: blur(4px);
+}
+.dash-focusable:hover .dash-focus-btn { opacity: 1; }
+.dash-focus-btn:hover { background: var(--accent2); color: #fff; border-color: var(--accent2); }
+
+.dash-spotlight-overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 500; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .55);
+  backdrop-filter: blur(6px);
+  animation: spotlight-fade-in .25s ease;
+}
+@keyframes spotlight-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+.dash-spotlight-content {
+  width: 92vw; max-width: 1100px; max-height: 90vh;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 16px; overflow: hidden;
+  box-shadow: 0 24px 80px rgba(0,0,0,.4), 0 0 0 1px rgba(99,102,241,.1) inset;
+  animation: spotlight-scale-in .3s cubic-bezier(.16,1,.3,1);
+  display: flex; flex-direction: column;
+}
+@keyframes spotlight-scale-in { from { transform: scale(.92); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+.dash-spotlight-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 18px; border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent2) 5%, var(--surface));
+  flex-shrink: 0;
+}
+.dash-spotlight-label {
+  font-size: 13px; font-weight: 700; color: var(--text);
+  letter-spacing: .3px;
+}
+.dash-spotlight-close {
+  width: 28px; height: 28px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text2); cursor: pointer; transition: all .15s;
+}
+.dash-spotlight-close:hover { background: var(--crit); color: #fff; border-color: var(--crit); }
+
+.dash-spotlight-body {
+  padding: 20px 24px; overflow-y: auto; flex: 1;
+  min-height: 0;
+}
+.dash-spotlight-body .widget-card {
+  border: none; box-shadow: none; background: transparent;
+}
+
 /* ── Capacity & Utilization widget ── */
 .cap-grid {
   display: grid;
