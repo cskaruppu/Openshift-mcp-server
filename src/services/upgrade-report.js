@@ -1003,12 +1003,20 @@ export async function generatePostAssessmentReport(session) {
     );
     doc.moveDown(0.3);
 
+    const execStarted = postAssessment.executedAt || session.executedAt;
+    const execCompleted = postAssessment.completedAt || session.completedAt;
     drawKVTable(doc, [
       ["Upgrade Outcome", outcomeBadge.text],
       ["Duration", safe(postAssessment.duration, "Not recorded")],
       ["From Version", safe(session.fromVersion)],
       ["To Version", safe(session.targetVersion)],
+      ["Verified Version", safe(postAssessment.verifiedVersion, "—")],
       ["Update Channel", safe(session.channel)],
+      ["Upgrade Started", execStarted ? new Date(execStarted).toLocaleString() : "—"],
+      ["Upgrade Completed", execCompleted ? new Date(execCompleted).toLocaleString() : "—"],
+      ["Post-Assessment Run", postAssessment.timestamp ? new Date(postAssessment.timestamp).toLocaleString() : "—"],
+      ["Operators (Total / Available / Degraded)", `${postAssessment.operatorSummary?.total || "—"} / ${postAssessment.operatorSummary?.available || "—"} / ${postAssessment.operatorSummary?.degraded || 0}`],
+      ["Nodes (Total / Ready)", `${postAssessment.nodeStatus?.total || "—"} / ${postAssessment.nodeStatus?.ready || "—"}`],
       ["Post-Check Passed", String(postChecks.passed || 0)],
       ["Post-Check Warnings", String(postChecks.warnings || 0)],
       ["Post-Check Failures", String(postChecks.failed || 0)],

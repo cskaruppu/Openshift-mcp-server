@@ -876,8 +876,8 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
 
   async function handlePostAssess() {
     const currentState = session?.state || data?.state;
-    if (currentState === "executing") {
-      showToast("Upgrade is still in progress. Wait for monitoring to confirm completion before running post-assessment.", "error");
+    if (currentState === "executing" || currentState === "monitoring") {
+      showToast("Upgrade is still in progress. Post-assessment will be available once all operators are healthy and all nodes are ready.", "error");
       return;
     }
     await runStep("post-assess");
@@ -914,7 +914,7 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     { key: "dry_run_passed", label: "Dry Run", desc: "Simulate upgrade to validate no blocking conditions", fromStates: ["cr_approved"], action: handleDryRun, actionLabel: "Run Dry Run" },
     { key: "executing", label: "Execute Upgrade", desc: "ClusterVersion patched — rolling upgrade in progress", fromStates: ["cr_approved", "dry_run_passed"], action: handleExecute, actionLabel: "Execute" },
     { key: "monitoring", label: "Monitoring", desc: "Watching operator and node rollout progress until completion", fromStates: ["executing"], action: handleCheckProgress, actionLabel: "Check Progress" },
-    { key: "completed", label: "Post-Assessment", desc: "Verify all operators healthy on target version", fromStates: ["monitoring"], action: handlePostAssess, actionLabel: "Run Post-Assessment" },
+    { key: "completed", label: "Post-Assessment", desc: "Verify all operators healthy on target version", fromStates: ["completed"], action: handlePostAssess, actionLabel: "Run Post-Assessment" },
   ];
 
   const STATE_ORDER = ["idle", "version_validated", "channel_switched", "pre_assessed", "component_analyzed",
@@ -1439,23 +1439,19 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     // ── Post-Assessment: before/after comparison + total duration ──
     if (key === "completed") {
       const pa = s.postAssessment || {};
-      const started = s.createdAt ? new Date(s.createdAt) : null;
-      const ended = s.updatedAt ? new Date(s.updatedAt) : null;
-      let totalDuration = "—";
-      if (started && ended) {
-        const diffMs = ended - started;
-        const mins = Math.floor(diffMs / 60000);
-        const hrs = Math.floor(mins / 60);
-        totalDuration = hrs > 0 ? `${hrs}h ${mins % 60}m` : `${mins}m`;
-      }
+      const started = pa.executedAt ? new Date(pa.executedAt) : (s.executedAt ? new Date(s.executedAt) : null);
+      const ended = pa.completedAt ? new Date(pa.completedAt) : (s.completedAt ? new Date(s.completedAt) : null);
+      const totalDuration = pa.duration || (started && ended ? (() => { const m = Math.floor((ended - started) / 60000); const h = Math.floor(m / 60); return h > 0 ? `${h}h ${m % 60}m` : `${m}m`; })() : "—");
+      const upgradeComplete = state === "completed";
       return (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 12 }}>
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", padding: "8px 12px", background: "color-mix(in srgb, var(--ok) 8%, transparent)", borderRadius: 8 }}>
-            <div><span style={{ fontWeight: 600 }}>Total Upgrade Duration:</span> <span style={{ fontWeight: 700, color: "var(--ok)" }}>{totalDuration}</span></div>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", padding: "8px 12px", background: upgradeComplete ? "color-mix(in srgb, var(--ok) 8%, transparent)" : "color-mix(in srgb, var(--accent2) 8%, transparent)", borderRadius: 8 }}>
+            <div><span style={{ fontWeight: 600 }}>Total Upgrade Duration:</span> <span style={{ fontWeight: 700, color: upgradeComplete ? "var(--ok)" : "var(--accent2)" }}>{totalDuration}</span></div>
             <div><span style={{ fontWeight: 600 }}>From:</span> {fromVer}</div>
             <div><span style={{ fontWeight: 600 }}>To:</span> {targetVer}</div>
             {started && <div><span style={{ fontWeight: 600 }}>Started:</span> {started.toLocaleString()}</div>}
             {ended && <div><span style={{ fontWeight: 600 }}>Completed:</span> {ended.toLocaleString()}</div>}
+            {!ended && started && <div><span style={{ fontWeight: 600, color: "var(--accent2)" }}>In Progress...</span></div>}
           </div>
           {pa.comparison && (
             <div>

@@ -122,6 +122,8 @@ async function ensureTable() {
   `);
   // Migration: add cluster column if table existed before this change
   await query(`ALTER TABLE upgrade_sessions ADD COLUMN IF NOT EXISTS cluster TEXT NOT NULL DEFAULT 'local'`).catch(() => {});
+  await query(`ALTER TABLE upgrade_sessions ADD COLUMN IF NOT EXISTS executed_at TIMESTAMPTZ`).catch(() => {});
+  await query(`ALTER TABLE upgrade_sessions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`).catch(() => {});
   return true;
 }
 
@@ -259,6 +261,8 @@ function mapSession(row) {
     postAssessment: row.post_assessment,
     monitoringData: row.monitoring_data,
     errorMessage: row.error_message,
+    executedAt: row.executed_at,
+    completedAt: row.completed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1256,7 +1260,9 @@ export async function stepExecuteUpgrade(sessionId) {
     throw err;
   }
 
-  const updated = await transition(sessionId, UPGRADE_STATES.EXECUTING);
+  const updated = await transition(sessionId, UPGRADE_STATES.EXECUTING, {
+    executedAt: new Date().toISOString(),
+  });
   return { session: updated, success: true };
 }
 
@@ -1413,7 +1419,10 @@ export async function stepCheckUpgradeProgress(sessionId) {
     }
     // Only auto-complete when ALL operators healthy + ALL nodes ready + CVO history confirmed
     if (currentSessionState === "monitoring" && trulyComplete) {
-      await transition(sessionId, UPGRADE_STATES.COMPLETED, { monitoringData: existingData });
+      await transition(sessionId, UPGRADE_STATES.COMPLETED, {
+        monitoringData: existingData,
+        completedAt: new Date().toISOString(),
+      });
     } else {
       await updateSession(sessionId, { monitoringData: existingData });
     }
@@ -1439,6 +1448,14 @@ export async function stepCheckUpgradeProgress(sessionId) {
 export async function stepPostAssessment(sessionId) {
   const session = await getSession(sessionId);
   if (!session) throw new Error("Session not found");
+
+  if (session.state === "executing" || session.state === "monitoring") {
+    return {
+      session,
+      success: false,
+      error: "Upgrade is still in progress. Post-assessment can only run after the upgrade is fully complete (all operators available, all nodes ready, CVO history confirmed).",
+    };
+  }
 
   // Verify the actual cluster version matches the target
   let verifiedVersion = null;
@@ -1514,17 +1531,35 @@ export async function stepPostAssessment(sessionId) {
     if (!preIssueSet.has(cat)) comparison.newIssues.push(cat);
   }
 
+  const execStart = session.executedAt ? new Date(session.executedAt) : null;
+  const execEnd = session.completedAt ? new Date(session.completedAt) : null;
+  let durationStr = "unknown";
+  let durationMinutes = null;
+  if (execStart && execEnd) {
+    durationMinutes = Math.round((execEnd - execStart) / 60000);
+    const hrs = Math.floor(durationMinutes / 60);
+    durationStr = hrs > 0 ? `${hrs}h ${durationMinutes % 60}m` : `${durationMinutes}m`;
+  } else if (session.monitoringData?.snapshots?.length) {
+    const first = new Date(session.monitoringData.snapshots[0].timestamp);
+    const last = new Date(session.monitoringData.snapshots[session.monitoringData.snapshots.length - 1].timestamp);
+    durationMinutes = Math.round((last - first) / 60000);
+    const hrs = Math.floor(durationMinutes / 60);
+    durationStr = hrs > 0 ? `${hrs}h ${durationMinutes % 60}m` : `${durationMinutes}m`;
+  }
+
   const postAssessment = {
     timestamp: new Date().toISOString(),
     report: postReport,
     comparison,
     verifiedVersion,
     operatorSummary,
+    nodeStatus,
     fromVersion: session.fromVersion,
     toVersion: session.targetVersion,
-    duration: session.monitoringData?.snapshots?.length
-      ? `${Math.round((Date.now() - new Date(session.monitoringData.snapshots[0].timestamp).getTime()) / 60000)} minutes`
-      : "unknown",
+    executedAt: session.executedAt || null,
+    completedAt: session.completedAt || null,
+    duration: durationStr,
+    durationMinutes,
   };
 
   await updateSession(sessionId, { postAssessment });
@@ -1536,6 +1571,7 @@ export async function stepPostAssessment(sessionId) {
 
     // 1. Add structured work notes with post-assessment summary
     try {
+      const fmtTime = (t) => t ? new Date(t).toLocaleString() : "N/A";
       const workNotes = [
         `[TCS Agentic AI] Post-Upgrade Assessment — ${session.cluster || "local"}`,
         `─────────────────────────────────────────`,
@@ -1543,13 +1579,20 @@ export async function stepPostAssessment(sessionId) {
         `Duration: ${postAssessment.duration}`,
         `Outcome: ${isSuccess ? "SUCCESS" : "REQUIRES REVIEW"}`,
         ``,
+        `── Timing ──`,
+        `Upgrade Started:  ${fmtTime(session.executedAt)}`,
+        `Upgrade Completed: ${fmtTime(session.completedAt)}`,
+        `Post-Assessment:  ${fmtTime(postAssessment.timestamp)}`,
+        ``,
+        `── Verification ──`,
         `Verified Cluster Version: ${verifiedVersion}`,
         `Target Version Match: ${verifiedVersion === session.targetVersion ? "YES ✓" : "NO ✗ — Expected " + session.targetVersion}`,
         ``,
+        `── Cluster Health ──`,
         `Operators: ${operatorSummary?.total || 0} total, ${operatorSummary?.available || 0} available, ${operatorSummary?.degraded || 0} degraded, ${operatorSummary?.progressing || 0} progressing`,
         `Nodes: ${nodeStatus?.total || "N/A"} total, ${nodeStatus?.ready || "N/A"} ready`,
         ``,
-        `Pre → Post Comparison:`,
+        `── Pre → Post Comparison ──`,
         `  Resolved Issues: ${comparison.resolved.length} (${comparison.resolved.join(", ") || "none"})`,
         `  New Issues: ${comparison.newIssues.length} (${comparison.newIssues.join(", ") || "none"})`,
         `  Persistent: ${comparison.persistent.length} (${comparison.persistent.join(", ") || "none"})`,
@@ -1589,8 +1632,11 @@ export async function stepPostAssessment(sessionId) {
             `Upgrade ${session.fromVersion} → ${session.targetVersion} completed and verified.`,
             `Cluster version confirmed: ${verifiedVersion}.`,
             `All ${operatorSummary?.total || 0} operators available, 0 degraded.`,
+            `Nodes: ${nodeStatus?.total || "N/A"} total, ${nodeStatus?.ready || "N/A"} ready.`,
+            `Started: ${session.executedAt ? new Date(session.executedAt).toLocaleString() : "N/A"}.`,
+            `Completed: ${session.completedAt ? new Date(session.completedAt).toLocaleString() : "N/A"}.`,
             `Duration: ${postAssessment.duration}.`,
-            `Pre/post assessment reports attached.`,
+            `Pre/post assessment reports attached (PDF + HTML).`,
             `${comparison.resolved.length} pre-upgrade issues resolved, ${comparison.newIssues.length} new issues.`,
           ].join(" "),
         });
