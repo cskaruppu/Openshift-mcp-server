@@ -3678,7 +3678,7 @@ spec:
         const yaml = generateAgentYAML(platform, agent?.clusterName || clusterName, agent?.apiUrl || "", !!agent?.actionsEnabled, hubUrl, hubToken);
         res.writeHead(200, {
           "Content-Type": "application/x-yaml",
-          "Content-Disposition": `attachment; filename=openshift-mcp-server-${platform}.yaml`,
+          "Content-Disposition": `attachment; filename=agentic-ai-agent-${platform}.yaml`,
         });
         return res.end(yaml);
       }
@@ -3700,7 +3700,7 @@ spec:
         const encodedName = encodeURIComponent(clusterName);
         return sendJson(res, 200, {
           curl: `curl -sL ${hubUrl}/api/agent/yaml/${encodedName} | ${cli} apply -f -`,
-          apply: `${cli} apply -f openshift-mcp-server-${platform}.yaml`,
+          apply: `${cli} apply -f agentic-ai-agent-${platform}.yaml`,
           yaml,
         });
       }

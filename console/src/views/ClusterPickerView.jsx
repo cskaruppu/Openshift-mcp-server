@@ -259,7 +259,7 @@ function generateAgentYAML(platform, clusterName, apiUrl, allowActions, hubToken
   const safeName = (clusterName || "my-cluster").replace(/[^a-z0-9-]/gi, "-").toLowerCase();
   const serverUrl = location.origin;
   const date = new Date().toISOString().split("T")[0];
-  const N = "openshift-mcp-server";
+  const N = "agentic-ai-agent";
 
   const L = [];
   L.push("# ============================================================");
@@ -540,7 +540,7 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
     const blob = new Blob([yaml], { type: "application/x-yaml" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `openshift-mcp-server-${platform || "k8s"}.yaml`;
+    a.download = `agentic-ai-agent-${platform || "k8s"}.yaml`;
     a.click();
     URL.revokeObjectURL(a.href);
   }, [yaml, platform]);
@@ -809,7 +809,7 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
                 <span style={{ fontWeight: 700, fontSize: 14 }}>Manual Deploy</span>
               </div>
               <div className="ccm-yaml-header">
-                <span className="ccm-yaml-filename">openshift-mcp-server-{platform || "k8s"}.yaml</span>
+                <span className="ccm-yaml-filename">agentic-ai-agent-{platform || "k8s"}.yaml</span>
                 <div className="ccm-yaml-actions">
                   <button className="ccm-copy-btn" onClick={copyYAML}>Copy YAML</button>
                   <button className="ccm-download-btn" onClick={downloadYAML}>Download</button>
@@ -818,7 +818,7 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
               <pre className="ccm-yaml-block" style={{ maxHeight: 220 }}><code>{yaml}</code></pre>
               <div className="ccm-yaml-instructions">
                 <h4>Then apply:</h4>
-                <code className="ccm-cmd">{cliTool} apply -f openshift-mcp-server-{platform || "k8s"}.yaml</code>
+                <code className="ccm-cmd">{cliTool} apply -f agentic-ai-agent-{platform || "k8s"}.yaml</code>
               </div>
             </div>
 
