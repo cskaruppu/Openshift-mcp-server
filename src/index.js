@@ -2785,30 +2785,34 @@ async function startSSE() {
         }
       }
 
-      if (!apiUrl) return sendJson(res, 400, { error: "API server URL is required" });
-      if (isBlockedUrl(apiUrl)) return sendJson(res, 400, { error: "API URL targets a blocked address range" });
+      const spokeMode = body.spokeMode || false;
+      if (!apiUrl && !spokeMode) return sendJson(res, 400, { error: "API server URL is required" });
+      if (apiUrl && isBlockedUrl(apiUrl)) return sendJson(res, 400, { error: "API URL targets a blocked address range" });
 
       // For credential storage: prefer extracted bearer token, fall back to raw kubeconfig
       const credToken = token || rawKubeconfig || null;
 
       let testResult = null;
-      try {
-        const headers = { Accept: "application/json" };
-        if (token) headers.Authorization = `Bearer ${token}`;
-        const testResp = await clusterFetch(`${apiUrl}/api/v1/namespaces?limit=1`, {
-          headers,
-          signal: AbortSignal.timeout(10000),
-          ...(rawKubeconfig && !token ? { kubeconfig: rawKubeconfig } : {}),
-        });
-        if (testResp.ok) {
-          const data = await testResp.json();
-          testResult = { ok: true, namespaces: (data.items || []).length };
-        } else {
-          const errText = await testResp.text().catch(() => "");
-          testResult = { ok: false, status: testResp.status, message: errText.slice(0, 200) };
+      if (apiUrl && !spokeMode) {
+        try {
+          const headers = { Accept: "application/json" };
+          if (token) headers.Authorization = `Bearer ${token}`;
+          const testResp = await clusterFetch(`${apiUrl}/api/v1/namespaces?limit=1`, {
+            headers,
+            signal: AbortSignal.timeout(10000),
+          });
+          if (testResp.ok) {
+            const data = await testResp.json();
+            testResult = { ok: true, namespaces: (data.items || []).length };
+          } else {
+            const errText = await testResp.text().catch(() => "");
+            testResult = { ok: false, status: testResp.status, message: errText.slice(0, 200) };
+          }
+        } catch (err) {
+          testResult = { ok: false, message: err.message };
         }
-      } catch (err) {
-        testResult = { ok: false, message: err.message };
+      } else if (spokeMode) {
+        testResult = { ok: true, mode: "spoke", message: "Spoke mode — agent will connect to hub" };
       }
 
       _connectedAgents.set(name, {

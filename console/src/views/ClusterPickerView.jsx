@@ -382,7 +382,7 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
   const [name, setName] = useState("");
   const [apiUrl, setApiUrl] = useState("");
   const [token, setToken] = useState("");
-  const [authTab, setAuthTab] = useState("token"); // token | kubeconfig
+  const [authTab, setAuthTab] = useState("hubtoken"); // hubtoken | token | kubeconfig
   const [allowActions, setAllowActions] = useState(false);
   const [kcParsed, setKcParsed] = useState(null);
   const [status, setStatus] = useState(null);
@@ -501,25 +501,34 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
   const handleConnect = useCallback(async () => {
     let finalToken = token;
     let finalUrl = apiUrl;
+    const isHubTokenMode = authTab === "hubtoken";
     if (kcParsed) {
       if (kcParsed.server && !finalUrl) finalUrl = kcParsed.server;
       if (kcParsed.token) finalToken = kcParsed.token;
     }
     if (!name.trim()) { setStatus({ type: "err", msg: "Please enter a cluster name" }); return; }
-    if (!finalUrl.trim()) { setStatus({ type: "err", msg: "Please enter the API server URL" }); return; }
+    if (!isHubTokenMode && !finalUrl.trim()) { setStatus({ type: "err", msg: "Please enter the API server URL" }); return; }
 
     setConnecting(true);
-    setStatus({ type: "info", msg: "Testing connection to cluster API…" });
+    setStatus({ type: "info", msg: isHubTokenMode ? "Registering cluster for spoke deployment…" : "Testing connection to cluster API…" });
     try {
       const res = await fetch("/api/hub/clusters", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), platform, apiUrl: finalUrl.trim(), token: finalToken }),
+        body: JSON.stringify({
+          name: name.trim(),
+          platform,
+          apiUrl: (finalUrl || "").trim() || undefined,
+          token: isHubTokenMode ? undefined : finalToken,
+          spokeMode: isHubTokenMode || undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to register cluster");
 
-      if (data.connectionTest?.ok) {
+      if (isHubTokenMode) {
+        setStatus({ type: "ok", msg: "Cluster registered! Deploy the agent YAML below — the hub token is pre-configured." });
+      } else if (data.connectionTest?.ok) {
         setStatus({ type: "ok", msg: "Cluster registered and API reachable! Deploy the agent YAML to enable real-time monitoring." });
       } else {
         setStatus({ type: "ok", msg: "Cluster registered! Direct API not available (expected for remote). Deploy the agent YAML to establish the MCP bridge." });
@@ -531,7 +540,7 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
     } finally {
       setConnecting(false);
     }
-  }, [name, apiUrl, token, platform, kcParsed, onConnected]);
+  }, [name, apiUrl, token, platform, authTab, kcParsed, onConnected]);
 
   const downloadYAML = useCallback(() => {
     const blob = new Blob([yaml], { type: "application/x-yaml" });
@@ -649,16 +658,31 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
                 <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. production-east" autoFocus readOnly={isEdit} style={isEdit ? { opacity: .6, cursor: "not-allowed" } : undefined} />
               </div>
               <div className="ccm-field">
-                <label>API Server URL</label>
-                <input type="text" value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} placeholder="https://api.cluster.example.com:6443" />
+                <label>API Server URL {authTab === "hubtoken" && <span className="ccm-optional">(optional for spoke mode)</span>}</label>
+                <input type="text" value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} placeholder={authTab === "hubtoken" ? "Optional — spoke agent connects to hub" : "https://api.cluster.example.com:6443"} />
               </div>
 
               {/* Auth tabs */}
               <div className="ccm-auth">
                 <div className="ccm-auth-tabs">
+                  <button className={"ccm-auth-tab" + (authTab === "hubtoken" ? " active" : "")} onClick={() => setAuthTab("hubtoken")}>Hub Token (Recommended)</button>
                   <button className={"ccm-auth-tab" + (authTab === "token" ? " active" : "")} onClick={() => setAuthTab("token")}>Bearer Token</button>
                   <button className={"ccm-auth-tab" + (authTab === "kubeconfig" ? " active" : "")} onClick={() => setAuthTab("kubeconfig")}>Kubeconfig</button>
                 </div>
+
+                {authTab === "hubtoken" && (
+                  <div className="ccm-field">
+                    <label>Hub API Token</label>
+                    <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "12px 16px", fontSize: 13, color: "#166534", marginBottom: 8 }}>
+                      The hub token is auto-configured in the generated YAML. Just enter the cluster name, select platform, and deploy — the spoke agent will authenticate with the hub automatically.
+                    </div>
+                    {hubToken && (
+                      <div style={{ fontFamily: "monospace", fontSize: 12, color: "#64748b", wordBreak: "break-all", background: "#f8fafc", padding: "8px 12px", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+                        {hubToken.slice(0, 12)}{"•".repeat(20)}{hubToken.slice(-8)}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {authTab === "token" && (
                   <div className="ccm-field">
