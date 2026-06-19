@@ -38,13 +38,15 @@ class ModalErrorBoundary extends Component {
 }
 
 const PLATFORMS = {
-  openshift: { ...PLATFORM_MAP.openshift, ns: "openshift-tcs-agentic", cli: "oc" },
-  rancher:   { ...PLATFORM_MAP.rancher,   ns: "tcs-agentic-system",   cli: "kubectl" },
-  eks:       { ...PLATFORM_MAP.eks,        ns: "tcs-agentic-system",   cli: "kubectl" },
-  aks:       { ...PLATFORM_MAP.aks,        ns: "tcs-agentic-system",   cli: "kubectl" },
-  gke:       { ...PLATFORM_MAP.gke,        ns: "tcs-agentic-system",   cli: "kubectl" },
-  k8s:       { ...PLATFORM_MAP.k8s,        ns: "tcs-agentic-system",   cli: "kubectl" },
+  openshift: { ...PLATFORM_MAP.openshift, ns: "openshift-mcp", cli: "oc" },
+  rancher:   { ...PLATFORM_MAP.rancher,   ns: "openshift-mcp", cli: "kubectl" },
+  eks:       { ...PLATFORM_MAP.eks,        ns: "openshift-mcp", cli: "kubectl" },
+  aks:       { ...PLATFORM_MAP.aks,        ns: "openshift-mcp", cli: "kubectl" },
+  gke:       { ...PLATFORM_MAP.gke,        ns: "openshift-mcp", cli: "kubectl" },
+  k8s:       { ...PLATFORM_MAP.k8s,        ns: "openshift-mcp", cli: "kubectl" },
 };
+
+const AGENT_IMAGE = "quay.io/karuppucs/openshift-mcp-server:latest";
 
 function statusDisplay(status) {
   if (status === "live" || status === "active" || status === "connected") return { label: "Active", color: "var(--ok)", pulse: true };
@@ -257,18 +259,19 @@ function generateAgentYAML(platform, clusterName, apiUrl, allowActions) {
   const safeName = (clusterName || "my-cluster").replace(/[^a-z0-9-]/gi, "-").toLowerCase();
   const serverUrl = location.origin;
   const date = new Date().toISOString().split("T")[0];
+  const N = "openshift-mcp-server";
 
   const L = [];
   L.push("# ============================================================");
   L.push("# TCS Agentic AI — Cluster Agent Deployment");
   L.push(`# Platform : ${p.name}`);
   L.push(`# Cluster  : ${clusterName || safeName}`);
-  L.push("# Registry : quay.io/karuppucs/tcs-agentic-ai:latest");
+  L.push(`# Registry : ${AGENT_IMAGE}`);
   L.push(`# Generated: ${date}`);
   L.push("# ============================================================");
   L.push("#");
-  L.push(`# Apply with: ${p.cli} apply -f tcs-agentic-ai-${platform}.yaml`);
-  L.push(`# Remove with: ${p.cli} delete -f tcs-agentic-ai-${platform}.yaml`);
+  L.push(`# Apply with: ${p.cli} apply -f ${N}-${platform}.yaml`);
+  L.push(`# Remove with: ${p.cli} delete -f ${N}-${platform}.yaml`);
   L.push("#");
   L.push("# Prerequisites:");
   L.push("#   - Cluster admin or equivalent RBAC permissions");
@@ -282,22 +285,22 @@ function generateAgentYAML(platform, clusterName, apiUrl, allowActions) {
   L.push("");
 
   // Namespace
-  L.push("---", "apiVersion: v1", "kind: Namespace", "metadata:", `  name: ${ns}`, "  labels:", "    app.kubernetes.io/name: tcs-agentic-ai", "    app.kubernetes.io/part-of: tcs-agentic-ai", "    app.kubernetes.io/managed-by: tcs-agentic-hub");
+  L.push("---", "apiVersion: v1", "kind: Namespace", "metadata:", `  name: ${ns}`, "  labels:", `    app.kubernetes.io/name: ${N}`, `    app.kubernetes.io/part-of: ${N}`, "    app.kubernetes.io/managed-by: openshift-mcp-hub");
   if (platform === "openshift") L.push("  annotations:", '    openshift.io/description: "TCS AI-Native Cluster Agent"');
   L.push("");
 
   // ServiceAccount
-  L.push("---", "apiVersion: v1", "kind: ServiceAccount", "metadata:", "  name: tcs-agentic-ai", `  namespace: ${ns}`, "  labels:", "    app.kubernetes.io/name: tcs-agentic-ai");
-  if (platform === "eks") L.push("  # Uncomment for IRSA:", "  # annotations:", "  #   eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/tcs-agentic-ai");
+  L.push("---", "apiVersion: v1", "kind: ServiceAccount", "metadata:", `  name: ${N}`, `  namespace: ${ns}`, "  labels:", `    app.kubernetes.io/name: ${N}`);
+  if (platform === "eks") L.push("  # Uncomment for IRSA:", "  # annotations:", `  #   eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/${N}`);
   else if (platform === "aks") L.push("  # Uncomment for Azure Workload Identity:", "  # annotations:", "  #   azure.workload.identity/client-id: <CLIENT_ID>");
-  else if (platform === "gke") L.push("  # Uncomment for GKE Workload Identity:", "  # annotations:", "  #   iam.gke.io/gcp-service-account: tcs-agentic-ai@PROJECT.iam.gserviceaccount.com");
+  else if (platform === "gke") L.push("  # Uncomment for GKE Workload Identity:", "  # annotations:", `  #   iam.gke.io/gcp-service-account: ${N}@PROJECT.iam.gserviceaccount.com`);
   L.push("");
 
   // ClusterRole
-  L.push("---", "apiVersion: rbac.authorization.k8s.io/v1", "kind: ClusterRole", "metadata:", "  name: tcs-agentic-ai-role", "  labels:", "    app.kubernetes.io/name: tcs-agentic-ai", "rules:");
+  L.push("---", "apiVersion: rbac.authorization.k8s.io/v1", "kind: ClusterRole", "metadata:", `  name: ${N}-role`, "  labels:", `    app.kubernetes.io/name: ${N}`, "rules:");
   L.push('  - apiGroups: [""]', "    resources: [pods, pods/log, nodes, services, events, namespaces, configmaps, persistentvolumeclaims, endpoints, replicationcontrollers, serviceaccounts, resourcequotas, limitranges]", '    verbs: ["get", "list", "watch"]');
   L.push('  - apiGroups: ["apps"]', "    resources: [deployments, statefulsets, daemonsets, replicasets]", '    verbs: ["get", "list", "watch"]');
-  L.push('  - apiGroups: ["apps"]', "    resources: [deployments]", "    resourceNames: [tcs-agentic-ai]", '    verbs: ["patch"]');
+  L.push('  - apiGroups: ["apps"]', "    resources: [deployments]", `    resourceNames: [${N}]`, '    verbs: ["patch"]');
   if (allowActions) {
     L.push("  # Remote actions (write) — ENABLED");
     L.push('  - apiGroups: ["apps"]', "    resources: [deployments, statefulsets, daemonsets, deployments/scale, statefulsets/scale]", '    verbs: ["update", "patch"]');
@@ -312,7 +315,7 @@ function generateAgentYAML(platform, clusterName, apiUrl, allowActions) {
   L.push('  - apiGroups: ["autoscaling"]', "    resources: [horizontalpodautoscalers]", '    verbs: ["get", "list", "watch"]');
   L.push('  - apiGroups: ["policy"]', "    resources: [poddisruptionbudgets]", '    verbs: ["get", "list", "watch"]');
   L.push('  - apiGroups: ["rbac.authorization.k8s.io"]', "    resources: [clusterroles, clusterrolebindings, roles, rolebindings]", '    verbs: ["get", "list"]');
-  L.push('  - apiGroups: ["rbac.authorization.k8s.io"]', "    resources: [clusterroles]", "    resourceNames: [tcs-agentic-ai-role]", '    verbs: ["update", "patch"]');
+  L.push('  - apiGroups: ["rbac.authorization.k8s.io"]', "    resources: [clusterroles]", `    resourceNames: [${N}-role]`, '    verbs: ["update", "patch"]');
   L.push('  - apiGroups: ["argoproj.io"]', "    resources: [applications, applicationsets]", '    verbs: ["get", "list"]');
   L.push('  - apiGroups: ["velero.io"]', "    resources: [backups, schedules, backupstoragelocations]", '    verbs: ["get", "list"]');
   L.push('  - apiGroups: ["aquasecurity.github.io"]', "    resources: [vulnerabilityreports, configauditreports]", '    verbs: ["get", "list"]');
@@ -335,43 +338,43 @@ function generateAgentYAML(platform, clusterName, apiUrl, allowActions) {
   L.push("");
 
   // ClusterRoleBinding
-  L.push("---", "apiVersion: rbac.authorization.k8s.io/v1", "kind: ClusterRoleBinding", "metadata:", "  name: tcs-agentic-ai-binding", "  labels:", "    app.kubernetes.io/name: tcs-agentic-ai", "roleRef:", "  apiGroup: rbac.authorization.k8s.io", "  kind: ClusterRole", "  name: tcs-agentic-ai-role", "subjects:", "  - kind: ServiceAccount", "    name: tcs-agentic-ai", `    namespace: ${ns}`);
+  L.push("---", "apiVersion: rbac.authorization.k8s.io/v1", "kind: ClusterRoleBinding", "metadata:", `  name: ${N}-binding`, "  labels:", `    app.kubernetes.io/name: ${N}`, "roleRef:", "  apiGroup: rbac.authorization.k8s.io", "  kind: ClusterRole", `  name: ${N}-role`, "subjects:", "  - kind: ServiceAccount", `    name: ${N}`, `    namespace: ${ns}`);
   L.push("");
 
   // ConfigMap
-  L.push("---", "apiVersion: v1", "kind: ConfigMap", "metadata:", "  name: tcs-agentic-ai-config", `  namespace: ${ns}`, "  labels:", "    app.kubernetes.io/name: tcs-agentic-ai", "data:");
-  L.push(`  HUB_SERVER_URL: "${serverUrl}"`, `  CLUSTER_NAME: "${safeName}"`, `  CLUSTER_PLATFORM: "${platform}"`, '  DEPLOYMENT_NAME: "tcs-agentic-ai"', '  SCAN_INTERVAL: "60"', '  LOG_LEVEL: "info"', '  HUB_TLS_SKIP_VERIFY: "true"', `  ALLOW_REMOTE_ACTIONS: "${allowActions ? "true" : "false"}"`);
+  L.push("---", "apiVersion: v1", "kind: ConfigMap", "metadata:", `  name: ${N}-config`, `  namespace: ${ns}`, "  labels:", `    app.kubernetes.io/name: ${N}`, "data:");
+  L.push(`  HUB_SERVER_URL: "${serverUrl}"`, `  CLUSTER_NAME: "${safeName}"`, `  CLUSTER_PLATFORM: "${platform}"`, `  DEPLOYMENT_NAME: "${N}"`, '  SCAN_INTERVAL: "60"', '  LOG_LEVEL: "info"', '  HUB_TLS_SKIP_VERIFY: "true"', `  ALLOW_REMOTE_ACTIONS: "${allowActions ? "true" : "false"}"`);
   if (apiUrl) L.push(`  API_SERVER_URL: "${apiUrl}"`);
   L.push("");
 
   // Secret
-  L.push("---", "apiVersion: v1", "kind: Secret", "metadata:", "  name: tcs-agentic-ai-secret", `  namespace: ${ns}`, "  labels:", "    app.kubernetes.io/name: tcs-agentic-ai", "type: Opaque", "stringData:", "  # Agent uses in-cluster ServiceAccount token by default.", '  # Uncomment to override:', '  # BEARER_TOKEN: "sha256~xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"', `  AGENT_ID: "${safeName}"`);
+  L.push("---", "apiVersion: v1", "kind: Secret", "metadata:", `  name: ${N}-secret`, `  namespace: ${ns}`, "  labels:", `    app.kubernetes.io/name: ${N}`, "type: Opaque", "stringData:", "  # Agent uses in-cluster ServiceAccount token by default.", '  # Uncomment to override:', '  # BEARER_TOKEN: "sha256~xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"', `  AGENT_ID: "${safeName}"`);
   L.push("");
 
   // Deployment
-  L.push("---", "apiVersion: apps/v1", "kind: Deployment", "metadata:", "  name: tcs-agentic-ai", `  namespace: ${ns}`, "  labels:", "    app: tcs-agentic-ai", "    app.kubernetes.io/name: tcs-agentic-ai", '    app.kubernetes.io/version: "1.2.0"', "spec:", "  replicas: 1", "  revisionHistoryLimit: 3", "  strategy:", "    type: RollingUpdate", "    rollingUpdate:", "      maxUnavailable: 0", "      maxSurge: 1", "  selector:", "    matchLabels:", "      app: tcs-agentic-ai", "  template:", "    metadata:", "      labels:", "        app: tcs-agentic-ai", "        app.kubernetes.io/name: tcs-agentic-ai", "      annotations:", '        prometheus.io/scrape: "true"', '        prometheus.io/port: "8080"', '        prometheus.io/path: "/status"', "    spec:", "      serviceAccountName: tcs-agentic-ai");
+  L.push("---", "apiVersion: apps/v1", "kind: Deployment", "metadata:", `  name: ${N}`, `  namespace: ${ns}`, "  labels:", `    app: ${N}`, `    app.kubernetes.io/name: ${N}`, '    app.kubernetes.io/version: "1.2.0"', "spec:", "  replicas: 1", "  revisionHistoryLimit: 3", "  strategy:", "    type: RollingUpdate", "    rollingUpdate:", "      maxUnavailable: 0", "      maxSurge: 1", "  selector:", "    matchLabels:", `      app: ${N}`, "  template:", "    metadata:", "      labels:", `        app: ${N}`, `        app.kubernetes.io/name: ${N}`, "      annotations:", '        prometheus.io/scrape: "true"', '        prometheus.io/port: "8080"', '        prometheus.io/path: "/status"', "    spec:", `      serviceAccountName: ${N}`);
   if (platform === "openshift") L.push("      securityContext:", "        runAsNonRoot: true");
   else L.push("      securityContext:", "        runAsNonRoot: true", "        runAsUser: 1001", "        runAsGroup: 1001", "        fsGroup: 1001");
-  L.push("      terminationGracePeriodSeconds: 30", "      containers:", "        - name: agent", "          image: quay.io/karuppucs/tcs-agentic-ai:latest", "          imagePullPolicy: Always", "          env:", "            - name: NODE_EXTRA_CA_CERTS", "              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt", "            - name: NODE_TLS_REJECT_UNAUTHORIZED", '              value: "0"', "          envFrom:", "            - configMapRef:", "                name: tcs-agentic-ai-config", "            - secretRef:", "                name: tcs-agentic-ai-secret", "                optional: true", "          ports:", "            - containerPort: 8080", "              name: http", "              protocol: TCP", "          resources:", "            requests:", "              cpu: 50m", "              memory: 64Mi", "            limits:", "              cpu: 200m", "              memory: 128Mi");
+  L.push("      terminationGracePeriodSeconds: 30", "      containers:", "        - name: agent", `          image: ${AGENT_IMAGE}`, "          imagePullPolicy: Always", "          env:", "            - name: NODE_EXTRA_CA_CERTS", "              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt", "            - name: NODE_TLS_REJECT_UNAUTHORIZED", '              value: "0"', "          envFrom:", "            - configMapRef:", `                name: ${N}-config`, "            - secretRef:", `                name: ${N}-secret`, "                optional: true", "          ports:", "            - containerPort: 8080", "              name: http", "              protocol: TCP", "          resources:", "            requests:", "              cpu: 50m", "              memory: 64Mi", "            limits:", "              cpu: 200m", "              memory: 128Mi");
   L.push("          livenessProbe:", "            httpGet:", "              path: /healthz", "              port: 8080", "            initialDelaySeconds: 10", "            periodSeconds: 30", "            timeoutSeconds: 5", "            failureThreshold: 3");
   L.push("          readinessProbe:", "            httpGet:", "              path: /readyz", "              port: 8080", "            initialDelaySeconds: 5", "            periodSeconds: 10", "            timeoutSeconds: 3", "            failureThreshold: 2");
   L.push("          securityContext:", "            allowPrivilegeEscalation: false", "            capabilities:", "              drop:", "                - ALL");
   L.push("");
 
   // Service
-  L.push("---", "apiVersion: v1", "kind: Service", "metadata:", "  name: tcs-agentic-ai", `  namespace: ${ns}`, "  labels:", "    app: tcs-agentic-ai", "spec:", "  type: ClusterIP", "  selector:", "    app: tcs-agentic-ai", "  ports:", "    - port: 8080", "      targetPort: 8080", "      protocol: TCP", "      name: http");
+  L.push("---", "apiVersion: v1", "kind: Service", "metadata:", `  name: ${N}`, `  namespace: ${ns}`, "  labels:", `    app: ${N}`, "spec:", "  type: ClusterIP", "  selector:", `    app: ${N}`, "  ports:", "    - port: 8080", "      targetPort: 8080", "      protocol: TCP", "      name: http");
   L.push("");
 
   // Route / Ingress
   if (platform === "openshift") {
-    L.push("---", "apiVersion: route.openshift.io/v1", "kind: Route", "metadata:", "  name: tcs-agentic-ai", `  namespace: ${ns}`, "  labels:", "    app: tcs-agentic-ai", "spec:", "  to:", "    kind: Service", "    name: tcs-agentic-ai", "  port:", "    targetPort: http", "  tls:", "    termination: edge", "    insecureEdgeTerminationPolicy: Redirect");
+    L.push("---", "apiVersion: route.openshift.io/v1", "kind: Route", "metadata:", `  name: ${N}`, `  namespace: ${ns}`, "  labels:", `    app: ${N}`, "spec:", "  to:", "    kind: Service", `    name: ${N}`, "  port:", "    targetPort: http", "  tls:", "    termination: edge", "    insecureEdgeTerminationPolicy: Redirect");
   } else {
-    L.push("# Uncomment to expose via Ingress:", "# ---", "# apiVersion: networking.k8s.io/v1", "# kind: Ingress", "# metadata:", `#   name: tcs-agentic-ai`, `#   namespace: ${ns}`);
+    L.push("# Uncomment to expose via Ingress:", "# ---", "# apiVersion: networking.k8s.io/v1", "# kind: Ingress", "# metadata:", `#   name: ${N}`, `#   namespace: ${ns}`);
     if (platform === "eks") L.push("#   annotations:", "#     kubernetes.io/ingress.class: alb");
     else if (platform === "gke") L.push("#   annotations:", "#     kubernetes.io/ingress.class: gce");
     else if (platform === "aks") L.push("#   annotations:", "#     kubernetes.io/ingress.class: azure/application-gateway");
     else L.push("#   annotations:", "#     kubernetes.io/ingress.class: nginx");
-    L.push("# spec:", "#   rules:", `#     - host: tcs-agentic-ai.${safeName}.local`, "#       http:", "#         paths:", "#           - path: /", "#             pathType: Prefix", "#             backend:", "#               service:", "#                 name: tcs-agentic-ai", "#                 port:", "#                   number: 8080");
+    L.push("# spec:", "#   rules:", `#     - host: ${N}.${safeName}.local`, "#       http:", "#         paths:", "#           - path: /", "#             pathType: Prefix", "#             backend:", "#               service:", `#                 name: ${N}`, "#                 port:", "#                   number: 8080");
   }
   L.push("");
   return L.join("\n");
@@ -390,8 +393,51 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
   const [kcParsed, setKcParsed] = useState(null);
   const [status, setStatus] = useState(null);
   const [connecting, setConnecting] = useState(false);
+  const [agentStatus, setAgentStatus] = useState(null); // null | "polling" | "live" | "registered" | "error"
+  const [agentDetail, setAgentDetail] = useState("");
+  const pollRef = useRef(null);
   const isEdit = !!editCluster;
   const fileRef = useRef(null);
+
+  useEffect(() => {
+    if (step !== "yaml" || !name.trim()) { setAgentStatus(null); return; }
+    setAgentStatus("polling");
+    setAgentDetail("Waiting for agent to connect...");
+    let cancelled = false;
+    const safeName = name.trim().replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase();
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/agent/status");
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const agents = data.agents || data || [];
+        const match = agents.find(a => a.name === safeName || a.clusterName === safeName);
+        if (!match) {
+          setAgentStatus("polling");
+          setAgentDetail("Agent not yet detected. Deploy the YAML and wait...");
+          return;
+        }
+        const s = match.status || match.state;
+        if (s === "live" || s === "active" || s === "connected") {
+          setAgentStatus("live");
+          setAgentDetail("Agent connected and reporting! Cluster is active.");
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+        } else if (s === "registered" || s === "waiting") {
+          setAgentStatus("registered");
+          setAgentDetail("Cluster registered. Waiting for agent pod to start and connect...");
+        } else if (s === "stale") {
+          setAgentStatus("registered");
+          setAgentDetail("Agent heartbeat stale. Check if the pod is running.");
+        } else {
+          setAgentStatus("registered");
+          setAgentDetail(`Agent status: ${s}. Waiting for connection...`);
+        }
+      } catch { if (!cancelled) { setAgentStatus("polling"); setAgentDetail("Checking agent status..."); } }
+    };
+    poll();
+    pollRef.current = setInterval(poll, 5000);
+    return () => { cancelled = true; if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+  }, [step, name]);
 
   const reset = useCallback(() => {
     if (editCluster) {
@@ -488,7 +534,7 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
     const blob = new Blob([yaml], { type: "application/x-yaml" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `tcs-agentic-ai-${platform || "k8s"}.yaml`;
+    a.download = `openshift-mcp-server-${platform || "k8s"}.yaml`;
     a.click();
     URL.revokeObjectURL(a.href);
   }, [yaml, platform]);
@@ -697,7 +743,7 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
                   </div>
                   <div className="ccm-review-item">
                     <span className="ccm-review-label">Agent Namespace</span>
-                    <span className="ccm-review-value" style={{ fontFamily: "'SF Mono', 'Fira Code', monospace", fontSize: 11 }}>{PLATFORMS[platform]?.ns || "tcs-agentic-system"}</span>
+                    <span className="ccm-review-value" style={{ fontFamily: "'SF Mono', 'Fira Code', monospace", fontSize: 11 }}>{PLATFORMS[platform]?.ns || "openshift-mcp"}</span>
                   </div>
                 </div>
 
@@ -757,7 +803,7 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
                 <span style={{ fontWeight: 700, fontSize: 14 }}>Manual Deploy</span>
               </div>
               <div className="ccm-yaml-header">
-                <span className="ccm-yaml-filename">tcs-agentic-ai-{platform || "k8s"}.yaml</span>
+                <span className="ccm-yaml-filename">openshift-mcp-server-{platform || "k8s"}.yaml</span>
                 <div className="ccm-yaml-actions">
                   <button className="ccm-copy-btn" onClick={copyYAML}>Copy YAML</button>
                   <button className="ccm-download-btn" onClick={downloadYAML}>Download</button>
@@ -766,11 +812,46 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
               <pre className="ccm-yaml-block" style={{ maxHeight: 220 }}><code>{yaml}</code></pre>
               <div className="ccm-yaml-instructions">
                 <h4>Then apply:</h4>
-                <code className="ccm-cmd">{cliTool} apply -f tcs-agentic-ai-{platform || "k8s"}.yaml</code>
+                <code className="ccm-cmd">{cliTool} apply -f openshift-mcp-server-{platform || "k8s"}.yaml</code>
               </div>
             </div>
 
+            {/* Live Agent Status Tracker */}
+            <div className="ccm-agent-tracker">
+              <div className="ccm-tracker-header">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <span style={{ fontWeight: 700, fontSize: 14 }}>Agent Connection Status</span>
+              </div>
+              <div className="ccm-tracker-steps">
+                <div className={"ccm-tracker-step" + (agentStatus ? " done" : " active")}>
+                  <span className={"ccm-tracker-dot" + (agentStatus ? " dot-ok" : " dot-pulse")} />
+                  <span>Cluster registered in hub</span>
+                </div>
+                <div className={"ccm-tracker-step" + (agentStatus === "live" ? " done" : agentStatus === "registered" ? " active" : "")}>
+                  <span className={"ccm-tracker-dot" + (agentStatus === "live" ? " dot-ok" : agentStatus === "registered" ? " dot-pulse" : "")} />
+                  <span>Agent pod deployed &amp; reporting</span>
+                </div>
+                <div className={"ccm-tracker-step" + (agentStatus === "live" ? " done" : "")}>
+                  <span className={"ccm-tracker-dot" + (agentStatus === "live" ? " dot-ok" : "")} />
+                  <span>Full telemetry active</span>
+                </div>
+              </div>
+              <div className={"ccm-tracker-msg ccm-tracker-" + (agentStatus || "polling")}>
+                {agentStatus === "live" && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" strokeWidth="2.5" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>}
+                {agentStatus === "polling" && <span className="ccm-tracker-spinner" />}
+                {agentStatus === "registered" && <span className="ccm-tracker-spinner" />}
+                <span>{agentDetail}</span>
+              </div>
+              {agentStatus === "live" && (
+                <button className="ccm-tracker-done" onClick={onClose}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>
+                  Done — Go to Dashboard
+                </button>
+              )}
+            </div>
+
             {/* What happens next */}
+            {agentStatus !== "live" && (
             <div className="ccm-next-steps">
               <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8 }}>What happens next:</div>
               <div className="ccm-next-list">
@@ -780,6 +861,7 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
                 <div className="ccm-next-item"><span className="ccm-next-num">4</span><span>Full telemetry, AI Chat, and Fleet AI available</span></div>
               </div>
             </div>
+            )}
           </div>
         )}
       </div>

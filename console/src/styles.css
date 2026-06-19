@@ -2856,6 +2856,67 @@ h3.widget-title {
 .ccm-or-divider::before, .ccm-or-divider::after {
   content: ""; flex: 1; height: 1px; background: var(--border);
 }
+/* ── Agent Connection Tracker ── */
+.ccm-agent-tracker {
+  margin-top: 16px; padding: 16px 18px; border-radius: 12px;
+  background: color-mix(in srgb, var(--accent2) 6%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent2) 20%, transparent);
+}
+.ccm-tracker-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 14px; color: var(--text);
+}
+.ccm-tracker-steps {
+  display: flex; flex-direction: column; gap: 0; margin-bottom: 14px; padding-left: 4px;
+}
+.ccm-tracker-step {
+  display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text2);
+  padding: 6px 0; position: relative;
+}
+.ccm-tracker-step.done { color: var(--ok); font-weight: 600; }
+.ccm-tracker-step.active { color: var(--text); font-weight: 500; }
+.ccm-tracker-dot {
+  width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid var(--border); background: transparent;
+}
+.ccm-tracker-dot.dot-ok {
+  border-color: var(--ok); background: var(--ok);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--ok) 40%, transparent);
+}
+.ccm-tracker-dot.dot-pulse {
+  border-color: var(--accent2); background: var(--accent2);
+  animation: tracker-pulse 1.5s ease-in-out infinite;
+}
+@keyframes tracker-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent2) 40%, transparent); }
+  50% { opacity: 0.6; box-shadow: 0 0 8px 3px color-mix(in srgb, var(--accent2) 30%, transparent); }
+}
+.ccm-tracker-msg {
+  display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 8px 12px;
+  border-radius: 8px; font-weight: 500;
+}
+.ccm-tracker-polling, .ccm-tracker-registered {
+  background: color-mix(in srgb, var(--accent2) 8%, transparent);
+  color: var(--accent2);
+}
+.ccm-tracker-live {
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+  color: var(--ok);
+}
+.ccm-tracker-spinner {
+  width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid color-mix(in srgb, var(--accent2) 30%, transparent);
+  border-top-color: var(--accent2);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.ccm-tracker-done {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; margin-top: 12px; padding: 10px 16px; border-radius: 8px;
+  background: var(--ok); color: #fff; border: none; cursor: pointer;
+  font-size: 13px; font-weight: 700; transition: background .15s;
+}
+.ccm-tracker-done:hover { background: color-mix(in srgb, var(--ok) 85%, #000); }
+
 .ccm-next-steps {
   margin-top: 14px; padding: 14px 16px; background: color-mix(in srgb, var(--ok) 6%, transparent);
   border: 1px solid color-mix(in srgb, var(--ok) 20%, transparent); border-radius: 10px;
