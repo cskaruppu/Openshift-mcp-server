@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TCS Agentic AI — Automation Use Cases</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: #f0f4f8; color: #1e293b; }
+
+  .page { max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+  /* Header */
+  .header { background: linear-gradient(135deg, #0f1b2d 0%, #1e3a5f 60%, #2563eb 100%);
+    color: #fff; padding: 32px 40px; border-radius: 16px; margin-bottom: 24px;
+    display: flex; justify-content: space-between; align-items: center; }
+  .header h1 { font-size: 24px; font-weight: 800; letter-spacing: -0.5px; }
+  .header p { font-size: 14px; color: rgba(255,255,255,0.7); margin-top: 4px; }
+  .header-badge { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25);
+    padding: 8px 20px; border-radius: 10px; text-align: center; }
+  .header-badge .big { font-size: 22px; font-weight: 800; }
+  .header-badge .small { font-size: 11px; color: rgba(255,255,255,0.7); }
+
+  /* Key Numbers */
+  .kn-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+  .kn-card { background: #fff; border-radius: 12px; padding: 16px 20px; text-align: center;
+    border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  .kn-num { font-size: 28px; font-weight: 800; color: #1e3a5f; }
+  .kn-desc { font-size: 11px; color: #64748b; margin-top: 4px; font-weight: 500; }
+
+  /* Section */
+  .section { margin-bottom: 24px; }
+  .section-title { font-size: 18px; font-weight: 700; color: #0f1b2d; margin-bottom: 12px;
+    padding-bottom: 8px; border-bottom: 2px solid #2563eb; display: inline-block; }
+
+  /* Main Table */
+  .auto-table { width: 100%; border-collapse: collapse; background: #fff;
+    border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+  .auto-table thead th { background: #1e3a5f; color: #fff; padding: 12px 14px;
+    font-size: 12px; font-weight: 700; text-align: center; text-transform: uppercase;
+    letter-spacing: 0.5px; border-right: 1px solid rgba(255,255,255,0.15); }
+  .auto-table thead th:last-child { border-right: none; }
+  .auto-table tbody td { padding: 12px 14px; border-bottom: 1px solid #e5e7eb;
+    vertical-align: top; font-size: 12px; line-height: 1.5; }
+  .auto-table tbody tr:nth-child(even) { background: #f8fafc; }
+  .auto-table tbody tr:hover { background: #eff6ff; }
+
+  .ticket-type { font-weight: 700; font-size: 13px; color: #0f1b2d; text-align: center;
+    vertical-align: middle !important; background: #dbeafe !important; min-width: 120px; }
+  .auto-poss ul, .levers ul { list-style: none; padding: 0; margin: 0; }
+  .auto-poss li { padding: 2px 0; }
+  .auto-poss li::before { content: "•"; color: #2563eb; font-weight: 700; margin-right: 6px; }
+  .levers li { padding: 2px 0; }
+  .levers li::before { content: "✦"; color: #15803d; margin-right: 6px; }
+  .pct { text-align: center; vertical-align: middle !important; font-size: 16px; font-weight: 800; min-width: 90px; }
+  .pct.industry { color: #c2410c; background: #fed7aa !important; }
+  .pct.tcs { color: #15803d; background: #d1fae5 !important; }
+  .demo { font-style: italic; color: #1e3a5f; font-size: 11px; line-height: 1.6;
+    background: #f0f9ff !important; min-width: 200px; }
+
+  /* Comparison Table */
+  .comp-table { width: 100%; border-collapse: collapse; background: #fff;
+    border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+  .comp-table thead th { background: #1e3a5f; color: #fff; padding: 10px 14px;
+    font-size: 12px; font-weight: 700; text-align: center; border-right: 1px solid rgba(255,255,255,0.15); }
+  .comp-table tbody td { padding: 8px 12px; border-bottom: 1px solid #e5e7eb;
+    text-align: center; font-size: 12px; }
+  .comp-table tbody tr:nth-child(even) { background: #f8fafc; }
+  .feature-name { text-align: left !important; font-weight: 600; min-width: 260px; }
+  .tcs-col { font-weight: 700 !important; }
+
+  .badge-green { background: #d1fae5; color: #15803d; padding: 3px 10px;
+    border-radius: 6px; font-weight: 700; font-size: 11px; }
+  .badge-red { background: #fee2e2; color: #dc2626; padding: 3px 10px;
+    border-radius: 6px; font-size: 11px; }
+  .badge-orange { background: #fed7aa; color: #c2410c; padding: 3px 10px;
+    border-radius: 6px; font-size: 11px; }
+
+  /* Upgrade Lifecycle */
+  .lifecycle { display: flex; gap: 0; margin: 16px 0; flex-wrap: wrap; }
+  .lc-step { flex: 1; min-width: 100px; padding: 10px 8px; text-align: center;
+    background: #1e3a5f; color: #fff; font-size: 10px; font-weight: 600;
+    position: relative; clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 0 100%, 12px 50%); }
+  .lc-step:first-child { clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 0 100%); }
+  .lc-step:nth-child(odd) { background: #2563eb; }
+  .lc-step:nth-child(even) { background: #1e3a5f; }
+
+  .footer { text-align: center; margin-top: 24px; padding: 16px;
+    color: #94a3b8; font-size: 11px; }
+
+  @media print {
+    body { background: #fff; }
+    .page { padding: 0; max-width: 100%; }
+    .header { border-radius: 0; }
+    .auto-table, .comp-table { box-shadow: none; border: 1px solid #ccc; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <div>
+      <h1>TCS Agentic AI</h1>
+      <p>Automation Opportunities for OpenShift Operations — Industry Best Practices</p>
+    </div>
+    <div style="display:flex;gap:12px;">
+      <div class="header-badge">
+        <div class="big">44</div>
+        <div class="small">MCP Tools</div>
+      </div>
+      <div class="header-badge">
+        <div class="big">10</div>
+        <div class="small">Upgrade Steps</div>
+      </div>
+      <div class="header-badge">
+        <div class="big">40-95%</div>
+        <div class="small">Work Volume Reduction</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="kn-grid">
+        <div class="kn-card">
+          <div class="kn-num">44</div>
+          <div class="kn-desc">MCP Tools across 8 categories</div>
+        </div>
+        <div class="kn-card">
+          <div class="kn-num">16</div>
+          <div class="kn-desc">Real-time dashboard widgets</div>
+        </div>
+        <div class="kn-card">
+          <div class="kn-num">10</div>
+          <div class="kn-desc">Upgrade orchestration steps (fully automated)</div>
+        </div>
+        <div class="kn-card">
+          <div class="kn-num">22</div>
+          <div class="kn-desc">Pre-assessment health checks</div>
+        </div>
+        <div class="kn-card">
+          <div class="kn-num">15s</div>
+          <div class="kn-desc">Change detection scan cycle</div>
+        </div>
+        <div class="kn-card">
+          <div class="kn-num">4</div>
+          <div class="kn-desc">Integrated views (Dashboard, AI Chat, Audit, AI Intelligence)</div>
+        </div>
+        <div class="kn-card">
+          <div class="kn-num">3</div>
+          <div class="kn-desc">Governance scorecards (CIS, GitOps, DR)</div>
+        </div>
+        <div class="kn-card">
+          <div class="kn-num">Hub + N</div>
+          <div class="kn-desc">Multi-cluster spoke architecture</div>
+        </div></div>
+
+  <div class="section">
+    <div class="section-title">Automation Opportunities by Ticket Type</div>
+    <table class="auto-table">
+      <thead>
+        <tr>
+          <th>Ticket Type</th>
+          <th>Automation Possibilities</th>
+          <th>Industry<br>Baseline</th>
+          <th>TCS Agentic AI<br>Automation %</th>
+          <th>Solution Levers (TCS Agentic AI)</th>
+          <th>Key Demo Moment</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="ticket-type">Incidents</td>
+          <td class="auto-poss"><ul><li>Pod crash detection & auto-restart</li><li>Node NotReady auto-cordon & drain</li><li>OOM / CPU saturation auto-scaling</li><li>Certificate expiry auto-renewal alerts</li><li>Storage pressure detection & PVC cleanup</li><li>Network policy conflict resolution</li><li>Cross-cluster incident correlation</li></ul></td>
+          <td class="pct industry">60-65%</td>
+          <td class="pct tcs">85-90%</td>
+          <td class="levers"><ul><li>AI Chat — natural language root cause analysis with fix proposals</li><li>16 Dashboard Widgets — real-time health, pods-at-risk, active alerts</li><li>Emergency Actions — cordon, drain, force-delete with confirmation</li><li>MCP Tools — 44 tools (6 cluster health, 5 monitoring, 6 emergency)</li><li>AI Intelligence — anomaly detection, predictive risk, incident correlation</li></ul></td>
+          <td class="demo">Show alert firing → AI Chat suggests fix → one-click apply → cluster heals → audit logged</td>
+        </tr>
+        <tr>
+          <td class="ticket-type">Change Tasks</td>
+          <td class="auto-poss"><ul><li>Deployment image tag updates</li><li>ConfigMap / Secret rotation</li><li>HPA scaling policy adjustments</li><li>RBAC role binding modifications</li><li>Node label & taint management</li><li>Operator subscription channel changes</li><li>Resource quota adjustments</li></ul></td>
+          <td class="pct industry">40-45%</td>
+          <td class="pct tcs">75-80%</td>
+          <td class="levers"><ul><li>Application Change Watcher — 15s scan cycle, AI impact analysis</li><li>Bulk Actions — filter by type/risk, agree/dismiss/acknowledge all</li><li>Webhook Notifications — Slack / PagerDuty integration</li><li>Workload Timeline — per-resource change history</li><li>ConfigMap/Secret Content Tracking — data-level diff detection</li><li>MCP Tools — 7 workload management tools (scale, restart, rollback)</li></ul></td>
+          <td class="demo">Make a deployment change → watch it appear in 15s → click AI Analysis → see blast radius report</td>
+        </tr>
+        <tr>
+          <td class="ticket-type">Change Requests<br>(Cluster Upgrades)</td>
+          <td class="auto-poss"><ul><li>End-to-end cluster upgrade lifecycle (10 steps)</li><li>22-point pre-assessment (operators, etcd, certs, MCPs, storage)</li><li>AI-generated remediation plan with per-fix execution</li><li>ServiceNow CR auto-creation with PDF/HTML reports</li><li>Approval gate integration (auto-polls every 15s)</li><li>Dry run validation before execution</li><li>Live CVO monitoring (operator, node, manifest progress)</li><li>Post-assessment with pre/post comparison</li><li>Auto-close CR with detailed close notes + attached reports</li></ul></td>
+          <td class="pct industry">35-40%</td>
+          <td class="pct tcs">90-95%</td>
+          <td class="levers"><ul><li>Upgrade Orchestrator — 10-step state machine with full audit trail</li><li>Pre-Assessment Report — PDF + HTML attached to ServiceNow CR</li><li>Post-Assessment Report — verified version, operator/node health, timing</li><li>Live Monitoring Dashboard — progress ring, operator donut, CVO manifests</li><li>ServiceNow Integration — CR creation, approval gate, auto-closure</li><li>Precise Timing — executedAt/completedAt with actual wall-clock duration</li></ul></td>
+          <td class="demo">Type 'automate upgrade' → 22 checks run → CR raised → approved → dry run → execute → monitor at 15s intervals → post-assess → CR auto-closed</td>
+        </tr>
+        <tr>
+          <td class="ticket-type">SC Tasks<br>(Service Catalog)</td>
+          <td class="auto-poss"><ul><li>Namespace provisioning with quotas & RBAC</li><li>Service account creation with scoped roles</li><li>PVC provisioning with storage class selection</li><li>Network policy templates for namespace isolation</li><li>Ingress / Route creation for new services</li><li>Certificate request & installation</li></ul></td>
+          <td class="pct industry">35-40%</td>
+          <td class="pct tcs">70-75%</td>
+          <td class="levers"><ul><li>MCP Tools — 5 networking tools (ingress, routes, DNS, network policies)</li><li>MCP Tools — 4 storage tools (PVC, StorageClass, snapshots)</li><li>AI Chat — conversational infrastructure provisioning</li><li>GitOps Sync Status — ArgoCD application monitoring</li><li>Audit Trail — full compliance logging of all provisioning actions</li></ul></td>
+          <td class="demo">Ask AI Chat 'create namespace orders-prod with 4 CPU quota' → resources created → audit logged → GitOps sync verified</td>
+        </tr>
+        <tr>
+          <td class="ticket-type">Release Tasks<br>(Deployment & Rollout)</td>
+          <td class="auto-poss"><ul><li>Blue-green / canary deployment orchestration</li><li>Image vulnerability scanning before deploy</li><li>Rollback on failed health checks</li><li>GitOps drift detection & auto-sync</li><li>DR readiness validation (backups, schedules)</li><li>Multi-cluster fleet-wide rollout coordination</li></ul></td>
+          <td class="pct industry">35-40%</td>
+          <td class="pct tcs">70-75%</td>
+          <td class="levers"><ul><li>Image Vulnerabilities Widget — Trivy/ACS scan results in dashboard</li><li>GitOps Sync Score — synced/out-of-sync/degraded ArgoCD apps</li><li>DR Readiness Score — backup completion, failed jobs, schedule health</li><li>App Change Watcher — tracks rollout changes with dismiss confirmation</li><li>MCP Tools — 5 GitOps tools (sync, diff, rollback, promote)</li><li>Hub/Spoke Architecture — fleet-wide coordination across clusters</li></ul></td>
+          <td class="demo">Deploy new image → vuln scan shows results → change watcher detects → AI analyzes impact → GitOps sync confirms → DR backup validates</td>
+        </tr></tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <div class="section-title">End-to-End Cluster Upgrade Lifecycle (10 Automated Steps)</div>
+    <div class="lifecycle">
+      <div class="lc-step">1. Version<br>Validation</div>
+      <div class="lc-step">2. Pre-Assessment<br>(22 Checks)</div>
+      <div class="lc-step">3. Component<br>Analysis</div>
+      <div class="lc-step">4. Remediation<br>Plan</div>
+      <div class="lc-step">5. ServiceNow<br>CR</div>
+      <div class="lc-step">6. CR<br>Approval</div>
+      <div class="lc-step">7. Dry<br>Run</div>
+      <div class="lc-step">8. Execute<br>Upgrade</div>
+      <div class="lc-step">9. Live<br>Monitoring</div>
+      <div class="lc-step">10. Post-<br>Assessment</div>
+    </div>
+    <p style="font-size:12px;color:#64748b;margin-top:8px;">
+      Each step produces audit trail entries. Pre &amp; post assessment reports (PDF + HTML) are auto-attached to ServiceNow CR.
+      CR is auto-closed with verified version, operator/node health, and precise timing (start → complete → duration).
+    </p>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Competitive Differentiators</div>
+    <table class="comp-table">
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>TCS Agentic AI</th>
+          <th>Lens</th>
+          <th>Rancher</th>
+          <th>K8s Dashboard</th>
+          <th>Manual / Scripts</th>
+        </tr>
+      </thead>
+      <tbody><tr><td class="feature-name"><span class="">AI-Native Operations (LLM-Powered)</span></td><td class="tcs-col"><span class="badge-green">Yes</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td></tr><tr><td class="feature-name"><span class="">MCP Protocol (44 Tools, Universal Agent)</span></td><td class="tcs-col"><span class="badge-green">Yes</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td></tr><tr><td class="feature-name"><span class="">Multi-Cluster Hub/Spoke</span></td><td class="tcs-col"><span class="badge-green">Yes</span></td><td class="comp-col"><span class="badge-orange">Limited</span></td><td class="comp-col"><span class="">Yes</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-orange">Partial</span></td></tr><tr><td class="feature-name"><span class="">End-to-End Upgrade Automation (10 Steps)</span></td><td class="tcs-col"><span class="badge-green">Yes</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-orange">Partial</span></td></tr><tr><td class="feature-name"><span class="">ServiceNow CR Integration</span></td><td class="tcs-col"><span class="badge-green">Native</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-orange">Manual</span></td></tr><tr><td class="feature-name"><span class="">CIS Compliance Scoring</span></td><td class="tcs-col"><span class="badge-green">Built-in</span></td><td class="comp-col"><span class="badge-orange">Plugin</span></td><td class="comp-col"><span class="badge-orange">External</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-orange">External</span></td></tr><tr><td class="feature-name"><span class="">Predictive Risk AI</span></td><td class="tcs-col"><span class="badge-green">Yes</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td></tr><tr><td class="feature-name"><span class="">Real-Time Change Detection (15s)</span></td><td class="tcs-col"><span class="badge-green">Yes</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td></tr><tr><td class="feature-name"><span class="">AI Impact Analysis per Change</span></td><td class="tcs-col"><span class="badge-green">Yes</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td></tr><tr><td class="feature-name"><span class="">Post-Assessment PDF/HTML Reports</span></td><td class="tcs-col"><span class="badge-green">Auto-generated</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-orange">Manual</span></td></tr><tr><td class="feature-name"><span class="">Emergency Actions + Audit Trail</span></td><td class="tcs-col"><span class="badge-green">Yes + Audit</span></td><td class="comp-col"><span class="badge-orange">Limited</span></td><td class="comp-col"><span class="">Yes</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-orange">Manual</span></td></tr><tr><td class="feature-name"><span class="">Natural Language Cluster Operations</span></td><td class="tcs-col"><span class="badge-green">Yes</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td><td class="comp-col"><span class="badge-red">No</span></td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    Powered by TCS &mdash; Tata Consultancy Services. All rights reserved. &nbsp;|&nbsp; Generated for hackathon demonstration purposes.
+  </div>
+
+</div>
+</body>
+</html>
