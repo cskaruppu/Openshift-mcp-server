@@ -1122,24 +1122,18 @@ function extractFromKubeconfig(raw) {
   if (!t.includes("apiVersion") || !(t.includes("clusters:") || t.includes("kind: Config"))) return null;
 
   let server = null, token = null;
-  let section = null, inUser = false;
-  for (const line of t.split("\n")) {
-    const s = line.trim();
-    if (/^clusters:\s*$/.test(s)) { section = "clusters"; inUser = false; continue; }
-    if (/^users:\s*$/.test(s)) { section = "users"; inUser = false; continue; }
-    if (/^(contexts|preferences|apiVersion|kind):/.test(s)) { section = null; continue; }
-    if (section === "clusters" && /^server:\s*/.test(s)) {
-      server = s.replace(/^server:\s*/, "").replace(/^["']|["']$/g, "");
+  const lines = t.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const s = lines[i].trim();
+    if (!server && /^server:\s*.+/.test(s)) {
+      server = s.replace(/^server:\s*/, "").replace(/^["']|["']$/g, "").trim();
     }
-    if (section === "users") {
-      if (/^-\s+name:/.test(s)) inUser = true;
-      if (/^user:/.test(s)) inUser = true;
-      if (inUser && /^token:\s*/.test(s)) {
-        token = s.replace(/^token:\s*/, "").replace(/^["']|["']$/g, "");
-      }
+    if (!token && /^token:\s*.+/.test(s)) {
+      token = s.replace(/^token:\s*/, "").replace(/^["']|["']$/g, "").trim();
     }
   }
-  return (server || token) ? { server, token } : null;
+  if (!server && !token) return null;
+  return { server, token };
 }
 
 function isBlockedUrl(urlStr) {
@@ -2778,20 +2772,24 @@ async function startSSE() {
 
       // Detect kubeconfig YAML pasted as token and extract server + token
       let kubeconfigDetected = false;
+      let rawKubeconfig = null;
       if (token) {
         const kc = extractFromKubeconfig(token);
         if (kc) {
           kubeconfigDetected = true;
+          rawKubeconfig = token;
           if (kc.server && !apiUrl) apiUrl = kc.server;
-          if (kc.server && apiUrl === kc.server) { /* already set */ }
           if (kc.token) token = kc.token;
           else token = null;
-          console.error(`[hub] Kubeconfig detected — extracted server: ${kc.server || "none"}, token: ${kc.token ? "yes" : "no"}`);
+          console.error(`[hub] Kubeconfig detected — extracted server: ${kc.server || "none"}, token: ${kc.token ? "yes" : "no"}, clientCert: ${kc.hasClientCert ? "yes" : "no"}`);
         }
       }
 
       if (!apiUrl) return sendJson(res, 400, { error: "API server URL is required" });
       if (isBlockedUrl(apiUrl)) return sendJson(res, 400, { error: "API URL targets a blocked address range" });
+
+      // For credential storage: prefer extracted bearer token, fall back to raw kubeconfig
+      const credToken = token || rawKubeconfig || null;
 
       let testResult = null;
       try {
@@ -2800,6 +2798,7 @@ async function startSSE() {
         const testResp = await clusterFetch(`${apiUrl}/api/v1/namespaces?limit=1`, {
           headers,
           signal: AbortSignal.timeout(10000),
+          ...(rawKubeconfig && !token ? { kubeconfig: rawKubeconfig } : {}),
         });
         if (testResp.ok) {
           const data = await testResp.json();
@@ -2816,7 +2815,8 @@ async function startSSE() {
         clusterName: name,
         platform: platform || "k8s",
         apiUrl,
-        token: token || null,
+        token: credToken,
+        kubeconfig: rawKubeconfig || null,
         registeredAt: new Date().toISOString(),
         lastReport: null,
         lastReportTime: null,
@@ -2826,8 +2826,8 @@ async function startSSE() {
       });
 
       saveClustersToDB().catch(() => {});
-      if (token && apiUrl) {
-        clusterCredsUpsert(name, apiUrl, token, platform || "openshift", name).catch(err =>
+      if (credToken && apiUrl) {
+        clusterCredsUpsert(name, apiUrl, credToken, platform || "openshift", name).catch(err =>
           console.warn(`[hub] Failed to save cluster credentials: ${err.message}`));
       }
       console.error(`[hub] Cluster registered: ${name} (${platform}) — test: ${testResult?.ok ? "OK" : "skipped/failed"}${kubeconfigDetected ? " (kubeconfig parsed)" : ""}`);
@@ -3561,12 +3561,13 @@ spec:
 
     if (url.pathname === "/api/agent/status" && req.method === "GET") {
       const agents = [];
-      for (const [, agent] of _connectedAgents) {
+      for (const [key, agent] of _connectedAgents) {
         const elapsed = agent.lastReportTime
           ? (Date.now() - new Date(agent.lastReportTime).getTime()) / 1000
           : null;
         agents.push({
           ...agent,
+          name: key,
           token: undefined,
           hasToken: !!agent.token,
           mcpVersion: agent.mcpVersion || null,

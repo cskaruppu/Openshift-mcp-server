@@ -234,20 +234,13 @@ function parseKubeconfig(text) {
   const t = text.trim();
   if (!t.includes("apiVersion") || (!t.includes("clusters:") && !t.includes("kind: Config"))) return null;
   let server = null, token = null;
-  let section = null, inUser = false;
   for (const line of t.split("\n")) {
     const s = line.trim();
-    if (/^clusters:\s*$/.test(s)) { section = "clusters"; inUser = false; continue; }
-    if (/^users:\s*$/.test(s)) { section = "users"; inUser = false; continue; }
-    if (/^(contexts|preferences|apiVersion|kind):/.test(s)) { section = null; continue; }
-    if (section === "clusters" && /^server:\s*/.test(s)) {
-      server = s.replace(/^server:\s*/, "").replace(/^["']|["']$/g, "");
+    if (!server && /^server:\s*.+/.test(s)) {
+      server = s.replace(/^server:\s*/, "").replace(/^["']|["']$/g, "").trim();
     }
-    if (section === "users") {
-      if (/^-\s+name:/.test(s) || /^user:\s*$/.test(s)) { inUser = true; continue; }
-      if (inUser && /^token:\s*/.test(s)) {
-        token = s.replace(/^token:\s*/, "").replace(/^["']|["']$/g, "");
-      }
+    if (!token && /^token:\s*.+/.test(s)) {
+      token = s.replace(/^token:\s*/, "").replace(/^["']|["']$/g, "").trim();
     }
   }
   return (server || token) ? { server, token } : null;
@@ -417,7 +410,11 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
         if (!res.ok || cancelled) return;
         const data = await res.json();
         const agents = data.agents || data || [];
-        const match = agents.find(a => a.name === safeName || a.clusterName === safeName);
+        const match = agents.find(a => {
+          const n = (a.name || "").toLowerCase();
+          const cn = (a.clusterName || "").toLowerCase();
+          return n === safeName || cn === safeName;
+        });
         if (!match) {
           setAgentStatus("polling");
           setAgentDetail("Agent not yet detected. Deploy the YAML and wait...");
