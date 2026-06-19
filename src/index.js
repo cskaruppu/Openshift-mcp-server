@@ -3668,13 +3668,12 @@ spec:
         const rawName = decodeURIComponent(yamlMatch[1]);
         const clusterName = findClusterKey(rawName) || rawName;
         const agent = _connectedAgents.get(clusterName);
-        if (!agent) return sendJson(res, 404, { error: `Cluster "${rawName}" not found` });
-        const hubUrl = process.env.HUB_EXTERNAL_URL || process.env.HUB_SERVER_URL || "http://localhost:3001";
-        const platform = agent.platform || "k8s";
-        const yaml = generateAgentYAML(platform, agent.clusterName || clusterName, agent.apiUrl || "", !!agent.actionsEnabled, hubUrl);
+        const hubUrl = process.env.HUB_EXTERNAL_URL || process.env.HUB_SERVER_URL || `${url.protocol}//${req.headers.host}`;
+        const platform = url.searchParams.get("platform") || agent?.platform || "openshift";
+        const yaml = generateAgentYAML(platform, agent?.clusterName || clusterName, agent?.apiUrl || "", !!agent?.actionsEnabled, hubUrl);
         res.writeHead(200, {
           "Content-Type": "application/x-yaml",
-          "Content-Disposition": `attachment; filename=tcs-agentic-ai-${platform}.yaml`,
+          "Content-Disposition": `attachment; filename=openshift-mcp-server-${platform}.yaml`,
         });
         return res.end(yaml);
       }
@@ -3688,15 +3687,14 @@ spec:
         const rawName = decodeURIComponent(yamlCmdMatch[1]);
         const clusterName = findClusterKey(rawName) || rawName;
         const agent = _connectedAgents.get(clusterName);
-        if (!agent) return sendJson(res, 404, { error: `Cluster "${rawName}" not found` });
-        const hubUrl = process.env.HUB_EXTERNAL_URL || process.env.HUB_SERVER_URL || "http://localhost:3001";
-        const platform = agent.platform || "k8s";
+        const hubUrl = process.env.HUB_EXTERNAL_URL || process.env.HUB_SERVER_URL || `${url.protocol}//${req.headers.host}`;
+        const platform = url.searchParams.get("platform") || agent?.platform || "openshift";
         const cli = platform === "openshift" ? "oc" : "kubectl";
-        const yaml = generateAgentYAML(platform, agent.clusterName || clusterName, agent.apiUrl || "", !!agent.actionsEnabled, hubUrl);
+        const yaml = generateAgentYAML(platform, agent?.clusterName || clusterName, agent?.apiUrl || "", !!agent?.actionsEnabled, hubUrl);
         const encodedName = encodeURIComponent(clusterName);
         return sendJson(res, 200, {
-          curl: `curl -sO ${hubUrl}/api/agent/yaml/${encodedName}`,
-          apply: `${cli} apply -f tcs-agentic-ai-${platform}.yaml`,
+          curl: `curl -sL ${hubUrl}/api/agent/yaml/${encodedName} | ${cli} apply -f -`,
+          apply: `${cli} apply -f openshift-mcp-server-${platform}.yaml`,
           yaml,
         });
       }
