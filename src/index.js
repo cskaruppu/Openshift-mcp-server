@@ -3211,6 +3211,10 @@ async function startSSE() {
       return sendJson(res, 200, { spokes: getSpokeStatus() });
     }
 
+    if (url.pathname === "/api/spoke/join-token" && req.method === "GET") {
+      return sendJson(res, 200, { token: process.env.MCP_API_TOKEN || "" });
+    }
+
     if (url.pathname === "/api/spoke/join-config" && req.method === "GET") {
       const platform = url.searchParams.get("platform") || "openshift";
       const clusterName = url.searchParams.get("clusterName") || "<cluster-name>";
@@ -3670,7 +3674,8 @@ spec:
         const agent = _connectedAgents.get(clusterName);
         const hubUrl = process.env.HUB_EXTERNAL_URL || process.env.HUB_SERVER_URL || `${url.protocol}//${req.headers.host}`;
         const platform = url.searchParams.get("platform") || agent?.platform || "openshift";
-        const yaml = generateAgentYAML(platform, agent?.clusterName || clusterName, agent?.apiUrl || "", !!agent?.actionsEnabled, hubUrl);
+        const hubToken = process.env.MCP_API_TOKEN || "";
+        const yaml = generateAgentYAML(platform, agent?.clusterName || clusterName, agent?.apiUrl || "", !!agent?.actionsEnabled, hubUrl, hubToken);
         res.writeHead(200, {
           "Content-Type": "application/x-yaml",
           "Content-Disposition": `attachment; filename=openshift-mcp-server-${platform}.yaml`,
@@ -3690,7 +3695,8 @@ spec:
         const hubUrl = process.env.HUB_EXTERNAL_URL || process.env.HUB_SERVER_URL || `${url.protocol}//${req.headers.host}`;
         const platform = url.searchParams.get("platform") || agent?.platform || "openshift";
         const cli = platform === "openshift" ? "oc" : "kubectl";
-        const yaml = generateAgentYAML(platform, agent?.clusterName || clusterName, agent?.apiUrl || "", !!agent?.actionsEnabled, hubUrl);
+        const hubToken = process.env.MCP_API_TOKEN || "";
+        const yaml = generateAgentYAML(platform, agent?.clusterName || clusterName, agent?.apiUrl || "", !!agent?.actionsEnabled, hubUrl, hubToken);
         const encodedName = encodeURIComponent(clusterName);
         return sendJson(res, 200, {
           curl: `curl -sL ${hubUrl}/api/agent/yaml/${encodedName} | ${cli} apply -f -`,

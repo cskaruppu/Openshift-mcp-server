@@ -26,7 +26,7 @@ const APP_LABEL = "openshift-mcp-server";
  * @param {string} hubServerUrl  - The hub server URL the agent should phone home to
  * @returns {string} The YAML manifest as a string
  */
-export function generateAgentYAML(platform, clusterName, apiUrl, allowActions, hubServerUrl) {
+export function generateAgentYAML(platform, clusterName, apiUrl, allowActions, hubServerUrl, hubApiToken) {
   const p = PLATFORMS[platform] || PLATFORMS.k8s;
   const ns = p.ns;
   const safeName = (clusterName || "my-cluster").replace(/[^a-z0-9-]/gi, "-").toLowerCase();
@@ -120,7 +120,7 @@ export function generateAgentYAML(platform, clusterName, apiUrl, allowActions, h
   L.push("");
 
   // Secret
-  L.push("---", "apiVersion: v1", "kind: Secret", "metadata:", "  name: openshift-mcp-server-secret", `  namespace: ${ns}`, "  labels:", "    app.kubernetes.io/name: openshift-mcp-server", "type: Opaque", "stringData:", '  MCP_API_TOKEN: ""', '  HUB_API_TOKEN: ""', `  AGENT_ID: "${safeName}"`);
+  L.push("---", "apiVersion: v1", "kind: Secret", "metadata:", "  name: openshift-mcp-server-secret", `  namespace: ${ns}`, "  labels:", "    app.kubernetes.io/name: openshift-mcp-server", "type: Opaque", "stringData:", `  MCP_API_TOKEN: "${hubApiToken || ""}"`, `  HUB_API_TOKEN: "${hubApiToken || ""}"`, `  AGENT_ID: "${safeName}"`);
   L.push("");
 
   // Deployment — spoke mode (stateless, phones home to hub)

@@ -253,7 +253,7 @@ function parseKubeconfig(text) {
   return (server || token) ? { server, token } : null;
 }
 
-function generateAgentYAML(platform, clusterName, apiUrl, allowActions) {
+function generateAgentYAML(platform, clusterName, apiUrl, allowActions, hubToken) {
   const p = PLATFORMS[platform] || PLATFORMS.k8s;
   const ns = p.ns;
   const safeName = (clusterName || "my-cluster").replace(/[^a-z0-9-]/gi, "-").toLowerCase();
@@ -348,7 +348,7 @@ function generateAgentYAML(platform, clusterName, apiUrl, allowActions) {
   L.push("");
 
   // Secret
-  L.push("---", "apiVersion: v1", "kind: Secret", "metadata:", `  name: ${N}-secret`, `  namespace: ${ns}`, "  labels:", `    app.kubernetes.io/name: ${N}`, "type: Opaque", "stringData:", '  MCP_API_TOKEN: ""', '  HUB_API_TOKEN: ""', `  AGENT_ID: "${safeName}"`);
+  L.push("---", "apiVersion: v1", "kind: Secret", "metadata:", `  name: ${N}-secret`, `  namespace: ${ns}`, "  labels:", `    app.kubernetes.io/name: ${N}`, "type: Opaque", "stringData:", `  MCP_API_TOKEN: "${hubToken || ""}"`, `  HUB_API_TOKEN: "${hubToken || ""}"`, `  AGENT_ID: "${safeName}"`);
   L.push("");
 
   // Deployment — spoke mode (stateless, phones home to hub)
@@ -396,9 +396,14 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
   const [connecting, setConnecting] = useState(false);
   const [agentStatus, setAgentStatus] = useState(null); // null | "polling" | "live" | "registered" | "error"
   const [agentDetail, setAgentDetail] = useState("");
+  const [hubToken, setHubToken] = useState("");
   const pollRef = useRef(null);
   const isEdit = !!editCluster;
   const fileRef = useRef(null);
+
+  useEffect(() => {
+    fetch("/api/spoke/join-token").then(r => r.json()).then(d => setHubToken(d.token || "")).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (step !== "yaml" || !name.trim()) { setAgentStatus(null); return; }
@@ -463,8 +468,8 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
 
   const yaml = useMemo(() => {
     if (!platform) return "";
-    return generateAgentYAML(platform, name, apiUrl, allowActions);
-  }, [platform, name, apiUrl, allowActions]);
+    return generateAgentYAML(platform, name, apiUrl, allowActions, hubToken);
+  }, [platform, name, apiUrl, allowActions, hubToken]);
 
   const handleFileUpload = useCallback((e) => {
     const file = e.target.files?.[0];
