@@ -341,28 +341,28 @@ function generateAgentYAML(platform, clusterName, apiUrl, allowActions) {
   L.push("---", "apiVersion: rbac.authorization.k8s.io/v1", "kind: ClusterRoleBinding", "metadata:", `  name: ${N}-binding`, "  labels:", `    app.kubernetes.io/name: ${N}`, "roleRef:", "  apiGroup: rbac.authorization.k8s.io", "  kind: ClusterRole", `  name: ${N}-role`, "subjects:", "  - kind: ServiceAccount", `    name: ${N}`, `    namespace: ${ns}`);
   L.push("");
 
-  // ConfigMap
+  // ConfigMap — spoke mode (stateless, no DB, phones home to hub)
   L.push("---", "apiVersion: v1", "kind: ConfigMap", "metadata:", `  name: ${N}-config`, `  namespace: ${ns}`, "  labels:", `    app.kubernetes.io/name: ${N}`, "data:");
-  L.push(`  HUB_SERVER_URL: "${serverUrl}"`, `  CLUSTER_NAME: "${safeName}"`, `  CLUSTER_PLATFORM: "${platform}"`, `  DEPLOYMENT_NAME: "${N}"`, '  SCAN_INTERVAL: "60"', '  LOG_LEVEL: "info"', '  HUB_TLS_SKIP_VERIFY: "true"', `  ALLOW_REMOTE_ACTIONS: "${allowActions ? "true" : "false"}"`);
+  L.push('  MCP_MODE: "spoke"', '  MCP_TRANSPORT: "sse"', '  MCP_SERVER_PORT: "3000"', '  LOG_LEVEL: "info"', `  HUB_URL: "${serverUrl}"`, `  CLUSTER_NAME: "${safeName}"`, `  CLUSTER_PLATFORM: "${platform}"`, `  DEPLOYMENT_NAME: "${N}"`, `  MCP_NAMESPACE: "${ns}"`, '  AUTH_MODE: "none"', '  EMERGENCY_AUTO_FIX: "false"', '  ALLOW_PRIVATE_CLUSTER_IPS: "true"', '  HUB_TLS_SKIP_VERIFY: "true"', `  ALLOW_REMOTE_ACTIONS: "${allowActions ? "true" : "false"}"`);
   if (apiUrl) L.push(`  API_SERVER_URL: "${apiUrl}"`);
   L.push("");
 
   // Secret
-  L.push("---", "apiVersion: v1", "kind: Secret", "metadata:", `  name: ${N}-secret`, `  namespace: ${ns}`, "  labels:", `    app.kubernetes.io/name: ${N}`, "type: Opaque", "stringData:", "  # Agent uses in-cluster ServiceAccount token by default.", '  # Uncomment to override:', '  # BEARER_TOKEN: "sha256~xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"', `  AGENT_ID: "${safeName}"`);
+  L.push("---", "apiVersion: v1", "kind: Secret", "metadata:", `  name: ${N}-secret`, `  namespace: ${ns}`, "  labels:", `    app.kubernetes.io/name: ${N}`, "type: Opaque", "stringData:", '  MCP_API_TOKEN: ""', '  HUB_API_TOKEN: ""', `  AGENT_ID: "${safeName}"`);
   L.push("");
 
-  // Deployment
-  L.push("---", "apiVersion: apps/v1", "kind: Deployment", "metadata:", `  name: ${N}`, `  namespace: ${ns}`, "  labels:", `    app: ${N}`, `    app.kubernetes.io/name: ${N}`, '    app.kubernetes.io/version: "1.2.0"', "spec:", "  replicas: 1", "  revisionHistoryLimit: 3", "  strategy:", "    type: RollingUpdate", "    rollingUpdate:", "      maxUnavailable: 0", "      maxSurge: 1", "  selector:", "    matchLabels:", `      app: ${N}`, "  template:", "    metadata:", "      labels:", `        app: ${N}`, `        app.kubernetes.io/name: ${N}`, "      annotations:", '        prometheus.io/scrape: "true"', '        prometheus.io/port: "8080"', '        prometheus.io/path: "/status"', "    spec:", `      serviceAccountName: ${N}`);
+  // Deployment — spoke mode (stateless, phones home to hub)
+  L.push("---", "apiVersion: apps/v1", "kind: Deployment", "metadata:", `  name: ${N}`, `  namespace: ${ns}`, "  labels:", `    app: ${N}`, `    app.kubernetes.io/name: ${N}`, "    app.kubernetes.io/component: spoke", '    app.kubernetes.io/version: "1.2.0"', "spec:", "  replicas: 1", "  revisionHistoryLimit: 3", "  strategy:", "    type: RollingUpdate", "    rollingUpdate:", "      maxUnavailable: 0", "      maxSurge: 1", "  selector:", "    matchLabels:", `      app: ${N}`, "  template:", "    metadata:", "      labels:", `        app: ${N}`, `        app.kubernetes.io/name: ${N}`, '        tcs.com/mcp-mode: spoke', `        tcs.com/cluster-name: "${safeName}"`, "      annotations:", '        prometheus.io/scrape: "true"', '        prometheus.io/port: "3000"', '        prometheus.io/path: "/status"', "    spec:", `      serviceAccountName: ${N}`);
   if (platform === "openshift") L.push("      securityContext:", "        runAsNonRoot: true");
   else L.push("      securityContext:", "        runAsNonRoot: true", "        runAsUser: 1001", "        runAsGroup: 1001", "        fsGroup: 1001");
-  L.push("      terminationGracePeriodSeconds: 30", "      containers:", "        - name: agent", `          image: ${AGENT_IMAGE}`, "          imagePullPolicy: Always", "          env:", "            - name: NODE_EXTRA_CA_CERTS", "              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt", "            - name: NODE_TLS_REJECT_UNAUTHORIZED", '              value: "0"', "          envFrom:", "            - configMapRef:", `                name: ${N}-config`, "            - secretRef:", `                name: ${N}-secret`, "                optional: true", "          ports:", "            - containerPort: 8080", "              name: http", "              protocol: TCP", "          resources:", "            requests:", "              cpu: 50m", "              memory: 64Mi", "            limits:", "              cpu: 200m", "              memory: 128Mi");
-  L.push("          livenessProbe:", "            httpGet:", "              path: /healthz", "              port: 8080", "            initialDelaySeconds: 10", "            periodSeconds: 30", "            timeoutSeconds: 5", "            failureThreshold: 3");
-  L.push("          readinessProbe:", "            httpGet:", "              path: /readyz", "              port: 8080", "            initialDelaySeconds: 5", "            periodSeconds: 10", "            timeoutSeconds: 3", "            failureThreshold: 2");
+  L.push("      terminationGracePeriodSeconds: 30", "      containers:", "        - name: agent", `          image: ${AGENT_IMAGE}`, "          imagePullPolicy: Always", "          env:", "            - name: NODE_EXTRA_CA_CERTS", "              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt", "            - name: NODE_TLS_REJECT_UNAUTHORIZED", '              value: "0"', "          envFrom:", "            - configMapRef:", `                name: ${N}-config`, "            - secretRef:", `                name: ${N}-secret`, "                optional: true", "          ports:", "            - containerPort: 3000", "              name: http", "              protocol: TCP", "          resources:", "            requests:", "              cpu: 100m", "              memory: 128Mi", "            limits:", "              cpu: 500m", "              memory: 512Mi");
+  L.push("          livenessProbe:", "            httpGet:", "              path: /healthz", "              port: 3000", "            initialDelaySeconds: 15", "            periodSeconds: 30", "            timeoutSeconds: 5", "            failureThreshold: 3");
+  L.push("          readinessProbe:", "            httpGet:", "              path: /readyz", "              port: 3000", "            initialDelaySeconds: 10", "            periodSeconds: 10", "            timeoutSeconds: 3", "            failureThreshold: 2");
   L.push("          securityContext:", "            allowPrivilegeEscalation: false", "            capabilities:", "              drop:", "                - ALL");
   L.push("");
 
   // Service
-  L.push("---", "apiVersion: v1", "kind: Service", "metadata:", `  name: ${N}`, `  namespace: ${ns}`, "  labels:", `    app: ${N}`, "spec:", "  type: ClusterIP", "  selector:", `    app: ${N}`, "  ports:", "    - port: 8080", "      targetPort: 8080", "      protocol: TCP", "      name: http");
+  L.push("---", "apiVersion: v1", "kind: Service", "metadata:", `  name: ${N}`, `  namespace: ${ns}`, "  labels:", `    app: ${N}`, "spec:", "  type: ClusterIP", "  selector:", `    app: ${N}`, "  ports:", "    - port: 3000", "      targetPort: 3000", "      protocol: TCP", "      name: http");
   L.push("");
 
   // Route / Ingress
@@ -374,7 +374,7 @@ function generateAgentYAML(platform, clusterName, apiUrl, allowActions) {
     else if (platform === "gke") L.push("#   annotations:", "#     kubernetes.io/ingress.class: gce");
     else if (platform === "aks") L.push("#   annotations:", "#     kubernetes.io/ingress.class: azure/application-gateway");
     else L.push("#   annotations:", "#     kubernetes.io/ingress.class: nginx");
-    L.push("# spec:", "#   rules:", `#     - host: ${N}.${safeName}.local`, "#       http:", "#         paths:", "#           - path: /", "#             pathType: Prefix", "#             backend:", "#               service:", `#                 name: ${N}`, "#                 port:", "#                   number: 8080");
+    L.push("# spec:", "#   rules:", `#     - host: ${N}.${safeName}.local`, "#       http:", "#         paths:", "#           - path: /", "#             pathType: Prefix", "#             backend:", "#               service:", `#                 name: ${N}`, "#                 port:", "#                   number: 3000");
   }
   L.push("");
   return L.join("\n");
