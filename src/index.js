@@ -3677,7 +3677,8 @@ spec:
         const rawName = decodeURIComponent(yamlMatch[1]);
         const clusterName = findClusterKey(rawName) || rawName;
         const agent = _connectedAgents.get(clusterName);
-        const hubUrl = process.env.HUB_EXTERNAL_URL || process.env.HUB_SERVER_URL || `${url.protocol}//${req.headers.host}`;
+        const proto = req.headers["x-forwarded-proto"] || "https";
+        const hubUrl = process.env.HUB_EXTERNAL_URL || process.env.HUB_SERVER_URL || `${proto}://${req.headers.host}`;
         const platform = url.searchParams.get("platform") || agent?.platform || "openshift";
         const hubToken = process.env.MCP_API_TOKEN || "";
         const yaml = generateAgentYAML(platform, agent?.clusterName || clusterName, agent?.apiUrl || "", !!agent?.actionsEnabled, hubUrl, hubToken);
@@ -3697,7 +3698,8 @@ spec:
         const rawName = decodeURIComponent(yamlCmdMatch[1]);
         const clusterName = findClusterKey(rawName) || rawName;
         const agent = _connectedAgents.get(clusterName);
-        const hubUrl = process.env.HUB_EXTERNAL_URL || process.env.HUB_SERVER_URL || `${url.protocol}//${req.headers.host}`;
+        const proto = req.headers["x-forwarded-proto"] || "https";
+        const hubUrl = process.env.HUB_EXTERNAL_URL || process.env.HUB_SERVER_URL || `${proto}://${req.headers.host}`;
         const platform = url.searchParams.get("platform") || agent?.platform || "openshift";
         const cli = platform === "openshift" ? "oc" : "kubectl";
         const hubToken = process.env.MCP_API_TOKEN || "";

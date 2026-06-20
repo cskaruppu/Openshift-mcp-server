@@ -38,12 +38,12 @@ class ModalErrorBoundary extends Component {
 }
 
 const PLATFORMS = {
-  openshift: { ...PLATFORM_MAP.openshift, ns: "openshift-mcp", cli: "oc" },
-  rancher:   { ...PLATFORM_MAP.rancher,   ns: "openshift-mcp", cli: "kubectl" },
-  eks:       { ...PLATFORM_MAP.eks,        ns: "openshift-mcp", cli: "kubectl" },
-  aks:       { ...PLATFORM_MAP.aks,        ns: "openshift-mcp", cli: "kubectl" },
-  gke:       { ...PLATFORM_MAP.gke,        ns: "openshift-mcp", cli: "kubectl" },
-  k8s:       { ...PLATFORM_MAP.k8s,        ns: "openshift-mcp", cli: "kubectl" },
+  openshift: { ...PLATFORM_MAP.openshift, ns: "openshift-mcp",      cli: "oc" },
+  rancher:   { ...PLATFORM_MAP.rancher,   ns: "tcs-agentic-system", cli: "kubectl" },
+  eks:       { ...PLATFORM_MAP.eks,        ns: "tcs-agentic-system", cli: "kubectl" },
+  aks:       { ...PLATFORM_MAP.aks,        ns: "tcs-agentic-system", cli: "kubectl" },
+  gke:       { ...PLATFORM_MAP.gke,        ns: "tcs-agentic-system", cli: "kubectl" },
+  k8s:       { ...PLATFORM_MAP.k8s,        ns: "tcs-agentic-system", cli: "kubectl" },
 };
 
 const AGENT_IMAGE = "quay.io/karuppucs/openshift-mcp-server:latest";
@@ -278,7 +278,7 @@ function generateAgentYAML(platform, clusterName, apiUrl, allowActions, hubToken
   L.push("");
 
   // Namespace
-  L.push("---", "apiVersion: v1", "kind: Namespace", "metadata:", `  name: ${ns}`, "  labels:", `    app.kubernetes.io/name: ${N}`, `    app.kubernetes.io/part-of: ${N}`, "    app.kubernetes.io/managed-by: openshift-mcp-hub");
+  L.push("---", "apiVersion: v1", "kind: Namespace", "metadata:", `  name: ${ns}`, "  labels:", `    app.kubernetes.io/name: ${N}`, "    app.kubernetes.io/part-of: tcs-agentic-ai", "    app.kubernetes.io/managed-by: openshift-mcp-hub");
   if (platform === "openshift") L.push("  annotations:", '    openshift.io/description: "TCS AI-Native Cluster Agent"');
   L.push("");
 
@@ -289,49 +289,67 @@ function generateAgentYAML(platform, clusterName, apiUrl, allowActions, hubToken
   else if (platform === "gke") L.push("  # Uncomment for GKE Workload Identity:", "  # annotations:", `  #   iam.gke.io/gcp-service-account: ${N}@PROJECT.iam.gserviceaccount.com`);
   L.push("");
 
-  // ClusterRole
-  L.push("---", "apiVersion: rbac.authorization.k8s.io/v1", "kind: ClusterRole", "metadata:", `  name: ${N}-role`, "  labels:", `    app.kubernetes.io/name: ${N}`, "rules:");
-  L.push('  - apiGroups: [""]', "    resources: [pods, pods/log, nodes, services, events, namespaces, configmaps, persistentvolumeclaims, endpoints, replicationcontrollers, serviceaccounts, resourcequotas, limitranges]", '    verbs: ["get", "list", "watch"]');
-  L.push('  - apiGroups: ["apps"]', "    resources: [deployments, statefulsets, daemonsets, replicasets]", '    verbs: ["get", "list", "watch"]');
-  L.push('  - apiGroups: ["apps"]', "    resources: [deployments]", `    resourceNames: [${N}]`, '    verbs: ["patch"]');
-  if (allowActions) {
-    L.push("  # Remote actions (write) — ENABLED");
-    L.push('  - apiGroups: ["apps"]', "    resources: [deployments, statefulsets, daemonsets, deployments/scale, statefulsets/scale]", '    verbs: ["update", "patch"]');
-    L.push('  - apiGroups: [""]', "    resources: [pods]", '    verbs: ["delete"]');
-    L.push('  - apiGroups: [""]', "    resources: [nodes]", '    verbs: ["patch", "update"]');
-    if (platform === "openshift") L.push('  - apiGroups: ["config.openshift.io"]', "    resources: [clusterversions]", '    verbs: ["patch", "update"]');
-  }
-  L.push('  - apiGroups: ["batch"]', "    resources: [jobs, cronjobs]", '    verbs: ["get", "list", "watch"]');
-  L.push('  - apiGroups: ["networking.k8s.io"]', "    resources: [ingresses, networkpolicies]", '    verbs: ["get", "list", "watch"]');
-  L.push('  - apiGroups: ["metrics.k8s.io"]', "    resources: [pods, nodes]", '    verbs: ["get", "list"]');
-  L.push('  - apiGroups: ["storage.k8s.io"]', "    resources: [storageclasses, volumeattachments]", '    verbs: ["get", "list", "watch"]');
-  L.push('  - apiGroups: ["autoscaling"]', "    resources: [horizontalpodautoscalers]", '    verbs: ["get", "list", "watch"]');
-  L.push('  - apiGroups: ["policy"]', "    resources: [poddisruptionbudgets]", '    verbs: ["get", "list", "watch"]');
-  L.push('  - apiGroups: ["rbac.authorization.k8s.io"]', "    resources: [clusterroles, clusterrolebindings, roles, rolebindings]", '    verbs: ["get", "list"]');
-  L.push('  - apiGroups: ["rbac.authorization.k8s.io"]', "    resources: [clusterroles]", `    resourceNames: [${N}-role]`, '    verbs: ["update", "patch"]');
-  L.push('  - apiGroups: ["argoproj.io"]', "    resources: [applications, applicationsets]", '    verbs: ["get", "list"]');
-  L.push('  - apiGroups: ["velero.io"]', "    resources: [backups, schedules, backupstoragelocations]", '    verbs: ["get", "list"]');
-  L.push('  - apiGroups: ["aquasecurity.github.io"]', "    resources: [vulnerabilityreports, configauditreports]", '    verbs: ["get", "list"]');
+  // ClusterRole — aligned with deploy.sh agentic-ai-agent-reader
+  L.push("---", "apiVersion: rbac.authorization.k8s.io/v1", "kind: ClusterRole", "metadata:", `  name: ${N}-reader`, "  labels:", `    app.kubernetes.io/name: ${N}`, "rules:");
+  L.push('  - apiGroups: [""]', "    resources: [nodes, pods, pods/log, services, namespaces, events, resourcequotas, limitranges, configmaps, secrets, serviceaccounts, persistentvolumeclaims, persistentvolumes, endpoints, replicationcontrollers]", '    verbs: [get, list, watch]');
+  L.push('  - apiGroups: [apps]', "    resources: [deployments, replicasets, statefulsets, daemonsets]", '    verbs: [get, list, watch]');
+  L.push('  - apiGroups: [batch]', "    resources: [jobs, cronjobs]", '    verbs: [get, list, watch]');
+  L.push('  - apiGroups: [autoscaling]', "    resources: [horizontalpodautoscalers]", '    verbs: [get, list, watch]');
+  L.push('  - apiGroups: [rbac.authorization.k8s.io]', "    resources: [roles, rolebindings, clusterroles, clusterrolebindings]", '    verbs: [get, list]');
+  L.push('  - apiGroups: [networking.k8s.io]', "    resources: [networkpolicies, ingresses, ingressclasses]", '    verbs: [get, list]');
+  L.push('  - apiGroups: [policy]', "    resources: [poddisruptionbudgets]", '    verbs: [get, list]');
+  L.push('  - apiGroups: [storage.k8s.io]', "    resources: [storageclasses, volumeattachments, csidrivers]", '    verbs: [get, list, watch]');
+  L.push('  - apiGroups: [metrics.k8s.io]', "    resources: [nodes, pods]", '    verbs: [get, list]');
+  L.push('  - apiGroups: [apiextensions.k8s.io]', "    resources: [customresourcedefinitions]", '    verbs: [get, list]');
+  L.push('  - apiGroups: [apiregistration.k8s.io]', "    resources: [apiservices]", '    verbs: [get, list]');
+  // Self-update
+  L.push('  - apiGroups: [apps]', "    resources: [deployments]", `    resourceNames: [${N}]`, '    verbs: [patch]');
+  L.push('  - apiGroups: [rbac.authorization.k8s.io]', "    resources: [clusterroles]", `    resourceNames: [${N}-reader]`, '    verbs: [update, patch]');
+  // Third-party
+  L.push('  - apiGroups: [argoproj.io]', "    resources: [applications, appprojects, applicationsets]", '    verbs: [get, list, watch]');
+  L.push('  - apiGroups: [velero.io]', "    resources: [backups, schedules, restores, backupstoragelocations]", '    verbs: [get, list]');
+  L.push('  - apiGroups: [aquasecurity.github.io]', "    resources: [vulnerabilityreports, configauditreports]", '    verbs: [get, list]');
 
   if (platform === "openshift") {
-    L.push('  - apiGroups: ["route.openshift.io"]', "    resources: [routes]", '    verbs: ["get", "list", "watch"]');
-    L.push('  - apiGroups: ["apps.openshift.io"]', "    resources: [deploymentconfigs]", '    verbs: ["get", "list", "watch"]');
-    L.push('  - apiGroups: ["project.openshift.io"]', "    resources: [projects]", '    verbs: ["get", "list"]');
-    L.push('  - apiGroups: ["config.openshift.io"]', "    resources: [clusterversions, clusteroperators, infrastructures]", '    verbs: ["get", "list"]');
-    L.push('  - apiGroups: ["machine.openshift.io"]', "    resources: [machines, machinesets]", '    verbs: ["get", "list"]');
-    L.push('  - apiGroups: ["security.openshift.io"]', "    resources: [securitycontextconstraints]", '    verbs: ["get", "list"]');
-    L.push('  - apiGroups: ["secscan.quay.redhat.com"]', "    resources: [imagemanifestvulns]", '    verbs: ["get", "list"]');
+    L.push('  - apiGroups: [config.openshift.io]', "    resources: [clusterversions, clusteroperators, infrastructures, oauths, ingresses, networks, proxies, schedulers, apiservers]", '    verbs: [get, list]');
+    L.push('  - apiGroups: [config.openshift.io]', "    resources: [clusterversions]", '    verbs: [patch, update]');
+    L.push('  - apiGroups: [route.openshift.io]', "    resources: [routes]", '    verbs: [get, list]');
+    L.push('  - apiGroups: [apps.openshift.io]', "    resources: [deploymentconfigs]", '    verbs: [get, list]');
+    L.push('  - apiGroups: [project.openshift.io]', "    resources: [projects]", '    verbs: [get, list]');
+    L.push('  - apiGroups: [image.openshift.io]', "    resources: [imagestreams, imagestreamtags]", '    verbs: [get, list, watch]');
+    L.push('  - apiGroups: [build.openshift.io]', "    resources: [builds, buildconfigs]", '    verbs: [get, list, watch]');
+    L.push('  - apiGroups: [security.openshift.io]', "    resources: [securitycontextconstraints]", '    verbs: [get, list]');
+    L.push('  - apiGroups: [operators.coreos.com]', "    resources: [subscriptions, clusterserviceversions, installplans, operatorgroups, catalogsources]", '    verbs: [get, list, watch]');
+    L.push('  - apiGroups: [operators.coreos.com]', "    resources: [installplans]", '    verbs: [patch, update]');
+    L.push('  - apiGroups: [packages.operators.coreos.com]', "    resources: [packagemanifests]", '    verbs: [get, list]');
+    L.push('  - apiGroups: [machine.openshift.io]', "    resources: [machines, machinesets, machinehealthchecks]", '    verbs: [get, list]');
+    L.push('  - apiGroups: [machineconfiguration.openshift.io]', "    resources: [machineconfigs, machineconfigpools]", '    verbs: [get, list]');
+    L.push('  - apiGroups: [monitoring.coreos.com]', "    resources: [prometheuses, alertmanagers, servicemonitors, prometheusrules, podmonitors]", '    verbs: [get, list]');
+    L.push('  - apiGroups: [compliance.openshift.io]', "    resources: [compliancesuites, compliancescans, profiles, profilebundles, compliancecheckresults]", '    verbs: [get, list]');
+    L.push('  - apiGroups: [user.openshift.io]', "    resources: [users, groups, identities]", '    verbs: [get, list]');
+    L.push('  - apiGroups: [quota.openshift.io]', "    resources: [clusterresourcequotas]", '    verbs: [get, list]');
+    L.push('  - apiGroups: [tekton.dev]', "    resources: [pipelines, pipelineruns, tasks, taskruns]", '    verbs: [get, list, watch]');
+    L.push('  - apiGroups: [authorization.k8s.io]', "    resources: [subjectaccessreviews]", '    verbs: [create]');
+    L.push('  - apiGroups: [secscan.quay.redhat.com]', "    resources: [imagemanifestvulns]", '    verbs: [get, list]');
   }
   if (platform === "rancher") {
-    L.push('  - apiGroups: ["management.cattle.io"]', "    resources: [clusters, nodes]", '    verbs: ["get", "list", "watch"]');
-    L.push('  - apiGroups: ["fleet.cattle.io"]', "    resources: [bundles, gitrepos]", '    verbs: ["get", "list"]');
+    L.push('  - apiGroups: [management.cattle.io]', "    resources: [clusters, nodes]", '    verbs: [get, list, watch]');
+    L.push('  - apiGroups: [fleet.cattle.io]', "    resources: [bundles, gitrepos]", '    verbs: [get, list]');
   }
-  if (platform === "eks") L.push('  - apiGroups: ["eks.amazonaws.com"]', '    resources: ["*"]', '    verbs: ["get", "list"]');
-  if (platform === "gke") L.push('  - apiGroups: ["cloud.google.com"]', '    resources: ["*"]', '    verbs: ["get", "list"]');
+  if (platform === "eks") L.push('  - apiGroups: [eks.amazonaws.com]', '    resources: ["*"]', '    verbs: [get, list]');
+  if (platform === "gke") L.push('  - apiGroups: [cloud.google.com]', '    resources: ["*"]', '    verbs: [get, list]');
+  // Remediation (matches deploy.sh)
+  L.push('  - apiGroups: [""]', "    resources: [pods]", '    verbs: [delete]');
+  L.push('  - apiGroups: [""]', "    resources: [nodes]", '    verbs: [patch, update]');
+  L.push('  - apiGroups: [""]', "    resources: [pods/eviction]", '    verbs: [create]');
+  L.push('  - apiGroups: [""]', "    resources: [persistentvolumeclaims]", '    verbs: [patch, update]');
+  L.push('  - apiGroups: [apps]', "    resources: [deployments, deployments/scale, statefulsets/scale]", '    verbs: [patch, update]');
+  L.push('  - apiGroups: [certificates.k8s.io]', "    resources: [certificatesigningrequests/status]", '    verbs: [update]');
+  L.push('  - apiGroups: [snapshot.storage.k8s.io]', "    resources: [volumesnapshots]", '    verbs: [create]');
   L.push("");
 
   // ClusterRoleBinding
-  L.push("---", "apiVersion: rbac.authorization.k8s.io/v1", "kind: ClusterRoleBinding", "metadata:", `  name: ${N}-binding`, "  labels:", `    app.kubernetes.io/name: ${N}`, "roleRef:", "  apiGroup: rbac.authorization.k8s.io", "  kind: ClusterRole", `  name: ${N}-role`, "subjects:", "  - kind: ServiceAccount", `    name: ${N}`, `    namespace: ${ns}`);
+  L.push("---", "apiVersion: rbac.authorization.k8s.io/v1", "kind: ClusterRoleBinding", "metadata:", `  name: ${N}-reader-binding`, "  labels:", `    app.kubernetes.io/name: ${N}`, "roleRef:", "  apiGroup: rbac.authorization.k8s.io", "  kind: ClusterRole", `  name: ${N}-reader`, "subjects:", "  - kind: ServiceAccount", `    name: ${N}`, `    namespace: ${ns}`);
   L.push("");
 
   // ConfigMap — spoke mode (stateless, no DB, phones home to hub)
@@ -340,28 +358,30 @@ function generateAgentYAML(platform, clusterName, apiUrl, allowActions, hubToken
   if (apiUrl) L.push(`  API_SERVER_URL: "${apiUrl}"`);
   L.push("");
 
-  // Secret
-  L.push("---", "apiVersion: v1", "kind: Secret", "metadata:", `  name: ${N}-secret`, `  namespace: ${ns}`, "  labels:", `    app.kubernetes.io/name: ${N}`, "type: Opaque", "stringData:", `  MCP_API_TOKEN: "${hubToken || ""}"`, `  HUB_API_TOKEN: "${hubToken || ""}"`, `  AGENT_ID: "${safeName}"`);
+  // Secret (name matches deploy.sh: -secrets plural)
+  L.push("---", "apiVersion: v1", "kind: Secret", "metadata:", `  name: ${N}-secrets`, `  namespace: ${ns}`, "  labels:", `    app.kubernetes.io/name: ${N}`, "type: Opaque", "stringData:", `  MCP_API_TOKEN: ""`, `  HUB_API_TOKEN: "${hubToken || ""}"`, `  AGENT_ID: "${safeName}"`);
   L.push("");
 
   // Deployment — spoke mode (stateless, phones home to hub)
-  L.push("---", "apiVersion: apps/v1", "kind: Deployment", "metadata:", `  name: ${N}`, `  namespace: ${ns}`, "  labels:", `    app: ${N}`, `    app.kubernetes.io/name: ${N}`, "    app.kubernetes.io/component: spoke", '    app.kubernetes.io/version: "1.2.0"', "spec:", "  replicas: 1", "  revisionHistoryLimit: 3", "  strategy:", "    type: RollingUpdate", "    rollingUpdate:", "      maxUnavailable: 0", "      maxSurge: 1", "  selector:", "    matchLabels:", `      app: ${N}`, "  template:", "    metadata:", "      labels:", `        app: ${N}`, `        app.kubernetes.io/name: ${N}`, '        tcs.com/mcp-mode: spoke', `        tcs.com/cluster-name: "${safeName}"`, "      annotations:", '        prometheus.io/scrape: "true"', '        prometheus.io/port: "3000"', '        prometheus.io/path: "/status"', "    spec:", `      serviceAccountName: ${N}`);
-  if (platform === "openshift") L.push("      securityContext:", "        runAsNonRoot: true");
-  else L.push("      securityContext:", "        runAsNonRoot: true", "        runAsUser: 1001", "        runAsGroup: 1001", "        fsGroup: 1001");
+  L.push("---", "apiVersion: apps/v1", "kind: Deployment", "metadata:", `  name: ${N}`, `  namespace: ${ns}`, "  labels:", `    app.kubernetes.io/name: ${N}`, "    app.kubernetes.io/component: spoke", "    app.kubernetes.io/part-of: tcs-agentic-ai", "spec:", "  replicas: 1", "  selector:", "    matchLabels:", `      app.kubernetes.io/name: ${N}`, "  template:", "    metadata:", "      labels:", `        app.kubernetes.io/name: ${N}`, '        tcs.com/mcp-mode: spoke', `        tcs.com/cluster-name: "${safeName}"`, "    spec:", `      serviceAccountName: ${N}`);
+  L.push("      securityContext:", "        runAsNonRoot: true", "        seccompProfile:", "          type: RuntimeDefault");
   L.push("      dnsPolicy: None", "      dnsConfig:", "        nameservers:", "          - 10.131.19.154", "        searches:", `          - ${ns}.svc.cluster.local`, "          - svc.cluster.local", "          - cluster.local", "          - caaslab.local", "        options:", "          - name: ndots", '            value: "5"');
-  L.push("      terminationGracePeriodSeconds: 30", "      containers:", "        - name: agent", `          image: ${AGENT_IMAGE}`, "          imagePullPolicy: Always", "          env:", "            - name: NODE_EXTRA_CA_CERTS", "              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt", "            - name: NODE_TLS_REJECT_UNAUTHORIZED", '              value: "0"', "          envFrom:", "            - configMapRef:", `                name: ${N}-config`, "            - secretRef:", `                name: ${N}-secret`, "                optional: true", "          ports:", "            - containerPort: 3000", "              name: http", "              protocol: TCP", "          resources:", "            requests:", "              cpu: 100m", "              memory: 128Mi", "            limits:", "              cpu: 500m", "              memory: 512Mi");
-  L.push("          livenessProbe:", "            httpGet:", "              path: /healthz", "              port: 3000", "            initialDelaySeconds: 15", "            periodSeconds: 30", "            timeoutSeconds: 5", "            failureThreshold: 3");
-  L.push("          readinessProbe:", "            httpGet:", "              path: /readyz", "              port: 3000", "            initialDelaySeconds: 10", "            periodSeconds: 10", "            timeoutSeconds: 3", "            failureThreshold: 2");
-  L.push("          securityContext:", "            allowPrivilegeEscalation: false", "            capabilities:", "              drop:", "                - ALL");
+  L.push("      containers:", `        - name: ${N}`, `          image: ${AGENT_IMAGE}`, "          imagePullPolicy: Always", "          ports:", "            - containerPort: 3000", "              name: http", "          envFrom:", "            - configMapRef:", `                name: ${N}-config`, "            - secretRef:", `                name: ${N}-secrets`, "          env:", "            - name: NODE_EXTRA_CA_CERTS", '              value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"', "            - name: NODE_TLS_REJECT_UNAUTHORIZED", '              value: "0"', "            - name: NODE_OPTIONS", '              value: "--max-old-space-size=768"');
+  L.push("          resources:", "            requests:", "              cpu: 100m", "              memory: 512Mi", "            limits:", "              cpu: 500m", "              memory: 1Gi");
+  L.push("          securityContext:", "            allowPrivilegeEscalation: false", "            readOnlyRootFilesystem: true", "            capabilities:", "              drop:", "                - ALL");
+  L.push("          volumeMounts:", "            - name: tmp", "              mountPath: /tmp", "            - name: data", "              mountPath: /data");
+  L.push("          readinessProbe:", "            httpGet:", "              path: /readyz", "              port: 3000", "            initialDelaySeconds: 5", "            periodSeconds: 10");
+  L.push("          livenessProbe:", "            httpGet:", "              path: /healthz", "              port: 3000", "            initialDelaySeconds: 10", "            periodSeconds: 30");
+  L.push("      volumes:", "        - name: tmp", "          emptyDir: {}", "        - name: data", "          emptyDir: {}");
   L.push("");
 
   // Service
-  L.push("---", "apiVersion: v1", "kind: Service", "metadata:", `  name: ${N}`, `  namespace: ${ns}`, "  labels:", `    app: ${N}`, "spec:", "  type: ClusterIP", "  selector:", `    app: ${N}`, "  ports:", "    - port: 3000", "      targetPort: 3000", "      protocol: TCP", "      name: http");
+  L.push("---", "apiVersion: v1", "kind: Service", "metadata:", `  name: ${N}`, `  namespace: ${ns}`, "  labels:", `    app.kubernetes.io/name: ${N}`, "spec:", "  selector:", `    app.kubernetes.io/name: ${N}`, "  ports:", "    - port: 3000", "      targetPort: 3000", "      name: http");
   L.push("");
 
   // Route / Ingress
   if (platform === "openshift") {
-    L.push("---", "apiVersion: route.openshift.io/v1", "kind: Route", "metadata:", `  name: ${N}`, `  namespace: ${ns}`, "  labels:", `    app: ${N}`, "spec:", "  to:", "    kind: Service", `    name: ${N}`, "  port:", "    targetPort: http", "  tls:", "    termination: edge", "    insecureEdgeTerminationPolicy: Redirect");
+    L.push("---", "apiVersion: route.openshift.io/v1", "kind: Route", "metadata:", `  name: ${N}`, `  namespace: ${ns}`, "  labels:", `    app.kubernetes.io/name: ${N}`, "  annotations:", "    haproxy.router.openshift.io/timeout: 600s", "    haproxy.router.openshift.io/timeout-tunnel: 600s", "spec:", "  to:", "    kind: Service", `    name: ${N}`, "  port:", "    targetPort: http", "  tls:", "    termination: edge", "    insecureEdgeTerminationPolicy: Redirect");
   } else {
     L.push("# Uncomment to expose via Ingress:", "# ---", "# apiVersion: networking.k8s.io/v1", "# kind: Ingress", "# metadata:", `#   name: ${N}`, `#   namespace: ${ns}`);
     if (platform === "eks") L.push("#   annotations:", "#     kubernetes.io/ingress.class: alb");
