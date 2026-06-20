@@ -23,12 +23,14 @@ export function clusterUrl(path, cluster) {
 export async function apiGet(path, { cluster, signal } = {}) {
   const res = await fetch(clusterUrl(path, cluster), {
     signal,
+    credentials: "same-origin",
     headers: {
       "X-Cluster-Context": cluster || "local",
       Accept: "application/json",
     },
   });
   if (res.status === 401) {
+    recheckAuth();
     const err = new Error("Authentication required");
     err.code = 401;
     throw err;
@@ -38,4 +40,23 @@ export async function apiGet(path, { cluster, signal } = {}) {
     throw new Error(`${res.status} ${res.statusText}${body ? ": " + body.slice(0, 200) : ""}`);
   }
   return res.json();
+}
+
+let _recheckPending = false;
+async function recheckAuth() {
+  if (_recheckPending) return;
+  _recheckPending = true;
+  try {
+    const { useAuthStore } = await import("../store/authStore");
+    const res = await fetch("/api/auth/status");
+    const data = await res.json();
+    if (data.authenticated) {
+      useAuthStore.getState().setAuth(data.user);
+    } else if (data.mode === "none") {
+      useAuthStore.getState().setAuth({ name: "anonymous", role: "admin" });
+    } else {
+      useAuthStore.getState().setUnauthenticated(data.mode);
+    }
+  } catch { /* ignore */ }
+  finally { _recheckPending = false; }
 }

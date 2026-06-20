@@ -81,18 +81,27 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      try {
-        const res = await fetch("/api/auth/status");
-        const data = await res.json();
-        if (data.authenticated) {
-          useAuthStore.getState().setAuth(data.user);
-        } else if (data.mode === "none") {
-          useAuthStore.getState().setAuth({ name: "anonymous", role: "admin" });
-        } else {
-          useAuthStore.getState().setUnauthenticated(data.mode);
+      let retries = 2;
+      while (retries >= 0) {
+        try {
+          const res = await fetch("/api/auth/status");
+          const data = await res.json();
+          if (data.authenticated) {
+            useAuthStore.getState().setAuth(data.user);
+          } else if (data.mode === "none") {
+            useAuthStore.getState().setAuth({ name: "anonymous", role: "admin" });
+          } else {
+            useAuthStore.getState().setUnauthenticated(data.mode);
+          }
+          break;
+        } catch {
+          if (retries > 0) {
+            retries--;
+            await new Promise((r) => setTimeout(r, 1000));
+          } else {
+            useAuthStore.getState().setAuth({ name: "anonymous", role: "admin" });
+          }
         }
-      } catch {
-        useAuthStore.getState().setAuth({ name: "anonymous", role: "admin" });
       }
     })();
   }, []);
