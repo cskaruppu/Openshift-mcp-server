@@ -2099,16 +2099,38 @@ async function startSSE() {
   if (MCP_MODE === "spoke") {
     const hubUrl = process.env.HUB_URL || process.env.HUB_SERVER_URL;
     const clusterName = process.env.CLUSTER_NAME || "unknown";
-    const spokeUrl = process.env.SPOKE_EXTERNAL_URL || `http://localhost:${PORT}`;
     const platform = process.env.CLUSTER_PLATFORM || "k8s";
-    if (hubUrl) {
-      console.log(`[spoke] Registering with hub: ${hubUrl} as "${clusterName}" (${spokeUrl})`);
-      startSpokeMode(hubUrl, clusterName, spokeUrl, platform).catch((e) =>
-        console.error(`[spoke] Registration failed: ${e.message}`)
-      );
-    } else {
-      console.warn("[spoke] HUB_URL not set — running in standalone mode (no federation)");
-    }
+    const deployName = process.env.DEPLOYMENT_NAME || "agentic-ai-agent";
+    const ns = process.env.MCP_NAMESPACE || "openshift-mcp";
+    const internalUrl = `http://${deployName}.${ns}.svc.cluster.local:${PORT}`;
+
+    (async () => {
+      let spokeUrl = process.env.SPOKE_EXTERNAL_URL || "";
+      // Auto-detect Route URL for OpenShift (hub can't resolve cross-cluster .svc.cluster.local)
+      if (!spokeUrl || spokeUrl.includes(".svc.cluster.local")) {
+        try {
+          const { ocpFetch } = await import("./utils/openshift-client.js");
+          const route = await ocpFetch(`/apis/route.openshift.io/v1/namespaces/${ns}/routes/${deployName}`);
+          if (route?.spec?.host) {
+            const tls = route.spec.tls ? "https" : "http";
+            spokeUrl = `${tls}://${route.spec.host}`;
+            console.log(`[spoke] Auto-detected Route URL: ${spokeUrl}`);
+          }
+        } catch {
+          // Not OpenShift or Route not found — use fallback
+        }
+      }
+      if (!spokeUrl) spokeUrl = internalUrl;
+
+      if (hubUrl) {
+        console.log(`[spoke] Registering with hub: ${hubUrl} as "${clusterName}" (${spokeUrl})`);
+        startSpokeMode(hubUrl, clusterName, spokeUrl, platform).catch((e) =>
+          console.error(`[spoke] Registration failed: ${e.message}`)
+        );
+      } else {
+        console.warn("[spoke] HUB_URL not set — running in standalone mode (no federation)");
+      }
+    })();
   }
 
   // Track active transports so each SSE session gets its own MCP server
