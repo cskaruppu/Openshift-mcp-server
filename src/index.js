@@ -3813,7 +3813,7 @@ spec:
           if (!agent) return sendJson(res, 404, { error: `Agent "${rawName}" not found` });
 
           // 1. Try spoke proxy
-          const spokeUrl = hasSpoke(clusterName) ? getAllSpokes().find(s => s.clusterName === clusterName || s.clusterName.toLowerCase() === clusterName.toLowerCase())?.spokeUrl : null;
+          const spokeUrl = getSpokeUrl(clusterName);
           if (spokeUrl) {
             try {
               const proxyRes = await fedFetch(`${spokeUrl}/api/cluster/health-check`, {
@@ -3907,7 +3907,7 @@ spec:
           if (sent) return sendJson(res, 200, { ok: true, target: clusterName, message: "Reconnect signal sent — agent will re-establish its connection" });
 
           // 2. Try spoke proxy restart (triggers agent pod restart which forces reconnect)
-          const spokeUrl = hasSpoke(clusterName) ? getAllSpokes().find(s => s.clusterName === clusterName || s.clusterName.toLowerCase() === clusterName.toLowerCase())?.spokeUrl : null;
+          const spokeUrl = getSpokeUrl(clusterName);
           if (spokeUrl) {
             try {
               const proxyRes = await fedFetch(`${spokeUrl}/api/cluster/redeploy`, {
@@ -3972,7 +3972,7 @@ spec:
         // Redeploy — proxy rollout restart to spoke, SSE bridge, or direct API
         if (action === "redeploy" && req.method === "POST") {
           // 1. Try spoke proxy
-          const spokeUrl = hasSpoke(clusterName) ? getAllSpokes().find(s => s.clusterName === clusterName || s.clusterName.toLowerCase() === clusterName.toLowerCase())?.spokeUrl : null;
+          const spokeUrl = getSpokeUrl(clusterName);
           if (spokeUrl) {
             try {
               const proxyRes = await fedFetch(`${spokeUrl}/api/cluster/redeploy`, {
