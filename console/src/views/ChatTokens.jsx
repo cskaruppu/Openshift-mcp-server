@@ -1918,9 +1918,36 @@ function BeforeAfterMetrics({ before, after }) {
 /* ------------------------------------------------------------------ */
 
 function FixProposal({ diag, cluster }) {
-  const [fixStates, setFixStates] = useState({});
+  const storageKey = `tcs-fix-${diag.incidentNumber || diag.podName || "fix"}-${cluster || "local"}`;
+
+  const loadPersistedState = () => {
+    try { const raw = localStorage.getItem(storageKey); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
+  };
+
+  const [fixStates, setFixStates] = useState(loadPersistedState);
   const [logsOpen, setLogsOpen] = useState(false);
   const [copied, setCopied] = useState(null);
+
+  const persistState = (newState) => {
+    setFixStates(newState);
+    try {
+      const toStore = {};
+      for (const [k, v] of Object.entries(typeof newState === "function" ? newState(fixStates) : newState)) {
+        if (v && !v.running) toStore[k] = v;
+      }
+      localStorage.setItem(storageKey, JSON.stringify(toStore));
+    } catch {}
+  };
+
+  const updateFixState = (key, value) => {
+    setFixStates(prev => {
+      const next = { ...prev, [key]: value };
+      if (!value.running) {
+        try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch {}
+      }
+      return next;
+    });
+  };
 
   const sevColors = { critical: "#dc2626", warning: "#f59e0b", info: "#3b82f6" };
   const sevBg = { critical: "rgba(220,38,38,0.08)", warning: "rgba(245,158,11,0.08)", info: "rgba(59,130,246,0.08)" };
@@ -1936,7 +1963,7 @@ function FixProposal({ diag, cluster }) {
   async function runFix(fix, dryRun) {
     const key = fix.command;
     const startTime = Date.now();
-    setFixStates(prev => ({ ...prev, [key]: { running: true, phase: dryRun ? "dry-run" : "applying", text: dryRun ? "Running dry run..." : "Applying fix..." } }));
+    updateFixState(key, { running: true, phase: dryRun ? "dry-run" : "applying", text: dryRun ? "Running dry run..." : "Applying fix..." });
     try {
       const res = await fetch(clusterUrl("/api/alerts/execute-fix", cluster), {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -1952,11 +1979,12 @@ function FixProposal({ diag, cluster }) {
         }),
       });
       const d = await res.json();
-      if (d.blocked) { setFixStates(prev => ({ ...prev, [key]: { phase: "blocked", text: d.reason || "Blocked by policy" } })); return; }
+      if (d.blocked) { updateFixState(key, { phase: "blocked", text: d.reason || "Blocked by policy" }); return; }
       const out = d.output || d.stdout || d.result || (d.success ? "Done." : d.error || "No output");
       const durationMs = Date.now() - startTime;
+      const appliedAt = new Date().toISOString();
       if (!dryRun && d.success !== false && diag.incidentSysId && !d.incidentClosed?.success) {
-        setFixStates(prev => ({ ...prev, [key]: { running: true, phase: "closing-inc", text: out + "\n\nClosing ServiceNow incident..." } }));
+        updateFixState(key, { running: true, phase: "closing-inc", text: out + "\n\nClosing ServiceNow incident..." });
         try {
           const resolution = {
             incidentNumber: diag.incidentNumber || "", severity: diag.severityLevel || diag.severity || "N/A",
@@ -1970,25 +1998,26 @@ function FixProposal({ diag, cluster }) {
             body: JSON.stringify({ sysId: diag.incidentSysId, closeNotes: `Resolved by TCS Agentic AI — ${fix.title}`, resolution }),
           });
           const closeData = await closeRes.json();
-          setFixStates(prev => ({ ...prev, [key]: {
+          updateFixState(key, {
             phase: closeData.success ? "resolved" : "applied", text: out, incClosed: closeData.success,
             incError: closeData.success ? null : (closeData.error || "close failed"),
-            validation: d.validation || null, beforeMetrics: d.beforeMetrics || null, afterMetrics: d.afterMetrics || null, resolutionTimeline: d.resolutionTimeline || null, durationMs,
-          } }));
+            validation: d.validation || null, beforeMetrics: d.beforeMetrics || null, afterMetrics: d.afterMetrics || null, resolutionTimeline: d.resolutionTimeline || null, durationMs, appliedAt,
+          });
         } catch (e) {
-          setFixStates(prev => ({ ...prev, [key]: { phase: "applied", text: out, incError: e.message, validation: d.validation || null, resolutionTimeline: d.resolutionTimeline || null, durationMs } }));
+          updateFixState(key, { phase: "applied", text: out, incError: e.message, validation: d.validation || null, resolutionTimeline: d.resolutionTimeline || null, durationMs, appliedAt });
         }
       } else {
         const phase = dryRun ? "dry-done" : d.incidentClosed?.success ? "resolved" : (d.success === false ? "failed" : "applied");
-        setFixStates(prev => ({ ...prev, [key]: {
+        updateFixState(key, {
           phase, text: String(out).slice(0, 4000),
           validation: d.validation || null, beforeMetrics: d.beforeMetrics || null, afterMetrics: d.afterMetrics || null,
           resolutionTimeline: d.resolutionTimeline || null,
           incClosed: d.incidentClosed?.success || false, incError: d.incidentClosed?.error || null, durationMs,
-        } }));
+          appliedAt: dryRun ? undefined : appliedAt,
+        });
       }
     } catch (e) {
-      setFixStates(prev => ({ ...prev, [key]: { phase: "failed", text: e.message } }));
+      updateFixState(key, { phase: "failed", text: e.message });
     }
   }
 
@@ -2101,33 +2130,44 @@ function FixProposal({ diag, cluster }) {
                       </button>
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: 0, borderTop: "1px solid var(--border)" }}>
-                    <button onClick={() => runFix(fix, true)} disabled={st?.running} style={{ flex: 1, padding: "8px 0", background: "transparent", border: "none", borderRight: "1px solid var(--border)", cursor: st?.running ? "default" : "pointer", color: "var(--fg)", fontWeight: 600, fontSize: "0.82em", opacity: st?.running ? 0.5 : 1 }}>
-                      {st?.phase === "dry-run" ? "⏳ Running..." : "▷ Dry Run"}
-                    </button>
-                    <button onClick={() => runFix(fix, false)} disabled={st?.running} style={{ flex: 1, padding: "8px 0", background: hasIncident ? "rgba(34,197,94,0.06)" : "rgba(59,130,246,0.06)", border: "none", cursor: st?.running ? "default" : "pointer", color: hasIncident ? "#16a34a" : "#3b82f6", fontWeight: 700, fontSize: "0.82em", opacity: st?.running ? 0.5 : 1 }}>
-                      {st?.phase === "applying" || st?.phase === "closing-inc" ? "⏳ Applying..." : hasIncident ? "▶ Apply & Close INC" : "▶ Apply Fix"}
-                    </button>
-                  </div>
-                  {st && !st.running && (
-                    <div style={{ padding: "8px 14px", borderTop: "1px solid var(--border)", background: st.phase === "failed" || st.phase === "blocked" ? "rgba(220,38,38,0.04)" : "rgba(34,197,94,0.04)" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, fontSize: "0.82em", fontWeight: 600 }}>
-                        <span>{phaseIcon[st.phase] || ""}</span>
-                        <span style={{ color: st.phase === "failed" || st.phase === "blocked" ? "#dc2626" : "#16a34a" }}>{phaseLabel[st.phase] || st.phase}</span>
-                        {st.incClosed && <span style={{ marginLeft: "auto", fontSize: "0.85em", color: "#16a34a" }}>{diag.incidentNumber} resolved</span>}
-                        {st.incError && <span style={{ marginLeft: "auto", fontSize: "0.85em", color: "#f59e0b" }}>INC close: {st.incError}</span>}
-                      </div>
-                      {/* Recovery timeline for applied fixes */}
-                      {st.validation && !st.phase?.startsWith("dry") && (
-                        <RecoveryTimeline validation={st.validation} incClosed={st.incClosed} incidentNumber={diag.incidentNumber} durationMs={st.durationMs} resolutionTimeline={st.resolutionTimeline} />
-                      )}
-                      {/* Before/After metrics comparison */}
-                      {st.beforeMetrics && st.afterMetrics && !st.phase?.startsWith("dry") && (
-                        <BeforeAfterMetrics before={st.beforeMetrics} after={st.afterMetrics} />
-                      )}
-                      <pre style={{ margin: 0, fontSize: "0.78em", whiteSpace: "pre-wrap", color: "var(--fg)", maxHeight: 200, overflow: "auto" }}>{st.text}</pre>
-                    </div>
-                  )}
+                  {(() => {
+                    const isApplied = st?.phase === "applied" || st?.phase === "resolved";
+                    const isFailed = st?.phase === "failed" || st?.phase === "blocked";
+                    const isRunning = st?.running;
+                    const isDisabled = isRunning || isApplied;
+                    return (
+                      <>
+                        <div style={{ display: "flex", gap: 0, borderTop: "1px solid var(--border)" }}>
+                          <button onClick={() => runFix(fix, true)} disabled={isDisabled} style={{ flex: 1, padding: "8px 0", background: isApplied ? "var(--card-bg)" : "transparent", border: "none", borderRight: "1px solid var(--border)", cursor: isDisabled ? "default" : "pointer", color: isApplied ? "var(--muted)" : "var(--fg)", fontWeight: 600, fontSize: "0.82em", opacity: isDisabled ? 0.5 : 1 }}>
+                            {st?.phase === "dry-run" ? "⏳ Running..." : isApplied ? "▷ Dry Run" : "▷ Dry Run"}
+                          </button>
+                          <button onClick={() => runFix(fix, false)} disabled={isDisabled} style={{ flex: 1, padding: "8px 0", background: isApplied ? "#16a34a12" : hasIncident ? "rgba(34,197,94,0.06)" : "rgba(59,130,246,0.06)", border: "none", cursor: isDisabled ? "default" : "pointer", color: isApplied ? "#16a34a" : hasIncident ? "#16a34a" : "#3b82f6", fontWeight: 700, fontSize: "0.82em", opacity: isDisabled ? 0.6 : 1 }}>
+                            {isRunning ? "⏳ Applying..." : isApplied ? (st.incClosed ? "✓ Applied & INC Closed" : "✓ Fix Applied") : hasIncident ? "▶ Apply & Close INC" : "▶ Apply Fix"}
+                          </button>
+                        </div>
+                        {st && !st.running && (
+                          <div style={{ padding: "8px 14px", borderTop: "1px solid var(--border)", background: isFailed ? "rgba(220,38,38,0.04)" : "rgba(34,197,94,0.04)" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, fontSize: "0.82em", fontWeight: 600 }}>
+                              <span>{phaseIcon[st.phase] || ""}</span>
+                              <span style={{ color: isFailed ? "#dc2626" : "#16a34a" }}>{phaseLabel[st.phase] || st.phase}</span>
+                              {st.incClosed && <span style={{ marginLeft: "auto", fontSize: "0.85em", color: "#16a34a" }}>{diag.incidentNumber} resolved</span>}
+                              {st.incError && <span style={{ marginLeft: "auto", fontSize: "0.85em", color: "#f59e0b" }}>INC close: {st.incError}</span>}
+                              {st.appliedAt && <span style={{ marginLeft: st.incClosed || st.incError ? 8 : "auto", fontSize: "0.75em", color: "var(--muted)", fontFamily: "var(--font-mono, monospace)" }}>Applied: {new Date(st.appliedAt).toLocaleString()}</span>}
+                            </div>
+                            {/* Recovery timeline for applied fixes */}
+                            {st.validation && !st.phase?.startsWith("dry") && (
+                              <RecoveryTimeline validation={st.validation} incClosed={st.incClosed} incidentNumber={diag.incidentNumber} durationMs={st.durationMs} resolutionTimeline={st.resolutionTimeline} />
+                            )}
+                            {/* Before/After metrics comparison */}
+                            {st.beforeMetrics && st.afterMetrics && !st.phase?.startsWith("dry") && (
+                              <BeforeAfterMetrics before={st.beforeMetrics} after={st.afterMetrics} />
+                            )}
+                            {st.text && <pre style={{ margin: 0, fontSize: "0.78em", whiteSpace: "pre-wrap", color: "var(--fg)", maxHeight: 200, overflow: "auto" }}>{st.text}</pre>}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
               );
             })}
