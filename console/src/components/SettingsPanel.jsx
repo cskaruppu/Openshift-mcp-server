@@ -426,7 +426,7 @@ function ServiceNowSection() {
           username: data.username || "",
           password: data.password ? "••••••••" : "",
         });
-        setConnected(data.configured || false);
+        setConnected(data.enabled || data.configured || false);
       })
       .catch(() => {});
   }, []);
