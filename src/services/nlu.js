@@ -798,8 +798,8 @@ const COMPOUND_TERMS = [
   [/(?<![a-z0-9-])app(?:lication)?\s+(?:is\s+)?(?:down|crash\w*|fail\w*|slow|unresponsive|broken|hang\w*|not\s+respond\w*)\b/gi, "incident_response"],
   [/(?<![a-z0-9-])service\s+(?:is\s+)?(?:down|crash\w*|fail\w*|slow|unresponsive|broken|hang\w*|degraded|not\s+respond\w*)\b/gi, "incident_response"],
   [/\bproduction\s+(?:issue|incident|outage|problem|down|failure|crash\w*)\b/gi, "incident_response"],
-  [/(?<![a-z0-9-])pod\s+(?:is\s+)?(?:down|crash\w*|fail\w*|slow|unresponsive|broken|not\s+respond\w*|oom\w*)\b/gi, "incident_response"],
-  [/(?<![a-z0-9-])(?:deploy(?:ment)?|job|cronjob|daemonset|statefulset|replicaset)\s+(?:is\s+)?(?:down|crash\w*|fail\w*|slow|unresponsive|broken|not\s+respond\w*)\b/gi, "incident_response"],
+  [/(?<![a-z0-9-])pod\s+(?:[\w][\w.-]*\s+)?(?:is\s+)?(?:down|crash\w*|fail\w*|slow|unresponsive|broken|not\s+respond\w*|oom\w*)\b/gi, "incident_response"],
+  [/(?<![a-z0-9-])(?:deploy(?:ment)?|job|cronjob|daemonset|statefulset|replicaset)\s+(?:[\w][\w.-]*\s+)?(?:is\s+)?(?:down|crash\w*|fail\w*|slow|unresponsive|broken|not\s+respond\w*)\b/gi, "incident_response"],
   [/(?<![a-z0-9-])(?:is|are)\s+(?:crash\w*|fail\w*|down|unresponsive|broken|degraded|hang\w*|slow|not\s+respond\w*)\b/gi, "incident_response"],
   [/\bcluster\s+(?:brief(?:ing)?|daily\s*report|morning\s*report|health\s*report|overview\s*report)\b/gi, "cluster_briefing"],
 ];
