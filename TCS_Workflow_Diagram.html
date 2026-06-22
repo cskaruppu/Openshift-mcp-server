@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TCS Agentic AI — Workflow Diagram</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', Calibri, Arial, sans-serif; background: #F8FAFC; padding: 32px; }
+
+  .page { max-width: 1400px; margin: 0 auto; background: #fff; border-radius: 16px; box-shadow: 0 4px 24px rgba(0,0,0,0.08); overflow: hidden; }
+
+  .header { background: linear-gradient(135deg, #0F172A 0%, #1E3A5F 100%); padding: 32px 48px; }
+  .header h1 { color: #fff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+  .header p { color: #94A3B8; font-size: 14px; margin-top: 6px; }
+  .header .accent { display: block; width: 60px; height: 4px; background: #2563EB; border-radius: 2px; margin-top: 12px; }
+
+  .legend-bar { display: flex; gap: 24px; padding: 16px 48px; background: #F1F5F9; border-bottom: 1px solid #E2E8F0; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; }
+  .legend-dot { width: 14px; height: 14px; border-radius: 4px; }
+  .legend-dot.user { background: #FEF3C7; border: 2px solid #D97706; }
+  .legend-dot.ai { background: #EDE9FE; border: 2px solid #7C3AED; }
+  .legend-dot.auto { background: #D1FAE5; border: 2px solid #059669; }
+  .legend-dot.val { background: #CFFAFE; border: 2px solid #0891B2; }
+  .legend-text.user { color: #D97706; }
+  .legend-text.ai { color: #7C3AED; }
+  .legend-text.auto { color: #059669; }
+  .legend-text.val { color: #0891B2; }
+
+  .flow { padding: 36px 32px; }
+
+  .flow-row { display: flex; gap: 12px; margin-bottom: 8px; align-items: stretch; }
+  .flow-row + .connector { display: flex; justify-content: center; margin-bottom: 8px; }
+  .connector svg { display: block; }
+
+  .step { flex: 1; border-radius: 12px; padding: 16px; position: relative; min-height: 130px; transition: transform 0.15s; }
+  .step:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,0.1); }
+
+  .step.user { background: #FFFBEB; border: 2px solid #D97706; }
+  .step.ai { background: #F5F3FF; border: 2px solid #7C3AED; }
+  .step.auto { background: #ECFDF5; border: 2px solid #059669; }
+  .step.val { background: #ECFEFF; border: 2px solid #0891B2; }
+
+  .step-num { position: absolute; top: -10px; left: 12px; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; font-weight: 700; }
+  .step.user .step-num { background: #D97706; }
+  .step.ai .step-num { background: #7C3AED; }
+  .step.auto .step-num { background: #059669; }
+  .step.val .step-num { background: #0891B2; }
+
+  .step-badge { position: absolute; top: -10px; right: 12px; padding: 2px 10px; border-radius: 10px; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; }
+  .step.user .step-badge { background: #FEF3C7; color: #92400E; }
+  .step.ai .step-badge { background: #EDE9FE; color: #5B21B6; }
+  .step.auto .step-badge { background: #D1FAE5; color: #065F46; }
+  .step.val .step-badge { background: #CFFAFE; color: #155E75; }
+
+  .step-title { font-size: 13px; font-weight: 700; margin: 6px 0 8px; }
+  .step.user .step-title { color: #92400E; }
+  .step.ai .step-title { color: #5B21B6; }
+  .step.auto .step-title { color: #065F46; }
+  .step.val .step-title { color: #155E75; }
+
+  .step-detail { font-size: 11px; color: #475569; line-height: 1.5; }
+  .step-detail strong { color: #1E293B; }
+
+  .arrow-right { display: flex; align-items: center; flex-shrink: 0; width: 24px; }
+  .arrow-right svg { width: 24px; height: 20px; }
+
+  .section-label { display: flex; align-items: center; gap: 12px; margin: 20px 16px 14px; }
+  .section-label span { font-size: 11px; font-weight: 700; color: #94A3B8; text-transform: uppercase; letter-spacing: 1.5px; }
+  .section-label hr { flex: 1; border: none; border-top: 1px dashed #CBD5E1; }
+
+  .summary-bar { background: linear-gradient(135deg, #0F172A 0%, #1E3A5F 100%); padding: 20px 48px; display: flex; justify-content: center; gap: 48px; flex-wrap: wrap; }
+  .summary-stat { text-align: center; }
+  .summary-stat .num { font-size: 28px; font-weight: 800; color: #2563EB; }
+  .summary-stat .label { font-size: 11px; color: #94A3B8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+
+  .wide { flex: 1.4; }
+  .narrow { flex: 0.8; }
+
+  @media print {
+    body { padding: 0; background: #fff; }
+    .page { box-shadow: none; border-radius: 0; }
+    .step:hover { transform: none; box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <div class="header">
+    <h1>TCS Agentic AI — Autonomous Incident Lifecycle Workflow</h1>
+    <p>End-to-end workflow from natural language question to validated resolution with full ITSM governance</p>
+    <span class="accent"></span>
+  </div>
+
+  <div class="legend-bar">
+    <div class="legend-item"><div class="legend-dot user"></div><span class="legend-text user">User Action (Human-in-the-loop)</span></div>
+    <div class="legend-item"><div class="legend-dot ai"></div><span class="legend-text ai">AI-Powered (NLU + LLM Intelligence)</span></div>
+    <div class="legend-item"><div class="legend-dot auto"></div><span class="legend-text auto">Fully Automated (Zero Human Input)</span></div>
+    <div class="legend-item"><div class="legend-dot val"></div><span class="legend-text val">Validation & Verification</span></div>
+  </div>
+
+  <div class="flow">
+
+    <!-- PHASE 1: Detection & Analysis -->
+    <div class="section-label">
+      <span>Phase 1 — Detection & Analysis</span><hr>
+    </div>
+
+    <div class="flow-row">
+      <div class="step user">
+        <div class="step-num">1</div>
+        <div class="step-badge">User Action</div>
+        <div class="step-title">Report Issue</div>
+        <div class="step-detail">
+          Operator types in AI Chat:<br>
+          <strong>"Why is my pod mlflow-server crashing?"</strong><br>
+          Plain English — no kubectl needed
+        </div>
+      </div>
+      <div class="arrow-right"><svg viewBox="0 0 24 20"><path d="M2 10h16m-4-5l5 5-5 5" stroke="#94A3B8" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="step ai">
+        <div class="step-num">2</div>
+        <div class="step-badge">AI-Powered</div>
+        <div class="step-title">NLU Intent Recognition</div>
+        <div class="step-detail">
+          <strong>Intent:</strong> incident_response<br>
+          <strong>Pod:</strong> mlflow-server-xxx<br>
+          <strong>Confidence:</strong> 0.88<br>
+          19+ phrasings understood
+        </div>
+      </div>
+      <div class="arrow-right"><svg viewBox="0 0 24 20"><path d="M2 10h16m-4-5l5 5-5 5" stroke="#94A3B8" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="step auto">
+        <div class="step-num">3</div>
+        <div class="step-badge">Automated</div>
+        <div class="step-title">Pod Discovery</div>
+        <div class="step-detail">
+          Read deployment <strong>matchLabels</strong><br>
+          Locate pods via label selector<br>
+          Fallback: prefix name match
+        </div>
+      </div>
+      <div class="arrow-right"><svg viewBox="0 0 24 20"><path d="M2 10h16m-4-5l5 5-5 5" stroke="#94A3B8" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="step auto wide">
+        <div class="step-num">4</div>
+        <div class="step-badge">Automated</div>
+        <div class="step-title">Multi-Signal Telemetry Collection</div>
+        <div class="step-detail">
+          <strong>Logs:</strong> 200 lines (current + previous)<br>
+          <strong>Events:</strong> OOMKilled, CrashLoopBackOff<br>
+          <strong>Metrics:</strong> 380Mi / 512Mi, 19 restarts<br>
+          <strong>State:</strong> Container status, readiness
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 2: Diagnosis & Fix -->
+    <div class="section-label">
+      <span>Phase 2 — AI Diagnosis & Fix Generation</span><hr>
+    </div>
+
+    <div class="flow-row">
+      <div class="step ai wide">
+        <div class="step-num">5</div>
+        <div class="step-badge">AI-Powered</div>
+        <div class="step-title">Hybrid Root Cause Analysis</div>
+        <div class="step-detail">
+          <strong>Rule Engine:</strong> OOMKilled pattern matched<br>
+          <strong>LLM Analysis:</strong> "Memory ceiling insufficient for ML workload — container usage spikes during inference"<br>
+          <strong>Category:</strong> Resource Exhaustion
+        </div>
+      </div>
+      <div class="arrow-right"><svg viewBox="0 0 24 20"><path d="M2 10h16m-4-5l5 5-5 5" stroke="#94A3B8" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="step ai">
+        <div class="step-num">6</div>
+        <div class="step-badge">AI-Powered</div>
+        <div class="step-title">Smart Fix Calculation</div>
+        <div class="step-detail">
+          <strong>smartMemoryLimit()</strong><br>
+          512Mi × 5x (19 restarts) = 2560Mi<br>
+          <strong>→ Rounded to 2Gi</strong><br>
+          Risk Assessment: <strong>Low</strong>
+        </div>
+      </div>
+      <div class="arrow-right"><svg viewBox="0 0 24 20"><path d="M2 10h16m-4-5l5 5-5 5" stroke="#94A3B8" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="step auto">
+        <div class="step-num">7</div>
+        <div class="step-badge">Automated</div>
+        <div class="step-title">ServiceNow Incident</div>
+        <div class="step-detail">
+          <strong>INC0012345</strong> created<br>
+          Priority: P2<br>
+          AI diagnosis in work notes<br>
+          All fields auto-populated
+        </div>
+      </div>
+      <div class="arrow-right"><svg viewBox="0 0 24 20"><path d="M2 10h16m-4-5l5 5-5 5" stroke="#94A3B8" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="step auto">
+        <div class="step-num">8</div>
+        <div class="step-badge">Automated</div>
+        <div class="step-title">Present to Operator</div>
+        <div class="step-detail">
+          Diagnosis card with severity<br>
+          Fix proposal with <strong>Apply / Dry Run</strong><br>
+          Before-metrics snapshot<br>
+          Incident timeline
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 3: Remediation & Closure -->
+    <div class="section-label">
+      <span>Phase 3 — Remediation, Validation & Closure</span><hr>
+    </div>
+
+    <div class="flow-row">
+      <div class="step user">
+        <div class="step-num">9</div>
+        <div class="step-badge">User Action</div>
+        <div class="step-title">Approve & Apply Fix</div>
+        <div class="step-detail">
+          Operator clicks <strong>"Apply Fix"</strong><br>
+          kubectl patch executed<br>
+          Before-metrics captured<br>
+          Rolling update initiated
+        </div>
+      </div>
+      <div class="arrow-right"><svg viewBox="0 0 24 20"><path d="M2 10h16m-4-5l5 5-5 5" stroke="#94A3B8" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="step val">
+        <div class="step-num">10</div>
+        <div class="step-badge">Validation</div>
+        <div class="step-title">Post-Fix Verification</div>
+        <div class="step-detail">
+          Pod: <strong>Running ✓</strong><br>
+          Ready: <strong>1/1 ✓</strong><br>
+          Restarts: <strong>0</strong> (was 19) ✓<br>
+          Memory: 120Mi / 2Gi ✓
+        </div>
+      </div>
+      <div class="arrow-right"><svg viewBox="0 0 24 20"><path d="M2 10h16m-4-5l5 5-5 5" stroke="#94A3B8" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="step auto wide">
+        <div class="step-num">11</div>
+        <div class="step-badge">Automated</div>
+        <div class="step-title">Before / After Evidence</div>
+        <div class="step-detail">
+          Memory Limit: <strong>512Mi → 2Gi</strong><br>
+          Restarts: <strong>19 → 0</strong><br>
+          Ready: <strong>false → true</strong><br>
+          Healthy Pods: <strong>1/1</strong> — Full impact evidence
+        </div>
+      </div>
+      <div class="arrow-right"><svg viewBox="0 0 24 20"><path d="M2 10h16m-4-5l5 5-5 5" stroke="#94A3B8" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="step auto">
+        <div class="step-num">12</div>
+        <div class="step-badge">Automated</div>
+        <div class="step-title">Incident Resolved</div>
+        <div class="step-detail">
+          INC0012345 <strong>closed</strong><br>
+          Work notes: before/after + timeline<br>
+          <strong>MTTR: 45 seconds</strong><br>
+          State persisted across refresh
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="summary-bar">
+    <div class="summary-stat"><div class="num">45s</div><div class="label">Mean Time to Resolution</div></div>
+    <div class="summary-stat"><div class="num">99%</div><div class="label">MTTR Reduction</div></div>
+    <div class="summary-stat"><div class="num">3</div><div class="label">Human Steps (of 20)</div></div>
+    <div class="summary-stat"><div class="num">4</div><div class="label">AI-Powered Steps</div></div>
+    <div class="summary-stat"><div class="num">12</div><div class="label">Fully Automated</div></div>
+    <div class="summary-stat"><div class="num">1</div><div class="label">Validation Gate</div></div>
+  </div>
+</div>
+
+</body>
+</html>
