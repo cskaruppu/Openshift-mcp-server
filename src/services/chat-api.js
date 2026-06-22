@@ -5378,10 +5378,12 @@ Respond with ONLY this JSON structure:
     const hasSpecificPod = hasPodName || (cmd.resourceType === "pod" && cmd.resourceName) || podPatternMatch;
     const hasSpecificDeployment = cmd.resourceType === "deployment" && cmd.resourceName;
 
-    // If query targets a specific pod or deployment, let gatherClusterContext
-    // handle it — return null so the LLM/built-in path can do pod-specific diagnosis.
+    // If query targets a specific pod or deployment, redirect to incident_response
+    // pipeline which has full log analysis, LLM diagnosis, and fix proposals.
     if (hasSpecificPod || hasSpecificDeployment) {
-      return null;
+      cmd.operation = "incident_response";
+      cmd.resourceName = cmd.resourceName || (podPatternMatch ? podPatternMatch[1] : null);
+      return handleDirectCommand(cmd, message, conversationHistory);
     }
 
     const isNodeFocused = cmd.resourceType === "node" || /\bnode\b|\bnodes\b|\bworker\b|\bmaster\b|\bcontrol.?plane\b/.test(diagLower);
