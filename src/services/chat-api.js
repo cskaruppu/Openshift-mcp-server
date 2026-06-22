@@ -14560,6 +14560,7 @@ function parseMemToBytes(v) {
 //  - Periodic heartbeats during long-running operations
 // ---------------------------------------------------------------------------
 function sseStart(res) {
+  if (res.headersSent) return;
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache, no-transform",
@@ -15297,6 +15298,22 @@ export async function handleChatAPI(req, res) {
     return;
   }
   incCounter("mcp_chat_requests_total", { status: "accepted" });
+
+  // Overall request timeout — prevents infinite hangs from stalled LLM or K8s calls.
+  const CHAT_TIMEOUT_MS = 120_000;
+  const _reqTimer = setTimeout(() => {
+    console.error(`[chat-api] Request timed out after ${CHAT_TIMEOUT_MS / 1000}s for: ${userMessage?.slice(0, 80) || "unknown"}`);
+    if (res.headersSent) {
+      try {
+        sseSend(res, { delta: "\n\n### Request Timed Out\n\nThe analysis took longer than expected. Please try again or use a simpler query." });
+        sseSend(res, { done: true, provider: "built-in", conversationId, error: true });
+        sseEnd(res);
+      } catch {}
+    } else {
+      try { json(res, 504, { error: "Chat request timed out", conversationId }); } catch {}
+    }
+  }, CHAT_TIMEOUT_MS);
+  res.on("close", () => clearTimeout(_reqTimer));
 
   try {
     const body = await readBody(req);
@@ -16682,6 +16699,15 @@ export async function handleChatAPI(req, res) {
       }
     }
 
+    // Start SSE early so the frontend transitions from "Parsing" to "Querying"
+    // even while rule-based handlers / K8s lookups / LLM calls are in progress.
+    let _sseStarted = false;
+    if (wantsStream && !res.headersSent) {
+      sseStart(res);
+      _sseStarted = true;
+      sseSend(res, { stage: "querying", toolProgress: "Analyzing query..." });
+    }
+
     // Rule-based handlers — for LOCAL cluster, or remote clusters with an
     // active agent bridge (ocpGet() is routed through the bridge so data
     // is fetched from the correct cluster).
@@ -17172,10 +17198,20 @@ export async function handleChatAPI(req, res) {
     json(res, 200, { ...payload, cached: false, conversationId });
   } catch (err) {
     console.error("Chat API error:", err?.stack || err);
-    const isNetworkError = /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ECONNRESET|network error|fetch failed/i.test(err.message);
-    if (err?.llmConfigError) {
+    const isNetworkError = /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ECONNRESET|network error|fetch failed|stalled/i.test(err.message);
+    const isTimeout = err.message?.includes("Chat request timed out") || err.message?.includes("stalled");
+    if (res.headersSent) {
+      const errReply = isTimeout
+        ? "### Request Timed Out\n\nThe AI analysis took too long to respond. Please try again — you can also try a simpler query like `list pods` or `cluster status`."
+        : isNetworkError
+        ? "### LLM Service Unavailable\n\nThe AI service could not be reached. Try direct queries like `list pods` or `cluster status`."
+        : `### Error\n\n${err.message || "An unexpected error occurred."}`;
+      sseSend(res, { delta: errReply });
+      sseSend(res, { done: true, provider: "built-in", conversationId, error: true });
+      sseEnd(res);
+    } else if (err?.llmConfigError) {
       json(res, 200, { reply: llmConfigErrorReply(err), provider: "built-in", error: "llm_not_configured", errorProvider: err.provider, conversationId });
-    } else if (isNetworkError) {
+    } else if (isNetworkError || isTimeout) {
       const fallbackReply = `### LLM Service Unavailable\n\nThe AI analysis service is currently unreachable. Your query **"${userMessage}"** requires LLM processing but the configured provider could not be contacted.\n\n**What you can try:**\n- Use direct queries like \`list pods\`, \`node status\`, \`cluster status\` (these work without LLM)\n- Check your LLM provider configuration (\`LLM_PROVIDER\`, \`LLM_API_URL\`, \`LLM_API_KEY\`)\n- Verify network connectivity from the pod to the LLM endpoint\n- Set \`LLM_PROVIDER=none\` to use built-in analysis`;
       json(res, 200, { reply: fallbackReply, provider: "built-in", error: "llm_unreachable", conversationId });
     } else {
@@ -17183,6 +17219,7 @@ export async function handleChatAPI(req, res) {
     }
     _traceStatus = "error";
   } finally {
+    clearTimeout(_reqTimer);
     clearRemoteCluster();
     histLogQuery({
       conversationId,

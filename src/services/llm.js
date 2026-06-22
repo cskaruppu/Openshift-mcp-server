@@ -100,7 +100,7 @@ export function getLLMRelayUrl() {
 }
 
 const DNS_RETRY_CODES = new Set(["EAI_AGAIN", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "ECONNREFUSED", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT"]);
-const MAX_RETRIES = 5;
+const MAX_RETRIES = 2;
 
 async function llmFetch(url, opts, retries = MAX_RETRIES) {
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -861,8 +861,19 @@ async function readSSE(body, onEvent) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
+  const CHUNK_TIMEOUT_MS = 90_000;
   while (true) {
-    const { value, done } = await reader.read();
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("LLM stream stalled — no data received for 90s")), CHUNK_TIMEOUT_MS);
+    });
+    let result;
+    try {
+      result = await Promise.race([reader.read(), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+    const { value, done } = result;
     if (done) break;
     buf += decoder.decode(value, { stream: true });
     let idx;
