@@ -1761,29 +1761,47 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
 /* ------------------------------------------------------------------ */
 
 function IncidentTimeline({ events, sevColor }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const fmtTime = (t) => { try { const d = new Date(t); return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); } catch { return "—"; } };
-  const evtIcons = { OOMKilling: "💀", Killing: "⚠", BackOff: "🔄", Unhealthy: "❌", FailedScheduling: "⏳", Pulled: "📦", Started: "▶", Created: "➕", "AI Detected": "🤖", ServiceNow: "🎫", "Fix Ready": "🔧" };
+  const fmtDate = (t) => { try { const d = new Date(t); return d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); } catch { return "—"; } };
+  const evtIcons = { OOMKilling: "💀", Killing: "⚠", BackOff: "🔄", Unhealthy: "❌", FailedScheduling: "⏳", Pulled: "📦", Started: "▶", Created: "➕", "AI Detected": "🤖", ServiceNow: "🎫", "Fix Ready": "🔧", "Incident Created": "🔔", "Triage Started": "🔍", "Fix Applied": "✅", "Resolved": "🏁" };
+  const phaseColors = { "AI Detected": "#3b82f6", ServiceNow: "#8b5cf6", "Fix Ready": "#16a34a", "Incident Created": "#dc2626", "Triage Started": "#f59e0b", "Fix Applied": "#16a34a", Resolved: "#16a34a" };
+
+  const firstTime = events[0]?.time ? new Date(events[0].time) : null;
+  const lastTime = events[events.length - 1]?.time ? new Date(events[events.length - 1].time) : null;
+  const duration = firstTime && lastTime ? ((lastTime - firstTime) / 1000) : null;
 
   return (
     <div style={{ marginBottom: 12, border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
       <button onClick={() => setOpen(v => !v)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "var(--card-bg)", border: "none", cursor: "pointer", color: "var(--fg)", fontSize: "0.88em", fontWeight: 600 }}>
         <span style={{ transform: open ? "rotate(90deg)" : "rotate(0)", transition: "transform 0.15s" }}>▶</span>
-        Incident Timeline ({events.length} events)
-        <span style={{ marginLeft: "auto", fontSize: "0.75em", color: "var(--muted)" }}>click to expand</span>
+        Incident Event Timeline ({events.length} events)
+        {duration != null && <span style={{ fontSize: "0.75em", color: "var(--muted)", fontWeight: 400 }}>| Span: {duration < 60 ? duration.toFixed(0) + "s" : (duration / 60).toFixed(1) + "min"}</span>}
+        <span style={{ marginLeft: "auto", fontSize: "0.75em", color: "var(--muted)" }}>{open ? "collapse" : "expand"}</span>
       </button>
       {open && (
-        <div style={{ padding: "8px 12px", borderTop: "1px solid var(--border)" }}>
-          {events.map((e, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "4px 0", borderBottom: i < events.length - 1 ? "1px dashed var(--border)" : "none" }}>
-              <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: "0.75em", color: "var(--muted)", minWidth: 65, flexShrink: 0 }}>{fmtTime(e.time)}</span>
-              <span style={{ fontSize: "0.85em", flexShrink: 0 }}>{evtIcons[e.event] || "●"}</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ fontWeight: 600, fontSize: "0.85em", color: e.event === "AI Detected" || e.event === "ServiceNow" || e.event === "Fix Ready" ? sevColor : "var(--fg)" }}>{e.event}</span>
-                {e.detail && <div style={{ fontSize: "0.78em", color: "var(--muted)", marginTop: 1, wordBreak: "break-word" }}>{e.detail}</div>}
+        <div style={{ padding: "4px 0", borderTop: "1px solid var(--border)" }}>
+          {events.map((e, i) => {
+            const isPhase = phaseColors[e.event];
+            return (
+              <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "5px 12px", borderBottom: i < events.length - 1 ? "1px dashed var(--border)" : "none", background: isPhase ? (phaseColors[e.event] + "08") : undefined }}>
+                <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: "0.72em", color: "var(--muted)", minWidth: 70, flexShrink: 0, paddingTop: 1 }}>{fmtTime(e.time)}</span>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 0, width: 20, flexShrink: 0 }}>
+                  <span style={{ fontSize: "0.85em" }}>{evtIcons[e.event] || "●"}</span>
+                  {i < events.length - 1 && <div style={{ width: 1, height: 12, background: "var(--border)", marginTop: 2 }} />}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ fontWeight: 600, fontSize: "0.84em", color: phaseColors[e.event] || sevColor || "var(--fg)" }}>{e.event}</span>
+                  {e.detail && <div style={{ fontSize: "0.76em", color: "var(--muted)", marginTop: 1, wordBreak: "break-word" }}>{e.detail}</div>}
+                </div>
               </div>
+            );
+          })}
+          {duration != null && (
+            <div style={{ padding: "6px 12px", fontSize: "0.75em", color: "var(--muted)", background: "var(--card-bg)", textAlign: "right", fontFamily: "var(--font-mono, monospace)" }}>
+              Detection to Fix Ready: {duration < 60 ? duration.toFixed(0) + "s" : (duration / 60).toFixed(1) + "min"} | {firstTime ? fmtDate(firstTime) : ""} — {lastTime ? fmtDate(lastTime) : ""}
             </div>
-          ))}
+          )}
         </div>
       )}
     </div>
@@ -1794,22 +1812,34 @@ function IncidentTimeline({ events, sevColor }) {
 /*  Recovery Timeline — shows step-by-step healing progress             */
 /* ------------------------------------------------------------------ */
 
-function RecoveryTimeline({ validation, incClosed, incidentNumber, durationMs }) {
+function RecoveryTimeline({ validation, incClosed, incidentNumber, durationMs, resolutionTimeline }) {
   if (!validation) return null;
   const v = validation;
+  const fmtTs = (iso) => { try { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); } catch { return ""; } };
   const steps = [];
-  steps.push({ label: "Fix command executed", status: "done", time: "0s" });
+
+  const fixTs = resolutionTimeline?.fixAppliedAt ? fmtTs(resolutionTimeline.fixAppliedAt) : "";
+  steps.push({ label: "Fix command executed", status: "done", time: fixTs || "T+0s" });
+
   if (v.stable != null) {
-    steps.push({ label: "Rolling restart triggered", status: "done", time: v.rolloutDurationMs ? `${(v.rolloutDurationMs / 1000 * 0.15).toFixed(0)}s` : "2s" });
-    steps.push({ label: v.ready != null ? `Replicas ready: ${v.ready}/${v.desired}` : "New pod scheduled", status: "done", time: v.rolloutDurationMs ? `${(v.rolloutDurationMs / 1000 * 0.6).toFixed(0)}s` : "8s" });
-    if (v.stable) steps.push({ label: "Rollout stable — all replicas updated", status: "done", time: v.rolloutDurationMs ? `${(v.rolloutDurationMs / 1000).toFixed(0)}s` : "15s" });
+    steps.push({ label: "Rolling restart triggered", status: "done", time: v.rolloutDurationMs ? `+${(v.rolloutDurationMs / 1000 * 0.15).toFixed(0)}s` : "+2s" });
+    steps.push({ label: v.ready != null ? `Replicas ready: ${v.ready}/${v.desired}` : "New pod scheduled", status: "done", time: v.rolloutDurationMs ? `+${(v.rolloutDurationMs / 1000 * 0.6).toFixed(0)}s` : "+8s" });
+    if (v.stable) steps.push({ label: "Rollout stable — all replicas updated", status: "done", time: v.rolloutDurationMs ? `+${(v.rolloutDurationMs / 1000).toFixed(0)}s` : "+15s" });
     else steps.push({ label: "Rollout in progress", status: "pending", time: "" });
   }
   if (v.allPodsHealthy != null) {
-    steps.push({ label: v.pods?.length ? `Pods healthy: ${v.pods.filter(p => p.ready).length}/${v.pods.length} running` : "Pod health verified", status: v.allPodsHealthy ? "done" : "warn", time: "" });
+    const podDetail = v.pods?.length ? `${v.pods.filter(p => p.ready).length}/${v.pods.length} running` : "verified";
+    steps.push({ label: `Pod health check — ${podDetail}`, status: v.allPodsHealthy ? "done" : "warn", time: resolutionTimeline?.validationAt ? fmtTs(resolutionTimeline.validationAt) : "" });
   }
-  if (incClosed) steps.push({ label: `ServiceNow ${incidentNumber || "incident"} auto-resolved`, status: "done", time: durationMs ? `${(durationMs / 1000).toFixed(0)}s` : "" });
-  if (v.passed) steps.push({ label: "Validation passed — incident closed", status: "done", time: durationMs ? `${(durationMs / 1000).toFixed(0)}s total` : "" });
+  if (incClosed) {
+    const resolveTs = resolutionTimeline?.resolvedAt ? fmtTs(resolutionTimeline.resolvedAt) : "";
+    steps.push({ label: `${incidentNumber || "Incident"} auto-resolved in ServiceNow`, status: "done", time: resolveTs });
+  }
+  if (v.passed) {
+    const totalSec = (resolutionTimeline?.totalDurationMs || durationMs || 0) / 1000;
+    steps.push({ label: "Validation passed — incident closed", status: "done", time: "" });
+    steps.push({ label: `Mean Time to Resolution (MTTR): ${totalSec < 60 ? totalSec.toFixed(1) + "s" : (totalSec / 60).toFixed(1) + "min"}`, status: "done", time: "", isSummary: true });
+  }
 
   const colors = { done: "#16a34a", pending: "#f59e0b", warn: "#f59e0b", fail: "#dc2626" };
   const icons = { done: "✓", pending: "◷", warn: "!", fail: "✕" };
@@ -1820,8 +1850,8 @@ function RecoveryTimeline({ validation, incClosed, incidentNumber, durationMs })
       {steps.map((s, i) => (
         <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", fontSize: "0.82em" }}>
           <span style={{ width: 18, height: 18, borderRadius: "50%", background: colors[s.status] + "18", color: colors[s.status], display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.7em", fontWeight: 700, flexShrink: 0 }}>{icons[s.status]}</span>
-          <span style={{ flex: 1, color: s.status === "done" ? "var(--fg)" : colors[s.status] }}>{s.label}</span>
-          {s.time && <span style={{ fontSize: "0.85em", color: "var(--muted)", fontFamily: "var(--font-mono, monospace)" }}>{s.time}</span>}
+          <span style={{ flex: 1, color: s.isSummary ? "#16a34a" : s.status === "done" ? "var(--fg)" : colors[s.status], fontWeight: s.isSummary ? 700 : 400 }}>{s.label}</span>
+          {s.time && <span style={{ fontSize: "0.78em", color: "var(--muted)", fontFamily: "var(--font-mono, monospace)" }}>{s.time}</span>}
         </div>
       ))}
     </div>
@@ -1834,25 +1864,49 @@ function RecoveryTimeline({ validation, incClosed, incidentNumber, durationMs })
 
 function BeforeAfterMetrics({ before, after }) {
   if (!before && !after) return null;
+
+  const statusDot = (ready, state) => {
+    const color = ready ? "#16a34a" : state === "CrashLoopBackOff" || state === "OOMKilled" ? "#dc2626" : "#f59e0b";
+    return React.createElement("span", { style: { display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: color, marginRight: 4, verticalAlign: "middle" } });
+  };
+
   const rows = [];
-  if (before?.memoryLimit || after?.memoryLimit) rows.push({ label: "Memory Limit", before: before?.memoryLimit || "—", after: after?.memoryLimit || "—" });
+  if (before?.status || after?.status) {
+    rows.push({
+      label: "Pod Status",
+      before: React.createElement("span", null, statusDot(before?.ready, before?.containerState), before?.containerState || before?.status || "—"),
+      after: React.createElement("span", null, statusDot(after?.ready, after?.containerState), after?.containerState || after?.status || "—"),
+      highlight: after?.ready && !before?.ready,
+    });
+  }
+  if (before?.memoryLimit || after?.memoryLimit) {
+    const changed = before?.memoryLimit !== after?.memoryLimit;
+    rows.push({ label: "Memory Limit", before: before?.memoryLimit || "—", after: after?.memoryLimit || "—", highlight: changed });
+  }
+  if (before?.memoryRequest || after?.memoryRequest) {
+    rows.push({ label: "Memory Request", before: before?.memoryRequest || "—", after: after?.memoryRequest || "—" });
+  }
   if (before?.memoryUsage || after?.memoryUsage) rows.push({ label: "Memory Usage", before: before?.memoryUsage || "—", after: after?.memoryUsage || "—" });
-  if (before?.restarts != null || after?.restarts != null) rows.push({ label: "Restarts", before: before?.restarts ?? "—", after: after?.restarts ?? "0" });
-  if (before?.status || after?.status) rows.push({ label: "Status", before: before?.status || "—", after: after?.status || "—" });
+  if (before?.restarts != null || after?.restarts != null) rows.push({ label: "Restarts", before: String(before?.restarts ?? "—"), after: String(after?.restarts ?? "0"), highlight: (after?.restarts ?? 0) < (before?.restarts ?? 0) });
+  if (before?.cpuLimit || after?.cpuLimit) rows.push({ label: "CPU Limit", before: before?.cpuLimit || "—", after: after?.cpuLimit || "—" });
   if (before?.cpuUsage || after?.cpuUsage) rows.push({ label: "CPU Usage", before: before?.cpuUsage || "—", after: after?.cpuUsage || "—" });
+  if (after?.podCount) rows.push({ label: "Healthy Pods", before: "—", after: after.podCount });
   if (rows.length === 0) return null;
 
   return (
     <div style={{ margin: "8px 0" }}>
-      <div style={{ fontSize: "0.72em", fontWeight: 600, textTransform: "uppercase", color: "var(--muted)", letterSpacing: "0.5px", marginBottom: 6 }}>Before / After</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 0, fontSize: "0.82em", border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <div style={{ fontSize: "0.72em", fontWeight: 600, textTransform: "uppercase", color: "var(--muted)", letterSpacing: "0.5px" }}>Before / After Comparison</div>
+        {before?.podName && <span style={{ fontSize: "0.72em", color: "var(--muted)", fontFamily: "var(--font-mono, monospace)" }}>{before.containerName || ""}@{before.podName}</span>}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr", gap: 0, fontSize: "0.82em", border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }}>
         <div style={{ padding: "6px 10px", fontWeight: 600, background: "var(--card-bg)", borderBottom: "1px solid var(--border)" }}>Metric</div>
-        <div style={{ padding: "6px 10px", fontWeight: 600, background: "var(--card-bg)", borderBottom: "1px solid var(--border)", textAlign: "center", color: "#dc2626" }}>Before</div>
-        <div style={{ padding: "6px 10px", fontWeight: 600, background: "var(--card-bg)", borderBottom: "1px solid var(--border)", textAlign: "center", color: "#16a34a" }}>After</div>
+        <div style={{ padding: "6px 10px", fontWeight: 600, background: "var(--card-bg)", borderBottom: "1px solid var(--border)", textAlign: "center", color: "#dc2626" }}>Before Fix</div>
+        <div style={{ padding: "6px 10px", fontWeight: 600, background: "var(--card-bg)", borderBottom: "1px solid var(--border)", textAlign: "center", color: "#16a34a" }}>After Fix</div>
         {rows.map((r, i) => (<React.Fragment key={i}>
-          <div style={{ padding: "5px 10px", borderBottom: i < rows.length - 1 ? "1px solid var(--border)" : "none" }}>{r.label}</div>
-          <div style={{ padding: "5px 10px", textAlign: "center", borderBottom: i < rows.length - 1 ? "1px solid var(--border)" : "none", color: "#dc2626", fontFamily: "var(--font-mono, monospace)" }}>{r.before}</div>
-          <div style={{ padding: "5px 10px", textAlign: "center", borderBottom: i < rows.length - 1 ? "1px solid var(--border)" : "none", color: "#16a34a", fontFamily: "var(--font-mono, monospace)" }}>{r.after}</div>
+          <div style={{ padding: "5px 10px", borderBottom: i < rows.length - 1 ? "1px solid var(--border)" : "none", fontWeight: r.highlight ? 600 : 400 }}>{r.label}</div>
+          <div style={{ padding: "5px 10px", textAlign: "center", borderBottom: i < rows.length - 1 ? "1px solid var(--border)" : "none", color: "#dc2626", fontFamily: typeof r.before === "string" ? "var(--font-mono, monospace)" : undefined }}>{r.before}</div>
+          <div style={{ padding: "5px 10px", textAlign: "center", borderBottom: i < rows.length - 1 ? "1px solid var(--border)" : "none", color: "#16a34a", fontFamily: typeof r.after === "string" ? "var(--font-mono, monospace)" : undefined, background: r.highlight ? "rgba(34,197,94,0.06)" : undefined, fontWeight: r.highlight ? 600 : 400 }}>{r.after}</div>
         </React.Fragment>))}
       </div>
     </div>
@@ -1919,16 +1973,17 @@ function FixProposal({ diag, cluster }) {
           setFixStates(prev => ({ ...prev, [key]: {
             phase: closeData.success ? "resolved" : "applied", text: out, incClosed: closeData.success,
             incError: closeData.success ? null : (closeData.error || "close failed"),
-            validation: d.validation || null, beforeMetrics: d.beforeMetrics || null, afterMetrics: d.afterMetrics || null, durationMs,
+            validation: d.validation || null, beforeMetrics: d.beforeMetrics || null, afterMetrics: d.afterMetrics || null, resolutionTimeline: d.resolutionTimeline || null, durationMs,
           } }));
         } catch (e) {
-          setFixStates(prev => ({ ...prev, [key]: { phase: "applied", text: out, incError: e.message, validation: d.validation || null, durationMs } }));
+          setFixStates(prev => ({ ...prev, [key]: { phase: "applied", text: out, incError: e.message, validation: d.validation || null, resolutionTimeline: d.resolutionTimeline || null, durationMs } }));
         }
       } else {
         const phase = dryRun ? "dry-done" : d.incidentClosed?.success ? "resolved" : (d.success === false ? "failed" : "applied");
         setFixStates(prev => ({ ...prev, [key]: {
           phase, text: String(out).slice(0, 4000),
           validation: d.validation || null, beforeMetrics: d.beforeMetrics || null, afterMetrics: d.afterMetrics || null,
+          resolutionTimeline: d.resolutionTimeline || null,
           incClosed: d.incidentClosed?.success || false, incError: d.incidentClosed?.error || null, durationMs,
         } }));
       }
@@ -2064,7 +2119,7 @@ function FixProposal({ diag, cluster }) {
                       </div>
                       {/* Recovery timeline for applied fixes */}
                       {st.validation && !st.phase?.startsWith("dry") && (
-                        <RecoveryTimeline validation={st.validation} incClosed={st.incClosed} incidentNumber={diag.incidentNumber} durationMs={st.durationMs} />
+                        <RecoveryTimeline validation={st.validation} incClosed={st.incClosed} incidentNumber={diag.incidentNumber} durationMs={st.durationMs} resolutionTimeline={st.resolutionTimeline} />
                       )}
                       {/* Before/After metrics comparison */}
                       {st.beforeMetrics && st.afterMetrics && !st.phase?.startsWith("dry") && (

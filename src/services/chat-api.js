@@ -4546,16 +4546,23 @@ Respond with ONLY this JSON structure:
 
       // Phase 15: FIX_PROPOSAL card with incident context
       if (fixProposals.length > 0) {
-        // Build incident timeline from events
+        // Build incident timeline — full lifecycle from first event to fix ready
         const timeline = [];
         const targetEvents = targetName ? warningEvents.filter(e => e.involvedObject?.name === targetName || (targetDeploy && e.involvedObject?.name?.startsWith(targetDeploy))) : warningEvents.slice(0, 10);
-        for (const evt of targetEvents.slice(0, 8)) {
+        const sortedEvts = targetEvents.slice(0, 8).sort((a, b) => new Date(a.lastTimestamp || a.eventTime || 0) - new Date(b.lastTimestamp || b.eventTime || 0));
+        if (sortedEvts.length > 0) {
+          const firstEvt = sortedEvts[0];
+          const firstTs = firstEvt.lastTimestamp || firstEvt.eventTime || firstEvt.metadata?.creationTimestamp;
+          timeline.push({ time: firstTs, event: "Incident Created", detail: `First warning event detected: ${firstEvt.reason || "Unknown"} on ${firstEvt.involvedObject?.name || targetName || "resource"}` });
+        }
+        for (const evt of sortedEvts) {
           const ts = evt.lastTimestamp || evt.eventTime || evt.metadata?.creationTimestamp;
           timeline.push({ time: ts, event: evt.reason || "Unknown", detail: (evt.message || "").slice(0, 120) });
         }
-        timeline.push({ time: new Date().toISOString(), event: "AI Detected", detail: `TCS Agentic AI diagnosed ${severity} — ${rootCauses[0]?.signal || "issue"}` });
-        if (snowRec?.number) timeline.push({ time: new Date().toISOString(), event: "ServiceNow", detail: `${snowRec.number} auto-created for ${severity}` });
-        timeline.push({ time: new Date().toISOString(), event: "Fix Ready", detail: `${fixProposals.length} fix proposal(s) generated` });
+        timeline.push({ time: new Date().toISOString(), event: "Triage Started", detail: `AI auto-triage initiated — scanning pods, logs, events, metrics` });
+        timeline.push({ time: new Date().toISOString(), event: "AI Detected", detail: `Diagnosed ${severity}: ${llmDiagnosis?.rootCause || rootCauses[0]?.signal || "issue"} — ${llmDiagnosis?.category || "analysis complete"}` });
+        if (snowRec?.number) timeline.push({ time: new Date().toISOString(), event: "ServiceNow", detail: `${snowRec.number} auto-created for ${severity} — assigned to ops team` });
+        timeline.push({ time: new Date().toISOString(), event: "Fix Ready", detail: `${fixProposals.length} fix proposal(s) generated — awaiting approval` });
 
         const rcaCategoryFallback = rootCauses.some(r => /OOM/i.test(r.signal)) ? "Resource Exhaustion"
           : rootCauses.some(r => /CrashLoop|Failed/i.test(r.signal)) ? "Application Failure"

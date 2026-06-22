@@ -4638,12 +4638,21 @@ spec:
                 const pmMatch = (pm.items || []).find(m => m.metadata?.name === pod.metadata?.name);
                 const memUsage = pmMatch?.containers?.[0]?.usage?.memory || null;
                 const cpuUsage = pmMatch?.containers?.[0]?.usage?.cpu || null;
+                const requests = (pod.spec?.containers || [])[0]?.resources?.requests || {};
                 beforeMetrics = {
+                  podName: pod.metadata?.name || "—",
+                  containerName: (pod.status?.containerStatuses || [])[0]?.name || (pod.spec?.containers || [])[0]?.name || "—",
                   memoryLimit: limits.memory || "—",
+                  memoryRequest: requests.memory || "—",
                   memoryUsage: memUsage || "—",
+                  cpuLimit: limits.cpu || "—",
+                  cpuRequest: requests.cpu || "—",
                   cpuUsage: cpuUsage || "—",
                   restarts: cs?.restartCount ?? 0,
                   status: pod.status?.phase || "Unknown",
+                  ready: cs?.ready ?? false,
+                  containerState: cs?.state?.running ? "Running" : cs?.state?.waiting?.reason || cs?.state?.terminated?.reason || "Unknown",
+                  timestamp: new Date().toISOString(),
                 };
               }
             }
@@ -4833,11 +4842,13 @@ spec:
             const aResName = meta.name || body.resourceName || "";
             if (aNs && aResName) {
               let specLimits = {};
+              let specRequests = {};
               const kindMatch = command.match(/\b(deployment|statefulset|daemonset|replicaset)\/([^\s]+)/i);
               const resKind = kindMatch?.[1]?.toLowerCase() || "deployment";
               try {
-                const wl = await ocpGet(`/apis/apps/v1/namespaces/${aNs}/${resKind}s/${aResName}`);
-                specLimits = (wl.spec?.template?.spec?.containers || [])[0]?.resources?.limits || {};
+                const wlData = await ocpGet(`/apis/apps/v1/namespaces/${aNs}/${resKind}s/${aResName}`);
+                specLimits = (wlData.spec?.template?.spec?.containers || [])[0]?.resources?.limits || {};
+                specRequests = (wlData.spec?.template?.spec?.containers || [])[0]?.resources?.requests || {};
               } catch {}
               const podData = await ocpGet(`/api/v1/namespaces/${aNs}/pods?labelSelector=app=${encodeURIComponent(aResName)}&limit=10`).catch(() => ({ items: [] }));
               const pm = await ocpGet(`/apis/metrics.k8s.io/v1beta1/namespaces/${aNs}/pods`).catch(() => ({ items: [] }));
@@ -4849,19 +4860,37 @@ spec:
                 const cs = (pod.status?.containerStatuses || [])[0];
                 const pmMatch = (pm.items || []).find(m => m.metadata?.name === pod.metadata?.name);
                 afterMetrics = {
+                  podName: pod.metadata?.name || "—",
+                  containerName: cs?.name || (pod.spec?.containers || [])[0]?.name || "—",
                   memoryLimit: specLimits.memory || (pod.spec?.containers || [])[0]?.resources?.limits?.memory || "—",
+                  memoryRequest: specRequests.memory || (pod.spec?.containers || [])[0]?.resources?.requests?.memory || "—",
                   memoryUsage: pmMatch?.containers?.[0]?.usage?.memory || "—",
+                  cpuLimit: specLimits.cpu || (pod.spec?.containers || [])[0]?.resources?.limits?.cpu || "—",
+                  cpuRequest: specRequests.cpu || (pod.spec?.containers || [])[0]?.resources?.requests?.cpu || "—",
                   cpuUsage: pmMatch?.containers?.[0]?.usage?.cpu || "—",
                   restarts: cs?.restartCount ?? 0,
                   status: pod.status?.phase || "Unknown",
+                  ready: cs?.ready ?? false,
+                  containerState: cs?.state?.running ? "Running" : cs?.state?.waiting?.reason || cs?.state?.terminated?.reason || "Unknown",
+                  podCount: `${runningPods.filter(p => (p.status?.containerStatuses || []).every(c => c.ready)).length}/${runningPods.length}`,
+                  timestamp: new Date().toISOString(),
                 };
               } else {
                 afterMetrics = {
+                  podName: "pending",
+                  containerName: "—",
                   memoryLimit: specLimits.memory || "—",
+                  memoryRequest: "pending",
                   memoryUsage: "pending",
+                  cpuLimit: "—",
+                  cpuRequest: "pending",
                   cpuUsage: "pending",
                   restarts: 0,
                   status: "Rolling out",
+                  ready: false,
+                  containerState: "ContainerCreating",
+                  podCount: "0/?",
+                  timestamp: new Date().toISOString(),
                 };
               }
             }
@@ -4871,13 +4900,17 @@ spec:
           const beforeAfterNotes = [];
           if (beforeMetrics || afterMetrics) {
             beforeAfterNotes.push(`── BEFORE / AFTER COMPARISON ────────`);
-            const fields = ["status", "restarts", "memoryUsage", "memoryLimit", "cpuUsage"];
-            const labels = { status: "Status", restarts: "Restarts", memoryUsage: "Memory Usage", memoryLimit: "Memory Limit", cpuUsage: "CPU Usage" };
+            if (beforeMetrics?.podName) beforeAfterNotes.push(`  Pod: ${beforeMetrics.podName} → ${afterMetrics?.podName || "pending"}`);
+            if (beforeMetrics?.containerName) beforeAfterNotes.push(`  Container: ${beforeMetrics.containerName}`);
+            const fields = ["status", "containerState", "ready", "restarts", "memoryLimit", "memoryRequest", "memoryUsage", "cpuLimit", "cpuUsage"];
+            const labels = { status: "Pod Phase", containerState: "Container State", ready: "Ready", restarts: "Restarts", memoryLimit: "Memory Limit", memoryRequest: "Memory Request", memoryUsage: "Memory Usage", cpuLimit: "CPU Limit", cpuUsage: "CPU Usage" };
             for (const f of fields) {
               const bv = beforeMetrics?.[f] ?? "—";
               const av = afterMetrics?.[f] ?? "—";
+              if (bv === "—" && av === "—") continue;
               beforeAfterNotes.push(`  ${labels[f]}: ${bv} → ${av}`);
             }
+            if (afterMetrics?.podCount) beforeAfterNotes.push(`  Healthy Pods: ${afterMetrics.podCount}`);
           }
           if (Array.isArray(body.incidentTimeline) && body.incidentTimeline.length) {
             beforeAfterNotes.push(`\n── INCIDENT TIMELINE ────────────────`);
@@ -4893,7 +4926,13 @@ spec:
             snowUpdateRecord("incident", body.incidentSysId, { work_notes: beforeAfterNotes.join("\n") }).catch(() => {});
           }
         }
-        return sendJson(res, 200, { ...result, classification: preflight?.classification, validation, incidentClosed, beforeMetrics, afterMetrics });
+        const resolutionTimeline = {
+          fixAppliedAt: beforeMetrics?.timestamp || new Date().toISOString(),
+          validationAt: afterMetrics?.timestamp || new Date().toISOString(),
+          resolvedAt: incidentClosed?.success ? new Date().toISOString() : null,
+          totalDurationMs: Date.now() - auditStart,
+        };
+        return sendJson(res, 200, { ...result, classification: preflight?.classification, validation, incidentClosed, beforeMetrics, afterMetrics, resolutionTimeline });
       } catch (e) {
         if (featureFlags.pillar7AuditLog()) logAuditEvent({
           command,
