@@ -3,46 +3,48 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TCS Agentic AI — Incident Response Use Case</title>
+<title>TCS Agentic AI — Use Case 2: Incident Response</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: 'Inter', -apple-system, sans-serif; background: #f0f4f8; color: #1e293b; }
-
   .page { max-width: 1400px; margin: 0 auto; padding: 24px; }
 
   .header { background: linear-gradient(135deg, #1A1A2E 0%, #16213E 40%, #0F3460 70%, #E94560 100%);
-    color: #fff; padding: 32px 40px; border-radius: 16px; margin-bottom: 24px;
-    display: flex; justify-content: space-between; align-items: center; }
-  .header h1 { font-size: 22px; font-weight: 800; letter-spacing: -0.5px; }
-  .header p { font-size: 13px; color: rgba(255,255,255,0.7); margin-top: 4px; }
-  .header-badge { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25);
-    padding: 8px 20px; border-radius: 10px; text-align: center; }
-  .header-badge .big { font-size: 22px; font-weight: 800; }
-  .header-badge .small { font-size: 11px; color: rgba(255,255,255,0.7); }
+    color: #fff; padding: 32px 40px; border-radius: 16px; margin-bottom: 24px; }
+  .header h1 { font-size: 24px; font-weight: 800; letter-spacing: -0.5px; }
+  .header h2 { font-size: 16px; font-weight: 500; color: rgba(255,255,255,0.8); margin-top: 4px; }
+  .header p { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 8px; line-height: 1.6; }
+  .header-metrics { display: flex; gap: 16px; margin-top: 16px; }
+  .hm { background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2);
+    padding: 10px 20px; border-radius: 10px; text-align: center; }
+  .hm .big { font-size: 22px; font-weight: 800; }
+  .hm .small { font-size: 10px; color: rgba(255,255,255,0.7); }
 
-  .kn-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 24px; }
-  .kn-card { background: #fff; border-radius: 12px; padding: 16px 12px; text-align: center;
-    border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
-  .kn-num { font-size: 24px; font-weight: 800; color: #0F3460; }
-  .kn-desc { font-size: 10px; color: #64748b; margin-top: 4px; font-weight: 500; }
+  .section { margin-bottom: 28px; }
+  .section-title { font-size: 18px; font-weight: 700; color: #1A1A2E; margin-bottom: 14px;
+    padding-bottom: 8px; border-bottom: 3px solid #E94560; display: inline-block; }
 
-  .section { margin-bottom: 24px; }
-  .section-title { font-size: 18px; font-weight: 700; color: #1A1A2E; margin-bottom: 12px;
-    padding-bottom: 8px; border-bottom: 2px solid #E94560; display: inline-block; }
+  /* Workflow steps */
+  .wf-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+  .wf-step { background: #fff; border-radius: 10px; padding: 14px; position: relative;
+    border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    display: flex; flex-direction: column; gap: 6px; }
+  .wf-step:nth-child(-n+5) { border-top: 3px solid #E94560; }
+  .wf-step:nth-child(n+6) { border-top: 3px solid #0F3460; }
+  .wf-num { font-size: 11px; font-weight: 800; color: #E94560;
+    background: #FEE2E2; padding: 2px 8px; border-radius: 4px; display: inline-block; width: fit-content; }
+  .wf-step:nth-child(n+6) .wf-num { color: #0F3460; background: #DBEAFE; }
+  .wf-name { font-size: 12px; font-weight: 700; color: #1A1A2E; }
+  .wf-desc { font-size: 10px; color: #64748b; line-height: 1.4; }
+  .wf-arrow { display: flex; justify-content: center; align-items: center; margin: 8px 0;
+    font-size: 20px; color: #94a3b8; }
 
-  .lifecycle { display: flex; gap: 0; margin: 16px 0; flex-wrap: wrap; }
-  .lc-step { flex: 1; min-width: 90px; padding: 10px 6px; text-align: center;
-    color: #fff; font-size: 9px; font-weight: 600; line-height: 1.4;
-    position: relative; clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%, 10px 50%); }
-  .lc-step:first-child { clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%); }
-  .lc-step:nth-child(odd) { background: #E94560; }
-  .lc-step:nth-child(even) { background: #0F3460; }
-
+  /* Tables */
   table { width: 100%; border-collapse: collapse; background: #fff;
-    border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.08); margin-bottom: 8px; }
+    border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
   thead th { background: #1A1A2E; color: #fff; padding: 12px 14px;
-    font-size: 12px; font-weight: 700; text-align: center; text-transform: uppercase;
+    font-size: 11px; font-weight: 700; text-align: center; text-transform: uppercase;
     letter-spacing: 0.5px; border-right: 1px solid rgba(255,255,255,0.15); }
   thead th:last-child { border-right: none; }
   tbody td { padding: 10px 14px; border-bottom: 1px solid #e5e7eb;
@@ -50,32 +52,17 @@
   tbody tr:nth-child(even) { background: #f8fafc; }
   tbody tr:hover { background: #eff6ff; }
 
-  .phase-name, .pattern-name, .scenario-name { font-weight: 700; color: #1A1A2E; }
-  .manual { color: #DC2626; font-weight: 700; text-align: center; vertical-align: middle !important; }
-  .automated { color: #16A34A; font-weight: 700; text-align: center; vertical-align: middle !important; }
-  .saved { color: #16A34A; font-weight: 800; font-size: 14px; text-align: center; vertical-align: middle !important; }
-  .outcome { font-style: italic; color: #0F3460; font-size: 11px; }
-  .fix-col { color: #16A34A; font-weight: 600; }
-
-  .sev-crit { color: #DC2626; font-weight: 800; text-align: center; vertical-align: middle !important;
-    background: #FEE2E2 !important; }
-  .sev-warn { color: #E67E22; font-weight: 700; text-align: center; vertical-align: middle !important;
-    background: #FEF3C7 !important; }
+  .phase { font-weight: 700; color: #1A1A2E; }
+  .manual { color: #DC2626; font-weight: 700; text-align: center; }
+  .auto { color: #16A34A; font-weight: 700; text-align: center; }
+  .saved { color: #16A34A; font-weight: 800; font-size: 14px; text-align: center; }
+  .pname { font-weight: 700; color: #1A1A2E; white-space: nowrap; }
+  .fix { color: #16A34A; font-weight: 600; }
+  .sev-crit { color: #DC2626; font-weight: 800; text-align: center; background: #FEE2E2 !important; }
+  .sev-warn { color: #E67E22; font-weight: 700; text-align: center; background: #FEF3C7 !important; }
 
   .total-row { background: #1A1A2E !important; }
   .total-row td { color: #fff; font-weight: 700; font-size: 13px; text-align: center; }
-
-  .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
-  .summary-card { background: #fff; border-radius: 12px; padding: 20px;
-    border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
-  .summary-card h3 { font-size: 14px; font-weight: 700; color: #1A1A2E; margin-bottom: 12px;
-    padding-bottom: 6px; border-bottom: 2px solid #E94560; }
-  .summary-card.challenge { border-left: 4px solid #DC2626; }
-  .summary-card.solution { border-left: 4px solid #16A34A; }
-  .summary-card ul { list-style: none; padding: 0; }
-  .summary-card li { padding: 4px 0; font-size: 12px; }
-  .summary-card.challenge li::before { content: "\2718 "; color: #DC2626; font-weight: 700; }
-  .summary-card.solution li::before { content: "\2714 "; color: #16A34A; font-weight: 700; }
 
   .footer { text-align: center; margin-top: 24px; padding: 16px;
     color: #94a3b8; font-size: 11px; }
@@ -85,6 +72,7 @@
     .page { padding: 0; max-width: 100%; }
     .header { border-radius: 0; }
     table { box-shadow: none; border: 1px solid #ccc; }
+    .wf-grid { grid-template-columns: repeat(5, 1fr); }
   }
 </style>
 </head>
@@ -92,167 +80,134 @@
 <div class="page">
 
   <div class="header">
-    <div>
-      <h1>TCS Agentic AI — Use Case 2</h1>
-      <p>End-to-End Incident Response &amp; Application Performance Troubleshooting</p>
-    </div>
-    <div style="display:flex;gap:12px;">
-      <div class="header-badge">
-        <div class="big">12</div>
-        <div class="small">Error Patterns</div>
-      </div>
-      <div class="header-badge">
-        <div class="big">8</div>
-        <div class="small">Parallel API Calls</div>
-      </div>
-      <div class="header-badge">
-        <div class="big">< 5 min</div>
-        <div class="small">Mean Time to Resolve</div>
-      </div>
+    <h1>TCS Agentic AI — Use Case 2</h1>
+    <h2>End-to-End Incident Response: "Why is my pod crashing?"</h2>
+    <p>Natural language question triggers a fully autonomous 10-stage pipeline: AI detects the error pattern,
+       diagnoses root cause from 8 parallel K8s API calls, auto-creates a ServiceNow incident, proposes a
+       targeted fix with dry-run validation, applies the fix, and verifies recovery — all in under 5 minutes.</p>
+    <div class="header-metrics">
+      <div class="hm"><div class="big">10</div><div class="small">Pipeline Stages</div></div>
+      <div class="hm"><div class="big">12</div><div class="small">Error Patterns</div></div>
+      <div class="hm"><div class="big">8</div><div class="small">Parallel API Calls</div></div>
+      <div class="hm"><div class="big">&lt; 5 min</div><div class="small">End-to-End MTTR</div></div>
+      <div class="hm"><div class="big">97%</div><div class="small">Time Saved vs Manual</div></div>
     </div>
   </div>
 
-  <div class="kn-grid">
-        <div class="kn-card">
-          <div class="kn-num">< 30s</div>
-          <div class="kn-desc">Mean Time to Detect</div>
+  <div class="section">
+    <div class="section-title">10-Stage Workflow: What Happens When You Ask</div>
+    <div class="wf-grid">
+        <div class="wf-step">
+          <div class="wf-num">01</div>
+          <div class="wf-name">NL Query Parsing</div>
+          <div class="wf-desc">NLU normalizes 'pod crash' → incident_response at 0.88 confidence</div>
         </div>
-        <div class="kn-card">
-          <div class="kn-num">< 5 min</div>
-          <div class="kn-desc">Mean Time to Resolve</div>
+        <div class="wf-step">
+          <div class="wf-num">02</div>
+          <div class="wf-name">8 Parallel K8s API Calls</div>
+          <div class="wf-desc">Pod describe + logs + prev logs + events + metrics + node + deploy + HPA</div>
         </div>
-        <div class="kn-card">
-          <div class="kn-num">85-90%</div>
-          <div class="kn-desc">Effort Reduction</div>
+        <div class="wf-step">
+          <div class="wf-num">03</div>
+          <div class="wf-name">Pod Doctor Diagnosis</div>
+          <div class="wf-desc">12-pattern engine: OOMKilled, CrashLoop, ImagePull, Evicted + 8 more</div>
         </div>
-        <div class="kn-card">
-          <div class="kn-num">12</div>
-          <div class="kn-desc">Error Patterns</div>
+        <div class="wf-step">
+          <div class="wf-num">04</div>
+          <div class="wf-name">Severity Assessment</div>
+          <div class="wf-desc">CRITICAL / WARNING / INFO based on error pattern + restart count</div>
         </div>
-        <div class="kn-card">
-          <div class="kn-num">8</div>
-          <div class="kn-desc">Parallel API Calls</div>
+        <div class="wf-step">
+          <div class="wf-num">05</div>
+          <div class="wf-name">Smart Fix Generation</div>
+          <div class="wf-desc">Targeted commands with risk score; smart memory calc for OOMKilled</div>
         </div>
-        <div class="kn-card">
-          <div class="kn-num">100%</div>
-          <div class="kn-desc">Audit Trail</div>
+        <div class="wf-step">
+          <div class="wf-num">06</div>
+          <div class="wf-name">ServiceNow INC Creation</div>
+          <div class="wf-desc">Auto-create with severity mapping, root cause, evidence, fixes</div>
+        </div>
+        <div class="wf-step">
+          <div class="wf-num">07</div>
+          <div class="wf-name">Fix Card in AI Chat</div>
+          <div class="wf-desc">Interactive card: diagnosis, evidence, Apply Fix / Dry Run buttons</div>
+        </div>
+        <div class="wf-step">
+          <div class="wf-num">08</div>
+          <div class="wf-name">Dry Run Validation</div>
+          <div class="wf-desc">K8s ?dryRun=All validates patch without applying; blocks dangerous ops</div>
+        </div>
+        <div class="wf-step">
+          <div class="wf-num">09</div>
+          <div class="wf-name">Apply Fix + Metrics</div>
+          <div class="wf-desc">Execute command, capture before/after memory, restarts, status</div>
+        </div>
+        <div class="wf-step">
+          <div class="wf-num">10</div>
+          <div class="wf-name">Recovery + INC Close</div>
+          <div class="wf-desc">Poll 3s/60s timeout; verify pods healthy; auto-close ServiceNow INC</div>
         </div></div>
-
-  <div class="summary-grid">
-    <div class="summary-card challenge">
-      <h3>The Challenge: Manual Incident Response</h3>
-      <ul>
-        <li>SREs spend 30-60 min manually collecting logs, events, and metrics per incident</li>
-        <li>Root cause analysis requires senior expertise — knowledge silos slow junior SREs</li>
-        <li>ServiceNow tickets created manually, often incomplete, no evidence correlation</li>
-        <li>No automated recovery validation — SREs manually check if fixes actually worked</li>
-        <li>Average 2.5-5.5 hours per incident from detection to verified resolution</li>
-      </ul>
-    </div>
-    <div class="summary-card solution">
-      <h3>The Solution: TCS Agentic AI</h3>
-      <ul>
-        <li>Natural language queries — ask "why is my pod crashing?" and get instant diagnosis</li>
-        <li>8 parallel K8s API calls collect all evidence in under 3 seconds</li>
-        <li>12 error patterns with auto-remediation proposals and risk scoring</li>
-        <li>ServiceNow INC auto-created with severity, root cause, evidence, and timeline</li>
-        <li>Before/after metrics capture proves fix effectiveness with quantified evidence</li>
-      </ul>
-    </div>
   </div>
 
   <div class="section">
-    <div class="section-title">10-Phase Incident Response Lifecycle</div>
-    <div class="lifecycle"><div class="lc-step">1. NL Query<br>Parsing</div><div class="lc-step">2. 8 Parallel<br>K8s API Calls</div><div class="lc-step">3. 12 Error<br>Pattern Detection</div><div class="lc-step">4. AI Root<br>Cause Analysis</div><div class="lc-step">5. Severity<br>Assessment</div><div class="lc-step">6. ServiceNow<br>INC Creation</div><div class="lc-step">7. Fix Proposal<br>Generation</div><div class="lc-step">8. Dry Run<br>Validation</div><div class="lc-step">9. Apply Fix<br>& Monitor</div><div class="lc-step">10. Recovery<br>Verification</div></div>
-    <p style="font-size:12px;color:#64748b;margin-top:8px;">
-      Each phase produces audit trail entries. ServiceNow INC is auto-created with severity mapping,
-      root cause, evidence, fix proposals, and resolution verification. Before/after metrics provide
-      quantified proof that the fix worked.
-    </p>
-  </div>
-
-  <div class="section">
-    <div class="section-title">Manual vs. Automated: Side-by-Side Comparison</div>
+    <div class="section-title">Manual SRE vs. TCS Agentic AI</div>
     <table>
       <thead>
-        <tr>
-          <th>Incident Phase</th>
-          <th>Manual (SRE Time)</th>
-          <th>Automated (AI Time)</th>
-          <th>Time Saved</th>
-        </tr>
+        <tr><th>Phase</th><th>Manual (SRE Time)</th><th>With TCS Agentic AI</th><th>Saved</th></tr>
       </thead>
       <tbody>
         
         <tr>
-          <td class="phase-name">Alert Detection & Triage</td>
-          <td class="manual">5-15 min</td>
-          <td class="automated">< 30 sec</td>
+          <td class="phase">Detect & Triage</td>
+          <td class="manual">5–15 min</td>
+          <td class="auto">< 30 sec</td>
           <td class="saved">95%</td>
         </tr>
         <tr>
-          <td class="phase-name">Data Collection</td>
-          <td class="manual">15-30 min</td>
-          <td class="automated">~3 sec</td>
+          <td class="phase">Collect Evidence</td>
+          <td class="manual">15–30 min</td>
+          <td class="auto">~3 sec</td>
           <td class="saved">98%</td>
         </tr>
         <tr>
-          <td class="phase-name">Error Pattern ID</td>
-          <td class="manual">10-20 min</td>
-          <td class="automated">~2 sec</td>
+          <td class="phase">Identify Error Pattern</td>
+          <td class="manual">10–20 min</td>
+          <td class="auto">~2 sec</td>
           <td class="saved">98%</td>
         </tr>
         <tr>
-          <td class="phase-name">Root Cause Analysis</td>
-          <td class="manual">30-60 min</td>
-          <td class="automated">~5 sec</td>
+          <td class="phase">Root Cause Analysis</td>
+          <td class="manual">30–60 min</td>
+          <td class="auto">~5 sec</td>
           <td class="saved">97%</td>
         </tr>
         <tr>
-          <td class="phase-name">Severity Classification</td>
-          <td class="manual">5-10 min</td>
-          <td class="automated">~1 sec</td>
+          <td class="phase">Create ServiceNow INC</td>
+          <td class="manual">15–30 min</td>
+          <td class="auto">~3 sec</td>
           <td class="saved">97%</td>
         </tr>
         <tr>
-          <td class="phase-name">ServiceNow INC</td>
-          <td class="manual">15-30 min</td>
-          <td class="automated">~3 sec</td>
+          <td class="phase">Develop Fix</td>
+          <td class="manual">20–45 min</td>
+          <td class="auto">~2 sec</td>
           <td class="saved">97%</td>
         </tr>
         <tr>
-          <td class="phase-name">Fix Proposal Dev</td>
-          <td class="manual">20-45 min</td>
-          <td class="automated">~2 sec</td>
-          <td class="saved">97%</td>
-        </tr>
-        <tr>
-          <td class="phase-name">Dry Run Validation</td>
-          <td class="manual">15-30 min</td>
-          <td class="automated">~5 sec</td>
+          <td class="phase">Dry Run + Apply Fix</td>
+          <td class="manual">25–50 min</td>
+          <td class="auto">~35 sec</td>
           <td class="saved">96%</td>
         </tr>
         <tr>
-          <td class="phase-name">Fix Execution</td>
-          <td class="manual">10-20 min</td>
-          <td class="automated">~30 sec</td>
-          <td class="saved">95%</td>
-        </tr>
-        <tr>
-          <td class="phase-name">Recovery Verification</td>
-          <td class="manual">15-30 min</td>
-          <td class="automated">~30 sec</td>
-          <td class="saved">96%</td>
-        </tr>
-        <tr>
-          <td class="phase-name">Documentation & Closure</td>
-          <td class="manual">20-40 min</td>
-          <td class="automated">~5 sec</td>
-          <td class="saved">98%</td>
+          <td class="phase">Verify + Close INC</td>
+          <td class="manual">35–70 min</td>
+          <td class="auto">~35 sec</td>
+          <td class="saved">97%</td>
         </tr>
         <tr class="total-row">
-          <td>TOTAL (per incident)</td>
-          <td style="color:#FEE2E2;">2.5-5.5 hours</td>
+          <td>TOTAL</td>
+          <td style="color:#FEE2E2;">2.5–5.5 hours</td>
           <td style="color:#DCFCE7;">&lt; 5 minutes</td>
           <td style="color:#DCFCE7;">~97%</td>
         </tr>
@@ -261,146 +216,83 @@
   </div>
 
   <div class="section">
-    <div class="section-title">12 Error Pattern Detection Engine</div>
+    <div class="section-title">12 Error Patterns Detected by Pod Doctor</div>
     <table>
       <thead>
-        <tr>
-          <th>Pattern</th>
-          <th>Severity</th>
-          <th>Description</th>
-          <th>Auto-Remediation</th>
-        </tr>
+        <tr><th>Pattern</th><th>Severity</th><th>How Detected</th><th>Auto-Fix</th></tr>
       </thead>
       <tbody>
         <tr>
-          <td class="pattern-name">OOMKilled</td>
+          <td class="pname">OOMKilled</td>
           <td class="sev-crit">CRITICAL</td>
-          <td>Container terminated due to memory limit exceeded</td>
-          <td class="fix-col">Increase memory limits</td>
+          <td>exitCode 137 / terminationReason</td>
+          <td class="fix">Smart memory limit: 2x–5x restarts</td>
         </tr>
         <tr>
-          <td class="pattern-name">CrashLoopBackOff</td>
+          <td class="pname">CrashLoopBackOff</td>
           <td class="sev-crit">CRITICAL</td>
-          <td>Repeated container crashes with exponential backoff</td>
-          <td class="fix-col">Analyze exit codes, rollback image</td>
+          <td>restarts > 5, exitCode !== 0</td>
+          <td class="fix">Rollback image / fix config (8 sub-patterns)</td>
         </tr>
         <tr>
-          <td class="pattern-name">ImagePullBackOff</td>
+          <td class="pname">ImagePullBackOff</td>
           <td class="sev-warn">WARNING</td>
-          <td>Failed to pull container image from registry</td>
-          <td class="fix-col">Verify image tag, check pull secret</td>
+          <td>waiting.reason = ImagePullBackOff</td>
+          <td class="fix">Verify image, recreate pull secret</td>
         </tr>
         <tr>
-          <td class="pattern-name">CreateContainerConfigError</td>
+          <td class="pname">CreateContainerConfigError</td>
           <td class="sev-warn">WARNING</td>
-          <td>Missing ConfigMap or Secret reference</td>
-          <td class="fix-col">Identify missing config, recreate</td>
+          <td>Missing ConfigMap/Secret</td>
+          <td class="fix">Identify + recreate missing config</td>
         </tr>
         <tr>
-          <td class="pattern-name">Evicted</td>
+          <td class="pname">Evicted</td>
           <td class="sev-crit">CRITICAL</td>
-          <td>Pod evicted due to node resource pressure</td>
-          <td class="fix-col">Rebalance workloads, clean storage</td>
+          <td>phase=Failed, reason=Evicted</td>
+          <td class="fix">Set ephemeral-storage limits</td>
         </tr>
         <tr>
-          <td class="pattern-name">Pending (Unschedulable)</td>
+          <td class="pname">Pending (Unschedulable)</td>
           <td class="sev-warn">WARNING</td>
-          <td>Insufficient resources or affinity failures</td>
-          <td class="fix-col">Scale nodes or reduce requests</td>
+          <td>Insufficient resources</td>
+          <td class="fix">Reduce requests or scale nodes</td>
         </tr>
         <tr>
-          <td class="pattern-name">ReadinessProbe Failure</td>
+          <td class="pname">ReadinessProbe Failure</td>
           <td class="sev-warn">WARNING</td>
-          <td>Pod not ready due to failed health check</td>
-          <td class="fix-col">Check endpoint, adjust thresholds</td>
+          <td>Events: Unhealthy + readiness</td>
+          <td class="fix">Adjust probe thresholds</td>
         </tr>
         <tr>
-          <td class="pattern-name">LivenessProbe Failure</td>
+          <td class="pname">LivenessProbe Failure</td>
           <td class="sev-crit">CRITICAL</td>
-          <td>Container restarting from liveness failure</td>
-          <td class="fix-col">Adjust probe config, check startup time</td>
+          <td>Events: Unhealthy + liveness</td>
+          <td class="fix">Increase initialDelaySeconds</td>
         </tr>
         <tr>
-          <td class="pattern-name">Init Container Failure</td>
+          <td class="pname">Init Container Failure</td>
           <td class="sev-warn">WARNING</td>
-          <td>Init container crash blocking pod start</td>
-          <td class="fix-col">Check dependencies, fix init script</td>
+          <td>Init in CrashLoopBackOff</td>
+          <td class="fix">Fix init script / dependencies</td>
         </tr>
         <tr>
-          <td class="pattern-name">Volume Mount Error</td>
+          <td class="pname">Volume Mount Error</td>
           <td class="sev-warn">WARNING</td>
-          <td>PVC pending or mount failure</td>
-          <td class="fix-col">Check PVC, StorageClass, zones</td>
+          <td>PVC pending / mount fail</td>
+          <td class="fix">Fix PVC, StorageClass, zones</td>
         </tr>
         <tr>
-          <td class="pattern-name">Node NotReady Impact</td>
+          <td class="pname">Node NotReady Impact</td>
           <td class="sev-crit">CRITICAL</td>
-          <td>Pods affected by unhealthy node</td>
-          <td class="fix-col">Migrate pods, analyze node conditions</td>
+          <td>Pod on NotReady node</td>
+          <td class="fix">Migrate pods, drain node</td>
         </tr>
         <tr>
-          <td class="pattern-name">Resource Quota Exceeded</td>
+          <td class="pname">Resource Quota Exceeded</td>
           <td class="sev-warn">WARNING</td>
-          <td>Pod rejected by admission controller</td>
-          <td class="fix-col">Increase quota or reduce requests</td>
-        </tr></tbody>
-    </table>
-  </div>
-
-  <div class="section">
-    <div class="section-title">Real-World Incident Scenarios</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Scenario</th>
-          <th>Root Cause</th>
-          <th>Manual</th>
-          <th>With AI</th>
-          <th>Outcome</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td class="scenario-name">OOMKilled Pod</td>
-          <td>Java app memory leak, 256Mi limit</td>
-          <td class="manual">~2 hours</td>
-          <td class="automated">~3 min</td>
-          <td class="outcome">INC auto-created, limits patched, recovery verified</td>
-        </tr>
-        <tr>
-          <td class="scenario-name">CrashLoopBackOff</td>
-          <td>Deleted ConfigMap dependency</td>
-          <td class="manual">~1.5 hours</td>
-          <td class="automated">~4 min</td>
-          <td class="outcome">Missing config identified, INC includes dependency chain</td>
-        </tr>
-        <tr>
-          <td class="scenario-name">ImagePullBackOff</td>
-          <td>Expired registry pull secret</td>
-          <td class="manual">~1 hour</td>
-          <td class="automated">~2 min</td>
-          <td class="outcome">Auth failure detected, secret renewed, INC created</td>
-        </tr>
-        <tr>
-          <td class="scenario-name">Node NotReady</td>
-          <td>Kernel panic, 12 pods affected</td>
-          <td class="manual">~3 hours</td>
-          <td class="automated">~5 min</td>
-          <td class="outcome">Blast radius mapped, pods migrated, full impact in INC</td>
-        </tr>
-        <tr>
-          <td class="scenario-name">Evicted Pods</td>
-          <td>Disk pressure, 5 pods evicted</td>
-          <td class="manual">~2 hours</td>
-          <td class="automated">~4 min</td>
-          <td class="outcome">Disk pressure identified, storage limits set, pods rescheduled</td>
-        </tr>
-        <tr>
-          <td class="scenario-name">Fleet-Wide Incident</td>
-          <td>Registry down, 3 clusters</td>
-          <td class="manual">~6 hours</td>
-          <td class="automated">~8 min</td>
-          <td class="outcome">Cross-cluster correlation, fleet INC, mirror configured</td>
+          <td>Rejected by admission</td>
+          <td class="fix">Increase quota or reduce requests</td>
         </tr></tbody>
     </table>
   </div>

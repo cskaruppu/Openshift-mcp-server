@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Generate TCS Agentic AI — Incident Response & Application Performance Troubleshooting Use Case Excel + HTML."""
+"""
+Generate TCS Agentic AI — Use Case 2: End-to-End Incident Response
+"Why is my pod crashing?" — Use Case Name, Description, and Workflow
+
+Outputs: Excel (.xlsx) + HTML matching Use Case 1 format
+"""
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -10,7 +15,7 @@ OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 wb = Workbook()
 
-# ── Colours & Styles ──
+# ── Colours & Styles (matching Use Case 1) ──
 PRIMARY = "1A1A2E"
 ACCENT = "0F7DC2"
 GREEN = "16A34A"
@@ -24,21 +29,16 @@ LIGHT_BLUE = "EFF6FF"
 
 hdr_font = Font(name="Inter", bold=True, color=WHITE, size=11)
 hdr_fill = PatternFill("solid", fgColor=PRIMARY)
-sub_hdr_font = Font(name="Inter", bold=True, color=WHITE, size=11)
 accent_fill = PatternFill("solid", fgColor=ACCENT)
-green_fill = PatternFill("solid", fgColor=GREEN)
-red_fill = PatternFill("solid", fgColor=RED)
 light_green_fill = PatternFill("solid", fgColor="DCFCE7")
 light_red_fill = PatternFill("solid", fgColor="FEE2E2")
 light_blue_fill = PatternFill("solid", fgColor="DBEAFE")
 light_bg_fill = PatternFill("solid", fgColor=LIGHT_BG)
-highlight_fill = PatternFill("solid", fgColor=LIGHT_GREEN)
 bold = Font(name="Inter", bold=True, size=11)
 bold_green = Font(name="Inter", bold=True, color=GREEN, size=11)
 bold_red = Font(name="Inter", bold=True, color=RED, size=11)
 bold_white = Font(name="Inter", bold=True, color=WHITE, size=12)
 normal = Font(name="Inter", size=11)
-small = Font(name="Inter", size=10, color="64748B")
 wrap = Alignment(wrap_text=True, vertical="top")
 center = Alignment(horizontal="center", vertical="center", wrap_text=True)
 thin_border = Border(
@@ -59,18 +59,6 @@ def style_header_row(ws, row, cols, fill=None):
         cell.border = thin_border
 
 
-def style_data_row(ws, row, cols, alt=False, highlight=False):
-    for c in range(1, cols + 1):
-        cell = ws.cell(row=row, column=c)
-        cell.font = normal
-        cell.alignment = wrap
-        cell.border = thin_border
-        if highlight:
-            cell.fill = highlight_fill
-        elif alt:
-            cell.fill = light_bg_fill
-
-
 def set_col_widths(ws, widths):
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
@@ -86,7 +74,7 @@ set_col_widths(ws1, [35, 25, 25, 18])
 # Title
 ws1.merge_cells("A1:D1")
 c = ws1["A1"]
-c.value = "TCS Agentic AI — End-to-End Incident Response & Application Performance Troubleshooting"
+c.value = "TCS Agentic AI — Use Case 2: End-to-End Incident Response"
 c.font = Font(name="Inter", bold=True, color=WHITE, size=16)
 c.fill = PatternFill("solid", fgColor=PRIMARY)
 c.alignment = Alignment(horizontal="center", vertical="center")
@@ -94,44 +82,73 @@ ws1.row_dimensions[1].height = 48
 
 ws1.merge_cells("A2:D2")
 c = ws1["A2"]
-c.value = "Fully autonomous incident detection, root cause analysis, and remediation — from pod crash detection through fix verification — orchestrated by AI with ServiceNow ITSM integration, real-time observability, and complete audit trail."
+c.value = (
+    '"Why is my pod crashing?" — Natural language question triggers a fully autonomous '
+    "incident response pipeline: AI detects the error pattern, diagnoses root cause from "
+    "8 parallel K8s API calls, auto-creates a ServiceNow incident, proposes a targeted fix "
+    "with dry-run validation, applies the fix, and verifies recovery — all in under 5 minutes."
+)
 c.font = Font(name="Inter", size=11, color="64748B", italic=True)
 c.fill = light_blue_fill
 c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-ws1.row_dimensions[2].height = 48
+ws1.row_dimensions[2].height = 56
 
-# Key Impact Numbers
+# ── Use Case Identity ──
 r = 4
 ws1.merge_cells(f"A{r}:D{r}")
-ws1.cell(r, 1, "KEY IMPACT METRICS").font = bold
+ws1.cell(r, 1, "USE CASE IDENTITY").font = bold_white
 ws1.cell(r, 1).fill = accent_fill
-ws1.cell(r, 1).font = bold_white
 ws1.cell(r, 1).alignment = center
 for c in range(2, 5):
     ws1.cell(r, c).fill = accent_fill
 
-r = 5
+fields = [
+    ("Use Case Name", "End-to-End Incident Response & Application Performance Troubleshooting"),
+    ("Trigger", 'User asks in AI Chat: "Why is my pod crashing?" (natural language)'),
+    ("Scope", "Any pod in any namespace across any connected OpenShift cluster"),
+    ("End State", "Pod healthy, ServiceNow INC resolved, before/after metrics captured, full audit trail"),
+]
+for i, (label, val) in enumerate(fields):
+    row = 5 + i
+    ws1.cell(row, 1, label).font = bold
+    ws1.cell(row, 1).border = thin_border
+    ws1.cell(row, 1).fill = light_blue_fill
+    ws1.merge_cells(f"B{row}:D{row}")
+    ws1.cell(row, 2, val).font = normal
+    ws1.cell(row, 2).alignment = wrap
+    ws1.cell(row, 2).border = thin_border
+
+# ── Key Impact Numbers ──
+r = 10
+ws1.merge_cells(f"A{r}:D{r}")
+ws1.cell(r, 1, "KEY IMPACT METRICS").font = bold_white
+ws1.cell(r, 1).fill = accent_fill
+ws1.cell(r, 1).alignment = center
+for c in range(2, 5):
+    ws1.cell(r, c).fill = accent_fill
+
+r = 11
 metrics = [
-    ("Mean Time to Detect (MTTD)", "< 30 seconds"),
-    ("Mean Time to Resolve (MTTR)", "< 5 minutes"),
-    ("Reduction in Manual Effort", "85-90%"),
+    ("Mean Time to Detect", "< 30 seconds"),
+    ("Mean Time to Resolve", "< 5 minutes"),
+    ("Reduction in Manual Effort", "85–90%"),
     ("Audit & Compliance Trail", "100%"),
 ]
 style_header_row(ws1, r, 4, fill=PatternFill("solid", fgColor="0F3460"))
 for i, (label, _) in enumerate(metrics, 1):
     ws1.cell(r, i, label)
 
-r = 6
+r = 12
 for i, (_, val) in enumerate(metrics, 1):
     cell = ws1.cell(r, i, val)
     cell.font = Font(name="Inter", bold=True, color=GREEN, size=14)
     cell.alignment = center
     cell.fill = light_green_fill
     cell.border = thin_border
-ws1.row_dimensions[6].height = 36
+ws1.row_dimensions[12].height = 36
 
-# The Challenge
-r = 8
+# ── The Challenge ──
+r = 14
 ws1.merge_cells(f"A{r}:D{r}")
 ws1.cell(r, 1, "THE CHALLENGE: MANUAL INCIDENT RESPONSE").font = bold_white
 ws1.cell(r, 1).fill = PatternFill("solid", fgColor=RED)
@@ -140,13 +157,13 @@ for c in range(2, 5):
     ws1.cell(r, c).fill = PatternFill("solid", fgColor=RED)
 
 challenges = [
-    ("Slow Detection", "SREs rely on alerts that may fire minutes after a pod crash — OOMKilled, CrashLoopBackOff, and ImagePullBackOff often go unnoticed until users report impact"),
-    ("Manual Root Cause Analysis", "SREs manually SSH into nodes, run kubectl describe/logs across multiple pods and namespaces, correlate events — often taking 30-60 minutes per incident"),
+    ("Slow Detection", "SREs rely on alerts that may fire minutes after a pod crash — OOMKilled and CrashLoopBackOff often go unnoticed until end-users report impact"),
+    ("Manual Root Cause Analysis", "SREs manually run kubectl describe, kubectl logs, kubectl get events across pods and namespaces — often taking 30–60 minutes per incident"),
     ("Knowledge Silos", "Troubleshooting expertise lives in senior SREs' heads; junior team members struggle with unfamiliar error patterns, extending resolution time"),
     ("ServiceNow Gaps", "Incident tickets created manually, often incomplete, missing root cause details, no correlation between detection and resolution evidence"),
-    ("No Recovery Validation", "After applying a fix, SREs manually check pod status, restart counts, and resource metrics — no automated verification that the fix actually worked"),
+    ("No Recovery Validation", "After applying a fix, SREs manually check pod status, restart counts, and resource metrics — no automated proof that the fix actually worked"),
 ]
-r = 9
+r = 15
 ws1.cell(r, 1, "Pain Point").font = bold
 ws1.cell(r, 2, "Description").font = bold
 ws1.merge_cells(f"B{r}:D{r}")
@@ -155,7 +172,7 @@ for c in range(1, 5):
     ws1.cell(r, c).border = thin_border
 
 for i, (pain, desc) in enumerate(challenges):
-    row = 10 + i
+    row = 16 + i
     ws1.cell(row, 1, pain).font = Font(name="Inter", bold=True, color=RED, size=11)
     ws1.cell(row, 1).border = thin_border
     ws1.merge_cells(f"B{row}:D{row}")
@@ -163,27 +180,27 @@ for i, (pain, desc) in enumerate(challenges):
     ws1.cell(row, 2).alignment = wrap
     ws1.cell(row, 2).border = thin_border
 
-# The Solution
-r = 16
+# ── The Solution ──
+r = 22
 ws1.merge_cells(f"A{r}:D{r}")
-ws1.cell(r, 1, "THE SOLUTION: TCS AGENTIC AI INCIDENT RESPONSE ORCHESTRATOR").font = bold_white
+ws1.cell(r, 1, 'THE SOLUTION: "WHY IS MY POD CRASHING?" END-TO-END PIPELINE').font = bold_white
 ws1.cell(r, 1).fill = PatternFill("solid", fgColor=GREEN)
 ws1.cell(r, 1).alignment = center
 for c in range(2, 5):
     ws1.cell(r, c).fill = PatternFill("solid", fgColor=GREEN)
 
 capabilities = [
-    ("Natural Language Detection", "Ask 'why is my pod crashing?' in plain English — NLU routes to the pod doctor with automatic pod/namespace extraction"),
-    ("8 Parallel K8s API Calls", "Simultaneously fetches pod describe, logs, events, resource metrics, node conditions, deployment config, HPA status, and network policies"),
-    ("12 Error Pattern Engine", "Detects OOMKilled, CrashLoopBackOff, ImagePullBackOff, CreateContainerConfigError, Evicted, Pending, ReadinessProbe failures, and 5 more patterns"),
-    ("AI Severity Assessment", "Automatically classifies incidents as CRITICAL / WARNING / INFO based on restart count, error frequency, and blast radius"),
-    ("ServiceNow Auto-Ticketing", "Creates INC ticket with severity mapping (CRITICAL→SEV-2, WARNING→SEV-3), root cause, evidence, and fix proposals — zero manual input"),
-    ("Fix Proposals with Dry Run", "Generates targeted remediation commands with risk scoring, dry-run validation before execution, and one-click apply"),
-    ("Recovery Validation", "Post-fix automated verification: pod restarts reset, memory usage normalized, all replicas healthy, incident timeline closed"),
-    ("Incident Timeline & Audit", "Complete event timeline from detection through resolution with timestamps, ServiceNow correlation, and before/after metrics"),
+    ("Natural Language Understanding", 'NLU normalizes "pod crashing" to incident_response intent with 0.88 confidence — routes to dedicated pipeline'),
+    ("8 Parallel K8s API Calls", "Simultaneously fetches pod describe, logs, previous logs, events, metrics, node conditions, deployment config, HPA status"),
+    ("12-Pattern Error Engine", "Detects OOMKilled, CrashLoopBackOff, ImagePullBackOff, CreateContainerConfigError, Evicted, Pending, Probe failures, and more"),
+    ("AI Root Cause Analysis", "LLM analyzes all collected evidence, identifies root cause, calculates blast radius, and determines affected services"),
+    ("Smart Memory Calculation", "For OOMKilled: calculates optimal memory limit based on restart count and usage — rounds to standard values (256Mi, 512Mi, 1Gi, etc.)"),
+    ("ServiceNow Auto-Ticketing", "Creates INC with severity mapping (CRITICAL→SEV-2, WARNING→SEV-3), root cause, evidence, and fix proposals — zero manual input"),
+    ("Fix Proposals with Dry Run", "Generates targeted oc/kubectl commands with risk scoring; dry-run validates before real execution"),
+    ("Recovery Verification", "Post-fix: polls deployment readiness every 3s (60s timeout), verifies all pods healthy, captures before/after metrics, auto-closes INC"),
 ]
 
-r = 17
+r = 23
 ws1.cell(r, 1, "Capability").font = bold
 ws1.cell(r, 2, "Description").font = bold
 ws1.merge_cells(f"B{r}:D{r}")
@@ -192,7 +209,7 @@ for c in range(1, 5):
     ws1.cell(r, c).border = thin_border
 
 for i, (cap, desc) in enumerate(capabilities):
-    row = 18 + i
+    row = 24 + i
     ws1.cell(row, 1, cap).font = Font(name="Inter", bold=True, color=GREEN, size=11)
     ws1.cell(row, 1).border = thin_border
     ws1.cell(row, 1).alignment = wrap
@@ -201,224 +218,337 @@ for i, (cap, desc) in enumerate(capabilities):
     ws1.cell(row, 2).alignment = wrap
     ws1.cell(row, 2).border = thin_border
 
-# Lifecycle
-r = 27
-ws1.merge_cells(f"A{r}:D{r}")
-ws1.cell(r, 1, "10-PHASE INCIDENT RESPONSE LIFECYCLE").font = bold_white
-ws1.cell(r, 1).fill = accent_fill
-ws1.cell(r, 1).alignment = center
-for c in range(2, 5):
-    ws1.cell(r, c).fill = accent_fill
-
-phases = [
-    ("01", "Natural Language Query", "~1 sec", "User asks 'why is my pod crashing?' — NLU extracts pod name, namespace, and intent"),
-    ("02", "8 Parallel K8s API Calls", "~3 sec", "Fetch pod describe, logs, events, metrics, node info, deployment, HPA, network policies simultaneously"),
-    ("03", "12 Error Pattern Detection", "~2 sec", "Match against OOMKilled, CrashLoopBackOff, ImagePullBackOff, Evicted, Pending, and 7 more patterns"),
-    ("04", "AI Root Cause Analysis", "~5 sec", "LLM analyzes all evidence, identifies root cause, determines blast radius and affected services"),
-    ("05", "Severity Assessment", "~1 sec", "Classify as CRITICAL/WARNING/INFO based on restart count, error frequency, and impact scope"),
-    ("06", "ServiceNow INC Creation", "~3 sec", "Auto-create incident ticket with severity, root cause, evidence, fix proposals, and timeline"),
-    ("07", "Fix Proposal Generation", "~2 sec", "Generate targeted remediation commands with risk scores, rollback instructions, and dry-run option"),
-    ("08", "Dry Run Validation", "~5 sec", "Execute fix in dry-run mode, verify no side effects, confirm resource changes are safe"),
-    ("09", "Apply Fix & Monitor", "~30 sec", "Execute remediation, capture before/after metrics, monitor pod recovery in real-time"),
-    ("10", "Recovery Verification", "~30 sec", "Verify pod healthy, restarts reset, memory normalized, replicas ready, update INC with resolution"),
-]
-
-r = 28
-headers = ["Phase", "Step", "Duration", "Description"]
-style_header_row(ws1, r, 4)
-for i, h in enumerate(headers, 1):
-    ws1.cell(r, i, h)
-
-for i, (num, step, dur, desc) in enumerate(phases):
-    row = 29 + i
-    ws1.cell(row, 1, num).font = bold
-    ws1.cell(row, 1).alignment = center
-    ws1.cell(row, 1).border = thin_border
-    ws1.cell(row, 2, step).font = bold
-    ws1.cell(row, 2).border = thin_border
-    ws1.cell(row, 3, dur).font = bold_green
-    ws1.cell(row, 3).alignment = center
-    ws1.cell(row, 3).border = thin_border
-    ws1.cell(row, 4, desc).font = normal
-    ws1.cell(row, 4).alignment = wrap
-    ws1.cell(row, 4).border = thin_border
-    if i % 2 == 1:
-        for c in range(1, 5):
-            ws1.cell(row, c).fill = light_bg_fill
-
 
 # ═══════════════════════════════════════════════════════════════════
-# SHEET 2: Manual vs Automated
+# SHEET 2: Use Case Workflow (Stage-by-Stage)
 # ═══════════════════════════════════════════════════════════════════
-ws2 = wb.create_sheet("Manual vs Automated")
-set_col_widths(ws2, [28, 22, 22, 14, 30])
+ws2 = wb.create_sheet("Workflow — Stage by Stage")
+set_col_widths(ws2, [6, 24, 10, 24, 40])
 
 ws2.merge_cells("A1:E1")
 c = ws2["A1"]
-c.value = "Side-by-Side Comparison: Manual vs. TCS Agentic AI Automated Incident Response"
+c.value = 'Use Case 2 Workflow: "Why is my pod crashing?" — What Happens at Each Stage'
 c.font = Font(name="Inter", bold=True, color=WHITE, size=14)
 c.fill = hdr_fill
 c.alignment = Alignment(horizontal="center", vertical="center")
 ws2.row_dimensions[1].height = 40
 
-r = 3
-headers = ["Incident Phase", "Manual (SRE Time)", "Automated (Human Time)", "Time Saved", "Automation Method"]
+ws2.merge_cells("A2:E2")
+c = ws2["A2"]
+c.value = "User types a natural language question in AI Chat. The system executes 10 stages autonomously — from NLU parsing to verified recovery — with ServiceNow integration and full audit trail."
+c.font = Font(name="Inter", size=10, color="64748B", italic=True)
+c.fill = light_blue_fill
+c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+ws2.row_dimensions[2].height = 36
+
+r = 4
+headers = ["Stage", "Step Name", "Duration", "What Happens", "Technical Detail"]
 style_header_row(ws2, r, 5)
 for i, h in enumerate(headers, 1):
     ws2.cell(r, i, h)
 
-comparison = [
-    ("Alert Detection & Triage", "5–15 min", "< 30 sec", "95%", "AI — NLU query parsing, automatic pod/namespace extraction"),
-    ("Data Collection (describe, logs, events)", "15–30 min", "~3 sec (8 parallel calls)", "98%", "AUTO — Parallel K8s API calls across all data sources"),
-    ("Error Pattern Identification", "10–20 min", "~2 sec", "98%", "AI — 12-pattern recognition engine with confidence scoring"),
-    ("Root Cause Analysis", "30–60 min", "~5 sec", "97%", "AI — LLM analysis of all evidence with blast radius assessment"),
-    ("Severity Classification", "5–10 min", "~1 sec", "97%", "AUTO — Rule-based severity mapping from error patterns"),
-    ("ServiceNow Incident Creation", "15–30 min", "~3 sec", "97%", "AUTO — ServiceNow API with severity, root cause, evidence"),
-    ("Fix Proposal Development", "20–45 min", "~2 sec", "97%", "AI — Targeted remediation with risk scoring"),
-    ("Dry Run Validation", "15–30 min", "~5 sec", "96%", "AUTO — Automated dry-run execution with safety checks"),
-    ("Fix Execution", "10–20 min", "~30 sec", "95%", "AUTO — One-click apply with before/after metrics capture"),
-    ("Recovery Verification", "15–30 min", "~30 sec", "96%", "AUTO — Pod health, restart count, memory, replica verification"),
-    ("Documentation & Closure", "20–40 min", "~5 sec", "98%", "AUTO — INC updated with timeline, metrics, resolution evidence"),
+stages = [
+    (
+        "01",
+        "Natural Language\nQuery Parsing",
+        "~1 sec",
+        'User asks "Why is my pod crashing?" — NLU engine parses the question',
+        'normalizeCompounds() matches "pod crash*" → replaces with incident_response pseudo-resource. '
+        "tokenize() splits into tokens. VERB_TABLE maps \"why\" → diagnose intent. "
+        "Resource detector finds incident_response → returns {intent: incident_response, confidence: 0.88}. "
+        "Bypasses cache (CACHE_BYPASS_INTENTS) — always hits live cluster data.",
+    ),
+    (
+        "02",
+        "Cluster Context\nGathering",
+        "~3 sec",
+        "8 parallel K8s API calls fetch all evidence about the crashing pod",
+        "If pod name detected: (1) GET pods/{name}, (2) GET events?involvedObject={name}, "
+        "(3) GET pods/{name}/log?tailLines=80, (4) GET pods/{name}/log?previous=true, "
+        "(5) GET metrics.k8s.io pods/{name}. "
+        "If no pod name: GET /api/v1/pods (all), GET /api/v1/nodes, "
+        "GET /api/v1/events?type=Warning, GET clusterversions, GET clusteroperators — "
+        "then filters to problemPods (CrashLoopBackOff, OOMKilled, ImagePullBackOff, etc.).",
+    ),
+    (
+        "03",
+        "Pod Doctor\nDiagnosis",
+        "~2 sec",
+        "12-pattern error detection engine analyzes the pod state",
+        "diagnosePod() counts totalRestarts, identifies crashingContainers via regex "
+        "(CrashLoopBackOff|Error|OOMKilled|Terminated). Per-container diagnoseContainer() "
+        "checks in priority order: (1) OOMKilled — exitCode 137 or terminationReason, "
+        "(2) CrashLoopBackOff — restarts > 5 + exitCodeMeaning(), "
+        "(3) ImagePullBackOff, (4) CreateContainerConfigError, (5) Evicted, "
+        "(6) ReadinessProbe, (7) LivenessProbe, (8) InitContainer failure. "
+        "For CrashLoop: detectConfigIssue() checks 8 sub-patterns (ConnectionRefused, "
+        "MissingEnvVar, PermissionDenied, MissingFile, BadFlag, ConfigParseError, PortConflict).",
+    ),
+    (
+        "04",
+        "Severity\nAssessment",
+        "~1 sec",
+        "Classifies incident as CRITICAL / WARNING / INFO based on evidence",
+        "OOMKilled → CRITICAL. CrashLoopBackOff (restarts > 5) → CRITICAL. "
+        "ImagePullBackOff → WARNING. Evicted → CRITICAL. "
+        "ReadinessProbe → WARNING. LivenessProbe → CRITICAL. "
+        "Severity drives ServiceNow urgency mapping and fix priority ordering.",
+    ),
+    (
+        "05",
+        "Smart Fix\nProposal Generation",
+        "~2 sec",
+        "AI generates targeted fix commands with risk scoring",
+        "For OOMKilled: calculateSmartMemoryLimit() computes optimal memory — "
+        "multiplier scales with restarts: 2x (≤2), 3x (≤5), 4x (≤10), 5x (>10). "
+        "Considers 2.5x current usage if higher. Rounds to nice values "
+        "(128Mi, 256Mi, 384Mi, 512Mi, 768Mi, 1Gi, 1.5Gi, 2Gi, 3Gi, 4Gi, 6Gi, 8Gi). "
+        "resolveDeploymentResource() finds owning Deployment/StatefulSet. "
+        "Generates: oc set resources deployment/<name> --limits=memory=<calculated>. "
+        "Each fix includes: title, action, command, risk score, rollback instructions.",
+    ),
+    (
+        "06",
+        "ServiceNow\nINC Creation",
+        "~3 sec",
+        "Auto-creates incident ticket with severity, root cause, evidence, and fixes",
+        "createServiceNowIncident() called with: short_description = "
+        '"[SEV-2] OOMKilled — <deploy> — Auto-generated by TCS Agentic AI", '
+        "description = severity + pod + namespace + ROOT CAUSE ANALYSIS + EVIDENCE + FIX, "
+        "urgency = 2 (CRITICAL→2, WARNING→3), impact = 2. "
+        "Returns incidentSysId + incidentNumber (e.g., INC0012345). "
+        "Appends notice to chat: \"ServiceNow Incident INC0012345 auto-created for SEV-2\". "
+        "Incident timeline built from pod events + AI detection event + fix-ready event.",
+    ),
+    (
+        "07",
+        "Fix Card Displayed\nin AI Chat",
+        "Instant",
+        "Interactive fix proposal card rendered with Apply Fix and Dry Run buttons",
+        "appendFixProposals() injects @@FIX_PROPOSAL|{json}@@ token into reply. "
+        "Frontend ChatTokens.jsx parseSegments() detects the token, renders ActionCard "
+        "with: diagnosis summary, root cause, evidence list, severity badge, "
+        "incident timeline (collapsible), and per-fix buttons (Apply Fix / Dry Run). "
+        "Each fix card shows: command, risk level, description, rollback instructions.",
+    ),
+    (
+        "08",
+        "Dry Run\nValidation",
+        "~5 sec",
+        "User clicks Dry Run — fix command executed with --dry-run flag",
+        "POST /api/alerts/execute-fix with {command, dryRun: true}. "
+        "Rate-limited (burst=5). Guardrails preflightCheck() classifies command. "
+        "executeFixCommand() runs with ?dryRun=All — K8s API validates the patch "
+        "without applying. Blocks dangerous patterns (delete namespace/crd/node, "
+        "cordon/drain, exec rm). Returns validation result — user sees confirmation.",
+    ),
+    (
+        "09",
+        "Apply Fix &\nBefore/After Metrics",
+        "~30 sec",
+        "User clicks Apply Fix — command executed, before/after metrics captured",
+        "POST /api/alerts/execute-fix with {command, dryRun: false, captureMetrics: true, "
+        "incidentSysId, incidentNumber}. BEFORE: fetches pods by label selector, "
+        "captures memoryLimit, memoryUsage, cpuUsage, restarts, status. "
+        "EXECUTE: e.g., PATCH deployment to set new memory limits. "
+        "Audit logged (userId, command, classification, duration). "
+        "Learning loop records fix for future similar-incident retrieval.",
+    ),
+    (
+        "10",
+        "Recovery Verification\n& INC Auto-Close",
+        "~30 sec",
+        "Polls deployment readiness, verifies pods healthy, auto-closes ServiceNow INC",
+        "Rollout poll every 3s (60s timeout): checks readyReplicas ≥ desired, "
+        "updatedReplicas ≥ desired, unavailableReplicas = 0. "
+        "Pod health: fetches all pods by label, checks phase=Running + ready=true. "
+        "AFTER metrics: re-captures memoryLimit, memoryUsage, restarts, status. "
+        "On success: snowResolveIncident() closes INC with closeCode='Solved (Permanently)', "
+        "workNotes include fix command, namespace, severity, diagnosis, validation results. "
+        "UI shows RecoveryTimeline (step-by-step) + BeforeAfterMetrics (red/green comparison).",
+    ),
 ]
 
-for i, (phase, manual, auto, saved, method) in enumerate(comparison):
-    row = 4 + i
-    ws2.cell(row, 1, phase).font = bold
+for i, (num, step, dur, what, detail) in enumerate(stages):
+    row = 5 + i
+    ws2.cell(row, 1, num).font = bold
+    ws2.cell(row, 1).alignment = center
     ws2.cell(row, 1).border = thin_border
-    ws2.cell(row, 1).alignment = wrap
-    ws2.cell(row, 2, manual).font = Font(name="Inter", color=RED, size=11)
-    ws2.cell(row, 2).alignment = center
+    ws2.cell(row, 2, step).font = bold
+    ws2.cell(row, 2).alignment = wrap
     ws2.cell(row, 2).border = thin_border
-    ws2.cell(row, 3, auto).font = Font(name="Inter", color=GREEN, size=11)
+    ws2.cell(row, 3, dur).font = bold_green
     ws2.cell(row, 3).alignment = center
     ws2.cell(row, 3).border = thin_border
-    ws2.cell(row, 4, saved).font = bold_green
-    ws2.cell(row, 4).alignment = center
+    ws2.cell(row, 4, what).font = normal
+    ws2.cell(row, 4).alignment = wrap
     ws2.cell(row, 4).border = thin_border
-    ws2.cell(row, 5, method).font = normal
+    ws2.cell(row, 5, detail).font = Font(name="Inter", size=10, color="475569")
     ws2.cell(row, 5).alignment = wrap
     ws2.cell(row, 5).border = thin_border
+    ws2.row_dimensions[row].height = 80
     if i % 2 == 1:
         for c in range(1, 6):
             ws2.cell(row, c).fill = light_bg_fill
 
 # Total row
 row = 15
-ws2.cell(row, 1, "TOTAL (per incident)").font = Font(name="Inter", bold=True, color=WHITE, size=12)
+ws2.merge_cells(f"A{row}:B{row}")
+ws2.cell(row, 1, "TOTAL END-TO-END").font = Font(name="Inter", bold=True, color=WHITE, size=12)
 ws2.cell(row, 1).fill = PatternFill("solid", fgColor=PRIMARY)
+ws2.cell(row, 1).alignment = center
 ws2.cell(row, 1).border = thin_border
-ws2.cell(row, 2, "2.5–5.5 hours").font = Font(name="Inter", bold=True, color=WHITE, size=12)
-ws2.cell(row, 2).fill = PatternFill("solid", fgColor=RED)
-ws2.cell(row, 2).alignment = center
+ws2.cell(row, 2).fill = PatternFill("solid", fgColor=PRIMARY)
 ws2.cell(row, 2).border = thin_border
-ws2.cell(row, 3, "< 5 minutes").font = Font(name="Inter", bold=True, color=WHITE, size=12)
+ws2.cell(row, 3, "< 5 min").font = Font(name="Inter", bold=True, color=WHITE, size=14)
 ws2.cell(row, 3).fill = PatternFill("solid", fgColor=GREEN)
 ws2.cell(row, 3).alignment = center
 ws2.cell(row, 3).border = thin_border
-ws2.cell(row, 4, "~97%").font = Font(name="Inter", bold=True, color=WHITE, size=12)
-ws2.cell(row, 4).fill = PatternFill("solid", fgColor=GREEN)
+ws2.merge_cells(f"D{row}:E{row}")
+ws2.cell(row, 4, "From natural language question to verified recovery with ServiceNow INC closed").font = Font(name="Inter", bold=True, color=WHITE, size=11)
+ws2.cell(row, 4).fill = PatternFill("solid", fgColor=PRIMARY)
 ws2.cell(row, 4).alignment = center
 ws2.cell(row, 4).border = thin_border
-ws2.cell(row, 5, "End-to-End AI Orchestration").font = Font(name="Inter", bold=True, color=WHITE, size=11)
 ws2.cell(row, 5).fill = PatternFill("solid", fgColor=PRIMARY)
-ws2.cell(row, 5).alignment = center
 ws2.cell(row, 5).border = thin_border
 ws2.row_dimensions[row].height = 32
 
-# Multi-Cluster Scale
-r = 18
-ws2.merge_cells(f"A{r}:E{r}")
-ws2.cell(r, 1, "MULTI-CLUSTER INCIDENT IMPACT AT SCALE").font = bold_white
-ws2.cell(r, 1).fill = accent_fill
-ws2.cell(r, 1).alignment = center
-for c in range(2, 6):
-    ws2.cell(r, c).fill = accent_fill
-
-r = 19
-for i, h in enumerate(["Environment Scale", "Clusters", "Monthly Incidents (Manual)", "With TCS Agentic AI", "SRE Hours Reclaimed/Month"], 1):
-    ws2.cell(r, i, h)
-style_header_row(ws2, r, 5)
-
-scale_data = [
-    ("Small", "5", "50 incidents × 3.5 hrs = 175 hrs", "50 incidents × 5 min = ~4 hrs", "~171 hours/month"),
-    ("Medium", "15", "150 incidents × 3.5 hrs = 525 hrs", "150 incidents × 5 min = ~12.5 hrs", "~512 hours/month"),
-    ("Enterprise", "50", "500 incidents × 3.5 hrs = 1,750 hrs", "500 incidents × 5 min = ~42 hrs", "~1,708 hours/month"),
-]
-
-for i, (scale, clusters, manual, auto, saved) in enumerate(scale_data):
-    row = 20 + i
-    ws2.cell(row, 1, scale).font = bold
-    ws2.cell(row, 1).border = thin_border
-    ws2.cell(row, 2, clusters).font = bold
-    ws2.cell(row, 2).alignment = center
-    ws2.cell(row, 2).border = thin_border
-    ws2.cell(row, 3, manual).font = bold_red
-    ws2.cell(row, 3).alignment = center
-    ws2.cell(row, 3).border = thin_border
-    ws2.cell(row, 4, auto).font = bold_green
-    ws2.cell(row, 4).alignment = center
-    ws2.cell(row, 4).border = thin_border
-    ws2.cell(row, 5, saved).font = bold_green
-    ws2.cell(row, 5).alignment = center
-    ws2.cell(row, 5).border = thin_border
-    if i % 2 == 1:
-        for c in range(1, 6):
-            ws2.cell(row, c).fill = light_bg_fill
-
 
 # ═══════════════════════════════════════════════════════════════════
-# SHEET 3: Detection & Analysis
+# SHEET 3: Manual vs Automated
 # ═══════════════════════════════════════════════════════════════════
-ws3 = wb.create_sheet("Detection & Analysis")
-set_col_widths(ws3, [22, 40, 16, 30])
+ws3 = wb.create_sheet("Manual vs Automated")
+set_col_widths(ws3, [28, 22, 22, 14, 30])
 
-ws3.merge_cells("A1:D1")
+ws3.merge_cells("A1:E1")
 c = ws3["A1"]
-c.value = "AI Detection & Analysis: 12 Error Patterns + 8 Data Sources"
+c.value = "Side-by-Side Comparison: Manual SRE vs. TCS Agentic AI"
 c.font = Font(name="Inter", bold=True, color=WHITE, size=14)
 c.fill = hdr_fill
 c.alignment = Alignment(horizontal="center", vertical="center")
 ws3.row_dimensions[1].height = 40
 
-# Error Patterns Section
 r = 3
-ws3.merge_cells(f"A{r}:D{r}")
-ws3.cell(r, 1, "12 ERROR PATTERN DETECTION ENGINE").font = bold_white
-ws3.cell(r, 1).fill = accent_fill
-ws3.cell(r, 1).alignment = center
-for c in range(2, 5):
-    ws3.cell(r, c).fill = accent_fill
-
-r = 4
-headers = ["Error Pattern", "Detection Method", "Severity", "Auto-Remediation"]
-style_header_row(ws3, r, 4)
+headers = ["Incident Phase", "Manual (SRE Time)", "Automated (AI Time)", "Time Saved", "How It Works"]
+style_header_row(ws3, r, 5)
 for i, h in enumerate(headers, 1):
     ws3.cell(r, i, h)
 
-patterns = [
-    ("OOMKilled", "Container last termination reason = OOMKilled; memory usage vs limits analysis", "CRITICAL", "Increase memory limits (patch deployment), identify memory leak source"),
-    ("CrashLoopBackOff", "Restart count > 3 with BackOff state; progressive restart interval detection", "CRITICAL", "Analyze exit codes, check config dependencies, rollback to last stable image"),
-    ("ImagePullBackOff", "Container waiting reason = ImagePullBackOff; image name and registry analysis", "WARNING", "Verify image tag exists, check registry credentials, suggest correct image"),
-    ("CreateContainerConfigError", "Container waiting reason = CreateContainerConfigError; missing ConfigMap/Secret detection", "WARNING", "Identify missing ConfigMap/Secret, check mount paths, verify RBAC permissions"),
-    ("Evicted", "Pod phase = Failed, reason = Evicted; node resource pressure analysis", "CRITICAL", "Identify pressure source (disk/memory/PID), rebalance workloads, clean ephemeral storage"),
-    ("Pending (Unschedulable)", "Pod phase = Pending; insufficient CPU/memory or node affinity failures", "WARNING", "Analyze resource requests vs available capacity, suggest node scaling or request reduction"),
-    ("ReadinessProbe Failure", "Container not ready; readiness probe failing with timeout or HTTP error", "WARNING", "Check probe endpoint health, adjust timeout/threshold, verify service dependencies"),
-    ("LivenessProbe Failure", "Container restarting due to liveness probe failure; health endpoint analysis", "CRITICAL", "Analyze probe configuration, check application startup time, adjust initialDelaySeconds"),
-    ("Init Container Failure", "Init container in CrashLoopBackOff or Error; dependency chain analysis", "WARNING", "Check init container logs, verify service dependencies, validate init scripts"),
-    ("Volume Mount Error", "Container waiting on volume; PVC pending or mount failure", "WARNING", "Check PVC status, StorageClass provisioner, node zone affinity for volumes"),
-    ("Node NotReady Impact", "Pod on NotReady node; node condition analysis and cordon status", "CRITICAL", "Identify affected pods, suggest pod migration, analyze node conditions"),
-    ("Resource Quota Exceeded", "Pod rejected by admission; namespace quota analysis", "WARNING", "Show current quota usage, suggest quota increase or resource request reduction"),
+comparison = [
+    ("Detect & Triage", "5–15 min (wait for alert)", "< 30 sec (NLU parse)", "95%", "NLU normalizes 'pod crash' → incident_response intent at 0.88 confidence"),
+    ("Collect Evidence", "15–30 min (kubectl describe,\nlogs, events, metrics)", "~3 sec (8 parallel API calls)", "98%", "Parallel: pod describe + logs + prev logs + events + metrics + node + deploy + HPA"),
+    ("Identify Error Pattern", "10–20 min (read logs,\ncorrelate events)", "~2 sec (12-pattern engine)", "98%", "diagnosePod() matches OOMKilled/CrashLoop/ImagePull/Evicted/Probe + 7 more"),
+    ("Root Cause Analysis", "30–60 min (senior SRE\nexpertise required)", "~5 sec (LLM analysis)", "97%", "AI cross-references all evidence, identifies root cause, calculates blast radius"),
+    ("Severity Classification", "5–10 min", "~1 sec", "97%", "Rule-based: OOMKilled→CRITICAL, ImagePull→WARNING — drives INC urgency"),
+    ("Create ServiceNow INC", "15–30 min (manual form)", "~3 sec (API auto-create)", "97%", "createServiceNowIncident() with severity, root cause, evidence, fix proposals"),
+    ("Develop Fix", "20–45 min (research +\ncraft command)", "~2 sec (auto-generated)", "97%", "Smart memory calc for OOM; rollback for CrashLoop; credential fix for ImagePull"),
+    ("Validate Fix (Dry Run)", "15–30 min (test env)", "~5 sec (K8s dry-run API)", "96%", "executeFixCommand() with ?dryRun=All — validates patch without applying"),
+    ("Apply Fix", "10–20 min (apply + monitor)", "~30 sec (one-click apply)", "95%", "PATCH deployment via K8s API + before-metrics captured automatically"),
+    ("Verify Recovery", "15–30 min (manual checks)", "~30 sec (auto-poll)", "96%", "Poll every 3s: readyReplicas ≥ desired + allPods Running+Ready + after-metrics"),
+    ("Document & Close INC", "20–40 min", "~5 sec (auto-close)", "98%", "snowResolveIncident() with fix details, validation results, before/after metrics"),
 ]
 
-for i, (pattern, method, sev, remediation) in enumerate(patterns):
-    row = 5 + i
-    ws3.cell(row, 1, pattern).font = bold
+for i, (phase, manual, auto, saved, how) in enumerate(comparison):
+    row = 4 + i
+    ws3.cell(row, 1, phase).font = bold
     ws3.cell(row, 1).border = thin_border
     ws3.cell(row, 1).alignment = wrap
-    ws3.cell(row, 2, method).font = normal
-    ws3.cell(row, 2).alignment = wrap
+    ws3.cell(row, 2, manual).font = Font(name="Inter", color=RED, size=11)
+    ws3.cell(row, 2).alignment = center
     ws3.cell(row, 2).border = thin_border
-    cell_sev = ws3.cell(row, 3, sev)
+    ws3.cell(row, 3, auto).font = Font(name="Inter", color=GREEN, size=11)
+    ws3.cell(row, 3).alignment = center
+    ws3.cell(row, 3).border = thin_border
+    ws3.cell(row, 4, saved).font = bold_green
+    ws3.cell(row, 4).alignment = center
+    ws3.cell(row, 4).border = thin_border
+    ws3.cell(row, 5, how).font = Font(name="Inter", size=10, color="475569")
+    ws3.cell(row, 5).alignment = wrap
+    ws3.cell(row, 5).border = thin_border
+    if i % 2 == 1:
+        for c in range(1, 6):
+            ws3.cell(row, c).fill = light_bg_fill
+
+# Total
+row = 15
+ws3.cell(row, 1, "TOTAL (per incident)").font = Font(name="Inter", bold=True, color=WHITE, size=12)
+ws3.cell(row, 1).fill = PatternFill("solid", fgColor=PRIMARY)
+ws3.cell(row, 1).border = thin_border
+ws3.cell(row, 2, "2.5–5.5 hours").font = Font(name="Inter", bold=True, color=WHITE, size=12)
+ws3.cell(row, 2).fill = PatternFill("solid", fgColor=RED)
+ws3.cell(row, 2).alignment = center
+ws3.cell(row, 2).border = thin_border
+ws3.cell(row, 3, "< 5 minutes").font = Font(name="Inter", bold=True, color=WHITE, size=12)
+ws3.cell(row, 3).fill = PatternFill("solid", fgColor=GREEN)
+ws3.cell(row, 3).alignment = center
+ws3.cell(row, 3).border = thin_border
+ws3.cell(row, 4, "~97%").font = Font(name="Inter", bold=True, color=WHITE, size=12)
+ws3.cell(row, 4).fill = PatternFill("solid", fgColor=GREEN)
+ws3.cell(row, 4).alignment = center
+ws3.cell(row, 4).border = thin_border
+ws3.cell(row, 5, "End-to-End AI Orchestration").font = Font(name="Inter", bold=True, color=WHITE, size=11)
+ws3.cell(row, 5).fill = PatternFill("solid", fgColor=PRIMARY)
+ws3.cell(row, 5).alignment = center
+ws3.cell(row, 5).border = thin_border
+ws3.row_dimensions[row].height = 32
+
+
+# ═══════════════════════════════════════════════════════════════════
+# SHEET 4: Error Patterns & Detection
+# ═══════════════════════════════════════════════════════════════════
+ws4 = wb.create_sheet("Error Patterns & Detection")
+set_col_widths(ws4, [22, 36, 14, 34])
+
+ws4.merge_cells("A1:D1")
+c = ws4["A1"]
+c.value = "12 Error Patterns Detected by Pod Doctor Engine"
+c.font = Font(name="Inter", bold=True, color=WHITE, size=14)
+c.fill = hdr_fill
+c.alignment = Alignment(horizontal="center", vertical="center")
+ws4.row_dimensions[1].height = 40
+
+r = 3
+headers = ["Error Pattern", "How Pod Doctor Detects It", "Severity", "Auto-Generated Fix"]
+style_header_row(ws4, r, 4)
+for i, h in enumerate(headers, 1):
+    ws4.cell(r, i, h)
+
+patterns = [
+    ("OOMKilled", "exitCode === 137 OR terminationReason === 'OOMKilled'; memory usage vs limits analysis", "CRITICAL",
+     "oc set resources deployment/<name> --limits=memory=<calculated>\ncalculateSmartMemoryLimit(): 2x–5x based on restarts, rounded to 128Mi–8Gi"),
+    ("CrashLoopBackOff", "container.state === 'CrashLoopBackOff' OR restarts > 5 && exitCode !== 0; exitCodeMeaning() lookup", "CRITICAL",
+     "Rollback to last stable image OR fix detected config issue\ndetectConfigIssue() checks 8 sub-patterns"),
+    ("ImagePullBackOff", "container.waiting.reason === 'ImagePullBackOff'; registry + image name analysis", "WARNING",
+     "Verify image tag exists, recreate pull secret\noc create secret docker-registry ..."),
+    ("CreateContainerConfigError", "container.waiting.reason === 'CreateContainerConfigError'; missing ConfigMap/Secret detection", "WARNING",
+     "Identify missing ConfigMap/Secret, recreate from source\noc create configmap <name> --from-file=..."),
+    ("Evicted", "pod.status.phase === 'Failed', reason === 'Evicted'; node resource pressure analysis", "CRITICAL",
+     "Set ephemeral storage limits, clean disk, rebalance workloads\noc set resources ... --limits=ephemeral-storage=..."),
+    ("Pending (Unschedulable)", "pod.phase === 'Pending'; insufficient CPU/memory or node affinity failures", "WARNING",
+     "Reduce resource requests OR suggest node scaling\noc scale machinesets ... --replicas=+1"),
+    ("ReadinessProbe Failure", "container not ready; events with reason 'Unhealthy' + /readiness/", "WARNING",
+     "Adjust probe thresholds: timeoutSeconds, failureThreshold\noc patch deployment ... -p '{...}'"),
+    ("LivenessProbe Failure", "container restarting; events with reason 'Unhealthy' + /liveness/", "CRITICAL",
+     "Increase initialDelaySeconds, adjust probe config\noc patch deployment ... -p '{...}'"),
+    ("Init Container Failure", "initContainer in CrashLoopBackOff or Error; dependency chain analysis", "WARNING",
+     "Fix init script or service dependency\nCheck init container logs for root cause"),
+    ("Volume Mount Error", "container waiting on volume; PVC pending or mount failure detected", "WARNING",
+     "Check PVC status, fix StorageClass, verify zone affinity\noc get pvc -n <ns> -o wide"),
+    ("Node NotReady Impact", "pod on NotReady node; node condition analysis + cordon status", "CRITICAL",
+     "Migrate affected pods, analyze node conditions\noc adm drain <node> --ignore-daemonsets"),
+    ("Resource Quota Exceeded", "pod rejected by admission; namespace quota analysis", "WARNING",
+     "Increase quota or reduce resource requests\noc patch resourcequota ... -p '{...}'"),
+]
+
+for i, (pattern, method, sev, fix) in enumerate(patterns):
+    row = 4 + i
+    ws4.cell(row, 1, pattern).font = bold
+    ws4.cell(row, 1).border = thin_border
+    ws4.cell(row, 1).alignment = wrap
+    ws4.cell(row, 2, method).font = normal
+    ws4.cell(row, 2).alignment = wrap
+    ws4.cell(row, 2).border = thin_border
+    cell_sev = ws4.cell(row, 3, sev)
     cell_sev.alignment = center
     cell_sev.border = thin_border
     if sev == "CRITICAL":
@@ -427,206 +557,123 @@ for i, (pattern, method, sev, remediation) in enumerate(patterns):
     else:
         cell_sev.font = Font(name="Inter", bold=True, color=ORANGE, size=10)
         cell_sev.fill = PatternFill("solid", fgColor="FEF3C7")
-    ws3.cell(row, 4, remediation).font = normal
-    ws3.cell(row, 4).alignment = wrap
-    ws3.cell(row, 4).border = thin_border
-    if i % 2 == 1:
-        ws3.cell(row, 1).fill = light_bg_fill
-        ws3.cell(row, 2).fill = light_bg_fill
-        ws3.cell(row, 4).fill = light_bg_fill
-
-# 8 Parallel Data Sources
-r = 18
-ws3.merge_cells(f"A{r}:D{r}")
-ws3.cell(r, 1, "8 PARALLEL K8s API DATA SOURCES").font = bold_white
-ws3.cell(r, 1).fill = accent_fill
-ws3.cell(r, 1).alignment = center
-for c in range(2, 5):
-    ws3.cell(r, c).fill = accent_fill
-
-r = 19
-headers = ["Data Source", "K8s API Call", "Mode", "Analysis Purpose"]
-style_header_row(ws3, r, 4)
-for i, h in enumerate(headers, 1):
-    ws3.cell(r, i, h)
-
-sources = [
-    ("Pod Describe", "GET /api/v1/namespaces/{ns}/pods/{pod}", "Parallel", "Container states, restart counts, exit codes, resource limits, conditions"),
-    ("Container Logs", "GET /api/v1/namespaces/{ns}/pods/{pod}/log", "Parallel", "Application errors, stack traces, OOM events, connection failures"),
-    ("Pod Events", "GET /api/v1/namespaces/{ns}/events?fieldSelector=involvedObject.name={pod}", "Parallel", "Scheduling decisions, image pulls, probe failures, mount errors"),
-    ("Resource Metrics", "GET /apis/metrics.k8s.io/v1beta1/namespaces/{ns}/pods/{pod}", "Parallel", "Current CPU/memory usage vs requests/limits, trend analysis"),
-    ("Node Conditions", "GET /api/v1/nodes/{nodeName}", "Parallel", "Node health, resource pressure, kernel version, kubelet status"),
-    ("Deployment Config", "GET /apis/apps/v1/namespaces/{ns}/deployments/{deploy}", "Parallel", "Replica count, strategy, image version, environment variables"),
-    ("HPA Status", "GET /apis/autoscaling/v2/namespaces/{ns}/hpa", "Parallel", "Current vs desired replicas, scaling metrics, scaling events"),
-    ("Network Policies", "GET /apis/networking.k8s.io/v1/namespaces/{ns}/networkpolicies", "Parallel", "Ingress/egress rules, service connectivity, DNS policies"),
-]
-
-for i, (source, api, mode, purpose) in enumerate(sources):
-    row = 20 + i
-    ws3.cell(row, 1, source).font = bold
-    ws3.cell(row, 1).border = thin_border
-    ws3.cell(row, 1).alignment = wrap
-    ws3.cell(row, 2, api).font = Font(name="SF Mono", size=9)
-    ws3.cell(row, 2).alignment = wrap
-    ws3.cell(row, 2).border = thin_border
-    cell_mode = ws3.cell(row, 3, mode)
-    cell_mode.alignment = center
-    cell_mode.border = thin_border
-    cell_mode.font = Font(name="Inter", bold=True, color=GREEN, size=10)
-    cell_mode.fill = light_green_fill
-    ws3.cell(row, 4, purpose).font = normal
-    ws3.cell(row, 4).alignment = wrap
-    ws3.cell(row, 4).border = thin_border
-    if i % 2 == 1:
-        ws3.cell(row, 1).fill = light_bg_fill
-        ws3.cell(row, 2).fill = light_bg_fill
-        ws3.cell(row, 4).fill = light_bg_fill
-
-
-# ═══════════════════════════════════════════════════════════════════
-# SHEET 4: Real-World Scenarios
-# ═══════════════════════════════════════════════════════════════════
-ws4 = wb.create_sheet("Incident Scenarios")
-set_col_widths(ws4, [28, 24, 20, 24, 34])
-
-ws4.merge_cells("A1:E1")
-c = ws4["A1"]
-c.value = "Real-World Incident Response Scenarios"
-c.font = Font(name="Inter", bold=True, color=WHITE, size=14)
-c.fill = hdr_fill
-c.alignment = Alignment(horizontal="center", vertical="center")
-ws4.row_dimensions[1].height = 40
-
-r = 3
-headers = ["Scenario", "Root Cause", "Manual Resolution", "With TCS Agentic AI", "Outcome"]
-style_header_row(ws4, r, 5)
-for i, h in enumerate(headers, 1):
-    ws4.cell(r, i, h)
-
-scenarios = [
-    (
-        "OOMKilled Pod\nMemory limit exceeded",
-        "Java app with memory leak\ncontainer limit 256Mi,\nactual usage 280Mi+",
-        "~2 hours\nSSH → describe → logs →\nidentify OOM → patch YAML",
-        "~3 min\nDetect → RCA → INC created →\npatch limits → verify recovery",
-        "ServiceNow INC auto-created (SEV-2), memory limits increased to 512Mi, pod recovered with 0 restarts, before/after metrics captured"
-    ),
-    (
-        "CrashLoopBackOff\nConfig dependency missing",
-        "Deployment references\ndeleted ConfigMap;\ncontainer exits code 1",
-        "~1.5 hours\nCheck events → logs →\ntrace config → recreate",
-        "~4 min\nDetect → missing config found →\nINC created → fix proposed",
-        "AI identified missing ConfigMap 'app-config', suggested recreation from git, ServiceNow INC includes full dependency chain"
-    ),
-    (
-        "ImagePullBackOff\nRegistry auth expired",
-        "Image pull secret expired;\nregistry returns 401\nfor private image",
-        "~1 hour\nCheck events → test pull →\nrenew secret → rollout",
-        "~2 min\nDetect → auth failure identified →\nfix proposed → secret renewed",
-        "AI detected 401 from registry, identified expired pull secret, INC created with registry details, new secret applied"
-    ),
-    (
-        "Node NotReady\nMultiple pods affected",
-        "Worker node kernel panic;\n12 pods displaced across\n4 namespaces",
-        "~3 hours\nIdentify node → list pods →\nmigrate workloads → verify",
-        "~5 min\nDetect → blast radius mapped →\npod migration triggered →\nall 12 pods recovered",
-        "AI mapped all 12 affected pods across 4 namespaces, auto-triggered pod migration, ServiceNow INC includes full impact assessment"
-    ),
-    (
-        "Evicted Pods\nDisk pressure on node",
-        "Ephemeral storage exceeded;\nlogs filling /var/log;\n5 pods evicted",
-        "~2 hours\nSSH to node → check disk →\nclean logs → reschedule",
-        "~4 min\nDetect → disk pressure found →\ncleanup suggested → pods\nrescheduled → verified",
-        "AI identified disk pressure source, suggested ephemeral storage limits and log rotation, 5 pods rescheduled successfully"
-    ),
-    (
-        "Fleet-Wide Incident\n3 clusters affected",
-        "Shared image registry\ndowntime; ImagePullBackOff\nacross 3 clusters",
-        "~6 hours\nPer-cluster investigation →\ncorrelate → workaround →\nverify each cluster",
-        "~8 min\nCorrelate across clusters →\nsingle root cause → fleet fix →\nverify all 3 clusters",
-        "AI correlated ImagePullBackOff across 3 clusters to single registry, fleet-wide INC created, registry mirror configured as fix"
-    ),
-]
-
-for i, (scenario, cause, manual, auto, outcome) in enumerate(scenarios):
-    row = 4 + i
-    ws4.cell(row, 1, scenario).font = bold
-    ws4.cell(row, 1).alignment = wrap
-    ws4.cell(row, 1).border = thin_border
-    ws4.cell(row, 2, cause).font = normal
-    ws4.cell(row, 2).alignment = wrap
-    ws4.cell(row, 2).border = thin_border
-    ws4.cell(row, 3, manual).font = bold_red
-    ws4.cell(row, 3).alignment = center
-    ws4.cell(row, 3).border = thin_border
-    ws4.cell(row, 4, auto).font = bold_green
-    ws4.cell(row, 4).alignment = center
+    ws4.cell(row, 4, fix).font = Font(name="Inter", size=10, color="475569")
+    ws4.cell(row, 4).alignment = wrap
     ws4.cell(row, 4).border = thin_border
-    ws4.cell(row, 5, outcome).font = normal
-    ws4.cell(row, 5).alignment = wrap
-    ws4.cell(row, 5).border = thin_border
-    ws4.row_dimensions[row].height = 64
+    ws4.row_dimensions[row].height = 48
     if i % 2 == 1:
-        for c in range(1, 6):
-            ws4.cell(row, c).fill = light_bg_fill
+        ws4.cell(row, 1).fill = light_bg_fill
+        ws4.cell(row, 2).fill = light_bg_fill
+        ws4.cell(row, 4).fill = light_bg_fill
 
 
 # ═══════════════════════════════════════════════════════════════════
-# SHEET 5: Safety & Risk Mitigation
+# SHEET 5: Real-World Scenarios
 # ═══════════════════════════════════════════════════════════════════
-ws5 = wb.create_sheet("Safety & Risk Mitigation")
-set_col_widths(ws5, [24, 32, 40])
+ws5 = wb.create_sheet("Real-World Scenarios")
+set_col_widths(ws5, [20, 22, 18, 18, 36])
 
-ws5.merge_cells("A1:C1")
+ws5.merge_cells("A1:E1")
 c = ws5["A1"]
-c.value = "Built-in Safety & Risk Mitigation for Incident Response"
+c.value = "Real-World Scenarios: What Happens When You Ask \"Why is my pod crashing?\""
 c.font = Font(name="Inter", bold=True, color=WHITE, size=14)
 c.fill = hdr_fill
 c.alignment = Alignment(horizontal="center", vertical="center")
 ws5.row_dimensions[1].height = 40
 
 r = 3
-headers = ["Risk Scenario", "Description", "Built-in Mitigation"]
-style_header_row(ws5, r, 3)
+headers = ["Scenario", "Root Cause Found", "Manual Resolution", "With TCS Agentic AI", "What the User Sees"]
+style_header_row(ws5, r, 5)
 for i, h in enumerate(headers, 1):
     ws5.cell(r, i, h)
 
-risks = [
-    ("Incorrect Root Cause", "AI misidentifies the root cause due to misleading log patterns", "12-pattern engine cross-validates with events, metrics, and node conditions; confidence scoring prevents low-confidence actions"),
-    ("Fix Side Effects", "Remediation command causes unintended impact on other workloads", "Dry-run validation before execution; blast radius analysis checks all pods in namespace; rollback instructions included with every fix"),
-    ("Over-Scaling Resources", "Memory/CPU limits increased beyond node capacity", "Resource change proposals check node allocatable capacity; HPA analysis prevents conflicting scaling; quota validation ensures namespace limits respected"),
-    ("ServiceNow Duplicate", "Multiple INC tickets created for same root cause", "Incident deduplication based on pod name + error pattern + namespace; existing INC checked before creation"),
-    ("Cascading Failures", "Fix applied to wrong pod or namespace affects healthy workloads", "Pod and namespace validation before any fix; deployment owner verification; confirmation required for cross-namespace operations"),
-    ("Data Loss", "Fix command (like pod delete) causes data loss for stateful workloads", "StatefulSet detection prevents force-delete; PVC analysis checks for unmounted volumes; fix proposals flag data-loss risks explicitly"),
-    ("Unauthorized Remediation", "Fix applied without proper change management approval", "All fixes require explicit user confirmation (click 'Apply Fix'); ServiceNow INC creates audit trail; rate limiting prevents automated mass changes"),
-    ("Recovery Timeout", "Pod fails to recover after fix, left in broken state", "30-second recovery monitoring with timeout detection; automatic status update to ServiceNow if recovery fails; escalation path to manual intervention"),
+scenarios = [
+    (
+        "OOMKilled\nJava memory leak",
+        "Container limit 256Mi,\nactual usage 280Mi+,\nexitCode 137",
+        "~2 hours\nSSH → describe → logs →\nidentify OOM → patch",
+        "~3 min\nDetect → RCA → INC →\npatch to 512Mi → verify",
+        "AI Chat shows: diagnosis card with OOMKilled root cause, memory usage chart, "
+        "INC0012345 auto-created, 'Apply Fix' button patches to 512Mi, "
+        "RecoveryTimeline shows pod restarting → healthy, BeforeAfterMetrics shows 256Mi→512Mi",
+    ),
+    (
+        "CrashLoopBackOff\nMissing ConfigMap",
+        "Deployment references\ndeleted ConfigMap 'app-config',\nexit code 1",
+        "~1.5 hours\nCheck events → logs →\ntrace config → recreate",
+        "~4 min\nDetect → missing config →\nINC → recreate → verify",
+        "AI Chat shows: CrashLoopBackOff diagnosis, detectConfigIssue() found 'MissingFile', "
+        "evidence includes log lines, INC auto-created with dependency chain, "
+        "fix proposes ConfigMap recreation",
+    ),
+    (
+        "ImagePullBackOff\nExpired pull secret",
+        "Pull secret expired,\nregistry returns 401\nfor private image",
+        "~1 hour\nCheck events → test →\nrenew secret → rollout",
+        "~2 min\nDetect → auth failure →\nINC → renew → verify",
+        "AI Chat shows: ImagePullBackOff diagnosis, registry URL identified, "
+        "INC auto-created as SEV-3 (WARNING), fix proposes new pull secret creation",
+    ),
+    (
+        "LivenessProbe\nSlow startup",
+        "App takes 45s to start,\nliveness probe fails at 30s,\npod keeps restarting",
+        "~1.5 hours\nCorrelate restarts with\nprobe config → adjust",
+        "~3 min\nDetect → probe analysis →\nINC → patch probe → verify",
+        "AI Chat shows: LivenessProbe CRITICAL diagnosis, events show 'Unhealthy' pattern, "
+        "fix proposes initialDelaySeconds increase from 30→60, INC auto-created",
+    ),
+    (
+        "Evicted Pods\nDisk pressure",
+        "Ephemeral storage full,\nlogs filling /var/log,\n5 pods evicted",
+        "~2 hours\nSSH to node → check →\nclean → reschedule",
+        "~4 min\nDetect → pressure found →\nINC → limits + clean →\nreschedule → verify",
+        "AI Chat shows: Evicted CRITICAL diagnosis, node disk pressure evidence, "
+        "INC created for all 5 pods, fix proposes ephemeral-storage limits, "
+        "recovery confirms all 5 pods rescheduled",
+    ),
+    (
+        "Node NotReady\n12 pods displaced",
+        "Worker node kernel panic,\n12 pods across\n4 namespaces affected",
+        "~3 hours\nIdentify node → list →\nmigrate → verify each",
+        "~5 min\nBlast radius mapped →\nINC → migrate →\nverify all 12 pods",
+        "AI Chat shows: blast radius analysis across 4 namespaces, "
+        "single INC with full impact list, pod migration triggered, "
+        "RecoveryTimeline tracks all 12 pods returning to healthy",
+    ),
 ]
 
-for i, (risk, desc, mitigation) in enumerate(risks):
+for i, (scenario, cause, manual, auto, user_sees) in enumerate(scenarios):
     row = 4 + i
-    ws5.cell(row, 1, risk).font = Font(name="Inter", bold=True, color=RED, size=11)
-    ws5.cell(row, 1).border = thin_border
+    ws5.cell(row, 1, scenario).font = bold
     ws5.cell(row, 1).alignment = wrap
-    ws5.cell(row, 2, desc).font = normal
+    ws5.cell(row, 1).border = thin_border
+    ws5.cell(row, 2, cause).font = normal
     ws5.cell(row, 2).alignment = wrap
     ws5.cell(row, 2).border = thin_border
-    ws5.cell(row, 3, mitigation).font = Font(name="Inter", bold=True, color=GREEN, size=11)
-    ws5.cell(row, 3).alignment = wrap
+    ws5.cell(row, 3, manual).font = bold_red
+    ws5.cell(row, 3).alignment = center
     ws5.cell(row, 3).border = thin_border
+    ws5.cell(row, 4, auto).font = bold_green
+    ws5.cell(row, 4).alignment = center
+    ws5.cell(row, 4).border = thin_border
+    ws5.cell(row, 5, user_sees).font = Font(name="Inter", size=10, color="475569")
+    ws5.cell(row, 5).alignment = wrap
+    ws5.cell(row, 5).border = thin_border
+    ws5.row_dimensions[row].height = 72
     if i % 2 == 1:
-        for c in range(1, 4):
+        for c in range(1, 6):
             ws5.cell(row, c).fill = light_bg_fill
 
 
 # ═══════════════════════════════════════════════════════════════════
-# SHEET 6: Key Benefits
+# SHEET 6: Safety & Key Benefits
 # ═══════════════════════════════════════════════════════════════════
-ws6 = wb.create_sheet("Key Benefits")
+ws6 = wb.create_sheet("Safety & Key Benefits")
 set_col_widths(ws6, [28, 50])
 
 ws6.merge_cells("A1:B1")
 c = ws6["A1"]
-c.value = "Key Benefits of TCS Agentic AI Incident Response Automation"
+c.value = "Built-in Safety Guardrails"
 c.font = Font(name="Inter", bold=True, color=WHITE, size=14)
 c.fill = hdr_fill
 c.alignment = Alignment(horizontal="center", vertical="center")
@@ -634,24 +681,58 @@ ws6.row_dimensions[1].height = 40
 
 r = 3
 style_header_row(ws6, r, 2)
+ws6.cell(r, 1, "Guardrail")
+ws6.cell(r, 2, "How It Works")
+
+guardrails = [
+    ("Dry Run Before Apply", "Every fix can be validated with K8s ?dryRun=All before real execution — user sees confirmation before committing"),
+    ("Dangerous Command Blocking", "fix-executor.js blocks: delete namespace/crd/node, cordon/drain, exec rm, delete all — hard-coded deny list"),
+    ("Rate Limiting", "execute-fix endpoint rate-limited at burst=5, refill=0.1/sec — prevents automated mass changes"),
+    ("User Confirmation Required", "Every fix requires explicit button click — no auto-apply; fix card shows command, risk level, and rollback instructions"),
+    ("Guardrails Preflight", "preflightCheck() classifies every command before execution — blocks high-risk operations if guardrails pillar enabled"),
+    ("StatefulSet Protection", "Pod doctor detects StatefulSets and prevents force-delete; flags data-loss risks explicitly in fix proposals"),
+    ("Recovery Timeout", "60-second timeout on rollout polling — if pod fails to recover, INC remains open for manual review, user notified"),
+    ("Complete Audit Trail", "Every fix execution logged: userId, command, classification, success/failure, duration, before/after metrics"),
+]
+
+for i, (guard, desc) in enumerate(guardrails):
+    row = 4 + i
+    ws6.cell(row, 1, guard).font = Font(name="Inter", bold=True, color=RED, size=11)
+    ws6.cell(row, 1).border = thin_border
+    ws6.cell(row, 1).alignment = wrap
+    ws6.cell(row, 2, desc).font = normal
+    ws6.cell(row, 2).alignment = wrap
+    ws6.cell(row, 2).border = thin_border
+    if i % 2 == 1:
+        for c in range(1, 3):
+            ws6.cell(row, c).fill = light_bg_fill
+
+# Key Benefits section
+r = 13
+ws6.merge_cells(f"A{r}:B{r}")
+ws6.cell(r, 1, "KEY BENEFITS").font = bold_white
+ws6.cell(r, 1).fill = PatternFill("solid", fgColor=GREEN)
+ws6.cell(r, 1).alignment = center
+ws6.cell(r, 2).fill = PatternFill("solid", fgColor=GREEN)
+
+r = 14
+style_header_row(ws6, r, 2)
 ws6.cell(r, 1, "Benefit")
 ws6.cell(r, 2, "Description")
 
 benefits = [
-    ("97% Time Reduction", "From 2.5-5.5 hours of manual SRE effort to under 5 minutes per incident — detection through verified resolution"),
-    ("Sub-30-Second Detection", "Natural language queries instantly routed to pod doctor; 8 parallel K8s API calls complete in under 3 seconds"),
-    ("12-Pattern Intelligence", "Comprehensive error pattern library covering OOMKilled, CrashLoopBackOff, ImagePullBackOff, Evicted, and 8 more — with auto-remediation for each"),
-    ("Complete Audit Trail", "Every incident fully documented — ServiceNow INC with severity, root cause, evidence, timeline, before/after metrics, and resolution verification"),
-    ("Before/After Metrics", "Quantified proof of fix effectiveness: memory usage, restart counts, pod status, and replica health compared pre- and post-remediation"),
-    ("Safe Remediation", "Dry-run validation before every fix; blast radius analysis; rollback instructions; data-loss detection for StatefulSets; rate limiting"),
-    ("ServiceNow Native Integration", "Auto-create INC with severity mapping (CRITICAL→SEV-2, WARNING→SEV-3), root cause, evidence, and fix proposals — zero manual ticketing"),
-    ("Multi-Cluster Correlation", "Cross-cluster incident correlation identifies fleet-wide issues (shared registry, DNS, networking) with single root cause across clusters"),
-    ("Recovery Verification", "Post-fix monitoring confirms pod healthy, restarts reset, memory normalized, all replicas ready — with automatic INC update on success"),
-    ("Knowledge Democratization", "Junior SREs get the same diagnosis quality as senior experts — AI captures and applies troubleshooting expertise consistently"),
+    ("97% Time Reduction", "From 2.5–5.5 hours manual SRE effort to under 5 minutes — detection through verified recovery with ServiceNow INC closed"),
+    ("Natural Language Interface", 'Ask "why is my pod crashing?" in plain English — no kubectl expertise needed; junior SREs get senior-level diagnosis'),
+    ("12-Pattern Intelligence", "Comprehensive error detection: OOMKilled, CrashLoopBackOff, ImagePullBackOff, Evicted, Probe failures, and 7 more — with targeted fix for each"),
+    ("ServiceNow Native ITSM", "Auto-create INC with severity mapping, root cause, evidence, timeline — auto-close with resolution proof when fix verified"),
+    ("Before/After Proof", "Quantified evidence: memory 256Mi→512Mi, restarts 47→0, status CrashLoopBackOff→Running — shows fix effectiveness"),
+    ("Smart Fix Generation", "OOMKilled gets calculated memory limits (2x–5x based on restarts); CrashLoop gets config issue detection (8 sub-patterns)"),
+    ("Recovery Verification", "Auto-poll every 3s: replicas ready + all pods Running+Ready + metrics normalized — not just 'command succeeded'"),
+    ("Knowledge Democratization", "AI captures troubleshooting expertise — every SRE gets consistent, expert-level diagnosis regardless of experience"),
 ]
 
 for i, (benefit, desc) in enumerate(benefits):
-    row = 4 + i
+    row = 15 + i
     ws6.cell(row, 1, benefit).font = bold_green
     ws6.cell(row, 1).border = thin_border
     ws6.cell(row, 1).alignment = wrap
@@ -674,109 +755,73 @@ print(f"Excel saved: {excel_path}")
 # ═══════════════════════════════════════════════════════════════════
 
 def generate_html():
-    # Key metrics
-    key_metrics_html = ""
-    metrics_data = [
-        ("< 30s", "Mean Time to Detect"),
-        ("< 5 min", "Mean Time to Resolve"),
-        ("85-90%", "Effort Reduction"),
-        ("12", "Error Patterns"),
-        ("8", "Parallel API Calls"),
-        ("100%", "Audit Trail"),
-    ]
-    for num, desc in metrics_data:
-        key_metrics_html += f'''
-        <div class="kn-card">
-          <div class="kn-num">{num}</div>
-          <div class="kn-desc">{desc}</div>
-        </div>'''
-
     # Lifecycle steps
     lifecycle_steps = [
-        "1. NL Query\nParsing",
-        "2. 8 Parallel\nK8s API Calls",
-        "3. 12 Error\nPattern Detection",
-        "4. AI Root\nCause Analysis",
-        "5. Severity\nAssessment",
-        "6. ServiceNow\nINC Creation",
-        "7. Fix Proposal\nGeneration",
-        "8. Dry Run\nValidation",
-        "9. Apply Fix\n& Monitor",
-        "10. Recovery\nVerification",
+        ("01", "NL Query Parsing", "NLU normalizes 'pod crash' → incident_response at 0.88 confidence"),
+        ("02", "8 Parallel K8s API Calls", "Pod describe + logs + prev logs + events + metrics + node + deploy + HPA"),
+        ("03", "Pod Doctor Diagnosis", "12-pattern engine: OOMKilled, CrashLoop, ImagePull, Evicted + 8 more"),
+        ("04", "Severity Assessment", "CRITICAL / WARNING / INFO based on error pattern + restart count"),
+        ("05", "Smart Fix Generation", "Targeted commands with risk score; smart memory calc for OOMKilled"),
+        ("06", "ServiceNow INC Creation", "Auto-create with severity mapping, root cause, evidence, fixes"),
+        ("07", "Fix Card in AI Chat", "Interactive card: diagnosis, evidence, Apply Fix / Dry Run buttons"),
+        ("08", "Dry Run Validation", "K8s ?dryRun=All validates patch without applying; blocks dangerous ops"),
+        ("09", "Apply Fix + Metrics", "Execute command, capture before/after memory, restarts, status"),
+        ("10", "Recovery + INC Close", "Poll 3s/60s timeout; verify pods healthy; auto-close ServiceNow INC"),
     ]
     lifecycle_html = ""
-    for step in lifecycle_steps:
-        label = step.replace("\n", "<br>")
-        lifecycle_html += f'<div class="lc-step">{label}</div>'
+    for num, name, desc in lifecycle_steps:
+        lifecycle_html += f'''
+        <div class="wf-step">
+          <div class="wf-num">{num}</div>
+          <div class="wf-name">{name}</div>
+          <div class="wf-desc">{desc}</div>
+        </div>'''
 
-    # Comparison table
-    comparison_rows = ""
-    comparison_data = [
-        ("Alert Detection & Triage", "5-15 min", "< 30 sec", "95%"),
-        ("Data Collection", "15-30 min", "~3 sec", "98%"),
-        ("Error Pattern ID", "10-20 min", "~2 sec", "98%"),
-        ("Root Cause Analysis", "30-60 min", "~5 sec", "97%"),
-        ("Severity Classification", "5-10 min", "~1 sec", "97%"),
-        ("ServiceNow INC", "15-30 min", "~3 sec", "97%"),
-        ("Fix Proposal Dev", "20-45 min", "~2 sec", "97%"),
-        ("Dry Run Validation", "15-30 min", "~5 sec", "96%"),
-        ("Fix Execution", "10-20 min", "~30 sec", "95%"),
-        ("Recovery Verification", "15-30 min", "~30 sec", "96%"),
-        ("Documentation & Closure", "20-40 min", "~5 sec", "98%"),
+    # Comparison rows
+    comp_data = [
+        ("Detect & Triage", "5–15 min", "< 30 sec", "95%"),
+        ("Collect Evidence", "15–30 min", "~3 sec", "98%"),
+        ("Identify Error Pattern", "10–20 min", "~2 sec", "98%"),
+        ("Root Cause Analysis", "30–60 min", "~5 sec", "97%"),
+        ("Create ServiceNow INC", "15–30 min", "~3 sec", "97%"),
+        ("Develop Fix", "20–45 min", "~2 sec", "97%"),
+        ("Dry Run + Apply Fix", "25–50 min", "~35 sec", "96%"),
+        ("Verify + Close INC", "35–70 min", "~35 sec", "97%"),
     ]
-    for phase, manual, auto, saved in comparison_data:
-        comparison_rows += f'''
+    comp_rows = ""
+    for phase, manual, auto, saved in comp_data:
+        comp_rows += f'''
         <tr>
-          <td class="phase-name">{phase}</td>
+          <td class="phase">{phase}</td>
           <td class="manual">{manual}</td>
-          <td class="automated">{auto}</td>
+          <td class="auto">{auto}</td>
           <td class="saved">{saved}</td>
         </tr>'''
 
     # Error patterns
-    pattern_rows = ""
-    patterns_html = [
-        ("OOMKilled", "CRITICAL", "Container terminated due to memory limit exceeded", "Increase memory limits"),
-        ("CrashLoopBackOff", "CRITICAL", "Repeated container crashes with exponential backoff", "Analyze exit codes, rollback image"),
-        ("ImagePullBackOff", "WARNING", "Failed to pull container image from registry", "Verify image tag, check pull secret"),
-        ("CreateContainerConfigError", "WARNING", "Missing ConfigMap or Secret reference", "Identify missing config, recreate"),
-        ("Evicted", "CRITICAL", "Pod evicted due to node resource pressure", "Rebalance workloads, clean storage"),
-        ("Pending (Unschedulable)", "WARNING", "Insufficient resources or affinity failures", "Scale nodes or reduce requests"),
-        ("ReadinessProbe Failure", "WARNING", "Pod not ready due to failed health check", "Check endpoint, adjust thresholds"),
-        ("LivenessProbe Failure", "CRITICAL", "Container restarting from liveness failure", "Adjust probe config, check startup time"),
-        ("Init Container Failure", "WARNING", "Init container crash blocking pod start", "Check dependencies, fix init script"),
-        ("Volume Mount Error", "WARNING", "PVC pending or mount failure", "Check PVC, StorageClass, zones"),
-        ("Node NotReady Impact", "CRITICAL", "Pods affected by unhealthy node", "Migrate pods, analyze node conditions"),
-        ("Resource Quota Exceeded", "WARNING", "Pod rejected by admission controller", "Increase quota or reduce requests"),
+    pattern_data = [
+        ("OOMKilled", "CRITICAL", "exitCode 137 / terminationReason", "Smart memory limit: 2x–5x restarts"),
+        ("CrashLoopBackOff", "CRITICAL", "restarts > 5, exitCode !== 0", "Rollback image / fix config (8 sub-patterns)"),
+        ("ImagePullBackOff", "WARNING", "waiting.reason = ImagePullBackOff", "Verify image, recreate pull secret"),
+        ("CreateContainerConfigError", "WARNING", "Missing ConfigMap/Secret", "Identify + recreate missing config"),
+        ("Evicted", "CRITICAL", "phase=Failed, reason=Evicted", "Set ephemeral-storage limits"),
+        ("Pending (Unschedulable)", "WARNING", "Insufficient resources", "Reduce requests or scale nodes"),
+        ("ReadinessProbe Failure", "WARNING", "Events: Unhealthy + readiness", "Adjust probe thresholds"),
+        ("LivenessProbe Failure", "CRITICAL", "Events: Unhealthy + liveness", "Increase initialDelaySeconds"),
+        ("Init Container Failure", "WARNING", "Init in CrashLoopBackOff", "Fix init script / dependencies"),
+        ("Volume Mount Error", "WARNING", "PVC pending / mount fail", "Fix PVC, StorageClass, zones"),
+        ("Node NotReady Impact", "CRITICAL", "Pod on NotReady node", "Migrate pods, drain node"),
+        ("Resource Quota Exceeded", "WARNING", "Rejected by admission", "Increase quota or reduce requests"),
     ]
-    for name, sev, desc, fix in patterns_html:
-        sev_class = "sev-crit" if sev == "CRITICAL" else "sev-warn"
+    pattern_rows = ""
+    for name, sev, detect, fix in pattern_data:
+        sev_cls = "sev-crit" if sev == "CRITICAL" else "sev-warn"
         pattern_rows += f'''
         <tr>
-          <td class="pattern-name">{name}</td>
-          <td class="{sev_class}">{sev}</td>
-          <td>{desc}</td>
-          <td class="fix-col">{fix}</td>
-        </tr>'''
-
-    # Scenarios
-    scenario_rows = ""
-    scenarios_html = [
-        ("OOMKilled Pod", "Java app memory leak, 256Mi limit", "~2 hours", "~3 min", "INC auto-created, limits patched, recovery verified"),
-        ("CrashLoopBackOff", "Deleted ConfigMap dependency", "~1.5 hours", "~4 min", "Missing config identified, INC includes dependency chain"),
-        ("ImagePullBackOff", "Expired registry pull secret", "~1 hour", "~2 min", "Auth failure detected, secret renewed, INC created"),
-        ("Node NotReady", "Kernel panic, 12 pods affected", "~3 hours", "~5 min", "Blast radius mapped, pods migrated, full impact in INC"),
-        ("Evicted Pods", "Disk pressure, 5 pods evicted", "~2 hours", "~4 min", "Disk pressure identified, storage limits set, pods rescheduled"),
-        ("Fleet-Wide Incident", "Registry down, 3 clusters", "~6 hours", "~8 min", "Cross-cluster correlation, fleet INC, mirror configured"),
-    ]
-    for name, cause, manual, auto, outcome in scenarios_html:
-        scenario_rows += f'''
-        <tr>
-          <td class="scenario-name">{name}</td>
-          <td>{cause}</td>
-          <td class="manual">{manual}</td>
-          <td class="automated">{auto}</td>
-          <td class="outcome">{outcome}</td>
+          <td class="pname">{name}</td>
+          <td class="{sev_cls}">{sev}</td>
+          <td>{detect}</td>
+          <td class="fix">{fix}</td>
         </tr>'''
 
     html = f'''<!DOCTYPE html>
@@ -784,46 +829,48 @@ def generate_html():
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TCS Agentic AI — Incident Response Use Case</title>
+<title>TCS Agentic AI — Use Case 2: Incident Response</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{ font-family: 'Inter', -apple-system, sans-serif; background: #f0f4f8; color: #1e293b; }}
-
   .page {{ max-width: 1400px; margin: 0 auto; padding: 24px; }}
 
   .header {{ background: linear-gradient(135deg, #1A1A2E 0%, #16213E 40%, #0F3460 70%, #E94560 100%);
-    color: #fff; padding: 32px 40px; border-radius: 16px; margin-bottom: 24px;
-    display: flex; justify-content: space-between; align-items: center; }}
-  .header h1 {{ font-size: 22px; font-weight: 800; letter-spacing: -0.5px; }}
-  .header p {{ font-size: 13px; color: rgba(255,255,255,0.7); margin-top: 4px; }}
-  .header-badge {{ background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25);
-    padding: 8px 20px; border-radius: 10px; text-align: center; }}
-  .header-badge .big {{ font-size: 22px; font-weight: 800; }}
-  .header-badge .small {{ font-size: 11px; color: rgba(255,255,255,0.7); }}
+    color: #fff; padding: 32px 40px; border-radius: 16px; margin-bottom: 24px; }}
+  .header h1 {{ font-size: 24px; font-weight: 800; letter-spacing: -0.5px; }}
+  .header h2 {{ font-size: 16px; font-weight: 500; color: rgba(255,255,255,0.8); margin-top: 4px; }}
+  .header p {{ font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 8px; line-height: 1.6; }}
+  .header-metrics {{ display: flex; gap: 16px; margin-top: 16px; }}
+  .hm {{ background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2);
+    padding: 10px 20px; border-radius: 10px; text-align: center; }}
+  .hm .big {{ font-size: 22px; font-weight: 800; }}
+  .hm .small {{ font-size: 10px; color: rgba(255,255,255,0.7); }}
 
-  .kn-grid {{ display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 24px; }}
-  .kn-card {{ background: #fff; border-radius: 12px; padding: 16px 12px; text-align: center;
-    border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }}
-  .kn-num {{ font-size: 24px; font-weight: 800; color: #0F3460; }}
-  .kn-desc {{ font-size: 10px; color: #64748b; margin-top: 4px; font-weight: 500; }}
+  .section {{ margin-bottom: 28px; }}
+  .section-title {{ font-size: 18px; font-weight: 700; color: #1A1A2E; margin-bottom: 14px;
+    padding-bottom: 8px; border-bottom: 3px solid #E94560; display: inline-block; }}
 
-  .section {{ margin-bottom: 24px; }}
-  .section-title {{ font-size: 18px; font-weight: 700; color: #1A1A2E; margin-bottom: 12px;
-    padding-bottom: 8px; border-bottom: 2px solid #E94560; display: inline-block; }}
+  /* Workflow steps */
+  .wf-grid {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }}
+  .wf-step {{ background: #fff; border-radius: 10px; padding: 14px; position: relative;
+    border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    display: flex; flex-direction: column; gap: 6px; }}
+  .wf-step:nth-child(-n+5) {{ border-top: 3px solid #E94560; }}
+  .wf-step:nth-child(n+6) {{ border-top: 3px solid #0F3460; }}
+  .wf-num {{ font-size: 11px; font-weight: 800; color: #E94560;
+    background: #FEE2E2; padding: 2px 8px; border-radius: 4px; display: inline-block; width: fit-content; }}
+  .wf-step:nth-child(n+6) .wf-num {{ color: #0F3460; background: #DBEAFE; }}
+  .wf-name {{ font-size: 12px; font-weight: 700; color: #1A1A2E; }}
+  .wf-desc {{ font-size: 10px; color: #64748b; line-height: 1.4; }}
+  .wf-arrow {{ display: flex; justify-content: center; align-items: center; margin: 8px 0;
+    font-size: 20px; color: #94a3b8; }}
 
-  .lifecycle {{ display: flex; gap: 0; margin: 16px 0; flex-wrap: wrap; }}
-  .lc-step {{ flex: 1; min-width: 90px; padding: 10px 6px; text-align: center;
-    color: #fff; font-size: 9px; font-weight: 600; line-height: 1.4;
-    position: relative; clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%, 10px 50%); }}
-  .lc-step:first-child {{ clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%); }}
-  .lc-step:nth-child(odd) {{ background: #E94560; }}
-  .lc-step:nth-child(even) {{ background: #0F3460; }}
-
+  /* Tables */
   table {{ width: 100%; border-collapse: collapse; background: #fff;
-    border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.08); margin-bottom: 8px; }}
+    border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }}
   thead th {{ background: #1A1A2E; color: #fff; padding: 12px 14px;
-    font-size: 12px; font-weight: 700; text-align: center; text-transform: uppercase;
+    font-size: 11px; font-weight: 700; text-align: center; text-transform: uppercase;
     letter-spacing: 0.5px; border-right: 1px solid rgba(255,255,255,0.15); }}
   thead th:last-child {{ border-right: none; }}
   tbody td {{ padding: 10px 14px; border-bottom: 1px solid #e5e7eb;
@@ -831,32 +878,17 @@ def generate_html():
   tbody tr:nth-child(even) {{ background: #f8fafc; }}
   tbody tr:hover {{ background: #eff6ff; }}
 
-  .phase-name, .pattern-name, .scenario-name {{ font-weight: 700; color: #1A1A2E; }}
-  .manual {{ color: #DC2626; font-weight: 700; text-align: center; vertical-align: middle !important; }}
-  .automated {{ color: #16A34A; font-weight: 700; text-align: center; vertical-align: middle !important; }}
-  .saved {{ color: #16A34A; font-weight: 800; font-size: 14px; text-align: center; vertical-align: middle !important; }}
-  .outcome {{ font-style: italic; color: #0F3460; font-size: 11px; }}
-  .fix-col {{ color: #16A34A; font-weight: 600; }}
-
-  .sev-crit {{ color: #DC2626; font-weight: 800; text-align: center; vertical-align: middle !important;
-    background: #FEE2E2 !important; }}
-  .sev-warn {{ color: #E67E22; font-weight: 700; text-align: center; vertical-align: middle !important;
-    background: #FEF3C7 !important; }}
+  .phase {{ font-weight: 700; color: #1A1A2E; }}
+  .manual {{ color: #DC2626; font-weight: 700; text-align: center; }}
+  .auto {{ color: #16A34A; font-weight: 700; text-align: center; }}
+  .saved {{ color: #16A34A; font-weight: 800; font-size: 14px; text-align: center; }}
+  .pname {{ font-weight: 700; color: #1A1A2E; white-space: nowrap; }}
+  .fix {{ color: #16A34A; font-weight: 600; }}
+  .sev-crit {{ color: #DC2626; font-weight: 800; text-align: center; background: #FEE2E2 !important; }}
+  .sev-warn {{ color: #E67E22; font-weight: 700; text-align: center; background: #FEF3C7 !important; }}
 
   .total-row {{ background: #1A1A2E !important; }}
   .total-row td {{ color: #fff; font-weight: 700; font-size: 13px; text-align: center; }}
-
-  .summary-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }}
-  .summary-card {{ background: #fff; border-radius: 12px; padding: 20px;
-    border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }}
-  .summary-card h3 {{ font-size: 14px; font-weight: 700; color: #1A1A2E; margin-bottom: 12px;
-    padding-bottom: 6px; border-bottom: 2px solid #E94560; }}
-  .summary-card.challenge {{ border-left: 4px solid #DC2626; }}
-  .summary-card.solution {{ border-left: 4px solid #16A34A; }}
-  .summary-card ul {{ list-style: none; padding: 0; }}
-  .summary-card li {{ padding: 4px 0; font-size: 12px; }}
-  .summary-card.challenge li::before {{ content: "\\2718 "; color: #DC2626; font-weight: 700; }}
-  .summary-card.solution li::before {{ content: "\\2714 "; color: #16A34A; font-weight: 700; }}
 
   .footer {{ text-align: center; margin-top: 24px; padding: 16px;
     color: #94a3b8; font-size: 11px; }}
@@ -866,6 +898,7 @@ def generate_html():
     .page {{ padding: 0; max-width: 100%; }}
     .header {{ border-radius: 0; }}
     table {{ box-shadow: none; border: 1px solid #ccc; }}
+    .wf-grid {{ grid-template-columns: repeat(5, 1fr); }}
   }}
 </style>
 </head>
@@ -873,77 +906,36 @@ def generate_html():
 <div class="page">
 
   <div class="header">
-    <div>
-      <h1>TCS Agentic AI — Use Case 2</h1>
-      <p>End-to-End Incident Response &amp; Application Performance Troubleshooting</p>
-    </div>
-    <div style="display:flex;gap:12px;">
-      <div class="header-badge">
-        <div class="big">12</div>
-        <div class="small">Error Patterns</div>
-      </div>
-      <div class="header-badge">
-        <div class="big">8</div>
-        <div class="small">Parallel API Calls</div>
-      </div>
-      <div class="header-badge">
-        <div class="big">< 5 min</div>
-        <div class="small">Mean Time to Resolve</div>
-      </div>
-    </div>
-  </div>
-
-  <div class="kn-grid">{key_metrics_html}</div>
-
-  <div class="summary-grid">
-    <div class="summary-card challenge">
-      <h3>The Challenge: Manual Incident Response</h3>
-      <ul>
-        <li>SREs spend 30-60 min manually collecting logs, events, and metrics per incident</li>
-        <li>Root cause analysis requires senior expertise — knowledge silos slow junior SREs</li>
-        <li>ServiceNow tickets created manually, often incomplete, no evidence correlation</li>
-        <li>No automated recovery validation — SREs manually check if fixes actually worked</li>
-        <li>Average 2.5-5.5 hours per incident from detection to verified resolution</li>
-      </ul>
-    </div>
-    <div class="summary-card solution">
-      <h3>The Solution: TCS Agentic AI</h3>
-      <ul>
-        <li>Natural language queries — ask "why is my pod crashing?" and get instant diagnosis</li>
-        <li>8 parallel K8s API calls collect all evidence in under 3 seconds</li>
-        <li>12 error patterns with auto-remediation proposals and risk scoring</li>
-        <li>ServiceNow INC auto-created with severity, root cause, evidence, and timeline</li>
-        <li>Before/after metrics capture proves fix effectiveness with quantified evidence</li>
-      </ul>
+    <h1>TCS Agentic AI — Use Case 2</h1>
+    <h2>End-to-End Incident Response: "Why is my pod crashing?"</h2>
+    <p>Natural language question triggers a fully autonomous 10-stage pipeline: AI detects the error pattern,
+       diagnoses root cause from 8 parallel K8s API calls, auto-creates a ServiceNow incident, proposes a
+       targeted fix with dry-run validation, applies the fix, and verifies recovery — all in under 5 minutes.</p>
+    <div class="header-metrics">
+      <div class="hm"><div class="big">10</div><div class="small">Pipeline Stages</div></div>
+      <div class="hm"><div class="big">12</div><div class="small">Error Patterns</div></div>
+      <div class="hm"><div class="big">8</div><div class="small">Parallel API Calls</div></div>
+      <div class="hm"><div class="big">&lt; 5 min</div><div class="small">End-to-End MTTR</div></div>
+      <div class="hm"><div class="big">97%</div><div class="small">Time Saved vs Manual</div></div>
     </div>
   </div>
 
   <div class="section">
-    <div class="section-title">10-Phase Incident Response Lifecycle</div>
-    <div class="lifecycle">{lifecycle_html}</div>
-    <p style="font-size:12px;color:#64748b;margin-top:8px;">
-      Each phase produces audit trail entries. ServiceNow INC is auto-created with severity mapping,
-      root cause, evidence, fix proposals, and resolution verification. Before/after metrics provide
-      quantified proof that the fix worked.
-    </p>
+    <div class="section-title">10-Stage Workflow: What Happens When You Ask</div>
+    <div class="wf-grid">{lifecycle_html}</div>
   </div>
 
   <div class="section">
-    <div class="section-title">Manual vs. Automated: Side-by-Side Comparison</div>
+    <div class="section-title">Manual SRE vs. TCS Agentic AI</div>
     <table>
       <thead>
-        <tr>
-          <th>Incident Phase</th>
-          <th>Manual (SRE Time)</th>
-          <th>Automated (AI Time)</th>
-          <th>Time Saved</th>
-        </tr>
+        <tr><th>Phase</th><th>Manual (SRE Time)</th><th>With TCS Agentic AI</th><th>Saved</th></tr>
       </thead>
       <tbody>
-        {comparison_rows}
+        {comp_rows}
         <tr class="total-row">
-          <td>TOTAL (per incident)</td>
-          <td style="color:#FEE2E2;">2.5-5.5 hours</td>
+          <td>TOTAL</td>
+          <td style="color:#FEE2E2;">2.5–5.5 hours</td>
           <td style="color:#DCFCE7;">&lt; 5 minutes</td>
           <td style="color:#DCFCE7;">~97%</td>
         </tr>
@@ -952,33 +944,12 @@ def generate_html():
   </div>
 
   <div class="section">
-    <div class="section-title">12 Error Pattern Detection Engine</div>
+    <div class="section-title">12 Error Patterns Detected by Pod Doctor</div>
     <table>
       <thead>
-        <tr>
-          <th>Pattern</th>
-          <th>Severity</th>
-          <th>Description</th>
-          <th>Auto-Remediation</th>
-        </tr>
+        <tr><th>Pattern</th><th>Severity</th><th>How Detected</th><th>Auto-Fix</th></tr>
       </thead>
       <tbody>{pattern_rows}</tbody>
-    </table>
-  </div>
-
-  <div class="section">
-    <div class="section-title">Real-World Incident Scenarios</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Scenario</th>
-          <th>Root Cause</th>
-          <th>Manual</th>
-          <th>With AI</th>
-          <th>Outcome</th>
-        </tr>
-      </thead>
-      <tbody>{scenario_rows}</tbody>
     </table>
   </div>
 
@@ -998,9 +969,6 @@ def generate_html():
 
 
 # ═══════════════════════════════════════════════════════════════════
-# MAIN
-# ═══════════════════════════════════════════════════════════════════
-
 if __name__ == "__main__":
     generate_html()
     print(f"\nDone! Files generated:")
