@@ -798,7 +798,9 @@ const COMPOUND_TERMS = [
   [/(?<![a-z0-9-])app(?:lication)?\s+(?:is\s+)?(?:down|crash\w*|fail\w*|slow|unresponsive|broken|hang\w*|not\s+respond\w*)\b/gi, "incident_response"],
   [/(?<![a-z0-9-])service\s+(?:is\s+)?(?:down|crash\w*|fail\w*|slow|unresponsive|broken|hang\w*|degraded|not\s+respond\w*)\b/gi, "incident_response"],
   [/\bproduction\s+(?:issue|incident|outage|problem|down|failure|crash\w*)\b/gi, "incident_response"],
-  [/(?<![a-z0-9-])pod\s+(?:[\w][\w.-]*\s+)?(?:is\s+)?(?:down|crash\w*|fail\w*|slow|unresponsive|broken|not\s+respond\w*|oom\w*)\b/gi, "incident_response"],
+  [/(?<![a-z0-9-])pod\s+(?:[\w][\w.-]*\s+)?(?:is\s+)?(?:down|crash\w*|fail\w*|slow|unresponsive|broken|not\s+respond\w*|oom\w*|restart\w*)\b/gi, "incident_response"],
+  [/(?<![a-z0-9-])pod\s+[\w][\w.-]*\s+(?:(?:gets?|keeps?|is)\s+)?restart\w*/gi, "incident_response"],
+  [/why\s+(?:is|does|my)?\s*(?:pod|deploy\w*)\s+[\w][\w.-]*\s+(?:(?:gets?|keeps?|is)\s+)?(?:restart\w*|crash\w*|fail\w*|oom\w*)/gi, "incident_response"],
   [/(?<![a-z0-9-])(?:deploy(?:ment)?|job|cronjob|daemonset|statefulset|replicaset)\s+(?:[\w][\w.-]*\s+)?(?:is\s+)?(?:down|crash\w*|fail\w*|slow|unresponsive|broken|not\s+respond\w*)\b/gi, "incident_response"],
   [/(?<![a-z0-9-])(?:is|are)\s+(?:crash\w*|fail\w*|down|unresponsive|broken|degraded|hang\w*|slow|not\s+respond\w*)\b/gi, "incident_response"],
   [/\bcluster\s+(?:brief(?:ing)?|daily\s*report|morning\s*report|health\s*report|overview\s*report)\b/gi, "cluster_briefing"],
@@ -1111,9 +1113,16 @@ export function parse(message, memory = {}) {
     "label", "annotate", "evict", "run", "timesync", "incident_response", "cluster_briefing",
   ]);
   if (resource === "incident_response") {
+    let incName = null;
+    const podMatch = raw.match(/\bpod\s+([\w][\w.-]{5,})/i);
+    if (podMatch) incName = podMatch[1];
+    if (!incName) {
+      const deployMatch = raw.match(/\b(?:deploy(?:ment)?|statefulset|daemonset)\s+([\w][\w.-]{3,})/i);
+      if (deployMatch) incName = deployMatch[1];
+    }
     return makeResult({
       intent: "incident_response", resource: null, scope: "health", raw,
-      confidence: 0.88, namespace, name,
+      confidence: 0.88, namespace, name: incName || name,
     });
   }
   if (resource === "cluster_briefing") {

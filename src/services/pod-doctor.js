@@ -484,12 +484,21 @@ function resolveDeploymentResource(ownerKind, ownerName, namespace) {
 
 function parseMemory(memStr) {
   if (!memStr) return null;
-  const match = memStr.match(/^(\d+(?:\.\d+)?)\s*(Ki|Mi|Gi|Ti|k|M|G|T|m)?$/i);
+  const s = String(memStr).trim();
+  const match = s.match(/^(\d+(?:\.\d+)?)\s*(Ki|Mi|Gi|Ti|k|M|G|T|m)?$/);
   if (!match) return null;
   const val = parseFloat(match[1]);
-  const unit = (match[2] || "").toLowerCase();
-  const multipliers = { "": 1, "m": 1 / 1000, "k": 1000, "ki": 1024, "mi": 1048576, "gi": 1073741824, "ti": 1099511627776, "m_upper": 1000000, "g": 1000000000, "t": 1000000000000 };
-  return val * (multipliers[unit] || 1);
+  const unit = match[2] || "";
+  if (unit === "Ki") return val * 1024;
+  if (unit === "Mi") return val * 1048576;
+  if (unit === "Gi") return val * 1073741824;
+  if (unit === "Ti") return val * 1099511627776;
+  if (unit === "M") return val * 1000000;
+  if (unit === "G") return val * 1000000000;
+  if (unit === "T") return val * 1000000000000;
+  if (unit === "k" || unit === "K") return val * 1000;
+  if (unit === "m") return val / 1000;
+  return val;
 }
 
 function formatMemory(bytes) {
