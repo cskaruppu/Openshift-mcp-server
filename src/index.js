@@ -96,6 +96,7 @@ import {
   createIncident as snowCreateIncident,
   attachFile as snowAttachFile,
   resolveIncident as snowResolveIncident,
+  updateRecord as snowUpdateRecord,
 } from "./utils/servicenow-client.js";
 import {
   listChats,
@@ -4778,29 +4779,38 @@ spec:
             }
             if (validation.passed) {
               try {
-                const incidentDetail = [
-                  `[TCS Agentic AI] Automated fix applied and validated.`,
-                  ``,
-                  `Fix Command: ${command}`,
-                  `Namespace: ${ns || "N/A"}`,
-                  `Resource: ${resourceKind}/${resourceName}`,
-                  `Severity: ${body.incidentSeverity || "N/A"}`,
-                  `Diagnosis: ${body.incidentDiagnosis || "N/A"}`,
-                  `Root Cause: ${body.incidentRootCause || "N/A"}`,
-                  ``,
-                  `Validation Results:`,
-                  `  Rollout Stable: ${validation.stable ? "Yes" : "N/A"}`,
-                  validation.ready != null ? `  Replicas: ${validation.ready}/${validation.desired} ready` : "",
-                  validation.pods?.length ? `  Pods Verified: ${validation.pods.filter(p => p.ready).length}/${validation.pods.length} healthy` : "",
-                  validation.pods?.length ? `  Pod Details: ${validation.pods.map(p => `${p.name} (${p.phase}, ready=${p.ready}, restarts=${p.restarts})`).join("; ")}` : "",
-                  `  Total Duration: ${((Date.now() - auditStart) / 1000).toFixed(1)}s`,
-                  ``,
-                  `Resolution: Fix validated — all pods running and healthy. Incident auto-closed.`,
-                ].filter(Boolean).join("\n");
+                const rolloutStatus = validation.stable
+                  ? `Stable — ${validation.ready || 0}/${validation.desired || 0} replicas ready`
+                  : validation.note || "triggered";
+                const evidence = [];
+                if (body.incidentDiagnosis) evidence.push(body.incidentDiagnosis);
+                if (body.incidentEvidence) {
+                  (Array.isArray(body.incidentEvidence) ? body.incidentEvidence : [body.incidentEvidence]).forEach(e => evidence.push(e));
+                }
+                if (validation.pods?.length) {
+                  evidence.push(`Post-fix: ${validation.pods.filter(p => p.ready).length}/${validation.pods.length} pods healthy`);
+                }
+                const resolutionObj = {
+                  incidentNumber: body.incidentNumber || "",
+                  severity: body.incidentSeverity || "N/A",
+                  podName: body.podName || resourceName || "N/A",
+                  namespace: ns || "N/A",
+                  deploymentName: resourceKind ? `${resourceKind}/${resourceName}` : resourceName || "N/A",
+                  cluster: body.cluster || process.env.CLUSTER_NAME || "local",
+                  rootCause: body.incidentRootCause || body.incidentDiagnosis || "See diagnosis",
+                  evidence,
+                  logErrors: Array.isArray(body.logErrors) ? body.logErrors : [],
+                  errorLines: Array.isArray(body.errorLines) ? body.errorLines : [],
+                  fixTitle: body.fixTitle || body.auditTitle || command.split(/\s/).slice(0, 4).join(" "),
+                  fixCommand: command,
+                  fixResult: result.stdout ? result.stdout.slice(0, 500) : "success",
+                  fixRisk: body.fixRisk || preflight?.classification?.level || "low",
+                  rolloutStatus,
+                };
                 await snowResolveIncident(body.incidentSysId, {
                   closeCode: "Solved (Permanently)",
                   closeNotes: `Auto-resolved by TCS Agentic AI. Fix: ${command}. Validation: passed. ${validation.pods?.length ? `${validation.pods.filter(p => p.ready).length}/${validation.pods.length} pods healthy.` : ""}`,
-                  workNotes: incidentDetail,
+                  resolution: resolutionObj,
                 });
                 incidentClosed = { success: true, incidentNumber: body.incidentNumber || null, state: "Resolved" };
               } catch (snowErr) {
@@ -4839,6 +4849,32 @@ spec:
               }
             }
           } catch {}
+        }
+        if (incidentClosed?.success && body.incidentSysId) {
+          const beforeAfterNotes = [];
+          if (beforeMetrics || afterMetrics) {
+            beforeAfterNotes.push(`── BEFORE / AFTER COMPARISON ────────`);
+            const fields = ["status", "restarts", "memoryUsage", "memoryLimit", "cpuUsage"];
+            const labels = { status: "Status", restarts: "Restarts", memoryUsage: "Memory Usage", memoryLimit: "Memory Limit", cpuUsage: "CPU Usage" };
+            for (const f of fields) {
+              const bv = beforeMetrics?.[f] ?? "—";
+              const av = afterMetrics?.[f] ?? "—";
+              beforeAfterNotes.push(`  ${labels[f]}: ${bv} → ${av}`);
+            }
+          }
+          if (Array.isArray(body.incidentTimeline) && body.incidentTimeline.length) {
+            beforeAfterNotes.push(`\n── INCIDENT TIMELINE ────────────────`);
+            for (const step of body.incidentTimeline) {
+              const t = step.timestamp || step.time || "";
+              const label = step.label || step.stage || step.event || "";
+              const detail = step.detail || step.details || "";
+              beforeAfterNotes.push(`  [${t}] ${label}${detail ? " — " + detail : ""}`);
+            }
+          }
+          if (beforeAfterNotes.length > 0) {
+            beforeAfterNotes.push(`\n  Total Resolution Time: ${((Date.now() - auditStart) / 1000).toFixed(1)}s`);
+            snowUpdateRecord("incident", body.incidentSysId, { work_notes: beforeAfterNotes.join("\n") }).catch(() => {});
+          }
         }
         return sendJson(res, 200, { ...result, classification: preflight?.classification, validation, incidentClosed, beforeMetrics, afterMetrics });
       } catch (e) {

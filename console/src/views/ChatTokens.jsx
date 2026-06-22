@@ -1892,6 +1892,9 @@ function FixProposal({ diag, cluster }) {
           incidentSeverity: diag.severityLevel || diag.severity || null,
           incidentDiagnosis: diag.diagnosis || null, incidentRootCause: diag.rootCause || null,
           captureMetrics: !dryRun,
+          podName: diag.podName || null, fixTitle: fix.title || null, fixRisk: fix.risk || null,
+          incidentEvidence: diag.evidence || [], logErrors: diag.logErrors || [], errorLines: diag.errorLines || [],
+          incidentTimeline: Array.isArray(diag.timeline) ? diag.timeline.map(t => ({ timestamp: t.time || t.timestamp || "", label: t.label || t.stage || "", detail: t.detail || t.details || "" })) : [],
         }),
       });
       const d = await res.json();
