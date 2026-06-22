@@ -1973,21 +1973,20 @@ function FixProposal({ diag, cluster }) {
         {Array.isArray(diag.timeline) && diag.timeline.length > 0 && (
           <IncidentTimeline events={diag.timeline} sevColor={sevColor} />
         )}
-        {/* Root cause + diagnosis */}
-        <div style={{ display: "grid", gridTemplateColumns: diag.rootCause && diag.diagnosis ? "1fr 1fr" : "1fr", gap: 10, marginBottom: 12 }}>
-          {diag.rootCause && (
-            <div style={{ padding: "8px 12px", background: "var(--card-bg)", borderRadius: 8, borderLeft: `3px solid ${sevColor}` }}>
-              <div style={{ fontSize: "0.72em", fontWeight: 600, textTransform: "uppercase", color: "var(--muted)", letterSpacing: "0.5px", marginBottom: 4 }}>Root Cause</div>
-              <div style={{ fontWeight: 600 }}>{diag.rootCause}</div>
-            </div>
-          )}
-          {diag.diagnosis && (
-            <div style={{ padding: "8px 12px", background: "var(--card-bg)", borderRadius: 8, borderLeft: "3px solid var(--muted)" }}>
-              <div style={{ fontSize: "0.72em", fontWeight: 600, textTransform: "uppercase", color: "var(--muted)", letterSpacing: "0.5px", marginBottom: 4 }}>Diagnosis</div>
-              <div>{diag.diagnosis}</div>
-            </div>
-          )}
-        </div>
+        {/* Root cause analysis */}
+        {diag.rootCause && (
+          <div style={{ padding: "10px 14px", background: "var(--card-bg)", borderRadius: 8, borderLeft: `3px solid ${sevColor}`, marginBottom: 10 }}>
+            <div style={{ fontSize: "0.72em", fontWeight: 600, textTransform: "uppercase", color: "var(--muted)", letterSpacing: "0.5px", marginBottom: 6 }}>Root Cause Analysis</div>
+            <div style={{ fontWeight: 600, whiteSpace: "pre-line", lineHeight: 1.5 }}>{diag.rootCause}</div>
+          </div>
+        )}
+        {/* Diagnosis summary */}
+        {diag.diagnosis && (
+          <div style={{ padding: "10px 14px", background: "var(--card-bg)", borderRadius: 8, borderLeft: "3px solid var(--muted)", marginBottom: 12 }}>
+            <div style={{ fontSize: "0.72em", fontWeight: 600, textTransform: "uppercase", color: "var(--muted)", letterSpacing: "0.5px", marginBottom: 6 }}>Impact Assessment</div>
+            <div style={{ whiteSpace: "pre-line", lineHeight: 1.5, fontSize: "0.9em" }}>{diag.diagnosis}</div>
+          </div>
+        )}
         {/* Evidence */}
         {Array.isArray(diag.evidence) && diag.evidence.length > 0 && (
           <div style={{ marginBottom: 12 }}>
@@ -2039,7 +2038,7 @@ function FixProposal({ diag, cluster }) {
                       <span style={{ fontWeight: 700, fontSize: "0.95em" }}>{fix.title}</span>
                       <span style={{ fontSize: "0.7em", padding: "1px 8px", borderRadius: 10, border: `1px solid ${riskColor}40`, color: riskColor, fontWeight: 600, textTransform: "uppercase" }}>{fix.risk || "low"} risk</span>
                     </div>
-                    <div style={{ fontSize: "0.82em", color: "var(--muted)", marginBottom: 8 }}>{fix.description}</div>
+                    <div style={{ fontSize: "0.82em", color: "var(--muted)", marginBottom: 8, lineHeight: 1.5, whiteSpace: "pre-line" }}>{fix.description}</div>
                     <div style={{ display: "flex", alignItems: "center", background: "#1e1e1e", borderRadius: 6, overflow: "hidden" }}>
                       <code style={{ flex: 1, padding: "8px 12px", color: "#d4d4d4", fontSize: "0.82em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{fix.command}</code>
                       <button onClick={() => copyCmd(fix.command)} style={{ padding: "6px 12px", background: "transparent", border: "none", borderLeft: "1px solid #333", color: copied === fix.command ? "#16a34a" : "#888", cursor: "pointer", fontSize: "0.78em", fontWeight: 600, whiteSpace: "nowrap" }}>

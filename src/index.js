@@ -4829,22 +4829,39 @@ spec:
         if (!dryRun && beforeMetrics && validation) {
           try {
             const meta = parseCommandTarget(command);
-            const ns = meta.namespace || body.namespace || "";
-            const resName = meta.name || body.resourceName || "";
-            if (ns && resName) {
-              const podData = await ocpGet(`/api/v1/namespaces/${ns}/pods?labelSelector=app=${encodeURIComponent(resName)}&limit=10`).catch(() => ({ items: [] }));
-              const pm = await ocpGet(`/apis/metrics.k8s.io/v1beta1/namespaces/${ns}/pods`).catch(() => ({ items: [] }));
-              const pod = (podData.items || [])[0];
+            const aNs = meta.namespace || body.namespace || "";
+            const aResName = meta.name || body.resourceName || "";
+            if (aNs && aResName) {
+              let specLimits = {};
+              const kindMatch = command.match(/\b(deployment|statefulset|daemonset|replicaset)\/([^\s]+)/i);
+              const resKind = kindMatch?.[1]?.toLowerCase() || "deployment";
+              try {
+                const wl = await ocpGet(`/apis/apps/v1/namespaces/${aNs}/${resKind}s/${aResName}`);
+                specLimits = (wl.spec?.template?.spec?.containers || [])[0]?.resources?.limits || {};
+              } catch {}
+              const podData = await ocpGet(`/api/v1/namespaces/${aNs}/pods?labelSelector=app=${encodeURIComponent(aResName)}&limit=10`).catch(() => ({ items: [] }));
+              const pm = await ocpGet(`/apis/metrics.k8s.io/v1beta1/namespaces/${aNs}/pods`).catch(() => ({ items: [] }));
+              const runningPods = (podData.items || [])
+                .filter(p => p.status?.phase === "Running" && (p.status?.containerStatuses || []).some(c => c.ready))
+                .sort((a, b) => new Date(b.metadata?.creationTimestamp || 0) - new Date(a.metadata?.creationTimestamp || 0));
+              const pod = runningPods[0];
               if (pod) {
                 const cs = (pod.status?.containerStatuses || [])[0];
-                const limits = (pod.spec?.containers || [])[0]?.resources?.limits || {};
                 const pmMatch = (pm.items || []).find(m => m.metadata?.name === pod.metadata?.name);
                 afterMetrics = {
-                  memoryLimit: limits.memory || "—",
+                  memoryLimit: specLimits.memory || (pod.spec?.containers || [])[0]?.resources?.limits?.memory || "—",
                   memoryUsage: pmMatch?.containers?.[0]?.usage?.memory || "—",
                   cpuUsage: pmMatch?.containers?.[0]?.usage?.cpu || "—",
                   restarts: cs?.restartCount ?? 0,
                   status: pod.status?.phase || "Unknown",
+                };
+              } else {
+                afterMetrics = {
+                  memoryLimit: specLimits.memory || "—",
+                  memoryUsage: "pending",
+                  cpuUsage: "pending",
+                  restarts: 0,
+                  status: "Rolling out",
                 };
               }
             }
