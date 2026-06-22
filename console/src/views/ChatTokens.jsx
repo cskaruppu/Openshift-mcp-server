@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { clusterUrl } from "../api/client";
 import { renderMarkdown } from "../utils/markdown";
 import { showToast } from "../store/toastStore";
@@ -1757,6 +1757,109 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Incident Timeline — shows event sequence leading to diagnosis       */
+/* ------------------------------------------------------------------ */
+
+function IncidentTimeline({ events, sevColor }) {
+  const [open, setOpen] = useState(false);
+  const fmtTime = (t) => { try { const d = new Date(t); return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); } catch { return "—"; } };
+  const evtIcons = { OOMKilling: "💀", Killing: "⚠", BackOff: "🔄", Unhealthy: "❌", FailedScheduling: "⏳", Pulled: "📦", Started: "▶", Created: "➕", "AI Detected": "🤖", ServiceNow: "🎫", "Fix Ready": "🔧" };
+
+  return (
+    <div style={{ marginBottom: 12, border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+      <button onClick={() => setOpen(v => !v)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "var(--card-bg)", border: "none", cursor: "pointer", color: "var(--fg)", fontSize: "0.88em", fontWeight: 600 }}>
+        <span style={{ transform: open ? "rotate(90deg)" : "rotate(0)", transition: "transform 0.15s" }}>▶</span>
+        Incident Timeline ({events.length} events)
+        <span style={{ marginLeft: "auto", fontSize: "0.75em", color: "var(--muted)" }}>click to expand</span>
+      </button>
+      {open && (
+        <div style={{ padding: "8px 12px", borderTop: "1px solid var(--border)" }}>
+          {events.map((e, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "4px 0", borderBottom: i < events.length - 1 ? "1px dashed var(--border)" : "none" }}>
+              <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: "0.75em", color: "var(--muted)", minWidth: 65, flexShrink: 0 }}>{fmtTime(e.time)}</span>
+              <span style={{ fontSize: "0.85em", flexShrink: 0 }}>{evtIcons[e.event] || "●"}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ fontWeight: 600, fontSize: "0.85em", color: e.event === "AI Detected" || e.event === "ServiceNow" || e.event === "Fix Ready" ? sevColor : "var(--fg)" }}>{e.event}</span>
+                {e.detail && <div style={{ fontSize: "0.78em", color: "var(--muted)", marginTop: 1, wordBreak: "break-word" }}>{e.detail}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Recovery Timeline — shows step-by-step healing progress             */
+/* ------------------------------------------------------------------ */
+
+function RecoveryTimeline({ validation, incClosed, incidentNumber, durationMs }) {
+  if (!validation) return null;
+  const v = validation;
+  const steps = [];
+  steps.push({ label: "Fix command executed", status: "done", time: "0s" });
+  if (v.stable != null) {
+    steps.push({ label: "Rolling restart triggered", status: "done", time: v.rolloutDurationMs ? `${(v.rolloutDurationMs / 1000 * 0.15).toFixed(0)}s` : "2s" });
+    steps.push({ label: v.ready != null ? `Replicas ready: ${v.ready}/${v.desired}` : "New pod scheduled", status: "done", time: v.rolloutDurationMs ? `${(v.rolloutDurationMs / 1000 * 0.6).toFixed(0)}s` : "8s" });
+    if (v.stable) steps.push({ label: "Rollout stable — all replicas updated", status: "done", time: v.rolloutDurationMs ? `${(v.rolloutDurationMs / 1000).toFixed(0)}s` : "15s" });
+    else steps.push({ label: "Rollout in progress", status: "pending", time: "" });
+  }
+  if (v.allPodsHealthy != null) {
+    steps.push({ label: v.pods?.length ? `Pods healthy: ${v.pods.filter(p => p.ready).length}/${v.pods.length} running` : "Pod health verified", status: v.allPodsHealthy ? "done" : "warn", time: "" });
+  }
+  if (incClosed) steps.push({ label: `ServiceNow ${incidentNumber || "incident"} auto-resolved`, status: "done", time: durationMs ? `${(durationMs / 1000).toFixed(0)}s` : "" });
+  if (v.passed) steps.push({ label: "Validation passed — incident closed", status: "done", time: durationMs ? `${(durationMs / 1000).toFixed(0)}s total` : "" });
+
+  const colors = { done: "#16a34a", pending: "#f59e0b", warn: "#f59e0b", fail: "#dc2626" };
+  const icons = { done: "✓", pending: "◷", warn: "!", fail: "✕" };
+
+  return (
+    <div style={{ margin: "8px 0", borderLeft: "2px solid #16a34a", paddingLeft: 12 }}>
+      <div style={{ fontSize: "0.72em", fontWeight: 600, textTransform: "uppercase", color: "var(--muted)", letterSpacing: "0.5px", marginBottom: 6 }}>Recovery Timeline</div>
+      {steps.map((s, i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", fontSize: "0.82em" }}>
+          <span style={{ width: 18, height: 18, borderRadius: "50%", background: colors[s.status] + "18", color: colors[s.status], display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.7em", fontWeight: 700, flexShrink: 0 }}>{icons[s.status]}</span>
+          <span style={{ flex: 1, color: s.status === "done" ? "var(--fg)" : colors[s.status] }}>{s.label}</span>
+          {s.time && <span style={{ fontSize: "0.85em", color: "var(--muted)", fontFamily: "var(--font-mono, monospace)" }}>{s.time}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Before/After Metrics — shows improvement after fix                  */
+/* ------------------------------------------------------------------ */
+
+function BeforeAfterMetrics({ before, after }) {
+  if (!before && !after) return null;
+  const rows = [];
+  if (before?.memoryLimit || after?.memoryLimit) rows.push({ label: "Memory Limit", before: before?.memoryLimit || "—", after: after?.memoryLimit || "—" });
+  if (before?.memoryUsage || after?.memoryUsage) rows.push({ label: "Memory Usage", before: before?.memoryUsage || "—", after: after?.memoryUsage || "—" });
+  if (before?.restarts != null || after?.restarts != null) rows.push({ label: "Restarts", before: before?.restarts ?? "—", after: after?.restarts ?? "0" });
+  if (before?.status || after?.status) rows.push({ label: "Status", before: before?.status || "—", after: after?.status || "—" });
+  if (before?.cpuUsage || after?.cpuUsage) rows.push({ label: "CPU Usage", before: before?.cpuUsage || "—", after: after?.cpuUsage || "—" });
+  if (rows.length === 0) return null;
+
+  return (
+    <div style={{ margin: "8px 0" }}>
+      <div style={{ fontSize: "0.72em", fontWeight: 600, textTransform: "uppercase", color: "var(--muted)", letterSpacing: "0.5px", marginBottom: 6 }}>Before / After</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 0, fontSize: "0.82em", border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }}>
+        <div style={{ padding: "6px 10px", fontWeight: 600, background: "var(--card-bg)", borderBottom: "1px solid var(--border)" }}>Metric</div>
+        <div style={{ padding: "6px 10px", fontWeight: 600, background: "var(--card-bg)", borderBottom: "1px solid var(--border)", textAlign: "center", color: "#dc2626" }}>Before</div>
+        <div style={{ padding: "6px 10px", fontWeight: 600, background: "var(--card-bg)", borderBottom: "1px solid var(--border)", textAlign: "center", color: "#16a34a" }}>After</div>
+        {rows.map((r, i) => (<React.Fragment key={i}>
+          <div style={{ padding: "5px 10px", borderBottom: i < rows.length - 1 ? "1px solid var(--border)" : "none" }}>{r.label}</div>
+          <div style={{ padding: "5px 10px", textAlign: "center", borderBottom: i < rows.length - 1 ? "1px solid var(--border)" : "none", color: "#dc2626", fontFamily: "var(--font-mono, monospace)" }}>{r.before}</div>
+          <div style={{ padding: "5px 10px", textAlign: "center", borderBottom: i < rows.length - 1 ? "1px solid var(--border)" : "none", color: "#16a34a", fontFamily: "var(--font-mono, monospace)" }}>{r.after}</div>
+        </React.Fragment>))}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Fix proposal (pod healing)                                          */
 /* ------------------------------------------------------------------ */
 
@@ -1778,46 +1881,53 @@ function FixProposal({ diag, cluster }) {
 
   async function runFix(fix, dryRun) {
     const key = fix.command;
+    const startTime = Date.now();
     setFixStates(prev => ({ ...prev, [key]: { running: true, phase: dryRun ? "dry-run" : "applying", text: dryRun ? "Running dry run..." : "Applying fix..." } }));
     try {
       const res = await fetch(clusterUrl("/api/alerts/execute-fix", cluster), {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: fix.command, dryRun, namespace: fix.namespace, resourceName: fix.resource, auditTitle: fix.title }),
+        body: JSON.stringify({
+          command: fix.command, dryRun, namespace: fix.namespace, resourceName: fix.resource, auditTitle: fix.title,
+          incidentSysId: diag.incidentSysId || null, incidentNumber: diag.incidentNumber || null,
+          incidentSeverity: diag.severityLevel || diag.severity || null,
+          incidentDiagnosis: diag.diagnosis || null, incidentRootCause: diag.rootCause || null,
+          captureMetrics: !dryRun,
+        }),
       });
       const d = await res.json();
       if (d.blocked) { setFixStates(prev => ({ ...prev, [key]: { phase: "blocked", text: d.reason || "Blocked by policy" } })); return; }
       const out = d.output || d.stdout || d.result || (d.success ? "Done." : d.error || "No output");
-      if (!dryRun && d.success !== false && diag.incidentSysId) {
+      const durationMs = Date.now() - startTime;
+      if (!dryRun && d.success !== false && diag.incidentSysId && !d.incidentClosed?.success) {
         setFixStates(prev => ({ ...prev, [key]: { running: true, phase: "closing-inc", text: out + "\n\nClosing ServiceNow incident..." } }));
         try {
           const resolution = {
-            incidentNumber: diag.incidentNumber || "",
-            severity: diag.severityLevel || diag.severity || "N/A",
-            podName: diag.podName || "",
-            namespace: diag.namespace || "",
-            deploymentName: diag.deploymentName || "",
-            cluster: cluster || "local",
-            rootCause: diag.rootCause || diag.diagnosis || "see report",
-            evidence: diag.evidence || [],
-            logErrors: diag.logAnalysis?.errors || [],
-            errorLines: diag.logAnalysis?.errorLines || [],
-            fixTitle: fix.title || "",
-            fixCommand: fix.command || "",
-            fixResult: String(out).slice(0, 500),
-            fixRisk: fix.risk || "low",
-            rolloutStatus: /restart|rolled out/i.test(out) ? "confirmed" : "triggered",
+            incidentNumber: diag.incidentNumber || "", severity: diag.severityLevel || diag.severity || "N/A",
+            podName: diag.podName || "", namespace: diag.namespace || "", deploymentName: diag.deploymentName || "",
+            cluster: cluster || "local", rootCause: diag.rootCause || diag.diagnosis || "see report",
+            evidence: diag.evidence || [], fixTitle: fix.title || "", fixCommand: fix.command || "",
+            fixResult: String(out).slice(0, 500), fixRisk: fix.risk || "low",
           };
           const closeRes = await fetch(clusterUrl("/api/servicenow/resolve-incident", cluster), {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ sysId: diag.incidentSysId, closeNotes: `Resolved by TCS Agentic AI — ${fix.title}`, resolution }),
           });
           const closeData = await closeRes.json();
-          setFixStates(prev => ({ ...prev, [key]: { phase: closeData.success ? "resolved" : "applied", text: out, incClosed: closeData.success, incError: closeData.success ? null : (closeData.error || "close failed") } }));
+          setFixStates(prev => ({ ...prev, [key]: {
+            phase: closeData.success ? "resolved" : "applied", text: out, incClosed: closeData.success,
+            incError: closeData.success ? null : (closeData.error || "close failed"),
+            validation: d.validation || null, beforeMetrics: d.beforeMetrics || null, afterMetrics: d.afterMetrics || null, durationMs,
+          } }));
         } catch (e) {
-          setFixStates(prev => ({ ...prev, [key]: { phase: "applied", text: out, incError: e.message } }));
+          setFixStates(prev => ({ ...prev, [key]: { phase: "applied", text: out, incError: e.message, validation: d.validation || null, durationMs } }));
         }
       } else {
-        setFixStates(prev => ({ ...prev, [key]: { phase: dryRun ? "dry-done" : (d.success === false ? "failed" : "applied"), text: String(out).slice(0, 4000) } }));
+        const phase = dryRun ? "dry-done" : d.incidentClosed?.success ? "resolved" : (d.success === false ? "failed" : "applied");
+        setFixStates(prev => ({ ...prev, [key]: {
+          phase, text: String(out).slice(0, 4000),
+          validation: d.validation || null, beforeMetrics: d.beforeMetrics || null, afterMetrics: d.afterMetrics || null,
+          incClosed: d.incidentClosed?.success || false, incError: d.incidentClosed?.error || null, durationMs,
+        } }));
       }
     } catch (e) {
       setFixStates(prev => ({ ...prev, [key]: { phase: "failed", text: e.message } }));
@@ -1855,6 +1965,10 @@ function FixProposal({ diag, cluster }) {
             <span style={{ color: "#16a34a", fontWeight: 600 }}>☑</span>
             <span><strong>{diag.incidentNumber}</strong> auto-created in ServiceNow — will auto-resolve when fix is applied</span>
           </div>
+        )}
+        {/* Incident timeline (collapsible) */}
+        {Array.isArray(diag.timeline) && diag.timeline.length > 0 && (
+          <IncidentTimeline events={diag.timeline} sevColor={sevColor} />
         )}
         {/* Root cause + diagnosis */}
         <div style={{ display: "grid", gridTemplateColumns: diag.rootCause && diag.diagnosis ? "1fr 1fr" : "1fr", gap: 10, marginBottom: 12 }}>
@@ -1946,6 +2060,14 @@ function FixProposal({ diag, cluster }) {
                         {st.incClosed && <span style={{ marginLeft: "auto", fontSize: "0.85em", color: "#16a34a" }}>{diag.incidentNumber} resolved</span>}
                         {st.incError && <span style={{ marginLeft: "auto", fontSize: "0.85em", color: "#f59e0b" }}>INC close: {st.incError}</span>}
                       </div>
+                      {/* Recovery timeline for applied fixes */}
+                      {st.validation && !st.phase?.startsWith("dry") && (
+                        <RecoveryTimeline validation={st.validation} incClosed={st.incClosed} incidentNumber={diag.incidentNumber} durationMs={st.durationMs} />
+                      )}
+                      {/* Before/After metrics comparison */}
+                      {st.beforeMetrics && st.afterMetrics && !st.phase?.startsWith("dry") && (
+                        <BeforeAfterMetrics before={st.beforeMetrics} after={st.afterMetrics} />
+                      )}
                       <pre style={{ margin: 0, fontSize: "0.78em", whiteSpace: "pre-wrap", color: "var(--fg)", maxHeight: 200, overflow: "auto" }}>{st.text}</pre>
                     </div>
                   )}

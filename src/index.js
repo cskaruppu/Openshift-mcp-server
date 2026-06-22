@@ -4075,12 +4075,14 @@ spec:
 
     // LLM Chat API — /api/chat (POST)
     if (req.method === "POST" && url.pathname === "/api/chat") {
+      if (enforceRateLimit(req, res, { burst: 20, refillPerSec: 0.5 })) return;
       await handleChatAPI(req, res);
       return;
     }
 
     // Fleet AI — ask across ALL clusters (POST /api/fleet/chat)
     if (req.method === "POST" && url.pathname === "/api/fleet/chat") {
+      if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.3 })) return;
       await handleFleetChatAPI(req, res);
       return;
     }
@@ -4572,6 +4574,7 @@ spec:
 
     // POST /api/alerts/execute-fix — runs a kubectl/oc command (dry-run or real)
     if (req.method === "POST" && url.pathname === "/api/alerts/execute-fix") {
+      if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
       const auditStart = Date.now();
       let preflight = null;
       let command = "";
@@ -4614,6 +4617,36 @@ spec:
               stderr: preflight.reason,
             });
           }
+        }
+
+        // Capture before-metrics for non-dry-run fixes
+        let beforeMetrics = null;
+        if (!dryRun && body.captureMetrics) {
+          try {
+            const meta = parseCommandTarget(command);
+            const ns = meta.namespace || body.namespace || "";
+            const resName = meta.name || body.resourceName || "";
+            if (ns && resName) {
+              const podData = await ocpGet(`/api/v1/namespaces/${ns}/pods?labelSelector=app=${encodeURIComponent(resName)}&limit=10`).catch(() => ({ items: [] }));
+              const pm = await ocpGet(`/apis/metrics.k8s.io/v1beta1/namespaces/${ns}/pods`).catch(() => ({ items: [] }));
+              const targetPods = podData.items || [];
+              const pod = targetPods[0];
+              if (pod) {
+                const cs = (pod.status?.containerStatuses || [])[0];
+                const limits = (pod.spec?.containers || [])[0]?.resources?.limits || {};
+                const pmMatch = (pm.items || []).find(m => m.metadata?.name === pod.metadata?.name);
+                const memUsage = pmMatch?.containers?.[0]?.usage?.memory || null;
+                const cpuUsage = pmMatch?.containers?.[0]?.usage?.cpu || null;
+                beforeMetrics = {
+                  memoryLimit: limits.memory || "—",
+                  memoryUsage: memUsage || "—",
+                  cpuUsage: cpuUsage || "—",
+                  restarts: cs?.restartCount ?? 0,
+                  status: pod.status?.phase || "Unknown",
+                };
+              }
+            }
+          } catch {}
         }
 
         const result = await executeFixCommand(command, { dryRun });
@@ -4781,7 +4814,33 @@ spec:
             incidentClosed = { success: false, reason: `Validation error: ${valErr.message}` };
           }
         }
-        return sendJson(res, 200, { ...result, classification: preflight?.classification, validation, incidentClosed });
+        // Capture after-metrics for comparison
+        let afterMetrics = null;
+        if (!dryRun && beforeMetrics && validation) {
+          try {
+            const meta = parseCommandTarget(command);
+            const ns = meta.namespace || body.namespace || "";
+            const resName = meta.name || body.resourceName || "";
+            if (ns && resName) {
+              const podData = await ocpGet(`/api/v1/namespaces/${ns}/pods?labelSelector=app=${encodeURIComponent(resName)}&limit=10`).catch(() => ({ items: [] }));
+              const pm = await ocpGet(`/apis/metrics.k8s.io/v1beta1/namespaces/${ns}/pods`).catch(() => ({ items: [] }));
+              const pod = (podData.items || [])[0];
+              if (pod) {
+                const cs = (pod.status?.containerStatuses || [])[0];
+                const limits = (pod.spec?.containers || [])[0]?.resources?.limits || {};
+                const pmMatch = (pm.items || []).find(m => m.metadata?.name === pod.metadata?.name);
+                afterMetrics = {
+                  memoryLimit: limits.memory || "—",
+                  memoryUsage: pmMatch?.containers?.[0]?.usage?.memory || "—",
+                  cpuUsage: pmMatch?.containers?.[0]?.usage?.cpu || "—",
+                  restarts: cs?.restartCount ?? 0,
+                  status: pod.status?.phase || "Unknown",
+                };
+              }
+            }
+          } catch {}
+        }
+        return sendJson(res, 200, { ...result, classification: preflight?.classification, validation, incidentClosed, beforeMetrics, afterMetrics });
       } catch (e) {
         if (featureFlags.pillar7AuditLog()) logAuditEvent({
           command,
@@ -4793,6 +4852,62 @@ spec:
           durationMs: Date.now() - auditStart,
         }).catch(() => {});
         return sendJson(res, 500, { success: false, stderr: e.message });
+      }
+    }
+
+    // POST /api/demo/setup-incident — deploy a deliberately broken pod for demo
+    if (req.method === "POST" && url.pathname === "/api/demo/setup-incident") {
+      try {
+        const body = await readJsonBody(req);
+        const ns = body.namespace || "demo-incident";
+        const appName = body.appName || "demo-oom-app";
+        const memLimit = body.memoryLimit || "32Mi";
+        // Create namespace if needed
+        await ocpGet(`/api/v1/namespaces/${ns}`).catch(async () => {
+          await ocpPost("/api/v1/namespaces", { apiVersion: "v1", kind: "Namespace", metadata: { name: ns } });
+        });
+        // Deploy a pod that will OOMKill (stress with low memory limit)
+        const deployment = {
+          apiVersion: "apps/v1", kind: "Deployment",
+          metadata: { name: appName, namespace: ns, labels: { app: appName, "demo-type": "incident-response" } },
+          spec: {
+            replicas: 1,
+            selector: { matchLabels: { app: appName } },
+            template: {
+              metadata: { labels: { app: appName } },
+              spec: { containers: [{
+                name: appName,
+                image: "registry.access.redhat.com/ubi8/ubi-minimal:latest",
+                command: ["sh", "-c", "echo 'Demo app starting — will exceed memory limit'; while true; do head -c 5M /dev/urandom >> /tmp/memfill 2>/dev/null; sleep 1; done"],
+                resources: { limits: { memory: memLimit, cpu: "100m" }, requests: { memory: memLimit, cpu: "50m" } },
+              }] },
+            },
+          },
+        };
+        // Delete existing deployment if any
+        try { await ocpDelete(`/apis/apps/v1/namespaces/${ns}/deployments/${appName}`); } catch {}
+        await new Promise(r => setTimeout(r, 1000));
+        await ocpPost(`/apis/apps/v1/namespaces/${ns}/deployments`, deployment);
+        return sendJson(res, 200, {
+          success: true,
+          message: `Demo deployment "${appName}" created in namespace "${ns}" with ${memLimit} memory limit. It will OOMKill within 30-60 seconds.`,
+          hint: `Ask: "why is my pod ${appName} in namespace ${ns} crashing?"`,
+          namespace: ns, appName, memoryLimit: memLimit,
+        });
+      } catch (e) {
+        return sendJson(res, 500, { success: false, error: e.message });
+      }
+    }
+
+    // POST /api/demo/cleanup — remove demo incident pods
+    if (req.method === "POST" && url.pathname === "/api/demo/cleanup") {
+      try {
+        const body = await readJsonBody(req);
+        const ns = body.namespace || "demo-incident";
+        await ocpDelete(`/api/v1/namespaces/${ns}`).catch(() => {});
+        return sendJson(res, 200, { success: true, message: `Demo namespace "${ns}" deleted.` });
+      } catch (e) {
+        return sendJson(res, 500, { success: false, error: e.message });
       }
     }
 

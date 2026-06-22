@@ -100,6 +100,16 @@ export function renderMarkdown(text) {
   // Strip HTML comments (e.g. <!--action:ID-->)
   text = text.replace(/<!--[\s\S]*?-->/g, "");
 
+  // Extract <details><summary> blocks BEFORE escaping → collapsible sections
+  text = text.replace(/<details[^>]*>\s*<summary>([\s\S]*?)<\/summary>([\s\S]*?)<\/details>/gi, (m, summary, body) => {
+    const trimBody = body.trim();
+    return ph(
+      '<details class="md-details"><summary class="md-details-summary">' +
+      esc(summary) + '</summary><div class="md-details-body">' +
+      esc(trimBody) + '</div></details>'
+    );
+  });
+
   // Extract fenced code blocks BEFORE escaping → styled box with copy button
   text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (m, lang, code) => {
     const trimmed = code.replace(/^\n+|\n+$/g, "").replace(/@@SEC_FIX_CMD\|([^@]+)@@/g, "$1");

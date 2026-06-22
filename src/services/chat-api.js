@@ -4379,6 +4379,17 @@ EOF@@`);
 
       // Phase 15: FIX_PROPOSAL card with incident context
       if (fixProposals.length > 0) {
+        // Build incident timeline from events
+        const timeline = [];
+        const targetEvents = targetName ? warningEvents.filter(e => e.involvedObject?.name === targetName || (targetDeploy && e.involvedObject?.name?.startsWith(targetDeploy))) : warningEvents.slice(0, 10);
+        for (const evt of targetEvents.slice(0, 8)) {
+          const ts = evt.lastTimestamp || evt.eventTime || evt.metadata?.creationTimestamp;
+          timeline.push({ time: ts, event: evt.reason || "Unknown", detail: (evt.message || "").slice(0, 120) });
+        }
+        timeline.push({ time: new Date().toISOString(), event: "AI Detected", detail: `TCS Agentic AI diagnosed ${severity} — ${rootCauses[0]?.signal || "issue"}` });
+        if (snowRec?.number) timeline.push({ time: new Date().toISOString(), event: "ServiceNow", detail: `${snowRec.number} auto-created for ${severity}` });
+        timeline.push({ time: new Date().toISOString(), event: "Fix Ready", detail: `${fixProposals.length} fix proposal(s) generated` });
+
         const diagPayload = {
           podName: targetName || "incident_response",
           namespace: targetNs || "cluster-wide",
@@ -4392,6 +4403,7 @@ EOF@@`);
           incidentSysId: snowRec?.sys_id || null,
           incidentNumber: snowRec?.number || null,
           logAnalysis: logAnalysis || null,
+          timeline,
         };
         parts.push(`@@FIX_PROPOSAL|${JSON.stringify(diagPayload).replace(/@@/g, "@ @")}@@`);
       }
@@ -10446,6 +10458,20 @@ async function appendFixProposals(reply, ctx) {
     } catch (e) {
       console.error(`[appendFixProposals] ServiceNow error: ${e.message}`);
     }
+  }
+
+  // Build incident timeline from pod events (if available)
+  if (!diag.timeline) {
+    const events = ctx?._focusPodEvents || ctx?.targetPodEvents || [];
+    const timeline = [];
+    for (const evt of events.slice(0, 8)) {
+      const ts = evt.lastTimestamp || evt.eventTime || evt.metadata?.creationTimestamp || evt.time;
+      timeline.push({ time: ts || new Date().toISOString(), event: evt.reason || "Event", detail: (evt.message || "").slice(0, 120) });
+    }
+    timeline.push({ time: new Date().toISOString(), event: "AI Detected", detail: `TCS Agentic AI diagnosed ${diag.severity} — ${diag.rootCause || "issue"}` });
+    if (diag.incidentNumber) timeline.push({ time: new Date().toISOString(), event: "ServiceNow", detail: `${diag.incidentNumber} auto-created` });
+    timeline.push({ time: new Date().toISOString(), event: "Fix Ready", detail: `${diag.fixes.length} fix proposal(s) generated` });
+    diag.timeline = timeline;
   }
 
   const fixJson = JSON.stringify(diag).replace(/@@/g, "@ @");
