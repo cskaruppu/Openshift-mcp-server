@@ -4111,6 +4111,57 @@ EOF@@`);
         } catch {}
       }
 
+      // Phase 2c: LLM-powered log analysis — use AI to understand the actual root cause
+      let llmDiagnosis = null;
+      if (targetPod && llmEnabled() && (logAnalysis?.errorLines?.length > 0 || targetIssues.length > 0)) {
+        try {
+          const podState = {
+            name: targetPod.metadata.name,
+            namespace: targetPod.metadata.namespace,
+            phase: targetPod.status?.phase,
+            containers: (targetPod.status?.containerStatuses || []).map(c => ({
+              name: c.name, state: c.state?.waiting?.reason || c.state?.terminated?.reason || (c.state?.running ? "Running" : "Unknown"),
+              restarts: c.restartCount || 0, exitCode: c.state?.terminated?.exitCode ?? c.lastState?.terminated?.exitCode,
+              lastReason: c.lastState?.terminated?.reason,
+            })),
+          };
+          const logExcerpt = (logAnalysis?.errorLines || []).slice(0, 8).join("\n") || "No error lines found in logs.";
+          const events = warningEvents.filter(e => e.involvedObject?.name === targetPod.metadata.name || (targetDeploy && e.involvedObject?.name?.startsWith(targetDeploy))).slice(0, 5).map(e => `${e.reason}: ${(e.message || "").slice(0, 150)}`).join("\n") || "No recent events.";
+          const signals = targetIssues.map(i => `${i.signal}${i.restarts ? ` (${i.restarts} restarts)` : ""}`).join(", ") || "none";
+          const limits = (targetPod.spec?.containers || []).map(c => `${c.name}: limits=${JSON.stringify(c.resources?.limits || {})} requests=${JSON.stringify(c.resources?.requests || {})}`).join("; ");
+
+          llmDiagnosis = await classifyJSON({
+            prompt: `Analyze this OpenShift/Kubernetes pod issue and respond with a JSON object.
+
+POD STATE:
+${JSON.stringify(podState, null, 1)}
+
+RESOURCE LIMITS: ${limits}
+
+DETECTED SIGNALS: ${signals}
+
+ERROR LOG LINES:
+${logExcerpt}
+
+KUBERNETES EVENTS:
+${events}
+
+Respond with ONLY this JSON structure:
+{
+  "rootCause": "One sentence describing the actual root cause based on the logs and state",
+  "category": "One of: OOMKilled, Memory Leak, Configuration Error, Dependency Failure, Permission Issue, Resource Exhaustion, Application Bug, Health Check Failure, Image Issue, Network Issue, Storage Issue, Unknown",
+  "diagnosis": "2-3 sentence detailed diagnosis explaining what is happening and why",
+  "fixCommand": "The exact oc/kubectl command to fix this issue, or null if manual investigation needed",
+  "fixTitle": "Short title for the fix action",
+  "fixDescription": "Detailed description of what the fix does and why it will resolve the issue",
+  "fixRisk": "low, medium, or high",
+  "additionalSteps": ["Step 1 to investigate further", "Step 2 if needed"]
+}`,
+            system: "You are an expert OpenShift/Kubernetes SRE. Analyze the pod state, logs, and events to identify the EXACT root cause. Be specific — reference actual log lines and error messages. Generate a precise fix command when possible. Never suggest a plain restart for OOMKilled — always increase memory. For application errors, suggest investigating the specific code path shown in logs.",
+          });
+        } catch {}
+      }
+
       // Phase 3: Compute severity — target-aware
       // Log analysis can boost severity: OOM/crash in logs = critical even if pod restarted
       const logCritical = logAnalysis?.errors?.some(e => /Memory Exhaustion|Application Crash/i.test(e.category));
@@ -4245,6 +4296,17 @@ EOF@@`);
         parts.push("");
       }
 
+      // Phase 8b: AI Diagnosis — show LLM analysis when available
+      if (llmDiagnosis) {
+        parts.push(`**AI Root Cause Analysis**`);
+        parts.push("");
+        parts.push(`> **Category:** ${llmDiagnosis.category || "Unknown"}`);
+        parts.push(`> **Root Cause:** ${llmDiagnosis.rootCause || "Analysis pending"}`);
+        parts.push(`>`);
+        parts.push(`> ${llmDiagnosis.diagnosis || ""}`);
+        parts.push("");
+      }
+
       // Phase 9: Recommended Actions — TARGET-SPECIFIC when pod named
       parts.push(`**Recommended Actions${targetName ? ` for ${targetDeploy || targetName}` : ""}**`);
       parts.push("");
@@ -4253,18 +4315,39 @@ EOF@@`);
         const ownerKind = getOwnerKind(targetPod);
         const hasOom = targetIssues.some(i => i.signal === "OOMKilled") || (logCritical && /Memory/i.test(logAnalysis?.errors?.[0]?.category || ""));
         const restarts = (targetPod.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0);
+
+        // LLM-powered recommendation takes priority when available
+        if (llmDiagnosis?.fixCommand && llmDiagnosis.fixTitle) {
+          parts.push(`${actionNum++}. **${llmDiagnosis.fixTitle}** — ${llmDiagnosis.fixDescription || llmDiagnosis.diagnosis || "AI-recommended fix"}`);
+          parts.push(`   > AI Confidence: ${llmDiagnosis.fixRisk === "low" ? "High" : llmDiagnosis.fixRisk === "medium" ? "Medium" : "Low"} | Risk: ${llmDiagnosis.fixRisk || "low"}`);
+          parts.push("");
+          parts.push(`@@SEC_FIX_CMD|${llmDiagnosis.fixCommand}@@`);
+          parts.push("");
+        }
+
         if (hasOom) {
           const oomIssue = targetIssues.find(i => i.signal === "OOMKilled");
           const container = oomIssue?.container || (targetPod.spec?.containers || [])[0]?.name || "main";
           const mem = smartMemoryLimit(targetPod, container);
-          parts.push(`${actionNum++}. **Fix OOMKilled** — increase memory from **${mem.currentLimit}** to **${mem.limit}**`);
-          parts.push(`   > ${mem.basis}. Container '${container}' has ${restarts} restart(s).`);
-          parts.push("");
-          parts.push(`@@SEC_FIX_CMD|${cli} set resources ${ownerKind}/${targetDeploy} -n ${targetPod.metadata.namespace} -c ${container} --limits=memory=${mem.limit}@@`);
-          parts.push("");
+          // Skip if LLM already generated the same memory fix
+          const llmAlreadyFixedOom = llmDiagnosis?.fixCommand && /set resources|limits.*memory/i.test(llmDiagnosis.fixCommand);
+          if (!llmAlreadyFixedOom) {
+            parts.push(`${actionNum++}. **Fix OOMKilled** — increase memory from **${mem.currentLimit}** to **${mem.limit}**`);
+            parts.push(`   > ${mem.basis}. Container '${container}' has ${restarts} restart(s).`);
+            parts.push("");
+            parts.push(`@@SEC_FIX_CMD|${cli} set resources ${ownerKind}/${targetDeploy} -n ${targetPod.metadata.namespace} -c ${container} --limits=memory=${mem.limit}@@`);
+            parts.push("");
+          }
         }
-        // Log-driven recommendations — show actions based on what logs reveal
-        if (logAnalysis?.errors?.length > 0) {
+        // LLM additional investigation steps
+        if (llmDiagnosis?.additionalSteps?.length > 0) {
+          for (const step of llmDiagnosis.additionalSteps.slice(0, 2)) {
+            parts.push(`${actionNum++}. ${step}`);
+            parts.push("");
+          }
+        }
+        // Log-driven recommendations — show actions based on what logs reveal (only if no LLM)
+        if (!llmDiagnosis && logAnalysis?.errors?.length > 0) {
           for (const err of logAnalysis.errors) {
             if (/Memory Exhaustion/i.test(err.category) && hasOom) continue;
             parts.push(`${actionNum++}. **${err.category}** — ${err.fix}`);
@@ -4273,7 +4356,7 @@ EOF@@`);
           }
         }
         // Restart only as last resort when no specific fix found
-        if (!hasOom && !(logAnalysis?.errors?.length > 0)) {
+        if (!hasOom && !llmDiagnosis && !(logAnalysis?.errors?.length > 0)) {
           parts.push(`${actionNum++}. **Restart ${ownerKind}** \`${targetDeploy}\` — ${restarts} restart(s) detected, no specific root cause in logs`);
           parts.push("");
           parts.push(`@@SEC_FIX_CMD|${cli} rollout restart ${ownerKind}/${targetDeploy} -n ${targetPod.metadata.namespace}@@`);
@@ -4383,67 +4466,56 @@ EOF@@`);
       parts.push(`| Team Notification | ${notifyEnabled ? (notifyResult?.failed ? "Failed" : "Sent") : "Skipped"} | ${notifyEnabled ? "Slack/Teams/PagerDuty alert dispatched" : "Auto-notify only for SEV-1/SEV-2/SEV-3"} |`);
       parts.push("");
 
-      // Phase 13: Fix proposals — LOG-DRIVEN + SIGNAL-BASED
-      // Log analysis takes priority: if logs reveal the actual root cause, generate
-      // targeted fixes instead of generic signal-based restarts.
+      // Phase 13: Fix proposals — AI-DRIVEN when LLM available, pattern-based fallback
       const fixProposals = [];
       const targetOwnerKind = targetPod ? getOwnerKind(targetPod) : "deployment";
       const hasOomIssue = targetIssues.some(i => i.signal === "OOMKilled");
-      const logDrivenFixAdded = new Set();
       if (targetName && targetPod && targetDeploy) {
         const restarts = (targetPod.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0);
         const mainContainer = (targetPod.spec?.containers || [])[0]?.name || "main";
 
-        // Step 1: OOMKilled — always increase memory (logs can't fix this)
+        // Priority 1: LLM-generated fix — AI analyzed the logs and understands the actual issue
+        if (llmDiagnosis?.fixCommand && llmDiagnosis.fixTitle) {
+          fixProposals.push({
+            title: llmDiagnosis.fixTitle,
+            action: /set resources|patch|scale/i.test(llmDiagnosis.fixCommand) ? "set_resources" : /rollout restart/i.test(llmDiagnosis.fixCommand) ? "restart_deployment" : /delete pod/i.test(llmDiagnosis.fixCommand) ? "restart_pod" : "custom",
+            resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind,
+            command: llmDiagnosis.fixCommand,
+            risk: llmDiagnosis.fixRisk || "low",
+            description: `[AI Analysis] ${llmDiagnosis.fixDescription || llmDiagnosis.diagnosis || ""}`,
+          });
+        }
+
+        // Priority 2: OOMKilled — always add memory increase if detected (even if LLM suggested something else)
         if (hasOomIssue || (logCritical && /Memory/i.test(logAnalysis?.errors?.[0]?.category || ""))) {
           const oomIssue = targetIssues.find(i => i.signal === "OOMKilled");
           const container = oomIssue?.container || mainContainer;
           const mem = smartMemoryLimit(targetPod, container);
-          fixProposals.push({ title: `Increase memory for ${targetDeploy} → ${mem.limit}`, action: "set_resources", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} set resources ${targetOwnerKind}/${targetDeploy} -n ${targetPod.metadata.namespace} -c ${container} --limits=memory=${mem.limit}`, risk: "low", description: `[OOMKilled Recovery] Container '${container}' terminated by OOM Killer (${restarts} restarts). ${mem.basis}. This command increases the memory limit and triggers a rolling restart.` });
-          logDrivenFixAdded.add("memory");
+          const alreadyHasMemFix = fixProposals.some(f => /memory|set resources.*limits/i.test(f.command || ""));
+          if (!alreadyHasMemFix) {
+            fixProposals.push({ title: `Increase memory for ${targetDeploy} → ${mem.limit}`, action: "set_resources", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} set resources ${targetOwnerKind}/${targetDeploy} -n ${targetPod.metadata.namespace} -c ${container} --limits=memory=${mem.limit}`, risk: "low", description: `[OOMKilled Recovery] Container '${container}' terminated by OOM Killer (${restarts} restarts). ${mem.basis}. This command increases the memory limit and triggers a rolling restart.` });
+          }
         }
 
-        // Step 2: Log-driven fixes — generate targeted fixes from log analysis
-        if (logAnalysis?.errors?.length > 0) {
-          for (const err of logAnalysis.errors) {
-            if (/Memory Exhaustion/i.test(err.category) && logDrivenFixAdded.has("memory")) continue;
-            if (logDrivenFixAdded.has(err.category)) continue;
-            logDrivenFixAdded.add(err.category);
-            const logSnippet = err.snippet ? ` (detected: "${err.snippet}")` : "";
-            if (/Connection Refused/i.test(err.category)) {
-              fixProposals.push({ title: `Check dependent services for ${targetDeploy}`, action: "diagnose", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} get svc -n ${targetPod.metadata.namespace} && ${cli} get endpoints -n ${targetPod.metadata.namespace}`, risk: "low", description: `[Log Analysis] ${err.category}${logSnippet}. ${err.fix}. Verify that all upstream services and their endpoints are running before restarting this pod.` });
-            } else if (/DNS Resolution/i.test(err.category)) {
-              fixProposals.push({ title: `Check DNS and service resolution`, action: "diagnose", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} get svc -A | grep -i dns && ${cli} logs -n openshift-dns -l dns.operator.openshift.io/daemonset-dns --tail=20`, risk: "low", description: `[Log Analysis] ${err.category}${logSnippet}. ${err.fix}.` });
-            } else if (/Permission Denied/i.test(err.category)) {
-              fixProposals.push({ title: `Check RBAC and SecurityContext for ${targetDeploy}`, action: "diagnose", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} get rolebinding,clusterrolebinding -n ${targetPod.metadata.namespace} -o wide && ${cli} get scc -o name`, risk: "low", description: `[Log Analysis] ${err.category}${logSnippet}. ${err.fix}. Review SecurityContextConstraints (SCCs), service account roles, and file system permissions.` });
-            } else if (/Disk Full/i.test(err.category)) {
-              fixProposals.push({ title: `Check and expand storage for ${targetDeploy}`, action: "diagnose", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} get pvc -n ${targetPod.metadata.namespace} && ${cli} exec ${targetPod.metadata.name} -n ${targetPod.metadata.namespace} -- df -h 2>/dev/null || echo "Container not running"`, risk: "low", description: `[Log Analysis] ${err.category}${logSnippet}. ${err.fix}.` });
-            } else if (/Health Check/i.test(err.category)) {
-              fixProposals.push({ title: `Adjust probe configuration for ${targetDeploy}`, action: "diagnose", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} get ${targetOwnerKind}/${targetDeploy} -n ${targetPod.metadata.namespace} -o jsonpath='{.spec.template.spec.containers[0].livenessProbe}{.spec.template.spec.containers[0].readinessProbe}'`, risk: "low", description: `[Log Analysis] ${err.category}${logSnippet}. ${err.fix}. Consider increasing initialDelaySeconds, periodSeconds, or failureThreshold.` });
-            } else if (/Image Pull/i.test(err.category)) {
-              fixProposals.push({ title: `Fix image pull for ${targetDeploy}`, action: "diagnose", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} get ${targetOwnerKind}/${targetDeploy} -n ${targetPod.metadata.namespace} -o jsonpath='{.spec.template.spec.containers[*].image}' && ${cli} get secret -n ${targetPod.metadata.namespace} -o name | grep -i pull`, risk: "low", description: `[Log Analysis] ${err.category}${logSnippet}. ${err.fix}.` });
-            } else if (/TLS|Certificate/i.test(err.category)) {
-              fixProposals.push({ title: `Check TLS/certificate configuration`, action: "diagnose", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} get secret -n ${targetPod.metadata.namespace} -o name | grep -i tls && ${cli} get route -n ${targetPod.metadata.namespace} -o jsonpath='{range .items[*]}{.metadata.name}{" tls="}{.spec.tls.termination}{"\\n"}{end}'`, risk: "low", description: `[Log Analysis] ${err.category}${logSnippet}. ${err.fix}.` });
-            } else if (/Resource Quota/i.test(err.category)) {
-              fixProposals.push({ title: `Check resource quotas in ${targetPod.metadata.namespace}`, action: "diagnose", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} describe resourcequota -n ${targetPod.metadata.namespace} && ${cli} describe limitrange -n ${targetPod.metadata.namespace}`, risk: "low", description: `[Log Analysis] ${err.category}${logSnippet}. ${err.fix}.` });
-            } else if (/Timeout/i.test(err.category)) {
-              fixProposals.push({ title: `Investigate timeout for ${targetDeploy}`, action: "diagnose", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} get svc -n ${targetPod.metadata.namespace} && ${cli} get networkpolicy -n ${targetPod.metadata.namespace}`, risk: "low", description: `[Log Analysis] ${err.category}${logSnippet}. ${err.fix}.` });
-            } else if (/Application Error|Application Crash/i.test(err.category)) {
-              fixProposals.push({ title: `Inspect application errors in ${targetDeploy}`, action: "diagnose", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} logs ${targetPod.metadata.name} -n ${targetPod.metadata.namespace} --tail=50${logAnalysis.previous ? " --previous" : ""}`, risk: "low", description: `[Log Analysis] ${err.category}${logSnippet}. ${err.fix}. Review the full logs above to identify the exact code path causing the failure.` });
-            } else {
-              fixProposals.push({ title: `Investigate: ${err.category}`, action: "diagnose", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} describe pod ${targetPod.metadata.name} -n ${targetPod.metadata.namespace}`, risk: "low", description: `[Log Analysis] ${err.category}${logSnippet}. ${err.fix}.` });
+        // Priority 3: LLM additional investigation steps
+        if (llmDiagnosis?.additionalSteps?.length > 0 && fixProposals.length < 3) {
+          for (const step of llmDiagnosis.additionalSteps.slice(0, 2)) {
+            if (typeof step === "string" && step.trim()) {
+              fixProposals.push({ title: step.slice(0, 80), action: "diagnose", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} describe pod ${targetPod.metadata.name} -n ${targetPod.metadata.namespace}`, risk: "low", description: `[Investigation] ${step}` });
             }
           }
         }
 
-        // Step 3: Restart only as last resort when no log-driven or OOM fix was generated
+        // Fallback: Pattern-based when no LLM and no OOM
+        if (fixProposals.length === 0 && logAnalysis?.errors?.length > 0) {
+          const err = logAnalysis.errors[0];
+          const logSnippet = err.snippet ? ` (detected: "${err.snippet}")` : "";
+          fixProposals.push({ title: `${err.fix.slice(0, 60)}`, action: "diagnose", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} logs ${targetPod.metadata.name} -n ${targetPod.metadata.namespace} --tail=80${logAnalysis.previous ? " --previous" : ""}`, risk: "low", description: `[Log Analysis] ${err.category}${logSnippet}. ${err.fix}.` });
+        }
+
+        // Last resort: restart only when nothing else applies
         if (fixProposals.length === 0) {
-          const hasCrash = targetIssues.some(i => i.signal === "CrashLoopBackOff" || i.signal === "Failed");
-          if (hasCrash) {
-            fixProposals.push({ title: `Restart ${targetOwnerKind} ${targetDeploy}`, action: "restart_deployment", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} rollout restart ${targetOwnerKind}/${targetDeploy} -n ${targetPod.metadata.namespace}`, risk: "low", description: `[CrashLoopBackOff Recovery] No specific root cause found in logs. Rolling restart to clear transient state (${restarts} restarts).` });
-          } else {
-            fixProposals.push({ title: `Restart ${targetOwnerKind} ${targetDeploy}`, action: "restart_deployment", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} rollout restart ${targetOwnerKind}/${targetDeploy} -n ${targetPod.metadata.namespace}`, risk: "low", description: `Restart ${targetDeploy} to recover — check logs above for application-level errors.` });
-          }
+          fixProposals.push({ title: `Restart ${targetOwnerKind} ${targetDeploy}`, action: "restart_deployment", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} rollout restart ${targetOwnerKind}/${targetDeploy} -n ${targetPod.metadata.namespace}`, risk: "low", description: `No specific root cause identified in logs. Rolling restart to clear transient state (${restarts} restarts). Monitor logs after restart for recurring errors.` });
         }
       } else if (targetName && targetPod && !targetDeploy) {
         fixProposals.push({ title: `Delete and recreate pod ${targetName}`, action: "restart_pod", resource: targetName, namespace: targetPod.metadata.namespace, resourceType: "pod", command: `${cli} delete pod ${targetName} -n ${targetPod.metadata.namespace}`, risk: "medium", description: `Delete standalone pod ${targetName} so it gets recreated by its controller (if any)` });
@@ -4485,25 +4557,37 @@ EOF@@`);
         if (snowRec?.number) timeline.push({ time: new Date().toISOString(), event: "ServiceNow", detail: `${snowRec.number} auto-created for ${severity}` });
         timeline.push({ time: new Date().toISOString(), event: "Fix Ready", detail: `${fixProposals.length} fix proposal(s) generated` });
 
-        const rcaCategory = rootCauses.some(r => /OOM/i.test(r.signal)) ? "Resource Exhaustion"
+        const rcaCategoryFallback = rootCauses.some(r => /OOM/i.test(r.signal)) ? "Resource Exhaustion"
           : rootCauses.some(r => /CrashLoop|Failed/i.test(r.signal)) ? "Application Failure"
           : rootCauses.some(r => /Image/i.test(r.signal)) ? "Configuration Error"
           : rootCauses.some(r => /Node|NotReady/i.test(r.signal)) ? "Infrastructure Failure"
           : rootCauses.some(r => /Scheduling|Pending/i.test(r.signal)) ? "Resource Contention"
           : "Service Degradation";
+        const rcaCategory = llmDiagnosis?.category || rcaCategoryFallback;
         const rcaSignals = [...new Set(rootCauses.map(r => r.signal))];
         const rcaDetails = rootCauses.map(r => `${r.signal}: ${r.detail}`);
-        const rcaRootCause = rootCauses.length === 1
-          ? `[${rcaCategory}] ${rootCauses[0].signal} — ${rootCauses[0].detail}`
-          : `[${rcaCategory}] ${rootCauses.length} contributing factors identified:\n${rcaDetails.map(d => `• ${d}`).join("\n")}`;
-        const rcaDiagnosis = [
-          `${severityLabel}`,
-          `Root Cause Category: ${rcaCategory}`,
-          `Scope: ${scope}`,
-          `Affected Signals: ${rcaSignals.join(", ")}`,
-          `Impact: ${rootCauses.length} issue(s) across ${affectedNs.size || 1} namespace(s)`,
-          logAnalysis?.errors?.length ? `Log Evidence: ${logAnalysis.errors.length} error pattern(s) detected` : null,
-        ].filter(Boolean).join("\n");
+        const rcaRootCause = llmDiagnosis?.rootCause
+          ? `[${rcaCategory}] ${llmDiagnosis.rootCause}`
+          : rootCauses.length === 1
+            ? `[${rcaCategoryFallback}] ${rootCauses[0].signal} — ${rootCauses[0].detail}`
+            : `[${rcaCategoryFallback}] ${rootCauses.length} contributing factors identified:\n${rcaDetails.map(d => `• ${d}`).join("\n")}`;
+        const rcaDiagnosis = llmDiagnosis?.diagnosis
+          ? [
+              `${severityLabel}`,
+              `Root Cause Category: ${rcaCategory}`,
+              `AI Diagnosis: ${llmDiagnosis.diagnosis}`,
+              `Scope: ${scope}`,
+              `Affected Signals: ${rcaSignals.join(", ")}`,
+              `Impact: ${rootCauses.length} issue(s) across ${affectedNs.size || 1} namespace(s)`,
+            ].join("\n")
+          : [
+              `${severityLabel}`,
+              `Root Cause Category: ${rcaCategory}`,
+              `Scope: ${scope}`,
+              `Affected Signals: ${rcaSignals.join(", ")}`,
+              `Impact: ${rootCauses.length} issue(s) across ${affectedNs.size || 1} namespace(s)`,
+              logAnalysis?.errors?.length ? `Log Evidence: ${logAnalysis.errors.length} error pattern(s) detected` : null,
+            ].filter(Boolean).join("\n");
         const diagPayload = {
           podName: targetName || "incident_response",
           namespace: targetNs || "cluster-wide",
