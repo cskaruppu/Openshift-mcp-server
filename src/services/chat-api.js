@@ -4016,8 +4016,9 @@ EOF@@`);
       }
 
       // Phase 2: Classify ALL problem signals in scope
+      const isOomContainer = (cs) => cs.state?.terminated?.reason === "OOMKilled" || cs.lastState?.terminated?.reason === "OOMKilled" || cs.lastState?.terminated?.exitCode === 137 || cs.state?.terminated?.exitCode === 137;
       const crashPods = podItems.filter(p => (p.status?.containerStatuses || []).some(cs => cs.state?.waiting?.reason === "CrashLoopBackOff"));
-      const oomPods = podItems.filter(p => (p.status?.containerStatuses || []).some(cs => cs.state?.terminated?.reason === "OOMKilled" || cs.lastState?.terminated?.reason === "OOMKilled"));
+      const oomPods = podItems.filter(p => (p.status?.containerStatuses || []).some(cs => isOomContainer(cs)));
       const imagePullPods = podItems.filter(p => (p.status?.containerStatuses || []).some(cs => cs.state?.waiting?.reason === "ImagePullBackOff" || cs.state?.waiting?.reason === "ErrImagePull"));
       const pendingPods = podItems.filter(p => p.status?.phase === "Pending");
       const failedPods = podItems.filter(p => p.status?.phase === "Failed");
@@ -4043,8 +4044,8 @@ EOF@@`);
           targetDeploy = getDeployName(targetPod);
           const cs = targetPod.status?.containerStatuses || [];
           for (const c of cs) {
-            if (c.state?.waiting?.reason === "CrashLoopBackOff") targetIssues.push({ signal: "CrashLoopBackOff", container: c.name, restarts: c.restartCount || 0 });
-            if (c.state?.terminated?.reason === "OOMKilled" || c.lastState?.terminated?.reason === "OOMKilled") targetIssues.push({ signal: "OOMKilled", container: c.name });
+            if (isOomContainer(c)) targetIssues.push({ signal: "OOMKilled", container: c.name, restarts: c.restartCount || 0 });
+            else if (c.state?.waiting?.reason === "CrashLoopBackOff") targetIssues.push({ signal: "CrashLoopBackOff", container: c.name, restarts: c.restartCount || 0 });
             if (c.state?.waiting?.reason === "ImagePullBackOff" || c.state?.waiting?.reason === "ErrImagePull") targetIssues.push({ signal: "ImagePullBackOff", container: c.name });
           }
           if (targetPod.status?.phase === "Pending") targetIssues.push({ signal: "Pending" });
@@ -4203,10 +4204,19 @@ EOF@@`);
         parts.push("");
       }
 
-      // Target-specific events
-      const targetEvents = targetName
-        ? warningEvents.filter(e => e.involvedObject?.name === targetName || e.involvedObject?.name === targetDeploy)
-        : warningEvents;
+      // Target-specific events — filter to only relevant events
+      let targetEvents;
+      if (targetName) {
+        targetEvents = warningEvents.filter(e => e.involvedObject?.name === targetName || (targetDeploy && (e.involvedObject?.name === targetDeploy || e.involvedObject?.name?.startsWith(targetDeploy + "-"))));
+      } else {
+        const affectedNsSet = new Set([...crashPods, ...oomPods, ...failedPods, ...pendingPods].map(p => p.metadata?.namespace).filter(Boolean));
+        targetEvents = warningEvents.filter(e => {
+          const ns = e.involvedObject?.namespace || e.metadata?.namespace;
+          if (affectedNsSet.size > 0 && !affectedNsSet.has(ns)) return false;
+          if (/migration|Migration|operator.*resolution/i.test(e.reason || "")) return false;
+          return true;
+        });
+      }
       const topEvents = targetEvents.slice(0, 8);
       if (topEvents.length > 0) {
         parts.push(`**Recent Warning Events${targetName ? ` for ${targetName}` : ""}** (${topEvents.length})`);
@@ -4254,7 +4264,7 @@ EOF@@`);
           parts.push(`@@SEC_FIX_CMD|${cli} set resources ${ownerKind}/${targetDeploy} -n ${targetPod.metadata.namespace} -c ${container} --limits=memory=${mem.limit}@@`);
           parts.push("");
         }
-        if (hasCrash || (!hasOom && targetIssues.length > 0)) {
+        if (!hasOom && (hasCrash || targetIssues.length > 0)) {
           parts.push(`${actionNum++}. **Restart ${ownerKind}** \`${targetDeploy}\` — ${restarts} restart(s) detected`);
           parts.push("");
           parts.push(`@@SEC_FIX_CMD|${cli} rollout restart ${ownerKind}/${targetDeploy} -n ${targetPod.metadata.namespace}@@`);
@@ -4278,12 +4288,14 @@ EOF@@`);
         parts.push(`@@SEC_FIX_CMD|${cli} logs ${targetPod.metadata.name} -n ${targetPod.metadata.namespace} --tail=50@@`);
         parts.push("");
       } else {
+        const oomRecDeployNames = new Set();
         if (oomPods.length > 0) {
-          const p0 = oomPods[0]; const container = ((p0.status?.containerStatuses || []).find(cs => cs.state?.terminated?.reason === "OOMKilled" || cs.lastState?.terminated?.reason === "OOMKilled"))?.name || (p0.spec?.containers || [])[0]?.name || "main";
+          const p0 = oomPods[0]; const container = ((p0.status?.containerStatuses || []).find(cs => isOomContainer(cs)))?.name || (p0.spec?.containers || [])[0]?.name || "main";
           const dn = getDeployName(p0); const ok = dn ? getOwnerKind(p0) : "deployment";
-          if (dn) { const mem = smartMemoryLimit(p0, container); const restarts = (p0.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0); parts.push(`${actionNum++}. **Fix OOMKilled** — increase memory from **${mem.currentLimit}** to **${mem.limit}** (${oomPods.length} affected pod${oomPods.length > 1 ? "s" : ""})`); parts.push(`   > ${mem.basis}. ${restarts} restart(s) on ${dn}.`); parts.push(""); parts.push(`@@SEC_FIX_CMD|${cli} set resources ${ok}/${dn} -n ${p0.metadata.namespace} -c ${container} --limits=memory=${mem.limit}@@`); parts.push(""); }
+          if (dn) { oomRecDeployNames.add(dn); const mem = smartMemoryLimit(p0, container); const restarts = (p0.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0); parts.push(`${actionNum++}. **Fix OOMKilled** — increase memory from **${mem.currentLimit}** to **${mem.limit}** (${oomPods.length} affected pod${oomPods.length > 1 ? "s" : ""})`); parts.push(`   > ${mem.basis}. ${restarts} restart(s) on ${dn}.`); parts.push(""); parts.push(`@@SEC_FIX_CMD|${cli} set resources ${ok}/${dn} -n ${p0.metadata.namespace} -c ${container} --limits=memory=${mem.limit}@@`); parts.push(""); }
         }
-        if (crashPods.length > 0) { const dn = getDeployName(crashPods[0]); const ok = dn ? getOwnerKind(crashPods[0]) : "deployment"; if (dn) { parts.push(`${actionNum++}. Restart CrashLooping ${ok}`); parts.push(""); parts.push(`@@SEC_FIX_CMD|${cli} rollout restart ${ok}/${dn} -n ${crashPods[0].metadata.namespace}@@`); parts.push(""); } }
+        const nonOomCrash = crashPods.filter(p => { const dn = getDeployName(p); return dn && !oomRecDeployNames.has(dn); });
+        if (nonOomCrash.length > 0) { const dn = getDeployName(nonOomCrash[0]); const ok = dn ? getOwnerKind(nonOomCrash[0]) : "deployment"; if (dn) { parts.push(`${actionNum++}. Restart CrashLooping ${ok}`); parts.push(""); parts.push(`@@SEC_FIX_CMD|${cli} rollout restart ${ok}/${dn} -n ${nonOomCrash[0].metadata.namespace}@@`); parts.push(""); } }
         if (zeroDeploys.length > 0) { parts.push(`${actionNum++}. Restart Zero-Ready Deployment`); parts.push(""); parts.push(`@@SEC_FIX_CMD|${cli} rollout restart deployment/${zeroDeploys[0].metadata.name} -n ${zeroDeploys[0].metadata.namespace}@@`); parts.push(""); }
       }
 
@@ -4365,6 +4377,7 @@ EOF@@`);
       // Phase 13: Fix proposals — TARGET-SPECIFIC when pod named
       const fixProposals = [];
       const targetOwnerKind = targetPod ? getOwnerKind(targetPod) : "deployment";
+      const hasOomIssue = targetIssues.some(i => i.signal === "OOMKilled");
       if (targetName && targetPod && targetDeploy) {
         for (const issue of targetIssues) {
           if (issue.signal === "OOMKilled" || (logCritical && /Memory/i.test(logAnalysis?.errors?.[0]?.category || ""))) {
@@ -4372,7 +4385,7 @@ EOF@@`);
             const mem = smartMemoryLimit(targetPod, container);
             const restarts = (targetPod.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0);
             fixProposals.push({ title: `Increase memory for ${targetDeploy} → ${mem.limit}`, action: "set_resources", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} set resources ${targetOwnerKind}/${targetDeploy} -n ${targetPod.metadata.namespace} -c ${container} --limits=memory=${mem.limit}`, risk: "low", description: `[OOMKilled Recovery] Container '${container}' killed due to memory exhaustion (${restarts} restarts). ${mem.basis}. Rolling restart will apply new limits with zero downtime.` });
-          } else if (issue.signal === "CrashLoopBackOff" || issue.signal === "Failed") {
+          } else if ((issue.signal === "CrashLoopBackOff" || issue.signal === "Failed") && !hasOomIssue) {
             const restarts = (targetPod.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0);
             fixProposals.push({ title: `Restart ${targetOwnerKind} ${targetDeploy}`, action: "restart_deployment", resource: targetDeploy, namespace: targetPod.metadata.namespace, resourceType: targetOwnerKind, command: `${cli} rollout restart ${targetOwnerKind}/${targetDeploy} -n ${targetPod.metadata.namespace}`, risk: "low", description: `[${issue.signal} Recovery] Pod in crash loop with ${restarts} restarts. Rolling restart will create new pods while keeping existing ones running until replacement is ready.` });
           }
@@ -4383,8 +4396,11 @@ EOF@@`);
       } else if (targetName && targetPod && !targetDeploy) {
         fixProposals.push({ title: `Delete and recreate pod ${targetName}`, action: "restart_pod", resource: targetName, namespace: targetPod.metadata.namespace, resourceType: "pod", command: `${cli} delete pod ${targetName} -n ${targetPod.metadata.namespace}`, risk: "medium", description: `Delete standalone pod ${targetName} so it gets recreated by its controller (if any)` });
       } else {
-        crashPods.slice(0, 3).forEach(p => { const dn = getDeployName(p); const ok = dn ? getOwnerKind(p) : "deployment"; const restarts = (p.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0); if (dn) fixProposals.push({ title: `Restart ${ok} ${dn}`, action: "restart_deployment", resource: dn, namespace: p.metadata.namespace, resourceType: ok, command: `${cli} rollout restart ${ok}/${dn} -n ${p.metadata.namespace}`, risk: "low", description: `[CrashLoopBackOff Recovery] ${dn} in namespace ${p.metadata.namespace} — ${restarts} restarts detected. Rolling restart will create healthy replacement pods with zero downtime.` }); });
-        oomPods.slice(0, 3).forEach(p => { const cn = ((p.status?.containerStatuses || []).find(cs => cs.state?.terminated?.reason === "OOMKilled" || cs.lastState?.terminated?.reason === "OOMKilled"))?.name || (p.spec?.containers || [])[0]?.name || "main"; const dn = getDeployName(p) || p.metadata.name; const ok = getOwnerKind(p); const mem = smartMemoryLimit(p, cn); const restarts = (p.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0); fixProposals.push({ title: `Increase memory for ${dn} → ${mem.limit}`, action: "set_resources", resource: dn, namespace: p.metadata.namespace, resourceType: ok, command: `${cli} set resources ${ok}/${dn} -n ${p.metadata.namespace} -c ${cn} --limits=memory=${mem.limit}`, risk: "low", description: `[OOMKilled Recovery] Container '${cn}' in ${p.metadata.namespace} killed due to memory exhaustion (${restarts} restarts). ${mem.basis}. Rolling restart will apply new limits.` }); });
+        // OOM fixes first (memory increase) — these address the real root cause
+        const oomDeployNames = new Set();
+        oomPods.slice(0, 3).forEach(p => { const cn = ((p.status?.containerStatuses || []).find(cs => isOomContainer(cs)))?.name || (p.spec?.containers || [])[0]?.name || "main"; const dn = getDeployName(p) || p.metadata.name; const ok = getOwnerKind(p); const mem = smartMemoryLimit(p, cn); const restarts = (p.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0); oomDeployNames.add(dn); fixProposals.push({ title: `Increase memory for ${dn} → ${mem.limit}`, action: "set_resources", resource: dn, namespace: p.metadata.namespace, resourceType: ok, command: `${cli} set resources ${ok}/${dn} -n ${p.metadata.namespace} -c ${cn} --limits=memory=${mem.limit}`, risk: "low", description: `[OOMKilled Recovery] Container '${cn}' in ${p.metadata.namespace} killed due to memory exhaustion (${restarts} restarts). ${mem.basis}. Rolling restart will apply new limits.` }); });
+        // Crash restarts only for pods NOT already addressed by OOM fix
+        crashPods.filter(p => { const dn = getDeployName(p); return dn && !oomDeployNames.has(dn); }).slice(0, 3).forEach(p => { const dn = getDeployName(p); const ok = dn ? getOwnerKind(p) : "deployment"; const restarts = (p.status?.containerStatuses || []).reduce((s, c) => s + (c.restartCount || 0), 0); if (dn) fixProposals.push({ title: `Restart ${ok} ${dn}`, action: "restart_deployment", resource: dn, namespace: p.metadata.namespace, resourceType: ok, command: `${cli} rollout restart ${ok}/${dn} -n ${p.metadata.namespace}`, risk: "low", description: `[CrashLoopBackOff Recovery] ${dn} in namespace ${p.metadata.namespace} — ${restarts} restarts detected. Rolling restart will create healthy replacement pods with zero downtime.` }); });
         zeroDeploys.slice(0, 3).forEach(d => fixProposals.push({ title: `Restart deployment ${d.metadata.name}`, action: "restart_deployment", resource: d.metadata.name, namespace: d.metadata.namespace, resourceType: "deployment", command: `${cli} rollout restart deployment/${d.metadata.name} -n ${d.metadata.namespace}`, risk: "low", description: `[Zero-Ready Recovery] ${d.metadata.name} has 0/${d.spec?.replicas || 0} replicas ready. Rolling restart will recreate all pods.` }));
       }
 
