@@ -4628,10 +4628,26 @@ spec:
             const ns = meta.namespace || body.namespace || "";
             const resName = meta.name || body.resourceName || "";
             if (ns && resName) {
-              const podData = await ocpGet(`/api/v1/namespaces/${ns}/pods?labelSelector=app=${encodeURIComponent(resName)}&limit=10`).catch(() => ({ items: [] }));
+              const kindMatch = command.match(/\b(deployment|statefulset|daemonset|replicaset)\/([^\s]+)/i);
+              const resKind = kindMatch?.[1]?.toLowerCase() || "deployment";
+              let podItems = [];
+              try {
+                const wlBefore = await ocpGet(`/apis/apps/v1/namespaces/${ns}/${resKind}s/${resName}`);
+                const matchLabels = wlBefore.spec?.selector?.matchLabels || {};
+                const labelParts = Object.entries(matchLabels).map(([k, v]) => `${k}=${v}`);
+                if (labelParts.length > 0) {
+                  const podData = await ocpGet(`/api/v1/namespaces/${ns}/pods?labelSelector=${encodeURIComponent(labelParts.join(","))}&limit=10`);
+                  podItems = podData.items || [];
+                }
+              } catch {}
+              if (podItems.length === 0) {
+                try {
+                  const podData = await ocpGet(`/api/v1/namespaces/${ns}/pods?limit=50`);
+                  podItems = (podData.items || []).filter(p => p.metadata?.name?.startsWith(resName + "-"));
+                } catch {}
+              }
               const pm = await ocpGet(`/apis/metrics.k8s.io/v1beta1/namespaces/${ns}/pods`).catch(() => ({ items: [] }));
-              const targetPods = podData.items || [];
-              const pod = targetPods[0];
+              const pod = podItems[0];
               if (pod) {
                 const cs = (pod.status?.containerStatuses || [])[0];
                 const limits = (pod.spec?.containers || [])[0]?.resources?.limits || {};
@@ -4845,14 +4861,26 @@ spec:
               let specRequests = {};
               const kindMatch = command.match(/\b(deployment|statefulset|daemonset|replicaset)\/([^\s]+)/i);
               const resKind = kindMatch?.[1]?.toLowerCase() || "deployment";
+              let afterPodItems = [];
               try {
-                const wlData = await ocpGet(`/apis/apps/v1/namespaces/${aNs}/${resKind}s/${aResName}`);
-                specLimits = (wlData.spec?.template?.spec?.containers || [])[0]?.resources?.limits || {};
-                specRequests = (wlData.spec?.template?.spec?.containers || [])[0]?.resources?.requests || {};
+                const wlAfter = await ocpGet(`/apis/apps/v1/namespaces/${aNs}/${resKind}s/${aResName}`);
+                specLimits = (wlAfter.spec?.template?.spec?.containers || [])[0]?.resources?.limits || {};
+                specRequests = (wlAfter.spec?.template?.spec?.containers || [])[0]?.resources?.requests || {};
+                const matchLabels = wlAfter.spec?.selector?.matchLabels || {};
+                const labelParts = Object.entries(matchLabels).map(([k, v]) => `${k}=${v}`);
+                if (labelParts.length > 0) {
+                  const podData = await ocpGet(`/api/v1/namespaces/${aNs}/pods?labelSelector=${encodeURIComponent(labelParts.join(","))}&limit=10`);
+                  afterPodItems = podData.items || [];
+                }
               } catch {}
-              const podData = await ocpGet(`/api/v1/namespaces/${aNs}/pods?labelSelector=app=${encodeURIComponent(aResName)}&limit=10`).catch(() => ({ items: [] }));
+              if (afterPodItems.length === 0) {
+                try {
+                  const podData = await ocpGet(`/api/v1/namespaces/${aNs}/pods?limit=50`);
+                  afterPodItems = (podData.items || []).filter(p => p.metadata?.name?.startsWith(aResName + "-"));
+                } catch {}
+              }
               const pm = await ocpGet(`/apis/metrics.k8s.io/v1beta1/namespaces/${aNs}/pods`).catch(() => ({ items: [] }));
-              const runningPods = (podData.items || [])
+              const runningPods = afterPodItems
                 .filter(p => p.status?.phase === "Running" && (p.status?.containerStatuses || []).some(c => c.ready))
                 .sort((a, b) => new Date(b.metadata?.creationTimestamp || 0) - new Date(a.metadata?.creationTimestamp || 0));
               const pod = runningPods[0];
