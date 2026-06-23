@@ -4116,8 +4116,16 @@ h3.widget-title {
 /*  Application Change Watcher                                          */
 /* ══════════════════════════════════════════════════════════════════════ */
 .acw {
-  background: var(--card); border: 1px solid var(--border);
+  background: var(--card);
+  border: 2px solid rgba(99,102,241,.25);
   border-radius: 14px; padding: 20px; overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(99,102,241,.08), 0 4px 24px rgba(0,0,0,.12);
+  position: relative;
+}
+.acw::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6, #06b6d4);
+  border-radius: 14px 14px 0 0;
 }
 .acw-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -4559,6 +4567,98 @@ h3.widget-title {
 }
 .acw-ns-health-changes.high { color: var(--crit); }
 .acw-ns-health-clean { color: var(--ok); font-weight: 700; margin-left: auto; font-size: 10px; }
+
+/* AI Namespace Recommendations */
+.acw-ai-recs {
+  margin-bottom: 12px; padding: 10px 12px;
+  background: linear-gradient(135deg, rgba(139,92,246,.08), rgba(99,102,241,.06));
+  border: 1px solid rgba(139,92,246,.2); border-radius: 10px;
+}
+.acw-ai-recs-header {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 8px;
+}
+.acw-ai-recs-icon { font-size: 16px; }
+.acw-ai-recs-title {
+  font-size: 11px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: .5px; color: #a78bfa;
+}
+.acw-ai-recs-count {
+  font-size: 10px; color: var(--text2); margin-left: auto;
+}
+.acw-ai-recs-dismiss {
+  background: none; border: none; color: var(--text2); cursor: pointer;
+  font-size: 14px; padding: 0 2px; line-height: 1;
+}
+.acw-ai-recs-list { display: flex; flex-direction: column; gap: 6px; }
+.acw-ai-rec-item {
+  padding: 8px 10px; background: rgba(255,255,255,.03);
+  border: 1px solid rgba(139,92,246,.15); border-radius: 8px;
+  cursor: pointer; transition: all .15s;
+}
+.acw-ai-rec-item:hover {
+  background: rgba(139,92,246,.1); border-color: rgba(139,92,246,.4);
+  transform: translateX(2px);
+}
+.acw-ai-rec-name { font-size: 12px; font-weight: 700; color: var(--text); }
+.acw-ai-rec-reason { font-size: 10px; color: #a78bfa; margin-top: 2px; font-style: italic; }
+.acw-ai-rec-score {
+  height: 3px; background: rgba(139,92,246,.15); border-radius: 2px;
+  margin-top: 5px; overflow: hidden;
+}
+.acw-ai-rec-bar {
+  height: 100%; background: linear-gradient(90deg, #8b5cf6, #6366f1);
+  border-radius: 2px; transition: width .3s;
+}
+.acw-ai-recs-track-btn {
+  display: block; width: 100%; margin-top: 8px; padding: 6px;
+  font-size: 11px; font-weight: 700; text-align: center;
+  background: rgba(139,92,246,.12); color: #a78bfa;
+  border: 1px dashed rgba(139,92,246,.3); border-radius: 6px;
+  cursor: pointer; transition: all .15s;
+}
+.acw-ai-recs-track-btn:hover {
+  background: #8b5cf6; color: #fff; border-style: solid;
+}
+
+/* Namespace recommendation badge */
+.acw-ns-rec-badge {
+  font-size: 8px; font-weight: 800; padding: 1px 4px; border-radius: 3px;
+  background: linear-gradient(135deg, #8b5cf6, #6366f1);
+  color: #fff; letter-spacing: .3px; flex-shrink: 0;
+}
+.acw-ns-item.recommended { border-left: 2px solid #8b5cf6; }
+
+/* Inline AI Risk Explanation */
+.acw-ai-inline {
+  display: flex; gap: 5px; margin-top: 4px; padding: 4px 8px;
+  background: linear-gradient(90deg, rgba(139,92,246,.06), rgba(99,102,241,.04));
+  border-left: 2px solid #8b5cf6; border-radius: 0 4px 4px 0;
+  font-size: 10px; line-height: 1.4;
+}
+.acw-ai-inline-icon { flex-shrink: 0; font-size: 11px; }
+.acw-ai-inline-text { color: var(--text2); }
+
+/* Correlation Badge */
+.acw-corr-badge {
+  font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 8px;
+  background: rgba(6,182,212,.12); color: #06b6d4; white-space: nowrap;
+}
+
+/* Correlation Section (expanded) */
+.acw-corr-section { margin-top: 10px; }
+.acw-corr-title {
+  font-size: 10px; font-weight: 700; color: #06b6d4;
+  text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px;
+}
+.acw-corr-item {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; padding: 4px 8px; margin-bottom: 3px;
+  background: rgba(6,182,212,.05); border-radius: 4px;
+  border-left: 2px solid rgba(6,182,212,.3);
+}
+.acw-corr-resource { font-weight: 700; color: var(--text); }
+.acw-corr-ns { font-size: 10px; color: var(--text2); }
+.acw-corr-reason { font-size: 10px; color: #06b6d4; margin-left: auto; font-style: italic; }
 
 /* Clean state (no pending changes) */
 .acw-clean-state {
@@ -5260,6 +5360,11 @@ h3.widget-title {
 .light-theme .acw-ns-health-stat { background: rgba(0,0,0,.04); }
 .light-theme .acw-empty-state { background: rgba(99,102,241,.03); border-radius: 12px; }
 .light-theme .acw-change-kind-badge { background: rgba(99,102,241,.08); }
+.light-theme .acw { border-color: rgba(99,102,241,.2); box-shadow: 0 0 0 1px rgba(99,102,241,.06), 0 4px 20px rgba(0,0,0,.06); }
+.light-theme .acw-ai-recs { background: linear-gradient(135deg, rgba(139,92,246,.05), rgba(99,102,241,.03)); }
+.light-theme .acw-ai-rec-item { background: rgba(255,255,255,.6); }
+.light-theme .acw-ai-inline { background: linear-gradient(90deg, rgba(139,92,246,.04), rgba(99,102,241,.02)); }
+.light-theme .acw-corr-item { background: rgba(6,182,212,.04); }
 
 /* ════════════════════════════════════════════════════════
    Audit & Compliance Center

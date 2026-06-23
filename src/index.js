@@ -54,7 +54,7 @@ import { registerUpgradeAdvisorTools } from "./tools/upgrade-advisor.js";
 import { registerBenchmarkTools } from "./tools/benchmarks.js";
 import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
-import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, agreeChange, dismissChange, getWorkloadsByNamespace, initTrackedNamespaces, getChangeHistory, getLastScanTime, getLastChangeTime, getHealthStreak, analyzeChangeImpact, bulkAction, getWorkloadTimeline, scanConfigChanges } from "./tools/app-change-watcher.js";
+import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, agreeChange, dismissChange, getWorkloadsByNamespace, initTrackedNamespaces, getChangeHistory, getLastScanTime, getLastChangeTime, getHealthStreak, analyzeChangeImpact, bulkAction, getWorkloadTimeline, scanConfigChanges, scoreNamespaceRecommendations, generateRiskExplanation, detectChangeCorrelations } from "./tools/app-change-watcher.js";
 import { registerImageVulnScannerTools, runImageScan, getScanResults, getScanHistory, getComplianceCache, getImageAgeCache } from "./tools/image-vulnerability-scanner.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, handleUserManagement, getAuthMode, loadUserRoles, getUserRole, setUserRole, getAllUserRoles, checkPermission, getRoles, getUserNamespaces, canAccessNamespace, filterByNamespace, createUser, listUsers, changePassword } from "./services/auth.js";
 import { runRCA, runNamespaceRCA, getActiveInvestigations, getRCAHistory } from "./tools/rca-engine.js";
@@ -5723,6 +5723,17 @@ spec:
 
           const history = getChangeHistory(clusterName);
 
+          let nsRecommendations = null;
+          if (discoveredNamespaces) {
+            try {
+              nsRecommendations = scoreNamespaceRecommendations(
+                discoveredNamespaces, log, Object.keys(getBaselines(clusterName))
+              );
+            } catch {}
+          }
+
+          const correlations = detectChangeCorrelations(log);
+
           const namespaceHealth = {};
           for (const ns of namespaces) {
             try {
@@ -5767,6 +5778,8 @@ spec:
               changedBy: e.changedBy || null,
               changeFreezeViolation: e.changeFreezeViolation || false,
               correlatedEvents: (e.correlatedEvents || []).slice(0, 5),
+              aiExplanation: generateRiskExplanation(e),
+              correlatedWith: correlations[e.id] || [],
               changes: e.changes.map(c => ({ field: c.field, old: c.old, new: c.new, severity: c.severity })),
               rollbackPreview: e.baseline ? {
                 replicas: e.baseline.replicas,
@@ -5776,6 +5789,8 @@ spec:
             })),
             changeHistory: history.slice(0, 50),
             namespaceHealth,
+            nsRecommendations,
+            correlations,
           };
         };
 

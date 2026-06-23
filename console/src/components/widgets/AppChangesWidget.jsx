@@ -425,15 +425,17 @@ export function AppChangesWidget() {
   );
 }
 
-/* ── Namespace Manager ── */
+/* ── Namespace Manager with AI Recommendations ── */
 function NamespaceManager({ cluster, watched, onClose, onUpdate }) {
   const [allNs, setAllNs] = useState([]);
+  const [recommendations, setRecommendations] = useState([]);
   const [trackedNs, setTrackedNs] = useState([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [selectedAvail, setSelectedAvail] = useState(new Set());
   const [selectedTracked, setSelectedTracked] = useState(new Set());
   const [loading, setLoading] = useState(true);
+  const [showRecs, setShowRecs] = useState(true);
   const lastClickAvail = useRef(null);
   const lastClickTracked = useRef(null);
 
@@ -445,6 +447,7 @@ function NamespaceManager({ cluster, watched, onClose, onUpdate }) {
       const watchedSet = new Set(d.watchedNamespaces || watched || []);
       setAllNs(discovered);
       setTrackedNs([...watchedSet]);
+      if (d.nsRecommendations) setRecommendations(d.nsRecommendations);
     } catch {
       setAllNs([]);
       setTrackedNs([...watched]);
@@ -464,7 +467,10 @@ function NamespaceManager({ cluster, watched, onClose, onUpdate }) {
   const availableNs = allNs
     .filter((n) => !trackedSet.has(n.namespace))
     .filter((n) => !search || n.namespace.toLowerCase().includes(search.toLowerCase()))
-    .filter((n) => filter === "all" || (n.workloads || 0) > 0);
+    .filter((n) => filter === "all" || filter === "recommended" || (n.workloads || 0) > 0);
+
+  const recMap = Object.fromEntries(recommendations.filter(r => !trackedSet.has(r.namespace)).map(r => [r.namespace, r]));
+  const highRecs = recommendations.filter(r => r.recommendation === "high" && !trackedSet.has(r.namespace));
 
   const handleSelect = (ns, side, e) => {
     const setFn = side === "avail" ? setSelectedAvail : setSelectedTracked;
@@ -518,6 +524,7 @@ function NamespaceManager({ cluster, watched, onClose, onUpdate }) {
   const untrackSelected = () => transfer([...selectedTracked], "remove");
   const trackAll = () => transfer(availableNs.map((n) => n.namespace), "add");
   const removeAll = () => transfer([...trackedNs], "remove");
+  const trackRecommended = () => transfer(highRecs.map(r => r.namespace), "add");
 
   const handleDrop = (e, side) => {
     e.preventDefault();
@@ -563,6 +570,35 @@ function NamespaceManager({ cluster, watched, onClose, onUpdate }) {
           <button className="acw-ns-close" onClick={onClose}>&times;</button>
         </div>
       </div>
+
+      {/* AI Recommendations Banner */}
+      {highRecs.length > 0 && showRecs && (
+        <div className="acw-ai-recs">
+          <div className="acw-ai-recs-header">
+            <span className="acw-ai-recs-icon">{"\u{1F9E0}"}</span>
+            <span className="acw-ai-recs-title">AI Recommended</span>
+            <span className="acw-ai-recs-count">{highRecs.length} namespace{highRecs.length > 1 ? "s" : ""}</span>
+            <button className="acw-ai-recs-dismiss" onClick={() => setShowRecs(false)} title="Dismiss">{"×"}</button>
+          </div>
+          <div className="acw-ai-recs-list">
+            {highRecs.slice(0, 4).map(r => (
+              <div key={r.namespace} className="acw-ai-rec-item" onClick={() => transfer([r.namespace], "add")}>
+                <div className="acw-ai-rec-name">{r.namespace}</div>
+                <div className="acw-ai-rec-reason">{r.aiSummary}</div>
+                <div className="acw-ai-rec-score">
+                  <span className="acw-ai-rec-bar" style={{ width: `${r.score}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+          {highRecs.length > 1 && (
+            <button className="acw-ai-recs-track-btn" onClick={trackRecommended}>
+              {"\u{2795}"} Track All {highRecs.length} Recommended
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="acw-ns-search-row">
         <input
           className="acw-ns-search"
@@ -573,6 +609,7 @@ function NamespaceManager({ cluster, watched, onClose, onUpdate }) {
         <select className="acw-ns-filter" value={filter} onChange={(e) => setFilter(e.target.value)}>
           <option value="all">All</option>
           <option value="workloads">With Workloads</option>
+          <option value="recommended">AI Recommended</option>
         </select>
       </div>
       <div className="acw-ns-transfer">
@@ -588,27 +625,31 @@ function NamespaceManager({ cluster, watched, onClose, onUpdate }) {
             <span className="acw-ns-count">{availableNs.length}</span>
           </div>
           <div className="acw-ns-list">
-            {loading ? <div className="acw-ns-loading">Loading…</div> : availableNs.map((n) => (
-              <div
-                key={n.namespace}
-                className={"acw-ns-item" + (selectedAvail.has(n.namespace) ? " selected" : "")}
-                draggable
-                onClick={(e) => handleSelect(n.namespace, "avail", e)}
-                onDragStart={(e) => handleDragStart(e, n.namespace, "avail")}
-                onDoubleClick={() => quickTransfer(n.namespace, "avail")}
-              >
-                <span className="acw-ns-dot" />
-                <span className="acw-ns-name">{n.namespace}</span>
-                {n.breakdown && (
-                  <span className="acw-ns-badges">
-                    {n.breakdown.deployments > 0 && <span className="acw-wb dep">{n.breakdown.deployments} Dep</span>}
-                    {n.breakdown.statefulsets > 0 && <span className="acw-wb sts">{n.breakdown.statefulsets} Sts</span>}
-                    {n.breakdown.daemonsets > 0 && <span className="acw-wb ds">{n.breakdown.daemonsets} Ds</span>}
-                    {n.breakdown.pods > 0 && <span className="acw-wb po">{n.breakdown.pods} Po</span>}
-                  </span>
-                )}
-              </div>
-            ))}
+            {loading ? <div className="acw-ns-loading">Loading…</div> : availableNs.map((n) => {
+              const rec = recMap[n.namespace];
+              return (
+                <div
+                  key={n.namespace}
+                  className={"acw-ns-item" + (selectedAvail.has(n.namespace) ? " selected" : "") + (rec?.recommendation === "high" ? " recommended" : "")}
+                  draggable
+                  onClick={(e) => handleSelect(n.namespace, "avail", e)}
+                  onDragStart={(e) => handleDragStart(e, n.namespace, "avail")}
+                  onDoubleClick={() => quickTransfer(n.namespace, "avail")}
+                >
+                  <span className="acw-ns-dot" />
+                  <span className="acw-ns-name">{n.namespace}</span>
+                  {rec?.recommendation === "high" && <span className="acw-ns-rec-badge">AI</span>}
+                  {n.breakdown && (
+                    <span className="acw-ns-badges">
+                      {n.breakdown.deployments > 0 && <span className="acw-wb dep">{n.breakdown.deployments} Dep</span>}
+                      {n.breakdown.statefulsets > 0 && <span className="acw-wb sts">{n.breakdown.statefulsets} Sts</span>}
+                      {n.breakdown.daemonsets > 0 && <span className="acw-wb ds">{n.breakdown.daemonsets} Ds</span>}
+                      {n.breakdown.pods > 0 && <span className="acw-wb po">{n.breakdown.pods} Po</span>}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -742,7 +783,7 @@ function MiniDonut({ changeTypes, total }) {
   );
 }
 
-/* ── Change Card ── */
+/* ── Change Card with AI Intelligence ── */
 function ChangeCard({ change, expanded, onToggle, onAction, onDismissConfirm, cluster }) {
   const c = change;
   const typeInfo = CHANGE_ICONS[c.changeType] || CHANGE_ICONS.other;
@@ -750,6 +791,7 @@ function ChangeCard({ change, expanded, onToggle, onAction, onDismissConfirm, cl
   const [aiLoading, setAiLoading] = useState(false);
   const [timelineData, setTimelineData] = useState(null);
   const [showTimeline, setShowTimeline] = useState(false);
+  const correlated = c.correlatedWith || [];
 
   const handleAnalyze = async () => {
     setAiLoading(true);
@@ -791,6 +833,11 @@ function ChangeCard({ change, expanded, onToggle, onAction, onDismissConfirm, cl
                 RSK {c.riskScore}
               </span>
             )}
+            {correlated.length > 0 && (
+              <span className="acw-corr-badge" title={`${correlated.length} related change${correlated.length > 1 ? "s" : ""}`}>
+                {"\u{1F517}"} {correlated.length}
+              </span>
+            )}
           </div>
           <div className="acw-change-meta">
             {c.namespace} · {relTime(c.changedBy?.time || c.detectedAt)}
@@ -801,6 +848,13 @@ function ChangeCard({ change, expanded, onToggle, onAction, onDismissConfirm, cl
               </span>
             )}
           </div>
+          {/* Inline AI Risk Explanation — always visible */}
+          {c.aiExplanation && (
+            <div className="acw-ai-inline">
+              <span className="acw-ai-inline-icon">{"\u{1F9E0}"}</span>
+              <span className="acw-ai-inline-text">{c.aiExplanation}</span>
+            </div>
+          )}
         </div>
         {c.followUp && <span className="acw-followup" title="Follow-up change">↻</span>}
         {c.changeFreezeViolation && <span className="acw-freeze-badge" title="Off-hours change">⏰</span>}
@@ -809,6 +863,20 @@ function ChangeCard({ change, expanded, onToggle, onAction, onDismissConfirm, cl
 
       {expanded && (
         <div className="acw-change-detail">
+          {/* Change Correlation */}
+          {correlated.length > 0 && (
+            <div className="acw-corr-section">
+              <div className="acw-corr-title">{"\u{1F517}"} Related Changes ({correlated.length})</div>
+              {correlated.map((r, i) => (
+                <div key={i} className="acw-corr-item">
+                  <span className="acw-corr-resource">{r.kind}/{r.name}</span>
+                  <span className="acw-corr-ns">{r.namespace}</span>
+                  <span className="acw-corr-reason">{r.reason}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Field-level changes */}
           {(c.changes || []).length > 0 && (
             <div className="acw-diff-section">
@@ -838,12 +906,12 @@ function ChangeCard({ change, expanded, onToggle, onAction, onDismissConfirm, cl
             </div>
           )}
 
-          {/* AI Impact Analysis */}
+          {/* AI Deep Analysis (on-demand via LLM) */}
           <div className="acw-ai-section">
-            <div className="acw-ai-title"><span className="acw-ai-icon">{"🤖"}</span> AI Impact Analysis</div>
+            <div className="acw-ai-title"><span className="acw-ai-icon">{"\u{1F916}"}</span> AI Deep Analysis</div>
             {!aiAnalysis && (
               <button className="acw-ai-btn" onClick={handleAnalyze} disabled={aiLoading}>
-                {aiLoading ? "Analyzing..." : "Analyze Impact"}
+                {aiLoading ? "Analyzing..." : "Run Deep Analysis"}
               </button>
             )}
             {aiAnalysis && <div className="acw-ai-result">{aiAnalysis}</div>}

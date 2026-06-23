@@ -303,6 +303,157 @@ function getRiskLevel(score) {
   return "low";
 }
 
+export function scoreNamespaceRecommendations(discoveredNamespaces, changeLog, baselines) {
+  if (!discoveredNamespaces || discoveredNamespaces.length === 0) return [];
+
+  return discoveredNamespaces.map(ns => {
+    let score = 0;
+    const reasons = [];
+    const workloads = ns.count || (ns.breakdown ? (ns.breakdown.deployments || 0) + (ns.breakdown.statefulsets || 0) + (ns.breakdown.daemonsets || 0) : 0);
+
+    // High workload count = more value in tracking
+    if (workloads >= 10) { score += 30; reasons.push(`High workload density — ${workloads} workloads detected`); }
+    else if (workloads >= 5) { score += 20; reasons.push(`${workloads} active workloads`); }
+    else if (workloads >= 1) { score += 10; reasons.push(`${workloads} workload${workloads > 1 ? 's' : ''} running`); }
+
+    // Recent changes in changelog for this namespace
+    const nsChanges = (changeLog || []).filter(e => e.namespace === ns.ns || e.namespace === ns.namespace);
+    if (nsChanges.length >= 5) { score += 25; reasons.push(`High change velocity — ${nsChanges.length} recent changes`); }
+    else if (nsChanges.length >= 1) { score += 15; reasons.push(`${nsChanges.length} recent change${nsChanges.length > 1 ? 's' : ''} detected`); }
+
+    // Critical changes
+    const critChanges = nsChanges.filter(e => e.severity === 'critical' || e.riskLevel === 'critical');
+    if (critChanges.length > 0) { score += 20; reasons.push(`${critChanges.length} critical change${critChanges.length > 1 ? 's' : ''} — needs monitoring`); }
+
+    // Has pods (active workloads vs dormant)
+    if (ns.breakdown?.pods > 10) { score += 15; reasons.push(`${ns.breakdown.pods} running pods — customer-facing risk`); }
+    else if (ns.breakdown?.pods > 0) { score += 5; }
+
+    // Known application namespaces get a boost
+    const nsName = ns.ns || ns.namespace || '';
+    if (nsName.includes('prod') || nsName.includes('production')) { score += 20; reasons.push('Production namespace — critical monitoring required'); }
+    if (nsName.includes('staging') || nsName.includes('stage')) { score += 10; reasons.push('Staging namespace — pre-production validation'); }
+
+    // Penalty for system-ish namespaces
+    if (nsName.startsWith('openshift-') || nsName.startsWith('kube-')) { score -= 30; }
+
+    const recommendation = score >= 60 ? 'high' : score >= 30 ? 'medium' : 'low';
+
+    return {
+      namespace: ns.ns || ns.namespace,
+      workloads,
+      breakdown: ns.breakdown || {},
+      score: Math.max(0, Math.min(100, score)),
+      recommendation,
+      reasons: reasons.slice(0, 3),
+      aiSummary: reasons.length > 0 ? reasons[0] : 'Low activity namespace',
+    };
+  }).sort((a, b) => b.score - a.score);
+}
+
+export function generateRiskExplanation(change) {
+  const parts = [];
+  const c = change;
+
+  // Change type significance
+  if (c.changeType === 'image-update') {
+    const imgChange = (c.changes || []).find(ch => ch.field?.includes('/image'));
+    if (imgChange) {
+      parts.push(`Image updated${imgChange.old && imgChange.new ? ` from ${imgChange.old.split('/').pop()} to ${imgChange.new.split('/').pop()}` : ''}`);
+    } else {
+      parts.push('Container image changed');
+    }
+    parts.push('Image changes affect running workloads and may introduce breaking changes');
+  } else if (c.changeType === 'config-change') {
+    const fieldCount = (c.changes || []).length;
+    parts.push(`${fieldCount} configuration field${fieldCount !== 1 ? 's' : ''} modified`);
+    if (c.kind === 'Secret') parts.push('Secret changes may affect authentication or service connectivity');
+    else if (c.kind === 'ConfigMap') parts.push('ConfigMap changes propagate to mounted pods on next restart');
+  } else if (c.changeType === 'scale') {
+    const scaleChange = (c.changes || []).find(ch => ch.field === 'replicas');
+    if (scaleChange) {
+      const from = parseInt(scaleChange.old) || 0;
+      const to = parseInt(scaleChange.new) || 0;
+      if (to > from) parts.push(`Scaled up from ${from} to ${to} replicas — increased capacity`);
+      else if (to < from) parts.push(`Scaled down from ${from} to ${to} replicas — reduced capacity`);
+      if (to === 0) parts.push('WARNING: Workload scaled to zero — service will be unavailable');
+      else if (to < from && to === 1) parts.push('Single replica — no high availability');
+    }
+  } else if (c.changeType === 'resource-tune') {
+    parts.push('Resource limits/requests modified');
+    parts.push('May affect pod scheduling and quality-of-service class');
+  }
+
+  // Timing context
+  if (c.changeFreezeViolation) {
+    parts.push('Change made outside business hours — higher risk of unreviewed modification');
+  }
+
+  // Follow-up detection
+  if (c.followUp) {
+    parts.push(`Follow-up change (${c.followUpCount || 'multiple'} times) — previously dismissed change has reappeared`);
+  }
+
+  // Blast radius
+  const replicas = c.currentSpec?.replicas || c.blastRadius;
+  if (replicas && replicas > 5) {
+    parts.push(`Affects ${replicas} pod replicas across the service`);
+  }
+
+  // Risk level summary
+  const score = c.riskScore || 0;
+  if (score >= 80) parts.push('RECOMMENDATION: Review immediately before agreeing — high blast radius');
+  else if (score >= 55) parts.push('RECOMMENDATION: Verify change source and validate in staging');
+  else if (score >= 35) parts.push('RECOMMENDATION: Acknowledge and monitor for 15 minutes');
+  else parts.push('Low-risk change — safe to agree');
+
+  return parts.join('. ') + '.';
+}
+
+export function detectChangeCorrelations(changeLog) {
+  if (!changeLog || changeLog.length < 2) return {};
+  const correlations = {};
+  const TIME_WINDOW = 5 * 60 * 1000; // 5 minutes
+
+  for (let i = 0; i < changeLog.length; i++) {
+    const a = changeLog[i];
+    if (a.acknowledged) continue;
+    const related = [];
+
+    for (let j = 0; j < changeLog.length; j++) {
+      if (i === j) continue;
+      const b = changeLog[j];
+      if (b.acknowledged) continue;
+
+      const timeDiff = Math.abs(new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+      // Time proximity correlation
+      if (timeDiff <= TIME_WINDOW) {
+        let reason = '';
+        if (a.namespace === b.namespace) {
+          reason = `Same namespace, ${Math.round(timeDiff / 1000)}s apart`;
+        } else if (a.changeType === b.changeType) {
+          reason = `Same change type across ${a.namespace} and ${b.namespace}`;
+        } else {
+          reason = `Concurrent changes within ${Math.round(timeDiff / 60000)}m window`;
+        }
+        related.push({ id: b.id, kind: b.kind, name: b.name, namespace: b.namespace, changeType: b.changeType, reason });
+      }
+
+      // Same changedBy correlation
+      if (a.changedBy?.user && b.changedBy?.user && a.changedBy.user === b.changedBy.user && a.changedBy.user !== 'unknown') {
+        const existing = related.find(r => r.id === b.id);
+        if (existing) existing.reason += ` — same author (${a.changedBy.user})`;
+        else related.push({ id: b.id, kind: b.kind, name: b.name, namespace: b.namespace, changeType: b.changeType, reason: `Same author: ${a.changedBy.user}` });
+      }
+    }
+
+    if (related.length > 0) correlations[a.id] = related.slice(0, 5);
+  }
+
+  return correlations;
+}
+
 function isOutsideBusinessHours() {
   const now = new Date();
   const hour = now.getUTCHours();
