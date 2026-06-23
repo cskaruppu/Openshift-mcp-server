@@ -4342,28 +4342,33 @@ h3.widget-title {
 .acw-ai-result strong { color: var(--accent2); }
 
 /* ── Dismiss Confirmation ── */
-.acw-confirm-overlay {
-  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,.5); z-index: 200;
-  display: flex; align-items: center; justify-content: center;
+/* ── Action Feedback Notification ── */
+.acw-action-feedback {
+  display: flex; align-items: flex-start; gap: 10px;
+  background: linear-gradient(135deg, rgba(239,68,68,.08), rgba(239,68,68,.03));
+  border: 1px solid rgba(239,68,68,.25);
+  border-radius: 10px; padding: 12px 14px; margin-top: 10px;
+  position: relative; overflow: hidden; cursor: pointer;
+  animation: acw-feedback-in .3s ease-out;
 }
-.acw-confirm-dialog {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 12px; padding: 20px 24px; max-width: 400px; width: 90%;
-  box-shadow: 0 8px 32px rgba(0,0,0,.3);
+@keyframes acw-feedback-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
-.acw-confirm-title { font-size: 15px; font-weight: 700; color: var(--crit); margin-bottom: 8px; }
-.acw-confirm-msg { font-size: 13px; color: var(--text2); line-height: 1.5; margin-bottom: 16px; }
-.acw-confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
-.acw-confirm-cancel {
-  padding: 6px 16px; border-radius: 8px; font-size: 12px; font-weight: 600;
-  border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;
+.acw-feedback-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+.acw-feedback-body { flex: 1; min-width: 0; }
+.acw-feedback-title { font-size: 12px; font-weight: 700; color: #ef4444; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 3px; }
+.acw-feedback-detail { font-size: 12px; color: var(--text); line-height: 1.4; }
+.acw-feedback-preview { font-size: 11px; color: var(--text2); margin-top: 4px; font-family: "SF Mono", "Fira Code", monospace; }
+.acw-feedback-progress {
+  position: absolute; bottom: 0; left: 0; height: 2px;
+  background: #ef4444;
+  animation: acw-feedback-shrink 4s linear forwards;
 }
-.acw-confirm-proceed {
-  padding: 6px 16px; border-radius: 8px; font-size: 12px; font-weight: 600;
-  border: none; background: #ef4444; color: #fff; cursor: pointer;
+@keyframes acw-feedback-shrink {
+  from { width: 100%; }
+  to { width: 0%; }
 }
-.acw-confirm-proceed:hover { background: #dc2626; }
 
 /* ── Workload Timeline ── */
 .acw-timeline-section { margin-top: 10px; }

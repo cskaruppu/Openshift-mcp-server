@@ -5919,14 +5919,18 @@ spec:
           sendJson(res, 400, { found: false, error: "Missing changeId or action" });
           return;
         }
-        const result = await withClusterContext(url, async () => {
-          if (action === "dismiss") return await dismissChange(changeId, _acCluster);
-          if (action === "agree") return await agreeChange(changeId, _acCluster);
-          if (action === "acknowledge") return await acknowledgeChange(changeId, _acCluster);
-          return { found: false, error: "Unknown action. Use: agree, dismiss, acknowledge" };
-        });
+        let result;
+        if (action === "agree") {
+          result = await agreeChange(changeId, _acCluster);
+        } else if (action === "acknowledge") {
+          result = await acknowledgeChange(changeId, _acCluster);
+        } else if (action === "dismiss") {
+          result = await dismissChange(changeId, _acCluster);
+        } else {
+          result = { found: false, error: "Unknown action. Use: agree, dismiss, acknowledge" };
+        }
         if (!result || !result.found) {
-          sendJson(res, 404, result || { found: false, error: "Change not found or agent offline" });
+          sendJson(res, 404, result || { found: false, error: "Change not found" });
         } else if (result.error) {
           sendJson(res, 500, result);
         } else {

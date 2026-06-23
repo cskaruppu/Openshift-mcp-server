@@ -716,8 +716,8 @@ export async function acknowledgeChange(changeId, cluster) {
   recordHistory(entry, "acknowledged", cluster);
   const idx = s.changeLog.indexOf(entry);
   if (idx >= 0) s.changeLog.splice(idx, 1);
-  if (!cluster || cluster === "local") await persistWatcherState().catch(e => console.error("[watcher] persist error:", e.message));
-  return { found: true, id: changeId, action: "acknowledged", resolved: true, message: `Acknowledged ${entry.kind}/${entry.name}` };
+  await persistWatcherState().catch(e => console.error("[watcher] persist error:", e.message));
+  return { found: true, id: changeId, action: "acknowledged", resolved: true, message: `Acknowledged ${entry.kind}/${entry.name} — cleared from queue` };
 }
 
 export async function agreeChange(changeId, cluster) {
@@ -730,7 +730,7 @@ export async function agreeChange(changeId, cluster) {
   if (entry.currentSpec) s.baselines.set(key, entry.currentSpec);
   const idx = s.changeLog.indexOf(entry);
   if (idx >= 0) s.changeLog.splice(idx, 1);
-  if (!cluster || cluster === "local") await persistWatcherState().catch(e => console.error("[watcher] persist error:", e.message));
+  await persistWatcherState().catch(e => console.error("[watcher] persist error:", e.message));
   return { found: true, id: changeId, action: "agreed", resolved: true, message: `Agreed to ${entry.kind}/${entry.name} — baseline updated` };
 }
 
@@ -759,11 +759,14 @@ export async function dismissChange(changeId, cluster) {
     patch.spec.template.spec.containers.push(container);
   }
 
+  let rolledBack = false;
+  let rollbackError = null;
   try {
     await ocpPatch(apiPath, patch, "application/strategic-merge-patch+json");
+    rolledBack = true;
   } catch (patchErr) {
     console.error(`[watcher] dismiss rollback failed for ${entry.kind}/${entry.name}:`, patchErr.message);
-    return { found: true, id: changeId, action: "dismiss", resolved: false, error: `Rollback failed: ${patchErr.message}` };
+    rollbackError = patchErr.message;
   }
 
   const key = workloadKey(entry.namespace, entry.kind, entry.name);
@@ -772,8 +775,11 @@ export async function dismissChange(changeId, cluster) {
   recordHistory(entry, "dismissed", cluster);
   const idx = s.changeLog.indexOf(entry);
   if (idx >= 0) s.changeLog.splice(idx, 1);
-  if (!cluster || cluster === "local") await persistWatcherState().catch(e => console.error("[watcher] persist error:", e.message));
-  return { found: true, id: changeId, action: "dismissed", rolledBack: true, resolved: true, message: `Rolled back ${entry.kind}/${entry.name} to baseline` };
+  await persistWatcherState().catch(e => console.error("[watcher] persist error:", e.message));
+  const msg = rolledBack
+    ? `Rolled back ${entry.kind}/${entry.name} to baseline`
+    : `Dismissed ${entry.kind}/${entry.name} — rollback attempted (${rollbackError})`;
+  return { found: true, id: changeId, action: "dismissed", rolledBack, resolved: true, message: msg };
 }
 
 export async function analyzeChangeImpact(changeId, cluster) {

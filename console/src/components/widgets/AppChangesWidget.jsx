@@ -39,9 +39,10 @@ export function AppChangesWidget() {
   const [workloadsOpen, setWorkloadsOpen] = useState(false);
   const [filterType, setFilterType] = useState("all");
   const [filterRisk, setFilterRisk] = useState("all");
-  const [confirmDismiss, setConfirmDismiss] = useState(null);
   const [bulkRunning, setBulkRunning] = useState(false);
   const [optimisticNs, setOptimisticNs] = useState(null);
+  const [removedIds, setRemovedIds] = useState(new Set());
+  const [actionFeedback, setActionFeedback] = useState(null);
 
   const unavailable = data && data.available === false;
   const total = data?.totalChanges ?? 0;
@@ -89,7 +90,30 @@ export function AppChangesWidget() {
     }
   };
 
-  const handleAction = async (changeId, action) => {
+  const handleAction = async (changeId, action, changeInfo) => {
+    setRemovedIds(prev => { const next = new Set(prev); next.add(changeId); return next; });
+    if (expandedChange === changeId) setExpandedChange(null);
+
+    const labels = {
+      agree: { verb: "Agreed", detail: changeInfo ? `${changeInfo.kind}/${changeInfo.name} — baseline updated to current state` : "Change accepted" },
+      dismiss: { verb: "Rolling back", detail: changeInfo ? `${changeInfo.kind}/${changeInfo.name} — reverting to previous baseline` : "Rollback initiated" },
+      acknowledge: { verb: "Acknowledged", detail: changeInfo ? `${changeInfo.kind}/${changeInfo.name} — cleared from queue` : "Change cleared" },
+    };
+    const label = labels[action] || { verb: action, detail: "" };
+
+    if (action === "dismiss" && changeInfo) {
+      setActionFeedback({
+        action: "dismiss",
+        kind: changeInfo.kind,
+        name: changeInfo.name,
+        namespace: changeInfo.namespace,
+        rollbackPreview: changeInfo.rollbackPreview,
+      });
+      setTimeout(() => setActionFeedback(null), 4000);
+    }
+
+    showToast(`${label.verb}: ${label.detail}`, "ok");
+
     try {
       const res = await fetch(clusterUrl("/api/dashboard/app-changes/action", cluster), {
         method: "POST",
@@ -98,18 +122,28 @@ export function AppChangesWidget() {
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok || d.error) {
-        showToast(d.error || `${action} failed (HTTP ${res.status})`, "err");
-      } else {
-        showToast(d.message || `Change ${action}d successfully`, "ok");
+        showToast(d.error || `${action} failed — restoring card`, "err");
+        setRemovedIds(prev => { const next = new Set(prev); next.delete(changeId); return next; });
       }
       refetch();
     } catch (err) {
-      showToast("Action failed: " + err.message, "err");
+      showToast(`Action failed: ${err.message} — restoring card`, "err");
+      setRemovedIds(prev => { const next = new Set(prev); next.delete(changeId); return next; });
     }
   };
 
+  useEffect(() => {
+    if (removedIds.size === 0) return;
+    const serverIds = new Set((data?.recentChanges || []).map(c => c.id));
+    const stillRelevant = new Set([...removedIds].filter(id => serverIds.has(id)));
+    if (stillRelevant.size < removedIds.size) setRemovedIds(stillRelevant);
+  }, [data, removedIds]);
+
   const handleBulkAction = async (action) => {
     setBulkRunning(true);
+    const affectedIds = filteredChanges.map(c => c.id);
+    setRemovedIds(prev => { const next = new Set(prev); for (const id of affectedIds) next.add(id); return next; });
+    showToast(`Bulk ${action}: ${affectedIds.length} changes processing...`, "ok");
     try {
       const filter = {};
       if (filterType !== "all") filter.changeType = filterType;
@@ -120,22 +154,23 @@ export function AppChangesWidget() {
         body: JSON.stringify({ action, filter }),
       });
       const d = await res.json().catch(() => ({}));
-      showToast(d.message || `Bulk ${action} complete`, res.ok ? "ok" : "err");
+      if (!res.ok || d.error) {
+        showToast(d.message || `Bulk ${action} failed`, "err");
+        setRemovedIds(new Set());
+      } else {
+        showToast(d.message || `Bulk ${action}: ${affectedIds.length} changes resolved`, "ok");
+      }
       refetch();
     } catch (err) {
       showToast("Bulk action failed: " + err.message, "err");
+      setRemovedIds(new Set());
     } finally {
       setBulkRunning(false);
     }
   };
 
-  const handleDismissConfirm = async () => {
-    if (!confirmDismiss) return;
-    await handleAction(confirmDismiss.id, "dismiss");
-    setConfirmDismiss(null);
-  };
-
   const filteredChanges = (data?.recentChanges || []).filter(c => {
+    if (removedIds.has(c.id)) return false;
     if (filterType !== "all" && c.changeType !== filterType) return false;
     if (filterRisk !== "all" && c.riskLevel !== filterRisk) return false;
     return true;
@@ -313,7 +348,7 @@ export function AppChangesWidget() {
           )}
 
           {/* Changes List */}
-          {changes.length > 0 && (
+          {filteredChanges.length > 0 && (
             <div className="acw-changes">
               <div className="acw-changes-title">Pending Changes</div>
 
@@ -355,7 +390,6 @@ export function AppChangesWidget() {
                       expanded={expandedChange === c.id}
                       onToggle={() => setExpandedChange(expandedChange === c.id ? null : c.id)}
                       onAction={handleAction}
-                      onDismissConfirm={setConfirmDismiss}
                       cluster={cluster}
                     />
                   ))}
@@ -365,7 +399,7 @@ export function AppChangesWidget() {
           )}
 
           {/* No changes — clean state */}
-          {changes.length === 0 && (
+          {filteredChanges.length === 0 && (
             <div className="acw-clean-state">
               <span className="acw-clean-icon">{"✅"}</span>
               <span className="acw-clean-text">No pending changes detected across {effectiveWatched.length} tracked namespace{effectiveWatched.length > 1 ? "s" : ""}</span>
@@ -406,19 +440,25 @@ export function AppChangesWidget() {
         </>
       )}
 
-      {/* Dismiss Confirmation */}
-      {confirmDismiss && (
-        <div className="acw-confirm-overlay" onClick={() => setConfirmDismiss(null)}>
-          <div className="acw-confirm-dialog" onClick={e => e.stopPropagation()}>
-            <div className="acw-confirm-title">Confirm Rollback</div>
-            <div className="acw-confirm-msg">
-              This will roll back <strong>{confirmDismiss.kind}/{confirmDismiss.name}</strong> in <strong>{confirmDismiss.namespace}</strong> to its previous baseline state. This action modifies the live cluster.
+      {/* Action Feedback — rollback details slide-in */}
+      {actionFeedback && actionFeedback.action === "dismiss" && (
+        <div className="acw-action-feedback" onClick={() => setActionFeedback(null)}>
+          <div className="acw-feedback-icon">{"↩️"}</div>
+          <div className="acw-feedback-body">
+            <div className="acw-feedback-title">Rollback Initiated</div>
+            <div className="acw-feedback-detail">
+              <strong>{actionFeedback.kind}/{actionFeedback.name}</strong> in <strong>{actionFeedback.namespace}</strong> is reverting to baseline
             </div>
-            <div className="acw-confirm-actions">
-              <button className="acw-confirm-cancel" onClick={() => setConfirmDismiss(null)}>Cancel</button>
-              <button className="acw-confirm-proceed" onClick={handleDismissConfirm}>Rollback</button>
-            </div>
+            {actionFeedback.rollbackPreview && (
+              <div className="acw-feedback-preview">
+                Replicas: {actionFeedback.rollbackPreview.replicas}
+                {(actionFeedback.rollbackPreview.containers || []).map((ct, i) => (
+                  <span key={i}> · {ct.name}: {ct.image}</span>
+                ))}
+              </div>
+            )}
           </div>
+          <div className="acw-feedback-progress" />
         </div>
       )}
     </div>
@@ -784,7 +824,7 @@ function MiniDonut({ changeTypes, total }) {
 }
 
 /* ── Change Card with AI Intelligence ── */
-function ChangeCard({ change, expanded, onToggle, onAction, onDismissConfirm, cluster }) {
+function ChangeCard({ change, expanded, onToggle, onAction, cluster }) {
   const c = change;
   const typeInfo = CHANGE_ICONS[c.changeType] || CHANGE_ICONS.other;
   const [aiAnalysis, setAiAnalysis] = useState(null);
@@ -964,13 +1004,13 @@ function ChangeCard({ change, expanded, onToggle, onAction, onDismissConfirm, cl
 
           {/* Action Buttons */}
           <div className="acw-action-row">
-            <button className="acw-action-btn agree" onClick={() => onAction(c.id, "agree")}>
+            <button className="acw-action-btn agree" onClick={() => onAction(c.id, "agree", { kind: c.kind, name: c.name, namespace: c.namespace })}>
               {"✓"} Agree
             </button>
-            <button className="acw-action-btn dismiss" onClick={() => onDismissConfirm({ id: c.id, kind: c.kind, name: c.name, namespace: c.namespace })}>
+            <button className="acw-action-btn dismiss" onClick={() => onAction(c.id, "dismiss", { kind: c.kind, name: c.name, namespace: c.namespace, rollbackPreview: c.rollbackPreview })}>
               {"✗"} Dismiss
             </button>
-            <button className="acw-action-btn ack" onClick={() => onAction(c.id, "acknowledge")}>
+            <button className="acw-action-btn ack" onClick={() => onAction(c.id, "acknowledge", { kind: c.kind, name: c.name, namespace: c.namespace })}>
               Ack
             </button>
           </div>
