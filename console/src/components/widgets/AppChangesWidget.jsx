@@ -41,18 +41,35 @@ export function AppChangesWidget() {
   const [filterRisk, setFilterRisk] = useState("all");
   const [confirmDismiss, setConfirmDismiss] = useState(null);
   const [bulkRunning, setBulkRunning] = useState(false);
+  const [optimisticNs, setOptimisticNs] = useState(null);
 
   const unavailable = data && data.available === false;
   const total = data?.totalChanges ?? 0;
   const critical = data?.critical ?? 0;
   const warning = data?.warning ?? 0;
   const watched = data?.watchedNamespaces || [];
+  const effectiveWatched = optimisticNs || watched;
   const tracked = data?.trackedWorkloads ?? 0;
   const changes = data?.recentChanges || [];
   const changeTypes = data?.changeTypeBreakdown || {};
   const timeline = data?.timelineStats || {};
   const history = data?.changeHistory || [];
   const gitops = data?.gitopsDrift || {};
+
+  useEffect(() => {
+    if (optimisticNs && watched.length > 0) setOptimisticNs(null);
+  }, [watched, optimisticNs]);
+
+  const handleNsUpdate = useCallback((trackedList) => {
+    if (trackedList && trackedList.length > 0) setOptimisticNs(trackedList);
+    else if (trackedList && trackedList.length === 0) setOptimisticNs(null);
+    refetch();
+  }, [refetch]);
+
+  const handlePanelClose = useCallback(() => {
+    setNsPanelOpen(false);
+    refetch();
+  }, [refetch]);
 
   const handleScan = async () => {
     setScanning(true);
@@ -147,7 +164,7 @@ export function AppChangesWidget() {
     );
   }
 
-  const hasNamespaces = watched.length > 0;
+  const hasNamespaces = effectiveWatched.length > 0;
   const nsHealth = data?.namespaceHealth || {};
 
   const groupedChanges = (() => {
@@ -185,7 +202,7 @@ export function AppChangesWidget() {
             className={"acw-ns-btn" + (hasNamespaces ? "" : " empty")}
             onClick={() => setNsPanelOpen(!nsPanelOpen)}
           >
-            {hasNamespaces ? `${watched.length} Namespace${watched.length > 1 ? "s" : ""}` : "Select Namespaces"}
+            {hasNamespaces ? `${effectiveWatched.length} Namespace${effectiveWatched.length > 1 ? "s" : ""}` : "Select Namespaces"}
           </button>
         </div>
       </div>
@@ -194,9 +211,9 @@ export function AppChangesWidget() {
       {nsPanelOpen && (
         <NamespaceManager
           cluster={cluster}
-          watched={watched}
-          onClose={() => setNsPanelOpen(false)}
-          onUpdate={refetch}
+          watched={effectiveWatched}
+          onClose={handlePanelClose}
+          onUpdate={handleNsUpdate}
         />
       )}
 
@@ -255,7 +272,7 @@ export function AppChangesWidget() {
               </svg>
               <div className="acw-ring-label">
                 <div className="acw-ring-title">Tracked Workloads</div>
-                <div className="acw-ring-sub">{watched.join(", ") || "none"}</div>
+                <div className="acw-ring-sub">{effectiveWatched.join(", ") || "none"}</div>
               </div>
             </div>
             <div className="acw-changes-count">
@@ -347,7 +364,7 @@ export function AppChangesWidget() {
           {changes.length === 0 && (
             <div className="acw-clean-state">
               <span className="acw-clean-icon">{"✅"}</span>
-              <span className="acw-clean-text">No pending changes detected across {watched.length} tracked namespace{watched.length > 1 ? "s" : ""}</span>
+              <span className="acw-clean-text">No pending changes detected across {effectiveWatched.length} tracked namespace{effectiveWatched.length > 1 ? "s" : ""}</span>
             </div>
           )}
 
@@ -482,8 +499,12 @@ function NamespaceManager({ cluster, watched, onClose, onUpdate }) {
       showToast(`${namespaces.length} namespace(s) ${action === "add" ? "tracked" : "removed"}`, "ok");
       setSelectedAvail(new Set());
       setSelectedTracked(new Set());
+      const newTracked = action === "add"
+        ? [...new Set([...trackedNs, ...namespaces])]
+        : trackedNs.filter(ns => !namespaces.includes(ns));
+      setTrackedNs(newTracked);
+      onUpdate(newTracked);
       loadData();
-      onUpdate();
     } catch (err) {
       showToast("Transfer failed: " + err.message, "err");
     }
