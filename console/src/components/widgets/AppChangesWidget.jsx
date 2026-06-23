@@ -48,7 +48,7 @@ export function AppChangesWidget() {
   const critical = data?.critical ?? 0;
   const warning = data?.warning ?? 0;
   const watched = data?.watchedNamespaces || [];
-  const effectiveWatched = optimisticNs || watched;
+  const effectiveWatched = optimisticNs !== null ? optimisticNs : watched;
   const tracked = data?.trackedWorkloads ?? 0;
   const changes = data?.recentChanges || [];
   const changeTypes = data?.changeTypeBreakdown || {};
@@ -57,12 +57,16 @@ export function AppChangesWidget() {
   const gitops = data?.gitopsDrift || {};
 
   useEffect(() => {
-    if (optimisticNs && watched.length > 0) setOptimisticNs(null);
+    if (optimisticNs === null) return;
+    const serverSet = new Set(watched);
+    const optSet = new Set(optimisticNs);
+    if (serverSet.size === optSet.size && [...optSet].every(ns => serverSet.has(ns))) {
+      setOptimisticNs(null);
+    }
   }, [watched, optimisticNs]);
 
   const handleNsUpdate = useCallback((trackedList) => {
-    if (trackedList && trackedList.length > 0) setOptimisticNs(trackedList);
-    else if (trackedList && trackedList.length === 0) setOptimisticNs(null);
+    if (Array.isArray(trackedList)) setOptimisticNs(trackedList);
     refetch();
   }, [refetch]);
 
