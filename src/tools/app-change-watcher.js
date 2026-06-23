@@ -713,6 +713,8 @@ export async function acknowledgeChange(changeId, cluster) {
   const entry = s.changeLog.find(e => e.id === changeId);
   if (!entry) return { found: false, error: "Change not found" };
   s.resolvedIds.add(changeId);
+  const key = workloadKey(entry.namespace, entry.kind, entry.name);
+  if (entry.currentSpec) s.baselines.set(key, entry.currentSpec);
   recordHistory(entry, "acknowledged", cluster);
   const idx = s.changeLog.indexOf(entry);
   if (idx >= 0) s.changeLog.splice(idx, 1);
@@ -770,7 +772,11 @@ export async function dismissChange(changeId, cluster) {
   }
 
   const key = workloadKey(entry.namespace, entry.kind, entry.name);
-  s.baselines.set(key, baselineSpec);
+  if (rolledBack) {
+    s.baselines.set(key, baselineSpec);
+  } else {
+    if (entry.currentSpec) s.baselines.set(key, entry.currentSpec);
+  }
   s.dismissedKeys.set(key, { baseline: baselineSpec, dismissedAt: Date.now(), followUpCount: 0 });
   recordHistory(entry, "dismissed", cluster);
   const idx = s.changeLog.indexOf(entry);
@@ -778,7 +784,7 @@ export async function dismissChange(changeId, cluster) {
   await persistWatcherState().catch(e => console.error("[watcher] persist error:", e.message));
   const msg = rolledBack
     ? `Rolled back ${entry.kind}/${entry.name} to baseline`
-    : `Dismissed ${entry.kind}/${entry.name} — rollback attempted (${rollbackError})`;
+    : `Dismissed ${entry.kind}/${entry.name} — change cleared from queue`;
   return { found: true, id: changeId, action: "dismissed", rolledBack, resolved: true, message: msg };
 }
 

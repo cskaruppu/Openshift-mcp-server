@@ -5673,14 +5673,6 @@ spec:
           let discoveredNamespaces = null;
           try { discoveredNamespaces = await discoverAppNamespaces(); } catch {}
 
-          let newChangesCount = 0;
-          try {
-            const changes = await scanForChanges(clusterName);
-            newChangesCount = changes.length;
-          } catch (e) { console.warn("[app-changes] scanForChanges failed:", e.message); }
-
-          try { await scanConfigChanges(clusterName); } catch (e) { console.warn("[app-changes] scanConfigChanges failed:", e.message); }
-
           const log = getChangeLog(clusterName);
           const filtered = ns ? log.filter(e => e.namespace === ns) : log;
           const totalChanges = filtered.length;
@@ -5762,7 +5754,7 @@ spec:
           return {
             watchedNamespaces: namespaces,
             trackedWorkloads: baselines,
-            newChanges: newChangesCount,
+            newChanges: filtered.filter(e => !e.acknowledged).length,
             totalChanges, critical, warning, info,
             lastScanTime: getLastScanTime(clusterName),
             lastChangeTime: getLastChangeTime(clusterName),
