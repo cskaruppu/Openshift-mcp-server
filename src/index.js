@@ -5668,17 +5668,20 @@ spec:
       try {
         const handler = async () => {
           const ns = url.searchParams.get("namespace") || undefined;
-          let namespaces = getWatchedNamespaces(clusterName);
+          const namespaces = getWatchedNamespaces(clusterName);
 
           let discoveredNamespaces = null;
-          try {
-            discoveredNamespaces = await discoverAppNamespaces();
-          } catch {};
+          try { discoveredNamespaces = await discoverAppNamespaces(); } catch {}
 
-          const changes = await scanForChanges(clusterName);
-          const configChanges = await scanConfigChanges(clusterName);
+          let newChangesCount = 0;
+          try {
+            const changes = await scanForChanges(clusterName);
+            newChangesCount = changes.length;
+          } catch (e) { console.warn("[app-changes] scanForChanges failed:", e.message); }
+
+          try { await scanConfigChanges(clusterName); } catch (e) { console.warn("[app-changes] scanConfigChanges failed:", e.message); }
+
           const log = getChangeLog(clusterName);
-          namespaces = getWatchedNamespaces(clusterName);
           const filtered = ns ? log.filter(e => e.namespace === ns) : log;
           const totalChanges = filtered.length;
           const critical = filtered.filter(e => e.severity === "critical").length;
@@ -5732,33 +5735,34 @@ spec:
             } catch {}
           }
 
-          const correlations = detectChangeCorrelations(log);
+          let correlations = {};
+          try { correlations = detectChangeCorrelations(log); } catch {}
 
           const namespaceHealth = {};
-          for (const ns of namespaces) {
+          for (const nsItem of namespaces) {
             try {
               const [deps, sts, pods] = await Promise.allSettled([
-                ocpGet(`/apis/apps/v1/namespaces/${ns}/deployments`),
-                ocpGet(`/apis/apps/v1/namespaces/${ns}/statefulsets`),
-                ocpGet(`/api/v1/namespaces/${ns}/pods`),
+                ocpGet(`/apis/apps/v1/namespaces/${nsItem}/deployments`),
+                ocpGet(`/apis/apps/v1/namespaces/${nsItem}/statefulsets`),
+                ocpGet(`/api/v1/namespaces/${nsItem}/pods`),
               ]);
               const depCount = deps.status === "fulfilled" ? (deps.value.items || []).length : 0;
               const stsCount = sts.status === "fulfilled" ? (sts.value.items || []).length : 0;
               const podList = pods.status === "fulfilled" ? (pods.value.items || []) : [];
               const podCount = podList.length;
               const runningPods = podList.filter(p => p.status?.phase === "Running").length;
-              const nsChanges = filtered.filter(e => e.namespace === ns);
+              const nsChanges = filtered.filter(e => e.namespace === nsItem);
               const nsCrit = nsChanges.filter(e => e.riskLevel === "critical" || e.riskLevel === "high").length;
-              namespaceHealth[ns] = { deployments: depCount, statefulsets: stsCount, pods: podCount, runningPods, changes: nsChanges.length, highRiskChanges: nsCrit };
+              namespaceHealth[nsItem] = { deployments: depCount, statefulsets: stsCount, pods: podCount, runningPods, changes: nsChanges.length, highRiskChanges: nsCrit };
             } catch {
-              namespaceHealth[ns] = { deployments: 0, statefulsets: 0, pods: 0, runningPods: 0, changes: 0, highRiskChanges: 0 };
+              namespaceHealth[nsItem] = { deployments: 0, statefulsets: 0, pods: 0, runningPods: 0, changes: 0, highRiskChanges: 0 };
             }
           }
 
           return {
             watchedNamespaces: namespaces,
             trackedWorkloads: baselines,
-            newChanges: changes.length,
+            newChanges: newChangesCount,
             totalChanges, critical, warning, info,
             lastScanTime: getLastScanTime(clusterName),
             lastChangeTime: getLastChangeTime(clusterName),
@@ -5798,12 +5802,12 @@ spec:
         if (result === null) {
           const cached = getAgentCachedResponse(clusterName, "/api/dashboard/app-changes", { skipFreshnessCheck: true });
           if (cached) return sendJson(res, 200, cached);
-          // Return empty state so the widget shows setup UI instead of "unavailable"
-          return sendJson(res, 200, { watchedNamespaces: [], trackedWorkloads: 0, newChanges: 0, totalChanges: 0, critical: 0, warning: 0, info: 0, recentChanges: [], discoveredNamespaces: null, changeHistory: [] });
+          return sendJson(res, 200, { watchedNamespaces: getWatchedNamespaces(clusterName), trackedWorkloads: 0, newChanges: 0, totalChanges: 0, critical: 0, warning: 0, info: 0, recentChanges: [], discoveredNamespaces: null, changeHistory: [] });
         }
         sendJson(res, 200, result);
       } catch (err) {
-        sendJson(res, 200, { watchedNamespaces: [], trackedWorkloads: 0, newChanges: 0, totalChanges: 0, critical: 0, warning: 0, info: 0, recentChanges: [], error: err.message });
+        console.error("[app-changes] GET handler error:", err.message);
+        sendJson(res, 200, { watchedNamespaces: getWatchedNamespaces(clusterName), trackedWorkloads: 0, newChanges: 0, totalChanges: 0, critical: 0, warning: 0, info: 0, recentChanges: [], error: err.message });
       }
       return;
     }
@@ -5833,33 +5837,33 @@ spec:
         const body = await readJsonBody(req);
         const action = body.action;
         const nsList = body.namespaces || [];
-        const result = await withClusterContext(url, async () => {
-          if (action === "add" && nsList.length > 0) {
-            await addNamespaces(nsList, _acCluster);
-            const resp = {
-              watchedNamespaces: getWatchedNamespaces(_acCluster),
-              trackedWorkloads: Object.keys(getBaselines(_acCluster)).length,
-              baselineStatus: "initializing",
-            };
-            initNamespaceBaselines(nsList, _acCluster).catch(e =>
-              console.warn("[app-watcher] Background baseline init error:", e.message)
-            );
-            return resp;
-          } else if (action === "remove" && nsList.length > 0) {
-            await removeNamespaces(nsList, _acCluster);
-            return {
-              watchedNamespaces: getWatchedNamespaces(_acCluster),
-              trackedWorkloads: Object.keys(getBaselines(_acCluster)).length,
-            };
-          }
-          return {
+        if (action === "add" && nsList.length > 0) {
+          await addNamespaces(nsList, _acCluster);
+          console.log(`[app-changes] Added namespaces for cluster "${_acCluster}":`, nsList);
+          initNamespaceBaselines(nsList, _acCluster).catch(e =>
+            console.warn("[app-watcher] Background baseline init error:", e.message)
+          );
+          sendJson(res, 200, {
             watchedNamespaces: getWatchedNamespaces(_acCluster),
             trackedWorkloads: Object.keys(getBaselines(_acCluster)).length,
-          };
-        });
-        sendJson(res, 200, result || { watchedNamespaces: [], trackedWorkloads: 0 });
+            baselineStatus: "initializing",
+          });
+        } else if (action === "remove" && nsList.length > 0) {
+          await removeNamespaces(nsList, _acCluster);
+          console.log(`[app-changes] Removed namespaces for cluster "${_acCluster}":`, nsList);
+          sendJson(res, 200, {
+            watchedNamespaces: getWatchedNamespaces(_acCluster),
+            trackedWorkloads: Object.keys(getBaselines(_acCluster)).length,
+          });
+        } else {
+          sendJson(res, 200, {
+            watchedNamespaces: getWatchedNamespaces(_acCluster),
+            trackedWorkloads: Object.keys(getBaselines(_acCluster)).length,
+          });
+        }
       } catch (err) {
-        sendJson(res, 200, { error: err.message });
+        console.error("[app-changes] Namespace management error:", err.message);
+        sendJson(res, 200, { watchedNamespaces: getWatchedNamespaces(_acCluster), error: err.message });
       }
       return;
     }

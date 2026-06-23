@@ -73,25 +73,43 @@ async function saveToDb(nsList) {
   } catch { return false; }
 }
 
-function loadFromFile() {
+function loadAllFromFile() {
   try {
     const data = JSON.parse(readFileSync(PERSIST_FILE, "utf8"));
-    return Array.isArray(data) ? data : [];
-  } catch { return []; }
+    if (Array.isArray(data)) return { local: data };
+    if (data && typeof data === "object") return data;
+    return {};
+  } catch { return {}; }
 }
 
-function saveToFile(nsList) {
+function loadFromFile() {
+  const all = loadAllFromFile();
+  return Array.isArray(all.local) ? all.local : [];
+}
+
+function saveToFile(nsList, cluster = "local") {
   try {
     mkdirSync(PERSIST_DIR, { recursive: true });
-    writeFileSync(PERSIST_FILE, JSON.stringify(nsList, null, 2));
-  } catch {}
+    let all = {};
+    try { all = JSON.parse(readFileSync(PERSIST_FILE, "utf8")); } catch {}
+    if (Array.isArray(all)) all = { local: all };
+    all[cluster] = nsList;
+    writeFileSync(PERSIST_FILE, JSON.stringify(all, null, 2));
+    console.log(`[app-watcher] Saved ${nsList.length} namespaces for cluster "${cluster}" to file`);
+  } catch (e) {
+    console.error("[app-watcher] saveToFile failed:", e.message);
+  }
 }
 
-async function persistNamespaces() {
-  const nsList = [..._watchedNamespaces];
-  const saved = await saveToConfigMap(nsList) || await saveToDb(nsList);
-  saveToFile(nsList);
-  if (saved) console.log("[app-watcher] Tracked namespaces persisted:", nsList.length);
+async function persistNamespaces(cluster = "local") {
+  const s = _cs(cluster);
+  const nsList = [...s.watchedNamespaces];
+  let saved = false;
+  if (!cluster || cluster === "local") {
+    saved = await saveToConfigMap(nsList) || await saveToDb(nsList);
+  }
+  saveToFile(nsList, cluster);
+  console.log(`[app-watcher] Tracked namespaces persisted for "${cluster}":`, nsList.length, nsList);
 }
 
 function getWatcherState() {
@@ -179,6 +197,7 @@ async function ensurePersistedLoad() {
 
 const _envNamespaces = (process.env.WATCHED_APP_NAMESPACES || "").split(",").map(s => s.trim()).filter(Boolean);
 const _fileNamespaces = loadFromFile();
+const _allFileNamespaces = loadAllFromFile();
 
 const MAX_CHANGES = 500;
 const MAX_HISTORY = 200;
@@ -188,7 +207,13 @@ const MAX_TIMELINE = 1000;
 const _clusterStates = new Map();
 function _cs(cluster = "local") {
   if (!_clusterStates.has(cluster)) {
-    const initial = cluster === "local" ? [..._envNamespaces, ..._fileNamespaces] : [];
+    let initial;
+    if (cluster === "local") {
+      initial = [..._envNamespaces, ..._fileNamespaces];
+    } else {
+      const persisted = _allFileNamespaces[cluster];
+      initial = Array.isArray(persisted) ? [...persisted] : [];
+    }
     _clusterStates.set(cluster, {
       watchedNamespaces: new Set(initial),
       baselines: new Map(),
@@ -653,7 +678,7 @@ export function getGitOpsDrift(cluster) { return Object.fromEntries(_cs(cluster)
 export async function addNamespaces(nsList, cluster) {
   const s = _cs(cluster);
   for (const ns of nsList) s.watchedNamespaces.add(ns);
-  if (!cluster || cluster === "local") await persistNamespaces();
+  await persistNamespaces(cluster || "local");
 }
 export async function removeNamespaces(nsList, cluster) {
   const s = _cs(cluster);
@@ -663,7 +688,7 @@ export async function removeNamespaces(nsList, cluster) {
       if (key.startsWith(ns + "/")) s.baselines.delete(key);
     }
   }
-  if (!cluster || cluster === "local") await persistNamespaces();
+  await persistNamespaces(cluster || "local");
 }
 export async function initNamespaceBaselines(nsList, cluster) {
   const s = _cs(cluster);
