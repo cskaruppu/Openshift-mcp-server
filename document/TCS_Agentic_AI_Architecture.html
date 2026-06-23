@@ -1,0 +1,1295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TCS Agentic AI — Platform Architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  /* ── Reset & Base ───────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #0B0F1A;
+    color: #E2E8F0;
+    min-height: 100vh;
+    overflow-x: hidden;
+    line-height: 1.5;
+  }
+
+  /* ── Animated Background ────────────────────────────── */
+  .bg-grid {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image:
+      radial-gradient(ellipse 80% 60% at 50% 0%, rgba(124,58,237,.12) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 80% 100%, rgba(6,182,212,.08) 0%, transparent 50%),
+      linear-gradient(rgba(124,58,237,.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(124,58,237,.03) 1px, transparent 1px);
+    background-size: 100% 100%, 100% 100%, 40px 40px, 40px 40px;
+  }
+
+  /* ── Utility ────────────────────────────────────────── */
+  .container { max-width: 1440px; margin: 0 auto; padding: 0 32px; position: relative; z-index: 1; }
+  .section { padding: 48px 0; }
+  .section-title {
+    font-size: 1.5rem; font-weight: 700; margin-bottom: 32px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .section-title::before {
+    content: ''; width: 4px; height: 28px; border-radius: 2px;
+    background: linear-gradient(180deg, #7C3AED, #06B6D4);
+  }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 12px; border-radius: 20px; font-size: .7rem;
+    font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+  }
+
+  /* ── Header ─────────────────────────────────────────── */
+  header {
+    padding: 40px 0 24px;
+    text-align: center;
+    position: relative;
+    z-index: 1;
+  }
+  header .overline {
+    font-size: .75rem; font-weight: 600; letter-spacing: .15em;
+    text-transform: uppercase; color: #7C3AED; margin-bottom: 12px;
+  }
+  header h1 {
+    font-size: clamp(2rem, 4vw, 3.2rem); font-weight: 800;
+    background: linear-gradient(135deg, #E2E8F0, #7C3AED, #06B6D4);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1.2; margin-bottom: 12px;
+  }
+  header .subtitle {
+    font-size: 1.1rem; color: #94A3B8; max-width: 700px; margin: 0 auto 24px;
+  }
+  .header-stats {
+    display: flex; justify-content: center; gap: 32px; flex-wrap: wrap;
+  }
+  .header-stat {
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .header-stat .num {
+    font-size: 2rem; font-weight: 800; color: #7C3AED;
+  }
+  .header-stat .label {
+    font-size: .75rem; color: #64748B; text-transform: uppercase; letter-spacing: .08em;
+  }
+
+  /* ── Hub-Spoke Diagram (SVG + CSS) ─────────────────── */
+  .hub-spoke-wrapper {
+    display: flex; justify-content: center; align-items: center;
+    padding: 32px 0;
+  }
+  .hub-spoke-container {
+    position: relative;
+    width: 720px; height: 720px;
+  }
+  @media (max-width: 800px) {
+    .hub-spoke-container { width: 100%; height: auto; aspect-ratio: 1; }
+  }
+  .hub-center {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 200px; height: 200px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(124,58,237,.25), rgba(124,58,237,.05));
+    border: 2px solid rgba(124,58,237,.5);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center; z-index: 5;
+    box-shadow: 0 0 60px rgba(124,58,237,.2), inset 0 0 40px rgba(124,58,237,.05);
+    cursor: default;
+    transition: box-shadow .3s, border-color .3s;
+  }
+  .hub-center:hover {
+    box-shadow: 0 0 80px rgba(124,58,237,.35), inset 0 0 40px rgba(124,58,237,.1);
+    border-color: rgba(124,58,237,.8);
+  }
+  .hub-center .icon { font-size: 2.5rem; margin-bottom: 4px; }
+  .hub-center .title { font-size: .9rem; font-weight: 700; color: #E2E8F0; }
+  .hub-center .sub { font-size: .65rem; color: #94A3B8; margin-top: 2px; }
+
+  .spoke-node {
+    position: absolute;
+    width: 120px; height: 120px;
+    border-radius: 50%;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center; z-index: 5;
+    cursor: default;
+    transition: transform .3s, box-shadow .3s, border-color .3s;
+  }
+  .spoke-node:hover { transform: scale(1.12); }
+  .spoke-node .icon { font-size: 1.5rem; margin-bottom: 2px; }
+  .spoke-node .title { font-size: .65rem; font-weight: 600; line-height: 1.2; }
+  .spoke-node .sub { font-size: .55rem; color: #94A3B8; }
+
+  .spoke-cluster {
+    background: radial-gradient(circle, rgba(16,185,129,.15), rgba(16,185,129,.03));
+    border: 2px solid rgba(16,185,129,.4);
+    box-shadow: 0 0 30px rgba(16,185,129,.1);
+  }
+  .spoke-cluster:hover {
+    box-shadow: 0 0 50px rgba(16,185,129,.25);
+    border-color: rgba(16,185,129,.7);
+  }
+  .spoke-integration {
+    background: radial-gradient(circle, rgba(6,182,212,.15), rgba(6,182,212,.03));
+    border: 2px solid rgba(6,182,212,.4);
+    box-shadow: 0 0 30px rgba(6,182,212,.1);
+  }
+  .spoke-integration:hover {
+    box-shadow: 0 0 50px rgba(6,182,212,.25);
+    border-color: rgba(6,182,212,.7);
+  }
+
+  /* SVG connections */
+  .hub-spoke-svg {
+    position: absolute; inset: 0; z-index: 1;
+    width: 100%; height: 100%;
+  }
+  .conn-line {
+    stroke-dasharray: 6 4;
+    animation: dash 20s linear infinite;
+  }
+  @keyframes dash { to { stroke-dashoffset: -200; } }
+  .conn-line-reverse { animation-direction: reverse; }
+
+  /* Pulse ring */
+  .pulse-ring {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 220px; height: 220px;
+    border-radius: 50%;
+    border: 1px solid rgba(124,58,237,.15);
+    animation: pulseExpand 3s ease-out infinite;
+    z-index: 2; pointer-events: none;
+  }
+  .pulse-ring:nth-child(2) { animation-delay: 1s; }
+  .pulse-ring:nth-child(3) { animation-delay: 2s; }
+  @keyframes pulseExpand {
+    0% { width: 220px; height: 220px; opacity: .6; }
+    100% { width: 500px; height: 500px; opacity: 0; }
+  }
+
+  /* ── Tooltip ────────────────────────────────────────── */
+  .tooltip-box {
+    display: none;
+    position: absolute;
+    background: #1E1B3A;
+    border: 1px solid rgba(124,58,237,.4);
+    border-radius: 12px;
+    padding: 16px 20px;
+    min-width: 260px;
+    max-width: 340px;
+    z-index: 100;
+    box-shadow: 0 16px 48px rgba(0,0,0,.5);
+    font-size: .8rem;
+    color: #CBD5E1;
+    line-height: 1.6;
+    pointer-events: none;
+  }
+  .tooltip-box .tt-title {
+    font-size: .85rem; font-weight: 700; color: #E2E8F0;
+    margin-bottom: 6px; display: flex; align-items: center; gap: 8px;
+  }
+  .tooltip-box .tt-detail { color: #94A3B8; }
+  .tooltip-box .tt-tag {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: .65rem; font-weight: 600; margin-top: 8px;
+  }
+
+  /* ── Agent Grid ─────────────────────────────────────── */
+  .agent-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+  }
+  .agent-card {
+    background: linear-gradient(135deg, rgba(124,58,237,.08), rgba(124,58,237,.02));
+    border: 1px solid rgba(124,58,237,.2);
+    border-radius: 14px;
+    padding: 20px;
+    transition: all .3s;
+    cursor: default;
+    position: relative;
+    overflow: hidden;
+  }
+  .agent-card::before {
+    content: '';
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 3px;
+    background: linear-gradient(90deg, #7C3AED, #06B6D4);
+    opacity: 0; transition: opacity .3s;
+  }
+  .agent-card:hover {
+    border-color: rgba(124,58,237,.5);
+    transform: translateY(-4px);
+    box-shadow: 0 12px 40px rgba(124,58,237,.15);
+  }
+  .agent-card:hover::before { opacity: 1; }
+  .agent-card .agent-num {
+    position: absolute; top: 12px; right: 16px;
+    font-size: 2rem; font-weight: 800; color: rgba(124,58,237,.12);
+    line-height: 1;
+  }
+  .agent-card .agent-icon { font-size: 1.5rem; margin-bottom: 8px; }
+  .agent-card .agent-name {
+    font-size: .85rem; font-weight: 700; color: #E2E8F0; margin-bottom: 4px;
+  }
+  .agent-card .agent-desc {
+    font-size: .72rem; color: #94A3B8; line-height: 1.5;
+  }
+  .agent-card .agent-tags {
+    display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px;
+  }
+  .agent-card .agent-tags span {
+    padding: 2px 8px; border-radius: 4px;
+    font-size: .6rem; font-weight: 600;
+    background: rgba(124,58,237,.12);
+    color: #A78BFA;
+  }
+  .a2a-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 4px;
+    background: rgba(16,185,129,.12); color: #34D399;
+    font-size: .6rem; font-weight: 600; margin-top: 8px;
+  }
+
+  /* ── NLU Engine Section ─────────────────────────────── */
+  .nlu-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 20px;
+  }
+  .nlu-card {
+    background: linear-gradient(135deg, rgba(6,182,212,.08), rgba(6,182,212,.02));
+    border: 1px solid rgba(6,182,212,.2);
+    border-radius: 14px;
+    padding: 24px;
+    transition: all .3s;
+  }
+  .nlu-card:hover {
+    border-color: rgba(6,182,212,.5);
+    transform: translateY(-3px);
+    box-shadow: 0 8px 32px rgba(6,182,212,.12);
+  }
+  .nlu-card .nlu-icon { font-size: 1.8rem; margin-bottom: 10px; }
+  .nlu-card .nlu-title { font-size: .9rem; font-weight: 700; color: #E2E8F0; margin-bottom: 6px; }
+  .nlu-card .nlu-desc { font-size: .75rem; color: #94A3B8; }
+
+  /* ── Use Cases ──────────────────────────────────────── */
+  .uc-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+  }
+  .uc-card {
+    background: linear-gradient(135deg, rgba(245,158,11,.06), rgba(245,158,11,.01));
+    border: 1px solid rgba(245,158,11,.2);
+    border-radius: 14px;
+    padding: 24px;
+    transition: all .3s;
+    position: relative;
+    overflow: hidden;
+  }
+  .uc-card:hover {
+    border-color: rgba(245,158,11,.5);
+    transform: translateY(-3px);
+    box-shadow: 0 8px 32px rgba(245,158,11,.1);
+  }
+  .uc-card .uc-id {
+    font-size: .65rem; font-weight: 700; color: #F59E0B;
+    text-transform: uppercase; letter-spacing: .1em; margin-bottom: 6px;
+  }
+  .uc-card .uc-title { font-size: 1rem; font-weight: 700; color: #E2E8F0; margin-bottom: 8px; }
+  .uc-card .uc-desc { font-size: .75rem; color: #94A3B8; line-height: 1.6; }
+  .uc-card .uc-flow {
+    margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  }
+  .uc-card .uc-step {
+    padding: 3px 10px; border-radius: 6px;
+    font-size: .6rem; font-weight: 600;
+  }
+  .uc-card .uc-arrow { color: #475569; font-size: .7rem; }
+
+  .step-auto { background: rgba(16,185,129,.15); color: #34D399; }
+  .step-user { background: rgba(245,158,11,.15); color: #FBBF24; }
+  .step-validate { background: rgba(6,182,212,.15); color: #22D3EE; }
+
+  /* ── Integration Strip ──────────────────────────────── */
+  .integration-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 14px;
+  }
+  .int-card {
+    background: rgba(30,27,58,.6);
+    border: 1px solid rgba(100,116,139,.2);
+    border-radius: 12px;
+    padding: 16px 20px;
+    display: flex; align-items: center; gap: 14px;
+    transition: all .3s;
+  }
+  .int-card:hover {
+    border-color: rgba(6,182,212,.4);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 24px rgba(6,182,212,.08);
+  }
+  .int-card .int-icon { font-size: 1.5rem; flex-shrink: 0; }
+  .int-card .int-name { font-size: .8rem; font-weight: 600; color: #E2E8F0; }
+  .int-card .int-type { font-size: .65rem; color: #64748B; }
+
+  /* ── Data Flow Section ──────────────────────────────── */
+  .flow-strip {
+    display: flex; align-items: center; justify-content: center;
+    gap: 0; flex-wrap: wrap;
+    padding: 24px 0;
+  }
+  .flow-node {
+    padding: 14px 24px;
+    border-radius: 12px;
+    font-size: .8rem; font-weight: 600;
+    text-align: center;
+    min-width: 140px;
+    position: relative;
+  }
+  .flow-arrow {
+    font-size: 1.5rem; color: #475569; padding: 0 4px;
+    animation: flowPulse 2s ease-in-out infinite;
+  }
+  @keyframes flowPulse {
+    0%, 100% { opacity: .4; }
+    50% { opacity: 1; color: #7C3AED; }
+  }
+  .flow-user { background: rgba(245,158,11,.12); border: 1px solid rgba(245,158,11,.3); color: #FBBF24; }
+  .flow-nlu { background: rgba(124,58,237,.12); border: 1px solid rgba(124,58,237,.3); color: #A78BFA; }
+  .flow-agent { background: rgba(16,185,129,.12); border: 1px solid rgba(16,185,129,.3); color: #34D399; }
+  .flow-cluster { background: rgba(6,182,212,.12); border: 1px solid rgba(6,182,212,.3); color: #22D3EE; }
+
+  /* ── Legend ──────────────────────────────────────────── */
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 20px;
+    justify-content: center;
+    padding: 24px 32px;
+    background: rgba(30,27,58,.5);
+    border: 1px solid rgba(100,116,139,.15);
+    border-radius: 14px;
+    margin: 24px 0;
+  }
+  .legend-item {
+    display: flex; align-items: center; gap: 8px;
+    font-size: .75rem; color: #94A3B8;
+  }
+  .legend-dot {
+    width: 12px; height: 12px; border-radius: 50%;
+  }
+  .legend-dot.purple { background: #7C3AED; box-shadow: 0 0 8px rgba(124,58,237,.5); }
+  .legend-dot.green { background: #10B981; box-shadow: 0 0 8px rgba(16,185,129,.5); }
+  .legend-dot.amber { background: #F59E0B; box-shadow: 0 0 8px rgba(245,158,11,.5); }
+  .legend-dot.cyan { background: #06B6D4; box-shadow: 0 0 8px rgba(6,182,212,.5); }
+
+  .legend-line {
+    width: 24px; height: 2px;
+    border-top: 2px dashed;
+  }
+  .legend-line.purple { border-color: rgba(124,58,237,.6); }
+  .legend-line.green { border-color: rgba(16,185,129,.6); }
+  .legend-line.cyan { border-color: rgba(6,182,212,.6); }
+
+  /* ── Heartbeat ──────────────────────────────────────── */
+  .heartbeat-section {
+    display: flex; flex-wrap: wrap; gap: 16px; justify-content: center;
+    margin: 20px 0;
+  }
+  .hb-card {
+    background: rgba(30,27,58,.6);
+    border: 1px solid rgba(100,116,139,.15);
+    border-radius: 12px;
+    padding: 16px 24px;
+    text-align: center;
+    min-width: 180px;
+    transition: all .3s;
+  }
+  .hb-card:hover { border-color: rgba(124,58,237,.3); }
+  .hb-card .hb-val {
+    font-size: 1.8rem; font-weight: 800;
+  }
+  .hb-card .hb-label {
+    font-size: .7rem; color: #64748B; text-transform: uppercase; letter-spacing: .08em;
+    margin-top: 4px;
+  }
+
+  /* ── Footer ─────────────────────────────────────────── */
+  footer {
+    text-align: center;
+    padding: 40px 0 32px;
+    border-top: 1px solid rgba(100,116,139,.12);
+    margin-top: 40px;
+  }
+  footer .footer-brand {
+    font-size: .85rem; font-weight: 600; color: #64748B;
+  }
+  footer .footer-sub {
+    font-size: .7rem; color: #475569; margin-top: 4px;
+  }
+
+  /* ── Responsive ─────────────────────────────────────── */
+  @media (max-width: 640px) {
+    .container { padding: 0 16px; }
+    .hub-spoke-container { width: 100%; }
+    .agent-grid { grid-template-columns: 1fr; }
+    .flow-strip { flex-direction: column; }
+    .flow-arrow { transform: rotate(90deg); }
+  }
+
+  /* ── Print ──────────────────────────────────────────── */
+  @media print {
+    body { background: #fff; color: #1a1a2e; }
+    .bg-grid { display: none; }
+    .pulse-ring { display: none; }
+    .agent-card, .nlu-card, .uc-card, .int-card, .hb-card {
+      border-color: #ccc;
+      box-shadow: none;
+      break-inside: avoid;
+    }
+    .hub-center, .spoke-node {
+      border-color: #999;
+      box-shadow: none;
+    }
+    header h1 {
+      -webkit-text-fill-color: #1a1a2e;
+      background: none;
+    }
+    .conn-line { animation: none; }
+    footer { border-color: #ccc; }
+    .section-title::before { background: #7C3AED; }
+  }
+
+  /* ── Section Divider ────────────────────────────────── */
+  .divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(124,58,237,.2), rgba(6,182,212,.2), transparent);
+    margin: 16px 0;
+  }
+
+  /* ── Scroll-reveal animation ────────────────────────── */
+  .reveal {
+    opacity: 0; transform: translateY(24px);
+    transition: opacity .6s ease-out, transform .6s ease-out;
+  }
+  .reveal.visible {
+    opacity: 1; transform: translateY(0);
+  }
+
+  /* ── SSE/Stream badge ───────────────────────────────── */
+  .stream-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 12px; border-radius: 20px;
+    background: rgba(124,58,237,.12); color: #A78BFA;
+    font-size: .65rem; font-weight: 600;
+  }
+  .stream-badge .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #7C3AED;
+    animation: blink 1.5s ease-in-out infinite;
+  }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+  /* ── Architecture Overview Cards ────────────────────── */
+  .arch-overview {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+  .arch-card {
+    background: rgba(30,27,58,.5);
+    border: 1px solid rgba(100,116,139,.15);
+    border-radius: 14px;
+    padding: 20px;
+    text-align: center;
+    transition: all .3s;
+  }
+  .arch-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 32px rgba(124,58,237,.1);
+    border-color: rgba(124,58,237,.3);
+  }
+  .arch-card .arch-icon { font-size: 2rem; margin-bottom: 8px; }
+  .arch-card .arch-label { font-size: .8rem; font-weight: 600; color: #E2E8F0; }
+  .arch-card .arch-sub { font-size: .68rem; color: #64748B; margin-top: 4px; }
+
+  /* ── Nav Anchor ─────────────────────────────────────── */
+  .toc {
+    display: flex; justify-content: center; flex-wrap: wrap; gap: 8px;
+    padding: 16px 0 8px;
+  }
+  .toc a {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 16px; border-radius: 8px;
+    background: rgba(30,27,58,.6);
+    border: 1px solid rgba(100,116,139,.15);
+    color: #94A3B8; text-decoration: none;
+    font-size: .75rem; font-weight: 500;
+    transition: all .25s;
+  }
+  .toc a:hover {
+    background: rgba(124,58,237,.12);
+    border-color: rgba(124,58,237,.3);
+    color: #A78BFA;
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<!-- ════════════════════════════════════════════════════
+     HEADER
+     ════════════════════════════════════════════════════ -->
+<header>
+  <div class="container">
+    <div class="overline">Production-Grade MCP Orchestrator</div>
+    <h1>TCS Agentic AI — Platform Architecture</h1>
+    <p class="subtitle">
+      Intelligent multi-cluster OpenShift management powered by 13 autonomous AI agents,
+      A2A protocol, and real-time SSE streaming
+    </p>
+    <div class="header-stats">
+      <div class="header-stat"><span class="num">13</span><span class="label">AI Agents</span></div>
+      <div class="header-stat"><span class="num">60+</span><span class="label">Intent Patterns</span></div>
+      <div class="header-stat"><span class="num">4</span><span class="label">Use Cases</span></div>
+      <div class="header-stat"><span class="num">6</span><span class="label">Integrations</span></div>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- TOC -->
+  <nav class="toc">
+    <a href="#topology">Hub-Spoke Topology</a>
+    <a href="#data-flow">Data Flow</a>
+    <a href="#agents">AI Agents</a>
+    <a href="#nlu">NLU Engine</a>
+    <a href="#integrations">Integrations</a>
+    <a href="#usecases">Use Cases</a>
+  </nav>
+
+  <div class="divider"></div>
+
+  <!-- Architecture Overview Cards -->
+  <div class="arch-overview reveal">
+    <div class="arch-card">
+      <div class="arch-icon">&#x1F50C;</div>
+      <div class="arch-label">Hub-Spoke Topology</div>
+      <div class="arch-sub">Central MCP server + distributed clusters</div>
+    </div>
+    <div class="arch-card">
+      <div class="arch-icon">&#x1F916;</div>
+      <div class="arch-label">A2A Protocol</div>
+      <div class="arch-sub">Agent-to-Agent discovery via .well-known</div>
+    </div>
+    <div class="arch-card">
+      <div class="arch-icon">&#x1F4E1;</div>
+      <div class="arch-label">SSE Streaming</div>
+      <div class="arch-sub">Real-time event proxying to UI</div>
+    </div>
+    <div class="arch-card">
+      <div class="arch-icon">&#x1F9E0;</div>
+      <div class="arch-label">NLU Engine</div>
+      <div class="arch-sub">Intent classification + entity extraction</div>
+    </div>
+    <div class="arch-card">
+      <div class="arch-icon">&#x1F512;</div>
+      <div class="arch-label">TLS + Proxy</div>
+      <div class="arch-sub">Custom DNS, HTTP proxy, 60s timeouts</div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       HUB-SPOKE TOPOLOGY
+       ════════════════════════════════════════════════════ -->
+  <section class="section reveal" id="topology">
+    <div class="section-title">Hub-Spoke Topology</div>
+
+    <div class="hub-spoke-wrapper">
+      <div class="hub-spoke-container" id="hubSpokeContainer">
+        <!-- Pulse rings -->
+        <div class="pulse-ring"></div>
+        <div class="pulse-ring"></div>
+        <div class="pulse-ring"></div>
+
+        <!-- SVG for connection lines -->
+        <svg class="hub-spoke-svg" id="hubSpokeSvg" viewBox="0 0 720 720" fill="none"></svg>
+
+        <!-- Hub -->
+        <div class="hub-center" data-tooltip="hub">
+          <div class="icon">&#x2B22;</div>
+          <div class="title">MCP Hub Server</div>
+          <div class="sub">NLU + LLM + REST API</div>
+          <div class="stream-badge" style="margin-top:8px"><span class="dot"></span> SSE Streaming</div>
+        </div>
+
+        <!-- Spoke Nodes — positioned by JS -->
+        <div class="spoke-node spoke-cluster" id="spoke0" data-tooltip="spoke0">
+          <div class="icon">&#x2388;</div>
+          <div class="title">OCP Cluster 1</div>
+          <div class="sub">Production</div>
+        </div>
+        <div class="spoke-node spoke-cluster" id="spoke1" data-tooltip="spoke1">
+          <div class="icon">&#x2388;</div>
+          <div class="title">OCP Cluster 2</div>
+          <div class="sub">Staging</div>
+        </div>
+        <div class="spoke-node spoke-cluster" id="spoke2" data-tooltip="spoke2">
+          <div class="icon">&#x2388;</div>
+          <div class="title">OCP Cluster 3</div>
+          <div class="sub">Development</div>
+        </div>
+        <div class="spoke-node spoke-integration" id="spoke3" data-tooltip="spoke3">
+          <div class="icon">&#x1F4CB;</div>
+          <div class="title">ServiceNow</div>
+          <div class="sub">ITSM</div>
+        </div>
+        <div class="spoke-node spoke-integration" id="spoke4" data-tooltip="spoke4">
+          <div class="icon">&#x1F4CA;</div>
+          <div class="title">Prometheus</div>
+          <div class="sub">Monitoring</div>
+        </div>
+        <div class="spoke-node spoke-integration" id="spoke5" data-tooltip="spoke5">
+          <div class="icon">&#x1F500;</div>
+          <div class="title">ArgoCD</div>
+          <div class="sub">GitOps</div>
+        </div>
+        <div class="spoke-node spoke-cluster" id="spoke6" data-tooltip="spoke6">
+          <div class="icon">&#x2388;</div>
+          <div class="title">OCP Cluster 4</div>
+          <div class="sub">DR / Backup</div>
+        </div>
+        <div class="spoke-node spoke-integration" id="spoke7" data-tooltip="spoke7">
+          <div class="icon">&#x1F6E1;</div>
+          <div class="title">Policy Engine</div>
+          <div class="sub">Gatekeeper / Kyverno</div>
+        </div>
+
+        <!-- Tooltip -->
+        <div class="tooltip-box" id="tooltipBox"></div>
+      </div>
+    </div>
+
+    <!-- Heartbeat Stats -->
+    <div class="heartbeat-section reveal">
+      <div class="hb-card">
+        <div class="hb-val" style="color:#10B981;">5 min</div>
+        <div class="hb-label">Stale Threshold</div>
+      </div>
+      <div class="hb-card">
+        <div class="hb-val" style="color:#F59E0B;">10 min</div>
+        <div class="hb-label">Unreachable Threshold</div>
+      </div>
+      <div class="hb-card">
+        <div class="hb-val" style="color:#06B6D4;">60s</div>
+        <div class="hb-label">HTTP Proxy Timeout</div>
+      </div>
+      <div class="hb-card">
+        <div class="hb-val" style="color:#7C3AED;">TLS</div>
+        <div class="hb-label">Encrypted Transport</div>
+      </div>
+      <div class="hb-card">
+        <div class="hb-val" style="color:#A78BFA;">DNS</div>
+        <div class="hb-label">Custom Resolver</div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ════════════════════════════════════════════════════
+       DATA FLOW
+       ════════════════════════════════════════════════════ -->
+  <section class="section reveal" id="data-flow">
+    <div class="section-title">Data Flow Pipeline</div>
+    <div class="flow-strip">
+      <div class="flow-node flow-user">&#x1F464; User Request</div>
+      <span class="flow-arrow">&#x27A1;</span>
+      <div class="flow-node flow-nlu">&#x1F9E0; NLU Engine</div>
+      <span class="flow-arrow">&#x27A1;</span>
+      <div class="flow-node" style="background:rgba(124,58,237,.12);border:1px solid rgba(124,58,237,.3);color:#A78BFA;">&#x2B22; MCP Hub</div>
+      <span class="flow-arrow">&#x27A1;</span>
+      <div class="flow-node flow-agent">&#x1F916; AI Agent</div>
+      <span class="flow-arrow">&#x27A1;</span>
+      <div class="flow-node flow-cluster">&#x2388; OpenShift API</div>
+      <span class="flow-arrow">&#x27A1;</span>
+      <div class="flow-node" style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);color:#34D399;">&#x2705; Result + SSE</div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- Legend -->
+  <div class="legend reveal">
+    <div class="legend-item"><span class="legend-dot purple"></span> AI / MCP Hub / Agents</div>
+    <div class="legend-item"><span class="legend-dot green"></span> Automated Actions / Clusters</div>
+    <div class="legend-item"><span class="legend-dot amber"></span> User Actions / Approvals</div>
+    <div class="legend-item"><span class="legend-dot cyan"></span> Validation / Integrations</div>
+    <div class="legend-item"><span class="legend-line purple"></span> Hub Connection</div>
+    <div class="legend-item"><span class="legend-line green"></span> Cluster Link</div>
+    <div class="legend-item"><span class="legend-line cyan"></span> Integration Link</div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- ════════════════════════════════════════════════════
+       13 AI AGENTS
+       ════════════════════════════════════════════════════ -->
+  <section class="section reveal" id="agents">
+    <div class="section-title">13 AI Agents <span class="badge" style="background:rgba(16,185,129,.12);color:#34D399;">A2A Protocol</span></div>
+    <p style="font-size:.8rem;color:#64748B;margin:-20px 0 24px 16px;">Each agent is discoverable via <code style="background:rgba(124,58,237,.12);padding:2px 6px;border-radius:4px;font-size:.72rem;color:#A78BFA;">.well-known/agent.json</code></p>
+
+    <div class="agent-grid">
+      <!-- Agent 1 -->
+      <div class="agent-card">
+        <div class="agent-num">01</div>
+        <div class="agent-icon">&#x1FA7A;</div>
+        <div class="agent-name">Diagnostics &amp; Healing</div>
+        <div class="agent-desc">Autonomous root-cause analysis, pod restart loops, CrashLoopBackOff detection, and self-healing remediation</div>
+        <div class="agent-tags"><span>diagnostics</span><span>self-heal</span><span>rca</span></div>
+        <div class="a2a-badge">&#x2714; A2A Discoverable</div>
+      </div>
+      <!-- Agent 2 -->
+      <div class="agent-card">
+        <div class="agent-num">02</div>
+        <div class="agent-icon">&#x2B06;</div>
+        <div class="agent-name">Upgrade Lifecycle</div>
+        <div class="agent-desc">End-to-end cluster upgrades with pre-flight checks, canary rollouts, rollback planning, and operator compatibility</div>
+        <div class="agent-tags"><span>upgrade</span><span>rollback</span><span>canary</span></div>
+        <div class="a2a-badge">&#x2714; A2A Discoverable</div>
+      </div>
+      <!-- Agent 3 -->
+      <div class="agent-card">
+        <div class="agent-num">03</div>
+        <div class="agent-icon">&#x1F6E1;</div>
+        <div class="agent-name">Security &amp; Compliance</div>
+        <div class="agent-desc">CIS benchmark scoring, vulnerability scanning, RBAC audit, image CVE detection, and policy enforcement</div>
+        <div class="agent-tags"><span>security</span><span>CIS</span><span>CVE</span></div>
+        <div class="a2a-badge">&#x2714; A2A Discoverable</div>
+      </div>
+      <!-- Agent 4 -->
+      <div class="agent-card">
+        <div class="agent-num">04</div>
+        <div class="agent-icon">&#x1F52E;</div>
+        <div class="agent-name">Proactive Intelligence</div>
+        <div class="agent-desc">Predictive anomaly detection, resource exhaustion forecasting, drift analysis, and early-warning alerts</div>
+        <div class="agent-tags"><span>prediction</span><span>anomaly</span><span>forecast</span></div>
+        <div class="a2a-badge">&#x2714; A2A Discoverable</div>
+      </div>
+      <!-- Agent 5 -->
+      <div class="agent-card">
+        <div class="agent-num">05</div>
+        <div class="agent-icon">&#x1F4CB;</div>
+        <div class="agent-name">ITSM &amp; Change Management</div>
+        <div class="agent-desc">ServiceNow integration, change request automation, approval workflows, and audit trail generation</div>
+        <div class="agent-tags"><span>ITSM</span><span>ServiceNow</span><span>change-mgmt</span></div>
+        <div class="a2a-badge">&#x2714; A2A Discoverable</div>
+      </div>
+      <!-- Agent 6 -->
+      <div class="agent-card">
+        <div class="agent-num">06</div>
+        <div class="agent-icon">&#x1F310;</div>
+        <div class="agent-name">Multi-Cluster &amp; ACM</div>
+        <div class="agent-desc">Cross-cluster operations, ACM policy propagation, fleet-wide health monitoring, and workload distribution</div>
+        <div class="agent-tags"><span>multi-cluster</span><span>ACM</span><span>fleet</span></div>
+        <div class="a2a-badge">&#x2714; A2A Discoverable</div>
+      </div>
+      <!-- Agent 7 -->
+      <div class="agent-card">
+        <div class="agent-num">07</div>
+        <div class="agent-icon">&#x1F4CA;</div>
+        <div class="agent-name">Observability</div>
+        <div class="agent-desc">Prometheus/Grafana integration, custom metrics, alert correlation, log aggregation, and SLO tracking</div>
+        <div class="agent-tags"><span>prometheus</span><span>grafana</span><span>SLO</span></div>
+        <div class="a2a-badge">&#x2714; A2A Discoverable</div>
+      </div>
+      <!-- Agent 8 -->
+      <div class="agent-card">
+        <div class="agent-num">08</div>
+        <div class="agent-icon">&#x1F4E6;</div>
+        <div class="agent-name">Workload Management</div>
+        <div class="agent-desc">Deployment scaling, resource optimization, quota management, HPA tuning, and pod scheduling analysis</div>
+        <div class="agent-tags"><span>workload</span><span>scaling</span><span>HPA</span></div>
+        <div class="a2a-badge">&#x2714; A2A Discoverable</div>
+      </div>
+      <!-- Agent 9 -->
+      <div class="agent-card">
+        <div class="agent-num">09</div>
+        <div class="agent-icon">&#x1F504;</div>
+        <div class="agent-name">CI/CD &amp; GitOps</div>
+        <div class="agent-desc">ArgoCD/Flux sync management, pipeline analysis, deployment tracking, and rollout status monitoring</div>
+        <div class="agent-tags"><span>GitOps</span><span>ArgoCD</span><span>CI/CD</span></div>
+        <div class="a2a-badge">&#x2714; A2A Discoverable</div>
+      </div>
+      <!-- Agent 10 -->
+      <div class="agent-card">
+        <div class="agent-num">10</div>
+        <div class="agent-icon">&#x1F578;</div>
+        <div class="agent-name">Networking &amp; Mesh</div>
+        <div class="agent-desc">Service mesh configuration, network policy management, ingress/route optimization, and DNS troubleshooting</div>
+        <div class="agent-tags"><span>mesh</span><span>network</span><span>ingress</span></div>
+        <div class="a2a-badge">&#x2714; A2A Discoverable</div>
+      </div>
+      <!-- Agent 11 -->
+      <div class="agent-card">
+        <div class="agent-num">11</div>
+        <div class="agent-icon">&#x1F4BE;</div>
+        <div class="agent-name">Backup &amp; DR</div>
+        <div class="agent-desc">Velero backup orchestration, disaster recovery planning, cross-cluster replication, and restore validation</div>
+        <div class="agent-tags"><span>backup</span><span>DR</span><span>velero</span></div>
+        <div class="a2a-badge">&#x2714; A2A Discoverable</div>
+      </div>
+      <!-- Agent 12 -->
+      <div class="agent-card">
+        <div class="agent-num">12</div>
+        <div class="agent-icon">&#x1F3D7;</div>
+        <div class="agent-name">Infrastructure &amp; Virtualization</div>
+        <div class="agent-desc">Node management, machine sets, OpenShift Virtualization (VMs), storage provisioning, and capacity planning</div>
+        <div class="agent-tags"><span>infra</span><span>VMs</span><span>storage</span></div>
+        <div class="a2a-badge">&#x2714; A2A Discoverable</div>
+      </div>
+      <!-- Agent 13 -->
+      <div class="agent-card">
+        <div class="agent-num">13</div>
+        <div class="agent-icon">&#x2699;</div>
+        <div class="agent-name">Cluster Operations</div>
+        <div class="agent-desc">Day-2 operations, etcd health, certificate rotation, operator lifecycle management, and cluster maintenance</div>
+        <div class="agent-tags"><span>ops</span><span>etcd</span><span>certs</span></div>
+        <div class="a2a-badge">&#x2714; A2A Discoverable</div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ════════════════════════════════════════════════════
+       NLU ENGINE
+       ════════════════════════════════════════════════════ -->
+  <section class="section reveal" id="nlu">
+    <div class="section-title">NLU Engine</div>
+    <div class="nlu-grid">
+      <div class="nlu-card">
+        <div class="nlu-icon">&#x1F3AF;</div>
+        <div class="nlu-title">Intent Classification</div>
+        <div class="nlu-desc">Confidence-scored intent routing across 60+ patterns. Maps natural language to specific agent capabilities with multi-level fallback.</div>
+      </div>
+      <div class="nlu-card">
+        <div class="nlu-icon">&#x1F50D;</div>
+        <div class="nlu-title">Entity Extraction</div>
+        <div class="nlu-desc">Recognizes cluster names, namespaces, pod identifiers, version strings, time ranges, and resource types from conversational input.</div>
+      </div>
+      <div class="nlu-card">
+        <div class="nlu-icon">&#x1F4AC;</div>
+        <div class="nlu-title">Multi-Turn Context</div>
+        <div class="nlu-desc">Maintains conversation state across turns with context memory, enabling follow-up queries and progressive refinement.</div>
+      </div>
+      <div class="nlu-card">
+        <div class="nlu-icon">&#x1F9E9;</div>
+        <div class="nlu-title">LLM Integration</div>
+        <div class="nlu-desc">Claude and Ollama backends for advanced reasoning, natural language generation, and complex query understanding.</div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ════════════════════════════════════════════════════
+       INTEGRATIONS
+       ════════════════════════════════════════════════════ -->
+  <section class="section reveal" id="integrations">
+    <div class="section-title">Integration Layer</div>
+    <div class="integration-grid">
+      <div class="int-card">
+        <div class="int-icon">&#x1F4CB;</div>
+        <div>
+          <div class="int-name">ServiceNow</div>
+          <div class="int-type">ITSM &amp; Change Management</div>
+        </div>
+      </div>
+      <div class="int-card">
+        <div class="int-icon">&#x1F4CA;</div>
+        <div>
+          <div class="int-name">Prometheus / Grafana</div>
+          <div class="int-type">Observability &amp; Monitoring</div>
+        </div>
+      </div>
+      <div class="int-card">
+        <div class="int-icon">&#x1F500;</div>
+        <div>
+          <div class="int-name">ArgoCD / Flux</div>
+          <div class="int-type">GitOps Delivery</div>
+        </div>
+      </div>
+      <div class="int-card">
+        <div class="int-icon">&#x1F5BC;</div>
+        <div>
+          <div class="int-name">Image Registries</div>
+          <div class="int-type">Vulnerability Scanning</div>
+        </div>
+      </div>
+      <div class="int-card">
+        <div class="int-icon">&#x1F4D0;</div>
+        <div>
+          <div class="int-name">CIS Benchmarks</div>
+          <div class="int-type">Compliance Scoring</div>
+        </div>
+      </div>
+      <div class="int-card">
+        <div class="int-icon">&#x1F6E1;</div>
+        <div>
+          <div class="int-name">Gatekeeper / Kyverno</div>
+          <div class="int-type">Policy Engine</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ════════════════════════════════════════════════════
+       USE CASES
+       ════════════════════════════════════════════════════ -->
+  <section class="section reveal" id="usecases">
+    <div class="section-title">Use Cases</div>
+    <div class="uc-grid">
+      <!-- UC-01 -->
+      <div class="uc-card">
+        <div class="uc-id">UC-01</div>
+        <div class="uc-title">Autonomous Incident Lifecycle Management</div>
+        <div class="uc-desc">End-to-end incident handling from detection through diagnosis, remediation, and post-incident review -- fully automated with human-in-the-loop approval gates.</div>
+        <div class="uc-flow">
+          <span class="uc-step step-auto">Detect</span>
+          <span class="uc-arrow">&#x2192;</span>
+          <span class="uc-step step-auto">Diagnose</span>
+          <span class="uc-arrow">&#x2192;</span>
+          <span class="uc-step step-user">Approve</span>
+          <span class="uc-arrow">&#x2192;</span>
+          <span class="uc-step step-auto">Remediate</span>
+          <span class="uc-arrow">&#x2192;</span>
+          <span class="uc-step step-validate">Validate</span>
+        </div>
+      </div>
+      <!-- UC-02 -->
+      <div class="uc-card">
+        <div class="uc-id">UC-02</div>
+        <div class="uc-title">Intelligent Cluster Upgrade Automation</div>
+        <div class="uc-desc">Orchestrated upgrades with pre-flight compatibility checks, operator readiness, canary rollouts, and automated rollback on failure detection.</div>
+        <div class="uc-flow">
+          <span class="uc-step step-validate">Pre-flight</span>
+          <span class="uc-arrow">&#x2192;</span>
+          <span class="uc-step step-user">Schedule</span>
+          <span class="uc-arrow">&#x2192;</span>
+          <span class="uc-step step-auto">Canary</span>
+          <span class="uc-arrow">&#x2192;</span>
+          <span class="uc-step step-auto">Upgrade</span>
+          <span class="uc-arrow">&#x2192;</span>
+          <span class="uc-step step-validate">Verify</span>
+        </div>
+      </div>
+      <!-- UC-03 -->
+      <div class="uc-card">
+        <div class="uc-id">UC-03</div>
+        <div class="uc-title">Predictive Intelligence &amp; Anomaly Detection</div>
+        <div class="uc-desc">ML-driven anomaly detection, resource exhaustion forecasting, drift analysis, and proactive alerting before issues impact workloads.</div>
+        <div class="uc-flow">
+          <span class="uc-step step-auto">Collect</span>
+          <span class="uc-arrow">&#x2192;</span>
+          <span class="uc-step step-auto">Analyze</span>
+          <span class="uc-arrow">&#x2192;</span>
+          <span class="uc-step step-auto">Predict</span>
+          <span class="uc-arrow">&#x2192;</span>
+          <span class="uc-step step-user">Review</span>
+          <span class="uc-arrow">&#x2192;</span>
+          <span class="uc-step step-auto">Mitigate</span>
+        </div>
+      </div>
+      <!-- UC-04 -->
+      <div class="uc-card">
+        <div class="uc-id">UC-04</div>
+        <div class="uc-title">Security &amp; Compliance Governance</div>
+        <div class="uc-desc">Continuous compliance scanning against CIS benchmarks, RBAC audit, CVE remediation tracking, and automated policy enforcement across clusters.</div>
+        <div class="uc-flow">
+          <span class="uc-step step-auto">Scan</span>
+          <span class="uc-arrow">&#x2192;</span>
+          <span class="uc-step step-validate">Score</span>
+          <span class="uc-arrow">&#x2192;</span>
+          <span class="uc-step step-auto">Remediate</span>
+          <span class="uc-arrow">&#x2192;</span>
+          <span class="uc-step step-user">Audit</span>
+          <span class="uc-arrow">&#x2192;</span>
+          <span class="uc-step step-validate">Certify</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div><!-- /container -->
+
+<!-- ════════════════════════════════════════════════════
+     FOOTER
+     ════════════════════════════════════════════════════ -->
+<footer>
+  <div class="container">
+    <div class="footer-brand">TCS Agentic AI Platform | OpenShift Multi-Cluster Intelligence</div>
+    <div class="footer-sub">Production-Grade MCP Orchestrator &middot; A2A Protocol &middot; Real-Time SSE Streaming</div>
+  </div>
+</footer>
+
+<!-- ════════════════════════════════════════════════════
+     JAVASCRIPT
+     ════════════════════════════════════════════════════ -->
+<script>
+(function() {
+  'use strict';
+
+  /* ── Position spoke nodes in a circle ──────────────── */
+  const spokeData = [
+    { id: 'spoke0', angle: 0 },
+    { id: 'spoke1', angle: 45 },
+    { id: 'spoke2', angle: 90 },
+    { id: 'spoke3', angle: 135 },
+    { id: 'spoke4', angle: 180 },
+    { id: 'spoke5', angle: 225 },
+    { id: 'spoke6', angle: 270 },
+    { id: 'spoke7', angle: 315 },
+  ];
+
+  const container = document.getElementById('hubSpokeContainer');
+  const svg = document.getElementById('hubSpokeSvg');
+  const cx = 360, cy = 360, radius = 260;
+  const spokeSize = 120;
+  const hubSize = 200;
+
+  spokeData.forEach(function(s) {
+    var el = document.getElementById(s.id);
+    var rad = (s.angle - 90) * Math.PI / 180;
+    var x = cx + radius * Math.cos(rad) - spokeSize / 2;
+    var y = cy + radius * Math.sin(rad) - spokeSize / 2;
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+  });
+
+  /* ── Draw SVG connection lines ─────────────────────── */
+  spokeData.forEach(function(s) {
+    var rad = (s.angle - 90) * Math.PI / 180;
+    var sx = cx + radius * Math.cos(rad);
+    var sy = cy + radius * Math.sin(rad);
+
+    var isCluster = document.getElementById(s.id).classList.contains('spoke-cluster');
+    var color = isCluster ? 'rgba(16,185,129,0.35)' : 'rgba(6,182,212,0.35)';
+    var colorHover = isCluster ? 'rgba(16,185,129,0.7)' : 'rgba(6,182,212,0.7)';
+
+    var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', cx);
+    line.setAttribute('y1', cy);
+    line.setAttribute('x2', sx);
+    line.setAttribute('y2', sy);
+    line.setAttribute('stroke', color);
+    line.setAttribute('stroke-width', '2');
+    line.classList.add('conn-line');
+    if (s.angle > 180) line.classList.add('conn-line-reverse');
+
+    line.dataset.spokeId = s.id;
+    svg.appendChild(line);
+
+    /* Hover glow */
+    var el = document.getElementById(s.id);
+    el.addEventListener('mouseenter', function() {
+      line.setAttribute('stroke', colorHover);
+      line.setAttribute('stroke-width', '3');
+    });
+    el.addEventListener('mouseleave', function() {
+      line.setAttribute('stroke', color);
+      line.setAttribute('stroke-width', '2');
+    });
+  });
+
+  /* ── Small animated data-flow dots on SVG lines ────── */
+  spokeData.forEach(function(s) {
+    var rad = (s.angle - 90) * Math.PI / 180;
+    var sx = cx + radius * Math.cos(rad);
+    var sy = cy + radius * Math.sin(rad);
+
+    var isCluster = document.getElementById(s.id).classList.contains('spoke-cluster');
+    var dotColor = isCluster ? '#10B981' : '#06B6D4';
+
+    var circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('r', '3');
+    circle.setAttribute('fill', dotColor);
+    circle.setAttribute('opacity', '0.8');
+
+    var animX = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+    animX.setAttribute('attributeName', 'cx');
+    animX.setAttribute('from', cx);
+    animX.setAttribute('to', sx);
+    animX.setAttribute('dur', (3 + Math.random() * 2) + 's');
+    animX.setAttribute('repeatCount', 'indefinite');
+
+    var animY = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+    animY.setAttribute('attributeName', 'cy');
+    animY.setAttribute('from', cy);
+    animY.setAttribute('to', sy);
+    animY.setAttribute('dur', animX.getAttribute('dur'));
+    animY.setAttribute('repeatCount', 'indefinite');
+
+    circle.appendChild(animX);
+    circle.appendChild(animY);
+    svg.appendChild(circle);
+
+    /* Return dot */
+    var circle2 = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle2.setAttribute('r', '2');
+    circle2.setAttribute('fill', dotColor);
+    circle2.setAttribute('opacity', '0.5');
+
+    var anim2X = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+    anim2X.setAttribute('attributeName', 'cx');
+    anim2X.setAttribute('from', sx);
+    anim2X.setAttribute('to', cx);
+    anim2X.setAttribute('dur', (4 + Math.random() * 2) + 's');
+    anim2X.setAttribute('repeatCount', 'indefinite');
+
+    var anim2Y = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+    anim2Y.setAttribute('attributeName', 'cy');
+    anim2Y.setAttribute('from', sy);
+    anim2Y.setAttribute('to', cy);
+    anim2Y.setAttribute('dur', anim2X.getAttribute('dur'));
+    anim2Y.setAttribute('repeatCount', 'indefinite');
+
+    circle2.appendChild(anim2X);
+    circle2.appendChild(anim2Y);
+    svg.appendChild(circle2);
+  });
+
+  /* ── Tooltip Data ──────────────────────────────────── */
+  var tooltips = {
+    hub: {
+      title: '&#x2B22; MCP Hub Server',
+      detail: 'Central orchestration server with NLU engine, LLM integration (Claude/Ollama), REST API, and SSE stream proxying. All agent communication flows through the hub.',
+      tag: 'Core Infrastructure',
+      tagColor: 'rgba(124,58,237,.2)',
+      tagText: '#A78BFA'
+    },
+    spoke0: {
+      title: '&#x2388; OCP Cluster 1 — Production',
+      detail: 'Primary production cluster. Connected via TLS with custom DNS resolver. Heartbeat monitored with 5-min stale / 10-min unreachable thresholds.',
+      tag: 'Production',
+      tagColor: 'rgba(16,185,129,.2)',
+      tagText: '#34D399'
+    },
+    spoke1: {
+      title: '&#x2388; OCP Cluster 2 — Staging',
+      detail: 'Staging environment for canary deployments and upgrade pre-validation. Mirrors production topology.',
+      tag: 'Staging',
+      tagColor: 'rgba(16,185,129,.2)',
+      tagText: '#34D399'
+    },
+    spoke2: {
+      title: '&#x2388; OCP Cluster 3 — Development',
+      detail: 'Development cluster for testing agent capabilities and new feature validation before promotion.',
+      tag: 'Development',
+      tagColor: 'rgba(16,185,129,.2)',
+      tagText: '#34D399'
+    },
+    spoke3: {
+      title: '&#x1F4CB; ServiceNow ITSM',
+      detail: 'Bi-directional integration for change requests, incident tickets, approval workflows, and audit trail synchronization.',
+      tag: 'ITSM Integration',
+      tagColor: 'rgba(6,182,212,.2)',
+      tagText: '#22D3EE'
+    },
+    spoke4: {
+      title: '&#x1F4CA; Prometheus / Grafana',
+      detail: 'Metrics collection, custom dashboards, alert correlation, and SLO tracking integration for all managed clusters.',
+      tag: 'Observability',
+      tagColor: 'rgba(6,182,212,.2)',
+      tagText: '#22D3EE'
+    },
+    spoke5: {
+      title: '&#x1F500; ArgoCD GitOps',
+      detail: 'GitOps delivery pipeline management, sync status monitoring, rollout tracking, and drift detection.',
+      tag: 'GitOps',
+      tagColor: 'rgba(6,182,212,.2)',
+      tagText: '#22D3EE'
+    },
+    spoke6: {
+      title: '&#x2388; OCP Cluster 4 — DR / Backup',
+      detail: 'Disaster recovery cluster with Velero backup orchestration and cross-cluster replication capabilities.',
+      tag: 'DR / Backup',
+      tagColor: 'rgba(16,185,129,.2)',
+      tagText: '#34D399'
+    },
+    spoke7: {
+      title: '&#x1F6E1; Policy Engine',
+      detail: 'Gatekeeper and Kyverno policy enforcement. Manages admission controllers, constraint templates, and compliance rules.',
+      tag: 'Policy',
+      tagColor: 'rgba(6,182,212,.2)',
+      tagText: '#22D3EE'
+    }
+  };
+
+  /* ── Tooltip Interaction ────────────────────────────── */
+  var tooltipEl = document.getElementById('tooltipBox');
+  var allNodes = container.querySelectorAll('[data-tooltip]');
+
+  allNodes.forEach(function(node) {
+    node.addEventListener('mouseenter', function(e) {
+      var key = node.dataset.tooltip;
+      var data = tooltips[key];
+      if (!data) return;
+      tooltipEl.innerHTML =
+        '<div class="tt-title">' + data.title + '</div>' +
+        '<div class="tt-detail">' + data.detail + '</div>' +
+        '<span class="tt-tag" style="background:' + data.tagColor + ';color:' + data.tagText + '">' + data.tag + '</span>';
+      tooltipEl.style.display = 'block';
+
+      /* Position */
+      var rect = node.getBoundingClientRect();
+      var cRect = container.getBoundingClientRect();
+      var left = rect.left - cRect.left + rect.width / 2 - 130;
+      var top = rect.top - cRect.top - tooltipEl.offsetHeight - 12;
+      if (top < 0) top = rect.bottom - cRect.top + 12;
+      if (left < 0) left = 8;
+      if (left + 260 > cRect.width) left = cRect.width - 270;
+      tooltipEl.style.left = left + 'px';
+      tooltipEl.style.top = top + 'px';
+    });
+    node.addEventListener('mouseleave', function() {
+      tooltipEl.style.display = 'none';
+    });
+  });
+
+  /* ── Scroll Reveal ─────────────────────────────────── */
+  var reveals = document.querySelectorAll('.reveal');
+  function checkReveal() {
+    reveals.forEach(function(el) {
+      var top = el.getBoundingClientRect().top;
+      if (top < window.innerHeight - 60) {
+        el.classList.add('visible');
+      }
+    });
+  }
+  window.addEventListener('scroll', checkReveal);
+  checkReveal(); /* initial check */
+
+})();
+</script>
+
+</body>
+</html>
