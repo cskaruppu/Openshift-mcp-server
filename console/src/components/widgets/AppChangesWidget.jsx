@@ -147,6 +147,26 @@ export function AppChangesWidget() {
     );
   }
 
+  const hasNamespaces = watched.length > 0;
+  const nsHealth = data?.namespaceHealth || {};
+
+  const groupedChanges = (() => {
+    if (filteredChanges.length === 0) return [];
+    const now = Date.now();
+    const groups = [
+      { label: "Last 1 Hour", max: 3600000, items: [] },
+      { label: "Last 6 Hours", max: 21600000, items: [] },
+      { label: "Last 24 Hours", max: 86400000, items: [] },
+      { label: "Older", max: Infinity, items: [] },
+    ];
+    for (const c of filteredChanges) {
+      const age = now - new Date(c.timestamp || c.detectedAt).getTime();
+      const g = groups.find(g => age < g.max);
+      if (g) g.items.push(c);
+    }
+    return groups.filter(g => g.items.length > 0);
+  })();
+
   return (
     <div className="acw">
       {/* Header */}
@@ -156,14 +176,16 @@ export function AppChangesWidget() {
           Application Change Watcher
         </h3>
         <div className="acw-header-actions">
-          <button className="acw-scan-btn" onClick={handleScan} disabled={scanning}>
-            {scanning ? "Scanning…" : "Scan Now"}
-          </button>
+          {hasNamespaces && (
+            <button className="acw-scan-btn" onClick={handleScan} disabled={scanning}>
+              {scanning ? "Scanning…" : "Scan Now"}
+            </button>
+          )}
           <button
-            className="acw-ns-btn"
+            className={"acw-ns-btn" + (hasNamespaces ? "" : " empty")}
             onClick={() => setNsPanelOpen(!nsPanelOpen)}
           >
-            {watched.length} Namespaces
+            {hasNamespaces ? `${watched.length} Namespace${watched.length > 1 ? "s" : ""}` : "Select Namespaces"}
           </button>
         </div>
       </div>
@@ -178,95 +200,189 @@ export function AppChangesWidget() {
         />
       )}
 
-      {/* Summary Row */}
-      <div className="acw-summary">
-        <div className="acw-ring" onClick={() => setWorkloadsOpen(!workloadsOpen)} title="View tracked workloads">
-          <svg viewBox="0 0 60 60" width="56" height="56">
-            <circle cx="30" cy="30" r="26" fill="none" stroke="var(--border)" strokeWidth="4" />
-            <circle
-              cx="30" cy="30" r="26" fill="none"
-              stroke={critical > 0 ? "var(--crit)" : warning > 0 ? "var(--warn)" : "var(--ok)"}
-              strokeWidth="4"
-              strokeDasharray={`${Math.min(1, tracked > 0 ? 1 : 0) * 163.4} 163.4`}
-              strokeLinecap="round"
-              transform="rotate(-90 30 30)"
-            />
-            <text x="30" y="34" textAnchor="middle" fill="var(--text)" fontSize="16" fontWeight="800">{tracked}</text>
-          </svg>
-          <div className="acw-ring-label">
-            <div className="acw-ring-title">Tracked Workloads</div>
-            <div className="acw-ring-sub">{watched.join(", ") || "none"}</div>
+      {/* Empty State — no namespaces tracked */}
+      {!hasNamespaces && !nsPanelOpen && (
+        <div className="acw-empty-state">
+          <div className="acw-empty-icon">{"\u{1F4E1}"}</div>
+          <div className="acw-empty-title">No Namespaces Tracked</div>
+          <div className="acw-empty-desc">
+            Select namespaces to begin monitoring application changes in real-time.
+            Track deployments, config changes, scaling events, and image updates across your workloads.
           </div>
-        </div>
-        <div className="acw-changes-count">
-          <div className={"acw-change-num " + (critical > 0 ? "crit" : warning > 0 ? "warn" : "ok")}>{total}</div>
-          <div className="acw-change-lbl">Changes</div>
-        </div>
-      </div>
-
-      {/* Workloads detail (collapsible) */}
-      {workloadsOpen && <WorkloadsViewer cluster={cluster} />}
-
-      {/* Change Type Breakdown */}
-      {Object.keys(changeTypes).length > 0 && (
-        <div className="acw-types">
-          {Object.entries(changeTypes).map(([type, count]) => {
-            const info = CHANGE_ICONS[type] || CHANGE_ICONS.other;
-            return (
-              <div key={type} className="acw-type-pill" style={{ borderColor: info.color }}>
-                <span>{info.icon}</span>
-                <span>{info.label}</span>
-                <span className="acw-type-count" style={{ background: info.color }}>{count}</span>
-              </div>
-            );
-          })}
+          <button className="acw-empty-btn" onClick={() => setNsPanelOpen(true)}>
+            {"\u{2795}"} Add Namespaces to Track
+          </button>
         </div>
       )}
 
-      {/* 24h Velocity Bar */}
-      {timeline.hourlyBuckets?.length > 0 && (
-        <VelocityBar buckets={timeline.hourlyBuckets} />
-      )}
-
-      {/* Changes List */}
-      {changes.length > 0 && (
-        <div className="acw-changes">
-          <div className="acw-changes-title">Pending Changes</div>
-
-          {/* Filter Bar */}
-          <div className="acw-filter-bar">
-            {[["all", "All"], ["image-update", "Image"], ["config-change", "Config"], ["scale", "Scale"], ["resource-tune", "Resource"]].map(([k, l]) => (
-              <button key={k} className={"acw-filter-chip" + (filterType === k ? " active" : "")} onClick={() => setFilterType(k)}>{l}</button>
-            ))}
-            <span style={{ width: 1, height: 16, background: "var(--border)", margin: "0 2px" }} />
-            {[["all", "All Risk"], ["critical", "Critical"], ["high", "High"], ["medium", "Med"], ["low", "Low"]].map(([k, l]) => (
-              <button key={k} className={"acw-filter-chip" + (filterRisk === k ? " active" : "")} onClick={() => setFilterRisk(k)}>{l}</button>
-            ))}
-          </div>
-
-          {/* Bulk Actions */}
-          {filteredChanges.length > 1 && (
-            <div className="acw-bulk-bar">
-              <span className="acw-bulk-label">Bulk</span>
-              <button className="acw-bulk-btn agree" disabled={bulkRunning} onClick={() => handleBulkAction("agree")}>Agree All</button>
-              <button className="acw-bulk-btn ack" disabled={bulkRunning} onClick={() => handleBulkAction("acknowledge")}>Ack All</button>
-              <button className="acw-bulk-btn dismiss" disabled={bulkRunning} onClick={() => handleBulkAction("dismiss")}>Dismiss All</button>
-              <span className="acw-bulk-count">{filteredChanges.length} changes</span>
+      {/* Main content — only when namespaces are tracked */}
+      {hasNamespaces && (
+        <>
+          {/* Namespace Health Summary Bar */}
+          {Object.keys(nsHealth).length > 0 && (
+            <div className="acw-ns-health">
+              {Object.entries(nsHealth).map(([ns, h]) => (
+                <div key={ns} className="acw-ns-health-item">
+                  <span className="acw-ns-health-name">{ns}</span>
+                  <span className="acw-ns-health-stat">{h.deployments} Dep</span>
+                  <span className="acw-ns-health-stat">{h.statefulsets} Sts</span>
+                  <span className="acw-ns-health-stat">{h.runningPods}/{h.pods} Po</span>
+                  {h.changes > 0 && (
+                    <span className={"acw-ns-health-changes" + (h.highRiskChanges > 0 ? " high" : "")}>
+                      {h.changes} change{h.changes !== 1 ? "s" : ""}{h.highRiskChanges > 0 ? ` (${h.highRiskChanges} high risk)` : ""}
+                    </span>
+                  )}
+                  {h.changes === 0 && <span className="acw-ns-health-clean">{"✓"} Clean</span>}
+                </div>
+              ))}
             </div>
           )}
 
-          {filteredChanges.map((c) => (
-            <ChangeCard
-              key={c.id}
-              change={c}
-              expanded={expandedChange === c.id}
-              onToggle={() => setExpandedChange(expandedChange === c.id ? null : c.id)}
-              onAction={handleAction}
-              onDismissConfirm={setConfirmDismiss}
-              cluster={cluster}
-            />
-          ))}
-        </div>
+          {/* Summary Row */}
+          <div className="acw-summary">
+            <div className="acw-ring" onClick={() => setWorkloadsOpen(!workloadsOpen)} title="View tracked workloads">
+              <svg viewBox="0 0 60 60" width="56" height="56">
+                <circle cx="30" cy="30" r="26" fill="none" stroke="var(--border)" strokeWidth="4" />
+                <circle
+                  cx="30" cy="30" r="26" fill="none"
+                  stroke={critical > 0 ? "var(--crit)" : warning > 0 ? "var(--warn)" : "var(--ok)"}
+                  strokeWidth="4"
+                  strokeDasharray={`${Math.min(1, tracked > 0 ? 1 : 0) * 163.4} 163.4`}
+                  strokeLinecap="round"
+                  transform="rotate(-90 30 30)"
+                />
+                <text x="30" y="34" textAnchor="middle" fill="var(--text)" fontSize="16" fontWeight="800">{tracked}</text>
+              </svg>
+              <div className="acw-ring-label">
+                <div className="acw-ring-title">Tracked Workloads</div>
+                <div className="acw-ring-sub">{watched.join(", ") || "none"}</div>
+              </div>
+            </div>
+            <div className="acw-changes-count">
+              <div className={"acw-change-num " + (critical > 0 ? "crit" : warning > 0 ? "warn" : "ok")}>{total}</div>
+              <div className="acw-change-lbl">Changes</div>
+            </div>
+          </div>
+
+          {/* Workloads detail (collapsible) */}
+          {workloadsOpen && <WorkloadsViewer cluster={cluster} />}
+
+          {/* Change Type Breakdown — mini donut + pills */}
+          {Object.keys(changeTypes).length > 0 && (
+            <div className="acw-types">
+              <MiniDonut changeTypes={changeTypes} total={total} />
+              <div className="acw-type-pills">
+                {Object.entries(changeTypes).map(([type, count]) => {
+                  const info = CHANGE_ICONS[type] || CHANGE_ICONS.other;
+                  return (
+                    <div key={type} className="acw-type-pill" style={{ borderColor: info.color }}>
+                      <span>{info.icon}</span>
+                      <span>{info.label}</span>
+                      <span className="acw-type-count" style={{ background: info.color }}>{count}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 24h Velocity Bar */}
+          {timeline.hourlyBuckets?.length > 0 && (
+            <VelocityBar buckets={timeline.hourlyBuckets} />
+          )}
+
+          {/* Changes List */}
+          {changes.length > 0 && (
+            <div className="acw-changes">
+              <div className="acw-changes-title">Pending Changes</div>
+
+              {/* Filter Bar */}
+              <div className="acw-filter-bar">
+                {[["all", "All"], ["image-update", "Image"], ["config-change", "Config"], ["scale", "Scale"], ["resource-tune", "Resource"]].map(([k, l]) => (
+                  <button key={k} className={"acw-filter-chip" + (filterType === k ? " active" : "")} onClick={() => setFilterType(k)}>{l}</button>
+                ))}
+                <span style={{ width: 1, height: 16, background: "var(--border)", margin: "0 2px" }} />
+                {[["all", "All Risk"], ["critical", "Critical"], ["high", "High"], ["medium", "Med"], ["low", "Low"]].map(([k, l]) => (
+                  <button key={k} className={"acw-filter-chip" + (filterRisk === k ? " active" : "")} onClick={() => setFilterRisk(k)}>{l}</button>
+                ))}
+              </div>
+
+              {/* Bulk Actions */}
+              {filteredChanges.length > 1 && (
+                <div className="acw-bulk-bar">
+                  <span className="acw-bulk-label">Bulk</span>
+                  <button className="acw-bulk-btn agree" disabled={bulkRunning} onClick={() => handleBulkAction("agree")}>Agree All</button>
+                  <button className="acw-bulk-btn ack" disabled={bulkRunning} onClick={() => handleBulkAction("acknowledge")}>Ack All</button>
+                  <button className="acw-bulk-btn dismiss" disabled={bulkRunning} onClick={() => handleBulkAction("dismiss")}>Dismiss All</button>
+                  <span className="acw-bulk-count">{filteredChanges.length} changes</span>
+                </div>
+              )}
+
+              {/* Time-grouped changes */}
+              {groupedChanges.map((group) => (
+                <div key={group.label} className="acw-time-group">
+                  <div className="acw-time-group-header">
+                    <span className="acw-time-group-line" />
+                    <span className="acw-time-group-label">{group.label}</span>
+                    <span className="acw-time-group-count">{group.items.length}</span>
+                    <span className="acw-time-group-line" />
+                  </div>
+                  {group.items.map((c) => (
+                    <ChangeCard
+                      key={c.id}
+                      change={c}
+                      expanded={expandedChange === c.id}
+                      onToggle={() => setExpandedChange(expandedChange === c.id ? null : c.id)}
+                      onAction={handleAction}
+                      onDismissConfirm={setConfirmDismiss}
+                      cluster={cluster}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* No changes — clean state */}
+          {changes.length === 0 && (
+            <div className="acw-clean-state">
+              <span className="acw-clean-icon">{"✅"}</span>
+              <span className="acw-clean-text">No pending changes detected across {watched.length} tracked namespace{watched.length > 1 ? "s" : ""}</span>
+            </div>
+          )}
+
+          {/* GitOps Drift */}
+          {gitops.argoInstalled && (
+            <div className="acw-gitops">
+              <div className="acw-gitops-title">GitOps Drift</div>
+              <div className="acw-gitops-stats">
+                <span className="acw-gitops-stat ok">{gitops.synced || 0} synced</span>
+                <span className="acw-gitops-stat warn">{gitops.drifted || 0} drifted</span>
+              </div>
+              {(gitops.apps || []).slice(0, 5).map((app) => (
+                <div key={app.name} className="acw-gitops-app">
+                  <span className={"acw-gitops-dot " + (app.isDrifted ? "warn" : "ok")} />
+                  <span>{app.name}</span>
+                  <span className="acw-gitops-sync">{app.syncStatus}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Recent History */}
+          {history.length > 0 && (
+            <div className="acw-history">
+              <div className="acw-history-title">Recent Actions</div>
+              {history.slice(0, 5).map((h, i) => (
+                <div key={i} className="acw-history-item">
+                  <span className={"acw-action-badge " + h.action}>{h.action}</span>
+                  <span>{h.kind}/{h.name}</span>
+                  <span className="acw-history-time">{relTime(h.resolvedAt)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {/* Dismiss Confirmation */}
@@ -282,38 +398,6 @@ export function AppChangesWidget() {
               <button className="acw-confirm-proceed" onClick={handleDismissConfirm}>Rollback</button>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* GitOps Drift */}
-      {gitops.argoInstalled && (
-        <div className="acw-gitops">
-          <div className="acw-gitops-title">GitOps Drift</div>
-          <div className="acw-gitops-stats">
-            <span className="acw-gitops-stat ok">{gitops.synced || 0} synced</span>
-            <span className="acw-gitops-stat warn">{gitops.drifted || 0} drifted</span>
-          </div>
-          {(gitops.apps || []).slice(0, 5).map((app) => (
-            <div key={app.name} className="acw-gitops-app">
-              <span className={"acw-gitops-dot " + (app.isDrifted ? "warn" : "ok")} />
-              <span>{app.name}</span>
-              <span className="acw-gitops-sync">{app.syncStatus}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Recent History */}
-      {history.length > 0 && (
-        <div className="acw-history">
-          <div className="acw-history-title">Recent Actions</div>
-          {history.slice(0, 5).map((h, i) => (
-            <div key={i} className="acw-history-item">
-              <span className={"acw-action-badge " + h.action}>{h.action}</span>
-              <span>{h.kind}/{h.name}</span>
-              <span className="acw-history-time">{relTime(h.resolvedAt)}</span>
-            </div>
-          ))}
         </div>
       )}
     </div>
@@ -604,6 +688,35 @@ function VelocityBar({ buckets }) {
   );
 }
 
+/* ── Mini Donut Chart ── */
+function MiniDonut({ changeTypes, total }) {
+  const types = Object.entries(changeTypes);
+  if (types.length === 0 || total === 0) return null;
+  const r = 18, cx = 24, cy = 24, circumference = 2 * Math.PI * r;
+  let offset = 0;
+  return (
+    <svg viewBox="0 0 48 48" width="44" height="44" className="acw-mini-donut">
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--border)" strokeWidth="6" />
+      {types.map(([type, count]) => {
+        const info = CHANGE_ICONS[type] || CHANGE_ICONS.other;
+        const pct = count / total;
+        const dash = pct * circumference;
+        const seg = (
+          <circle key={type} cx={cx} cy={cy} r={r} fill="none"
+            stroke={info.color} strokeWidth="6"
+            strokeDasharray={`${dash} ${circumference - dash}`}
+            strokeDashoffset={-offset}
+            transform={`rotate(-90 ${cx} ${cy})`}
+          />
+        );
+        offset += dash;
+        return seg;
+      })}
+      <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fill="var(--text)" fontSize="11" fontWeight="800">{total}</text>
+    </svg>
+  );
+}
+
 /* ── Change Card ── */
 function ChangeCard({ change, expanded, onToggle, onAction, onDismissConfirm, cluster }) {
   const c = change;
@@ -646,7 +759,8 @@ function ChangeCard({ change, expanded, onToggle, onAction, onDismissConfirm, cl
         <span className="acw-change-icon">{typeInfo.icon}</span>
         <div className="acw-change-info">
           <div className="acw-change-resource">
-            {c.kind}/{c.name}
+            <span className="acw-change-kind-badge">{c.kind}</span>
+            {c.name}
             {c.riskScore != null && (
               <span className={"acw-risk-badge " + (c.riskLevel || "low")} title={`Risk: ${c.riskScore}/100`}>
                 RSK {c.riskScore}
@@ -656,6 +770,11 @@ function ChangeCard({ change, expanded, onToggle, onAction, onDismissConfirm, cl
           <div className="acw-change-meta">
             {c.namespace} · {relTime(c.changedBy?.time || c.detectedAt)}
             {c.changedBy?.method && <> · via {c.changedBy.method}</>}
+            {c.blastRadius != null && c.blastRadius > 0 && (
+              <span className="acw-blast-radius" title={`${c.blastRadius} pod(s) affected`}>
+                · {"\u{1F4A5}"} {c.blastRadius} pod{c.blastRadius !== 1 ? "s" : ""} affected
+              </span>
+            )}
           </div>
         </div>
         {c.followUp && <span className="acw-followup" title="Follow-up change">↻</span>}

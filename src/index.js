@@ -5722,6 +5722,28 @@ spec:
           } catch {}
 
           const history = getChangeHistory(clusterName);
+
+          const namespaceHealth = {};
+          for (const ns of namespaces) {
+            try {
+              const [deps, sts, pods] = await Promise.allSettled([
+                ocpGet(`/apis/apps/v1/namespaces/${ns}/deployments`),
+                ocpGet(`/apis/apps/v1/namespaces/${ns}/statefulsets`),
+                ocpGet(`/api/v1/namespaces/${ns}/pods`),
+              ]);
+              const depCount = deps.status === "fulfilled" ? (deps.value.items || []).length : 0;
+              const stsCount = sts.status === "fulfilled" ? (sts.value.items || []).length : 0;
+              const podList = pods.status === "fulfilled" ? (pods.value.items || []) : [];
+              const podCount = podList.length;
+              const runningPods = podList.filter(p => p.status?.phase === "Running").length;
+              const nsChanges = filtered.filter(e => e.namespace === ns);
+              const nsCrit = nsChanges.filter(e => e.riskLevel === "critical" || e.riskLevel === "high").length;
+              namespaceHealth[ns] = { deployments: depCount, statefulsets: stsCount, pods: podCount, runningPods, changes: nsChanges.length, highRiskChanges: nsCrit };
+            } catch {
+              namespaceHealth[ns] = { deployments: 0, statefulsets: 0, pods: 0, runningPods: 0, changes: 0, highRiskChanges: 0 };
+            }
+          }
+
           return {
             watchedNamespaces: namespaces,
             trackedWorkloads: baselines,
@@ -5750,8 +5772,10 @@ spec:
                 replicas: e.baseline.replicas,
                 containers: (e.baseline.containers || []).map(c => ({ name: c.name, image: c.image, ports: c.ports })),
               } : null,
+              blastRadius: e.currentSpec?.replicas || null,
             })),
             changeHistory: history.slice(0, 50),
+            namespaceHealth,
           };
         };
 

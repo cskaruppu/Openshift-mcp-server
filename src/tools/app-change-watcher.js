@@ -273,11 +273,26 @@ async function sendWebhook(entry) {
   }
 }
 
-function calculateRiskScore(changeType, severity, followUp, changeCount) {
+function calculateRiskScore(changeType, severity, followUp, changeCount, context) {
   let score = RISK_WEIGHTS[changeType] || 50;
   score += RISK_SEVERITY_BOOST[severity] || 0;
   if (followUp) score = Math.min(100, score + 20);
   if (changeCount > 3) score = Math.min(100, score + 10);
+  if (context) {
+    if (context.kind === "Secret" && context.changedFields?.every(f => f.includes("(updated)"))) {
+      score = Math.max(15, score - 40);
+    }
+    if (context.kind === "ConfigMap" && changeCount <= 1) {
+      score = Math.max(20, score - 15);
+    }
+    if (context.kind === "Deployment" || context.kind === "StatefulSet") {
+      score = Math.min(100, score + 5);
+    }
+    if (context.hasImageChange) score = Math.min(100, score + 10);
+    if (context.hasReplicaChange && !context.hasImageChange && changeCount === 1) {
+      score = Math.max(15, Math.min(score, 35));
+    }
+  }
   return Math.min(100, Math.max(0, score));
 }
 
@@ -1001,7 +1016,11 @@ export async function scanForChanges(cluster) {
           }
           let changedBy = extractChangedBy(w, ns, w.kind, w.metadata.name);
           try { changedBy = await enrichChangedByWithUser(changedBy, ns, w.kind, w.metadata.name); } catch {}
-          const riskScore = calculateRiskScore(changeType, severity, followUp, diffs.length);
+          const riskScore = calculateRiskScore(changeType, severity, followUp, diffs.length, {
+            kind: w.kind,
+            hasImageChange: diffs.some(d => d.field.includes("/image")),
+            hasReplicaChange: diffs.some(d => d.field === "replicas"),
+          });
           const riskLevel = getRiskLevel(riskScore);
           const changeFreezeViolation = outsideHours || weekend;
           let correlatedEvents = [];
@@ -1085,7 +1104,9 @@ export async function scanConfigChanges(cluster) {
         if (diffs.length > 0) {
           const existingCM = s.changeLog.find(e => e.namespace === ns && e.kind === "ConfigMap" && e.name === cm.metadata.name && !e.acknowledged);
           if (existingCM) { s.baselines.set(key + ":hash", currentHash); continue; }
-          const riskScore = calculateRiskScore("config-change", "warning", false, diffs.length);
+          const riskScore = calculateRiskScore("config-change", "warning", false, diffs.length, {
+            kind: "ConfigMap",
+          });
           const entry = {
             id: `chg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             namespace: ns, kind: "ConfigMap", name: cm.metadata.name,
@@ -1108,6 +1129,8 @@ export async function scanConfigChanges(cluster) {
       for (const sec of secretList) {
         if (sec.type === "kubernetes.io/service-account-token") continue;
         if (sec.metadata.name.startsWith("builder-") || sec.metadata.name.startsWith("deployer-")) continue;
+        if (sec.metadata.name.includes("-dockercfg-")) continue;
+        if (sec.type === "kubernetes.io/dockercfg" || sec.type === "kubernetes.io/dockerconfigjson") continue;
         const key = `${ns}/Secret/${sec.metadata.name}`;
         const dataKeys = Object.keys(sec.data || {}).sort().join(",");
         const currentHash = `keys:${dataKeys}:rv:${sec.metadata.resourceVersion}`;
@@ -1133,7 +1156,10 @@ export async function scanConfigChanges(cluster) {
         if (diffs.length > 0) {
           const existingSec = s.changeLog.find(e => e.namespace === ns && e.kind === "Secret" && e.name === sec.metadata.name && !e.acknowledged);
           if (existingSec) { s.baselines.set(key + ":hash", currentHash); continue; }
-          const riskScore = calculateRiskScore("config-change", "critical", false, diffs.length);
+          const riskScore = calculateRiskScore("config-change", "critical", false, diffs.length, {
+            kind: "Secret",
+            changedFields: diffs.map(d => d.new),
+          });
           const entry = {
             id: `chg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             namespace: ns, kind: "Secret", name: sec.metadata.name,

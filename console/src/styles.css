@@ -4165,7 +4165,7 @@ h3.widget-title {
 .acw-change-lbl { font-size: 11px; color: var(--text2); font-weight: 600; }
 
 /* Change type pills */
-.acw-types { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.acw-types { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
 .acw-type-pill {
   display: flex; align-items: center; gap: 5px;
   padding: 3px 10px; border-radius: 8px; font-size: 11px;
@@ -4520,6 +4520,97 @@ h3.widget-title {
 .acw-wl-kind { font-size: 10px; font-weight: 700; color: var(--text2); min-width: 60px; }
 .acw-wl-name { font-weight: 600; flex: 1; }
 .acw-wl-replicas { font-size: 11px; color: var(--text2); }
+
+/* Empty state */
+.acw-empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 32px 20px; text-align: center; min-height: 160px;
+}
+.acw-empty-icon { font-size: 36px; margin-bottom: 12px; opacity: .7; }
+.acw-empty-title { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.acw-empty-desc { font-size: 12px; color: var(--text2); line-height: 1.5; max-width: 320px; margin-bottom: 16px; }
+.acw-empty-btn {
+  font-size: 12px; font-weight: 600; padding: 8px 18px;
+  background: var(--accent2); color: #fff; border: none; border-radius: 8px;
+  cursor: pointer; transition: all .2s;
+}
+.acw-empty-btn:hover { filter: brightness(1.15); box-shadow: 0 0 14px rgba(99,102,241,.35); }
+
+/* Namespace health summary bar */
+.acw-ns-health {
+  display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px;
+  padding: 8px 10px; background: rgba(99,102,241,.04); border-radius: 8px;
+  border: 1px solid rgba(99,102,241,.1);
+}
+.acw-ns-health-item {
+  display: flex; align-items: center; gap: 8px; font-size: 11px;
+  padding: 3px 0; flex-wrap: wrap;
+}
+.acw-ns-health-name {
+  font-weight: 700; color: var(--accent2); min-width: 100px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.acw-ns-health-stat {
+  font-weight: 600; color: var(--text2); padding: 1px 6px;
+  background: rgba(255,255,255,.04); border-radius: 4px; font-size: 10px;
+}
+.acw-ns-health-changes {
+  font-weight: 700; color: var(--warn); margin-left: auto; font-size: 10px;
+}
+.acw-ns-health-changes.high { color: var(--crit); }
+.acw-ns-health-clean { color: var(--ok); font-weight: 700; margin-left: auto; font-size: 10px; }
+
+/* Clean state (no pending changes) */
+.acw-clean-state {
+  display: flex; align-items: center; gap: 8px; padding: 14px 0;
+  font-size: 12px; color: var(--ok); font-weight: 600;
+}
+.acw-clean-icon { font-size: 16px; }
+.acw-clean-text { color: var(--text2); }
+
+/* Select namespaces button variant */
+.acw-ns-btn.empty {
+  background: var(--accent2); color: #fff; border-color: var(--accent2);
+  animation: acw-pulse 2s infinite;
+}
+.acw-ns-btn.empty:hover { filter: brightness(1.15); }
+
+/* Time group headers */
+.acw-time-group { margin-bottom: 4px; }
+.acw-time-group-header {
+  display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; padding: 0 2px;
+}
+.acw-time-group-line { flex: 1; height: 1px; background: var(--border); }
+.acw-time-group-label {
+  font-size: 10px; font-weight: 700; color: var(--text2); text-transform: uppercase;
+  letter-spacing: .5px; white-space: nowrap;
+}
+.acw-time-group-count {
+  font-size: 9px; font-weight: 800; color: var(--accent2);
+  background: rgba(99,102,241,.12); padding: 1px 5px; border-radius: 8px;
+}
+
+/* Kind badge on change card */
+.acw-change-kind-badge {
+  font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .3px;
+  padding: 1px 5px; border-radius: 3px;
+  background: rgba(99,102,241,.12); color: var(--accent2);
+}
+
+/* Blast radius indicator */
+.acw-blast-radius {
+  color: var(--warn); font-weight: 600;
+}
+
+/* Mini donut chart */
+.acw-mini-donut { flex-shrink: 0; }
+.acw-types { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.acw-type-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+
+@keyframes acw-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .75; }
+}
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  AI Risk Predictions (premium)                                       */
@@ -5165,6 +5256,10 @@ h3.widget-title {
 .light-theme .acw-ns-search, .light-theme .acw-ns-filter { background: #fff; border-color: #e5e7eb; }
 .light-theme .acw-change-card { background: #f8fafc; border-color: #e5e7eb; }
 .light-theme .acw-type-pill { background: rgba(0,0,0,.03); }
+.light-theme .acw-ns-health { background: rgba(99,102,241,.06); border-color: rgba(99,102,241,.15); }
+.light-theme .acw-ns-health-stat { background: rgba(0,0,0,.04); }
+.light-theme .acw-empty-state { background: rgba(99,102,241,.03); border-radius: 12px; }
+.light-theme .acw-change-kind-badge { background: rgba(99,102,241,.08); }
 
 /* ════════════════════════════════════════════════════════
    Audit & Compliance Center
