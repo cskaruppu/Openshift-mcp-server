@@ -4791,13 +4791,17 @@ spec:
                 } catch { break; }
               }
               let podHealth = [];
+              const desiredReplicas = lastCheck?.desired || 1;
               try {
                 const wlSpec = await ocpFetch(`/apis/apps/v1/namespaces/${ns}/${plural}/${resourceName}`).catch(() => null);
                 const matchLabels = wlSpec?.spec?.selector?.matchLabels || {};
                 const selectorStr = Object.entries(matchLabels).map(([k, v]) => `${k}=${v}`).join(",");
                 const labelQuery = selectorStr || `app=${resourceName}`;
                 const podData = await ocpFetch(`/api/v1/namespaces/${ns}/pods?labelSelector=${encodeURIComponent(labelQuery)}&limit=50`);
-                const activePods = (podData.items || []).filter(p => !p.metadata?.deletionTimestamp);
+                const activePods = (podData.items || [])
+                  .filter(p => !p.metadata?.deletionTimestamp)
+                  .sort((a, b) => new Date(b.metadata?.creationTimestamp || 0) - new Date(a.metadata?.creationTimestamp || 0))
+                  .slice(0, desiredReplicas);
                 podHealth = activePods.map(p => ({
                   name: p.metadata.name,
                   phase: p.status?.phase,
@@ -4883,8 +4887,10 @@ spec:
               let specLimits = {};
               let specRequests = {};
               let afterPodItems = [];
+              let afterDesired = 1;
               try {
                 const wlAfter = await ocpFetch(`/apis/apps/v1/namespaces/${aNs}/${plural}/${aResName}`);
+                afterDesired = wlAfter?.spec?.replicas || 1;
                 specLimits = (wlAfter.spec?.template?.spec?.containers || [])[0]?.resources?.limits || {};
                 specRequests = (wlAfter.spec?.template?.spec?.containers || [])[0]?.resources?.requests || {};
                 const matchLabels = wlAfter.spec?.selector?.matchLabels || {};
@@ -4900,12 +4906,12 @@ spec:
                   afterPodItems = (podData.items || []).filter(p => p.metadata?.name?.startsWith(aResName + "-"));
                 } catch {}
               }
-              // Filter out terminating pods (old pods being removed after rolling update)
-              afterPodItems = afterPodItems.filter(p => !p.metadata?.deletionTimestamp);
-              // Sort pods: newest first so we pick the NEW pod with updated spec
-              const allPods = afterPodItems.sort((a, b) =>
-                new Date(b.metadata?.creationTimestamp || 0) - new Date(a.metadata?.creationTimestamp || 0)
-              );
+              // Filter out terminating pods, keep only the newest N matching desired replicas
+              afterPodItems = afterPodItems
+                .filter(p => !p.metadata?.deletionTimestamp)
+                .sort((a, b) => new Date(b.metadata?.creationTimestamp || 0) - new Date(a.metadata?.creationTimestamp || 0))
+                .slice(0, afterDesired);
+              const allPods = afterPodItems;
               const runningPods = allPods.filter(p =>
                 p.status?.phase === "Running" && (p.status?.containerStatuses || []).some(c => c.ready)
               );
