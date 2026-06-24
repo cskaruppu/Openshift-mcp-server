@@ -763,12 +763,8 @@ export async function dismissChange(changeId, cluster) {
   if (!isConfig && baselineSpec && baselineSpec.containers) {
     const kindPath = entry.kind === "Deployment" ? "deployments" : entry.kind === "StatefulSet" ? "statefulsets" : "daemonsets";
     const apiPath = `/apis/apps/v1/namespaces/${entry.namespace}/${kindPath}/${entry.name}`;
-    const patch = { spec: { template: { spec: { containers: [] } } } };
 
-    if (baselineSpec.replicas !== undefined && entry.changes.some(c => c.field === "replicas")) {
-      patch.spec.replicas = baselineSpec.replicas;
-    }
-    for (const bc of baselineSpec.containers) {
+    const patchContainers = baselineSpec.containers.map(bc => {
       const container = { name: bc.name, image: bc.image };
       if (bc.env && bc.env.length > 0) {
         container.env = bc.env.map(e => {
@@ -777,7 +773,15 @@ export async function dismissChange(changeId, cluster) {
         });
       }
       if (bc.resources) container.resources = bc.resources;
-      patch.spec.template.spec.containers.push(container);
+      if (bc.ports) container.ports = bc.ports;
+      if (bc.command) container.command = bc.command;
+      if (bc.args) container.args = bc.args;
+      return container;
+    });
+
+    const patch = { spec: { template: { spec: { containers: patchContainers } } } };
+    if (baselineSpec.replicas !== undefined && entry.changes.some(c => c.field === "replicas")) {
+      patch.spec.replicas = baselineSpec.replicas;
     }
 
     try {
@@ -798,14 +802,18 @@ export async function dismissChange(changeId, cluster) {
   }
   s.dismissedKeys.set(key, { baseline: baselineSpec, dismissedAt: Date.now(), followUpCount: 0 });
   s.resolvedWorkloads.set(key, Date.now());
-  recordHistory(entry, "dismissed", cluster);
+  recordHistory(entry, rolledBack ? "dismissed-rolled-back" : "dismissed", cluster);
   const idx = s.changeLog.indexOf(entry);
   if (idx >= 0) s.changeLog.splice(idx, 1);
   await persistWatcherState().catch(e => console.error("[watcher] persist error:", e.message));
-  const msg = rolledBack
-    ? `Rolled back ${entry.kind}/${entry.name} to baseline`
-    : `Dismissed ${entry.kind}/${entry.name} — change cleared from queue`;
-  return { found: true, id: changeId, action: "dismissed", rolledBack, resolved: true, message: msg };
+
+  if (rolledBack) {
+    return { found: true, id: changeId, action: "dismissed", rolledBack: true, resolved: true, message: `Rolled back ${entry.kind}/${entry.name} to baseline successfully` };
+  }
+  if (rollbackError) {
+    return { found: true, id: changeId, action: "dismissed", rolledBack: false, resolved: true, rollbackError, message: `Dismissed ${entry.kind}/${entry.name} — rollback failed: ${rollbackError}` };
+  }
+  return { found: true, id: changeId, action: "dismissed", rolledBack: false, resolved: true, message: `Dismissed ${entry.kind}/${entry.name} — cleared from queue (no rollback for ${entry.kind})` };
 }
 
 export async function analyzeChangeImpact(changeId, cluster) {

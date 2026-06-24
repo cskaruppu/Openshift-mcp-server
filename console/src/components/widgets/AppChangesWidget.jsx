@@ -130,6 +130,12 @@ export function AppChangesWidget() {
       if (!res.ok || d.error) {
         showToast(d.error || `${action} failed — restoring card`, "err");
         setRemovedIds(prev => { const next = new Set(prev); next.delete(changeId); return next; });
+      } else if (action === "dismiss") {
+        if (d.rolledBack) {
+          showToast(`Rolled back ${changeInfo?.kind || ""}/${changeInfo?.name || ""} to previous state`, "ok");
+        } else if (d.rollbackError) {
+          showToast(`Dismissed but rollback failed: ${d.rollbackError}`, "err");
+        }
       }
       refetch();
     } catch (err) {
