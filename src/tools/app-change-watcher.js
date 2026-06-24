@@ -1200,13 +1200,8 @@ export async function scanForChanges(cluster) {
           continue;
         }
         if (baseline.generation === current.generation && baseline.resourceVersion === current.resourceVersion) continue;
-        const resolvedAt = s.resolvedWorkloads.get(key);
-        if (resolvedAt && (Date.now() - resolvedAt < 86400000)) {
-          s.baselines.set(key, current);
-          continue;
-        }
         const dismissCooldown = s.dismissedKeys.get(key);
-        if (dismissCooldown && (Date.now() - dismissCooldown.dismissedAt < 86400000)) {
+        if (dismissCooldown && (Date.now() - dismissCooldown.dismissedAt < 300000)) {
           s.baselines.set(key, current);
           continue;
         }
@@ -1299,13 +1294,8 @@ export async function scanConfigChanges(cluster) {
           continue;
         }
         if (baselineHash === currentHash) continue;
-        const resolvedAt = s.resolvedWorkloads.get(key);
-        if (resolvedAt && (Date.now() - resolvedAt < 86400000)) {
-          s.baselines.set(key + ":hash", currentHash);
-          continue;
-        }
         const dismissCooldown = s.dismissedKeys.get(key);
-        if (dismissCooldown && (Date.now() - dismissCooldown.dismissedAt < 86400000)) {
+        if (dismissCooldown && (Date.now() - dismissCooldown.dismissedAt < 300000)) {
           s.baselines.set(key + ":hash", currentHash);
           continue;
         }
@@ -1358,13 +1348,8 @@ export async function scanConfigChanges(cluster) {
           continue;
         }
         if (baselineHash === currentHash) continue;
-        const resolvedAtSec = s.resolvedWorkloads.get(key);
-        if (resolvedAtSec && (Date.now() - resolvedAtSec < 86400000)) {
-          s.baselines.set(key + ":hash", currentHash);
-          continue;
-        }
         const dismissCooldown = s.dismissedKeys.get(key);
-        if (dismissCooldown && (Date.now() - dismissCooldown.dismissedAt < 86400000)) {
+        if (dismissCooldown && (Date.now() - dismissCooldown.dismissedAt < 300000)) {
           s.baselines.set(key + ":hash", currentHash);
           continue;
         }
