@@ -31,7 +31,7 @@ export function AppChangesWidget() {
   const cluster = useActiveCluster();
   const { data, isLoading, isError, error, refetch } = useClusterQuery(
     "/api/dashboard/app-changes",
-    { refetchInterval: 15_000 }
+    { refetchInterval: 5_000, staleTime: 3_000 }
   );
   const [nsPanelOpen, setNsPanelOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -75,9 +75,18 @@ export function AppChangesWidget() {
   const handleScan = async () => {
     setScanning(true);
     try {
-      const res = await fetch(clusterUrl("/api/dashboard/app-changes/scan", cluster), { method: "POST" });
+      const res = await fetch(clusterUrl("/api/dashboard/app-changes/scan", cluster), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-Cluster-Context": cluster || "local" },
+      });
       const d = await res.json().catch(() => ({}));
-      showToast(d.newChanges != null ? `Scan complete: ${d.newChanges} new changes` : "Scan complete", "ok");
+      if (d.error) {
+        showToast(`Scan: ${d.error}`, "err");
+      } else {
+        showToast(`Scan complete: ${d.newChanges ?? 0} new, ${d.pendingChanges ?? 0} pending`, "ok");
+      }
+      setRemovedIds(new Set());
       refetch();
     } catch (err) {
       showToast("Scan failed: " + err.message, "err");
@@ -113,7 +122,8 @@ export function AppChangesWidget() {
     try {
       const res = await fetch(clusterUrl("/api/dashboard/app-changes/action", cluster), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-Cluster-Context": cluster || "local" },
         body: JSON.stringify({ changeId, action }),
       });
       const d = await res.json().catch(() => ({}));
@@ -146,7 +156,8 @@ export function AppChangesWidget() {
       if (filterRisk !== "all") filter.riskLevel = filterRisk;
       const res = await fetch(clusterUrl("/api/dashboard/app-changes/bulk-action", cluster), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-Cluster-Context": cluster || "local" },
         body: JSON.stringify({ action, filter }),
       });
       const d = await res.json().catch(() => ({}));

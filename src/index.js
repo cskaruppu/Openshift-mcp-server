@@ -5864,11 +5864,16 @@ spec:
     if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/scan") {
       const _acCluster = url.searchParams.get("cluster") || "local";
       try {
-        const changes = await scanForChanges(_acCluster);
+        const [workloadChanges, configChanges] = await Promise.allSettled([
+          scanForChanges(_acCluster),
+          scanConfigChanges(_acCluster),
+        ]);
+        const wc = workloadChanges.status === "fulfilled" ? workloadChanges.value : [];
+        const cc = configChanges.status === "fulfilled" ? configChanges.value : [];
         const log = getChangeLog(_acCluster).filter(e => !e.acknowledged);
         sendJson(res, 200, {
           scanned: true,
-          newChanges: changes.length,
+          newChanges: wc.length + cc.length,
           pendingChanges: log.length,
           timestamp: new Date().toISOString(),
         });
