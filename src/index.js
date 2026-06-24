@@ -5864,19 +5864,16 @@ spec:
     if (req.method === "POST" && url.pathname === "/api/dashboard/app-changes/scan") {
       const _acCluster = url.searchParams.get("cluster") || "local";
       try {
-        const result = await withClusterContext(url, async () => {
-          const changes = await scanForChanges(_acCluster);
-          const log = getChangeLog(_acCluster).filter(e => !e.acknowledged);
-          return {
-            scanned: true,
-            newChanges: changes.length,
-            pendingChanges: log.length,
-            timestamp: new Date().toISOString(),
-          };
+        const changes = await scanForChanges(_acCluster);
+        const log = getChangeLog(_acCluster).filter(e => !e.acknowledged);
+        sendJson(res, 200, {
+          scanned: true,
+          newChanges: changes.length,
+          pendingChanges: log.length,
+          timestamp: new Date().toISOString(),
         });
-        sendJson(res, 200, result || { scanned: false, newChanges: 0, pendingChanges: 0 });
       } catch (err) {
-        sendJson(res, 200, { scanned: false, error: err.message });
+        sendJson(res, 200, { scanned: false, newChanges: 0, pendingChanges: 0, error: err.message });
       }
       return;
     }

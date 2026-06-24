@@ -715,7 +715,12 @@ export async function acknowledgeChange(changeId, cluster) {
   if (!entry) return { found: true, id: changeId, action: "acknowledged", resolved: true, message: "Already cleared" };
   s.resolvedIds.add(changeId);
   const key = workloadKey(entry.namespace, entry.kind, entry.name);
-  if (entry.currentSpec) s.baselines.set(key, entry.currentSpec);
+  const isConfig = entry.kind === "ConfigMap" || entry.kind === "Secret";
+  if (isConfig && entry.currentSpec?.hash) {
+    s.baselines.set(key + ":hash", entry.currentSpec.hash);
+  } else if (entry.currentSpec) {
+    s.baselines.set(key, entry.currentSpec);
+  }
   s.resolvedWorkloads.set(key, Date.now());
   recordHistory(entry, "acknowledged", cluster);
   const idx = s.changeLog.indexOf(entry);
@@ -731,7 +736,12 @@ export async function agreeChange(changeId, cluster) {
   s.resolvedIds.add(changeId);
   recordHistory(entry, "agreed", cluster);
   const key = workloadKey(entry.namespace, entry.kind, entry.name);
-  if (entry.currentSpec) s.baselines.set(key, entry.currentSpec);
+  const isConfig = entry.kind === "ConfigMap" || entry.kind === "Secret";
+  if (isConfig && entry.currentSpec?.hash) {
+    s.baselines.set(key + ":hash", entry.currentSpec.hash);
+  } else if (entry.currentSpec) {
+    s.baselines.set(key, entry.currentSpec);
+  }
   s.resolvedWorkloads.set(key, Date.now());
   const idx = s.changeLog.indexOf(entry);
   if (idx >= 0) s.changeLog.splice(idx, 1);
@@ -743,39 +753,45 @@ export async function dismissChange(changeId, cluster) {
   const s = _cs(cluster);
   const entry = s.changeLog.find(e => e.id === changeId);
   if (!entry) return { found: true, id: changeId, action: "dismissed", resolved: true, message: "Already cleared" };
-  const kindPath = entry.kind === "Deployment" ? "deployments" : entry.kind === "StatefulSet" ? "statefulsets" : "daemonsets";
-  const apiPath = `/apis/apps/v1/namespaces/${entry.namespace}/${kindPath}/${entry.name}`;
-
-  const baselineSpec = entry.baseline;
-  const patch = { spec: { template: { spec: { containers: [] } } } };
-
-  if (baselineSpec.replicas !== undefined && entry.changes.some(c => c.field === "replicas")) {
-    patch.spec.replicas = baselineSpec.replicas;
-  }
-  for (const bc of baselineSpec.containers) {
-    const container = { name: bc.name, image: bc.image };
-    if (bc.env && bc.env.length > 0) {
-      container.env = bc.env.map(e => {
-        if (e.from) return { name: e.name, valueFrom: JSON.parse(e.from) };
-        return { name: e.name, value: e.value };
-      });
-    }
-    if (bc.resources) container.resources = bc.resources;
-    patch.spec.template.spec.containers.push(container);
-  }
-
-  let rolledBack = false;
-  let rollbackError = null;
-  try {
-    await ocpPatch(apiPath, patch, "application/strategic-merge-patch+json");
-    rolledBack = true;
-  } catch (patchErr) {
-    console.error(`[watcher] dismiss rollback failed for ${entry.kind}/${entry.name}:`, patchErr.message);
-    rollbackError = patchErr.message;
-  }
 
   const key = workloadKey(entry.namespace, entry.kind, entry.name);
-  if (rolledBack) {
+  const baselineSpec = entry.baseline;
+  let rolledBack = false;
+  let rollbackError = null;
+
+  const isConfig = entry.kind === "ConfigMap" || entry.kind === "Secret";
+  if (!isConfig && baselineSpec && baselineSpec.containers) {
+    const kindPath = entry.kind === "Deployment" ? "deployments" : entry.kind === "StatefulSet" ? "statefulsets" : "daemonsets";
+    const apiPath = `/apis/apps/v1/namespaces/${entry.namespace}/${kindPath}/${entry.name}`;
+    const patch = { spec: { template: { spec: { containers: [] } } } };
+
+    if (baselineSpec.replicas !== undefined && entry.changes.some(c => c.field === "replicas")) {
+      patch.spec.replicas = baselineSpec.replicas;
+    }
+    for (const bc of baselineSpec.containers) {
+      const container = { name: bc.name, image: bc.image };
+      if (bc.env && bc.env.length > 0) {
+        container.env = bc.env.map(e => {
+          if (e.from) return { name: e.name, valueFrom: JSON.parse(e.from) };
+          return { name: e.name, value: e.value };
+        });
+      }
+      if (bc.resources) container.resources = bc.resources;
+      patch.spec.template.spec.containers.push(container);
+    }
+
+    try {
+      await ocpPatch(apiPath, patch, "application/strategic-merge-patch+json");
+      rolledBack = true;
+    } catch (patchErr) {
+      console.error(`[watcher] dismiss rollback failed for ${entry.kind}/${entry.name}:`, patchErr.message);
+      rollbackError = patchErr.message;
+    }
+  }
+
+  if (isConfig) {
+    if (entry.currentSpec?.hash) s.baselines.set(key + ":hash", entry.currentSpec.hash);
+  } else if (rolledBack) {
     s.baselines.set(key, baselineSpec);
   } else {
     if (entry.currentSpec) s.baselines.set(key, entry.currentSpec);
@@ -1283,8 +1299,13 @@ export async function scanConfigChanges(cluster) {
           continue;
         }
         if (baselineHash === currentHash) continue;
+        const resolvedAt = s.resolvedWorkloads.get(key);
+        if (resolvedAt && (Date.now() - resolvedAt < 86400000)) {
+          s.baselines.set(key + ":hash", currentHash);
+          continue;
+        }
         const dismissCooldown = s.dismissedKeys.get(key);
-        if (dismissCooldown && (Date.now() - dismissCooldown.dismissedAt < 90000)) {
+        if (dismissCooldown && (Date.now() - dismissCooldown.dismissedAt < 86400000)) {
           s.baselines.set(key + ":hash", currentHash);
           continue;
         }
@@ -1337,8 +1358,13 @@ export async function scanConfigChanges(cluster) {
           continue;
         }
         if (baselineHash === currentHash) continue;
+        const resolvedAtSec = s.resolvedWorkloads.get(key);
+        if (resolvedAtSec && (Date.now() - resolvedAtSec < 86400000)) {
+          s.baselines.set(key + ":hash", currentHash);
+          continue;
+        }
         const dismissCooldown = s.dismissedKeys.get(key);
-        if (dismissCooldown && (Date.now() - dismissCooldown.dismissedAt < 90000)) {
+        if (dismissCooldown && (Date.now() - dismissCooldown.dismissedAt < 86400000)) {
           s.baselines.set(key + ":hash", currentHash);
           continue;
         }
