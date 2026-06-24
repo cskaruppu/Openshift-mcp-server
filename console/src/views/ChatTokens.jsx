@@ -2004,15 +2004,22 @@ function FixProposal({ diag, cluster }) {
             cluster: cluster || "local", rootCause: diag.rootCause || diag.diagnosis || "see report",
             evidence: diag.evidence || [], fixTitle: fix.title || "", fixCommand: fix.command || "",
             fixResult: String(out).slice(0, 500), fixRisk: fix.risk || "low",
+            rolloutStatus: d.validation?.stable ? `Stable — ${d.validation.ready || 0}/${d.validation.desired || 0} replicas ready` : "triggered",
+            timeline: Array.isArray(diag.timeline) ? diag.timeline.map(t => ({ timestamp: t.time || t.timestamp || "", label: t.label || t.stage || "", detail: t.detail || t.details || "" })) : [],
           };
           const closeRes = await fetch(clusterUrl("/api/servicenow/resolve-incident", cluster), {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ sysId: diag.incidentSysId, closeNotes: `Resolved by TCS Agentic AI — ${fix.title}`, resolution }),
           });
           const closeData = await closeRes.json();
+          // Details are always saved to ServiceNow; the state-close is best-effort.
+          // Show a soft "details saved" note rather than a hard error when only the
+          // close transition fails (e.g. instance ACL / mandatory fields).
+          const detailsSaved = closeData.detailsSaved || closeData.success;
           updateFixState(key, {
             phase: closeData.success ? "resolved" : "applied", text: out, incClosed: closeData.success,
-            incError: closeData.success ? null : (closeData.error || "close failed"),
+            incError: closeData.success ? null : (detailsSaved ? `Details synced to ServiceNow — close pending${closeData.closeError ? " (" + closeData.closeError + ")" : ""}` : (closeData.error || closeData.closeError || "close failed")),
+            incDetailsSaved: detailsSaved,
             validation: d.validation || null, beforeMetrics: d.beforeMetrics || null, afterMetrics: d.afterMetrics || null, resolutionTimeline: d.resolutionTimeline || null, durationMs, appliedAt,
           });
         } catch (e) {
@@ -2163,7 +2170,8 @@ function FixProposal({ diag, cluster }) {
                               <span>{phaseIcon[st.phase] || ""}</span>
                               <span style={{ color: isFailed ? "#dc2626" : "#16a34a" }}>{phaseLabel[st.phase] || st.phase}</span>
                               {st.incClosed && <span style={{ marginLeft: "auto", fontSize: "0.85em", color: "#16a34a" }}>{diag.incidentNumber} resolved</span>}
-                              {st.incError && <span style={{ marginLeft: "auto", fontSize: "0.85em", color: "#f59e0b" }}>INC close: {st.incError}</span>}
+                              {!st.incClosed && st.incDetailsSaved && <span style={{ marginLeft: "auto", fontSize: "0.85em", color: "#0ea5e9" }}>{diag.incidentNumber} — details synced (close pending)</span>}
+                              {st.incError && !st.incDetailsSaved && <span style={{ marginLeft: "auto", fontSize: "0.85em", color: "#f59e0b" }}>INC close: {st.incError}</span>}
                               {st.appliedAt && <span style={{ marginLeft: st.incClosed || st.incError ? 8 : "auto", fontSize: "0.75em", color: "var(--muted)", fontFamily: "var(--font-mono, monospace)" }}>Applied: {new Date(st.appliedAt).toLocaleString()}</span>}
                             </div>
                             {/* Recovery timeline for applied fixes */}

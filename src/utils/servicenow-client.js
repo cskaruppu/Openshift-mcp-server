@@ -217,14 +217,19 @@ export async function cancelChangeRequest(sysId, { reason = "Cancelled by user f
 
 /** Resolve a ServiceNow incident — ITIL-compliant closure.
  *  Posts structured work notes (RCA, timeline, fix detail, prevention) as a
- *  separate update first, then sets state to Resolved (6).
+ *  separate update FIRST so the details are ALWAYS saved, then attempts to set
+ *  state to Resolved. The close is best-effort: if the state transition fails
+ *  (e.g. instance-specific mandatory fields or field-level ACL), the details
+ *  remain saved and the function returns { detailsSaved: true, closed: false,
+ *  closeError } instead of throwing — so the caller never loses the timeline.
  *  Accepts an optional `resolution` object with full diagnosis context. */
 export async function resolveIncident(sysId, {
-  closeCode = "Solved (Permanently)",
+  closeCode = process.env.SERVICENOW_CLOSE_CODE || "Solved (Permanently)",
   closeNotes = "Resolved by TCS Agentic AI",
   workNotes = "",
   resolution = null,
 } = {}) {
+  let detailsSaved = false;
   if (resolution) {
     const ts = new Date().toISOString().replace("T", " ").slice(0, 19);
     const sections = [
@@ -264,6 +269,18 @@ export async function resolveIncident(sysId, {
       `  Result: ${(resolution.fixResult || "success").slice(0, 500)}`,
       `  Risk Level: ${resolution.fixRisk || "low"}`,
     );
+    if (resolution.beforeAfter) {
+      sections.push(``, `── BEFORE / AFTER COMPARISON ────────`, resolution.beforeAfter);
+    }
+    if (Array.isArray(resolution.timeline) && resolution.timeline.length > 0) {
+      sections.push(``, `── INCIDENT TIMELINE ────────────────`);
+      for (const step of resolution.timeline) {
+        const t = step.timestamp || step.time || "";
+        const label = step.label || step.stage || step.event || "";
+        const detail = step.detail || step.details || "";
+        sections.push(`  [${t}] ${label}${detail ? " — " + detail : ""}`);
+      }
+    }
     sections.push(
       ``,
       `── VERIFICATION ─────────────────────`,
@@ -289,27 +306,52 @@ export async function resolveIncident(sysId, {
       `  Close code: ${closeCode}`,
       `══════════════════════════════════════`,
     );
+    // Always save the full details first — this must succeed even if close fails.
     await updateRecord("incident", sysId, { work_notes: sections.join("\n") });
+    detailsSaved = true;
+
     const richCloseNotes = [
       closeNotes,
       `Root Cause: ${resolution.rootCause || "see work notes"}`,
       `Fix: ${resolution.fixTitle || "see work notes"}`,
       `Severity: ${resolution.severity || "N/A"} | Namespace: ${resolution.namespace || "N/A"} | Pod: ${resolution.podName || "N/A"}`,
     ].join("\n");
-    return updateRecord("incident", sysId, {
-      state: "6",
-      close_code: closeCode,
-      close_notes: richCloseNotes,
-    });
+    return closeWithFallback(sysId, closeCode, richCloseNotes, detailsSaved, resolution.incidentNumber);
   }
   if (workNotes) {
     await updateRecord("incident", sysId, { work_notes: workNotes });
+    detailsSaved = true;
   }
-  return updateRecord("incident", sysId, {
-    state: "6",
-    close_code: closeCode,
-    close_notes: closeNotes,
-  });
+  return closeWithFallback(sysId, closeCode, closeNotes, detailsSaved, null);
+}
+
+/** Best-effort incident close. Tries Resolved (state 6) with close fields.
+ *  ServiceNow instances vary — some require resolution_code/resolution_notes
+ *  (newer ITSM), some use close_code/close_notes (classic). We try the modern
+ *  fields first, then fall back to classic, then to a bare state change.
+ *  Never throws on close failure — returns a status object so the caller keeps
+ *  the already-saved work notes. */
+async function closeWithFallback(sysId, closeCode, closeNotes, detailsSaved, incidentNumber) {
+  const resolveState = process.env.SERVICENOW_RESOLVE_STATE || "6";
+  const attempts = [
+    // Modern ITSM resolution fields
+    { state: resolveState, close_code: closeCode, close_notes: closeNotes, resolution_code: closeCode, resolution_notes: closeNotes },
+    // Classic close fields only
+    { state: resolveState, close_code: closeCode, close_notes: closeNotes },
+    // Bare state change (last resort — at least move it out of "In Progress")
+    { state: resolveState, close_notes: closeNotes },
+  ];
+  let lastError = null;
+  for (const payload of attempts) {
+    try {
+      const res = await updateRecord("incident", sysId, payload);
+      return { closed: true, detailsSaved, state: "Resolved", incidentNumber, result: res };
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  console.warn(`[servicenow] Incident ${incidentNumber || sysId} details saved but close failed:`, lastError?.message);
+  return { closed: false, detailsSaved, closeError: lastError?.message || "close failed", incidentNumber };
 }
 
 /** Test ServiceNow connectivity and permissions. */

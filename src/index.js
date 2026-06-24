@@ -4838,15 +4838,25 @@ spec:
                   fixResult: result.stdout ? result.stdout.slice(0, 500) : "success",
                   fixRisk: body.fixRisk || preflight?.classification?.level || "low",
                   rolloutStatus,
+                  timeline: Array.isArray(body.incidentTimeline) ? body.incidentTimeline : [],
                 };
-                await snowResolveIncident(body.incidentSysId, {
+                const snowResult = await snowResolveIncident(body.incidentSysId, {
                   closeCode: "Solved (Permanently)",
                   closeNotes: `Auto-resolved by TCS Agentic AI. Fix: ${command}. Validation: passed. ${validation.pods?.length ? `${validation.pods.filter(p => p.ready).length}/${validation.pods.length} pods healthy.` : ""}`,
                   resolution: resolutionObj,
                 });
-                incidentClosed = { success: true, incidentNumber: body.incidentNumber || null, state: "Resolved" };
+                // snowResolveIncident no longer throws on close-only failure — it
+                // returns { closed, detailsSaved, closeError }. Details are always
+                // saved to ServiceNow; the close is best-effort.
+                incidentClosed = {
+                  success: snowResult?.closed === true,
+                  detailsSaved: snowResult?.detailsSaved === true,
+                  incidentNumber: body.incidentNumber || null,
+                  state: snowResult?.closed ? "Resolved" : "Updated (close pending)",
+                  closeError: snowResult?.closeError || null,
+                };
               } catch (snowErr) {
-                incidentClosed = { success: false, error: snowErr.message };
+                incidentClosed = { success: false, detailsSaved: false, error: snowErr.message };
               }
             } else {
               incidentClosed = { success: false, reason: "Validation failed — incident remains open for manual review" };
@@ -4941,10 +4951,14 @@ spec:
             }
           } catch {}
         }
-        if (incidentClosed?.success && body.incidentSysId) {
+        // Post before/after comparison (with fresh after-metrics) as a follow-up
+        // work note. Decoupled from close success — as long as the incident exists
+        // and details were saved, the comparison + timeline are recorded in
+        // ServiceNow even if the state-close transition failed.
+        if (body.incidentSysId && (incidentClosed?.detailsSaved || incidentClosed?.success)) {
           const beforeAfterNotes = [];
           if (beforeMetrics || afterMetrics) {
-            beforeAfterNotes.push(`── BEFORE / AFTER COMPARISON ────────`);
+            beforeAfterNotes.push(`── POST-FIX VERIFICATION (live) ─────`);
             if (beforeMetrics?.podName) beforeAfterNotes.push(`  Pod: ${beforeMetrics.podName} → ${afterMetrics?.podName || "pending"}`);
             if (beforeMetrics?.containerName) beforeAfterNotes.push(`  Container: ${beforeMetrics.containerName}`);
             const fields = ["status", "containerState", "ready", "restarts", "memoryLimit", "memoryRequest", "memoryUsage", "cpuLimit", "cpuUsage"];
@@ -4957,17 +4971,9 @@ spec:
             }
             if (afterMetrics?.podCount) beforeAfterNotes.push(`  Healthy Pods: ${afterMetrics.podCount}`);
           }
-          if (Array.isArray(body.incidentTimeline) && body.incidentTimeline.length) {
-            beforeAfterNotes.push(`\n── INCIDENT TIMELINE ────────────────`);
-            for (const step of body.incidentTimeline) {
-              const t = step.timestamp || step.time || "";
-              const label = step.label || step.stage || step.event || "";
-              const detail = step.detail || step.details || "";
-              beforeAfterNotes.push(`  [${t}] ${label}${detail ? " — " + detail : ""}`);
-            }
-          }
           if (beforeAfterNotes.length > 0) {
             beforeAfterNotes.push(`\n  Total Resolution Time: ${((Date.now() - auditStart) / 1000).toFixed(1)}s`);
+            beforeAfterNotes.push(`  Incident Status: ${incidentClosed?.success ? "Resolved ✓" : "Details saved — close pending manual review"}`);
             snowUpdateRecord("incident", body.incidentSysId, { work_notes: beforeAfterNotes.join("\n") }).catch(() => {});
           }
         }
@@ -5227,7 +5233,15 @@ spec:
           workNotes: workNotes || "",
           resolution: resolution || null,
         });
-        return sendJson(res, 200, { success: true, result: result?.result || result });
+        // snowResolveIncident returns { closed, detailsSaved, closeError }. Details
+        // are always saved; close is best-effort. Report both so the UI can show
+        // "Resolved" vs "Details saved — close pending" without a hard error.
+        return sendJson(res, 200, {
+          success: result?.closed === true,
+          detailsSaved: result?.detailsSaved === true,
+          closeError: result?.closeError || null,
+          result: result?.result || result,
+        });
       } catch (e) {
         return sendJson(res, 500, { error: e.message });
       }
