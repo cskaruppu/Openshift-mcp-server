@@ -45,14 +45,10 @@ export function AppChangesWidget() {
   const [actionFeedback, setActionFeedback] = useState(null);
 
   const unavailable = data && data.available === false;
-  const total = data?.totalChanges ?? 0;
-  const critical = data?.critical ?? 0;
-  const warning = data?.warning ?? 0;
   const watched = data?.watchedNamespaces || [];
   const effectiveWatched = optimisticNs !== null ? optimisticNs : watched;
   const tracked = data?.trackedWorkloads ?? 0;
   const changes = data?.recentChanges || [];
-  const changeTypes = data?.changeTypeBreakdown || {};
   const timeline = data?.timelineStats || {};
   const history = data?.changeHistory || [];
   const gitops = data?.gitopsDrift || {};
@@ -169,12 +165,18 @@ export function AppChangesWidget() {
     }
   };
 
-  const filteredChanges = (data?.recentChanges || []).filter(c => {
-    if (removedIds.has(c.id)) return false;
+  const visibleChanges = (data?.recentChanges || []).filter(c => !removedIds.has(c.id));
+  const filteredChanges = visibleChanges.filter(c => {
     if (filterType !== "all" && c.changeType !== filterType) return false;
     if (filterRisk !== "all" && c.riskLevel !== filterRisk) return false;
     return true;
   });
+
+  const total = visibleChanges.length;
+  const critical = visibleChanges.filter(c => c.severity === "critical").length;
+  const warning = visibleChanges.filter(c => c.severity === "warning").length;
+  const changeTypes = {};
+  for (const c of visibleChanges) { const t = c.changeType || "other"; changeTypes[t] = (changeTypes[t] || 0) + 1; }
 
   if (isLoading) {
     return (
@@ -277,20 +279,24 @@ export function AppChangesWidget() {
           {/* Namespace Health Summary Bar */}
           {Object.keys(nsHealth).length > 0 && (
             <div className="acw-ns-health">
-              {Object.entries(nsHealth).map(([ns, h]) => (
-                <div key={ns} className="acw-ns-health-item">
-                  <span className="acw-ns-health-name">{ns}</span>
-                  <span className="acw-ns-health-stat">{h.deployments} Dep</span>
-                  <span className="acw-ns-health-stat">{h.statefulsets} Sts</span>
-                  <span className="acw-ns-health-stat">{h.runningPods}/{h.pods} Po</span>
-                  {h.changes > 0 && (
-                    <span className={"acw-ns-health-changes" + (h.highRiskChanges > 0 ? " high" : "")}>
-                      {h.changes} change{h.changes !== 1 ? "s" : ""}{h.highRiskChanges > 0 ? ` (${h.highRiskChanges} high risk)` : ""}
-                    </span>
-                  )}
-                  {h.changes === 0 && <span className="acw-ns-health-clean">{"✓"} Clean</span>}
-                </div>
-              ))}
+              {Object.entries(nsHealth).map(([ns, h]) => {
+                const nsChanges = visibleChanges.filter(c => c.namespace === ns).length;
+                const nsHighRisk = visibleChanges.filter(c => c.namespace === ns && (c.riskLevel === "critical" || c.riskLevel === "high")).length;
+                return (
+                  <div key={ns} className="acw-ns-health-item">
+                    <span className="acw-ns-health-name">{ns}</span>
+                    <span className="acw-ns-health-stat">{h.deployments} Dep</span>
+                    <span className="acw-ns-health-stat">{h.statefulsets} Sts</span>
+                    <span className="acw-ns-health-stat">{h.runningPods}/{h.pods} Po</span>
+                    {nsChanges > 0 && (
+                      <span className={"acw-ns-health-changes" + (nsHighRisk > 0 ? " high" : "")}>
+                        {nsChanges} change{nsChanges !== 1 ? "s" : ""}{nsHighRisk > 0 ? ` (${nsHighRisk} high risk)` : ""}
+                      </span>
+                    )}
+                    {nsChanges === 0 && <span className="acw-ns-health-clean">{"✓"} Clean</span>}
+                  </div>
+                );
+              })}
             </div>
           )}
 
