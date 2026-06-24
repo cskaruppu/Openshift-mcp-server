@@ -220,6 +220,7 @@ function _cs(cluster = "local") {
       changeLog: [],
       resolvedIds: new Set(),
       dismissedKeys: new Map(),
+      resolvedWorkloads: new Map(),
       changeHistory: [],
       lastScanTime: null,
       lastChangeTime: null,
@@ -711,10 +712,11 @@ export async function initNamespaceBaselines(nsList, cluster) {
 export async function acknowledgeChange(changeId, cluster) {
   const s = _cs(cluster);
   const entry = s.changeLog.find(e => e.id === changeId);
-  if (!entry) return { found: false, error: "Change not found" };
+  if (!entry) return { found: true, id: changeId, action: "acknowledged", resolved: true, message: "Already cleared" };
   s.resolvedIds.add(changeId);
   const key = workloadKey(entry.namespace, entry.kind, entry.name);
   if (entry.currentSpec) s.baselines.set(key, entry.currentSpec);
+  s.resolvedWorkloads.set(key, Date.now());
   recordHistory(entry, "acknowledged", cluster);
   const idx = s.changeLog.indexOf(entry);
   if (idx >= 0) s.changeLog.splice(idx, 1);
@@ -725,11 +727,12 @@ export async function acknowledgeChange(changeId, cluster) {
 export async function agreeChange(changeId, cluster) {
   const s = _cs(cluster);
   const entry = s.changeLog.find(e => e.id === changeId);
-  if (!entry) return { found: false, error: "Change not found" };
+  if (!entry) return { found: true, id: changeId, action: "agreed", resolved: true, message: "Already cleared" };
   s.resolvedIds.add(changeId);
   recordHistory(entry, "agreed", cluster);
   const key = workloadKey(entry.namespace, entry.kind, entry.name);
   if (entry.currentSpec) s.baselines.set(key, entry.currentSpec);
+  s.resolvedWorkloads.set(key, Date.now());
   const idx = s.changeLog.indexOf(entry);
   if (idx >= 0) s.changeLog.splice(idx, 1);
   await persistWatcherState().catch(e => console.error("[watcher] persist error:", e.message));
@@ -739,7 +742,7 @@ export async function agreeChange(changeId, cluster) {
 export async function dismissChange(changeId, cluster) {
   const s = _cs(cluster);
   const entry = s.changeLog.find(e => e.id === changeId);
-  if (!entry) return { found: false, error: "Change not found" };
+  if (!entry) return { found: true, id: changeId, action: "dismissed", resolved: true, message: "Already cleared" };
   const kindPath = entry.kind === "Deployment" ? "deployments" : entry.kind === "StatefulSet" ? "statefulsets" : "daemonsets";
   const apiPath = `/apis/apps/v1/namespaces/${entry.namespace}/${kindPath}/${entry.name}`;
 
@@ -778,6 +781,7 @@ export async function dismissChange(changeId, cluster) {
     if (entry.currentSpec) s.baselines.set(key, entry.currentSpec);
   }
   s.dismissedKeys.set(key, { baseline: baselineSpec, dismissedAt: Date.now(), followUpCount: 0 });
+  s.resolvedWorkloads.set(key, Date.now());
   recordHistory(entry, "dismissed", cluster);
   const idx = s.changeLog.indexOf(entry);
   if (idx >= 0) s.changeLog.splice(idx, 1);
@@ -1180,8 +1184,13 @@ export async function scanForChanges(cluster) {
           continue;
         }
         if (baseline.generation === current.generation && baseline.resourceVersion === current.resourceVersion) continue;
+        const resolvedAt = s.resolvedWorkloads.get(key);
+        if (resolvedAt && (Date.now() - resolvedAt < 86400000)) {
+          s.baselines.set(key, current);
+          continue;
+        }
         const dismissCooldown = s.dismissedKeys.get(key);
-        if (dismissCooldown && (Date.now() - dismissCooldown.dismissedAt < 90000)) {
+        if (dismissCooldown && (Date.now() - dismissCooldown.dismissedAt < 86400000)) {
           s.baselines.set(key, current);
           continue;
         }
