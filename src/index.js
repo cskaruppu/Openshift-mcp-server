@@ -4630,9 +4630,18 @@ spec:
             if (ns && resName) {
               const kindMatch = command.match(/\b(deployment|statefulset|daemonset|replicaset)\/([^\s]+)/i);
               const resKind = kindMatch?.[1]?.toLowerCase() || "deployment";
+              const plural = resKind + "s";
+              // Read deployment spec directly (bypass cache for accurate before-state)
+              let specLimits = {};
+              let specRequests = {};
+              try {
+                const wlBefore = await ocpFetch(`/apis/apps/v1/namespaces/${ns}/${plural}/${resName}`);
+                specLimits = (wlBefore.spec?.template?.spec?.containers || [])[0]?.resources?.limits || {};
+                specRequests = (wlBefore.spec?.template?.spec?.containers || [])[0]?.resources?.requests || {};
+              } catch {}
               let podItems = [];
               try {
-                const wlBefore = await ocpGet(`/apis/apps/v1/namespaces/${ns}/${resKind}s/${resName}`);
+                const wlBefore = await ocpGet(`/apis/apps/v1/namespaces/${ns}/${plural}/${resName}`);
                 const matchLabels = wlBefore.spec?.selector?.matchLabels || {};
                 const labelParts = Object.entries(matchLabels).map(([k, v]) => `${k}=${v}`);
                 if (labelParts.length > 0) {
@@ -4650,19 +4659,17 @@ spec:
               const pod = podItems[0];
               if (pod) {
                 const cs = (pod.status?.containerStatuses || [])[0];
-                const limits = (pod.spec?.containers || [])[0]?.resources?.limits || {};
                 const pmMatch = (pm.items || []).find(m => m.metadata?.name === pod.metadata?.name);
                 const memUsage = pmMatch?.containers?.[0]?.usage?.memory || null;
                 const cpuUsage = pmMatch?.containers?.[0]?.usage?.cpu || null;
-                const requests = (pod.spec?.containers || [])[0]?.resources?.requests || {};
                 beforeMetrics = {
                   podName: pod.metadata?.name || "—",
                   containerName: (pod.status?.containerStatuses || [])[0]?.name || (pod.spec?.containers || [])[0]?.name || "—",
-                  memoryLimit: limits.memory || "—",
-                  memoryRequest: requests.memory || "—",
+                  memoryLimit: specLimits.memory || "—",
+                  memoryRequest: specRequests.memory || "—",
                   memoryUsage: memUsage || "—",
-                  cpuLimit: limits.cpu || "—",
-                  cpuRequest: requests.cpu || "—",
+                  cpuLimit: specLimits.cpu || "—",
+                  cpuRequest: specRequests.cpu || "—",
                   cpuUsage: cpuUsage || "—",
                   restarts: cs?.restartCount ?? 0,
                   status: pod.status?.phase || "Unknown",
@@ -4849,58 +4856,68 @@ spec:
             incidentClosed = { success: false, reason: `Validation error: ${valErr.message}` };
           }
         }
-        // Capture after-metrics for comparison
+        // Capture after-metrics for comparison (bypass cache for fresh data)
         let afterMetrics = null;
         if (!dryRun && beforeMetrics && validation) {
+          await new Promise(r => setTimeout(r, 2000));
           try {
             const meta = parseCommandTarget(command);
             const aNs = meta.namespace || body.namespace || "";
             const aResName = meta.name || body.resourceName || "";
             if (aNs && aResName) {
-              let specLimits = {};
-              let specRequests = {};
               const kindMatch = command.match(/\b(deployment|statefulset|daemonset|replicaset)\/([^\s]+)/i);
               const resKind = kindMatch?.[1]?.toLowerCase() || "deployment";
+              const plural = resKind + "s";
+              // Bypass cache — read the updated Deployment spec directly
+              let specLimits = {};
+              let specRequests = {};
               let afterPodItems = [];
               try {
-                const wlAfter = await ocpGet(`/apis/apps/v1/namespaces/${aNs}/${resKind}s/${aResName}`);
+                const wlAfter = await ocpFetch(`/apis/apps/v1/namespaces/${aNs}/${plural}/${aResName}`);
                 specLimits = (wlAfter.spec?.template?.spec?.containers || [])[0]?.resources?.limits || {};
                 specRequests = (wlAfter.spec?.template?.spec?.containers || [])[0]?.resources?.requests || {};
                 const matchLabels = wlAfter.spec?.selector?.matchLabels || {};
                 const labelParts = Object.entries(matchLabels).map(([k, v]) => `${k}=${v}`);
                 if (labelParts.length > 0) {
-                  const podData = await ocpGet(`/api/v1/namespaces/${aNs}/pods?labelSelector=${encodeURIComponent(labelParts.join(","))}&limit=10`);
+                  const podData = await ocpFetch(`/api/v1/namespaces/${aNs}/pods?labelSelector=${encodeURIComponent(labelParts.join(","))}&limit=10`);
                   afterPodItems = podData.items || [];
                 }
               } catch {}
               if (afterPodItems.length === 0) {
                 try {
-                  const podData = await ocpGet(`/api/v1/namespaces/${aNs}/pods?limit=50`);
+                  const podData = await ocpFetch(`/api/v1/namespaces/${aNs}/pods?limit=50`);
                   afterPodItems = (podData.items || []).filter(p => p.metadata?.name?.startsWith(aResName + "-"));
                 } catch {}
               }
-              const pm = await ocpGet(`/apis/metrics.k8s.io/v1beta1/namespaces/${aNs}/pods`).catch(() => ({ items: [] }));
-              const runningPods = afterPodItems
-                .filter(p => p.status?.phase === "Running" && (p.status?.containerStatuses || []).some(c => c.ready))
-                .sort((a, b) => new Date(b.metadata?.creationTimestamp || 0) - new Date(a.metadata?.creationTimestamp || 0));
-              const pod = runningPods[0];
+              // Sort pods: newest first so we pick the NEW pod with updated spec
+              const allPods = afterPodItems.sort((a, b) =>
+                new Date(b.metadata?.creationTimestamp || 0) - new Date(a.metadata?.creationTimestamp || 0)
+              );
+              const runningPods = allPods.filter(p =>
+                p.status?.phase === "Running" && (p.status?.containerStatuses || []).some(c => c.ready)
+              );
+              const pm = await ocpFetch(`/apis/metrics.k8s.io/v1beta1/namespaces/${aNs}/pods`).catch(() => ({ items: [] }));
+              const pod = runningPods[0] || allPods[0];
               if (pod) {
                 const cs = (pod.status?.containerStatuses || [])[0];
                 const pmMatch = (pm.items || []).find(m => m.metadata?.name === pod.metadata?.name);
+                const podPhase = pod.status?.phase || "Unknown";
+                const podState = cs?.state?.running ? "Running"
+                  : cs?.state?.waiting?.reason || cs?.state?.terminated?.reason || "Pending";
                 afterMetrics = {
                   podName: pod.metadata?.name || "—",
                   containerName: cs?.name || (pod.spec?.containers || [])[0]?.name || "—",
-                  memoryLimit: specLimits.memory || (pod.spec?.containers || [])[0]?.resources?.limits?.memory || "—",
-                  memoryRequest: specRequests.memory || (pod.spec?.containers || [])[0]?.resources?.requests?.memory || "—",
-                  memoryUsage: pmMatch?.containers?.[0]?.usage?.memory || "—",
-                  cpuLimit: specLimits.cpu || (pod.spec?.containers || [])[0]?.resources?.limits?.cpu || "—",
-                  cpuRequest: specRequests.cpu || (pod.spec?.containers || [])[0]?.resources?.requests?.cpu || "—",
-                  cpuUsage: pmMatch?.containers?.[0]?.usage?.cpu || "—",
+                  memoryLimit: specLimits.memory || "—",
+                  memoryRequest: specRequests.memory || "—",
+                  memoryUsage: pmMatch?.containers?.[0]?.usage?.memory || "pending",
+                  cpuLimit: specLimits.cpu || "—",
+                  cpuRequest: specRequests.cpu || "—",
+                  cpuUsage: pmMatch?.containers?.[0]?.usage?.cpu || "pending",
                   restarts: cs?.restartCount ?? 0,
-                  status: pod.status?.phase || "Unknown",
+                  status: podPhase,
                   ready: cs?.ready ?? false,
-                  containerState: cs?.state?.running ? "Running" : cs?.state?.waiting?.reason || cs?.state?.terminated?.reason || "Unknown",
-                  podCount: `${runningPods.filter(p => (p.status?.containerStatuses || []).every(c => c.ready)).length}/${runningPods.length}`,
+                  containerState: podState,
+                  podCount: `${runningPods.filter(p => (p.status?.containerStatuses || []).every(c => c.ready)).length}/${allPods.length}`,
                   timestamp: new Date().toISOString(),
                 };
               } else {
@@ -4908,10 +4925,10 @@ spec:
                   podName: "pending",
                   containerName: "—",
                   memoryLimit: specLimits.memory || "—",
-                  memoryRequest: "pending",
+                  memoryRequest: specRequests.memory || "—",
                   memoryUsage: "pending",
-                  cpuLimit: "—",
-                  cpuRequest: "pending",
+                  cpuLimit: specLimits.cpu || "—",
+                  cpuRequest: specRequests.cpu || "—",
                   cpuUsage: "pending",
                   restarts: 0,
                   status: "Rolling out",

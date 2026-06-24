@@ -1872,11 +1872,13 @@ function BeforeAfterMetrics({ before, after }) {
 
   const rows = [];
   if (before?.status || after?.status) {
+    const bState = before?.containerState || before?.status || "—";
+    const aState = after?.containerState || after?.status || "—";
     rows.push({
       label: "Pod Status",
-      before: React.createElement("span", null, statusDot(before?.ready, before?.containerState), before?.containerState || before?.status || "—"),
-      after: React.createElement("span", null, statusDot(after?.ready, after?.containerState), after?.containerState || after?.status || "—"),
-      highlight: after?.ready && !before?.ready,
+      before: React.createElement("span", null, statusDot(before?.ready, before?.containerState), bState),
+      after: React.createElement("span", null, statusDot(after?.ready, after?.containerState), aState),
+      highlight: bState !== aState || (after?.ready && !before?.ready),
     });
   }
   if (before?.memoryLimit || after?.memoryLimit) {
@@ -1884,13 +1886,23 @@ function BeforeAfterMetrics({ before, after }) {
     rows.push({ label: "Memory Limit", before: before?.memoryLimit || "—", after: after?.memoryLimit || "—", highlight: changed });
   }
   if (before?.memoryRequest || after?.memoryRequest) {
-    rows.push({ label: "Memory Request", before: before?.memoryRequest || "—", after: after?.memoryRequest || "—" });
+    const changed = before?.memoryRequest !== after?.memoryRequest;
+    rows.push({ label: "Memory Request", before: before?.memoryRequest || "—", after: after?.memoryRequest || "—", highlight: changed });
   }
-  if (before?.memoryUsage || after?.memoryUsage) rows.push({ label: "Memory Usage", before: before?.memoryUsage || "—", after: after?.memoryUsage || "—" });
-  if (before?.restarts != null || after?.restarts != null) rows.push({ label: "Restarts", before: String(before?.restarts ?? "—"), after: String(after?.restarts ?? "0"), highlight: (after?.restarts ?? 0) < (before?.restarts ?? 0) });
-  if (before?.cpuLimit || after?.cpuLimit) rows.push({ label: "CPU Limit", before: before?.cpuLimit || "—", after: after?.cpuLimit || "—" });
-  if (before?.cpuUsage || after?.cpuUsage) rows.push({ label: "CPU Usage", before: before?.cpuUsage || "—", after: after?.cpuUsage || "—" });
-  if (after?.podCount) rows.push({ label: "Healthy Pods", before: "—", after: after.podCount });
+  if (before?.memoryUsage || after?.memoryUsage) {
+    const changed = before?.memoryUsage !== after?.memoryUsage;
+    rows.push({ label: "Memory Usage", before: before?.memoryUsage || "—", after: after?.memoryUsage || "—", highlight: changed });
+  }
+  if (before?.restarts != null || after?.restarts != null) rows.push({ label: "Restarts", before: String(before?.restarts ?? "—"), after: String(after?.restarts ?? "0"), highlight: (after?.restarts ?? 0) !== (before?.restarts ?? 0) });
+  if (before?.cpuLimit || after?.cpuLimit) {
+    const changed = before?.cpuLimit !== after?.cpuLimit;
+    rows.push({ label: "CPU Limit", before: before?.cpuLimit || "—", after: after?.cpuLimit || "—", highlight: changed });
+  }
+  if (before?.cpuUsage || after?.cpuUsage) {
+    const changed = before?.cpuUsage !== after?.cpuUsage;
+    rows.push({ label: "CPU Usage", before: before?.cpuUsage || "—", after: after?.cpuUsage || "—", highlight: changed });
+  }
+  if (after?.podCount) rows.push({ label: "Healthy Pods", before: before?.podCount || "—", after: after.podCount, highlight: true });
   if (rows.length === 0) return null;
 
   return (
