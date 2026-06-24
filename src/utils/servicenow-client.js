@@ -195,12 +195,31 @@ export async function queryRecords(table, query, limit = 10) {
   );
 }
 
-/** Update a record */
+let _preferPut = false;
+
+/** Update a record.
+ *  Tries PATCH first (standard REST). Many ServiceNow PDI / developer instances
+ *  block PATCH with 403 while allowing PUT on the same endpoint. When PATCH
+ *  fails with 403, automatically retries with PUT and remembers the preference
+ *  so subsequent calls go straight to PUT without the extra round-trip. */
 export async function updateRecord(table, sysId, data) {
-  return snowFetch(`/now/table/${table}/${sysId}`, {
-    method: "PATCH",
-    body: JSON.stringify(data),
-  });
+  const path = `/now/table/${table}/${sysId}`;
+  const body = JSON.stringify(data);
+
+  if (_preferPut) {
+    return snowFetch(path, { method: "PUT", body });
+  }
+
+  try {
+    return await snowFetch(path, { method: "PATCH", body });
+  } catch (err) {
+    if (/403|forbidden/i.test(err.message)) {
+      console.warn("[servicenow] PATCH blocked (403) — falling back to PUT for this and future updates");
+      _preferPut = true;
+      return snowFetch(path, { method: "PUT", body });
+    }
+    throw err;
+  }
 }
 
 /** Cancel a change request in ServiceNow.
