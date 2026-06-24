@@ -4792,12 +4792,13 @@ spec:
               }
               let podHealth = [];
               try {
-                const wlSpec = await ocpGet(`/apis/apps/v1/namespaces/${ns}/${plural}/${resourceName}`).catch(() => null);
+                const wlSpec = await ocpFetch(`/apis/apps/v1/namespaces/${ns}/${plural}/${resourceName}`).catch(() => null);
                 const matchLabels = wlSpec?.spec?.selector?.matchLabels || {};
                 const selectorStr = Object.entries(matchLabels).map(([k, v]) => `${k}=${v}`).join(",");
                 const labelQuery = selectorStr || `app=${resourceName}`;
-                const podData = await ocpGet(`/api/v1/namespaces/${ns}/pods?labelSelector=${encodeURIComponent(labelQuery)}&limit=50`);
-                podHealth = (podData.items || []).map(p => ({
+                const podData = await ocpFetch(`/api/v1/namespaces/${ns}/pods?labelSelector=${encodeURIComponent(labelQuery)}&limit=50`);
+                const activePods = (podData.items || []).filter(p => !p.metadata?.deletionTimestamp);
+                podHealth = activePods.map(p => ({
                   name: p.metadata.name,
                   phase: p.status?.phase,
                   ready: (p.status?.containerStatuses || []).every(c => c.ready),
@@ -4866,10 +4867,10 @@ spec:
             incidentClosed = { success: false, reason: `Validation error: ${valErr.message}` };
           }
         }
-        // Capture after-metrics for comparison (bypass cache for fresh data)
+        // Capture after-metrics for comparison (bypass cache, wait for old pods to terminate)
         let afterMetrics = null;
         if (!dryRun && beforeMetrics && validation) {
-          await new Promise(r => setTimeout(r, 2000));
+          await new Promise(r => setTimeout(r, 5000));
           try {
             const meta = parseCommandTarget(command);
             const aNs = meta.namespace || body.namespace || "";
@@ -4899,6 +4900,8 @@ spec:
                   afterPodItems = (podData.items || []).filter(p => p.metadata?.name?.startsWith(aResName + "-"));
                 } catch {}
               }
+              // Filter out terminating pods (old pods being removed after rolling update)
+              afterPodItems = afterPodItems.filter(p => !p.metadata?.deletionTimestamp);
               // Sort pods: newest first so we pick the NEW pod with updated spec
               const allPods = afterPodItems.sort((a, b) =>
                 new Date(b.metadata?.creationTimestamp || 0) - new Date(a.metadata?.creationTimestamp || 0)

@@ -344,20 +344,26 @@ export async function resolveIncident(sysId, {
   return closeWithFallback(sysId, closeCode, closeNotes, detailsSaved, null);
 }
 
-/** Best-effort incident close. Tries Resolved (state 6) with close fields.
- *  ServiceNow instances vary — some require resolution_code/resolution_notes
- *  (newer ITSM), some use close_code/close_notes (classic). We try the modern
- *  fields first, then fall back to classic, then to a bare state change.
+/** Best-effort incident close. ServiceNow PDIs enforce state transitions —
+ *  you cannot jump from New(1) directly to Resolved(6). This function first
+ *  moves the incident to In Progress(2), then tries Resolved(6) with various
+ *  close-field combinations (modern ITSM → classic → bare state).
  *  Never throws on close failure — returns a status object so the caller keeps
  *  the already-saved work notes. */
 async function closeWithFallback(sysId, closeCode, closeNotes, detailsSaved, incidentNumber) {
   const resolveState = process.env.SERVICENOW_RESOLVE_STATE || "6";
+
+  // Step 1: Move to In Progress first (required by most PDIs before resolving)
+  try {
+    await updateRecord("incident", sysId, { state: "2" });
+  } catch (e) {
+    console.warn(`[servicenow] Could not move ${incidentNumber || sysId} to In Progress:`, e.message);
+  }
+
+  // Step 2: Try to resolve with various close-field combinations
   const attempts = [
-    // Modern ITSM resolution fields
     { state: resolveState, close_code: closeCode, close_notes: closeNotes, resolution_code: closeCode, resolution_notes: closeNotes },
-    // Classic close fields only
     { state: resolveState, close_code: closeCode, close_notes: closeNotes },
-    // Bare state change (last resort — at least move it out of "In Progress")
     { state: resolveState, close_notes: closeNotes },
   ];
   let lastError = null;
