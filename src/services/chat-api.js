@@ -4063,14 +4063,15 @@ EOF@@`);
         try {
           const containers = (targetPod.spec?.containers || []).map(c => c.name);
           const prevTerminated = (targetPod.status?.containerStatuses || []).some(cs => cs.lastState?.terminated);
-          const logLines = [];
-          for (const cn of containers.slice(0, 2)) {
+          const logResults = await Promise.all(containers.slice(0, 2).map(async (cn) => {
             try {
               const logUrl = `/api/v1/namespaces/${targetPod.metadata.namespace}/pods/${targetPod.metadata.name}/log?container=${cn}&tailLines=80&timestamps=true${prevTerminated ? "&previous=true" : ""}`;
               const raw = await ocpFetch(logUrl, { headers: { Accept: "text/plain" } }).catch(() => "");
-              if (raw) logLines.push({ container: cn, text: typeof raw === "string" ? raw : JSON.stringify(raw), previous: prevTerminated });
+              if (raw) return { container: cn, text: typeof raw === "string" ? raw : JSON.stringify(raw), previous: prevTerminated };
             } catch {}
-          }
+            return null;
+          }));
+          const logLines = logResults.filter(Boolean);
           if (logLines.length > 0) {
             const ERROR_PATTERNS = [
               { re: /\b(OutOfMemoryError|OOM|Cannot allocate memory|memory allocation failed)\b/i, category: "Memory Exhaustion", fix: "Increase memory limits or fix memory leak" },
@@ -4111,58 +4112,8 @@ EOF@@`);
         } catch {}
       }
 
-      // Phase 2c: LLM-powered log analysis — use AI to understand the actual root cause
-      let llmDiagnosis = null;
-      if (targetPod && llmEnabled() && (logAnalysis?.errorLines?.length > 0 || targetIssues.length > 0)) {
-        try {
-          const podState = {
-            name: targetPod.metadata.name,
-            namespace: targetPod.metadata.namespace,
-            phase: targetPod.status?.phase,
-            containers: (targetPod.status?.containerStatuses || []).map(c => ({
-              name: c.name, state: c.state?.waiting?.reason || c.state?.terminated?.reason || (c.state?.running ? "Running" : "Unknown"),
-              restarts: c.restartCount || 0, exitCode: c.state?.terminated?.exitCode ?? c.lastState?.terminated?.exitCode,
-              lastReason: c.lastState?.terminated?.reason,
-            })),
-          };
-          const logExcerpt = (logAnalysis?.errorLines || []).slice(0, 8).join("\n") || "No error lines found in logs.";
-          const events = warningEvents.filter(e => e.involvedObject?.name === targetPod.metadata.name || (targetDeploy && e.involvedObject?.name?.startsWith(targetDeploy))).slice(0, 5).map(e => `${e.reason}: ${(e.message || "").slice(0, 150)}`).join("\n") || "No recent events.";
-          const signals = targetIssues.map(i => `${i.signal}${i.restarts ? ` (${i.restarts} restarts)` : ""}`).join(", ") || "none";
-          const limits = (targetPod.spec?.containers || []).map(c => `${c.name}: limits=${JSON.stringify(c.resources?.limits || {})} requests=${JSON.stringify(c.resources?.requests || {})}`).join("; ");
-
-          llmDiagnosis = await classifyJSON({
-            prompt: `Analyze this OpenShift/Kubernetes pod issue and respond with a JSON object.
-
-POD STATE:
-${JSON.stringify(podState, null, 1)}
-
-RESOURCE LIMITS: ${limits}
-
-DETECTED SIGNALS: ${signals}
-
-ERROR LOG LINES:
-${logExcerpt}
-
-KUBERNETES EVENTS:
-${events}
-
-Respond with ONLY this JSON structure:
-{
-  "rootCause": "One sentence describing the actual root cause based on the logs and state",
-  "category": "One of: OOMKilled, Memory Leak, Configuration Error, Dependency Failure, Permission Issue, Resource Exhaustion, Application Bug, Health Check Failure, Image Issue, Network Issue, Storage Issue, Unknown",
-  "diagnosis": "2-3 sentence detailed diagnosis explaining what is happening and why",
-  "fixCommand": "The exact oc/kubectl command to fix this issue, or null if manual investigation needed",
-  "fixTitle": "Short title for the fix action",
-  "fixDescription": "Detailed description of what the fix does and why it will resolve the issue",
-  "fixRisk": "low, medium, or high",
-  "additionalSteps": ["Step 1 to investigate further", "Step 2 if needed"]
-}`,
-            system: "You are an expert OpenShift/Kubernetes SRE. Analyze the pod state, logs, and events to identify the EXACT root cause. Be specific — reference actual log lines and error messages. Generate a precise fix command when possible. Never suggest a plain restart for OOMKilled — always increase memory. For application errors, suggest investigating the specific code path shown in logs.",
-          });
-        } catch {}
-      }
-
-      // Phase 3: Compute severity — target-aware
+      // Phase 3: Compute severity — target-aware (moved before LLM call so
+      // ServiceNow creation can start in parallel with the LLM diagnosis)
       // Log analysis can boost severity: OOM/crash in logs = critical even if pod restarted
       const logCritical = logAnalysis?.errors?.some(e => /Memory Exhaustion|Application Crash/i.test(e.category));
       const logWarning = logAnalysis?.errors?.length > 0;
@@ -4203,6 +4154,105 @@ Respond with ONLY this JSON structure:
       if (!targetName) rootCauses.push(...otherCauses);
 
       const affectedNs = new Set([...crashPods, ...oomPods, ...zeroDeploys, ...failedPods].map(p => p.metadata?.namespace).filter(Boolean));
+
+      // Phase 2c + 10: LLM diagnosis and ServiceNow creation run in PARALLEL
+      // Both only need severity + root causes (computed above), not each other.
+      const llmDiagnosisPromise = (targetPod && llmEnabled() && (logAnalysis?.errorLines?.length > 0 || targetIssues.length > 0)) ? (async () => {
+        try {
+          const podState = {
+            name: targetPod.metadata.name,
+            namespace: targetPod.metadata.namespace,
+            phase: targetPod.status?.phase,
+            containers: (targetPod.status?.containerStatuses || []).map(c => ({
+              name: c.name, state: c.state?.waiting?.reason || c.state?.terminated?.reason || (c.state?.running ? "Running" : "Unknown"),
+              restarts: c.restartCount || 0, exitCode: c.state?.terminated?.exitCode ?? c.lastState?.terminated?.exitCode,
+              lastReason: c.lastState?.terminated?.reason,
+            })),
+          };
+          const logExcerpt = (logAnalysis?.errorLines || []).slice(0, 8).join("\n") || "No error lines found in logs.";
+          const llmEvents = warningEvents.filter(e => e.involvedObject?.name === targetPod.metadata.name || (targetDeploy && e.involvedObject?.name?.startsWith(targetDeploy))).slice(0, 5).map(e => `${e.reason}: ${(e.message || "").slice(0, 150)}`).join("\n") || "No recent events.";
+          const signals = targetIssues.map(i => `${i.signal}${i.restarts ? ` (${i.restarts} restarts)` : ""}`).join(", ") || "none";
+          const limits = (targetPod.spec?.containers || []).map(c => `${c.name}: limits=${JSON.stringify(c.resources?.limits || {})} requests=${JSON.stringify(c.resources?.requests || {})}`).join("; ");
+          return await classifyJSON({
+            prompt: `Analyze this OpenShift/Kubernetes pod issue and respond with a JSON object.
+
+POD STATE:
+${JSON.stringify(podState, null, 1)}
+
+RESOURCE LIMITS: ${limits}
+
+DETECTED SIGNALS: ${signals}
+
+ERROR LOG LINES:
+${logExcerpt}
+
+KUBERNETES EVENTS:
+${llmEvents}
+
+Respond with ONLY this JSON structure:
+{
+  "rootCause": "One sentence describing the actual root cause based on the logs and state",
+  "category": "One of: OOMKilled, Memory Leak, Configuration Error, Dependency Failure, Permission Issue, Resource Exhaustion, Application Bug, Health Check Failure, Image Issue, Network Issue, Storage Issue, Unknown",
+  "diagnosis": "2-3 sentence detailed diagnosis explaining what is happening and why",
+  "fixCommand": "The exact oc/kubectl command to fix this issue, or null if manual investigation needed",
+  "fixTitle": "Short title for the fix action",
+  "fixDescription": "Detailed description of what the fix does and why it will resolve the issue",
+  "fixRisk": "low, medium, or high",
+  "additionalSteps": ["Step 1 to investigate further", "Step 2 if needed"]
+}`,
+            system: "You are an expert OpenShift/Kubernetes SRE. Analyze the pod state, logs, and events to identify the EXACT root cause. Be specific — reference actual log lines and error messages. Generate a precise fix command when possible. Never suggest a plain restart for OOMKilled — always increase memory. For application errors, suggest investigating the specific code path shown in logs.",
+          });
+        } catch { return null; }
+      })() : Promise.resolve(null);
+
+      const snowRcaCategory = rootCauses.some(r => /OOM/i.test(r.signal)) ? "Resource Exhaustion"
+        : rootCauses.some(r => /CrashLoop|Failed/i.test(r.signal)) ? "Application Failure"
+        : rootCauses.some(r => /Image/i.test(r.signal)) ? "Configuration Error"
+        : rootCauses.some(r => /Node/i.test(r.signal)) ? "Infrastructure Failure"
+        : "Service Degradation";
+      const snowEnabled = (severity === "SEV-1" || severity === "SEV-2" || severity === "SEV-3") && isServiceNowEnabled();
+      const notifyEnabled = severity === "SEV-1" || severity === "SEV-2" || severity === "SEV-3";
+      const podLabel = targetName && targetDeploy ? `${targetDeploy} (${targetName})` : (targetNs || "cluster-wide");
+      const snowShortDesc = targetName
+        ? `[${severity}] ${targetIssues[0]?.signal || "Issue"} — ${podLabel} — Auto-generated by TCS Agentic AI`
+        : `[${severity}] ${rootCauses[0]?.signal || "Cluster Issue"} — ${targetNs || "cluster-wide"} — Auto-generated by TCS Agentic AI`;
+      const fixSummary = (targetName && targetIssues.some(i => i.signal === "OOMKilled")) ? `Increase memory for ${targetDeploy || targetName}`
+        : (targetName && targetIssues.length > 0) ? `Restart ${targetDeploy || targetName}`
+        : oomPods.length > 0 ? "Increase memory limits" : crashPods.length > 0 ? "Restart affected deployments" : "Investigate and remediate";
+
+      const earlySnowPromise = snowEnabled ? createServiceNowIncident({
+        shortDescription: snowShortDesc,
+        description: [
+          `══════════════════════════════════════`,
+          `  INCIDENT REPORT — ${severity}`,
+          `  Generated: ${new Date().toISOString().replace("T", " ").slice(0, 19)}`,
+          `══════════════════════════════════════`,
+          ``,
+          `▸ Severity: ${severityLabel}`,
+          `▸ Scope: ${targetNs ? `namespace ${targetNs}` : "cluster-wide"}`,
+          `▸ Root Cause: ${rootCauses.map(r => `${r.signal}: ${r.detail}`).join("; ") || "Under investigation"}`,
+          ``,
+          `── Recommended Action ──`,
+          fixSummary,
+          ``,
+          `── Affected Resources ──`,
+          ...(rootCauses.slice(0, 5).map(r => `  • ${r.signal}: ${r.detail}`)),
+          ``,
+          `Auto-generated by TCS Agentic AI`,
+        ].join("\n"),
+        urgency: severity === "SEV-1" ? "1" : severity === "SEV-2" ? "2" : "3",
+        impact: severity === "SEV-1" ? "1" : severity === "SEV-2" ? "2" : "3",
+      }).catch(e => ({ error: e.message })) : Promise.resolve(null);
+
+      const earlyNotifyPromise = notifyEnabled ? notifyAll({
+        title: `[${severity}] ${targetName ? targetName : "Cluster Incident"} — ${targetNs || "cluster-wide"}`,
+        text: rootCauses.map(r => `${r.signal}: ${r.detail}`).join("\n"),
+        severity: severity === "SEV-1" ? "critical" : severity === "SEV-2" ? "high" : "warning",
+        namespace: targetNs || undefined, cluster: "local",
+      }).catch(() => ({ failed: true })) : Promise.resolve(null);
+
+      // Await all three in parallel — LLM + ServiceNow + Notify
+      const [llmDiagnosis, snowResult, notifyResult] = await Promise.all([llmDiagnosisPromise, earlySnowPromise, earlyNotifyPromise]);
 
       // Phase 8: Build triage report
       const scope = targetNs ? `namespace \`${targetNs}\`` : "cluster-wide";
@@ -4391,64 +4441,7 @@ Respond with ONLY this JSON structure:
         if (zeroDeploys.length > 0) { parts.push(`${actionNum++}. Restart Zero-Ready Deployment`); parts.push(""); parts.push(`@@SEC_FIX_CMD|${cli} rollout restart deployment/${zeroDeploys[0].metadata.name} -n ${zeroDeploys[0].metadata.namespace}@@`); parts.push(""); }
       }
 
-      // Phase 10–12: ServiceNow + Notification in PARALLEL
-      // Create ServiceNow incidents for SEV-1/2/3 — any real issue deserves a ticket
-      const snowEnabled = (severity === "SEV-1" || severity === "SEV-2" || severity === "SEV-3") && isServiceNowEnabled();
-      const notifyEnabled = severity === "SEV-1" || severity === "SEV-2" || severity === "SEV-3";
-      const podLabel = targetName && targetDeploy ? `${targetDeploy} (${targetName})` : (targetNs || "cluster-wide");
-      const snowShortDesc = targetName
-        ? `[${severity}] ${targetIssues[0]?.signal || "Issue"} — ${podLabel} — Auto-generated by TCS Agentic AI`
-        : `[${severity}] ${rootCauses[0]?.signal || "Cluster Issue"} — ${targetNs || "cluster-wide"} — Auto-generated by TCS Agentic AI`;
-      const fixSummary = (targetName && targetIssues.some(i => i.signal === "OOMKilled")) ? `Increase memory for ${targetDeploy || targetName}`
-        : (targetName && targetIssues.length > 0) ? `Restart ${targetDeploy || targetName}`
-        : oomPods.length > 0 ? "Increase memory limits" : crashPods.length > 0 ? "Restart affected deployments" : "Investigate and remediate";
-
-      const snowRcaCategory = rootCauses.some(r => /OOM/i.test(r.signal)) ? "Resource Exhaustion"
-        : rootCauses.some(r => /CrashLoop|Failed/i.test(r.signal)) ? "Application Failure"
-        : rootCauses.some(r => /Image/i.test(r.signal)) ? "Configuration Error"
-        : rootCauses.some(r => /Node/i.test(r.signal)) ? "Infrastructure Failure"
-        : "Service Degradation";
-      const snowPromise = snowEnabled ? createServiceNowIncident({
-        shortDescription: snowShortDesc,
-        description: [
-          `══════════════════════════════════════`,
-          `  INCIDENT REPORT — ${severity}`,
-          `  Generated: ${new Date().toISOString().replace("T", " ").slice(0, 19)}`,
-          `══════════════════════════════════════`,
-          ``,
-          `▸ Severity: ${severityLabel}`,
-          `▸ Scope: ${scope}`,
-          targetName ? `▸ Target Pod: ${targetName}` : null,
-          targetDeploy ? `▸ Deployment: ${targetDeploy}` : null,
-          `▸ Affected Namespaces: ${[...affectedNs].join(", ") || "N/A"}`,
-          ``,
-          `── ROOT CAUSE ANALYSIS ──────────────`,
-          `Category: ${snowRcaCategory}`,
-          ...rootCauses.map(r => `  • ${r.signal}: ${r.detail}`),
-          ...(otherCauses.length > 0 && targetName ? [``, `── CONTRIBUTING FACTORS ─────────────`, ...otherCauses.map(r => `  • ${r.signal}: ${r.detail}`)] : []),
-          ...(logAnalysis?.errors?.length ? [``, `── LOG EVIDENCE ─────────────────────`, ...logAnalysis.errors.slice(0, 3).map(e => `  [${e.category}] ${e.snippet || ""}`)] : []),
-          ``,
-          `── RECOMMENDED REMEDIATION ──────────`,
-          `  ${fixSummary}`,
-          ``,
-          `══════════════════════════════════════`,
-          `  Auto-generated by TCS Agentic AI`,
-          `  Incident Response Pipeline v2.0`,
-          `══════════════════════════════════════`,
-        ].filter(Boolean).join("\n"),
-        urgency: severity === "SEV-1" ? "1" : severity === "SEV-2" ? "2" : "3",
-        impact: severity === "SEV-1" ? "1" : severity === "SEV-2" ? "2" : "3",
-      }).catch(e => ({ error: e.message })) : Promise.resolve(null);
-
-      const notifyPromise = notifyEnabled ? notifyAll({
-        title: `[${severity}] ${targetName ? targetName : "Cluster Incident"} — ${targetNs || "cluster-wide"}`,
-        text: rootCauses.map(r => `${r.signal}: ${r.detail}`).join("\n"),
-        severity: severity === "SEV-1" ? "critical" : severity === "SEV-2" ? "high" : "warning",
-        namespace: targetNs || undefined, cluster: "local",
-      }).catch(() => ({ failed: true })) : Promise.resolve(null);
-
-      const [snowResult, notifyResult] = await Promise.all([snowPromise, notifyPromise]);
-
+      // ServiceNow + Notify results already available from the parallel Promise.all above
       let snowTicket = null;
       parts.push(`**Escalation**`);
       parts.push("");
