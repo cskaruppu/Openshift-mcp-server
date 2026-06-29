@@ -72,6 +72,16 @@ export function AuditView() {
   const { data: pendingCRData } =
     useClusterQuery("/api/cr/pending", { refetchInterval: 30_000 });
 
+  // Agent execution traces — which agents/tools handled each AI Chat request
+  const { data: tracesData, refetch: refetchTraces } =
+    useClusterQuery("/api/traces?limit=50", { refetchInterval: 30_000 });
+
+  const { data: traceStats } =
+    useClusterQuery("/api/traces/stats?days=30", { refetchInterval: 120_000 });
+
+  const { data: agentAnalytics } =
+    useClusterQuery("/api/traces/analytics?days=30", { refetchInterval: 120_000 });
+
   const [activeTab, setActiveTab] = useState("compliance");
   const [scanning, setScanning] = useState(false);
   const [catFilter, setCatFilter] = useState("all");
@@ -86,6 +96,8 @@ export function AuditView() {
 
   const [trailType, setTrailType] = useState("all");
   const [trailSearch, setTrailSearch] = useState("");
+  const [expandedTrace, setExpandedTrace] = useState(null);
+  const [traceAgentFilter, setTraceAgentFilter] = useState("");
   const [activitySearch, setActivitySearch] = useState("");
   const [crStatusFilter, setCrStatusFilter] = useState("all");
   const [syncingAll, setSyncingAll] = useState(false);
@@ -146,6 +158,22 @@ export function AuditView() {
   const pending = auditData?.pending || [];
   const queries = auditData?.queries || [];
   const queryStats = auditData?.queryStats || {};
+
+  // Agent execution traces
+  const allTraces = tracesData?.traces || [];
+  const traces = useMemo(() => {
+    if (!traceAgentFilter) return allTraces;
+    return allTraces.filter((t) =>
+      (t.spans || []).some((s) => (s.agent_name || s.agentName) === traceAgentFilter)
+    );
+  }, [allTraces, traceAgentFilter]);
+  const traceStatsData = traceStats || {};
+  const agentRows = agentAnalytics?.agents || [];
+  const agentTokenMap = useMemo(() => {
+    const m = {};
+    for (const a of agentRows) m[a.agent_name] = a;
+    return m;
+  }, [agentRows]);
 
   const filteredExecuted = useMemo(() => {
     let list = [...executed];
@@ -324,6 +352,7 @@ export function AuditView() {
           { key: "frameworks", label: "Framework Profiles", icon: "layers" },
           { key: "change-requests", label: "Change Requests", count: (crData?.crs || []).length },
           { key: "trail", label: "Audit Trail", icon: "scroll" },
+          { key: "agent-traces", label: "Agent Traces", count: allTraces.length },
           { key: "activity", label: "Activity & Actions", icon: "zap" },
           { key: "analytics", label: "Query Analytics", icon: "chart" },
         ].map((t) => (
@@ -679,6 +708,146 @@ export function AuditView() {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* ═══ AGENT EXECUTION TRACES ═══ */}
+      {activeTab === "agent-traces" && (
+        <div className="aud-section">
+          <div className="aud-section-intro">
+            <h3>Agent Execution Traces</h3>
+            <p>Which AI agents handled each request, the tools they called, duration &amp; token usage</p>
+          </div>
+
+          {/* Stats bar */}
+          <div className="aud-analytics-grid">
+            <div className="aud-analytics-card" style={{ "--ac-c": "#8b5cf6" }}>
+              <div className="aud-ac-val">{traceStatsData.total_queries ?? allTraces.length ?? 0}</div>
+              <div className="aud-ac-lbl">Total Queries</div>
+            </div>
+            <div className="aud-analytics-card" style={{ "--ac-c": "#06b6d4" }}>
+              <div className="aud-ac-val">{traceStatsData.avg_agents_per_query ?? 0}</div>
+              <div className="aud-ac-lbl">Avg Agents / Query</div>
+            </div>
+            <div className="aud-analytics-card" style={{ "--ac-c": "#f59e0b" }}>
+              <div className="aud-ac-val">{traceStatsData.avg_duration_ms != null ? `${traceStatsData.avg_duration_ms}ms` : "—"}</div>
+              <div className="aud-ac-lbl">Avg Duration</div>
+            </div>
+            <div className="aud-analytics-card" style={{ "--ac-c": "#22c55e" }}>
+              <div className="aud-ac-val" style={{ fontSize: "1.1rem" }}>{(traceStatsData.top_agents || [])[0]?.agent_name || "N/A"}</div>
+              <div className="aud-ac-lbl">Top Agent</div>
+            </div>
+          </div>
+
+          {/* Agent filter */}
+          <div className="aud-trail-filters" style={{ marginTop: 14 }}>
+            <button className={"aud-trail-pill" + (traceAgentFilter === "" ? " active" : "")} onClick={() => setTraceAgentFilter("")}>All Agents</button>
+            {(traceStatsData.top_agents || []).slice(0, 8).map((a) => (
+              <button key={a.agent_name} className={"aud-trail-pill" + (traceAgentFilter === a.agent_name ? " active" : "")} onClick={() => setTraceAgentFilter(a.agent_name)}>
+                {a.agent_name} ({a.count})
+              </button>
+            ))}
+            <button className="aud-trail-pill" onClick={() => refetchTraces()}>↻ Refresh</button>
+          </div>
+
+          {/* Trace list */}
+          <div className="aud-trace-list" style={{ marginTop: 12 }}>
+            {traces.length === 0 && (
+              <div className="aud-empty">No agent execution traces recorded yet. Traces are captured when queries are processed through AI Chat.</div>
+            )}
+            {traces.map((t, ti) => {
+              const spans = t.spans || [];
+              const tid = t.trace_id || `trace-${ti}`;
+              const isOpen = expandedTrace === tid;
+              const ok = (t.status || "success") === "success";
+              const dur = t.total_duration_ms ?? t.totalDurationMs ?? 0;
+              const agentCount = t.agent_count ?? t.agentCount ?? spans.length;
+              const toolCount = t.tool_count ?? t.toolCount ?? 0;
+              return (
+                <div key={tid} className="aud-trace-card" style={{ border: "1px solid var(--border)", borderRadius: 8, marginBottom: 8, overflow: "hidden" }}>
+                  <div
+                    className="aud-trace-head"
+                    onClick={() => setExpandedTrace(isOpen ? null : tid)}
+                    style={{ padding: "10px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, background: "var(--card-bg, rgba(255,255,255,0.02))" }}
+                  >
+                    <span style={{ fontSize: 13, color: ok ? "#22c55e" : "#ef4444" }}>{ok ? "✓" : "✗"}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {t.query_text || t.queryText || "—"}
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                        <TimeCell ts={t.created_at} /> · {t.provider || "built-in"} · {dur}ms
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+                      <span className="aud-trace-badge" style={{ background: "rgba(139,92,246,0.15)", color: "#8b5cf6", padding: "2px 8px", borderRadius: 10, fontSize: 11 }}>{agentCount} agents</span>
+                      <span className="aud-trace-badge" style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e", padding: "2px 8px", borderRadius: 10, fontSize: 11 }}>{toolCount} tools</span>
+                      <span style={{ color: "var(--muted)", transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .2s" }}>▾</span>
+                    </div>
+                  </div>
+                  {isOpen && (
+                    <div style={{ padding: "10px 14px", borderTop: "1px solid var(--border)" }}>
+                      {spans.length > 0 ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {spans.map((sp, si) => {
+                            const spName = sp.agent_name || sp.agentName || "Unknown";
+                            const spTools = sp.tools_called || sp.toolsCalled || [];
+                            const spStatus = sp.status || "active";
+                            const spColor = sp.agent_color || sp.color || "#3b82f6";
+                            const spDur = sp.duration_ms ?? sp.durationMs;
+                            const agentTok = agentTokenMap[spName]?.total_tokens;
+                            return (
+                              <div key={si} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", background: `color-mix(in srgb, ${spColor} 8%, transparent)`, borderRadius: 6, fontSize: 12 }}>
+                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: spColor, flexShrink: 0 }} />
+                                <span style={{ fontWeight: 500, minWidth: 140 }}>{spName}</span>
+                                <span style={{ color: "var(--muted)", flex: 1, display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                  {spTools.length > 0
+                                    ? spTools.map((tn, k) => <code key={k} style={{ background: "rgba(139,92,246,0.1)", color: "#8b5cf6", padding: "1px 5px", borderRadius: 3, fontSize: 10 }}>{tn}</code>)
+                                    : <em>context analysis</em>}
+                                </span>
+                                {spDur != null && <span style={{ color: "var(--muted)", fontSize: 10 }}>{spDur}ms</span>}
+                                {agentTok != null && <span style={{ color: "#06b6d4", fontSize: 10 }}>{agentTok.toLocaleString()} tok</span>}
+                                <span style={{ padding: "1px 6px", borderRadius: 8, fontSize: 10, background: spStatus === "active" || spStatus === "success" ? "rgba(34,197,94,0.15)" : "rgba(148,163,184,0.15)", color: spStatus === "active" || spStatus === "success" ? "#22c55e" : "var(--muted)" }}>{spStatus}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 12, color: "var(--muted)", padding: "8px 0" }}>No agent spans recorded for this trace.</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Per-agent token & usage table */}
+          {agentRows.length > 0 && (
+            <>
+              <h4 className="aud-sub-title" style={{ marginTop: 18 }}>Agent Usage &amp; Token Consumption (30 days)</h4>
+              <div className="aud-table-wrap">
+                <table className="aud-table">
+                  <thead>
+                    <tr><th>Agent</th><th>Invocations</th><th>Avg Latency</th><th>Total Tokens</th><th>Error Rate</th><th>Top Tools</th><th>Last Used</th></tr>
+                  </thead>
+                  <tbody>
+                    {agentRows.map((a, i) => (
+                      <tr key={a.agent_id || a.agent_name || i}>
+                        <td style={{ fontWeight: 500 }}>{a.agent_name}</td>
+                        <td style={{ textAlign: "center" }}>{a.invocation_count}</td>
+                        <td style={{ textAlign: "center" }}>{a.avg_duration_ms != null ? `${a.avg_duration_ms}ms` : "—"}</td>
+                        <td style={{ textAlign: "center", color: "#06b6d4", fontWeight: 600 }}>{a.total_tokens != null ? a.total_tokens.toLocaleString() : "—"}</td>
+                        <td style={{ textAlign: "center", color: (a.error_rate || 0) > 5 ? "#ef4444" : (a.error_rate || 0) > 0 ? "#f59e0b" : "#22c55e" }}>{a.error_rate != null ? `${a.error_rate}%` : "0%"}</td>
+                        <td>{(a.most_common_tools || []).slice(0, 3).map((tn, k) => <code key={k} style={{ background: "rgba(139,92,246,0.1)", color: "#8b5cf6", padding: "1px 5px", borderRadius: 3, fontSize: 10, marginRight: 3 }}>{tn}</code>)}</td>
+                        <td><TimeCell ts={a.last_used} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
       )}
 
