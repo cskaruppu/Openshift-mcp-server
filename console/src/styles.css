@@ -1879,6 +1879,18 @@ h3.widget-title {
 }
 .ivs-aifix-err { font-size: 12px; color: var(--crit); padding: 6px 0; }
 
+/* ── Expanded (spotlight modal) — single clean scroll, fixed window ──
+   In the small dashboard tile the image list scrolls inside a 360px box.
+   Inside the expand modal that nested cap fights the modal's own scroll and
+   clips the AI-fix output, so here we drop the inner cap and let the modal
+   body be the ONE scroll container (it is capped at 90vh with overflow-y). */
+.dash-spotlight-body .ivs-images-list { max-height: none; overflow: visible; }
+.dash-spotlight-body .ivs { height: auto; }
+/* keep long AI-fix plans tidy without ballooning the window */
+.dash-spotlight-body .ivs-aifix-panel { max-height: none; }
+.ivs-aifix-steps { max-height: 220px; overflow-y: auto; }
+.ivs-aifix-docker { max-height: 160px; overflow: auto; }
+
 /* labeled fixable bar */
 .ivs-fixwrap { padding: 2px 18px 12px; }
 .ivs-fixwrap-head {
