@@ -67,6 +67,7 @@ export function ImageVulnsWidget() {
   const [scanning, setScanning] = useState(false);
   const [expandedImg, setExpandedImg] = useState(null);
   const [sevFilter, setSevFilter] = useState(null); // null | critical | high | medium | low | exploitable
+  const [aiFix, setAiFix] = useState({}); // { [imageKey]: { loading, data, error } }
   const [aiFindings, setAiFindings] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiProvider, setAiProvider] = useState(null);
@@ -75,6 +76,34 @@ export function ImageVulnsWidget() {
   const toggleFilter = useCallback((key) => {
     setSevFilter((prev) => (prev === key ? null : key));
     setExpandedImg(null);
+  }, []);
+
+  const handleAiFix = useCallback(async (img) => {
+    const key = img.fullImage || img.image;
+    setAiFix((p) => ({ ...p, [key]: { loading: true } }));
+    try {
+      const res = await fetch(clusterUrl("/api/ai/image-remediation", cluster), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image: img.fullImage || img.image,
+          namespace: img.namespace,
+          deployment: (img.pods && img.pods[0]?.pod) ? img.pods[0].pod.replace(/-[a-f0-9]+(-[a-z0-9]+)?$/, "") : "",
+          vulnerabilities: img.vulnerabilities || [],
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || "Remediation failed");
+      setAiFix((p) => ({ ...p, [key]: { loading: false, data } }));
+      showToast("AI remediation ready", "ok");
+    } catch (err) {
+      setAiFix((p) => ({ ...p, [key]: { loading: false, error: err.message } }));
+      showToast("AI fix failed: " + err.message, "err");
+    }
+  }, [cluster]);
+
+  const copyCmd = useCallback((cmd) => {
+    try { navigator.clipboard?.writeText(cmd); showToast("Command copied", "ok"); } catch { /* ignore */ }
   }, []);
 
   const handleScan = useCallback(async () => {
@@ -321,10 +350,11 @@ export function ImageVulnsWidget() {
                   </span>
                   <span className="ivs-img-ns">{img.namespace || "—"}</span>
                   <span className="ivs-img-sevs ivs-col-c">
-                    {img.critical > 0 && <span className="ivs-img-sev crit">{img.critical}</span>}
-                    {img.high > 0 && <span className="ivs-img-sev high">{img.high}</span>}
-                    {img.medium > 0 && <span className="ivs-img-sev med">{img.medium}</span>}
-                    {img.low > 0 && <span className="ivs-img-sev low">{img.low}</span>}
+                    {img.critical > 0 && <span className="ivs-img-sev crit" title={`${img.critical} Critical`}>{img.critical} C</span>}
+                    {img.high > 0 && <span className="ivs-img-sev high" title={`${img.high} High`}>{img.high} H</span>}
+                    {img.medium > 0 && <span className="ivs-img-sev med" title={`${img.medium} Medium`}>{img.medium} M</span>}
+                    {img.low > 0 && <span className="ivs-img-sev low" title={`${img.low} Low`}>{img.low} L</span>}
+                    {!img.critical && !img.high && !img.medium && !img.low && <span className="ivs-muted">—</span>}
                   </span>
                   <span className="ivs-img-cvss ivs-col-c" style={{ color: cvssColor(img.maxCVSS || 0) }}>
                     {(img.maxCVSS || 0).toFixed(1)}
@@ -334,14 +364,59 @@ export function ImageVulnsWidget() {
                 </div>
                 {expandedImg === i && (() => {
                   const shownVulns = filterVulns(img.vulnerabilities || [], sevFilter).slice(0, 20);
+                  const fixKey = img.fullImage || img.image;
+                  const fixState = aiFix[fixKey] || {};
                   return (
                   <div className="ivs-img-detail">
-                    {img.recommendedFix && (
-                      <div className="ivs-img-reco">
-                        <span className="ivs-img-reco-icon">✨</span>
-                        <span><strong>AI Remediation:</strong> {img.recommendedFix}</span>
+                    {/* Quick heuristic remediation + AI Fix action */}
+                    <div className="ivs-img-reco">
+                      <span className="ivs-img-reco-icon">✨</span>
+                      <span style={{ flex: 1 }}>
+                        <strong>Remediation:</strong> {img.recommendedFix || "Review CVEs below and upgrade to a patched image."}
+                      </span>
+                      <button
+                        type="button"
+                        className="ivs-aifix-btn"
+                        onClick={(e) => { e.stopPropagation(); handleAiFix(img); }}
+                        disabled={fixState.loading}
+                      >
+                        {fixState.loading ? "Generating…" : "🪄 AI Fix"}
+                      </button>
+                    </div>
+
+                    {/* AI-generated remediation plan */}
+                    {fixState.data && (
+                      <div className="ivs-aifix-panel">
+                        <div className="ivs-aifix-head">
+                          <span className="ivs-aifix-badge">AI Remediation Plan</span>
+                          <span className="ivs-aifix-meta">
+                            fixes {fixState.data.fixesCount ?? "?"}/{fixState.data.totalCount ?? (img.vulnerabilities || []).length} · {fixState.data.provider || "AI"}
+                          </span>
+                        </div>
+                        {fixState.data.rationale && <p className="ivs-aifix-rationale">{fixState.data.rationale}</p>}
+                        {fixState.data.recommendedImage && (
+                          <div className="ivs-aifix-row">
+                            <span className="ivs-aifix-lbl">Use image</span>
+                            <code className="ivs-ver-new">{fixState.data.recommendedImage}</code>
+                          </div>
+                        )}
+                        {fixState.data.command && (
+                          <div className="ivs-aifix-cmd">
+                            <code>{fixState.data.command}</code>
+                            <button type="button" className="ivs-aifix-copy" onClick={(e) => { e.stopPropagation(); copyCmd(fixState.data.command); }}>Copy</button>
+                          </div>
+                        )}
+                        {Array.isArray(fixState.data.steps) && fixState.data.steps.length > 0 && (
+                          <ol className="ivs-aifix-steps">
+                            {fixState.data.steps.map((st, si) => <li key={si}>{st}</li>)}
+                          </ol>
+                        )}
+                        {fixState.data.dockerfilePatch && (
+                          <pre className="ivs-aifix-docker">{fixState.data.dockerfilePatch}</pre>
+                        )}
                       </div>
                     )}
+                    {fixState.error && <div className="ivs-aifix-err">AI fix failed: {fixState.error}</div>}
                     {shownVulns.length > 0 ? (
                       <table className="ivs-vuln-table">
                         <thead>

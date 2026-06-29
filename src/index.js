@@ -81,7 +81,7 @@ import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
 import { callLLM } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport } from "./services/upgrade-report.js";
-import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleOptimizationAnalysisAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
+import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleOptimizationAnalysisAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import {
   listActions,
   getAction,
@@ -4134,6 +4134,13 @@ spec:
     if (req.method === "POST" && url.pathname === "/api/ai/image-vuln-analysis") {
       if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
       await withClusterContext(url, async () => { await handleImageVulnAnalysisAPI(req, res); });
+      return;
+    }
+
+    // AI per-image remediation — /api/ai/image-remediation (POST)
+    if (req.method === "POST" && url.pathname === "/api/ai/image-remediation") {
+      if (enforceRateLimit(req, res, { burst: 8, refillPerSec: 0.2 })) return;
+      await withClusterContext(url, async () => { await handleImageRemediationAPI(req, res); });
       return;
     }
 

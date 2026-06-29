@@ -18600,6 +18600,108 @@ Return ONLY the JSON array.`;
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/ai/image-remediation — AI generates a concrete fix for ONE image
+// Returns recommended replacement image/tag, the exact oc command to apply it,
+// an optional Dockerfile patch, and step-by-step remediation. Closes the loop
+// from "here's a CVE" to "here's how to fix it — and apply it".
+// ---------------------------------------------------------------------------
+export async function handleImageRemediationAPI(req, res) {
+  try {
+    const body = await readBody(req);
+    const llmOpts = body.llmOpts || {};
+    const provider = llmOpts.provider || LLM_PROVIDER;
+    const image = body.image || "";
+    const namespace = body.namespace || "";
+    const vulns = Array.isArray(body.vulnerabilities) ? body.vulnerabilities.slice(0, 20) : [];
+    const deployment = body.deployment || "";
+
+    if (!image) return json(res, 200, { error: "No image specified" });
+
+    // Build a deterministic fallback so the feature works even without an LLM
+    const fixable = vulns.filter(v => v.fix || v.fixedBy);
+    const hasLatest = /:latest$|^[^:]+$/.test(image);
+    const baseName = image.split(":")[0].split("@")[0];
+    const fallbackTag = hasLatest ? `${baseName}:<pin-specific-version>` : baseName;
+    const fallback = {
+      image,
+      recommendedImage: hasLatest ? `${baseName}:<latest-stable-tag>` : `${baseName}:<patched-tag>`,
+      command: deployment
+        ? `oc set image deployment/${deployment} ${baseName.split("/").pop()}=${fallbackTag} -n ${namespace || "<namespace>"}`
+        : `oc set image deployment/<deployment> <container>=${fallbackTag} -n ${namespace || "<namespace>"}`,
+      dockerfilePatch: hasLatest ? `# Pin the base image to a digest instead of :latest\nFROM ${baseName}@sha256:<digest>` : null,
+      steps: [
+        hasLatest ? "Replace the :latest tag with a specific, patched version or digest" : "Rebuild from a patched base image tag",
+        `Apply the new image to the deployment in namespace ${namespace || "<namespace>"}`,
+        "Verify the rollout and re-scan to confirm the findings are resolved",
+      ],
+      fixesCount: fixable.length,
+      totalCount: vulns.length,
+      rationale: `${fixable.length} of ${vulns.length} findings have an upstream fix available.`,
+      provider: "built-in",
+    };
+
+    if (!provider || provider === "none") {
+      return json(res, 200, fallback);
+    }
+
+    const cveList = vulns.map(v => `${v.id} [${v.severity} CVSS:${v.cvss || "?"}] ${v.package || ""}${v.version ? "@" + v.version : ""}${(v.fix || v.fixedBy) ? " → fix: " + (v.fix || v.fixedBy) : " (no upstream fix)"}`).join("\n");
+
+    const prompt = `You are a container security remediation engineer. Generate a CONCRETE, actionable fix for the vulnerable container image below.
+
+IMAGE: ${image}
+NAMESPACE: ${namespace || "unknown"}
+${deployment ? `DEPLOYMENT: ${deployment}` : ""}
+
+VULNERABILITIES (${vulns.length}):
+${cveList || "supply-chain / hygiene findings"}
+
+Produce a remediation that a platform engineer can apply immediately. Prefer the smallest, safest change that fixes the most findings (e.g. bump to a patched tag or pin a digest). If the image uses :latest, recommend a specific stable tag.
+
+Respond ONLY with this JSON object (no markdown fences):
+{
+  "recommendedImage": "the exact replacement image:tag to use",
+  "command": "the exact oc/kubectl command to apply the fix (use real namespace/deployment if known, else placeholders)",
+  "dockerfilePatch": "a short Dockerfile change if relevant, else null",
+  "steps": ["step 1", "step 2", "step 3"],
+  "rationale": "1-2 sentences on why this fixes the findings and the risk reduction",
+  "fixesCount": <number of findings this resolves>,
+  "totalCount": ${vulns.length}
+}`;
+
+    const r = await callLLM({
+      messages: [{ role: "user", content: prompt }],
+      system: "You are a precise container security remediation engineer. Output only valid JSON. Reference real CVE fixes and image tags. No markdown.",
+      maxTokens: 1200, temperature: 0.1,
+      provider: llmOpts.provider, apiUrl: llmOpts.apiUrl, apiKey: llmOpts.apiKey,
+      model: llmOpts.model, azureDeployment: llmOpts.azureDeployment, azureApiVersion: llmOpts.azureApiVersion,
+    });
+
+    try {
+      let text = (r.text || "").trim();
+      const m = text.match(/\{[\s\S]*\}/);
+      if (m) text = m[0];
+      const parsed = JSON.parse(text);
+      return json(res, 200, {
+        image,
+        recommendedImage: String(parsed.recommendedImage || fallback.recommendedImage).slice(0, 200),
+        command: String(parsed.command || fallback.command).slice(0, 400),
+        dockerfilePatch: parsed.dockerfilePatch ? String(parsed.dockerfilePatch).slice(0, 400) : null,
+        steps: Array.isArray(parsed.steps) ? parsed.steps.slice(0, 6).map(s => String(s).slice(0, 200)) : fallback.steps,
+        rationale: String(parsed.rationale || fallback.rationale).slice(0, 400),
+        fixesCount: Number(parsed.fixesCount) || fixable.length,
+        totalCount: Number(parsed.totalCount) || vulns.length,
+        provider: r.provider || provider,
+      });
+    } catch {
+      return json(res, 200, { ...fallback, provider: r.provider || provider, note: "AI response unparseable — showing safe default" });
+    }
+  } catch (err) {
+    console.error("Image remediation AI error:", err);
+    json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/ai/optimization-analysis — AI resource optimization with trends
 // ---------------------------------------------------------------------------
 export async function handleOptimizationAnalysisAPI(req, res) {
