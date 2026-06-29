@@ -167,10 +167,16 @@ export async function getAuditStats(days = 30) {
       ),
     ]);
 
+    const sevRows = bySeverity?.rows ?? [];
+    const sevCount = (name) => sevRows.find((s) => s.severity === name)?.count || 0;
     return {
       byType: byType?.rows ?? [],
-      bySeverity: bySeverity?.rows ?? [],
+      bySeverity: sevRows,
       byNamespace: byNamespace?.rows ?? [],
+      total: sevRows.reduce((a, s) => a + (s.count || 0), 0),
+      critical: sevCount("critical"),
+      warnings: sevCount("warn") + sevCount("warning"),
+      info: sevCount("info"),
     };
   }
 
@@ -188,10 +194,16 @@ export async function getAuditStats(days = 30) {
       .sort((a, b) => b.count - a.count);
   };
 
+  const bySeverity = countBy(recent, "severity");
+  const sevCount = (name) => bySeverity.find((s) => s.severity === name)?.count || 0;
   return {
     byType: countBy(recent, "event_type"),
-    bySeverity: countBy(recent, "severity"),
+    bySeverity,
     byNamespace: countBy(recent, "namespace"),
+    total: recent.length,
+    critical: sevCount("critical"),
+    warnings: sevCount("warn") + sevCount("warning"),
+    info: sevCount("info"),
   };
 }
 

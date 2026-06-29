@@ -190,20 +190,55 @@ export function AuditView() {
 
   const frameworks = fwSummary?.results || [];
 
-  const trailEntries = trailData?.entries || trailData?.events || [];
+  // Normalize backend rows (event_type/title/details/created_at) into the shape
+  // the UI renders. details is JSONB (an object) — flatten to a string so React
+  // never tries to render an object as a child (which would blank the page).
+  const trailEntries = useMemo(() => {
+    const raw = trailData?.entries || trailData?.events || [];
+    return raw.map((e) => {
+      let detailsStr = "";
+      if (e.details != null) {
+        detailsStr = typeof e.details === "string" ? e.details : (() => { try { return JSON.stringify(e.details); } catch { return ""; } })();
+      }
+      return {
+        ...e,
+        type: e.type || e.event_type || "event",
+        severity: e.severity || "info",
+        message: e.message || e.title || e.description || detailsStr || "—",
+        timestamp: e.timestamp || e.created_at || null,
+        namespace: e.namespace || (typeof e.details === "object" ? e.details?.namespace : "") || "",
+        resource: e.resource || (typeof e.details === "object" ? e.details?.resource : "") || "",
+        username: e.username || e.source || "",
+      };
+    });
+  }, [trailData]);
+
   const filteredTrail = useMemo(() => {
     let list = trailType === "all" ? trailEntries : trailEntries.filter((e) => e.type === trailType);
     const q = trailSearch.trim().toLowerCase();
     if (q) {
       list = list.filter((e) =>
-        [e.message, e.description, e.details, e.namespace, e.resource, e.username, e.type]
+        [e.message, e.namespace, e.resource, e.username, e.type]
           .filter(Boolean).join(" ").toLowerCase().includes(q)
       );
     }
     return list;
   }, [trailEntries, trailType, trailSearch]);
 
-  const trailStatsData = trailStats || {};
+  // Derive summary counters from the loaded entries. Backend getAuditStats
+  // returns byType/bySeverity/byNamespace; the cards below want flat totals.
+  const trailStatsData = useMemo(() => {
+    const sev = (trailStats?.bySeverity || []);
+    const fromSev = (name) => sev.find((s) => s.severity === name)?.count || 0;
+    const total = trailStats?.total != null ? trailStats.total
+      : (sev.length ? sev.reduce((a, s) => a + (s.count || 0), 0) : trailEntries.length);
+    return {
+      total,
+      critical: fromSev("critical") || trailEntries.filter((e) => e.severity === "critical").length,
+      warnings: (fromSev("warn") + fromSev("warning")) || trailEntries.filter((e) => /warn/.test(e.severity)).length,
+      info: fromSev("info") || trailEntries.filter((e) => e.severity === "info").length,
+    };
+  }, [trailStats, trailEntries]);
 
   const handleExportJSON = useCallback(() => {
     downloadFile(
@@ -631,7 +666,7 @@ export function AuditView() {
                       {e.severity && <span className={"aud-trail-sev " + e.severity}>{e.severity}</span>}
                       <span className="aud-trail-time"><TimeCell ts={e.timestamp || e.created_at} /></span>
                     </div>
-                    <div className="aud-trail-msg">{e.message || e.description || e.details || "—"}</div>
+                    <div className="aud-trail-msg">{e.message || "—"}</div>
                     {(e.namespace || e.username || e.resource) && (
                       <div className="aud-trail-meta">
                         {e.namespace && <span>ns: <code>{e.namespace}</code></span>}
