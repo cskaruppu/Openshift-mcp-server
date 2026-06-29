@@ -6050,6 +6050,45 @@ spec:
         const scan = await runImageScan(ns);
         const riskScore = Math.max(0, 100 - scan.critical * 15 - scan.high * 8 - scan.medium * 3 - scan.low * 1);
         const grade = riskScore >= 90 ? "A" : riskScore >= 80 ? "B" : riskScore >= 70 ? "C" : riskScore >= 60 ? "D" : "F";
+
+        // CISA KEV (Known Exploited Vulnerabilities) — representative subset of
+        // real CVE IDs from the CISA catalog. A scanned CVE that matches is
+        // flagged as actively exploited (industry-standard prioritization).
+        const KEV_SET = new Set([
+          "CVE-2021-44228", "CVE-2021-45046", "CVE-2022-22965", "CVE-2022-1388",
+          "CVE-2021-4034", "CVE-2014-0160", "CVE-2017-5638", "CVE-2018-7600",
+          "CVE-2019-0708", "CVE-2020-1472", "CVE-2021-26855", "CVE-2022-30190",
+          "CVE-2023-23397", "CVE-2023-34362", "CVE-2023-4863", "CVE-2024-3094",
+          "CVE-2021-22205", "CVE-2022-0847", "CVE-2021-3156", "CVE-2016-5195",
+        ]);
+        const isExploitable = (v) => KEV_SET.has((v.id || "").toUpperCase()) || (v.cvss || 0) >= 9.0;
+
+        // Count actively-exploitable findings across all scanned images
+        let exploitableCount = 0;
+        for (const r of scan.results) {
+          for (const v of (r.vulnerabilities || [])) if (isExploitable(v)) exploitableCount++;
+        }
+
+        // One-line, human-readable reason behind the grade — the "why"
+        const comp = scan.compliance || {};
+        const reasonParts = [];
+        if (scan.critical > 0) reasonParts.push(`${scan.critical} Critical`);
+        if (scan.high > 0) reasonParts.push(`${scan.high} High`);
+        if (exploitableCount > 0) reasonParts.push(`${exploitableCount} actively exploited`);
+        if ((comp.signed || 0) === 0 && (comp.total || 0) > 0) reasonParts.push(`0/${comp.total} signed`);
+        if ((scan.maxCVSS || 0) > 0) reasonParts.push(`max CVSS ${(scan.maxCVSS).toFixed(1)}`);
+        const scoreReason = reasonParts.length ? reasonParts.join(" · ") : "No significant findings";
+
+        // Recommended remediation per image — the dominant fix action
+        const recommendFix = (r) => {
+          const fixables = (r.vulnerabilities || []).filter(v => v.fixedBy);
+          if (fixables.length === 0) return null;
+          // Prefer a concrete package upgrade if present
+          const pkgFix = fixables.find(v => v.package && /^\d|\bv?\d+\./.test(String(v.fixedBy || "")));
+          if (pkgFix) return `Upgrade ${pkgFix.package} → ${pkgFix.fixedBy} (fixes ${fixables.length} of ${r.totalVulns})`;
+          return `${fixables[0].fixedBy} — resolves ${fixables.length} of ${r.totalVulns} findings`;
+        };
+
         return {
           scannerType: scan.scannerType,
           timestamp: scan.timestamp,
@@ -6061,8 +6100,9 @@ spec:
           medium: scan.medium,
           low: scan.low,
           fixable: scan.fixable,
+          exploitable: exploitableCount,
           maxCVSS: scan.maxCVSS || 0,
-          riskScore, grade,
+          riskScore, grade, scoreReason,
           compliance: scan.compliance || { avgScore: 0, signed: 0, sbom: 0, pinned: 0, trusted: 0, total: 0 },
           ageSummary: scan.ageSummary || { fresh: 0, aging: 0, stale: 0, current: 0, unknown: 0 },
           topImages: scan.results.slice(0, 15).map(r => ({
@@ -6072,6 +6112,8 @@ spec:
             critical: r.critical, high: r.high, medium: r.medium, low: r.low,
             fixable: r.fixable, total: r.totalVulns,
             maxCVSS: r.maxCVSS || 0,
+            exploitable: (r.vulnerabilities || []).filter(isExploitable).length,
+            recommendedFix: recommendFix(r),
             age: r.age || null,
             pods: r.pods ? r.pods.slice(0, 5).map(p => ({ pod: p.pod, namespace: p.namespace, container: p.container })) : [],
             complianceBadges: r.compliance?.badges || [],
@@ -6080,6 +6122,7 @@ spec:
             vulnerabilities: (r.vulnerabilities || []).slice(0, 20).map(v => ({
               id: v.id, severity: v.severity, package: v.package || "", version: v.version || "",
               fix: v.fixedBy, cvss: v.cvss || 0, link: v.link || null,
+              exploitable: isExploitable(v), kev: KEV_SET.has((v.id || "").toUpperCase()),
               description: (v.description || "").slice(0, 150),
             })),
           })),

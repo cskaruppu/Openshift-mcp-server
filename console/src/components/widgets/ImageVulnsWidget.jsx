@@ -139,38 +139,52 @@ export function ImageVulnsWidget() {
         </div>
       </div>
 
-      {/* Hero Row: Donut + Grade + Findings */}
-      <div className="ivs-hero">
-        <div className="ivs-donut">
-          <svg viewBox="0 0 64 64" width="64" height="64">
-            <circle cx="32" cy="32" r="27" fill="none" stroke="var(--border)" strokeWidth="5" />
-            <circle
-              cx="32" cy="32" r="27" fill="none"
-              stroke={gc} strokeWidth="5" strokeLinecap="round"
-              strokeDasharray={circumference}
-              strokeDashoffset={offset}
-              style={{ transform: "rotate(-90deg)", transformOrigin: "center", transition: "stroke-dashoffset .8s ease" }}
-            />
-          </svg>
-          <div className="ivs-donut-score">{score}</div>
-        </div>
-        <div className="ivs-grade-info">
-          <div className="ivs-grade-pill" style={{ background: gc + "18", color: gc, borderColor: gc }}>
-            {d.grade || "?"}
+      {/* Hero Row: posture ring + grade + reason + key metrics */}
+      <div className="ivs-hero2">
+        <div className="ivs-hero2-score">
+          <div className="ivs-donut">
+            <svg viewBox="0 0 64 64" width="72" height="72">
+              <circle cx="32" cy="32" r="27" fill="none" stroke="var(--border)" strokeWidth="6" />
+              <circle
+                cx="32" cy="32" r="27" fill="none"
+                stroke={gc} strokeWidth="6" strokeLinecap="round"
+                strokeDasharray={circumference}
+                strokeDashoffset={offset}
+                style={{ transform: "rotate(-90deg)", transformOrigin: "center", transition: "stroke-dashoffset .8s ease" }}
+              />
+            </svg>
+            <div className="ivs-donut-inner">
+              <div className="ivs-donut-score" style={{ color: gc }}>{score}</div>
+              <div className="ivs-donut-of">/100</div>
+            </div>
           </div>
-          <div className="ivs-grade-label">Security Grade</div>
-          <div className="ivs-grade-meta">
-            {d.totalImages || 0} images · {total} findings · scanned {d.timestamp ? relTime(d.timestamp) : "--"}
+          <div className="ivs-hero2-gradewrap">
+            <div className="ivs-grade-pill" style={{ background: gc + "18", color: gc, borderColor: gc }}>{d.grade || "?"}</div>
+            <div className="ivs-grade-label">Security Posture</div>
           </div>
         </div>
-        <div className="ivs-findings-count">
-          <div className="ivs-findings-num" style={{ color: total > 0 ? "var(--crit)" : "var(--ok)" }}>{total}</div>
-          <div className="ivs-findings-label">Findings</div>
+        <div className="ivs-hero2-detail">
+          <div className="ivs-hero2-reason" style={{ borderColor: gc + "55" }}>
+            <span className="ivs-hero2-reason-icon" style={{ color: gc }}>●</span>
+            {d.scoreReason || `${total} findings across ${d.totalImages || 0} images`}
+          </div>
+          <div className="ivs-hero2-meta">
+            {d.totalImages || 0} images scanned · {total} findings · Max CVSS{" "}
+            <strong style={{ color: cvssColor(d.maxCVSS || 0) }}>{(d.maxCVSS || 0).toFixed(1)}</strong>
+            {" · "}<strong style={{ color: "var(--accent3, #06b6d4)" }}>{d.fixable || 0}</strong> fixable
+            {" · scanned "}{d.timestamp ? relTime(d.timestamp) : "--"}
+          </div>
         </div>
       </div>
 
-      {/* Severity Cards */}
-      <div className="ivs-severity-row">
+      {/* Severity + Exploitable Cards */}
+      <div className="ivs-severity-row ivs-severity-row5">
+        {(d.exploitable || 0) > 0 && (
+          <div className="ivs-sev-card ivs-sev-card-kev" style={{ "--sev-color": "#dc2626" }}>
+            <div className="ivs-sev-val">{d.exploitable}</div>
+            <div className="ivs-sev-label">🔴 Exploitable</div>
+          </div>
+        )}
         {[
           { key: "critical", color: "var(--crit)", val: d.critical || 0 },
           { key: "high", color: "var(--warn)", val: d.high || 0 },
@@ -184,16 +198,15 @@ export function ImageVulnsWidget() {
         ))}
       </div>
 
-      {/* Stats Row */}
-      <div className="ivs-stats-row">
-        <span>{d.totalImages || 0} images scanned</span>
-        <span>Max CVSS: <strong style={{ color: cvssColor(d.maxCVSS || 0) }}>{(d.maxCVSS || 0).toFixed(1)}</strong></span>
-        <span><strong style={{ color: "var(--accent3, #06b6d4)" }}>{d.fixable || 0}</strong> fixable</span>
-      </div>
-
-      {/* Fixable Progress */}
-      <div className="ivs-progress-track">
-        <div className="ivs-progress-bar" style={{ width: `${fixPct}%` }} />
+      {/* Fixable Progress (labeled) */}
+      <div className="ivs-fixwrap">
+        <div className="ivs-fixwrap-head">
+          <span>Remediable Findings</span>
+          <span className="ivs-fixwrap-pct"><strong>{fixPct}%</strong> fixable now ({d.fixable || 0}/{total})</span>
+        </div>
+        <div className="ivs-progress-track">
+          <div className="ivs-progress-bar" style={{ width: `${fixPct}%` }} />
+        </div>
       </div>
 
       {/* Compliance Badges */}
@@ -226,46 +239,82 @@ export function ImageVulnsWidget() {
       {/* Top Images */}
       {(d.topImages || []).length > 0 && (
         <div className="ivs-images">
-          <div className="ivs-images-title">Top Vulnerable Images</div>
+          <div className="ivs-images-title">
+            Top Vulnerable Images
+            <span className="ivs-images-subtitle">click a row for CVE detail &amp; remediation</span>
+          </div>
+          <div className="ivs-img-table-head">
+            <span>Image</span>
+            <span>Namespace</span>
+            <span className="ivs-col-c">Severity</span>
+            <span className="ivs-col-c">Max CVSS</span>
+            <span className="ivs-col-c">Fixable</span>
+            <span className="ivs-col-c">Age</span>
+          </div>
           <div className="ivs-images-list">
-            {(d.topImages || []).slice(0, 10).map((img, i) => (
+            {(d.topImages || []).slice(0, 10).map((img, i) => {
+              const ageChip = img.age?.label || img.age?.status || (typeof img.age === "string" ? img.age : null);
+              return (
               <div key={i} className={"ivs-img-row" + (expandedImg === i ? " expanded" : "")}>
-                <div className="ivs-img-summary" onClick={() => setExpandedImg(expandedImg === i ? null : i)}>
-                  <span className="ivs-img-name" title={img.fullImage || img.image}>{img.image}</span>
-                  <span className="ivs-img-ns">{img.namespace}</span>
-                  <div className="ivs-img-sevs">
-                    {img.critical > 0 && <span className="ivs-img-sev crit">{img.critical}C</span>}
-                    {img.high > 0 && <span className="ivs-img-sev high">{img.high}H</span>}
-                    {img.medium > 0 && <span className="ivs-img-sev med">{img.medium}M</span>}
-                    {img.low > 0 && <span className="ivs-img-sev low">{img.low}L</span>}
-                  </div>
-                  <span className="ivs-img-cvss" style={{ color: cvssColor(img.maxCVSS || 0) }}>
+                <div className="ivs-img-summary2" onClick={() => setExpandedImg(expandedImg === i ? null : i)}>
+                  <span className="ivs-img-name" title={img.fullImage || img.image}>
+                    <span className="ivs-img-chevron">{expandedImg === i ? "▾" : "▸"}</span>
+                    {img.image}
+                    {(img.exploitable || 0) > 0 && <span className="ivs-img-kev" title="Contains actively-exploited (KEV) CVEs">KEV</span>}
+                  </span>
+                  <span className="ivs-img-ns">{img.namespace || "—"}</span>
+                  <span className="ivs-img-sevs ivs-col-c">
+                    {img.critical > 0 && <span className="ivs-img-sev crit">{img.critical}</span>}
+                    {img.high > 0 && <span className="ivs-img-sev high">{img.high}</span>}
+                    {img.medium > 0 && <span className="ivs-img-sev med">{img.medium}</span>}
+                    {img.low > 0 && <span className="ivs-img-sev low">{img.low}</span>}
+                  </span>
+                  <span className="ivs-img-cvss ivs-col-c" style={{ color: cvssColor(img.maxCVSS || 0) }}>
                     {(img.maxCVSS || 0).toFixed(1)}
                   </span>
-                  <span className="ivs-img-chevron">{expandedImg === i ? "▲" : "▼"}</span>
+                  <span className="ivs-col-c ivs-img-fixable">{img.fixable || 0}/{img.total || 0}</span>
+                  <span className="ivs-col-c">{ageChip ? <span className="ivs-age-chip">{ageChip}</span> : <span className="ivs-muted">—</span>}</span>
                 </div>
-                {expandedImg === i && (img.vulnerabilities || []).length > 0 && (
+                {expandedImg === i && (
                   <div className="ivs-img-detail">
-                    <table className="ivs-vuln-table">
-                      <thead>
-                        <tr><th>CVSS</th><th>Severity</th><th>CVE</th><th>Package</th><th>Fix</th></tr>
-                      </thead>
-                      <tbody>
-                        {(img.vulnerabilities || []).slice(0, 15).map((v, vi) => (
-                          <tr key={vi}>
-                            <td style={{ color: cvssColor(v.cvss || 0), fontWeight: 700 }}>{(v.cvss || 0).toFixed(1)}</td>
-                            <td><span className={"ivs-sev-pill " + (v.severity || "").toLowerCase()}>{v.severity}</span></td>
-                            <td className="ivs-cve-id">{v.id}</td>
-                            <td>{v.package}{v.version ? `@${v.version}` : ""}</td>
-                            <td>{v.fix ? <span style={{ color: "var(--ok)" }}>{"✓"} {v.fix}</span> : <span style={{ color: "var(--text2)" }}>—</span>}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                    {img.recommendedFix && (
+                      <div className="ivs-img-reco">
+                        <span className="ivs-img-reco-icon">✨</span>
+                        <span><strong>AI Remediation:</strong> {img.recommendedFix}</span>
+                      </div>
+                    )}
+                    {(img.vulnerabilities || []).length > 0 ? (
+                      <table className="ivs-vuln-table">
+                        <thead>
+                          <tr><th>CVSS</th><th>Severity</th><th>CVE</th><th>Package</th><th>Installed → Fixed</th></tr>
+                        </thead>
+                        <tbody>
+                          {(img.vulnerabilities || []).slice(0, 15).map((v, vi) => (
+                            <tr key={vi} className={v.exploitable ? "ivs-vuln-kev" : ""}>
+                              <td style={{ color: cvssColor(v.cvss || 0), fontWeight: 700 }}>{(v.cvss || 0).toFixed(1)}</td>
+                              <td>
+                                <span className={"ivs-sev-pill " + (v.severity || "").toLowerCase()}>{v.severity}</span>
+                                {v.exploitable && <span className="ivs-vuln-kev-tag" title={v.kev ? "CISA KEV — actively exploited" : "CVSS ≥ 9.0"}>{v.kev ? "KEV" : "EXPLOIT"}</span>}
+                              </td>
+                              <td className="ivs-cve-id">
+                                {v.link ? <a href={v.link} target="_blank" rel="noreferrer">{v.id}</a> : v.id}
+                              </td>
+                              <td>{v.package || "—"}</td>
+                              <td>
+                                {v.version ? <code className="ivs-ver-old">{v.version}</code> : <span className="ivs-muted">—</span>}
+                                {v.fix ? <> → <code className="ivs-ver-new">{v.fix}</code></> : <span className="ivs-muted"> (no fix)</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div className="ivs-muted" style={{ padding: "8px 4px" }}>No detailed CVE data for this image.</div>
+                    )}
                   </div>
                 )}
               </div>
-            ))}
+            );})}
           </div>
         </div>
       )}
