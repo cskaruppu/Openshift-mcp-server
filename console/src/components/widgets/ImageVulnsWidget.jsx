@@ -30,6 +30,28 @@ const sevColor = (s) => {
   return "#22c55e";
 };
 
+const filterColor = (f) => {
+  if (f === "exploitable") return "#dc2626";
+  if (f === "critical") return "#ef4444";
+  if (f === "high") return "#f97316";
+  if (f === "medium") return "#3b82f6";
+  return "#22c55e";
+};
+
+// Does an image have any finding matching the active filter?
+const imgMatchesFilter = (img, filter) => {
+  if (!filter) return true;
+  if (filter === "exploitable") return (img.exploitable || 0) > 0;
+  return (img[filter] || 0) > 0;
+};
+
+// Filter an image's CVE list to the active severity / exploitable filter
+const filterVulns = (vulns, filter) => {
+  if (!filter) return vulns;
+  if (filter === "exploitable") return vulns.filter((v) => v.exploitable);
+  return vulns.filter((v) => (v.severity || "").toLowerCase() === filter);
+};
+
 const frameworkIcon = (fw) => {
   const map = { "NIST NVD": "N", "CIS": "C", "OWASP": "O", "SOC2": "S", "PCI-DSS": "P" };
   for (const [k, v] of Object.entries(map)) if ((fw || "").includes(k)) return v;
@@ -44,10 +66,16 @@ export function ImageVulnsWidget() {
   );
   const [scanning, setScanning] = useState(false);
   const [expandedImg, setExpandedImg] = useState(null);
+  const [sevFilter, setSevFilter] = useState(null); // null | critical | high | medium | low | exploitable
   const [aiFindings, setAiFindings] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiProvider, setAiProvider] = useState(null);
   const [expandedAi, setExpandedAi] = useState(null);
+
+  const toggleFilter = useCallback((key) => {
+    setSevFilter((prev) => (prev === key ? null : key));
+    setExpandedImg(null);
+  }, []);
 
   const handleScan = useCallback(async () => {
     setScanning(true);
@@ -177,13 +205,19 @@ export function ImageVulnsWidget() {
         </div>
       </div>
 
-      {/* Severity + Exploitable Cards */}
+      {/* Severity + Exploitable Cards — click to filter */}
       <div className="ivs-severity-row ivs-severity-row5">
         {(d.exploitable || 0) > 0 && (
-          <div className="ivs-sev-card ivs-sev-card-kev" style={{ "--sev-color": "#dc2626" }}>
+          <button
+            type="button"
+            className={"ivs-sev-card ivs-sev-card-kev" + (sevFilter === "exploitable" ? " active" : "")}
+            style={{ "--sev-color": "#dc2626" }}
+            onClick={() => toggleFilter("exploitable")}
+            title="Filter to actively-exploited findings"
+          >
             <div className="ivs-sev-val">{d.exploitable}</div>
             <div className="ivs-sev-label">🔴 Exploitable</div>
-          </div>
+          </button>
         )}
         {[
           { key: "critical", color: "var(--crit)", val: d.critical || 0 },
@@ -191,12 +225,28 @@ export function ImageVulnsWidget() {
           { key: "medium", color: "#3b82f6", val: d.medium || 0 },
           { key: "low", color: "var(--ok)", val: d.low || 0 },
         ].map((s) => (
-          <div key={s.key} className="ivs-sev-card" style={{ "--sev-color": s.color }}>
+          <button
+            type="button"
+            key={s.key}
+            className={"ivs-sev-card" + (sevFilter === s.key ? " active" : "") + (s.val === 0 ? " ivs-sev-empty" : "")}
+            style={{ "--sev-color": s.color }}
+            onClick={() => s.val > 0 && toggleFilter(s.key)}
+            title={s.val > 0 ? `Filter to ${s.key} findings` : `No ${s.key} findings`}
+          >
             <div className="ivs-sev-val">{s.val}</div>
             <div className="ivs-sev-label">{s.key}</div>
-          </div>
+          </button>
         ))}
       </div>
+
+      {/* Active filter banner */}
+      {sevFilter && (
+        <div className="ivs-filter-banner">
+          <span className="ivs-filter-banner-dot" style={{ background: filterColor(sevFilter) }} />
+          Showing <strong>{sevFilter === "exploitable" ? "actively-exploited" : sevFilter}</strong> findings only
+          <button type="button" className="ivs-filter-clear" onClick={() => setSevFilter(null)}>Clear ✕</button>
+        </div>
+      )}
 
       {/* Fixable Progress (labeled) */}
       <div className="ivs-fixwrap">
@@ -237,11 +287,15 @@ export function ImageVulnsWidget() {
       </div>
 
       {/* Top Images */}
-      {(d.topImages || []).length > 0 && (
+      {(d.topImages || []).length > 0 && (() => {
+        const visibleImages = (d.topImages || []).filter((img) => imgMatchesFilter(img, sevFilter)).slice(0, 12);
+        return (
         <div className="ivs-images">
           <div className="ivs-images-title">
             Top Vulnerable Images
-            <span className="ivs-images-subtitle">click a row for CVE detail &amp; remediation</span>
+            <span className="ivs-images-subtitle">
+              {sevFilter ? `${visibleImages.length} image(s) with ${sevFilter} findings` : "click a row for CVE detail & remediation"}
+            </span>
           </div>
           <div className="ivs-img-table-head">
             <span>Image</span>
@@ -252,7 +306,10 @@ export function ImageVulnsWidget() {
             <span className="ivs-col-c">Age</span>
           </div>
           <div className="ivs-images-list">
-            {(d.topImages || []).slice(0, 10).map((img, i) => {
+            {visibleImages.length === 0 && (
+              <div className="ivs-muted" style={{ padding: "10px 4px" }}>No images match this filter.</div>
+            )}
+            {visibleImages.map((img, i) => {
               const ageChip = img.age?.label || img.age?.status || (typeof img.age === "string" ? img.age : null);
               return (
               <div key={i} className={"ivs-img-row" + (expandedImg === i ? " expanded" : "")}>
@@ -275,7 +332,9 @@ export function ImageVulnsWidget() {
                   <span className="ivs-col-c ivs-img-fixable">{img.fixable || 0}/{img.total || 0}</span>
                   <span className="ivs-col-c">{ageChip ? <span className="ivs-age-chip">{ageChip}</span> : <span className="ivs-muted">—</span>}</span>
                 </div>
-                {expandedImg === i && (
+                {expandedImg === i && (() => {
+                  const shownVulns = filterVulns(img.vulnerabilities || [], sevFilter).slice(0, 20);
+                  return (
                   <div className="ivs-img-detail">
                     {img.recommendedFix && (
                       <div className="ivs-img-reco">
@@ -283,13 +342,13 @@ export function ImageVulnsWidget() {
                         <span><strong>AI Remediation:</strong> {img.recommendedFix}</span>
                       </div>
                     )}
-                    {(img.vulnerabilities || []).length > 0 ? (
+                    {shownVulns.length > 0 ? (
                       <table className="ivs-vuln-table">
                         <thead>
                           <tr><th>CVSS</th><th>Severity</th><th>CVE</th><th>Package</th><th>Installed → Fixed</th></tr>
                         </thead>
                         <tbody>
-                          {(img.vulnerabilities || []).slice(0, 15).map((v, vi) => (
+                          {shownVulns.map((v, vi) => (
                             <tr key={vi} className={v.exploitable ? "ivs-vuln-kev" : ""}>
                               <td style={{ color: cvssColor(v.cvss || 0), fontWeight: 700 }}>{(v.cvss || 0).toFixed(1)}</td>
                               <td>
@@ -309,15 +368,18 @@ export function ImageVulnsWidget() {
                         </tbody>
                       </table>
                     ) : (
-                      <div className="ivs-muted" style={{ padding: "8px 4px" }}>No detailed CVE data for this image.</div>
+                      <div className="ivs-muted" style={{ padding: "8px 4px" }}>
+                        {sevFilter ? `No ${sevFilter} CVEs in this image.` : "No detailed CVE data for this image."}
+                      </div>
                     )}
                   </div>
-                )}
+                  );
+                })()}
               </div>
             );})}
           </div>
         </div>
-      )}
+      );})()}
 
       {/* AI Security Analysis */}
       {aiLoading && (
