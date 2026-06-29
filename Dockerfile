@@ -11,7 +11,9 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
+# --omit=dev: skip doc-generation tooling (exceljs/pptxgenjs/xlsx) not used at runtime
+# --no-audit --no-fund: keep the build log clean (audit/funding notices are noise here)
+RUN npm ci --omit=dev --no-audit --no-fund
 COPY src/ src/
 
 # Stage 2 — Final runtime image
