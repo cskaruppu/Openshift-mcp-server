@@ -178,7 +178,15 @@ export function ImageVulnsWidget() {
   const age = d.ageSummary || {};
   const ageTotal = (age.fresh || 0) + (age.aging || 0) + (age.stale || 0) || 1;
   const fixPct = total > 0 ? Math.round(((d.fixable || 0) / total) * 100) : 0;
-  const scannerLabel = d.scannerType === "quay-cso" ? "Quay CSO" : d.scannerType === "openshift-image-api" ? "OCP API" : "Static Analysis";
+  // Scanner mode — distinguishes a real dynamic CVE feed from static heuristics
+  const SCANNER_MODES = {
+    "trivy-operator": { label: "Live CVE · Trivy", live: true, tip: "Dynamic CVE scanning via Trivy Operator (NVD + GHSA + OS vendor feeds). Works on OpenShift, EKS, AKS, GKE." },
+    "quay-cso": { label: "Live CVE · Quay/Clair", live: true, tip: "Dynamic CVE scanning via Red Hat Quay Container Security Operator (Clair)." },
+    "openshift-image-api": { label: "OCP Image API", live: false, tip: "OpenShift image metadata source." },
+    "static-analysis": { label: "Static Analysis", live: false, tip: "Heuristic image-hygiene checks (CIS 5.5.1/5.5.2, registry trust). Install Trivy Operator for live CVE scanning." },
+  };
+  const scannerMode = SCANNER_MODES[d.scannerType] || SCANNER_MODES["static-analysis"];
+  const scannerLabel = scannerMode.label;
 
   return (
     <div className="ivs">
@@ -186,7 +194,13 @@ export function ImageVulnsWidget() {
       <div className="ivs-header">
         <h3>Image Vulnerability Scanner</h3>
         <div className="ivs-header-actions">
-          <span className="ivs-scanner-badge">{scannerLabel}</span>
+          <span
+            className={"ivs-scanner-badge" + (scannerMode.live ? " ivs-scanner-live" : " ivs-scanner-static")}
+            title={scannerMode.tip}
+          >
+            {scannerMode.live && <span className="ivs-scanner-dot" />}
+            {scannerLabel}
+          </span>
           <button className="ivs-ai-btn" onClick={handleAiAnalysis} disabled={aiLoading}>
             {aiLoading ? "Analyzing…" : "AI Security Analysis"}
           </button>
