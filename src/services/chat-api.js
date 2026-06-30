@@ -57,7 +57,7 @@ import {
   renderPendingMessage,
   isServiceNowEnabled,
 } from "./action-workflow.js";
-import { createIncident as createServiceNowIncident, resolveIncident as snowResolveIncident } from "../utils/servicenow-client.js";
+import { createIncident as createServiceNowIncident, resolveIncident as snowResolveIncident, createChangeRequest as snowCreateChangeRequest, updateRecord as snowUpdateRecord } from "../utils/servicenow-client.js";
 import { notifyAll } from "./integrations.js";
 import { callLLM, callLLMStream, llmEnabled } from "./llm.js";
 import { resolveLLMOpts } from "./dashboard-api.js";
@@ -18698,6 +18698,201 @@ Respond ONLY with this JSON object (no markdown fences):
   } catch (err) {
     console.error("Image remediation AI error:", err);
     json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/security/remediate-image — end-to-end vulnerability remediation
+//
+// Closes the loop: dry-run preview → raise a ServiceNow Change Request (ITIL —
+// a vuln fix is a planned change, not an incident; KEV/exploitable also raises
+// an Incident) → patch the deployment image on the cluster → re-scan to prove
+// the CVEs dropped → record before/after evidence on the Change Request.
+//
+// Body: { image, namespace, deployment, container, newImage, dryRun,
+//         before: {critical,high,medium,low,total}, exploitable, oldImage }
+// Reuses ocpGet/ocpPatch + servicenow-client. Nothing mutates unless
+// dryRun === false (the UI gates that behind an explicit "Apply" click).
+// ---------------------------------------------------------------------------
+
+/** Resolve which deployment + container runs a given image in a namespace. */
+async function resolveImageWorkload(namespace, image, hintDeployment, hintContainer) {
+  // If the caller already knows the deployment+container, trust it but still
+  // fetch the live image for an accurate backout reference.
+  const tryDeployment = async (name) => {
+    try {
+      const dep = await ocpGet(`/apis/apps/v1/namespaces/${namespace}/deployments/${name}`);
+      const containers = dep?.spec?.template?.spec?.containers || [];
+      let c = hintContainer ? containers.find(x => x.name === hintContainer) : null;
+      if (!c) c = containers.find(x => x.image === image) || containers[0];
+      if (c) return { deployment: name, container: c.name, oldImage: c.image, kind: "deployments" };
+    } catch { /* not found */ }
+    return null;
+  };
+  if (hintDeployment) {
+    const r = await tryDeployment(hintDeployment);
+    if (r) return r;
+  }
+  // Otherwise scan deployments in the namespace for one running this image.
+  try {
+    const deps = await ocpGet(`/apis/apps/v1/namespaces/${namespace}/deployments`);
+    for (const dep of (deps.items || [])) {
+      const c = (dep.spec?.template?.spec?.containers || []).find(x => x.image === image);
+      if (c) return { deployment: dep.metadata.name, container: c.name, oldImage: c.image, kind: "deployments" };
+    }
+  } catch { /* fall through */ }
+  return null;
+}
+
+export async function handleImageRemediateAPI(req, res) {
+  try {
+    const body = await readBody(req);
+    const { image, namespace, newImage } = body;
+    const dryRun = body.dryRun !== false; // default to SAFE (dry run) unless explicitly false
+    const before = body.before || {};
+    const exploitable = Number(body.exploitable) || 0;
+
+    if (!namespace || !image) return json(res, 400, { success: false, error: "Missing image or namespace" });
+    if (!newImage || /[<>]/.test(newImage)) {
+      return json(res, 400, { success: false, error: "A concrete replacement image (newImage) is required — run AI Fix first to generate one." });
+    }
+
+    const wl = await resolveImageWorkload(namespace, image, body.deployment, body.container);
+    if (!wl) {
+      return json(res, 200, { success: false, error: `Could not find a Deployment in '${namespace}' running ${image}. Manual remediation required.` });
+    }
+
+    const patchPreview = {
+      target: `deployment/${wl.deployment}`,
+      container: wl.container,
+      oldImage: wl.oldImage,
+      newImage,
+      command: `oc set image deployment/${wl.deployment} ${wl.container}=${newImage} -n ${namespace}`,
+      backoutCommand: `oc set image deployment/${wl.deployment} ${wl.container}=${wl.oldImage} -n ${namespace}`,
+    };
+
+    // ---- DRY RUN: preview only, no mutation ----
+    if (dryRun) {
+      return json(res, 200, {
+        success: true, dryRun: true,
+        ...patchPreview,
+        before,
+        willRaiseChangeRequest: isServiceNowEnabled(),
+        willRaiseIncident: isServiceNowEnabled() && exploitable > 0,
+        note: "Dry run — no change applied. Click Apply to raise a Change Request and patch the cluster.",
+      });
+    }
+
+    // ---- APPLY: raise CR → patch → re-scan → close CR ----
+    const sevText = `${before.critical || 0} Critical / ${before.high || 0} High / ${before.medium || 0} Medium / ${before.low || 0} Low`;
+    const isKev = exploitable > 0;
+    const riskLevel = (before.critical > 0 || isKev) ? "high" : (before.high > 0) ? "moderate" : "low";
+
+    let changeRequest = null, incident = null;
+    if (isServiceNowEnabled()) {
+      try {
+        const cr = await snowCreateChangeRequest({
+          shortDescription: `[Security] Patch ${wl.deployment} image to remediate ${before.total || (before.critical||0)+(before.high||0)+(before.medium||0)+(before.low||0)} finding(s) — ${namespace}`,
+          description: [
+            `Automated image vulnerability remediation by TCS Agentic AI.`,
+            ``,
+            `Namespace: ${namespace}`,
+            `Workload: deployment/${wl.deployment} (container: ${wl.container})`,
+            `Current image: ${wl.oldImage}`,
+            `Target image: ${newImage}`,
+            `Findings before: ${sevText}`,
+            isKev ? `Actively exploited (KEV/EPSS): ${exploitable} — expedited.` : ``,
+          ].filter(Boolean).join("\n"),
+          type: "normal",
+          risk: riskLevel,
+          impact: before.critical > 0 ? "2" : "3",
+          priority: isKev ? "1" : before.critical > 0 ? "2" : "3",
+          category: "Software",
+          justification: `Remediate ${sevText} in ${wl.deployment}. ${isKev ? "Contains actively-exploited CVEs." : "Scheduled security patching."}`,
+          implementationPlan: patchPreview.command,
+          backoutPlan: patchPreview.backoutCommand,
+          testPlan: `Re-scan image after rollout; verify CVE count reduced and pods healthy.`,
+          workNotes: `[AI Hub] Remediation initiated for ${image} → ${newImage}`,
+        });
+        const rec = cr?.result ? (Array.isArray(cr.result) ? cr.result[0] : cr.result) : null;
+        if (rec) changeRequest = { number: rec.number, sysId: rec.sys_id };
+      } catch (e) { changeRequest = { error: e.message }; }
+
+      // For actively-exploited findings, also raise an Incident (KEV = active risk)
+      if (isKev) {
+        try {
+          const inc = await createServiceNowIncident({
+            shortDescription: `[SEV-2] Actively-exploited CVE in ${wl.deployment} — ${namespace}`,
+            description: `KEV/exploitable vulnerability detected in ${image}. Remediation change ${changeRequest?.number || "pending"} raised. Findings: ${sevText}.`,
+            urgency: "1", impact: "2",
+          });
+          const irec = inc?.result ? (Array.isArray(inc.result) ? inc.result[0] : inc.result) : null;
+          if (irec) incident = { number: irec.number, sysId: irec.sys_id };
+        } catch { /* incident best-effort */ }
+      }
+    }
+
+    // Patch the deployment image (strategic-merge — only this container changes)
+    let patchError = null;
+    try {
+      await ocpPatch(
+        `/apis/apps/v1/namespaces/${namespace}/deployments/${wl.deployment}`,
+        { spec: { template: { spec: { containers: [{ name: wl.container, image: newImage }] } } } }
+      );
+    } catch (e) {
+      patchError = e.message;
+    }
+
+    // Re-scan to capture the "after" picture for this workload (best-effort —
+    // a live CVE scanner may need a few minutes to scan the new image).
+    let after = null;
+    if (!patchError) {
+      try {
+        await new Promise(r => setTimeout(r, 3000));
+        const { scanAllNamespaceImages } = await import("../tools/image-vulnerability-scanner.js");
+        const rescan = await scanAllNamespaceImages(namespace);
+        const match = (rescan.topImages || []).find(i =>
+          i.image === newImage || i.workload?.name === wl.deployment || (i.pods || []).some(p => p.pod === wl.deployment)
+        );
+        if (match) {
+          after = { critical: match.critical, high: match.high, medium: match.medium, low: match.low, total: match.totalVulns };
+        } else {
+          after = { pending: true, note: "New image not yet scanned — live scanner will report within a few minutes." };
+        }
+      } catch { after = { pending: true }; }
+    }
+
+    // Close out the Change Request with before/after evidence
+    if (changeRequest?.sysId) {
+      const afterText = after?.pending ? "re-scan pending" : `${after?.critical || 0}C / ${after?.high || 0}H / ${after?.medium || 0}M / ${after?.low || 0}L`;
+      const notes = [
+        `── REMEDIATION RESULT ──`,
+        `Image patched: ${wl.oldImage} → ${newImage}`,
+        `Findings before: ${sevText}`,
+        `Findings after: ${afterText}`,
+        patchError ? `Patch error: ${patchError}` : `Rollout: triggered (rolling update)`,
+        `Backout: ${patchPreview.backoutCommand}`,
+        `Performed by: TCS Agentic AI`,
+      ].join("\n");
+      try {
+        const updates = { work_notes: notes };
+        if (!patchError) { updates.state = process.env.SERVICENOW_CHANGE_REVIEW_STATE || "0"; } // Review
+        await snowUpdateRecord("change_request", changeRequest.sysId, updates);
+      } catch { /* notes best-effort */ }
+    }
+
+    return json(res, 200, {
+      success: !patchError,
+      applied: !patchError,
+      error: patchError,
+      ...patchPreview,
+      before, after,
+      changeRequest, incident,
+      rolloutTriggered: !patchError,
+    });
+  } catch (err) {
+    console.error("Image remediate error:", err);
+    json(res, 500, { success: false, error: err.message });
   }
 }
 

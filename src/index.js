@@ -81,7 +81,7 @@ import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
 import { callLLM } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport } from "./services/upgrade-report.js";
-import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleOptimizationAnalysisAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
+import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import {
   listActions,
   getAction,
@@ -4141,6 +4141,13 @@ spec:
     if (req.method === "POST" && url.pathname === "/api/ai/image-remediation") {
       if (enforceRateLimit(req, res, { burst: 8, refillPerSec: 0.2 })) return;
       await withClusterContext(url, async () => { await handleImageRemediationAPI(req, res); });
+      return;
+    }
+
+    // End-to-end image remediation (dry-run / apply + ServiceNow CR) — POST
+    if (req.method === "POST" && url.pathname === "/api/security/remediate-image") {
+      if (enforceRateLimit(req, res, { burst: 6, refillPerSec: 0.15 })) return;
+      await withClusterContext(url, async () => { await handleImageRemediateAPI(req, res); });
       return;
     }
 

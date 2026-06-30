@@ -1893,6 +1893,38 @@ h3.widget-title {
 }
 .ivs-aifix-err { font-size: 12px; color: var(--crit); padding: 6px 0; }
 
+/* ── End-to-end remediation: Dry Run / Apply & Raise CR ──────────── */
+.ivs-remediate-actions {
+  display: flex; align-items: center; gap: 8px; margin-top: 10px;
+  padding-top: 10px; border-top: 1px dashed rgba(139,92,246,0.25);
+}
+.ivs-rem-dry, .ivs-rem-apply {
+  padding: 6px 14px; border-radius: 7px; font-size: 12px; font-weight: 700;
+  cursor: pointer; font-family: inherit; transition: all 0.12s;
+}
+.ivs-rem-dry {
+  background: transparent; color: var(--text); border: 1px solid var(--border);
+}
+.ivs-rem-dry:hover:not(:disabled) { border-color: var(--accent3, #06b6d4); color: var(--accent3, #06b6d4); }
+.ivs-rem-apply {
+  background: linear-gradient(135deg, #16a34a, #15803d); color: #fff; border: none;
+  box-shadow: 0 2px 8px rgba(22,163,74,0.35);
+}
+.ivs-rem-apply:hover:not(:disabled) { filter: brightness(1.08); }
+.ivs-rem-dry:disabled, .ivs-rem-apply:disabled { opacity: 0.5; cursor: default; }
+.ivs-rem-hint { font-size: 10.5px; color: var(--warn); }
+
+.ivs-rem-result {
+  margin-top: 10px; padding: 10px 12px; border-radius: 8px; font-size: 12px;
+  border: 1px solid var(--border);
+}
+.ivs-rem-result.dry { background: rgba(6,182,212,0.06); border-color: rgba(6,182,212,0.3); }
+.ivs-rem-result.applied { background: rgba(22,163,74,0.07); border-color: rgba(22,163,74,0.35); }
+.ivs-rem-result-head { font-weight: 700; margin-bottom: 6px; color: var(--accent3, #06b6d4); }
+.ivs-rem-result-head.ok { color: #16a34a; }
+.ivs-rem-line { margin: 3px 0; color: var(--text); line-height: 1.5; }
+.ivs-rem-line code { font-size: 11px; }
+
 /* ── Expanded (spotlight modal) — single clean scroll, fixed window ──
    In the small dashboard tile the image list scrolls inside a 360px box.
    Inside the expand modal that nested cap fights the modal's own scroll and

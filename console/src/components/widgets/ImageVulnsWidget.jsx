@@ -68,6 +68,7 @@ export function ImageVulnsWidget() {
   const [expandedImg, setExpandedImg] = useState(null);
   const [sevFilter, setSevFilter] = useState(null); // null | critical | high | medium | low | exploitable
   const [aiFix, setAiFix] = useState({}); // { [imageKey]: { loading, data, error } }
+  const [remediate, setRemediate] = useState({}); // { [imageKey]: { phase, dryRun, result, error } }
   const [aiFindings, setAiFindings] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiProvider, setAiProvider] = useState(null);
@@ -105,6 +106,40 @@ export function ImageVulnsWidget() {
   const copyCmd = useCallback((cmd) => {
     try { navigator.clipboard?.writeText(cmd); showToast("Command copied", "ok"); } catch { /* ignore */ }
   }, []);
+
+  const runRemediation = useCallback(async (img, dryRun) => {
+    const key = img.fullImage || img.image;
+    const fixData = (aiFix[key] || {}).data;
+    const newImage = fixData?.recommendedImage;
+    if (!newImage || /[<>]/.test(newImage)) {
+      showToast("Run AI Fix first to get a concrete target image", "err");
+      return;
+    }
+    setRemediate((p) => ({ ...p, [key]: { phase: dryRun ? "dry-running" : "applying", dryRun } }));
+    try {
+      const res = await fetch(clusterUrl("/api/security/remediate-image", cluster), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image: img.fullImage || img.image,
+          namespace: img.namespace,
+          deployment: (img.workload?.name) || ((img.pods && img.pods[0]?.pod) ? img.pods[0].pod.replace(/-[a-f0-9]+(-[a-z0-9]+)?$/, "") : ""),
+          container: img.pods && img.pods[0]?.container,
+          newImage,
+          dryRun,
+          exploitable: img.exploitable || 0,
+          before: { critical: img.critical || 0, high: img.high || 0, medium: img.medium || 0, low: img.low || 0, total: img.total || 0 },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.success === false) throw new Error(data.error || "Remediation failed");
+      setRemediate((p) => ({ ...p, [key]: { phase: dryRun ? "dry-done" : "applied", dryRun, result: data } }));
+      showToast(dryRun ? "Dry run complete" : `Applied${data.changeRequest?.number ? " · " + data.changeRequest.number : ""}`, "ok");
+    } catch (err) {
+      setRemediate((p) => ({ ...p, [key]: { phase: "failed", dryRun, error: err.message } }));
+      showToast("Remediation failed: " + err.message, "err");
+    }
+  }, [cluster, aiFix]);
 
   const handleScan = useCallback(async () => {
     setScanning(true);
@@ -428,6 +463,55 @@ export function ImageVulnsWidget() {
                         {fixState.data.dockerfilePatch && (
                           <pre className="ivs-aifix-docker">{fixState.data.dockerfilePatch}</pre>
                         )}
+
+                        {/* End-to-end remediation: Dry Run → Apply & Raise CR */}
+                        {(() => {
+                          const rem = remediate[fixKey] || {};
+                          const concreteTarget = fixState.data.recommendedImage && !/[<>]/.test(fixState.data.recommendedImage);
+                          const busy = rem.phase === "dry-running" || rem.phase === "applying";
+                          return (
+                            <>
+                              <div className="ivs-remediate-actions">
+                                <button type="button" className="ivs-rem-dry" disabled={busy || !concreteTarget}
+                                  onClick={(e) => { e.stopPropagation(); runRemediation(img, true); }}>
+                                  {rem.phase === "dry-running" ? "Previewing…" : "▷ Dry Run"}
+                                </button>
+                                <button type="button" className="ivs-rem-apply" disabled={busy || !concreteTarget}
+                                  onClick={(e) => { e.stopPropagation(); if (window.confirm(`Apply fix to ${img.image}?\n\nThis patches the deployment image on the cluster and raises a ServiceNow Change Request.`)) runRemediation(img, false); }}>
+                                  {rem.phase === "applying" ? "Applying…" : "▶ Apply & Raise CR"}
+                                </button>
+                                {!concreteTarget && <span className="ivs-rem-hint">AI returned a placeholder tag — not auto-appliable</span>}
+                              </div>
+
+                              {/* Dry run preview */}
+                              {rem.phase === "dry-done" && rem.result && (
+                                <div className="ivs-rem-result dry">
+                                  <div className="ivs-rem-result-head">▷ Dry Run — preview only, nothing changed</div>
+                                  <div className="ivs-rem-line">{rem.result.target} · container <code>{rem.result.container}</code></div>
+                                  <div className="ivs-rem-line"><code className="ivs-ver-old">{rem.result.oldImage}</code> → <code className="ivs-ver-new">{rem.result.newImage}</code></div>
+                                  {rem.result.willRaiseChangeRequest && <div className="ivs-rem-line">✓ Will raise a ServiceNow Change Request on Apply</div>}
+                                  {rem.result.willRaiseIncident && <div className="ivs-rem-line" style={{ color: "#dc2626" }}>⚠ Exploitable — will also raise an Incident</div>}
+                                </div>
+                              )}
+
+                              {/* Applied result */}
+                              {rem.phase === "applied" && rem.result && (
+                                <div className="ivs-rem-result applied">
+                                  <div className="ivs-rem-result-head ok">✓ Applied — image patched, rollout triggered</div>
+                                  <div className="ivs-rem-line"><code className="ivs-ver-old">{rem.result.oldImage}</code> → <code className="ivs-ver-new">{rem.result.newImage}</code></div>
+                                  {rem.result.changeRequest?.number && <div className="ivs-rem-line">📋 Change Request: <strong>{rem.result.changeRequest.number}</strong></div>}
+                                  {rem.result.incident?.number && <div className="ivs-rem-line" style={{ color: "#dc2626" }}>🚨 Incident: <strong>{rem.result.incident.number}</strong></div>}
+                                  <div className="ivs-rem-line">
+                                    Findings: {rem.result.before?.high || 0}H/{rem.result.before?.medium || 0}M →{" "}
+                                    {rem.result.after?.pending ? <em>re-scan pending</em> : `${rem.result.after?.high || 0}H/${rem.result.after?.medium || 0}M`}
+                                  </div>
+                                  <div className="ivs-rem-line ivs-muted">Backout: <code>{rem.result.backoutCommand}</code></div>
+                                </div>
+                              )}
+                              {rem.phase === "failed" && <div className="ivs-aifix-err">Remediation failed: {rem.error}</div>}
+                            </>
+                          );
+                        })()}
                       </div>
                     )}
                     {fixState.error && <div className="ivs-aifix-err">AI fix failed: {fixState.error}</div>}
