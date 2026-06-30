@@ -1,0 +1,11 @@
+# Applies the RBAC glue that lets the TCS Agentic AI server read Trivy /
+# Quay scan reports. Run with:  oc apply -k deploy/trivy-operator/
+#
+# This intentionally does NOT bundle the Trivy Operator itself — the operator
+# is large and versioned, so it is best installed once via OperatorHub or Helm
+# (see README.md). This kustomization is the small, stable piece that wires the
+# operator's reports into the dashboard.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml

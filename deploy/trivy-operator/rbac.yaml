@@ -1,0 +1,57 @@
+# =============================================================================
+# RBAC — let the TCS Agentic AI server read container-security scan reports
+#
+# The Image Vulnerability Scanner widget reads scan results straight from the
+# Kubernetes API. These rules grant the server's service account read access to:
+#   • Trivy Operator      → vulnerabilityreports.aquasecurity.github.io
+#   • Quay CSO / Clair     → imagemanifestvulns.secscan.quay.redhat.com
+#
+# Without these rules the widget silently falls back to "Static Analysis".
+#
+# Adjust the ServiceAccount name/namespace at the bottom if your server runs
+# under a different identity (defaults match deploy/dashboard/manifests).
+# =============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agentic-ai-securityscan-reader
+  labels:
+    app.kubernetes.io/name: agentic-ai-server
+    app.kubernetes.io/component: security-scanner-rbac
+rules:
+  # Trivy Operator (vendor-neutral — OpenShift, EKS, AKS, GKE)
+  - apiGroups: ["aquasecurity.github.io"]
+    resources:
+      - vulnerabilityreports
+      - exposedsecretreports
+      - configauditreports
+      - rbacassessmentreports
+      - infraassessmentreports
+      - clustervulnerabilityreports
+      - clusterconfigauditreports
+      - clusterrbacassessmentreports
+      - clustercompliancereports
+      - sbomreports
+      - clustersbomreports
+    verbs: ["get", "list", "watch"]
+  # Red Hat Quay Container Security Operator / Clair (OpenShift-native)
+  - apiGroups: ["secscan.quay.redhat.com"]
+    resources:
+      - imagemanifestvulns
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agentic-ai-securityscan-reader
+  labels:
+    app.kubernetes.io/name: agentic-ai-server
+    app.kubernetes.io/component: security-scanner-rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agentic-ai-securityscan-reader
+subjects:
+  - kind: ServiceAccount
+    name: agentic-ai-server      # <-- change to match your server's SA
+    namespace: openshift-mcp     # <-- change to match your server's namespace
