@@ -13,6 +13,7 @@ import { DashboardView } from "./views/DashboardView";
 import { AuditView } from "./views/AuditView";
 import { IntelligenceView } from "./views/IntelligenceView";
 import { ChatView } from "./views/ChatView";
+import { AutopilotView } from "./views/AutopilotView";
 import { useAuthStore } from "./store/authStore";
 import { useThemeStore } from "./store/themeStore";
 import { showToast } from "./store/toastStore";
@@ -64,6 +65,9 @@ export default function App() {
   const [userMgmtOpen, setUserMgmtOpen] = useState(false);
   const [agentRegOpen, setAgentRegOpen] = useState(false);
   const [inClusterPicker, setInClusterPicker] = useState(true);
+  // Altitude scope: "cluster" = the per-cluster tabs; "fleet" = cross-cluster
+  // surfaces (Autopilot). The scope switcher in the header toggles between them.
+  const [scope, setScope] = useState("cluster");
   const { kbdOpen, setKbdOpen } = useKeyboardShortcuts();
 
   const { data: agentData } = useQuery({
@@ -189,8 +193,24 @@ export default function App() {
                 <span className="brand-sub">Enterprise Intelligence Platform</span>
               </div>
             </div>
+            <div className="scope-switch" role="tablist" aria-label="Scope">
+              <button
+                className={"scope-btn" + (scope === "cluster" ? " active" : "")}
+                onClick={() => setScope("cluster")}
+                title="Operate on the selected cluster"
+              >
+                Cluster
+              </button>
+              <button
+                className={"scope-btn" + (scope === "fleet" ? " active" : "")}
+                onClick={() => setScope("fleet")}
+                title="Cross-cluster automation (Autopilot)"
+              >
+                Fleet
+              </button>
+            </div>
             <nav className="nav-tabs">
-              {NAV.map((t) => (
+              {scope === "cluster" && NAV.map((t) => (
                 <button
                   key={t.key}
                   className={"nav-tab" + (activeView === t.key ? " active" : "")}
@@ -202,6 +222,9 @@ export default function App() {
                   )}
                 </button>
               ))}
+              {scope === "fleet" && (
+                <button className="nav-tab active">🛫 Autopilot</button>
+              )}
             </nav>
             <div className="header-actions">
               <div className="conn-status">
@@ -241,10 +264,16 @@ export default function App() {
           </header>
 
           <main className="main-area">
-            {activeView === "dashboard" && <DashboardView />}
-            {activeView === "chat" && <ChatView />}
-            {activeView === "audit" && <AuditView />}
-            {activeView === "intelligence" && <IntelligenceView />}
+            {scope === "fleet" ? (
+              <AutopilotView />
+            ) : (
+              <>
+                {activeView === "dashboard" && <DashboardView />}
+                {activeView === "chat" && <ChatView />}
+                {activeView === "audit" && <AuditView />}
+                {activeView === "intelligence" && <IntelligenceView />}
+              </>
+            )}
           </main>
 
           <footer className="app-footer">
