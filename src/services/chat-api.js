@@ -18549,11 +18549,22 @@ function heuristicSopCompile(text) {
   };
 
   const steps = source.map((raw, i) => ({ n: i + 1, ...mapStep(raw), dryRun: true }));
+
+  // Heuristic "critic" — flag common runbook gaps so the panel always has
+  // suggestions even without an LLM.
+  const cats = new Set(steps.map(s => s.category));
+  const suggestions = [];
+  if (!cats.has("verify")) suggestions.push({ type: "missing_step", text: "No verification step — add a step to confirm the result before finishing.", severity: "warning" });
+  if (steps.some(s => s.destructive) && !/backout|rollback|revert|restore/i.test(text)) suggestions.push({ type: "safety", text: "Contains a destructive step but no backout/rollback plan — add one.", severity: "critical" });
+  if (!cats.has("servicenow_change") && !/change request|servicenow|ticket|approval/i.test(text)) suggestions.push({ type: "compliance", text: "No change/approval record — add a ServiceNow Change Request step for auditability.", severity: "info" });
+  if (steps.length > 0 && !/pre-?check|prerequisite|precondition|before you/i.test(text)) suggestions.push({ type: "precheck", text: "No pre-checks/prerequisites listed — add a preconditions section.", severity: "info" });
+
   return {
     title: (lines[0] || "Operating Procedure").slice(0, 120),
     summary: `Compiled ${steps.length} step(s) from the SOP (heuristic).`,
     missingParams: [...missing],
     steps,
+    suggestions,
     compiler: "heuristic",
   };
 }
@@ -18585,6 +18596,8 @@ SOP DOCUMENT:
 ${clean}
 """
 
+Also act as an SOP reviewer ("critic"): list concrete suggestions to improve the runbook — missing steps (e.g. no backout/rollback, no verification, no approval gate), risky ordering, missing pre-checks, or compliance gaps. Be specific and actionable.
+
 Respond with ONLY this JSON (no markdown fences):
 {
   "title": "short title of the procedure",
@@ -18592,6 +18605,9 @@ Respond with ONLY this JSON (no markdown fences):
   "missingParams": ["appname", "team"],
   "steps": [
     { "n": 1, "title": "short step title", "description": "what happens", "category": "one of the whitelist", "command": "exact oc command", "risk": "low|medium|high", "destructive": false }
+  ],
+  "suggestions": [
+    { "type": "missing_step|ordering|precheck|safety|compliance", "text": "specific, actionable improvement", "severity": "info|warning|critical" }
   ]
 }`;
 
@@ -18617,11 +18633,17 @@ Respond with ONLY this JSON (no markdown fences):
       destructive: !!s.destructive,
       dryRun: true,
     }));
+    const suggestions = (Array.isArray(parsed.suggestions) ? parsed.suggestions : []).map((s) => ({
+      type: String(s.type || "info").slice(0, 30),
+      text: String(s.text || "").slice(0, 300),
+      severity: ["info", "warning", "critical"].includes(s.severity) ? s.severity : "info",
+    })).filter(s => s.text);
     return {
       title: String(parsed.title || "Operating Procedure").slice(0, 120),
       summary: String(parsed.summary || `${steps.length} step(s) compiled`).slice(0, 300),
       missingParams: Array.isArray(parsed.missingParams) ? parsed.missingParams.map(String).slice(0, 20) : [],
       steps,
+      suggestions,
       compiler: r.provider || provider,
     };
   } catch {

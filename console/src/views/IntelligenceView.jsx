@@ -4,6 +4,7 @@ import { useActiveCluster } from "../store/clusterStore";
 import { showToast } from "../store/toastStore";
 import { clusterUrl } from "../api/client";
 import { formatTimestamp } from "../utils/format";
+import { SopRunner } from "../components/SopRunner";
 
 const SEV = { critical: "#ef4444", warning: "#f59e0b", info: "#3b82f6" };
 
@@ -1064,6 +1065,9 @@ export function IntelligenceView() {
           </div>
         </div>
       )}
+
+      {/* SOP Runner — compile a runbook into a validated, dry-run plan */}
+      <SopRunner />
     </div>
   );
 }

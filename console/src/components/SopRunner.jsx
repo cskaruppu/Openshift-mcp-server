@@ -111,6 +111,19 @@ export function SopRunner() {
             </div>
           )}
 
+          {plan.suggestions?.length > 0 && (
+            <div className="sop-critic">
+              <div className="sop-critic-head">🔎 SOP Review — {plan.suggestions.length} suggestion(s)</div>
+              {plan.suggestions.map((s, i) => (
+                <div key={i} className={"sop-critic-item sev-" + (s.severity || "info")}>
+                  <span className="sop-critic-dot" />
+                  <span className="sop-critic-type">{(s.type || "info").replace(/_/g, " ")}</span>
+                  <span className="sop-critic-text">{s.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {plan.steps?.length > 0 ? (
             <div className="sop-steps">
               {plan.steps.map((s) => (
