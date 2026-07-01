@@ -5,6 +5,7 @@ import { useActiveCluster } from "../store/clusterStore";
 import { useChatStore } from "../store/chatStore";
 import { useViewStore } from "../store/viewStore";
 import { PLATFORM_MAP, getPlatformInfo } from "../lib/platforms";
+import { SopRunner } from "../components/SopRunner";
 
 /* ── Constants ── */
 
@@ -235,6 +236,9 @@ export function AIHubView() {
           ))}
         </div>
       </div>
+
+      {/* SOP Runner — compile a runbook into a validated plan (preview) */}
+      <SopRunner />
 
       {/* Agent Usage Analytics — real query-trace data (last 30 days) */}
       <div className="hub-analytics card">

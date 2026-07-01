@@ -81,7 +81,7 @@ import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
 import { callLLM } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport } from "./services/upgrade-report.js";
-import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
+import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, compileSOPPlan, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import {
   listActions,
   getAction,
@@ -6726,6 +6726,36 @@ spec:
             console.error("[deploy] Parse job", parseId, "FAILED:", err.message);
             _parseJobs.set(parseId, { status: "error", error: err.message });
           });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // SOP Runner (Phase A) — compile an SOP doc/text into a preview plan
+    if (req.method === "POST" && url.pathname === "/api/sop/compile") {
+      if (enforceRateLimit(req, res, { burst: 6, refillPerSec: 0.2 })) return;
+      try {
+        const ct = req.headers["content-type"] || "";
+        let sopText = "", llmOpts = {};
+        if (ct.includes("multipart/form-data")) {
+          const raw = await readRawBody(req);
+          const parts = parseMultipart(raw, ct);
+          const filePart = parts.find((p) => p.filename);
+          if (filePart) {
+            const parsed = filePart.filename.endsWith(".docx")
+              ? await parseDocx(filePart.data)
+              : parseMarkdownText(filePart.data.toString());
+            sopText = (parsed.sections || []).map(s => `${s.heading || ""}\n${s.text || s.content || ""}`).join("\n") || parsed.text || filePart.data.toString();
+          }
+          const optsPart = parts.find((p) => p.name === "llmOpts");
+          if (optsPart) { try { llmOpts = JSON.parse(optsPart.data.toString()); } catch {} }
+        } else {
+          const body = await readJsonBody(req);
+          sopText = body.text || body.document || "";
+          llmOpts = body.llmOpts || {};
+        }
+        if (!sopText.trim()) { sendJson(res, 400, { error: "No SOP text or file provided" }); return; }
+        const plan = await compileSOPPlan(sopText, llmOpts);
+        sendJson(res, 200, plan);
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }

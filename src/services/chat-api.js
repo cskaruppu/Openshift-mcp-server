@@ -18500,6 +18500,136 @@ export async function handleFeedbackStatsAPI(req, res) {
 }
 
 // ---------------------------------------------------------------------------
+// SOP Runner (Phase A) — compile a Standard Operating Procedure document into a
+// validated, step-by-step execution PLAN (preview + dry-run only, no execution).
+//
+// Reads the SOP text, uses the LLM to map each natural-language step to a real
+// platform capability with a concrete oc/kubectl command, a risk rating, and
+// any parameters the operator must supply. Falls back to a deterministic
+// heuristic compiler when no LLM is configured so it always returns a plan.
+// ---------------------------------------------------------------------------
+
+// The whitelist of capabilities the compiler may map steps to. The LLM is told
+// to use ONLY these categories, so a plan can never invent an arbitrary action.
+const SOP_CAPABILITIES = [
+  "create_namespace", "resource_quota", "limit_range", "network_policy", "rbac_binding",
+  "scale_workload", "restart_workload", "set_image", "set_resources", "apply_manifest",
+  "cordon_node", "drain_node", "backup", "restore", "verify", "servicenow_change", "manual_step",
+];
+
+function heuristicSopCompile(text) {
+  // Split into numbered/bulleted steps
+  const lines = String(text).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const stepLines = lines.filter(l => /^(\d+[\.\)]|[-*•]|step\s*\d+)/i.test(l));
+  const source = stepLines.length ? stepLines : lines.filter(l => l.length > 8).slice(0, 15);
+  const missing = new Set();
+  for (const m of String(text).matchAll(/<([a-z0-9_ -]+)>/gi)) missing.add(m[1].trim());
+
+  const mapStep = (raw) => {
+    const s = raw.replace(/^(\d+[\.\)]|[-*•]|step\s*\d+[:\.]?)\s*/i, "").trim();
+    const l = s.toLowerCase();
+    let category = "manual_step", risk = "low", destructive = false, command = null;
+    if (/namespace|project/.test(l) && /creat|provision|new/.test(l)) { category = "create_namespace"; command = "oc create namespace <name>"; }
+    else if (/resourcequota|resource quota|quota/.test(l)) { category = "resource_quota"; command = "oc apply -f resourcequota.yaml"; }
+    else if (/limitrange|limit range|default (container )?limit/.test(l)) { category = "limit_range"; command = "oc apply -f limitrange.yaml"; }
+    else if (/networkpolicy|network policy|deny|allow ingress|allow egress/.test(l)) { category = "network_policy"; command = "oc apply -f networkpolicy.yaml"; }
+    else if (/rolebinding|role binding|rbac|grant|developers.*role|edit role|admin role/.test(l)) { category = "rbac_binding"; command = "oc create rolebinding <name> --clusterrole=edit --group=<group> -n <name>"; }
+    else if (/scale/.test(l)) { category = "scale_workload"; command = "oc scale deployment/<name> --replicas=<n> -n <ns>"; }
+    else if (/restart|rollout/.test(l)) { category = "restart_workload"; command = "oc rollout restart deployment/<name> -n <ns>"; }
+    else if (/set image|update image|patch.*image/.test(l)) { category = "set_image"; command = "oc set image deployment/<name> <container>=<image> -n <ns>"; }
+    else if (/memory|cpu|limits|requests|set resources/.test(l)) { category = "set_resources"; command = "oc set resources deployment/<name> --limits=memory=<mem> -n <ns>"; }
+    else if (/cordon/.test(l)) { category = "cordon_node"; risk = "medium"; command = "oc adm cordon <node>"; }
+    else if (/drain/.test(l)) { category = "drain_node"; risk = "high"; destructive = true; command = "oc adm drain <node> --ignore-daemonsets --delete-emptydir-data"; }
+    else if (/backup|velero/.test(l)) { category = "backup"; command = "velero backup create <name>"; }
+    else if (/restore/.test(l)) { category = "restore"; risk = "high"; destructive = true; command = "velero restore create --from-backup <name>"; }
+    else if (/verify|confirm|check|validate|ensure/.test(l)) { category = "verify"; command = "oc get all -n <ns>"; }
+    else if (/servicenow|change request|raise.*(cr|change)|ticket/.test(l)) { category = "servicenow_change"; command = "(auto) create ServiceNow Change Request"; }
+    else if (/apply|create|deploy/.test(l)) { category = "apply_manifest"; command = "oc apply -f <manifest>.yaml"; }
+    return { category, risk, destructive, command, title: s.slice(0, 90), description: s };
+  };
+
+  const steps = source.map((raw, i) => ({ n: i + 1, ...mapStep(raw), dryRun: true }));
+  return {
+    title: (lines[0] || "Operating Procedure").slice(0, 120),
+    summary: `Compiled ${steps.length} step(s) from the SOP (heuristic).`,
+    missingParams: [...missing],
+    steps,
+    compiler: "heuristic",
+  };
+}
+
+/** Compile SOP text into a structured plan. Returns { title, summary,
+ *  missingParams[], steps[], compiler }. Never throws — falls back to heuristic. */
+export async function compileSOPPlan(text, llmOpts = {}) {
+  const clean = String(text || "").slice(0, 12000);
+  if (!clean.trim()) return { title: "", summary: "Empty document", missingParams: [], steps: [], compiler: "none" };
+
+  const provider = llmOpts.provider || LLM_PROVIDER;
+  if (!provider || provider === "none" || !llmEnabled()) {
+    return heuristicSopCompile(clean);
+  }
+
+  const prompt = `You are a Kubernetes/OpenShift operations engineer. Compile the Standard Operating Procedure (SOP) below into a precise, step-by-step execution plan.
+
+For EACH step, map it to exactly ONE capability from this whitelist (never invent others):
+${SOP_CAPABILITIES.join(", ")}
+
+Rules:
+- Produce the exact oc/kubectl command for the step (use <placeholders> for values not given in the SOP).
+- Rate risk: "low" (read/create), "medium" (scale/cordon/config change), "high" (drain/delete/restore).
+- Mark destructive:true for anything that deletes, drains, or restores.
+- Collect every <placeholder> the operator must provide into missingParams.
+
+SOP DOCUMENT:
+"""
+${clean}
+"""
+
+Respond with ONLY this JSON (no markdown fences):
+{
+  "title": "short title of the procedure",
+  "summary": "one sentence describing what this plan does",
+  "missingParams": ["appname", "team"],
+  "steps": [
+    { "n": 1, "title": "short step title", "description": "what happens", "category": "one of the whitelist", "command": "exact oc command", "risk": "low|medium|high", "destructive": false }
+  ]
+}`;
+
+  try {
+    const r = await callLLM({
+      messages: [{ role: "user", content: prompt }],
+      system: "You are a precise operations planner. Output only valid JSON. Map every step to the given capability whitelist. No markdown.",
+      maxTokens: 2500, temperature: 0.1,
+      provider: llmOpts.provider, apiUrl: llmOpts.apiUrl, apiKey: llmOpts.apiKey,
+      model: llmOpts.model, azureDeployment: llmOpts.azureDeployment, azureApiVersion: llmOpts.azureApiVersion,
+    });
+    let t = (r.text || "").trim();
+    const m = t.match(/\{[\s\S]*\}/);
+    if (m) t = m[0];
+    const parsed = JSON.parse(t);
+    const steps = (Array.isArray(parsed.steps) ? parsed.steps : []).map((s, i) => ({
+      n: s.n || i + 1,
+      title: String(s.title || `Step ${i + 1}`).slice(0, 100),
+      description: String(s.description || "").slice(0, 300),
+      category: SOP_CAPABILITIES.includes(s.category) ? s.category : "manual_step",
+      command: String(s.command || "").slice(0, 300),
+      risk: ["low", "medium", "high"].includes(s.risk) ? s.risk : "low",
+      destructive: !!s.destructive,
+      dryRun: true,
+    }));
+    return {
+      title: String(parsed.title || "Operating Procedure").slice(0, 120),
+      summary: String(parsed.summary || `${steps.length} step(s) compiled`).slice(0, 300),
+      missingParams: Array.isArray(parsed.missingParams) ? parsed.missingParams.map(String).slice(0, 20) : [],
+      steps,
+      compiler: r.provider || provider,
+    };
+  } catch {
+    return heuristicSopCompile(clean);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/ai/image-vuln-analysis — AI analysis of image vulnerabilities
 // ---------------------------------------------------------------------------
 export async function handleImageVulnAnalysisAPI(req, res) {
