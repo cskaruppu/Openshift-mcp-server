@@ -23,9 +23,8 @@ const CATEGORY_LABEL = {
  * and dry-run preview. Execution (approve & run) is Phase B — intentionally not
  * wired here, so nothing touches a cluster.
  */
-export function SopRunner({ cluster: clusterProp } = {}) {
-  const activeCluster = useActiveCluster();
-  const cluster = clusterProp || activeCluster;
+export function SopRunner() {
+  const cluster = useActiveCluster();
   const [text, setText] = useState("");
   const [plan, setPlan] = useState(null);
   const [loading, setLoading] = useState(false);
