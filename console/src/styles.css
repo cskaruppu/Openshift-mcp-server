@@ -6997,3 +6997,21 @@ h3.widget-title {
 .sop-critic-item.sev-critical .sop-critic-dot { background: #ef4444; }
 .sop-critic-type { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text2); min-width: 84px; }
 .sop-critic-text { flex: 1; }
+
+/* SOP Runner — Phase B execution controls */
+.sop-step-status { font-size: 11px; font-weight: 700; }
+.sop-exec { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); }
+.sop-param-inputs { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+.sop-param-field { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--text2); }
+.sop-param-field input { padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg, #0a0a0a); color: var(--text); font-size: 12px; min-width: 140px; }
+.sop-exec-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sop-dry-btn { padding: 7px 14px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; background: transparent; color: var(--text); border: 1px solid var(--border); font-family: inherit; }
+.sop-dry-btn:hover:not(:disabled) { border-color: var(--accent3, #06b6d4); color: var(--accent3, #06b6d4); }
+.sop-apply-btn { padding: 7px 16px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; color: #fff; border: none; background: linear-gradient(135deg, #16a34a, #15803d); box-shadow: 0 2px 8px rgba(22,163,74,0.35); font-family: inherit; }
+.sop-apply-btn:hover:not(:disabled) { filter: brightness(1.08); }
+.sop-dry-btn:disabled, .sop-apply-btn:disabled { opacity: 0.5; cursor: default; }
+.sop-rollback-btn { padding: 6px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(239,68,68,0.1); color: #ef4444; border: 1px solid rgba(239,68,68,0.3); font-family: inherit; }
+.sop-exec-hint { font-size: 11px; color: #f59e0b; }
+.sop-exec-result { margin-top: 10px; padding: 8px 12px; border-radius: 8px; font-size: 12px; }
+.sop-exec-result.ok { background: rgba(22,163,74,0.08); border: 1px solid rgba(22,163,74,0.3); color: var(--text); }
+.sop-exec-result.fail { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.35); color: var(--text); }

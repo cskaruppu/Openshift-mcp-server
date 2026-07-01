@@ -30,10 +30,14 @@ export function SopRunner() {
   const [loading, setLoading] = useState(false);
   const [fileName, setFileName] = useState("");
   const fileRef = useRef(null);
+  const [params, setParams] = useState({});
+  const [execPhase, setExecPhase] = useState(null); // dry-running | applying | done | failed
+  const [execResults, setExecResults] = useState(null);
+  const [execMeta, setExecMeta] = useState(null); // { changeRequest, created, rolledBack, success }
 
   const compile = useCallback(async (formData, jsonBody) => {
     setLoading(true);
-    setPlan(null);
+    setPlan(null); setParams({}); setExecResults(null); setExecMeta(null); setExecPhase(null);
     try {
       const opts = formData
         ? { method: "POST", body: formData }
@@ -64,7 +68,44 @@ export function SopRunner() {
     compile(fd, null);
   }, [compile]);
 
+  const runExecute = useCallback(async (mode) => {
+    setExecPhase(mode === "apply" ? "applying" : "dry-running");
+    setExecResults(null);
+    try {
+      const res = await fetch(clusterUrl("/api/sop/execute", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan, params, mode }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || "Execution failed");
+      setExecResults(data.results || []);
+      setExecMeta(mode === "apply" ? { changeRequest: data.changeRequest, created: data.created, rolledBack: data.rolledBack, success: data.success } : null);
+      setExecPhase(mode === "apply" ? (data.success ? "done" : "failed") : "dry-done");
+      showToast(mode === "apply"
+        ? (data.success ? `Executed${data.changeRequest?.number ? " · " + data.changeRequest.number : ""}` : "Execution failed — rolled back")
+        : `Dry run: ${(data.results || []).filter(r => r.status === "validated" || r.status === "ok").length} ready`, mode === "apply" && !data.success ? "err" : "ok");
+    } catch (err) {
+      setExecPhase("failed");
+      showToast("SOP execute failed: " + err.message, "err");
+    }
+  }, [cluster, plan, params]);
+
+  const runRollback = useCallback(async () => {
+    if (!execMeta?.created?.length) return;
+    try {
+      const res = await fetch(clusterUrl("/api/sop/rollback", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ created: execMeta.created }),
+      });
+      const data = await res.json();
+      showToast(`Rolled back: ${(data.deleted || []).join(", ") || "nothing"}`, "ok");
+      setExecMeta((m) => ({ ...m, created: [], rolledBack: data.deleted || [] }));
+    } catch (err) { showToast("Rollback failed: " + err.message, "err"); }
+  }, [cluster, execMeta]);
+
   const destructiveCount = (plan?.steps || []).filter(s => s.destructive).length;
+  const unfilled = (plan?.missingParams || []).filter((k) => !params[k]);
+  const statusColor = (s) => ({ done: "#16a34a", validated: "#16a34a", ok: "#16a34a", auto: "#06b6d4", warn: "#f59e0b", manual: "#a78bfa", skipped: "#6b7280", error: "#ef4444" }[s] || "#6b7280");
 
   return (
     <div className="sop card">
@@ -135,6 +176,7 @@ export function SopRunner() {
                       <span className="sop-cat-chip">{CATEGORY_LABEL[s.category] || s.category}</span>
                       <span className="sop-risk-chip" style={{ background: riskColor(s.risk) + "22", color: riskColor(s.risk) }}>{s.risk}</span>
                       {s.destructive && <span className="sop-destructive">⚠ destructive</span>}
+                      {(() => { const r = (execResults || []).find(x => x.n === s.n); return r ? <span className="sop-step-status" style={{ marginLeft: "auto", color: statusColor(r.status) }}>{r.status}{r.detail ? " · " + r.detail : ""}</span> : null; })()}
                     </div>
                     {s.description && s.description !== s.title && <div className="sop-step-desc">{s.description}</div>}
                     {s.command && (
@@ -151,11 +193,49 @@ export function SopRunner() {
             <div className="sop-empty">No executable steps were detected in this document.</div>
           )}
 
+          {/* Phase B — parameters + execution controls */}
+          {plan.steps?.length > 0 && (
+            <div className="sop-exec">
+              {plan.missingParams?.length > 0 && (
+                <div className="sop-param-inputs">
+                  {plan.missingParams.map((k) => (
+                    <label key={k} className="sop-param-field">
+                      <span>{k}</span>
+                      <input value={params[k] || ""} onChange={(e) => setParams((p) => ({ ...p, [k]: e.target.value }))} placeholder={`<${k}>`} />
+                    </label>
+                  ))}
+                </div>
+              )}
+              <div className="sop-exec-actions">
+                <button className="sop-dry-btn" onClick={() => runExecute("dryrun")} disabled={execPhase === "dry-running" || execPhase === "applying"}>
+                  {execPhase === "dry-running" ? "Validating…" : "▷ Dry Run All"}
+                </button>
+                <button
+                  className="sop-apply-btn"
+                  disabled={execPhase === "applying" || execPhase === "dry-running" || unfilled.length > 0}
+                  onClick={() => { if (window.confirm(`Execute this SOP on cluster "${cluster}"?\n\nThis raises a ServiceNow Change Request and applies ${plan.steps.length - destructiveCount} step(s). Destructive steps are NOT auto-run. Anything created is auto-rolled-back on failure.`)) runExecute("apply"); }}
+                >
+                  {execPhase === "applying" ? "Executing…" : "▶ Approve & Execute"}
+                </button>
+                {unfilled.length > 0 && <span className="sop-exec-hint">Fill {unfilled.join(", ")} to enable execute</span>}
+                {execMeta?.created?.length > 0 && (
+                  <button className="sop-rollback-btn" onClick={runRollback}>↩ Rollback ({execMeta.created.length})</button>
+                )}
+              </div>
+
+              {execMeta && (
+                <div className={"sop-exec-result " + (execMeta.success ? "ok" : "fail")}>
+                  {execMeta.success ? "✓ Executed successfully" : "✗ Failed — auto-rolled back"}
+                  {execMeta.changeRequest?.number && <> · Change Request <strong>{execMeta.changeRequest.number}</strong></>}
+                  {execMeta.rolledBack?.length > 0 && <> · rolled back: {execMeta.rolledBack.join(", ")}</>}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="sop-footer">
-            <span>
-              {plan.steps?.length || 0} step(s) · {destructiveCount} destructive · preview only — nothing was executed.
-            </span>
-            <span className="sop-phaseb-note">Approve &amp; Execute (with rollback + ServiceNow Change Request) is Phase B.</span>
+            <span>{plan.steps?.length || 0} step(s) · {destructiveCount} destructive (never auto-run)</span>
+            <span className="sop-phaseb-note">Dry-run validates; Execute raises a ServiceNow Change Request, applies safe steps, and auto-rolls-back on failure.</span>
           </div>
         </div>
       )}

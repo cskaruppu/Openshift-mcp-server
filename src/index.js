@@ -81,7 +81,7 @@ import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
 import { callLLM } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport } from "./services/upgrade-report.js";
-import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, compileSOPPlan, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
+import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import {
   listActions,
   getAction,
@@ -6757,6 +6757,19 @@ spec:
         const plan = await compileSOPPlan(sopText, llmOpts);
         sendJson(res, 200, plan);
       } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // SOP Runner (Phase B) — execute a compiled plan (dry-run or apply)
+    if (req.method === "POST" && url.pathname === "/api/sop/execute") {
+      if (enforceRateLimit(req, res, { burst: 4, refillPerSec: 0.1 })) return;
+      await withClusterContext(url, async () => { await handleSOPExecuteAPI(req, res); });
+      return;
+    }
+    // SOP Runner — roll back resources created by a prior execution
+    if (req.method === "POST" && url.pathname === "/api/sop/rollback") {
+      if (enforceRateLimit(req, res, { burst: 4, refillPerSec: 0.1 })) return;
+      await withClusterContext(url, async () => { await handleSOPRollbackAPI(req, res); });
       return;
     }
 

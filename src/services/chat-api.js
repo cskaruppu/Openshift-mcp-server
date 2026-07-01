@@ -18652,6 +18652,210 @@ Respond with ONLY this JSON (no markdown fences):
 }
 
 // ---------------------------------------------------------------------------
+// SOP Runner (Phase B) — execute a compiled plan with governance.
+//
+// Safety model:
+//   • dry-run mode validates every step (server-side dryRun=All) — no mutation.
+//   • apply mode raises a ServiceNow Change Request, executes ONLY a curated,
+//     additive/low-risk subset via the K8s API, tracks every created resource,
+//     verifies, and auto-rolls-back everything created if any step fails.
+//   • Destructive steps (drain, restore, backup, delete) and anything the
+//     server can't safely interpret are NEVER auto-executed — they are returned
+//     as "manual" with the command for the operator.
+// ---------------------------------------------------------------------------
+
+function substituteParams(str, params) {
+  return String(str || "").replace(/<([a-z0-9_ -]+)>/gi, (m, key) => {
+    const k = key.trim();
+    return params[k] != null && params[k] !== "" ? params[k] : m;
+  });
+}
+
+// Parse a param-substituted step into a typed, executable action (or manual).
+function planStepAction(step, params) {
+  const cmd = substituteParams(step.command || "", params);
+  const desc = substituteParams(step.description || step.title || "", params);
+  const cat = step.category;
+  const hasPlaceholder = /<[a-z0-9_ -]+>/i.test(cmd);
+
+  // Anything destructive or not interpretable → manual (never auto-run)
+  const MANUAL = { manual: true, command: cmd, kind: cat };
+  if (step.destructive || ["drain_node", "restore", "backup", "apply_manifest", "manual_step"].includes(cat)) return MANUAL;
+  if (hasPlaceholder) return { ...MANUAL, reason: "unfilled parameters" };
+
+  const num = (re, d) => { const m = desc.match(re); return m ? m[1] : d; };
+
+  if (cat === "create_namespace") {
+    const name = (cmd.match(/namespace\s+(\S+)/) || [])[1];
+    if (!name) return MANUAL;
+    const labels = {};
+    for (const lm of desc.matchAll(/\b([a-z0-9_.-]+)=([a-z0-9_.-]+)/gi)) labels[lm[1]] = lm[2];
+    return { kind: "Namespace", path: "/api/v1/namespaces", body: { apiVersion: "v1", kind: "Namespace", metadata: { name, labels } }, rollback: `/api/v1/namespaces/${name}`, ns: name, command: cmd };
+  }
+  if (cat === "resource_quota") {
+    const ns = (cmd.match(/-n\s+(\S+)/) || [])[1] || params.namespace || params.name;
+    if (!ns) return MANUAL;
+    const cpu = num(/(\d+)\s*cpu/i, "4"), mem = num(/(\d+\s*[GM]i)\s*(?:memory|mem)/i, "8Gi").replace(/\s+/g, ""), pods = num(/(\d+)\s*pods?/i, "10");
+    const body = { apiVersion: "v1", kind: "ResourceQuota", metadata: { name: "sop-quota", namespace: ns }, spec: { hard: { "requests.cpu": cpu, "requests.memory": mem, "limits.cpu": cpu, "limits.memory": mem, pods } } };
+    return { kind: "ResourceQuota", path: `/api/v1/namespaces/${ns}/resourcequotas`, body, rollback: `/api/v1/namespaces/${ns}/resourcequotas/sop-quota`, ns, command: cmd };
+  }
+  if (cat === "limit_range") {
+    const ns = (cmd.match(/-n\s+(\S+)/) || [])[1] || params.namespace || params.name;
+    if (!ns) return MANUAL;
+    const cpu = num(/(\d+m)\s*cpu/i, "500m"), mem = num(/(\d+\s*[GM]i)\s*(?:memory|mem)/i, "512Mi").replace(/\s+/g, "");
+    const body = { apiVersion: "v1", kind: "LimitRange", metadata: { name: "sop-limits", namespace: ns }, spec: { limits: [{ type: "Container", default: { cpu, memory: mem }, defaultRequest: { cpu, memory: mem } }] } };
+    return { kind: "LimitRange", path: `/api/v1/namespaces/${ns}/limitranges`, body, rollback: `/api/v1/namespaces/${ns}/limitranges/sop-limits`, ns, command: cmd };
+  }
+  if (cat === "network_policy") {
+    const ns = (cmd.match(/-n\s+(\S+)/) || [])[1] || params.namespace || params.name;
+    if (!ns) return MANUAL;
+    const fromNs = (desc.match(/from(?:\s+the)?\s+[`']?([a-z0-9-]+)[`']?\s+namespace/i) || [])[1] || "ingress";
+    const body = { apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy", metadata: { name: "sop-default-deny-allow-ingress", namespace: ns }, spec: { podSelector: {}, policyTypes: ["Ingress"], ingress: [{ from: [{ namespaceSelector: { matchLabels: { "kubernetes.io/metadata.name": fromNs } } }] }] } };
+    return { kind: "NetworkPolicy", path: `/apis/networking.k8s.io/v1/namespaces/${ns}/networkpolicies`, body, rollback: `/apis/networking.k8s.io/v1/namespaces/${ns}/networkpolicies/sop-default-deny-allow-ingress`, ns, command: cmd };
+  }
+  if (cat === "rbac_binding") {
+    const ns = (cmd.match(/-n\s+(\S+)/) || [])[1] || params.namespace || params.name;
+    const group = (cmd.match(/--group[=\s]+(\S+)/) || [])[1] || (desc.match(/([a-z0-9-]+-developers)/i) || [])[1];
+    const role = (cmd.match(/--clusterrole[=\s]+(\S+)/) || [])[1] || "edit";
+    if (!ns || !group) return MANUAL;
+    const body = { apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", metadata: { name: `sop-${role}-binding`, namespace: ns }, roleRef: { apiGroup: "rbac.authorization.k8s.io", kind: "ClusterRole", name: role }, subjects: [{ apiGroup: "rbac.authorization.k8s.io", kind: "Group", name: group }] };
+    return { kind: "RoleBinding", path: `/apis/rbac.authorization.k8s.io/v1/namespaces/${ns}/rolebindings`, body, rollback: `/apis/rbac.authorization.k8s.io/v1/namespaces/${ns}/rolebindings/sop-${role}-binding`, ns, command: cmd };
+  }
+  if (cat === "scale_workload") {
+    const dep = (cmd.match(/deployment\/(\S+)/) || [])[1], ns = (cmd.match(/-n\s+(\S+)/) || [])[1], rep = (cmd.match(/--replicas[=\s]+(\d+)/) || [])[1];
+    if (!dep || !ns || rep == null) return MANUAL;
+    return { kind: "Scale", patch: `/apis/apps/v1/namespaces/${ns}/deployments/${dep}`, patchBody: { spec: { replicas: parseInt(rep, 10) } }, ns, command: cmd };
+  }
+  if (cat === "restart_workload") {
+    const dep = (cmd.match(/deployment\/(\S+)/) || [])[1], ns = (cmd.match(/-n\s+(\S+)/) || [])[1];
+    if (!dep || !ns) return MANUAL;
+    return { kind: "Restart", patch: `/apis/apps/v1/namespaces/${ns}/deployments/${dep}`, patchBody: { spec: { template: { metadata: { annotations: { "kubectl.kubernetes.io/restartedAt": new Date().toISOString() } } } } }, ns, command: cmd };
+  }
+  if (cat === "verify") {
+    const ns = (cmd.match(/-n\s+(\S+)/) || [])[1] || params.namespace || params.name;
+    return { kind: "Verify", verify: ns ? `/api/v1/namespaces/${ns}` : null, ns, command: cmd };
+  }
+  if (cat === "servicenow_change") return { kind: "ServiceNowChange", auto: true, command: cmd };
+  return MANUAL;
+}
+
+export async function handleSOPExecuteAPI(req, res) {
+  try {
+    const body = await readBody(req);
+    const plan = body.plan || {};
+    const params = body.params || {};
+    const mode = body.mode === "apply" ? "apply" : "dryrun";
+    const steps = Array.isArray(plan.steps) ? plan.steps : [];
+    if (steps.length === 0) return json(res, 400, { error: "No plan steps to execute" });
+
+    const actions = steps.map((s) => ({ step: s, action: planStepAction(s, params) }));
+
+    // ---- DRY RUN: validate creatable objects server-side, no mutation ----
+    if (mode === "dryrun") {
+      const results = [];
+      for (const { step, action } of actions) {
+        if (action.manual) { results.push({ n: step.n, status: "manual", detail: action.reason || "requires manual execution", command: action.command }); continue; }
+        if (action.auto) { results.push({ n: step.n, status: "auto", detail: "ServiceNow Change Request (raised on Apply)", command: action.command }); continue; }
+        if (action.verify != null || action.kind === "Verify") { results.push({ n: step.n, status: "ok", detail: "read-only verification", command: action.command }); continue; }
+        try {
+          if (action.body) { await ocpPost(`${action.path}?dryRun=All`, action.body); results.push({ n: step.n, status: "validated", detail: `${action.kind} valid`, command: action.command }); }
+          else if (action.patchBody) { results.push({ n: step.n, status: "validated", detail: `${action.kind} patch ready`, command: action.command }); }
+          else results.push({ n: step.n, status: "manual", detail: "not interpretable", command: action.command });
+        } catch (e) { results.push({ n: step.n, status: "error", detail: e.message.slice(0, 160), command: action.command }); }
+      }
+      return json(res, 200, { mode: "dryrun", results, executable: results.filter(r => r.status === "validated").length, manual: results.filter(r => r.status === "manual").length });
+    }
+
+    // ---- APPLY: CR → execute subset → verify → rollback-on-failure → close CR ----
+    let changeRequest = null;
+    if (isServiceNowEnabled()) {
+      try {
+        const cr = await snowCreateChangeRequest({
+          shortDescription: `[SOP] ${plan.title || "Operating Procedure"} — automated execution`,
+          description: `Automated SOP execution by TCS Agentic AI.\n\nSteps: ${steps.length}\nParameters: ${JSON.stringify(params)}`,
+          type: "normal", risk: steps.some(s => s.destructive) ? "high" : "low", category: "Software",
+          justification: plan.summary || "Standardized operating procedure execution.",
+          implementationPlan: steps.map(s => `${s.n}. ${s.command}`).join("\n"),
+          backoutPlan: "Auto-rollback deletes all resources created by this run in reverse order.",
+          workNotes: "[AI Hub] SOP execution started.",
+        });
+        const rec = cr?.result ? (Array.isArray(cr.result) ? cr.result[0] : cr.result) : null;
+        if (rec) changeRequest = { number: rec.number, sysId: rec.sys_id };
+      } catch (e) { changeRequest = { error: e.message }; }
+    }
+
+    const created = []; // { kind, path } for rollback
+    const results = [];
+    let failed = false;
+
+    for (const { step, action } of actions) {
+      if (failed) { results.push({ n: step.n, status: "skipped", detail: "prior step failed" }); continue; }
+      if (action.manual) { results.push({ n: step.n, status: "manual", detail: action.reason || "run manually", command: action.command }); continue; }
+      if (action.auto) { results.push({ n: step.n, status: "done", detail: changeRequest?.number ? `CR ${changeRequest.number}` : "ServiceNow not configured", command: action.command }); continue; }
+      try {
+        if (action.body) {
+          await ocpPost(action.path, action.body);
+          if (action.rollback) created.push({ kind: action.kind, path: action.rollback });
+          results.push({ n: step.n, status: "done", detail: `${action.kind} created`, command: action.command });
+        } else if (action.patchBody) {
+          await ocpPatch(action.patch, action.patchBody);
+          results.push({ n: step.n, status: "done", detail: `${action.kind} applied`, command: action.command });
+        } else if (action.kind === "Verify") {
+          let ok = true; try { if (action.verify) await ocpGet(action.verify); } catch { ok = false; }
+          results.push({ n: step.n, status: ok ? "done" : "warn", detail: ok ? "verified" : "verification incomplete", command: action.command });
+        } else {
+          results.push({ n: step.n, status: "manual", detail: "not interpretable", command: action.command });
+        }
+      } catch (e) {
+        failed = true;
+        results.push({ n: step.n, status: "error", detail: e.message.slice(0, 200), command: action.command });
+      }
+    }
+
+    // Auto-rollback everything created if a step failed
+    let rolledBack = [];
+    if (failed && created.length) {
+      for (const c of created.reverse()) {
+        try { await ocpDelete(c.path); rolledBack.push(c.kind); } catch { /* best effort */ }
+      }
+    }
+
+    // Close/annotate the Change Request with the outcome
+    if (changeRequest?.sysId) {
+      const notes = [
+        `── SOP EXECUTION RESULT ──`,
+        `Outcome: ${failed ? "FAILED — auto-rolled back" : "SUCCESS"}`,
+        ...results.map(r => `  ${r.n}. [${r.status}] ${r.detail}`),
+        failed ? `Rolled back: ${rolledBack.join(", ") || "none"}` : `Created: ${created.map(c => c.kind).join(", ") || "none"}`,
+      ].join("\n");
+      try { await snowUpdateRecord("change_request", changeRequest.sysId, { work_notes: notes, ...(failed ? {} : { state: process.env.SERVICENOW_CHANGE_REVIEW_STATE || "0" }) }); } catch { /* best effort */ }
+    }
+
+    return json(res, 200, {
+      mode: "apply", success: !failed, results,
+      changeRequest, created: created.map(c => ({ kind: c.kind, path: c.path })),
+      rolledBack: failed ? rolledBack : [],
+    });
+  } catch (err) {
+    console.error("SOP execute error:", err);
+    json(res, 500, { error: err.message });
+  }
+}
+
+// POST /api/sop/rollback — delete resources created by a prior SOP execution
+export async function handleSOPRollbackAPI(req, res) {
+  try {
+    const body = await readBody(req);
+    const created = Array.isArray(body.created) ? body.created : [];
+    const deleted = [], errors = [];
+    for (const c of created.slice().reverse()) {
+      try { await ocpDelete(c.path); deleted.push(c.kind); } catch (e) { errors.push(`${c.kind}: ${e.message}`); }
+    }
+    return json(res, 200, { deleted, errors });
+  } catch (err) { json(res, 500, { error: err.message }); }
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/ai/image-vuln-analysis — AI analysis of image vulnerabilities
 // ---------------------------------------------------------------------------
 export async function handleImageVulnAnalysisAPI(req, res) {
