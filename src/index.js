@@ -4885,10 +4885,38 @@ spec:
             incidentClosed = { success: false, reason: `Validation error: ${valErr.message}` };
           }
         }
-        // Capture after-metrics for comparison (bypass cache, wait for old pods to terminate)
+        // Capture after-metrics for comparison — but first WATCH the workload
+        // until its rolling update completes (new pod Running & Ready), so the
+        // Before/After reflects the healthy pod, never a mid-rollout snapshot.
         let afterMetrics = null;
+        let afterPodReady = false;
         if (!dryRun && beforeMetrics && validation) {
-          await new Promise(r => setTimeout(r, 5000));
+          try {
+            const _m = parseCommandTarget(command);
+            const _ns = _m.namespace || body.namespace || "";
+            const _name = _m.name || body.resourceName || "";
+            const _km = command.match(/\b(deployment|statefulset|daemonset|replicaset)\/([^\s]+)/i);
+            const _plural = (_km?.[1]?.toLowerCase() || "deployment") + "s";
+            if (_ns && _name) {
+              const _start = Date.now();
+              const _maxWait = 60_000;   // watch up to 60s for the pod to be Ready
+              // brief initial pause so the rollout actually begins
+              await new Promise(r => setTimeout(r, 2000));
+              while (Date.now() - _start < _maxWait) {
+                try {
+                  const _wl = await ocpFetch(`/apis/apps/v1/namespaces/${_ns}/${_plural}/${_name}`);
+                  const _des = _wl.spec?.replicas ?? 1;
+                  const _ready = _wl.status?.readyReplicas ?? 0;
+                  const _updated = _wl.status?.updatedReplicas ?? 0;
+                  const _unavail = _wl.status?.unavailableReplicas ?? 0;
+                  if (_ready >= _des && _updated >= _des && _unavail === 0) { afterPodReady = true; break; }
+                } catch {}
+                await new Promise(r => setTimeout(r, 3000));
+              }
+            } else {
+              await new Promise(r => setTimeout(r, 5000));
+            }
+          } catch { await new Promise(r => setTimeout(r, 5000)); }
           try {
             const meta = parseCommandTarget(command);
             const aNs = meta.namespace || body.namespace || "";
