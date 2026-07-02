@@ -5848,11 +5848,22 @@ spec:
           };
         };
 
+        // The tracked-namespace list is managed on the HUB (via POST
+        // /namespaces), so it is always hub-authoritative — never let a spoke's
+        // cached snapshot (which has its own, usually empty, list) mask the
+        // user's selection. We overlay the hub list onto every response.
+        const authoritativeNs = getWatchedNamespaces(clusterName);
+        const authoritativeCount = getTrackedWorkloadCount(clusterName);
         const result = await withClusterContext(url, handler);
         if (result === null) {
           const cached = getAgentCachedResponse(clusterName, "/api/dashboard/app-changes", { skipFreshnessCheck: true });
-          if (cached) return sendJson(res, 200, cached);
-          return sendJson(res, 200, { watchedNamespaces: getWatchedNamespaces(clusterName), trackedWorkloads: 0, newChanges: 0, totalChanges: 0, critical: 0, warning: 0, info: 0, recentChanges: [], discoveredNamespaces: null, changeHistory: [] });
+          if (cached) return sendJson(res, 200, { ...cached, watchedNamespaces: authoritativeNs, trackedWorkloads: authoritativeCount });
+          return sendJson(res, 200, { watchedNamespaces: authoritativeNs, trackedWorkloads: authoritativeCount, newChanges: 0, totalChanges: 0, critical: 0, warning: 0, info: 0, recentChanges: [], discoveredNamespaces: null, changeHistory: [] });
+        }
+        // Even on the happy path, guarantee the tracked list reflects the hub.
+        if (result && typeof result === "object" && (!result.watchedNamespaces || result.watchedNamespaces.length === 0) && authoritativeNs.length > 0) {
+          result.watchedNamespaces = authoritativeNs;
+          result.trackedWorkloads = authoritativeCount;
         }
         sendJson(res, 200, result);
       } catch (err) {
