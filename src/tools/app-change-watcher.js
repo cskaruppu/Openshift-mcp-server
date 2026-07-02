@@ -188,19 +188,42 @@ async function loadWatcherState() {
 let _persistInitDone = false;
 async function ensurePersistedLoad() {
   if (_persistInitDone) return;
-  _persistInitDone = true;
+  // Load the persisted tracked list. loadFromConfigMap returns null on a read
+  // ERROR (vs [] for a genuinely empty list). Only mark init "done" when we get
+  // a definitive answer — otherwise a transient startup failure (API client not
+  // ready yet) would permanently skip the load and the tracked list would be
+  // empty in memory even though it's persisted.
   const cmList = await loadFromConfigMap();
-  if (cmList && cmList.length > 0) {
+  let definitive = false;
+  if (cmList !== null) {
+    definitive = true;
     for (const ns of cmList) _watchedNamespaces.add(ns);
-    console.log("[app-watcher] Loaded", cmList.length, "namespaces from ConfigMap");
+    if (cmList.length) console.log("[app-watcher] Loaded", cmList.length, "namespaces from ConfigMap");
   } else {
     const dbList = await loadFromDb();
-    if (dbList && dbList.length > 0) {
+    if (dbList !== null) {
+      definitive = true;
       for (const ns of dbList) _watchedNamespaces.add(ns);
-      console.log("[app-watcher] Loaded", dbList.length, "namespaces from database");
+      if (dbList.length) console.log("[app-watcher] Loaded", dbList.length, "namespaces from database");
     }
   }
   await loadWatcherState();
+  if (definitive) _persistInitDone = true; // retry next call if load failed
+}
+
+/** Self-healing hydrate: reload the persisted tracked list into memory. Safe to
+ *  call any time — used by the dashboard API to recover if the startup load ran
+ *  before the API client was ready. Returns the current watched list. */
+export async function rehydrateTrackedNamespaces(cluster = "local") {
+  try {
+    const cmList = await loadFromConfigMap();
+    const list = cmList !== null ? cmList : ((await loadFromDb()) || []);
+    const s = _cs(cluster);
+    // Reconcile to the persisted set exactly (add missing, keep existing).
+    for (const ns of list) s.watchedNamespaces.add(ns);
+    if (list.length) _persistInitDone = true;
+  } catch { /* best effort */ }
+  return getWatchedNamespaces(cluster);
 }
 
 const _envNamespaces = (process.env.WATCHED_APP_NAMESPACES || "").split(",").map(s => s.trim()).filter(Boolean);

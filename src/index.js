@@ -54,7 +54,7 @@ import { registerUpgradeAdvisorTools } from "./tools/upgrade-advisor.js";
 import { registerBenchmarkTools } from "./tools/benchmarks.js";
 import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
-import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, agreeChange, dismissChange, getWorkloadsByNamespace, getTrackedWorkloadCount, initTrackedNamespaces, getChangeHistory, getLastScanTime, getLastChangeTime, getHealthStreak, analyzeChangeImpact, bulkAction, getWorkloadTimeline, scanConfigChanges, scoreNamespaceRecommendations, generateRiskExplanation, detectChangeCorrelations } from "./tools/app-change-watcher.js";
+import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, agreeChange, dismissChange, getWorkloadsByNamespace, getTrackedWorkloadCount, rehydrateTrackedNamespaces, initTrackedNamespaces, getChangeHistory, getLastScanTime, getLastChangeTime, getHealthStreak, analyzeChangeImpact, bulkAction, getWorkloadTimeline, scanConfigChanges, scoreNamespaceRecommendations, generateRiskExplanation, detectChangeCorrelations } from "./tools/app-change-watcher.js";
 import { registerImageVulnScannerTools, runImageScan, getScanResults, getScanHistory, getComplianceCache, getImageAgeCache } from "./tools/image-vulnerability-scanner.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, handleUserManagement, getAuthMode, loadUserRoles, getUserRole, setUserRole, getAllUserRoles, checkPermission, getRoles, getUserNamespaces, canAccessNamespace, filterByNamespace, createUser, listUsers, changePassword } from "./services/auth.js";
 import { runRCA, runNamespaceRCA, getActiveInvestigations, getRCAHistory } from "./tools/rca-engine.js";
@@ -5852,7 +5852,12 @@ spec:
         // /namespaces), so it is always hub-authoritative — never let a spoke's
         // cached snapshot (which has its own, usually empty, list) mask the
         // user's selection. We overlay the hub list onto every response.
-        const authoritativeNs = getWatchedNamespaces(clusterName);
+        let authoritativeNs = getWatchedNamespaces(clusterName);
+        // Self-heal: if memory is empty but a list was persisted (startup load
+        // may have run before the API client was ready), reload it now.
+        if ((!authoritativeNs || authoritativeNs.length === 0) && (clusterName === "local")) {
+          try { authoritativeNs = await rehydrateTrackedNamespaces("local"); } catch {}
+        }
         const authoritativeCount = getTrackedWorkloadCount(clusterName);
         const result = await withClusterContext(url, handler);
         if (result === null) {
