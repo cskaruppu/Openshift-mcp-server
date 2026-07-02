@@ -576,19 +576,26 @@ function NamespaceManager({ cluster, watched, onClose, onUpdate }) {
 
   const transfer = async (namespaces, action) => {
     try {
-      await fetch(clusterUrl("/api/dashboard/app-changes/namespaces", cluster), {
+      const res = await fetch(clusterUrl("/api/dashboard/app-changes/namespaces", cluster), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, namespaces }),
       });
+      const data = await res.json().catch(() => ({}));
       showToast(`${namespaces.length} namespace(s) ${action === "add" ? "tracked" : "removed"}`, "ok");
       setSelectedAvail(new Set());
       setSelectedTracked(new Set());
-      const newTracked = action === "add"
-        ? [...new Set([...trackedNs, ...namespaces])]
-        : trackedNs.filter(ns => !namespaces.includes(ns));
-      setTrackedNs(newTracked);
-      onUpdate(newTracked);
+      // Use the SERVER's authoritative list from the mutation response — never
+      // guess. This guarantees the panel and the main view reflect the exact
+      // tracked set the server now holds (so a removed namespace disappears
+      // everywhere immediately).
+      const serverTracked = Array.isArray(data.watchedNamespaces)
+        ? data.watchedNamespaces
+        : (action === "add"
+            ? [...new Set([...trackedNs, ...namespaces])]
+            : trackedNs.filter(ns => !namespaces.includes(ns)));
+      setTrackedNs(serverTracked);
+      onUpdate(serverTracked);
       loadData();
     } catch (err) {
       showToast("Transfer failed: " + err.message, "err");
