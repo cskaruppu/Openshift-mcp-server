@@ -29,10 +29,11 @@ function relTime(iso) {
 
 export function AppChangesWidget() {
   const cluster = useActiveCluster();
-  const { data, isLoading, isError, error, refetch } = useClusterQuery(
+  const { data, isLoading, isError, error, refetch, dataUpdatedAt } = useClusterQuery(
     "/api/dashboard/app-changes",
     { refetchInterval: 5_000, staleTime: 3_000 }
   );
+  const optimisticAtRef = useRef(0);
   const [nsPanelOpen, setNsPanelOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [expandedChange, setExpandedChange] = useState(null);
@@ -53,17 +54,23 @@ export function AppChangesWidget() {
   const history = data?.changeHistory || [];
   const gitops = data?.gitopsDrift || {};
 
+  // The optimistic namespace list is only a brief bridge between the user's
+  // action and the next server response. Once ANY fresh fetch completes after
+  // the action, the SERVER becomes the source of truth — in both directions.
+  // (The old logic only cleared it when the server matched, so a removed
+  // namespace could linger in the header/summary from a stale optimistic add.)
   useEffect(() => {
     if (optimisticNs === null) return;
-    const serverSet = new Set(watched);
-    const optSet = new Set(optimisticNs);
-    if (serverSet.size === optSet.size && [...optSet].every(ns => serverSet.has(ns))) {
+    if (dataUpdatedAt && dataUpdatedAt > optimisticAtRef.current) {
       setOptimisticNs(null);
     }
-  }, [watched, optimisticNs]);
+  }, [dataUpdatedAt, optimisticNs]);
 
   const handleNsUpdate = useCallback((trackedList) => {
-    if (Array.isArray(trackedList)) setOptimisticNs(trackedList);
+    if (Array.isArray(trackedList)) {
+      setOptimisticNs(trackedList);
+      optimisticAtRef.current = Date.now();
+    }
     refetch();
   }, [refetch]);
 
