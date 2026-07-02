@@ -275,8 +275,13 @@ export function AppChangesWidget() {
         />
       )}
 
+      {/* Loading — avoid flashing the empty state before data arrives */}
+      {isLoading && !nsPanelOpen && effectiveWatched.length === 0 && (
+        <div className="acw-empty-state"><div className="acw-empty-title">Loading…</div></div>
+      )}
+
       {/* Empty State — no namespaces tracked */}
-      {!hasNamespaces && !nsPanelOpen && (
+      {!isLoading && !hasNamespaces && !nsPanelOpen && (
         <div className="acw-empty-state">
           <div className="acw-empty-icon">{"\u{1F4E1}"}</div>
           <div className="acw-empty-title">No Namespaces Tracked</div>

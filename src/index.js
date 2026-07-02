@@ -5727,7 +5727,11 @@ spec:
           let discoveredNamespaces = null;
           try { discoveredNamespaces = await discoverAppNamespaces(); } catch {}
 
-          const log = getChangeLog(clusterName);
+          // Scope every change record to the currently-tracked namespaces, so
+          // the widget only ever shows changes for namespaces the user tracks
+          // (and a removed namespace's changes disappear immediately).
+          const watchedSet = new Set(namespaces);
+          const log = getChangeLog(clusterName).filter(e => watchedSet.has(e.namespace));
           const filtered = ns ? log.filter(e => e.namespace === ns) : log;
           const totalChanges = filtered.length;
           const critical = filtered.filter(e => e.severity === "critical").length;
@@ -5770,7 +5774,7 @@ spec:
             }
           } catch {}
 
-          const history = getChangeHistory(clusterName);
+          const history = getChangeHistory(clusterName).filter(e => watchedSet.has(e.namespace));
 
           let nsRecommendations = null;
           if (discoveredNamespaces) {
