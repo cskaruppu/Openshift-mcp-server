@@ -596,7 +596,10 @@ function NamespaceManager({ cluster, watched, onClose, onUpdate }) {
             : trackedNs.filter(ns => !namespaces.includes(ns)));
       setTrackedNs(serverTracked);
       onUpdate(serverTracked);
-      loadData();
+      // NOTE: no immediate loadData() here — the POST response is already the
+      // authoritative list, and an immediate re-GET can return a stale/cached
+      // snapshot that overwrites (flickers) the list we just set. The 30s
+      // interval + the parent's refetch reconcile change data separately.
     } catch (err) {
       showToast("Transfer failed: " + err.message, "err");
     }
