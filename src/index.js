@@ -54,7 +54,7 @@ import { registerUpgradeAdvisorTools } from "./tools/upgrade-advisor.js";
 import { registerBenchmarkTools } from "./tools/benchmarks.js";
 import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
-import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, agreeChange, dismissChange, getWorkloadsByNamespace, initTrackedNamespaces, getChangeHistory, getLastScanTime, getLastChangeTime, getHealthStreak, analyzeChangeImpact, bulkAction, getWorkloadTimeline, scanConfigChanges, scoreNamespaceRecommendations, generateRiskExplanation, detectChangeCorrelations } from "./tools/app-change-watcher.js";
+import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, agreeChange, dismissChange, getWorkloadsByNamespace, getTrackedWorkloadCount, initTrackedNamespaces, getChangeHistory, getLastScanTime, getLastChangeTime, getHealthStreak, analyzeChangeImpact, bulkAction, getWorkloadTimeline, scanConfigChanges, scoreNamespaceRecommendations, generateRiskExplanation, detectChangeCorrelations } from "./tools/app-change-watcher.js";
 import { registerImageVulnScannerTools, runImageScan, getScanResults, getScanHistory, getComplianceCache, getImageAgeCache } from "./tools/image-vulnerability-scanner.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, handleUserManagement, getAuthMode, loadUserRoles, getUserRole, setUserRole, getAllUserRoles, checkPermission, getRoles, getUserNamespaces, canAccessNamespace, filterByNamespace, createUser, listUsers, changePassword } from "./services/auth.js";
 import { runRCA, runNamespaceRCA, getActiveInvestigations, getRCAHistory } from "./tools/rca-engine.js";
@@ -5733,7 +5733,7 @@ spec:
           const critical = filtered.filter(e => e.severity === "critical").length;
           const warning = filtered.filter(e => e.severity === "warning").length;
           const info = filtered.filter(e => e.severity === "info").length;
-          const baselines = Object.keys(getBaselines(clusterName)).length;
+          const baselines = getTrackedWorkloadCount(clusterName);
 
           const timelineStats = getTimelineStats(clusterName);
 
@@ -5891,7 +5891,7 @@ spec:
           );
           sendJson(res, 200, {
             watchedNamespaces: getWatchedNamespaces(_acCluster),
-            trackedWorkloads: Object.keys(getBaselines(_acCluster)).length,
+            trackedWorkloads: getTrackedWorkloadCount(_acCluster),
             baselineStatus: "initializing",
           });
         } else if (action === "remove" && nsList.length > 0) {
@@ -5899,12 +5899,12 @@ spec:
           console.log(`[app-changes] Removed namespaces for cluster "${_acCluster}":`, nsList);
           sendJson(res, 200, {
             watchedNamespaces: getWatchedNamespaces(_acCluster),
-            trackedWorkloads: Object.keys(getBaselines(_acCluster)).length,
+            trackedWorkloads: getTrackedWorkloadCount(_acCluster),
           });
         } else {
           sendJson(res, 200, {
             watchedNamespaces: getWatchedNamespaces(_acCluster),
-            trackedWorkloads: Object.keys(getBaselines(_acCluster)).length,
+            trackedWorkloads: getTrackedWorkloadCount(_acCluster),
           });
         }
       } catch (err) {

@@ -87,6 +87,14 @@ function loadFromFile() {
   return Array.isArray(all.local) ? all.local : [];
 }
 
+// True once the user has explicitly saved a local namespace list (even an empty
+// one). Used so env defaults (WATCHED_APP_NAMESPACES) seed only the FIRST run
+// and never re-add namespaces the user has since removed.
+function hasPersistedLocal() {
+  try { return Object.prototype.hasOwnProperty.call(loadAllFromFile(), "local"); }
+  catch { return false; }
+}
+
 function saveToFile(nsList, cluster = "local") {
   try {
     mkdirSync(PERSIST_DIR, { recursive: true });
@@ -209,7 +217,9 @@ function _cs(cluster = "local") {
   if (!_clusterStates.has(cluster)) {
     let initial;
     if (cluster === "local") {
-      initial = [..._envNamespaces, ..._fileNamespaces];
+      // If the user has customized the tracked list, honor it exactly (so a
+      // removed namespace stays removed). Only merge env defaults on first run.
+      initial = hasPersistedLocal() ? [..._fileNamespaces] : [..._envNamespaces, ..._fileNamespaces];
     } else {
       const persisted = _allFileNamespaces[cluster];
       initial = Array.isArray(persisted) ? [...persisted] : [];
@@ -688,8 +698,15 @@ export async function removeNamespaces(nsList, cluster) {
     for (const [key] of s.baselines) {
       if (key.startsWith(ns + "/")) s.baselines.delete(key);
     }
+    // Drop any change-log / timeline entries for the untracked namespace so the
+    // summary and history don't keep surfacing it.
+    s.changeLog = (s.changeLog || []).filter(e => e.namespace !== ns);
+    s.changeHistory = (s.changeHistory || []).filter(e => e.namespace !== ns);
   }
   await persistNamespaces(cluster || "local");
+  // Persist the pruned baselines too, so removed namespaces don't reappear
+  // from the baseline store after a reload/restart.
+  persistWatcherState().catch(() => {});
 }
 export async function initNamespaceBaselines(nsList, cluster) {
   const s = _cs(cluster);
@@ -915,10 +932,18 @@ export function getWorkloadsByNamespace(cluster) {
   const s = _cs(cluster);
   const byNs = {};
   for (const [key, spec] of s.baselines) {
+    // Skip config-hash companion entries ("ns/kind/name:hash") — they are not
+    // workloads and would otherwise inflate/duplicate the list.
+    if (key.endsWith(":hash")) continue;
     const parts = key.split("/");
     const ns = parts[0];
     const kind = parts[1];
     const name = parts[2];
+    // Only surface workloads for namespaces that are still tracked. Baselines
+    // for an un-tracked namespace can linger (e.g. reloaded from persistence);
+    // they must not show up in the summary.
+    if (!s.watchedNamespaces.has(ns)) continue;
+    if (!spec || !Array.isArray(spec.containers)) continue;
     if (!byNs[ns]) byNs[ns] = [];
     byNs[ns].push({
       kind,
@@ -929,6 +954,19 @@ export function getWorkloadsByNamespace(cluster) {
     });
   }
   return byNs;
+}
+
+/** Count tracked workloads, scoped to currently-watched namespaces (excludes
+ *  hash-companion keys and orphaned baselines). */
+export function getTrackedWorkloadCount(cluster) {
+  const s = _cs(cluster);
+  let n = 0;
+  for (const [key] of s.baselines) {
+    if (key.endsWith(":hash")) continue;
+    if (!s.watchedNamespaces.has(key.split("/")[0])) continue;
+    n++;
+  }
+  return n;
 }
 
 function workloadKey(ns, kind, name) { return `${ns}/${kind}/${name}`; }
