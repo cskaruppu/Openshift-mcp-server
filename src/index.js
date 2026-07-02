@@ -717,6 +717,23 @@ async function withClusterContext(url, handler) {
   return handler();
 }
 
+// ── Async fix-verification jobs ──────────────────────────────────────────
+// Production pattern: /api/alerts/execute-fix applies the fix and returns
+// immediately (202) with a verifyJobId; the pod-watch → incident close →
+// after-metrics run in the BACKGROUND and are stored here; the UI polls
+// /api/alerts/fix-status?jobId=… for progress. Keeps long remediations off
+// the request path so a slow rollout never trips a route/proxy timeout.
+const _verifyJobs = new Map();
+const VERIFY_JOB_TTL_MS = 15 * 60 * 1000;
+function setVerifyJob(id, patch) {
+  const prev = _verifyJobs.get(id) || {};
+  _verifyJobs.set(id, { ...prev, ...patch, updatedAt: Date.now() });
+  if (_verifyJobs.size > 300) {
+    const now = Date.now();
+    for (const [k, v] of _verifyJobs) if (now - (v.updatedAt || 0) > VERIFY_JOB_TTL_MS) _verifyJobs.delete(k);
+  }
+}
+
 /**
  * Try to invoke a tool on a remote agent via the SSE bridge.
  * Maps API endpoint paths to agent tool names.
@@ -4594,6 +4611,8 @@ spec:
       let preflight = null;
       let command = "";
       let dryRun = false;
+      let earlyResponded = false;   // true once we send the async 202 response
+      let verifyJobId = null;
       try {
         const body = await readJsonBody(req);
         command = body.command || "";
@@ -4767,6 +4786,28 @@ spec:
             timeToResolveMs: Date.now() - auditStart,
           }).catch(() => {});
         }
+        // Production-grade async: for a real (non-dry-run) fix tied to an
+        // incident, respond IMMEDIATELY (202) and run the pod-watch → verify →
+        // auto-close → after-metrics in the background. The UI polls
+        // /api/alerts/fix-status. This keeps the (possibly 60–90s) rollout off
+        // the HTTP request path so it never trips a route/proxy timeout.
+        if (!dryRun && result.success !== false && body.incidentSysId) {
+          verifyJobId = "vfy-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+          setVerifyJob(verifyJobId, {
+            status: "verifying", phase: "watching_pod",
+            beforeMetrics, output: result.stdout || result.output || "",
+            classification: preflight?.classification || null,
+            incidentNumber: body.incidentNumber || null,
+            appliedAt: new Date().toISOString(),
+          });
+          sendJson(res, 202, {
+            success: true, applied: true, verifying: true, verifyJobId,
+            beforeMetrics, output: result.stdout || result.output || "",
+            classification: preflight?.classification || null,
+          });
+          earlyResponded = true;
+        }
+
         // Post-fix validation & auto-close ServiceNow incident
         let validation = null;
         let incidentClosed = null;
@@ -5047,6 +5088,16 @@ spec:
           resolvedAt: incidentClosed?.success ? new Date().toISOString() : null,
           totalDurationMs: Date.now() - auditStart,
         };
+        // Async path: response already sent — store the final result for polling.
+        if (earlyResponded) {
+          setVerifyJob(verifyJobId, {
+            status: incidentClosed?.success ? "resolved" : (validation && validation.passed === false ? "failed" : "applied"),
+            phase: "done",
+            validation, incidentClosed, afterMetrics, resolutionTimeline,
+            classification: preflight?.classification,
+          });
+          return;
+        }
         return sendJson(res, 200, { ...result, classification: preflight?.classification, validation, incidentClosed, beforeMetrics, afterMetrics, resolutionTimeline });
       } catch (e) {
         if (featureFlags.pillar7AuditLog()) logAuditEvent({
@@ -5058,8 +5109,22 @@ spec:
           stderrPreview: e.message,
           durationMs: Date.now() - auditStart,
         }).catch(() => {});
+        // Async path: response already sent — record the failure for polling.
+        if (earlyResponded) {
+          setVerifyJob(verifyJobId, { status: "failed", phase: "error", error: e.message });
+          return;
+        }
         return sendJson(res, 500, { success: false, stderr: e.message });
       }
+    }
+
+    // GET /api/alerts/fix-status?jobId=… — poll async fix-verification result
+    if (req.method === "GET" && url.pathname === "/api/alerts/fix-status") {
+      const jobId = url.searchParams.get("jobId");
+      const job = jobId ? _verifyJobs.get(jobId) : null;
+      if (!job) { sendJson(res, 404, { error: "job not found", status: "unknown" }); return; }
+      sendJson(res, 200, job);
+      return;
     }
 
     // POST /api/demo/setup-incident — deploy a deliberately broken pod for demo

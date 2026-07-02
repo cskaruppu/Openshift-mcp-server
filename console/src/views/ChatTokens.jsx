@@ -1992,6 +1992,47 @@ function FixProposal({ diag, cluster }) {
       });
       const d = await res.json();
       if (d.blocked) { updateFixState(key, { phase: "blocked", text: d.reason || "Blocked by policy" }); return; }
+
+      // Production-grade async path: the fix was applied and the server is now
+      // watching the pod → verifying → closing the incident in the background.
+      // Poll for the result so a slow rollout never blocks/timeouts the request.
+      if (d.verifying && d.verifyJobId) {
+        updateFixState(key, {
+          running: false, phase: "verifying",
+          text: (d.output || "") + "\n\n⏳ Watching pod & verifying rollout…",
+          beforeMetrics: d.beforeMetrics || null, appliedAt: new Date().toISOString(),
+        });
+        const jobId = d.verifyJobId;
+        const pollStart = Date.now();
+        while (Date.now() - pollStart < 180000) { // poll up to 3 min
+          await new Promise(r => setTimeout(r, 3000));
+          try {
+            const sres = await fetch(clusterUrl(`/api/alerts/fix-status?jobId=${encodeURIComponent(jobId)}`, cluster));
+            const sd = await sres.json();
+            if (["resolved", "applied", "failed"].includes(sd.status)) {
+              const incClosed = sd.incidentClosed?.success || false;
+              updateFixState(key, {
+                running: false,
+                phase: sd.status === "resolved" ? "resolved" : (sd.status === "failed" ? "failed" : "applied"),
+                text: sd.output || d.output || "Applied.",
+                validation: sd.validation || null,
+                beforeMetrics: sd.beforeMetrics || d.beforeMetrics || null,
+                afterMetrics: sd.afterMetrics || null,
+                resolutionTimeline: sd.resolutionTimeline || null,
+                incClosed,
+                incError: incClosed ? null : (sd.incidentClosed?.detailsSaved ? "Details synced to ServiceNow — close pending" : (sd.incidentClosed?.closeError || sd.error || null)),
+                incDetailsSaved: sd.incidentClosed?.detailsSaved || incClosed,
+                durationMs: Date.now() - startTime,
+                appliedAt: sd.appliedAt || new Date().toISOString(),
+              });
+              return;
+            }
+          } catch { /* transient — keep polling */ }
+        }
+        updateFixState(key, { running: false, phase: "applied", text: "Fix applied. Verification is taking longer than expected — check the incident in ServiceNow." });
+        return;
+      }
+
       const out = d.output || d.stdout || d.result || (d.success ? "Done." : d.error || "No output");
       const durationMs = Date.now() - startTime;
       const appliedAt = new Date().toISOString();
@@ -2044,8 +2085,8 @@ function FixProposal({ diag, cluster }) {
   const hasIncident = diag.incidentSysId && diag.incidentNumber;
   const logData = diag.logAnalysis;
 
-  const phaseIcon = { "dry-run": "⏳", applying: "⏳", "closing-inc": "⏳", "dry-done": "✅", applied: "✅", resolved: "✅", failed: "❌", blocked: "⛔" };
-  const phaseLabel = { "dry-run": "Running dry run...", applying: "Applying...", "closing-inc": "Closing incident...", "dry-done": "Dry run complete", applied: "Fix applied", resolved: "Fix applied & incident closed", failed: "Failed", blocked: "Blocked" };
+  const phaseIcon = { "dry-run": "⏳", applying: "⏳", verifying: "⏳", "closing-inc": "⏳", "dry-done": "✅", applied: "✅", resolved: "✅", failed: "❌", blocked: "⛔" };
+  const phaseLabel = { "dry-run": "Running dry run...", applying: "Applying...", verifying: "Watching pod & verifying...", "closing-inc": "Closing incident...", "dry-done": "Dry run complete", applied: "Fix applied", resolved: "Fix applied & incident closed", failed: "Failed", blocked: "Blocked" };
 
   return (
     <div style={{ border: `1px solid ${sevColor}33`, borderRadius: 10, overflow: "hidden", marginTop: 8 }}>
@@ -2153,7 +2194,8 @@ function FixProposal({ diag, cluster }) {
                     const isApplied = st?.phase === "applied" || st?.phase === "resolved";
                     const isFailed = st?.phase === "failed" || st?.phase === "blocked";
                     const isRunning = st?.running;
-                    const isDisabled = isRunning || isApplied;
+                    const isVerifying = st?.phase === "verifying";
+                    const isDisabled = isRunning || isApplied || isVerifying;
                     return (
                       <>
                         <div style={{ display: "flex", gap: 0, borderTop: "1px solid var(--border)" }}>
@@ -2161,7 +2203,7 @@ function FixProposal({ diag, cluster }) {
                             {st?.phase === "dry-run" ? "⏳ Running..." : isApplied ? "▷ Dry Run" : "▷ Dry Run"}
                           </button>
                           <button onClick={() => runFix(fix, false)} disabled={isDisabled} style={{ flex: 1, padding: "8px 0", background: isApplied ? "#16a34a12" : hasIncident ? "rgba(34,197,94,0.06)" : "rgba(59,130,246,0.06)", border: "none", cursor: isDisabled ? "default" : "pointer", color: isApplied ? "#16a34a" : hasIncident ? "#16a34a" : "#3b82f6", fontWeight: 700, fontSize: "0.82em", opacity: isDisabled ? 0.6 : 1 }}>
-                            {isRunning ? "⏳ Applying..." : isApplied ? (st.incClosed ? "✓ Applied & INC Closed" : "✓ Fix Applied") : hasIncident ? "▶ Apply & Close INC" : "▶ Apply Fix"}
+                            {isRunning ? "⏳ Applying..." : isVerifying ? "⏳ Verifying pod…" : isApplied ? (st.incClosed ? "✓ Applied & INC Closed" : "✓ Fix Applied") : hasIncident ? "▶ Apply & Close INC" : "▶ Apply Fix"}
                           </button>
                         </div>
                         {st && !st.running && (
