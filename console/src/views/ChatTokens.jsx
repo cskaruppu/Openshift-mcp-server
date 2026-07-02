@@ -2178,10 +2178,25 @@ function FixProposal({ diag, cluster }) {
                             {st.validation && !st.phase?.startsWith("dry") && (
                               <RecoveryTimeline validation={st.validation} incClosed={st.incClosed} incidentNumber={diag.incidentNumber} durationMs={st.durationMs} resolutionTimeline={st.resolutionTimeline} />
                             )}
-                            {/* Before/After metrics comparison */}
-                            {st.beforeMetrics && st.afterMetrics && !st.phase?.startsWith("dry") && (
-                              <BeforeAfterMetrics before={st.beforeMetrics} after={st.afterMetrics} />
-                            )}
+                            {/* Before/After metrics comparison — only when the
+                                new pod is actually Running/Ready. Showing it
+                                while the rollout is unhealthy (e.g. "0/1
+                                running") would present misleading numbers. */}
+                            {st.beforeMetrics && st.afterMetrics && !st.phase?.startsWith("dry") && (() => {
+                              const a = st.afterMetrics;
+                              const zeroReady = a?.podCount ? /^0\s*\//.test(String(a.podCount)) : false;
+                              const podHealthy = a?.ready !== false
+                                && st.validation?.allPodsHealthy !== false
+                                && !zeroReady
+                                && a?.status !== "Rolling out" && a?.status !== "Pending";
+                              return podHealthy
+                                ? <BeforeAfterMetrics before={st.beforeMetrics} after={st.afterMetrics} />
+                                : (
+                                  <div style={{ margin: "8px 0", padding: "10px 12px", borderRadius: 8, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)", fontSize: "0.82em", color: "var(--fg)" }}>
+                                    <strong style={{ color: "#f59e0b" }}>⏳ Post-fix verification pending</strong> — the new pod is not yet Running{a?.podCount ? ` (${a.podCount} ready)` : ""}. Before/After metrics are withheld until the rollout is healthy to avoid misleading results. Re-run the fix verification or click <em>Scan</em> once the pod is Ready.
+                                  </div>
+                                );
+                            })()}
                             {st.text && <pre style={{ margin: 0, fontSize: "0.78em", whiteSpace: "pre-wrap", color: "var(--fg)", maxHeight: 200, overflow: "auto" }}>{st.text}</pre>}
                           </div>
                         )}
