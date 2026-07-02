@@ -4806,7 +4806,12 @@ spec:
               }
               let podHealth = [];
               const desiredReplicas = lastCheck?.desired || 1;
-              try {
+              // Poll the actual pods until they are Running & Ready (not just a
+              // single snapshot). This makes allPodsHealthy — and therefore the
+              // incident close — a confirmed "pod is up" signal, not a race.
+              const _phStart = Date.now();
+              const _phMaxWait = 45_000;
+              const capturePods = async () => {
                 const wlSpec = await ocpFetch(`/apis/apps/v1/namespaces/${ns}/${plural}/${resourceName}`).catch(() => null);
                 const matchLabels = wlSpec?.spec?.selector?.matchLabels || {};
                 const selectorStr = Object.entries(matchLabels).map(([k, v]) => `${k}=${v}`).join(",");
@@ -4816,14 +4821,22 @@ spec:
                   .filter(p => !p.metadata?.deletionTimestamp)
                   .sort((a, b) => new Date(b.metadata?.creationTimestamp || 0) - new Date(a.metadata?.creationTimestamp || 0))
                   .slice(0, desiredReplicas);
-                podHealth = activePods.map(p => ({
+                return activePods.map(p => ({
                   name: p.metadata.name,
                   phase: p.status?.phase,
-                  ready: (p.status?.containerStatuses || []).every(c => c.ready),
+                  ready: (p.status?.containerStatuses || []).length > 0 && (p.status?.containerStatuses || []).every(c => c.ready),
                   restarts: Math.max(0, ...(p.status?.containerStatuses || []).map(c => c.restartCount || 0)),
                 }));
-              } catch {}
-              const allPodsHealthy = podHealth.length === 0 || podHealth.every(p => p.phase === "Running" && p.ready);
+              };
+              while (true) {
+                try { podHealth = await capturePods(); } catch {}
+                const healthyNow = podHealth.length >= Math.min(desiredReplicas, 1) && podHealth.every(p => p.phase === "Running" && p.ready);
+                if (healthyNow || Date.now() - _phStart >= _phMaxWait) break;
+                await new Promise(r => setTimeout(r, 3000));
+              }
+              // Healthy requires the expected pod(s) to actually be Running &
+              // Ready — an empty pod list is NOT vacuously healthy for a rollout.
+              const allPodsHealthy = podHealth.length >= Math.min(desiredReplicas, 1) && podHealth.every(p => p.phase === "Running" && p.ready);
               validation = { stable, rolloutDurationMs: Date.now() - rolloutStart, ...lastCheck, pods: podHealth, allPodsHealthy, passed: stable && allPodsHealthy };
             } else {
               validation = { passed: true, note: "Non-rollout fix — command succeeded" };
