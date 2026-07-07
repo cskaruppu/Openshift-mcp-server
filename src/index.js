@@ -4150,28 +4150,39 @@ spec:
     // AI image vulnerability analysis — /api/ai/image-vuln-analysis (POST)
     if (req.method === "POST" && url.pathname === "/api/ai/image-vuln-analysis") {
       if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
-      await withClusterContext(url, async () => { await handleImageVulnAnalysisAPI(req, res); });
+      try { await withClusterContext(url, async () => { await handleImageVulnAnalysisAPI(req, res); }); }
+      catch (e) { if (!res.headersSent) sendJson(res, 500, { findings: [], error: e.message }); }
+      // Guarantee a JSON body even if withClusterContext skipped the handler
+      // (e.g. selected cluster has no live bridge) — never leave the client
+      // parsing an empty response ("Unexpected end of JSON input").
+      if (!res.headersSent) sendJson(res, 200, { findings: [], error: "AI analysis unavailable for the selected cluster context." });
       return;
     }
 
     // AI per-image remediation — /api/ai/image-remediation (POST)
     if (req.method === "POST" && url.pathname === "/api/ai/image-remediation") {
       if (enforceRateLimit(req, res, { burst: 8, refillPerSec: 0.2 })) return;
-      await withClusterContext(url, async () => { await handleImageRemediationAPI(req, res); });
+      try { await withClusterContext(url, async () => { await handleImageRemediationAPI(req, res); }); }
+      catch (e) { if (!res.headersSent) sendJson(res, 500, { error: e.message }); }
+      if (!res.headersSent) sendJson(res, 200, { error: "Remediation unavailable for the selected cluster context." });
       return;
     }
 
     // End-to-end image remediation (dry-run / apply + ServiceNow CR) — POST
     if (req.method === "POST" && url.pathname === "/api/security/remediate-image") {
       if (enforceRateLimit(req, res, { burst: 6, refillPerSec: 0.15 })) return;
-      await withClusterContext(url, async () => { await handleImageRemediateAPI(req, res); });
+      try { await withClusterContext(url, async () => { await handleImageRemediateAPI(req, res); }); }
+      catch (e) { if (!res.headersSent) sendJson(res, 500, { error: e.message }); }
+      if (!res.headersSent) sendJson(res, 200, { error: "Remediation unavailable for the selected cluster context." });
       return;
     }
 
     // AI resource optimization analysis — /api/ai/optimization-analysis (POST)
     if (req.method === "POST" && url.pathname === "/api/ai/optimization-analysis") {
       if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
-      await withClusterContext(url, async () => { await handleOptimizationAnalysisAPI(req, res); });
+      try { await withClusterContext(url, async () => { await handleOptimizationAnalysisAPI(req, res); }); }
+      catch (e) { if (!res.headersSent) sendJson(res, 500, { error: e.message }); }
+      if (!res.headersSent) sendJson(res, 200, { findings: [], error: "Optimization analysis unavailable for the selected cluster context." });
       return;
     }
 

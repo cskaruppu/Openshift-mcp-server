@@ -163,8 +163,9 @@ export function ImageVulnsWidget() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
-      const json = await res.json();
+      const json = await res.json().catch(() => ({ findings: [], error: "Empty response from server" }));
       if (!res.ok) throw new Error(json.error || "Analysis failed");
+      if (json.error && (!json.findings || json.findings.length === 0)) throw new Error(json.error);
       setAiFindings(json.findings || []);
       setAiProvider(json.provider || null);
       showToast(`AI analysis complete — ${(json.findings || []).length} findings`, "ok");
