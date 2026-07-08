@@ -223,6 +223,8 @@ export function ImageVulnsWidget() {
   };
   const scannerMode = SCANNER_MODES[d.scannerType] || SCANNER_MODES["static-analysis"];
   const scannerLabel = scannerMode.label;
+  const gradeColor = (g) => ({ A: "#16a34a", B: "#65a30d", C: "#f59e0b", D: "#ea580c", F: "#dc2626" }[g] || "#64748b");
+  const sourceShort = (t) => ({ "trivy-operator": "Trivy", "quay-cso": "Clair", "static-analysis": "Static", "openshift-image-api": "OCP" }[t] || t || "—");
 
   return (
     <div className="ivs">
@@ -366,6 +368,32 @@ export function ImageVulnsWidget() {
       </div>
 
       {/* Top Images */}
+      {/* Fleet coverage — appears only when multi-cluster aggregation is on.
+          Single-cluster view is unchanged (d.fleet is absent). */}
+      {d.fleet?.enabled && (
+        <div style={{ margin: "12px 0 6px", padding: "12px 14px", borderRadius: 12, background: "linear-gradient(180deg, rgba(59,130,246,0.06), rgba(59,130,246,0.02))", border: "1px solid rgba(59,130,246,0.22)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <span style={{ fontSize: "1.05em" }}>🛰️</span>
+            <span style={{ fontSize: "0.8em", fontWeight: 800, letterSpacing: ".04em", color: "var(--fg)" }}>FLEET COVERAGE</span>
+            <span style={{ fontSize: "0.76em", fontWeight: 600, color: "var(--muted)" }}>
+              {d.fleet.totalClusters} cluster{d.fleet.totalClusters !== 1 ? "s" : ""} · {d.totalImages} images · {d.critical + d.high} high-risk
+            </span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {(d.fleet.clusters || []).map((c) => (
+              <div key={c.cluster} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 11px", borderRadius: 9, background: "var(--card-bg, rgba(255,255,255,0.5))", border: "1px solid rgba(148,163,184,0.28)", fontSize: "0.78em", boxShadow: "0 1px 2px rgba(0,0,0,0.03)" }}>
+                <span style={{ width: 19, height: 19, borderRadius: 6, display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: "0.7em", color: "#fff", background: gradeColor(c.grade) }}>{c.grade}</span>
+                <span style={{ fontWeight: 700, color: "var(--fg)" }}>{c.cluster}</span>
+                <span style={{ color: "var(--muted)" }}>{c.images} img</span>
+                {c.critical > 0 && <span style={{ color: "#dc2626", fontWeight: 800 }}>{c.critical}C</span>}
+                {c.high > 0 && <span style={{ color: "#f59e0b", fontWeight: 800 }}>{c.high}H</span>}
+                <span style={{ padding: "1px 6px", borderRadius: 5, fontSize: "0.86em", fontWeight: 700, color: c.scannerType === "static-analysis" ? "#b45309" : "#0369a1", background: c.scannerType === "static-analysis" ? "rgba(245,158,11,0.14)" : "rgba(3,105,161,0.12)" }}>{sourceShort(c.scannerType)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {(d.topImages || []).length > 0 && (() => {
         const visibleImages = (d.topImages || []).filter((img) => imgMatchesFilter(img, sevFilter)).slice(0, 12);
         return (
@@ -395,6 +423,11 @@ export function ImageVulnsWidget() {
                 <div className="ivs-img-summary2" onClick={() => setExpandedImg(expandedImg === i ? null : i)}>
                   <span className="ivs-img-name" title={img.fullImage || img.image}>
                     <span className="ivs-img-chevron">{expandedImg === i ? "▾" : "▸"}</span>
+                    {img.cluster && (
+                      <span title={`Cluster: ${img.cluster}`} style={{ marginRight: 6, padding: "1px 7px", borderRadius: 5, fontSize: "0.68em", fontWeight: 800, letterSpacing: ".02em", color: "#1d4ed8", background: "rgba(59,130,246,0.14)", border: "1px solid rgba(59,130,246,0.28)", verticalAlign: "middle" }}>
+                        {"\u{1F5C4}"} {img.cluster}
+                      </span>
+                    )}
                     {img.image}
                     {(img.exploitable || 0) > 0 && <span className="ivs-img-kev" title="Contains actively-exploited (KEV) CVEs">KEV</span>}
                   </span>

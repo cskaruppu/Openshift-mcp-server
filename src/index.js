@@ -767,6 +767,15 @@ const AGENT_CACHE_MAX_AGE_SEC = 300; // 5 minutes
 // Feature-flag reversible: set CLUSTER_STORE_ENABLED=false to disable instantly.
 const CLUSTER_STORE_ENABLED = process.env.CLUSTER_STORE_ENABLED !== "false";
 
+// Fleet-wide image vulnerability aggregation. OFF by default → the Image
+// Vulnerability panel behaves exactly as today (single cluster). When ON, the
+// hub merges its own scan with the per-cluster image-vuln snapshots already
+// reported by connected spokes (reusing the agent cache — no new cross-cluster
+// scan calls), tags every finding by cluster, dedupes, and returns a `fleet`
+// summary. Purely additive + reversible: set FLEET_SCAN_ENABLED=false to revert.
+const FLEET_SCAN_ENABLED = process.env.FLEET_SCAN_ENABLED === "true";
+const HUB_CLUSTER_NAME = process.env.HUB_CLUSTER_NAME || "hub";
+
 // Data-plane endpoints: require a running MCP agent pod. In MCP_MODE=control
 // these must NOT be served in-process — only via the spoke proxy.
 const DATA_PLANE_ENDPOINTS = new Set([
@@ -6195,6 +6204,49 @@ spec:
     }
 
     // ── Image Vulnerability Scanner API ──────────────────────────────
+    // Merge the hub's own image-vuln scan with connected spokes' cached
+    // snapshots into one fleet-wide view. Additive; only used when
+    // FLEET_SCAN_ENABLED. Reuses the agent cache — no new remote scan calls.
+    const buildFleetImageVulns = (localData) => {
+      const clusters = [];
+      const seen = new Set();
+      const merged = [];
+      const addFrom = (clusterName, d) => {
+        if (!d || d.available === false) return;
+        let c = 0, h = 0, m = 0, l = 0, imgs = 0;
+        for (const img of (d.topImages || [])) {
+          const key = `${clusterName}::${img.fullImage || img.image}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push({ ...img, cluster: clusterName });
+          c += img.critical || 0; h += img.high || 0; m += img.medium || 0; l += img.low || 0; imgs++;
+        }
+        clusters.push({
+          cluster: clusterName, images: imgs,
+          critical: c, high: h, medium: m, low: l,
+          grade: d.grade || "?", scannerType: d.scannerType || "unknown",
+        });
+      };
+      addFrom(HUB_CLUSTER_NAME, localData);
+      for (const [name] of _connectedAgents) {
+        const cached = getAgentCachedResponse(name, "/api/dashboard/image-vulns", { skipFreshnessCheck: true });
+        if (cached) addFrom(name, cached);
+      }
+      merged.sort((a, b) => (b.critical * 100 + b.high * 10 + b.medium) - (a.critical * 100 + a.high * 10 + a.medium));
+      const t = merged.reduce((s, i) => ({
+        critical: s.critical + (i.critical || 0), high: s.high + (i.high || 0),
+        medium: s.medium + (i.medium || 0), low: s.low + (i.low || 0),
+        fixable: s.fixable + (i.fixable || 0), total: s.total + (i.total || 0),
+      }), { critical: 0, high: 0, medium: 0, low: 0, fixable: 0, total: 0 });
+      return {
+        ...localData,
+        fleet: { enabled: true, totalClusters: clusters.length, clusters },
+        totalImages: merged.length,
+        totalVulns: t.total, critical: t.critical, high: t.high, medium: t.medium, low: t.low, fixable: t.fixable,
+        topImages: merged.slice(0, 30),
+      };
+    };
+
     if (req.method === "GET" && url.pathname === "/api/dashboard/image-vulns") {
       const _ivHandler = async () => {
         const ns = url.searchParams.get("namespace") || undefined;
@@ -6287,6 +6339,11 @@ spec:
           const cached = getAgentCachedResponse(_ivCluster, "/api/dashboard/image-vulns", { skipFreshnessCheck: true });
           if (cached) return sendJson(res, 200, cached);
           return sendJson(res, 200, { available: false, source: "agent-cache", message: "Not installed on this cluster" });
+        }
+        // Fleet mode: only for the aggregate (no specific cluster requested).
+        // OFF by default → single-cluster response is byte-identical to today.
+        if (FLEET_SCAN_ENABLED && !url.searchParams.get("cluster") && data && data.available !== false) {
+          return sendJson(res, 200, buildFleetImageVulns(data));
         }
         sendJson(res, 200, data);
       } catch (err) {
