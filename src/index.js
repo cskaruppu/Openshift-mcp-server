@@ -6301,6 +6301,7 @@ spec:
         return {
           scannerType: scan.scannerType,
           sources,
+          coverage: scan.coverage || null,
           timestamp: scan.timestamp,
           scope: scan.namespace,
           totalImages: scan.totalImages,
@@ -6315,10 +6316,11 @@ spec:
           riskScore, grade, scoreReason,
           compliance: scan.compliance || { avgScore: 0, signed: 0, sbom: 0, pinned: 0, trusted: 0, total: 0 },
           ageSummary: scan.ageSummary || { fresh: 0, aging: 0, stale: 0, current: 0, unknown: 0 },
-          topImages: scan.results.slice(0, 15).map(r => ({
+          topImages: scan.results.slice(0, 30).map(r => ({
             image: r.image.length > 60 ? "..." + r.image.slice(-57) : r.image,
             fullImage: r.image,
             namespace: r.namespace,
+            source: r.source || null,
             critical: r.critical, high: r.high, medium: r.medium, low: r.low,
             fixable: r.fixable, total: r.totalVulns,
             maxCVSS: r.maxCVSS || 0,

@@ -397,6 +397,19 @@ export function ImageVulnsWidget() {
           <div style={{ marginTop: 8, fontSize: "0.72em", color: "var(--muted)" }}>
             🟢 Active = driving results now · 🔵 Available = installed, not selected · ⚪ Not installed
           </div>
+          {d.coverage && (d.coverage.live > 0 || d.coverage.hygiene > 0) && (
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed rgba(148,163,184,0.3)", display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12, fontSize: "0.78em" }}>
+              <span style={{ fontWeight: 800, letterSpacing: ".03em", color: "var(--fg)" }}>COVERAGE</span>
+              <span><strong style={{ color: "#0369a1" }}>{d.coverage.live}</strong> live-scanned (real CVEs)</span>
+              <span style={{ color: "var(--muted)" }}>·</span>
+              <span><strong style={{ color: "#b45309" }}>{d.coverage.hygiene}</strong> hygiene-only (awaiting scan)</span>
+              <span style={{ color: "var(--muted)" }}>·</span>
+              <span style={{ color: "var(--muted)" }}>{d.coverage.total} total images</span>
+              {d.coverage.hygiene > 0 && d.coverage.live > 0 && (
+                <span style={{ fontSize: "0.92em", color: "var(--muted)", fontStyle: "italic" }}>— live CVEs fill in as the scanner finishes each image</span>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -455,6 +468,11 @@ export function ImageVulnsWidget() {
                 <div className="ivs-img-summary2" onClick={() => setExpandedImg(expandedImg === i ? null : i)}>
                   <span className="ivs-img-name" title={img.fullImage || img.image}>
                     <span className="ivs-img-chevron">{expandedImg === i ? "▾" : "▸"}</span>
+                    {img.source && (
+                      <span title={img.source === "static" ? "Hygiene checks only — awaiting a live CVE scan" : "Live CVE scan result"} style={{ marginRight: 6, padding: "1px 6px", borderRadius: 5, fontSize: "0.64em", fontWeight: 800, letterSpacing: ".02em", color: img.source === "static" ? "#b45309" : "#0369a1", background: img.source === "static" ? "rgba(245,158,11,0.13)" : "rgba(3,105,161,0.13)", border: `1px solid ${img.source === "static" ? "rgba(245,158,11,0.3)" : "rgba(3,105,161,0.3)"}`, verticalAlign: "middle" }}>
+                        {img.source === "trivy" ? "Trivy" : img.source === "clair" ? "Clair" : "Static"}
+                      </span>
+                    )}
                     {img.cluster && (
                       <span title={`Cluster: ${img.cluster}`} style={{ marginRight: 6, padding: "1px 7px", borderRadius: 5, fontSize: "0.68em", fontWeight: 800, letterSpacing: ".02em", color: "#1d4ed8", background: "rgba(59,130,246,0.14)", border: "1px solid rgba(59,130,246,0.28)", verticalAlign: "middle" }}>
                         {"\u{1F5C4}"} {img.cluster}
