@@ -369,6 +369,37 @@ export function ImageVulnsWidget() {
       </div>
 
       {/* Top Images */}
+      {/* Scan Sources — live integration status of every scanner engine.
+          Proves at a glance which tools are detected, active, and live. */}
+      {Array.isArray(d.sources) && d.sources.length > 0 && (
+        <div style={{ margin: "12px 0 6px", padding: "12px 14px", borderRadius: 12, background: "var(--card-bg, rgba(148,163,184,0.05))", border: "1px solid rgba(148,163,184,0.22)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: "0.78em", fontWeight: 800, letterSpacing: ".04em", color: "var(--fg)" }}>
+            <span>{"\u{1F50C}"}</span> SCAN SOURCES
+            <span style={{ fontWeight: 600, color: "var(--muted)" }}>· live integration status</span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {d.sources.map((s) => {
+              const state = s.active ? "active" : s.available ? "available" : "off";
+              const dot = state === "active" ? "#16a34a" : state === "available" ? "#3b82f6" : "#94a3b8";
+              const statusText = s.active ? "Active" : s.available ? "Available" : "Not installed";
+              return (
+                <div key={s.id} title={`${s.name} — ${s.vendor}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 11px", borderRadius: 9, background: "var(--bg, rgba(255,255,255,0.6))", border: `1px solid ${s.active ? "rgba(22,163,74,0.4)" : "rgba(148,163,184,0.25)"}`, fontSize: "0.78em", opacity: state === "off" ? 0.62 : 1, boxShadow: s.active ? "0 1px 3px rgba(22,163,74,0.12)" : "none" }}>
+                  <span style={{ width: 9, height: 9, borderRadius: "50%", background: dot, boxShadow: s.active ? "0 0 0 3px rgba(22,163,74,0.16)" : "none" }} />
+                  <span style={{ fontWeight: 700, color: "var(--fg)" }}>{s.name}</span>
+                  <span style={{ padding: "1px 6px", borderRadius: 5, fontSize: "0.84em", fontWeight: 700, color: s.live ? "#0369a1" : "#b45309", background: s.live ? "rgba(3,105,161,0.1)" : "rgba(245,158,11,0.12)" }}>{s.live ? "Live CVE" : "Static"}</span>
+                  <span style={{ color: state === "active" ? "#16a34a" : "var(--muted)", fontWeight: state === "active" ? 700 : 500 }}>
+                    {statusText}{s.available && s.reportCount != null ? ` · ${s.reportCount} report${s.reportCount !== 1 ? "s" : ""}` : ""}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ marginTop: 8, fontSize: "0.72em", color: "var(--muted)" }}>
+            🟢 Active = driving results now · 🔵 Available = installed, not selected · ⚪ Not installed
+          </div>
+        </div>
+      )}
+
       {/* Fleet coverage — appears only when multi-cluster aggregation is on.
           Single-cluster view is unchanged (d.fleet is absent). */}
       {d.fleet?.enabled && (

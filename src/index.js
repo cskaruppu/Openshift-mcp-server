@@ -55,7 +55,7 @@ import { registerBenchmarkTools } from "./tools/benchmarks.js";
 import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerPreflightTools } from "./tools/upgrade-preflight.js";
 import { registerAppChangeWatcherTools, scanForChanges, getChangeLog, getWatchedNamespaces, getBaselines, discoverAppNamespaces, autoDiscoverAndWatch, scanGitOpsDrift, getChangeTimeline, getTimelineStats, addNamespaces, removeNamespaces, initNamespaceBaselines, acknowledgeChange, agreeChange, dismissChange, getWorkloadsByNamespace, getTrackedWorkloadCount, rehydrateTrackedNamespaces, initTrackedNamespaces, getChangeHistory, getLastScanTime, getLastChangeTime, getHealthStreak, analyzeChangeImpact, bulkAction, getWorkloadTimeline, scanConfigChanges, scoreNamespaceRecommendations, generateRiskExplanation, detectChangeCorrelations } from "./tools/app-change-watcher.js";
-import { registerImageVulnScannerTools, runImageScan, getScanResults, getScanHistory, getComplianceCache, getImageAgeCache } from "./tools/image-vulnerability-scanner.js";
+import { registerImageVulnScannerTools, runImageScan, getScanResults, getScanHistory, getComplianceCache, getImageAgeCache, detectScanSources } from "./tools/image-vulnerability-scanner.js";
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, handleUserManagement, getAuthMode, loadUserRoles, getUserRole, setUserRole, getAllUserRoles, checkPermission, getRoles, getUserNamespaces, canAccessNamespace, filterByNamespace, createUser, listUsers, changePassword } from "./services/auth.js";
 import { runRCA, runNamespaceRCA, getActiveInvestigations, getRCAHistory } from "./tools/rca-engine.js";
 import { getNetworkTopology, getClusterTopology, getExposedServices, getUnprotectedNamespaces } from "./tools/network-topology.js";
@@ -6251,6 +6251,12 @@ spec:
       const _ivHandler = async () => {
         const ns = url.searchParams.get("namespace") || undefined;
         const scan = await runImageScan(ns);
+        // Integration status of every scanner engine (for the Scan Sources panel)
+        let sources = [];
+        try {
+          sources = await detectScanSources();
+          for (const s of sources) s.active = (s.id === scan.scannerType);
+        } catch { sources = []; }
         const riskScore = Math.max(0, 100 - scan.critical * 15 - scan.high * 8 - scan.medium * 3 - scan.low * 1);
         const grade = riskScore >= 90 ? "A" : riskScore >= 80 ? "B" : riskScore >= 70 ? "C" : riskScore >= 60 ? "D" : "F";
 
@@ -6294,6 +6300,7 @@ spec:
 
         return {
           scannerType: scan.scannerType,
+          sources,
           timestamp: scan.timestamp,
           scope: scan.namespace,
           totalImages: scan.totalImages,
