@@ -223,7 +223,8 @@ export function ImageVulnsWidget() {
   };
   const scannerMode = SCANNER_MODES[d.scannerType] || SCANNER_MODES["static-analysis"];
   const scannerLabel = scannerMode.label;
-  const gradeColor = (g) => ({ A: "#16a34a", B: "#65a30d", C: "#f59e0b", D: "#ea580c", F: "#dc2626" }[g] || "#64748b");
+  // gradeColor is defined at module scope (top of file) — reuse it, don't
+  // shadow it (a local re-declaration caused a use-before-init/TDZ crash).
   const sourceShort = (t) => ({ "trivy-operator": "Trivy", "quay-cso": "Clair", "static-analysis": "Static", "openshift-image-api": "OCP" }[t] || t || "—");
 
   return (
