@@ -6396,6 +6396,72 @@ spec:
       return;
     }
 
+    // Bulk auto-remediation for a CIS control. Governed dry-run → apply →
+    // re-scan → audit-log. No ServiceNow CR (kept intentionally out of this
+    // flow). Currently supports CIS-5.2.4 (missing resource limits) by applying
+    // a namespace-level LimitRange — the CIS-recommended fix — to every
+    // affected namespace at once.
+    if (req.method === "POST" && url.pathname === "/api/compliance/remediate") {
+      if (enforceRateLimit(req, res, { burst: 4, refillPerSec: 0.1 })) return;
+      try {
+        const body = await readJsonBody(req);
+        const controlId = body.controlId || "";
+        const dryRun = body.dryRun !== false; // default to dry-run for safety
+        if (controlId !== "CIS-5.2.4") {
+          sendJson(res, 200, { supported: false, error: `Auto-fix not available for ${controlId || "(none)"}. Supported: CIS-5.2.4.` });
+          return;
+        }
+        // Affected namespaces from the latest scan
+        const latest = getComplianceResults();
+        const affected = [...new Set((latest?.findings || [])
+          .filter(f => f.id === controlId && f.namespace)
+          .map(f => f.namespace))];
+        const limitRange = (ns) => ({
+          apiVersion: "v1", kind: "LimitRange",
+          metadata: { name: "mcp-default-limits", namespace: ns, labels: { "app.kubernetes.io/managed-by": "tcs-agentic-ai", "compliance.tcs/control": "CIS-5.2.4" } },
+          spec: { limits: [{ type: "Container", default: { cpu: "500m", memory: "512Mi" }, defaultRequest: { cpu: "100m", memory: "128Mi" } }] },
+        });
+        if (dryRun) {
+          sendJson(res, 200, {
+            dryRun: true, controlId, namespaces: affected, affectedCount: affected.length,
+            action: "Apply a LimitRange (default container cpu/memory limits) to each affected namespace",
+            manifestPreview: affected.length ? limitRange(affected[0]) : null,
+            note: "LimitRange sets defaults for new/restarted pods (CIS-recommended). Existing running pods pick it up on their next rollout.",
+          });
+          return;
+        }
+        // Apply
+        const applied = [], failed = [];
+        for (const ns of affected) {
+          const lr = limitRange(ns);
+          try {
+            await ocpPost(`/api/v1/namespaces/${ns}/limitranges`, lr);
+            applied.push(ns);
+          } catch (e) {
+            // Already exists → patch it
+            try {
+              await ocpPatch(`/api/v1/namespaces/${ns}/limitranges/mcp-default-limits`, { spec: lr.spec }, "application/merge-patch+json");
+              applied.push(ns);
+            } catch (e2) { failed.push({ namespace: ns, error: e2.message || e.message }); }
+          }
+        }
+        if (featureFlags.pillar7AuditLog()) logAuditEvent({
+          command: `compliance-remediate ${controlId} (LimitRange × ${applied.length} ns)`,
+          dryRun: false, classification: "compliance-remediation", allowed: true,
+          success: failed.length === 0, durationMs: 0,
+        }).catch(() => {});
+        // Re-scan so the score reflects the change
+        let rescan = null;
+        try { const r = await runComplianceScan(); rescan = { score: r.score, grade: r.grade, totals: r.totals }; } catch {}
+        sendJson(res, 200, {
+          dryRun: false, controlId, appliedCount: applied.length, applied, failed,
+          rescan,
+          note: "LimitRange applied. New/restarted pods comply immediately; roll the affected deployments to apply to running pods now.",
+        });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
     // ── Network Topology API ────────────────────────────────────────
     if (req.method === "GET" && url.pathname === "/api/network/topology") {
       try {

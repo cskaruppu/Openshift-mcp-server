@@ -89,6 +89,29 @@ export function AuditView() {
   const [findingStatus, setFindingStatus] = useState("all");
   const [expandedFinding, setExpandedFinding] = useState(null);
   const [expandedFw, setExpandedFw] = useState(null);
+  const [expandedControl, setExpandedControl] = useState(null);
+  const [remediation, setRemediation] = useState({}); // { [controlId]: { phase, data, error } }
+
+  // Bulk auto-fix for a CIS control (dry-run → apply → re-scan). No CR.
+  const handleAutoFix = useCallback(async (controlId, apply) => {
+    setRemediation((p) => ({ ...p, [controlId]: { phase: apply ? "applying" : "checking" } }));
+    try {
+      const res = await fetch(clusterUrl("/api/compliance/remediate", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ controlId, dryRun: !apply }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (d.supported === false || d.error) throw new Error(d.error || "Auto-fix unavailable");
+      setRemediation((p) => ({ ...p, [controlId]: { phase: apply ? "done" : "preview", data: d } }));
+      if (apply) {
+        showToast(`Auto-fix applied to ${d.appliedCount ?? 0} namespace(s)`, "ok");
+        refetchComp?.();
+      }
+    } catch (e) {
+      setRemediation((p) => ({ ...p, [controlId]: { phase: "error", error: e.message } }));
+      showToast("Auto-fix failed: " + e.message, "err");
+    }
+  }, [cluster, refetchComp]);
 
   const [statusFilter, setStatusFilter] = useState("All");
   const [timeRange, setTimeRange] = useState("All Time");
@@ -216,6 +239,20 @@ export function AuditView() {
     return list;
   }, [findings, catFilter, findingSev, findingStatus]);
 
+  // Group findings by control (id+title) so hundreds of repeats collapse into a
+  // handful of controls with an affected-resource count — professional and
+  // actionable. CIS-5.2.4 is flagged auto-fixable.
+  const AUTOFIXABLE = new Set(["CIS-5.2.4"]);
+  const groupedFindings = useMemo(() => {
+    const map = new Map();
+    for (const f of filteredFindings) {
+      const key = f.id + "|" + f.title;
+      if (!map.has(key)) map.set(key, { id: f.id, title: f.title, severity: f.severity, status: f.status, category: f.category, remediation: f.remediation, description: f.description, items: [] });
+      map.get(key).items.push(f);
+    }
+    return [...map.values()].sort((a, b) => b.items.length - a.items.length);
+  }, [filteredFindings]);
+
   const frameworks = fwSummary?.results || [];
 
   // Normalize backend rows (event_type/title/details/created_at) into the shape
@@ -326,8 +363,8 @@ export function AuditView() {
               <div className="aud-stat-lbl">Findings (Fail)</div>
             </div>
             <div className="aud-stat-box" style={{ "--stat-c": "#22c55e" }}>
-              <div className="aud-stat-val">{compTotals.pass || 0}</div>
-              <div className="aud-stat-lbl">Checks Passed</div>
+              <div className="aud-stat-val">{compTotals.controlsTotal ? `${compTotals.controlsPassed}/${compTotals.controlsTotal}` : (compTotals.pass || 0)}</div>
+              <div className="aud-stat-lbl">Controls Passed</div>
             </div>
             <div className="aud-stat-box" style={{ "--stat-c": "#3b82f6" }}>
               <div className="aud-stat-val">{total}</div>
@@ -439,35 +476,75 @@ export function AuditView() {
                   <option value="PASS">Passed</option>
                   <option value="WARN">Warning</option>
                 </select>
-                <span className="aud-f-count">Showing {Math.min(filteredFindings.length, 60)} of {filteredFindings.length} findings</span>
+                <span className="aud-f-count">{groupedFindings.length} controls · {filteredFindings.length} findings</span>
               </div>
 
-              {/* Findings list */}
+              {/* Findings — grouped by control, with bulk Auto-Fix */}
               <div className="aud-findings-list">
-                {filteredFindings.length === 0 && <div className="aud-empty">No findings match the current filters</div>}
-                {filteredFindings.slice(0, 60).map((f, i) => {
-                  const sc = f.status === "PASS" ? "#22c55e" : f.status === "FAIL" ? "#ef4444" : "#f59e0b";
-                  const isExp = expandedFinding === i;
+                {groupedFindings.length === 0 && <div className="aud-empty">No findings match the current filters</div>}
+                {groupedFindings.slice(0, 40).map((g, i) => {
+                  const sc = g.status === "PASS" ? "#22c55e" : g.status === "FAIL" ? "#ef4444" : "#f59e0b";
+                  const isExp = expandedControl === i;
+                  const rem = remediation[g.id] || {};
+                  const autofixable = AUTOFIXABLE.has(g.id);
                   return (
                     <div key={i} className={"aud-finding" + (isExp ? " expanded" : "")} style={{ "--find-c": sc }}>
-                      <div className="aud-finding-head" onClick={() => setExpandedFinding(isExp ? null : i)}>
-                        <span className="aud-finding-status" style={{ color: sc }}>{statusIcon(f.status)}</span>
+                      <div className="aud-finding-head" onClick={() => setExpandedControl(isExp ? null : i)}>
+                        <span className="aud-finding-status" style={{ color: sc }}>{statusIcon(g.status)}</span>
                         <div className="aud-finding-body">
                           <div className="aud-finding-row1">
-                            <span className="aud-finding-id">{f.id}</span>
-                            <span className="aud-finding-title">{f.title}</span>
-                            <span className={"aud-finding-sev " + (f.severity || "info")}>{(f.severity || "info").toUpperCase()}</span>
-                            <span className={"aud-finding-st " + (f.status || "").toLowerCase()}>{f.status}</span>
+                            <span className="aud-finding-id">{g.id}</span>
+                            <span className="aud-finding-title">{g.title}</span>
+                            <span className={"aud-finding-sev " + (g.severity || "info")}>{(g.severity || "info").toUpperCase()}</span>
+                            <span style={{ fontSize: "0.72em", fontWeight: 800, padding: "1px 8px", borderRadius: 999, background: sc + "1c", color: sc }}>{g.items.length} affected</span>
                           </div>
-                          {f.namespace && <span className="aud-finding-ns">ns: {f.namespace}</span>}
-                          {f.resource && <span className="aud-finding-res">{f.resource}</span>}
                         </div>
+                        {autofixable && g.status !== "PASS" && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleAutoFix(g.id, false); setExpandedControl(i); }}
+                            disabled={rem.phase === "checking" || rem.phase === "applying"}
+                            style={{ marginRight: 8, padding: "5px 12px", borderRadius: 7, border: "1px solid rgba(22,163,74,0.4)", background: "rgba(22,163,74,0.1)", color: "#16a34a", fontWeight: 700, fontSize: "0.78em", cursor: "pointer" }}>
+                            {rem.phase === "checking" ? "Checking…" : rem.phase === "applying" ? "Applying…" : "⚡ Auto-Fix"}
+                          </button>
+                        )}
                         <span className="aud-finding-chevron">{isExp ? "▲" : "▼"}</span>
                       </div>
                       {isExp && (
                         <div className="aud-finding-detail">
-                          {f.description && <div className="aud-fd-block"><span className="aud-fd-lbl">Description</span><p>{f.description}</p></div>}
-                          {f.remediation && <div className="aud-fd-block remediation"><span className="aud-fd-lbl">Remediation</span><p>{f.remediation}</p></div>}
+                          {g.description && <div className="aud-fd-block"><span className="aud-fd-lbl">Description</span><p>{g.description}</p></div>}
+                          {g.remediation && <div className="aud-fd-block remediation"><span className="aud-fd-lbl">Remediation</span><p>{g.remediation}</p></div>}
+
+                          {/* Auto-Fix preview / result */}
+                          {rem.phase === "preview" && rem.data && (
+                            <div className="aud-fd-block" style={{ borderLeft: "3px solid #16a34a", paddingLeft: 10 }}>
+                              <span className="aud-fd-lbl">Auto-Fix Plan (dry-run)</span>
+                              <p>Apply a <strong>LimitRange</strong> (default cpu/memory limits) to <strong>{rem.data.affectedCount}</strong> namespace(s): {(rem.data.namespaces || []).join(", ")}</p>
+                              <p style={{ fontSize: "0.85em", color: "var(--muted)" }}>{rem.data.note}</p>
+                              <button onClick={() => handleAutoFix(g.id, true)} style={{ marginTop: 6, padding: "6px 14px", borderRadius: 7, border: "none", background: "#16a34a", color: "#fff", fontWeight: 700, fontSize: "0.8em", cursor: "pointer" }}>✓ Apply Fix to {rem.data.affectedCount} namespace(s)</button>
+                            </div>
+                          )}
+                          {rem.phase === "done" && rem.data && (
+                            <div className="aud-fd-block" style={{ borderLeft: "3px solid #16a34a", paddingLeft: 10 }}>
+                              <span className="aud-fd-lbl">✓ Auto-Fix Applied</span>
+                              <p>LimitRange applied to <strong>{rem.data.appliedCount}</strong> namespace(s).{rem.data.failed?.length ? ` ${rem.data.failed.length} failed.` : ""}</p>
+                              {rem.data.rescan && <p>Re-scan: score <strong>{rem.data.rescan.score}</strong> (grade {rem.data.rescan.grade}).</p>}
+                              <p style={{ fontSize: "0.85em", color: "var(--muted)" }}>{rem.data.note}</p>
+                            </div>
+                          )}
+                          {rem.phase === "error" && <div className="aud-fd-block" style={{ color: "#dc2626" }}>Auto-fix error: {rem.error}</div>}
+
+                          {/* Affected resources */}
+                          <div className="aud-fd-block">
+                            <span className="aud-fd-lbl">Affected resources ({g.items.length})</span>
+                            <div style={{ maxHeight: 180, overflow: "auto", fontSize: "0.82em" }}>
+                              {g.items.slice(0, 100).map((it, j) => (
+                                <div key={j} style={{ padding: "2px 0", color: "var(--muted)" }}>
+                                  <span style={{ color: "var(--fg)" }}>{it.namespace || "—"}</span> · {it.resource || "—"}
+                                </div>
+                              ))}
+                              {g.items.length > 100 && <div style={{ color: "var(--muted)" }}>+ {g.items.length - 100} more</div>}
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>

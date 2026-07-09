@@ -735,6 +735,16 @@ export async function runComplianceScan(options = {}) {
   const grade = calculateGrade(score);
   const summary = buildCategorySummary(allFindings);
 
+  // Honest control-level pass count: of the CIS controls this scanner
+  // evaluates, how many have zero violations. This is the credible
+  // "X of Y controls passed" metric (vs. the misleading raw finding count).
+  const CIS_CONTROL_CATALOG = [
+    "CIS-5.1.1", "CIS-5.2.1", "CIS-5.2.2", "CIS-5.2.3", "CIS-5.2.4", "CIS-5.2.5",
+    "CIS-5.3.1", "CIS-5.3.2", "CIS-5.3.3", "CIS-5.4.1", "CIS-5.5.1", "CIS-5.5.2",
+  ];
+  const failingControlIds = new Set(allFindings.filter((f) => f.status !== "PASS").map((f) => f.id));
+  const controlsPassed = CIS_CONTROL_CATALOG.filter((id) => !failingControlIds.has(id)).length;
+
   const results = {
     scanTime,
     score,
@@ -746,6 +756,9 @@ export async function runComplianceScan(options = {}) {
       pass: allFindings.filter((f) => f.status === "PASS").length,
       fail: allFindings.filter((f) => f.status === "FAIL").length,
       warn: allFindings.filter((f) => f.status === "WARN").length,
+      controlsTotal: CIS_CONTROL_CATALOG.length,
+      controlsPassed,
+      controlsFailed: CIS_CONTROL_CATALOG.length - controlsPassed,
       critical: allFindings.filter((f) => f.severity === "critical").length,
       warning: allFindings.filter((f) => f.severity === "warning").length,
       info: allFindings.filter((f) => f.severity === "info").length,
