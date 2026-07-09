@@ -6396,68 +6396,90 @@ spec:
       return;
     }
 
-    // Bulk auto-remediation for a CIS control. Governed dry-run → apply →
-    // re-scan → audit-log. No ServiceNow CR (kept intentionally out of this
-    // flow). Currently supports CIS-5.2.4 (missing resource limits) by applying
-    // a namespace-level LimitRange — the CIS-recommended fix — to every
-    // affected namespace at once.
+    // CIS remediation — every control returns a guided plan (dry-run) with the
+    // exact fix (manifest/command). Controls with a SAFE, namespace-scoped fix
+    // (type "auto") can also be applied one-click → re-scan → audit-log.
+    // Behavior-changing controls are "guided": copy the fix, review, apply.
+    // No ServiceNow CR anywhere in this flow.
     if (req.method === "POST" && url.pathname === "/api/compliance/remediate") {
       if (enforceRateLimit(req, res, { burst: 4, refillPerSec: 0.1 })) return;
       try {
         const body = await readJsonBody(req);
         const controlId = body.controlId || "";
-        const dryRun = body.dryRun !== false; // default to dry-run for safety
-        if (controlId !== "CIS-5.2.4") {
-          sendJson(res, 200, { supported: false, error: `Auto-fix not available for ${controlId || "(none)"}. Supported: CIS-5.2.4.` });
+        const dryRun = body.dryRun !== false;
+        const latest = getComplianceResults();
+        const findings = (latest?.findings || []).filter(f => f.id === controlId);
+        const namespaces = [...new Set(findings.filter(f => f.namespace).map(f => f.namespace))];
+        const ns0 = namespaces[0] || "<namespace>";
+        const limitRange = (ns) => ({ apiVersion: "v1", kind: "LimitRange", metadata: { name: "mcp-default-limits", namespace: ns, labels: { "app.kubernetes.io/managed-by": "tcs-agentic-ai" } }, spec: { limits: [{ type: "Container", default: { cpu: "500m", memory: "512Mi" }, defaultRequest: { cpu: "100m", memory: "128Mi" } }] } });
+        const baselineNetpol = (ns) => ({ apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy", metadata: { name: "mcp-baseline-deny", namespace: ns, labels: { "app.kubernetes.io/managed-by": "tcs-agentic-ai" } }, spec: { podSelector: {}, policyTypes: ["Ingress", "Egress"], ingress: [{ from: [{ podSelector: {} }] }], egress: [{ to: [{ namespaceSelector: {} }] }, { ports: [{ protocol: "UDP", port: 53 }, { protocol: "TCP", port: 53 }] }] } });
+
+        const REM = {
+          "CIS-5.2.4": { type: "auto", title: "Apply default resource limits (LimitRange)",
+            steps: ["Apply a LimitRange with default container cpu/memory limits & requests to each affected namespace.", "New/restarted pods inherit the defaults; roll deployments to apply to running pods."],
+            manifest: () => namespaces.length ? limitRange(ns0) : null,
+            apply: async () => { const applied = [], failed = []; for (const ns of namespaces) { const lr = limitRange(ns); try { await ocpPost(`/api/v1/namespaces/${ns}/limitranges`, lr); applied.push(ns); } catch { try { await ocpPatch(`/api/v1/namespaces/${ns}/limitranges/mcp-default-limits`, { spec: lr.spec }, "application/merge-patch+json"); applied.push(ns); } catch (e2) { failed.push({ namespace: ns, error: e2.message }); } } } return { appliedCount: applied.length, applied, failed }; } },
+          "CIS-5.3.1": { type: "guided", title: "Add a baseline NetworkPolicy per namespace",
+            steps: ["Create a default-deny NetworkPolicy that still allows same-namespace traffic and DNS.", "⚠ Review app connectivity — this changes network behavior before applying."],
+            manifest: () => namespaces.length ? baselineNetpol(ns0) : null },
+          "CIS-5.3.3": { type: "guided", title: "Use a dedicated ServiceAccount (not 'default')",
+            steps: ["Create a dedicated ServiceAccount and bind it to the workload."],
+            command: () => `oc create sa app-sa -n ${ns0}\noc set serviceaccount deployment/<name> app-sa -n ${ns0}` },
+          "CIS-5.2.3": { type: "guided", title: "Remove hostNetwork",
+            steps: ["Set spec.template.spec.hostNetwork: false and roll the workload.", "Use a Service/Route for access instead of the host network."],
+            command: () => `oc patch deployment/<name> -n ${ns0} --type=merge \\\n  -p '{"spec":{"template":{"spec":{"hostNetwork":false}}}}'` },
+          "CIS-5.2.1": { type: "guided", title: "Drop privileged securityContext",
+            steps: ["Set securityContext.privileged: false and remove unneeded capabilities."],
+            command: () => `oc patch deployment/<name> -n ${ns0} --type=json \\\n  -p '[{"op":"replace","path":"/spec/template/spec/containers/0/securityContext/privileged","value":false}]'` },
+          "CIS-5.2.2": { type: "guided", title: "Remove hostPID / hostIPC",
+            steps: ["Set spec.template.spec.hostPID: false and hostIPC: false, then roll the workload."],
+            command: () => `oc patch deployment/<name> -n ${ns0} --type=merge \\\n  -p '{"spec":{"template":{"spec":{"hostPID":false,"hostIPC":false}}}}'` },
+          "CIS-5.2.5": { type: "guided", title: "Add a readiness probe",
+            steps: ["Add a readinessProbe to the container spec matching your app's health endpoint."],
+            manifest: () => ({ readinessProbe: { httpGet: { path: "/healthz", port: 8080 }, initialDelaySeconds: 5, periodSeconds: 10 } }) },
+          "CIS-5.5.1": { type: "guided", title: "Pin image to a specific tag/digest",
+            steps: ["Replace ':latest' with a specific version tag, or pin to an immutable @sha256 digest."],
+            command: () => `# find the running digest, then pin it:\noc get pod <pod> -n ${ns0} -o jsonpath='{.status.containerStatuses[0].imageID}'\noc set image deployment/<name> <container>=<repo>@sha256:<digest> -n ${ns0}` },
+          "CIS-5.5.2": { type: "guided", title: "Use an approved registry",
+            steps: ["Mirror the image into your approved/internal registry and update the workload image reference."],
+            command: () => `oc set image deployment/<name> <container>=<approved-registry>/<repo>:<tag> -n ${ns0}` },
+          "CIS-5.4.1": { type: "guided", title: "Mount secrets as files, not env vars",
+            steps: ["Mount the Secret as a volume instead of exposing it via env — reduces exposure in process listings/logs."],
+            command: () => `# add a secret volume + volumeMount to the workload, remove the secretKeyRef env entries` },
+          "CIS-5.3.2": { type: "guided", title: "Avoid direct LoadBalancer exposure",
+            steps: ["Expose the service via an Ingress/Route behind the cluster ingress instead of a LoadBalancer, or restrict source ranges."],
+            command: () => `oc expose service <svc> -n ${ns0}   # create a Route instead of type=LoadBalancer` },
+          "CIS-5.1.1": { type: "guided", title: "Restrict cluster-admin usage",
+            steps: ["Replace broad cluster-admin bindings with least-privilege roles scoped to what the subject needs."],
+            command: () => `oc get clusterrolebindings -o wide | grep cluster-admin   # review and tighten` },
+        };
+
+        const rem = REM[controlId];
+        if (!rem) {
+          sendJson(res, 200, { controlId, type: "guided", title: "Remediation guidance", steps: findings[0]?.remediation ? [findings[0].remediation] : ["Refer to the CIS benchmark guidance for this control."], affectedCount: findings.length, namespaces, applicable: false });
           return;
         }
-        // Affected namespaces from the latest scan
-        const latest = getComplianceResults();
-        const affected = [...new Set((latest?.findings || [])
-          .filter(f => f.id === controlId && f.namespace)
-          .map(f => f.namespace))];
-        const limitRange = (ns) => ({
-          apiVersion: "v1", kind: "LimitRange",
-          metadata: { name: "mcp-default-limits", namespace: ns, labels: { "app.kubernetes.io/managed-by": "tcs-agentic-ai", "compliance.tcs/control": "CIS-5.2.4" } },
-          spec: { limits: [{ type: "Container", default: { cpu: "500m", memory: "512Mi" }, defaultRequest: { cpu: "100m", memory: "128Mi" } }] },
-        });
         if (dryRun) {
           sendJson(res, 200, {
-            dryRun: true, controlId, namespaces: affected, affectedCount: affected.length,
-            action: "Apply a LimitRange (default container cpu/memory limits) to each affected namespace",
-            manifestPreview: affected.length ? limitRange(affected[0]) : null,
-            note: "LimitRange sets defaults for new/restarted pods (CIS-recommended). Existing running pods pick it up on their next rollout.",
+            dryRun: true, controlId, type: rem.type, title: rem.title,
+            steps: rem.steps || [], command: rem.command ? rem.command() : null, manifest: rem.manifest ? rem.manifest() : null,
+            affectedCount: findings.length, namespaces,
+            resources: findings.slice(0, 50).map(f => ({ namespace: f.namespace, resource: f.resource })),
+            applicable: rem.type === "auto",
+            note: rem.type === "auto" ? "Safe, namespace-scoped change — one-click Apply available." : "Behavior-changing — copy the fix, review, and apply it yourself. No blind apply.",
           });
           return;
         }
-        // Apply
-        const applied = [], failed = [];
-        for (const ns of affected) {
-          const lr = limitRange(ns);
-          try {
-            await ocpPost(`/api/v1/namespaces/${ns}/limitranges`, lr);
-            applied.push(ns);
-          } catch (e) {
-            // Already exists → patch it
-            try {
-              await ocpPatch(`/api/v1/namespaces/${ns}/limitranges/mcp-default-limits`, { spec: lr.spec }, "application/merge-patch+json");
-              applied.push(ns);
-            } catch (e2) { failed.push({ namespace: ns, error: e2.message || e.message }); }
-          }
+        // Apply — only for safe "auto" controls
+        if (rem.type !== "auto" || !rem.apply) {
+          sendJson(res, 200, { applied: false, manual: true, controlId, message: "This control uses guided remediation — copy and apply the provided fix after review." });
+          return;
         }
-        if (featureFlags.pillar7AuditLog()) logAuditEvent({
-          command: `compliance-remediate ${controlId} (LimitRange × ${applied.length} ns)`,
-          dryRun: false, classification: "compliance-remediation", allowed: true,
-          success: failed.length === 0, durationMs: 0,
-        }).catch(() => {});
-        // Re-scan so the score reflects the change
+        const result = await rem.apply();
+        if (featureFlags.pillar7AuditLog()) logAuditEvent({ command: `compliance-remediate ${controlId}`, dryRun: false, classification: "compliance-remediation", allowed: true, success: (result.failed || []).length === 0, durationMs: 0 }).catch(() => {});
         let rescan = null;
         try { const r = await runComplianceScan(); rescan = { score: r.score, grade: r.grade, totals: r.totals }; } catch {}
-        sendJson(res, 200, {
-          dryRun: false, controlId, appliedCount: applied.length, applied, failed,
-          rescan,
-          note: "LimitRange applied. New/restarted pods comply immediately; roll the affected deployments to apply to running pods now.",
-        });
+        sendJson(res, 200, { dryRun: false, controlId, ...result, rescan, note: "Applied. New/restarted pods comply immediately; roll affected deployments to apply to running pods now." });
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }

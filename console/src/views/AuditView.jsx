@@ -499,12 +499,13 @@ export function AuditView() {
                             <span style={{ fontSize: "0.72em", fontWeight: 800, padding: "1px 8px", borderRadius: 999, background: sc + "1c", color: sc }}>{g.items.length} affected</span>
                           </div>
                         </div>
-                        {autofixable && g.status !== "PASS" && (
+                        {g.status !== "PASS" && (
                           <button
                             onClick={(e) => { e.stopPropagation(); handleAutoFix(g.id, false); setExpandedControl(i); }}
                             disabled={rem.phase === "checking" || rem.phase === "applying"}
-                            style={{ marginRight: 8, padding: "5px 12px", borderRadius: 7, border: "1px solid rgba(22,163,74,0.4)", background: "rgba(22,163,74,0.1)", color: "#16a34a", fontWeight: 700, fontSize: "0.78em", cursor: "pointer" }}>
-                            {rem.phase === "checking" ? "Checking…" : rem.phase === "applying" ? "Applying…" : "⚡ Auto-Fix"}
+                            title={autofixable ? "Safe auto-fix available" : "Guided remediation — review then apply"}
+                            style={{ marginRight: 8, padding: "5px 12px", borderRadius: 7, border: `1px solid ${autofixable ? "rgba(22,163,74,0.4)" : "rgba(59,130,246,0.4)"}`, background: autofixable ? "rgba(22,163,74,0.1)" : "rgba(59,130,246,0.1)", color: autofixable ? "#16a34a" : "#2563eb", fontWeight: 700, fontSize: "0.78em", cursor: "pointer" }}>
+                            {rem.phase === "checking" ? "Checking…" : rem.phase === "applying" ? "Applying…" : (autofixable ? "⚡ Auto-Fix" : "📋 Remediate")}
                           </button>
                         )}
                         <span className="aud-finding-chevron">{isExp ? "▲" : "▼"}</span>
@@ -514,24 +515,38 @@ export function AuditView() {
                           {g.description && <div className="aud-fd-block"><span className="aud-fd-lbl">Description</span><p>{g.description}</p></div>}
                           {g.remediation && <div className="aud-fd-block remediation"><span className="aud-fd-lbl">Remediation</span><p>{g.remediation}</p></div>}
 
-                          {/* Auto-Fix preview / result */}
-                          {rem.phase === "preview" && rem.data && (
-                            <div className="aud-fd-block" style={{ borderLeft: "3px solid #16a34a", paddingLeft: 10 }}>
-                              <span className="aud-fd-lbl">Auto-Fix Plan (dry-run)</span>
-                              <p>Apply a <strong>LimitRange</strong> (default cpu/memory limits) to <strong>{rem.data.affectedCount}</strong> namespace(s): {(rem.data.namespaces || []).join(", ")}</p>
-                              <p style={{ fontSize: "0.85em", color: "var(--muted)" }}>{rem.data.note}</p>
-                              <button onClick={() => handleAutoFix(g.id, true)} style={{ marginTop: 6, padding: "6px 14px", borderRadius: 7, border: "none", background: "#16a34a", color: "#fff", fontWeight: 700, fontSize: "0.8em", cursor: "pointer" }}>✓ Apply Fix to {rem.data.affectedCount} namespace(s)</button>
-                            </div>
-                          )}
+                          {/* Remediation plan (dry-run) */}
+                          {rem.phase === "preview" && rem.data && (() => {
+                            const auto = rem.data.type === "auto";
+                            const accent = auto ? "#16a34a" : "#2563eb";
+                            const cmd = rem.data.command || (rem.data.manifest ? JSON.stringify(rem.data.manifest, null, 2) : "");
+                            return (
+                              <div className="aud-fd-block" style={{ borderLeft: `3px solid ${accent}`, paddingLeft: 10 }}>
+                                <span className="aud-fd-lbl">{auto ? "⚡ Auto-Fix Plan (dry-run)" : "📋 Guided Remediation (dry-run)"} · {rem.data.affectedCount} affected</span>
+                                <p style={{ fontWeight: 700 }}>{rem.data.title}</p>
+                                {(rem.data.steps || []).map((s, si) => <p key={si} style={{ margin: "2px 0", fontSize: "0.88em" }}>• {s}</p>)}
+                                {cmd && (
+                                  <div style={{ position: "relative", marginTop: 6 }}>
+                                    <pre style={{ background: "rgba(15,23,42,0.06)", padding: "8px 10px", borderRadius: 7, fontSize: "0.78em", overflow: "auto", maxHeight: 200, whiteSpace: "pre-wrap" }}>{cmd}</pre>
+                                    <button onClick={() => { navigator.clipboard?.writeText(cmd); showToast("Copied to clipboard", "ok"); }} style={{ position: "absolute", top: 6, right: 6, padding: "2px 8px", borderRadius: 5, border: "1px solid var(--border)", background: "var(--card-bg)", fontSize: "0.72em", cursor: "pointer" }}>Copy</button>
+                                  </div>
+                                )}
+                                <p style={{ fontSize: "0.82em", color: "var(--muted)", marginTop: 6 }}>{rem.data.note}</p>
+                                {rem.data.applicable && (
+                                  <button onClick={() => handleAutoFix(g.id, true)} style={{ marginTop: 6, padding: "6px 14px", borderRadius: 7, border: "none", background: "#16a34a", color: "#fff", fontWeight: 700, fontSize: "0.8em", cursor: "pointer" }}>✓ Apply Fix to {rem.data.affectedCount} namespace(s)</button>
+                                )}
+                              </div>
+                            );
+                          })()}
                           {rem.phase === "done" && rem.data && (
                             <div className="aud-fd-block" style={{ borderLeft: "3px solid #16a34a", paddingLeft: 10 }}>
-                              <span className="aud-fd-lbl">✓ Auto-Fix Applied</span>
-                              <p>LimitRange applied to <strong>{rem.data.appliedCount}</strong> namespace(s).{rem.data.failed?.length ? ` ${rem.data.failed.length} failed.` : ""}</p>
+                              <span className="aud-fd-lbl">✓ Fix Applied</span>
+                              <p>Applied to <strong>{rem.data.appliedCount}</strong> namespace(s).{rem.data.failed?.length ? ` ${rem.data.failed.length} failed.` : ""}</p>
                               {rem.data.rescan && <p>Re-scan: score <strong>{rem.data.rescan.score}</strong> (grade {rem.data.rescan.grade}).</p>}
                               <p style={{ fontSize: "0.85em", color: "var(--muted)" }}>{rem.data.note}</p>
                             </div>
                           )}
-                          {rem.phase === "error" && <div className="aud-fd-block" style={{ color: "#dc2626" }}>Auto-fix error: {rem.error}</div>}
+                          {rem.phase === "error" && <div className="aud-fd-block" style={{ color: "#dc2626" }}>Remediation error: {rem.error}</div>}
 
                           {/* Affected resources */}
                           <div className="aud-fd-block">
