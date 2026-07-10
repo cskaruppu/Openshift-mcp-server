@@ -18956,6 +18956,71 @@ Return ONLY the JSON array.`;
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/compliance/impact-analysis — Agentic AI impact analysis for a CIS
+// control BEFORE remediating. Answers two questions the operator actually has:
+// (1) if we apply this fix, what changes and what could break? (2) if we do
+// NOT fix it, what is the risk to the cluster? Returns a structured verdict.
+// ---------------------------------------------------------------------------
+export async function handleComplianceImpactAPI(req, res) {
+  try {
+    const body = await readBody(req);
+    const provider = (body.llmOpts && body.llmOpts.provider) || LLM_PROVIDER;
+    const c = body.control || {};
+    if (!provider || provider === "none") {
+      return json(res, 200, { error: "No LLM provider configured. Configure a provider in Settings to enable AI impact analysis." });
+    }
+    const prompt = `You are a Kubernetes/OpenShift security and reliability expert. A CIS benchmark control has failed on a live cluster. Give a concise, decision-ready IMPACT ANALYSIS for the operator who is about to remediate it.
+
+CONTROL: ${c.id} — ${c.title}
+CATEGORY: ${c.category || "n/a"}
+SEVERITY: ${c.severity || "n/a"}
+AFFECTED RESOURCES: ${c.affectedCount || 0} (e.g. ${(c.samples || []).slice(0, 5).join(", ") || "n/a"})
+DESCRIPTION: ${c.description || "n/a"}
+PLANNED REMEDIATION: ${c.remediation || "n/a"}
+
+Return ONLY valid JSON (no markdown) with this shape:
+{
+  "riskLevelIfIgnored": "critical|high|medium|low",
+  "changeRiskIfApplied": "high|medium|low",
+  "recommendation": "apply-now|apply-with-caution|review-first|schedule-maintenance",
+  "ifApplied": {
+    "summary": "one line: what this change does",
+    "blastRadius": "what/how many workloads or namespaces are affected",
+    "couldBreak": "realistic ways this change could disrupt a running app, or 'Low disruption risk' if safe",
+    "watchFor": "what to verify after applying"
+  },
+  "ifIgnored": {
+    "summary": "one line: the exposure of leaving it unfixed",
+    "attackOrFailure": "the concrete security or reliability scenario this enables",
+    "likelihood": "how likely / under what conditions",
+    "businessImpact": "plain-language consequence (downtime, breach, audit failure...)"
+  },
+  "bottomLine": "one sentence recommendation the operator can act on"
+}
+Be specific to THIS control. Keep each field under 240 characters.`;
+
+    const r = await callLLM({
+      messages: [{ role: "user", content: prompt }],
+      system: "You are a precise Kubernetes security analyst. Output only a valid JSON object, no markdown fences. Be concrete and honest about both applying and ignoring the fix.",
+      maxTokens: 900, temperature: 0.2,
+      provider: body.llmOpts?.provider, apiUrl: body.llmOpts?.apiUrl, apiKey: body.llmOpts?.apiKey,
+      model: body.llmOpts?.model, azureDeployment: body.llmOpts?.azureDeployment, azureApiVersion: body.llmOpts?.azureApiVersion,
+    });
+    let analysis = null;
+    try {
+      let text = (r.text || "").trim();
+      const m = text.match(/\{[\s\S]*\}/);
+      if (m) text = m[0];
+      analysis = JSON.parse(text);
+    } catch { return json(res, 200, { error: "Failed to parse AI response" }); }
+    json(res, 200, { analysis, provider: r.provider || provider });
+  } catch (err) {
+    console.error("Compliance impact analysis error:", err);
+    json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/ai/image-remediation — AI generates a concrete fix for ONE image
 // Returns recommended replacement image/tag, the exact oc command to apply it,
 // an optional Dockerfile patch, and step-by-step remediation. Closes the loop

@@ -81,7 +81,7 @@ import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
 import { callLLM } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport } from "./services/upgrade-report.js";
-import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
+import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, handleComplianceImpactAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import {
   listActions,
   getAction,
@@ -4165,6 +4165,15 @@ spec:
       // (e.g. selected cluster has no live bridge) — never leave the client
       // parsing an empty response ("Unexpected end of JSON input").
       if (!res.headersSent) sendJson(res, 200, { findings: [], error: "AI analysis unavailable for the selected cluster context." });
+      return;
+    }
+
+    // Agentic AI impact analysis for a CIS control — /api/compliance/impact-analysis (POST)
+    if (req.method === "POST" && url.pathname === "/api/compliance/impact-analysis") {
+      if (enforceRateLimit(req, res, { burst: 6, refillPerSec: 0.15 })) return;
+      try { await withClusterContext(url, async () => { await handleComplianceImpactAPI(req, res); }); }
+      catch (e) { if (!res.headersSent) sendJson(res, 500, { error: e.message }); }
+      if (!res.headersSent) sendJson(res, 200, { error: "Impact analysis unavailable for the selected cluster context." });
       return;
     }
 

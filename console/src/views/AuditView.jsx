@@ -91,6 +91,28 @@ export function AuditView() {
   const [expandedFw, setExpandedFw] = useState(null);
   const [expandedControl, setExpandedControl] = useState(null);
   const [remediation, setRemediation] = useState({}); // { [controlId]: { phase, data, error } }
+  const [impact, setImpact] = useState({}); // { [controlId]: { loading, data, error } }
+
+  // Agentic AI impact analysis — what happens if we apply the fix vs. if we don't.
+  const handleImpact = useCallback(async (g) => {
+    setImpact((p) => ({ ...p, [g.id]: { loading: true } }));
+    try {
+      const res = await fetch(clusterUrl("/api/compliance/impact-analysis", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ control: {
+          id: g.id, title: g.title, category: g.category, severity: g.severity,
+          description: g.description, remediation: g.remediation,
+          affectedCount: g.items.length,
+          samples: g.items.slice(0, 5).map((x) => `${x.namespace || "-"}/${x.resource || "-"}`),
+        } }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (d.error || !d.analysis) throw new Error(d.error || "No analysis returned");
+      setImpact((p) => ({ ...p, [g.id]: { loading: false, data: d.analysis } }));
+    } catch (e) {
+      setImpact((p) => ({ ...p, [g.id]: { loading: false, error: e.message } }));
+    }
+  }, [cluster]);
 
   // Bulk auto-fix for a CIS control (dry-run → apply → re-scan). No CR.
   const handleAutoFix = useCallback(async (controlId, apply) => {
@@ -354,29 +376,35 @@ export function AuditView() {
 
           {/* Hero stats */}
           <div className="aud-hero-stats">
-            <div className="aud-stat-box" style={{ "--stat-c": compScore !== null ? gradeColor(compGrade) : "#64748b" }}>
+            <div className="aud-stat-box" title="View CIS compliance detail" style={{ "--stat-c": compScore !== null ? gradeColor(compGrade) : "#64748b", cursor: "pointer" }}
+              onClick={() => { setActiveTab("compliance"); setFindingStatus("all"); }}>
               <div className="aud-stat-val">{compScore !== null ? compScore : "—"}</div>
-              <div className="aud-stat-lbl">CIS Score</div>
+              <div className="aud-stat-lbl">CIS Score &rsaquo;</div>
             </div>
-            <div className="aud-stat-box" style={{ "--stat-c": "#ef4444" }}>
+            <div className="aud-stat-box" title="Show only failed findings" style={{ "--stat-c": "#ef4444", cursor: "pointer" }}
+              onClick={() => { setActiveTab("compliance"); setFindingStatus("FAIL"); }}>
               <div className="aud-stat-val">{compTotals.fail || 0}</div>
-              <div className="aud-stat-lbl">Findings (Fail)</div>
+              <div className="aud-stat-lbl">Findings (Fail) &rsaquo;</div>
             </div>
-            <div className="aud-stat-box" style={{ "--stat-c": "#22c55e" }}>
+            <div className="aud-stat-box" title="Show passing controls" style={{ "--stat-c": "#22c55e", cursor: "pointer" }}
+              onClick={() => { setActiveTab("compliance"); setFindingStatus("PASS"); }}>
               <div className="aud-stat-val">{compTotals.controlsTotal ? `${compTotals.controlsPassed}/${compTotals.controlsTotal}` : (compTotals.pass || 0)}</div>
-              <div className="aud-stat-lbl">Controls Passed</div>
+              <div className="aud-stat-lbl">Controls Passed &rsaquo;</div>
             </div>
-            <div className="aud-stat-box" style={{ "--stat-c": "#3b82f6" }}>
+            <div className="aud-stat-box" title="View actions taken" style={{ "--stat-c": "#3b82f6", cursor: "pointer" }}
+              onClick={() => setActiveTab("activity")}>
               <div className="aud-stat-val">{total}</div>
-              <div className="aud-stat-lbl">Actions Executed</div>
+              <div className="aud-stat-lbl">Actions Executed &rsaquo;</div>
             </div>
-            <div className="aud-stat-box" style={{ "--stat-c": rate >= 90 ? "#22c55e" : rate >= 70 ? "#f59e0b" : "#ef4444" }}>
+            <div className="aud-stat-box" title="View activity & success rate" style={{ "--stat-c": rate >= 90 ? "#22c55e" : rate >= 70 ? "#f59e0b" : "#ef4444", cursor: "pointer" }}
+              onClick={() => setActiveTab("activity")}>
               <div className="aud-stat-val">{rate}%</div>
-              <div className="aud-stat-lbl">Success Rate</div>
+              <div className="aud-stat-lbl">Success Rate &rsaquo;</div>
             </div>
-            <div className="aud-stat-box" style={{ "--stat-c": "#8b5cf6" }}>
+            <div className="aud-stat-box" title="View framework profiles" style={{ "--stat-c": "#8b5cf6", cursor: "pointer" }}
+              onClick={() => setActiveTab("frameworks")}>
               <div className="aud-stat-val">{frameworks.length}</div>
-              <div className="aud-stat-lbl">Frameworks</div>
+              <div className="aud-stat-lbl">Frameworks &rsaquo;</div>
             </div>
           </div>
         </div>
@@ -499,6 +527,15 @@ export function AuditView() {
                             <span style={{ fontSize: "0.72em", fontWeight: 800, padding: "1px 8px", borderRadius: 999, background: sc + "1c", color: sc }}>{g.items.length} affected</span>
                           </div>
                         </div>
+                        {g.status !== "PASS" && (() => { const imp = impact[g.id] || {}; return (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); if (!imp.loading) handleImpact(g); setExpandedControl(i); }}
+                            disabled={imp.loading}
+                            title="Agentic AI: what happens if you apply this fix vs. if you don't"
+                            style={{ marginRight: 8, padding: "5px 12px", borderRadius: 7, border: "1px solid rgba(124,58,237,0.4)", background: "rgba(124,58,237,0.1)", color: "#7c3aed", fontWeight: 700, fontSize: "0.78em", cursor: "pointer" }}>
+                            {imp.loading ? "Analyzing…" : "🧠 AI Impact"}
+                          </button>
+                        ); })()}
                         {g.status !== "PASS" && (
                           <button
                             onClick={(e) => { e.stopPropagation(); handleAutoFix(g.id, false); setExpandedControl(i); }}
@@ -514,6 +551,42 @@ export function AuditView() {
                         <div className="aud-finding-detail">
                           {g.description && <div className="aud-fd-block"><span className="aud-fd-lbl">Description</span><p>{g.description}</p></div>}
                           {g.remediation && <div className="aud-fd-block remediation"><span className="aud-fd-lbl">Remediation</span><p>{g.remediation}</p></div>}
+
+                          {/* Agentic AI impact analysis — apply vs. ignore */}
+                          {impact[g.id]?.error && <div className="aud-fd-block" style={{ color: "#dc2626" }}>AI impact analysis: {impact[g.id].error}</div>}
+                          {impact[g.id]?.data && (() => {
+                            const a = impact[g.id].data;
+                            const rk = { critical: "#dc2626", high: "#ea580c", medium: "#d97706", low: "#16a34a" };
+                            const recColor = a.recommendation === "apply-now" ? "#16a34a" : a.recommendation === "apply-with-caution" ? "#d97706" : "#dc2626";
+                            const pill = (label, val, color) => <span style={{ fontSize: "0.72em", fontWeight: 800, padding: "3px 10px", borderRadius: 999, background: color + "1c", color, textTransform: "capitalize" }}>{label}: {String(val || "—").replace(/-/g, " ")}</span>;
+                            return (
+                              <div className="aud-fd-block" style={{ borderLeft: "3px solid #7c3aed", paddingLeft: 12 }}>
+                                <span className="aud-fd-lbl" style={{ color: "#7c3aed" }}>🧠 Agentic AI Impact Analysis</span>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "8px 0 12px" }}>
+                                  {pill("If ignored", a.riskLevelIfIgnored, rk[a.riskLevelIfIgnored] || "#64748b")}
+                                  {pill("Change risk", a.changeRiskIfApplied, rk[a.changeRiskIfApplied] || "#64748b")}
+                                  {pill("Recommend", a.recommendation, recColor)}
+                                </div>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                                  <div style={{ background: "rgba(22,163,74,0.06)", border: "1px solid rgba(22,163,74,0.25)", borderRadius: 10, padding: "12px 14px" }}>
+                                    <div style={{ fontWeight: 800, color: "#16a34a", fontSize: "0.82em", marginBottom: 6 }}>✅ If we APPLY the fix</div>
+                                    {a.ifApplied?.summary && <p style={{ margin: "0 0 6px", fontWeight: 600 }}>{a.ifApplied.summary}</p>}
+                                    {a.ifApplied?.blastRadius && <p style={{ margin: "3px 0", fontSize: "0.86em" }}><b>Blast radius:</b> {a.ifApplied.blastRadius}</p>}
+                                    {a.ifApplied?.couldBreak && <p style={{ margin: "3px 0", fontSize: "0.86em" }}><b>Could break:</b> {a.ifApplied.couldBreak}</p>}
+                                    {a.ifApplied?.watchFor && <p style={{ margin: "3px 0", fontSize: "0.86em" }}><b>Watch for:</b> {a.ifApplied.watchFor}</p>}
+                                  </div>
+                                  <div style={{ background: "rgba(220,59,59,0.06)", border: "1px solid rgba(220,59,59,0.25)", borderRadius: 10, padding: "12px 14px" }}>
+                                    <div style={{ fontWeight: 800, color: "#dc2626", fontSize: "0.82em", marginBottom: 6 }}>⚠️ If we DON'T fix it</div>
+                                    {a.ifIgnored?.summary && <p style={{ margin: "0 0 6px", fontWeight: 600 }}>{a.ifIgnored.summary}</p>}
+                                    {a.ifIgnored?.attackOrFailure && <p style={{ margin: "3px 0", fontSize: "0.86em" }}><b>Scenario:</b> {a.ifIgnored.attackOrFailure}</p>}
+                                    {a.ifIgnored?.likelihood && <p style={{ margin: "3px 0", fontSize: "0.86em" }}><b>Likelihood:</b> {a.ifIgnored.likelihood}</p>}
+                                    {a.ifIgnored?.businessImpact && <p style={{ margin: "3px 0", fontSize: "0.86em" }}><b>Business impact:</b> {a.ifIgnored.businessImpact}</p>}
+                                  </div>
+                                </div>
+                                {a.bottomLine && <p style={{ margin: "12px 0 0", fontWeight: 700 }}>💡 {a.bottomLine}</p>}
+                              </div>
+                            );
+                          })()}
 
                           {/* Remediation plan (dry-run) */}
                           {rem.phase === "preview" && rem.data && (() => {
