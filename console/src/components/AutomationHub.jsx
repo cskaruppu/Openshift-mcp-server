@@ -76,6 +76,25 @@ function SopAgent({ clusters, activeCluster }) {
   const [error, setError] = useState(null);
   const [cluster, setCluster] = useState(activeCluster || "local");
   const [deploy, setDeploy] = useState(null); // { phase, result }
+  const [uploading, setUploading] = useState(false);
+  const [uploadedName, setUploadedName] = useState(null);
+
+  const onUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true); setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/automation/extract-doc", { method: "POST", body: fd });
+      const d = await res.json().catch(() => ({}));
+      if (d.error) throw new Error(d.error);
+      setRequirement((prev) => (prev ? prev + "\n\n" : "") + (d.text || ""));
+      setUploadedName(d.filename);
+      showToast(`Loaded ${d.filename} (${d.chars} chars) — review & generate`, "ok");
+    } catch (err) { setError("Upload: " + err.message); showToast("Upload failed: " + err.message, "err"); }
+    finally { setUploading(false); e.target.value = ""; }
+  };
 
   const generate = async () => {
     setLoading(true); setError(null); setGen(null); setDeploy(null);
@@ -107,8 +126,16 @@ function SopAgent({ clusters, activeCluster }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ fontSize: "0.86rem", color: "var(--muted,#5a6373)" }}>Describe the application to deploy (or paste requirement text). The agent generates Kubernetes/OpenShift manifests you can review, dry-run, and deploy to any connected cluster.</div>
-      <textarea value={requirement} onChange={(e) => setRequirement(e.target.value)} rows={5}
+      <div style={{ fontSize: "0.86rem", color: "var(--muted,#5a6373)" }}>Upload a requirement document, or describe/paste the requirement. The agent analyses it and generates Kubernetes/OpenShift manifests you can review, dry-run, and deploy to any connected cluster.</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 9, border: "1px dashed #3d5afe", background: "rgba(61,90,254,0.06)", color: "#3d5afe", fontWeight: 700, fontSize: "0.84rem", cursor: uploading ? "wait" : "pointer" }}>
+          {uploading ? "Reading…" : "📎 Upload requirement doc"}
+          <input type="file" accept=".docx,.txt,.md,.markdown,.yaml,.yml,.json,.csv,.log" hidden disabled={uploading} onChange={onUpload} />
+        </label>
+        {uploadedName && <span style={{ fontSize: "0.8rem", color: "var(--muted,#5a6373)" }}>📄 {uploadedName} loaded ✓</span>}
+        <span style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)" }}>.docx / .txt / .md supported</span>
+      </div>
+      <textarea value={requirement} onChange={(e) => setRequirement(e.target.value)} rows={7}
         placeholder="e.g. Deploy an nginx web app with 2 replicas, expose it via a Route, and set 256Mi memory limit."
         style={{ width: "100%", padding: 12, borderRadius: 10, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--fg,#151a29)", fontSize: "0.9rem", resize: "vertical" }} />
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>

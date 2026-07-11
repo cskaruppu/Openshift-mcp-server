@@ -4169,6 +4169,36 @@ spec:
       return;
     }
 
+    // ── Automation Hub · SOP Agent — extract text from an uploaded doc ──
+    // Accepts a requirement document (.docx / .txt / .md / .yaml / .json) and
+    // returns its plain text so the SOP Agent can generate manifests from it.
+    if (req.method === "POST" && url.pathname === "/api/automation/extract-doc") {
+      if (enforceRateLimit(req, res, { burst: 6, refillPerSec: 0.2 })) return;
+      try {
+        const ct = req.headers["content-type"] || "";
+        if (!ct.includes("multipart/form-data")) { sendJson(res, 400, { error: "Upload a file (multipart/form-data)." }); return; }
+        const raw = await readRawBody(req);
+        const parts = parseMultipart(raw, ct);
+        const filePart = parts.find((p) => p.filename);
+        if (!filePart) { sendJson(res, 400, { error: "No file uploaded." }); return; }
+        const name = (filePart.filename || "").toLowerCase();
+        let text = "";
+        if (name.endsWith(".docx")) {
+          const parsed = await parseDocx(filePart.data);
+          text = (parsed.sections || []).map((s) => `${s.heading || ""}\n${s.text || s.content || ""}`).join("\n") || parsed.text || "";
+        } else if (name.endsWith(".pdf") || name.endsWith(".doc")) {
+          sendJson(res, 200, { error: "PDF/.doc aren't supported yet — upload .docx, .txt or .md, or paste the text." });
+          return;
+        } else {
+          text = filePart.data.toString("utf8");
+        }
+        text = (text || "").trim().slice(0, 14000);
+        if (!text) { sendJson(res, 200, { error: "Could not read any text from that file." }); return; }
+        sendJson(res, 200, { text, filename: filePart.filename, chars: text.length });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
     // ── Automation Hub · SOP Agent — generate manifests from a requirement ──
     if (req.method === "POST" && url.pathname === "/api/automation/generate-manifest") {
       if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
