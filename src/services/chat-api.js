@@ -19021,6 +19021,55 @@ Be specific to THIS control. Keep each field under 240 characters.`;
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/automation/generate-manifest — SOP Agent. Turns a plain-language
+// requirement (or pasted requirement doc text) into a complete, deployable set
+// of Kubernetes/OpenShift manifests. The caller then reviews, dry-runs and
+// deploys to a chosen cluster via /api/automation/deploy.
+// ---------------------------------------------------------------------------
+export async function handleGenerateManifestAPI(req, res) {
+  try {
+    const body = await readBody(req);
+    const provider = (body.llmOpts && body.llmOpts.provider) || LLM_PROVIDER;
+    const requirement = String(body.requirement || "").slice(0, 8000);
+    const namespace = body.namespace || "";
+    if (!provider || provider === "none") return json(res, 200, { error: "No LLM provider configured. Configure one in Settings to use the SOP Agent." });
+    if (!requirement.trim()) return json(res, 200, { error: "Provide a requirement to generate manifests from." });
+    const prompt = `You are a Kubernetes/OpenShift deployment expert. From the user's requirement below, generate a COMPLETE, production-ready set of manifests to deploy the application.
+
+REQUIREMENT:
+${requirement}
+
+${namespace ? `Target namespace: ${namespace}` : "Choose a sensible namespace name."}
+
+Return ONLY valid JSON (no markdown) with this exact shape:
+{
+  "appName": "short-dns-safe-name",
+  "namespace": "namespace-to-use",
+  "image": "container image to run (use a real public image if the requirement implies one, e.g. nginx, node, python; otherwise a clear placeholder like registry/app:tag)",
+  "summary": "one paragraph describing what will be deployed",
+  "manifests": [ <full Kubernetes manifest objects: at minimum a Deployment; add a Service, and a Route if it is web-facing; add a ConfigMap if configuration is needed> ],
+  "notes": "assumptions you made and what the user should review before deploying"
+}
+Best practices: set resource requests/limits, readiness & liveness probes, sensible labels and selectors, a Service, and a Route for web apps. Default replicas to 1 unless specified. Every manifest must include metadata.name and metadata.namespace.`;
+    const r = await callLLM({
+      messages: [{ role: "user", content: prompt }],
+      system: "You are a precise Kubernetes manifest generator. Output only a single valid JSON object, no markdown fences.",
+      maxTokens: 2600, temperature: 0.2,
+      provider: body.llmOpts?.provider, apiUrl: body.llmOpts?.apiUrl, apiKey: body.llmOpts?.apiKey,
+      model: body.llmOpts?.model, azureDeployment: body.llmOpts?.azureDeployment, azureApiVersion: body.llmOpts?.azureApiVersion,
+    });
+    let out = null;
+    try { let t = (r.text || "").trim(); const m = t.match(/\{[\s\S]*\}/); if (m) t = m[0]; out = JSON.parse(t); }
+    catch { return json(res, 200, { error: "Failed to parse AI response into manifests" }); }
+    if (!out || !Array.isArray(out.manifests) || out.manifests.length === 0) return json(res, 200, { error: "No manifests were generated — try a more specific requirement." });
+    json(res, 200, { ...out, provider: r.provider || provider });
+  } catch (err) {
+    console.error("Generate manifest error:", err);
+    json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/ai/image-remediation — AI generates a concrete fix for ONE image
 // Returns recommended replacement image/tag, the exact oc command to apply it,
 // an optional Dockerfile patch, and step-by-step remediation. Closes the loop

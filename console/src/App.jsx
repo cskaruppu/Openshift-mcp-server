@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "./api/client";
 import { LoginOverlay } from "./components/LoginOverlay";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { AutomationHub } from "./components/AutomationHub";
 import { UserManagementPanel } from "./components/UserManagementPanel";
 import { AgentRegistryModal } from "./components/AgentRegistryModal";
 import { ToastStack } from "./components/ToastStack";
@@ -63,6 +64,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [userMgmtOpen, setUserMgmtOpen] = useState(false);
   const [agentRegOpen, setAgentRegOpen] = useState(false);
+  const [automationOpen, setAutomationOpen] = useState(false);
   const [inClusterPicker, setInClusterPicker] = useState(true);
   const { kbdOpen, setKbdOpen } = useKeyboardShortcuts();
 
@@ -208,6 +210,9 @@ export default function App() {
                 <span className="conn-dot connected" />
                 <span className="conn-label">Connected</span>
               </div>
+              <button className="icon-btn" onClick={() => setAutomationOpen(true)} title="Automation Hub — SOP & ServiceNow agents">
+                &#x1F916;
+              </button>
               <button className="icon-btn" onClick={() => { showToast("Refreshing...", "ok"); window.location.reload(); }} title="Refresh">
                 &#x21bb;
               </button>
@@ -258,6 +263,7 @@ export default function App() {
       <AgentRegistryModal open={agentRegOpen} onClose={handleCloseAgentRegistry} />
       <UserManagementPanel open={userMgmtOpen} onClose={handleCloseUserMgmt} />
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <AutomationHub open={automationOpen} onClose={() => setAutomationOpen(false)} />
       <KbdOverlay open={kbdOpen} onClose={() => setKbdOpen(false)} />
       <ToastStack />
     </ErrorBoundary>

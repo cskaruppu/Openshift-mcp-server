@@ -81,7 +81,7 @@ import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
 import { callLLM } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport } from "./services/upgrade-report.js";
-import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, handleComplianceImpactAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
+import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, handleComplianceImpactAPI, handleGenerateManifestAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import {
   listActions,
   getAction,
@@ -97,6 +97,7 @@ import {
   attachFile as snowAttachFile,
   resolveIncident as snowResolveIncident,
   updateRecord as snowUpdateRecord,
+  queryRecords as snowQueryRecords,
 } from "./utils/servicenow-client.js";
 import {
   listChats,
@@ -4165,6 +4166,90 @@ spec:
       // (e.g. selected cluster has no live bridge) — never leave the client
       // parsing an empty response ("Unexpected end of JSON input").
       if (!res.headersSent) sendJson(res, 200, { findings: [], error: "AI analysis unavailable for the selected cluster context." });
+      return;
+    }
+
+    // ── Automation Hub · SOP Agent — generate manifests from a requirement ──
+    if (req.method === "POST" && url.pathname === "/api/automation/generate-manifest") {
+      if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
+      try { await handleGenerateManifestAPI(req, res); }
+      catch (e) { if (!res.headersSent) sendJson(res, 500, { error: e.message }); }
+      if (!res.headersSent) sendJson(res, 200, { error: "Manifest generation unavailable." });
+      return;
+    }
+
+    // ── Automation Hub · SOP Agent — deploy manifests to a chosen cluster ──
+    if (req.method === "POST" && url.pathname === "/api/automation/deploy") {
+      if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
+      try {
+        const body = await readJsonBody(req);
+        const manifests = Array.isArray(body.manifests) ? body.manifests : [];
+        const dryRun = body.dryRun !== false;
+        const nsDefault = body.namespace || "";
+        if (manifests.length === 0) { sendJson(res, 200, { error: "No manifests to deploy." }); return; }
+        const kindPath = (kind, ns) => ({
+          deployment: `/apis/apps/v1/namespaces/${ns}/deployments`,
+          statefulset: `/apis/apps/v1/namespaces/${ns}/statefulsets`,
+          daemonset: `/apis/apps/v1/namespaces/${ns}/daemonsets`,
+          service: `/api/v1/namespaces/${ns}/services`,
+          route: `/apis/route.openshift.io/v1/namespaces/${ns}/routes`,
+          ingress: `/apis/networking.k8s.io/v1/namespaces/${ns}/ingresses`,
+          configmap: `/api/v1/namespaces/${ns}/configmaps`,
+          secret: `/api/v1/namespaces/${ns}/secrets`,
+          persistentvolumeclaim: `/api/v1/namespaces/${ns}/persistentvolumeclaims`,
+          serviceaccount: `/api/v1/namespaces/${ns}/serviceaccounts`,
+          horizontalpodautoscaler: `/apis/autoscaling/v2/namespaces/${ns}/horizontalpodautoscalers`,
+        }[(kind || "").toLowerCase()] || null);
+        const result = await withClusterContext(url, async () => {
+          const applied = [], failed = [];
+          const nss = [...new Set(manifests.map(m => m.metadata?.namespace || nsDefault).filter(Boolean))];
+          // Ensure target namespaces exist (real apply only)
+          if (!dryRun) for (const ns of nss) {
+            try { await ocpPost(`/api/v1/namespaces`, { apiVersion: "v1", kind: "Namespace", metadata: { name: ns } }); } catch { /* exists */ }
+          }
+          for (const m of manifests) {
+            const ns = (m.metadata && (m.metadata.namespace || nsDefault)) || nsDefault;
+            if (m.metadata) m.metadata.namespace = ns;
+            const path = kindPath(m.kind, ns);
+            if (!path) { failed.push({ kind: m.kind, error: "unsupported kind" }); continue; }
+            const q = dryRun ? "?dryRun=All" : "";
+            try { await ocpPost(path + q, m); applied.push(`${m.kind}/${m.metadata?.name}`); }
+            catch (e) {
+              if (!dryRun && m.metadata?.name) {
+                try { await ocpPatch(`${path}/${m.metadata.name}`, m, "application/merge-patch+json"); applied.push(`${m.kind}/${m.metadata.name} (updated)`); }
+                catch (e2) { failed.push({ kind: m.kind, name: m.metadata?.name, error: e2.message || e.message }); }
+              } else failed.push({ kind: m.kind, name: m.metadata?.name, error: e.message });
+            }
+          }
+          return { dryRun, applied, failed, namespaces: nss };
+        });
+        if (result === null) { sendJson(res, 200, { error: "Selected cluster is not reachable for deployment." }); return; }
+        sendJson(res, 200, result);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── Automation Hub · ServiceNow Agent — list platform incidents ──
+    if (req.method === "GET" && url.pathname === "/api/servicenow/incidents") {
+      try {
+        const limit = Math.min(parseInt(url.searchParams.get("limit") || "25", 10), 100);
+        let incidents = [], source = "servicenow", note = null;
+        try {
+          const recs = await snowQueryRecords("incident", "active=true^ORDERBYDESCsys_created_on", limit);
+          const grab = (r, s) => { const m = `${r.short_description || ""} ${r.description || ""} ${r.work_notes || ""} ${r.comments || ""}`.match(s); return m ? m[1].trim() : null; };
+          incidents = (recs || []).map(r => ({
+            sysId: r.sys_id, number: r.number,
+            shortDescription: r.short_description || "(no summary)",
+            description: (r.description || "").slice(0, 600),
+            severity: r.severity || r.urgency || r.priority || "—",
+            state: r.state, createdOn: r.sys_created_on || r.opened_at,
+            cluster: grab(r, /cluster[:\s]+([a-zA-Z0-9._-]+)/i) || grab(r, /"?cluster"?\s*[:=]\s*"?([a-zA-Z0-9._-]+)/i),
+            namespace: grab(r, /namespace[:\s]+([a-z0-9-]+)/i),
+            resource: grab(r, /(?:pod|deployment|workload)[:\s]+([a-z0-9.\/-]+)/i),
+          }));
+        } catch (e) { source = "unavailable"; note = e.message; }
+        sendJson(res, 200, { source, count: incidents.length, incidents, note });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }
 
