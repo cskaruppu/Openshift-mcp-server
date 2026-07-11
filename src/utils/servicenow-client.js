@@ -37,6 +37,22 @@ function authHeader() {
   return `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
 }
 
+// On an internal/proxied cluster, egress to the SaaS ServiceNow instance must go
+// through the corporate proxy. Node's global fetch ignores HTTPS_PROXY unless we
+// pass an undici ProxyAgent as the dispatcher. Resolved once and cached.
+let _snowDispatcher = undefined; // undefined = unresolved, null = no proxy
+async function getSnowDispatcher() {
+  if (_snowDispatcher !== undefined) return _snowDispatcher;
+  const proxy = process.env.SERVICENOW_PROXY || process.env.HTTPS_PROXY || process.env.https_proxy || "";
+  if (!proxy) { _snowDispatcher = null; return null; }
+  try {
+    const { ProxyAgent } = await import("undici");
+    _snowDispatcher = new ProxyAgent(proxy);
+    console.log(`[servicenow] Egress via proxy ${proxy.replace(/\/\/[^@]*@/, "//***@")}`);
+  } catch (e) { console.warn("[servicenow] Proxy configured but undici ProxyAgent unavailable:", e.message); _snowDispatcher = null; }
+  return _snowDispatcher;
+}
+
 export async function snowFetch(path, options = {}) {
   const { instance } = getConfig();
   if (!instance) {
@@ -46,10 +62,12 @@ export async function snowFetch(path, options = {}) {
   const timeoutMs = options.timeoutMs || 15000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const dispatcher = await getSnowDispatcher();
   let resp;
   try {
     resp = await fetch(url, {
       ...options,
+      ...(dispatcher ? { dispatcher } : {}),
       signal: controller.signal,
       headers: {
         Authorization: authHeader(),

@@ -39,24 +39,27 @@ export function AutomationHub({ open, onClose }) {
   if (!open) return null;
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,14,25,0.55)", backdropFilter: "blur(3px)", zIndex: 1000, display: "flex", justifyContent: "flex-end" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(720px, 96vw)", height: "100%", background: "var(--bg, #fff)", borderLeft: "1px solid var(--border, #e4e8f1)", boxShadow: "-8px 0 40px rgba(0,0,0,0.2)", display: "flex", flexDirection: "column" }}>
-        {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 20px", borderBottom: "1px solid var(--border,#e4e8f1)" }}>
-          <span style={{ fontSize: "1.3rem" }}>🤖</span>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,14,25,0.62)", backdropFilter: "blur(7px)", WebkitBackdropFilter: "blur(7px)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", animation: "ah-fade .16s ease" }}>
+      <style>{`@keyframes ah-fade{from{opacity:0}to{opacity:1}}@keyframes ah-pop{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}`}</style>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(780px, 96vw)", maxHeight: "88vh", background: "var(--bg, #fff)", border: "1px solid var(--border, #e4e8f1)", borderRadius: 18, boxShadow: "0 24px 70px rgba(0,0,0,0.4)", display: "flex", flexDirection: "column", overflow: "hidden", animation: "ah-pop .2s cubic-bezier(.2,.7,.3,1)" }}>
+        {/* Header with gradient accent */}
+        <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "18px 22px", borderBottom: "1px solid var(--border,#e4e8f1)", background: "linear-gradient(90deg, rgba(61,90,254,0.07), rgba(14,165,160,0.05))" }}>
+          <span style={{ width: 40, height: 40, borderRadius: 11, background: "linear-gradient(135deg,#3d5afe,#7a3dff 55%,#0ea5a0)", display: "grid", placeItems: "center", fontSize: "1.25rem", boxShadow: "0 6px 16px rgba(61,90,254,0.35)" }}>🤖</span>
           <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 800, fontSize: "1.05rem", color: "var(--fg,#151a29)" }}>Automation Hub</div>
-            <div style={{ fontSize: "0.78rem", color: "var(--muted,#5a6373)" }}>Agent-driven deployment & incident remediation</div>
+            <div style={{ fontWeight: 800, fontSize: "1.12rem", color: "var(--fg,#151a29)", letterSpacing: "-0.01em" }}>Automation Hub</div>
+            <div style={{ fontSize: "0.78rem", color: "var(--muted,#5a6373)" }}>Fleet-wide agent-driven deployment &amp; incident remediation</div>
           </div>
-          <button onClick={onClose} style={{ border: "none", background: "transparent", fontSize: "1.4rem", cursor: "pointer", color: "var(--muted,#5a6373)" }}>×</button>
+          <button onClick={onClose} title="Close" style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", fontSize: "1.15rem", cursor: "pointer", color: "var(--muted,#5a6373)", lineHeight: 1 }}>×</button>
         </div>
-        {/* Agent tabs */}
-        <div style={{ display: "flex", gap: 8, padding: "12px 20px 0" }}>
-          {[["sop", "🧩 SOP Agent"], ["snow", "🎫 ServiceNow Agent"]].map(([k, label]) => (
-            <button key={k} onClick={() => setAgent(k)} style={{ padding: "8px 16px", borderRadius: "9px 9px 0 0", border: "1px solid var(--border,#e4e8f1)", borderBottom: agent === k ? "2px solid #3d5afe" : "1px solid var(--border,#e4e8f1)", background: agent === k ? "var(--card-bg,#f6f8fc)" : "transparent", fontWeight: 700, fontSize: "0.86rem", color: agent === k ? "#3d5afe" : "var(--muted,#5a6373)", cursor: "pointer" }}>{label}</button>
-          ))}
+        {/* Segmented agent switcher */}
+        <div style={{ padding: "16px 22px 0" }}>
+          <div style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 11, background: "var(--card-bg,#f0f2f8)", border: "1px solid var(--border,#e4e8f1)" }}>
+            {[["sop", "🧩 SOP Agent"], ["snow", "🎫 ServiceNow Agent"]].map(([k, label]) => (
+              <button key={k} onClick={() => setAgent(k)} style={{ padding: "8px 18px", borderRadius: 8, border: "none", background: agent === k ? "linear-gradient(135deg,#3d5afe,#5b6cff)" : "transparent", fontWeight: 700, fontSize: "0.86rem", color: agent === k ? "#fff" : "var(--muted,#5a6373)", cursor: "pointer", boxShadow: agent === k ? "0 3px 10px rgba(61,90,254,0.3)" : "none", transition: "all .15s" }}>{label}</button>
+            ))}
+          </div>
         </div>
-        <div style={{ flex: 1, overflow: "auto", padding: "18px 20px" }}>
+        <div style={{ flex: 1, overflow: "auto", padding: "18px 22px 24px" }}>
           {agent === "sop" ? <SopAgent clusters={clusters} activeCluster={activeCluster} /> : <SnowAgent activeCluster={activeCluster} />}
         </div>
       </div>
