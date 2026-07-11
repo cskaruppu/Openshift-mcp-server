@@ -919,7 +919,7 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
 
 
 // ─── Main View ──────────────────────────────────────────────────────────
-export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, onOpenAgentRegistry, onOpenUserMgmt }) {
+export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, onOpenAgentRegistry, onOpenUserMgmt, onOpenAutomation }) {
   const user = useAuthStore((s) => s.user);
   const theme = useThemeStore((s) => s.theme);
   const toggleTheme = useThemeStore((s) => s.toggle);
@@ -996,6 +996,14 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
         </div>
         <div className="cp-user">
           <div className="cp-header-actions">
+            {onOpenAutomation && (
+              <button className="cp-icon-btn" onClick={onOpenAutomation} title="Automation Hub — SOP & ServiceNow agents (fleet-wide)">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="4" y="8" width="16" height="11" rx="2" /><path d="M12 8V5" /><circle cx="12" cy="4" r="1.2" />
+                  <circle cx="9" cy="13" r="1.1" /><circle cx="15" cy="13" r="1.1" /><line x1="8.5" y1="17" x2="15.5" y2="17" />
+                </svg>
+              </button>
+            )}
             <button className="cp-icon-btn agents-icon-btn" onClick={onOpenAgentRegistry} title="Agent Registry">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="7" r="3" /><circle cx="5" cy="18" r="2.5" /><circle cx="19" cy="18" r="2.5" />

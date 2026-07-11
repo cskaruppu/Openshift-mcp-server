@@ -175,6 +175,7 @@ export default function App() {
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenAgentRegistry={handleOpenAgentRegistry}
           onOpenUserMgmt={handleOpenUserMgmt}
+          onOpenAutomation={() => setAutomationOpen(true)}
         />
       )}
       {authenticated && !inClusterPicker && (
@@ -210,9 +211,6 @@ export default function App() {
                 <span className="conn-dot connected" />
                 <span className="conn-label">Connected</span>
               </div>
-              <button className="icon-btn" onClick={() => setAutomationOpen(true)} title="Automation Hub — SOP & ServiceNow agents">
-                &#x1F916;
-              </button>
               <button className="icon-btn" onClick={() => { showToast("Refreshing...", "ok"); window.location.reload(); }} title="Refresh">
                 &#x21bb;
               </button>
