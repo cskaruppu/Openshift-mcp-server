@@ -4235,9 +4235,11 @@ spec:
         const limit = Math.min(parseInt(url.searchParams.get("limit") || "25", 10), 100);
         let incidents = [], source = "servicenow", note = null;
         try {
-          const recs = await snowQueryRecords("incident", "active=true^ORDERBYDESCsys_created_on", limit);
+          const recsRaw = await snowQueryRecords("incident", "active=true^ORDERBYDESCsys_created_on", limit);
+          // ServiceNow Table API returns { result: [...] }; be tolerant of either shape.
+          const recs = Array.isArray(recsRaw) ? recsRaw : (recsRaw?.result || []);
           const grab = (r, s) => { const m = `${r.short_description || ""} ${r.description || ""} ${r.work_notes || ""} ${r.comments || ""}`.match(s); return m ? m[1].trim() : null; };
-          incidents = (recs || []).map(r => ({
+          incidents = recs.map(r => ({
             sysId: r.sys_id, number: r.number,
             shortDescription: r.short_description || "(no summary)",
             description: (r.description || "").slice(0, 600),
