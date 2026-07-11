@@ -130,10 +130,10 @@ function SopAgent({ clusters, activeCluster }) {
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 9, border: "1px dashed #3d5afe", background: "rgba(61,90,254,0.06)", color: "#3d5afe", fontWeight: 700, fontSize: "0.84rem", cursor: uploading ? "wait" : "pointer" }}>
           {uploading ? "Reading…" : "📎 Upload requirement doc"}
-          <input type="file" accept=".docx,.txt,.md,.markdown,.yaml,.yml,.json,.csv,.log" hidden disabled={uploading} onChange={onUpload} />
+          <input type="file" accept=".pdf,.docx,.txt,.md,.markdown,.yaml,.yml,.json,.csv,.log" hidden disabled={uploading} onChange={onUpload} />
         </label>
         {uploadedName && <span style={{ fontSize: "0.8rem", color: "var(--muted,#5a6373)" }}>📄 {uploadedName} loaded ✓</span>}
-        <span style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)" }}>.docx / .txt / .md supported</span>
+        <span style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)" }}>.pdf / .docx / .txt / .md supported</span>
       </div>
       <textarea value={requirement} onChange={(e) => setRequirement(e.target.value)} rows={7}
         placeholder="e.g. Deploy an nginx web app with 2 replicas, expose it via a Route, and set 256Mi memory limit."
@@ -180,6 +180,21 @@ function SnowAgent({ activeCluster }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [rca, setRca] = useState({}); // { [sysId]: { loading, data, error } }
+  const [fix, setFix] = useState({}); // { [sysId]: { phase, data, error } }
+
+  const runFix = async (inc, apply) => {
+    setFix((p) => ({ ...p, [inc.sysId]: { phase: apply ? "applying" : "checking" } }));
+    try {
+      const res = await fetch(clusterUrl("/api/servicenow/incidents/fix", inc.cluster || activeCluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sysId: inc.sysId, namespace: inc.namespace, resource: inc.resource, dryRun: !apply }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (d.error) throw new Error(d.error);
+      setFix((p) => ({ ...p, [inc.sysId]: { phase: apply ? "done" : "preview", data: d } }));
+      if (apply) showToast(`Fix applied${d.incidentClosed?.success ? " · incident closed" : ""}`, "ok");
+    } catch (e) { setFix((p) => ({ ...p, [inc.sysId]: { phase: "error", error: e.message } })); showToast("Fix failed: " + e.message, "err"); }
+  };
 
   const fetchIncidents = useCallback(async () => {
     setLoading(true);
@@ -226,6 +241,9 @@ function SnowAgent({ activeCluster }) {
             <div style={{ fontSize: "0.88rem", margin: "6px 0", color: "var(--fg,#151a29)" }}>{inc.shortDescription}</div>
             <div style={{ display: "flex", gap: 8 }}>
               <button onClick={() => runRca(inc)} disabled={r.loading || !inc.namespace} title={inc.namespace ? "" : "No namespace/resource on this incident"} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid rgba(124,58,237,0.4)", background: "rgba(124,58,237,0.1)", color: "#7c3aed", fontWeight: 700, fontSize: "0.8rem", cursor: inc.namespace ? "pointer" : "not-allowed", opacity: inc.namespace ? 1 : 0.5 }}>{r.loading ? "Analyzing…" : "🔎 Run RCA"}</button>
+              {(() => { const f = fix[inc.sysId] || {}; return (
+                <button onClick={() => runFix(inc, false)} disabled={f.phase === "checking" || f.phase === "applying" || !inc.namespace} title={inc.namespace ? "Fix (rolling restart) + close incident" : "No namespace/resource on this incident"} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid rgba(14,165,160,0.4)", background: "rgba(14,165,160,0.1)", color: "#0ea5a0", fontWeight: 700, fontSize: "0.8rem", cursor: inc.namespace ? "pointer" : "not-allowed", opacity: inc.namespace ? 1 : 0.5 }}>{f.phase === "checking" ? "Checking…" : f.phase === "applying" ? "Applying…" : "⚡ Fix"}</button>
+              ); })()}
             </div>
             {r.error && <div style={{ marginTop: 8, color: "#dc2626", fontSize: "0.82rem" }}>RCA: {r.error}</div>}
             {r.data && (
@@ -235,6 +253,22 @@ function SnowAgent({ activeCluster }) {
                 {r.data.summary && !r.data.rootCause && <p style={{ margin: 0 }}>{r.data.summary}</p>}
               </div>
             )}
+            {(() => {
+              const f = fix[inc.sysId] || {};
+              if (f.phase === "preview" && f.data) return (
+                <div style={{ marginTop: 10, borderLeft: "3px solid #0ea5a0", paddingLeft: 10, fontSize: "0.84rem" }}>
+                  <b>Planned fix (dry-run):</b> {f.data.action}
+                  <div><button onClick={() => runFix(inc, true)} style={{ marginTop: 6, padding: "6px 14px", borderRadius: 7, border: "none", background: "#0ea5a0", color: "#fff", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>✓ Apply Fix & Close Incident</button></div>
+                </div>
+              );
+              if (f.phase === "done" && f.data) return (
+                <div style={{ marginTop: 10, borderLeft: "3px solid #16a34a", paddingLeft: 10, fontSize: "0.84rem" }}>
+                  <b>✓ Applied:</b> {f.data.action}.{f.data.incidentClosed?.success ? " Incident closed in ServiceNow." : f.data.incidentClosed?.detailsSaved ? " Details saved — close pending." : ""}
+                </div>
+              );
+              if (f.phase === "error") return <div style={{ marginTop: 8, color: "#dc2626", fontSize: "0.82rem" }}>Fix: {f.error}</div>;
+              return null;
+            })()}
           </div>
         );
       })}

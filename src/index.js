@@ -4186,8 +4186,16 @@ spec:
         if (name.endsWith(".docx")) {
           const parsed = await parseDocx(filePart.data);
           text = (parsed.sections || []).map((s) => `${s.heading || ""}\n${s.text || s.content || ""}`).join("\n") || parsed.text || "";
-        } else if (name.endsWith(".pdf") || name.endsWith(".doc")) {
-          sendJson(res, 200, { error: "PDF/.doc aren't supported yet — upload .docx, .txt or .md, or paste the text." });
+        } else if (name.endsWith(".pdf")) {
+          try {
+            // Import the lib path directly — pdf-parse's index.js has a debug
+            // harness that throws under ESM.
+            const pdf = (await import("pdf-parse/lib/pdf-parse.js")).default;
+            const data = await pdf(filePart.data);
+            text = data?.text || "";
+          } catch (e) { sendJson(res, 200, { error: "Could not read the PDF: " + e.message + ". Try a text-based PDF, .docx, or paste the text." }); return; }
+        } else if (name.endsWith(".doc")) {
+          sendJson(res, 200, { error: "Legacy .doc isn't supported — save as .docx or .pdf, or paste the text." });
           return;
         } else {
           text = filePart.data.toString("utf8");
@@ -4281,6 +4289,56 @@ spec:
           }));
         } catch (e) { source = "unavailable"; note = e.message; }
         sendJson(res, 200, { source, count: incidents.length, incidents, note });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── Automation Hub · ServiceNow Agent — one-click fix + close incident ──
+    // Safe, universal remediation: rolling-restart the affected workload on its
+    // cluster, then close the incident in ServiceNow. Dry-run by default.
+    if (req.method === "POST" && url.pathname === "/api/servicenow/incidents/fix") {
+      if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
+      try {
+        const body = await readJsonBody(req);
+        const { sysId, namespace, resource, closeNotes } = body;
+        const dryRun = body.dryRun !== false;
+        if (!namespace || !resource) { sendJson(res, 200, { error: "This incident has no namespace/workload to fix automatically — resolve it manually." }); return; }
+        const podName = String(resource).split("/")[0];
+        const result = await withClusterContext(url, async () => {
+          let workloadName = null, kind = "deployment";
+          try {
+            const pod = await ocpGet(`/api/v1/namespaces/${namespace}/pods/${podName}`);
+            const refs = pod.metadata?.ownerReferences || [];
+            const rsRef = refs.find(o => o.kind === "ReplicaSet");
+            if (rsRef) {
+              const rs = await ocpGet(`/apis/apps/v1/namespaces/${namespace}/replicasets/${rsRef.name}`);
+              const depRef = (rs.metadata?.ownerReferences || []).find(o => o.kind === "Deployment");
+              if (depRef) { workloadName = depRef.name; kind = "deployment"; }
+            }
+            if (!workloadName) {
+              const other = refs.find(o => ["StatefulSet", "DaemonSet"].includes(o.kind));
+              if (other) { workloadName = other.name; kind = other.kind.toLowerCase(); }
+            }
+          } catch (e) { return { error: `Could not resolve the workload for pod ${podName}: ${e.message}` }; }
+          if (!workloadName) return { error: `Could not find the owning workload for pod ${podName} — fix manually.` };
+          const plural = kind === "statefulset" ? "statefulsets" : kind === "daemonset" ? "daemonsets" : "deployments";
+          const path = `/apis/apps/v1/namespaces/${namespace}/${plural}/${workloadName}`;
+          const action = `Rolling restart ${kind}/${workloadName} in namespace ${namespace}`;
+          if (dryRun) return { dryRun: true, action, workload: `${kind}/${workloadName}`, namespace };
+          const patch = { spec: { template: { metadata: { annotations: { "kubectl.kubernetes.io/restartedAt": new Date().toISOString() } } } } };
+          await ocpPatch(path, patch, "application/strategic-merge-patch+json");
+          return { dryRun: false, action, workload: `${kind}/${workloadName}`, namespace };
+        });
+        if (result === null) { sendJson(res, 200, { error: "Incident's cluster is not reachable." }); return; }
+        if (result.error) { sendJson(res, 200, { error: result.error }); return; }
+        let incidentClosed = null;
+        if (result.dryRun === false && sysId) {
+          try {
+            const c = await snowResolveIncident(sysId, { closeNotes: closeNotes || `Resolved by TCS Agentic AI — ${result.action}`, resolution: null });
+            incidentClosed = { success: c?.closed === true, detailsSaved: c?.detailsSaved === true, closeError: c?.closeError || null };
+          } catch (e) { incidentClosed = { success: false, error: e.message }; }
+        }
+        sendJson(res, 200, { ...result, incidentClosed });
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }
