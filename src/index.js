@@ -6625,6 +6625,43 @@ spec:
       return;
     }
 
+    // Post-deploy CIS verification scoped to ONE namespace. Runs the full CIS
+    // scanner on the (selected) cluster and returns only the findings for the
+    // requested namespace — the "closed-loop" security check for the App
+    // Deployment Agent right after it deploys.
+    if (req.method === "POST" && url.pathname === "/api/compliance/scan-namespace") {
+      if (enforceRateLimit(req, res, { burst: 4, refillPerSec: 0.1 })) return;
+      try {
+        const body = await readJsonBody(req);
+        const ns = String(body.namespace || "").trim();
+        if (!ns) { sendJson(res, 200, { error: "namespace is required" }); return; }
+        const scan = await withClusterContext(url, async () => runComplianceScan({}));
+        if (scan === null) { sendJson(res, 200, { error: "Selected cluster is not reachable for scanning." }); return; }
+        const nsFindings = (scan.findings || []).filter((f) => f.namespace === ns);
+        const issues = nsFindings.filter((f) => f.status && f.status !== "PASS");
+        // CIS scanner taxonomy is critical / warning / info.
+        const sev = { critical: 0, warning: 0, info: 0 };
+        for (const f of issues) { const s = String(f.severity || "").toLowerCase(); if (s in sev) sev[s]++; }
+        const failedControls = [...new Set(issues.map((f) => f.id))];
+        const clean = issues.length === 0;
+        const grade = clean ? "A" : sev.critical ? "F" : sev.warning ? "C" : "B";
+        sendJson(res, 200, {
+          namespace: ns,
+          scannedAt: scan.scanTime || scan.timestamp || null,
+          clean,
+          grade,
+          issueCount: issues.length,
+          severity: sev,
+          failedControls,
+          findings: issues.slice(0, 40).map((f) => ({
+            id: f.id, title: f.title, severity: f.severity, status: f.status,
+            resource: f.resource, remediation: f.remediation,
+          })),
+        });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
     // CIS remediation — every control returns a guided plan (dry-run) with the
     // exact fix (manifest/command). Controls with a SAFE, namespace-scoped fix
     // (type "auto") can also be applied one-click → re-scan → audit-log.

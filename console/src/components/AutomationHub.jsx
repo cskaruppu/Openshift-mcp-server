@@ -79,6 +79,7 @@ function SopAgent({ clusters, activeCluster }) {
   const [deploy, setDeploy] = useState(null); // { phase, result }
   const [uploading, setUploading] = useState(false);
   const [uploadedName, setUploadedName] = useState(null);
+  const [verify, setVerify] = useState(null); // { phase, cis, image, error }
 
   const onUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -124,8 +125,30 @@ function SopAgent({ clusters, activeCluster }) {
       const d = await res.json().catch(() => ({}));
       if (d.error) throw new Error(d.error);
       setDeploy({ phase: "done", dryRun, result: d });
+      setVerify(null);
       showToast(dryRun ? "Dry-run complete" : `Deployed ${d.applied?.length || 0} object(s)`, d.failed?.length ? "err" : "ok");
     } catch (e) { setDeploy({ phase: "error", error: e.message }); showToast("Deploy failed: " + e.message, "err"); }
+  };
+
+  // Closed-loop security check: run the CIS scan + image vulnerability scan
+  // against the namespace we just deployed to, on the same cluster.
+  const runVerify = async () => {
+    const ns = namespace || gen?.namespace;
+    if (!ns) return;
+    setVerify({ phase: "running" });
+    try {
+      const [cisRes, imgRes] = await Promise.all([
+        fetch(clusterUrl("/api/compliance/scan-namespace", cluster), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ namespace: ns }),
+        }).then((r) => r.json()).catch((e) => ({ error: e.message })),
+        fetch(clusterUrl(`/api/dashboard/image-vulns?namespace=${encodeURIComponent(ns)}`, cluster))
+          .then((r) => r.json()).catch((e) => ({ error: e.message })),
+      ]);
+      setVerify({ phase: "done", cis: cisRes, image: imgRes });
+      const crit = (cisRes?.severity?.critical || 0) + (imgRes?.critical || 0);
+      showToast(crit ? `Verify: ${crit} critical finding(s)` : "Verify: no critical findings", crit ? "err" : "ok");
+    } catch (e) { setVerify({ phase: "error", error: e.message }); showToast("Verify failed: " + e.message, "err"); }
   };
 
   return (
@@ -200,6 +223,53 @@ function SopAgent({ clusters, activeCluster }) {
             </div>
           )}
           {deploy?.phase === "error" && <div style={{ marginTop: 8, color: "#dc2626", fontSize: "0.84rem" }}>Deploy error: {deploy.error}</div>}
+
+          {/* Closed-loop security verification — only after a real deploy */}
+          {deploy?.phase === "done" && !deploy.dryRun && (
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed var(--border,#e4e8f1)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <button onClick={runVerify} disabled={verify?.phase === "running"} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "linear-gradient(135deg,#7c3aed,#3d5afe)", color: "#fff", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer", opacity: verify?.phase === "running" ? 0.7 : 1 }}>
+                  {verify?.phase === "running" ? "Scanning…" : "🔍 Verify security (CIS + image scan)"}
+                </button>
+                <span style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)" }}>Runs the CIS benchmark + image vulnerability scan on <b>{namespace || gen.namespace}</b></span>
+              </div>
+              {verify?.phase === "error" && <div style={{ marginTop: 8, color: "#dc2626", fontSize: "0.84rem" }}>Verify error: {verify.error}</div>}
+              {verify?.phase === "done" && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
+                  {/* CIS card */}
+                  <div style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, padding: 12, background: "var(--card-bg,#fff)" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontWeight: 800, fontSize: "0.82rem" }}>🛡 CIS Benchmark</span>
+                      {verify.cis?.error ? <span style={{ fontSize: "0.72rem", color: "#dc2626" }}>error</span> :
+                        <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: verify.cis?.clean ? "rgba(22,163,74,0.14)" : "rgba(220,38,38,0.12)", color: verify.cis?.clean ? "#16a34a" : "#dc2626" }}>{verify.cis?.clean ? "PASS · grade " + verify.cis.grade : (verify.cis?.issueCount || 0) + " issue(s)"}</span>}
+                    </div>
+                    {verify.cis?.error ? <div style={{ fontSize: "0.78rem", color: "#dc2626", marginTop: 6 }}>{verify.cis.error}</div> : (
+                      <>
+                        <div style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)", margin: "6px 0" }}>Critical {verify.cis?.severity?.critical || 0} · Warning {verify.cis?.severity?.warning || 0} · Info {verify.cis?.severity?.info || 0}</div>
+                        {(verify.cis?.findings || []).slice(0, 4).map((f, i) => <div key={i} style={{ fontSize: "0.74rem", color: "var(--fg,#151a29)", marginTop: 2 }}>• <b>{f.id}</b> {f.title}</div>)}
+                        {verify.cis?.clean && <div style={{ fontSize: "0.78rem", color: "#16a34a", marginTop: 4 }}>No CIS violations in this namespace ✓</div>}
+                      </>
+                    )}
+                  </div>
+                  {/* Image scan card */}
+                  <div style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, padding: 12, background: "var(--card-bg,#fff)" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontWeight: 800, fontSize: "0.82rem" }}>🐞 Image Vulnerabilities</span>
+                      {verify.image?.error ? <span style={{ fontSize: "0.72rem", color: "#dc2626" }}>error</span> :
+                        <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: "rgba(61,90,254,0.12)", color: "#3d5afe" }}>grade {verify.image?.grade || "?"}</span>}
+                    </div>
+                    {verify.image?.error ? <div style={{ fontSize: "0.78rem", color: "#dc2626", marginTop: 6 }}>{verify.image.error}</div> : (
+                      <>
+                        <div style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)", margin: "6px 0" }}>{verify.image?.totalImages || 0} image(s) · C {verify.image?.critical || 0} · H {verify.image?.high || 0} · M {verify.image?.medium || 0} · L {verify.image?.low || 0}</div>
+                        {verify.image?.scannerType && verify.image.scannerType !== "unknown" ? <div style={{ fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>scanner: {verify.image.scannerType}</div> : <div style={{ fontSize: "0.72rem", color: "#b45309" }}>No live scanner data yet — images may still be scanning.</div>}
+                        {(verify.image?.topImages || []).slice(0, 3).map((im, i) => <div key={i} style={{ fontSize: "0.74rem", marginTop: 2 }}>• {im.image} <span style={{ color: "#dc2626" }}>{im.critical ? im.critical + "C" : ""}</span> <span style={{ color: "#ea580c" }}>{im.high ? im.high + "H" : ""}</span></div>)}
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
