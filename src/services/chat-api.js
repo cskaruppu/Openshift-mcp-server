@@ -20,6 +20,7 @@
 import { gzipSync } from "node:zlib";
 import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
+import yaml from "js-yaml";
 import {
   ocpGet,
   ocpDelete,
@@ -19032,29 +19033,42 @@ export async function handleGenerateManifestAPI(req, res) {
     const provider = (body.llmOpts && body.llmOpts.provider) || LLM_PROVIDER;
     const requirement = String(body.requirement || "").slice(0, 8000);
     const namespace = body.namespace || "";
-    if (!provider || provider === "none") return json(res, 200, { error: "No LLM provider configured. Configure one in Settings to use the SOP Agent." });
+    if (!provider || provider === "none") return json(res, 200, { error: "No LLM provider configured. Configure one in Settings to use the App Deployment Agent." });
     if (!requirement.trim()) return json(res, 200, { error: "Provide a requirement to generate manifests from." });
-    const prompt = `You are a Kubernetes/OpenShift deployment expert. From the user's requirement below, generate a COMPLETE, production-ready set of manifests to deploy the application.
+    const prompt = `You are a senior Kubernetes/OpenShift platform architect. From the requirement below, generate a COMPLETE, PRODUCTION-GRADE, SECURITY-HARDENED set of manifests that follow GLOBAL INDUSTRY STANDARDS (CIS Kubernetes Benchmark + Pod Security Standards "restricted").
 
 REQUIREMENT:
 ${requirement}
 
-${namespace ? `Target namespace: ${namespace}` : "Choose a sensible namespace name."}
+${namespace ? `Target namespace: ${namespace}` : "Choose a sensible, DNS-safe namespace name derived from the app."}
 
-Return ONLY valid JSON (no markdown) with this exact shape:
+Return ONLY valid JSON (no markdown fences) with this exact shape:
 {
   "appName": "short-dns-safe-name",
   "namespace": "namespace-to-use",
-  "image": "container image to run (use a real public image if the requirement implies one, e.g. nginx, node, python; otherwise a clear placeholder like registry/app:tag)",
-  "summary": "one paragraph describing what will be deployed",
-  "manifests": [ <full Kubernetes manifest objects: at minimum a Deployment; add a Service, and a Route if it is web-facing; add a ConfigMap if configuration is needed> ],
-  "notes": "assumptions you made and what the user should review before deploying"
+  "image": "primary container image (use a real public image if implied, e.g. nginx, node, redis, postgres:16; otherwise a clear placeholder registry/app:tag — never :latest)",
+  "summary": "one paragraph describing what will be deployed and the standards applied",
+  "manifests": [ <full Kubernetes/OpenShift manifest objects, in apply order> ],
+  "securityApplied": ["short bullet list of the security controls you baked in"],
+  "monitoringApplied": ["short bullet list of the observability you enabled"],
+  "notes": "assumptions made and what the user should review/edit before deploying"
 }
-Best practices: set resource requests/limits, readiness & liveness probes, sensible labels and selectors, a Service, and a Route for web apps. Default replicas to 1 unless specified. Every manifest must include metadata.name and metadata.namespace.`;
+
+MANDATORY — include ALL of these when the requirement implies an app (and a DB/cache tier when mentioned):
+1. NAMESPACE ISOLATION: a Namespace object with pod-security labels (pod-security.kubernetes.io/enforce: restricted, audit, warn), a default-deny NetworkPolicy, plus targeted allow NetworkPolicies (router→web, web→db). Add a ResourceQuota and a LimitRange.
+2. RBAC (LEAST PRIVILEGE): a dedicated ServiceAccount per tier (never the default SA); a namespace-scoped Role and a RoleBinding. NEVER cluster-admin, NEVER wildcard verbs, NEVER ClusterRole/ClusterRoleBinding.
+3. SECURITY CONTEXT ("restricted") on EVERY pod spec: runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities.drop: ["ALL"], seccompProfile.type: RuntimeDefault, and readOnlyRootFilesystem: true where feasible. No privileged, no hostNetwork/hostPID/hostIPC, no hostPath.
+4. SECRETS: database/cache credentials MUST come from a Secret (reference via secretKeyRef / envFrom), never inline plaintext in the Deployment env.
+5. PERSISTENCE (PVC): add a PersistentVolumeClaim (ReadWriteOnce, sensible size) for any stateful tier (DB, cache with persistence) and mount it. Stateless tiers get NO PVC.
+6. MONITORING: add a ServiceMonitor (monitoring.coreos.com/v1) scraping a named "metrics" port, ensure the Service exposes that port, and set readiness + liveness probes on every workload.
+7. WORKLOAD: Deployment for stateless tiers; StatefulSet for databases. Set resource requests/limits, recommended labels (app.kubernetes.io/name, /part-of, /managed-by: app-deployment-agent), and matching selectors.
+8. EXPOSURE: ClusterIP Service for every tier; an OpenShift Route (edge TLS) for web-facing tiers only. Databases/caches are internal Services only — never routed.
+
+Every manifest MUST include apiVersion, kind, metadata.name and metadata.namespace. Default replicas to what the requirement states (else 2 for web, 1 for DB). Keep it deployable as-is.`;
     const r = await callLLM({
       messages: [{ role: "user", content: prompt }],
-      system: "You are a precise Kubernetes manifest generator. Output only a single valid JSON object, no markdown fences.",
-      maxTokens: 2600, temperature: 0.2,
+      system: "You are a precise, security-first Kubernetes manifest generator. Output only a single valid JSON object, no markdown fences. Every pod must satisfy Pod Security 'restricted'.",
+      maxTokens: 4000, temperature: 0.2,
       provider: body.llmOpts?.provider, apiUrl: body.llmOpts?.apiUrl, apiKey: body.llmOpts?.apiKey,
       model: body.llmOpts?.model, azureDeployment: body.llmOpts?.azureDeployment, azureApiVersion: body.llmOpts?.azureApiVersion,
     });
@@ -19062,7 +19076,15 @@ Best practices: set resource requests/limits, readiness & liveness probes, sensi
     try { let t = (r.text || "").trim(); const m = t.match(/\{[\s\S]*\}/); if (m) t = m[0]; out = JSON.parse(t); }
     catch { return json(res, 200, { error: "Failed to parse AI response into manifests" }); }
     if (!out || !Array.isArray(out.manifests) || out.manifests.length === 0) return json(res, 200, { error: "No manifests were generated — try a more specific requirement." });
-    json(res, 200, { ...out, provider: r.provider || provider });
+    // Serialize to editable multi-document YAML so the user can review/tweak
+    // values before deploying. The deploy endpoint accepts this YAML back.
+    let yamlText = "";
+    try {
+      yamlText = out.manifests
+        .map((m) => yaml.dump(m, { noRefs: true, lineWidth: 120 }).trimEnd())
+        .join("\n---\n") + "\n";
+    } catch { yamlText = ""; }
+    json(res, 200, { ...out, yaml: yamlText, provider: r.provider || provider });
   } catch (err) {
     console.error("Generate manifest error:", err);
     json(res, 500, { error: err.message });

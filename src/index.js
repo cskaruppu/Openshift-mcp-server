@@ -13,6 +13,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolve, extname } from "node:path";
 import { execFile } from "node:child_process";
 import { gzipSync } from "node:zlib";
+import yaml from "js-yaml";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -4221,10 +4222,18 @@ spec:
       if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
       try {
         const body = await readJsonBody(req);
-        const manifests = Array.isArray(body.manifests) ? body.manifests : [];
+        // Prefer edited YAML if the user tweaked it in the UI; fall back to the
+        // structured manifest objects from generation.
+        let manifests = Array.isArray(body.manifests) ? body.manifests : [];
+        if (typeof body.yaml === "string" && body.yaml.trim()) {
+          try {
+            manifests = yaml.loadAll(body.yaml).filter((d) => d && typeof d === "object" && d.kind);
+          } catch (e) { sendJson(res, 200, { error: "The edited YAML could not be parsed: " + e.message }); return; }
+        }
         const dryRun = body.dryRun !== false;
         const nsDefault = body.namespace || "";
         if (manifests.length === 0) { sendJson(res, 200, { error: "No manifests to deploy." }); return; }
+        // Namespaced resource → REST collection path.
         const kindPath = (kind, ns) => ({
           deployment: `/apis/apps/v1/namespaces/${ns}/deployments`,
           statefulset: `/apis/apps/v1/namespaces/${ns}/statefulsets`,
@@ -4237,20 +4246,56 @@ spec:
           persistentvolumeclaim: `/api/v1/namespaces/${ns}/persistentvolumeclaims`,
           serviceaccount: `/api/v1/namespaces/${ns}/serviceaccounts`,
           horizontalpodautoscaler: `/apis/autoscaling/v2/namespaces/${ns}/horizontalpodautoscalers`,
+          role: `/apis/rbac.authorization.k8s.io/v1/namespaces/${ns}/roles`,
+          rolebinding: `/apis/rbac.authorization.k8s.io/v1/namespaces/${ns}/rolebindings`,
+          networkpolicy: `/apis/networking.k8s.io/v1/namespaces/${ns}/networkpolicies`,
+          resourcequota: `/api/v1/namespaces/${ns}/resourcequotas`,
+          limitrange: `/api/v1/namespaces/${ns}/limitranges`,
+          servicemonitor: `/apis/monitoring.coreos.com/v1/namespaces/${ns}/servicemonitors`,
+          poddisruptionbudget: `/apis/policy/v1/namespaces/${ns}/poddisruptionbudgets`,
+          cronjob: `/apis/batch/v1/namespaces/${ns}/cronjobs`,
+          job: `/apis/batch/v1/namespaces/${ns}/jobs`,
         }[(kind || "").toLowerCase()] || null);
+        // Apply in a dependency-safe order: namespace → policy/rbac/config → workloads → exposure.
+        const applyRank = (kind) => ({
+          namespace: 0,
+          resourcequota: 1, limitrange: 1, networkpolicy: 1,
+          serviceaccount: 2, role: 3, rolebinding: 4,
+          secret: 2, configmap: 2, persistentvolumeclaim: 2,
+          deployment: 6, statefulset: 6, daemonset: 6, cronjob: 6, job: 6,
+          service: 5, route: 7, ingress: 7, horizontalpodautoscaler: 7,
+          servicemonitor: 7, poddisruptionbudget: 7,
+        }[(kind || "").toLowerCase()] ?? 5);
+        const ordered = manifests
+          .map((m, i) => ({ m, i }))
+          .sort((a, b) => applyRank(a.m.kind) - applyRank(b.m.kind) || a.i - b.i)
+          .map((x) => x.m);
         const result = await withClusterContext(url, async () => {
           const applied = [], failed = [];
-          const nss = [...new Set(manifests.map(m => m.metadata?.namespace || nsDefault).filter(Boolean))];
-          // Ensure target namespaces exist (real apply only)
+          const nss = [...new Set(manifests.map(m => (m.kind || "").toLowerCase() === "namespace" ? m.metadata?.name : (m.metadata?.namespace || nsDefault)).filter(Boolean))];
+          // Ensure target namespaces exist (real apply only). An explicit
+          // Namespace manifest in the set is applied below with its full labels.
           if (!dryRun) for (const ns of nss) {
             try { await ocpPost(`/api/v1/namespaces`, { apiVersion: "v1", kind: "Namespace", metadata: { name: ns } }); } catch { /* exists */ }
           }
-          for (const m of manifests) {
+          for (const m of ordered) {
+            const kind = (m.kind || "").toLowerCase();
+            const q = dryRun ? "?dryRun=All" : "";
+            // Namespace is cluster-scoped — apply directly, no namespace segment.
+            if (kind === "namespace") {
+              try { await ocpPost(`/api/v1/namespaces${q}`, m); applied.push(`Namespace/${m.metadata?.name}`); }
+              catch (e) {
+                if (!dryRun && m.metadata?.name) {
+                  try { await ocpPatch(`/api/v1/namespaces/${m.metadata.name}`, m, "application/merge-patch+json"); applied.push(`Namespace/${m.metadata.name} (updated)`); }
+                  catch (e2) { failed.push({ kind: m.kind, name: m.metadata?.name, error: e2.message || e.message }); }
+                } else failed.push({ kind: m.kind, name: m.metadata?.name, error: e.message });
+              }
+              continue;
+            }
             const ns = (m.metadata && (m.metadata.namespace || nsDefault)) || nsDefault;
             if (m.metadata) m.metadata.namespace = ns;
             const path = kindPath(m.kind, ns);
-            if (!path) { failed.push({ kind: m.kind, error: "unsupported kind" }); continue; }
-            const q = dryRun ? "?dryRun=All" : "";
+            if (!path) { failed.push({ kind: m.kind, name: m.metadata?.name, error: "unsupported kind" }); continue; }
             try { await ocpPost(path + q, m); applied.push(`${m.kind}/${m.metadata?.name}`); }
             catch (e) {
               if (!dryRun && m.metadata?.name) {

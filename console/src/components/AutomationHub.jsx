@@ -54,7 +54,7 @@ export function AutomationHub({ open, onClose }) {
         {/* Segmented agent switcher */}
         <div style={{ padding: "16px 22px 0" }}>
           <div style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 11, background: "var(--card-bg,#f0f2f8)", border: "1px solid var(--border,#e4e8f1)" }}>
-            {[["sop", "🧩 SOP Agent"], ["snow", "🎫 ServiceNow Agent"]].map(([k, label]) => (
+            {[["sop", "🚀 App Deployment Agent"], ["snow", "🎫 ServiceNow Agent"]].map(([k, label]) => (
               <button key={k} onClick={() => setAgent(k)} style={{ padding: "8px 18px", borderRadius: 8, border: "none", background: agent === k ? "linear-gradient(135deg,#3d5afe,#5b6cff)" : "transparent", fontWeight: 700, fontSize: "0.86rem", color: agent === k ? "#fff" : "var(--muted,#5a6373)", cursor: "pointer", boxShadow: agent === k ? "0 3px 10px rgba(61,90,254,0.3)" : "none", transition: "all .15s" }}>{label}</button>
             ))}
           </div>
@@ -67,11 +67,12 @@ export function AutomationHub({ open, onClose }) {
   );
 }
 
-/* ── SOP Agent: requirement → manifests → choose cluster → deploy ── */
+/* ── App Deployment Agent: requirement → hardened manifests → edit → deploy ── */
 function SopAgent({ clusters, activeCluster }) {
   const [requirement, setRequirement] = useState("");
   const [namespace, setNamespace] = useState("");
-  const [gen, setGen] = useState(null); // { appName, namespace, manifests, summary, notes, image }
+  const [gen, setGen] = useState(null); // { appName, namespace, manifests, yaml, summary, notes, image }
+  const [editedYaml, setEditedYaml] = useState(""); // user-editable manifest YAML
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [cluster, setCluster] = useState(activeCluster || "local");
@@ -106,6 +107,9 @@ function SopAgent({ clusters, activeCluster }) {
       const d = await res.json().catch(() => ({}));
       if (d.error) throw new Error(d.error);
       setGen(d);
+      // Seed the editable YAML from the generated manifests (fallback to a
+      // best-effort render if the server didn't return a yaml string).
+      setEditedYaml(d.yaml || (d.manifests || []).map((m) => toYaml(m)).join("\n---\n") + "\n");
       if (d.namespace && !namespace) setNamespace(d.namespace);
     } catch (e) { setError(e.message); } finally { setLoading(false); }
   };
@@ -115,7 +119,7 @@ function SopAgent({ clusters, activeCluster }) {
     try {
       const res = await fetch(clusterUrl("/api/automation/deploy", cluster), {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ manifests: gen.manifests, namespace: namespace || gen.namespace, dryRun }),
+        body: JSON.stringify({ yaml: editedYaml, manifests: gen.manifests, namespace: namespace || gen.namespace, dryRun }),
       });
       const d = await res.json().catch(() => ({}));
       if (d.error) throw new Error(d.error);
@@ -126,7 +130,7 @@ function SopAgent({ clusters, activeCluster }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ fontSize: "0.86rem", color: "var(--muted,#5a6373)" }}>Upload a requirement document, or describe/paste the requirement. The agent analyses it and generates Kubernetes/OpenShift manifests you can review, dry-run, and deploy to any connected cluster.</div>
+      <div style={{ fontSize: "0.86rem", color: "var(--muted,#5a6373)" }}>Upload a requirement document, or describe/paste the requirement. The agent generates <b>security-hardened, standards-aligned</b> Kubernetes/OpenShift manifests — namespace isolation, least-privilege RBAC, Pod Security "restricted", PVCs, NetworkPolicies and Prometheus monitoring baked in — which you can <b>edit</b>, dry-run, and deploy to any connected cluster.</div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 9, border: "1px dashed #3d5afe", background: "rgba(61,90,254,0.06)", color: "#3d5afe", fontWeight: 700, fontSize: "0.84rem", cursor: uploading ? "wait" : "pointer" }}>
           {uploading ? "Reading…" : "📎 Upload requirement doc"}
@@ -136,7 +140,7 @@ function SopAgent({ clusters, activeCluster }) {
         <span style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)" }}>.pdf / .docx / .txt / .md supported</span>
       </div>
       <textarea value={requirement} onChange={(e) => setRequirement(e.target.value)} rows={7}
-        placeholder="e.g. Deploy an nginx web app with 2 replicas, expose it via a Route, and set 256Mi memory limit."
+        placeholder="e.g. Deploy a web app (nginx, 2 replicas) with a PostgreSQL database in a dedicated, restricted namespace. Add least-privilege RBAC, a default-deny NetworkPolicy, a 10Gi PVC for the DB, DB creds from a Secret, Prometheus monitoring, and expose the web tier via an edge-TLS Route."
         style={{ width: "100%", padding: 12, borderRadius: 10, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--fg,#151a29)", fontSize: "0.9rem", resize: "vertical" }} />
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <input value={namespace} onChange={(e) => setNamespace(e.target.value)} placeholder="namespace (optional)"
@@ -151,7 +155,34 @@ function SopAgent({ clusters, activeCluster }) {
         <div style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 12, padding: 16, background: "var(--card-bg,#f6f8fc)" }}>
           <div style={{ fontWeight: 750 }}>{gen.appName} <span style={{ color: "var(--muted,#5a6373)", fontWeight: 500 }}>· {gen.manifests?.length} manifests · image: {gen.image || "—"}</span></div>
           {gen.summary && <p style={{ fontSize: "0.86rem", color: "var(--muted,#5a6373)", margin: "6px 0" }}>{gen.summary}</p>}
-          <pre style={{ maxHeight: 260, overflow: "auto", background: "rgba(15,23,42,0.06)", padding: 12, borderRadius: 8, fontSize: "0.74rem", whiteSpace: "pre-wrap" }}>{gen.manifests.map((m) => toYaml(m)).join("\n---\n")}</pre>
+
+          {/* Security & monitoring controls baked into the generated manifests */}
+          {(Array.isArray(gen.securityApplied) && gen.securityApplied.length > 0) && (
+            <div style={{ margin: "8px 0 2px" }}>
+              <div style={{ fontSize: "0.74rem", fontWeight: 800, color: "#0ea5a0", textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>🛡 Security controls</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {gen.securityApplied.slice(0, 10).map((s, i) => <span key={i} style={{ fontSize: "0.73rem", padding: "3px 9px", borderRadius: 999, background: "rgba(14,165,160,0.12)", color: "#0e8a86", fontWeight: 600 }}>{s}</span>)}
+              </div>
+            </div>
+          )}
+          {(Array.isArray(gen.monitoringApplied) && gen.monitoringApplied.length > 0) && (
+            <div style={{ margin: "8px 0 2px" }}>
+              <div style={{ fontSize: "0.74rem", fontWeight: 800, color: "#7c3aed", textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>📈 Observability</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {gen.monitoringApplied.slice(0, 10).map((s, i) => <span key={i} style={{ fontSize: "0.73rem", padding: "3px 9px", borderRadius: 999, background: "rgba(124,58,237,0.12)", color: "#7c3aed", fontWeight: 600 }}>{s}</span>)}
+              </div>
+            </div>
+          )}
+
+          {/* Editable YAML — review and tweak values before deploying */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "12px 0 5px" }}>
+            <label style={{ fontSize: "0.78rem", fontWeight: 800, color: "var(--fg,#151a29)" }}>✎ Manifests (editable YAML)</label>
+            <button onClick={() => setEditedYaml(gen.yaml || (gen.manifests || []).map((m) => toYaml(m)).join("\n---\n") + "\n")}
+              style={{ fontSize: "0.72rem", padding: "3px 10px", borderRadius: 7, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--muted,#5a6373)", fontWeight: 700, cursor: "pointer" }}>↺ Reset to generated</button>
+          </div>
+          <textarea value={editedYaml} onChange={(e) => setEditedYaml(e.target.value)} spellCheck={false} rows={14}
+            style={{ width: "100%", maxHeight: 340, background: "#0f172a", color: "#e2e8f0", padding: 12, borderRadius: 8, fontSize: "0.75rem", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", lineHeight: 1.5, border: "1px solid var(--border,#e4e8f1)", resize: "vertical", whiteSpace: "pre", overflowWrap: "normal", overflowX: "auto" }} />
+          <div style={{ fontSize: "0.72rem", color: "var(--muted,#5a6373)", marginTop: 3 }}>Edit any value above (image tags, replicas, sizes, limits). Your edits are what gets dry-run and deployed.</div>
           {gen.notes && <p style={{ fontSize: "0.8rem", color: "var(--muted,#5a6373)" }}>📝 {gen.notes}</p>}
           <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
             <label style={{ fontSize: "0.82rem", color: "var(--muted,#5a6373)" }}>Deploy to cluster:</label>
