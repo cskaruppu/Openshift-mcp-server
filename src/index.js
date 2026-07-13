@@ -83,6 +83,7 @@ import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handle
 import { callLLM } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport } from "./services/upgrade-report.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, handleComplianceImpactAPI, handleGenerateManifestAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
+import { cisCheckManifests, scanManifestImages } from "./services/manifest-scan.js";
 import {
   listActions,
   getAction,
@@ -4308,6 +4309,46 @@ spec:
         });
         if (result === null) { sendJson(res, 200, { error: "Selected cluster is not reachable for deployment." }); return; }
         sendJson(res, 200, result);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── App Deployment Agent · shift-left CIS check on GENERATED manifests ──
+    // Static Pod Security / CIS evaluation of the manifest YAML before deploy.
+    // No cluster needed — inspects the manifests themselves.
+    if (req.method === "POST" && url.pathname === "/api/automation/cis-check") {
+      if (enforceRateLimit(req, res, { burst: 8, refillPerSec: 0.2 })) return;
+      try {
+        const body = await readJsonBody(req);
+        let manifests = Array.isArray(body.manifests) ? body.manifests : [];
+        if (typeof body.yaml === "string" && body.yaml.trim()) {
+          try { manifests = yaml.loadAll(body.yaml).filter((d) => d && typeof d === "object" && d.kind); }
+          catch (e) { sendJson(res, 200, { error: "YAML could not be parsed: " + e.message }); return; }
+        }
+        if (manifests.length === 0) { sendJson(res, 200, { error: "No manifests to check." }); return; }
+        sendJson(res, 200, cisCheckManifests(manifests));
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── App Deployment Agent · shift-left image scan on GENERATED manifests ──
+    // Image hygiene on every referenced image, optionally enriched with real
+    // CVE counts from the selected cluster's Trivy Operator reports.
+    if (req.method === "POST" && url.pathname === "/api/automation/image-scan") {
+      if (enforceRateLimit(req, res, { burst: 8, refillPerSec: 0.2 })) return;
+      try {
+        const body = await readJsonBody(req);
+        let manifests = Array.isArray(body.manifests) ? body.manifests : [];
+        if (typeof body.yaml === "string" && body.yaml.trim()) {
+          try { manifests = yaml.loadAll(body.yaml).filter((d) => d && typeof d === "object" && d.kind); }
+          catch (e) { sendJson(res, 200, { error: "YAML could not be parsed: " + e.message }); return; }
+        }
+        if (manifests.length === 0) { sendJson(res, 200, { error: "No manifests to scan." }); return; }
+        // Enrich against the chosen cluster's Trivy reports when reachable;
+        // fall back to hygiene-only if the cluster context isn't available.
+        let out = await withClusterContext(url, async () => scanManifestImages(manifests, { enrich: true }));
+        if (out === null) out = await scanManifestImages(manifests, { enrich: false });
+        sendJson(res, 200, out);
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }

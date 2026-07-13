@@ -80,6 +80,8 @@ function SopAgent({ clusters, activeCluster }) {
   const [uploading, setUploading] = useState(false);
   const [uploadedName, setUploadedName] = useState(null);
   const [verify, setVerify] = useState(null); // { phase, cis, image, error }
+  const [cisChk, setCisChk] = useState(null); // pre-deploy CIS: { phase, data }
+  const [imgChk, setImgChk] = useState(null); // pre-deploy image: { phase, data }
 
   const onUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -99,7 +101,7 @@ function SopAgent({ clusters, activeCluster }) {
   };
 
   const generate = async () => {
-    setLoading(true); setError(null); setGen(null); setDeploy(null);
+    setLoading(true); setError(null); setGen(null); setDeploy(null); setCisChk(null); setImgChk(null); setVerify(null);
     try {
       const res = await fetch("/api/automation/generate-manifest", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -128,6 +130,33 @@ function SopAgent({ clusters, activeCluster }) {
       setVerify(null);
       showToast(dryRun ? "Dry-run complete" : `Deployed ${d.applied?.length || 0} object(s)`, d.failed?.length ? "err" : "ok");
     } catch (e) { setDeploy({ phase: "error", error: e.message }); showToast("Deploy failed: " + e.message, "err"); }
+  };
+
+  // Shift-left checks on the GENERATED code (before deploy) — run separately.
+  const runCisCheck = async () => {
+    setCisChk({ phase: "running" });
+    try {
+      const res = await fetch("/api/automation/cis-check", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ yaml: editedYaml, manifests: gen?.manifests }),
+      });
+      const d = await res.json();
+      if (d.error) throw new Error(d.error);
+      setCisChk({ phase: "done", data: d });
+    } catch (e) { setCisChk({ phase: "error", error: e.message }); showToast("CIS check failed: " + e.message, "err"); }
+  };
+
+  const runImageCheck = async () => {
+    setImgChk({ phase: "running" });
+    try {
+      const res = await fetch(clusterUrl("/api/automation/image-scan", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ yaml: editedYaml, manifests: gen?.manifests }),
+      });
+      const d = await res.json();
+      if (d.error) throw new Error(d.error);
+      setImgChk({ phase: "done", data: d });
+    } catch (e) { setImgChk({ phase: "error", error: e.message }); showToast("Image scan failed: " + e.message, "err"); }
   };
 
   // Closed-loop security check: run the CIS scan + image vulnerability scan
@@ -207,6 +236,63 @@ function SopAgent({ clusters, activeCluster }) {
             style={{ width: "100%", maxHeight: 340, background: "#0f172a", color: "#e2e8f0", padding: 12, borderRadius: 8, fontSize: "0.75rem", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", lineHeight: 1.5, border: "1px solid var(--border,#e4e8f1)", resize: "vertical", whiteSpace: "pre", overflowWrap: "normal", overflowX: "auto" }} />
           <div style={{ fontSize: "0.72rem", color: "var(--muted,#5a6373)", marginTop: 3 }}>Edit any value above (image tags, replicas, sizes, limits). Your edits are what gets dry-run and deployed.</div>
           {gen.notes && <p style={{ fontSize: "0.8rem", color: "var(--muted,#5a6373)" }}>📝 {gen.notes}</p>}
+
+          {/* Pre-deploy (shift-left) checks — run independently on the generated code */}
+          <div style={{ marginTop: 12, padding: 12, borderRadius: 10, border: "1px solid var(--border,#e4e8f1)", background: "rgba(61,90,254,0.04)" }}>
+            <div style={{ fontSize: "0.78rem", fontWeight: 800, color: "var(--fg,#151a29)", marginBottom: 8 }}>🔎 Pre-deploy checks <span style={{ fontWeight: 500, color: "var(--muted,#5a6373)" }}>· run on the generated code, before deploying</span></div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button onClick={runCisCheck} disabled={cisChk?.phase === "running"} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #0ea5a0", background: "rgba(14,165,160,0.08)", color: "#0e8a86", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer", opacity: cisChk?.phase === "running" ? 0.7 : 1 }}>{cisChk?.phase === "running" ? "Checking…" : "🛡 CIS Benchmark check"}</button>
+              <button onClick={runImageCheck} disabled={imgChk?.phase === "running"} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #7c3aed", background: "rgba(124,58,237,0.08)", color: "#7c3aed", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer", opacity: imgChk?.phase === "running" ? 0.7 : 1 }}>{imgChk?.phase === "running" ? "Scanning…" : "🐞 Image vulnerability scan"}</button>
+            </div>
+
+            {/* CIS result */}
+            {cisChk?.phase === "error" && <div style={{ marginTop: 8, color: "#dc2626", fontSize: "0.82rem" }}>CIS check: {cisChk.error}</div>}
+            {cisChk?.phase === "done" && (
+              cisChk.data.applicable === false
+                ? <div style={{ marginTop: 8, fontSize: "0.8rem", color: "var(--muted,#5a6373)" }}>{cisChk.data.note}</div>
+                : (
+                  <div style={{ marginTop: 10, border: "1px solid var(--border,#e4e8f1)", borderRadius: 9, padding: 11, background: "var(--card-bg,#fff)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 800, fontSize: "0.82rem" }}>🛡 CIS / Pod Security</span>
+                      <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: cisChk.data.summary.failed === 0 ? "rgba(22,163,74,0.14)" : "rgba(220,38,38,0.12)", color: cisChk.data.summary.failed === 0 ? "#16a34a" : "#dc2626" }}>{cisChk.data.summary.passed}/{cisChk.data.summary.total} passed · grade {cisChk.data.summary.grade}</span>
+                    </div>
+                    <div style={{ marginTop: 7, display: "flex", flexDirection: "column", gap: 3 }}>
+                      {cisChk.data.controls.map((c) => (
+                        <div key={c.id} style={{ display: "flex", alignItems: "flex-start", gap: 7, fontSize: "0.76rem" }}>
+                          <span style={{ color: c.status === "PASS" ? "#16a34a" : "#dc2626", fontWeight: 800 }}>{c.status === "PASS" ? "✓" : "✗"}</span>
+                          <span style={{ color: "var(--fg,#151a29)" }}><b>{c.id}</b> {c.title}
+                            {c.status === "FAIL" && c.offenders?.length > 0 && <span style={{ color: "var(--muted,#5a6373)" }}> — {c.offenders.join(", ")}</span>}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+            )}
+
+            {/* Image result */}
+            {imgChk?.phase === "error" && <div style={{ marginTop: 8, color: "#dc2626", fontSize: "0.82rem" }}>Image scan: {imgChk.error}</div>}
+            {imgChk?.phase === "done" && (
+              <div style={{ marginTop: 10, border: "1px solid var(--border,#e4e8f1)", borderRadius: 9, padding: 11, background: "var(--card-bg,#fff)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontWeight: 800, fontSize: "0.82rem" }}>🐞 Image Vulnerabilities</span>
+                  <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: "rgba(124,58,237,0.12)", color: "#7c3aed" }}>{imgChk.data.summary?.total || 0} image(s) · grade {imgChk.data.summary?.grade}</span>
+                  <span style={{ fontSize: "0.7rem", color: "var(--muted,#5a6373)" }}>{imgChk.data.enriched ? "live CVEs + hygiene" : "hygiene (deploy for live CVEs)"}</span>
+                </div>
+                {imgChk.data.note && <div style={{ fontSize: "0.78rem", color: "var(--muted,#5a6373)", marginTop: 6 }}>{imgChk.data.note}</div>}
+                {(imgChk.data.images || []).map((im, i) => (
+                  <div key={i} style={{ marginTop: 7, fontSize: "0.76rem" }}>
+                    <div style={{ fontWeight: 600 }}>{im.image} <span style={{ color: "var(--muted,#5a6373)", fontWeight: 400 }}>· {im.source}</span></div>
+                    <div style={{ color: "var(--muted,#5a6373)" }}>
+                      <span style={{ color: "#dc2626" }}>C {im.critical}</span> · <span style={{ color: "#ea580c" }}>H {im.high}</span> · M {im.medium} · L {im.low}
+                    </div>
+                    {(im.hygiene || []).slice(0, 3).map((f, j) => <div key={j} style={{ color: "var(--muted,#5a6373)", marginLeft: 8 }}>• <b>{f.id}</b> {f.description} <span style={{ color: "#0e8a86" }}>→ {f.fixedBy}</span></div>)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
             <label style={{ fontSize: "0.82rem", color: "var(--muted,#5a6373)" }}>Deploy to cluster:</label>
             <select value={cluster} onChange={(e) => setCluster(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--fg,#151a29)", fontSize: "0.84rem" }}>
