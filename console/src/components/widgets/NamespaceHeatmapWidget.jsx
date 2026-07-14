@@ -15,7 +15,11 @@ const STATUS = {
   idle: { c: "#64748b", bg: "rgba(100,116,139,0.12)", label: "Idle" },
 };
 
-const KIND_ICON = { Route: "🌐", Service: "🔀", Deployment: "📦", StatefulSet: "🗃", DaemonSet: "🛰", Pod: "▪" };
+const KIND_ICON = {
+  Namespace: "🗂", Route: "🌐", Service: "🔀", Deployment: "📦", StatefulSet: "🗃", DaemonSet: "🛰",
+  ReplicaSet: "🧬", Pod: "⬢", ConfigMap: "📄", Secret: "🔑", PVC: "💾", ServiceAccount: "👤",
+  ImageStream: "🖼", RoleBinding: "🛡", NetworkPolicy: "🧱",
+};
 
 /**
  * Namespace Heatmap — a colored cell per namespace for the active cluster.
@@ -136,28 +140,12 @@ function NamespaceTopologyModal({ namespace, onClose }) {
                 </div>
               )}
 
-              {/* Flow chains */}
-              {topo.chains.length === 0 && topo.standalone.length === 0 && (
+              {/* Hierarchical topology graph — Namespace → resources → RS → Pod */}
+              {(!topo.graph || topo.graph.nodes.length <= 1) ? (
                 <div style={{ color: "var(--muted,#94a3b8)", fontSize: "0.86rem" }}>No workloads found in this namespace.</div>
+              ) : (
+                <TopologyGraph graph={topo.graph} />
               )}
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {topo.chains.map((ch, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap", padding: 10, borderRadius: 10, border: "1px solid var(--border,#243045)", background: "var(--card-bg,#131a28)" }}>
-                    {ch.route && <><Node n={ch.route} sub={ch.route.host} /> <Arrow /></>}
-                    {ch.service && <><Node n={ch.service} sub={ch.service.selector && Object.keys(ch.service.selector).length ? `${ch.service.readyEndpoints}/${ch.service.matchedPods} endpoints` : "no selector"} /> {ch.workload && <Arrow />}</>}
-                    {ch.workload ? <WorkloadNode w={ch.workload} /> : (ch.service && !ch.workload && <span style={{ alignSelf: "center", fontSize: "0.76rem", color: "#dc2626" }}>→ no matching workload</span>)}
-                  </div>
-                ))}
-                {topo.standalone.length > 0 && (
-                  <>
-                    <div style={{ fontSize: "0.76rem", fontWeight: 800, color: "var(--muted,#94a3b8)", marginTop: 4 }}>Internal workloads (no Service in front)</div>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      {topo.standalone.map((w, i) => <WorkloadNode key={i} w={w} />)}
-                    </div>
-                  </>
-                )}
-              </div>
 
               {/* Legend */}
               <div style={{ display: "flex", gap: 14, marginTop: 16, flexWrap: "wrap", fontSize: "0.72rem", color: "var(--muted,#94a3b8)" }}>
@@ -177,41 +165,61 @@ function Chip({ children, c }) {
   return <span style={{ fontSize: "0.74rem", fontWeight: 700, padding: "3px 10px", borderRadius: 999, background: c ? c + "22" : "rgba(148,163,184,0.14)", color: c || "var(--muted,#94a3b8)" }}>{children}</span>;
 }
 
-function Arrow() {
-  return <span style={{ alignSelf: "center", color: "var(--muted,#5a6b85)", fontSize: "1.1rem", fontWeight: 700 }}>→</span>;
+/* Hierarchical tree layout (deterministic) + SVG connectors, ACM-style. */
+const NODE_W = 96, CIRCLE = 46, LEVEL_H = 118, PAD = 24;
+
+function layoutTree(graph) {
+  const map = new Map(graph.nodes.map((n) => [n.id, { ...n, children: [] }]));
+  const hasParent = new Set();
+  for (const e of graph.edges) {
+    const p = map.get(e.source), c = map.get(e.target);
+    if (p && c) { p.children.push(c); hasParent.add(c.id); }
+  }
+  const root = map.get((graph.nodes.find((n) => !hasParent.has(n.id)) || graph.nodes[0]).id);
+  let cursor = 0;
+  const place = (node, depth) => {
+    node.y = depth * LEVEL_H + PAD;
+    if (node.children.length === 0) { node.x = cursor * (NODE_W + 14) + PAD; cursor++; }
+    else { node.children.forEach((c) => place(c, depth + 1)); node.x = (node.children[0].x + node.children[node.children.length - 1].x) / 2; }
+  };
+  place(root, 0);
+  const all = [...map.values()];
+  const width = Math.max(...all.map((n) => n.x)) + NODE_W + PAD;
+  const height = Math.max(...all.map((n) => n.y)) + CIRCLE + 40 + PAD;
+  const idx = new Map(all.map((n) => [n.id, n]));
+  const edges = graph.edges.map((e) => ({ from: idx.get(e.source), to: idx.get(e.target) })).filter((e) => e.from && e.to);
+  return { nodes: all, edges, width, height };
 }
 
-function Node({ n, sub }) {
-  const st = STATUS[n.status] || STATUS.idle;
+function TopologyGraph({ graph }) {
+  const { nodes, edges, width, height } = layoutTree(graph);
+  const cx = (n) => n.x + NODE_W / 2;
   return (
-    <div style={{ minWidth: 140, borderRadius: 9, border: `1px solid ${st.c}55`, background: st.bg, padding: "8px 11px", alignSelf: "center" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span style={{ fontSize: "0.82rem" }}>{KIND_ICON[n.kind] || "▫"}</span>
-        <span style={{ fontSize: "0.68rem", fontWeight: 800, color: st.c, textTransform: "uppercase", letterSpacing: "0.03em" }}>{n.kind}</span>
-        <span style={{ width: 8, height: 8, borderRadius: 999, background: st.c, marginLeft: "auto" }} />
+    <div style={{ overflow: "auto", border: "1px solid var(--border,#243045)", borderRadius: 10, background: "var(--card-bg,#0d1320)" }}>
+      <div style={{ position: "relative", width, height, minWidth: "100%" }}>
+        <svg width={width} height={height} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+          {edges.map((e, i) => {
+            const x1 = cx(e.from), y1 = e.from.y + CIRCLE, x2 = cx(e.to), y2 = e.to.y;
+            const my = (y1 + y2) / 2;
+            return <path key={i} d={`M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}`} fill="none" stroke="var(--border,#334155)" strokeWidth="1.5" />;
+          })}
+        </svg>
+        {nodes.map((n) => {
+          const st = STATUS[n.status] || STATUS.idle;
+          return (
+            <div key={n.id} style={{ position: "absolute", left: n.x, top: n.y, width: NODE_W, display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <div style={{ position: "relative", width: CIRCLE, height: CIRCLE, borderRadius: "50%", background: st.bg, border: `2px solid ${st.c}`, display: "grid", placeItems: "center", fontSize: "1.15rem" }}>
+                {KIND_ICON[n.kind] || "▫"}
+                {/* status dot */}
+                <span style={{ position: "absolute", top: -3, left: -3, width: 12, height: 12, borderRadius: "50%", background: st.c, border: "2px solid var(--card-bg,#0d1320)" }} />
+                {/* count badge */}
+                {n.count > 1 && <span style={{ position: "absolute", top: -5, right: -5, minWidth: 16, height: 16, padding: "0 3px", borderRadius: 8, background: "#3d5afe", color: "#fff", fontSize: "0.62rem", fontWeight: 800, display: "grid", placeItems: "center" }}>{n.count}</span>}
+              </div>
+              <div title={n.name} style={{ marginTop: 5, maxWidth: NODE_W, textAlign: "center", fontSize: "0.66rem", fontWeight: 600, color: "var(--fg,#cbd5e1)", padding: "2px 6px", borderRadius: 6, border: "1px solid var(--border,#243045)", background: "var(--bg,#131a28)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{n.name}</div>
+            </div>
+          );
+        })}
       </div>
-      <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--fg,#e6ebf5)", marginTop: 2, wordBreak: "break-all" }}>{n.name}</div>
-      {sub && <div style={{ fontSize: "0.68rem", color: "var(--muted,#94a3b8)", marginTop: 1 }}>{sub}</div>}
-    </div>
-  );
-}
-
-function WorkloadNode({ w }) {
-  const st = STATUS[w.status] || STATUS.idle;
-  return (
-    <div style={{ minWidth: 168, borderRadius: 9, border: `1px solid ${st.c}55`, background: st.bg, padding: "8px 11px", alignSelf: "center" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span style={{ fontSize: "0.82rem" }}>{KIND_ICON[w.kind] || "📦"}</span>
-        <span style={{ fontSize: "0.68rem", fontWeight: 800, color: st.c, textTransform: "uppercase", letterSpacing: "0.03em" }}>{w.kind}</span>
-        <span style={{ marginLeft: "auto", fontSize: "0.7rem", fontWeight: 800, color: st.c }}>{w.ready}/{w.desired}</span>
-      </div>
-      <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--fg,#e6ebf5)", marginTop: 2, wordBreak: "break-all" }}>{w.name}</div>
-      {w.reasons.length > 0 && <div style={{ fontSize: "0.68rem", color: "#dc2626", marginTop: 2 }}>{w.reasons.join(", ")}</div>}
-      {w.pods.some((p) => p.status !== "healthy") && (
-        <div style={{ marginTop: 4, display: "flex", gap: 3, flexWrap: "wrap" }}>
-          {w.pods.map((p, i) => <span key={i} title={`${p.name} · ${p.phase}${p.reasons.length ? " · " + p.reasons.join(",") : ""}`} style={{ width: 8, height: 8, borderRadius: 999, background: (STATUS[p.status] || STATUS.idle).c }} />)}
-        </div>
-      )}
     </div>
   );
 }

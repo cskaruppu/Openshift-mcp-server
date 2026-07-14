@@ -44,13 +44,21 @@ export async function getNamespaceTopology(namespace) {
   const ns = namespace;
   const safe = async (p) => { try { return await ocpGet(p); } catch { return { items: [] }; } };
 
-  const [deps, stss, dss, pods, svcs, routes] = await Promise.all([
+  const [deps, stss, dss, pods, svcs, routes, cms, secrets, pvcs, sas, rss, iss, rbs, nps] = await Promise.all([
     safe(`/apis/apps/v1/namespaces/${ns}/deployments`),
     safe(`/apis/apps/v1/namespaces/${ns}/statefulsets`),
     safe(`/apis/apps/v1/namespaces/${ns}/daemonsets`),
     safe(`/api/v1/namespaces/${ns}/pods`),
     safe(`/api/v1/namespaces/${ns}/services`),
     safe(`/apis/route.openshift.io/v1/namespaces/${ns}/routes`),
+    safe(`/api/v1/namespaces/${ns}/configmaps`),
+    safe(`/api/v1/namespaces/${ns}/secrets`),
+    safe(`/api/v1/namespaces/${ns}/persistentvolumeclaims`),
+    safe(`/api/v1/namespaces/${ns}/serviceaccounts`),
+    safe(`/apis/apps/v1/namespaces/${ns}/replicasets`),
+    safe(`/apis/image.openshift.io/v1/namespaces/${ns}/imagestreams`),
+    safe(`/apis/rbac.authorization.k8s.io/v1/namespaces/${ns}/rolebindings`),
+    safe(`/apis/networking.k8s.io/v1/namespaces/${ns}/networkpolicies`),
   ]);
 
   const podList = (pods.items || []).map((p) => ({
@@ -170,6 +178,54 @@ export async function getNamespaceTopology(namespace) {
   // Standalone workloads (no service in front)
   const standalone = workloads.filter((w) => !usedWorkloadIds.has(w.id));
 
+  // ---- ACM-style hierarchical graph: Namespace → resources → RS → Pod ----
+  const worst = (arr) => arr.includes("error") ? "error" : arr.includes("warning") ? "warning" : arr.some((s) => s === "healthy") ? "healthy" : "idle";
+  const gNodes = [], gEdges = [];
+  const nsStatus = worst([...workloads.map((w) => w.status), ...services.map((s) => s.status), ...routeNodes.map((r) => r.status)]);
+  gNodes.push({ id: "ns", kind: "Namespace", name: ns, status: nsStatus });
+  const addKind = (kind, count, status, parent = "ns", idSuffix = "") => {
+    if (!count) return null;
+    const id = `kind/${kind}${idSuffix}`;
+    gNodes.push({ id, kind, name: kind, count, status });
+    gEdges.push({ source: parent, target: id });
+    return id;
+  };
+  const podsFor = (list) => podList.filter((p) => list.some((w) => labelsMatch(w.selector, p.labels)));
+
+  // Deployment → ReplicaSet → Pod
+  const depW = workloads.filter((w) => w.kind === "Deployment");
+  if (depW.length) {
+    const dId = addKind("Deployment", depW.length, worst(depW.map((w) => w.status)));
+    const activeRs = (rss.items || []).filter((r) => (r.status?.replicas || 0) > 0);
+    const rsId = `${dId}/rs`;
+    gNodes.push({ id: rsId, kind: "ReplicaSet", name: "ReplicaSet", count: activeRs.length || depW.length, status: worst(depW.map((w) => w.status)) });
+    gEdges.push({ source: dId, target: rsId });
+    const dp = podsFor(depW);
+    const pId = `${rsId}/pod`;
+    gNodes.push({ id: pId, kind: "Pod", name: "Pod", count: dp.length, status: worst(dp.map((p) => p.health.status)) });
+    gEdges.push({ source: rsId, target: pId });
+  }
+  // StatefulSet → Pod, DaemonSet → Pod
+  for (const [k, list] of [["StatefulSet", workloads.filter((w) => w.kind === "StatefulSet")], ["DaemonSet", workloads.filter((w) => w.kind === "DaemonSet")]]) {
+    if (!list.length) continue;
+    const id = addKind(k, list.length, worst(list.map((w) => w.status)));
+    const p = podsFor(list);
+    const pid = `${id}/pod`;
+    gNodes.push({ id: pid, kind: "Pod", name: "Pod", count: p.length, status: worst(p.map((x) => x.health.status)) });
+    gEdges.push({ source: id, target: pid });
+  }
+  // Leaf resource kinds (collapsed with a count badge, ACM-style)
+  addKind("Service", services.length, worst(services.map((s) => s.status)));
+  addKind("Route", routeNodes.length, worst(routeNodes.map((r) => r.status)));
+  const pvcItems = pvcs.items || [];
+  addKind("PVC", pvcItems.length, worst(pvcItems.map((p) => p.status?.phase === "Bound" ? "healthy" : p.status?.phase === "Lost" ? "error" : "warning")));
+  addKind("ConfigMap", (cms.items || []).length, "healthy");
+  addKind("Secret", (secrets.items || []).length, "healthy");
+  addKind("ServiceAccount", (sas.items || []).length, "healthy");
+  addKind("ImageStream", (iss.items || []).length, "healthy");
+  addKind("RoleBinding", (rbs.items || []).length, "healthy");
+  addKind("NetworkPolicy", (nps.items || []).length, "healthy");
+
   const summary = {
     workloads: workloads.length,
     healthy: workloads.filter((w) => w.status === "healthy").length,
@@ -182,5 +238,5 @@ export async function getNamespaceTopology(namespace) {
     runningPods: podList.filter((p) => p.health.status === "healthy").length,
   };
 
-  return { namespace: ns, summary, chains, standalone, issues, ok: issues.filter((i) => i.level === "error").length === 0 };
+  return { namespace: ns, summary, chains, standalone, issues, graph: { nodes: gNodes, edges: gEdges }, ok: issues.filter((i) => i.level === "error").length === 0 };
 }
