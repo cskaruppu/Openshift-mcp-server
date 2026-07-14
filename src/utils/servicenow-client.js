@@ -15,7 +15,7 @@ function getConfig() {
 }
 
 let _callerSysIdCache = null;
-async function resolveCallerSysId() {
+export async function resolveCallerSysId() {
   if (_callerSysIdCache) return _callerSysIdCache;
   const { user } = getConfig();
   if (!user) return "";

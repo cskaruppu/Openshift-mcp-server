@@ -84,6 +84,7 @@ import { callLLM } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport } from "./services/upgrade-report.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, handleComplianceImpactAPI, handleGenerateManifestAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import { cisCheckManifests, scanManifestImages } from "./services/manifest-scan.js";
+import { handleIncidentCorrelationAPI } from "./services/chat-api.js";
 import {
   listActions,
   getAction,
@@ -100,6 +101,7 @@ import {
   resolveIncident as snowResolveIncident,
   updateRecord as snowUpdateRecord,
   queryRecords as snowQueryRecords,
+  resolveCallerSysId as snowResolveCallerSysId,
 } from "./utils/servicenow-client.js";
 import {
   listChats,
@@ -4357,25 +4359,67 @@ spec:
     if (req.method === "GET" && url.pathname === "/api/servicenow/incidents") {
       try {
         const limit = Math.min(parseInt(url.searchParams.get("limit") || "25", 10), 100);
-        let incidents = [], source = "servicenow", note = null;
+        // scope=platform (default) → only incidents THIS platform raised (caller
+        // is the integration user). scope=all → every open incident.
+        const scope = (url.searchParams.get("scope") || "platform").toLowerCase();
+        let incidents = [], source = "servicenow", note = null, scopeApplied = scope;
         try {
-          const recsRaw = await snowQueryRecords("incident", "active=true^ORDERBYDESCsys_created_on", limit);
+          // OPEN only: active AND not Resolved(6)/Closed(7)/Cancelled(8).
+          let query = "active=true^stateNOT IN6,7,8";
+          if (scope === "platform") {
+            let callerSysId = "";
+            try { callerSysId = await snowResolveCallerSysId(); } catch { callerSysId = ""; }
+            if (callerSysId) query += `^caller_id=${callerSysId}`;
+            else scopeApplied = "all"; // couldn't resolve integration user → fall back
+          }
+          query += "^ORDERBYDESCsys_created_on";
+          const recsRaw = await snowQueryRecords("incident", query, limit);
           // ServiceNow Table API returns { result: [...] }; be tolerant of either shape.
           const recs = Array.isArray(recsRaw) ? recsRaw : (recsRaw?.result || []);
+          const STATE_LABEL = { "1": "New", "2": "In Progress", "3": "On Hold", "6": "Resolved", "7": "Closed", "8": "Cancelled" };
           const grab = (r, s) => { const m = `${r.short_description || ""} ${r.description || ""} ${r.work_notes || ""} ${r.comments || ""}`.match(s); return m ? m[1].trim() : null; };
-          incidents = recs.map(r => ({
-            sysId: r.sys_id, number: r.number,
-            shortDescription: r.short_description || "(no summary)",
-            description: (r.description || "").slice(0, 600),
-            severity: r.severity || r.urgency || r.priority || "—",
-            state: r.state, createdOn: r.sys_created_on || r.opened_at,
-            cluster: grab(r, /cluster[:\s]+([a-zA-Z0-9._-]+)/i) || grab(r, /"?cluster"?\s*[:=]\s*"?([a-zA-Z0-9._-]+)/i),
-            namespace: grab(r, /namespace[:\s]+([a-z0-9-]+)/i),
-            resource: grab(r, /(?:pod|deployment|workload)[:\s]+([a-z0-9.\/-]+)/i),
-          }));
+          // Deterministic dedup fingerprint: normalized summary (digits/uuids
+          // stripped) + namespace + resource. Same fingerprint ⇒ same issue.
+          const fp = (r, ns, resource) => {
+            const s = String(r.short_description || "").toLowerCase()
+              .replace(/[0-9a-f]{6,}/g, "#").replace(/\d+/g, "#").replace(/[^a-z#]+/g, " ").trim();
+            return `${s}|${ns || ""}|${resource || ""}`;
+          };
+          incidents = recs.map(r => {
+            const ns = grab(r, /namespace[:\s]+([a-z0-9-]+)/i);
+            const resource = grab(r, /(?:pod|deployment|workload)[:\s]+([a-z0-9.\/-]+)/i);
+            return {
+              sysId: r.sys_id, number: r.number,
+              shortDescription: r.short_description || "(no summary)",
+              description: (r.description || "").slice(0, 600),
+              severity: r.severity || r.urgency || r.priority || "—",
+              state: r.state, stateLabel: STATE_LABEL[String(r.state)] || `state ${r.state}`,
+              createdOn: r.sys_created_on || r.opened_at,
+              cluster: grab(r, /cluster[:\s]+([a-zA-Z0-9._-]+)/i) || grab(r, /"?cluster"?\s*[:=]\s*"?([a-zA-Z0-9._-]+)/i),
+              namespace: ns,
+              resource,
+              fingerprint: fp(r, ns, resource),
+            };
+          });
         } catch (e) { source = "unavailable"; note = e.message; }
-        sendJson(res, 200, { source, count: incidents.length, incidents, note });
+        // Deterministic duplicate grouping (server-side hint; AI does the deep pass).
+        const seen = new Map();
+        for (const inc of incidents) {
+          if (!seen.has(inc.fingerprint)) { seen.set(inc.fingerprint, inc.number); inc.duplicateOf = null; }
+          else inc.duplicateOf = seen.get(inc.fingerprint);
+        }
+        const uniqueCount = seen.size;
+        sendJson(res, 200, { source, count: incidents.length, uniqueCount, scope: scopeApplied, openOnly: true, incidents, note });
       } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── Automation Hub · ServiceNow Agent — AI correlation, dedup & triage ──
+    if (req.method === "POST" && url.pathname === "/api/servicenow/incidents/analyze") {
+      if (enforceRateLimit(req, res, { burst: 4, refillPerSec: 0.1 })) return;
+      try { await handleIncidentCorrelationAPI(req, res); }
+      catch (e) { if (!res.headersSent) sendJson(res, 500, { error: e.message }); }
+      if (!res.headersSent) sendJson(res, 200, { error: "Correlation unavailable." });
       return;
     }
 
@@ -4418,13 +4462,24 @@ spec:
         if (result === null) { sendJson(res, 200, { error: "Incident's cluster is not reachable." }); return; }
         if (result.error) { sendJson(res, 200, { error: result.error }); return; }
         let incidentClosed = null;
+        // Optionally close correlated duplicates/dependents that this same fix
+        // resolves — passed as [{ sysId, number }] from the correlation view.
+        const alsoClose = Array.isArray(body.alsoClose) ? body.alsoClose.slice(0, 25) : [];
+        const closedRelated = [];
         if (result.dryRun === false && sysId) {
           try {
             const c = await snowResolveIncident(sysId, { closeNotes: closeNotes || `Resolved by TCS Agentic AI — ${result.action}`, resolution: null });
             incidentClosed = { success: c?.closed === true, detailsSaved: c?.detailsSaved === true, closeError: c?.closeError || null };
           } catch (e) { incidentClosed = { success: false, error: e.message }; }
+          for (const dup of alsoClose) {
+            const dupSysId = dup?.sysId; if (!dupSysId || dupSysId === sysId) continue;
+            try {
+              const c = await snowResolveIncident(dupSysId, { closeNotes: `Resolved by TCS Agentic AI — duplicate/correlated with ${body.primaryNumber || "primary incident"}; fixed via: ${result.action}`, resolution: null });
+              closedRelated.push({ number: dup.number || dupSysId, closed: c?.closed === true, detailsSaved: c?.detailsSaved === true });
+            } catch (e) { closedRelated.push({ number: dup.number || dupSysId, closed: false, error: e.message }); }
+          }
         }
-        sendJson(res, 200, { ...result, incidentClosed });
+        sendJson(res, 200, { ...result, incidentClosed, closedRelated });
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }

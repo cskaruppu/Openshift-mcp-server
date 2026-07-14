@@ -19092,6 +19092,109 @@ Every manifest MUST include apiVersion, kind, metadata.name and metadata.namespa
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/servicenow/incidents/analyze — AI correlation, dedup & fix triage
+// Takes the open incidents and returns: correlated groups (which incidents
+// share a root cause), duplicate clusters (with their ticket IDs), the single
+// primary to fix first per group, and a global fix order. Closes the loop from
+// "here is a noisy queue" to "fix THIS one and it clears N others".
+// ---------------------------------------------------------------------------
+export async function handleIncidentCorrelationAPI(req, res) {
+  try {
+    const body = await readBody(req);
+    const provider = (body.llmOpts && body.llmOpts.provider) || LLM_PROVIDER;
+    const incidents = Array.isArray(body.incidents) ? body.incidents.slice(0, 60) : [];
+    if (incidents.length === 0) return json(res, 200, { groups: [], standalone: [], fixOrder: [], summary: "No incidents to analyze." });
+
+    // Deterministic fallback (also used when no LLM): group by fingerprint.
+    const fpFallback = () => {
+      const byFp = new Map();
+      for (const i of incidents) {
+        const key = i.fingerprint || `${i.shortDescription}|${i.namespace}|${i.resource}`;
+        if (!byFp.has(key)) byFp.set(key, []);
+        byFp.get(key).push(i);
+      }
+      const groups = [], standalone = [];
+      for (const members of byFp.values()) {
+        if (members.length === 1) { standalone.push(members[0].number); continue; }
+        const [primary, ...rest] = members;
+        groups.push({
+          title: primary.shortDescription.slice(0, 80),
+          primary: primary.number, severity: String(primary.severity || "—"),
+          rootCause: "Multiple incidents share the same signature (namespace/resource/summary).",
+          recommendedFix: "Remediate the affected workload once; the duplicates resolve together.",
+          members: members.map(m => m.number),
+          duplicates: rest.map(m => m.number),
+          resolvesOnFix: rest.map(m => m.number),
+          correlationType: "duplicate",
+        });
+      }
+      return { groups, standalone, fixOrder: groups.map(g => ({ number: g.primary, why: `Clears ${g.duplicates.length} duplicate(s)` })), summary: `${groups.length} duplicate cluster(s), ${standalone.length} unique incident(s).`, provider: "built-in" };
+    };
+
+    if (!provider || provider === "none") return json(res, 200, fpFallback());
+
+    const compact = incidents.map(i => `${i.number} [sev ${i.severity}${i.stateLabel ? ", " + i.stateLabel : ""}] cluster=${i.cluster || "?"} ns=${i.namespace || "?"} res=${i.resource || "?"} :: ${i.shortDescription}${i.description ? " — " + i.description.slice(0, 160) : ""}`).join("\n");
+
+    const prompt = `You are an ITSM incident correlation engine for a Kubernetes/OpenShift platform. Analyze the OPEN incidents below.
+
+INCIDENTS (${incidents.length}):
+${compact}
+
+Do THREE things:
+1. DEDUPLICATE — group incidents that describe the SAME underlying problem (same resource/namespace/symptom), even if worded differently. List their exact ticket numbers.
+2. CORRELATE — group incidents that are causally related (one root cause producing several symptoms across the stack). Identify the ONE primary incident that, when fixed, resolves the others.
+3. TRIAGE — give a global fix order: which incident to fix first for maximum blast-radius reduction.
+
+Return ONLY valid JSON (no markdown fences):
+{
+  "summary": "2-3 sentence executive summary of the queue and what to fix first",
+  "groups": [
+    {
+      "title": "short label for the group",
+      "correlationType": "duplicate" | "causal",
+      "severity": "critical|high|medium|low",
+      "primary": "INCxxxxxxx (the one to fix first)",
+      "rootCause": "the shared root cause",
+      "recommendedFix": "the concrete fix for the primary",
+      "members": ["all ticket numbers in this group"],
+      "duplicates": ["ticket numbers that are exact duplicates of the primary"],
+      "resolvesOnFix": ["ticket numbers that get resolved when the primary is fixed"]
+    }
+  ],
+  "standalone": ["ticket numbers that are unique and unrelated"],
+  "fixOrder": [ { "number": "INCxxxxxxx", "why": "why this is first — root cause, clears N others" } ]
+}
+Only use ticket numbers that appear above. Prefer fewer, well-justified groups over over-grouping.`;
+
+    const r = await callLLM({
+      messages: [{ role: "user", content: prompt }],
+      system: "You are a precise incident-correlation engine. Output only a single valid JSON object, no markdown. Never invent ticket numbers.",
+      maxTokens: 2200, temperature: 0.2,
+      provider: body.llmOpts?.provider, apiUrl: body.llmOpts?.apiUrl, apiKey: body.llmOpts?.apiKey,
+      model: body.llmOpts?.model, azureDeployment: body.llmOpts?.azureDeployment, azureApiVersion: body.llmOpts?.azureApiVersion,
+    });
+    let out = null;
+    try { let t = (r.text || "").trim(); const m = t.match(/\{[\s\S]*\}/); if (m) t = m[0]; out = JSON.parse(t); }
+    catch { return json(res, 200, { ...fpFallback(), note: "AI response unparseable — showing deterministic dedup." }); }
+    if (!out || (!Array.isArray(out.groups) && !Array.isArray(out.standalone))) return json(res, 200, fpFallback());
+    // Guard against hallucinated ticket numbers.
+    const valid = new Set(incidents.map(i => i.number));
+    const clean = (arr) => (Array.isArray(arr) ? arr.filter(n => valid.has(n)) : []);
+    out.groups = (out.groups || []).map(g => ({
+      ...g,
+      members: clean(g.members), duplicates: clean(g.duplicates), resolvesOnFix: clean(g.resolvesOnFix),
+      primary: valid.has(g.primary) ? g.primary : (clean(g.members)[0] || null),
+    })).filter(g => g.primary);
+    out.standalone = clean(out.standalone);
+    out.fixOrder = (out.fixOrder || []).filter(f => valid.has(f.number));
+    json(res, 200, { ...out, provider: r.provider || provider });
+  } catch (err) {
+    console.error("Incident correlation error:", err);
+    json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/ai/image-remediation — AI generates a concrete fix for ONE image
 // Returns recommended replacement image/tag, the exact oc command to apply it,
 // an optional Dockerfile patch, and step-by-step remediation. Closes the loop

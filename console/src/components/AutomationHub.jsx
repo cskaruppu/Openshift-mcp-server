@@ -362,37 +362,52 @@ function SopAgent({ clusters, activeCluster }) {
   );
 }
 
-/* ── ServiceNow Agent: fetch platform incidents → RCA per incident ── */
+/* ── ServiceNow Agent: open incidents → AI correlation/dedup → triage & fix ── */
+const SEV_COLOR = (s) => {
+  const k = String(s || "").toLowerCase();
+  if (/crit|^1$/.test(k)) return "#dc2626";
+  if (/high|^2$/.test(k)) return "#ea580c";
+  if (/med|^3$/.test(k)) return "#d97706";
+  return "#64748b";
+};
+
 function SnowAgent({ activeCluster }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [rca, setRca] = useState({}); // { [sysId]: { loading, data, error } }
-  const [fix, setFix] = useState({}); // { [sysId]: { phase, data, error } }
+  const [scope, setScope] = useState("platform"); // platform | all
+  const [rca, setRca] = useState({});
+  const [fix, setFix] = useState({}); // keyed by sysId
+  const [analysis, setAnalysis] = useState(null); // { phase, data, error }
 
-  const runFix = async (inc, apply) => {
-    setFix((p) => ({ ...p, [inc.sysId]: { phase: apply ? "applying" : "checking" } }));
-    try {
-      const res = await fetch(clusterUrl("/api/servicenow/incidents/fix", inc.cluster || activeCluster), {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sysId: inc.sysId, namespace: inc.namespace, resource: inc.resource, dryRun: !apply }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (d.error) throw new Error(d.error);
-      setFix((p) => ({ ...p, [inc.sysId]: { phase: apply ? "done" : "preview", data: d } }));
-      if (apply) showToast(`Fix applied${d.incidentClosed?.success ? " · incident closed" : ""}`, "ok");
-    } catch (e) { setFix((p) => ({ ...p, [inc.sysId]: { phase: "error", error: e.message } })); showToast("Fix failed: " + e.message, "err"); }
-  };
+  const incidents = data?.incidents || [];
+  const byNumber = {};
+  for (const i of incidents) byNumber[i.number] = i;
 
-  const fetchIncidents = useCallback(async () => {
-    setLoading(true);
+  const fetchIncidents = useCallback(async (scp) => {
+    setLoading(true); setAnalysis(null);
     try {
-      const res = await fetch("/api/servicenow/incidents?limit=25");
+      const res = await fetch(`/api/servicenow/incidents?limit=40&scope=${scp}`);
       const d = await res.json().catch(() => ({}));
       setData(d);
     } catch (e) { setData({ source: "error", note: e.message, incidents: [] }); } finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchIncidents(); }, [fetchIncidents]);
+  useEffect(() => { fetchIncidents(scope); }, [fetchIncidents, scope]);
+
+  const runAnalyze = async () => {
+    setAnalysis({ phase: "running" });
+    try {
+      const res = await fetch("/api/servicenow/incidents/analyze", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ incidents }),
+      });
+      const d = await res.json();
+      if (d.error) throw new Error(d.error);
+      setAnalysis({ phase: "done", data: d });
+      const grouped = (d.groups || []).reduce((n, g) => n + (g.duplicates?.length || 0) + (g.resolvesOnFix?.length || 0), 0);
+      showToast(`Correlated: ${(d.groups || []).length} group(s), ~${grouped} incident(s) collapse into their primary`, "ok");
+    } catch (e) { setAnalysis({ phase: "error", error: e.message }); showToast("Analyze failed: " + e.message, "err"); }
+  };
 
   const runRca = async (inc) => {
     setRca((p) => ({ ...p, [inc.sysId]: { loading: true } }));
@@ -407,20 +422,168 @@ function SnowAgent({ activeCluster }) {
     } catch (e) { setRca((p) => ({ ...p, [inc.sysId]: { loading: false, error: e.message } })); }
   };
 
+  // Fix one incident. `alsoClose` = correlated tickets that this same fix
+  // resolves; they are closed in ServiceNow with a note referencing the primary.
+  const runFix = async (inc, apply, alsoClose = [], primaryNumber = null) => {
+    setFix((p) => ({ ...p, [inc.sysId]: { phase: apply ? "applying" : "checking" } }));
+    try {
+      const res = await fetch(clusterUrl("/api/servicenow/incidents/fix", inc.cluster || activeCluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sysId: inc.sysId, namespace: inc.namespace, resource: inc.resource, dryRun: !apply, alsoClose, primaryNumber }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (d.error) throw new Error(d.error);
+      setFix((p) => ({ ...p, [inc.sysId]: { phase: apply ? "done" : "preview", data: d, alsoClose } }));
+      if (apply) showToast(`Fix applied${d.incidentClosed?.success ? " · primary closed" : ""}${d.closedRelated?.length ? " · " + d.closedRelated.filter(x => x.closed).length + " related closed" : ""}`, "ok");
+    } catch (e) { setFix((p) => ({ ...p, [inc.sysId]: { phase: "error", error: e.message } })); showToast("Fix failed: " + e.message, "err"); }
+  };
+
+  // Compute {sysId, number} list for a group's collateral closes.
+  const collateralOf = (g) => {
+    const nums = [...new Set([...(g.resolvesOnFix || []), ...(g.duplicates || [])])].filter((n) => n !== g.primary);
+    return nums.map((n) => byNumber[n]).filter(Boolean).map((i) => ({ sysId: i.sysId, number: i.number }));
+  };
+
+  const A = analysis?.data;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ fontSize: "0.86rem", color: "var(--muted,#5a6373)", flex: 1 }}>Incidents the platform raised in ServiceNow — with the cluster they came from. Run RCA and see the fix per incident.</div>
-        <button onClick={fetchIncidents} disabled={loading} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer" }}>{loading ? "Fetching…" : "↻ Refresh"}</button>
+      {/* Toolbar */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ fontSize: "0.86rem", color: "var(--muted,#5a6373)", flex: 1, minWidth: 220 }}>Open incidents this platform is tracking. Let AI de-duplicate and correlate them, then fix the primary to clear the rest.</div>
+        <div style={{ display: "inline-flex", gap: 3, padding: 3, borderRadius: 9, background: "var(--card-bg,#f0f2f8)", border: "1px solid var(--border,#e4e8f1)" }}>
+          {[["platform", "This platform"], ["all", "All open"]].map(([k, label]) => (
+            <button key={k} onClick={() => setScope(k)} style={{ padding: "5px 12px", borderRadius: 7, border: "none", background: scope === k ? "#3d5afe" : "transparent", color: scope === k ? "#fff" : "var(--muted,#5a6373)", fontWeight: 700, fontSize: "0.78rem", cursor: "pointer" }}>{label}</button>
+          ))}
+        </div>
+        <button onClick={() => fetchIncidents(scope)} disabled={loading} style={{ padding: "8px 13px", borderRadius: 8, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", fontWeight: 700, fontSize: "0.82rem", cursor: "pointer" }}>{loading ? "…" : "↻ Refresh"}</button>
+        <button onClick={runAnalyze} disabled={analysis?.phase === "running" || incidents.length === 0} style={{ padding: "8px 15px", borderRadius: 8, border: "none", background: "linear-gradient(135deg,#7c3aed,#3d5afe)", color: "#fff", fontWeight: 700, fontSize: "0.82rem", cursor: "pointer", opacity: analysis?.phase === "running" || !incidents.length ? 0.65 : 1 }}>{analysis?.phase === "running" ? "Analyzing…" : "🧠 Analyze & Correlate"}</button>
       </div>
+
+      {/* Status strip */}
+      {data && data.source !== "unavailable" && (
+        <div style={{ display: "flex", gap: 14, alignItems: "center", fontSize: "0.78rem", color: "var(--muted,#5a6373)", flexWrap: "wrap" }}>
+          <span><b style={{ color: "var(--fg,#151a29)" }}>{incidents.length}</b> open</span>
+          {typeof data.uniqueCount === "number" && <span><b style={{ color: "var(--fg,#151a29)" }}>{data.uniqueCount}</b> unique signature(s)</span>}
+          {incidents.length - (data.uniqueCount ?? incidents.length) > 0 && <span style={{ color: "#b45309" }}>{incidents.length - data.uniqueCount} likely duplicate(s)</span>}
+          <span style={{ padding: "2px 8px", borderRadius: 999, background: "rgba(61,90,254,0.1)", color: "#3d5afe", fontWeight: 700 }}>scope: {data.scope || scope}</span>
+          <span style={{ padding: "2px 8px", borderRadius: 999, background: "rgba(22,163,74,0.12)", color: "#16a34a", fontWeight: 700 }}>open only</span>
+        </div>
+      )}
+
       {data?.source === "unavailable" && <div style={{ fontSize: "0.84rem", color: "#b45309", background: "rgba(245,158,11,0.1)", padding: 12, borderRadius: 8 }}>ServiceNow not reachable/configured. Set the connection in Settings → ServiceNow. ({data.note})</div>}
-      {data && data.incidents?.length === 0 && data.source !== "unavailable" && <div style={{ fontSize: "0.86rem", color: "var(--muted,#5a6373)" }}>No open incidents found.</div>}
-      {(data?.incidents || []).map((inc) => {
+      {data && incidents.length === 0 && data.source !== "unavailable" && <div style={{ fontSize: "0.86rem", color: "var(--muted,#5a6373)" }}>No open incidents{scope === "platform" ? " raised by this platform" : ""}.</div>}
+      {analysis?.phase === "error" && <div style={{ color: "#dc2626", fontSize: "0.84rem" }}>Analyze error: {analysis.error}</div>}
+
+      {/* ── Correlation view ── */}
+      {A && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {A.summary && <div style={{ fontSize: "0.86rem", color: "var(--fg,#151a29)", background: "linear-gradient(90deg, rgba(124,58,237,0.08), rgba(61,90,254,0.05))", padding: 12, borderRadius: 10, borderLeft: "3px solid #7c3aed" }}><b>🧠 AI triage:</b> {A.summary}</div>}
+
+          {/* Fix order */}
+          {(A.fixOrder || []).length > 0 && (
+            <div style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, padding: 12, background: "var(--card-bg,#fff)" }}>
+              <div style={{ fontWeight: 800, fontSize: "0.8rem", marginBottom: 7 }}>⚑ Recommended fix order</div>
+              {(A.fixOrder || []).map((f, i) => (
+                <div key={f.number} style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: "0.8rem", marginTop: 3 }}>
+                  <span style={{ width: 18, height: 18, borderRadius: 999, background: "#3d5afe", color: "#fff", fontSize: "0.68rem", fontWeight: 800, display: "grid", placeItems: "center", flexShrink: 0 }}>{i + 1}</span>
+                  <span><b>{f.number}</b> <span style={{ color: "var(--muted,#5a6373)" }}>— {f.why}</span></span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Correlated / duplicate groups */}
+          {(A.groups || []).map((g, gi) => {
+            const primary = byNumber[g.primary];
+            const collateral = collateralOf(g);
+            const f = primary ? (fix[primary.sysId] || {}) : {};
+            const isDup = g.correlationType === "duplicate";
+            return (
+              <div key={gi} style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 12, padding: 14, background: "var(--card-bg,#fff)", borderTop: `3px solid ${SEV_COLOR(g.severity)}` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: isDup ? "rgba(217,119,6,0.14)" : "rgba(124,58,237,0.14)", color: isDup ? "#b45309" : "#7c3aed" }}>{isDup ? "🔁 DUPLICATE CLUSTER" : "🔗 CORRELATED"}</span>
+                  <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: SEV_COLOR(g.severity) + "22", color: SEV_COLOR(g.severity) }}>{String(g.severity || "—").toUpperCase()}</span>
+                  <span style={{ fontWeight: 750, fontSize: "0.9rem" }}>{g.title}</span>
+                  <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>{g.members?.length || 1} ticket(s)</span>
+                </div>
+
+                {/* Primary */}
+                <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "0.66rem", fontWeight: 800, padding: "2px 7px", borderRadius: 5, background: "#16a34a", color: "#fff" }}>ROOT / FIX FIRST</span>
+                  <b style={{ fontSize: "0.9rem" }}>{g.primary}</b>
+                  {primary?.cluster && <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "2px 8px", borderRadius: 999, background: "rgba(61,90,254,0.13)", color: "#3d5afe" }}>🗄 {primary.cluster}</span>}
+                  {primary?.namespace && <span style={{ fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>ns: {primary.namespace}{primary.resource ? " · " + primary.resource : ""}</span>}
+                </div>
+                {g.rootCause && <p style={{ fontSize: "0.83rem", margin: "6px 0 3px" }}><b>Root cause:</b> {g.rootCause}</p>}
+                {g.recommendedFix && <p style={{ fontSize: "0.83rem", margin: "0 0 4px" }}><b>Recommended fix:</b> {g.recommendedFix}</p>}
+
+                {/* Members / duplicates */}
+                {(g.members || []).length > 1 && (
+                  <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                    <span style={{ fontSize: "0.74rem", color: "var(--muted,#5a6373)" }}>Collapses:</span>
+                    {(g.members || []).filter((n) => n !== g.primary).map((n) => (
+                      <span key={n} style={{ fontSize: "0.72rem", fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: (g.duplicates || []).includes(n) ? "rgba(217,119,6,0.12)" : "rgba(100,116,139,0.12)", color: (g.duplicates || []).includes(n) ? "#b45309" : "#475569" }}>{n}{(g.duplicates || []).includes(n) ? " · dup" : ""}</span>
+                    ))}
+                  </div>
+                )}
+                {collateral.length > 0 && <div style={{ fontSize: "0.75rem", color: "#16a34a", marginTop: 5 }}>Fixing {g.primary} auto-closes {collateral.length} correlated ticket(s).</div>}
+
+                {/* Actions */}
+                {primary && primary.namespace && (
+                  <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                    <button onClick={() => runFix(primary, false, collateral, g.primary)} disabled={f.phase === "checking" || f.phase === "applying"} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid rgba(14,165,160,0.4)", background: "rgba(14,165,160,0.1)", color: "#0ea5a0", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>{f.phase === "checking" ? "Checking…" : "▷ Dry-run fix"}</button>
+                    <button onClick={() => runRca(primary)} disabled={(rca[primary.sysId] || {}).loading} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid rgba(124,58,237,0.4)", background: "rgba(124,58,237,0.1)", color: "#7c3aed", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>{(rca[primary.sysId] || {}).loading ? "Analyzing…" : "🔎 RCA"}</button>
+                  </div>
+                )}
+                {primary && !primary.namespace && <div style={{ fontSize: "0.76rem", color: "#b45309", marginTop: 8 }}>No namespace/workload parsed on the primary — resolve manually.</div>}
+
+                {(() => {
+                  if (!primary) return null;
+                  const rr = rca[primary.sysId] || {};
+                  return rr.data ? (
+                    <div style={{ marginTop: 8, borderLeft: "3px solid #7c3aed", paddingLeft: 10, fontSize: "0.82rem" }}>
+                      {rr.data.rootCause && <p style={{ margin: "0 0 3px" }}><b>RCA:</b> {rr.data.rootCause}</p>}
+                      {rr.data.recommendation && <p style={{ margin: 0 }}><b>Fix:</b> {rr.data.recommendation}</p>}
+                    </div>
+                  ) : rr.error ? <div style={{ marginTop: 6, color: "#dc2626", fontSize: "0.8rem" }}>RCA: {rr.error}</div> : null;
+                })()}
+
+                {f.phase === "preview" && f.data && (
+                  <div style={{ marginTop: 8, borderLeft: "3px solid #0ea5a0", paddingLeft: 10, fontSize: "0.82rem" }}>
+                    <b>Planned:</b> {f.data.action}. {collateral.length > 0 && <span>Will also close {collateral.length} correlated ticket(s).</span>}
+                    <div><button onClick={() => runFix(primary, true, collateral, g.primary)} style={{ marginTop: 6, padding: "6px 14px", borderRadius: 7, border: "none", background: "#0ea5a0", color: "#fff", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>✓ Apply & Close {collateral.length ? `${collateral.length + 1} incidents` : "Incident"}</button></div>
+                  </div>
+                )}
+                {f.phase === "done" && f.data && (
+                  <div style={{ marginTop: 8, borderLeft: "3px solid #16a34a", paddingLeft: 10, fontSize: "0.82rem" }}>
+                    <b>✓ Applied:</b> {f.data.action}.{f.data.incidentClosed?.success ? " Primary closed." : f.data.incidentClosed?.detailsSaved ? " Details saved — close pending." : ""}
+                    {(f.data.closedRelated || []).length > 0 && <div style={{ color: "#16a34a" }}>Closed {f.data.closedRelated.filter((x) => x.closed).length}/{f.data.closedRelated.length} correlated ticket(s).</div>}
+                  </div>
+                )}
+                {f.phase === "error" && <div style={{ marginTop: 6, color: "#dc2626", fontSize: "0.8rem" }}>Fix: {f.error}</div>}
+              </div>
+            );
+          })}
+
+          {(A.standalone || []).length > 0 && (
+            <div style={{ fontSize: "0.78rem", color: "var(--muted,#5a6373)" }}>
+              <b>Unique / unrelated:</b> {(A.standalone || []).join(", ")} — fix individually below.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Raw incident list (when not analyzed) ── */}
+      {!A && incidents.map((inc) => {
         const r = rca[inc.sysId] || {};
+        const f = fix[inc.sysId] || {};
         return (
-          <div key={inc.sysId} style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, padding: 14, background: "var(--card-bg,#fff)" }}>
+          <div key={inc.sysId} style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, padding: 14, background: "var(--card-bg,#fff)", opacity: inc.duplicateOf ? 0.72 : 1 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontWeight: 750, fontSize: "0.9rem" }}>{inc.number}</span>
+              {inc.stateLabel && <span style={{ fontSize: "0.68rem", fontWeight: 700, padding: "2px 7px", borderRadius: 999, background: "rgba(100,116,139,0.12)", color: "#475569" }}>{inc.stateLabel}</span>}
+              {inc.duplicateOf && <span style={{ fontSize: "0.68rem", fontWeight: 800, padding: "2px 7px", borderRadius: 999, background: "rgba(217,119,6,0.12)", color: "#b45309" }}>🔁 dup of {inc.duplicateOf}</span>}
               {inc.cluster && <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "2px 8px", borderRadius: 999, background: "rgba(61,90,254,0.13)", color: "#3d5afe" }}>🗄 {inc.cluster}</span>}
               {inc.namespace && <span style={{ fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>ns: {inc.namespace}</span>}
               <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>{inc.createdOn}</span>
@@ -428,9 +591,7 @@ function SnowAgent({ activeCluster }) {
             <div style={{ fontSize: "0.88rem", margin: "6px 0", color: "var(--fg,#151a29)" }}>{inc.shortDescription}</div>
             <div style={{ display: "flex", gap: 8 }}>
               <button onClick={() => runRca(inc)} disabled={r.loading || !inc.namespace} title={inc.namespace ? "" : "No namespace/resource on this incident"} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid rgba(124,58,237,0.4)", background: "rgba(124,58,237,0.1)", color: "#7c3aed", fontWeight: 700, fontSize: "0.8rem", cursor: inc.namespace ? "pointer" : "not-allowed", opacity: inc.namespace ? 1 : 0.5 }}>{r.loading ? "Analyzing…" : "🔎 Run RCA"}</button>
-              {(() => { const f = fix[inc.sysId] || {}; return (
-                <button onClick={() => runFix(inc, false)} disabled={f.phase === "checking" || f.phase === "applying" || !inc.namespace} title={inc.namespace ? "Fix (rolling restart) + close incident" : "No namespace/resource on this incident"} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid rgba(14,165,160,0.4)", background: "rgba(14,165,160,0.1)", color: "#0ea5a0", fontWeight: 700, fontSize: "0.8rem", cursor: inc.namespace ? "pointer" : "not-allowed", opacity: inc.namespace ? 1 : 0.5 }}>{f.phase === "checking" ? "Checking…" : f.phase === "applying" ? "Applying…" : "⚡ Fix"}</button>
-              ); })()}
+              <button onClick={() => runFix(inc, false)} disabled={f.phase === "checking" || f.phase === "applying" || !inc.namespace} title={inc.namespace ? "Fix (rolling restart) + close incident" : "No namespace/resource on this incident"} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid rgba(14,165,160,0.4)", background: "rgba(14,165,160,0.1)", color: "#0ea5a0", fontWeight: 700, fontSize: "0.8rem", cursor: inc.namespace ? "pointer" : "not-allowed", opacity: inc.namespace ? 1 : 0.5 }}>{f.phase === "checking" ? "Checking…" : f.phase === "applying" ? "Applying…" : "⚡ Fix"}</button>
             </div>
             {r.error && <div style={{ marginTop: 8, color: "#dc2626", fontSize: "0.82rem" }}>RCA: {r.error}</div>}
             {r.data && (
@@ -440,22 +601,18 @@ function SnowAgent({ activeCluster }) {
                 {r.data.summary && !r.data.rootCause && <p style={{ margin: 0 }}>{r.data.summary}</p>}
               </div>
             )}
-            {(() => {
-              const f = fix[inc.sysId] || {};
-              if (f.phase === "preview" && f.data) return (
-                <div style={{ marginTop: 10, borderLeft: "3px solid #0ea5a0", paddingLeft: 10, fontSize: "0.84rem" }}>
-                  <b>Planned fix (dry-run):</b> {f.data.action}
-                  <div><button onClick={() => runFix(inc, true)} style={{ marginTop: 6, padding: "6px 14px", borderRadius: 7, border: "none", background: "#0ea5a0", color: "#fff", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>✓ Apply Fix & Close Incident</button></div>
-                </div>
-              );
-              if (f.phase === "done" && f.data) return (
-                <div style={{ marginTop: 10, borderLeft: "3px solid #16a34a", paddingLeft: 10, fontSize: "0.84rem" }}>
-                  <b>✓ Applied:</b> {f.data.action}.{f.data.incidentClosed?.success ? " Incident closed in ServiceNow." : f.data.incidentClosed?.detailsSaved ? " Details saved — close pending." : ""}
-                </div>
-              );
-              if (f.phase === "error") return <div style={{ marginTop: 8, color: "#dc2626", fontSize: "0.82rem" }}>Fix: {f.error}</div>;
-              return null;
-            })()}
+            {f.phase === "preview" && f.data && (
+              <div style={{ marginTop: 10, borderLeft: "3px solid #0ea5a0", paddingLeft: 10, fontSize: "0.84rem" }}>
+                <b>Planned fix (dry-run):</b> {f.data.action}
+                <div><button onClick={() => runFix(inc, true)} style={{ marginTop: 6, padding: "6px 14px", borderRadius: 7, border: "none", background: "#0ea5a0", color: "#fff", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>✓ Apply Fix & Close Incident</button></div>
+              </div>
+            )}
+            {f.phase === "done" && f.data && (
+              <div style={{ marginTop: 10, borderLeft: "3px solid #16a34a", paddingLeft: 10, fontSize: "0.84rem" }}>
+                <b>✓ Applied:</b> {f.data.action}.{f.data.incidentClosed?.success ? " Incident closed in ServiceNow." : f.data.incidentClosed?.detailsSaved ? " Details saved — close pending." : ""}
+              </div>
+            )}
+            {f.phase === "error" && <div style={{ marginTop: 8, color: "#dc2626", fontSize: "0.82rem" }}>Fix: {f.error}</div>}
           </div>
         );
       })}
