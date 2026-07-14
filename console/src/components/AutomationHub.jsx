@@ -551,8 +551,34 @@ function SnowAgent({ activeCluster }) {
 
                 {f.phase === "preview" && f.data && (
                   <div style={{ marginTop: 8, borderLeft: "3px solid #0ea5a0", paddingLeft: 10, fontSize: "0.82rem" }}>
-                    <b>Planned:</b> {f.data.action}. {collateral.length > 0 && <span>Will also close {collateral.length} correlated ticket(s).</span>}
-                    <div><button onClick={() => runFix(primary, true, collateral, g.primary)} style={{ marginTop: 6, padding: "6px 14px", borderRadius: 7, border: "none", background: "#0ea5a0", color: "#fff", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>✓ Apply & Close {collateral.length ? `${collateral.length + 1} incidents` : "Incident"}</button></div>
+                    <b>Planned action:</b> {f.data.action}.
+                    {/* Consolidated close list — everything this one fix will close */}
+                    <div style={{ marginTop: 8, padding: 10, borderRadius: 8, background: "rgba(14,165,160,0.06)", border: "1px solid rgba(14,165,160,0.25)" }}>
+                      <div style={{ fontWeight: 800, fontSize: "0.76rem", color: "#0e8a86", marginBottom: 6 }}>Will close {collateral.length + 1} incident(s) in ServiceNow:</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: "0.78rem" }}>
+                          <span style={{ fontSize: "0.62rem", fontWeight: 800, padding: "1px 6px", borderRadius: 4, background: "#16a34a", color: "#fff" }}>PRIMARY</span>
+                          <b>{g.primary}</b>
+                          <span style={{ color: "var(--muted,#5a6373)" }}>{primary?.shortDescription?.slice(0, 60)}</span>
+                        </div>
+                        {collateral.map((c) => {
+                          const ci = byNumber[c.number];
+                          const isDup = (g.duplicates || []).includes(c.number);
+                          return (
+                            <div key={c.number} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: "0.78rem" }}>
+                              <span style={{ fontSize: "0.62rem", fontWeight: 800, padding: "1px 6px", borderRadius: 4, background: isDup ? "rgba(217,119,6,0.16)" : "rgba(100,116,139,0.16)", color: isDup ? "#b45309" : "#475569" }}>{isDup ? "DUPLICATE" : "RESOLVED-BY"}</span>
+                              <span>{c.number}</span>
+                              <span style={{ color: "var(--muted,#5a6373)" }}>{ci?.shortDescription?.slice(0, 55)}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {collateral.length === 0 && <div style={{ fontSize: "0.74rem", color: "var(--muted,#5a6373)" }}>No correlated tickets — only the primary will close.</div>}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+                      <button onClick={() => runFix(primary, true, collateral, g.primary)} style={{ padding: "6px 14px", borderRadius: 7, border: "none", background: "#0ea5a0", color: "#fff", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>✓ Confirm — Apply & Close {collateral.length ? `${collateral.length + 1} incidents` : "Incident"}</button>
+                      <button onClick={() => setFix((p) => ({ ...p, [primary.sysId]: {} }))} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--muted,#5a6373)", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>Cancel</button>
+                    </div>
                   </div>
                 )}
                 {f.phase === "done" && f.data && (
