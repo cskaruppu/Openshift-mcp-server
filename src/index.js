@@ -6952,7 +6952,8 @@ spec:
       try {
         const ns = url.searchParams.get("namespace");
         if (!ns) { sendJson(res, 200, { error: "namespace query param is required" }); return; }
-        const result = await withClusterContext(url, async () => getNamespaceTopology(ns));
+        const expand = url.searchParams.get("expand") === "1";
+        const result = await withClusterContext(url, async () => getNamespaceTopology(ns, { expand }));
         if (result === null) { sendJson(res, 200, { error: "Selected cluster is not reachable." }); return; }
         sendJson(res, 200, result);
       } catch (err) { sendJson(res, 500, { error: err.message }); }

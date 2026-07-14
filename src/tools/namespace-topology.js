@@ -40,8 +40,9 @@ function podHealth(pod) {
   return { name: pod.metadata?.name, phase, ready, status, restarts: maxRestarts, reasons: [...new Set(reasons)] };
 }
 
-export async function getNamespaceTopology(namespace) {
+export async function getNamespaceTopology(namespace, opts = {}) {
   const ns = namespace;
+  const expand = opts.expand === true;
   const safe = async (p) => { try { return await ocpGet(p); } catch { return { items: [] }; } };
 
   const [deps, stss, dss, pods, svcs, routes, cms, secrets, pvcs, sas, rss, iss, rbs, nps] = await Promise.all([
@@ -62,7 +63,9 @@ export async function getNamespaceTopology(namespace) {
   ]);
 
   const podList = (pods.items || []).map((p) => ({
+    name: p.metadata?.name,
     labels: p.metadata?.labels || {},
+    ownerRs: (p.metadata?.ownerReferences || []).find((o) => o.kind === "ReplicaSet")?.name || null,
     health: podHealth(p),
   }));
 
@@ -226,6 +229,59 @@ export async function getNamespaceTopology(namespace) {
   addKind("RoleBinding", (rbs.items || []).length, "healthy");
   addKind("NetworkPolicy", (nps.items || []).length, "healthy");
 
+  // ---- Expanded graph: every resource as its own node ----
+  let expandedGraph = null;
+  if (expand) {
+    const eNodes = [], eEdges = [];
+    const push = (n, parent) => { eNodes.push(n); if (parent) eEdges.push({ source: parent, target: n.id }); };
+    push({ id: "ns", kind: "Namespace", name: ns, status: nsStatus });
+    const POD_CAP = 12;
+    const addPods = (parentId, myPods) => {
+      myPods.slice(0, POD_CAP).forEach((p) => push({ id: `Pod/${p.name}`, kind: "Pod", name: p.name, status: p.health.status, reasons: p.health.reasons }, parentId));
+      if (myPods.length > POD_CAP) push({ id: `${parentId}/pod-more`, kind: "Pod", name: `+${myPods.length - POD_CAP} pods`, status: worst(myPods.slice(POD_CAP).map((p) => p.health.status)), count: myPods.length - POD_CAP }, parentId);
+    };
+    // Deployments → their ReplicaSets → Pods
+    for (const dep of (deps.items || [])) {
+      const w = workloads.find((x) => x.kind === "Deployment" && x.name === dep.metadata?.name);
+      const dId = `Deployment/${dep.metadata?.name}`;
+      push({ id: dId, kind: "Deployment", name: dep.metadata?.name, status: w?.status || "idle", replicas: `${w?.ready || 0}/${w?.desired || 0}`, reasons: w?.reasons || [] }, "ns");
+      const myRs = (rss.items || []).filter((r) => (r.metadata?.ownerReferences || []).some((o) => o.kind === "Deployment" && o.name === dep.metadata?.name) && (r.status?.replicas || 0) > 0);
+      if (myRs.length === 0) { addPods(dId, podList.filter((p) => labelsMatch(w?.selector || {}, p.labels))); }
+      for (const rs of myRs) {
+        const rId = `ReplicaSet/${rs.metadata?.name}`;
+        push({ id: rId, kind: "ReplicaSet", name: rs.metadata?.name, status: w?.status || "healthy" }, dId);
+        addPods(rId, podList.filter((p) => p.ownerRs === rs.metadata?.name));
+      }
+    }
+    // StatefulSets / DaemonSets → Pods
+    for (const [items, kind] of [[stss.items, "StatefulSet"], [dss.items, "DaemonSet"]]) {
+      for (const it of (items || [])) {
+        const w = workloads.find((x) => x.kind === kind && x.name === it.metadata?.name);
+        const id = `${kind}/${it.metadata?.name}`;
+        push({ id, kind, name: it.metadata?.name, status: w?.status || "idle", replicas: `${w?.ready || 0}/${w?.desired || 0}`, reasons: w?.reasons || [] }, "ns");
+        addPods(id, podList.filter((p) => labelsMatch(w?.selector || {}, p.labels)));
+      }
+    }
+    // Services & Routes individually
+    for (const s of services) push({ id: s.id, kind: "Service", name: s.name, status: s.status }, "ns");
+    for (const r of routeNodes) push({ id: r.id, kind: "Route", name: r.name, status: r.status, host: r.host }, "ns");
+    // Config-type resources (capped per kind to keep it readable)
+    const LEAF_CAP = 20;
+    const leaf = (items, kind, statusFn) => {
+      const arr = items || [];
+      arr.slice(0, LEAF_CAP).forEach((it) => push({ id: `${kind}/${it.metadata?.name}`, kind, name: it.metadata?.name, status: statusFn ? statusFn(it) : "healthy" }, "ns"));
+      if (arr.length > LEAF_CAP) push({ id: `kind/${kind}-more`, kind, name: `+${arr.length - LEAF_CAP} ${kind}`, status: "idle", count: arr.length - LEAF_CAP }, "ns");
+    };
+    leaf(pvcs.items, "PVC", (p) => p.status?.phase === "Bound" ? "healthy" : p.status?.phase === "Lost" ? "error" : "warning");
+    leaf(cms.items, "ConfigMap");
+    leaf(secrets.items, "Secret");
+    leaf(sas.items, "ServiceAccount");
+    leaf(iss.items, "ImageStream");
+    leaf(rbs.items, "RoleBinding");
+    leaf(nps.items, "NetworkPolicy");
+    expandedGraph = { nodes: eNodes, edges: eEdges };
+  }
+
   const summary = {
     workloads: workloads.length,
     healthy: workloads.filter((w) => w.status === "healthy").length,
@@ -238,5 +294,5 @@ export async function getNamespaceTopology(namespace) {
     runningPods: podList.filter((p) => p.health.status === "healthy").length,
   };
 
-  return { namespace: ns, summary, chains, standalone, issues, graph: { nodes: gNodes, edges: gEdges }, ok: issues.filter((i) => i.level === "error").length === 0 };
+  return { namespace: ns, summary, chains, standalone, issues, expanded: expand, graph: expand ? expandedGraph : { nodes: gNodes, edges: gEdges }, ok: issues.filter((i) => i.level === "error").length === 0 };
 }

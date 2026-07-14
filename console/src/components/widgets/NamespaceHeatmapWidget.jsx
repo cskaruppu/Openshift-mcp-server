@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "../../api/client";
 import { useClusterQuery } from "../../hooks/useClusterQuery";
@@ -80,32 +80,38 @@ export function NamespaceHeatmapWidget() {
 /* ── Topology popup for one namespace ── */
 function NamespaceTopologyModal({ namespace, onClose }) {
   const cluster = useActiveCluster();
+  const [expand, setExpand] = useState(false);
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
-    queryKey: ["/api/topology/namespace", namespace, cluster],
-    queryFn: ({ signal }) => apiGet(`/api/topology/namespace?namespace=${encodeURIComponent(namespace)}`, { cluster, signal }),
+    queryKey: ["/api/topology/namespace", namespace, cluster, expand],
+    queryFn: ({ signal }) => apiGet(`/api/topology/namespace?namespace=${encodeURIComponent(namespace)}${expand ? "&expand=1" : ""}`, { cluster, signal }),
     staleTime: 15_000,
   });
   const topo = data && !data.error ? data : null;
   const s = topo?.summary;
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,14,25,0.62)", backdropFilter: "blur(7px)", WebkitBackdropFilter: "blur(7px)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,14,25,0.55)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
       <style>{`@keyframes nt-pop{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}`}</style>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(960px, 96vw)", maxHeight: "88vh", background: "var(--bg,#0f1420)", border: "1px solid var(--border,#243045)", borderRadius: 16, boxShadow: "0 24px 70px rgba(0,0,0,0.5)", display: "flex", flexDirection: "column", overflow: "hidden", animation: "nt-pop .18s cubic-bezier(.2,.7,.3,1)" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(1000px, 96vw)", maxHeight: "90vh", background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 16, boxShadow: "0 24px 70px rgba(0,0,0,0.35)", display: "flex", flexDirection: "column", overflow: "hidden", animation: "nt-pop .18s cubic-bezier(.2,.7,.3,1)", color: "#1e293b" }}>
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 20px", borderBottom: "1px solid var(--border,#243045)", background: "linear-gradient(90deg, rgba(61,90,254,0.10), rgba(14,165,160,0.06))" }}>
-          <span style={{ width: 38, height: 38, borderRadius: 10, background: "linear-gradient(135deg,#3d5afe,#0ea5a0)", display: "grid", placeItems: "center", fontSize: "1.15rem" }}>🧩</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", borderBottom: "1px solid #e2e8f0", background: "linear-gradient(90deg, rgba(61,90,254,0.08), rgba(14,165,160,0.05))" }}>
+          <span style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#3d5afe,#0ea5a0)", display: "grid", placeItems: "center", fontSize: "1.1rem" }}>🧩</span>
           <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 800, fontSize: "1.05rem", color: "var(--fg,#e6ebf5)" }}>{namespace}</div>
-            <div style={{ fontSize: "0.76rem", color: "var(--muted,#94a3b8)" }}>Workload topology · Route → Service → Workload → Pods</div>
+            <div style={{ fontWeight: 800, fontSize: "1.02rem", color: "#0f172a" }}>{namespace}</div>
+            <div style={{ fontSize: "0.75rem", color: "#64748b" }}>Namespace topology · Namespace → workloads → pods & resources</div>
           </div>
-          <button onClick={() => refetch()} title="Refresh" style={{ padding: "6px 11px", borderRadius: 8, border: "1px solid var(--border,#243045)", background: "transparent", color: "var(--muted,#94a3b8)", fontWeight: 700, fontSize: "0.78rem", cursor: "pointer" }}>{isFetching ? "…" : "↻"}</button>
-          <button onClick={onClose} title="Close" style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid var(--border,#243045)", background: "transparent", color: "var(--muted,#94a3b8)", fontSize: "1.1rem", cursor: "pointer", lineHeight: 1 }}>×</button>
+          <div style={{ display: "inline-flex", gap: 3, padding: 3, borderRadius: 9, background: "#f1f5f9", border: "1px solid #e2e8f0" }}>
+            {[["", "Grouped"], ["1", "Expanded"]].map(([v, label]) => (
+              <button key={label} onClick={() => setExpand(v === "1")} style={{ padding: "5px 11px", borderRadius: 7, border: "none", background: (expand ? "1" : "") === v ? "#3d5afe" : "transparent", color: (expand ? "1" : "") === v ? "#fff" : "#475569", fontWeight: 700, fontSize: "0.76rem", cursor: "pointer" }}>{label}</button>
+            ))}
+          </div>
+          <button onClick={() => refetch()} title="Refresh" style={{ padding: "6px 11px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontWeight: 700, fontSize: "0.78rem", cursor: "pointer" }}>{isFetching ? "…" : "↻"}</button>
+          <button onClick={onClose} title="Close" style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: "1.1rem", cursor: "pointer", lineHeight: 1 }}>×</button>
         </div>
 
         {/* Summary chips */}
         {s && (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "12px 20px 0" }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "12px 18px 0" }}>
             <Chip>{s.workloads} workloads</Chip>
             <Chip c="#16a34a">{s.healthy} healthy</Chip>
             {s.warning > 0 && <Chip c="#d97706">{s.warning} warning</Chip>}
@@ -118,8 +124,8 @@ function NamespaceTopologyModal({ namespace, onClose }) {
         )}
 
         {/* Body */}
-        <div style={{ flex: 1, overflow: "auto", padding: 20 }}>
-          {isLoading && <div style={{ color: "var(--muted,#94a3b8)" }}>Building topology…</div>}
+        <div style={{ flex: 1, overflow: "auto", padding: 18, background: "#ffffff" }}>
+          {isLoading && <div style={{ color: "#64748b" }}>Building topology…</div>}
           {isError && <div style={{ color: "#dc2626" }}>{String(error.message)}</div>}
           {data?.error && <div style={{ color: "#dc2626" }}>{data.error}</div>}
 
@@ -127,31 +133,32 @@ function NamespaceTopologyModal({ namespace, onClose }) {
             <>
               {/* Issues (errors between components) */}
               {topo.issues.length > 0 && (
-                <div style={{ marginBottom: 16, border: "1px solid var(--border,#243045)", borderRadius: 10, overflow: "hidden" }}>
-                  <div style={{ padding: "8px 12px", fontWeight: 800, fontSize: "0.8rem", color: "var(--fg,#e6ebf5)", background: "rgba(220,38,38,0.08)" }}>⚠ {topo.issues.length} issue(s) between components</div>
+                <div style={{ marginBottom: 14, border: "1px solid #fecaca", borderRadius: 10, overflow: "hidden" }}>
+                  <div style={{ padding: "8px 12px", fontWeight: 800, fontSize: "0.8rem", color: "#b91c1c", background: "#fef2f2" }}>⚠ {topo.issues.length} issue(s) between components</div>
                   <div style={{ padding: "8px 12px", display: "flex", flexDirection: "column", gap: 5 }}>
                     {topo.issues.map((i, k) => (
                       <div key={k} style={{ fontSize: "0.8rem", display: "flex", gap: 7, alignItems: "baseline" }}>
                         <span style={{ color: i.level === "error" ? "#dc2626" : "#d97706", fontWeight: 800 }}>{i.level === "error" ? "✗" : "!"}</span>
-                        <span style={{ color: "var(--fg,#cbd5e1)" }}>{i.message}</span>
+                        <span style={{ color: "#334155" }}>{i.message}</span>
                       </div>
                     ))}
                   </div>
                 </div>
               )}
 
-              {/* Hierarchical topology graph — Namespace → resources → RS → Pod */}
+              {/* Interactive hierarchical topology graph */}
               {(!topo.graph || topo.graph.nodes.length <= 1) ? (
-                <div style={{ color: "var(--muted,#94a3b8)", fontSize: "0.86rem" }}>No workloads found in this namespace.</div>
+                <div style={{ color: "#64748b", fontSize: "0.86rem" }}>No workloads found in this namespace.</div>
               ) : (
                 <TopologyGraph graph={topo.graph} />
               )}
 
               {/* Legend */}
-              <div style={{ display: "flex", gap: 14, marginTop: 16, flexWrap: "wrap", fontSize: "0.72rem", color: "var(--muted,#94a3b8)" }}>
+              <div style={{ display: "flex", gap: 14, marginTop: 12, flexWrap: "wrap", fontSize: "0.72rem", color: "#64748b" }}>
                 {Object.entries(STATUS).map(([k, v]) => (
                   <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 3, background: v.c }} /> {v.label}</span>
                 ))}
+                <span style={{ marginLeft: "auto" }}>drag background to pan · scroll to zoom · drag a node to move it</span>
               </div>
             </>
           )}
@@ -162,11 +169,11 @@ function NamespaceTopologyModal({ namespace, onClose }) {
 }
 
 function Chip({ children, c }) {
-  return <span style={{ fontSize: "0.74rem", fontWeight: 700, padding: "3px 10px", borderRadius: 999, background: c ? c + "22" : "rgba(148,163,184,0.14)", color: c || "var(--muted,#94a3b8)" }}>{children}</span>;
+  return <span style={{ fontSize: "0.74rem", fontWeight: 700, padding: "3px 10px", borderRadius: 999, background: c ? c + "1f" : "#f1f5f9", color: c || "#475569", border: `1px solid ${c ? c + "44" : "#e2e8f0"}` }}>{children}</span>;
 }
 
-/* Hierarchical tree layout (deterministic) + SVG connectors, ACM-style. */
-const NODE_W = 96, CIRCLE = 46, LEVEL_H = 118, PAD = 24;
+/* Deterministic hierarchical tree layout. */
+const NODE_W = 104, CIRCLE = 44, LEVEL_H = 116, PAD = 30, LEAF_GAP = 16;
 
 function layoutTree(graph) {
   const map = new Map(graph.nodes.map((n) => [n.id, { ...n, children: [] }]));
@@ -179,47 +186,107 @@ function layoutTree(graph) {
   let cursor = 0;
   const place = (node, depth) => {
     node.y = depth * LEVEL_H + PAD;
-    if (node.children.length === 0) { node.x = cursor * (NODE_W + 14) + PAD; cursor++; }
+    if (node.children.length === 0) { node.x = cursor * (NODE_W + LEAF_GAP) + PAD; cursor++; }
     else { node.children.forEach((c) => place(c, depth + 1)); node.x = (node.children[0].x + node.children[node.children.length - 1].x) / 2; }
   };
   place(root, 0);
   const all = [...map.values()];
   const width = Math.max(...all.map((n) => n.x)) + NODE_W + PAD;
-  const height = Math.max(...all.map((n) => n.y)) + CIRCLE + 40 + PAD;
+  const height = Math.max(...all.map((n) => n.y)) + CIRCLE + 46 + PAD;
   const idx = new Map(all.map((n) => [n.id, n]));
-  const edges = graph.edges.map((e) => ({ from: idx.get(e.source), to: idx.get(e.target) })).filter((e) => e.from && e.to);
-  return { nodes: all, edges, width, height };
+  const edges = graph.edges.map((e) => ({ from: e.source, to: e.target })).filter((e) => idx.get(e.from) && idx.get(e.to));
+  return { nodes: all, edges, width, height, idx };
 }
 
+/* Interactive (pan / zoom / drag-node) topology canvas — light, readable. */
 function TopologyGraph({ graph }) {
-  const { nodes, edges, width, height } = layoutTree(graph);
-  const cx = (n) => n.x + NODE_W / 2;
+  const base = useMemo(() => layoutTree(graph), [graph]);
+  const [pos, setPos] = useState({});           // node id → {x,y} overrides
+  const [view, setView] = useState({ z: 1, x: 0, y: 0 });
+  const vpRef = useRef(null);
+  const drag = useRef(null);
+  const viewRef = useRef(view); viewRef.current = view;
+
+  useEffect(() => { setPos({}); setView({ z: 1, x: 0, y: 0 }); }, [graph]);
+
+  useEffect(() => {
+    const move = (e) => {
+      const d = drag.current; if (!d) return;
+      if (d.type === "pan") setView((v) => ({ ...v, x: d.ox + (e.clientX - d.sx), y: d.oy + (e.clientY - d.sy) }));
+      else { const z = viewRef.current.z; setPos((p) => ({ ...p, [d.id]: { x: d.ox + (e.clientX - d.sx) / z, y: d.oy + (e.clientY - d.sy) / z } })); }
+    };
+    const up = () => { drag.current = null; };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+    return () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); };
+  }, []);
+
+  const nodePos = (n) => pos[n.id] || { x: n.x, y: n.y };
+  const cx = (n) => nodePos(n).x + NODE_W / 2;
+
+  // Non-passive wheel listener so we can preventDefault and zoom (not scroll).
+  useEffect(() => {
+    const el = vpRef.current; if (!el) return;
+    const onWheel = (e) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      setView((v) => {
+        const z2 = Math.min(2.4, Math.max(0.3, v.z * (e.deltaY < 0 ? 1.12 : 0.89)));
+        const wx = (mx - v.x) / v.z, wy = (my - v.y) / v.z;
+        return { z: z2, x: mx - wx * z2, y: my - wy * z2 };
+      });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  const startPan = (e) => { drag.current = { type: "pan", sx: e.clientX, sy: e.clientY, ox: view.x, oy: view.y }; };
+  const startNode = (e, n) => { e.stopPropagation(); const p = nodePos(n); drag.current = { type: "node", id: n.id, sx: e.clientX, sy: e.clientY, ox: p.x, oy: p.y }; };
+  const zoomBy = (f) => setView((v) => ({ ...v, z: Math.min(2.4, Math.max(0.3, v.z * f)) }));
+  const reset = () => { setPos({}); setView({ z: 1, x: 0, y: 0 }); };
+
+  const btn = { width: 28, height: 28, borderRadius: 7, border: "1px solid #e2e8f0", background: "#fff", color: "#334155", fontWeight: 800, fontSize: "0.9rem", cursor: "pointer", lineHeight: 1 };
+
   return (
-    <div style={{ overflow: "auto", border: "1px solid var(--border,#243045)", borderRadius: 10, background: "var(--card-bg,#0d1320)" }}>
-      <div style={{ position: "relative", width, height, minWidth: "100%" }}>
-        <svg width={width} height={height} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
-          {edges.map((e, i) => {
-            const x1 = cx(e.from), y1 = e.from.y + CIRCLE, x2 = cx(e.to), y2 = e.to.y;
-            const my = (y1 + y2) / 2;
-            return <path key={i} d={`M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}`} fill="none" stroke="var(--border,#334155)" strokeWidth="1.5" />;
-          })}
-        </svg>
-        {nodes.map((n) => {
-          const st = STATUS[n.status] || STATUS.idle;
-          return (
-            <div key={n.id} style={{ position: "absolute", left: n.x, top: n.y, width: NODE_W, display: "flex", flexDirection: "column", alignItems: "center" }}>
-              <div style={{ position: "relative", width: CIRCLE, height: CIRCLE, borderRadius: "50%", background: st.bg, border: `2px solid ${st.c}`, display: "grid", placeItems: "center", fontSize: "1.15rem" }}>
-                {KIND_ICON[n.kind] || "▫"}
-                {/* status dot */}
-                <span style={{ position: "absolute", top: -3, left: -3, width: 12, height: 12, borderRadius: "50%", background: st.c, border: "2px solid var(--card-bg,#0d1320)" }} />
-                {/* count badge */}
-                {n.count > 1 && <span style={{ position: "absolute", top: -5, right: -5, minWidth: 16, height: 16, padding: "0 3px", borderRadius: 8, background: "#3d5afe", color: "#fff", fontSize: "0.62rem", fontWeight: 800, display: "grid", placeItems: "center" }}>{n.count}</span>}
+    <div style={{ position: "relative", height: 470, border: "1px solid #e2e8f0", borderRadius: 12, background: "#f8fafc", overflow: "hidden" }}>
+      <div ref={vpRef} onMouseDown={startPan} style={{ position: "absolute", inset: 0, cursor: "grab" }}>
+        <div style={{ position: "absolute", transformOrigin: "0 0", transform: `translate(${view.x}px, ${view.y}px) scale(${view.z})` }}>
+          <svg width={base.width} height={base.height} style={{ position: "absolute", inset: 0, overflow: "visible", pointerEvents: "none" }}>
+            {base.edges.map((e, i) => {
+              const from = base.idx.get(e.from), to = base.idx.get(e.to);
+              const x1 = cx(from), y1 = nodePos(from).y + CIRCLE, x2 = cx(to), y2 = nodePos(to).y;
+              const my = (y1 + y2) / 2;
+              const bad = (to.status === "error");
+              return <path key={i} d={`M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}`} fill="none" stroke={bad ? "#fca5a5" : "#cbd5e1"} strokeWidth="1.6" />;
+            })}
+          </svg>
+          {base.nodes.map((n) => {
+            const st = STATUS[n.status] || STATUS.idle;
+            const p = nodePos(n);
+            return (
+              <div key={n.id} onMouseDown={(e) => startNode(e, n)} style={{ position: "absolute", left: p.x, top: p.y, width: NODE_W, display: "flex", flexDirection: "column", alignItems: "center", cursor: "grab", userSelect: "none" }}>
+                <div style={{ position: "relative", width: CIRCLE, height: CIRCLE, borderRadius: "50%", background: "#fff", border: `2.5px solid ${st.c}`, display: "grid", placeItems: "center", fontSize: "1.05rem", boxShadow: "0 1px 4px rgba(15,23,42,0.12)" }}>
+                  {KIND_ICON[n.kind] || "▫"}
+                  <span title={st.label} style={{ position: "absolute", top: -3, left: -3, width: 12, height: 12, borderRadius: "50%", background: st.c, border: "2px solid #fff" }} />
+                  {n.count > 1 && <span style={{ position: "absolute", top: -6, right: -6, minWidth: 16, height: 16, padding: "0 3px", borderRadius: 8, background: "#3d5afe", color: "#fff", fontSize: "0.62rem", fontWeight: 800, display: "grid", placeItems: "center", border: "1.5px solid #fff" }}>{n.count}</span>}
+                </div>
+                <div style={{ fontSize: "0.6rem", fontWeight: 800, color: st.c, textTransform: "uppercase", letterSpacing: "0.03em", marginTop: 4 }}>{n.kind}</div>
+                <div title={n.name} style={{ maxWidth: NODE_W + 8, textAlign: "center", fontSize: "0.68rem", fontWeight: 600, color: "#1e293b", padding: "2px 7px", borderRadius: 6, border: "1px solid #e2e8f0", background: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginTop: 2 }}>{n.name}</div>
+                {n.replicas && <div style={{ fontSize: "0.62rem", fontWeight: 700, color: st.c, marginTop: 1 }}>{n.replicas}</div>}
+                {n.reasons && n.reasons.length > 0 && <div style={{ fontSize: "0.6rem", color: "#dc2626", marginTop: 1, maxWidth: NODE_W + 8, textAlign: "center" }}>{n.reasons.join(", ")}</div>}
               </div>
-              <div title={n.name} style={{ marginTop: 5, maxWidth: NODE_W, textAlign: "center", fontSize: "0.66rem", fontWeight: 600, color: "var(--fg,#cbd5e1)", padding: "2px 6px", borderRadius: 6, border: "1px solid var(--border,#243045)", background: "var(--bg,#131a28)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{n.name}</div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
+      {/* Controls */}
+      <div style={{ position: "absolute", top: 10, right: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+        <button style={btn} onClick={() => zoomBy(1.2)} title="Zoom in">+</button>
+        <button style={btn} onClick={() => zoomBy(0.83)} title="Zoom out">−</button>
+        <button style={{ ...btn, fontSize: "0.7rem" }} onClick={reset} title="Reset view">⟳</button>
+      </div>
+      <div style={{ position: "absolute", bottom: 8, left: 10, fontSize: "0.68rem", color: "#94a3b8", background: "rgba(255,255,255,0.7)", padding: "2px 7px", borderRadius: 6 }}>{Math.round(view.z * 100)}%</div>
     </div>
   );
 }
