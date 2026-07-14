@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useActiveCluster } from "../store/clusterStore";
 import { showToast } from "../store/toastStore";
 
@@ -379,6 +379,9 @@ function SnowAgent({ clusters = [], activeCluster }) {
   const [fix, setFix] = useState({}); // keyed by sysId
   const [analysis, setAnalysis] = useState(null); // { phase, data, error }
   const [clusterSel, setClusterSel] = useState({}); // { [sysId]: clusterName }
+  const [reconcile, setReconcile] = useState(null); // { running, at, results, resolved[], checked }
+  const [autoRecon, setAutoRecon] = useState(false); // periodic reconcile while open
+  const [autoClose, setAutoClose] = useState(false); // hands-off: close resolved automatically
 
   const incidents = data?.incidents || [];
   const byNumber = {};
@@ -475,7 +478,57 @@ function SnowAgent({ clusters = [], activeCluster }) {
     return nums.map((n) => byNumber[n]).filter(Boolean).map((i) => ({ sysId: i.sysId, number: i.number }));
   };
 
+  // ── Auto-reconcile: validate every open incident against its cluster and
+  // flag the ones already resolved (open in ServiceNow but healthy in-cluster).
+  const autoCloseRef = useRef(false);
+  autoCloseRef.current = autoClose;
+
+  const runReconcile = async () => {
+    const targets = (data?.incidents || []).filter((i) => i.namespace && i.resource);
+    if (targets.length === 0) { setReconcile({ running: false, at: new Date().toLocaleTimeString(), results: {}, resolved: [], checked: 0 }); return; }
+    setReconcile((p) => ({ ...(p || { results: {}, resolved: [] }), running: true }));
+    const entries = await Promise.all(targets.map(async (inc) => {
+      try {
+        const r = await fetch(clusterUrl("/api/servicenow/incidents/validate", clusterFor(inc)), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ namespace: inc.namespace, resource: inc.resource }),
+        }).then((x) => x.json());
+        return [inc.sysId, r];
+      } catch (e) { return [inc.sysId, { error: e.message }]; }
+    }));
+    const results = Object.fromEntries(entries);
+    const resolved = targets.filter((i) => results[i.sysId] && results[i.sysId].stillAffected === false);
+    setReconcile({ running: false, at: new Date().toLocaleTimeString(), results, resolved: resolved.map((i) => i.sysId), checked: targets.length });
+    if (autoCloseRef.current && resolved.length) {
+      for (const inc of resolved) { await runFix(inc, true, [], null, { closeOnly: true }); }
+      showToast(`Auto-closed ${resolved.length} already-resolved incident(s)`, "ok");
+      fetchIncidents(scope);
+    } else if (resolved.length) {
+      showToast(`Reconcile: ${resolved.length} incident(s) already resolved in-cluster — ready to close`, "ok");
+    }
+  };
+
+  // Periodic reconcile while the toggle is on (runs immediately, then every 90s).
+  const reconcileRef = useRef(() => {});
+  reconcileRef.current = runReconcile;
+  useEffect(() => {
+    if (!autoRecon) return;
+    reconcileRef.current();
+    const id = setInterval(() => reconcileRef.current(), 90000);
+    return () => clearInterval(id);
+  }, [autoRecon]);
+
+  const closeResolved = async () => {
+    const list = (reconcile?.resolved || []).map((id) => (data?.incidents || []).find((i) => i.sysId === id)).filter(Boolean);
+    if (!list.length) return;
+    if (!window.confirm(`Close ${list.length} incident(s) validated as already resolved in-cluster? No cluster changes are made — this only closes the ServiceNow tickets.`)) return;
+    for (const inc of list) { await runFix(inc, true, [], null, { closeOnly: true }); }
+    showToast(`Closed ${list.length} already-resolved incident(s)`, "ok");
+    fetchIncidents(scope);
+  };
+
   const A = analysis?.data;
+  const readyToClose = (reconcile?.resolved || []).map((id) => (data?.incidents || []).find((i) => i.sysId === id)).filter(Boolean);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -499,6 +552,29 @@ function SnowAgent({ clusters = [], activeCluster }) {
           {incidents.length - (data.uniqueCount ?? incidents.length) > 0 && <span style={{ color: "#b45309" }}>{incidents.length - data.uniqueCount} likely duplicate(s)</span>}
           <span style={{ padding: "2px 8px", borderRadius: 999, background: "rgba(61,90,254,0.1)", color: "#3d5afe", fontWeight: 700 }}>scope: {data.scope || scope}</span>
           <span style={{ padding: "2px 8px", borderRadius: 999, background: "rgba(22,163,74,0.12)", color: "#16a34a", fontWeight: 700 }}>open only</span>
+        </div>
+      )}
+
+      {/* Auto-reconcile bar — validates open incidents against the cluster and flags already-resolved ones */}
+      {data && data.source !== "unavailable" && incidents.length > 0 && (
+        <div style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, padding: "10px 12px", background: "rgba(14,165,160,0.04)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ fontSize: "0.8rem", fontWeight: 800, color: "var(--fg,#151a29)" }}>🔄 Auto-reconcile</span>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.78rem", color: "var(--muted,#5a6373)", cursor: "pointer" }}>
+              <input type="checkbox" checked={autoRecon} onChange={(e) => setAutoRecon(e.target.checked)} /> Every 90s (while open)
+            </label>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.78rem", color: "var(--muted,#5a6373)", cursor: "pointer" }} title="Automatically close incidents validated as already resolved — no cluster changes">
+              <input type="checkbox" checked={autoClose} onChange={(e) => setAutoClose(e.target.checked)} /> Auto-close resolved
+            </label>
+            <button onClick={runReconcile} disabled={reconcile?.running} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid #0ea5a0", background: "rgba(14,165,160,0.1)", color: "#0ea5a0", fontWeight: 700, fontSize: "0.78rem", cursor: "pointer" }}>{reconcile?.running ? "Validating…" : "Reconcile now"}</button>
+            {reconcile && !reconcile.running && <span style={{ fontSize: "0.74rem", color: "var(--muted,#5a6373)" }}>Checked {reconcile.checked} · {readyToClose.length} already resolved · {reconcile.at}</span>}
+          </div>
+          {readyToClose.length > 0 && (
+            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "8px 10px", borderRadius: 8, background: "rgba(22,163,74,0.08)", border: "1px solid rgba(22,163,74,0.3)" }}>
+              <span style={{ fontSize: "0.78rem", color: "#16a34a", fontWeight: 700 }}>✅ {readyToClose.length} incident(s) open in ServiceNow but healthy in-cluster: {readyToClose.slice(0, 6).map((i) => i.number).join(", ")}{readyToClose.length > 6 ? "…" : ""}</span>
+              <button onClick={closeResolved} style={{ padding: "6px 12px", borderRadius: 7, border: "none", background: "#16a34a", color: "#fff", fontWeight: 700, fontSize: "0.78rem", cursor: "pointer" }}>Close {readyToClose.length} resolved — no change</button>
+            </div>
+          )}
         </div>
       )}
 
@@ -661,6 +737,11 @@ function SnowAgent({ clusters = [], activeCluster }) {
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontWeight: 750, fontSize: "0.9rem" }}>{inc.number}</span>
               {inc.stateLabel && <span style={{ fontSize: "0.68rem", fontWeight: 700, padding: "2px 7px", borderRadius: 999, background: "rgba(100,116,139,0.12)", color: "#475569" }}>{inc.stateLabel}</span>}
+              {(() => { const rv = reconcile?.results?.[inc.sysId]; if (!rv || rv.error) return null;
+                return rv.stillAffected === false
+                  ? <span style={{ fontSize: "0.68rem", fontWeight: 800, padding: "2px 7px", borderRadius: 999, background: "rgba(22,163,74,0.14)", color: "#16a34a" }}>✅ resolved in-cluster</span>
+                  : <span style={{ fontSize: "0.68rem", fontWeight: 800, padding: "2px 7px", borderRadius: 999, background: "rgba(220,38,38,0.12)", color: "#dc2626" }}>⚠ still failing</span>;
+              })()}
               {inc.duplicateOf && <span style={{ fontSize: "0.68rem", fontWeight: 800, padding: "2px 7px", borderRadius: 999, background: "rgba(217,119,6,0.12)", color: "#b45309" }}>🔁 dup of {inc.duplicateOf}</span>}
               {inc.namespace && <span style={{ fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>ns: {inc.namespace}{inc.resource ? " · " + inc.resource : ""}</span>}
               <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>{inc.createdOn}</span>
