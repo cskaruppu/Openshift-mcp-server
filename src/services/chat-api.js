@@ -19195,6 +19195,94 @@ Only use ticket numbers that appear above. Prefer fewer, well-justified groups o
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/topology/explain — AI narrates a namespace topology and names the
+// ONE root-cause component plus its downstream symptoms, so the graph can dim
+// noise and highlight the causal path. Turns a static map into a story.
+// ---------------------------------------------------------------------------
+export async function handleTopologyExplainAPI(req, res) {
+  try {
+    const body = await readBody(req);
+    const provider = (body.llmOpts && body.llmOpts.provider) || LLM_PROVIDER;
+    const namespace = body.namespace || "";
+    const nodes = Array.isArray(body.nodes) ? body.nodes.slice(0, 120) : [];
+    const issues = Array.isArray(body.issues) ? body.issues.slice(0, 40) : [];
+    const ids = new Set(nodes.map((n) => n.id));
+    const errNodes = nodes.filter((n) => n.status === "error");
+    const warnNodes = nodes.filter((n) => n.status === "warning");
+
+    // Deterministic fallback (also used when no LLM): pick a workload error as
+    // primary, everything else broken as symptoms.
+    const fallback = () => {
+      const primary = errNodes.find((n) => /Deployment|StatefulSet|DaemonSet/.test(n.kind)) || errNodes[0] || warnNodes[0] || null;
+      const symptomIds = [...errNodes, ...warnNodes].filter((n) => n.id !== primary?.id).map((n) => n.id);
+      const headline = errNodes.length === 0 && warnNodes.length === 0
+        ? `All components in ${namespace} look healthy.`
+        : `${errNodes.length} error, ${warnNodes.length} warning component(s) in ${namespace}.`;
+      return {
+        headline,
+        rootCause: primary ? `${primary.kind} "${primary.name}" is the most likely root cause.` : "No unhealthy components detected.",
+        primaryId: primary?.id || null,
+        symptomIds,
+        recommendation: primary ? `Investigate ${primary.kind}/${primary.name} first; downstream components should recover once it is healthy.` : "No action needed.",
+        confidence: "medium",
+        provider: "built-in",
+      };
+    };
+
+    if (!provider || provider === "none" || (errNodes.length === 0 && warnNodes.length === 0)) {
+      return json(res, 200, fallback());
+    }
+
+    const nodeList = nodes.map((n) => `${n.id} [${n.kind} "${n.name}" — ${n.status}]`).join("\n");
+    const issueList = issues.map((i) => `- (${i.level}) ${i.message}`).join("\n");
+    const prompt = `You are an SRE analyzing a Kubernetes/OpenShift namespace topology. Determine the SINGLE root-cause component and which other components are downstream symptoms of it.
+
+NAMESPACE: ${namespace}
+
+COMPONENTS (id [kind "name" — status]):
+${nodeList}
+
+DETECTED ISSUES:
+${issueList || "none"}
+
+Return ONLY valid JSON (no markdown):
+{
+  "headline": "one sentence: what's wrong (or that it's healthy)",
+  "rootCause": "1-2 sentences naming the root cause and why",
+  "primaryId": "the exact component id that is the root cause (or null if healthy)",
+  "symptomIds": ["component ids that are downstream symptoms of the primary"],
+  "recommendation": "the concrete next action",
+  "confidence": "high | medium | low"
+}
+Use ONLY component ids from the list. Prefer a workload (Deployment/StatefulSet/DaemonSet) or image/config issue as the root cause; Services/Routes with no endpoints are usually symptoms of the workload behind them.`;
+
+    const r = await callLLM({
+      messages: [{ role: "user", content: prompt }],
+      system: "You are a precise root-cause analysis engine for Kubernetes topology. Output only a single valid JSON object. Never invent component ids.",
+      maxTokens: 900, temperature: 0.2,
+      provider: body.llmOpts?.provider, apiUrl: body.llmOpts?.apiUrl, apiKey: body.llmOpts?.apiKey,
+      model: body.llmOpts?.model, azureDeployment: body.llmOpts?.azureDeployment, azureApiVersion: body.llmOpts?.azureApiVersion,
+    });
+    let out = null;
+    try { let t = (r.text || "").trim(); const m = t.match(/\{[\s\S]*\}/); if (m) t = m[0]; out = JSON.parse(t); }
+    catch { return json(res, 200, { ...fallback(), note: "AI response unparseable — deterministic RCA." }); }
+    const primaryId = ids.has(out.primaryId) ? out.primaryId : (fallback().primaryId);
+    const symptomIds = (Array.isArray(out.symptomIds) ? out.symptomIds : []).filter((i) => ids.has(i) && i !== primaryId);
+    json(res, 200, {
+      headline: String(out.headline || "").slice(0, 240),
+      rootCause: String(out.rootCause || "").slice(0, 400),
+      primaryId, symptomIds,
+      recommendation: String(out.recommendation || "").slice(0, 400),
+      confidence: ["high", "medium", "low"].includes(out.confidence) ? out.confidence : "medium",
+      provider: r.provider || provider,
+    });
+  } catch (err) {
+    console.error("Topology explain error:", err);
+    json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/ai/image-remediation — AI generates a concrete fix for ONE image
 // Returns recommended replacement image/tag, the exact oc command to apply it,
 // an optional Dockerfile patch, and step-by-step remediation. Closes the loop

@@ -85,7 +85,7 @@ import { callLLM } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport } from "./services/upgrade-report.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, handleComplianceImpactAPI, handleGenerateManifestAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import { cisCheckManifests, scanManifestImages } from "./services/manifest-scan.js";
-import { handleIncidentCorrelationAPI } from "./services/chat-api.js";
+import { handleIncidentCorrelationAPI, handleTopologyExplainAPI } from "./services/chat-api.js";
 import {
   listActions,
   getAction,
@@ -6956,6 +6956,48 @@ spec:
         const result = await withClusterContext(url, async () => getNamespaceTopology(ns, { expand }));
         if (result === null) { sendJson(res, 200, { error: "Selected cluster is not reachable." }); return; }
         sendJson(res, 200, result);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // AI root-cause narration for a namespace topology (Explain / highlight).
+    if (req.method === "POST" && url.pathname === "/api/topology/explain") {
+      if (enforceRateLimit(req, res, { burst: 6, refillPerSec: 0.15 })) return;
+      try { await handleTopologyExplainAPI(req, res); }
+      catch (e) { if (!res.headersSent) sendJson(res, 500, { error: e.message }); }
+      if (!res.headersSent) sendJson(res, 200, { error: "Explain unavailable." });
+      return;
+    }
+
+    // Fix-from-node: rolling-restart a workload directly from the topology.
+    if (req.method === "POST" && url.pathname === "/api/topology/remediate") {
+      if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
+      try {
+        const body = await readJsonBody(req);
+        const ns = body.namespace, name = body.name;
+        const kind = String(body.kind || "").toLowerCase();
+        const dryRun = body.dryRun !== false;
+        const plural = kind === "statefulset" ? "statefulsets" : kind === "daemonset" ? "daemonsets" : kind === "deployment" ? "deployments" : null;
+        if (!ns || !name || !plural) { sendJson(res, 200, { error: "Fix supports Deployment/StatefulSet/DaemonSet nodes only." }); return; }
+        const out = await withClusterContext(url, async () => {
+          const path = `/apis/apps/v1/namespaces/${ns}/${plural}/${name}`;
+          let desired = 0, ready = 0;
+          try {
+            const w = await ocpGet(path);
+            desired = kind === "daemonset" ? (w.status?.desiredNumberScheduled ?? 0) : (w.spec?.replicas ?? 0);
+            ready = kind === "daemonset" ? (w.status?.numberReady ?? 0) : (w.status?.readyReplicas ?? 0);
+          } catch (e) { return { error: `Could not read ${kind}/${name}: ${e.message}` }; }
+          const healthy = desired > 0 && ready >= desired;
+          const action = `Rolling restart ${kind}/${name} in ${ns}`;
+          if (dryRun) return { dryRun: true, action, kind, name, namespace: ns, ready, desired, healthy };
+          const patch = { spec: { template: { metadata: { annotations: { "kubectl.kubernetes.io/restartedAt": new Date().toISOString() } } } } };
+          await ocpPatch(path, patch, "application/strategic-merge-patch+json");
+          return { dryRun: false, action, kind, name, namespace: ns, ready, desired, healthy };
+        });
+        if (out === null) { sendJson(res, 200, { error: "Selected cluster is not reachable." }); return; }
+        if (out.error) { sendJson(res, 200, { error: out.error }); return; }
+        if (out.dryRun === false && featureFlags.pillar7AuditLog()) logAuditEvent({ command: `topology-restart ${out.kind}/${out.name}`, dryRun: false, classification: "topology-remediation", allowed: true, success: true, durationMs: 0 }).catch(() => {});
+        sendJson(res, 200, out);
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }

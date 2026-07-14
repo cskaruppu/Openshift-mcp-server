@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { apiGet } from "../../api/client";
+import { apiGet, clusterUrl } from "../../api/client";
 import { useClusterQuery } from "../../hooks/useClusterQuery";
 import { useActiveCluster } from "../../store/clusterStore";
+import { showToast } from "../../store/toastStore";
 
 const healthColor = (h) =>
   h === "critical" ? "#ef4444" : h === "warning" ? "#f59e0b" : h === "pending" ? "#3b82f6" : h === "healthy" ? "#22c55e" : "#444";
@@ -81,6 +82,7 @@ export function NamespaceHeatmapWidget() {
 function NamespaceTopologyModal({ namespace, onClose }) {
   const cluster = useActiveCluster();
   const [expand, setExpand] = useState(false);
+  const [explain, setExplain] = useState(null); // { phase, data, error }
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["/api/topology/namespace", namespace, cluster, expand],
     queryFn: ({ signal }) => apiGet(`/api/topology/namespace?namespace=${encodeURIComponent(namespace)}${expand ? "&expand=1" : ""}`, { cluster, signal }),
@@ -88,6 +90,27 @@ function NamespaceTopologyModal({ namespace, onClose }) {
   });
   const topo = data && !data.error ? data : null;
   const s = topo?.summary;
+
+  // Reset the AI narration whenever the underlying graph changes.
+  useEffect(() => { setExplain(null); }, [expand, namespace]);
+
+  const runExplain = async () => {
+    if (!topo?.graph) return;
+    setExplain({ phase: "running" });
+    try {
+      const res = await fetch(clusterUrl("/api/topology/explain", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          namespace,
+          nodes: topo.graph.nodes.map((n) => ({ id: n.id, kind: n.kind, name: n.name, status: n.status })),
+          issues: topo.issues,
+        }),
+      });
+      const d = await res.json();
+      if (d.error) throw new Error(d.error);
+      setExplain({ phase: "done", data: d });
+    } catch (e) { setExplain({ phase: "error", error: e.message }); }
+  };
 
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,14,25,0.55)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
@@ -146,11 +169,29 @@ function NamespaceTopologyModal({ namespace, onClose }) {
                 </div>
               )}
 
+              {/* AI Explain — narrate root cause & highlight the causal path */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                <button onClick={runExplain} disabled={explain?.phase === "running" || !topo.graph || topo.graph.nodes.length <= 1} style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: "linear-gradient(135deg,#7c3aed,#3d5afe)", color: "#fff", fontWeight: 700, fontSize: "0.82rem", cursor: "pointer", opacity: explain?.phase === "running" ? 0.7 : 1 }}>{explain?.phase === "running" ? "Analyzing…" : "🧠 Explain (AI root cause)"}</button>
+                {explain?.data && <button onClick={() => setExplain(null)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontWeight: 700, fontSize: "0.78rem", cursor: "pointer" }}>Clear highlight</button>}
+                {!expand && <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>tip: switch to Expanded to pinpoint & fix a specific workload</span>}
+              </div>
+              {explain?.phase === "error" && <div style={{ color: "#dc2626", fontSize: "0.82rem", marginBottom: 8 }}>Explain: {explain.error}</div>}
+              {explain?.data && (
+                <div style={{ marginBottom: 12, padding: 12, borderRadius: 10, background: "linear-gradient(90deg, rgba(124,58,237,0.06), rgba(61,90,254,0.04))", border: "1px solid #e0d7fb" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 800, fontSize: "0.86rem", color: "#5b21b6" }}>🧠 {explain.data.headline}</span>
+                    <span style={{ fontSize: "0.68rem", fontWeight: 800, padding: "1px 8px", borderRadius: 999, background: "#ede9fe", color: "#6d28d9" }}>confidence: {explain.data.confidence}</span>
+                  </div>
+                  {explain.data.rootCause && <div style={{ fontSize: "0.82rem", color: "#334155", marginTop: 5 }}><b>Root cause:</b> {explain.data.rootCause}</div>}
+                  {explain.data.recommendation && <div style={{ fontSize: "0.82rem", color: "#334155", marginTop: 3 }}><b>Recommendation:</b> {explain.data.recommendation}</div>}
+                </div>
+              )}
+
               {/* Interactive hierarchical topology graph */}
               {(!topo.graph || topo.graph.nodes.length <= 1) ? (
                 <div style={{ color: "#64748b", fontSize: "0.86rem" }}>No workloads found in this namespace.</div>
               ) : (
-                <TopologyGraph graph={topo.graph} />
+                <TopologyGraph graph={topo.graph} namespace={namespace} cluster={cluster} onChanged={refetch} highlight={explain?.data || null} />
               )}
 
               {/* Legend */}
@@ -199,30 +240,55 @@ function layoutTree(graph) {
 }
 
 /* Interactive (pan / zoom / drag-node) topology canvas — light, readable. */
-function TopologyGraph({ graph }) {
+function TopologyGraph({ graph, namespace, cluster, onChanged, highlight }) {
   const base = useMemo(() => layoutTree(graph), [graph]);
   const [pos, setPos] = useState({});           // node id → {x,y} overrides
   const [view, setView] = useState({ z: 1, x: 0, y: 0 });
+  const [sel, setSel] = useState(null);          // selected node
+  const [fix, setFix] = useState(null);          // { phase, data, error }
   const vpRef = useRef(null);
   const drag = useRef(null);
   const viewRef = useRef(view); viewRef.current = view;
+  const selectRef = useRef(() => {});
+  selectRef.current = (id) => { const n = base.idx.get(id); if (n) { setSel(n); setFix(null); } };
 
-  useEffect(() => { setPos({}); setView({ z: 1, x: 0, y: 0 }); }, [graph]);
+  useEffect(() => { setPos({}); setView({ z: 1, x: 0, y: 0 }); setSel(null); setFix(null); }, [graph]);
 
   useEffect(() => {
     const move = (e) => {
       const d = drag.current; if (!d) return;
       if (d.type === "pan") setView((v) => ({ ...v, x: d.ox + (e.clientX - d.sx), y: d.oy + (e.clientY - d.sy) }));
-      else { const z = viewRef.current.z; setPos((p) => ({ ...p, [d.id]: { x: d.ox + (e.clientX - d.sx) / z, y: d.oy + (e.clientY - d.sy) / z } })); }
+      else { d.moved = true; const z = viewRef.current.z; setPos((p) => ({ ...p, [d.id]: { x: d.ox + (e.clientX - d.sx) / z, y: d.oy + (e.clientY - d.sy) / z } })); }
     };
-    const up = () => { drag.current = null; };
+    const up = () => { const d = drag.current; if (d && d.type === "node" && !d.moved) selectRef.current(d.id); drag.current = null; };
     document.addEventListener("mousemove", move);
     document.addEventListener("mouseup", up);
     return () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); };
   }, []);
 
+  // Root-cause highlight sets from the AI explain result.
+  const primaryId = highlight?.primaryId || null;
+  const symptomSet = useMemo(() => new Set(highlight?.symptomIds || []), [highlight]);
+  const highlighted = (id) => !highlight || id === primaryId || symptomSet.has(id);
+
   const nodePos = (n) => pos[n.id] || { x: n.x, y: n.y };
   const cx = (n) => nodePos(n).x + NODE_W / 2;
+
+  const isWorkload = (n) => n && /^(Deployment|StatefulSet|DaemonSet)$/.test(n.kind) && !n.id.startsWith("kind/") && n.name !== n.kind;
+  const runFix = async (dryRun) => {
+    if (!sel) return;
+    setFix({ phase: dryRun ? "checking" : "applying" });
+    try {
+      const res = await fetch(clusterUrl("/api/topology/remediate", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ namespace, kind: sel.kind, name: sel.name, dryRun }),
+      });
+      const d = await res.json();
+      if (d.error) throw new Error(d.error);
+      setFix({ phase: dryRun ? "preview" : "done", data: d });
+      if (!dryRun) { showToast(`Restarted ${sel.kind}/${sel.name}`, "ok"); setTimeout(() => onChanged?.(), 1200); }
+    } catch (e) { setFix({ phase: "error", error: e.message }); showToast("Fix failed: " + e.message, "err"); }
+  };
 
   // Non-passive wheel listener so we can preventDefault and zoom (not scroll).
   useEffect(() => {
@@ -241,8 +307,8 @@ function TopologyGraph({ graph }) {
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
-  const startPan = (e) => { drag.current = { type: "pan", sx: e.clientX, sy: e.clientY, ox: view.x, oy: view.y }; };
-  const startNode = (e, n) => { e.stopPropagation(); const p = nodePos(n); drag.current = { type: "node", id: n.id, sx: e.clientX, sy: e.clientY, ox: p.x, oy: p.y }; };
+  const startPan = (e) => { setSel(null); drag.current = { type: "pan", sx: e.clientX, sy: e.clientY, ox: view.x, oy: view.y }; };
+  const startNode = (e, n) => { e.stopPropagation(); const p = nodePos(n); drag.current = { type: "node", id: n.id, sx: e.clientX, sy: e.clientY, ox: p.x, oy: p.y, moved: false }; };
   const zoomBy = (f) => setView((v) => ({ ...v, z: Math.min(2.4, Math.max(0.3, v.z * f)) }));
   const reset = () => { setPos({}); setView({ z: 1, x: 0, y: 0 }); };
 
@@ -250,6 +316,7 @@ function TopologyGraph({ graph }) {
 
   return (
     <div style={{ position: "relative", height: 470, border: "1px solid #e2e8f0", borderRadius: 12, background: "#f8fafc", overflow: "hidden" }}>
+      <style>{`@keyframes tg-pulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,0.5)}70%{box-shadow:0 0 0 10px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}`}</style>
       <div ref={vpRef} onMouseDown={startPan} style={{ position: "absolute", inset: 0, cursor: "grab" }}>
         <div style={{ position: "absolute", transformOrigin: "0 0", transform: `translate(${view.x}px, ${view.y}px) scale(${view.z})` }}>
           <svg width={base.width} height={base.height} style={{ position: "absolute", inset: 0, overflow: "visible", pointerEvents: "none" }}>
@@ -257,22 +324,29 @@ function TopologyGraph({ graph }) {
               const from = base.idx.get(e.from), to = base.idx.get(e.to);
               const x1 = cx(from), y1 = nodePos(from).y + CIRCLE, x2 = cx(to), y2 = nodePos(to).y;
               const my = (y1 + y2) / 2;
+              const dim = highlight && !(highlighted(from.id) && highlighted(to.id));
               const bad = (to.status === "error");
-              return <path key={i} d={`M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}`} fill="none" stroke={bad ? "#fca5a5" : "#cbd5e1"} strokeWidth="1.6" />;
+              return <path key={i} d={`M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}`} fill="none" stroke={dim ? "#e9edf3" : bad ? "#fca5a5" : "#cbd5e1"} strokeWidth={dim ? 1 : 1.6} />;
             })}
           </svg>
           {base.nodes.map((n) => {
             const st = STATUS[n.status] || STATUS.idle;
             const p = nodePos(n);
+            const isPrimary = n.id === primaryId;
+            const isSymptom = symptomSet.has(n.id);
+            const dim = highlight && !highlighted(n.id);
+            const isSel = sel?.id === n.id;
+            const ring = isPrimary ? "#dc2626" : isSel ? "#3d5afe" : st.c;
             return (
-              <div key={n.id} onMouseDown={(e) => startNode(e, n)} style={{ position: "absolute", left: p.x, top: p.y, width: NODE_W, display: "flex", flexDirection: "column", alignItems: "center", cursor: "grab", userSelect: "none" }}>
-                <div style={{ position: "relative", width: CIRCLE, height: CIRCLE, borderRadius: "50%", background: "#fff", border: `2.5px solid ${st.c}`, display: "grid", placeItems: "center", fontSize: "1.05rem", boxShadow: "0 1px 4px rgba(15,23,42,0.12)" }}>
+              <div key={n.id} onMouseDown={(e) => startNode(e, n)} style={{ position: "absolute", left: p.x, top: p.y, width: NODE_W, display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer", userSelect: "none", opacity: dim ? 0.4 : 1, transition: "opacity .2s" }}>
+                {isPrimary && <div style={{ fontSize: "0.56rem", fontWeight: 800, color: "#fff", background: "#dc2626", padding: "1px 6px", borderRadius: 4, marginBottom: 3 }}>ROOT CAUSE</div>}
+                <div style={{ position: "relative", width: CIRCLE, height: CIRCLE, borderRadius: "50%", background: "#fff", border: `${isPrimary || isSel ? 3 : 2.5}px solid ${ring}`, display: "grid", placeItems: "center", fontSize: "1.05rem", boxShadow: "0 1px 4px rgba(15,23,42,0.12)", animation: isPrimary ? "tg-pulse 1.8s infinite" : "none", outline: isSymptom ? "2px dashed #d97706" : "none", outlineOffset: 2 }}>
                   {KIND_ICON[n.kind] || "▫"}
                   <span title={st.label} style={{ position: "absolute", top: -3, left: -3, width: 12, height: 12, borderRadius: "50%", background: st.c, border: "2px solid #fff" }} />
                   {n.count > 1 && <span style={{ position: "absolute", top: -6, right: -6, minWidth: 16, height: 16, padding: "0 3px", borderRadius: 8, background: "#3d5afe", color: "#fff", fontSize: "0.62rem", fontWeight: 800, display: "grid", placeItems: "center", border: "1.5px solid #fff" }}>{n.count}</span>}
                 </div>
                 <div style={{ fontSize: "0.6rem", fontWeight: 800, color: st.c, textTransform: "uppercase", letterSpacing: "0.03em", marginTop: 4 }}>{n.kind}</div>
-                <div title={n.name} style={{ maxWidth: NODE_W + 8, textAlign: "center", fontSize: "0.68rem", fontWeight: 600, color: "#1e293b", padding: "2px 7px", borderRadius: 6, border: "1px solid #e2e8f0", background: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginTop: 2 }}>{n.name}</div>
+                <div title={n.name} style={{ maxWidth: NODE_W + 8, textAlign: "center", fontSize: "0.68rem", fontWeight: 600, color: "#1e293b", padding: "2px 7px", borderRadius: 6, border: `1px solid ${isSel ? "#3d5afe" : "#e2e8f0"}`, background: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginTop: 2 }}>{n.name}</div>
                 {n.replicas && <div style={{ fontSize: "0.62rem", fontWeight: 700, color: st.c, marginTop: 1 }}>{n.replicas}</div>}
                 {n.reasons && n.reasons.length > 0 && <div style={{ fontSize: "0.6rem", color: "#dc2626", marginTop: 1, maxWidth: NODE_W + 8, textAlign: "center" }}>{n.reasons.join(", ")}</div>}
               </div>
@@ -287,6 +361,40 @@ function TopologyGraph({ graph }) {
         <button style={{ ...btn, fontSize: "0.7rem" }} onClick={reset} title="Reset view">⟳</button>
       </div>
       <div style={{ position: "absolute", bottom: 8, left: 10, fontSize: "0.68rem", color: "#94a3b8", background: "rgba(255,255,255,0.7)", padding: "2px 7px", borderRadius: 6 }}>{Math.round(view.z * 100)}%</div>
+
+      {/* Selected-node action panel (fix-from-node) */}
+      {sel && (
+        <div style={{ position: "absolute", top: 10, left: 10, width: 262, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 10px 30px rgba(15,23,42,0.18)", padding: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <span style={{ fontSize: "1rem" }}>{KIND_ICON[sel.kind] || "▫"}</span>
+            <span style={{ fontSize: "0.6rem", fontWeight: 800, color: (STATUS[sel.status] || STATUS.idle).c, textTransform: "uppercase" }}>{sel.kind}</span>
+            <button onClick={() => { setSel(null); setFix(null); }} style={{ marginLeft: "auto", border: "none", background: "transparent", color: "#94a3b8", cursor: "pointer", fontSize: "1rem" }}>×</button>
+          </div>
+          <div style={{ fontSize: "0.84rem", fontWeight: 700, color: "#0f172a", marginTop: 3, wordBreak: "break-all" }}>{sel.name}</div>
+          {sel.replicas && <div style={{ fontSize: "0.74rem", color: "#64748b" }}>Replicas: {sel.replicas}</div>}
+          {sel.reasons && sel.reasons.length > 0 && <div style={{ fontSize: "0.74rem", color: "#dc2626", marginTop: 2 }}>{sel.reasons.join(", ")}</div>}
+          {isWorkload(sel) ? (
+            <div style={{ marginTop: 9 }}>
+              {(!fix || fix.phase === "error") && (
+                <button onClick={() => runFix(true)} style={{ width: "100%", padding: "7px 0", borderRadius: 7, border: "1px solid #0ea5a0", background: "rgba(14,165,160,0.08)", color: "#0e8a86", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>▷ Dry-run restart</button>
+              )}
+              {fix?.phase === "checking" && <div style={{ fontSize: "0.78rem", color: "#64748b" }}>Checking…</div>}
+              {fix?.phase === "preview" && fix.data && (
+                <div style={{ fontSize: "0.78rem" }}>
+                  <div style={{ color: "#334155" }}><b>Planned:</b> {fix.data.action}.</div>
+                  <div style={{ color: fix.data.healthy ? "#16a34a" : "#dc2626", margin: "3px 0 6px" }}>{fix.data.healthy ? `Currently healthy (${fix.data.ready}/${fix.data.desired}) — restart anyway?` : `Currently ${fix.data.ready}/${fix.data.desired} ready.`}</div>
+                  <button onClick={() => runFix(false)} style={{ width: "100%", padding: "7px 0", borderRadius: 7, border: "none", background: "#0ea5a0", color: "#fff", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>✓ Apply rolling restart</button>
+                </div>
+              )}
+              {fix?.phase === "applying" && <div style={{ fontSize: "0.78rem", color: "#64748b" }}>Applying…</div>}
+              {fix?.phase === "done" && <div style={{ fontSize: "0.78rem", color: "#16a34a" }}>✓ {fix.data.action} triggered. Refreshing…</div>}
+              {fix?.phase === "error" && <div style={{ fontSize: "0.76rem", color: "#dc2626", marginTop: 4 }}>{fix.error}</div>}
+            </div>
+          ) : (
+            <div style={{ fontSize: "0.74rem", color: "#94a3b8", marginTop: 8 }}>{/^(Deployment|StatefulSet|DaemonSet)$/.test(sel.kind) ? "Switch to Expanded mode to fix a specific workload." : "No direct fix action for this resource type."}</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
