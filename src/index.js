@@ -60,6 +60,7 @@ import { registerImageVulnScannerTools, runImageScan, getScanResults, getScanHis
 import { authMiddleware, registerAuthRoutes, handleTokenLogin, handleUserManagement, getAuthMode, loadUserRoles, getUserRole, setUserRole, getAllUserRoles, checkPermission, getRoles, getUserNamespaces, canAccessNamespace, filterByNamespace, createUser, listUsers, changePassword } from "./services/auth.js";
 import { runRCA, runNamespaceRCA, getActiveInvestigations, getRCAHistory } from "./tools/rca-engine.js";
 import { getNetworkTopology, getClusterTopology, getExposedServices, getUnprotectedNamespaces } from "./tools/network-topology.js";
+import { getNamespaceTopology } from "./tools/namespace-topology.js";
 import { captureSnapshot as captureCapacitySnapshot, getCapacityForecast, getNamespaceForecasts, getCapacityHistory } from "./tools/capacity-forecast.js";
 import { runComplianceScan, getComplianceResults, getComplianceScore, getComplianceHistory } from "./tools/compliance-scanner.js";
 import { defineSLO, getSLOStatus, getAllSLOs, deleteSLO, calculateErrorBudget, loadSLOs, setPrometheusUrl, getPrometheusStatus } from "./tools/slo-tracker.js";
@@ -6939,6 +6940,20 @@ spec:
       try {
         const ns = url.searchParams.get("namespace");
         const result = ns ? await getNetworkTopology(ns) : await getClusterTopology();
+        sendJson(res, 200, result);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // Per-namespace WORKLOAD topology (Route → Service → Workload → Pods) with
+    // component health and cross-component error detection. Powers the
+    // click-through topology popup from the Namespace Heatmap.
+    if (req.method === "GET" && url.pathname === "/api/topology/namespace") {
+      try {
+        const ns = url.searchParams.get("namespace");
+        if (!ns) { sendJson(res, 200, { error: "namespace query param is required" }); return; }
+        const result = await withClusterContext(url, async () => getNamespaceTopology(ns));
+        if (result === null) { sendJson(res, 200, { error: "Selected cluster is not reachable." }); return; }
         sendJson(res, 200, result);
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
