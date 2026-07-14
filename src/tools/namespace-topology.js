@@ -294,5 +294,11 @@ export async function getNamespaceTopology(namespace, opts = {}) {
     runningPods: podList.filter((p) => p.health.status === "healthy").length,
   };
 
-  return { namespace: ns, summary, chains, standalone, issues, expanded: expand, graph: expand ? expandedGraph : { nodes: gNodes, edges: gEdges }, ok: issues.filter((i) => i.level === "error").length === 0 };
+  // Relations for blast-radius tracing (service→workload, route→service).
+  const relations = {
+    services: services.map((s) => ({ id: s.id, name: s.name, workload: s.workloadId })),
+    routes: routeNodes.map((r) => ({ id: r.id, name: r.name, service: r.serviceId })),
+  };
+
+  return { namespace: ns, summary, chains, standalone, issues, relations, expanded: expand, graph: expand ? expandedGraph : { nodes: gNodes, edges: gEdges }, ok: issues.filter((i) => i.level === "error").length === 0 };
 }

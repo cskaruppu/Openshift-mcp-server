@@ -83,6 +83,7 @@ function NamespaceTopologyModal({ namespace, onClose }) {
   const cluster = useActiveCluster();
   const [expand, setExpand] = useState(false);
   const [explain, setExplain] = useState(null); // { phase, data, error }
+  const [secOn, setSecOn] = useState(false);     // security (CVE) overlay
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["/api/topology/namespace", namespace, cluster, expand],
     queryFn: ({ signal }) => apiGet(`/api/topology/namespace?namespace=${encodeURIComponent(namespace)}${expand ? "&expand=1" : ""}`, { cluster, signal }),
@@ -90,6 +91,27 @@ function NamespaceTopologyModal({ namespace, onClose }) {
   });
   const topo = data && !data.error ? data : null;
   const s = topo?.summary;
+
+  // Security overlay — namespace-scoped image vulnerability scan (Trivy/Quay).
+  const { data: secData, isFetching: secFetching } = useQuery({
+    queryKey: ["/api/dashboard/image-vulns", namespace, cluster],
+    queryFn: ({ signal }) => apiGet(`/api/dashboard/image-vulns?namespace=${encodeURIComponent(namespace)}`, { cluster, signal }),
+    enabled: secOn,
+    staleTime: 30_000,
+  });
+  const security = useMemo(() => {
+    if (!secOn || !secData || secData.available === false) return null;
+    const pods = {};
+    for (const img of (secData.topImages || [])) {
+      for (const pd of (img.pods || [])) {
+        const cur = pods[pd.pod] || { critical: 0, high: 0, image: img.fullImage || img.image };
+        cur.critical = Math.max(cur.critical, img.critical || 0);
+        cur.high = Math.max(cur.high, img.high || 0);
+        pods[pd.pod] = cur;
+      }
+    }
+    return { pods, summary: { totalImages: secData.totalImages || 0, critical: secData.critical || 0, high: secData.high || 0, grade: secData.grade, scannerType: secData.scannerType } };
+  }, [secOn, secData]);
 
   // Reset the AI narration whenever the underlying graph changes.
   useEffect(() => { setExplain(null); }, [expand, namespace]);
@@ -172,9 +194,24 @@ function NamespaceTopologyModal({ namespace, onClose }) {
               {/* AI Explain — narrate root cause & highlight the causal path */}
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
                 <button onClick={runExplain} disabled={explain?.phase === "running" || !topo.graph || topo.graph.nodes.length <= 1} style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: "linear-gradient(135deg,#7c3aed,#3d5afe)", color: "#fff", fontWeight: 700, fontSize: "0.82rem", cursor: "pointer", opacity: explain?.phase === "running" ? 0.7 : 1 }}>{explain?.phase === "running" ? "Analyzing…" : "🧠 Explain (AI root cause)"}</button>
+                <button onClick={() => setSecOn((v) => !v)} style={{ padding: "7px 12px", borderRadius: 8, border: `1px solid ${secOn ? "#dc2626" : "#e2e8f0"}`, background: secOn ? "rgba(220,38,38,0.08)" : "#fff", color: secOn ? "#b91c1c" : "#475569", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>🛡 Security {secOn ? "on" : "overlay"}</button>
                 {explain?.data && <button onClick={() => setExplain(null)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontWeight: 700, fontSize: "0.78rem", cursor: "pointer" }}>Clear highlight</button>}
-                {!expand && <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>tip: switch to Expanded to pinpoint & fix a specific workload</span>}
+                {!expand && <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>tip: switch to Expanded to pinpoint, fix & scan a specific workload</span>}
               </div>
+              {secOn && (
+                <div style={{ marginBottom: 12, padding: "8px 12px", borderRadius: 10, background: "#fef2f2", border: "1px solid #fecaca", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", fontSize: "0.78rem" }}>
+                  <span style={{ fontWeight: 800, color: "#b91c1c" }}>🛡 Image security</span>
+                  {secFetching && !security ? <span style={{ color: "#64748b" }}>scanning…</span> : security ? (
+                    <>
+                      <span style={{ color: "#334155" }}>{security.summary.totalImages} image(s)</span>
+                      <span style={{ color: "#dc2626", fontWeight: 700 }}>{security.summary.critical} critical</span>
+                      <span style={{ color: "#ea580c", fontWeight: 700 }}>{security.summary.high} high</span>
+                      <span style={{ padding: "1px 8px", borderRadius: 999, background: "#fee2e2", color: "#b91c1c", fontWeight: 800 }}>grade {security.summary.grade || "?"}</span>
+                      <span style={{ color: "#94a3b8" }}>scanner: {security.summary.scannerType || "n/a"} · shields mark vulnerable pods/workloads</span>
+                    </>
+                  ) : <span style={{ color: "#b45309" }}>No live scan data for this namespace yet.</span>}
+                </div>
+              )}
               {explain?.phase === "error" && <div style={{ color: "#dc2626", fontSize: "0.82rem", marginBottom: 8 }}>Explain: {explain.error}</div>}
               {explain?.data && (
                 <div style={{ marginBottom: 12, padding: 12, borderRadius: 10, background: "linear-gradient(90deg, rgba(124,58,237,0.06), rgba(61,90,254,0.04))", border: "1px solid #e0d7fb" }}>
@@ -191,7 +228,7 @@ function NamespaceTopologyModal({ namespace, onClose }) {
               {(!topo.graph || topo.graph.nodes.length <= 1) ? (
                 <div style={{ color: "#64748b", fontSize: "0.86rem" }}>No workloads found in this namespace.</div>
               ) : (
-                <TopologyGraph graph={topo.graph} namespace={namespace} cluster={cluster} onChanged={refetch} highlight={explain?.data || null} />
+                <TopologyGraph graph={topo.graph} namespace={namespace} cluster={cluster} onChanged={refetch} highlight={explain?.data || null} relations={topo.relations} security={security} />
               )}
 
               {/* Legend */}
@@ -240,19 +277,56 @@ function layoutTree(graph) {
 }
 
 /* Interactive (pan / zoom / drag-node) topology canvas — light, readable. */
-function TopologyGraph({ graph, namespace, cluster, onChanged, highlight }) {
+function TopologyGraph({ graph, namespace, cluster, onChanged, highlight, relations, security }) {
   const base = useMemo(() => layoutTree(graph), [graph]);
   const [pos, setPos] = useState({});           // node id → {x,y} overrides
   const [view, setView] = useState({ z: 1, x: 0, y: 0 });
   const [sel, setSel] = useState(null);          // selected node
   const [fix, setFix] = useState(null);          // { phase, data, error }
+  const [blastOn, setBlastOn] = useState(false); // predictive blast-radius
+
+  // children map for descendant / blast-radius tracing
+  const childMap = useMemo(() => {
+    const m = new Map();
+    for (const e of graph.edges) { if (!m.has(e.source)) m.set(e.source, []); m.get(e.source).push(e.target); }
+    return m;
+  }, [graph]);
+  const descendants = (id) => {
+    const out = new Set(); const stack = [...(childMap.get(id) || [])];
+    while (stack.length) { const x = stack.pop(); if (out.has(x)) continue; out.add(x); (childMap.get(x) || []).forEach((c) => stack.push(c)); }
+    return out;
+  };
+  // Blast radius of the selected node: its descendants + services it backs + routes on those.
+  const blastSet = useMemo(() => {
+    if (!blastOn || !sel) return null;
+    const set = descendants(sel.id);
+    const svcs = (relations?.services || []).filter((s) => s.workload === sel.id).map((s) => s.id);
+    svcs.forEach((id) => set.add(id));
+    const rts = (relations?.routes || []).filter((r) => svcs.includes(r.service)).map((r) => r.id);
+    rts.forEach((id) => set.add(id));
+    return set;
+  }, [blastOn, sel, relations, childMap]);
+  const blastCount = blastSet ? blastSet.size : 0;
+
+  // Per-node security (CVE) rollup: pod nodes by name; workloads sum their pods.
+  const nodeVuln = (n) => {
+    if (!security) return null;
+    if (n.kind === "Pod" && !n.id.startsWith("kind/")) return security.pods[n.name] || null;
+    if (/^(Deployment|StatefulSet|DaemonSet)$/.test(n.kind) && !n.id.startsWith("kind/")) {
+      const pods = [...descendants(n.id)].map((id) => base.idx.get(id)).filter((x) => x && x.kind === "Pod");
+      let critical = 0, high = 0;
+      for (const p of pods) { const v = security.pods[p.name]; if (v) { critical = Math.max(critical, v.critical); high = Math.max(high, v.high); } }
+      return (critical || high) ? { critical, high } : null;
+    }
+    return null;
+  };
   const vpRef = useRef(null);
   const drag = useRef(null);
   const viewRef = useRef(view); viewRef.current = view;
   const selectRef = useRef(() => {});
-  selectRef.current = (id) => { const n = base.idx.get(id); if (n) { setSel(n); setFix(null); } };
+  selectRef.current = (id) => { const n = base.idx.get(id); if (n) { setSel(n); setFix(null); setBlastOn(false); } };
 
-  useEffect(() => { setPos({}); setView({ z: 1, x: 0, y: 0 }); setSel(null); setFix(null); }, [graph]);
+  useEffect(() => { setPos({}); setView({ z: 1, x: 0, y: 0 }); setSel(null); setFix(null); setBlastOn(false); }, [graph]);
 
   useEffect(() => {
     const move = (e) => {
@@ -307,7 +381,7 @@ function TopologyGraph({ graph, namespace, cluster, onChanged, highlight }) {
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
-  const startPan = (e) => { setSel(null); drag.current = { type: "pan", sx: e.clientX, sy: e.clientY, ox: view.x, oy: view.y }; };
+  const startPan = (e) => { setSel(null); setBlastOn(false); drag.current = { type: "pan", sx: e.clientX, sy: e.clientY, ox: view.x, oy: view.y }; };
   const startNode = (e, n) => { e.stopPropagation(); const p = nodePos(n); drag.current = { type: "node", id: n.id, sx: e.clientX, sy: e.clientY, ox: p.x, oy: p.y, moved: false }; };
   const zoomBy = (f) => setView((v) => ({ ...v, z: Math.min(2.4, Math.max(0.3, v.z * f)) }));
   const reset = () => { setPos({}); setView({ z: 1, x: 0, y: 0 }); };
@@ -324,9 +398,11 @@ function TopologyGraph({ graph, namespace, cluster, onChanged, highlight }) {
               const from = base.idx.get(e.from), to = base.idx.get(e.to);
               const x1 = cx(from), y1 = nodePos(from).y + CIRCLE, x2 = cx(to), y2 = nodePos(to).y;
               const my = (y1 + y2) / 2;
-              const dim = highlight && !(highlighted(from.id) && highlighted(to.id));
+              const inBlast = blastSet && (blastSet.has(to.id) || to.id === sel?.id) && (blastSet.has(from.id) || from.id === sel?.id);
+              const dim = blastSet ? !inBlast : (highlight && !(highlighted(from.id) && highlighted(to.id)));
               const bad = (to.status === "error");
-              return <path key={i} d={`M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}`} fill="none" stroke={dim ? "#e9edf3" : bad ? "#fca5a5" : "#cbd5e1"} strokeWidth={dim ? 1 : 1.6} />;
+              const stroke = dim ? "#e9edf3" : blastSet && inBlast ? "#f59e0b" : bad ? "#fca5a5" : "#cbd5e1";
+              return <path key={i} d={`M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}`} fill="none" stroke={stroke} strokeWidth={dim ? 1 : blastSet && inBlast ? 2 : 1.6} />;
             })}
           </svg>
           {base.nodes.map((n) => {
@@ -334,16 +410,21 @@ function TopologyGraph({ graph, namespace, cluster, onChanged, highlight }) {
             const p = nodePos(n);
             const isPrimary = n.id === primaryId;
             const isSymptom = symptomSet.has(n.id);
-            const dim = highlight && !highlighted(n.id);
             const isSel = sel?.id === n.id;
-            const ring = isPrimary ? "#dc2626" : isSel ? "#3d5afe" : st.c;
+            const inBlast = blastSet && (blastSet.has(n.id) || isSel);
+            const dim = blastSet ? !inBlast : (highlight && !highlighted(n.id));
+            const isBlastImpact = blastSet && blastSet.has(n.id) && !isSel;
+            const ring = isBlastImpact ? "#ea580c" : isPrimary ? "#dc2626" : isSel ? "#3d5afe" : st.c;
+            const vuln = nodeVuln(n);
             return (
               <div key={n.id} onMouseDown={(e) => startNode(e, n)} style={{ position: "absolute", left: p.x, top: p.y, width: NODE_W, display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer", userSelect: "none", opacity: dim ? 0.4 : 1, transition: "opacity .2s" }}>
                 {isPrimary && <div style={{ fontSize: "0.56rem", fontWeight: 800, color: "#fff", background: "#dc2626", padding: "1px 6px", borderRadius: 4, marginBottom: 3 }}>ROOT CAUSE</div>}
-                <div style={{ position: "relative", width: CIRCLE, height: CIRCLE, borderRadius: "50%", background: "#fff", border: `${isPrimary || isSel ? 3 : 2.5}px solid ${ring}`, display: "grid", placeItems: "center", fontSize: "1.05rem", boxShadow: "0 1px 4px rgba(15,23,42,0.12)", animation: isPrimary ? "tg-pulse 1.8s infinite" : "none", outline: isSymptom ? "2px dashed #d97706" : "none", outlineOffset: 2 }}>
+                {isBlastImpact && <div style={{ fontSize: "0.54rem", fontWeight: 800, color: "#fff", background: "#ea580c", padding: "1px 5px", borderRadius: 4, marginBottom: 3 }}>IMPACTED</div>}
+                <div style={{ position: "relative", width: CIRCLE, height: CIRCLE, borderRadius: "50%", background: "#fff", border: `${isPrimary || isSel || isBlastImpact ? 3 : 2.5}px solid ${ring}`, display: "grid", placeItems: "center", fontSize: "1.05rem", boxShadow: "0 1px 4px rgba(15,23,42,0.12)", animation: isPrimary ? "tg-pulse 1.8s infinite" : "none", outline: isSymptom ? "2px dashed #d97706" : "none", outlineOffset: 2 }}>
                   {KIND_ICON[n.kind] || "▫"}
                   <span title={st.label} style={{ position: "absolute", top: -3, left: -3, width: 12, height: 12, borderRadius: "50%", background: st.c, border: "2px solid #fff" }} />
                   {n.count > 1 && <span style={{ position: "absolute", top: -6, right: -6, minWidth: 16, height: 16, padding: "0 3px", borderRadius: 8, background: "#3d5afe", color: "#fff", fontSize: "0.62rem", fontWeight: 800, display: "grid", placeItems: "center", border: "1.5px solid #fff" }}>{n.count}</span>}
+                  {vuln && (vuln.critical > 0 || vuln.high > 0) && <span title={`${vuln.critical} critical, ${vuln.high} high CVEs${vuln.image ? " · " + vuln.image : ""}`} style={{ position: "absolute", bottom: -5, right: -6, minWidth: 15, height: 15, padding: "0 3px", borderRadius: 7, background: vuln.critical > 0 ? "#dc2626" : "#ea580c", color: "#fff", fontSize: "0.58rem", fontWeight: 800, display: "grid", placeItems: "center", border: "1.5px solid #fff" }}>🛡{vuln.critical || vuln.high}</span>}
                 </div>
                 <div style={{ fontSize: "0.6rem", fontWeight: 800, color: st.c, textTransform: "uppercase", letterSpacing: "0.03em", marginTop: 4 }}>{n.kind}</div>
                 <div title={n.name} style={{ maxWidth: NODE_W + 8, textAlign: "center", fontSize: "0.68rem", fontWeight: 600, color: "#1e293b", padding: "2px 7px", borderRadius: 6, border: `1px solid ${isSel ? "#3d5afe" : "#e2e8f0"}`, background: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginTop: 2 }}>{n.name}</div>
@@ -373,6 +454,14 @@ function TopologyGraph({ graph, namespace, cluster, onChanged, highlight }) {
           <div style={{ fontSize: "0.84rem", fontWeight: 700, color: "#0f172a", marginTop: 3, wordBreak: "break-all" }}>{sel.name}</div>
           {sel.replicas && <div style={{ fontSize: "0.74rem", color: "#64748b" }}>Replicas: {sel.replicas}</div>}
           {sel.reasons && sel.reasons.length > 0 && <div style={{ fontSize: "0.74rem", color: "#dc2626", marginTop: 2 }}>{sel.reasons.join(", ")}</div>}
+          {(() => { const v = nodeVuln(sel); return v && (v.critical > 0 || v.high > 0) ? <div style={{ fontSize: "0.74rem", color: v.critical ? "#dc2626" : "#ea580c", marginTop: 2, fontWeight: 700 }}>🛡 {v.critical} critical · {v.high} high CVE(s){v.image ? ` in ${v.image}` : ""}</div> : null; })()}
+
+          {/* Predictive blast-radius */}
+          <div style={{ marginTop: 9 }}>
+            <button onClick={() => setBlastOn((b) => !b)} style={{ width: "100%", padding: "6px 0", borderRadius: 7, border: `1px solid ${blastOn ? "#ea580c" : "#e2e8f0"}`, background: blastOn ? "rgba(234,88,12,0.08)" : "#fff", color: blastOn ? "#c2410c" : "#475569", fontWeight: 700, fontSize: "0.78rem", cursor: "pointer" }}>{blastOn ? "Hide blast radius" : "⚡ Show blast radius"}</button>
+            {blastOn && <div style={{ fontSize: "0.74rem", color: "#c2410c", marginTop: 5 }}>If this fails/restarts, <b>{blastCount}</b> downstream component(s) are impacted (highlighted in orange).</div>}
+          </div>
+
           {isWorkload(sel) ? (
             <div style={{ marginTop: 9 }}>
               {(!fix || fix.phase === "error") && (
