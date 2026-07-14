@@ -4432,9 +4432,18 @@ spec:
         const body = await readJsonBody(req);
         const { sysId, namespace, resource, closeNotes } = body;
         const dryRun = body.dryRun !== false;
+        // closeOnly: the issue was validated as already resolved — close the
+        // incident(s) in ServiceNow WITHOUT touching the cluster.
+        const closeOnly = body.closeOnly === true;
+        const podName = String(resource || "").split("/")[0];
+        let result;
+        if (closeOnly) {
+          const action = `Close only — no cluster change (validated ${resource || "workload"} already healthy)`;
+          if (dryRun) { sendJson(res, 200, { dryRun: true, closeOnly: true, action, namespace }); return; }
+          result = { dryRun: false, closeOnly: true, action, namespace };
+        } else {
         if (!namespace || !resource) { sendJson(res, 200, { error: "This incident has no namespace/workload to fix automatically — resolve it manually." }); return; }
-        const podName = String(resource).split("/")[0];
-        const result = await withClusterContext(url, async () => {
+        result = await withClusterContext(url, async () => {
           let workloadName = null, kind = "deployment";
           try {
             const pod = await ocpGet(`/api/v1/namespaces/${namespace}/pods/${podName}`);
@@ -4459,6 +4468,7 @@ spec:
           await ocpPatch(path, patch, "application/strategic-merge-patch+json");
           return { dryRun: false, action, workload: `${kind}/${workloadName}`, namespace };
         });
+        }
         if (result === null) { sendJson(res, 200, { error: "Incident's cluster is not reachable." }); return; }
         if (result.error) { sendJson(res, 200, { error: result.error }); return; }
         let incidentClosed = null;
@@ -4467,8 +4477,11 @@ spec:
         const alsoClose = Array.isArray(body.alsoClose) ? body.alsoClose.slice(0, 25) : [];
         const closedRelated = [];
         if (result.dryRun === false && sysId) {
+          const noteBase = result.closeOnly
+            ? `Closed by TCS Agentic AI — validated already healthy, no change required`
+            : `Resolved by TCS Agentic AI — ${result.action}`;
           try {
-            const c = await snowResolveIncident(sysId, { closeNotes: closeNotes || `Resolved by TCS Agentic AI — ${result.action}`, resolution: null });
+            const c = await snowResolveIncident(sysId, { closeNotes: closeNotes || noteBase, resolution: null });
             incidentClosed = { success: c?.closed === true, detailsSaved: c?.detailsSaved === true, closeError: c?.closeError || null };
           } catch (e) { incidentClosed = { success: false, error: e.message }; }
           for (const dup of alsoClose) {
@@ -4480,6 +4493,81 @@ spec:
           }
         }
         sendJson(res, 200, { ...result, incidentClosed, closedRelated });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── Automation Hub · ServiceNow Agent — LIVE pre-flight validation ──
+    // Before applying any change, check the CURRENT state of the affected
+    // workload on the chosen cluster. An incident may still be open in
+    // ServiceNow while the problem has already been resolved. Returns whether
+    // the issue is still present and whether to fix or just close.
+    if (req.method === "POST" && url.pathname === "/api/servicenow/incidents/validate") {
+      if (enforceRateLimit(req, res, { burst: 8, refillPerSec: 0.2 })) return;
+      try {
+        const body = await readJsonBody(req);
+        const { namespace, resource } = body;
+        if (!namespace || !resource) { sendJson(res, 200, { error: "No namespace/workload on this incident to validate." }); return; }
+        const podName = String(resource).split("/")[0];
+        const BAD = /CrashLoopBackOff|ImagePullBackOff|ErrImagePull|InvalidImageName|CreateContainer|RunContainer|CreateContainerConfigError/;
+        const evalPods = (pods) => {
+          const bad = [];
+          let anyUnready = false, maxRestarts = 0, readyRunning = 0;
+          for (const p of pods) {
+            const phase = p.status?.phase;
+            const cs = p.status?.containerStatuses || [];
+            for (const c of cs) {
+              maxRestarts = Math.max(maxRestarts, c.restartCount || 0);
+              const wr = c.state?.waiting?.reason;
+              if (wr && BAD.test(wr)) bad.push(wr);
+              if (c.ready === false && phase === "Running") anyUnready = true;
+              if (c.lastState?.terminated?.reason === "OOMKilled") bad.push("OOMKilled");
+            }
+            if (phase === "Failed") bad.push("PodFailed");
+            if (phase === "Pending" && (p.status?.conditions || []).some(c => c.type === "PodScheduled" && c.status === "False")) bad.push("Unschedulable");
+            if (phase === "Running" && cs.length > 0 && cs.every(c => c.ready)) readyRunning++;
+          }
+          return { badReasons: [...new Set(bad)], anyUnready, maxRestarts, readyRunning, total: pods.length };
+        };
+        const out = await withClusterContext(url, async () => {
+          let pods = [], mode = "exact";
+          try {
+            const pod = await ocpGet(`/api/v1/namespaces/${namespace}/pods/${podName}`);
+            pods = [pod];
+          } catch {
+            // Exact pod is gone (replaced/deleted) — inspect current siblings.
+            mode = "siblings";
+            const seg = podName.split("-");
+            const prefix = seg.length >= 3 ? seg.slice(0, -2).join("-") : seg.slice(0, -1).join("-");
+            try {
+              const list = await ocpGet(`/api/v1/namespaces/${namespace}/pods`);
+              pods = (list.items || []).filter(p => (p.metadata?.name || "").startsWith(prefix ? prefix + "-" : podName));
+            } catch { pods = []; }
+          }
+          if (pods.length === 0) {
+            return { state: "gone", stillAffected: false, recommendation: "close",
+              evidence: [`No pods matching "${podName}" are running in ${namespace}.`, "The workload was replaced or removed — there is nothing to restart."],
+              summary: "The affected pod no longer exists and no replacement is failing. The problem appears already resolved — safe to close without any change.", checkedPods: 0 };
+          }
+          const e = evalPods(pods);
+          const stillAffected = e.badReasons.length > 0 || e.anyUnready;
+          const evidence = [];
+          evidence.push(`${e.readyRunning}/${e.total} pod(s) Running & Ready${mode === "siblings" ? " (original pod was replaced)" : ""}.`);
+          if (e.maxRestarts > 0) evidence.push(`Max restart count: ${e.maxRestarts}.`);
+          if (e.badReasons.length) evidence.push(`Active failure signals: ${e.badReasons.join(", ")}.`);
+          return {
+            state: stillAffected ? "unhealthy" : (e.maxRestarts > 5 ? "recovered" : "healthy"),
+            stillAffected,
+            recommendation: stillAffected ? "fix" : "close",
+            evidence,
+            summary: stillAffected
+              ? `The workload is STILL failing (${e.badReasons.join(", ") || "not ready"}). Applying the fix is recommended.`
+              : `The workload is currently healthy (${e.readyRunning}/${e.total} ready)${e.maxRestarts > 5 ? " and has stabilised after earlier restarts" : ""}. The incident looks already resolved — you can close it without changes.`,
+            checkedPods: e.total,
+          };
+        });
+        if (out === null) { sendJson(res, 200, { error: "The selected cluster is not reachable for validation." }); return; }
+        sendJson(res, 200, { namespace, resource, ...out });
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }

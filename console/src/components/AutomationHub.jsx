@@ -60,7 +60,7 @@ export function AutomationHub({ open, onClose }) {
           </div>
         </div>
         <div style={{ flex: 1, overflow: "auto", padding: "18px 22px 24px" }}>
-          {agent === "sop" ? <SopAgent clusters={clusters} activeCluster={activeCluster} /> : <SnowAgent activeCluster={activeCluster} />}
+          {agent === "sop" ? <SopAgent clusters={clusters} activeCluster={activeCluster} /> : <SnowAgent clusters={clusters} activeCluster={activeCluster} />}
         </div>
       </div>
     </div>
@@ -371,17 +371,36 @@ const SEV_COLOR = (s) => {
   return "#64748b";
 };
 
-function SnowAgent({ activeCluster }) {
+function SnowAgent({ clusters = [], activeCluster }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [scope, setScope] = useState("platform"); // platform | all
   const [rca, setRca] = useState({});
   const [fix, setFix] = useState({}); // keyed by sysId
   const [analysis, setAnalysis] = useState(null); // { phase, data, error }
+  const [clusterSel, setClusterSel] = useState({}); // { [sysId]: clusterName }
 
   const incidents = data?.incidents || [];
   const byNumber = {};
   for (const i of incidents) byNumber[i.number] = i;
+
+  const clusterList = clusters.length ? clusters : ["local"];
+  // Which cluster to act on for an incident: explicit selection > parsed from
+  // the incident > active cluster > hub.
+  const clusterFor = (inc) => clusterSel[inc.sysId] || inc.cluster || activeCluster || "local";
+  // A cluster must be chosen when the incident carries none and there's a real
+  // choice (more than just the hub).
+  const needsClusterChoice = (inc) => !inc.cluster && !clusterSel[inc.sysId] && clusterList.length > 1;
+
+  const ClusterPicker = ({ inc }) => (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+      <span style={{ fontSize: "0.72rem", color: needsClusterChoice(inc) ? "#dc2626" : "var(--muted,#5a6373)", fontWeight: needsClusterChoice(inc) ? 700 : 400 }}>{inc.cluster ? "cluster:" : "run on:"}</span>
+      <select value={clusterFor(inc)} onChange={(e) => setClusterSel((p) => ({ ...p, [inc.sysId]: e.target.value }))}
+        style={{ padding: "3px 7px", borderRadius: 6, border: needsClusterChoice(inc) ? "1px solid #dc2626" : "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--fg,#151a29)", fontSize: "0.74rem", fontWeight: 600 }}>
+        {clusterList.map((c) => <option key={c} value={c}>{c === "local" ? "Hub (local)" : c}</option>)}
+      </select>
+    </span>
+  );
 
   const fetchIncidents = useCallback(async (scp) => {
     setLoading(true); setAnalysis(null);
@@ -412,7 +431,7 @@ function SnowAgent({ activeCluster }) {
   const runRca = async (inc) => {
     setRca((p) => ({ ...p, [inc.sysId]: { loading: true } }));
     try {
-      const res = await fetch(clusterUrl("/api/rca/investigate", inc.cluster || activeCluster), {
+      const res = await fetch(clusterUrl("/api/rca/investigate", clusterFor(inc)), {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ namespace: inc.namespace, pod: inc.resource }),
       });
@@ -424,18 +443,30 @@ function SnowAgent({ activeCluster }) {
 
   // Fix one incident. `alsoClose` = correlated tickets that this same fix
   // resolves; they are closed in ServiceNow with a note referencing the primary.
-  const runFix = async (inc, apply, alsoClose = [], primaryNumber = null) => {
-    setFix((p) => ({ ...p, [inc.sysId]: { phase: apply ? "applying" : "checking" } }));
+  // On dry-run we ALSO run a live pre-flight validation so the user can see
+  // whether the issue is still present before applying anything.
+  // opts.closeOnly closes the incident(s) without touching the cluster.
+  const runFix = async (inc, apply, alsoClose = [], primaryNumber = null, opts = {}) => {
+    const cl = clusterFor(inc);
+    setFix((p) => ({ ...p, [inc.sysId]: { ...(p[inc.sysId] || {}), phase: apply ? "applying" : "checking" } }));
     try {
-      const res = await fetch(clusterUrl("/api/servicenow/incidents/fix", inc.cluster || activeCluster), {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sysId: inc.sysId, namespace: inc.namespace, resource: inc.resource, dryRun: !apply, alsoClose, primaryNumber }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (d.error) throw new Error(d.error);
-      setFix((p) => ({ ...p, [inc.sysId]: { phase: apply ? "done" : "preview", data: d, alsoClose } }));
-      if (apply) showToast(`Fix applied${d.incidentClosed?.success ? " · primary closed" : ""}${d.closedRelated?.length ? " · " + d.closedRelated.filter(x => x.closed).length + " related closed" : ""}`, "ok");
-    } catch (e) { setFix((p) => ({ ...p, [inc.sysId]: { phase: "error", error: e.message } })); showToast("Fix failed: " + e.message, "err"); }
+      const [fixRes, valRes] = await Promise.all([
+        fetch(clusterUrl("/api/servicenow/incidents/fix", cl), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sysId: inc.sysId, namespace: inc.namespace, resource: inc.resource, dryRun: !apply, alsoClose, primaryNumber, closeOnly: opts.closeOnly === true }),
+        }).then((r) => r.json()).catch((e) => ({ error: e.message })),
+        // Validate live state only during the dry-run preview.
+        (!apply && inc.namespace && inc.resource)
+          ? fetch(clusterUrl("/api/servicenow/incidents/validate", cl), {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ namespace: inc.namespace, resource: inc.resource }),
+            }).then((r) => r.json()).catch(() => null)
+          : Promise.resolve(null),
+      ]);
+      if (fixRes.error) throw new Error(fixRes.error);
+      setFix((p) => ({ ...p, [inc.sysId]: { phase: apply ? "done" : "preview", data: fixRes, alsoClose, validation: valRes || (p[inc.sysId] || {}).validation, closeOnly: opts.closeOnly === true } }));
+      if (apply) showToast(`${opts.closeOnly ? "Closed" : "Fix applied"}${fixRes.incidentClosed?.success ? " · primary closed" : ""}${fixRes.closedRelated?.length ? " · " + fixRes.closedRelated.filter(x => x.closed).length + " related closed" : ""}`, "ok");
+    } catch (e) { setFix((p) => ({ ...p, [inc.sysId]: { phase: "error", error: e.message } })); showToast("Action failed: " + e.message, "err"); }
   };
 
   // Compute {sysId, number} list for a group's collateral closes.
@@ -512,9 +543,10 @@ function SnowAgent({ activeCluster }) {
                 <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span style={{ fontSize: "0.66rem", fontWeight: 800, padding: "2px 7px", borderRadius: 5, background: "#16a34a", color: "#fff" }}>ROOT / FIX FIRST</span>
                   <b style={{ fontSize: "0.9rem" }}>{g.primary}</b>
-                  {primary?.cluster && <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "2px 8px", borderRadius: 999, background: "rgba(61,90,254,0.13)", color: "#3d5afe" }}>🗄 {primary.cluster}</span>}
                   {primary?.namespace && <span style={{ fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>ns: {primary.namespace}{primary.resource ? " · " + primary.resource : ""}</span>}
+                  {primary && <ClusterPicker inc={primary} />}
                 </div>
+                {primary && needsClusterChoice(primary) && <div style={{ fontSize: "0.74rem", color: "#dc2626", marginTop: 4 }}>⚠ This incident has no cluster on it — choose the target cluster above before fixing.</div>}
                 {g.rootCause && <p style={{ fontSize: "0.83rem", margin: "6px 0 3px" }}><b>Root cause:</b> {g.rootCause}</p>}
                 {g.recommendedFix && <p style={{ fontSize: "0.83rem", margin: "0 0 4px" }}><b>Recommended fix:</b> {g.recommendedFix}</p>}
 
@@ -532,7 +564,7 @@ function SnowAgent({ activeCluster }) {
                 {/* Actions */}
                 {primary && primary.namespace && (
                   <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                    <button onClick={() => runFix(primary, false, collateral, g.primary)} disabled={f.phase === "checking" || f.phase === "applying"} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid rgba(14,165,160,0.4)", background: "rgba(14,165,160,0.1)", color: "#0ea5a0", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>{f.phase === "checking" ? "Checking…" : "▷ Dry-run fix"}</button>
+                    <button onClick={() => runFix(primary, false, collateral, g.primary)} disabled={f.phase === "checking" || f.phase === "applying" || needsClusterChoice(primary)} title={needsClusterChoice(primary) ? "Choose a cluster first" : "Dry-run + validate live state"} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid rgba(14,165,160,0.4)", background: "rgba(14,165,160,0.1)", color: "#0ea5a0", fontWeight: 700, fontSize: "0.8rem", cursor: needsClusterChoice(primary) ? "not-allowed" : "pointer", opacity: needsClusterChoice(primary) ? 0.5 : 1 }}>{f.phase === "checking" ? "Validating…" : "▷ Dry-run + validate"}</button>
                     <button onClick={() => runRca(primary)} disabled={(rca[primary.sysId] || {}).loading} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid rgba(124,58,237,0.4)", background: "rgba(124,58,237,0.1)", color: "#7c3aed", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>{(rca[primary.sysId] || {}).loading ? "Analyzing…" : "🔎 RCA"}</button>
                   </div>
                 )}
@@ -549,10 +581,22 @@ function SnowAgent({ activeCluster }) {
                   ) : rr.error ? <div style={{ marginTop: 6, color: "#dc2626", fontSize: "0.8rem" }}>RCA: {rr.error}</div> : null;
                 })()}
 
-                {f.phase === "preview" && f.data && (
+                {f.phase === "preview" && f.data && (() => {
+                  const v = f.validation;
+                  const alreadyResolved = v && v.stillAffected === false;
+                  return (
                   <div style={{ marginTop: 8, borderLeft: "3px solid #0ea5a0", paddingLeft: 10, fontSize: "0.82rem" }}>
                     <b>Planned action:</b> {f.data.action}.
-                    {/* Consolidated close list — everything this one fix will close */}
+                    {/* Live pre-flight validation verdict */}
+                    {v && !v.error && (
+                      <div style={{ marginTop: 8, padding: 10, borderRadius: 8, background: alreadyResolved ? "rgba(22,163,74,0.08)" : "rgba(220,38,38,0.06)", border: `1px solid ${alreadyResolved ? "rgba(22,163,74,0.3)" : "rgba(220,38,38,0.25)"}` }}>
+                        <div style={{ fontWeight: 800, fontSize: "0.76rem", color: alreadyResolved ? "#16a34a" : "#dc2626", marginBottom: 4 }}>{alreadyResolved ? "🩺 Live validation: already resolved" : "🩺 Live validation: still failing"}</div>
+                        <div style={{ fontSize: "0.78rem", color: "var(--fg,#151a29)" }}>{v.summary}</div>
+                        {(v.evidence || []).map((e, i) => <div key={i} style={{ fontSize: "0.74rem", color: "var(--muted,#5a6373)" }}>• {e}</div>)}
+                      </div>
+                    )}
+                    {v?.error && <div style={{ marginTop: 6, fontSize: "0.74rem", color: "#b45309" }}>Validation skipped: {v.error}</div>}
+                    {/* Consolidated close list — everything this action will close */}
                     <div style={{ marginTop: 8, padding: 10, borderRadius: 8, background: "rgba(14,165,160,0.06)", border: "1px solid rgba(14,165,160,0.25)" }}>
                       <div style={{ fontWeight: 800, fontSize: "0.76rem", color: "#0e8a86", marginBottom: 6 }}>Will close {collateral.length + 1} incident(s) in ServiceNow:</div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
@@ -575,12 +619,20 @@ function SnowAgent({ activeCluster }) {
                       </div>
                       {collateral.length === 0 && <div style={{ fontSize: "0.74rem", color: "var(--muted,#5a6373)" }}>No correlated tickets — only the primary will close.</div>}
                     </div>
-                    <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
-                      <button onClick={() => runFix(primary, true, collateral, g.primary)} style={{ padding: "6px 14px", borderRadius: 7, border: "none", background: "#0ea5a0", color: "#fff", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>✓ Confirm — Apply & Close {collateral.length ? `${collateral.length + 1} incidents` : "Incident"}</button>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      {alreadyResolved ? (
+                        <>
+                          <button onClick={() => runFix(primary, true, collateral, g.primary, { closeOnly: true })} style={{ padding: "6px 14px", borderRadius: 7, border: "none", background: "#16a34a", color: "#fff", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>✓ Close {collateral.length ? `${collateral.length + 1} incidents` : "incident"} — no change needed</button>
+                          <button onClick={() => runFix(primary, true, collateral, g.primary)} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid #0ea5a0", background: "var(--card-bg,#fff)", color: "#0ea5a0", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>Apply fix anyway</button>
+                        </>
+                      ) : (
+                        <button onClick={() => runFix(primary, true, collateral, g.primary)} style={{ padding: "6px 14px", borderRadius: 7, border: "none", background: "#0ea5a0", color: "#fff", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>✓ Confirm — Apply & Close {collateral.length ? `${collateral.length + 1} incidents` : "Incident"}</button>
+                      )}
                       <button onClick={() => setFix((p) => ({ ...p, [primary.sysId]: {} }))} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--muted,#5a6373)", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>Cancel</button>
                     </div>
                   </div>
-                )}
+                  );
+                })()}
                 {f.phase === "done" && f.data && (
                   <div style={{ marginTop: 8, borderLeft: "3px solid #16a34a", paddingLeft: 10, fontSize: "0.82rem" }}>
                     <b>✓ Applied:</b> {f.data.action}.{f.data.incidentClosed?.success ? " Primary closed." : f.data.incidentClosed?.detailsSaved ? " Details saved — close pending." : ""}
@@ -610,15 +662,16 @@ function SnowAgent({ activeCluster }) {
               <span style={{ fontWeight: 750, fontSize: "0.9rem" }}>{inc.number}</span>
               {inc.stateLabel && <span style={{ fontSize: "0.68rem", fontWeight: 700, padding: "2px 7px", borderRadius: 999, background: "rgba(100,116,139,0.12)", color: "#475569" }}>{inc.stateLabel}</span>}
               {inc.duplicateOf && <span style={{ fontSize: "0.68rem", fontWeight: 800, padding: "2px 7px", borderRadius: 999, background: "rgba(217,119,6,0.12)", color: "#b45309" }}>🔁 dup of {inc.duplicateOf}</span>}
-              {inc.cluster && <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "2px 8px", borderRadius: 999, background: "rgba(61,90,254,0.13)", color: "#3d5afe" }}>🗄 {inc.cluster}</span>}
-              {inc.namespace && <span style={{ fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>ns: {inc.namespace}</span>}
+              {inc.namespace && <span style={{ fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>ns: {inc.namespace}{inc.resource ? " · " + inc.resource : ""}</span>}
               <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>{inc.createdOn}</span>
             </div>
             <div style={{ fontSize: "0.88rem", margin: "6px 0", color: "var(--fg,#151a29)" }}>{inc.shortDescription}</div>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <ClusterPicker inc={inc} />
               <button onClick={() => runRca(inc)} disabled={r.loading || !inc.namespace} title={inc.namespace ? "" : "No namespace/resource on this incident"} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid rgba(124,58,237,0.4)", background: "rgba(124,58,237,0.1)", color: "#7c3aed", fontWeight: 700, fontSize: "0.8rem", cursor: inc.namespace ? "pointer" : "not-allowed", opacity: inc.namespace ? 1 : 0.5 }}>{r.loading ? "Analyzing…" : "🔎 Run RCA"}</button>
-              <button onClick={() => runFix(inc, false)} disabled={f.phase === "checking" || f.phase === "applying" || !inc.namespace} title={inc.namespace ? "Fix (rolling restart) + close incident" : "No namespace/resource on this incident"} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid rgba(14,165,160,0.4)", background: "rgba(14,165,160,0.1)", color: "#0ea5a0", fontWeight: 700, fontSize: "0.8rem", cursor: inc.namespace ? "pointer" : "not-allowed", opacity: inc.namespace ? 1 : 0.5 }}>{f.phase === "checking" ? "Checking…" : f.phase === "applying" ? "Applying…" : "⚡ Fix"}</button>
+              <button onClick={() => runFix(inc, false)} disabled={f.phase === "checking" || f.phase === "applying" || !inc.namespace || needsClusterChoice(inc)} title={needsClusterChoice(inc) ? "Choose a cluster first" : inc.namespace ? "Dry-run + validate, then fix + close" : "No namespace/resource on this incident"} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid rgba(14,165,160,0.4)", background: "rgba(14,165,160,0.1)", color: "#0ea5a0", fontWeight: 700, fontSize: "0.8rem", cursor: (inc.namespace && !needsClusterChoice(inc)) ? "pointer" : "not-allowed", opacity: (inc.namespace && !needsClusterChoice(inc)) ? 1 : 0.5 }}>{f.phase === "checking" ? "Validating…" : f.phase === "applying" ? "Applying…" : "⚡ Fix"}</button>
             </div>
+            {needsClusterChoice(inc) && <div style={{ fontSize: "0.74rem", color: "#dc2626", marginTop: 6 }}>⚠ No cluster on this incident — choose the target cluster before fixing.</div>}
             {r.error && <div style={{ marginTop: 8, color: "#dc2626", fontSize: "0.82rem" }}>RCA: {r.error}</div>}
             {r.data && (
               <div style={{ marginTop: 10, borderLeft: "3px solid #7c3aed", paddingLeft: 10, fontSize: "0.84rem" }}>
@@ -627,12 +680,34 @@ function SnowAgent({ activeCluster }) {
                 {r.data.summary && !r.data.rootCause && <p style={{ margin: 0 }}>{r.data.summary}</p>}
               </div>
             )}
-            {f.phase === "preview" && f.data && (
+            {f.phase === "preview" && f.data && (() => {
+              const v = f.validation;
+              const alreadyResolved = v && v.stillAffected === false;
+              return (
               <div style={{ marginTop: 10, borderLeft: "3px solid #0ea5a0", paddingLeft: 10, fontSize: "0.84rem" }}>
                 <b>Planned fix (dry-run):</b> {f.data.action}
-                <div><button onClick={() => runFix(inc, true)} style={{ marginTop: 6, padding: "6px 14px", borderRadius: 7, border: "none", background: "#0ea5a0", color: "#fff", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>✓ Apply Fix & Close Incident</button></div>
+                {v && !v.error && (
+                  <div style={{ marginTop: 8, padding: 10, borderRadius: 8, background: alreadyResolved ? "rgba(22,163,74,0.08)" : "rgba(220,38,38,0.06)", border: `1px solid ${alreadyResolved ? "rgba(22,163,74,0.3)" : "rgba(220,38,38,0.25)"}` }}>
+                    <div style={{ fontWeight: 800, fontSize: "0.76rem", color: alreadyResolved ? "#16a34a" : "#dc2626", marginBottom: 4 }}>{alreadyResolved ? "🩺 Live validation: already resolved" : "🩺 Live validation: still failing"}</div>
+                    <div style={{ fontSize: "0.78rem" }}>{v.summary}</div>
+                    {(v.evidence || []).map((e, i) => <div key={i} style={{ fontSize: "0.74rem", color: "var(--muted,#5a6373)" }}>• {e}</div>)}
+                  </div>
+                )}
+                {v?.error && <div style={{ marginTop: 6, fontSize: "0.74rem", color: "#b45309" }}>Validation skipped: {v.error}</div>}
+                <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                  {alreadyResolved ? (
+                    <>
+                      <button onClick={() => runFix(inc, true, [], null, { closeOnly: true })} style={{ padding: "6px 14px", borderRadius: 7, border: "none", background: "#16a34a", color: "#fff", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>✓ Close incident — no change needed</button>
+                      <button onClick={() => runFix(inc, true)} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid #0ea5a0", background: "var(--card-bg,#fff)", color: "#0ea5a0", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>Apply fix anyway</button>
+                    </>
+                  ) : (
+                    <button onClick={() => runFix(inc, true)} style={{ padding: "6px 14px", borderRadius: 7, border: "none", background: "#0ea5a0", color: "#fff", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>✓ Apply Fix & Close Incident</button>
+                  )}
+                  <button onClick={() => setFix((p) => ({ ...p, [inc.sysId]: {} }))} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--muted,#5a6373)", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>Cancel</button>
+                </div>
               </div>
-            )}
+              );
+            })()}
             {f.phase === "done" && f.data && (
               <div style={{ marginTop: 10, borderLeft: "3px solid #16a34a", paddingLeft: 10, fontSize: "0.84rem" }}>
                 <b>✓ Applied:</b> {f.data.action}.{f.data.incidentClosed?.success ? " Incident closed in ServiceNow." : f.data.incidentClosed?.detailsSaved ? " Details saved — close pending." : ""}
