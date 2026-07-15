@@ -7,12 +7,14 @@ to **any connected cluster**.
 
 ## Available samples
 
-| Document | Architecture | Tiers |
+| Document | Architecture | Tiers / Highlights |
 |---|---|---|
 | `sample-requirement-two-tier-app.md` | **Two-tier** | Web/API + MySQL |
 | `sample-requirement-three-tier-app.md` | **Three-tier** | Frontend + Backend API + PostgreSQL |
 | `sample-requirement-webapp-postgres.md` | Two-tier | Web app + PostgreSQL |
 | `sample-requirement-microservice-redis.md` | Two-tier | API microservice + Redis |
+| `sample-requirement-custom-image-app.md` | Two-tier, **custom images** | Private-registry images + image pull Secret (edit creds before deploy) |
+| `sample-requirement-demo-showcase.md` | **Demo showcase** | Frontend + autoscaled API (HPA) + PostgreSQL + CronJob — richest topology view, deploys green with no edits |
 
 All samples request the same governance baseline: dedicated **restricted**
 namespace, default-deny **NetworkPolicy**, least-privilege **RBAC**, Pod
