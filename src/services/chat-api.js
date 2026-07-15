@@ -19067,14 +19067,32 @@ MANDATORY — include ALL of these when the requirement implies an app (and a DB
 Every manifest MUST include apiVersion, kind, metadata.name and metadata.namespace. Default replicas to what the requirement states (else 2 for web, 1 for DB). Keep it deployable as-is.`;
     const r = await callLLM({
       messages: [{ role: "user", content: prompt }],
-      system: "You are a precise, security-first Kubernetes manifest generator. Output only a single valid JSON object, no markdown fences. Every pod must satisfy Pod Security 'restricted'.",
-      maxTokens: 4000, temperature: 0.2,
+      system: "You are a precise, security-first Kubernetes manifest generator. Output only a single valid JSON object, no markdown fences. Keep the JSON compact (no comments, minimal whitespace). Every pod must satisfy Pod Security 'restricted'.",
+      maxTokens: 8000, temperature: 0.2,
       provider: body.llmOpts?.provider, apiUrl: body.llmOpts?.apiUrl, apiKey: body.llmOpts?.apiKey,
       model: body.llmOpts?.model, azureDeployment: body.llmOpts?.azureDeployment, azureApiVersion: body.llmOpts?.azureApiVersion,
     });
+    // Robust JSON extraction: strip code fences, then take the FIRST brace-
+    // balanced object (a greedy regex breaks on truncated/trailing output).
+    const extractJson = (text) => {
+      let t = (text || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+      const start = t.indexOf("{");
+      if (start < 0) return { json: null, truncated: false };
+      let depth = 0, inStr = false, esc = false;
+      for (let i = start; i < t.length; i++) {
+        const ch = t[i];
+        if (inStr) { if (esc) esc = false; else if (ch === "\\") esc = true; else if (ch === '"') inStr = false; continue; }
+        if (ch === '"') { inStr = true; continue; }
+        if (ch === "{") depth++;
+        else if (ch === "}") { depth--; if (depth === 0) return { json: t.slice(start, i + 1), truncated: false }; }
+      }
+      return { json: null, truncated: true }; // never balanced → response was cut off
+    };
     let out = null;
-    try { let t = (r.text || "").trim(); const m = t.match(/\{[\s\S]*\}/); if (m) t = m[0]; out = JSON.parse(t); }
-    catch { return json(res, 200, { error: "Failed to parse AI response into manifests" }); }
+    const { json: jsonStr, truncated } = extractJson(r.text);
+    if (truncated) return json(res, 200, { error: "The AI response was too large and got cut off before the manifests were complete. Try generating fewer tiers at a time (e.g. split the 3-tier app into web+api, then the database), or simplify the requirement." });
+    try { out = JSON.parse(jsonStr); }
+    catch { return json(res, 200, { error: "Failed to parse AI response into manifests. Try again, or simplify the requirement." }); }
     if (!out || !Array.isArray(out.manifests) || out.manifests.length === 0) return json(res, 200, { error: "No manifests were generated — try a more specific requirement." });
     // Serialize to editable multi-document YAML so the user can review/tweak
     // values before deploying. The deploy endpoint accepts this YAML back.
