@@ -84,6 +84,7 @@ function NamespaceTopologyModal({ namespace, onClose }) {
   const [expand, setExpand] = useState(false);
   const [explain, setExplain] = useState(null); // { phase, data, error }
   const [secOn, setSecOn] = useState(false);     // security (CVE) overlay
+  const [filter, setFilter] = useState(null);    // active summary-chip filter
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["/api/topology/namespace", namespace, cluster, expand],
     queryFn: ({ signal }) => apiGet(`/api/topology/namespace?namespace=${encodeURIComponent(namespace)}${expand ? "&expand=1" : ""}`, { cluster, signal }),
@@ -113,8 +114,9 @@ function NamespaceTopologyModal({ namespace, onClose }) {
     return { pods, summary: { totalImages: secData.totalImages || 0, critical: secData.critical || 0, high: secData.high || 0, grade: secData.grade, scannerType: secData.scannerType } };
   }, [secOn, secData]);
 
-  // Reset the AI narration whenever the underlying graph changes.
-  useEffect(() => { setExplain(null); }, [expand, namespace]);
+  // Reset the AI narration + filter whenever the underlying graph changes.
+  useEffect(() => { setExplain(null); setFilter(null); }, [expand, namespace]);
+  const toggleFilter = (k) => setFilter((f) => (f === k ? null : k));
 
   const runExplain = async () => {
     if (!topo?.graph) return;
@@ -156,14 +158,15 @@ function NamespaceTopologyModal({ namespace, onClose }) {
 
         {/* Summary chips */}
         {s && (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "12px 18px 0" }}>
-            <Chip>{s.workloads} workloads</Chip>
-            <Chip c="#16a34a">{s.healthy} healthy</Chip>
-            {s.warning > 0 && <Chip c="#d97706">{s.warning} warning</Chip>}
-            {s.error > 0 && <Chip c="#dc2626">{s.error} error</Chip>}
-            <Chip>{s.services} services</Chip>
-            <Chip>{s.routes} routes</Chip>
-            <Chip>{s.runningPods}/{s.pods} pods ready</Chip>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "12px 18px 0", alignItems: "center" }}>
+            <Chip filterKey="workloads" active={filter === "workloads"} onClick={() => toggleFilter("workloads")}>{s.workloads} workloads</Chip>
+            <Chip c="#16a34a" filterKey="healthy" active={filter === "healthy"} onClick={() => toggleFilter("healthy")}>{s.healthy} healthy</Chip>
+            {s.warning > 0 && <Chip c="#d97706" filterKey="warning" active={filter === "warning"} onClick={() => toggleFilter("warning")}>{s.warning} warning</Chip>}
+            {s.error > 0 && <Chip c="#dc2626" filterKey="error" active={filter === "error"} onClick={() => toggleFilter("error")}>{s.error} error</Chip>}
+            <Chip filterKey="services" active={filter === "services"} onClick={() => toggleFilter("services")}>{s.services} services</Chip>
+            <Chip filterKey="routes" active={filter === "routes"} onClick={() => toggleFilter("routes")}>{s.routes} routes</Chip>
+            <Chip filterKey="pods" active={filter === "pods"} onClick={() => toggleFilter("pods")}>{s.runningPods}/{s.pods} pods ready</Chip>
+            {filter && <button onClick={() => setFilter(null)} style={{ fontSize: "0.72rem", fontWeight: 700, padding: "3px 9px", borderRadius: 999, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", cursor: "pointer" }}>Show all</button>}
             <span style={{ marginLeft: "auto", fontSize: "0.74rem", fontWeight: 800, color: topo.ok ? "#16a34a" : "#dc2626", alignSelf: "center" }}>{topo.ok ? "● No blocking errors" : "● Errors detected"}</span>
           </div>
         )}
@@ -228,7 +231,7 @@ function NamespaceTopologyModal({ namespace, onClose }) {
               {(!topo.graph || topo.graph.nodes.length <= 1) ? (
                 <div style={{ color: "#64748b", fontSize: "0.86rem" }}>No workloads found in this namespace.</div>
               ) : (
-                <TopologyGraph graph={topo.graph} namespace={namespace} cluster={cluster} onChanged={refetch} highlight={explain?.data || null} relations={topo.relations} security={security} />
+                <TopologyGraph graph={topo.graph} namespace={namespace} cluster={cluster} onChanged={refetch} highlight={explain?.data || null} relations={topo.relations} security={security} filter={filter} onClearFilter={() => setFilter(null)} />
               )}
 
               {/* Legend */}
@@ -246,9 +249,34 @@ function NamespaceTopologyModal({ namespace, onClose }) {
   );
 }
 
-function Chip({ children, c }) {
-  return <span style={{ fontSize: "0.74rem", fontWeight: 700, padding: "3px 10px", borderRadius: 999, background: c ? c + "1f" : "#f1f5f9", color: c || "#475569", border: `1px solid ${c ? c + "44" : "#e2e8f0"}` }}>{children}</span>;
+// Clickable summary chip — acts as a topology filter when filterKey is set.
+function Chip({ children, c, filterKey, active, onClick }) {
+  const clickable = !!filterKey;
+  return (
+    <span
+      onClick={clickable ? onClick : undefined}
+      title={clickable ? (active ? "Clear filter" : "Show only these components") : undefined}
+      style={{
+        fontSize: "0.74rem", fontWeight: 700, padding: "3px 10px", borderRadius: 999,
+        background: active ? (c || "#3d5afe") : (c ? c + "1f" : "#f1f5f9"),
+        color: active ? "#fff" : (c || "#475569"),
+        border: `1px solid ${active ? (c || "#3d5afe") : (c ? c + "44" : "#e2e8f0")}`,
+        cursor: clickable ? "pointer" : "default", userSelect: "none",
+      }}
+    >{children}{active ? " ✕" : ""}</span>
+  );
 }
+
+// Topology filter predicates for the clickable summary chips.
+const FILTER_PRED = {
+  workloads: (n) => /^(Deployment|StatefulSet|DaemonSet)$/.test(n.kind),
+  healthy: (n) => n.status === "healthy" && n.kind !== "Namespace",
+  warning: (n) => n.status === "warning",
+  error: (n) => n.status === "error" && n.kind !== "Namespace",
+  services: (n) => n.kind === "Service",
+  routes: (n) => n.kind === "Route",
+  pods: (n) => n.kind === "Pod",
+};
 
 /* Deterministic hierarchical tree layout. */
 const NODE_W = 104, CIRCLE = 44, LEVEL_H = 116, PAD = 30, LEAF_GAP = 16;
@@ -277,8 +305,19 @@ function layoutTree(graph) {
 }
 
 /* Interactive (pan / zoom / drag-node) topology canvas — light, readable. */
-function TopologyGraph({ graph, namespace, cluster, onChanged, highlight, relations, security }) {
-  const base = useMemo(() => layoutTree(graph), [graph]);
+function TopologyGraph({ graph, namespace, cluster, onChanged, highlight, relations, security, filter, onClearFilter }) {
+  // Apply the summary-chip filter: keep matched nodes + their path to the root
+  // so the sub-tree stays connected, then re-layout just that.
+  const viewGraph = useMemo(() => {
+    if (!filter || !FILTER_PRED[filter]) return graph;
+    const matched = graph.nodes.filter(FILTER_PRED[filter]).map((n) => n.id);
+    const parent = new Map(); graph.edges.forEach((e) => parent.set(e.target, e.source));
+    const keep = new Set();
+    for (const id of matched) { let cur = id; let guard = 0; while (cur && !keep.has(cur) && guard++ < 50) { keep.add(cur); cur = parent.get(cur); } }
+    return { nodes: graph.nodes.filter((n) => keep.has(n.id)), edges: graph.edges.filter((e) => keep.has(e.source) && keep.has(e.target)) };
+  }, [graph, filter]);
+  const base = useMemo(() => layoutTree(viewGraph), [viewGraph]);
+  const filteredEmpty = filter && viewGraph.nodes.length <= 1;
   const [pos, setPos] = useState({});           // node id → {x,y} overrides
   const [view, setView] = useState({ z: 1, x: 0, y: 0 });
   const [sel, setSel] = useState(null);          // selected node
@@ -326,7 +365,7 @@ function TopologyGraph({ graph, namespace, cluster, onChanged, highlight, relati
   const selectRef = useRef(() => {});
   selectRef.current = (id) => { const n = base.idx.get(id); if (n) { setSel(n); setFix(null); setBlastOn(false); } };
 
-  useEffect(() => { setPos({}); setView({ z: 1, x: 0, y: 0 }); setSel(null); setFix(null); setBlastOn(false); }, [graph]);
+  useEffect(() => { setPos({}); setView({ z: 1, x: 0, y: 0 }); setSel(null); setFix(null); setBlastOn(false); }, [graph, filter]);
 
   useEffect(() => {
     const move = (e) => {
@@ -442,6 +481,15 @@ function TopologyGraph({ graph, namespace, cluster, onChanged, highlight, relati
         <button style={{ ...btn, fontSize: "0.7rem" }} onClick={reset} title="Reset view">⟳</button>
       </div>
       <div style={{ position: "absolute", bottom: 8, left: 10, fontSize: "0.68rem", color: "#94a3b8", background: "rgba(255,255,255,0.7)", padding: "2px 7px", borderRadius: 6 }}>{Math.round(view.z * 100)}%</div>
+      {filter && (
+        <div style={{ position: "absolute", top: 10, left: sel ? 282 : 10, display: "flex", alignItems: "center", gap: 8, fontSize: "0.72rem", background: "#eef2ff", color: "#3730a3", border: "1px solid #c7d2fe", padding: "4px 10px", borderRadius: 999, fontWeight: 700 }}>
+          Filter: {filter} — {Math.max(0, base.nodes.length - 1)} component(s)
+          <span onClick={onClearFilter} style={{ cursor: "pointer", fontWeight: 800 }}>✕</span>
+        </div>
+      )}
+      {filteredEmpty && (
+        <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "#64748b", fontSize: "0.86rem" }}>No “{filter}” components in this namespace.</div>
+      )}
 
       {/* Selected-node action panel (fix-from-node) */}
       {sel && (
