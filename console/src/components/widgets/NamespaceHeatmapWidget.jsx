@@ -156,6 +156,15 @@ function NamespaceTopologyModal({ namespace, onClose }) {
           <button onClick={onClose} title="Close" style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: "1.1rem", cursor: "pointer", lineHeight: 1 }}>×</button>
         </div>
 
+        {/* Always-visible AI toolbar */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 18px", borderBottom: "1px solid #eef2f7", background: "linear-gradient(90deg, rgba(124,58,237,0.06), rgba(61,90,254,0.03))", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "0.7rem", fontWeight: 800, color: "#6d28d9", background: "#ede9fe", padding: "2px 8px", borderRadius: 999, letterSpacing: "0.03em" }}>✦ AI COPILOT</span>
+          <button onClick={runExplain} disabled={explain?.phase === "running" || !topo?.graph || (topo?.graph?.nodes?.length ?? 0) <= 1} style={{ padding: "6px 13px", borderRadius: 8, border: "none", background: "linear-gradient(135deg,#7c3aed,#3d5afe)", color: "#fff", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer", opacity: explain?.phase === "running" ? 0.7 : 1 }}>{explain?.phase === "running" ? "Analyzing…" : "🧠 Explain root cause"}</button>
+          <button onClick={() => setSecOn((v) => !v)} style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${secOn ? "#dc2626" : "#e2e8f0"}`, background: secOn ? "rgba(220,38,38,0.08)" : "#fff", color: secOn ? "#b91c1c" : "#475569", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>🛡 Security overlay{secOn ? " ✓" : ""}</button>
+          {explain?.data && <button onClick={() => setExplain(null)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontWeight: 700, fontSize: "0.78rem", cursor: "pointer" }}>Clear highlight</button>}
+          <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>select a node → Explain, blast-radius & fix from the panel</span>
+        </div>
+
         {/* Summary chips */}
         {s && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "12px 18px 0", alignItems: "center" }}>
@@ -194,13 +203,6 @@ function NamespaceTopologyModal({ namespace, onClose }) {
                 </div>
               )}
 
-              {/* AI Explain — narrate root cause & highlight the causal path */}
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
-                <button onClick={runExplain} disabled={explain?.phase === "running" || !topo.graph || topo.graph.nodes.length <= 1} style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: "linear-gradient(135deg,#7c3aed,#3d5afe)", color: "#fff", fontWeight: 700, fontSize: "0.82rem", cursor: "pointer", opacity: explain?.phase === "running" ? 0.7 : 1 }}>{explain?.phase === "running" ? "Analyzing…" : "🧠 Explain (AI root cause)"}</button>
-                <button onClick={() => setSecOn((v) => !v)} style={{ padding: "7px 12px", borderRadius: 8, border: `1px solid ${secOn ? "#dc2626" : "#e2e8f0"}`, background: secOn ? "rgba(220,38,38,0.08)" : "#fff", color: secOn ? "#b91c1c" : "#475569", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>🛡 Security {secOn ? "on" : "overlay"}</button>
-                {explain?.data && <button onClick={() => setExplain(null)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontWeight: 700, fontSize: "0.78rem", cursor: "pointer" }}>Clear highlight</button>}
-                {!expand && <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>tip: switch to Expanded to pinpoint, fix & scan a specific workload</span>}
-              </div>
               {secOn && (
                 <div style={{ marginBottom: 12, padding: "8px 12px", borderRadius: 10, background: "#fef2f2", border: "1px solid #fecaca", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", fontSize: "0.78rem" }}>
                   <span style={{ fontWeight: 800, color: "#b91c1c" }}>🛡 Image security</span>
