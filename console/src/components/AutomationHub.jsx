@@ -306,6 +306,15 @@ function SopAgent({ clusters, activeCluster }) {
               <b>{deploy.dryRun ? "Dry-run" : "Deploy"} result:</b> {deploy.result.applied?.length || 0} ok{deploy.result.failed?.length ? `, ${deploy.result.failed.length} failed` : ""}.
               <div style={{ color: "var(--muted,#5a6373)" }}>{(deploy.result.applied || []).join(", ")}</div>
               {(deploy.result.failed || []).map((f, i) => <div key={i} style={{ color: "#dc2626" }}>✗ {f.kind}/{f.name}: {f.error}</div>)}
+              {/* Detect RBAC 403s and show the one-command fix inline */}
+              {(deploy.result.failed || []).some((f) => /forbidden|cannot create|is forbidden|\b403\b/i.test(f.error || "")) && (
+                <div style={{ marginTop: 10, padding: 11, borderRadius: 9, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.4)" }}>
+                  <div style={{ fontWeight: 800, color: "#b45309", fontSize: "0.8rem" }}>🔑 The agent's ServiceAccount isn't allowed to deploy on this cluster (RBAC 403).</div>
+                  <div style={{ fontSize: "0.78rem", color: "var(--fg,#151a29)", margin: "5px 0 7px" }}>Grant the one-time deploy role, then run Dry-run again. Run as a cluster-admin:</div>
+                  <pre style={{ margin: 0, padding: 9, borderRadius: 7, background: "#0f172a", color: "#e2e8f0", fontSize: "0.72rem", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>oc apply -f https://raw.githubusercontent.com/cskaruppu/openshift-mcp-server/claude/setup-mcp-openshift-9JUo7/deploy/dashboard/manifests/serviceaccount.yaml</pre>
+                  <div style={{ fontSize: "0.72rem", color: "var(--muted,#5a6373)", marginTop: 6 }}>This adds the <code>agentic-ai-server-deployer</code> ClusterRole (create namespaces, workloads, networking, RBAC, monitoring) bound to the agent's service accounts. It's a cluster-side change — no image rebuild needed.</div>
+                </div>
+              )}
             </div>
           )}
           {deploy?.phase === "error" && <div style={{ marginTop: 8, color: "#dc2626", fontSize: "0.84rem" }}>Deploy error: {deploy.error}</div>}
