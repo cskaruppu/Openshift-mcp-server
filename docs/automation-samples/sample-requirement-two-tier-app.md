@@ -17,9 +17,14 @@
 
 Deploy a classic **two-tier** business application:
 
-- **Tier 1 — Web/API (stateless):** an `nginx`-based web application, **2 replicas**,
-  serving the UI and REST API. Web-facing.
-- **Tier 2 — Database (stateful):** a **MySQL 8** instance with persistent storage.
+Use **non-root / OpenShift-safe images** (they run under Pod Security
+"restricted" with an arbitrary UID):
+
+- **Tier 1 — Web/API (stateless):** image `nginxinc/nginx-unprivileged:1.27-alpine`,
+  port **8080**, **2 replicas**, serving the UI and REST API. Web-facing.
+- **Tier 2 — Database (stateful):** image `quay.io/sclorg/mysql-80-c9s:latest`
+  (**MySQL 8**), env `MYSQL_USER/MYSQL_PASSWORD/MYSQL_DATABASE` from a Secret,
+  persistent storage at `/var/lib/mysql/data`.
 
 The result must be production-ready, secure by default, observable, and
 deployable to any cluster through the agent.

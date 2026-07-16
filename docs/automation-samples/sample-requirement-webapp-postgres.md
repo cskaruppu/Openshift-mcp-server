@@ -12,9 +12,12 @@
 Deploy a two-tier business application to OpenShift following **global industry
 standard** best practices:
 
-- **Frontend/API tier:** a stateless web application (`nginx`-based, 2 replicas).
-- **Database tier:** a **PostgreSQL 16** database (stateful, single instance)
-  with persistent storage.
+- **Frontend/API tier:** a stateless web application — image
+  `nginxinc/nginx-unprivileged:1.27-alpine` (non-root, port **8080**), 2 replicas.
+- **Database tier:** a **PostgreSQL 16** database (stateful, single instance) —
+  image `quay.io/sclorg/postgresql-16-c9s:latest` (OpenShift-safe, non-root),
+  env `POSTGRESQL_USER/POSTGRESQL_PASSWORD/POSTGRESQL_DATABASE` from a Secret,
+  persistent storage at `/var/lib/pgsql/data`.
 
 The application must be production-ready, secure by default, observable, and
 deployable to any connected cluster through the App Deployment Agent.

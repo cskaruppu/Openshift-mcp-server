@@ -19046,7 +19046,7 @@ Return ONLY valid JSON (no markdown fences) with this exact shape:
 {
   "appName": "short-dns-safe-name",
   "namespace": "namespace-to-use",
-  "image": "primary container image (use a real public image if implied, e.g. nginx, node, redis, postgres:16; otherwise a clear placeholder registry/app:tag — never :latest)",
+  "image": "primary container image (MUST be a non-root/OpenShift-safe image per rule 9; never :latest)",
   "summary": "one paragraph describing what will be deployed and the standards applied",
   "manifests": [ <full Kubernetes/OpenShift manifest objects, in apply order> ],
   "securityApplied": ["short bullet list of the security controls you baked in"],
@@ -19057,12 +19057,19 @@ Return ONLY valid JSON (no markdown fences) with this exact shape:
 MANDATORY — include ALL of these when the requirement implies an app (and a DB/cache tier when mentioned):
 1. NAMESPACE ISOLATION: a Namespace object with pod-security labels (pod-security.kubernetes.io/enforce: restricted, audit, warn), a default-deny NetworkPolicy, plus targeted allow NetworkPolicies (router→web, web→db). Add a ResourceQuota and a LimitRange.
 2. RBAC (LEAST PRIVILEGE): a dedicated ServiceAccount per tier (never the default SA); a namespace-scoped Role and a RoleBinding. NEVER cluster-admin, NEVER wildcard verbs, NEVER ClusterRole/ClusterRoleBinding.
-3. SECURITY CONTEXT ("restricted") on EVERY pod spec: runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities.drop: ["ALL"], seccompProfile.type: RuntimeDefault, and readOnlyRootFilesystem: true where feasible. No privileged, no hostNetwork/hostPID/hostIPC, no hostPath.
+3. SECURITY CONTEXT ("restricted") on EVERY pod spec: runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities.drop: ["ALL"], seccompProfile.type: RuntimeDefault. No privileged, no hostNetwork/hostPID/hostIPC, no hostPath. NEVER set runAsUser or fsGroup — OpenShift assigns arbitrary UIDs. Set readOnlyRootFilesystem ONLY if you also mount emptyDir volumes at every path the image writes (/tmp, cache/run dirs); otherwise leave it false — a read-only root filesystem on an image that writes caches causes CrashLoopBackOff.
 4. SECRETS: database/cache credentials MUST come from a Secret (reference via secretKeyRef / envFrom), never inline plaintext in the Deployment env.
 5. PERSISTENCE (PVC): add a PersistentVolumeClaim (ReadWriteOnce, sensible size) for any stateful tier (DB, cache with persistence) and mount it. Stateless tiers get NO PVC.
 6. MONITORING: add a ServiceMonitor (monitoring.coreos.com/v1) scraping a named "metrics" port, ensure the Service exposes that port, and set readiness + liveness probes on every workload.
 7. WORKLOAD: Deployment for stateless tiers; StatefulSet for databases. Set resource requests/limits, recommended labels (app.kubernetes.io/name, /part-of, /managed-by: app-deployment-agent), and matching selectors.
 8. EXPOSURE: ClusterIP Service for every tier; an OpenShift Route (edge TLS) for web-facing tiers only. Databases/caches are internal Services only — never routed.
+9. OPENSHIFT IMAGE COMPATIBILITY (prevents CrashLoopBackOff — CRITICAL): every image must run as NON-ROOT under an arbitrary UID. Unless the requirement names a specific image, use these known-good ones:
+   - nginx / static web  → image "nginxinc/nginx-unprivileged:1.27-alpine", containerPort 8080 (NOT plain nginx — it needs root and crashes).
+   - simple HTTP/API placeholder → image "hashicorp/http-echo:1.0" with args ["-listen=:8080","-text=ok"], containerPort 8080 (NOT bare node/python images — a runtime image without a server command exits immediately and crashloops).
+   - PostgreSQL → image "quay.io/sclorg/postgresql-16-c9s:latest", env POSTGRESQL_USER/POSTGRESQL_PASSWORD/POSTGRESQL_DATABASE from the Secret, PVC mounted at /var/lib/pgsql/data, port 5432.
+   - MySQL/MariaDB → image "quay.io/sclorg/mysql-80-c9s:latest", env MYSQL_USER/MYSQL_PASSWORD/MYSQL_DATABASE from the Secret, PVC mounted at /var/lib/mysql/data, port 3306.
+   - Redis → image "bitnami/redis:7.2", env REDIS_PASSWORD from the Secret, PVC mounted at /bitnami/redis/data, port 6379.
+   Every container needs a long-running server process, containerPort matching the image's real listen port, and probes targeting that port (tcpSocket is safest for DBs).
 
 Every manifest MUST include apiVersion, kind, metadata.name and metadata.namespace. Default replicas to what the requirement states (else 2 for web, 1 for DB). Keep it deployable as-is.`;
     const r = await callLLM({

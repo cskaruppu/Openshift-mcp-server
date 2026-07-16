@@ -9,8 +9,11 @@
 
 ## 1. Overview
 
-Deploy a stateless **Orders REST microservice** (Node.js image, 3 replicas)
-backed by a **Redis** cache (single instance, persistent). Follow global
+Deploy a stateless **Orders REST microservice** — image
+`hashicorp/http-echo:1.0` with args `["-listen=:8080","-text=orders-ok"]`
+(non-root, port 8080), 3 replicas — backed by a **Redis** cache — image
+`bitnami/redis:7.2` (non-root), env `REDIS_PASSWORD` from a Secret, persistent
+data at `/bitnami/redis/data` (single instance). Follow global
 industry-standard security, isolation, storage and monitoring practices so the
 workload is production-ready and passes the platform's CIS/security scanners.
 

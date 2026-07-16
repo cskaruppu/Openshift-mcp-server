@@ -16,12 +16,17 @@
 
 ## 1. Overview
 
-- **Frontend (stateless):** image `nginx:1.25-alpine`, **2 replicas**, port 8080. Web-facing.
-- **Analytics API (stateless, autoscaled):** image `node:20-alpine` running a simple
-  HTTP server, **2 replicas**, port 8080, plus a **HorizontalPodAutoscaler**
-  (min 2, max 5, target 70% CPU).
-- **PostgreSQL (stateful):** image `postgres:16-alpine`, 1 replica, port 5432,
-  credentials from a Secret, **8Gi** RWO PVC.
+All images below are **non-root / OpenShift-safe** (they run under the
+"restricted" Pod Security profile with an arbitrary UID — no CrashLoopBackOff):
+
+- **Frontend (stateless):** image `nginxinc/nginx-unprivileged:1.27-alpine`,
+  **2 replicas**, port **8080**. Web-facing.
+- **Analytics API (stateless, autoscaled):** image `hashicorp/http-echo:1.0`
+  with args `["-listen=:8080","-text=ok"]`, **2 replicas**, port **8080**,
+  plus a **HorizontalPodAutoscaler** (min 2, max 5, target 70% CPU).
+- **PostgreSQL (stateful):** image `quay.io/sclorg/postgresql-16-c9s:latest`,
+  1 replica, port 5432, env `POSTGRESQL_USER/POSTGRESQL_PASSWORD/POSTGRESQL_DATABASE`
+  from a Secret, **8Gi** RWO PVC mounted at `/var/lib/pgsql/data`.
 - **Nightly report CronJob:** image `busybox:1.36`, schedule `0 2 * * *`,
   runs a short report command and exits.
 

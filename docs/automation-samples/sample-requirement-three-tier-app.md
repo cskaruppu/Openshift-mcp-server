@@ -17,12 +17,19 @@
 
 Deploy a classic **three-tier** business application:
 
-- **Tier 1 — Frontend / Presentation (stateless):** an `nginx`-served web UI,
-  **2 replicas**. The only web-facing tier.
-- **Tier 2 — Backend API / Application (stateless):** a `node`-based REST API,
-  **3 replicas**. Reached only by the frontend; talks to the database.
-- **Tier 3 — Database / Data (stateful):** a **PostgreSQL 16** instance with
-  persistent storage. Reached only by the API.
+Use **non-root / OpenShift-safe images** (they run under Pod Security
+"restricted" with an arbitrary UID):
+
+- **Tier 1 — Frontend / Presentation (stateless):** image
+  `nginxinc/nginx-unprivileged:1.27-alpine`, port **8080**, **2 replicas**.
+  The only web-facing tier.
+- **Tier 2 — Backend API / Application (stateless):** image
+  `hashicorp/http-echo:1.0` with args `["-listen=:8080","-text=ok"]`, port
+  **8080**, **3 replicas**. Reached only by the frontend; talks to the database.
+- **Tier 3 — Database / Data (stateful):** image
+  `quay.io/sclorg/postgresql-16-c9s:latest` (**PostgreSQL 16**), env
+  `POSTGRESQL_USER/POSTGRESQL_PASSWORD/POSTGRESQL_DATABASE` from a Secret,
+  persistent storage at `/var/lib/pgsql/data`. Reached only by the API.
 
 Production-ready, secure by default, observable, and deployable to any cluster.
 
