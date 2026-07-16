@@ -4260,6 +4260,19 @@ spec:
           cronjob: `/apis/batch/v1/namespaces/${ns}/cronjobs`,
           job: `/apis/batch/v1/namespaces/${ns}/jobs`,
         }[(kind || "").toLowerCase()] || null);
+        // Canonical apiVersion per kind — must match the REST path we POST to,
+        // or the API server rejects the object (e.g. an LLM emitting
+        // autoscaling/v2beta2 HPA against the /apis/autoscaling/v2 path).
+        const kindApiVersion = (kind) => ({
+          namespace: "v1", service: "v1", configmap: "v1", secret: "v1",
+          persistentvolumeclaim: "v1", serviceaccount: "v1", resourcequota: "v1", limitrange: "v1",
+          deployment: "apps/v1", statefulset: "apps/v1", daemonset: "apps/v1",
+          route: "route.openshift.io/v1", ingress: "networking.k8s.io/v1", networkpolicy: "networking.k8s.io/v1",
+          horizontalpodautoscaler: "autoscaling/v2",
+          role: "rbac.authorization.k8s.io/v1", rolebinding: "rbac.authorization.k8s.io/v1",
+          servicemonitor: "monitoring.coreos.com/v1", poddisruptionbudget: "policy/v1",
+          cronjob: "batch/v1", job: "batch/v1",
+        }[(kind || "").toLowerCase()] || null);
         // Apply in a dependency-safe order: namespace → policy/rbac/config → workloads → exposure.
         const applyRank = (kind) => ({
           namespace: 0,
@@ -4300,11 +4313,16 @@ spec:
             if (m.metadata) m.metadata.namespace = ns;
             const path = kindPath(m.kind, ns);
             if (!path) { failed.push({ kind: m.kind, name: m.metadata?.name, error: "unsupported kind" }); continue; }
+            // Force the apiVersion to match the path we're posting to.
+            const canonical = kindApiVersion(m.kind);
+            if (canonical) m.apiVersion = canonical;
             try { await ocpPost(path + q, m); applied.push(`${m.kind}/${m.metadata?.name}`); }
             catch (e) {
               if (!dryRun && m.metadata?.name) {
                 try { await ocpPatch(`${path}/${m.metadata.name}`, m, "application/merge-patch+json"); applied.push(`${m.kind}/${m.metadata.name} (updated)`); }
-                catch (e2) { failed.push({ kind: m.kind, name: m.metadata?.name, error: e2.message || e.message }); }
+                // A 404 on the update fallback means the object never existed —
+                // the CREATE error is the real story, so surface that one.
+                catch (e2) { failed.push({ kind: m.kind, name: m.metadata?.name, error: /404|NotFound/i.test(e2.message || "") ? (e.message || e2.message) : (e2.message || e.message) }); }
               } else failed.push({ kind: m.kind, name: m.metadata?.name, error: e.message });
             }
           }
@@ -4351,6 +4369,84 @@ spec:
         // fall back to hygiene-only if the cluster context isn't available.
         let out = await withClusterContext(url, async () => scanManifestImages(manifests, { enrich: true }));
         if (out === null) out = await scanManifestImages(manifests, { enrich: false });
+        sendJson(res, 200, out);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── App Deployment Agent · live pod status (terminal-style watch) ──
+    // kubectl-like rows (NAME READY STATUS RESTARTS AGE) for the deployed
+    // namespace + workload rollout + route URLs. Polled by the console after
+    // a real deploy so the user watches the app come up without any CLI.
+    if (req.method === "GET" && url.pathname === "/api/automation/app-status") {
+      try {
+        const ns = url.searchParams.get("namespace");
+        if (!ns) { sendJson(res, 200, { error: "namespace query param is required" }); return; }
+        const out = await withClusterContext(url, async () => {
+          const safe = async (p) => { try { return await ocpGet(p); } catch { return { items: [] }; } };
+          const [pods, deps, stss, dss, routes] = await Promise.all([
+            safe(`/api/v1/namespaces/${ns}/pods`),
+            safe(`/apis/apps/v1/namespaces/${ns}/deployments`),
+            safe(`/apis/apps/v1/namespaces/${ns}/statefulsets`),
+            safe(`/apis/apps/v1/namespaces/${ns}/daemonsets`),
+            safe(`/apis/route.openshift.io/v1/namespaces/${ns}/routes`),
+          ]);
+          const age = (ts) => {
+            if (!ts) return "—";
+            const s = Math.max(0, Math.floor((Date.now() - new Date(ts).getTime()) / 1000));
+            if (s < 60) return s + "s";
+            if (s < 3600) return Math.floor(s / 60) + "m";
+            if (s < 86400) return Math.floor(s / 3600) + "h";
+            return Math.floor(s / 86400) + "d";
+          };
+          const podRows = (pods.items || []).map((p) => {
+            const spec = p.spec || {}, st = p.status || {};
+            const cs = st.containerStatuses || [];
+            const ics = st.initContainerStatuses || [];
+            const total = (spec.containers || []).length;
+            const readyN = cs.filter((c) => c.ready).length;
+            const restarts = [...cs, ...ics].reduce((s, c) => s + (c.restartCount || 0), 0);
+            // kubectl-style STATUS: Terminating > Init:* > waiting reason > Completed > terminated error > phase
+            let status = st.phase || "Unknown";
+            if (p.metadata?.deletionTimestamp) status = "Terminating";
+            else {
+              const initTotal = (spec.initContainers || []).length;
+              const initDone = ics.filter((c) => c.state?.terminated?.exitCode === 0).length;
+              const initWait = ics.find((c) => c.state?.waiting?.reason && c.state.waiting.reason !== "PodInitializing");
+              if (initTotal > 0 && initDone < initTotal) status = initWait ? `Init:${initWait.state.waiting.reason}` : `Init:${initDone}/${initTotal}`;
+              else {
+                const w = cs.find((c) => c.state?.waiting?.reason);
+                if (w) status = w.state.waiting.reason;
+                else if (st.phase === "Succeeded") status = "Completed";
+                else {
+                  const t = cs.find((c) => c.state?.terminated?.reason && c.state.terminated.exitCode !== 0);
+                  if (t) status = t.state.terminated.reason;
+                }
+              }
+            }
+            return { name: p.metadata?.name || "?", ready: `${readyN}/${total}`, status, restarts, age: age(p.metadata?.creationTimestamp) };
+          }).sort((a, b) => a.name.localeCompare(b.name));
+          const wl = [];
+          for (const d of (deps.items || [])) wl.push({ kind: "deployment", name: d.metadata?.name, ready: d.status?.readyReplicas || 0, desired: d.spec?.replicas ?? 0 });
+          for (const s2 of (stss.items || [])) wl.push({ kind: "statefulset", name: s2.metadata?.name, ready: s2.status?.readyReplicas || 0, desired: s2.spec?.replicas ?? 0 });
+          for (const d of (dss.items || [])) wl.push({ kind: "daemonset", name: d.metadata?.name, ready: d.status?.numberReady || 0, desired: d.status?.desiredNumberScheduled ?? 0 });
+          const BAD = /BackOff|Err|Error|Failed|OOM|Invalid|CreateContainer|Unschedulable/;
+          const active = podRows.filter((r) => r.status !== "Completed" && r.status !== "Terminating");
+          const fullyReady = (r) => { const [a, b] = r.ready.split("/").map(Number); return a === b && b > 0; };
+          const allReady = wl.length > 0
+            && wl.every((w) => w.ready >= w.desired)
+            && active.length > 0
+            && active.every((r) => r.status === "Running" && fullyReady(r))
+            && !active.some((r) => BAD.test(r.status));
+          return {
+            namespace: ns, timestamp: new Date().toISOString(),
+            pods: podRows, workloads: wl,
+            routes: (routes.items || []).map((r) => ({ name: r.metadata?.name, host: r.spec?.host, tls: !!r.spec?.tls })),
+            allReady,
+            failing: active.filter((r) => BAD.test(r.status)).length,
+          };
+        });
+        if (out === null) { sendJson(res, 200, { error: "Selected cluster is not reachable." }); return; }
         sendJson(res, 200, out);
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;

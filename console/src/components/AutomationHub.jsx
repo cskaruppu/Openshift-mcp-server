@@ -82,6 +82,28 @@ function SopAgent({ clusters, activeCluster }) {
   const [verify, setVerify] = useState(null); // { phase, cis, image, error }
   const [cisChk, setCisChk] = useState(null); // pre-deploy CIS: { phase, data }
   const [imgChk, setImgChk] = useState(null); // pre-deploy image: { phase, data }
+  const [watch, setWatch] = useState(null);   // terminal pod watch: { on, done, data, error }
+
+  // Live pod watch — polls the deployed namespace every 4s while "on",
+  // stops automatically once everything is ready.
+  const watchNs = namespace || gen?.namespace;
+  useEffect(() => {
+    if (!watch?.on || !watchNs) return;
+    let stopped = false;
+    const tick = async () => {
+      try {
+        const res = await fetch(clusterUrl(`/api/automation/app-status?namespace=${encodeURIComponent(watchNs)}`, cluster));
+        const d = await res.json();
+        if (stopped) return;
+        if (d.error) { setWatch((w) => (w ? { ...w, error: d.error } : w)); return; }
+        if (d.allReady) setWatch((w) => (w ? { ...w, on: false, done: true, data: d, error: null } : w));
+        else setWatch((w) => (w?.on ? { ...w, data: d, error: null } : w));
+      } catch (e) { if (!stopped) setWatch((w) => (w ? { ...w, error: e.message } : w)); }
+    };
+    tick();
+    const id = setInterval(tick, 4000);
+    return () => { stopped = true; clearInterval(id); };
+  }, [watch?.on, watchNs, cluster]);
 
   const onUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -101,7 +123,7 @@ function SopAgent({ clusters, activeCluster }) {
   };
 
   const generate = async () => {
-    setLoading(true); setError(null); setGen(null); setDeploy(null); setCisChk(null); setImgChk(null); setVerify(null);
+    setLoading(true); setError(null); setGen(null); setDeploy(null); setCisChk(null); setImgChk(null); setVerify(null); setWatch(null);
     try {
       const res = await fetch("/api/automation/generate-manifest", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -128,6 +150,8 @@ function SopAgent({ clusters, activeCluster }) {
       if (d.error) throw new Error(d.error);
       setDeploy({ phase: "done", dryRun, result: d });
       setVerify(null);
+      // Real deploy → auto-start the terminal pod watch below the result.
+      if (!dryRun && (d.applied || []).length > 0) setWatch({ on: true });
       showToast(dryRun ? "Dry-run complete" : `Deployed ${d.applied?.length || 0} object(s)`, d.failed?.length ? "err" : "ok");
     } catch (e) { setDeploy({ phase: "error", error: e.message }); showToast("Deploy failed: " + e.message, "err"); }
   };
@@ -318,6 +342,62 @@ function SopAgent({ clusters, activeCluster }) {
             </div>
           )}
           {deploy?.phase === "error" && <div style={{ marginTop: 8, color: "#dc2626", fontSize: "0.84rem" }}>Deploy error: {deploy.error}</div>}
+
+          {/* Live pod status — terminal-style watch (real deploy only) */}
+          {deploy?.phase === "done" && !deploy.dryRun && (
+            <div style={{ marginTop: 12 }}>
+              <style>{`@keyframes ah-blink{0%,49%{opacity:1}50%,100%{opacity:0}}`}</style>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+                <span style={{ fontSize: "0.8rem", fontWeight: 800, color: "var(--fg,#151a29)" }}>🖥 Live application status</span>
+                <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: watch?.done ? "rgba(22,163,74,0.14)" : watch?.on ? "rgba(61,90,254,0.12)" : "rgba(100,116,139,0.12)", color: watch?.done ? "#16a34a" : watch?.on ? "#3d5afe" : "#64748b" }}>
+                  {watch?.done ? "● complete — all pods ready" : watch?.on ? "● watching (4s)" : "● paused"}
+                </span>
+                {watch?.on
+                  ? <button onClick={() => setWatch((w) => ({ ...w, on: false }))} style={{ padding: "4px 11px", borderRadius: 7, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--muted,#5a6373)", fontWeight: 700, fontSize: "0.74rem", cursor: "pointer" }}>⏸ Pause</button>
+                  : <button onClick={() => setWatch((w) => ({ ...(w || {}), on: true, done: false }))} style={{ padding: "4px 11px", borderRadius: 7, border: "1px solid #3d5afe", background: "rgba(61,90,254,0.08)", color: "#3d5afe", fontWeight: 700, fontSize: "0.74rem", cursor: "pointer" }}>{watch?.done ? "↻ Watch again" : "▶ Watch"}</button>}
+              </div>
+              <div style={{ background: "#0b1120", borderRadius: 10, border: "1px solid #1e293b", padding: "12px 14px", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.74rem", lineHeight: 1.7, maxHeight: 320, overflow: "auto", whiteSpace: "pre" }}>
+                <div style={{ color: "#7dd3fc" }}>$ oc get pods -n {watchNs} --watch</div>
+                {watch?.error && <div style={{ color: "#f87171" }}>error: {watch.error}</div>}
+                {!watch?.data && !watch?.error && <div style={{ color: "#94a3b8" }}>connecting to cluster{cluster !== "local" ? ` ${cluster}` : ""}…</div>}
+                {watch?.data?.pods && (() => {
+                  const rows = watch.data.pods;
+                  const nameW = Math.max(4, ...rows.map((r) => r.name.length)) + 3;
+                  const statusW = Math.max(6, ...rows.map((r) => r.status.length)) + 3;
+                  const color = (s) => /Running|Completed/.test(s) ? "#4ade80" : /BackOff|Err|Error|Failed|OOM|Invalid|CreateContainer|Unschedulable/.test(s) ? "#f87171" : /Terminating/.test(s) ? "#94a3b8" : "#fbbf24";
+                  return (
+                    <>
+                      <div style={{ color: "#cbd5e1", fontWeight: 700 }}>{"NAME".padEnd(nameW)}{"READY".padEnd(8)}{"STATUS".padEnd(statusW)}{"RESTARTS".padEnd(10)}AGE</div>
+                      {rows.length === 0 && <div style={{ color: "#94a3b8" }}>No pods yet — waiting for the scheduler…</div>}
+                      {rows.map((r) => (
+                        <div key={r.name} style={{ color: "#e2e8f0" }}>
+                          {r.name.padEnd(nameW)}
+                          <span style={{ color: r.ready.split("/")[0] === r.ready.split("/")[1] ? "#4ade80" : "#fbbf24" }}>{r.ready.padEnd(8)}</span>
+                          <span style={{ color: color(r.status) }}>{r.status.padEnd(statusW)}</span>
+                          <span style={{ color: r.restarts > 3 ? "#f87171" : "#94a3b8" }}>{String(r.restarts).padEnd(10)}</span>
+                          <span style={{ color: "#94a3b8" }}>{r.age}</span>
+                        </div>
+                      ))}
+                      {(watch.data.workloads || []).length > 0 && (
+                        <div style={{ color: "#64748b", marginTop: 6 }}>{watch.data.workloads.map((w) => `${w.kind}/${w.name} ${w.ready}/${w.desired}`).join("   ")}</div>
+                      )}
+                      {watch.data.allReady && (watch.data.routes || []).map((rt) => (
+                        <div key={rt.name} style={{ color: "#7dd3fc" }}>↗ <a href={`http${rt.tls ? "s" : ""}://${rt.host}`} target="_blank" rel="noreferrer" style={{ color: "#7dd3fc" }}>http{rt.tls ? "s" : ""}://{rt.host}</a></div>
+                      ))}
+                      <div style={{ marginTop: 6, color: watch.data.allReady ? "#4ade80" : watch.data.failing ? "#f87171" : "#fbbf24" }}>
+                        {watch.data.allReady
+                          ? `🟢 All pods ready — application is up.`
+                          : watch.data.failing
+                            ? `🔴 ${watch.data.failing} pod(s) failing — waiting for recovery…`
+                            : `🟡 Rolling out — waiting for pods to become ready…`}
+                        {watch.on && <span style={{ animation: "ah-blink 1s step-end infinite" }}> █</span>}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
 
           {/* Closed-loop security verification — only after a real deploy */}
           {deploy?.phase === "done" && !deploy.dryRun && (
