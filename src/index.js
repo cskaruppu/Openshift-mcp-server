@@ -86,6 +86,7 @@ import { generatePreAssessmentReport, generatePostAssessmentReport } from "./ser
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, handleComplianceImpactAPI, handleGenerateManifestAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import { cisCheckManifests, scanManifestImages } from "./services/manifest-scan.js";
 import { handleIncidentCorrelationAPI, handleTopologyExplainAPI } from "./services/chat-api.js";
+import { remember as fleetRemember, recall as fleetRecall, memoryStats as fleetMemoryStats } from "./services/fleet-memory.js";
 import {
   listActions,
   getAction,
@@ -4589,6 +4590,15 @@ spec:
             } catch (e) { closedRelated.push({ number: dup.number || dupSysId, closed: false, error: e.message }); }
           }
         }
+        // Fleet memory: applied fixes become retrievable experience for future RCA.
+        if (result.dryRun === false) fleetRemember({
+          kind: "incident-fix",
+          cluster: url.searchParams.get("cluster") || "local",
+          namespace, workload: result.workload || null,
+          symptom: (body.symptom || `ServiceNow incident ${body.primaryNumber || sysId || ""}`).slice(0, 300),
+          action: result.action,
+          outcome: result.closeOnly ? "closed-no-change-needed" : "fix-applied",
+        });
         sendJson(res, 200, { ...result, incidentClosed, closedRelated });
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
@@ -7093,8 +7103,27 @@ spec:
         if (out === null) { sendJson(res, 200, { error: "Selected cluster is not reachable." }); return; }
         if (out.error) { sendJson(res, 200, { error: out.error }); return; }
         if (out.dryRun === false && featureFlags.pillar7AuditLog()) logAuditEvent({ command: `topology-restart ${out.kind}/${out.name}`, dryRun: false, classification: "topology-remediation", allowed: true, success: true, durationMs: 0 }).catch(() => {});
+        if (out.dryRun === false) fleetRemember({
+          kind: "topology-fix",
+          cluster: url.searchParams.get("cluster") || "local",
+          namespace: out.namespace, workload: `${out.kind}/${out.name}`,
+          symptom: (body.symptom || `${out.kind}/${out.name} unhealthy (${out.ready}/${out.desired} ready)`).slice(0, 300),
+          action: out.action,
+          outcome: "fix-applied",
+        });
         sendJson(res, 200, out);
       } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── Fleet memory — stats & similarity recall (debug/UI surface) ──
+    if (req.method === "GET" && url.pathname === "/api/memory/stats") {
+      sendJson(res, 200, fleetMemoryStats());
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/memory/recall") {
+      const q = url.searchParams.get("q") || "";
+      sendJson(res, 200, { query: q, hits: q ? fleetRecall(q, 5) : [] });
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/network/exposed") {

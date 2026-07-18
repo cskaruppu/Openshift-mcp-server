@@ -545,7 +545,7 @@ function SnowAgent({ clusters = [], activeCluster }) {
       const [fixRes, valRes] = await Promise.all([
         fetch(clusterUrl("/api/servicenow/incidents/fix", cl), {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sysId: inc.sysId, namespace: inc.namespace, resource: inc.resource, dryRun: !apply, alsoClose, primaryNumber, closeOnly: opts.closeOnly === true }),
+          body: JSON.stringify({ sysId: inc.sysId, namespace: inc.namespace, resource: inc.resource, dryRun: !apply, alsoClose, primaryNumber, closeOnly: opts.closeOnly === true, symptom: inc.shortDescription }),
         }).then((r) => r.json()).catch((e) => ({ error: e.message })),
         // Validate live state only during the dry-run preview.
         (!apply && inc.namespace && inc.resource)

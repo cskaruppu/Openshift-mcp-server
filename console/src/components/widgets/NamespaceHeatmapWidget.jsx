@@ -128,6 +128,7 @@ function NamespaceTopologyModal({ namespace, onClose }) {
           namespace,
           nodes: topo.graph.nodes.map((n) => ({ id: n.id, kind: n.kind, name: n.name, status: n.status })),
           issues: topo.issues,
+          relations: topo.relations,
         }),
       });
       const d = await res.json();
@@ -396,7 +397,7 @@ function TopologyGraph({ graph, namespace, cluster, onChanged, highlight, relati
     try {
       const res = await fetch(clusterUrl("/api/topology/remediate", cluster), {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ namespace, kind: sel.kind, name: sel.name, dryRun }),
+        body: JSON.stringify({ namespace, kind: sel.kind, name: sel.name, dryRun, symptom: (sel.reasons || []).join(", ") || undefined }),
       });
       const d = await res.json();
       if (d.error) throw new Error(d.error);
