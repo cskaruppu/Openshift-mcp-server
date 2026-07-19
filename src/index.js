@@ -85,7 +85,7 @@ import { callLLM } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport } from "./services/upgrade-report.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, handleComplianceImpactAPI, handleGenerateManifestAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import { cisCheckManifests, scanManifestImages } from "./services/manifest-scan.js";
-import { handleIncidentCorrelationAPI, handleTopologyExplainAPI } from "./services/chat-api.js";
+import { handleIncidentCorrelationAPI, handleTopologyExplainAPI, handleImageAnalysisAPI } from "./services/chat-api.js";
 import { remember as fleetRemember, recall as fleetRecall, memoryStats as fleetMemoryStats } from "./services/fleet-memory.js";
 import {
   listActions,
@@ -4111,6 +4111,15 @@ spec:
     if (req.method === "POST" && url.pathname === "/api/chat") {
       if (enforceRateLimit(req, res, { burst: 20, refillPerSec: 0.5 })) return;
       await handleChatAPI(req, res);
+      return;
+    }
+
+    // Vision — analyze an uploaded/pasted screenshot (pod list, events, logs)
+    if (req.method === "POST" && url.pathname === "/api/chat/analyze-image") {
+      if (enforceRateLimit(req, res, { burst: 6, refillPerSec: 0.15 })) return;
+      try { await handleImageAnalysisAPI(req, res); }
+      catch (e) { if (!res.headersSent) sendJson(res, 500, { error: e.message }); }
+      if (!res.headersSent) sendJson(res, 200, { error: "Image analysis unavailable." });
       return;
     }
 

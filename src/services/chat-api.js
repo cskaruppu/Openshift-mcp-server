@@ -19311,6 +19311,86 @@ Use ONLY component ids from the list. Prefer a workload (Deployment/StatefulSet/
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/chat/analyze-image — VISION: read a screenshot (pod list, events,
+// terminal output…) with a vision-capable LLM (Azure/OpenAI gpt-4o, Anthropic
+// Claude) and extract failing resources, symptoms, likely root cause and next
+// steps. Grounds the read in this fleet's memory and offers to run LIVE RCA
+// against the real cluster on the entities it recognized.
+// ---------------------------------------------------------------------------
+export async function handleImageAnalysisAPI(req, res) {
+  try {
+    const body = await readBody(req);
+    const llmOpts = body.llmOpts || {};
+    const provider = llmOpts.provider || LLM_PROVIDER;
+    if (!provider || provider === "none") return json(res, 200, { error: "Configure a vision-capable LLM (Azure/OpenAI gpt-4o or Anthropic Claude) in Settings to analyze screenshots." });
+
+    // Accept a data URL or raw base64 + mediaType.
+    let base64 = body.imageBase64 || "";
+    let mediaType = body.mediaType || "image/png";
+    const m = /^data:(image\/[a-z.+-]+);base64,(.*)$/i.exec(base64);
+    if (m) { mediaType = m[1]; base64 = m[2]; }
+    if (!base64) return json(res, 200, { error: "No image provided." });
+    // Guard: ~8MB of base64 ≈ 6MB image.
+    if (base64.length > 8_500_000) return json(res, 200, { error: "Image too large (max ~6MB). Crop or downscale the screenshot." });
+
+    const userQuestion = String(body.question || "").slice(0, 500);
+    const memoryCtx = buildMemoryContext(userQuestion || "kubernetes pod failure crashloop error", 3);
+
+    const prompt = `You are an OpenShift/Kubernetes SRE. The user pasted a SCREENSHOT (e.g. a pod list, oc/kubectl output, events, or a terminal). Read it carefully and diagnose.
+
+${userQuestion ? `The user also asks: ${fenceUntrusted("USER_QUESTION", userQuestion)}` : ""}
+${memoryCtx}
+From ONLY what is visible in the image, extract the facts and diagnose. Do not invent resources that are not shown.
+
+Return ONLY valid JSON (no markdown):
+{
+  "readable": true/false,               // could you read Kubernetes content from the image?
+  "summary": "2-3 sentence plain-English read of what the screenshot shows and the overall health",
+  "findings": [ { "resource": "pod/deployment name as shown", "kind": "Pod|Deployment|...", "symptom": "e.g. CrashLoopBackOff, 5 restarts, 0/1 Ready", "severity": "critical|high|medium|low" } ],
+  "events": [ "notable event / error lines you can read" ],
+  "likelyCauses": [ "most probable root cause(s) for the failures seen" ],
+  "suggestions": [ "concrete next steps / oc commands the user can run" ],
+  "entities": [ { "namespace": "if visible else null", "pod": "pod name to investigate live" } ],
+  "followUp": "one question offering to go deeper, e.g. 'Want me to run live RCA on pod X in namespace Y?'"
+}`;
+
+    const r = await callLLM({
+      messages: [{ role: "user", content: prompt }],
+      images: [{ mediaType, base64 }],
+      system: "You are a precise Kubernetes screenshot analyst. Output only one valid JSON object, no markdown. Report only what is visible; never fabricate resource names or statuses. " + UNTRUSTED_GUARD,
+      maxTokens: 1800, temperature: 0.2,
+      provider: llmOpts.provider, apiUrl: llmOpts.apiUrl, apiKey: llmOpts.apiKey,
+      model: llmOpts.model, azureDeployment: llmOpts.azureDeployment, azureApiVersion: llmOpts.azureApiVersion,
+    });
+
+    const { json: jsonStr, truncated } = extractJsonObject(r.text);
+    if (truncated) return json(res, 200, { error: "The analysis was cut off — try a smaller/cropped screenshot." });
+    let out = null;
+    try { out = JSON.parse(jsonStr); } catch { return json(res, 200, { error: "Could not parse the vision response.", raw: (r.text || "").slice(0, 400) }); }
+    if (out.readable === false) return json(res, 200, { readable: false, summary: out.summary || "No readable Kubernetes content was found in the image.", provider: r.provider || provider });
+
+    const clamp = (s, n) => String(s || "").slice(0, n);
+    json(res, 200, {
+      readable: true,
+      summary: clamp(out.summary, 600),
+      findings: (Array.isArray(out.findings) ? out.findings : []).slice(0, 20).map((f) => ({
+        resource: clamp(f.resource, 200), kind: clamp(f.kind, 40),
+        symptom: clamp(f.symptom, 200), severity: ["critical", "high", "medium", "low"].includes(f.severity) ? f.severity : "medium",
+      })),
+      events: (Array.isArray(out.events) ? out.events : []).slice(0, 12).map((e) => clamp(e, 240)),
+      likelyCauses: (Array.isArray(out.likelyCauses) ? out.likelyCauses : []).slice(0, 6).map((e) => clamp(e, 240)),
+      suggestions: (Array.isArray(out.suggestions) ? out.suggestions : []).slice(0, 8).map((e) => clamp(e, 240)),
+      entities: (Array.isArray(out.entities) ? out.entities : []).slice(0, 12).map((e) => ({ namespace: e.namespace ? clamp(e.namespace, 120) : null, pod: clamp(e.pod, 200) })),
+      followUp: clamp(out.followUp, 300),
+      provider: r.provider || provider,
+    });
+  } catch (err) {
+    console.error("Image analysis error:", err);
+    json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/ai/image-remediation — AI generates a concrete fix for ONE image
 // Returns recommended replacement image/tag, the exact oc command to apply it,
 // an optional Dockerfile patch, and step-by-step remediation. Closes the loop

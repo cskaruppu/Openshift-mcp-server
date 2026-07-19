@@ -117,6 +117,8 @@ export function ChatView() {
   const [toolCalls, setToolCalls] = useState([]);
   const [toolProgress, setToolProgress] = useState("");
   const [followUps, setFollowUps] = useState([]);
+  const [imgBusy, setImgBusy] = useState(false);
+  const imgInputRef = useRef(null);
   const [inputFocused, setInputFocused] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -653,6 +655,49 @@ export function ChatView() {
     }
   }
 
+  // ── Vision: analyze a pasted/attached screenshot (pod list, events, logs) ──
+  const sevIcon = (s) => s === "critical" ? "🔴" : s === "high" ? "🟠" : s === "medium" ? "🟡" : "⚪";
+  function formatImageAnalysis(d) {
+    const L = [`**🖼️ Screenshot analysis**\n\n${d.summary || ""}`];
+    if (d.findings?.length) { L.push("\n\n**Findings**"); d.findings.forEach((f) => L.push(`\n- ${sevIcon(f.severity)} \`${f.resource}\`${f.kind ? ` (${f.kind})` : ""} — ${f.symptom}`)); }
+    if (d.events?.length) { L.push("\n\n**Events / errors read**"); d.events.forEach((e) => L.push(`\n- ${e}`)); }
+    if (d.likelyCauses?.length) { L.push("\n\n**Likely cause(s)**"); d.likelyCauses.forEach((e) => L.push(`\n- ${e}`)); }
+    if (d.suggestions?.length) { L.push("\n\n**Suggested next steps**"); d.suggestions.forEach((e) => L.push(`\n- ${e}`)); }
+    if (d.followUp) L.push(`\n\n${d.followUp}`);
+    return L.join("");
+  }
+  async function analyzeImageFile(file) {
+    if (!file || imgBusy || busy) return;
+    if (!file.type?.startsWith("image/")) { showToast("Attach an image (PNG/JPG screenshot)", "warn"); return; }
+    setImgBusy(true);
+    try {
+      const dataUrl = await new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(file); });
+      addMessage(cluster, { role: "user", text: "🖼️ *Uploaded a screenshot for analysis*" });
+      addMessage(cluster, { role: "assistant", text: "Reading the screenshot…" });
+      setFollowUps([]);
+      const wireProvider = activeProvider === "builtin" ? "none" : activeProvider;
+      const res = await fetch(clusterUrl("/api/chat/analyze-image", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64: dataUrl, provider: wireProvider, cluster }),
+      });
+      const d = await res.json().catch(() => ({ error: "Invalid response" }));
+      if (d.error) { updateLastAssistant(cluster, "⚠ " + d.error); return; }
+      if (d.readable === false) { updateLastAssistant(cluster, d.summary || "No readable Kubernetes content found in that image."); return; }
+      updateLastAssistant(cluster, formatImageAnalysis(d));
+      // Grounding loop: offer to run LIVE analysis against the real cluster.
+      const fus = [];
+      (d.entities || []).filter((e) => e.pod).slice(0, 3).forEach((e) => fus.push(`Investigate ${e.pod}${e.namespace ? ` in namespace ${e.namespace}` : ""} on the live cluster`));
+      if (fus.length) setFollowUps(fus);
+    } catch (e) { updateLastAssistant(cluster, "Error analyzing image: " + e.message); }
+    finally { setImgBusy(false); }
+  }
+  function handlePaste(e) {
+    const items = e.clipboardData?.items || [];
+    for (const it of items) {
+      if (it.type?.startsWith("image/")) { const f = it.getAsFile(); if (f) { e.preventDefault(); analyzeImageFile(f); return; } }
+    }
+  }
+
   function handleKeyDown(e) {
     if (slashOpen && filteredSlash.length > 0) {
       if (e.key === "ArrowDown") { e.preventDefault(); setSlashIdx((i) => Math.min(i + 1, filteredSlash.length - 1)); return; }
@@ -1049,6 +1094,7 @@ export function ChatView() {
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               onFocus={() => setInputFocused(true)}
               onBlur={() => setInputFocused(false)}
               rows={1}
@@ -1099,7 +1145,13 @@ export function ChatView() {
               </div>
 
               <div className="ac-input-toolbar-right">
-                <span className="ac-input-hint"><kbd>/</kbd> commands &middot; <kbd>&#8629;</kbd> send</span>
+                <input ref={imgInputRef} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) analyzeImageFile(f); e.target.value = ""; }} />
+                <button className="ac-send-btn" style={{ background: "transparent", color: imgBusy ? "#94a3b8" : "#7c3aed", border: "1px solid rgba(124,58,237,0.4)" }} onClick={() => imgInputRef.current?.click()} disabled={imgBusy || busy} title="Analyze a screenshot (pod list, events, logs) — or just paste an image">
+                  {imgBusy
+                    ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                    : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>}
+                </button>
+                <span className="ac-input-hint"><kbd>/</kbd> commands &middot; 🖼 paste image &middot; <kbd>&#8629;</kbd> send</span>
                 {busy ? (
                   <button className="ac-send-btn abort" onClick={handleAbort} title="Stop">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>

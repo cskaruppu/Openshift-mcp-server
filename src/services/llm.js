@@ -141,6 +141,8 @@ function resolveOpts(opts = {}) {
     azureDeployment: opts.azureDeployment || opts.deployment || DEFAULT_AZURE_DEPLOYMENT,
     azureApiVersion: opts.azureApiVersion || opts.apiVersion || DEFAULT_AZURE_API_VERSION,
     maxRetries: opts.maxRetries ?? MAX_RETRIES,
+    // Vision: [{ mediaType: "image/png", base64: "..." }] attached to the last user message.
+    images: Array.isArray(opts.images) ? opts.images : null,
   };
   const urlSrc = opts.apiUrl ? "request" : "default";
   const keySrc = opts.apiKey ? "request" : "default";
@@ -374,8 +376,41 @@ export async function classifyJSON({ prompt, system, ...opts }) {
 // ===========================================================================
 // OpenAI (OpenAI + Azure + any OpenAI-compatible endpoint)
 // ===========================================================================
+// Attach vision images to the last user message in each provider's format.
+function withImagesOpenAI(messages, images) {
+  if (!images || !images.length) return messages;
+  const copy = messages.slice();
+  for (let i = copy.length - 1; i >= 0; i--) {
+    if (copy[i].role === "user") {
+      const text = typeof copy[i].content === "string" ? copy[i].content : "";
+      copy[i] = { ...copy[i], content: [
+        ...(text ? [{ type: "text", text }] : []),
+        ...images.map((im) => ({ type: "image_url", image_url: { url: `data:${im.mediaType};base64,${im.base64}` } })),
+      ] };
+      break;
+    }
+  }
+  return copy;
+}
+function withImagesAnthropic(messages, images) {
+  if (!images || !images.length) return messages;
+  const copy = messages.slice();
+  for (let i = copy.length - 1; i >= 0; i--) {
+    if (copy[i].role === "user") {
+      const text = typeof copy[i].content === "string" ? copy[i].content : "";
+      copy[i] = { ...copy[i], content: [
+        ...images.map((im) => ({ type: "image", source: { type: "base64", media_type: im.mediaType, data: im.base64 } })),
+        ...(text ? [{ type: "text", text }] : []),
+      ] };
+      break;
+    }
+  }
+  return copy;
+}
+
 async function callOpenAI(messages, o, stream, hooks = {}) {
   const url = `${o.apiUrl.replace(/\/$/, "") || "https://api.openai.com"}/v1/chat/completions`;
+  messages = withImagesOpenAI(messages, o.images);
   const body = {
     model: o.model,
     messages: o.system
@@ -493,6 +528,7 @@ async function callAzureOpenAI(messages, o, stream, hooks = {}) {
   const deployment = o.azureDeployment || o.model || "gpt-4";
   const apiVersion = o.azureApiVersion || DEFAULT_AZURE_API_VERSION;
   const url = `${baseUrl}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`;
+  messages = withImagesOpenAI(messages, o.images);
 
   const body = {
     messages: o.system
@@ -605,7 +641,7 @@ async function callAzureOpenAI(messages, o, stream, hooks = {}) {
 async function callAnthropic(messages, o, stream, hooks = {}) {
   const url = `${o.apiUrl.replace(/\/$/, "") || "https://api.anthropic.com"}/v1/messages`;
   // Anthropic expects system separate and only user/assistant messages
-  const amsgs = messages.filter((m) => m.role === "user" || m.role === "assistant");
+  const amsgs = withImagesAnthropic(messages.filter((m) => m.role === "user" || m.role === "assistant"), o.images);
 
   // Use structured system format with cache_control for prompt caching.
   // Anthropic caches the system prompt prefix for 5 min, reducing input
