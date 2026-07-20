@@ -6899,10 +6899,34 @@ spec:
     if (req.method === "POST" && url.pathname === "/api/rca/investigate") {
       try {
         const body = await readJsonBody(req);
-        const { namespace, pod } = body;
-        if (!namespace) { sendJson(res, 400, { error: "namespace required" }); return; }
+        let { namespace, pod } = body;
+        if (!namespace && !pod) { sendJson(res, 400, { error: "namespace or pod required" }); return; }
         // Run in the selected cluster's context so RCA targets the right cluster.
-        const result = await withClusterContext(url, async () => pod ? await runRCA(namespace, pod) : await runNamespaceRCA(namespace));
+        const result = await withClusterContext(url, async () => {
+          // If only a pod name was given, locate which namespace it lives in —
+          // so "investigate pod X" diagnoses THAT pod, not the whole cluster.
+          if (pod && !namespace) {
+            let located = null;
+            try {
+              const byName = await ocpGet(`/api/v1/pods?fieldSelector=metadata.name=${encodeURIComponent(pod)}&limit=5`);
+              located = (byName.items || [])[0] || null;
+            } catch { /* fall through to broad scan */ }
+            if (!located) {
+              try {
+                const all = await ocpGet(`/api/v1/pods?limit=2000`);
+                located = (all.items || []).find((p) => p.metadata?.name === pod)
+                  || (all.items || []).find((p) => (p.metadata?.name || "").startsWith(pod)) || null;
+              } catch { /* ignore */ }
+            }
+            if (!located) {
+              const stem = pod.split("-").slice(0, -2).join("-") || pod;
+              return { error: `Pod "${pod}" was not found in any namespace on this cluster. It may have been replaced — try: oc get pods -A | grep ${stem}` };
+            }
+            namespace = located.metadata.namespace;
+            pod = located.metadata.name;
+          }
+          return pod ? await runRCA(namespace, pod) : await runNamespaceRCA(namespace);
+        });
         if (result === null) { sendJson(res, 200, { error: "Selected cluster is not reachable for RCA." }); return; }
         sendJson(res, 200, result);
       } catch (err) { sendJson(res, 500, { error: err.message }); }
