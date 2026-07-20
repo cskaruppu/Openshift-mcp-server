@@ -118,6 +118,7 @@ export function ChatView() {
   const [toolProgress, setToolProgress] = useState("");
   const [followUps, setFollowUps] = useState([]);
   const [imgBusy, setImgBusy] = useState(false);
+  const [pendingImage, setPendingImage] = useState(null); // { dataUrl, name } staged in composer
   const imgInputRef = useRef(null);
   const [inputFocused, setInputFocused] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -528,6 +529,15 @@ export function ChatView() {
   async function sendText(text) { return send(text); }
 
   async function send(override) {
+    // If a screenshot is staged, hitting Enter/Send submits it for analysis
+    // (any typed text becomes the question about the image).
+    if (pendingImage && typeof override !== "string") {
+      const cap = input.trim();
+      const img = pendingImage;
+      setInput(""); setPendingImage(null);
+      runImageAnalysis(img.dataUrl, cap);
+      return;
+    }
     const msg = (typeof override === "string" ? override : input).trim();
     if (!msg || busy) return;
     setInput("");
@@ -666,36 +676,71 @@ export function ChatView() {
     if (d.followUp) L.push(`\n\n${d.followUp}`);
     return L.join("");
   }
-  async function analyzeImageFile(file) {
-    if (!file || imgBusy || busy) return;
+  // Stage an image into the composer (preview). User hits Enter/Send to submit.
+  function attachImage(file) {
+    if (!file) return;
     if (!file.type?.startsWith("image/")) { showToast("Attach an image (PNG/JPG screenshot)", "warn"); return; }
+    const r = new FileReader();
+    r.onload = () => { setPendingImage({ dataUrl: r.result, name: file.name || "screenshot.png" }); textareaRef.current?.focus(); };
+    r.onerror = () => showToast("Could not read that image", "err");
+    r.readAsDataURL(file);
+  }
+  function handlePaste(e) {
+    const items = e.clipboardData?.items || [];
+    for (const it of items) {
+      if (it.type?.startsWith("image/")) { const f = it.getAsFile(); if (f) { e.preventDefault(); attachImage(f); return; } }
+    }
+  }
+
+  // Submit the staged image (with the typed text as an optional question).
+  async function runImageAnalysis(dataUrl, question) {
+    if (imgBusy || busy) return;
     setImgBusy(true);
     try {
-      const dataUrl = await new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(file); });
-      addMessage(cluster, { role: "user", text: "🖼️ *Uploaded a screenshot for analysis*" });
+      addMessage(cluster, { role: "user", text: `🖼️ *Screenshot for analysis*${question ? `\n\n${question}` : ""}`, image: dataUrl });
       addMessage(cluster, { role: "assistant", text: "Reading the screenshot…" });
       setFollowUps([]);
       const wireProvider = activeProvider === "builtin" ? "none" : activeProvider;
       const res = await fetch(clusterUrl("/api/chat/analyze-image", cluster), {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64: dataUrl, provider: wireProvider, cluster }),
+        body: JSON.stringify({ imageBase64: dataUrl, question, provider: wireProvider, cluster }),
       });
       const d = await res.json().catch(() => ({ error: "Invalid response" }));
       if (d.error) { updateLastAssistant(cluster, "⚠ " + d.error); return; }
       if (d.readable === false) { updateLastAssistant(cluster, d.summary || "No readable Kubernetes content found in that image."); return; }
       updateLastAssistant(cluster, formatImageAnalysis(d));
-      // Grounding loop: offer to run LIVE analysis against the real cluster.
-      const fus = [];
-      (d.entities || []).filter((e) => e.pod).slice(0, 3).forEach((e) => fus.push(`Investigate ${e.pod}${e.namespace ? ` in namespace ${e.namespace}` : ""} on the live cluster`));
+      // Grounding loop: follow-ups run LIVE RCA on the real cluster (object form).
+      const fus = (d.entities || []).filter((e) => e.pod).slice(0, 3)
+        .map((e) => ({ label: `🔎 Investigate ${e.pod}${e.namespace ? ` (${e.namespace})` : ""} live`, rca: { pod: e.pod, namespace: e.namespace } }));
       if (fus.length) setFollowUps(fus);
     } catch (e) { updateLastAssistant(cluster, "Error analyzing image: " + e.message); }
     finally { setImgBusy(false); }
   }
-  function handlePaste(e) {
-    const items = e.clipboardData?.items || [];
-    for (const it of items) {
-      if (it.type?.startsWith("image/")) { const f = it.getAsFile(); if (f) { e.preventDefault(); analyzeImageFile(f); return; } }
-    }
+
+  // Direct live RCA against the real cluster — what the image follow-ups call,
+  // so the answer is grounded, not a generic chat reply.
+  async function runLiveRca({ pod, namespace }) {
+    if (busy || imgBusy) return;
+    const ns = namespace || "";
+    addMessage(cluster, { role: "user", text: `Investigate pod \`${pod}\`${ns ? ` in namespace \`${ns}\`` : ""} on the live cluster` });
+    addMessage(cluster, { role: "assistant", text: `Running live RCA on ${pod}${ns ? ` in ${ns}` : ""}…` });
+    setFollowUps([]);
+    try {
+      if (!ns) { updateLastAssistant(cluster, `I couldn't read the namespace for **${pod}** from the screenshot. Which namespace is it in? (or run \`oc get pod ${pod} -A\`)`); return; }
+      const res = await fetch(clusterUrl("/api/rca/investigate", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ namespace: ns, pod }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (d.error) { updateLastAssistant(cluster, `⚠ ${d.error}`); return; }
+      const L = [`**🔎 Live RCA — \`${pod}\`${ns ? ` in \`${ns}\`` : ""}**`];
+      if (d.rootCause) L.push(`\n\n**Root cause:** ${d.rootCause}${d.severity ? ` _(severity: ${d.severity})_` : ""}`);
+      if (d.recommendation) L.push(`\n\n**Recommended fix:** ${d.recommendation}`);
+      const chain = Array.isArray(d.causalChain) ? d.causalChain : [];
+      if (chain.length) { L.push("\n\n**Evidence:**"); chain.slice(0, 6).forEach((c) => L.push(`\n- ${c.evidence || c.cause}${c.confidence ? ` _(${Math.round(c.confidence * 100)}%)_` : ""}`)); }
+      if (L.length === 1) L.push(`\n\nThe pod could not be found on the live cluster — it may have been replaced, or the name/namespace differs from the screenshot. Try \`oc get pods -n ${ns}\`.`);
+      updateLastAssistant(cluster, L.join(""));
+    } catch (e) { updateLastAssistant(cluster, "Error running live RCA: " + e.message); }
   }
 
   function handleKeyDown(e) {
@@ -924,7 +969,10 @@ export function ChatView() {
               return (
                 <div key={i} className="ac-msg ac-msg-user">
                   <div className="ac-user-row">
-                    <div className="ac-bubble">{m.text}</div>
+                    <div className="ac-bubble">
+                      {m.image && <img src={m.image} alt="screenshot" style={{ display: "block", maxWidth: 320, maxHeight: 220, borderRadius: 10, marginBottom: m.text ? 8 : 0, border: "1px solid rgba(255,255,255,0.25)" }} />}
+                      {m.text}
+                    </div>
                     <div className="ac-user-meta">
                       {ts && <span className="ac-msg-time">{ts}</span>}
                     </div>
@@ -1034,9 +1082,10 @@ export function ChatView() {
                       {/* Follow-ups */}
                       {!busy && isLastAI && followUps.length > 0 && (
                         <div className="ac-follow-ups">
-                          {followUps.map((fu) => (
-                            <button key={fu} className="ac-follow-btn" onClick={() => sendText(fu)}>{fu}</button>
-                          ))}
+                          {followUps.map((fu, fi) => {
+                            const label = typeof fu === "string" ? fu : fu.label;
+                            return <button key={label + fi} className="ac-follow-btn" onClick={() => (typeof fu === "object" && fu.rca) ? runLiveRca(fu.rca) : sendText(fu)}>{label}</button>;
+                          })}
                         </div>
                       )}
                     </div>
@@ -1086,6 +1135,17 @@ export function ChatView() {
           )}
 
           <div className={"ac-input-pill" + (inputFocused ? " focused" : "")}>
+            {/* Staged screenshot preview — submit with Enter (optionally add a question) */}
+            {pendingImage && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 6px 4px" }}>
+                <img src={pendingImage.dataUrl} alt="screenshot" style={{ height: 56, maxWidth: 120, borderRadius: 8, border: "1px solid var(--border,#e4e8f1)", objectFit: "cover" }} />
+                <div style={{ fontSize: "0.78rem", color: "var(--muted,#5a6373)" }}>
+                  <div style={{ fontWeight: 700, color: "var(--fg,#151a29)" }}>🖼 {pendingImage.name}</div>
+                  <div>{imgBusy ? "Analyzing…" : "Press Enter to analyze (add a question first if you like)"}</div>
+                </div>
+                <button onClick={() => setPendingImage(null)} disabled={imgBusy} title="Remove" style={{ marginLeft: "auto", width: 26, height: 26, borderRadius: 7, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--muted,#5a6373)", cursor: "pointer", fontSize: "1rem", lineHeight: 1 }}>×</button>
+              </div>
+            )}
             {/* Row 1 — full-width textarea so typed text never gets squeezed */}
             <textarea
               ref={textareaRef}
@@ -1145,11 +1205,9 @@ export function ChatView() {
               </div>
 
               <div className="ac-input-toolbar-right">
-                <input ref={imgInputRef} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) analyzeImageFile(f); e.target.value = ""; }} />
-                <button className="ac-send-btn" style={{ background: "transparent", color: imgBusy ? "#94a3b8" : "#7c3aed", border: "1px solid rgba(124,58,237,0.4)" }} onClick={() => imgInputRef.current?.click()} disabled={imgBusy || busy} title="Analyze a screenshot (pod list, events, logs) — or just paste an image">
-                  {imgBusy
-                    ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                    : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>}
+                <input ref={imgInputRef} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) attachImage(f); e.target.value = ""; }} />
+                <button className="ac-send-btn" style={{ background: "transparent", color: imgBusy ? "#94a3b8" : "#7c3aed", border: "1px solid rgba(124,58,237,0.4)" }} onClick={() => imgInputRef.current?.click()} disabled={imgBusy || busy} title="Attach a screenshot (pod list, events, logs) — or just paste an image, then hit Enter">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
                 </button>
                 <span className="ac-input-hint"><kbd>/</kbd> commands &middot; 🖼 paste image &middot; <kbd>&#8629;</kbd> send</span>
                 {busy ? (
@@ -1157,7 +1215,7 @@ export function ChatView() {
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
                   </button>
                 ) : (
-                  <button className="ac-send-btn" onClick={send} disabled={!input.trim()} title="Send">
+                  <button className="ac-send-btn" onClick={send} disabled={!input.trim() && !pendingImage} title={pendingImage ? "Analyze screenshot" : "Send"}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
                   </button>
                 )}

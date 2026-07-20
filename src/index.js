@@ -6900,7 +6900,9 @@ spec:
         const body = await readJsonBody(req);
         const { namespace, pod } = body;
         if (!namespace) { sendJson(res, 400, { error: "namespace required" }); return; }
-        const result = pod ? await runRCA(namespace, pod) : await runNamespaceRCA(namespace);
+        // Run in the selected cluster's context so RCA targets the right cluster.
+        const result = await withClusterContext(url, async () => pod ? await runRCA(namespace, pod) : await runNamespaceRCA(namespace));
+        if (result === null) { sendJson(res, 200, { error: "Selected cluster is not reachable for RCA." }); return; }
         sendJson(res, 200, result);
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
