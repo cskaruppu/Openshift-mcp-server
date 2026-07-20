@@ -4115,9 +4115,10 @@ spec:
     }
 
     // Vision — analyze an uploaded/pasted screenshot (pod list, events, logs)
+    // Wrapped in cluster context so live reconciliation targets the right cluster.
     if (req.method === "POST" && url.pathname === "/api/chat/analyze-image") {
       if (enforceRateLimit(req, res, { burst: 6, refillPerSec: 0.15 })) return;
-      try { await handleImageAnalysisAPI(req, res); }
+      try { await withClusterContext(url, async () => { await handleImageAnalysisAPI(req, res); }); }
       catch (e) { if (!res.headersSent) sendJson(res, 500, { error: e.message }); }
       if (!res.headersSent) sendJson(res, 200, { error: "Image analysis unavailable." });
       return;

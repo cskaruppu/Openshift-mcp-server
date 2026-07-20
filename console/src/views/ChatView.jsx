@@ -670,6 +670,15 @@ export function ChatView() {
   function formatImageAnalysis(d) {
     const L = [`**🖼️ Screenshot analysis**\n\n${d.summary || ""}`];
     if (d.findings?.length) { L.push("\n\n**Findings**"); d.findings.forEach((f) => L.push(`\n- ${sevIcon(f.severity)} \`${f.resource}\`${f.kind ? ` (${f.kind})` : ""} — ${f.symptom}`)); }
+    // Live reconciliation — the differentiator: what the cluster says NOW vs the screenshot.
+    if (d.reconciliation?.length) {
+      const vIcon = (v) => v === "recovered" ? "🟢" : v === "still-failing" ? "🔴" : v === "gone" ? "⚪" : v === "healthy" ? "🟢" : "❔";
+      const vTag = (v) => v === "recovered" ? "RECOVERED" : v === "still-failing" ? "STILL FAILING" : v === "gone" ? "GONE" : v === "healthy" ? "HEALTHY" : "UNKNOWN";
+      L.push("\n\n**🔄 Live reconciliation — screenshot vs. cluster right now**");
+      d.reconciliation.forEach((r) => {
+        L.push(`\n- ${vIcon(r.verdict)} **${vTag(r.verdict)}** \`${r.pod}\`${r.namespace ? ` (${r.namespace})` : ""}: screenshot said _${r.screenshotSaid}_ → cluster now: **${r.clusterState}**${r.ready && r.ready !== "—" ? ` · ${r.ready} ready · ${r.restarts} restarts` : ""}. ${r.note || ""}`);
+      });
+    }
     if (d.events?.length) { L.push("\n\n**Events / errors read**"); d.events.forEach((e) => L.push(`\n- ${e}`)); }
     if (d.likelyCauses?.length) { L.push("\n\n**Likely cause(s)**"); d.likelyCauses.forEach((e) => L.push(`\n- ${e}`)); }
     if (d.suggestions?.length) { L.push("\n\n**Suggested next steps**"); d.suggestions.forEach((e) => L.push(`\n- ${e}`)); }

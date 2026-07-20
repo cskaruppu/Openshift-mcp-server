@@ -19370,17 +19370,72 @@ Return ONLY valid JSON (no markdown):
     if (out.readable === false) return json(res, 200, { readable: false, summary: out.summary || "No readable Kubernetes content was found in the image.", provider: r.provider || provider });
 
     const clamp = (s, n) => String(s || "").slice(0, n);
+    const findings = (Array.isArray(out.findings) ? out.findings : []).slice(0, 20).map((f) => ({
+      resource: clamp(f.resource, 200), kind: clamp(f.kind, 40),
+      symptom: clamp(f.symptom, 200), severity: ["critical", "high", "medium", "low"].includes(f.severity) ? f.severity : "medium",
+    }));
+    const entities = (Array.isArray(out.entities) ? out.entities : []).slice(0, 12).map((e) => ({ namespace: e.namespace ? clamp(e.namespace, 120) : null, pod: clamp(e.pod, 200) }));
+
+    // ── LIVE RECONCILIATION — the differentiator: compare the screenshot's
+    // claims to what the cluster says RIGHT NOW. A screenshot is a moment in
+    // time; the pod may have recovered, still be failing, or be gone. Runs in
+    // whatever cluster context the endpoint was invoked with.
+    const reconciliation = [];
+    const BAD = /CrashLoopBackOff|ImagePullBackOff|ErrImagePull|InvalidImageName|CreateContainer|RunContainer|OOMKilled|Unschedulable/;
+    const findingFor = (podName) => findings.find((f) => podName && String(f.resource || "").split("/").pop() && podName.startsWith(String(f.resource || "").split("/").pop().split("-").slice(0, 2).join("-"))) || findings.find((f) => podName && String(f.resource || "").includes(podName)) || null;
+    for (const e of entities.slice(0, 8)) {
+      if (!e.pod) continue;
+      const ns = e.namespace;
+      const f = findingFor(e.pod);
+      const screenshotSaid = f?.symptom || "as shown in the screenshot";
+      const screenshotBad = f ? (BAD.test(f.symptom || "") || /0\/|not ?ready|error|fail|restart/i.test(f.symptom || "") || ["critical", "high"].includes(f.severity)) : true;
+      if (!ns) { reconciliation.push({ pod: e.pod, namespace: null, screenshotSaid, clusterState: "—", verdict: "unknown", note: "Namespace not visible in the screenshot — can't reconcile live." }); continue; }
+      try {
+        let podObj = null;
+        try { podObj = await ocpGet(`/api/v1/namespaces/${ns}/pods/${e.pod}`); } catch { podObj = null; }
+        let clusterState = "Unknown", ready = "—", restarts = 0, healthy = false, found = true;
+        if (podObj) {
+          const st = podObj.status || {}, cs = st.containerStatuses || [];
+          const total = (podObj.spec?.containers || []).length, readyN = cs.filter((c) => c.ready).length;
+          restarts = cs.reduce((s, c) => s + (c.restartCount || 0), 0); ready = `${readyN}/${total}`;
+          const w = cs.find((c) => c.state?.waiting?.reason);
+          clusterState = podObj.metadata?.deletionTimestamp ? "Terminating" : (w ? w.state.waiting.reason : (st.phase || "Unknown"));
+          healthy = st.phase === "Running" && total > 0 && readyN === total && !w;
+        } else {
+          // Exact pod gone — inspect current siblings of the same workload.
+          try {
+            const prefix = e.pod.split("-").slice(0, -2).join("-") || e.pod;
+            const list = await ocpGet(`/api/v1/namespaces/${ns}/pods`);
+            const sib = (list.items || []).filter((p) => (p.metadata?.name || "").startsWith(prefix ? prefix + "-" : e.pod));
+            if (sib.length === 0) { found = false; clusterState = "NotFound"; }
+            else {
+              const readyC = sib.filter((p) => p.status?.phase === "Running" && (p.status?.containerStatuses || []).every((c) => c.ready)).length;
+              const bad = sib.some((p) => (p.status?.containerStatuses || []).some((c) => BAD.test(c.state?.waiting?.reason || "")));
+              healthy = readyC > 0 && !bad; clusterState = bad ? "failing" : (readyC > 0 ? "Running (pod replaced)" : "Pending"); ready = `${readyC}/${sib.length}`;
+            }
+          } catch { found = false; clusterState = "Unknown"; }
+        }
+        let verdict;
+        if (!found) verdict = "gone";
+        else if (healthy) verdict = screenshotBad ? "recovered" : "healthy";
+        else verdict = "still-failing";
+        reconciliation.push({ pod: e.pod, namespace: ns, screenshotSaid, clusterState, ready, restarts, verdict,
+          note: verdict === "recovered" ? "Healthy on the cluster now — the screenshot is stale." :
+                verdict === "gone" ? "No matching pod on the cluster now — replaced or removed." :
+                verdict === "still-failing" ? "Still failing on the live cluster right now." :
+                verdict === "healthy" ? "Healthy — matches the screenshot." : "" });
+      } catch (err) { reconciliation.push({ pod: e.pod, namespace: ns, screenshotSaid, clusterState: "—", verdict: "unknown", note: "Could not read live state: " + err.message }); }
+    }
+
     json(res, 200, {
       readable: true,
       summary: clamp(out.summary, 600),
-      findings: (Array.isArray(out.findings) ? out.findings : []).slice(0, 20).map((f) => ({
-        resource: clamp(f.resource, 200), kind: clamp(f.kind, 40),
-        symptom: clamp(f.symptom, 200), severity: ["critical", "high", "medium", "low"].includes(f.severity) ? f.severity : "medium",
-      })),
+      findings,
       events: (Array.isArray(out.events) ? out.events : []).slice(0, 12).map((e) => clamp(e, 240)),
       likelyCauses: (Array.isArray(out.likelyCauses) ? out.likelyCauses : []).slice(0, 6).map((e) => clamp(e, 240)),
       suggestions: (Array.isArray(out.suggestions) ? out.suggestions : []).slice(0, 8).map((e) => clamp(e, 240)),
-      entities: (Array.isArray(out.entities) ? out.entities : []).slice(0, 12).map((e) => ({ namespace: e.namespace ? clamp(e.namespace, 120) : null, pod: clamp(e.pod, 200) })),
+      entities,
+      reconciliation,
       followUp: clamp(out.followUp, 300),
       provider: r.provider || provider,
     });
