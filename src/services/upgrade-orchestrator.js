@@ -777,6 +777,95 @@ export async function stepBuildRemediationPlan(sessionId) {
     }
   }
 
+  // Certificate Expiry — propose rotation/approval (complements the pending-CSR auto-fix)
+  const certCheck = checks.find(c => c.category === "Certificate Expiry");
+  if (certCheck && (certCheck.status === "fail" || certCheck.status === "warning")) {
+    const soon = certCheck.items || [];
+    fixes.push({
+      id: "cert_rotate",
+      category: "Certificate",
+      severity: certCheck.status === "fail" ? "critical" : "warning",
+      description: `Rotate/renew ${soon.length} expiring certificate(s) before upgrade${soon.length ? `: ${soon.map(i => i.name).filter(Boolean).slice(0, 4).join(", ")}` : ""}`,
+      command: [
+        "# 1) Approve any pending CSRs (often clears operator-managed cert renewal):",
+        "oc get csr | grep -i pending",
+        "oc adm certificate approve <csr-name>",
+        "# 2) For an operator-managed signer near expiry, force rotation (operator regenerates it):",
+        "#    oc delete secret <signer-secret> -n <operator-namespace>",
+      ].join("\n"),
+      reversible: false,
+      autoApplicable: false,
+      guided: true,
+      note: "OpenShift operators auto-rotate most signer certs near expiry; approving pending CSRs usually clears this. Force-rotation is guided — review before applying.",
+    });
+  }
+
+  // Resource Capacity — ensure the cluster can sustain a node offline during rolling upgrade
+  const capCheck = checks.find(c => c.category === "Resource Capacity");
+  if (capCheck && (capCheck.status === "fail" || capCheck.status === "warning")) {
+    fixes.push({
+      id: "capacity_headroom",
+      category: "Capacity",
+      severity: capCheck.status === "fail" ? "critical" : "warning",
+      description: `Low capacity headroom for a rolling upgrade — ${capCheck.details || "review capacity"}`,
+      command: [
+        "# A rolling upgrade drains one node at a time — ensure workloads can reschedule. Options:",
+        "# 1) Temporarily add a worker (safest):",
+        "#    oc scale machineset <name> --replicas=<current+1> -n openshift-machine-api",
+        "# 2) Free capacity: scale down / evict non-critical workloads.",
+        "# 3) Verify PodDisruptionBudgets allow at least one disruption.",
+      ].join("\n"),
+      reversible: true,
+      autoApplicable: false,
+      guided: true,
+      note: "With low headroom, confirm one node can drain without stranding pods. Scaling a MachineSet is the safest remediation.",
+    });
+  }
+
+  // Deprecated/Removed APIs — migrate consumers before the removing upgrade
+  const depCheck = checks.find(c => c.category === "Deprecated/Removed APIs");
+  if (depCheck && (depCheck.status === "fail" || depCheck.status === "warning")) {
+    for (const api of (depCheck.items || []).slice(0, 10)) {
+      const apiName = api.api || api.name || api.resource || String(api).slice(0, 60);
+      fixes.push({
+        id: `dep_api_${String(apiName).replace(/[^a-z0-9]/gi, "_").slice(0, 40)}`,
+        category: "Deprecated API",
+        severity: api.removed ? "critical" : "warning",
+        description: `Migrate workloads off deprecated API "${apiName}"${api.message ? ` — ${api.message}` : ""}`,
+        command: [
+          `# Find consumers of ${apiName} and migrate to the GA apiVersion:`,
+          `# oc get <resource>.<group> -A`,
+          `# Update manifests to the stable apiVersion (the App Deployment Agent can regenerate hardened manifests).`,
+        ].join("\n"),
+        reversible: false,
+        autoApplicable: false,
+        guided: true,
+        aiAssist: "manifest-migration",
+        note: "Beta APIs still in use won't block a z-stream patch, but will break on the minor/major upgrade that removes them — migrate ahead.",
+      });
+    }
+  }
+
+  // Generic safety net: any remaining fail/warning check with a recommendation
+  // must not be left with zero remediation.
+  const handledCats = new Set(["Admin Acknowledgments", "Machine Config Pools", "Node Health", "Storage (PVs)", "Certificate Expiry", "Resource Capacity", "Deprecated/Removed APIs"]);
+  for (const c of checks) {
+    if ((c.status !== "fail" && c.status !== "warning") || !c.recommendation) continue;
+    if (handledCats.has(c.category)) continue;
+    const fid = `guided_${String(c.category).replace(/[^a-z0-9]/gi, "_").slice(0, 40)}`;
+    if (fixes.some(f => f.id === fid)) continue;
+    fixes.push({
+      id: fid,
+      category: c.category,
+      severity: c.status === "fail" ? "critical" : "warning",
+      description: `${c.category}: ${c.details || "review required"}`,
+      command: `# ${c.recommendation}`,
+      reversible: false,
+      autoApplicable: false,
+      guided: true,
+    });
+  }
+
   // Sort by severity: critical → warning → info
   const severityOrder = { critical: 0, warning: 1, info: 2 };
   fixes.sort((a, b) => (severityOrder[a.severity] || 99) - (severityOrder[b.severity] || 99));
@@ -784,6 +873,8 @@ export async function stepBuildRemediationPlan(sessionId) {
   const plan = {
     timestamp: new Date().toISOString(),
     totalFixes: fixes.length,
+    autoApplicable: fixes.filter(f => f.autoApplicable).length,
+    guided: fixes.filter(f => !f.autoApplicable).length,
     critical: fixes.filter(f => f.severity === "critical").length,
     warnings: fixes.filter(f => f.severity === "warning").length,
     informational: fixes.filter(f => f.severity === "info").length,

@@ -949,7 +949,9 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     }
     const plan = s.remediationPlan || remediationPlan;
     if (key === "remediation_proposed" && plan) {
-      return { text: `${plan.totalFixes || plan.fixes?.length || 0} fixes`, color: "var(--warn)" };
+      const total = plan.totalFixes || plan.fixes?.length || 0;
+      const auto = plan.autoApplicable ?? (plan.fixes || []).filter((f) => f.autoApplicable).length;
+      return { text: total ? `${total} fixes${auto ? ` · ${auto} auto` : ""}` : "0 fixes", color: total ? "var(--warn)" : "var(--text2)" };
     }
     if (key === "cr_submitted" && s.crTicketId) {
       const isLocal = !s.crSysId;
@@ -1098,14 +1100,24 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
                   {(fix.severity || "info").toUpperCase()}
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div>{fix.description}</div>
-                  {fix.command && <code style={{ fontSize: 10.5, color: "var(--accent3, #10b981)", wordBreak: "break-all" }}>{fix.command}</code>}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span>{fix.description}</span>
+                    {fix.autoApplicable
+                      ? <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 5px", borderRadius: 4, background: "color-mix(in srgb, var(--ok) 18%, transparent)", color: "var(--ok)" }}>AUTO</span>
+                      : <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 5px", borderRadius: 4, background: "color-mix(in srgb, var(--accent2) 18%, transparent)", color: "var(--accent2)" }}>GUIDED</span>}
+                  </div>
+                  {fix.command && <pre style={{ margin: "2px 0 0", fontSize: 10.5, color: "var(--accent3, #10b981)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{fix.command}</pre>}
+                  {fix.note && <div style={{ fontSize: 10, color: "var(--text2)", marginTop: 2 }}>ℹ {fix.note}</div>}
+                  {fix.aiAssist === "manifest-migration" && <div style={{ fontSize: 10, color: "var(--accent2)", marginTop: 2 }}>💡 The App Deployment Agent can regenerate migrated manifests for this API.</div>}
                 </div>
                 {res ? (
                   <span style={{ color: res.success ? "var(--ok)" : "var(--crit)", fontSize: 11, flexShrink: 0 }}>{res.success ? "✅ Done" : "❌ Failed"}</span>
                 ) : (state === "remediation_proposed" && (
-                  <button className="ux-btn ux-btn-dryrun" style={{ padding: "2px 8px", fontSize: 10, flexShrink: 0 }}
-                    onClick={(e) => { e.stopPropagation(); handleExecuteFix(fix.id); }} disabled={!!stepRunning}>Fix</button>
+                  fix.autoApplicable
+                    ? <button className="ux-btn ux-btn-dryrun" style={{ padding: "2px 8px", fontSize: 10, flexShrink: 0 }}
+                        onClick={(e) => { e.stopPropagation(); handleExecuteFix(fix.id); }} disabled={!!stepRunning}>Fix</button>
+                    : <button className="ux-btn ux-btn-dryrun" style={{ padding: "2px 8px", fontSize: 10, flexShrink: 0, opacity: 0.9 }}
+                        onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(fix.command || ""); showToast("Command copied — review before running", "ok"); }} title="Copy the guided command">Copy</button>
                 ))}
               </div>
             );
