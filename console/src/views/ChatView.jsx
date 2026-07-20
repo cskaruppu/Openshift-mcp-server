@@ -1150,7 +1150,7 @@ export function ChatView() {
             <textarea
               ref={textareaRef}
               className="ac-textarea"
-              placeholder={`Ask about ${clusterLabel(cluster)}...`}
+              placeholder={pendingImage ? "Ask something about this screenshot… (or just press Enter to analyze)" : `Ask about ${clusterLabel(cluster)}...`}
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
