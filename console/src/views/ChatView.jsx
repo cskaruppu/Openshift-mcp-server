@@ -119,6 +119,7 @@ export function ChatView() {
   const [followUps, setFollowUps] = useState([]);
   const [imgBusy, setImgBusy] = useState(false);
   const [pendingImage, setPendingImage] = useState(null); // { dataUrl, name } staged in composer
+  const [pendingAction, setPendingAction] = useState(null); // action the AI offered, run on "yes"
   const imgInputRef = useRef(null);
   const [inputFocused, setInputFocused] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -538,6 +539,19 @@ export function ChatView() {
       runImageAnalysis(img.dataUrl, cap);
       return;
     }
+    const rawMsg = (typeof override === "string" ? override : input).trim();
+    // If the AI just offered an action, a typed "yes"/"proceed" executes it —
+    // instead of routing to a generic chat reply that loses the context.
+    if (pendingAction && typeof override !== "string") {
+      const affirm = /^(y|yes|yeah|yep|yup|sure|ok(ay)?|proceed|go ?ahead|do it|please( do)?|run( it)?|investigate|continue|confirm|analyse|analyze)\b/i.test(rawMsg);
+      const negate = /^(no|nope|nah|cancel|stop|don'?t|not now|later)\b/i.test(rawMsg);
+      const pa = pendingAction;
+      if (affirm) { setInput(""); setPendingAction(null); if (pa.kind === "rca") runLiveRca({ pod: pa.pod, namespace: pa.namespace }); return; }
+      // Any other reply (a new question or "no") cancels the pending action and
+      // continues as a normal message.
+      setPendingAction(null);
+      if (negate && !rawMsg.replace(/^(no|nope|nah|cancel|stop|don'?t|not now|later)\b[.! ]*/i, "").trim()) { setInput(""); return; }
+    }
     const msg = (typeof override === "string" ? override : input).trim();
     if (!msg || busy) return;
     setInput("");
@@ -719,9 +733,12 @@ export function ChatView() {
       if (d.readable === false) { updateLastAssistant(cluster, d.summary || "No readable Kubernetes content found in that image."); return; }
       updateLastAssistant(cluster, formatImageAnalysis(d));
       // Grounding loop: follow-ups run LIVE RCA on the real cluster (object form).
-      const fus = (d.entities || []).filter((e) => e.pod).slice(0, 3)
-        .map((e) => ({ label: `🔎 Investigate ${e.pod}${e.namespace ? ` (${e.namespace})` : ""} live`, rca: { pod: e.pod, namespace: e.namespace } }));
+      const withNs = (d.entities || []).filter((e) => e.pod);
+      const fus = withNs.slice(0, 3).map((e) => ({ label: `🔎 Investigate ${e.pod}${e.namespace ? ` (${e.namespace})` : ""} live`, rca: { pod: e.pod, namespace: e.namespace } }));
       if (fus.length) setFollowUps(fus);
+      // Remember the offered action so a typed "yes"/"proceed" runs it (not a generic chat reply).
+      const primary = withNs.find((e) => e.pod && e.namespace) || withNs[0];
+      if (primary?.pod) setPendingAction({ kind: "rca", pod: primary.pod, namespace: primary.namespace, label: `live RCA on ${primary.pod}${primary.namespace ? ` in ${primary.namespace}` : ""}` });
     } catch (e) { updateLastAssistant(cluster, "Error analyzing image: " + e.message); }
     finally { setImgBusy(false); }
   }
@@ -730,6 +747,7 @@ export function ChatView() {
   // so the answer is grounded, not a generic chat reply.
   async function runLiveRca({ pod, namespace }) {
     if (busy || imgBusy) return;
+    setPendingAction(null);
     const ns = namespace || "";
     addMessage(cluster, { role: "user", text: `Investigate pod \`${pod}\`${ns ? ` in namespace \`${ns}\`` : ""} on the live cluster` });
     addMessage(cluster, { role: "assistant", text: `Running live RCA on ${pod}${ns ? ` in ${ns}` : ""}…` });
