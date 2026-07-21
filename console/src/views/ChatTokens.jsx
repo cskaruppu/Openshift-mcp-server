@@ -895,6 +895,25 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     }
   }
 
+  // Map a pre-assessment check to its remediation fix(es) so the Fix button can
+  // live inline on the check itself.
+  const CHECK_FIX_CATEGORY = {
+    "Certificate Expiry": ["Certificate"],
+    "Resource Capacity": ["Capacity"],
+    "Deprecated/Removed APIs": ["Deprecated API"],
+    "Admin Acknowledgments": ["Admin Acknowledgment"],
+    "Machine Config Pools": ["Machine Config Pool"],
+    "Node Health": ["Node Recovery"],
+    "Storage (PVs)": ["Storage"],
+    "Cluster Operators": ["Operator Recovery"],
+  };
+  function fixesForCheck(check, plan) {
+    if (!plan?.fixes?.length || !check?.category) return [];
+    const cats = CHECK_FIX_CATEGORY[check.category] || [check.category];
+    const cl = check.category.toLowerCase();
+    return plan.fixes.filter(f => cats.includes(f.category) || (f.description || "").toLowerCase().includes(cl));
+  }
+
   // Deprecated-API remediation: find live consumers (APIRequestCount) + AI plan.
   async function findApiConsumers(fix) {
     setApiActions(p => ({ ...p, [fix.id]: { ...(p[fix.id] || {}), loadingConsumers: true } }));
@@ -1067,9 +1086,30 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
                   {c.recommendation && (
                     <div style={{ color: "var(--accent2)", marginTop: 2 }}>↳ {c.recommendation}</div>
                   )}
-                  {(c.status === "fail" || c.status === "warning") && (
-                    <div style={{ marginTop: 3, fontSize: 10.5, fontWeight: 700, color: "var(--accent2)", display: "inline-flex", alignItems: "center", gap: 4, background: "color-mix(in srgb, var(--accent2) 10%, transparent)", padding: "2px 7px", borderRadius: 5 }}>🔧 Fix available in the “Remediation Plan” step below</div>
-                  )}
+                  {(c.status === "fail" || c.status === "warning") && (() => {
+                    const plan = s.remediationPlan || remediationPlan;
+                    const matched = fixesForCheck(c, plan);
+                    if (!matched.length) return <div style={{ marginTop: 3, fontSize: 10.5, color: "var(--accent2)" }}>🔧 A fix will appear in the “Remediation Plan” step once it’s built.</div>;
+                    const auto = matched.find(f => f.autoApplicable);
+                    const results = s.remediationResults || {};
+                    const done = matched.map(f => f._result || results[f.id]).find(Boolean);
+                    return (
+                      <div style={{ marginTop: 4, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                        {done ? (
+                          <span style={{ color: done.success ? "var(--ok)" : "var(--crit)", fontWeight: 700, fontSize: 11 }}>{done.success ? "✅ Fixed" : "❌ Fix failed"}</span>
+                        ) : auto ? (
+                          <button className="ux-btn ux-btn-dryrun" style={{ padding: "2px 9px", fontSize: 10.5 }} onClick={(e) => { e.stopPropagation(); handleExecuteFix(auto.id); }} disabled={!!stepRunning}>{stepRunning === "execute-fix" ? "Fixing…" : "🔧 Fix"}</button>
+                        ) : (
+                          <button className="ux-btn ux-btn-dryrun" style={{ padding: "2px 9px", fontSize: 10.5 }} onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(matched[0].command || ""); showToast("Fix command copied — review before running (guided fix)", "ok"); }}>🔧 Copy fix</button>
+                        )}
+                        {matched[0]?.api && <button className="ux-btn ux-btn-dryrun" style={{ padding: "2px 9px", fontSize: 10.5 }} onClick={(e) => { e.stopPropagation(); findApiConsumers(matched[0]); }} disabled={apiActions[matched[0].id]?.loadingConsumers}>🔍 Consumers</button>}
+                        <span style={{ fontSize: 10, color: "var(--text2)" }}>{matched.length} fix{matched.length > 1 ? "es" : ""} · {auto ? "one-click" : "guided"}</span>
+                        {matched[0]?.api && apiActions[matched[0].id]?.consumers && !apiActions[matched[0].id].consumers.error && (
+                          <span style={{ fontSize: 10, color: "var(--text2)", width: "100%" }}>Consumers: {apiActions[matched[0].id].consumers.consumers?.length || 0} · {apiActions[matched[0].id].consumers.totalRequests || 0} calls/24h</span>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {Array.isArray(c.items) && c.items.length > 0 && (
                     <div style={{ marginTop: 3, color: "var(--text2)" }}>
                       {c.items.slice(0, 6).map((it, j) => (
