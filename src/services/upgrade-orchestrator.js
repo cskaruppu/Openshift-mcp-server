@@ -851,6 +851,8 @@ export async function stepBuildRemediationPlan(sessionId) {
         autoApplicable: false,
         guided: true,
         aiAssist: "manifest-migration",
+        api: apiName,               // <group>/<version> — used by "Find consumers" + migration plan
+        replacement: api.replacement || null,
         note: "Beta APIs still in use won't block a z-stream patch, but will break on the minor/major upgrade that removes them — migrate ahead.",
       });
     }

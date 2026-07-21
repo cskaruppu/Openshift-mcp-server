@@ -19311,6 +19311,82 @@ Use ONLY component ids from the list. Prefer a workload (Deployment/StatefulSet/
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/upgrade/api-migration — AI generates a concrete migration plan to
+// move workloads off a deprecated API, grounded in the live consumers found via
+// APIRequestCount. Turns a "migrate off <api>" warning into exact steps.
+// ---------------------------------------------------------------------------
+export async function handleApiMigrationAPI(req, res) {
+  try {
+    const body = await readBody(req);
+    const provider = (body.llmOpts && body.llmOpts.provider) || LLM_PROVIDER;
+    const api = String(body.api || "").slice(0, 120);
+    const replacement = body.replacement ? String(body.replacement).slice(0, 120) : "";
+    const targetVersion = String(body.targetVersion || "").slice(0, 40);
+    const consumers = Array.isArray(body.consumers) ? body.consumers.slice(0, 30) : [];
+    if (!api) return json(res, 200, { error: "No API specified." });
+
+    const consumerList = consumers.map((c) => `- ${c.username || "?"} (${c.userAgent || "?"}) — ${c.requestCount || 0} calls${c.verbs?.length ? " [" + c.verbs.join(",") + "]" : ""}`).join("\n");
+    const fallback = {
+      targetApiVersion: replacement || "the GA apiVersion (check the OpenShift API deprecation guide)",
+      summary: `Migrate all consumers off ${api} to ${replacement || "the GA apiVersion"} before the upgrade that removes it.`,
+      steps: [
+        `Identify the workloads behind the consumers (ServiceAccounts/controllers) using ${api}.`,
+        `Update their manifests/Helm charts/operators to ${replacement || "the GA apiVersion"}.`,
+        `Re-apply any stored objects on the new apiVersion; verify APIRequestCount usage drops to zero.`,
+      ],
+      commands: [`oc get apirequestcounts | grep ${api.split("/").pop()}`],
+      risk: "low",
+      provider: "built-in",
+    };
+    if (!provider || provider === "none") return json(res, 200, fallback);
+
+    const prompt = `You are an OpenShift upgrade engineer. Workloads still call the DEPRECATED API "${api}"${replacement ? ` (GA replacement: ${replacement})` : ""}${targetVersion ? `, which is removed/deprecated around ${targetVersion}` : ""}. Produce a concrete migration plan.
+
+LIVE CONSUMERS (from APIRequestCount, last 24h):
+${consumerList || "none detected in the last 24h"}
+
+Return ONLY valid JSON (no markdown):
+{
+  "targetApiVersion": "the exact GA apiVersion to migrate to",
+  "summary": "1-2 sentences: what to change and why now",
+  "steps": ["ordered, concrete migration steps"],
+  "commands": ["exact oc/kubectl commands to find and migrate consumers (real resource/group names)"],
+  "perConsumer": [ { "consumer": "username or controller", "action": "what to do for this specific consumer" } ],
+  "risk": "low|medium|high",
+  "verify": "how to confirm the migration is complete (usage → 0)"
+}
+Prefer editing the owning workload/operator/Helm chart. For stored custom resources, note that re-applying on the new version (or a storage-version migration) is required.`;
+
+    const r = await callLLM({
+      messages: [{ role: "user", content: prompt }],
+      system: "You are a precise OpenShift API migration engineer. Output only one valid JSON object, no markdown. Reference real API groups/versions and commands. " + UNTRUSTED_GUARD,
+      maxTokens: 1500, temperature: 0.2,
+      provider: body.llmOpts?.provider, apiUrl: body.llmOpts?.apiUrl, apiKey: body.llmOpts?.apiKey,
+      model: body.llmOpts?.model, azureDeployment: body.llmOpts?.azureDeployment, azureApiVersion: body.llmOpts?.azureApiVersion,
+    });
+    const { json: jsonStr, truncated } = extractJsonObject(r.text);
+    if (truncated) return json(res, 200, { ...fallback, note: "AI response truncated — showing safe default." });
+    let out = null;
+    try { out = JSON.parse(jsonStr); } catch { return json(res, 200, { ...fallback, note: "AI response unparseable — showing safe default." }); }
+    const clampArr = (a, n, m) => (Array.isArray(a) ? a.slice(0, n).map((x) => typeof x === "string" ? x.slice(0, m) : x) : []);
+    json(res, 200, {
+      api,
+      targetApiVersion: String(out.targetApiVersion || fallback.targetApiVersion).slice(0, 160),
+      summary: String(out.summary || fallback.summary).slice(0, 400),
+      steps: clampArr(out.steps, 8, 240),
+      commands: clampArr(out.commands, 8, 240),
+      perConsumer: (Array.isArray(out.perConsumer) ? out.perConsumer.slice(0, 20) : []).map((p) => ({ consumer: String(p.consumer || "").slice(0, 160), action: String(p.action || "").slice(0, 240) })),
+      risk: ["low", "medium", "high"].includes(out.risk) ? out.risk : "medium",
+      verify: String(out.verify || "").slice(0, 240),
+      provider: r.provider || provider,
+    });
+  } catch (err) {
+    console.error("API migration plan error:", err);
+    json(res, 500, { error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/chat/analyze-image — VISION: read a screenshot (pod list, events,
 // terminal output…) with a vision-capable LLM (Azure/OpenAI gpt-4o, Anthropic
 // Claude) and extract failing resources, symptoms, likely root cause and next

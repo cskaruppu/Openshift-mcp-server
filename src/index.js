@@ -85,7 +85,8 @@ import { callLLM } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport, generateReportHTML } from "./services/upgrade-report.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, handleComplianceImpactAPI, handleGenerateManifestAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import { cisCheckManifests, scanManifestImages } from "./services/manifest-scan.js";
-import { handleIncidentCorrelationAPI, handleTopologyExplainAPI, handleImageAnalysisAPI } from "./services/chat-api.js";
+import { handleIncidentCorrelationAPI, handleTopologyExplainAPI, handleImageAnalysisAPI, handleApiMigrationAPI } from "./services/chat-api.js";
+import { getDeprecatedAPIConsumers } from "./tools/api-consumers.js";
 import { remember as fleetRemember, recall as fleetRecall, memoryStats as fleetMemoryStats } from "./services/fleet-memory.js";
 import {
   listActions,
@@ -6340,6 +6341,27 @@ spec:
         const session = await cancelSession(body.sessionId, body.reason || "Cancelled by user");
         sendJson(res, 200, { session, message: "Upgrade cancelled" });
       } catch (err) { sendJson(res, 400, { error: err.message }); }
+      return;
+    }
+
+    // Deprecated-API consumers — who still calls this API (from APIRequestCount)
+    if (req.method === "GET" && url.pathname === "/api/upgrade/api-consumers") {
+      try {
+        const api = url.searchParams.get("api");
+        if (!api) { sendJson(res, 200, { error: "api query param (group/version) is required" }); return; }
+        const out = await withClusterContext(url, async () => getDeprecatedAPIConsumers(api));
+        if (out === null) { sendJson(res, 200, { error: "Selected cluster is not reachable." }); return; }
+        sendJson(res, 200, out);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // AI migration plan for a deprecated API (grounded in its live consumers)
+    if (req.method === "POST" && url.pathname === "/api/upgrade/api-migration") {
+      if (enforceRateLimit(req, res, { burst: 6, refillPerSec: 0.15 })) return;
+      try { await handleApiMigrationAPI(req, res); }
+      catch (e) { if (!res.headersSent) sendJson(res, 500, { error: e.message }); }
+      if (!res.headersSent) sendJson(res, 200, { error: "Migration plan unavailable." });
       return;
     }
 

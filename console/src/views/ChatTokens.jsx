@@ -704,6 +704,7 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
   const [stepRunning, setStepRunning] = useState(null);
   const [dryRunResult, setDryRunResult] = useState(null);
   const [remediationPlan, setRemediationPlan] = useState(null);
+  const [apiActions, setApiActions] = useState({}); // per-fix deprecated-API: {consumers, migration, loading*}
   const [progressData, setProgressData] = useState(null);
   const [expandedStep, setExpandedStep] = useState("pre_assessed");
   const [inProgressAlert, setInProgressAlert] = useState(null);
@@ -892,6 +893,26 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
         return { ...prev, fixes: prev.fixes.map(f => f.id === fixId ? { ...f, _result: d.result } : f) };
       });
     }
+  }
+
+  // Deprecated-API remediation: find live consumers (APIRequestCount) + AI plan.
+  async function findApiConsumers(fix) {
+    setApiActions(p => ({ ...p, [fix.id]: { ...(p[fix.id] || {}), loadingConsumers: true } }));
+    try {
+      const r = await fetch(clusterUrl(`/api/upgrade/api-consumers?api=${encodeURIComponent(fix.api)}`, cluster)).then(x => x.json());
+      setApiActions(p => ({ ...p, [fix.id]: { ...(p[fix.id] || {}), loadingConsumers: false, consumers: r } }));
+    } catch (e) { setApiActions(p => ({ ...p, [fix.id]: { ...(p[fix.id] || {}), loadingConsumers: false, consumers: { error: e.message } } })); }
+  }
+  async function apiMigrationPlan(fix) {
+    setApiActions(p => ({ ...p, [fix.id]: { ...(p[fix.id] || {}), loadingMigration: true } }));
+    try {
+      const consumers = apiActions[fix.id]?.consumers?.consumers || [];
+      const r = await fetch(clusterUrl("/api/upgrade/api-migration", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api: fix.api, replacement: fix.replacement, targetVersion: targetVer, consumers }),
+      }).then(x => x.json());
+      setApiActions(p => ({ ...p, [fix.id]: { ...(p[fix.id] || {}), loadingMigration: false, migration: r } }));
+    } catch (e) { setApiActions(p => ({ ...p, [fix.id]: { ...(p[fix.id] || {}), loadingMigration: false, migration: { error: e.message } } })); }
   }
 
   const s = session || {};
@@ -1114,6 +1135,42 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
                   {fix.command && <pre style={{ margin: "2px 0 0", fontSize: 10.5, color: "var(--accent3, #10b981)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{fix.command}</pre>}
                   {fix.note && <div style={{ fontSize: 10, color: "var(--text2)", marginTop: 2 }}>ℹ {fix.note}</div>}
                   {fix.aiAssist === "manifest-migration" && <div style={{ fontSize: 10, color: "var(--accent2)", marginTop: 2 }}>💡 The App Deployment Agent can regenerate migrated manifests for this API.</div>}
+                  {/* Deprecated-API: find live consumers + AI migration plan */}
+                  {fix.api && (() => {
+                    const a = apiActions[fix.id] || {};
+                    return (
+                      <div style={{ marginTop: 5 }}>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          <button className="ux-btn ux-btn-dryrun" style={{ padding: "2px 9px", fontSize: 10 }} onClick={(e) => { e.stopPropagation(); findApiConsumers(fix); }} disabled={a.loadingConsumers}>{a.loadingConsumers ? "Finding…" : "🔍 Find consumers"}</button>
+                          <button className="ux-btn ux-btn-dryrun" style={{ padding: "2px 9px", fontSize: 10 }} onClick={(e) => { e.stopPropagation(); apiMigrationPlan(fix); }} disabled={a.loadingMigration}>{a.loadingMigration ? "Planning…" : "🤖 AI migration plan"}</button>
+                        </div>
+                        {a.consumers && (
+                          <div style={{ marginTop: 4, fontSize: 10, background: "var(--bg-deep, #0f172a10)", borderRadius: 6, padding: "6px 8px" }}>
+                            {a.consumers.error ? <span style={{ color: "var(--warn)" }}>{a.consumers.error}</span> : (
+                              <>
+                                <div style={{ fontWeight: 700 }}>Consumers ({a.consumers.consumers?.length || 0}) · {a.consumers.totalRequests || 0} calls/24h{a.consumers.removedInRelease ? ` · removed in ${a.consumers.removedInRelease}` : ""}</div>
+                                {a.consumers.note && <div style={{ color: "var(--text2)" }}>{a.consumers.note}</div>}
+                                {(a.consumers.consumers || []).slice(0, 8).map((c, i) => <div key={i} style={{ color: "var(--text2)", fontFamily: "monospace" }}>• {c.username} <span style={{ opacity: 0.7 }}>({c.userAgent})</span> — {c.requestCount}</div>)}
+                              </>
+                            )}
+                          </div>
+                        )}
+                        {a.migration && (
+                          <div style={{ marginTop: 4, fontSize: 10, background: "color-mix(in srgb, var(--accent2) 6%, transparent)", border: "1px solid color-mix(in srgb, var(--accent2) 25%, transparent)", borderRadius: 6, padding: "6px 8px" }}>
+                            {a.migration.error ? <span style={{ color: "var(--warn)" }}>{a.migration.error}</span> : (
+                              <>
+                                <div style={{ fontWeight: 700, color: "var(--accent2)" }}>🤖 Migrate to {a.migration.targetApiVersion} · risk: {a.migration.risk}</div>
+                                <div style={{ color: "var(--text2)", marginTop: 2 }}>{a.migration.summary}</div>
+                                {(a.migration.steps || []).length > 0 && <div style={{ marginTop: 3 }}>{a.migration.steps.map((s, i) => <div key={i}>{i + 1}. {s}</div>)}</div>}
+                                {(a.migration.commands || []).length > 0 && <pre style={{ margin: "4px 0 0", whiteSpace: "pre-wrap", wordBreak: "break-word", color: "var(--accent3, #10b981)" }}>{a.migration.commands.join("\n")}</pre>}
+                                {a.migration.verify && <div style={{ color: "var(--text2)", marginTop: 3 }}>✓ Verify: {a.migration.verify}</div>}
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
                 {res ? (
                   <span style={{ color: res.success ? "var(--ok)" : "var(--crit)", fontSize: 11, flexShrink: 0 }}>{res.success ? "✅ Done" : "❌ Failed"}</span>
