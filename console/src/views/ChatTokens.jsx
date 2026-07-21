@@ -909,9 +909,12 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     { key: "pre_assessed", label: "Pre-Assessment (22 checks)", desc: "Operators, nodes, etcd, certs, storage, MCPs health check", fromStates: ["version_validated", "channel_switched"], action: handlePreAssess, actionLabel: "Run Assessment" },
     { key: "component_analyzed", label: "Component Analysis", desc: "Deep inspection of degraded operators, failing pods, cert expiry", fromStates: ["pre_assessed"], action: handleComponentAnalysis, actionLabel: "Analyze" },
     { key: "remediation_proposed", label: "Remediation Plan", desc: "AI-generated fix plan for all detected issues", fromStates: ["pre_assessed", "component_analyzed"], action: handleRemediationPlan, actionLabel: "Build Plan" },
-    { key: "cr_submitted", label: "Change Request", desc: "Raise ServiceNow CR with pre-assessment report and upgrade plan", fromStates: ["remediation_proposed", "remediated"], action: handleRaiseCR, actionLabel: "Raise CR" },
+    // Dry Run BEFORE the Change Request (ITIL best practice): validate the
+    // upgrade path first, then submit the CR WITH the dry-run result as evidence
+    // so the CAB approves an already-validated, de-risked change.
+    { key: "dry_run_passed", label: "Dry Run (validation)", desc: "Validate the upgrade path & readiness BEFORE raising the CR — attached as approval evidence", fromStates: ["pre_assessed", "component_analyzed", "remediation_proposed", "remediated"], action: handleDryRun, actionLabel: "Run Dry Run" },
+    { key: "cr_submitted", label: "Change Request", desc: "Raise ServiceNow CR with pre-assessment + dry-run evidence for CAB approval", fromStates: ["dry_run_passed", "remediation_proposed", "remediated"], action: handleRaiseCR, actionLabel: "Raise CR" },
     { key: "cr_approved", label: "CR Approved", desc: isLocalCR ? "Blocked — ServiceNow CR required for approval gate" : "Change Request approved — cleared for execution", fromStates: ["cr_submitted"], action: isLocalCR ? null : handleCheckCR, actionLabel: "Check Status" },
-    { key: "dry_run_passed", label: "Dry Run", desc: "Simulate upgrade to validate no blocking conditions", fromStates: ["cr_approved"], action: handleDryRun, actionLabel: "Run Dry Run" },
     { key: "executing", label: "Execute Upgrade", desc: "ClusterVersion patched — rolling upgrade in progress", fromStates: ["cr_approved", "dry_run_passed"], action: handleExecute, actionLabel: "Execute" },
     { key: "monitoring", label: "Monitoring", desc: "Watching operator and node rollout progress until completion", fromStates: ["executing"], action: handleCheckProgress, actionLabel: "Check Progress" },
     // Post-Assessment is what FINALIZES the upgrade — available once the rollout
@@ -920,7 +923,7 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
   ];
 
   const STATE_ORDER = ["idle", "version_validated", "channel_switched", "pre_assessed", "component_analyzed",
-    "remediation_proposed", "remediated", "cr_submitted", "cr_approved", "dry_run_passed", "executing", "monitoring", "completed"];
+    "remediation_proposed", "remediated", "dry_run_passed", "cr_submitted", "cr_approved", "executing", "monitoring", "completed"];
   const currentIdx = STATE_ORDER.indexOf(state);
 
   const stateColors = {
