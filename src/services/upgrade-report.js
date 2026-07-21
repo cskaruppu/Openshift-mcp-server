@@ -884,6 +884,17 @@ export async function generatePreAssessmentReport(session) {
       drawTable(doc, ["Fix", "Result", "Output"], resRows, { colWidths: [tw * 0.25, tw * 0.15, tw * 0.60] });
     }
 
+    // ── Dry-Run Validation (evidence gathered before the CR) ──
+    if (session.dryRunResult) {
+      doc.moveDown(0.6);
+      drawHeading(doc, "6.2 Dry-Run Validation", 2);
+      drawParagraph(doc, `Result: ${session.dryRunResult.warnings ? "PASSED WITH WARNINGS" : "PASSED"} — validated before the Change Request was raised.`);
+      doc.moveDown(0.2);
+      for (const line of String(session.dryRunResult.details || "").split("\n").filter(Boolean).slice(0, 20)) {
+        drawParagraph(doc, line, { fontSize: 9 });
+      }
+    }
+
     // ── Risk Assessment ──
     doc.moveDown(0.8);
     drawHeading(doc, "7. Risk Assessment & Impact Analysis", 1);
@@ -1199,8 +1210,15 @@ export function generateReportHTML(session, type = "pre") {
     ${kv("Generated", gen)}
   </table></section>`;
 
+  // Dry-run validation evidence (shown on both pre and post reports when present).
+  const dr = session.dryRunResult;
+  const dryRunHTML = dr ? `<section><h2>Dry-Run Validation</h2>
+    <p style="margin:0 0 8px">${statusPill(dr.warnings ? "warning" : "pass")} <b>${dr.warnings ? "PASSED WITH WARNINGS" : "PASSED"}</b> — validated before the Change Request.</p>
+    <pre style="background:#0f172a;color:#e2e8f0;padding:12px;border-radius:8px;font-size:12px;white-space:pre-wrap;overflow:auto">${esc(dr.details || "")}</pre></section>` : "";
+
   if (!isPost) {
     body += `<section><h2>Pre-Assessment (${summary.pass ?? 0} passed · ${summary.warning ?? 0} warnings · ${summary.fail ?? 0} failed)</h2>${checksTableHTML(pre.checks)}</section>`;
+    body += dryRunHTML;
   } else {
     const cmp = post.comparison || {};
     const op = post.operatorSummary || {};
@@ -1216,6 +1234,7 @@ export function generateReportHTML(session, type = "pre") {
       ${kv("New issues", (cmp.newIssues || []).join(", ") || "none")}
     </table></section>`;
     body += `<section><h2>Post-Assessment Checks</h2>${checksTableHTML(postReport.checks)}</section>`;
+    body += dryRunHTML;
   }
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} — ${esc(session.cluster || "")}</title>

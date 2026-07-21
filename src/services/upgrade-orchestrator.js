@@ -1999,6 +1999,13 @@ ${fixes.length > 0 ? `<div class="section">
 </table>
 </div>` : ""}
 
+<!-- Dry-Run Validation (evidence attached to the CR) -->
+${session.dryRunResult ? `<div class="section">
+<h2>8. Dry-Run Validation</h2>
+<p><strong style="color:${session.dryRunResult.warnings ? "#f59e0b" : "#22c55e"}">${session.dryRunResult.warnings ? "PASSED WITH WARNINGS" : "PASSED"}</strong> — validated before this Change Request was raised.</p>
+<pre style="background:#0f172a;color:#e2e8f0;padding:12px;border-radius:8px;font-size:12px;white-space:pre-wrap;overflow:auto">${esc(session.dryRunResult.details || "")}</pre>
+</div>` : ""}
+
 <!-- Change Request -->
 ${session.crTicketId ? `<div class="section">
 <h2>8. Change Request</h2>
