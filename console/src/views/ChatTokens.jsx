@@ -914,7 +914,9 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
     { key: "dry_run_passed", label: "Dry Run", desc: "Simulate upgrade to validate no blocking conditions", fromStates: ["cr_approved"], action: handleDryRun, actionLabel: "Run Dry Run" },
     { key: "executing", label: "Execute Upgrade", desc: "ClusterVersion patched — rolling upgrade in progress", fromStates: ["cr_approved", "dry_run_passed"], action: handleExecute, actionLabel: "Execute" },
     { key: "monitoring", label: "Monitoring", desc: "Watching operator and node rollout progress until completion", fromStates: ["executing"], action: handleCheckProgress, actionLabel: "Check Progress" },
-    { key: "completed", label: "Post-Assessment", desc: "Verify all operators healthy on target version", fromStates: ["completed"], action: handlePostAssess, actionLabel: "Run Post-Assessment" },
+    // Post-Assessment is what FINALIZES the upgrade — available once the rollout
+    // is technically complete (monitoring), and gates the COMPLETED state.
+    { key: "completed", label: "Post-Assessment (finalizes upgrade)", desc: "Validate target version, operators & nodes — upgrade is marked complete only after this passes", fromStates: ["monitoring", "completed"], action: handlePostAssess, actionLabel: "Run Post-Assessment" },
   ];
 
   const STATE_ORDER = ["idle", "version_validated", "channel_switched", "pre_assessed", "component_analyzed",
@@ -1431,16 +1433,27 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
             </div>
           )}
 
+          {/* Rollout technically complete → must run Post-Assessment to finalize */}
+          {state === "monitoring" && s.monitoringData?.technicallyComplete && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 10, background: "color-mix(in srgb, var(--accent2) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--accent2) 30%, transparent)" }}>
+              <span style={{ fontSize: 15 }}>🧪</span>
+              <div style={{ flex: 1, fontSize: 12 }}>
+                <b>Rollout complete — not finalized yet.</b> Run the Post-Assessment below to validate the cluster and mark the upgrade <b>Complete</b>.
+              </div>
+              <button className="ux-btn ux-btn-execute" style={{ padding: "5px 12px", fontSize: 11.5 }} onClick={(e) => { e.stopPropagation(); handlePostAssess(); }} disabled={!!stepRunning}>{stepRunning === "post-assess" ? "Validating…" : "Run Post-Assessment"}</button>
+            </div>
+          )}
           {/* Footer: last updated + polling indicator */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, color: "var(--text2)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              {state !== "completed" && (
+              {state !== "completed" && !s.monitoringData?.technicallyComplete && (
                 <>
                   <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e", animation: "pulse 2s infinite" }} />
                   <span>Live — polling cluster every 15s</span>
                 </>
               )}
-              {state === "completed" && <span>Upgrade verified complete</span>}
+              {state === "monitoring" && s.monitoringData?.technicallyComplete && <span style={{ color: "var(--accent2)" }}>Awaiting post-assessment to finalize</span>}
+              {state === "completed" && <span style={{ color: "var(--ok)", fontWeight: 700 }}>✅ Upgrade verified &amp; complete</span>}
             </div>
             {pd.timestamp && <span>Last: {new Date(pd.timestamp).toLocaleTimeString()}</span>}
           </div>
@@ -1744,22 +1757,20 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
           </div>
         )}
 
-        {/* Report download buttons (pre-assessment / post-assessment DOCX) */}
-        {(data.preflightStatus || state === "completed") && (
-          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-            <button className="ux-btn ux-btn-outline" onClick={() => {
-              const a = document.createElement("a");
-              a.href = `/api/upgrade/report?session=${sessionId}&type=pre`;
-              a.download = "pre-assessment.pdf";
-              a.click();
-            }}>Download Pre-Assessment</button>
-            {state === "completed" && (
-              <button className="ux-btn ux-btn-outline" onClick={() => {
-                const a = document.createElement("a");
-                a.href = `/api/upgrade/report?session=${sessionId}&type=post`;
-                a.download = "post-assessment.pdf";
-                a.click();
-              }}>Download Post-Assessment</button>
+        {/* Assessment reports — HTML (view) + PDF (download), pre & post */}
+        {(data.preflightStatus || s.preflightReport || state === "completed" || s.postAssessment) && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text2)", textTransform: "uppercase", letterSpacing: 0.4 }}>Pre-Assessment</span>
+              <a className="ux-btn ux-btn-outline" style={{ padding: "5px 11px", fontSize: 11, textDecoration: "none" }} href={clusterUrl(`/api/upgrade/report?session=${sessionId}&type=pre&format=html`, cluster)} target="_blank" rel="noopener noreferrer">🖹 Open HTML</a>
+              <a className="ux-btn ux-btn-outline" style={{ padding: "5px 11px", fontSize: 11, textDecoration: "none" }} href={clusterUrl(`/api/upgrade/report?session=${sessionId}&type=pre&format=pdf`, cluster)} target="_blank" rel="noopener noreferrer">⭳ PDF</a>
+            </div>
+            {(s.postAssessment || state === "completed") && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text2)", textTransform: "uppercase", letterSpacing: 0.4 }}>Post-Assessment</span>
+                <a className="ux-btn ux-btn-outline" style={{ padding: "5px 11px", fontSize: 11, textDecoration: "none" }} href={clusterUrl(`/api/upgrade/report?session=${sessionId}&type=post&format=html`, cluster)} target="_blank" rel="noopener noreferrer">🖹 Open HTML</a>
+                <a className="ux-btn ux-btn-outline" style={{ padding: "5px 11px", fontSize: 11, textDecoration: "none" }} href={clusterUrl(`/api/upgrade/report?session=${sessionId}&type=post&format=pdf`, cluster)} target="_blank" rel="noopener noreferrer">⭳ PDF</a>
+              </div>
             )}
           </div>
         )}

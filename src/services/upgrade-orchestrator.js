@@ -1512,12 +1512,15 @@ export async function stepCheckUpgradeProgress(sessionId) {
       await transition(sessionId, UPGRADE_STATES.MONITORING, { monitoringData: existingData });
       currentSessionState = "monitoring";
     }
-    // Only auto-complete when ALL operators healthy + ALL nodes ready + CVO history confirmed
+    // Technical rollout done (operators healthy + nodes ready + CVO history
+    // confirmed) — but DO NOT mark COMPLETED yet. The upgrade is only complete
+    // after the Post-Assessment validates it (version verified, no new issues).
+    // Flag it as awaiting post-assessment so the UI prompts to finalize.
     if (currentSessionState === "monitoring" && trulyComplete) {
-      await transition(sessionId, UPGRADE_STATES.COMPLETED, {
-        monitoringData: existingData,
-        completedAt: new Date().toISOString(),
-      });
+      existingData.technicallyComplete = true;
+      existingData.awaitingPostAssessment = true;
+      existingData.technicalCompleteAt = existingData.technicalCompleteAt || new Date().toISOString();
+      await updateSession(sessionId, { monitoringData: existingData });
     } else {
       await updateSession(sessionId, { monitoringData: existingData });
     }
@@ -1544,11 +1547,15 @@ export async function stepPostAssessment(sessionId) {
   const session = await getSession(sessionId);
   if (!session) throw new Error("Session not found");
 
-  if (session.state === "executing" || session.state === "monitoring") {
+  // Post-assessment finalizes the upgrade. It may run once the rollout is
+  // technically complete (state monitoring/technicallyComplete or completed) —
+  // the version check below re-confirms completion. Only block while actively
+  // executing with no confirmed target version yet.
+  if (session.state === "executing" && !session.monitoringData?.technicallyComplete) {
     return {
       session,
       success: false,
-      error: "Upgrade is still in progress. Post-assessment can only run after the upgrade is fully complete (all operators available, all nodes ready, CVO history confirmed).",
+      error: "Upgrade is still in progress. Post-assessment can only run after the rollout is complete (all operators available, all nodes ready, CVO history confirmed).",
     };
   }
 
@@ -1657,7 +1664,23 @@ export async function stepPostAssessment(sessionId) {
     durationMinutes,
   };
 
+  // Verdict: the upgrade is COMPLETE only when post-assessment validates it —
+  // target version verified, operators healthy, nodes ready, no NEW issues.
+  const passed = verifiedVersion === session.targetVersion
+    && (operatorSummary?.degraded || 0) === 0
+    && (operatorSummary?.progressing || 0) === 0
+    && (nodeStatus?.notReady || 0) === 0
+    && (comparison.newIssues?.length || 0) === 0;
+  postAssessment.passed = passed;
+  postAssessment.verdict = passed ? "verified-complete" : "issues-found";
   await updateSession(sessionId, { postAssessment });
+
+  // Finalize: only NOW does the upgrade transition to COMPLETED — never before
+  // post-assessment. If issues remain, stay in monitoring so they're surfaced.
+  if (passed && (session.state === "monitoring" || session.state === "executing")) {
+    try { await transition(sessionId, UPGRADE_STATES.COMPLETED, { completedAt: session.completedAt || new Date().toISOString() }); }
+    catch { /* transition may race; postAssessment is persisted regardless */ }
+  }
 
   // ── ServiceNow CR: update with post-assessment details, attach reports, then close ──
   if (session.crSysId) {

@@ -1149,3 +1149,104 @@ export async function generatePostAssessmentReport(session) {
     drawFooter(doc);
   });
 }
+
+// ===========================================================================
+// HTML report — professional, self-contained (inline CSS), openable & printable
+// (browser Print → Save as PDF). Mirrors the PDF data for pre/post assessment.
+// ===========================================================================
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function statusPill(status) {
+  const s = String(status || "").toLowerCase();
+  const map = { pass: ["#16a34a", "PASS"], warning: ["#d97706", "WARN"], fail: ["#dc2626", "FAIL"], ready: ["#16a34a", "READY"], not_ready: ["#dc2626", "NOT READY"] };
+  const [c, label] = map[s] || ["#64748b", (status || "—").toString().toUpperCase()];
+  return `<span style="display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:800;color:#fff;background:${c}">${esc(label)}</span>`;
+}
+function checksTableHTML(checks) {
+  if (!Array.isArray(checks) || !checks.length) return "<p>No checks recorded.</p>";
+  const rows = checks.map((c) => `
+    <tr>
+      <td style="font-weight:600">${esc(c.category)}</td>
+      <td>${statusPill(c.status)}</td>
+      <td style="color:#475569">${esc(c.details || "")}${c.recommendation ? `<div style="color:#b45309;font-size:12px;margin-top:3px">↳ ${esc(c.recommendation)}</div>` : ""}</td>
+    </tr>`).join("");
+  return `<table><thead><tr><th style="width:26%">Check</th><th style="width:12%">Status</th><th>Details</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+export function generateReportHTML(session, type = "pre") {
+  const isPost = type === "post";
+  const pre = session.preflightReport || {};
+  const post = session.postAssessment || {};
+  const postReport = post.report || {};
+  const summary = pre.summary || {};
+  const gen = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+  const title = `${isPost ? "Post" : "Pre"}-Upgrade Assessment Report`;
+
+  const kv = (k, v) => `<tr><td style="color:#64748b;width:42%">${esc(k)}</td><td style="font-weight:600">${esc(v)}</td></tr>`;
+  const overall = isPost ? (post.comparison?.postOverall || "UNKNOWN") : (pre.overallStatus || "UNKNOWN");
+  const overallColor = /READY|PASS|HEALTHY/i.test(overall) ? "#16a34a" : /FAIL|NOT|BLOCK/i.test(overall) ? "#dc2626" : "#d97706";
+
+  let body = "";
+  body += `<section><h2>Summary</h2><table class="kv">
+    ${kv("Cluster", session.cluster || "local")}
+    ${kv("From version", session.fromVersion || "—")}
+    ${kv("Target version", session.targetVersion || "—")}
+    ${isPost ? kv("Verified version", post.verifiedVersion || "—") : ""}
+    ${kv("Upgrade type", session.upgradeType || "patch")}
+    ${isPost && post.duration ? kv("Upgrade duration", post.duration) : ""}
+    ${kv("Assessment status", overall)}
+    ${kv("Generated", gen)}
+  </table></section>`;
+
+  if (!isPost) {
+    body += `<section><h2>Pre-Assessment (${summary.pass ?? 0} passed · ${summary.warning ?? 0} warnings · ${summary.fail ?? 0} failed)</h2>${checksTableHTML(pre.checks)}</section>`;
+  } else {
+    const cmp = post.comparison || {};
+    const op = post.operatorSummary || {};
+    const nd = post.nodeStatus || {};
+    body += `<section><h2>Verification</h2><table class="kv">
+      ${kv("Cluster Operators", `${op.available ?? "?"}/${op.total ?? "?"} available · ${op.degraded ?? 0} degraded · ${op.progressing ?? 0} progressing`)}
+      ${kv("Nodes", `${nd.ready ?? "?"}/${nd.total ?? "?"} ready`)}
+      ${kv("Version match", (post.verifiedVersion === session.targetVersion) ? "matches target ✔" : "mismatch ✗")}
+    </table></section>`;
+    body += `<section><h2>Pre → Post comparison</h2><table class="kv">
+      ${kv("Resolved issues", (cmp.resolved || []).join(", ") || "none")}
+      ${kv("Persistent issues", (cmp.persistent || []).join(", ") || "none")}
+      ${kv("New issues", (cmp.newIssues || []).join(", ") || "none")}
+    </table></section>`;
+    body += `<section><h2>Post-Assessment Checks</h2>${checksTableHTML(postReport.checks)}</section>`;
+  }
+
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} — ${esc(session.cluster || "")}</title>
+<style>
+  *{box-sizing:border-box} body{font-family:'Segoe UI',Inter,system-ui,sans-serif;color:#0f172a;margin:0;background:#f1f5f9}
+  .page{max-width:900px;margin:24px auto;background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;box-shadow:0 6px 24px rgba(15,23,42,.06)}
+  header{padding:22px 28px;background:linear-gradient(90deg,#0b1e5b,#1e40af);color:#fff}
+  header .brand{font-size:12px;font-weight:800;letter-spacing:.14em;opacity:.85}
+  header h1{margin:6px 0 2px;font-size:22px}
+  header .sub{font-size:13px;opacity:.9}
+  .banner{padding:10px 28px;background:${overallColor}14;color:${overallColor};font-weight:800;border-bottom:1px solid #e2e8f0}
+  main{padding:8px 28px 24px}
+  section{margin:18px 0}
+  h2{font-size:15px;margin:0 0 8px;color:#0b1e5b;border-bottom:2px solid #e2e8f0;padding-bottom:5px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;background:#f8fafc;color:#475569;font-size:11px;text-transform:uppercase;letter-spacing:.04em;padding:7px 9px;border-bottom:1px solid #e2e8f0}
+  td{padding:7px 9px;border-bottom:1px solid #eef2f7;vertical-align:top}
+  table.kv td{border-bottom:1px solid #f1f5f9}
+  footer{padding:14px 28px;font-size:11px;color:#94a3b8;border-top:1px solid #e2e8f0}
+  @media print{body{background:#fff}.page{border:none;box-shadow:none;margin:0;max-width:none}}
+</style></head><body>
+<div class="page">
+  <header>
+    <div class="brand">TCS AGENTIC AI · ENTERPRISE INTELLIGENCE PLATFORM</div>
+    <h1>${esc(title)}</h1>
+    <div class="sub">Cluster <b>${esc(session.cluster || "local")}</b> · ${esc(session.fromVersion || "?")} → ${esc(session.targetVersion || "?")}</div>
+  </header>
+  <div class="banner">● Overall: ${esc(overall)}</div>
+  <main>${body}</main>
+  <footer>Generated ${esc(gen)} by TCS Agentic AI. This report is a point-in-time assessment; re-run before executing changes. © Tata Consultancy Services.</footer>
+</div>
+<script>if(location.search.includes('print=1')){window.print()}</script>
+</body></html>`;
+}

@@ -82,7 +82,7 @@ import { createDeployment, executeDeployment, rollbackDeployment, getDeployment,
 import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
 import { callLLM } from "./services/llm.js";
-import { generatePreAssessmentReport, generatePostAssessmentReport } from "./services/upgrade-report.js";
+import { generatePreAssessmentReport, generatePostAssessmentReport, generateReportHTML } from "./services/upgrade-report.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, handleComplianceImpactAPI, handleGenerateManifestAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import { cisCheckManifests, scanManifestImages } from "./services/manifest-scan.js";
 import { handleIncidentCorrelationAPI, handleTopologyExplainAPI, handleImageAnalysisAPI } from "./services/chat-api.js";
@@ -6248,10 +6248,17 @@ spec:
       try {
         const sessionId = url.searchParams.get("session");
         const type = url.searchParams.get("type") || "pre"; // "pre" or "post"
+        const format = (url.searchParams.get("format") || "pdf").toLowerCase(); // "pdf" | "html"
         const { getSession } = await import("./services/upgrade-orchestrator.js");
-        const session = getSession(sessionId);
+        const session = await getSession(sessionId);
         if (!session) return sendJson(res, 404, { error: "Upgrade session not found" });
 
+        if (format === "html") {
+          const html = generateReportHTML(session, type);
+          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Length": Buffer.byteLength(html) });
+          res.end(html);
+          return;
+        }
         const buffer = type === "post"
           ? await generatePostAssessmentReport(session)
           : await generatePreAssessmentReport(session);
