@@ -705,6 +705,7 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
   const [dryRunResult, setDryRunResult] = useState(null);
   const [remediationPlan, setRemediationPlan] = useState(null);
   const [apiActions, setApiActions] = useState({}); // per-fix deprecated-API: {consumers, migration, loading*}
+  const [fixDryRuns, setFixDryRuns] = useState({}); // per-fix dry-run preview: { [fixId]: result }
   const [progressData, setProgressData] = useState(null);
   const [expandedStep, setExpandedStep] = useState("pre_assessed");
   const [inProgressAlert, setInProgressAlert] = useState(null);
@@ -885,9 +886,13 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
   }
   async function handleCheckCR() { await runStep("cr-status"); }
 
-  async function handleExecuteFix(fixId) {
-    const d = await runStep("execute-fix", { fixId });
-    if (d) {
+  async function handleExecuteFix(fixId, dryRun = false) {
+    const d = await runStep("execute-fix", { fixId, dryRun });
+    if (!d) return;
+    if (dryRun) {
+      setFixDryRuns(prev => ({ ...prev, [fixId]: d.result }));
+    } else {
+      setFixDryRuns(prev => { const n = { ...prev }; delete n[fixId]; return n; });
       setRemediationPlan(prev => {
         if (!prev) return prev;
         return { ...prev, fixes: prev.fixes.map(f => f.id === fixId ? { ...f, _result: d.result } : f) };
@@ -1098,7 +1103,11 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
                         {done ? (
                           <span style={{ color: done.success ? "var(--ok)" : "var(--crit)", fontWeight: 700, fontSize: 11 }}>{done.success ? "✅ Fixed" : "❌ Fix failed"}</span>
                         ) : auto ? (
-                          <button className="ux-btn ux-btn-dryrun" style={{ padding: "2px 9px", fontSize: 10.5 }} onClick={(e) => { e.stopPropagation(); handleExecuteFix(auto.id); }} disabled={!!stepRunning}>{stepRunning === "execute-fix" ? "Fixing…" : "🔧 Fix"}</button>
+                          <>
+                            <button className="ux-btn ux-btn-dryrun" style={{ padding: "2px 9px", fontSize: 10.5 }} onClick={(e) => { e.stopPropagation(); handleExecuteFix(auto.id, true); }} disabled={!!stepRunning} title="Preview without applying">▷ Dry-run</button>
+                            <button className="ux-btn ux-btn-execute" style={{ padding: "2px 9px", fontSize: 10.5 }} onClick={(e) => { e.stopPropagation(); handleExecuteFix(auto.id, false); }} disabled={!!stepRunning}>{stepRunning === "execute-fix" ? "Running…" : "🔧 Run"}</button>
+                            {fixDryRuns[auto.id] && <span style={{ fontSize: 10, color: fixDryRuns[auto.id].success ? "var(--ok)" : "var(--warn)", width: "100%" }}>▷ Dry-run: {fixDryRuns[auto.id].success ? "OK — safe to apply" : "review output"}</span>}
+                          </>
                         ) : (
                           <button className="ux-btn ux-btn-dryrun" style={{ padding: "2px 9px", fontSize: 10.5 }} onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(matched[0].command || ""); showToast("Fix command copied — review before running (guided fix)", "ok"); }}>🔧 Copy fix</button>
                         )}
@@ -1164,7 +1173,8 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
           {plan.fixes.map((fix) => {
             const res = fix._result || results[fix.id];
             return (
-              <div key={fix.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
+              <div key={fix.id} style={{ padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ color: fix.severity === "critical" ? "var(--crit)" : fix.severity === "warning" ? "var(--warn)" : "var(--text2)", fontSize: 10.5, fontWeight: 700, width: 58, flexShrink: 0 }}>
                   {(fix.severity || "info").toUpperCase()}
                 </span>
@@ -1219,11 +1229,24 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
                   <span style={{ color: res.success ? "var(--ok)" : "var(--crit)", fontSize: 11, flexShrink: 0 }}>{res.success ? "✅ Done" : "❌ Failed"}</span>
                 ) : (state === "remediation_proposed" && (
                   fix.autoApplicable
-                    ? <button className="ux-btn ux-btn-dryrun" style={{ padding: "2px 8px", fontSize: 10, flexShrink: 0 }}
-                        onClick={(e) => { e.stopPropagation(); handleExecuteFix(fix.id); }} disabled={!!stepRunning}>Fix</button>
+                    ? <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
+                        <button className="ux-btn ux-btn-dryrun" style={{ padding: "2px 8px", fontSize: 10 }}
+                          onClick={(e) => { e.stopPropagation(); handleExecuteFix(fix.id, true); }} disabled={!!stepRunning} title="Preview the command without applying">▷ Dry-run</button>
+                        <button className="ux-btn ux-btn-execute" style={{ padding: "2px 8px", fontSize: 10 }}
+                          onClick={(e) => { e.stopPropagation(); handleExecuteFix(fix.id, false); }} disabled={!!stepRunning} title="Apply the fix">🔧 Run</button>
+                      </div>
                     : <button className="ux-btn ux-btn-dryrun" style={{ padding: "2px 8px", fontSize: 10, flexShrink: 0, opacity: 0.9 }}
                         onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(fix.command || ""); showToast("Command copied — review before running", "ok"); }} title="Copy the guided command">Copy</button>
                 ))}
+              </div>
+              {/* Dry-run preview → then apply */}
+              {fixDryRuns[fix.id] && !res && (
+                <div style={{ margin: "0 0 6px 66px", padding: "6px 8px", borderRadius: 6, fontSize: 10, background: "color-mix(in srgb, var(--accent2) 6%, transparent)", border: "1px solid color-mix(in srgb, var(--accent2) 25%, transparent)" }}>
+                  <div style={{ fontWeight: 700, color: fixDryRuns[fix.id].success ? "var(--ok)" : "var(--warn)" }}>▷ Dry-run: {fixDryRuns[fix.id].success ? "OK — safe to apply" : "check output"}</div>
+                  {fixDryRuns[fix.id].output && <pre style={{ margin: "2px 0", whiteSpace: "pre-wrap", wordBreak: "break-word", color: "var(--text2)" }}>{String(fixDryRuns[fix.id].output).slice(0, 400)}</pre>}
+                  <button className="ux-btn ux-btn-execute" style={{ padding: "2px 8px", fontSize: 10, marginTop: 2 }} onClick={(e) => { e.stopPropagation(); handleExecuteFix(fix.id, false); }} disabled={!!stepRunning}>✓ Apply now</button>
+                </div>
+              )}
               </div>
             );
           })}

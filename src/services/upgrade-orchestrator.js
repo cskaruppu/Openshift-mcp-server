@@ -902,7 +902,7 @@ export async function stepBuildRemediationPlan(sessionId) {
 
 // ── Step 5a: Execute Single Remediation Fix ─────────────────────────────────
 
-export async function stepExecuteFix(sessionId, fixId) {
+export async function stepExecuteFix(sessionId, fixId, opts = {}) {
   const session = await getSession(sessionId);
   if (!session) throw new Error("Session not found");
 
@@ -912,19 +912,27 @@ export async function stepExecuteFix(sessionId, fixId) {
   const fix = plan.fixes.find(f => f.id === fixId);
   if (!fix) throw new Error(`Fix ${fixId} not found in remediation plan`);
 
-  // Execute via the dashboard API's execute-fix endpoint (reuses guardrails)
+  const dryRun = opts.dryRun === true;
+
+  // Execute via the dashboard API's execute-fix endpoint (reuses guardrails).
+  // dryRun previews the command without applying it.
   const port = process.env.PORT || 3001;
   const result = await fetch(`http://localhost:${port}/api/alerts/execute-fix`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       command: fix.command,
-      dryRun: false,
-      auditTitle: `Upgrade remediation: ${fix.description}`,
+      dryRun,
+      auditTitle: `Upgrade remediation${dryRun ? " (dry-run)" : ""}: ${fix.description}`,
     }),
   }).then(r => r.json()).catch(e => ({ success: false, error: e.message }));
 
-  // Record the result
+  // Dry-run is transient — return the preview, don't persist as "done".
+  if (dryRun) {
+    return { fixId, fix, dryRun: true, result: { success: result.success !== false, output: result.output || result.preview || result.error || "", command: fix.command, timestamp: new Date().toISOString() } };
+  }
+
+  // Record the applied result
   const results = session.remediationResults || {};
   results[fixId] = {
     success: result.success !== false,

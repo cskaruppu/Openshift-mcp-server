@@ -2009,9 +2009,9 @@ export async function handleUpgradeOrchestrator(req, res, action) {
       }
 
       case "execute-fix": {
-        const { sessionId, fixId } = body;
+        const { sessionId, fixId, dryRun } = body;
         if (!sessionId || !fixId) return json(res, 400, { error: "Missing 'sessionId' or 'fixId'" });
-        const result = await stepExecuteFix(sessionId, fixId);
+        const result = await stepExecuteFix(sessionId, fixId, { dryRun: dryRun === true });
         return json(res, 200, result);
       }
 
