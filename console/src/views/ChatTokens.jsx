@@ -1067,6 +1067,9 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
                   {c.recommendation && (
                     <div style={{ color: "var(--accent2)", marginTop: 2 }}>↳ {c.recommendation}</div>
                   )}
+                  {(c.status === "fail" || c.status === "warning") && (
+                    <div style={{ marginTop: 3, fontSize: 10.5, fontWeight: 700, color: "var(--accent2)", display: "inline-flex", alignItems: "center", gap: 4, background: "color-mix(in srgb, var(--accent2) 10%, transparent)", padding: "2px 7px", borderRadius: 5 }}>🔧 Fix available in the “Remediation Plan” step below</div>
+                  )}
                   {Array.isArray(c.items) && c.items.length > 0 && (
                     <div style={{ marginTop: 3, color: "var(--text2)" }}>
                       {c.items.slice(0, 6).map((it, j) => (
