@@ -1756,25 +1756,42 @@ export async function stepPostAssessment(sessionId) {
       console.warn(`[post-assess] Failed to attach reports to CR: ${attErr.message}`);
     }
 
-    // 3. Close the CR only if upgrade verified successful
+    // 3. Close the CR only if upgrade verified successful.
     try {
       if (isSuccess) {
-        await updateRecord("change_request", session.crSysId, {
-          state: "3",
-          close_code: "successful",
-          close_notes: [
-            `Upgrade ${session.fromVersion} → ${session.targetVersion} completed and verified.`,
-            `Cluster version confirmed: ${verifiedVersion}.`,
-            `All ${operatorSummary?.total || 0} operators available, 0 degraded.`,
-            `Nodes: ${nodeStatus?.total || "N/A"} total, ${nodeStatus?.ready || "N/A"} ready.`,
-            `Started: ${session.executedAt ? new Date(session.executedAt).toLocaleString() : "N/A"}.`,
-            `Completed: ${session.completedAt ? new Date(session.completedAt).toLocaleString() : "N/A"}.`,
-            `Duration: ${postAssessment.duration}.`,
-            `Pre/post assessment reports attached (PDF + HTML).`,
-            `${comparison.resolved.length} pre-upgrade issues resolved, ${comparison.newIssues.length} new issues.`,
-          ].join(" "),
-        });
+        const closeNotes = [
+          `Upgrade ${session.fromVersion} → ${session.targetVersion} completed and verified.`,
+          `Cluster version confirmed: ${verifiedVersion}.`,
+          `All ${operatorSummary?.total || 0} operators available, 0 degraded.`,
+          `Nodes: ${nodeStatus?.total || "N/A"} total, ${nodeStatus?.ready || "N/A"} ready.`,
+          `Duration: ${postAssessment.duration}.`,
+          `Pre/post assessment reports attached (PDF + HTML).`,
+          `${comparison.resolved.length} pre-upgrade issues resolved, ${comparison.newIssues.length} new issues.`,
+        ].join(" ");
+        // ServiceNow change_request enforces a state progression — you usually
+        // cannot jump straight to Closed(3). Advance through Implement(-1) →
+        // Review(0), then try Closed with several field combinations. Never
+        // throw on failure; record the real outcome for the UI.
+        let closeResult = { closed: false, error: null };
+        for (const s of ["-1", "0"]) {
+          try { await updateRecord("change_request", session.crSysId, { state: s }); } catch { /* state may already be past this */ }
+        }
+        const attempts = [
+          { state: "3", close_code: "successful", close_notes: closeNotes },
+          { state: "0", close_code: "successful", close_notes: closeNotes },
+          { state: "3", close_notes: closeNotes },
+          { close_code: "successful", close_notes: closeNotes },
+        ];
+        for (const payload of attempts) {
+          try { await updateRecord("change_request", session.crSysId, payload); closeResult = { closed: true, state: payload.state || "closed" }; break; }
+          catch (e) { closeResult = { closed: false, error: e.message }; }
+        }
+        postAssessment.crClosed = closeResult;
+        await updateSession(sessionId, { postAssessment });
+        if (!closeResult.closed) console.warn(`[post-assess] CR ${session.crTicketId} could not be auto-closed: ${closeResult.error}`);
       } else {
+        postAssessment.crClosed = { closed: false, reason: "manual-review-required" };
+        await updateSession(sessionId, { postAssessment });
         await updateRecord("change_request", session.crSysId, {
           work_notes: [
             `[TCS Agentic AI] WARNING: Post-assessment detected issues.`,

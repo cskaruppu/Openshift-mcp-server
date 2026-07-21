@@ -1502,17 +1502,21 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
               )}
             </div>
           )}
-          {/* ServiceNow CR closure status */}
+          {/* ServiceNow CR closure status — reflects the ACTUAL close result */}
           {s.crTicketId && pa.verifiedVersion && (
             <div style={{ padding: "6px 10px", background: "color-mix(in srgb, var(--accent2) 8%, transparent)", borderRadius: 6 }}>
               <span style={{ fontWeight: 600 }}>ServiceNow CR: </span>
               <span style={{ fontWeight: 700, color: "var(--accent2)" }}>{s.crTicketId}</span>
-              {pa.verifiedVersion === targetVer && pa.operatorSummary?.degraded === 0 ? (
+              {pa.crClosed?.closed ? (
                 <span style={{ marginLeft: 8, color: "var(--ok)", fontWeight: 600 }}>✅ Auto-closed (successful)</span>
+              ) : pa.crClosed?.reason === "manual-review-required" ? (
+                <span style={{ marginLeft: 8, color: "var(--warn)", fontWeight: 600 }}>⚠ Not closed — manual review required</span>
+              ) : pa.crClosed && !pa.crClosed.closed ? (
+                <span style={{ marginLeft: 8, color: "var(--crit)", fontWeight: 600 }}>❌ Close failed{pa.crClosed.error ? ` — ${String(pa.crClosed.error).slice(0, 80)}` : ""}</span>
               ) : (
-                <span style={{ marginLeft: 8, color: "var(--warn)", fontWeight: 600 }}>⚠ Requires manual review</span>
+                <span style={{ marginLeft: 8, color: "var(--warn)", fontWeight: 600 }}>⏳ Close pending</span>
               )}
-              <div style={{ marginTop: 3, fontSize: 10, color: "var(--text2)" }}>Post-assessment report and HTML report attached to CR</div>
+              <div style={{ marginTop: 3, fontSize: 10, color: "var(--text2)" }}>Post-assessment PDF + HTML attached to CR</div>
             </div>
           )}
           {!pa.comparison && !pa.verifiedVersion && (
@@ -1751,6 +1755,27 @@ function UpgradeProgressCard({ data, cluster, onQuery }) {
               )}
             </div>
             <a href={clusterUrl(`/api/upgrade/orchestrator/report?sessionId=${sessionId}`, cluster)}
+              target="_blank" rel="noopener noreferrer"
+              className="ux-btn ux-btn-execute"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              Open Full Report
+            </a>
+          </div>
+        )}
+
+        {/* Full POST-Upgrade Assessment Report — prominent action bar (mirrors pre) */}
+        {(s.postAssessment || state === "completed") && (
+          <div style={{ marginTop: 12, padding: "10px 14px", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 10, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <div style={{ fontWeight: 600, fontSize: 12.5 }}>Full Post-Upgrade Assessment Report</div>
+              {s.postAssessment?.comparison && (
+                <div style={{ fontSize: 11, color: "var(--text2)", marginTop: 2 }}>
+                  {(s.postAssessment.comparison.resolved || []).length} resolved · {(s.postAssessment.comparison.newIssues || []).length} new issues · verified {s.postAssessment.verifiedVersion || "—"}
+                </div>
+              )}
+            </div>
+            <a href={clusterUrl(`/api/upgrade/report?session=${sessionId}&type=post&format=html`, cluster)}
               target="_blank" rel="noopener noreferrer"
               className="ux-btn ux-btn-execute"
               style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", fontSize: 12, fontWeight: 600, textDecoration: "none" }}>

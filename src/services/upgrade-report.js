@@ -1234,7 +1234,8 @@ export function generateReportHTML(session, type = "pre") {
       ${kv("New issues", (cmp.newIssues || []).join(", ") || "none")}
     </table></section>`;
     body += `<section><h2>Post-Assessment Checks</h2>${checksTableHTML(postReport.checks)}</section>`;
-    body += dryRunHTML;
+    // Dry-run is pre-upgrade validation — it belongs in the Pre-Assessment
+    // report and the CR, not in the post-upgrade outcome report.
   }
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} — ${esc(session.cluster || "")}</title>
