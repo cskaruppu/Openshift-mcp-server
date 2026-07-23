@@ -1387,6 +1387,17 @@ function _legacyParseCommand_unused(message) {
   return { operation, resourceType, resourceName, namespace };
 }
 
+// Resolve a promise but never wait longer than `ms`; on timeout (or rejection)
+// resolve to `fallback` instead. Used to keep best-effort enrichment (LLM,
+// ServiceNow, notifications) from stalling the whole chat past its 120s budget
+// — the LLM relay's own timeout is 120s, which alone can exhaust it.
+function withSoftTimeout(promise, ms, fallback = null) {
+  return Promise.race([
+    Promise.resolve(promise).catch(() => fallback),
+    new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 // ---------------------------------------------------------------------------
 // Direct command handler — handles specific CRUD/operations without LLM
 // Returns null if the message isn't a recognized direct command
@@ -4255,8 +4266,17 @@ Respond with ONLY this JSON structure:
         namespace: targetNs || undefined, cluster: "local",
       }).catch(() => ({ failed: true })) : Promise.resolve(null);
 
-      // Await all three in parallel — LLM + ServiceNow + Notify
-      const [llmDiagnosis, snowResult, notifyResult] = await Promise.all([llmDiagnosisPromise, earlySnowPromise, earlyNotifyPromise]);
+      // Await all three in parallel — LLM + ServiceNow + Notify — but cap each
+      // so a slow provider can't stall the whole chat past its 120s timeout.
+      // The LLM only polishes the narrative; ServiceNow/Notify are best-effort.
+      // On timeout we degrade to the deterministic RCA + fix proposals, which is
+      // still a complete end-to-end result (this is what caused "Chat request
+      // timed out" — the LLM relay's own timeout is a full 120s).
+      const [llmDiagnosis, snowResult, notifyResult] = await Promise.all([
+        withSoftTimeout(llmDiagnosisPromise, parseInt(process.env.INCIDENT_LLM_TIMEOUT_MS || "30000", 10)),
+        withSoftTimeout(earlySnowPromise, 20_000),
+        withSoftTimeout(earlyNotifyPromise, 10_000),
+      ]);
 
       // Phase 8: Build triage report
       const scope = targetNs ? `namespace \`${targetNs}\`` : "cluster-wide";
