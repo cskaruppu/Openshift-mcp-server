@@ -554,11 +554,13 @@ export function ChatView() {
     }
     const msg = (typeof override === "string" ? override : input).trim();
     if (!msg || busy) return;
-    // Targeted pod investigation: "investigate/diagnose/why is pod <name> [in <ns>]"
-    // → run RCA on THAT pod (backend locates its namespace) instead of the
-    // generic chat path that dumps every failing pod in the cluster.
-    const podReq = detectPodInvestigation(msg);
-    if (podReq) { setInput(""); setSlashOpen(false); runLiveRca(podReq); return; }
+    // NOTE: pod-specific questions ("why is pod X crashing?") intentionally flow
+    // through /api/chat below. The backend NLU tags them intent=incident_response
+    // and runs the FULL end-to-end pipeline (targeted RCA → ServiceNow INC →
+    // interactive fix proposals), scoped to the named pod. Do NOT re-add a
+    // client-side shortcut to /api/rca/investigate here — that endpoint is
+    // diagnosis-only and drops the ServiceNow + fix-proposal steps, which is
+    // what broke UC-01 (message got rewritten and the flow stopped at "Evidence").
     setInput("");
     setSlashOpen(false);
     setFollowUps([]);
@@ -748,45 +750,18 @@ export function ChatView() {
     finally { setImgBusy(false); }
   }
 
-  // Direct live RCA against the real cluster — what the image follow-ups call,
-  // so the answer is grounded, not a generic chat reply.
-  // High-precision detector: only fires on an explicit pod investigation with a
-  // real pod name (contains a dash), so normal chat is never hijacked.
-  function detectPodInvestigation(text) {
-    if (!/\bpods?\b/i.test(text)) return null;
-    if (!/(investigate|diagnos|troubleshoot|debug|\brca\b|root ?cause|why|what'?s wrong|failing|crash|analy[sz]e|look (in|at)|check|status of|details? (of|for))/i.test(text)) return null;
-    const pm = /\bpods?\s+["'`]?([a-z0-9]([a-z0-9.-]*-[a-z0-9.-]+))["'`]?/i.exec(text);
-    if (!pm) return null;
-    const pod = pm[1].replace(/[.,;:?!]+$/, "");
-    const nm = /\b(?:namespace|ns|project)\s+["'`]?([a-z0-9][a-z0-9-]*)/i.exec(text)
-      || /\bin\s+["'`]?([a-z0-9][a-z0-9-]*)\b(?!.*\bpod\b)/i.exec(text);
-    return { pod, namespace: nm ? nm[1] : null };
-  }
-
+  // Live RCA against the real cluster — used by the image-analysis follow-up
+  // buttons and the "yes, investigate" affirmation. Routes through the FULL
+  // end-to-end incident pipeline (/api/chat), NOT the diagnosis-only
+  // /api/rca/investigate endpoint, so the answer includes the ServiceNow
+  // incident and interactive fix proposals — the complete UC-01 flow. The
+  // backend NLU tags this as incident_response and scopes it to the named pod
+  // (it resolves the namespace itself), so it works for any cluster/pod name.
   async function runLiveRca({ pod, namespace }) {
     if (busy || imgBusy) return;
     setPendingAction(null);
     const ns = namespace || "";
-    addMessage(cluster, { role: "user", text: `Investigate pod \`${pod}\`${ns ? ` in namespace \`${ns}\`` : ""} on the live cluster` });
-    addMessage(cluster, { role: "assistant", text: `Locating and diagnosing ${pod}${ns ? ` in ${ns}` : ""}…` });
-    setFollowUps([]);
-    try {
-      // Namespace optional — the backend locates the pod across namespaces.
-      const res = await fetch(clusterUrl("/api/rca/investigate", cluster), {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pod, ...(ns ? { namespace: ns } : {}) }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (d.error) { updateLastAssistant(cluster, `⚠ ${d.error}`); return; }
-      const rns = d.namespace || ns; // namespace the backend resolved
-      const L = [`**🔎 Live RCA — \`${d.pod || pod}\`${rns ? ` in \`${rns}\`` : ""}**`];
-      if (d.rootCause) L.push(`\n\n**Root cause:** ${d.rootCause}${d.severity ? ` _(severity: ${d.severity})_` : ""}`);
-      if (d.recommendation) L.push(`\n\n**Recommended fix:** ${d.recommendation}`);
-      const chain = Array.isArray(d.causalChain) ? d.causalChain : [];
-      if (chain.length) { L.push("\n\n**Evidence:**"); chain.slice(0, 6).forEach((c) => L.push(`\n- ${c.evidence || c.cause}${c.confidence ? ` _(${Math.round(c.confidence * 100)}%)_` : ""}`)); }
-      if (L.length === 1) L.push(d.rootCause === "Healthy" ? `\n\n✅ \`${d.pod || pod}\`${rns ? ` in \`${rns}\`` : ""} is healthy — running and ready with no issues.` : `\n\nNo clear failure signal for \`${d.pod || pod}\`${rns ? ` in \`${rns}\`` : ""} in the available data.`);
-      updateLastAssistant(cluster, L.join(""));
-    } catch (e) { updateLastAssistant(cluster, "Error running live RCA: " + e.message); }
+    send(`Investigate pod ${pod}${ns ? ` in namespace ${ns}` : ""} and propose a fix`);
   }
 
   function handleKeyDown(e) {
