@@ -1398,6 +1398,112 @@ function withSoftTimeout(promise, ms, fallback = null) {
   ]);
 }
 
+// PVC-object-centric diagnosis — reads the PVC's OWN phase, events,
+// StorageClass and %-full (not a pod), matches the storage error-knowledge
+// catalog, and proposes the right fix card (expand when full, provisioning
+// checks when Pending). Returns a markdown report string.
+async function diagnosePVC(name, namespace) {
+  const parts = [];
+  let pvc = null, ns = namespace || null;
+  if (ns) {
+    try { pvc = await ocpGet(`/api/v1/namespaces/${ns}/persistentvolumeclaims/${encodeURIComponent(name)}`); } catch { pvc = null; }
+  }
+  if (!pvc) {
+    // Namespace unknown or mismatched — locate the PVC cluster-wide.
+    try {
+      const all = await ocpGet(`/api/v1/persistentvolumeclaims?limit=2000`);
+      pvc = (all.items || []).find(p => p.metadata?.name === name)
+        || (all.items || []).find(p => (p.metadata?.name || "").startsWith(name)) || null;
+    } catch { /* ignore */ }
+  }
+  if (!pvc) {
+    return `### PVC \`${name}\` not found\nNo PersistentVolumeClaim named \`${name}\`${namespace ? ` in \`${namespace}\`` : ""} exists on this cluster. Try \`list pvcs${namespace ? ` in ${namespace}` : ""}\` to see what's there.`;
+  }
+  ns = pvc.metadata.namespace;
+  const phase = pvc.status?.phase || "Unknown";
+  const scName = pvc.spec?.storageClassName || "(default)";
+  const requested = pvc.spec?.resources?.requests?.storage || "?";
+  const capacity = pvc.status?.capacity?.storage || null;
+  const boundPV = pvc.spec?.volumeName || null;
+  const accessModes = (pvc.spec?.accessModes || []).join(", ");
+  const phaseIcon = phase === "Bound" ? "🟢" : phase === "Pending" ? "🟠" : "🔴";
+
+  parts.push(`### 🔎 PVC Diagnosis — \`${name}\` in \`${ns}\``);
+  parts.push(``);
+  parts.push(`**Phase:** ${phaseIcon} ${phase}  ·  **StorageClass:** \`${scName}\`  ·  **Access:** ${accessModes || "?"}`);
+  parts.push(`**Requested:** ${requested}${capacity ? `  ·  **Capacity:** ${capacity}` : ""}${boundPV ? `  ·  **Bound PV:** \`${boundPV}\`` : ""}`);
+
+  // The PVC's own events.
+  let events = [];
+  try {
+    const ev = await ocpGet(`/api/v1/namespaces/${ns}/events?fieldSelector=involvedObject.name=${encodeURIComponent(name)},involvedObject.kind=PersistentVolumeClaim&limit=50`);
+    events = (ev.items || []).sort((a, b) => new Date(b.lastTimestamp || 0) - new Date(a.lastTimestamp || 0));
+  } catch { /* ignore */ }
+  const warnEvents = events.filter(e => e.type === "Warning");
+  const matches = findMatchingErrors([], events.map(e => ({ reason: e.reason, message: e.message })));
+
+  parts.push(``);
+  if (phase === "Bound") {
+    let usagePct = null;
+    try {
+      const { promQuery } = await import("./prometheus.js");
+      const rows = await promQuery(`(kubelet_volume_stats_used_bytes{persistentvolumeclaim="${name}",namespace="${ns}"} / kubelet_volume_stats_capacity_bytes{persistentvolumeclaim="${name}",namespace="${ns}"}) * 100`);
+      const v = rows?.[0]?.value?.[1];
+      if (v != null) usagePct = Math.round(parseFloat(v));
+    } catch { /* metrics optional */ }
+    if (usagePct != null && usagePct >= 90) {
+      // Suggest a concrete new size (current + 50%, rounded up to whole Gi) so
+      // the fix card is one-click instead of a placeholder to edit.
+      const curM = /^(\d+(?:\.\d+)?)\s*(Gi|Mi|Ti)$/.exec(capacity || requested || "");
+      let suggest = "<newSize>Gi";
+      if (curM) {
+        const gi = curM[2] === "Ti" ? parseFloat(curM[1]) * 1024 : curM[2] === "Mi" ? parseFloat(curM[1]) / 1024 : parseFloat(curM[1]);
+        suggest = `${Math.max(1, Math.ceil(gi * 1.5))}Gi`;
+      }
+      parts.push(`**Utilization:** ${usagePct}% full`);
+      parts.push(``);
+      parts.push(`**Root cause:** The volume is nearly full (${usagePct}%). Writes may start failing with "no space left on device".`);
+      parts.push(`**Recommended fix — expand the PVC${curM ? ` to ${suggest}` : ""}** (StorageClass must allow expansion):`);
+      parts.push(`@@SEC_FIX_CMD|oc patch pvc ${name} -n ${ns} --type=merge -p '{"spec":{"resources":{"requests":{"storage":"${suggest}"}}}}'@@`);
+    } else if (usagePct != null) {
+      parts.push(`**Utilization:** ${usagePct}% full`);
+      parts.push(``);
+      parts.push(`✅ **Healthy** — Bound with ${100 - usagePct}% free. No storage issue detected.`);
+    } else {
+      parts.push(`✅ **Bound** to \`${boundPV}\` — no binding problem. (Live utilization unavailable — kubelet volume metrics not reachable.)`);
+    }
+  } else if (phase === "Pending") {
+    parts.push(`**Root cause:** The PVC is **Pending** — it hasn't been provisioned/bound to a PersistentVolume.`);
+    const reasons = [...new Set(warnEvents.map(e => e.reason).filter(Boolean))];
+    if (reasons.length) parts.push(`**Signals:** ${reasons.join(", ")}`);
+    parts.push(``);
+    parts.push(`**Most likely causes & checks:**`);
+    parts.push(`1. StorageClass \`${scName}\` provisioner missing/unhealthy — list classes:`);
+    parts.push(`@@SEC_FIX_CMD|oc get storageclass@@`);
+    parts.push(`2. No PersistentVolume matches the request (size / accessMode / zone) — list PVs:`);
+    parts.push(`@@SEC_FIX_CMD|oc get pv@@`);
+    parts.push(`3. The CSI / provisioner pods are failing — check their pods and logs.`);
+  } else {
+    parts.push(`**Root cause:** The PVC is in **${phase}** — the bound PersistentVolume may have been lost or deleted.`);
+    parts.push(`**Recommended:** Inspect PV \`${boundPV || "(unknown)"}\` and restore from a backup/snapshot if the data is gone.`);
+  }
+
+  if (matches.length) {
+    parts.push(``);
+    parts.push(`**Known storage-error matches:**`);
+    for (const mm of matches.slice(0, 3)) {
+      const e = mm.entry || {};
+      parts.push(`- **${e.rootCause || "match"}** — ${(e.remediation || [])[0] || (e.explanation || "").slice(0, 120)}`);
+    }
+  }
+  if (warnEvents.length) {
+    parts.push(``);
+    parts.push(`**Recent warning events:**`);
+    warnEvents.slice(0, 5).forEach(e => parts.push(`- \`${e.reason}\`: ${(e.message || "").slice(0, 160)}`));
+  }
+  return parts.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Direct command handler — handles specific CRUD/operations without LLM
 // Returns null if the message isn't a recognized direct command
@@ -2074,6 +2180,26 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
       parts.push(`### Delete ${cmd.resourceType}`);
       parts.push(`[WARNING] Please specify the namespace.`);
       parts.push(`\n**Example:** "delete ${cmd.resourceType} ${cmd.resourceName} in namespace my-ns"`);
+      return parts.join("\n");
+    }
+    // Storage deletion is irreversible (data loss). Never delete a PVC
+    // immediately from a natural-language command — route it through the same
+    // dry-run → approve fix-card every other destructive action uses, so the
+    // user reviews it first and the executor's mounted-PVC guard applies.
+    if (cmd.resourceType === "pvc" || cmd.resourceType === "persistentvolumeclaim") {
+      parts.push(`### ⚠ Delete PVC \`${cmd.resourceName}\` in \`${cmd.namespace}\``);
+      parts.push(``);
+      parts.push(`Deleting a PVC is **irreversible** — the bound volume and its data may be reclaimed. Dry-run first to preview, then apply. If the PVC is still mounted by a running pod, the executor refuses the delete until you scale that workload down.`);
+      parts.push(``);
+      parts.push(`**Preview (dry-run), then apply:**`);
+      parts.push(`@@SEC_FIX_CMD|oc delete pvc ${cmd.resourceName} -n ${cmd.namespace}@@`);
+      parts.push(``);
+      parts.push(`_Tip: run \`describe pvc ${cmd.resourceName} in ${cmd.namespace}\` or ask "why is pvc ${cmd.resourceName} …" to inspect it first._`);
+      return parts.join("\n");
+    }
+    if (cmd.resourceType === "pv" || cmd.resourceType === "persistentvolume") {
+      parts.push(`### Delete PersistentVolume — blocked for safety`);
+      parts.push(`[WARNING] Deleting a cluster-scoped PersistentVolume can orphan or destroy data across namespaces, so it is blocked here. Delete the owning **PVC** instead, or remove the PV manually after review.`);
       return parts.join("\n");
     }
     const path = resInfo.namespaced
@@ -5417,6 +5543,12 @@ Respond with ONLY this JSON structure:
   // -----------------------------------------------------------------------
   if (cmd.operation === "diagnose") {
     const diagLower = (cmd.raw || message || "").toLowerCase();
+
+    // PVC-object-centric diagnosis — read the PVC's own phase/events/StorageClass
+    // and %-full instead of treating the name as a pod.
+    if ((cmd.resourceType === "pvc" || cmd.resourceType === "persistentvolumeclaim") && cmd.resourceName) {
+      return await diagnosePVC(cmd.resourceName, cmd.namespace);
+    }
 
     // Detect if user is asking about a specific pod or deployment
     const hasPodName = cmd.resourceName && (cmd.resourceType === "pod" || !cmd.resourceType);

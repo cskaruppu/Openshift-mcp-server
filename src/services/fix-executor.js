@@ -73,6 +73,55 @@ const RESOURCE_API_PATHS = {
   routes: { group: "route.openshift.io", version: "v1" },
 };
 
+// Parse a Kubernetes storage quantity ("20Gi", "500Mi", "1Ti", "1000000000")
+// into bytes. Returns NaN when unparseable.
+function _parseStorage(q) {
+  if (q == null) return NaN;
+  const s = String(q).trim();
+  const m = /^(\d+(?:\.\d+)?)\s*(Ki|Mi|Gi|Ti|Pi|Ei|K|M|G|T|P|E)?$/.exec(s);
+  if (!m) return NaN;
+  const n = parseFloat(m[1]);
+  const unit = m[2] || "";
+  const mul = {
+    "": 1,
+    Ki: 1024, Mi: 1024 ** 2, Gi: 1024 ** 3, Ti: 1024 ** 4, Pi: 1024 ** 5, Ei: 1024 ** 6,
+    K: 1e3, M: 1e6, G: 1e9, T: 1e12, P: 1e15, E: 1e18,
+  }[unit];
+  return n * mul;
+}
+
+// Preflight a PVC patch that changes requested storage: confirm it's an
+// expansion (K8s can't shrink) and that the StorageClass permits it. Returns
+// { error } to block, or {} to proceed. Lookup failures never block (best
+// effort) — the API server's own dry-run remains the final authority.
+async function _pvcExpansionPreflight(namespace, name, patchBody) {
+  const requested = patchBody?.spec?.resources?.requests?.storage;
+  if (requested == null) return {}; // not a resize — nothing to check
+  const reqBytes = _parseStorage(requested);
+  if (Number.isNaN(reqBytes)) return { error: `Invalid storage size '${requested}'. Use a quantity like 20Gi.` };
+  let pvc;
+  try {
+    pvc = await ocpGet(`/api/v1/namespaces/${namespace}/persistentvolumeclaims/${name}`);
+  } catch {
+    return {}; // can't read it — let the API server decide
+  }
+  const current = pvc?.status?.capacity?.storage || pvc?.spec?.resources?.requests?.storage;
+  const curBytes = _parseStorage(current);
+  if (!Number.isNaN(curBytes) && reqBytes <= curBytes) {
+    return { error: `Cannot resize PVC '${name}' to ${requested}: it is not larger than the current size (${current}). Kubernetes only supports EXPANDING a PVC, never shrinking.` };
+  }
+  const scName = pvc?.spec?.storageClassName;
+  if (scName) {
+    try {
+      const sc = await ocpGet(`/apis/storage.k8s.io/v1/storageclasses/${scName}`);
+      if (sc && sc.allowVolumeExpansion !== true) {
+        return { error: `StorageClass '${scName}' does not allow volume expansion (allowVolumeExpansion is not true), so PVC '${name}' cannot be resized. Migrate the data to a larger PVC on an expandable StorageClass instead.` };
+      }
+    } catch { /* SC not readable — proceed and let the API server validate */ }
+  }
+  return {};
+}
+
 function tokenize(cmd) {
   // Strip shell line-continuation (backslash + newline)
   cmd = cmd.replace(/\\\s*\n/g, " ");
@@ -530,13 +579,28 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
       const { resource: rawResource, name } = resolveResourceTarget(positional);
       if (!rawResource || !name) { result.stderr = `Usage: ${cli} delete <resource>[/name] [name] -n <ns>`; return result; }
       const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
-      // Only allow deleting namespaced workload resources
-      const allowedDelete = ["pods", "jobs", "replicasets"];
+      // Only allow deleting namespaced workload resources + PVCs. PV/PVC on the
+      // cluster-scoped side (persistentvolumes) stays blocked by BLOCKED_PATTERNS.
+      const allowedDelete = ["pods", "jobs", "replicasets", "persistentvolumeclaims"];
       if (!allowedDelete.includes(resource)) {
         result.stderr = `Delete not allowed for resource '${resource}'. Allowed: ${allowedDelete.join(", ")}`;
         return result;
       }
       if (!namespace) { result.stderr = "Namespace required (-n <ns>)"; return result; }
+      // Data-loss guard: refuse to delete a PVC that is still mounted by a pod.
+      // (K8s pvc-protection would otherwise leave it stuck Terminating.)
+      if (resource === "persistentvolumeclaims" && !dryRun) {
+        try {
+          const pods = await ocpGet(`/api/v1/namespaces/${namespace}/pods`);
+          const consumers = (pods.items || [])
+            .filter(p => (p.spec?.volumes || []).some(v => v.persistentVolumeClaim?.claimName === name))
+            .map(p => p.metadata.name);
+          if (consumers.length) {
+            result.stderr = `PVC '${name}' is still mounted by ${consumers.length} pod(s): ${consumers.slice(0, 5).join(", ")}${consumers.length > 5 ? "…" : ""}. Scale down or delete these workloads first to avoid data loss.`;
+            return result;
+          }
+        } catch { /* best effort — fall through to the delete */ }
+      }
       let ownerDep = null;
       if (resource === "pods" && !dryRun) {
         try {
@@ -618,7 +682,7 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
         return result;
       }
       const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
-      const allowedPatch = ["deployments", "daemonsets", "statefulsets", "services", "configmaps", "pods", "ingresses", "cronjobs", "jobs"];
+      const allowedPatch = ["deployments", "daemonsets", "statefulsets", "services", "configmaps", "pods", "ingresses", "cronjobs", "jobs", "persistentvolumeclaims"];
       if (!allowedPatch.includes(resource)) {
         result.stderr = `Patch not allowed for resource '${resource}'. Allowed: ${allowedPatch.join(", ")}`;
         return result;
@@ -633,6 +697,14 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
       try { patchBody = JSON.parse(patchStr); } catch {
         result.stderr = `Invalid JSON in patch body: ${patchStr.slice(0, 200)}`;
         return result;
+      }
+      // PVC expansion preflight: a PVC patch is (almost always) a resize. Verify
+      // the StorageClass allows expansion and the new size is strictly larger —
+      // K8s cannot shrink a PVC, and expansion silently no-ops without
+      // allowVolumeExpansion. Best-effort: lookup failures don't block.
+      if (resource === "persistentvolumeclaims") {
+        const pf = await _pvcExpansionPreflight(namespace, name, patchBody);
+        if (pf.error) { result.stderr = pf.error; return result; }
       }
       const patchType = (flags.type || "strategic").toLowerCase();
       const contentType = patchType === "json"
