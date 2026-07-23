@@ -87,6 +87,7 @@ import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvest
 import { cisCheckManifests, scanManifestImages } from "./services/manifest-scan.js";
 import { handleIncidentCorrelationAPI, handleTopologyExplainAPI, handleImageAnalysisAPI, handleApiMigrationAPI } from "./services/chat-api.js";
 import { getDeprecatedAPIConsumers } from "./tools/api-consumers.js";
+import { getGpuOverview } from "./tools/gpu-metrics.js";
 import { remember as fleetRemember, recall as fleetRecall, memoryStats as fleetMemoryStats } from "./services/fleet-memory.js";
 import {
   listActions,
@@ -6353,6 +6354,17 @@ spec:
         if (out === null) { sendJson(res, 200, { error: "Selected cluster is not reachable." }); return; }
         sendJson(res, 200, out);
       } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // GPU fleet overview — DCGM-sourced inventory / utilization / health.
+    // Graceful { available:false } when the GPU Operator/DCGM isn't present.
+    if (req.method === "GET" && url.pathname === "/api/dashboard/gpu") {
+      try {
+        const out = await withClusterContext(url, async () => getGpuOverview());
+        if (out === null) { sendJson(res, 200, { available: false, reason: "cluster-unreachable", message: "Selected cluster is not reachable." }); return; }
+        sendJson(res, 200, out);
+      } catch (err) { sendJson(res, 200, { available: false, reason: "error", message: err.message }); }
       return;
     }
 

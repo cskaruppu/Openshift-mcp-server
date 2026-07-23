@@ -14,6 +14,7 @@ import { ImageVulnsWidget } from "../components/widgets/ImageVulnsWidget";
 import { HealthTimelineWidget } from "../components/widgets/HealthTimelineWidget";
 import { ResourceOptimizationWidget } from "../components/widgets/ResourceOptimizationWidget";
 import { CapacityWidget } from "../components/widgets/CapacityWidget";
+import { GpuOverviewWidget } from "../components/widgets/GpuOverviewWidget";
 import { EmergencyActionsWidget } from "../components/widgets/EmergencyActionsWidget";
 import { REFRESH } from "../hooks/useClusterQuery";
 
@@ -185,6 +186,9 @@ export function DashboardView() {
       </section>
       <section className="dash-section">
         <FocusableWidget label="Resource Optimization"><ResourceOptimizationWidget /></FocusableWidget>
+      </section>
+      <section className="dash-section">
+        <FocusableWidget label="GPU Fleet"><GpuOverviewWidget /></FocusableWidget>
       </section>
 
       {/* ── 6. Trends & Topology ── */}
