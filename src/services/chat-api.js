@@ -4170,6 +4170,28 @@ EOF@@`);
 
       const affectedNs = new Set([...crashPods, ...oomPods, ...zeroDeploys, ...failedPods].map(p => p.metadata?.namespace).filter(Boolean));
 
+      // ── Instant feedback: stream the deterministic RCA NOW, before the LLM /
+      // ServiceNow enrichment runs (which can take tens of seconds). The full
+      // report — interactive fix cards + incident number — REPLACES this preview
+      // when it's ready, so the user sees the answer within ~2s instead of
+      // staring at a blank "Querying". onProgress is a no-op on the non-stream
+      // path, so JSON callers are unaffected.
+      if (typeof opts.onProgress === "function" && targetName && targetPod) {
+        const _topCause = rootCauses[0];
+        const _early = [
+          `### 🔎 Live RCA — \`${targetPod.metadata.name}\``,
+          ``,
+          `**Severity:** ${severityLabel}`,
+          `**Pod:** \`${targetPod.metadata.name}\` in \`${targetPod.metadata.namespace}\`${targetDeploy ? ` · Deployment \`${targetDeploy}\`` : ""}`,
+          _topCause ? `**Root cause:** ${_topCause.signal} — ${_topCause.detail}` : `**Root cause:** analysing…`,
+          ...(logAnalysis?.errorLines?.length ? [``, `**Evidence (logs):**`, ...logAnalysis.errorLines.slice(0, 4).map(l => `- \`${l}\``)] : []),
+          ``,
+          `_⏳ Generating fix proposals${isServiceNowEnabled() ? " and raising the ServiceNow incident" : ""}…_`,
+        ].join("\n");
+        try { opts.onProgress({ delta: _early }); } catch {}
+        try { opts.onProgress({ toolProgress: `Detected ${_topCause?.signal || "issue"} on ${targetName} — enriching…` }); } catch {}
+      }
+
       // Phase 2c + 10: LLM diagnosis and ServiceNow creation run in PARALLEL
       // Both only need severity + root causes (computed above), not each other.
       const llmDiagnosisPromise = (targetPod && llmEnabled() && (logAnalysis?.errorLines?.length > 0 || targetIssues.length > 0)) ? (async () => {
@@ -16968,7 +16990,20 @@ export async function handleChatAPI(req, res) {
     // active agent bridge (ocpGet() is routed through the bridge so data
     // is fetched from the correct cluster).
     if (!_remoteClusterContext || _remoteBridgeActive) {
-      const directResult = await handleDirectCommand(userMessage, cmd, { llmAvailable: llmActive });
+      // Live progress: heavy paths (incident_response) stream a deterministic
+      // RCA preview within ~2s via onProgress, then the full report replaces it.
+      // onProgress only fires while we're actually streaming (SSE).
+      let _streamedEarly = false;
+      const _onProgress = wantsStream
+        ? (evt) => {
+            try {
+              if (evt.delta) { _streamedEarly = true; sseSend(res, { stage: "generating", delta: evt.delta }); }
+              else if (evt.toolProgress) { sseSend(res, { toolProgress: evt.toolProgress }); }
+              else if (evt.stage) { sseSend(res, { stage: evt.stage }); }
+            } catch {}
+          }
+        : undefined;
+      const directResult = await handleDirectCommand(userMessage, cmd, { llmAvailable: llmActive, onProgress: _onProgress });
       if (directResult) {
         const provider = llmActive ? activeProvider : "built-in";
         const payload = {
@@ -16986,9 +17021,12 @@ export async function handleChatAPI(req, res) {
         updateMemory(conversationId, memoryPatchFromParse(parsed)).catch(() => {});
         if (wantsStream) {
           sseStart(res);
-          sseSend(res, { stage: "querying" });
           sseSend(res, { stage: "generating" });
-          sseSend(res, { delta: directResult });
+          // If an early preview was streamed, REPLACE it with the full report
+          // (fix cards + incident number) so nothing is duplicated. Otherwise
+          // stream the result as a normal delta (unchanged behaviour).
+          if (_streamedEarly) sseSend(res, { replace: directResult });
+          else sseSend(res, { delta: directResult });
           sseSend(res, { done: true, provider, conversationId });
           sseEnd(res);
           return;

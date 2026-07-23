@@ -639,6 +639,12 @@ export function ChatView() {
                 full += evt.delta;
                 updateLastAssistant(sendingCluster, full);
               }
+              // Replace the whole message (used when an early preview is
+              // swapped for the final, complete report — avoids duplication).
+              if (evt.replace !== undefined) {
+                full = evt.replace;
+                updateLastAssistant(sendingCluster, full);
+              }
               if (evt.toolCall) {
                 currentToolCalls.push(evt.toolCall);
                 setToolCalls([...currentToolCalls]);
