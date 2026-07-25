@@ -1,6 +1,8 @@
 import { useState, useCallback, useMemo } from "react";
 import { useClusterQuery } from "../hooks/useClusterQuery";
 import { useActiveCluster } from "../store/clusterStore";
+import { useChatStore } from "../store/chatStore";
+import { useViewStore } from "../store/viewStore";
 import { showToast } from "../store/toastStore";
 import { clusterUrl } from "../api/client";
 import { formatTimestamp } from "../utils/format";
@@ -58,6 +60,30 @@ export function IntelligenceView() {
     useClusterQuery("/api/change-timeline?window=24h&limit=50", { refetchInterval: 60_000 });
   const { data: corrData, refetch: refetchCorr } =
     useClusterQuery("/api/intelligence/correlations", { refetchInterval: 30_000 });
+  // Autonomous incident detection (shadow mode) — threshold breaches that WOULD
+  // have opened an incident. Read-only; no tickets are raised.
+  const { data: detectData, refetch: refetchDetect, isLoading: detectLoading } =
+    useClusterQuery("/api/intelligence/detected-incidents", { refetchInterval: 60_000 });
+
+  const setChatSeed = useChatStore((s) => s.setSeed);
+  const setActiveView = useViewStore((s) => s.setActiveView);
+
+  const detected = useMemo(() => (Array.isArray(detectData?.incidents) ? detectData.incidents : []), [detectData]);
+  const dStats = detectData?.stats || {};
+
+  // Hand a detection to the AI Chat, which runs the SAME incident_response
+  // pipeline UC-01 uses — so the RCA comes back in the identical format.
+  const investigateDetection = useCallback((inc) => {
+    const target = inc.kind === "node"
+      ? `node ${inc.node}`
+      : inc.kind === "operator"
+        ? `cluster operator ${inc.target}`
+        : inc.kind === "pvc"
+          ? `pvc ${inc.target}${inc.namespace ? ` in namespace ${inc.namespace}` : ""}`
+          : `pod ${inc.affected?.[0]?.pod || inc.target}${inc.namespace ? ` in namespace ${inc.namespace}` : ""}`;
+    setChatSeed(cluster, `Investigate ${target} — ${inc.signal} detected for ${inc.dwellMinutes ?? "?"}m. Generate the RCA and propose a fix.`);
+    setActiveView("chat");
+  }, [cluster, setChatSeed, setActiveView]);
 
   const [activeTab, setActiveTab] = useState("insights");
   const [sevFilter, setSevFilter] = useState("all");
@@ -437,6 +463,7 @@ export function IntelligenceView() {
       <div className="intel-tabs">
         {[
           { key: "insights", label: "Insights & Alerts", count: totalActive },
+          { key: "autodetect", label: "Auto-Detect", count: detected.length },
           { key: "incidents", label: "Incidents", count: incidents.length },
           { key: "timeline", label: "Change Timeline", count: tlEvents.length },
           { key: "predictions", label: "Predictions", count: predictions.length },
@@ -586,6 +613,146 @@ export function IntelligenceView() {
                   <button className="intel-card-btn" onClick={() => handleUnsilence(s.name, s.namespace)}>Unsilence</button>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ═══ 1b. AUTONOMOUS DETECTION (SHADOW MODE) ═══ */}
+      {activeTab === "autodetect" && (
+        <div className="intel-section">
+          <div className="intel-section-head">
+            <div className="intel-section-title">
+              <div className="intel-section-icon" style={{ background: "linear-gradient(135deg, #0ea5e9, #6366f1)" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              </div>
+              <div>
+                <h3>Autonomous Incident Detection</h3>
+                <p>Threshold breach → correlation → incident, with no human trigger</p>
+              </div>
+            </div>
+            <button className="intel-hero-btn" onClick={() => refetchDetect()}>Re-scan</button>
+          </div>
+
+          {/* Shadow-mode banner — the whole point of Phase 1 */}
+          <div style={{
+            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+            padding: "10px 14px", borderRadius: 10, marginBottom: 14,
+            background: "rgba(14,165,233,.12)", border: "1px solid rgba(14,165,233,.4)", fontSize: 12.5,
+          }}>
+            <strong style={{ color: "#38bdf8" }}>SHADOW MODE</strong>
+            <span style={{ opacity: .9 }}>
+              {detectData?.notice || "Detections only — no tickets raised, nothing remediated."}
+            </span>
+            <span style={{ marginLeft: "auto", opacity: .75 }}>
+              Autonomous action: <strong style={{ color: detectData?.autoActEnabled ? "#22c55e" : "#94a3b8" }}>
+                {detectData?.autoActEnabled ? "ENABLED" : "OFF"}
+              </strong>
+            </span>
+          </div>
+
+          {detectData?.disabled && (
+            <div className="intel-empty">Auto-detection is disabled. Set <code>INCIDENT_AUTO_DETECT=true</code> to enable.</div>
+          )}
+          {detectData?.error && <div className="intel-empty">{detectData.error}</div>}
+
+          {/* Detection KPIs — the numbers that justify threshold tuning */}
+          <div className="intel-inc-stats">
+            <div className="intel-inc-stat" style={{ "--is-c": "#0ea5e9" }}><span>{dStats.incidents ?? 0}</span><label>Incidents</label></div>
+            <div className="intel-inc-stat" style={{ "--is-c": "#8b5cf6" }}><span>{dStats.symptoms ?? 0}</span><label>Raw Symptoms</label></div>
+            <div className="intel-inc-stat" style={{ "--is-c": "#22c55e" }}><span>{dStats.correlationSavings ?? 0}</span><label>Tickets Avoided</label></div>
+            <div className="intel-inc-stat" style={{ "--is-c": "#f59e0b" }}><span>{dStats.wouldRaiseTickets ?? 0}</span><label>Would Ticket</label></div>
+            <div className="intel-inc-stat" style={{ "--is-c": "#64748b" }}><span>{dStats.suppressedDuplicates ?? 0}</span><label>Suppressed</label></div>
+            <div className="intel-inc-stat" style={{ "--is-c": "#ef4444" }}><span>{dStats.recurring ?? 0}</span><label>Recurring</label></div>
+          </div>
+
+          <div className="intel-card-list">
+            {detectLoading && detected.length === 0 && <div className="intel-empty">Evaluating thresholds…</div>}
+            {!detectLoading && detected.length === 0 && !detectData?.disabled && (
+              <div className="intel-empty">No threshold breaches sustained past their dwell time. Nothing would have been ticketed.</div>
+            )}
+            {detected.map((inc) => {
+              const sc = sevBucket(inc.severity);
+              const color = SEV[sc] || SEV.info;
+              return (
+                <div key={inc.signature} className="intel-card" style={{ "--card-sev": color }}>
+                  <div className="intel-card-head">
+                    <div className="intel-card-body">
+                      <div className="intel-card-row1">
+                        <span className="intel-card-title">{inc.title}</span>
+                        <span className={"intel-card-sev-badge " + sc}>{inc.severity}</span>
+                        {inc.correlation !== "single" && (
+                          <span className="intel-card-kind-badge" style={{ background: "rgba(34,197,94,.18)", color: "#4ade80" }}>
+                            {inc.correlation === "node-cascade" ? "node cascade" : "grouped"} · {inc.symptomCount} symptoms
+                          </span>
+                        )}
+                        {inc.recurring && <span className="intel-card-count">{inc.occurrences}× recurring</span>}
+                      </div>
+
+                      <div className="intel-card-msg">
+                        Fired <strong>{inc.rule}</strong>
+                        {inc.dwellMinutes != null && <> after <strong>{inc.dwellMinutes}m</strong> (threshold {inc.threshold?.dwellMinutes ?? 0}m)</>}
+                        {inc.thresholdStandard && <> · standard: <code>{inc.thresholdStandard}</code></>}
+                      </div>
+
+                      {inc.rootHint && (
+                        <div className="intel-card-reco">
+                          <span className="intel-card-reco-lbl">Correlation</span>
+                          <span className="intel-card-reco-txt">{inc.rootHint}</span>
+                        </div>
+                      )}
+
+                      {inc.evidence?.length > 0 && (
+                        <div style={{ marginTop: 6, fontSize: 11.5, opacity: .85, display: "flex", flexDirection: "column", gap: 2 }}>
+                          {inc.evidence.slice(0, 3).map((e, i) => <div key={i}>• {e}</div>)}
+                          {inc.evidence.length > 3 && <div style={{ opacity: .7 }}>+{inc.evidence.length - 3} more</div>}
+                        </div>
+                      )}
+
+                      <div className="intel-card-meta">
+                        {inc.namespace && <span>ns: {inc.namespace}</span>}
+                        {inc.node && <span>node: {inc.node}</span>}
+                        <span>first seen {timeAgo(inc.firstSeen)}</span>
+                        <span style={{ color: inc.wouldRaiseTicket ? "#f59e0b" : "#64748b" }}>
+                          {inc.wouldRaiseTicket ? "would raise ServiceNow INC" : "below ticket threshold"}
+                        </span>
+                        {inc.wouldBeAutoRemediable && <span style={{ color: "#4ade80" }}>auto-remediable (with approval)</span>}
+                      </div>
+                    </div>
+                    <div className="intel-card-actions">
+                      <button className="intel-card-btn primary" onClick={() => investigateDetection(inc)}>
+                        Generate RCA →
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Active threshold policy — tuning transparency */}
+          {detectData?.thresholds && (
+            <div style={{ marginTop: 18 }}>
+              <div className="intel-section-title" style={{ marginBottom: 8 }}>
+                <div><h3 style={{ fontSize: 14 }}>Active Threshold Policy</h3>
+                  <p style={{ fontSize: 11.5 }}>Defaults follow the kubernetes-mixin / kube-prometheus standards. Override with <code>INCIDENT_THRESHOLDS</code>.</p></div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 8 }}>
+                {Object.entries(detectData.thresholds).map(([k, v]) => (
+                  <div key={k} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px", fontSize: 11.5 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <strong>{k}</strong>
+                      <span style={{ color: v.enabled ? "#4ade80" : "#64748b" }}>{v.enabled ? "on" : "off"}</span>
+                    </div>
+                    <div style={{ opacity: .8, marginTop: 3 }}>
+                      {v.dwellMinutes != null && <>dwell {v.dwellMinutes}m · </>}
+                      {v.minRestarts != null && <>restarts ≥{v.minRestarts} · </>}
+                      {v.freePctBelow != null && <>free &lt;{v.freePctBelow}% · </>}
+                      {v.severity}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

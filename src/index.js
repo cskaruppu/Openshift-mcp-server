@@ -2662,6 +2662,29 @@ async function startSSE() {
       });
     }
 
+    // Autonomous incident detection — Phase 1, SHADOW MODE.
+    // Evaluates industry-standard thresholds against live cluster state and
+    // returns the incidents that WOULD be opened. Strictly read-only: no
+    // ServiceNow ticket, no notification, no remediation.
+    if (url.pathname === "/api/intelligence/detected-incidents" && req.method === "GET") {
+      if (!featureFlags.incidentAutoDetect()) {
+        return sendJson(res, 200, {
+          disabled: true, shadowMode: true, incidents: [],
+          notice: "Incident auto-detection is disabled (INCIDENT_AUTO_DETECT=false).",
+        });
+      }
+      try {
+        const { detectIncidents } = await import("./services/incident-detector.js");
+        const out = await withClusterContext(url, async () => detectIncidents());
+        if (out === null) {
+          return sendJson(res, 200, { shadowMode: true, incidents: [], error: "Selected cluster is not reachable." });
+        }
+        return sendJson(res, 200, { ...out, autoActEnabled: featureFlags.incidentAutoAct() });
+      } catch (err) {
+        return sendJson(res, 200, { shadowMode: true, incidents: [], error: err.message });
+      }
+    }
+
     if (url.pathname === "/api/intelligence/correlations" && req.method === "GET") {
       const force = url.searchParams.get("force") === "true";
       const result = await runCorrelation({ force });

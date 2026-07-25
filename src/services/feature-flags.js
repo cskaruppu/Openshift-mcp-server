@@ -53,6 +53,16 @@ export const flags = {
 
   // Pillar 7: Write audit log entries
   pillar7AuditLog: () => envFlag("PILLAR_7_AUDIT_LOG", true),
+
+  // Autonomous incident detection (threshold evaluator + correlation).
+  // Phase 1 is read-only SHADOW MODE: it surfaces the incidents that WOULD be
+  // opened without raising tickets or remediating anything.
+  incidentAutoDetect: () => envFlag("INCIDENT_AUTO_DETECT", true),
+
+  // Master safety interlock for autonomous ACTION (ticket creation +
+  // remediation). Stays OFF until thresholds have been validated in shadow
+  // mode; Phase 1 never reads it as anything but a display value.
+  incidentAutoAct: () => envFlag("INCIDENT_AUTO_ACT", false),
 };
 
 /** Snapshot of all flag states for the admin endpoint. */
@@ -67,6 +77,8 @@ export function snapshot() {
     pillar6_telemetry: flags.pillar6Telemetry(),
     pillar7_guardrails: flags.pillar7Guardrails(),
     pillar7_audit_log: flags.pillar7AuditLog(),
+    incident_auto_detect: flags.incidentAutoDetect(),
+    incident_auto_act: flags.incidentAutoAct(),
   };
 }
 
@@ -86,6 +98,8 @@ export function summaryText() {
     ["Pillar 6 — Telemetry recording", s.pillar6_telemetry],
     ["Pillar 7 — Command guardrails", s.pillar7_guardrails],
     ["Pillar 7 — Audit logging", s.pillar7_audit_log],
+    ["Incident auto-detection (shadow mode)", s.incident_auto_detect],
+    ["Incident autonomous action (ticket + remediate)", s.incident_auto_act],
   ];
   return rows.map(([label, on]) => `${on ? "[ON]" : "[OFF]"} ${label}`).join("\n");
 }
