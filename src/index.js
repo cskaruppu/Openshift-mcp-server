@@ -2685,6 +2685,70 @@ async function startSSE() {
       }
     }
 
+    // ── Autonomous incident sessions (Phase 2) ────────────────────────────
+    // Managed lifecycle: promote a detection → RCA → ServiceNow INC → fix →
+    // dry-run → AWAITING_APPROVAL → (human click) → apply → verify → close.
+    if (url.pathname === "/api/intelligence/incident-sessions" && req.method === "GET") {
+      try {
+        const { listSessions } = await import("./services/incident-orchestrator.js");
+        const sessions = await listSessions({
+          cluster: url.searchParams.get("cluster") || undefined,
+          state: url.searchParams.get("state") || undefined,
+        });
+        return sendJson(res, 200, {
+          sessions,
+          awaitingApproval: sessions.filter((s) => s.state === "awaiting_approval").length,
+          autoActEnabled: featureFlags.incidentAutoAct(),
+        });
+      } catch (err) { return sendJson(res, 200, { sessions: [], error: err.message }); }
+    }
+
+    // Promote a detection into a managed incident. Human-initiated.
+    if (url.pathname === "/api/intelligence/incident-sessions/promote" && req.method === "POST") {
+      if (enforceRateLimit(req, res, { burst: 6, refillPerSec: 0.1 })) return;
+      try {
+        const body = await readJsonBody(req);
+        if (!body?.detection?.signature) return sendJson(res, 400, { error: "detection (with signature) is required" });
+        const { promoteDetection } = await import("./services/incident-orchestrator.js");
+        const cluster = url.searchParams.get("cluster") || body.cluster || "local";
+        const session = await withClusterContext(url, async () => promoteDetection(body.detection, {
+          cluster, actor: body.actor || "operator", unattended: false,
+        }));
+        if (session === null) return sendJson(res, 200, { error: "Selected cluster is not reachable." });
+        return sendJson(res, 200, { session });
+      } catch (err) { return sendJson(res, 400, { error: err.message }); }
+    }
+
+    // The single human gate.
+    const apprMatch = url.pathname.match(/^\/api\/intelligence\/incident-sessions\/([\w-]+)\/(approve|reject)$/);
+    if (apprMatch && req.method === "POST") {
+      if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.2 })) return;
+      try {
+        const body = await readJsonBody(req).catch(() => ({}));
+        const { approveSession, rejectSession } = await import("./services/incident-orchestrator.js");
+        const actor = body.actor || "operator";
+        const session = await withClusterContext(url, async () =>
+          apprMatch[2] === "approve"
+            ? approveSession(apprMatch[1], { actor })
+            : rejectSession(apprMatch[1], { actor, reason: body.reason || "Rejected by operator" })
+        );
+        if (session === null) return sendJson(res, 200, { error: "Selected cluster is not reachable." });
+        return sendJson(res, 200, { session });
+      } catch (err) { return sendJson(res, 400, { error: err.message }); }
+    }
+
+    // RCA document (plain text) for a session — download / attach.
+    const rcaMatch = url.pathname.match(/^\/api\/intelligence\/incident-sessions\/([\w-]+)\/rca$/);
+    if (rcaMatch && req.method === "GET") {
+      try {
+        const { getSessionRCA } = await import("./services/incident-orchestrator.js");
+        const doc = await getSessionRCA(rcaMatch[1]);
+        if (!doc) return sendJson(res, 404, { error: "Session not found" });
+        res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+        return res.end(doc);
+      } catch (err) { return sendJson(res, 500, { error: err.message }); }
+    }
+
     if (url.pathname === "/api/intelligence/correlations" && req.method === "GET") {
       const force = url.searchParams.get("force") === "true";
       const result = await runCorrelation({ force });

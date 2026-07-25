@@ -49,6 +49,15 @@ export const DEFAULT_THRESHOLDS = {
 // namespaces are still covered by operatorDegraded / node rules.
 const NOISE_NAMESPACES = [/^openshift-marketplace$/, /^openshift-operator-lifecycle-manager$/];
 
+// Rules for which a safe, deterministic remediation exists (rolling restart,
+// memory bump, PVC expand). Shared with the orchestrator so the badge shown in
+// shadow mode and the action actually planned later can never diverge.
+// Infrastructure signals (node/operator/PVC-pending/image-pull) are deliberately
+// absent — they escalate to a human instead of being guessed at.
+export const AUTO_REMEDIABLE_RULES = new Set([
+  "crashLoop", "podNotReady", "zeroReady", "replicaMismatch", "oomKilled", "pvcFilling",
+]);
+
 /** Merge operator overrides (env JSON) over the standard defaults. */
 export function getThresholds() {
   let over = {};
@@ -404,7 +413,7 @@ export async function detectIncidents() {
       })),
       // Shadow-mode transparency: what the automation WOULD do next.
       wouldRaiseTicket: raiseWorthy,
-      wouldBeAutoRemediable: ["crashLoop", "zeroReady", "replicaMismatch", "podNotReady"].includes(p.rule),
+      wouldBeAutoRemediable: AUTO_REMEDIABLE_RULES.has(p.rule),
       shadowMode: true,
     });
   }

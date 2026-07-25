@@ -64,12 +64,45 @@ export function IntelligenceView() {
   // have opened an incident. Read-only; no tickets are raised.
   const { data: detectData, refetch: refetchDetect, isLoading: detectLoading } =
     useClusterQuery("/api/intelligence/detected-incidents", { refetchInterval: 60_000 });
+  // Managed incident sessions (Phase 2) — the approval queue. Polled faster
+  // because remediation/verification progresses in the background.
+  const { data: sessData, refetch: refetchSessions } =
+    useClusterQuery("/api/intelligence/incident-sessions", { refetchInterval: 10_000 });
 
   const setChatSeed = useChatStore((s) => s.setSeed);
   const setActiveView = useViewStore((s) => s.setActiveView);
 
   const detected = useMemo(() => (Array.isArray(detectData?.incidents) ? detectData.incidents : []), [detectData]);
   const dStats = detectData?.stats || {};
+  const sessions = useMemo(() => (Array.isArray(sessData?.sessions) ? sessData.sessions : []), [sessData]);
+  const awaiting = useMemo(() => sessions.filter((s) => s.state === "awaiting_approval"), [sessions]);
+  const liveSessions = useMemo(() => sessions.filter((s) => s.state !== "closed"), [sessions]);
+  // Signatures already under management — so a detection isn't promoted twice.
+  const managedSigs = useMemo(() => new Set(liveSessions.map((s) => s.signature)), [liveSessions]);
+  const [busySession, setBusySession] = useState({});
+
+  const callSession = useCallback(async (path, body, okMsg) => {
+    setBusySession((p) => ({ ...p, [path]: true }));
+    try {
+      const res = await fetch(clusterUrl(path, cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {}),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (d.error) showToast(d.error, "err");
+      else showToast(okMsg, "ok");
+      refetchSessions();
+    } catch (e) {
+      showToast(e.message, "err");
+    } finally {
+      setBusySession((p) => ({ ...p, [path]: false }));
+    }
+  }, [cluster, refetchSessions]);
+
+  const promoteDetection = useCallback((inc) => {
+    callSession("/api/intelligence/incident-sessions/promote", { detection: inc },
+      "Incident opened — running RCA, ticket and dry-run…");
+  }, [callSession]);
 
   // Hand a detection to the AI Chat, which runs the SAME incident_response
   // pipeline UC-01 uses — so the RCA comes back in the identical format.
@@ -463,7 +496,7 @@ export function IntelligenceView() {
       <div className="intel-tabs">
         {[
           { key: "insights", label: "Insights & Alerts", count: totalActive },
-          { key: "autodetect", label: "Auto-Detect", count: detected.length },
+          { key: "autodetect", label: awaiting.length > 0 ? `Auto-Detect · ${awaiting.length} to approve` : "Auto-Detect", count: detected.length },
           { key: "incidents", label: "Incidents", count: incidents.length },
           { key: "timeline", label: "Change Timeline", count: tlEvents.length },
           { key: "predictions", label: "Predictions", count: predictions.length },
@@ -656,6 +689,126 @@ export function IntelligenceView() {
           )}
           {detectData?.error && <div className="intel-empty">{detectData.error}</div>}
 
+          {/* ── APPROVAL INBOX — the single human gate ── */}
+          {liveSessions.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
+              <div className="intel-section-title" style={{ marginBottom: 10 }}>
+                <div>
+                  <h3 style={{ fontSize: 14 }}>
+                    Approval Inbox
+                    {awaiting.length > 0 && (
+                      <span style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 999, fontSize: 11,
+                        background: "rgba(245,158,11,.2)", color: "#fbbf24", border: "1px solid rgba(245,158,11,.45)" }}>
+                        {awaiting.length} awaiting approval
+                      </span>
+                    )}
+                  </h3>
+                  <p style={{ fontSize: 11.5 }}>
+                    RCA, ticket and dry-run are already done. Approving applies the fix, then verification and ticket closure run automatically.
+                  </p>
+                </div>
+              </div>
+
+              <div className="intel-card-list">
+                {liveSessions.map((s) => {
+                  const sc = sevBucket(s.severity);
+                  const color = SEV[sc] || SEV.info;
+                  const gate = s.state === "awaiting_approval";
+                  const running = ["approved", "remediating", "verifying"].includes(s.state);
+                  const bad = ["failed", "rolled_back", "escalated"].includes(s.state);
+                  const aPath = `/api/intelligence/incident-sessions/${s.id}/approve`;
+                  const rPath = `/api/intelligence/incident-sessions/${s.id}/reject`;
+                  const STATE_LABEL = {
+                    detected: "Detected", triaged: "RCA generated", inc_raised: "Ticket raised",
+                    fix_proposed: "Fix proposed", dry_run_passed: "Dry-run passed",
+                    awaiting_approval: "⏸ Awaiting your approval", approved: "Approved",
+                    remediating: "⏳ Applying fix…", verifying: "⏳ Verifying…",
+                    resolved: "Resolved", closed: "Closed", rejected: "Rejected",
+                    escalated: "⚠ Escalated — needs a human", rolled_back: "⚠ Not verified — rolled back",
+                    failed: "❌ Failed",
+                  };
+                  return (
+                    <div key={s.id} className="intel-card"
+                      style={{ "--card-sev": color, ...(gate ? { boxShadow: "0 0 0 1px rgba(245,158,11,.5)" } : {}) }}>
+                      <div className="intel-card-head">
+                        <div className="intel-card-body">
+                          <div className="intel-card-row1">
+                            <span className="intel-card-title">{s.title}</span>
+                            <span className={"intel-card-sev-badge " + sc}>{s.severity}</span>
+                            <span className="intel-card-kind-badge" style={{
+                              background: gate ? "rgba(245,158,11,.18)" : bad ? "rgba(239,68,68,.18)" : running ? "rgba(14,165,233,.18)" : "rgba(34,197,94,.18)",
+                              color: gate ? "#fbbf24" : bad ? "#fca5a5" : running ? "#38bdf8" : "#4ade80",
+                            }}>{STATE_LABEL[s.state] || s.state}</span>
+                            {s.incidentNumber && <span className="intel-card-source">{s.incidentNumber}</span>}
+                          </div>
+
+                          {s.rca?.rootCause && (
+                            <div className="intel-card-msg"><strong>Root cause:</strong> {s.rca.rootCause}</div>
+                          )}
+
+                          {s.remediation?.command && (
+                            <div className="intel-card-reco" style={{ flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
+                              <span className="intel-card-reco-lbl">
+                                Proposed fix · risk {s.remediation.risk} · {s.remediation.reversible ? "reversible" : "NOT reversible"}
+                              </span>
+                              <code style={{ fontSize: 11.5, wordBreak: "break-all" }}>{s.remediation.command}</code>
+                              {s.remediation.rationale && (
+                                <span style={{ fontSize: 11.5, opacity: .85 }}>{s.remediation.rationale}</span>
+                              )}
+                            </div>
+                          )}
+
+                          {s.dryRunOutput && (
+                            <div style={{ marginTop: 6, fontSize: 11, opacity: .8 }}>
+                              <strong>Dry-run:</strong> {String(s.dryRunOutput).slice(0, 220)}
+                            </div>
+                          )}
+                          {s.escalationReason && (
+                            <div style={{ marginTop: 6, fontSize: 11.5, color: "#fca5a5" }}>{s.escalationReason}</div>
+                          )}
+                          {s.verification?.summary && (
+                            <div style={{ marginTop: 6, fontSize: 11.5, color: s.verification.ok ? "#4ade80" : "#fbbf24" }}>
+                              <strong>Verification:</strong> {s.verification.summary}
+                            </div>
+                          )}
+
+                          <div className="intel-card-meta">
+                            {s.namespace && <span>ns: {s.namespace}</span>}
+                            {s.target && <span>target: {s.target}</span>}
+                            <span>opened {timeAgo(s.detectedAt)}</span>
+                            {s.approvedBy && <span>approved by {s.approvedBy}</span>}
+                            {s.state === "closed" && <span style={{ color: s.ticketClosed ? "#4ade80" : "#94a3b8" }}>
+                              {s.ticketClosed ? "ticket closed with RCA" : "ticket left open"}
+                            </span>}
+                          </div>
+                        </div>
+
+                        <div className="intel-card-actions" style={{ gap: 6 }}>
+                          {gate && (
+                            <>
+                              <button className="intel-card-btn success" disabled={!!busySession[aPath]}
+                                onClick={() => callSession(aPath, { actor: "operator" }, "Approved — applying fix, then verifying and closing")}>
+                                {busySession[aPath] ? "…" : "Approve & Fix"}
+                              </button>
+                              <button className="intel-card-btn" disabled={!!busySession[rPath]}
+                                onClick={() => callSession(rPath, { actor: "operator", reason: "Rejected from Approval Inbox" }, "Rejected — incident left for manual handling")}>
+                                Reject
+                              </button>
+                            </>
+                          )}
+                          <a className="intel-card-btn" href={clusterUrl(`/api/intelligence/incident-sessions/${s.id}/rca`, cluster)}
+                            target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+                            View RCA
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Detection KPIs — the numbers that justify threshold tuning */}
           <div className="intel-inc-stats">
             <div className="intel-inc-stat" style={{ "--is-c": "#0ea5e9" }}><span>{dStats.incidents ?? 0}</span><label>Incidents</label></div>
@@ -719,9 +872,21 @@ export function IntelligenceView() {
                         {inc.wouldBeAutoRemediable && <span style={{ color: "#4ade80" }}>auto-remediable (with approval)</span>}
                       </div>
                     </div>
-                    <div className="intel-card-actions">
-                      <button className="intel-card-btn primary" onClick={() => investigateDetection(inc)}>
-                        Generate RCA →
+                    <div className="intel-card-actions" style={{ gap: 6 }}>
+                      {managedSigs.has(inc.signature) ? (
+                        <span style={{ fontSize: 11, color: "#4ade80" }}>in Approval Inbox ↑</span>
+                      ) : (
+                        <button
+                          className="intel-card-btn success"
+                          disabled={!!busySession["/api/intelligence/incident-sessions/promote"]}
+                          title="Run RCA, raise the ServiceNow incident, propose a fix and dry-run it — then wait for your approval"
+                          onClick={() => promoteDetection(inc)}
+                        >
+                          Open Incident →
+                        </button>
+                      )}
+                      <button className="intel-card-btn" onClick={() => investigateDetection(inc)}>
+                        Ask AI
                       </button>
                     </div>
                   </div>
