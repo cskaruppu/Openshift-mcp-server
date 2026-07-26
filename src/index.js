@@ -2690,7 +2690,7 @@ async function startSSE() {
     // dry-run → AWAITING_APPROVAL → (human click) → apply → verify → close.
     if (url.pathname === "/api/intelligence/incident-sessions" && req.method === "GET") {
       try {
-        const { listSessions } = await import("./services/incident-orchestrator.js");
+        const { listSessions, ticketBudgetStatus } = await import("./services/incident-orchestrator.js");
         const sessions = await listSessions({
           cluster: url.searchParams.get("cluster") || undefined,
           state: url.searchParams.get("state") || undefined,
@@ -2698,7 +2698,9 @@ async function startSSE() {
         return sendJson(res, 200, {
           sessions,
           awaitingApproval: sessions.filter((s) => s.state === "awaiting_approval").length,
+          selfHealed: sessions.filter((s) => s.selfHealed).length,
           autoActEnabled: featureFlags.incidentAutoAct(),
+          ticketBudget: ticketBudgetStatus(),
         });
       } catch (err) { return sendJson(res, 200, { sessions: [], error: err.message }); }
     }
@@ -8363,6 +8365,38 @@ spec:
   }
 
   _upgradePollTimer = setInterval(pollUpgradeSessions, UPGRADE_POLL_INTERVAL);
+
+  // ── Autonomous incident loop ────────────────────────────────────────────
+  // Runs the threshold detector on a schedule and (a) closes incidents whose
+  // condition self-resolved, (b) opens incidents for eligible new breaches when
+  // INCIDENT_AUTO_ACT is enabled. Detection is always safe/read-only; only the
+  // promotion half is gated. This is what makes the flow need no human trigger.
+  const INCIDENT_POLL_INTERVAL = parseInt(process.env.INCIDENT_POLL_INTERVAL_MS || "120000", 10);
+
+  async function pollIncidentDetections() {
+    if (!featureFlags.incidentAutoDetect()) return;
+    try {
+      const { detectIncidents } = await import("./services/incident-detector.js");
+      const { reconcileSelfHealed, autoPromoteDetections } = await import("./services/incident-orchestrator.js");
+      const result = await detectIncidents();
+
+      // 1. Self-heal first, so a condition that cleared never gets re-opened.
+      const healed = await reconcileSelfHealed(result.activeSignatures || []);
+      if (healed.length) {
+        console.log(`[incident-loop] self-healed & closed: ${healed.map(h => h.incidentNumber || h.id).join(", ")}`);
+      }
+
+      // 2. Open incidents for eligible breaches (no-op unless AUTO_ACT is on).
+      const promo = await autoPromoteDetections(result.incidents || [], { cluster: "local" });
+      if (promo.enabled && promo.promoted.length) {
+        console.log(`[incident-loop] auto-raised: ${promo.promoted.map(p => `${p.incidentNumber || p.sessionId}(${p.state})`).join(", ")}`);
+      }
+    } catch (e) {
+      console.error(`[incident-loop] ${e.message}`);
+    }
+  }
+
+  setInterval(pollIncidentDetections, INCIDENT_POLL_INTERVAL);
 
   // Reload config on SIGHUP (e.g. after ConfigMap update)
   process.on("SIGHUP", () => {

@@ -673,14 +673,21 @@ export function IntelligenceView() {
             padding: "10px 14px", borderRadius: 10, marginBottom: 14,
             background: "rgba(14,165,233,.12)", border: "1px solid rgba(14,165,233,.4)", fontSize: 12.5,
           }}>
-            <strong style={{ color: "#38bdf8" }}>SHADOW MODE</strong>
+            <strong style={{ color: sessData?.autoActEnabled ? "#4ade80" : "#38bdf8" }}>
+              {sessData?.autoActEnabled ? "AUTONOMOUS MODE" : "SHADOW MODE"}
+            </strong>
             <span style={{ opacity: .9 }}>
-              {detectData?.notice || "Detections only — no tickets raised, nothing remediated."}
+              {sessData?.autoActEnabled
+                ? "Eligible breaches raise a ServiceNow incident automatically and self-resolved conditions close themselves. Fixes still require your approval."
+                : (detectData?.notice || "Detections only — no tickets raised, nothing remediated.")}
             </span>
             <span style={{ marginLeft: "auto", opacity: .75 }}>
-              Autonomous action: <strong style={{ color: detectData?.autoActEnabled ? "#22c55e" : "#94a3b8" }}>
-                {detectData?.autoActEnabled ? "ENABLED" : "OFF"}
+              Autonomous action: <strong style={{ color: sessData?.autoActEnabled ? "#22c55e" : "#94a3b8" }}>
+                {sessData?.autoActEnabled ? "ENABLED" : "OFF"}
               </strong>
+              {sessData?.selfHealed > 0 && (
+                <span style={{ marginLeft: 10, color: "#4ade80" }}>· {sessData.selfHealed} self-healed</span>
+              )}
             </span>
           </div>
 
@@ -740,6 +747,17 @@ export function IntelligenceView() {
                               color: gate ? "#fbbf24" : bad ? "#fca5a5" : running ? "#38bdf8" : "#4ade80",
                             }}>{STATE_LABEL[s.state] || s.state}</span>
                             {s.incidentNumber && <span className="intel-card-source">{s.incidentNumber}</span>}
+                            {s.itilPriority && <span className="intel-card-source">{s.itilPriority}</span>}
+                            {s.selfHealed && (
+                              <span className="intel-card-kind-badge" style={{ background: "rgba(34,197,94,.18)", color: "#4ade80" }}>
+                                self-healed · auto-closed
+                              </span>
+                            )}
+                            {s.promotedBy === "auto-detect" && (
+                              <span className="intel-card-kind-badge" style={{ background: "rgba(14,165,233,.18)", color: "#38bdf8" }}>
+                                auto-raised
+                              </span>
+                            )}
                           </div>
 
                           {s.rca?.rootCause && (
@@ -811,13 +829,24 @@ export function IntelligenceView() {
 
           {/* Detection KPIs — the numbers that justify threshold tuning */}
           <div className="intel-inc-stats">
-            <div className="intel-inc-stat" style={{ "--is-c": "#0ea5e9" }}><span>{dStats.incidents ?? 0}</span><label>Incidents</label></div>
+            <div className="intel-inc-stat" style={{ "--is-c": "#0ea5e9" }}><span>{dStats.detections ?? 0}</span><label>Detections</label></div>
             <div className="intel-inc-stat" style={{ "--is-c": "#8b5cf6" }}><span>{dStats.symptoms ?? 0}</span><label>Raw Symptoms</label></div>
             <div className="intel-inc-stat" style={{ "--is-c": "#22c55e" }}><span>{dStats.correlationSavings ?? 0}</span><label>Tickets Avoided</label></div>
-            <div className="intel-inc-stat" style={{ "--is-c": "#f59e0b" }}><span>{dStats.wouldRaiseTickets ?? 0}</span><label>Would Ticket</label></div>
-            <div className="intel-inc-stat" style={{ "--is-c": "#64748b" }}><span>{dStats.suppressedDuplicates ?? 0}</span><label>Suppressed</label></div>
+            <div className="intel-inc-stat" style={{ "--is-c": "#f59e0b" }}><span>{dStats.wouldRaiseTickets ?? 0}</span><label>Auto-Ticket Eligible</label></div>
+            <div className="intel-inc-stat" style={{ "--is-c": "#64748b" }}><span>{dStats.chronic ?? 0}</span><label>Chronic (Problem)</label></div>
             <div className="intel-inc-stat" style={{ "--is-c": "#ef4444" }}><span>{dStats.recurring ?? 0}</span><label>Recurring</label></div>
           </div>
+
+          {/* Policy transparency — why N of M would actually get a ticket */}
+          {detectData?.policy && (
+            <div style={{ fontSize: 11.5, opacity: .8, margin: "-4px 0 14px" }}>
+              Auto-ticket policy: severity ≤ <strong>{detectData.policy.autoSeverityFloor}</strong> ·
+              conditions older than <strong>{detectData.policy.chronicHours}h</strong> when first seen are treated as
+              chronic <em>Problem</em> candidates, not new incidents ·
+              rate limit <strong>{sessData?.ticketBudget?.limit ?? "—"}/hour</strong>
+              {sessData?.ticketBudget && ` (${sessData.ticketBudget.usedLastHour} used)`}
+            </div>
+          )}
 
           <div className="intel-card-list">
             {detectLoading && detected.length === 0 && <div className="intel-empty">Evaluating thresholds…</div>}
@@ -840,13 +869,21 @@ export function IntelligenceView() {
                           </span>
                         )}
                         {inc.recurring && <span className="intel-card-count">{inc.occurrences}× recurring</span>}
+                        {inc.chronic && (
+                          <span className="intel-card-kind-badge" style={{ background: "rgba(100,116,139,.25)", color: "#cbd5e1" }}
+                            title={inc.chronicReason || ""}>chronic → Problem</span>
+                        )}
                       </div>
 
                       <div className="intel-card-msg">
                         Fired <strong>{inc.rule}</strong>
-                        {inc.dwellMinutes != null && <> after <strong>{inc.dwellMinutes}m</strong> (threshold {inc.threshold?.dwellMinutes ?? 0}m)</>}
+                        {inc.dwellMinutes != null && <> after <strong>{inc.dwellHuman || `${inc.dwellMinutes}m`}</strong> (threshold {inc.threshold?.dwellMinutes ?? 0}m)</>}
                         {inc.thresholdStandard && <> · standard: <code>{inc.thresholdStandard}</code></>}
                       </div>
+
+                      {inc.chronic && inc.chronicReason && (
+                        <div style={{ marginTop: 5, fontSize: 11.5, color: "#cbd5e1", opacity: .9 }}>{inc.chronicReason}</div>
+                      )}
 
                       {inc.rootHint && (
                         <div className="intel-card-reco">
@@ -866,8 +903,12 @@ export function IntelligenceView() {
                         {inc.namespace && <span>ns: {inc.namespace}</span>}
                         {inc.node && <span>node: {inc.node}</span>}
                         <span>first seen {timeAgo(inc.firstSeen)}</span>
-                        <span style={{ color: inc.wouldRaiseTicket ? "#f59e0b" : "#64748b" }}>
-                          {inc.wouldRaiseTicket ? "would raise ServiceNow INC" : "below ticket threshold"}
+                        <span style={{ color: inc.autoTicketEligible ? "#f59e0b" : "#64748b" }}>
+                          {inc.autoTicketEligible
+                            ? "eligible for auto-ticket"
+                            : inc.autoTicketBlockedBy === "chronic"
+                              ? "chronic — manual only"
+                              : `below ${detectData?.policy?.autoSeverityFloor || "severity floor"}`}
                         </span>
                         {inc.wouldBeAutoRemediable && <span style={{ color: "#4ade80" }}>auto-remediable (with approval)</span>}
                       </div>

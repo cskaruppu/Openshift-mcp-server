@@ -110,8 +110,12 @@ export async function createIncident({
   urgency = "2",
   impact = "2",
   category = "",
+  subcategory = "",
   assignmentGroup = "",
   callerID = "",
+  correlationId = "",
+  correlationDisplay = "",
+  cmdbCi = "",
 }) {
   const payload = {
     short_description: shortDescription,
@@ -120,7 +124,18 @@ export async function createIncident({
     impact,
   };
   if (category) payload.category = category;
-  if (assignmentGroup) payload.assignment_group = assignmentGroup;
+  if (subcategory) payload.subcategory = subcategory;
+  // Fall back to a configured default queue so auto-raised incidents always
+  // land in a human-owned bucket instead of the unassigned pool.
+  const group = assignmentGroup || process.env.SERVICENOW_ASSIGNMENT_GROUP || "";
+  if (group) payload.assignment_group = group;
+  // correlation_id is ServiceNow's native key for "this came from an external
+  // monitoring system" — it lets ServiceNow itself dedupe/relate our incidents.
+  if (correlationId) payload.correlation_id = correlationId;
+  if (correlationDisplay) payload.correlation_display = correlationDisplay;
+  // Referencing a CI by plain name only works if it resolves in the CMDB;
+  // an unresolvable reference can make the whole insert fail, so it is opt-in.
+  if (cmdbCi && process.env.SERVICENOW_SET_CMDB_CI === "true") payload.cmdb_ci = cmdbCi;
   const callerSysId = callerID || await resolveCallerSysId();
   if (callerSysId) payload.caller_id = callerSysId;
 

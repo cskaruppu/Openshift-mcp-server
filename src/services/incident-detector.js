@@ -73,14 +73,39 @@ export function getThresholds() {
 // Suppression / recurrence memory (per-process; Phase 2 moves this to the DB
 // alongside incident_history so it survives restarts and spans the fleet).
 // ---------------------------------------------------------------------------
-const _seen = new Map(); // signature -> { firstSeen, lastSeen, count }
-const SUPPRESS_MINUTES = parseInt(process.env.INCIDENT_SUPPRESS_MINUTES || "60", 10);
+const _seen = new Map(); // signature -> { firstSeen, lastSeen, occurrences }
+
+// A signature seen again while it was never absent is the SAME ongoing episode.
+// It only counts as a genuine recurrence if the condition CLEARED (went missing
+// from a scan for longer than this gap) and then came back. Without this, a
+// 60-second poll would report "60× recurring" after an hour of one flat outage.
+const RECURRENCE_GAP_MINUTES = parseInt(process.env.INCIDENT_RECURRENCE_GAP_MINUTES || "20", 10);
+
+// A condition that was ALREADY broken for longer than this when we first saw it
+// is chronic, not a new incident. Paging someone at 2am for something that has
+// been failing for ten days is how automated ITSM loses credibility — chronic
+// items are surfaced as Problem-record candidates instead.
+const CHRONIC_HOURS = parseInt(process.env.INCIDENT_CHRONIC_HOURS || "24", 10);
+
+// Only these severities are eligible for UNATTENDED ticket creation. Everything
+// else is still detected and can be promoted by hand.
+const AUTO_SEVERITY_FLOOR = (process.env.INCIDENT_AUTO_SEVERITY_FLOOR || "SEV-2").toUpperCase();
 
 function minutesSince(ts) {
   if (!ts) return null;
   const t = new Date(ts).getTime();
   if (Number.isNaN(t)) return null;
   return Math.max(0, Math.round((Date.now() - t) / 60000));
+}
+
+/** 14606 → "10d 3h". Raw minutes are unreadable past an hour or two. */
+export function humanizeMinutes(m) {
+  if (m == null || Number.isNaN(m)) return null;
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60), rm = m % 60;
+  if (h < 24) return rm ? `${h}h ${rm}m` : `${h}h`;
+  const d = Math.floor(h / 24), rh = h % 24;
+  return rh ? `${d}d ${rh}h` : `${d}d`;
 }
 
 /** Strip ReplicaSet/pod hash suffixes so a signature is stable across restarts. */
@@ -370,22 +395,35 @@ export async function detectIncidents() {
 
   // Fingerprint, apply recurrence memory, and shape the result.
   const now = Date.now();
-  let suppressed = 0;
+  const nowIso = new Date(now).toISOString();
+  const seenThisScan = new Set();
   const out = [];
   for (const inc of correlated) {
     const p = inc.primary;
     const signature = `${p.rule}:${p.namespace || "cluster"}:${p.owner || p.node || stableName(p.pod) || "-"}`;
+    seenThisScan.add(signature);
     const prev = _seen.get(signature);
-    const firstSeen = prev?.firstSeen || new Date(now - (p.dwellMinutes || 0) * 60000).toISOString();
-    const count = (prev?.count || 0) + 1;
-    _seen.set(signature, { firstSeen, lastSeen: new Date(now).toISOString(), count });
 
-    // Suppression: an unchanged signature seen inside the window is a duplicate
-    // of an already-surfaced detection, not a new incident.
-    const isDuplicate = prev && minutesSince(prev.lastSeen) != null && minutesSince(prev.lastSeen) < SUPPRESS_MINUTES && count > 1;
-    if (isDuplicate) suppressed++;
+    // True recurrence = the condition disappeared for longer than the gap and
+    // then returned. A continuously-present condition stays occurrence #1 no
+    // matter how many times we poll.
+    const gap = prev ? minutesSince(prev.lastSeen) : null;
+    const isNewEpisode = !prev || (gap != null && gap > RECURRENCE_GAP_MINUTES);
+    const occurrences = isNewEpisode ? ((prev?.occurrences || 0) + 1) : (prev.occurrences || 1);
+    const firstSeen = isNewEpisode
+      ? new Date(now - (p.dwellMinutes || 0) * 60000).toISOString()
+      : prev.firstSeen;
+    _seen.set(signature, { firstSeen, lastSeen: nowIso, occurrences });
 
-    const raiseWorthy = SEV_RANK[inc.severity] <= 3; // matches the existing SEV-1..3 ticket rule
+    // Chronic: already broken longer than the chronic window when first seen.
+    const ageMinutes = p.dwellMinutes ?? minutesSince(firstSeen) ?? 0;
+    const chronic = ageMinutes > CHRONIC_HOURS * 60;
+
+    // Ticket eligibility for UNATTENDED creation: severity floor + not chronic.
+    // (Chronic items remain fully promotable by hand from the UI.)
+    const meetsSeverity = SEV_RANK[inc.severity] <= (SEV_RANK[AUTO_SEVERITY_FLOOR] || 2);
+    const autoTicketEligible = meetsSeverity && !chronic;
+
     out.push({
       signature,
       title: inc.title,
@@ -401,21 +439,35 @@ export async function detectIncidents() {
       thresholdStandard: p.standard,
       threshold: T[p.rule] || null,
       dwellMinutes: p.dwellMinutes,
-      detectedAt: new Date(now).toISOString(),
+      dwellHuman: humanizeMinutes(p.dwellMinutes),
+      ageHuman: humanizeMinutes(ageMinutes),
+      detectedAt: nowIso,
       firstSeen,
-      occurrences: count,
-      recurring: count > 1,
-      suppressedDuplicate: !!isDuplicate,
+      occurrences,
+      recurring: occurrences > 1,
+      chronic,
+      classification: chronic ? "problem" : "incident",
+      chronicReason: chronic
+        ? `Already failing for ${humanizeMinutes(ageMinutes)} when first detected (chronic threshold ${CHRONIC_HOURS}h). Treated as a Problem candidate, not a new Incident — raise it manually if you want a ticket.`
+        : null,
       rootHint: inc.rootHint,
       evidence: inc.symptoms.slice(0, 8).map((s) => s.evidence),
       affected: inc.symptoms.slice(0, 20).map((s) => ({
         namespace: s.namespace, pod: s.pod || null, node: s.node || null, owner: s.owner || null, signal: s.signal,
       })),
-      // Shadow-mode transparency: what the automation WOULD do next.
-      wouldRaiseTicket: raiseWorthy,
+      // Transparency: exactly what the automation would do, and why.
+      wouldRaiseTicket: autoTicketEligible,
+      autoTicketEligible,
+      autoTicketBlockedBy: autoTicketEligible ? null : (chronic ? "chronic" : "severity-floor"),
       wouldBeAutoRemediable: AUTO_REMEDIABLE_RULES.has(p.rule),
       shadowMode: true,
     });
+  }
+
+  // Age out signatures that have fully cleared, so a later reappearance counts
+  // as a real recurrence and self-heal detection can see them disappear.
+  for (const [sig, rec] of _seen) {
+    if (!seenThisScan.has(sig) && (minutesSince(rec.lastSeen) ?? 0) > 24 * 60) _seen.delete(sig);
   }
 
   out.sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || (b.symptomCount - a.symptomCount));
@@ -425,18 +477,24 @@ export async function detectIncidents() {
     shadowMode: true,
     notice: "Shadow mode — detections only. No ServiceNow tickets were raised, no notifications sent, and nothing was remediated.",
     incidents: out,
+    // Live signature set, so the poller can spot conditions that have cleared.
+    activeSignatures: [...seenThisScan],
     stats: {
-      incidents: out.length,
+      detections: out.length,
       symptoms: symptoms.length,
       correlationSavings: Math.max(0, symptoms.length - out.length), // tickets avoided by correlating
-      suppressedDuplicates: suppressed,
+      chronic: out.filter((i) => i.chronic).length,
       recurring: out.filter((i) => i.recurring).length,
-      wouldRaiseTickets: out.filter((i) => i.wouldRaiseTicket).length,
+      wouldRaiseTickets: out.filter((i) => i.autoTicketEligible).length,
       bySeverity,
       alertmanagerAlerts: Array.isArray(amAlerts) ? amAlerts.filter((a) => a.status?.state === "active").length : 0,
     },
+    policy: {
+      chronicHours: CHRONIC_HOURS,
+      autoSeverityFloor: AUTO_SEVERITY_FLOOR,
+      recurrenceGapMinutes: RECURRENCE_GAP_MINUTES,
+    },
     thresholds: T,
-    suppressWindowMinutes: SUPPRESS_MINUTES,
-    generatedAt: new Date(now).toISOString(),
+    generatedAt: nowIso,
   };
 }

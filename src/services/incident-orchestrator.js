@@ -57,19 +57,22 @@ export const INCIDENT_STATES = {
 };
 const S = INCIDENT_STATES;
 
+// RESOLVED appears on the pre-remediation states too: a condition can clear on
+// its own before anyone approves a fix (self-healing), and leaving those tickets
+// open forever is exactly the manual toil this system exists to remove.
 const TRANSITIONS = {
-  [S.DETECTED]:          [S.TRIAGED, S.FAILED],
-  [S.TRIAGED]:           [S.INC_RAISED, S.FIX_PROPOSED, S.ESCALATED, S.FAILED],
-  [S.INC_RAISED]:        [S.FIX_PROPOSED, S.ESCALATED, S.FAILED],
-  [S.FIX_PROPOSED]:      [S.DRY_RUN_PASSED, S.ESCALATED, S.FAILED],
-  [S.DRY_RUN_PASSED]:    [S.AWAITING_APPROVAL, S.ESCALATED, S.FAILED],
-  [S.AWAITING_APPROVAL]: [S.APPROVED, S.REJECTED, S.ESCALATED],
+  [S.DETECTED]:          [S.TRIAGED, S.RESOLVED, S.FAILED],
+  [S.TRIAGED]:           [S.INC_RAISED, S.FIX_PROPOSED, S.ESCALATED, S.RESOLVED, S.FAILED],
+  [S.INC_RAISED]:        [S.FIX_PROPOSED, S.ESCALATED, S.RESOLVED, S.FAILED],
+  [S.FIX_PROPOSED]:      [S.DRY_RUN_PASSED, S.ESCALATED, S.RESOLVED, S.FAILED],
+  [S.DRY_RUN_PASSED]:    [S.AWAITING_APPROVAL, S.ESCALATED, S.RESOLVED, S.FAILED],
+  [S.AWAITING_APPROVAL]: [S.APPROVED, S.REJECTED, S.ESCALATED, S.RESOLVED],
   [S.APPROVED]:          [S.REMEDIATING, S.FAILED],
   [S.REMEDIATING]:       [S.VERIFYING, S.ROLLED_BACK, S.FAILED],
   [S.VERIFYING]:         [S.RESOLVED, S.ROLLED_BACK, S.FAILED],
   [S.RESOLVED]:          [S.CLOSED],
   [S.REJECTED]:          [S.CLOSED],
-  [S.ESCALATED]:         [S.AWAITING_APPROVAL, S.CLOSED],
+  [S.ESCALATED]:         [S.AWAITING_APPROVAL, S.RESOLVED, S.CLOSED],
   [S.ROLLED_BACK]:       [S.ESCALATED, S.CLOSED],
   [S.FAILED]:            [S.ESCALATED, S.CLOSED],
   [S.CLOSED]:            [],
@@ -77,6 +80,34 @@ const TRANSITIONS = {
 
 const TERMINAL = new Set([S.CLOSED]);
 const MAX_ACTIVE_SESSIONS = parseInt(process.env.INCIDENT_MAX_ACTIVE || "25", 10);
+
+// Storm protection: hard ceiling on tickets raised per rolling hour. Without
+// this, one bad deploy or a node loss can open dozens of incidents in a minute.
+const MAX_TICKETS_PER_HOUR = parseInt(process.env.INCIDENT_MAX_TICKETS_PER_HOUR || "10", 10);
+const _ticketTimes = [];
+function ticketBudgetAvailable() {
+  const cutoff = Date.now() - 3600_000;
+  while (_ticketTimes.length && _ticketTimes[0] < cutoff) _ticketTimes.shift();
+  return _ticketTimes.length < MAX_TICKETS_PER_HOUR;
+}
+function recordTicket() { _ticketTimes.push(Date.now()); }
+export function ticketBudgetStatus() {
+  const cutoff = Date.now() - 3600_000;
+  while (_ticketTimes.length && _ticketTimes[0] < cutoff) _ticketTimes.shift();
+  return { usedLastHour: _ticketTimes.length, limit: MAX_TICKETS_PER_HOUR, available: _ticketTimes.length < MAX_TICKETS_PER_HOUR };
+}
+
+// ITIL priority is derived from the Impact × Urgency matrix, not from severity
+// directly. ServiceNow computes `priority` itself from these two fields, so we
+// set them correctly and let the instance's matrix apply.
+//   1-1 → P1 Critical | 2-1 → P2 High | 2-3 → P4 Low | 3-3 → P5 Planning
+const ITIL_MATRIX = {
+  "SEV-1": { impact: "1", urgency: "1", label: "P1 Critical" },
+  "SEV-2": { impact: "2", urgency: "1", label: "P2 High" },
+  "SEV-3": { impact: "2", urgency: "3", label: "P4 Low" },
+  "SEV-4": { impact: "3", urgency: "3", label: "P5 Planning" },
+  "SEV-5": { impact: "3", urgency: "3", label: "P5 Planning" },
+};
 
 const PROTECTED_NS = [
   /^openshift-/, /^kube-system$/, /^kube-public$/, /^kube-node-lease$/, /^default$/,
@@ -522,25 +553,43 @@ export async function promoteDetection(detection, { cluster = "local", actor = "
     const rca = await buildRCA(detection);
     await transition(session, S.TRIAGED, { rca });
 
-    // 2. Raise the ServiceNow incident (SEV-1..3, matching existing policy).
+    // 2. Raise the ServiceNow incident with proper ITIL classification.
     const raiseWorthy = ["SEV-1", "SEV-2", "SEV-3"].includes(session.severity);
     if (raiseWorthy && isServiceNowEnabled()) {
-      try {
-        const inc = await createIncident({
-          shortDescription: `[${session.severity}] ${session.title} — Auto-detected by TCS Agentic AI`,
-          description: renderRCADocument(session),
-          urgency: session.severity === "SEV-1" ? "1" : session.severity === "SEV-2" ? "2" : "3",
-          impact: session.severity === "SEV-1" ? "1" : session.severity === "SEV-2" ? "2" : "3",
-        });
-        const rec = inc?.result || inc;
+      if (!ticketBudgetAvailable()) {
+        // Storm brake: detected and triaged, but we refuse to flood the ITSM.
         await transition(session, S.INC_RAISED, {
-          incidentNumber: rec?.number || null,
-          incidentSysId: rec?.sys_id || null,
-          incidentRaisedAt: nowIso(),
+          incidentError: `Ticket rate limit reached (${MAX_TICKETS_PER_HOUR}/hour). Incident tracked locally; raise manually if needed.`,
+          incidentRaisedAt: nowIso(), rateLimited: true,
         });
-      } catch (e) {
-        // Ticketing failure must not stop remediation planning.
-        await transition(session, S.INC_RAISED, { incidentError: e.message, incidentRaisedAt: nowIso() });
+      } else {
+        try {
+          const m = ITIL_MATRIX[session.severity] || ITIL_MATRIX["SEV-3"];
+          const inc = await createIncident({
+            shortDescription: `[${session.severity}] ${session.title} — Auto-detected by TCS Agentic AI`,
+            description: renderRCADocument(session),
+            urgency: m.urgency,
+            impact: m.impact,
+            category: "Software",
+            subcategory: session.kind === "node" ? "Infrastructure" : "Application",
+            // Native ServiceNow dedup key — the same condition always maps to
+            // the same correlation_id, so the instance can relate/suppress too.
+            correlationId: session.signature,
+            correlationDisplay: `TCS Agentic AI · ${session.rule}`,
+            cmdbCi: session.target || session.node || "",
+          });
+          const rec = inc?.result || inc;
+          recordTicket();
+          await transition(session, S.INC_RAISED, {
+            incidentNumber: rec?.number || null,
+            incidentSysId: rec?.sys_id || null,
+            incidentRaisedAt: nowIso(),
+            itilPriority: m.label,
+          });
+        } catch (e) {
+          // Ticketing failure must not stop remediation planning.
+          await transition(session, S.INC_RAISED, { incidentError: e.message, incidentRaisedAt: nowIso() });
+        }
       }
     }
 
@@ -670,6 +719,92 @@ export async function rejectSession(sessionId, { actor = "operator", reason = "R
   await transition(session, S.REJECTED, { rejectedBy: actor, rejectedAt: nowIso(), rejectionReason: reason });
   await noteOnTicket(session, `Proposed fix REJECTED by ${actor}: ${reason}. Incident remains open for manual handling.`);
   return await transition(session, S.CLOSED, { closedAt: nowIso(), ticketClosed: false });
+}
+
+// ---------------------------------------------------------------------------
+// Self-heal — close incidents whose condition cleared on its own
+// ---------------------------------------------------------------------------
+// A condition that clears before anyone acts (pod recovered, node came back,
+// rollout finished) must close itself with evidence. Otherwise the queue fills
+// with stale tickets that a human has to read and close by hand — the exact
+// toil this system exists to eliminate.
+const SELF_HEAL_CONFIRM_SCANS = parseInt(process.env.INCIDENT_SELFHEAL_SCANS || "2", 10);
+const _clearedStreak = new Map(); // sessionId -> consecutive scans with no signal
+
+/** States where the condition clearing means "it fixed itself". */
+const PRE_ACTION = new Set([S.DETECTED, S.TRIAGED, S.INC_RAISED, S.FIX_PROPOSED, S.DRY_RUN_PASSED, S.AWAITING_APPROVAL, S.ESCALATED]);
+
+/**
+ * Given the signatures still firing right now, close any pre-action session
+ * whose signature has been absent for SELF_HEAL_CONFIRM_SCANS consecutive scans.
+ * @returns {Promise<Array>} sessions that were auto-closed
+ */
+export async function reconcileSelfHealed(activeSignatures = []) {
+  await hydrate();
+  const active = new Set(activeSignatures);
+  const healed = [];
+  for (const session of _sessions.values()) {
+    if (!PRE_ACTION.has(session.state)) { _clearedStreak.delete(session.id); continue; }
+    if (active.has(session.signature)) { _clearedStreak.delete(session.id); continue; }
+    const streak = (_clearedStreak.get(session.id) || 0) + 1;
+    _clearedStreak.set(session.id, streak);
+    if (streak < SELF_HEAL_CONFIRM_SCANS) continue; // require confirmation, avoid flapping
+
+    _clearedStreak.delete(session.id);
+    try {
+      const verification = { ok: true, summary: `Condition cleared on its own — "${session.signal}" no longer detected across ${streak} consecutive scans. No remediation was applied.`, attempts: streak, selfHealed: true };
+      await transition(session, S.RESOLVED, { verification, resolvedAt: nowIso(), selfHealed: true });
+      if (session.incidentSysId && isServiceNowEnabled()) {
+        try {
+          await resolveIncident(session.incidentSysId, {
+            closeCode: "Solved (Permanently)",
+            closeNotes: renderRCADocument(session),
+            workNotes: `Auto-closed by TCS Agentic AI: the condition self-resolved and was confirmed clear over ${streak} consecutive detection scans.`,
+            resolution: {
+              incidentNumber: session.incidentNumber, severity: session.severity,
+              podName: session.affected?.[0]?.pod || session.target, namespace: session.namespace,
+              deploymentName: session.target, cluster: session.cluster,
+              rootCause: session.rca?.rootCause, evidence: session.rca?.evidence || [],
+            },
+          });
+          await transition(session, S.CLOSED, { closedAt: nowIso(), ticketClosed: true });
+        } catch (e) {
+          await transition(session, S.CLOSED, { closedAt: nowIso(), ticketClosed: false, closeError: e.message });
+        }
+      } else {
+        await transition(session, S.CLOSED, { closedAt: nowIso(), ticketClosed: false });
+      }
+      healed.push(session);
+    } catch { /* transition refused — leave it alone */ }
+  }
+  return healed;
+}
+
+/**
+ * Unattended sweep: promote every eligible detection into a managed incident.
+ * Eligibility is decided by the detector (severity floor + chronic guard); this
+ * adds the ticket-budget brake and skips anything already under management.
+ * No-op unless INCIDENT_AUTO_ACT=true.
+ */
+export async function autoPromoteDetections(detections = [], { cluster = "local" } = {}) {
+  if (!flags.incidentAutoAct()) return { enabled: false, promoted: [], skipped: detections.length };
+  await hydrate();
+  const managed = new Set([..._sessions.values()].filter((s) => !TERMINAL.has(s.state)).map((s) => s.signature));
+  const promoted = [];
+  const skipped = [];
+  for (const d of detections) {
+    if (!d.autoTicketEligible) { skipped.push({ signature: d.signature, why: d.autoTicketBlockedBy || "not-eligible" }); continue; }
+    if (managed.has(d.signature)) { skipped.push({ signature: d.signature, why: "already-managed" }); continue; }
+    if (!ticketBudgetAvailable()) { skipped.push({ signature: d.signature, why: "rate-limited" }); continue; }
+    try {
+      const s = await promoteDetection(d, { cluster, actor: "auto-detect", unattended: true });
+      promoted.push({ signature: d.signature, sessionId: s.id, state: s.state, incidentNumber: s.incidentNumber || null });
+      managed.add(d.signature);
+    } catch (e) {
+      skipped.push({ signature: d.signature, why: e.message });
+    }
+  }
+  return { enabled: true, promoted, skipped };
 }
 
 export async function listSessions({ cluster, state } = {}) {
