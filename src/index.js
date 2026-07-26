@@ -2009,6 +2009,14 @@ async function startSSE() {
     await restoreServiceNowSettings();
   } catch (e) { console.warn("[startup] ServiceNow settings restore:", e.message); }
 
+  // Restore incident-automation policy (autonomous on/off, ServiceNow queue,
+  // chronic window, severity floor, rate limit) so operator changes made in the
+  // UI survive a pod restart without touching the Deployment.
+  try {
+    const { restoreIncidentSettings } = await import("./services/incident-settings.js");
+    await restoreIncidentSettings();
+  } catch (e) { console.warn("[startup] incident settings restore:", e.message); }
+
   // Hydrate LLM runtime defaults from the settings store so background LLM
   // calls (upgrade analysis, proactive insights) use the same provider config
   // as chat — not stale env defaults (azure + localhost = ECONNREFUSED).
@@ -2660,6 +2668,37 @@ async function startSSE() {
         monitoring: isMonitorRunning(),
         crossCluster: correlationResult.status === "fulfilled" ? correlationResult.value : null,
       });
+    }
+
+    // Incident automation settings — runtime-configurable policy (no redeploy).
+    if (url.pathname === "/api/intelligence/incident-settings" && req.method === "GET") {
+      try {
+        const { loadIncidentSettings, DEFAULTS } = await import("./services/incident-settings.js");
+        const s = await loadIncidentSettings();
+        return sendJson(res, 200, { settings: s, defaults: DEFAULTS });
+      } catch (err) { return sendJson(res, 200, { error: err.message }); }
+    }
+    if (url.pathname === "/api/intelligence/incident-settings" && req.method === "POST") {
+      if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.2 })) return;
+      try {
+        const body = await readJsonBody(req);
+        const { saveIncidentSettings, verifyAssignmentGroup } = await import("./services/incident-settings.js");
+        const saved = await saveIncidentSettings(body || {});
+        // Best-effort: tell the operator if the queue name doesn't resolve, so a
+        // typo doesn't silently leave every incident unassigned.
+        const groupCheck = await verifyAssignmentGroup(saved.assignmentGroup);
+        try {
+          // NOTE: logAuditTrailEvent is the audit-log.js writer ({type,title,…});
+          // the bare `logAuditEvent` in this file is the guardrails one with a
+          // completely different shape.
+          await logAuditTrailEvent({
+            type: "config_change", severity: "info",
+            title: `Incident automation settings updated (autoAct=${saved.autoAct})`,
+            details: JSON.stringify(saved), source: "incident-settings",
+          });
+        } catch {}
+        return sendJson(res, 200, { settings: saved, groupCheck });
+      } catch (err) { return sendJson(res, 400, { error: err.message }); }
     }
 
     // Autonomous incident detection — Phase 1, SHADOW MODE.

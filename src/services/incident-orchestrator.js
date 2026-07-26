@@ -83,18 +83,20 @@ const MAX_ACTIVE_SESSIONS = parseInt(process.env.INCIDENT_MAX_ACTIVE || "25", 10
 
 // Storm protection: hard ceiling on tickets raised per rolling hour. Without
 // this, one bad deploy or a node loss can open dozens of incidents in a minute.
-const MAX_TICKETS_PER_HOUR = parseInt(process.env.INCIDENT_MAX_TICKETS_PER_HOUR || "10", 10);
+// Read at call time so the Settings panel can change it without a restart.
+const maxTicketsPerHour = () => parseInt(process.env.INCIDENT_MAX_TICKETS_PER_HOUR || "10", 10);
 const _ticketTimes = [];
 function ticketBudgetAvailable() {
   const cutoff = Date.now() - 3600_000;
   while (_ticketTimes.length && _ticketTimes[0] < cutoff) _ticketTimes.shift();
-  return _ticketTimes.length < MAX_TICKETS_PER_HOUR;
+  return _ticketTimes.length < maxTicketsPerHour();
 }
 function recordTicket() { _ticketTimes.push(Date.now()); }
 export function ticketBudgetStatus() {
   const cutoff = Date.now() - 3600_000;
   while (_ticketTimes.length && _ticketTimes[0] < cutoff) _ticketTimes.shift();
-  return { usedLastHour: _ticketTimes.length, limit: MAX_TICKETS_PER_HOUR, available: _ticketTimes.length < MAX_TICKETS_PER_HOUR };
+  const limit = maxTicketsPerHour();
+  return { usedLastHour: _ticketTimes.length, limit, available: _ticketTimes.length < limit };
 }
 
 // ITIL priority is derived from the Impact × Urgency matrix, not from severity
@@ -559,7 +561,7 @@ export async function promoteDetection(detection, { cluster = "local", actor = "
       if (!ticketBudgetAvailable()) {
         // Storm brake: detected and triaged, but we refuse to flood the ITSM.
         await transition(session, S.INC_RAISED, {
-          incidentError: `Ticket rate limit reached (${MAX_TICKETS_PER_HOUR}/hour). Incident tracked locally; raise manually if needed.`,
+          incidentError: `Ticket rate limit reached (${maxTicketsPerHour()}/hour). Incident tracked locally; raise manually if needed.`,
           incidentRaisedAt: nowIso(), rateLimited: true,
         });
       } else {
@@ -728,7 +730,7 @@ export async function rejectSession(sessionId, { actor = "operator", reason = "R
 // rollout finished) must close itself with evidence. Otherwise the queue fills
 // with stale tickets that a human has to read and close by hand — the exact
 // toil this system exists to eliminate.
-const SELF_HEAL_CONFIRM_SCANS = parseInt(process.env.INCIDENT_SELFHEAL_SCANS || "2", 10);
+const selfHealConfirmScans = () => parseInt(process.env.INCIDENT_SELFHEAL_SCANS || "2", 10);
 const _clearedStreak = new Map(); // sessionId -> consecutive scans with no signal
 
 /** States where the condition clearing means "it fixed itself". */
@@ -748,7 +750,7 @@ export async function reconcileSelfHealed(activeSignatures = []) {
     if (active.has(session.signature)) { _clearedStreak.delete(session.id); continue; }
     const streak = (_clearedStreak.get(session.id) || 0) + 1;
     _clearedStreak.set(session.id, streak);
-    if (streak < SELF_HEAL_CONFIRM_SCANS) continue; // require confirmation, avoid flapping
+    if (streak < selfHealConfirmScans()) continue; // require confirmation, avoid flapping
 
     _clearedStreak.delete(session.id);
     try {

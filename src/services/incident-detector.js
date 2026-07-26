@@ -75,21 +75,24 @@ export function getThresholds() {
 // ---------------------------------------------------------------------------
 const _seen = new Map(); // signature -> { firstSeen, lastSeen, occurrences }
 
+// These are read at CALL time, not import time, so changing them from the
+// Settings panel takes effect on the very next scan without a pod restart.
+
 // A signature seen again while it was never absent is the SAME ongoing episode.
 // It only counts as a genuine recurrence if the condition CLEARED (went missing
 // from a scan for longer than this gap) and then came back. Without this, a
 // 60-second poll would report "60× recurring" after an hour of one flat outage.
-const RECURRENCE_GAP_MINUTES = parseInt(process.env.INCIDENT_RECURRENCE_GAP_MINUTES || "20", 10);
+const recurrenceGapMinutes = () => parseInt(process.env.INCIDENT_RECURRENCE_GAP_MINUTES || "20", 10);
 
 // A condition that was ALREADY broken for longer than this when we first saw it
 // is chronic, not a new incident. Paging someone at 2am for something that has
 // been failing for ten days is how automated ITSM loses credibility — chronic
 // items are surfaced as Problem-record candidates instead.
-const CHRONIC_HOURS = parseInt(process.env.INCIDENT_CHRONIC_HOURS || "24", 10);
+const chronicHours = () => parseInt(process.env.INCIDENT_CHRONIC_HOURS || "24", 10);
 
 // Only these severities are eligible for UNATTENDED ticket creation. Everything
 // else is still detected and can be promoted by hand.
-const AUTO_SEVERITY_FLOOR = (process.env.INCIDENT_AUTO_SEVERITY_FLOOR || "SEV-2").toUpperCase();
+const autoSeverityFloor = () => (process.env.INCIDENT_AUTO_SEVERITY_FLOOR || "SEV-2").toUpperCase();
 
 function minutesSince(ts) {
   if (!ts) return null;
@@ -408,7 +411,7 @@ export async function detectIncidents() {
     // then returned. A continuously-present condition stays occurrence #1 no
     // matter how many times we poll.
     const gap = prev ? minutesSince(prev.lastSeen) : null;
-    const isNewEpisode = !prev || (gap != null && gap > RECURRENCE_GAP_MINUTES);
+    const isNewEpisode = !prev || (gap != null && gap > recurrenceGapMinutes());
     const occurrences = isNewEpisode ? ((prev?.occurrences || 0) + 1) : (prev.occurrences || 1);
     const firstSeen = isNewEpisode
       ? new Date(now - (p.dwellMinutes || 0) * 60000).toISOString()
@@ -417,11 +420,12 @@ export async function detectIncidents() {
 
     // Chronic: already broken longer than the chronic window when first seen.
     const ageMinutes = p.dwellMinutes ?? minutesSince(firstSeen) ?? 0;
-    const chronic = ageMinutes > CHRONIC_HOURS * 60;
+    const chronicH = chronicHours();
+    const chronic = ageMinutes > chronicH * 60;
 
     // Ticket eligibility for UNATTENDED creation: severity floor + not chronic.
     // (Chronic items remain fully promotable by hand from the UI.)
-    const meetsSeverity = SEV_RANK[inc.severity] <= (SEV_RANK[AUTO_SEVERITY_FLOOR] || 2);
+    const meetsSeverity = SEV_RANK[inc.severity] <= (SEV_RANK[autoSeverityFloor()] || 2);
     const autoTicketEligible = meetsSeverity && !chronic;
 
     out.push({
@@ -448,7 +452,7 @@ export async function detectIncidents() {
       chronic,
       classification: chronic ? "problem" : "incident",
       chronicReason: chronic
-        ? `Already failing for ${humanizeMinutes(ageMinutes)} when first detected (chronic threshold ${CHRONIC_HOURS}h). Treated as a Problem candidate, not a new Incident — raise it manually if you want a ticket.`
+        ? `Already failing for ${humanizeMinutes(ageMinutes)} when first detected (chronic threshold ${chronicH}h). Treated as a Problem candidate, not a new Incident — raise it manually if you want a ticket.`
         : null,
       rootHint: inc.rootHint,
       evidence: inc.symptoms.slice(0, 8).map((s) => s.evidence),
@@ -490,9 +494,9 @@ export async function detectIncidents() {
       alertmanagerAlerts: Array.isArray(amAlerts) ? amAlerts.filter((a) => a.status?.state === "active").length : 0,
     },
     policy: {
-      chronicHours: CHRONIC_HOURS,
-      autoSeverityFloor: AUTO_SEVERITY_FLOOR,
-      recurrenceGapMinutes: RECURRENCE_GAP_MINUTES,
+      chronicHours: chronicHours(),
+      autoSeverityFloor: autoSeverityFloor(),
+      recurrenceGapMinutes: recurrenceGapMinutes(),
     },
     thresholds: T,
     generatedAt: nowIso,

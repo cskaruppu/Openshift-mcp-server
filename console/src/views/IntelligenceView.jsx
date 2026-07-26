@@ -68,6 +68,8 @@ export function IntelligenceView() {
   // because remediation/verification progresses in the background.
   const { data: sessData, refetch: refetchSessions } =
     useClusterQuery("/api/intelligence/incident-sessions", { refetchInterval: 10_000 });
+  const { data: incSettingsData, refetch: refetchIncSettings } =
+    useClusterQuery("/api/intelligence/incident-settings", { refetchInterval: 120_000 });
 
   const setChatSeed = useChatStore((s) => s.setSeed);
   const setActiveView = useViewStore((s) => s.setActiveView);
@@ -103,6 +105,48 @@ export function IntelligenceView() {
     callSession("/api/intelligence/incident-sessions/promote", { detection: inc },
       "Incident opened — running RCA, ticket and dry-run…");
   }, [callSession]);
+
+  // ── Incident automation settings (editable, no redeploy) ──
+  const [showIncSettings, setShowIncSettings] = useState(false);
+  const [incForm, setIncForm] = useState(null);
+  const [savingInc, setSavingInc] = useState(false);
+  const incSettings = incSettingsData?.settings || null;
+
+  // Seed the form the first time settings arrive (and whenever the panel opens).
+  const openIncSettings = useCallback(() => {
+    setIncForm({
+      autoAct: !!incSettings?.autoAct,
+      assignmentGroup: incSettings?.assignmentGroup || "",
+      chronicHours: incSettings?.chronicHours ?? 24,
+      severityFloor: incSettings?.severityFloor || "SEV-2",
+      maxTicketsPerHour: incSettings?.maxTicketsPerHour ?? 10,
+      selfHealScans: incSettings?.selfHealScans ?? 2,
+    });
+    setShowIncSettings(true);
+  }, [incSettings]);
+
+  const saveIncSettings = useCallback(async () => {
+    if (!incForm) return;
+    setSavingInc(true);
+    try {
+      const res = await fetch(clusterUrl("/api/intelligence/incident-settings", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(incForm),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (d.error) { showToast(d.error, "err"); return; }
+      // Surface a mistyped queue name instead of silently leaving it unassigned.
+      if (d.groupCheck?.checked && d.groupCheck.found === false) {
+        showToast(`Saved, but ServiceNow has no group named "${d.groupCheck.name}" — incidents will use default routing`, "warn");
+      } else {
+        showToast(d.settings?.autoAct ? "Saved — autonomous mode ON" : "Settings saved", "ok");
+      }
+      setShowIncSettings(false);
+      refetchIncSettings(); refetchSessions(); refetchDetect();
+    } catch (e) {
+      showToast(e.message, "err");
+    } finally { setSavingInc(false); }
+  }, [incForm, cluster, refetchIncSettings, refetchSessions, refetchDetect]);
 
   // Hand a detection to the AI Chat, which runs the SAME incident_response
   // pipeline UC-01 uses — so the RCA comes back in the identical format.
@@ -664,8 +708,116 @@ export function IntelligenceView() {
                 <p>Threshold breach → correlation → incident, with no human trigger</p>
               </div>
             </div>
-            <button className="intel-hero-btn" onClick={() => refetchDetect()}>Re-scan</button>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="intel-hero-btn" onClick={openIncSettings}>⚙ Automation Settings</button>
+              <button className="intel-hero-btn" onClick={() => refetchDetect()}>Re-scan</button>
+            </div>
           </div>
+
+          {/* ── Automation settings — editable without a redeploy ── */}
+          {showIncSettings && incForm && (
+            <div style={{
+              border: "1px solid var(--border)", borderRadius: 12, padding: 16, marginBottom: 16,
+              background: "color-mix(in srgb, var(--text2) 6%, transparent)",
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+                <div>
+                  <h3 style={{ fontSize: 14, margin: 0 }}>Incident Automation Settings</h3>
+                  <p style={{ fontSize: 11.5, opacity: .8, margin: "3px 0 0" }}>
+                    Applied live on the next scan — no pod restart. Stored in the database
+                    {incSettings?._storage ? ` (currently: ${incSettings._storage})` : ""}.
+                  </p>
+                </div>
+                <button className="intel-card-btn" onClick={() => setShowIncSettings(false)}>Close</button>
+              </div>
+
+              {/* Master switch */}
+              <label style={{
+                display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 9,
+                border: `1px solid ${incForm.autoAct ? "rgba(34,197,94,.5)" : "var(--border)"}`,
+                background: incForm.autoAct ? "rgba(34,197,94,.10)" : "transparent", cursor: "pointer", marginBottom: 12,
+              }}>
+                <input type="checkbox" checked={incForm.autoAct} style={{ marginTop: 3 }}
+                  onChange={(e) => setIncForm((f) => ({ ...f, autoAct: e.target.checked }))} />
+                <span style={{ fontSize: 12.5 }}>
+                  <strong>Autonomous mode</strong> — raise ServiceNow incidents automatically when a threshold
+                  breaches, and auto-close them when the condition self-resolves.
+                  <span style={{ display: "block", opacity: .8, marginTop: 2 }}>
+                    Applying a fix always still requires your approval.
+                  </span>
+                </span>
+              </label>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 11.5, fontWeight: 600, display: "block", marginBottom: 4 }}>
+                    ServiceNow assignment group
+                  </label>
+                  <input type="text" value={incForm.assignmentGroup} placeholder="e.g. Platform-SRE (blank = default)"
+                    onChange={(e) => setIncForm((f) => ({ ...f, assignmentGroup: e.target.value }))}
+                    style={{ width: "100%", padding: "7px 9px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--card)", color: "var(--text)", fontSize: 12.5 }} />
+                  <div style={{ fontSize: 10.5, opacity: .7, marginTop: 3 }}>
+                    The admin queue incidents are assigned to. Verified against ServiceNow on save.
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 11.5, fontWeight: 600, display: "block", marginBottom: 4 }}>Severity floor</label>
+                  <select value={incForm.severityFloor}
+                    onChange={(e) => setIncForm((f) => ({ ...f, severityFloor: e.target.value }))}
+                    style={{ width: "100%", padding: "7px 9px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--card)", color: "var(--text)", fontSize: 12.5 }}>
+                    {["SEV-1", "SEV-2", "SEV-3", "SEV-4"].map((s) => <option key={s} value={s}>{s} and worse</option>)}
+                  </select>
+                  <div style={{ fontSize: 10.5, opacity: .7, marginTop: 3 }}>Only these are auto-ticketed.</div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 11.5, fontWeight: 600, display: "block", marginBottom: 4 }}>Chronic window (hours)</label>
+                  <input type="number" min="0" max="8760" value={incForm.chronicHours}
+                    onChange={(e) => setIncForm((f) => ({ ...f, chronicHours: e.target.value }))}
+                    style={{ width: "100%", padding: "7px 9px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--card)", color: "var(--text)", fontSize: 12.5 }} />
+                  <div style={{ fontSize: 10.5, opacity: .7, marginTop: 3 }}>
+                    Older than this when first seen → Problem candidate, not a new incident.
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 11.5, fontWeight: 600, display: "block", marginBottom: 4 }}>Max tickets / hour</label>
+                  <input type="number" min="1" max="500" value={incForm.maxTicketsPerHour}
+                    onChange={(e) => setIncForm((f) => ({ ...f, maxTicketsPerHour: e.target.value }))}
+                    style={{ width: "100%", padding: "7px 9px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--card)", color: "var(--text)", fontSize: 12.5 }} />
+                  <div style={{ fontSize: 10.5, opacity: .7, marginTop: 3 }}>Storm brake.</div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 11.5, fontWeight: 600, display: "block", marginBottom: 4 }}>Self-heal confirm scans</label>
+                  <input type="number" min="1" max="20" value={incForm.selfHealScans}
+                    onChange={(e) => setIncForm((f) => ({ ...f, selfHealScans: e.target.value }))}
+                    style={{ width: "100%", padding: "7px 9px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--card)", color: "var(--text)", fontSize: 12.5 }} />
+                  <div style={{ fontSize: 10.5, opacity: .7, marginTop: 3 }}>
+                    Clear scans required before auto-closing (guards against flapping).
+                  </div>
+                </div>
+              </div>
+
+              {incForm.autoAct && (
+                <div style={{ marginTop: 12, padding: "9px 12px", borderRadius: 8, fontSize: 12,
+                  background: "rgba(245,158,11,.12)", border: "1px solid rgba(245,158,11,.4)" }}>
+                  ⚠ Turning this on lets the system create real ServiceNow incidents unattended.
+                  With the current policy, <strong>{dStats.wouldRaiseTickets ?? 0}</strong> of{" "}
+                  <strong>{dStats.detections ?? 0}</strong> detections would be ticketed
+                  {dStats.chronic > 0 && <> ({dStats.chronic} chronic are excluded)</>}.
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                <button className="intel-card-btn primary" disabled={savingInc} onClick={saveIncSettings}>
+                  {savingInc ? "Saving…" : "Save settings"}
+                </button>
+                <button className="intel-card-btn" onClick={() => setShowIncSettings(false)}>Cancel</button>
+              </div>
+            </div>
+          )}
 
           {/* Shadow-mode banner — the whole point of Phase 1 */}
           <div style={{
@@ -845,6 +997,13 @@ export function IntelligenceView() {
               chronic <em>Problem</em> candidates, not new incidents ·
               rate limit <strong>{sessData?.ticketBudget?.limit ?? "—"}/hour</strong>
               {sessData?.ticketBudget && ` (${sessData.ticketBudget.usedLastHour} used)`}
+              {" · queue "}
+              <strong>{incSettings?.assignmentGroup || "ServiceNow default routing"}</strong>
+              {" · "}
+              <button onClick={openIncSettings}
+                style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "#38bdf8", font: "inherit", textDecoration: "underline" }}>
+                change
+              </button>
             </div>
           )}
 
