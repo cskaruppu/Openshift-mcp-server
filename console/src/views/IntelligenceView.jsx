@@ -205,6 +205,25 @@ export function IntelligenceView() {
     setActiveView("chat");
   }, [cluster, setChatSeed, setActiveView]);
 
+  // ── Layout mode ──────────────────────────────────────────────────────────
+  // "focused" groups the nav and splits Auto-Detect into Live/History/Policy.
+  // "classic" is the original flat 8-tab layout, kept as an instant escape
+  // hatch: it is a localStorage flag, so switching back needs no redeploy.
+  const [layout, setLayout] = useState(() => {
+    try { return localStorage.getItem("intelLayout") || "focused"; } catch { return "focused"; }
+  });
+  const focused = layout === "focused";
+  const switchLayout = useCallback((next) => {
+    setLayout(next);
+    try { localStorage.setItem("intelLayout", next); } catch { /* private mode */ }
+  }, []);
+  // Sub-view within Autonomous (focused layout only).
+  const [autoSub, setAutoSub] = useState("live");
+  const [moreOpen, setMoreOpen] = useState(false);
+  // Section visibility: classic shows everything stacked (original behaviour);
+  // focused assigns each section to one sub-view.
+  const showSub = useCallback((sub) => !focused || autoSub === sub, [focused, autoSub]);
+
   const [activeTab, setActiveTab] = useState("insights");
   const [sevFilter, setSevFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -533,31 +552,29 @@ export function IntelligenceView() {
             </div>
           </div>
 
+          {/* Outcome metrics in the focused layout — the original counts merely
+              restated the tab badges, and "Monitoring" was shown twice. */}
           <div className="intel-hero-stats">
-            <div className="intel-stat-box" style={{ "--stat-color": "#ef4444" }}>
-              <div className="intel-stat-val">{sevCounts.critical}</div>
-              <div className="intel-stat-label">Critical</div>
-            </div>
-            <div className="intel-stat-box" style={{ "--stat-color": "#f59e0b" }}>
-              <div className="intel-stat-val">{sevCounts.warning}</div>
-              <div className="intel-stat-label">Warning</div>
-            </div>
-            <div className="intel-stat-box" style={{ "--stat-color": "#8b5cf6" }}>
-              <div className="intel-stat-val">{predictions.length}</div>
-              <div className="intel-stat-label">Predicted</div>
-            </div>
-            <div className="intel-stat-box" style={{ "--stat-color": "#22c55e" }}>
-              <div className="intel-stat-val">{iStats.open || 0}</div>
-              <div className="intel-stat-label">Open Incidents</div>
-            </div>
-            <div className="intel-stat-box" style={{ "--stat-color": "#06b6d4" }}>
-              <div className="intel-stat-val">{rules.length}</div>
-              <div className="intel-stat-label">Auto Rules</div>
-            </div>
-            <div className="intel-stat-box" style={{ "--stat-color": monitoring ? "#22c55e" : "#64748b" }}>
-              <div className="intel-stat-val">{monitoring ? "ON" : "OFF"}</div>
-              <div className="intel-stat-label">Monitoring</div>
-            </div>
+            {(focused ? [
+              { v: iStats.avgMTTR != null ? `${Math.round(iStats.avgMTTR)}m` : "—", l: "Median MTTR", c: "#22c55e" },
+              { v: awaiting.length, l: "Awaiting You", c: awaiting.length > 0 ? "#f59e0b" : "#64748b" },
+              { v: sessions.filter((x) => x.state === "closed").length, l: "Auto-Resolved", c: "#06b6d4" },
+              { v: dStats.correlationSavings ?? 0, l: "Tickets Avoided", c: "#22c55e" },
+              { v: dStats.escalated ?? 0, l: "Escalated", c: (dStats.escalated ?? 0) > 0 ? "#ef4444" : "#64748b" },
+              { v: sevCounts.critical, l: "Critical Alerts", c: "#ef4444" },
+            ] : [
+              { v: sevCounts.critical, l: "Critical", c: "#ef4444" },
+              { v: sevCounts.warning, l: "Warning", c: "#f59e0b" },
+              { v: predictions.length, l: "Predicted", c: "#8b5cf6" },
+              { v: iStats.open || 0, l: "Open Incidents", c: "#22c55e" },
+              { v: rules.length, l: "Auto Rules", c: "#06b6d4" },
+              { v: monitoring ? "ON" : "OFF", l: "Monitoring", c: monitoring ? "#22c55e" : "#64748b" },
+            ]).map((k) => (
+              <div key={k.l} className="intel-stat-box" style={{ "--stat-color": k.c }}>
+                <div className="intel-stat-val">{k.v}</div>
+                <div className="intel-stat-label">{k.l}</div>
+              </div>
+            ))}
           </div>
 
         </div>
@@ -580,8 +597,15 @@ export function IntelligenceView() {
       </div>
 
       {/* ═══ TABS ═══ */}
+      {/* Focused layout promotes the two sections people actually use and files
+          the rest under "More", so the nav advertises what is live instead of a
+          row of zeroes. Classic keeps the original flat list. */}
       <div className="intel-tabs">
-        {[
+        {(focused ? [
+          { key: "insights", label: "Overview", count: totalActive },
+          { key: "autodetect", label: awaiting.length > 0 ? `Autonomous · ${awaiting.length} to approve` : "Autonomous", count: detected.length },
+          { key: "predictions", label: "Predictions", count: predictions.length },
+        ] : [
           { key: "insights", label: "Insights & Alerts", count: totalActive },
           { key: "autodetect", label: awaiting.length > 0 ? `Auto-Detect · ${awaiting.length} to approve` : "Auto-Detect", count: detected.length },
           { key: "incidents", label: "Incidents", count: incidents.length },
@@ -591,12 +615,58 @@ export function IntelligenceView() {
           { key: "kb", label: "Knowledge Base", count: kbEntries.length },
           { key: "playbook", label: "Team Playbook" },
           { key: "correlation", label: "Cross-Cluster", count: corrData?.correlationCount || 0 },
-        ].map((t) => (
+        ]).map((t) => (
           <button key={t.key} className={"intel-tab" + (activeTab === t.key ? " active" : "")} onClick={() => setActiveTab(t.key)}>
             {t.label}
             {t.count != null && <span className="intel-tab-count">{t.count}</span>}
           </button>
         ))}
+
+        {/* "More" collects the sections that are usually empty, so they stay
+            reachable without occupying prime navigation. */}
+        {focused && (
+          <div style={{ position: "relative" }}>
+            <button className={"intel-tab" + (["incidents", "timeline", "rules", "kb", "playbook", "correlation"].includes(activeTab) ? " active" : "")}
+              onClick={() => setMoreOpen((o) => !o)}>
+              More ▾
+            </button>
+            {moreOpen && (
+              <div style={{
+                position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 40, minWidth: 210,
+                background: "var(--card)", border: "1px solid var(--border)", borderRadius: 10,
+                boxShadow: "0 10px 30px rgba(0,0,0,.35)", padding: 6,
+              }}>
+                {[
+                  { key: "incidents", label: "Incidents", count: incidents.length },
+                  { key: "timeline", label: "Cluster Drift (changes seen)", count: tlEvents.length },
+                  { key: "rules", label: "Automation Rules", count: rules.length },
+                  { key: "kb", label: "Knowledge Base", count: kbEntries.length },
+                  { key: "playbook", label: "Team Playbook · SOP Runner" },
+                  { key: "correlation", label: "Cross-Cluster", count: corrData?.correlationCount || 0 },
+                ].map((m) => (
+                  <button key={m.key}
+                    onClick={() => { setActiveTab(m.key); setMoreOpen(false); }}
+                    style={{
+                      display: "flex", width: "100%", alignItems: "center", justifyContent: "space-between",
+                      gap: 10, padding: "7px 10px", borderRadius: 7, border: "none", cursor: "pointer",
+                      background: activeTab === m.key ? "color-mix(in srgb, var(--text2) 14%, transparent)" : "transparent",
+                      color: "var(--text)", font: "inherit", fontSize: 12.5, textAlign: "left",
+                    }}>
+                    <span>{m.label}</span>
+                    {m.count != null && <span style={{ opacity: .6, fontSize: 11 }}>{m.count}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Instant escape hatch — no rebuild, no redeploy. */}
+        <button className="intel-tab" style={{ marginLeft: "auto", opacity: .75, fontSize: 11 }}
+          title={focused ? "Switch back to the original flat 8-tab layout" : "Switch to the grouped layout"}
+          onClick={() => switchLayout(focused ? "classic" : "focused")}>
+          {focused ? "↩ Classic layout" : "✦ New layout"}
+        </button>
       </div>
 
       {/* ═══ 1. INSIGHTS & ALERTS ═══ */}
@@ -756,6 +826,24 @@ export function IntelligenceView() {
               <button className="intel-hero-btn" onClick={() => refetchDetect()}>Re-scan</button>
             </div>
           </div>
+
+          {/* Three purposeful sub-views instead of one long scroll:
+              Live = what needs me now · History = what we changed · Policy = how it behaves. */}
+          {focused && (
+            <div className="intel-tabs" style={{ marginBottom: 14 }}>
+              {[
+                { k: "live", label: "Live", count: escalations.length + awaiting.length + visibleDetections.length },
+                { k: "history", label: "History", count: changeData?.changes?.length ?? 0 },
+                { k: "policy", label: "Policy", count: null },
+              ].map((t) => (
+                <button key={t.k} className={"intel-tab" + (autoSub === t.k ? " active" : "")}
+                  onClick={() => setAutoSub(t.k)}>
+                  {t.label}
+                  {t.count != null && <span className="intel-tab-count">{t.count}</span>}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* ── Automation settings — editable without a redeploy ── */}
           {showIncSettings && incForm && (
@@ -939,7 +1027,7 @@ export function IntelligenceView() {
           {detectData?.error && <div className="intel-empty">{detectData.error}</div>}
 
           {/* ── DUPLICATE TICKET BACKLOG — groups that pre-date correlation dedup ── */}
-          {dupData?.groups?.length > 0 && (
+          {showSub("policy") && dupData?.groups?.length > 0 && (
             <div style={{
               border: "1px solid rgba(14,165,233,.45)", borderRadius: 12, padding: 14, marginBottom: 16,
               background: "rgba(14,165,233,.07)",
@@ -995,7 +1083,7 @@ export function IntelligenceView() {
           )}
 
           {/* ── ESCALATIONS — repeat offenders demand attention now ── */}
-          {escalations.length > 0 && (
+          {showSub("live") && escalations.length > 0 && (
             <div style={{
               border: "1px solid rgba(220,38,38,.5)", borderRadius: 12, padding: 14, marginBottom: 16,
               background: "rgba(220,38,38,.08)",
@@ -1035,7 +1123,7 @@ export function IntelligenceView() {
           )}
 
           {/* ── APPROVAL INBOX — the single human gate ── */}
-          {liveSessions.length > 0 && (
+          {showSub("live") && liveSessions.length > 0 && (
             <div style={{ marginBottom: 20 }}>
               <div className="intel-section-title" style={{ marginBottom: 10 }}>
                 <div>
@@ -1311,6 +1399,7 @@ export function IntelligenceView() {
           )}
 
           {/* Detection KPIs — the numbers that justify threshold tuning */}
+          {showSub("live") && <>
           <div className="intel-inc-stats">
             <div className="intel-inc-stat" style={{ "--is-c": "#0ea5e9" }}><span>{dStats.detections ?? 0}</span><label>Detections</label></div>
             <div className="intel-inc-stat" style={{ "--is-c": "#8b5cf6" }}><span>{dStats.symptoms ?? 0}</span><label>Raw Symptoms</label></div>
@@ -1379,19 +1468,28 @@ export function IntelligenceView() {
                               : "grouped"} · {inc.symptomCount} symptoms
                           </span>
                         )}
-                        {inc.recurring && <span className="intel-card-count">{inc.occurrences}× recurring</span>}
-                        {inc.chronic && (
-                          <span className="intel-card-kind-badge" style={{ background: "rgba(100,116,139,.25)", color: "#cbd5e1" }}
-                            title={inc.chronicReason || ""}>chronic → Problem</span>
-                        )}
-                        {inc.escalated && (
-                          <span className="intel-card-kind-badge" style={{ background: "rgba(220,38,38,.25)", color: "#fca5a5" }}
-                            title={inc.escalationReason || ""}>⚠ escalated {inc.occurrences}×</span>
-                        )}
-                        {inc.activityOverride && (
-                          <span className="intel-card-kind-badge" style={{ background: "rgba(239,68,68,.18)", color: "#fca5a5" }}
-                            title={inc.activityReason || ""}>old but ACTIVE</span>
-                        )}
+                        {/* Badge discipline: cards were carrying eight or more chips
+                            at once, leaving the eye no entry point. Show the most
+                            decision-relevant few; collapse the rest behind "+N". */}
+                        {(() => {
+                          const badges = [
+                            inc.escalated && { k: "escalated", el: <span className="intel-card-kind-badge" style={{ background: "rgba(220,38,38,.25)", color: "#fca5a5" }} title={inc.escalationReason || ""}>⚠ escalated {inc.occurrences}×</span> },
+                            inc.activityOverride && { k: "old but active", el: <span className="intel-card-kind-badge" style={{ background: "rgba(239,68,68,.18)", color: "#fca5a5" }} title={inc.activityReason || ""}>old but ACTIVE</span> },
+                            inc.chronic && { k: "chronic", el: <span className="intel-card-kind-badge" style={{ background: "rgba(100,116,139,.25)", color: "#cbd5e1" }} title={inc.chronicReason || ""}>chronic → Problem</span> },
+                            inc.recurring && { k: "recurring", el: <span className="intel-card-count">{inc.occurrences}× recurring</span> },
+                          ].filter(Boolean);
+                          const cap = focused ? 2 : badges.length;
+                          const shown = badges.slice(0, cap);
+                          const hidden = badges.length - shown.length;
+                          return (<>
+                            {shown.map((b) => <span key={b.k}>{b.el}</span>)}
+                            {hidden > 0 && (
+                              <span className="intel-card-kind-badge"
+                                style={{ background: "rgba(100,116,139,.2)", color: "#94a3b8" }}
+                                title={badges.slice(cap).map((b) => b.k).join(" · ")}>＋{hidden}</span>
+                            )}
+                          </>);
+                        })()}
                       </div>
 
                       <div className="intel-card-msg">
@@ -1422,15 +1520,22 @@ export function IntelligenceView() {
                         </div>
                       )}
 
-                      {inc.chronic && inc.chronicReason && (
-                        <div style={{ marginTop: 5, fontSize: 11.5, color: "#cbd5e1", opacity: .9 }}>{inc.chronicReason}</div>
-                      )}
-                      {inc.escalationReason && (
-                        <div style={{ marginTop: 5, fontSize: 11.5, color: "#fca5a5" }}>{inc.escalationReason}</div>
-                      )}
-                      {inc.activityReason && (
-                        <div style={{ marginTop: 5, fontSize: 11.5, color: "#fca5a5" }}>{inc.activityReason}</div>
-                      )}
+                      {/* Rationale matters but is not scannable — behind a
+                          disclosure in the focused layout, inline in classic. */}
+                      {(inc.chronicReason || inc.escalationReason || inc.activityReason) && (focused ? (
+                        <details style={{ marginTop: 5 }}>
+                          <summary style={{ cursor: "pointer", fontSize: 11.5, opacity: .8 }}>Why this classification</summary>
+                          <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3 }}>
+                            {inc.escalationReason && <div style={{ fontSize: 11.5, color: "#fca5a5" }}>{inc.escalationReason}</div>}
+                            {inc.activityReason && <div style={{ fontSize: 11.5, color: "#fca5a5" }}>{inc.activityReason}</div>}
+                            {inc.chronicReason && <div style={{ fontSize: 11.5, color: "#cbd5e1" }}>{inc.chronicReason}</div>}
+                          </div>
+                        </details>
+                      ) : (<>
+                        {inc.chronicReason && <div style={{ marginTop: 5, fontSize: 11.5, color: "#cbd5e1", opacity: .9 }}>{inc.chronicReason}</div>}
+                        {inc.escalationReason && <div style={{ marginTop: 5, fontSize: 11.5, color: "#fca5a5" }}>{inc.escalationReason}</div>}
+                        {inc.activityReason && <div style={{ marginTop: 5, fontSize: 11.5, color: "#fca5a5" }}>{inc.activityReason}</div>}
+                      </>))}
 
                       {inc.rootHint && (
                         <div className="intel-card-reco">
@@ -1482,9 +1587,10 @@ export function IntelligenceView() {
               );
             })}
           </div>
+          </>}
 
           {/* ── HISTORY — what we changed, and how to undo it ── */}
-          {changeData?.changes?.length > 0 && (
+          {showSub("history") && changeData?.changes?.length > 0 && (
             <div style={{ marginTop: 20 }}>
               <div className="intel-section-title" style={{ marginBottom: 8 }}>
                 <div>
@@ -1630,7 +1736,7 @@ export function IntelligenceView() {
           )}
 
           {/* Active threshold policy — tuning transparency */}
-          {detectData?.thresholds && (
+          {showSub("policy") && detectData?.thresholds && (
             <div style={{ marginTop: 18 }}>
               <div className="intel-section-title" style={{ marginBottom: 8 }}>
                 <div><h3 style={{ fontSize: 14 }}>Active Threshold Policy</h3>
@@ -2132,8 +2238,11 @@ export function IntelligenceView() {
         </div>
       )}
 
-      {/* SOP Runner — compile a runbook into a validated, dry-run plan */}
-      <SopRunner />
+      {/* SOP Runner — compile a runbook into a validated, dry-run plan.
+          This previously sat OUTSIDE every activeTab guard, so it rendered at the
+          bottom of all eight tabs. It is a deliberate authoring tool, not triage
+          furniture, so it now lives only in Team Playbook (reachable via More). */}
+      {activeTab === "playbook" && <SopRunner />}
     </div>
   );
 }
