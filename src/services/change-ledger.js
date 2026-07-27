@@ -65,8 +65,17 @@ function genId() {
  *            beforeValue:object|null, afterValue:object|null, nativeUndo:string|null}}
  */
 export function computeRevert(remediation, ctx = {}) {
-  const { namespace, target, workloadKind = "deployment" } = ctx;
-  const none = (reason) => ({ revertable: false, revertReason: reason, revertCommand: null, beforeValue: null, afterValue: null, nativeUndo: null });
+  const { namespace, target, workloadKind = "deployment", specBefore } = ctx;
+  // Native undo is possible for any Deployment we can name — offer it even when
+  // an exact inverse is unavailable, rather than telling the operator to use it
+  // and then recording nothing.
+  const nativeUndoCmd = (namespace && target && workloadKind === "deployment")
+    ? `oc rollout undo ${workloadKind}/${target} -n ${namespace}`
+    : null;
+  const none = (reason) => ({
+    revertable: false, revertReason: reason, revertCommand: null,
+    beforeValue: null, afterValue: null, nativeUndo: nativeUndoCmd,
+  });
   if (!remediation?.action) return none("No action recorded.");
 
   switch (remediation.action) {
@@ -76,15 +85,24 @@ export function computeRevert(remediation, ctx = {}) {
         revertable: false,
         revertReason: "A rolling restart changes no configuration — there is nothing to revert. The pods were simply recreated.",
         revertCommand: null, beforeValue: null, afterValue: null,
+        // Deliberately no native undo either: rolling back the pod template would
+        // undo whatever legitimate change preceded the restart, not the restart.
         nativeUndo: null,
       };
 
     case "increase_memory": {
-      const before = remediation.beforeMemory;   // e.g. "389Mi"
-      const after = remediation.afterMemory;     // e.g. "778Mi"
       const container = remediation.container;
+      const after = remediation.afterMemory;     // e.g. "778Mi"
+      // Prefer what the planner captured; fall back to the spec read immediately
+      // before the mutation. Two independent sources means an older or replanned
+      // session still gets a precise inverse.
+      const before = remediation.beforeMemory
+        || (container ? specBefore?.containers?.[container]?.limits?.memory : null);
       if (!before || !container || !namespace || !target) {
-        return none("The previous memory limit was not captured, so an exact inverse cannot be built. Use native rollout undo instead.");
+        return none(
+          "The previous memory limit could not be determined, so an exact inverse cannot be built. " +
+          "A native rollout undo is offered instead — it restores the entire previous pod template."
+        );
       }
       return {
         revertable: true,
@@ -92,7 +110,7 @@ export function computeRevert(remediation, ctx = {}) {
         revertCommand: `oc set resources ${workloadKind}/${target} -n ${namespace} --containers=${container} --limits=memory=${before}`,
         beforeValue: { [`containers.${container}.limits.memory`]: before },
         afterValue: { [`containers.${container}.limits.memory`]: after },
-        nativeUndo: `oc rollout undo ${workloadKind}/${target} -n ${namespace}`,
+        nativeUndo: nativeUndoCmd,
       };
     }
 

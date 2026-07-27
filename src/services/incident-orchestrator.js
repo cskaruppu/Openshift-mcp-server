@@ -793,6 +793,32 @@ export async function captureWorkloadSnapshot(namespace, target) {
   }
 }
 
+/**
+ * Read the spec fields we are about to mutate, immediately before mutating them.
+ * A safety net for the change ledger: the plan should already carry the prior
+ * value, but a session planned by an older build (or replanned) may not — and
+ * once the patch lands the original is unrecoverable.
+ */
+async function captureSpecBefore(session) {
+  const ns = session.namespace, name = session.target;
+  const kind = session.remediation?.workloadKind || "deployment";
+  if (!ns || !name) return null;
+  try {
+    if (session.remediation?.action === "expand_pvc") {
+      const pvc = await ocpGet(`/api/v1/namespaces/${ns}/persistentvolumeclaims/${encodeURIComponent(name)}`);
+      return { storage: pvc?.status?.capacity?.storage || pvc?.spec?.resources?.requests?.storage || null };
+    }
+    const obj = await ocpGet(`/apis/apps/v1/namespaces/${ns}/${kind}s/${encodeURIComponent(name)}`);
+    const containers = {};
+    for (const c of obj?.spec?.template?.spec?.containers || []) {
+      containers[c.name] = { limits: c.resources?.limits || {}, requests: c.resources?.requests || {} };
+    }
+    return { containers, revision: obj?.metadata?.annotations?.["deployment.kubernetes.io/revision"] || null };
+  } catch {
+    return null;
+  }
+}
+
 const VERIFY_ATTEMPTS = parseInt(process.env.INCIDENT_VERIFY_ATTEMPTS || "12", 10);
 const VERIFY_DELAY_MS = parseInt(process.env.INCIDENT_VERIFY_DELAY_MS || "10000", 10);
 
@@ -991,7 +1017,8 @@ async function runRemediationChain(session) {
     // Snapshot container state BEFORE touching anything, so the console can show
     // a real before/after rather than asserting the fix worked.
     const before = await captureWorkloadSnapshot(session.namespace, session.target);
-    await transition(session, S.REMEDIATING, { beforeSnapshot: before });
+    const specBefore = await captureSpecBefore(session);
+    await transition(session, S.REMEDIATING, { beforeSnapshot: before, specBefore });
 
     // Terminal transcript — the operator sees exactly what ran, in CLI form.
     const term = [
@@ -1038,6 +1065,7 @@ async function runRemediationChain(session) {
       const rev = computeRevert(session.remediation, {
         namespace: session.namespace, target: session.target,
         workloadKind: session.remediation?.workloadKind || "deployment",
+        specBefore: session.specBefore,   // safety net when the plan lacked it
       });
       const change = await recordChange({
         cluster: session.cluster, namespace: session.namespace,

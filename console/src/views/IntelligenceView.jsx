@@ -120,13 +120,13 @@ export function IntelligenceView() {
   }, [cluster, refetchSessions]);
 
   const [revertPreview, setRevertPreview] = useState({});
-  const revertChange = useCallback(async (id, { dryRun }) => {
+  const revertChange = useCallback(async (id, { dryRun, useNativeUndo = false }) => {
     const key = `rev-${id}`;
     setBusySession((p) => ({ ...p, [key]: true }));
     try {
       const res = await fetch(clusterUrl(`/api/intelligence/changes/${id}/revert`, cluster), {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dryRun, actor: "operator" }),
+        body: JSON.stringify({ dryRun, useNativeUndo, actor: "operator" }),
       });
       const d = await res.json().catch(() => ({}));
       if (d.error) { showToast(d.error, "err"); return; }
@@ -1556,7 +1556,17 @@ export function IntelligenceView() {
                           </div>
 
                           {!done && !c.revertable && c.revertReason && (
-                            <div style={{ marginTop: 5, fontSize: 11.5, color: "#94a3b8" }}>{c.revertReason}</div>
+                            <div style={{ marginTop: 5, fontSize: 11.5, color: "#94a3b8" }}>
+                              {c.revertReason}
+                              {c.nativeUndo && (
+                                <div style={{ marginTop: 3, color: "#67e8f9", fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>
+                                  $ {c.nativeUndo}
+                                  <span style={{ color: "#94a3b8", fontFamily: "inherit" }}>
+                                    {" "}— restores the whole previous pod template, so unrelated changes since would also be undone.
+                                  </span>
+                                </div>
+                              )}
+                            </div>
                           )}
 
                           {revertPreview[c.id] && (
@@ -1587,9 +1597,26 @@ export function IntelligenceView() {
                               </button>
                               <button className="intel-card-btn" disabled={!!busySession[bk]}
                                 style={{ borderColor: "#f59e0b", color: "#fbbf24" }}
-                                title="Undo this change, then verify — recorded as its own ledger entry"
+                                title="Undo exactly this change, then verify — recorded as its own ledger entry"
                                 onClick={() => revertChange(c.id, { dryRun: false })}>
                                 ↩ Revert
+                              </button>
+                            </>
+                          )}
+                          {/* No exact inverse, but Kubernetes can still roll the
+                              Deployment back to its previous revision. */}
+                          {!done && !c.revertable && c.nativeUndo && (
+                            <>
+                              <button className="intel-card-btn" disabled={!!busySession[bk]}
+                                title={`Preview: ${c.nativeUndo}`}
+                                onClick={() => revertChange(c.id, { dryRun: true, useNativeUndo: true })}>
+                                {busySession[bk] ? "…" : "▷ Dry-run rollout undo"}
+                              </button>
+                              <button className="intel-card-btn" disabled={!!busySession[bk]}
+                                style={{ borderColor: "#0891b2", color: "#67e8f9" }}
+                                title="Roll the Deployment back to its previous revision. This restores the ENTIRE prior pod template, so any unrelated change made since will also be undone."
+                                onClick={() => revertChange(c.id, { dryRun: false, useNativeUndo: true })}>
+                                ↩ Rollout undo
                               </button>
                             </>
                           )}
