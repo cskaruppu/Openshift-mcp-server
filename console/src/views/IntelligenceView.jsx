@@ -85,6 +85,8 @@ export function IntelligenceView() {
   // Actionable vs chronic — chronic entries are informational (Problem
   // candidates) and would otherwise bury the few that can actually be ticketed.
   const [detectFilter, setDetectFilter] = useState("actionable");
+  // Repeat offenders — surfaced at the top so a returning fault is impossible to miss.
+  const escalations = useMemo(() => detected.filter((d) => d.escalated), [detected]);
   const visibleDetections = useMemo(() => {
     if (detectFilter === "chronic") return detected.filter((d) => d.chronic);
     if (detectFilter === "actionable") return detected.filter((d) => !d.chronic);
@@ -872,6 +874,46 @@ export function IntelligenceView() {
           )}
           {detectData?.error && <div className="intel-empty">{detectData.error}</div>}
 
+          {/* ── ESCALATIONS — repeat offenders demand attention now ── */}
+          {escalations.length > 0 && (
+            <div style={{
+              border: "1px solid rgba(220,38,38,.5)", borderRadius: 12, padding: 14, marginBottom: 16,
+              background: "rgba(220,38,38,.08)",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 15 }}>⚠</span>
+                <strong style={{ fontSize: 14, color: "#fca5a5" }}>
+                  Escalated — {escalations.length} recurring condition{escalations.length > 1 ? "s" : ""}
+                </strong>
+                <span style={{ fontSize: 11.5, opacity: .85 }}>
+                  Returned {detectData?.policy?.escalateAfterOccurrences ?? 3}+ times. A fault that keeps coming back is an
+                  unresolved root cause — raise a Problem record rather than closing another Incident.
+                </span>
+              </div>
+              {escalations.map((e) => (
+                <div key={e.signature} style={{
+                  display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+                  padding: "8px 10px", borderRadius: 8, marginTop: 6,
+                  background: "rgba(0,0,0,.15)", border: "1px solid rgba(220,38,38,.3)",
+                }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, padding: "1px 7px", borderRadius: 999,
+                    background: "rgba(220,38,38,.25)", color: "#fca5a5" }}>{e.severity}</span>
+                  {e.baseSeverity && e.baseSeverity !== e.severity && (
+                    <span style={{ fontSize: 10.5, opacity: .7 }}>was {e.baseSeverity}</span>
+                  )}
+                  <span style={{ fontSize: 12.5, fontWeight: 600 }}>{e.title}</span>
+                  <span style={{ fontSize: 11, color: "#fca5a5" }}>{e.occurrences}× recurring</span>
+                  <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                    {!managedSigs.has(e.signature) && (
+                      <button className="intel-card-btn success" onClick={() => promoteDetection(e)}>Open Incident →</button>
+                    )}
+                    <button className="intel-card-btn" onClick={() => investigateDetection(e)}>Ask AI</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* ── APPROVAL INBOX — the single human gate ── */}
           {liveSessions.length > 0 && (
             <div style={{ marginBottom: 20 }}>
@@ -1026,6 +1068,54 @@ export function IntelligenceView() {
                           {s.escalationReason && (
                             <div style={{ marginTop: 6, fontSize: 11.5, color: "#fca5a5" }}>{s.escalationReason}</div>
                           )}
+                          {/* CLI transcript — exactly what ran, in terminal form */}
+                          {s.terminal?.length > 0 && (
+                            <pre style={{
+                              marginTop: 8, marginBottom: 0, padding: "10px 12px", borderRadius: 8,
+                              background: "#0b1220", color: "#e2e8f0", border: "1px solid rgba(148,163,184,.25)",
+                              fontFamily: "var(--font-mono, ui-monospace, Menlo, monospace)", fontSize: 11,
+                              lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word",
+                              maxHeight: 220, overflowY: "auto",
+                            }}>
+                              {s.terminal.map((l, i) => (
+                                <div key={i} style={{
+                                  color: l.startsWith("$") ? "#86efac"
+                                    : l.startsWith("# NOT") ? "#fca5a5"
+                                    : l.startsWith("#") ? "#7dd3fc" : "#e2e8f0",
+                                }}>{l || "\u00a0"}</div>
+                              ))}
+                            </pre>
+                          )}
+
+                          {/* Before / after container status — evidence, not a claim */}
+                          {(s.beforeSnapshot?.rows?.length > 0 || s.afterSnapshot?.rows?.length > 0) && (
+                            <div style={{ display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+                              {[["Before fix", s.beforeSnapshot], ["After fix", s.afterSnapshot]].map(([label, snap]) =>
+                                snap?.rows?.length ? (
+                                  <div key={label} style={{ flex: 1, minWidth: 260, border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+                                    <div style={{ padding: "5px 9px", fontSize: 11, fontWeight: 700,
+                                      background: label === "After fix" ? "rgba(34,197,94,.14)" : "rgba(100,116,139,.16)",
+                                      color: label === "After fix" ? "#4ade80" : "var(--text2)" }}>{label}</div>
+                                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10.5,
+                                      fontFamily: "var(--font-mono, ui-monospace, monospace)" }}>
+                                      <thead><tr>{snap.header.map((h) => (
+                                        <th key={h} style={{ textAlign: "left", padding: "4px 6px", opacity: .6, fontWeight: 600 }}>{h}</th>
+                                      ))}</tr></thead>
+                                      <tbody>{snap.rows.map((r) => (
+                                        <tr key={r.name} style={{ borderTop: "1px solid var(--border)" }}>
+                                          <td style={{ padding: "4px 6px", maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</td>
+                                          <td style={{ padding: "4px 6px", color: r.healthy ? "#4ade80" : "#fbbf24" }}>{r.ready}</td>
+                                          <td style={{ padding: "4px 6px", color: r.healthy ? "#4ade80" : "#fca5a5" }}>{r.status}</td>
+                                          <td style={{ padding: "4px 6px" }}>{r.restarts}</td>
+                                          <td style={{ padding: "4px 6px", opacity: .7 }}>{r.age}</td>
+                                        </tr>
+                                      ))}</tbody>
+                                    </table>
+                                  </div>
+                                ) : null)}
+                            </div>
+                          )}
+
                           {s.verification?.summary && (
                             <div style={{ marginTop: 6, fontSize: 11.5, color: s.verification.ok ? "#4ade80" : "#fbbf24" }}>
                               <strong>Verification:</strong> {s.verification.summary}
@@ -1156,6 +1246,10 @@ export function IntelligenceView() {
                           <span className="intel-card-kind-badge" style={{ background: "rgba(100,116,139,.25)", color: "#cbd5e1" }}
                             title={inc.chronicReason || ""}>chronic → Problem</span>
                         )}
+                        {inc.escalated && (
+                          <span className="intel-card-kind-badge" style={{ background: "rgba(220,38,38,.25)", color: "#fca5a5" }}
+                            title={inc.escalationReason || ""}>⚠ escalated {inc.occurrences}×</span>
+                        )}
                         {inc.activityOverride && (
                           <span className="intel-card-kind-badge" style={{ background: "rgba(239,68,68,.18)", color: "#fca5a5" }}
                             title={inc.activityReason || ""}>old but ACTIVE</span>
@@ -1192,6 +1286,9 @@ export function IntelligenceView() {
 
                       {inc.chronic && inc.chronicReason && (
                         <div style={{ marginTop: 5, fontSize: 11.5, color: "#cbd5e1", opacity: .9 }}>{inc.chronicReason}</div>
+                      )}
+                      {inc.escalationReason && (
+                        <div style={{ marginTop: 5, fontSize: 11.5, color: "#fca5a5" }}>{inc.escalationReason}</div>
                       )}
                       {inc.activityReason && (
                         <div style={{ marginTop: 5, fontSize: 11.5, color: "#fca5a5" }}>{inc.activityReason}</div>

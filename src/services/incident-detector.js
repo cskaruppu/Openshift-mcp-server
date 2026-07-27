@@ -98,6 +98,12 @@ const autoSeverityFloor = () => (process.env.INCIDENT_AUTO_SEVERITY_FLOOR || "SE
 // On by default: an actively churning workload is a live incident, not a Problem.
 const chronicActivityOverride = () => process.env.INCIDENT_CHRONIC_ACTIVITY_OVERRIDE !== "false";
 
+// Repeat offenders escalate. A condition that keeps coming back is not "another
+// SEV-3" — it is an unresolved underlying fault, and ITIL says that belongs in
+// Problem management. At this many episodes we raise severity one level and flag
+// it for immediate attention in the console.
+const escalateAfterOccurrences = () => parseInt(process.env.INCIDENT_ESCALATE_AFTER || "3", 10);
+
 function minutesSince(ts) {
   if (!ts) return null;
   const t = new Date(ts).getTime();
@@ -574,15 +580,30 @@ export async function detectIncidents() {
     const activityOverride = chronicByAge && !!activeRestart && chronicActivityOverride();
     const chronic = chronicByAge && !activityOverride;
 
+    // Repeat-offender escalation: bump one severity level and flag it.
+    const escalateAt = escalateAfterOccurrences();
+    const repeatEscalated = occurrences >= escalateAt;
+    const baseSeverity = inc.severity;
+    const escalatedSeverity = repeatEscalated
+      ? (["SEV-1", "SEV-2", "SEV-3", "SEV-4", "SEV-5"][Math.max(0, (SEV_RANK[baseSeverity] || 3) - 2)] || baseSeverity)
+      : baseSeverity;
+    const effectiveSeverity = escalatedSeverity;
+
     // Ticket eligibility for UNATTENDED creation: severity floor + not chronic.
     // (Chronic items remain fully promotable by hand from the UI.)
-    const meetsSeverity = SEV_RANK[inc.severity] <= (SEV_RANK[autoSeverityFloor()] || 2);
+    const meetsSeverity = SEV_RANK[effectiveSeverity] <= (SEV_RANK[autoSeverityFloor()] || 2);
     const autoTicketEligible = meetsSeverity && !chronic;
 
     out.push({
       signature,
       title: inc.title,
-      severity: inc.severity,
+      severity: effectiveSeverity,
+      baseSeverity,
+      escalated: repeatEscalated,
+      escalationLevel: repeatEscalated ? Math.min(3, Math.floor(occurrences / escalateAt)) : 0,
+      escalationReason: repeatEscalated
+        ? `Recurred ${occurrences}× (escalation threshold ${escalateAt}). Severity raised ${baseSeverity} → ${effectiveSeverity}. A repeatedly-returning fault is an unresolved root cause — raise a Problem record rather than closing another Incident.`
+        : null,
       correlation: inc.correlation,
       symptomCount: inc.symptoms.length,
       namespace: p.namespace || null,
@@ -652,6 +673,7 @@ export async function detectIncidents() {
       correlationSavings: Math.max(0, symptoms.length - out.length), // tickets avoided by correlating
       chronic: out.filter((i) => i.chronic).length,
       activeOverrides: out.filter((i) => i.activityOverride).length,
+      escalated: out.filter((i) => i.escalated).length,
       recurring: out.filter((i) => i.recurring).length,
       wouldRaiseTickets: out.filter((i) => i.autoTicketEligible).length,
       bySeverity,
@@ -662,6 +684,7 @@ export async function detectIncidents() {
       autoSeverityFloor: autoSeverityFloor(),
       recurrenceGapMinutes: recurrenceGapMinutes(),
       chronicActivityOverride: chronicActivityOverride(),
+      escalateAfterOccurrences: escalateAfterOccurrences(),
     },
     thresholds: T,
     generatedAt: nowIso,

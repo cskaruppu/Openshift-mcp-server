@@ -739,6 +739,44 @@ async function checkHealthy(v) {
   return { ok: want > 0 && ready >= want, summary: `${v.kind.slice(0, -1)} ${v.name}: ${ready}/${want} replicas ready.` };
 }
 
+/**
+ * Snapshot the workload's pods in `oc get pods` shape, so the console can show
+ * real before/after container status instead of just claiming success.
+ * @returns {Promise<{at:string, rows:Array, header:Array}|null>}
+ */
+export async function captureWorkloadSnapshot(namespace, target) {
+  if (!namespace) return null;
+  try {
+    const list = await ocpGet(`/api/v1/namespaces/${namespace}/pods?limit=200`);
+    const stem = String(target || "");
+    const pods = (list.items || []).filter((p) => !stem || (p.metadata?.name || "").startsWith(stem));
+    const rows = pods.slice(0, 12).map((p) => {
+      const cs = p.status?.containerStatuses || [];
+      const ready = cs.filter((c) => c.ready).length;
+      const total = cs.length || (p.spec?.containers || []).length;
+      const restarts = cs.reduce((n, c) => n + (c.restartCount || 0), 0);
+      const waiting = cs.find((c) => c.state?.waiting?.reason)?.state.waiting.reason;
+      const start = p.status?.startTime || p.metadata?.creationTimestamp;
+      const ageMin = start ? Math.max(0, Math.round((Date.now() - new Date(start).getTime()) / 60000)) : null;
+      const age = ageMin == null ? "—"
+        : ageMin < 60 ? `${ageMin}m`
+        : ageMin < 1440 ? `${Math.floor(ageMin / 60)}h${ageMin % 60 ? `${ageMin % 60}m` : ""}`
+        : `${Math.floor(ageMin / 1440)}d`;
+      return {
+        name: p.metadata?.name,
+        ready: `${ready}/${total}`,
+        status: waiting || p.status?.phase || "Unknown",
+        restarts,
+        age,
+        healthy: total > 0 && ready === total && !waiting && p.status?.phase === "Running",
+      };
+    });
+    return { at: nowIso(), header: ["NAME", "READY", "STATUS", "RESTARTS", "AGE"], rows };
+  } catch {
+    return null;
+  }
+}
+
 const VERIFY_ATTEMPTS = parseInt(process.env.INCIDENT_VERIFY_ATTEMPTS || "12", 10);
 const VERIFY_DELAY_MS = parseInt(process.env.INCIDENT_VERIFY_DELAY_MS || "10000", 10);
 
@@ -934,21 +972,39 @@ export async function promoteDetection(detection, { cluster = "local", actor = "
 // ---------------------------------------------------------------------------
 async function runRemediationChain(session) {
   try {
-    await transition(session, S.REMEDIATING);
+    // Snapshot container state BEFORE touching anything, so the console can show
+    // a real before/after rather than asserting the fix worked.
+    const before = await captureWorkloadSnapshot(session.namespace, session.target);
+    await transition(session, S.REMEDIATING, { beforeSnapshot: before });
+
+    // Terminal transcript — the operator sees exactly what ran, in CLI form.
+    const term = [
+      `$ ${session.remediation.command}`,
+    ];
     const res = await executeFixCommand(session.remediation.command, { dryRun: false });
+    term.push(res.success ? (res.stdout || "applied") : (res.stderr || "failed"));
     if (!res.success) {
-      await transition(session, S.FAILED, { applyOutput: res.stderr || "apply failed" });
+      await transition(session, S.FAILED, { applyOutput: res.stderr || "apply failed", terminal: term });
       await transition(session, S.ESCALATED, {
         escalationReason: `Remediation failed on apply: ${(res.stderr || "unknown").slice(0, 300)}`,
       });
       await noteOnTicket(session, `Automated remediation FAILED: ${(res.stderr || "unknown").slice(0, 500)}`);
       return;
     }
-    await transition(session, S.VERIFYING, { applyOutput: res.stdout || "applied", remediatedAt: nowIso() });
+    term.push("", `$ oc get pods -n ${session.namespace} | grep ${session.target || ""}`.trim());
+    await transition(session, S.VERIFYING, { applyOutput: res.stdout || "applied", remediatedAt: nowIso(), terminal: term });
 
     const verification = await verifyRemediation(session);
+    // Capture the resulting container state — this is the evidence, not a claim.
+    const after = await captureWorkloadSnapshot(session.namespace, session.target);
+    if (after?.rows?.length) {
+      for (const r of after.rows) term.push(`${r.name}   ${r.ready}   ${r.status}   ${r.restarts}   ${r.age}`);
+    }
+    term.push("", verification.ok
+      ? `# verified: ${verification.summary}`
+      : `# NOT verified: ${verification.summary}`);
     if (!verification.ok) {
-      await transition(session, S.ROLLED_BACK, { verification });
+      await transition(session, S.ROLLED_BACK, { verification, afterSnapshot: after, terminal: term });
       await transition(session, S.ESCALATED, {
         escalationReason: `Fix was applied but verification did not pass: ${verification.summary} — escalated instead of being reported as resolved.`,
       });
@@ -956,7 +1012,7 @@ async function runRemediationChain(session) {
       return;
     }
 
-    await transition(session, S.RESOLVED, { verification, resolvedAt: nowIso() });
+    await transition(session, S.RESOLVED, { verification, resolvedAt: nowIso(), afterSnapshot: after, terminal: term });
 
     // Close the ticket with the full RCA as close notes.
     if (session.incidentSysId && isServiceNowEnabled()) {

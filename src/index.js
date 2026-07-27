@@ -2784,15 +2784,25 @@ async function startSSE() {
       } catch (err) { return sendJson(res, 400, { error: err.message }); }
     }
 
-    // RCA document (plain text) for a session — download / attach.
+    // RCA document for a session. Defaults to the professional HTML report
+    // (this is opened in a browser); ?format=text returns the plain-text version
+    // used for ServiceNow close notes.
     const rcaMatch = url.pathname.match(/^\/api\/intelligence\/incident-sessions\/([\w-]+)\/rca$/);
     if (rcaMatch && req.method === "GET") {
       try {
-        const { getSessionRCA } = await import("./services/incident-orchestrator.js");
-        const doc = await getSessionRCA(rcaMatch[1]);
-        if (!doc) return sendJson(res, 404, { error: "Session not found" });
-        res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-        return res.end(doc);
+        const fmt = (url.searchParams.get("format") || "html").toLowerCase();
+        const { getIncidentSession, getSessionRCA } = await import("./services/incident-orchestrator.js");
+        if (fmt === "text" || fmt === "txt") {
+          const doc = await getSessionRCA(rcaMatch[1]);
+          if (!doc) return sendJson(res, 404, { error: "Session not found" });
+          res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+          return res.end(doc);
+        }
+        const session = await getIncidentSession(rcaMatch[1]);
+        if (!session) return sendJson(res, 404, { error: "Session not found" });
+        const { renderRCAHtml } = await import("./services/incident-rca-report.js");
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        return res.end(renderRCAHtml(session));
       } catch (err) { return sendJson(res, 500, { error: err.message }); }
     }
 
