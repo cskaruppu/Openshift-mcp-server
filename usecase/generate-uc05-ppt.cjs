@@ -13,7 +13,9 @@ fs.mkdirSync(path.dirname(OUT), { recursive: true });
 
 const pptx = new PptxGenJS();
 pptx.author = "TCS Agentic AI Platform";
-pptx.title = "TCS Agentic AI — UC-05: Zero-Touch Incident Command";
+pptx.title = "TCS Agentic AI — Zero-Touch Incident Command (ZTIC) · UC-05";
+pptx.subject = "ZTIC — autonomous incident lifecycle for OpenShift";
+pptx.company = "Tata Consultancy Services";
 pptx.layout = "LAYOUT_WIDE"; // 13.33 x 7.5
 
 // Palette aligned with the master deck
@@ -36,8 +38,9 @@ function head(s, kicker, title, sub) {
   s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.33, h: 0.9, fill: { color: C.darkNavy } });
   s.addText(kicker, { x: 0.45, y: 0.12, w: 4, h: 0.25, fontSize: 10, color: C.valCyan, bold: true, charSpacing: 1.5, fontFace: F });
   s.addText(title, { x: 0.45, y: 0.34, w: 9.6, h: 0.45, fontSize: 22, color: C.white, bold: true, fontFace: F });
-  s.addText("UC-05", { x: 11.9, y: 0.28, w: 1.1, h: 0.36, fontSize: 13, color: C.white, bold: true, align: "center", fontFace: F,
+  s.addText("ZTIC", { x: 11.62, y: 0.2, w: 1.35, h: 0.34, fontSize: 13, color: C.white, bold: true, align: "center", fontFace: F,
     fill: { color: C.tcsBlue }, rectRadius: 0.05 });
+  s.addText("TCS Agentic AI · UC-05", { x: 11.12, y: 0.56, w: 1.85, h: 0.22, fontSize: 7.5, color: "94A3B8", align: "center", fontFace: F });
   if (sub) s.addText(sub, { x: 0.45, y: 1.0, w: 12.4, h: 0.3, fontSize: 12, color: C.textMed, fontFace: F });
 }
 
@@ -68,13 +71,16 @@ function hdr(cells) {
 {
   const s = pptx.addSlide();
   s.background = { color: C.darkNavy };
-  s.addShape(pptx.ShapeType.rect, { x: 0, y: 3.05, w: 13.33, h: 0.045, fill: { color: C.tcsBlue } });
-  s.addText("USE CASE 05", { x: 0.8, y: 1.75, w: 6, h: 0.3, fontSize: 13, color: C.valCyan, bold: true, charSpacing: 3, fontFace: F });
-  s.addText("Zero-Touch Incident Command", { x: 0.8, y: 2.1, w: 11.6, h: 0.85, fontSize: 42, color: C.white, bold: true, fontFace: F });
+  s.addShape(pptx.ShapeType.rect, { x: 0, y: 3.32, w: 13.33, h: 0.045, fill: { color: C.tcsBlue } });
+  s.addText("TCS AGENTIC AI   ·   USE CASE 05", { x: 0.8, y: 1.62, w: 8, h: 0.3, fontSize: 13, color: C.valCyan, bold: true, charSpacing: 3, fontFace: F });
+  s.addText("Zero-Touch Incident Command", { x: 0.8, y: 1.98, w: 11.6, h: 0.85, fontSize: 40, color: C.white, bold: true, fontFace: F });
+  s.addText("ZTIC", { x: 0.8, y: 2.82, w: 1.2, h: 0.32, fontSize: 13, color: C.white, bold: true, align: "center", valign: "middle",
+    fontFace: F, fill: { color: C.tcsBlue }, rectRadius: 0.05 });
+  s.addText("the short name for demos", { x: 2.1, y: 2.82, w: 5, h: 0.32, fontSize: 11, color: "64748B", valign: "middle", fontFace: F });
   s.addText("Self-detecting · Self-documenting · Self-closing · Self-reverting incident lifecycle",
-    { x: 0.8, y: 3.25, w: 11.6, h: 0.4, fontSize: 16, color: "94A3B8", fontFace: F });
+    { x: 0.8, y: 3.5, w: 11.6, h: 0.4, fontSize: 15.5, color: "94A3B8", fontFace: F });
   s.addText("“Nobody opens the ticket.  Nobody writes the RCA.  Nobody closes it.”",
-    { x: 0.8, y: 3.85, w: 11.6, h: 0.4, fontSize: 15, color: C.lAmber, italic: true, fontFace: F });
+    { x: 0.8, y: 4.05, w: 11.6, h: 0.4, fontSize: 15, color: C.lAmber, italic: true, fontFace: F });
 
   const stats = [
     { v: "1", l: "Human touchpoint" }, { v: "0", l: "Human triggers" },
@@ -82,11 +88,11 @@ function hdr(cells) {
   ];
   stats.forEach((st, i) => {
     const x = 0.8 + i * 2.42;
-    s.addShape(pptx.ShapeType.roundRect, { x, y: 4.7, w: 2.2, h: 1.15, fill: { color: C.navy }, line: { color: "334155", width: 1 }, rectRadius: 0.06 });
-    s.addText(st.v, { x, y: 4.82, w: 2.2, h: 0.5, fontSize: 26, bold: true, color: C.valCyan, align: "center", fontFace: F });
-    s.addText(st.l, { x, y: 5.32, w: 2.2, h: 0.3, fontSize: 9.5, color: "94A3B8", align: "center", fontFace: F });
+    s.addShape(pptx.ShapeType.roundRect, { x, y: 4.85, w: 2.2, h: 1.15, fill: { color: C.navy }, line: { color: "334155", width: 1 }, rectRadius: 0.06 });
+    s.addText(st.v, { x, y: 4.97, w: 2.2, h: 0.5, fontSize: 26, bold: true, color: C.valCyan, align: "center", fontFace: F });
+    s.addText(st.l, { x, y: 5.47, w: 2.2, h: 0.3, fontSize: 9.5, color: "94A3B8", align: "center", fontFace: F });
   });
-  s.addText("TCS Agentic AI for OpenShift  ·  Autonomous ITSM / AIOps", { x: 0.8, y: 6.35, w: 11.6, h: 0.3, fontSize: 11, color: "64748B", fontFace: F });
+  s.addText("TCS Agentic AI for OpenShift  ·  Autonomous ITSM / AIOps  ·  Tata Consultancy Services", { x: 0.8, y: 6.45, w: 11.6, h: 0.3, fontSize: 11, color: "64748B", fontFace: F });
 }
 
 // ───────────────────────────────────────────── 2. THE PROBLEM
@@ -532,13 +538,15 @@ function hdr(cells) {
 {
   const s = pptx.addSlide();
   s.background = { color: C.darkNavy };
-  s.addText("UC-05  ·  Zero-Touch Incident Command", { x: 0.8, y: 2.5, w: 11.6, h: 0.7, fontSize: 34, bold: true, color: C.white, fontFace: F });
-  s.addShape(pptx.ShapeType.rect, { x: 0.8, y: 3.35, w: 3.2, h: 0.04, fill: { color: C.valCyan } });
+  s.addText("TCS AGENTIC AI", { x: 0.8, y: 2.22, w: 8, h: 0.3, fontSize: 12, color: C.valCyan, bold: true, charSpacing: 3, fontFace: F });
+  s.addText("Zero-Touch Incident Command", { x: 0.8, y: 2.55, w: 11.6, h: 0.7, fontSize: 34, bold: true, color: C.white, fontFace: F });
+  s.addText("ZTIC  ·  UC-05", { x: 0.8, y: 3.22, w: 4, h: 0.3, fontSize: 12, color: "94A3B8", fontFace: F });
+  s.addShape(pptx.ShapeType.rect, { x: 0.8, y: 3.58, w: 3.2, h: 0.04, fill: { color: C.valCyan } });
   s.addText("Nobody opens the ticket.\nNobody writes the RCA.\nNobody closes it.\nAnd every change can be undone.",
-    { x: 0.8, y: 3.6, w: 11.6, h: 1.9, fontSize: 20, color: C.lAmber, lineSpacing: 31, fontFace: F });
+    { x: 0.8, y: 3.82, w: 11.6, h: 1.9, fontSize: 19, color: C.lAmber, lineSpacing: 30, fontFace: F });
   s.addText("The only thing a human decides is whether to apply the fix.",
     { x: 0.8, y: 5.65, w: 11.6, h: 0.4, fontSize: 15, color: "94A3B8", fontFace: F });
-  s.addText("TCS Agentic AI for OpenShift", { x: 0.8, y: 6.4, w: 11.6, h: 0.3, fontSize: 11, color: "64748B", fontFace: F });
+  s.addText("TCS Agentic AI for OpenShift  ·  Tata Consultancy Services", { x: 0.8, y: 6.5, w: 11.6, h: 0.3, fontSize: 11, color: "64748B", fontFace: F });
 }
 
 pptx.writeFile({ fileName: OUT }).then(() => {

@@ -1,11 +1,15 @@
-# UC-05 — Zero-Touch Incident Command
+# TCS Agentic AI — Zero-Touch Incident Command
+
+### ZTIC · Use Case 05
 
 **Self-detecting · Self-documenting · Self-closing · Self-reverting incident lifecycle for OpenShift**
 
 | | |
 |---|---|
 | **Use case ID** | UC-05 |
-| **Name** | Zero-Touch Incident Command |
+| **Full name** | **TCS Agentic AI — Zero-Touch Incident Command** |
+| **Short name** | **ZTIC** *(use this in demos and conversation)* |
+| **Product family** | TCS Agentic AI for OpenShift · Tata Consultancy Services |
 | **Tagline** | *Nobody opens the ticket. Nobody writes the RCA. Nobody closes it.* |
 | **Category** | Autonomous ITSM / AIOps |
 | **Human touchpoints** | **Exactly one** — approving the fix |

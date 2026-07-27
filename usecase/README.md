@@ -2,7 +2,9 @@
 
 Customer-facing use case collateral for the TCS Agentic AI platform.
 
-## UC-05 — Zero-Touch Incident Command
+## TCS Agentic AI — Zero-Touch Incident Command
+
+**ZTIC** · Use Case 05
 
 *Self-detecting · Self-documenting · Self-closing · Self-reverting incident lifecycle for OpenShift*
 
@@ -42,7 +44,7 @@ or mermaid.live).
 | UC-02 | Autonomous Cluster Upgrade | Human requests upgrade | `docs/` |
 | UC-03 | Predictive Intelligence & Anomaly Detection | Scheduled analysis | `generate-uc03-excel.cjs` |
 | UC-04 | Security & Compliance Governance | Continuous scanning | `generate-uc04-excel.cjs` |
-| **UC-05** | **Zero-Touch Incident Command** | **None — fully autonomous** | **this folder** |
+| **UC-05** | **TCS Agentic AI — Zero-Touch Incident Command (ZTIC)** | **None — fully autonomous** | **this folder** |
 
 UC-05 is the only use case with **no human trigger**, the only one that **closes its own
 tickets** with an audit-grade RCA, and the only one that keeps a **change ledger with

@@ -14,7 +14,9 @@ fs.mkdirSync(path.dirname(OUT), { recursive: true });
 const wb = new ExcelJS.Workbook();
 wb.creator = "TCS Agentic AI Platform";
 wb.created = new Date();
-wb.title = "UC-05 — Zero-Touch Incident Command";
+wb.title = "TCS Agentic AI — Zero-Touch Incident Command (ZTIC) · UC-05";
+wb.company = "Tata Consultancy Services";
+wb.subject = "ZTIC — autonomous incident lifecycle for OpenShift";
 
 const C = {
   darkNavy: "0F172A", navy: "1E293B", tcsBlue: "2563EB", lightBlue: "DBEAFE", paleBlue: "EFF6FF",
@@ -105,13 +107,15 @@ function note(ws, rowIdx, span, text, bg, fg) {
 {
   const ws = wb.addWorksheet("1. Overview", { properties: { tabColor: { argb: "FF" + C.tcsBlue } } });
   ws.columns = [{ width: 30 }, { width: 95 }];
-  let r = banner(ws, "UC-05 — Zero-Touch Incident Command",
+  let r = banner(ws, "TCS Agentic AI — Zero-Touch Incident Command  (ZTIC)  ·  UC-05",
     "Self-detecting · Self-documenting · Self-closing · Self-reverting incident lifecycle for OpenShift", 2);
 
   r = headerRow(ws, r, ["Attribute", "Detail"]);
   r = dataRows(ws, r, [
     ["Use case ID", "UC-05"],
-    ["Name", "Zero-Touch Incident Command"],
+    ["Full name", "TCS Agentic AI — Zero-Touch Incident Command"],
+    ["Short name (use in demos)", "ZTIC"],
+    ["Product family", "TCS Agentic AI for OpenShift · Tata Consultancy Services"],
     ["Tagline", "Nobody opens the ticket. Nobody writes the RCA. Nobody closes it."],
     ["Category", "Autonomous ITSM / AIOps"],
     ["Human touchpoints", "Exactly ONE — approving the fix"],
@@ -146,7 +150,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
 {
   const ws = wb.addWorksheet("2. Workflow", { properties: { tabColor: { argb: "FF" + C.aiPurple } } });
   ws.columns = [{ width: 6 }, { width: 22 }, { width: 24 }, { width: 62 }, { width: 16 }];
-  let r = banner(ws, "UC-05 Workflow — step by step",
+  let r = banner(ws, "TCS Agentic AI · ZTIC — Workflow, step by step",
     "Everything before the approval gate is autonomous. Everything after it is autonomous.", 5);
 
   r = headerRow(ws, r, ["#", "Phase", "State", "What happens", "Actor"]);
@@ -187,7 +191,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
 {
   const ws = wb.addWorksheet("3. State Machine", { properties: { tabColor: { argb: "FF" + C.valCyan } } });
   ws.columns = [{ width: 24 }, { width: 46 }, { width: 52 }, { width: 14 }];
-  let r = banner(ws, "Lifecycle state machine — 15 states", "Transitions are enforced; an invalid transition is rejected rather than silently applied.", 4);
+  let r = banner(ws, "TCS Agentic AI · ZTIC — Lifecycle state machine (15 states)", "Transitions are enforced; an invalid transition is rejected rather than silently applied.", 4);
   r = headerRow(ws, r, ["State", "Meaning", "Allowed next states", "Human?"]);
   r = dataRows(ws, r, [
     ["DETECTED", "Threshold breach promoted into a managed incident", "TRIAGED · RESOLVED (self-heal) · FAILED", "No"],
@@ -214,7 +218,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
 {
   const ws = wb.addWorksheet("4. Thresholds", { properties: { tabColor: { argb: "FF" + C.tcsBlue } } });
   ws.columns = [{ width: 22 }, { width: 22 }, { width: 12 }, { width: 44 }, { width: 40 }];
-  let r = banner(ws, "Detection thresholds — global industry standard",
+  let r = banner(ws, "TCS Agentic AI · ZTIC — Detection thresholds (global industry standard)",
     "Defaults come from the kubernetes-mixin / kube-prometheus rules OpenShift already ships. Dwell time is the equivalent of a Prometheus rule's `for:` clause.", 5);
   r = headerRow(ws, r, ["Rule", "Dwell / condition", "Severity", "Industry standard rule", "Why it matters"]);
   r = dataRows(ws, r, [
@@ -239,7 +243,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
 {
   const ws = wb.addWorksheet("5. Noise Control", { properties: { tabColor: { argb: "FF" + C.autoGreen } } });
   ws.columns = [{ width: 26 }, { width: 70 }, { width: 18 }, { width: 22 }];
-  let r = banner(ws, "Noise control — what makes autonomy credible",
+  let r = banner(ws, "TCS Agentic AI · ZTIC — Noise control: what makes autonomy credible",
     "Without these guards, enabling auto-ticketing on a real cluster creates an alert storm on the very first scan.", 4);
   r = headerRow(ws, r, ["Guard", "Purpose", "Default", "Configurable"]);
   r = dataRows(ws, r, [
@@ -269,7 +273,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
 {
   const ws = wb.addWorksheet("6. Remediation", { properties: { tabColor: { argb: "FF" + C.orange } } });
   ws.columns = [{ width: 34 }, { width: 52 }, { width: 12 }, { width: 13 }, { width: 44 }];
-  let r = banner(ws, "Remediation catalogue — one safe action per signal",
+  let r = banner(ws, "TCS Agentic AI · ZTIC — Remediation catalogue (one safe action per signal)",
     "Anything not listed escalates with the RCA and ticket already prepared. The system never guesses at a fix.", 5);
   r = headerRow(ws, r, ["Signal", "Automated action", "Risk", "Reversible", "Rationale"]);
   r = dataRows(ws, r, [
@@ -289,7 +293,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
 {
   const ws = wb.addWorksheet("7. AI RCA", { properties: { tabColor: { argb: "FF" + C.aiPurple } } });
   ws.columns = [{ width: 30 }, { width: 92 }];
-  let r = banner(ws, "AI root-cause analysis — evidence-grounded",
+  let r = banner(ws, "TCS Agentic AI · ZTIC — AI root-cause analysis (evidence-grounded)",
     "Logs and events are attacker-influencable, so they are fenced as untrusted data — the model treats them as evidence, never as instructions.", 2);
 
   r = headerRow(ws, r, ["Evidence collected", "Detail"]);
@@ -325,7 +329,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
 {
   const ws = wb.addWorksheet("8. RCA Document", { properties: { tabColor: { argb: "FF" + C.valCyan } } });
   ws.columns = [{ width: 34 }, { width: 88 }];
-  let r = banner(ws, "RCA document structure — ITIL 4 · Google SRE · NIST SP 800-61",
+  let r = banner(ws, "TCS Agentic AI · ZTIC — RCA document (ITIL 4 · Google SRE · NIST SP 800-61)",
     "Written into the ServiceNow close notes on every incident and downloadable from the console.", 2);
   r = headerRow(ws, r, ["Delivery format", "Where it goes / purpose"]);
   r = dataRows(ws, r, [
@@ -366,7 +370,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
 {
   const ws = wb.addWorksheet("9. Safety", { properties: { tabColor: { argb: "FF" + C.secRed } } });
   ws.columns = [{ width: 30 }, { width: 78 }, { width: 20 }];
-  let r = banner(ws, "Safety model", "Autonomy is only acceptable if it is bounded, previewed, verified and auditable.", 3);
+  let r = banner(ws, "TCS Agentic AI · ZTIC — Safety model", "Autonomy is only acceptable if it is bounded, previewed, verified and auditable.", 3);
   r = headerRow(ws, r, ["Control", "Behaviour", "Default"]);
   r = dataRows(ws, r, [
     ["Two-flag interlock", "Detection (read-only) is separate from action. Detection can run safely with action disabled.", "detect ON / act OFF"],
@@ -391,7 +395,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
 {
   const ws = wb.addWorksheet("10. Business Value", { properties: { tabColor: { argb: "FF" + C.autoGreen } } });
   ws.columns = [{ width: 34 }, { width: 46 }, { width: 46 }, { width: 22 }];
-  let r = banner(ws, "Business value — where the time goes back", "The target is the administrative load, not the engineering judgement.", 4);
+  let r = banner(ws, "TCS Agentic AI · ZTIC — Business value: where the time goes back", "The target is the administrative load, not the engineering judgement.", 4);
   r = headerRow(ws, r, ["Metric", "Manual today", "UC-05 Zero-Touch", "Effect"]);
   r = dataRows(ws, r, [
     ["Detection → ticket raised", "Minutes to hours — a human must notice first", "Seconds, with no human involved", "MTTD collapses"],
@@ -412,7 +416,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
 {
   const ws = wb.addWorksheet("11. Demo Script", { properties: { tabColor: { argb: "FF" + C.userAmber } } });
   ws.columns = [{ width: 6 }, { width: 40 }, { width: 74 }, { width: 14 }];
-  let r = banner(ws, "Demo script — five minutes", "Run in shadow mode first, then enable autonomous action for the live portion.", 4);
+  let r = banner(ws, "TCS Agentic AI · ZTIC — Demo script", "Run in shadow mode first, then enable autonomous action for the live portion.", 4);
   r = headerRow(ws, r, ["#", "Action", "What to say", "Duration"]);
   r = dataRows(ws, r, [
     ["1", "Open AI Intelligence → Auto-Detect", "“Nobody asked for this. The platform found 24 issues on its own and correlated 26 raw symptoms into them.”", "20s"],
@@ -437,7 +441,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
 {
   const ws = wb.addWorksheet("12. Configuration", { properties: { tabColor: { argb: "FF" + C.slate } } });
   ws.columns = [{ width: 34 }, { width: 40 }, { width: 22 }, { width: 16 }, { width: 40 }];
-  let r = banner(ws, "Configuration & rollout", "Everything an operator needs to tune is editable in the UI and persisted — no pod restart.", 5);
+  let r = banner(ws, "TCS Agentic AI · ZTIC — Configuration & rollout", "Everything an operator needs to tune is editable in the UI and persisted — no pod restart.", 5);
   r = headerRow(ws, r, ["Setting", "Environment variable", "Default", "UI editable", "Notes"]);
   r = dataRows(ws, r, [
     ["Detection on/off", "INCIDENT_AUTO_DETECT", "true (read-only)", "Yes", "Safe to leave on — never mutates anything"],
@@ -475,7 +479,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
 {
   const ws = wb.addWorksheet("13. Verification", { properties: { tabColor: { argb: "FF" + C.valCyan } } });
   ws.columns = [{ width: 44 }, { width: 74 }, { width: 18 }];
-  let r = banner(ws, "Verification status", "Honest separation between what has been proven and what still needs live validation.", 3);
+  let r = banner(ws, "TCS Agentic AI · ZTIC — Verification status", "Honest separation between what has been proven and what still needs live validation.", 3);
   r = headerRow(ws, r, ["Scenario", "Expected behaviour", "Status"]);
   r = dataRows(ws, r, [
     ["Node cascade correlation", "4 crash-looping pods on a NotReady node collapse into 1 incident (6 duplicate tickets avoided)", "VERIFIED"],
@@ -519,7 +523,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
 {
   const ws = wb.addWorksheet("14. Implementation", { properties: { tabColor: { argb: "FF" + C.navy } } });
   ws.columns = [{ width: 44 }, { width: 52 }, { width: 52 }];
-  let r = banner(ws, "Implementation map", "Where each capability lives in the codebase.", 3);
+  let r = banner(ws, "TCS Agentic AI · ZTIC — Implementation map", "Where each capability lives in the codebase.", 3);
   r = headerRow(ws, r, ["Component", "File", "Responsibility"]);
   r = dataRows(ws, r, [
     ["Threshold evaluator + correlation", "src/services/incident-detector.js", "Evaluates thresholds, correlates symptoms, fingerprints signatures, classifies chronic/recurring"],
@@ -542,7 +546,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
 {
   const ws = wb.addWorksheet("15. Deduplication", { properties: { tabColor: { argb: "FF" + C.valCyan } } });
   ws.columns = [{ width: 6 }, { width: 26 }, { width: 74 }, { width: 24 }];
-  let r = banner(ws, "One fault = one ticket",
+  let r = banner(ws, "TCS Agentic AI · ZTIC — One fault = one ticket",
     "Three independent layers prevent duplicates, plus deliberately asymmetric handling of tickets we did not raise.", 4);
 
   r = headerRow(ws, r, ["#", "Layer", "How it works", "Scope"]);
@@ -573,7 +577,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
 {
   const ws = wb.addWorksheet("16. Escalation", { properties: { tabColor: { argb: "FF" + C.secRed } } });
   ws.columns = [{ width: 30 }, { width: 78 }, { width: 22 }];
-  let r = banner(ws, "Escalation — repeat offenders",
+  let r = banner(ws, "TCS Agentic AI · ZTIC — Escalation: repeat offenders",
     "A fault that keeps coming back is not another SEV-3; it is an unresolved root cause, which ITIL puts in Problem management.", 3);
 
   r = headerRow(ws, r, ["Mechanism", "Behaviour", "Default"]);
@@ -601,7 +605,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
 {
   const ws = wb.addWorksheet("17. Change Ledger", { properties: { tabColor: { argb: "FF" + C.orange } } });
   ws.columns = [{ width: 28 }, { width: 30 }, { width: 72 }];
-  let r = banner(ws, "Change Ledger & Revert",
+  let r = banner(ws, "TCS Agentic AI · ZTIC — Change Ledger & Revert",
     "Every mutation the automation applied, with a precomputed inverse — surfaced as “History — applied changes” once an incident is fixed.", 3);
 
   r = note(ws, r, 3,
