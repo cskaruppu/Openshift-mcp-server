@@ -217,6 +217,53 @@ export async function createChangeRequest({
 }
 
 /** Get a record by sys_id from a table */
+// ServiceNow incident states: 1 New, 2 In Progress, 3 On Hold,
+// 6 Resolved, 7 Closed, 8 Canceled.
+export const SNOW_OPEN_STATES = ["1", "2", "3"];
+export const SNOW_TERMINAL_STATES = ["6", "7", "8"];
+
+/**
+ * Find an OPEN incident previously raised for the same condition, keyed on our
+ * correlation_id. This is the authoritative duplicate check: ServiceNow itself
+ * is the system of record, so it holds even if our own session store was lost
+ * (pod restart, DB unavailable) — which is exactly when duplicates used to slip
+ * through.
+ * @returns {Promise<object|null>} the incident record, or null
+ */
+export async function findOpenIncidentByCorrelation(correlationId) {
+  if (!correlationId) return null;
+  try {
+    const q = `correlation_id=${correlationId}^stateNOT IN${SNOW_TERMINAL_STATES.join(",")}^ORDERBYDESCsys_created_on`;
+    const res = await snowFetch(
+      `/now/table/incident?sysparm_query=${encodeURIComponent(q)}&sysparm_limit=1&sysparm_fields=sys_id,number,state,short_description,correlation_id`,
+      { timeoutMs: 15000 }
+    );
+    return res?.result?.[0] || null;
+  } catch {
+    return null; // never block incident creation on a failed lookup
+  }
+}
+
+/** Current state of an incident, for reconciling closures made in ServiceNow. */
+export async function getIncidentState(sysId) {
+  if (!sysId) return null;
+  try {
+    const res = await snowFetch(
+      `/now/table/incident/${sysId}?sysparm_fields=sys_id,number,state,close_code,close_notes`,
+      { timeoutMs: 15000 }
+    );
+    const r = res?.result;
+    if (!r) return null;
+    return {
+      sysId: r.sys_id, number: r.number, state: String(r.state ?? ""),
+      terminal: SNOW_TERMINAL_STATES.includes(String(r.state ?? "")),
+      closeCode: r.close_code || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function getRecord(table, sysId) {
   return snowFetch(`/now/table/${table}/${sysId}`);
 }

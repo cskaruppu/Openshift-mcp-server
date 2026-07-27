@@ -181,6 +181,13 @@ function stableName(name) {
   return s === String(name || "") ? stripHash(s) : s; // bare replicaset: foo-6bc756b95f
 }
 
+// Causal precedence for merging several signals on one workload: the earlier a
+// rule appears, the more likely it is the ROOT cause rather than a consequence.
+// An OOM kill explains a crash loop; a crash loop explains zero-ready replicas.
+const ROOT_PRECEDENCE = [
+  "oomKilled", "imagePull", "podPending", "crashLoop", "podNotReady", "zeroReady", "replicaMismatch",
+];
+
 const SEV_RANK = { "SEV-1": 1, "SEV-2": 2, "SEV-3": 3, "SEV-4": 4, "SEV-5": 5 };
 const worstSev = (a, b) => (SEV_RANK[a] <= SEV_RANK[b] ? a : b);
 
@@ -425,30 +432,65 @@ function correlate(symptoms) {
     });
   }
 
-  // Group the remaining pod symptoms per (namespace, owner, signal).
+  // Group the REMAINING symptoms per affected object — deliberately NOT per
+  // rule. A workload that is OOMKilled *and* crash-looping is ONE problem (the
+  // OOM causes the crash loop); grouping per rule produced two tickets for the
+  // same underlying fault. Pod/workload symptoms therefore key on
+  // (namespace, owner) only, so every signal on a workload lands in one incident.
   const groups = new Map();
   for (const s of symptoms) {
     if (claimed.has(s)) continue;
-    const key = `${s.rule}|${s.namespace || "-"}|${s.owner || s.node || "-"}`;
+    const workloadScoped = s.kind === "pod" || s.kind === "workload";
+    const key = workloadScoped
+      ? `wl|${s.namespace || "-"}|${s.owner || s.pod || "-"}`
+      : `${s.rule}|${s.namespace || "-"}|${s.owner || s.node || "-"}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(s);
   }
-  for (const group of groups.values()) {
-    const primary = group.reduce((a, b) => (SEV_RANK[a.severity] <= SEV_RANK[b.severity] ? a : b));
-    let severity = primary.severity;
-    // Breadth escalation: the same fault across many replicas is worse than one.
-    if (group.length >= 3 && SEV_RANK[severity] > 1) severity = worstSev(severity, "SEV-2");
+
+  for (const [key, group] of groups) {
+    // Choose the ROOT-CAUSE signal, not merely the most severe: an OOM kill
+    // explains a crash loop, a failed image pull explains an unready pod. The
+    // others are folded in as corroborating symptoms.
+    const byRoot = [...group].sort((a, b) => {
+      const ra = ROOT_PRECEDENCE.indexOf(a.rule), rb = ROOT_PRECEDENCE.indexOf(b.rule);
+      const pa = ra === -1 ? 99 : ra, pb = rb === -1 ? 99 : rb;
+      if (pa !== pb) return pa - pb;
+      return SEV_RANK[a.severity] - SEV_RANK[b.severity];
+    });
+    const primary = byRoot[0];
+
+    // Severity = worst across the merged signals, then breadth escalation.
+    let severity = group.reduce((w, s) => worstSev(w, s.severity), "SEV-5");
+    const distinctPods = new Set(group.map((s) => s.pod).filter(Boolean)).size;
+    if (distinctPods >= 3 && SEV_RANK[severity] > 1) severity = worstSev(severity, "SEV-2");
+
     // Cluster-scoped objects (nodes, cluster operators) have no namespace —
     // don't render a "null/" prefix for them.
     const qualify = (n) => (primary.namespace ? `${primary.namespace}/${n}` : n);
     const scope = primary.owner ? qualify(primary.owner) : (primary.node || "cluster");
+    const signals = [...new Set(byRoot.map((s) => s.signal))];
+    const extra = signals.length - 1;
+
+    let title = `${primary.signal} — ${primary.owner ? scope : (primary.pod ? qualify(primary.pod) : scope)}`;
+    if (extra > 0) title += ` (+${extra} related signal${extra > 1 ? "s" : ""})`;
+    else if (distinctPods > 1) title += ` (${distinctPods} instances)`;
+
+    const isMerged = signals.length > 1;
     incidents.push({
-      primary, symptoms: group, severity,
-      title: group.length > 1
-        ? `${primary.signal} — ${scope} (${group.length} instances)`
-        : `${primary.signal} — ${primary.pod ? qualify(primary.pod) : scope}`,
-      rootHint: null,
-      correlation: group.length > 1 ? "workload-group" : "single",
+      primary,
+      symptoms: byRoot,
+      severity,
+      title,
+      signals,
+      // Workload-scoped key so the signature stays stable even as the mix of
+      // firing rules changes — that is what prevents a second ticket appearing
+      // when, say, the OOM window lapses but the crash loop continues.
+      groupKey: key.startsWith("wl|") ? key : null,
+      rootHint: isMerged
+        ? `${signals.length} signals on the same workload were merged into one incident. "${primary.signal}" is treated as the root cause; ${signals.slice(1).join(", ")} are consequences.`
+        : null,
+      correlation: isMerged ? "causal-merge" : (distinctPods > 1 ? "workload-group" : "single"),
     });
   }
 
@@ -494,7 +536,11 @@ export async function detectIncidents() {
   const out = [];
   for (const inc of correlated) {
     const p = inc.primary;
-    const signature = `${p.rule}:${p.namespace || "cluster"}:${p.owner || p.node || stableName(p.pod) || "-"}`;
+    // Workload-scoped when available, so a workload keeps ONE signature (and so
+    // ONE ticket) even as the set of firing rules changes over time.
+    const signature = inc.groupKey
+      ? `wl:${p.namespace || "cluster"}:${p.owner || stableName(p.pod) || "-"}`
+      : `${p.rule}:${p.namespace || "cluster"}:${p.owner || p.node || stableName(p.pod) || "-"}`;
     seenThisScan.add(signature);
     const prev = _seen.get(signature);
 
@@ -544,6 +590,7 @@ export async function detectIncidents() {
       node: p.node || null,
       kind: p.kind,
       signal: p.signal,
+      signals: inc.signals || [p.signal],
       rule: p.rule,
       thresholdStandard: p.standard,
       threshold: T[p.rule] || null,

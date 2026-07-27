@@ -8422,13 +8422,20 @@ spec:
     if (!featureFlags.incidentAutoDetect()) return;
     try {
       const { detectIncidents } = await import("./services/incident-detector.js");
-      const { reconcileSelfHealed, autoPromoteDetections } = await import("./services/incident-orchestrator.js");
+      const { reconcileSelfHealed, reconcileExternalClosures, autoPromoteDetections } = await import("./services/incident-orchestrator.js");
       const result = await detectIncidents();
 
       // 1. Self-heal first, so a condition that cleared never gets re-opened.
       const healed = await reconcileSelfHealed(result.activeSignatures || []);
       if (healed.length) {
         console.log(`[incident-loop] self-healed & closed: ${healed.map(h => h.incidentNumber || h.id).join(", ")}`);
+      }
+
+      // 1b. Tickets an admin closed directly in ServiceNow — stop tracking them
+      // so the queue reflects reality and a recurrence can open a fresh ticket.
+      const extClosed = await reconcileExternalClosures();
+      if (extClosed.length) {
+        console.log(`[incident-loop] closed in ServiceNow by a human: ${extClosed.map(s => s.incidentNumber || s.id).join(", ")}`);
       }
 
       // 2. Open incidents for eligible breaches (no-op unless AUTO_ACT is on).

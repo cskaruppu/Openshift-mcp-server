@@ -926,6 +926,17 @@ export function IntelligenceView() {
                             }}>{STATE_LABEL[s.state] || s.state}</span>
                             {s.incidentNumber && <span className="intel-card-source">{s.incidentNumber}</span>}
                             {s.itilPriority && <span className="intel-card-source">{s.itilPriority}</span>}
+                            {s.reusedExistingTicket && (
+                              <span className="intel-card-kind-badge" style={{ background: "rgba(14,165,233,.18)", color: "#38bdf8" }}
+                                title="An open ticket already existed for this condition — attached to it instead of raising a duplicate">
+                                existing ticket reused
+                              </span>
+                            )}
+                            {s.closedExternally && (
+                              <span className="intel-card-kind-badge" style={{ background: "rgba(100,116,139,.25)", color: "#cbd5e1" }}>
+                                closed in ServiceNow
+                              </span>
+                            )}
                             {s.selfHealed && (
                               <span className="intel-card-kind-badge" style={{ background: "rgba(34,197,94,.18)", color: "#4ade80" }}>
                                 self-healed · auto-closed
@@ -1135,7 +1146,9 @@ export function IntelligenceView() {
                         <span className={"intel-card-sev-badge " + sc}>{inc.severity}</span>
                         {inc.correlation !== "single" && (
                           <span className="intel-card-kind-badge" style={{ background: "rgba(34,197,94,.18)", color: "#4ade80" }}>
-                            {inc.correlation === "node-cascade" ? "node cascade" : "grouped"} · {inc.symptomCount} symptoms
+                            {inc.correlation === "node-cascade" ? "node cascade"
+                              : inc.correlation === "causal-merge" ? "merged — 1 ticket"
+                              : "grouped"} · {inc.symptomCount} symptoms
                           </span>
                         )}
                         {inc.recurring && <span className="intel-card-count">{inc.occurrences}× recurring</span>}
@@ -1156,6 +1169,11 @@ export function IntelligenceView() {
                         {/* Which container actually failed — essential for 1/2 pods */}
                         {inc.containers?.length > 0 && (
                           <> · container{inc.containers.length > 1 ? "s" : ""}: <strong>{inc.containers.join(", ")}</strong></>
+                        )}
+                        {inc.signals?.length > 1 && (
+                          <div style={{ marginTop: 3 }}>
+                            Signals merged into this one incident: <strong>{inc.signals.join(" → ")}</strong>
+                          </div>
                         )}
                       </div>
 

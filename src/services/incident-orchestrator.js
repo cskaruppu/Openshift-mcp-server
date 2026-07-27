@@ -35,7 +35,7 @@ import { findMatchingErrors } from "./error-knowledge.js";
 import { executeFixCommand } from "./fix-executor.js";
 import { classifyCommand } from "./guardrails.js";
 import { logAuditEvent } from "./audit-log.js";
-import { createIncident, resolveIncident, updateRecord } from "../utils/servicenow-client.js";
+import { createIncident, resolveIncident, updateRecord, findOpenIncidentByCorrelation, getIncidentState } from "../utils/servicenow-client.js";
 import { isServiceNowEnabled } from "./action-workflow.js";
 import { query, isEnabled as dbEnabled } from "../utils/db.js";
 import { flags } from "./feature-flags.js";
@@ -793,6 +793,7 @@ export async function promoteDetection(detection, { cluster = "local", actor = "
     severity: detection.severity,
     rule: detection.rule,
     signal: detection.signal,
+    signals: detection.signals || [detection.signal],
     thresholdStandard: detection.thresholdStandard,
     dwellMinutes: detection.dwellMinutes,
     namespace: detection.namespace || null,
@@ -839,6 +840,26 @@ export async function promoteDetection(detection, { cluster = "local", actor = "
           incidentRaisedAt: nowIso(), rateLimited: true,
         });
       } else {
+        // Authoritative duplicate check against ServiceNow itself. If an OPEN
+        // incident already carries this correlation_id we ATTACH to it instead of
+        // raising a second ticket — this holds even when our own session store
+        // was lost (pod restart / DB down), which is when duplicates used to slip
+        // through. The rest of the flow (dry-run, apply, verify, close with RCA)
+        // then runs against that existing ticket.
+        let reused = null;
+        try { reused = await findOpenIncidentByCorrelation(session.signature); } catch { /* ignore */ }
+        if (reused?.sys_id) {
+          await transition(session, S.INC_RAISED, {
+            incidentNumber: reused.number || null,
+            incidentSysId: reused.sys_id,
+            incidentRaisedAt: nowIso(),
+            reusedExistingTicket: true,
+            itilPriority: (ITIL_MATRIX[session.severity] || {}).label || null,
+          });
+          await noteOnTicket(session,
+            `Additional occurrence detected by TCS Agentic AI for the same condition (${session.signature}). ` +
+            `No duplicate incident raised — this ticket remains the single record. Signals: ${(session.signals || [session.signal]).join(", ")}.`);
+        } else {
         try {
           const m = ITIL_MATRIX[session.severity] || ITIL_MATRIX["SEV-3"];
           const inc = await createIncident({
@@ -865,6 +886,7 @@ export async function promoteDetection(detection, { cluster = "local", actor = "
         } catch (e) {
           // Ticketing failure must not stop remediation planning.
           await transition(session, S.INC_RAISED, { incidentError: e.message, incidentRaisedAt: nowIso() });
+        }
         }
       }
     }
@@ -1111,6 +1133,42 @@ export async function reconcileSelfHealed(activeSignatures = []) {
     } catch { /* transition refused — leave it alone */ }
   }
   return healed;
+}
+
+/**
+ * Reconcile the OTHER direction: an admin resolved or closed the ticket directly
+ * in ServiceNow. Without this the local session would sit in AWAITING_APPROVAL
+ * forever and the operator would be asked to approve a fix for an incident that
+ * is already closed — and a later recurrence could not open a fresh ticket.
+ * @returns {Promise<Array>} sessions closed because their ticket was closed
+ */
+export async function reconcileExternalClosures() {
+  await hydrate();
+  if (!isServiceNowEnabled()) return [];
+  const closed = [];
+  for (const session of _sessions.values()) {
+    if (TERMINAL.has(session.state)) continue;
+    // Only pre-action states: never abandon a session mid-apply/verify.
+    if (!PRE_ACTION.has(session.state)) continue;
+    if (!session.incidentSysId) continue;
+    let st = null;
+    try { st = await getIncidentState(session.incidentSysId); } catch { continue; }
+    if (!st || !st.terminal) continue;
+    try {
+      await transition(session, S.RESOLVED, {
+        resolvedAt: nowIso(),
+        closedExternally: true,
+        verification: {
+          ok: true,
+          summary: `Incident ${st.number || session.incidentNumber} was resolved/closed directly in ServiceNow (state ${st.state}${st.closeCode ? `, ${st.closeCode}` : ""}). Local automation stopped tracking it.`,
+          attempts: 0,
+        },
+      });
+      await transition(session, S.CLOSED, { closedAt: nowIso(), ticketClosed: true, closedBy: "servicenow" });
+      closed.push(session);
+    } catch { /* transition refused — leave it */ }
+  }
+  return closed;
 }
 
 /**
