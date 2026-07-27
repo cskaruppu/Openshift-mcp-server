@@ -82,6 +82,14 @@ export function IntelligenceView() {
   // Signatures already under management — so a detection isn't promoted twice.
   const managedSigs = useMemo(() => new Set(liveSessions.map((s) => s.signature)), [liveSessions]);
   const [busySession, setBusySession] = useState({});
+  // Actionable vs chronic — chronic entries are informational (Problem
+  // candidates) and would otherwise bury the few that can actually be ticketed.
+  const [detectFilter, setDetectFilter] = useState("actionable");
+  const visibleDetections = useMemo(() => {
+    if (detectFilter === "chronic") return detected.filter((d) => d.chronic);
+    if (detectFilter === "actionable") return detected.filter((d) => !d.chronic);
+    return detected;
+  }, [detected, detectFilter]);
 
   const callSession = useCallback(async (path, body, okMsg) => {
     setBusySession((p) => ({ ...p, [path]: true }));
@@ -1075,12 +1083,31 @@ export function IntelligenceView() {
             </div>
           )}
 
+          {/* Actionable / chronic split — chronic entries are Problem candidates */}
+          <div className="intel-sev-pills" style={{ marginBottom: 10 }}>
+            {[
+              { k: "actionable", label: `Actionable (${detected.filter((d) => !d.chronic).length})` },
+              { k: "chronic", label: `Chronic → Problem (${detected.filter((d) => d.chronic).length})` },
+              { k: "all", label: `All (${detected.length})` },
+            ].map((p) => (
+              <button key={p.k} className={"intel-sev-pill" + (detectFilter === p.k ? " active" : "")}
+                onClick={() => setDetectFilter(p.k)}>{p.label}</button>
+            ))}
+          </div>
+
           <div className="intel-card-list">
             {detectLoading && detected.length === 0 && <div className="intel-empty">Evaluating thresholds…</div>}
             {!detectLoading && detected.length === 0 && !detectData?.disabled && (
               <div className="intel-empty">No threshold breaches sustained past their dwell time. Nothing would have been ticketed.</div>
             )}
-            {detected.map((inc) => {
+            {!detectLoading && detected.length > 0 && visibleDetections.length === 0 && (
+              <div className="intel-empty">
+                {detectFilter === "actionable"
+                  ? `No actionable detections — all ${detected.length} are chronic (long-standing) and are treated as Problem candidates.`
+                  : "None in this category."}
+              </div>
+            )}
+            {visibleDetections.map((inc) => {
               const sc = sevBucket(inc.severity);
               const color = SEV[sc] || SEV.info;
               return (
@@ -1106,7 +1133,24 @@ export function IntelligenceView() {
                         Fired <strong>{inc.rule}</strong>
                         {inc.dwellMinutes != null && <> after <strong>{inc.dwellHuman || `${inc.dwellMinutes}m`}</strong> (threshold {inc.threshold?.dwellMinutes ?? 0}m)</>}
                         {inc.thresholdStandard && <> · standard: <code>{inc.thresholdStandard}</code></>}
+                        {/* Which container actually failed — essential for 1/2 pods */}
+                        {inc.containers?.length > 0 && (
+                          <> · container{inc.containers.length > 1 ? "s" : ""}: <strong>{inc.containers.join(", ")}</strong></>
+                        )}
                       </div>
+
+                      {/* Live restart activity — catches flapping containers that
+                          are Running at the moment of the scan */}
+                      {inc.restartRate && (
+                        <div style={{
+                          marginTop: 5, display: "inline-block", padding: "2px 8px", borderRadius: 999,
+                          fontSize: 11, background: "rgba(239,68,68,.15)", color: "#fca5a5",
+                          border: "1px solid rgba(239,68,68,.35)",
+                        }}>
+                          ⟳ actively restarting — {inc.restartRate.gained}× in the last {inc.restartRate.windowMinutes}m
+                          {inc.restartRate.total != null && <span style={{ opacity: .8 }}> (total {inc.restartRate.total})</span>}
+                        </div>
+                      )}
 
                       {inc.chronic && inc.chronicReason && (
                         <div style={{ marginTop: 5, fontSize: 11.5, color: "#cbd5e1", opacity: .9 }}>{inc.chronicReason}</div>

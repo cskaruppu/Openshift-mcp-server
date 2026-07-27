@@ -101,6 +101,50 @@ function minutesSince(ts) {
   return Math.max(0, Math.round((Date.now() - t) / 60000));
 }
 
+// ---------------------------------------------------------------------------
+// Restart-rate memory — how many restarts a container gained recently.
+// ---------------------------------------------------------------------------
+// Instantaneous state is not enough: a container restarting every few seconds
+// is frequently Running at the moment we scan, so a CrashLoopBackOff-only check
+// misses it entirely. We keep a short per-container history of restart counts
+// and fire on the DELTA, which is what the kubernetes-mixin rule actually does
+// (rate(kube_pod_container_status_restarts_total[5m])).
+const _restarts = new Map(); // "ns/pod/container" -> [{ at, count }]
+const restartWindowMinutes = () => parseInt(process.env.INCIDENT_RESTART_WINDOW_MINUTES || "15", 10);
+
+/**
+ * Record this scan's restart count and report how many restarts were gained
+ * across the retained window.
+ * @returns {{gained:number, spanMinutes:number, samples:number}}
+ */
+function trackRestarts(key, count) {
+  const now = Date.now();
+  let hist = _restarts.get(key);
+  if (!hist) { hist = []; _restarts.set(key, hist); }
+  // A pod replacement resets the counter — start a fresh baseline rather than
+  // reporting a negative delta.
+  if (hist.length && count < hist[hist.length - 1].count) hist.length = 0;
+  hist.push({ at: now, count });
+  const cutoff = now - restartWindowMinutes() * 60000;
+  while (hist.length > 2 && hist[0].at < cutoff) hist.shift();
+  if (hist.length > 120) hist.shift();
+  const first = hist[0];
+  return {
+    gained: Math.max(0, count - first.count),
+    spanMinutes: Math.max(1, Math.round((now - first.at) / 60000)),
+    samples: hist.length,
+  };
+}
+
+/** Drop restart history for containers that no longer exist. */
+function pruneRestartHistory(seenKeys) {
+  if (_restarts.size < 5000) {
+    for (const k of _restarts.keys()) if (!seenKeys.has(k)) _restarts.delete(k);
+  } else {
+    _restarts.clear(); // pathological cluster size — reset rather than leak
+  }
+}
+
 /** 14606 → "10d 3h". Raw minutes are unreadable past an hour or two. */
 export function humanizeMinutes(m) {
   if (m == null || Number.isNaN(m)) return null;
@@ -176,7 +220,7 @@ async function fetchAlertmanager() {
 // ---------------------------------------------------------------------------
 // Symptom collection — one raw finding per breached threshold
 // ---------------------------------------------------------------------------
-function collectPodSymptoms(pods, T, symptoms) {
+function collectPodSymptoms(pods, T, symptoms, seenKeys = new Set()) {
   for (const pod of pods) {
     const ns = pod.metadata?.namespace || "";
     if (NOISE_NAMESPACES.some((re) => re.test(ns))) continue;
@@ -195,12 +239,32 @@ function collectPodSymptoms(pods, T, symptoms) {
       const waitReason = cs.state?.waiting?.reason || "";
       const lastTerm = cs.lastState?.terminated;
 
-      if (T.crashLoop.enabled && waitReason === "CrashLoopBackOff") {
+      // CrashLoop detection has TWO independent triggers:
+      //  (a) the container is sitting in CrashLoopBackOff at scan time, or
+      //  (b) it GAINED restarts since we last looked — the restart-rate signal.
+      // (b) matters because a container flapping on a few-second cycle is often
+      // Running at the instant we scan, so (a) alone silently misses it. The
+      // real KubePodCrashLooping standard is rate-based for exactly this reason.
+      if (T.crashLoop.enabled) {
         const restarts = cs.restartCount || 0;
-        if (restarts >= T.crashLoop.minRestarts && (dwell ?? 0) >= T.crashLoop.dwellMinutes) {
+        const rkey = `${ns}/${name}/${cs.name}`;
+        seenKeys.add(rkey);
+        const rate = trackRestarts(rkey, restarts);
+        const inBackoff = waitReason === "CrashLoopBackOff";
+        const backoffFires = inBackoff && restarts >= T.crashLoop.minRestarts && (dwell ?? 0) >= T.crashLoop.dwellMinutes;
+        const rateFires = rate.gained >= (T.crashLoop.minRestarts ?? 3);
+        if (backoffFires || rateFires) {
+          // For the rate path the pod may still be Ready between restarts, so
+          // fall back to the observation span rather than a not-Ready duration.
+          const effDwell = inBackoff ? dwell : (dwell ?? rate.spanMinutes);
+          const detail = rateFires
+            ? `restarted ${rate.gained}× in the last ${rate.spanMinutes}m (total ${restarts})`
+            : `restarted ${restarts}× — CrashLoopBackOff for ${dwell}m`;
           symptoms.push({ ...base, signal: "CrashLoopBackOff", container: cs.name, severity: T.crashLoop.severity,
-            dwellMinutes: dwell, rule: "crashLoop", standard: T.crashLoop.standard,
-            evidence: `container "${cs.name}" restarted ${restarts}× — CrashLoopBackOff for ${dwell}m` });
+            dwellMinutes: effDwell, rule: "crashLoop", standard: T.crashLoop.standard,
+            restartRate: rateFires ? { gained: rate.gained, windowMinutes: rate.spanMinutes, total: restarts } : null,
+            trigger: rateFires ? (inBackoff ? "backoff+rate" : "restart-rate") : "backoff",
+            evidence: `container "${cs.name}" ${detail}` });
         }
       }
 
@@ -408,11 +472,14 @@ export async function detectIncidents() {
 
   const symptoms = [];
   collectNodeSymptoms(nodes.items || [], T, symptoms);
-  collectPodSymptoms(pods.items || [], T, symptoms);
+  const restartKeys = new Set();
+  collectPodSymptoms(pods.items || [], T, symptoms, restartKeys);
   collectWorkloadSymptoms(deploys.items || [], T, symptoms);
   collectOperatorSymptoms(operators.items || [], T, symptoms);
   collectPvcSymptoms(pvcs.items || [], T, symptoms);
   await collectPvcFillingSymptoms(T, symptoms);
+
+  pruneRestartHistory(restartKeys);
 
   const correlated = correlate(symptoms);
 
@@ -477,8 +544,15 @@ export async function detectIncidents() {
       rootHint: inc.rootHint,
       evidence: inc.symptoms.slice(0, 8).map((s) => s.evidence),
       affected: inc.symptoms.slice(0, 20).map((s) => ({
-        namespace: s.namespace, pod: s.pod || null, node: s.node || null, owner: s.owner || null, signal: s.signal,
+        namespace: s.namespace, pod: s.pod || null, container: s.container || null,
+        node: s.node || null, owner: s.owner || null, signal: s.signal,
+        restartRate: s.restartRate || null, trigger: s.trigger || null,
       })),
+      // Distinct containers involved — a 1/2 pod must show WHICH container failed.
+      containers: [...new Set(inc.symptoms.map((s) => s.container).filter(Boolean))],
+      // Strongest live restart activity across the correlated symptoms.
+      restartRate: inc.symptoms.map((s) => s.restartRate).filter(Boolean)
+        .sort((a, b) => b.gained - a.gained)[0] || null,
       // Transparency: exactly what the automation would do, and why.
       wouldRaiseTicket: autoTicketEligible,
       autoTicketEligible,
