@@ -877,6 +877,8 @@ export function IntelligenceView() {
                   const bad = ["failed", "rolled_back", "escalated"].includes(s.state);
                   const aPath = `/api/intelligence/incident-sessions/${s.id}/approve`;
                   const rPath = `/api/intelligence/incident-sessions/${s.id}/reject`;
+                  const dPath = `/api/intelligence/incident-sessions/${s.id}/dry-run`;
+                  const pPath = `/api/intelligence/incident-sessions/${s.id}/replan`;
                   const STATE_LABEL = {
                     detected: "Detected", triaged: "RCA generated", inc_raised: "Ticket raised",
                     fix_proposed: "Fix proposed", dry_run_passed: "Dry-run passed",
@@ -929,8 +931,18 @@ export function IntelligenceView() {
                           )}
 
                           {s.dryRunOutput && (
-                            <div style={{ marginTop: 6, fontSize: 11, opacity: .8 }}>
-                              <strong>Dry-run:</strong> {String(s.dryRunOutput).slice(0, 220)}
+                            <div style={{
+                              marginTop: 7, padding: "7px 10px", borderRadius: 7, fontSize: 11.5,
+                              background: "color-mix(in srgb, var(--text2) 10%, transparent)",
+                              border: `1px solid ${s.dryRunOk === false ? "rgba(239,68,68,.4)" : "var(--border)"}`,
+                            }}>
+                              <strong style={{ color: s.dryRunOk === false ? "#fca5a5" : "#4ade80" }}>
+                                {s.dryRunOk === false ? "Dry-run failed" : "Dry-run passed"}
+                              </strong>
+                              {s.dryRunAt && <span style={{ opacity: .65 }}> · {timeAgo(s.dryRunAt)}</span>}
+                              <div style={{ fontFamily: "var(--font-mono, monospace)", marginTop: 3, opacity: .9, wordBreak: "break-word" }}>
+                                {String(s.dryRunOutput).slice(0, 300)}
+                              </div>
                             </div>
                           )}
                           {s.escalationReason && (
@@ -953,18 +965,31 @@ export function IntelligenceView() {
                           </div>
                         </div>
 
-                        <div className="intel-card-actions" style={{ gap: 6 }}>
+                        <div className="intel-card-actions" style={{ gap: 6, flexWrap: "wrap" }}>
                           {gate && (
                             <>
+                              <button className="intel-card-btn" disabled={!!busySession[dPath]}
+                                title="Preview the change against the live API server (?dryRun=All) — nothing is modified"
+                                onClick={() => callSession(dPath, {}, "Dry-run complete — review the output, then Apply Fix")}>
+                                {busySession[dPath] ? "…" : "▷ Dry-run"}
+                              </button>
                               <button className="intel-card-btn success" disabled={!!busySession[aPath]}
-                                onClick={() => callSession(aPath, { actor: "operator" }, "Approved — applying fix, then verifying and closing")}>
-                                {busySession[aPath] ? "…" : "Approve & Fix"}
+                                title="Apply the fix, then verify and close the ticket with the RCA — all automatic"
+                                onClick={() => callSession(aPath, { actor: "operator" }, "Applying fix — verification and ticket closure will follow automatically")}>
+                                {busySession[aPath] ? "…" : "✅ Apply Fix"}
                               </button>
                               <button className="intel-card-btn" disabled={!!busySession[rPath]}
                                 onClick={() => callSession(rPath, { actor: "operator", reason: "Rejected from Approval Inbox" }, "Rejected — incident left for manual handling")}>
                                 Reject
                               </button>
                             </>
+                          )}
+                          {s.state === "escalated" && (
+                            <button className="intel-card-btn" disabled={!!busySession[pPath]}
+                              title="Re-attempt automated remediation planning for this incident"
+                              onClick={() => callSession(pPath, {}, "Fix found — review the dry-run, then Apply Fix")}>
+                              {busySession[pPath] ? "…" : "↻ Retry auto-fix"}
+                            </button>
                           )}
                           <a className="intel-card-btn" href={clusterUrl(`/api/intelligence/incident-sessions/${s.id}/rca`, cluster)}
                             target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>

@@ -2760,19 +2760,25 @@ async function startSSE() {
       } catch (err) { return sendJson(res, 400, { error: err.message }); }
     }
 
-    // The single human gate.
-    const apprMatch = url.pathname.match(/^\/api\/intelligence\/incident-sessions\/([\w-]+)\/(approve|reject)$/);
+    // The single human gate — plus explicit dry-run and re-plan actions so the
+    // operator can preview the fix before applying it.
+    const apprMatch = url.pathname.match(/^\/api\/intelligence\/incident-sessions\/([\w-]+)\/(approve|reject|dry-run|replan)$/);
     if (apprMatch && req.method === "POST") {
-      if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.2 })) return;
+      if (enforceRateLimit(req, res, { burst: 12, refillPerSec: 0.3 })) return;
       try {
         const body = await readJsonBody(req).catch(() => ({}));
-        const { approveSession, rejectSession } = await import("./services/incident-orchestrator.js");
+        const orch = await import("./services/incident-orchestrator.js");
         const actor = body.actor || "operator";
-        const session = await withClusterContext(url, async () =>
-          apprMatch[2] === "approve"
-            ? approveSession(apprMatch[1], { actor })
-            : rejectSession(apprMatch[1], { actor, reason: body.reason || "Rejected by operator" })
-        );
+        const id = apprMatch[1];
+        const session = await withClusterContext(url, async () => {
+          switch (apprMatch[2]) {
+            case "approve":  return orch.approveSession(id, { actor });
+            case "reject":   return orch.rejectSession(id, { actor, reason: body.reason || "Rejected by operator" });
+            case "dry-run":  return orch.dryRunSession(id);
+            case "replan":   return orch.replanSession(id);
+            default:         throw new Error("Unsupported action");
+          }
+        });
         if (session === null) return sendJson(res, 200, { error: "Selected cluster is not reachable." });
         return sendJson(res, 200, { session });
       } catch (err) { return sendJson(res, 400, { error: err.message }); }

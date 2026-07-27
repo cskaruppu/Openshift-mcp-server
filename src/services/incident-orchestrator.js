@@ -226,6 +226,19 @@ async function findWorkload(ns, name) {
       if (obj?.metadata?.name) return { ...k, obj };
     } catch { /* try next kind */ }
   }
+  // Authoritative fallback: the name may still be a ReplicaSet (e.g. the hash
+  // heuristic didn't apply). Read the ReplicaSet and follow its ownerReference
+  // to the real Deployment instead of guessing at the string.
+  try {
+    const rs = await ocpGet(`/apis/apps/v1/namespaces/${ns}/replicasets/${encodeURIComponent(name)}`);
+    const owner = (rs?.metadata?.ownerReferences || []).find((o) => o.kind === "Deployment");
+    if (owner?.name) {
+      const dep = await ocpGet(`/apis/apps/v1/namespaces/${ns}/deployments/${encodeURIComponent(owner.name)}`);
+      if (dep?.metadata?.name) {
+        return { plural: "deployments", api: "/apis/apps/v1", kind: "Deployment", obj: dep, resolvedFrom: `replicaset/${name}` };
+      }
+    }
+  } catch { /* not a ReplicaSet either */ }
   return null;
 }
 
@@ -255,13 +268,15 @@ async function planRemediation(d) {
     if (!ns || !owner) return null;
     const wl = await findWorkload(ns, owner);
     if (!wl) return null;
+    const wname = wl.obj.metadata.name;   // resolved name (may differ from `owner`)
     return {
       action: "rollout_restart",
-      command: `oc rollout restart ${wl.plural.slice(0, -1)}/${owner} -n ${ns}`,
+      command: `oc rollout restart ${wl.plural.slice(0, -1)}/${wname} -n ${ns}`,
       risk: "low",
       reversible: true,
-      rationale: `Rolling restart of ${wl.kind} ${owner} recreates its pods. Reversible and the standard first response for ${d.signal}.`,
-      verify: { kind: wl.plural, namespace: ns, name: owner },
+      rationale: `Rolling restart of ${wl.kind} ${wname} recreates its pods. Reversible and the standard first response for ${d.signal}.`
+        + (wl.resolvedFrom ? ` (resolved from ${wl.resolvedFrom})` : ""),
+      verify: { kind: wl.plural, namespace: ns, name: wname },
     };
   }
 
@@ -271,6 +286,7 @@ async function planRemediation(d) {
     if (!ns || !owner) return null;
     const wl = await findWorkload(ns, owner);
     if (!wl) return null;
+    const wname = wl.obj.metadata.name;   // resolved name (may differ from `owner`)
     const c = (wl.obj.spec?.template?.spec?.containers || [])[0];
     if (!c) return null;
     const curMi = parseMemToMi(c.resources?.limits?.memory);
@@ -284,11 +300,11 @@ async function planRemediation(d) {
     const newMi = Math.min(curMi * 2, 65536); // cap at 64Gi
     return {
       action: "increase_memory",
-      command: `oc set resources ${wl.plural.slice(0, -1)}/${owner} -n ${ns} --containers=${c.name} --limits=memory=${newMi}Mi`,
+      command: `oc set resources ${wl.plural.slice(0, -1)}/${wname} -n ${ns} --containers=${c.name} --limits=memory=${newMi}Mi`,
       risk: "medium",
       reversible: true,
       rationale: `Container "${c.name}" was OOMKilled at a ${curMi}Mi limit. Doubling to ${newMi}Mi stops the kill; profile the workload if it keeps growing (possible leak).`,
-      verify: { kind: wl.plural, namespace: ns, name: owner },
+      verify: { kind: wl.plural, namespace: ns, name: wname },
     };
   }
 
@@ -708,6 +724,63 @@ export async function approveSession(sessionId, { actor = "operator" } = {}) {
   await noteOnTicket(session, `Fix approved by ${actor}. Applying: ${session.remediation.command}`);
   // Run apply → verify → close in the background; the UI polls the session.
   runRemediationChain(session).catch(() => {});
+  return session;
+}
+
+/**
+ * Re-run the dry-run on demand so the operator can see the preview immediately
+ * before committing. Read-only (?dryRun=All) and does NOT change state.
+ */
+export async function dryRunSession(sessionId) {
+  await hydrate();
+  const session = _sessions.get(sessionId);
+  if (!session) throw new Error(`Incident session ${sessionId} not found`);
+  if (!session.remediation?.command) throw new Error("This incident has no proposed fix to dry-run");
+  const res = await executeFixCommand(session.remediation.command, { dryRun: true });
+  session.dryRunOutput = res.success ? (res.stdout || "dry-run OK") : (res.stderr || "dry-run failed");
+  session.dryRunOk = !!res.success;
+  session.dryRunAt = nowIso();
+  session.updatedAt = nowIso();
+  await persist(session);
+  return session;
+}
+
+/**
+ * Re-attempt remediation planning for an ESCALATED session. Useful when the
+ * first attempt found no fix for a reason that has since changed (e.g. the
+ * workload target now resolves correctly), so an already-raised ticket can
+ * become actionable without waiting for a fresh detection cycle.
+ */
+export async function replanSession(sessionId) {
+  await hydrate();
+  const session = _sessions.get(sessionId);
+  if (!session) throw new Error(`Incident session ${sessionId} not found`);
+  if (session.state !== S.ESCALATED) throw new Error(`Session is ${session.state}; re-plan only applies to escalated incidents`);
+
+  const detection = {
+    rule: session.rule, signal: session.signal, namespace: session.namespace,
+    target: session.target, node: session.node, kind: session.kind,
+  };
+  const plan = await planRemediation(detection);
+  if (!plan || !plan.command) {
+    throw new Error(plan?.rationale || `Still no safe automated remediation for ${session.signal}.`);
+  }
+  const cls = classifyCommand(plan.command);
+  if (cls.level === "blocked") throw new Error(`Proposed fix is blocked by guardrails: ${cls.reason}`);
+
+  const dry = await executeFixCommand(plan.command, { dryRun: true });
+  if (!dry.success) throw new Error(`Dry-run failed, fix not offered: ${(dry.stderr || "unknown").slice(0, 200)}`);
+
+  // ESCALATED → AWAITING_APPROVAL is an allowed edge.
+  await transition(session, S.AWAITING_APPROVAL, {
+    remediation: { ...plan, classification: cls },
+    dryRunOutput: dry.stdout || "dry-run OK",
+    dryRunOk: true,
+    dryRunAt: nowIso(),
+    escalationReason: null,
+    replannedAt: nowIso(),
+  });
+  await noteOnTicket(session, `Re-planned: automated fix now available — ${plan.command}. Awaiting operator approval.`);
   return session;
 }
 

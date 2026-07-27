@@ -111,22 +111,42 @@ export function humanizeMinutes(m) {
   return rh ? `${d}d ${rh}h` : `${d}d`;
 }
 
+/**
+ * Strip a Kubernetes pod-template-hash suffix.
+ *
+ * The hash is 5-11 chars of [a-z0-9] and, in practice, always contains at least
+ * one digit — the digit requirement is what stops a legitimate trailing word
+ * being eaten ("my-app-server" must NOT become "my-app"). Getting this wrong is
+ * not cosmetic: the derived name is both the dedup signature AND the remediation
+ * target, so a ReplicaSet name left unstripped means the Deployment lookup 404s
+ * and a fixable incident escalates instead.
+ */
+function stripHash(name) {
+  return String(name || "").replace(/-(?=[a-z0-9]*\d)[a-z0-9]{5,11}$/, "");
+}
+
 /** Strip ReplicaSet/pod hash suffixes so a signature is stable across restarts. */
 function stableName(name) {
-  return String(name || "")
-    .replace(/-[a-f0-9]{6,10}-[a-z0-9]{5}$/, "")  // deployment pod: foo-6bc756b95f-2vv7b
-    .replace(/-[a-z0-9]{5}$/, "")                  // bare replicaset pod: foo-2vv7b
-    .replace(/-\d+$/, "");                         // statefulset pod: foo-0
+  const s = String(name || "")
+    .replace(/-[a-z0-9]{5,11}-[a-z0-9]{5}$/, "")   // deployment pod: foo-6bc756b95f-2vv7b
+    .replace(/-\d+$/, "");                          // statefulset pod: foo-0
+  return s === String(name || "") ? stripHash(s) : s; // bare replicaset: foo-6bc756b95f
 }
 
 const SEV_RANK = { "SEV-1": 1, "SEV-2": 2, "SEV-3": 3, "SEV-4": 4, "SEV-5": 5 };
 const worstSev = (a, b) => (SEV_RANK[a] <= SEV_RANK[b] ? a : b);
 
-/** Pod's owning workload name (stable), for grouping symptoms per deployment. */
+/**
+ * Pod's owning workload name, for grouping symptoms and for targeting the fix.
+ * A ReplicaSet owner is reduced to its Deployment name (strip the template hash)
+ * so the target is a real, patchable workload and the signature survives
+ * rollouts — otherwise every new deploy mints a new hash, hence a new signature,
+ * hence a duplicate incident.
+ */
 function ownerOf(pod) {
   const o = (pod.metadata?.ownerReferences || [])[0];
   if (!o) return stableName(pod.metadata?.name);
-  if (o.kind === "ReplicaSet") return stableName(o.name);
+  if (o.kind === "ReplicaSet") return stripHash(o.name);
   return o.name;
 }
 
