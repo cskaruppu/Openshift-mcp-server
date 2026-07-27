@@ -94,6 +94,10 @@ const chronicHours = () => parseInt(process.env.INCIDENT_CHRONIC_HOURS || "24", 
 // else is still detected and can be promoted by hand.
 const autoSeverityFloor = () => (process.env.INCIDENT_AUTO_SEVERITY_FLOOR || "SEV-2").toUpperCase();
 
+// Should current restart velocity override the age-based chronic classification?
+// On by default: an actively churning workload is a live incident, not a Problem.
+const chronicActivityOverride = () => process.env.INCIDENT_CHRONIC_ACTIVITY_OVERRIDE !== "false";
+
 function minutesSince(ts) {
   if (!ts) return null;
   const t = new Date(ts).getTime();
@@ -505,10 +509,24 @@ export async function detectIncidents() {
       : prev.firstSeen;
     _seen.set(signature, { firstSeen, lastSeen: nowIso, occurrences });
 
+    // Strongest live restart activity across the correlated symptoms.
+    const activeRestart = inc.symptoms.map((s) => s.restartRate).filter(Boolean)
+      .sort((a, b) => b.gained - a.gained)[0] || null;
+
     // Chronic: already broken longer than the chronic window when first seen.
+    //
+    // ACTIVITY OVERRIDE: age alone is the wrong test for something that is still
+    // actively failing. A deployment stuck at 0/2 for ten days is genuinely a
+    // Problem record; a container that has restarted 2,141 times and is STILL
+    // restarting every few seconds is a live incident that happens to be old.
+    // When a detection shows current restart velocity we treat it as active and
+    // let it page, regardless of age. Disable with
+    // INCIDENT_CHRONIC_ACTIVITY_OVERRIDE=false to go back to age-only.
     const ageMinutes = p.dwellMinutes ?? minutesSince(firstSeen) ?? 0;
     const chronicH = chronicHours();
-    const chronic = ageMinutes > chronicH * 60;
+    const chronicByAge = ageMinutes > chronicH * 60;
+    const activityOverride = chronicByAge && !!activeRestart && chronicActivityOverride();
+    const chronic = chronicByAge && !activityOverride;
 
     // Ticket eligibility for UNATTENDED creation: severity floor + not chronic.
     // (Chronic items remain fully promotable by hand from the UI.)
@@ -541,6 +559,11 @@ export async function detectIncidents() {
       chronicReason: chronic
         ? `Already failing for ${humanizeMinutes(ageMinutes)} when first detected (chronic threshold ${chronicH}h). Treated as a Problem candidate, not a new Incident — raise it manually if you want a ticket.`
         : null,
+      // Old, but still actively failing — explain why it is being treated as live.
+      activityOverride,
+      activityReason: activityOverride
+        ? `${humanizeMinutes(ageMinutes)} old, but still actively restarting (${activeRestart.gained}× in the last ${activeRestart.windowMinutes}m) — treated as a LIVE incident rather than a chronic Problem.`
+        : null,
       rootHint: inc.rootHint,
       evidence: inc.symptoms.slice(0, 8).map((s) => s.evidence),
       affected: inc.symptoms.slice(0, 20).map((s) => ({
@@ -551,8 +574,7 @@ export async function detectIncidents() {
       // Distinct containers involved — a 1/2 pod must show WHICH container failed.
       containers: [...new Set(inc.symptoms.map((s) => s.container).filter(Boolean))],
       // Strongest live restart activity across the correlated symptoms.
-      restartRate: inc.symptoms.map((s) => s.restartRate).filter(Boolean)
-        .sort((a, b) => b.gained - a.gained)[0] || null,
+      restartRate: activeRestart,
       // Transparency: exactly what the automation would do, and why.
       wouldRaiseTicket: autoTicketEligible,
       autoTicketEligible,
@@ -582,6 +604,7 @@ export async function detectIncidents() {
       symptoms: symptoms.length,
       correlationSavings: Math.max(0, symptoms.length - out.length), // tickets avoided by correlating
       chronic: out.filter((i) => i.chronic).length,
+      activeOverrides: out.filter((i) => i.activityOverride).length,
       recurring: out.filter((i) => i.recurring).length,
       wouldRaiseTickets: out.filter((i) => i.autoTicketEligible).length,
       bySeverity,
@@ -591,6 +614,7 @@ export async function detectIncidents() {
       chronicHours: chronicHours(),
       autoSeverityFloor: autoSeverityFloor(),
       recurrenceGapMinutes: recurrenceGapMinutes(),
+      chronicActivityOverride: chronicActivityOverride(),
     },
     thresholds: T,
     generatedAt: nowIso,

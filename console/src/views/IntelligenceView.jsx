@@ -129,6 +129,7 @@ export function IntelligenceView() {
       severityFloor: incSettings?.severityFloor || "SEV-2",
       maxTicketsPerHour: incSettings?.maxTicketsPerHour ?? 10,
       selfHealScans: incSettings?.selfHealScans ?? 2,
+      chronicActivityOverride: incSettings?.chronicActivityOverride !== false,
     });
     setShowIncSettings(true);
   }, [incSettings]);
@@ -756,6 +757,21 @@ export function IntelligenceView() {
                 </span>
               </label>
 
+              <label style={{
+                display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 12px", borderRadius: 9,
+                border: "1px solid var(--border)", cursor: "pointer", marginBottom: 12,
+              }}>
+                <input type="checkbox" checked={incForm.chronicActivityOverride} style={{ marginTop: 3 }}
+                  onChange={(e) => setIncForm((f) => ({ ...f, chronicActivityOverride: e.target.checked }))} />
+                <span style={{ fontSize: 12.5 }}>
+                  <strong>Treat actively-failing workloads as live, regardless of age</strong>
+                  <span style={{ display: "block", opacity: .8, marginTop: 2 }}>
+                    A container still restarting right now is a live incident even if it has been failing for days.
+                    Turn off to classify purely by age.
+                  </span>
+                </span>
+              </label>
+
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 12 }}>
                 <div>
                   <label style={{ fontSize: 11.5, fontWeight: 600, display: "block", marginBottom: 4 }}>
@@ -1127,6 +1143,10 @@ export function IntelligenceView() {
                           <span className="intel-card-kind-badge" style={{ background: "rgba(100,116,139,.25)", color: "#cbd5e1" }}
                             title={inc.chronicReason || ""}>chronic → Problem</span>
                         )}
+                        {inc.activityOverride && (
+                          <span className="intel-card-kind-badge" style={{ background: "rgba(239,68,68,.18)", color: "#fca5a5" }}
+                            title={inc.activityReason || ""}>old but ACTIVE</span>
+                        )}
                       </div>
 
                       <div className="intel-card-msg">
@@ -1154,6 +1174,9 @@ export function IntelligenceView() {
 
                       {inc.chronic && inc.chronicReason && (
                         <div style={{ marginTop: 5, fontSize: 11.5, color: "#cbd5e1", opacity: .9 }}>{inc.chronicReason}</div>
+                      )}
+                      {inc.activityReason && (
+                        <div style={{ marginTop: 5, fontSize: 11.5, color: "#fca5a5" }}>{inc.activityReason}</div>
                       )}
 
                       {inc.rootHint && (

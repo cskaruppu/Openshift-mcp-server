@@ -32,6 +32,7 @@ export const DEFAULTS = {
   severityFloor: "SEV-2",    // only this severity or worse is auto-ticketed
   maxTicketsPerHour: 10,     // storm brake
   selfHealScans: 2,          // consecutive clear scans before auto-closing
+  chronicActivityOverride: true, // still-restarting workloads page even when old
 };
 
 const VALID_SEVERITIES = new Set(["SEV-1", "SEV-2", "SEV-3", "SEV-4"]);
@@ -53,6 +54,7 @@ export function normalize(raw = {}) {
     severityFloor: VALID_SEVERITIES.has(sev) ? sev : DEFAULTS.severityFloor,
     maxTicketsPerHour: clampInt(raw.maxTicketsPerHour, 1, 500, DEFAULTS.maxTicketsPerHour),
     selfHealScans: clampInt(raw.selfHealScans, 1, 20, DEFAULTS.selfHealScans),
+    chronicActivityOverride: raw.chronicActivityOverride !== undefined ? Boolean(raw.chronicActivityOverride) : DEFAULTS.chronicActivityOverride,
   };
 }
 
@@ -65,6 +67,7 @@ export function applyToEnv(s) {
   process.env.INCIDENT_AUTO_SEVERITY_FLOOR = s.severityFloor;
   process.env.INCIDENT_MAX_TICKETS_PER_HOUR = String(s.maxTicketsPerHour);
   process.env.INCIDENT_SELFHEAL_SCANS = String(s.selfHealScans);
+  process.env.INCIDENT_CHRONIC_ACTIVITY_OVERRIDE = s.chronicActivityOverride ? "true" : "false";
 }
 
 /** Load from DB → file → env → defaults. Never throws. */
@@ -93,6 +96,7 @@ export async function loadIncidentSettings() {
       severityFloor: process.env.INCIDENT_AUTO_SEVERITY_FLOOR,
       maxTicketsPerHour: process.env.INCIDENT_MAX_TICKETS_PER_HOUR,
       selfHealScans: process.env.INCIDENT_SELFHEAL_SCANS,
+      chronicActivityOverride: process.env.INCIDENT_CHRONIC_ACTIVITY_OVERRIDE !== "false",
     }),
     _storage: "environment",
   };
