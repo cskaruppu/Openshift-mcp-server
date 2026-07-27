@@ -2701,6 +2701,36 @@ async function startSSE() {
       } catch (err) { return sendJson(res, 400, { error: err.message }); }
     }
 
+    // ── Change ledger — what the automation changed, with revert ────────────
+    if (url.pathname === "/api/intelligence/changes" && req.method === "GET") {
+      try {
+        const { listChanges, changeStats } = await import("./services/change-ledger.js");
+        const cluster = url.searchParams.get("cluster") || undefined;
+        const [changes, stats] = await Promise.all([
+          listChanges({ cluster, limit: parseInt(url.searchParams.get("limit") || "60", 10) }),
+          changeStats({ cluster }),
+        ]);
+        return sendJson(res, 200, { changes, stats });
+      } catch (err) { return sendJson(res, 200, { changes: [], error: err.message }); }
+    }
+
+    // Revert a ledgered change. ?dryRun=true previews without mutating.
+    const revMatch = url.pathname.match(/^\/api\/intelligence\/changes\/([\w-]+)\/revert$/);
+    if (revMatch && req.method === "POST") {
+      if (enforceRateLimit(req, res, { burst: 6, refillPerSec: 0.1 })) return;
+      try {
+        const body = await readJsonBody(req).catch(() => ({}));
+        const { revertChange } = await import("./services/incident-orchestrator.js");
+        const out = await withClusterContext(url, async () => revertChange(revMatch[1], {
+          dryRun: body.dryRun === true,
+          actor: body.actor || "operator",
+          useNativeUndo: body.useNativeUndo === true,
+        }));
+        if (out === null) return sendJson(res, 200, { error: "Selected cluster is not reachable." });
+        return sendJson(res, 200, out);
+      } catch (err) { return sendJson(res, 400, { error: err.message }); }
+    }
+
     // Duplicate-ticket backlog: inspect (GET) or clean up (POST) groups of open
     // incidents this platform raised for the same condition. GET is read-only so
     // the operator can see the groups before acting.

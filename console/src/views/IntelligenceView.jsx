@@ -73,6 +73,9 @@ export function IntelligenceView() {
   // Duplicate-ticket backlog (read-only sweep of open incidents we raised).
   const { data: dupData, refetch: refetchDupes } =
     useClusterQuery("/api/intelligence/incident-duplicates", { refetchInterval: 300_000 });
+  // Change ledger — every mutation we applied, with its recorded inverse.
+  const { data: changeData, refetch: refetchChanges } =
+    useClusterQuery("/api/intelligence/changes", { refetchInterval: 60_000 });
 
   const setChatSeed = useChatStore((s) => s.setSeed);
   const setActiveView = useViewStore((s) => s.setActiveView);
@@ -108,12 +111,35 @@ export function IntelligenceView() {
       else showToast(okMsg, "ok");
       refetchSessions();
       refetchDupes();
+      refetchChanges();
     } catch (e) {
       showToast(e.message, "err");
     } finally {
       setBusySession((p) => ({ ...p, [path]: false }));
     }
   }, [cluster, refetchSessions]);
+
+  const [revertPreview, setRevertPreview] = useState({});
+  const revertChange = useCallback(async (id, { dryRun }) => {
+    const key = `rev-${id}`;
+    setBusySession((p) => ({ ...p, [key]: true }));
+    try {
+      const res = await fetch(clusterUrl(`/api/intelligence/changes/${id}/revert`, cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun, actor: "operator" }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (d.error) { showToast(d.error, "err"); return; }
+      if (dryRun) {
+        setRevertPreview((p) => ({ ...p, [id]: d.output || "dry-run OK" }));
+        showToast("Revert dry-run passed — review, then Revert", "ok");
+      } else {
+        showToast(d.verification?.ok ? "Reverted and verified" : "Reverted — verification did not pass", d.verification?.ok ? "ok" : "warn");
+        refetchChanges();
+      }
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setBusySession((p) => ({ ...p, [key]: false })); }
+  }, [cluster, refetchChanges]);
 
   const promoteDetection = useCallback((inc) => {
     callSession("/api/intelligence/incident-sessions/promote", { detection: inc },
@@ -1456,6 +1482,125 @@ export function IntelligenceView() {
               );
             })}
           </div>
+
+          {/* ── HISTORY — what we changed, and how to undo it ── */}
+          {changeData?.changes?.length > 0 && (
+            <div style={{ marginTop: 20 }}>
+              <div className="intel-section-title" style={{ marginBottom: 8 }}>
+                <div>
+                  <h3 style={{ fontSize: 14 }}>
+                    History — applied changes
+                    {changeData.stats?.revertable > 0 && (
+                      <span style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 999, fontSize: 11,
+                        background: "rgba(14,165,233,.2)", color: "#38bdf8", border: "1px solid rgba(14,165,233,.45)" }}>
+                        {changeData.stats.revertable} revertable
+                      </span>
+                    )}
+                  </h3>
+                  <p style={{ fontSize: 11.5 }}>
+                    Every cluster change this platform applied, with the inverse recorded at apply time.
+                    Reverting runs the same dry-run → apply → verify path as the original fix.
+                    {changeData.stats?.reverted > 0 && ` · ${changeData.stats.reverted} already reverted`}
+                  </p>
+                </div>
+              </div>
+
+              <div className="intel-card-list">
+                {changeData.changes.map((c) => {
+                  const bk = `rev-${c.id}`;
+                  const isRevert = !!c.revertOf;
+                  const done = !!c.revertedAt;
+                  return (
+                    <div key={c.id} className="intel-card"
+                      style={{ "--card-sev": done ? "#64748b" : isRevert ? "#0891b2" : "#22c55e", opacity: done ? .75 : 1 }}>
+                      <div className="intel-card-head">
+                        <div className="intel-card-body">
+                          <div className="intel-card-row1">
+                            <span className="intel-card-title">
+                              <code>{c.action}</code> · {c.namespace}/{c.resourceName}
+                              {c.container && <span style={{ opacity: .8 }}> · container {c.container}</span>}
+                            </span>
+                            {c.incidentNumber && <span className="intel-card-source">{c.incidentNumber}</span>}
+                            {isRevert && (
+                              <span className="intel-card-kind-badge" style={{ background: "rgba(8,145,178,.2)", color: "#67e8f9" }}>
+                                revert
+                              </span>
+                            )}
+                            {done && (
+                              <span className="intel-card-kind-badge" style={{ background: "rgba(100,116,139,.25)", color: "#cbd5e1" }}>
+                                reverted {timeAgo(c.revertedAt)}{c.revertedBy ? ` by ${c.revertedBy}` : ""}
+                              </span>
+                            )}
+                            {!done && !c.revertable && (
+                              <span className="intel-card-kind-badge" style={{ background: "rgba(100,116,139,.2)", color: "#94a3b8" }}
+                                title={c.revertReason || ""}>not revertable</span>
+                            )}
+                          </div>
+
+                          {/* what actually changed */}
+                          {(c.beforeValue || c.afterValue) && (
+                            <div style={{ marginTop: 5, fontSize: 12, fontFamily: "var(--font-mono, monospace)" }}>
+                              {Object.keys(c.afterValue || c.beforeValue || {}).map((k) => (
+                                <div key={k}>
+                                  <span style={{ opacity: .7 }}>{k}: </span>
+                                  <span style={{ color: "#fca5a5" }}>{String(c.beforeValue?.[k] ?? "—")}</span>
+                                  <span style={{ opacity: .6 }}> → </span>
+                                  <span style={{ color: "#4ade80" }}>{String(c.afterValue?.[k] ?? "—")}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          <div style={{ marginTop: 5, fontSize: 11.5, fontFamily: "var(--font-mono, monospace)", opacity: .85, wordBreak: "break-all" }}>
+                            $ {c.command}
+                          </div>
+
+                          {!done && !c.revertable && c.revertReason && (
+                            <div style={{ marginTop: 5, fontSize: 11.5, color: "#94a3b8" }}>{c.revertReason}</div>
+                          )}
+
+                          {revertPreview[c.id] && (
+                            <pre style={{
+                              marginTop: 7, marginBottom: 0, padding: "8px 10px", borderRadius: 7, fontSize: 11,
+                              background: "#0b1220", color: "#7dd3fc", border: "1px solid rgba(148,163,184,.25)",
+                              whiteSpace: "pre-wrap", wordBreak: "break-word",
+                            }}>{revertPreview[c.id]}</pre>
+                          )}
+
+                          <div className="intel-card-meta">
+                            <span>applied {timeAgo(c.appliedAt)}</span>
+                            {c.approvedBy && <span>by {c.approvedBy}</span>}
+                            {c.risk && <span>risk {c.risk}</span>}
+                            <span style={{ color: c.verification?.ok ? "#4ade80" : "#fbbf24" }}>
+                              {c.verification?.ok ? "verified" : "not verified"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="intel-card-actions" style={{ gap: 6, flexWrap: "wrap" }}>
+                          {!done && c.revertable && (
+                            <>
+                              <button className="intel-card-btn" disabled={!!busySession[bk]}
+                                title="Preview the revert against the live API server — nothing is modified"
+                                onClick={() => revertChange(c.id, { dryRun: true })}>
+                                {busySession[bk] ? "…" : "▷ Dry-run revert"}
+                              </button>
+                              <button className="intel-card-btn" disabled={!!busySession[bk]}
+                                style={{ borderColor: "#f59e0b", color: "#fbbf24" }}
+                                title="Undo this change, then verify — recorded as its own ledger entry"
+                                onClick={() => revertChange(c.id, { dryRun: false })}>
+                                ↩ Revert
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Active threshold policy — tuning transparency */}
           {detectData?.thresholds && (

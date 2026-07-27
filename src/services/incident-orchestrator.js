@@ -281,6 +281,7 @@ async function planRemediation(d) {
     const wname = wl.obj.metadata.name;   // resolved name (may differ from `owner`)
     return {
       action: "rollout_restart",
+      workloadKind: wl.plural.slice(0, -1),
       command: `oc rollout restart ${wl.plural.slice(0, -1)}/${wname} -n ${ns}`,
       risk: "low",
       reversible: true,
@@ -310,6 +311,12 @@ async function planRemediation(d) {
     const newMi = Math.min(curMi * 2, 65536); // cap at 64Gi
     return {
       action: "increase_memory",
+      // Captured NOW, while the prior value is still knowable — this is the
+      // undo payload for the change ledger.
+      container: c.name,
+      beforeMemory: c.resources.limits.memory,
+      afterMemory: `${newMi}Mi`,
+      workloadKind: wl.plural.slice(0, -1),
       command: `oc set resources ${wl.plural.slice(0, -1)}/${wname} -n ${ns} --containers=${c.name} --limits=memory=${newMi}Mi`,
       risk: "medium",
       reversible: true,
@@ -330,6 +337,8 @@ async function planRemediation(d) {
     const target = `${Math.max(1, Math.ceil(gi * 1.5))}Gi`;
     return {
       action: "expand_pvc",
+      beforeStorage: cur,
+      afterStorage: target,
       command: `oc patch pvc ${owner} -n ${ns} --type=merge -p '{"spec":{"resources":{"requests":{"storage":"${target}"}}}}'`,
       risk: "medium",
       reversible: false, // storage cannot be shrunk back
@@ -1021,6 +1030,31 @@ async function runRemediationChain(session) {
 
     await transition(session, S.RESOLVED, { verification, resolvedAt: nowIso(), afterSnapshot: after, terminal: term });
 
+    // Ledger the mutation with its precomputed inverse, so it can be reverted
+    // later. Recorded only after verification passed — an unverified change is
+    // already escalated and must not present a tidy "revert" affordance.
+    try {
+      const { computeRevert, recordChange } = await import("./change-ledger.js");
+      const rev = computeRevert(session.remediation, {
+        namespace: session.namespace, target: session.target,
+        workloadKind: session.remediation?.workloadKind || "deployment",
+      });
+      const change = await recordChange({
+        cluster: session.cluster, namespace: session.namespace,
+        resourceKind: session.remediation?.workloadKind || session.kind,
+        resourceName: session.target, container: session.remediation?.container,
+        action: session.remediation?.action, command: session.remediation?.command,
+        risk: session.remediation?.risk,
+        ...rev,
+        sessionId: session.id, signature: session.signature,
+        incidentNumber: session.incidentNumber, approvedBy: session.approvedBy,
+        dryRunOutput: session.dryRunOutput, applyOutput: session.applyOutput,
+        verification, beforeSnapshot: session.beforeSnapshot, afterSnapshot: after,
+      });
+      session.changeId = change?.id || null;
+      await persist(session);
+    } catch { /* ledger is observability — never fail a good remediation over it */ }
+
     // Attach the RCA files FIRST (closed records often refuse attachments), then
     // link/close duplicates, then close the primary with the RCA in close notes.
     const attached = await attachRCAReports(session);
@@ -1390,6 +1424,111 @@ export async function reconcileDuplicateBacklog({ apply = false } = {}) {
     });
   }
   return { groups, applied: apply, linked, closed, totalGroups: groups.length };
+}
+
+/**
+ * Revert a ledgered change. Goes through the SAME governance as the original
+ * fix — guardrail classification, mandatory dry-run, apply, verify — because a
+ * revert is a change, not an escape hatch, and an unverified revert turns one
+ * incident into two.
+ *
+ * The revert is itself recorded in the ledger (`revertOf`), and a work note is
+ * added to the originating incident so the audit trail stays followable even
+ * after the ticket was closed.
+ *
+ * @param {string} changeId
+ * @param {object} opts
+ * @param {boolean} [opts.dryRun] preview only — no mutation
+ * @param {string}  [opts.actor]
+ * @param {boolean} [opts.useNativeUndo] use `oc rollout undo` instead of the inverse patch
+ */
+export async function revertChange(changeId, { dryRun = false, actor = "operator", useNativeUndo = false } = {}) {
+  const { getChange, computeRevert, recordChange, markReverted } = await import("./change-ledger.js");
+  const change = await getChange(changeId);
+  if (!change) throw new Error(`Change ${changeId} not found in the ledger`);
+  if (change.revertedAt) throw new Error(`Change was already reverted at ${change.revertedAt}`);
+
+  const command = useNativeUndo ? change.nativeUndo : change.revertCommand;
+  if (!command) {
+    throw new Error(change.revertReason
+      || (useNativeUndo ? "No native rollout undo is available for this change." : "This change has no recorded inverse."));
+  }
+  if (change.namespace && PROTECTED_NS.some((re) => re.test(change.namespace))) {
+    throw new Error(`Namespace "${change.namespace}" is protected — revert it manually.`);
+  }
+
+  const cls = classifyCommand(command);
+  if (cls.level === "blocked") throw new Error(`Revert command blocked by guardrails: ${cls.reason}`);
+
+  // Always dry-run first, even when the caller asked to apply.
+  const dry = await executeFixCommand(command, { dryRun: true });
+  if (!dry.success) {
+    throw new Error(`Revert dry-run failed, nothing was applied: ${(dry.stderr || "unknown").slice(0, 300)}`);
+  }
+  if (dryRun) {
+    return { dryRun: true, command, output: dry.stdout || "dry-run OK", change };
+  }
+
+  const beforeSnap = await captureWorkloadSnapshot(change.namespace, change.resourceName);
+  const applied = await executeFixCommand(command, { dryRun: false });
+  const term = [`$ ${command}`, applied.success ? (applied.stdout || "applied") : (applied.stderr || "failed")];
+  if (!applied.success) {
+    throw new Error(`Revert failed on apply: ${(applied.stderr || "unknown").slice(0, 300)}`);
+  }
+
+  // Verify the revert actually took, using the same health check as a fix.
+  let verification = { ok: false, summary: "Not verified." };
+  if (change.resourceKind && change.resourceName && change.namespace) {
+    const plural = change.resourceKind.endsWith("s") ? change.resourceKind : `${change.resourceKind}s`;
+    verification = await verifyRemediation({
+      remediation: { verify: { kind: plural, namespace: change.namespace, name: change.resourceName } },
+    });
+  }
+  const afterSnap = await captureWorkloadSnapshot(change.namespace, change.resourceName);
+  term.push("", `$ oc get pods -n ${change.namespace} | grep ${change.resourceName}`);
+  for (const r of afterSnap?.rows || []) term.push(`${r.name}   ${r.ready}   ${r.status}   ${r.restarts}   ${r.age}`);
+  term.push("", verification.ok ? `# reverted and verified: ${verification.summary}` : `# revert applied but NOT verified: ${verification.summary}`);
+
+  // The revert is itself a change — invert the before/after so the chain reads
+  // correctly and this entry can in turn be reverted.
+  const revertRec = await recordChange({
+    cluster: change.cluster, namespace: change.namespace,
+    resourceKind: change.resourceKind, resourceName: change.resourceName, container: change.container,
+    action: `revert_${change.action}`, command, risk: change.risk,
+    beforeValue: change.afterValue, afterValue: change.beforeValue,
+    revertable: !!change.revertCommand, revertReason: null,
+    revertCommand: change.command || null,   // re-applying the original undoes the revert
+    nativeUndo: change.nativeUndo || null,
+    sessionId: change.sessionId, signature: change.signature,
+    incidentNumber: change.incidentNumber, approvedBy: actor,
+    dryRunOutput: dry.stdout || null, applyOutput: applied.stdout || null,
+    verification, beforeSnapshot: beforeSnap, afterSnapshot: afterSnap,
+    revertOf: change.id,
+  });
+  await markReverted(change.id, { by: actor, revertChangeId: revertRec?.id });
+
+  // Keep the incident record honest — the ticket may already be closed.
+  if (change.incidentNumber) {
+    const sess = [..._sessions.values()].find((x) => x.id === change.sessionId);
+    if (sess?.incidentSysId && isServiceNowEnabled()) {
+      try {
+        await updateRecord("incident", sess.incidentSysId, {
+          work_notes: `Remediation REVERTED by ${actor}.\nCommand: ${command}\nVerification: ${verification.summary}\n` +
+            `The original fix (${change.command}) has been undone. Review whether the underlying condition has returned.`,
+        });
+      } catch { /* best effort */ }
+    }
+  }
+  try {
+    await logAuditEvent({
+      type: "action_taken", severity: verification.ok ? "warn" : "error",
+      title: `Change reverted: ${change.action} on ${change.namespace}/${change.resourceName}`,
+      details: JSON.stringify({ changeId: change.id, revertChangeId: revertRec?.id, command, actor, verified: verification.ok }),
+      namespace: change.namespace, username: actor, source: "change-ledger",
+    });
+  } catch {}
+
+  return { dryRun: false, command, output: applied.stdout, verification, terminal: term, change: revertRec, revertedId: change.id };
 }
 
 export async function listSessions({ cluster, state } = {}) {

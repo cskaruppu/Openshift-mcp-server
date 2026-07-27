@@ -657,10 +657,71 @@ export async function executeFixCommand(command, { dryRun = false } = {}) {
 
     if (verb === "rollout") {
       const subVerb = positional[0];
-      if (subVerb !== "restart") {
-        result.stderr = `Only 'rollout restart' is supported`;
+      if (!["restart", "undo", "history"].includes(subVerb)) {
+        result.stderr = `Only 'rollout restart', 'rollout undo' and 'rollout history' are supported`;
         return result;
       }
+
+      // ── rollout history / undo ──
+      // kubectl implements these over ReplicaSet revisions rather than a single
+      // API call: each ReplicaSet owned by the Deployment carries a
+      // deployment.kubernetes.io/revision annotation and a full pod template.
+      // Undo = patch the Deployment's template back to the chosen revision's.
+      if (subVerb === "undo" || subVerb === "history") {
+        const t = resolveResourceTarget(positional, 1);
+        const res2 = RESOURCE_ALIASES[(t.resource || "").toLowerCase()] || (t.resource || "").toLowerCase();
+        if (!t.name) { result.stderr = `Usage: ${cli} rollout ${subVerb} deployment/<name> -n <ns> [--to-revision=N]`; return result; }
+        if (res2 !== "deployments") { result.stderr = `'rollout ${subVerb}' is only supported for deployments (got '${res2}')`; return result; }
+        if (!namespace) { result.stderr = "Namespace required (-n <ns>)"; return result; }
+
+        let dep;
+        try { dep = await ocpGet(buildPath("deployments", namespace, t.name)); }
+        catch (e) { result.stderr = `Deployment ${t.name} not found in ${namespace}: ${e.message}`; return result; }
+        const curRev = parseInt(dep?.metadata?.annotations?.["deployment.kubernetes.io/revision"] || "0", 10);
+
+        // Only ReplicaSets actually owned by this Deployment are candidates.
+        let rsList = [];
+        try {
+          const all = await ocpGet(`/apis/apps/v1/namespaces/${namespace}/replicasets?limit=200`);
+          rsList = (all.items || []).filter((rs) =>
+            (rs.metadata?.ownerReferences || []).some((o) => o.kind === "Deployment" && o.name === dep.metadata.name));
+        } catch { /* fall through to the empty check */ }
+        const revs = rsList
+          .map((rs) => ({ rev: parseInt(rs.metadata?.annotations?.["deployment.kubernetes.io/revision"] || "0", 10), rs }))
+          .filter((x) => x.rev > 0)
+          .sort((a, b) => b.rev - a.rev);
+
+        if (subVerb === "history") {
+          result.success = true;
+          result.stdout = revs.length
+            ? [`deployment.apps/${t.name}`, "REVISION  REPLICASET", ...revs.map((x) => `${String(x.rev).padEnd(9)} ${x.rs.metadata.name}${x.rev === curRev ? "  (current)" : ""}`)].join("\n")
+            : `No revision history retained for deployment/${t.name}.`;
+          return result;
+        }
+
+        const want = flags["to-revision"] ? parseInt(flags["to-revision"], 10) : null;
+        const target = want ? revs.find((x) => x.rev === want) : revs.find((x) => x.rev !== curRev);
+        if (!target) {
+          result.stderr = want
+            ? `Revision ${want} is not retained for deployment/${t.name} (available: ${revs.map((x) => x.rev).join(", ") || "none"}).`
+            : `No previous revision retained for deployment/${t.name} — revisionHistoryLimit has aged it out, so a native undo is not possible.`;
+          return result;
+        }
+        const tpl = target.rs.spec?.template;
+        if (!tpl) { result.stderr = `Revision ${target.rev} has no pod template to restore.`; return result; }
+        // Drop the template hash — it is derived by the controller, not settable.
+        const cleanTpl = JSON.parse(JSON.stringify(tpl));
+        if (cleanTpl.metadata?.labels) delete cleanTpl.metadata.labels["pod-template-hash"];
+
+        const undoPath = buildPath("deployments", namespace, t.name) + dryRunParam;
+        await ocpPatch(undoPath, { spec: { template: cleanTpl } });
+        result.success = true;
+        result.stdout = (dryRun ? "[DRY RUN] Would roll back " : "Rolled back ") +
+          `deployment/${t.name} in ${namespace} to revision ${target.rev} (from ${curRev || "?"})`;
+        try { result.context = await gatherPodContext("deployments", namespace, t.name); } catch { /* best effort */ }
+        return result;
+      }
+
       const { resource: rawResource, name } = resolveResourceTarget(positional, 1);
       if (!rawResource || !name) { result.stderr = `Usage: ${cli} rollout restart <resource>[/name] [name] -n <ns>`; return result; }
       const resource = RESOURCE_ALIASES[rawResource.toLowerCase()] || rawResource.toLowerCase();
