@@ -106,7 +106,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
   const ws = wb.addWorksheet("1. Overview", { properties: { tabColor: { argb: "FF" + C.tcsBlue } } });
   ws.columns = [{ width: 30 }, { width: 95 }];
   let r = banner(ws, "UC-05 — Zero-Touch Incident Command",
-    "Self-detecting · Self-documenting · Self-closing incident lifecycle for OpenShift", 2);
+    "Self-detecting · Self-documenting · Self-closing · Self-reverting incident lifecycle for OpenShift", 2);
 
   r = headerRow(ws, r, ["Attribute", "Detail"]);
   r = dataRows(ws, r, [
@@ -117,7 +117,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
     ["Human touchpoints", "Exactly ONE — approving the fix"],
     ["Trigger", "None. Continuous threshold evaluation against the live cluster."],
     ["Platform", "TCS Agentic AI for OpenShift"],
-    ["Relationship to UC-01", "UC-01 answers when a human asks. UC-05 has no human trigger at all, and additionally closes its own tickets with an audit-grade RCA."],
+    ["Relationship to UC-01", "UC-01 answers when a human asks. UC-05 has no human trigger at all, closes its own tickets with an audit-grade RCA, and keeps a change ledger so every fix can be reverted."],
   ], { height: 34 });
 
   r++;
@@ -129,7 +129,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
     "UC-05 removes every one of those steps except the decision to apply the fix.\n\n" +
     "The platform continuously evaluates industry-standard thresholds against the live cluster. When a breach is sustained past its dwell time, it correlates the symptoms into a single incident, gathers real evidence (container logs — including the previous terminated instance — events, resource limits, exit codes), asks the AI for a grounded root-cause analysis, raises a properly classified ServiceNow incident into the admin queue, plans a safe remediation, and dry-runs it against the live API server.\n\n" +
     "Then it stops and waits for one human click.\n\n" +
-    "On approval it applies the fix, verifies the workload actually recovered, and closes the ticket with a full ITIL/SRE-standard RCA attached. If the condition clears on its own first, the incident closes itself and says so. If verification fails, it escalates and deliberately leaves the ticket open rather than reporting a false success.";
+    "On approval it applies the fix, verifies the workload actually recovered, ATTACHES the RCA as HTML and PDF, links and closes duplicate tickets, closes the incident with the full RCA in the close notes, and RECORDS the change with a precomputed inverse so it can be reverted. If the condition clears on its own first, the incident closes itself and says so. If verification fails, it escalates and deliberately leaves the ticket open rather than reporting a false success.";
   d.font = { name: F, size: 10.5, color: { argb: "FF" + C.textDark } };
   d.fill = fill(C.white);
   d.alignment = { vertical: "top", horizontal: "left", wrapText: true, indent: 1 };
@@ -218,7 +218,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
     "Defaults come from the kubernetes-mixin / kube-prometheus rules OpenShift already ships. Dwell time is the equivalent of a Prometheus rule's `for:` clause.", 5);
   r = headerRow(ws, r, ["Rule", "Dwell / condition", "Severity", "Industry standard rule", "Why it matters"]);
   r = dataRows(ws, r, [
-    ["crashLoop", "15 min · ≥3 restarts", "SEV-2", "KubePodCrashLooping", "Container repeatedly dying — the classic outage signal"],
+    ["crashLoop", "15 min · ≥3 restarts  OR  ≥3 restarts gained in a 15-min window", "SEV-2", "KubePodCrashLooping", "Dual trigger: state-only checks MISS a container that is Running at the instant of the scan. The mixin standard is rate-based for this reason."],
     ["oomKilled", "on event (30 min window)", "SEV-2", "container OOMKilled", "Memory limit exceeded; a restart alone will repeat the kill"],
     ["zeroReady", "5 min", "SEV-1", "KubeDeploymentReplicasMismatch (0 ready)", "Complete loss of a service"],
     ["replicaMismatch", "15 min", "SEV-3", "KubeDeploymentReplicasMismatch", "Reduced capacity / partial availability"],
@@ -244,11 +244,15 @@ function note(ws, rowIdx, span, text, bg, fg) {
   r = headerRow(ws, r, ["Guard", "Purpose", "Default", "Configurable"]);
   r = dataRows(ws, r, [
     ["Dwell time", "A breach must be sustained before it counts — filters transient blips and normal rolling deploys", "per rule", "Yes (env JSON)"],
-    ["Correlation", "A NotReady node taking N pods with it becomes 1 incident with N symptoms, not N+1 tickets", "always on", "—"],
+    ["Causal merge", "Every signal on one workload becomes ONE incident. Root cause chosen by precedence (OOM explains a crash loop, a crash loop explains zero-ready replicas); the rest are folded in as corroborating symptoms", "always on", "—"],
+    ["Node cascade", "A NotReady node taking N pods with it becomes 1 incident with N symptoms, not N+1 tickets", "always on", "—"],
+    ["Activity override", "A chronic-by-age condition that is STILL actively restarting is treated as a live incident. Static long-standing failures stay Problem candidates", "on", "Yes (UI)"],
+    ["ServiceNow dedup", "Before creating, query ServiceNow for an OPEN incident with the same correlation_id and attach to it. Holds even if our own session store was lost", "always on", "—"],
+    ["Escalation", "3+ recurrences raise severity one level and flag the condition for immediate attention — a returning fault is an unresolved root cause", "3 episodes", "Env"],
     ["Chronic guard", "Already broken longer than the window when first seen → Problem candidate, NOT a new Incident", "24 hours", "Yes (UI)"],
     ["Severity floor", "Only this severity or worse is eligible for unattended ticketing", "SEV-2", "Yes (UI)"],
     ["Rate limit", "Rolling ceiling on tickets per hour with a circuit breaker", "10 / hour", "Yes (UI)"],
-    ["Signature dedup", "One live incident per condition; the signature is stable across rollouts", "always on", "—"],
+    ["Workload signature", "The dedup key is the workload, not the rule — so it survives rollouts AND a changing mix of firing signals. No second ticket when the OOM window lapses but the crash loop continues", "always on", "—"],
     ["Recurrence gap", "“Recurring” means the condition cleared and returned — not that we polled again", "20 min", "Yes (env)"],
     ["Protected namespaces", "openshift-*, kube-system, kube-public, kube-node-lease, default are never auto-remediated", "always on", "—"],
     ["Self-heal confirmation", "Consecutive clear scans required before auto-closing, so flapping doesn't close early", "2 scans", "Yes (UI)"],
@@ -269,8 +273,8 @@ function note(ws, rowIdx, span, text, bg, fg) {
     "Anything not listed escalates with the RCA and ticket already prepared. The system never guesses at a fix.", 5);
   r = headerRow(ws, r, ["Signal", "Automated action", "Risk", "Reversible", "Rationale"]);
   r = dataRows(ws, r, [
-    ["CrashLoopBackOff / NotReady /\nZeroReady / ReplicaMismatch", "oc rollout restart <workload>", "low", "yes", "Recreating the pods is the standard first response and is fully reversible."],
-    ["OOMKilled", "oc set resources --limits=memory (DOUBLED)", "medium", "yes", "A bare restart just repeats the kill. The limit is doubled from the observed value; if it keeps growing, profile for a leak."],
+    ["CrashLoopBackOff / NotReady /\nZeroReady / ReplicaMismatch", "oc rollout restart <workload>", "low", "n/a", "Recreating the pods is the standard first response. Nothing to revert — the spec was never modified."],
+    ["OOMKilled", "oc set resources --limits=memory (DOUBLED)", "medium", "YES — ledgered", "A bare restart just repeats the kill. The limit is doubled from the observed value. The prior limit is captured at apply time, so this is revertable with one click."],
     ["PVC filling up", "oc patch pvc — expand +50%", "medium", "NO", "StorageClass allowVolumeExpansion is validated first. Kubernetes cannot shrink a PVC, so this is one-way."],
     ["Node NotReady", "none — escalate", "—", "—", "Node recovery is an infrastructure decision, not a safe automated action."],
     ["Cluster operator degraded", "none — escalate", "—", "—", "Platform components require human judgement."],
@@ -323,6 +327,15 @@ function note(ws, rowIdx, span, text, bg, fg) {
   ws.columns = [{ width: 34 }, { width: 88 }];
   let r = banner(ws, "RCA document structure — ITIL 4 · Google SRE · NIST SP 800-61",
     "Written into the ServiceNow close notes on every incident and downloadable from the console.", 2);
+  r = headerRow(ws, r, ["Delivery format", "Where it goes / purpose"]);
+  r = dataRows(ws, r, [
+    ["Plain text", "ServiceNow close_notes — the GUARANTEED record, always present even if attachments are blocked by policy"],
+    ["HTML", "Attached to the incident, and served by “View RCA” in the console. Self-contained (no external CSS/fonts/images), responsive and print-ready"],
+    ["PDF", "Attached to the incident for archival, e-mail and auditors who want a file rather than a link"],
+  ], { height: 34 });
+  r++;
+  r = note(ws, r, 2, "Attachments are uploaded BEFORE the incident is closed — many ServiceNow configurations refuse attachments on closed records. Attachment is best-effort: a failure never costs the text record.", C.lightAmber, C.darkAmber);
+
   r = headerRow(ws, r, ["Section", "Contents"]);
   r = dataRows(ws, r, [
     ["1. Summary", "Title, severity, cluster, scope, and the threshold that detected it"],
@@ -404,18 +417,20 @@ function note(ws, rowIdx, span, text, bg, fg) {
   r = dataRows(ws, r, [
     ["1", "Open AI Intelligence → Auto-Detect", "“Nobody asked for this. The platform found 24 issues on its own and correlated 26 raw symptoms into them.”", "20s"],
     ["2", "Point at CHRONIC 23 / AUTO-TICKET ELIGIBLE 1", "“It refuses to page for things that have been broken ten days. That restraint is what makes it trustworthy.”", "30s"],
-    ["3", "Open ⚙ Automation Settings", "“The autonomous switch and the ServiceNow queue are configurable here — no redeploy, no editing a Deployment.”", "30s"],
+    ["3", "Toggle the Actionable / Chronic filter", "“One actionable item, not 24 — the queue tells the truth instead of burying it.”", "20s"],
+    ["4", "Open ⚙ Automation Settings", "“The autonomous switch, the ServiceNow queue and every threshold are configurable here — no redeploy.”", "30s"],
     ["4", "Break something live (bad image or tight memory limit)", "“Let's create a genuinely new failure — the only kind that should page.”", "30s"],
     ["5", "Wait one detection cycle (2 min)", "“No one is typing. The loop is scanning.”", "2 min"],
     ["6", "Incident appears — auto-raised", "“There's the ServiceNow number and the ITIL priority. Nobody opened this.”", "20s"],
     ["7", "Read the AI RCA on the card", "“Category, confidence, the causal chain, and real log lines from the failed container.”", "40s"],
     ["8", "Click ▷ Dry-run", "“Previewed against the live API server. Nothing has changed yet.”", "20s"],
-    ["9", "Click ✅ Apply Fix", "“One click. Now it applies, verifies the pods actually recovered, and closes the ticket.”", "40s"],
-    ["10", "Open the incident in ServiceNow", "“Full RCA in the close notes — timeline with MTTD, MTTA, MTTR, evidence and preventive actions.”", "40s"],
-    ["11", "Optional: let one self-heal", "“This one fixed itself. The platform noticed and closed its own ticket.”", "30s"],
+    ["9", "Click ✅ Apply Fix", "“One click. Watch the terminal transcript and the BEFORE/AFTER container table — that is evidence, not a claim.”", "45s"],
+    ["10", "Open the incident in ServiceNow", "“Full RCA in the close notes — AND the HTML and PDF reports attached to the ticket itself.”", "40s"],
+    ["11", "Show History — applied changes", "“Here is every change we made, with a before → after diff and a one-click revert that dry-runs first.”", "40s"],
+    ["12", "Optional: let one self-heal", "“This one fixed itself. The platform noticed and closed its own ticket.”", "30s"],
   ], { height: 38 });
   r++;
-  note(ws, r, 4, "Closing line: “The only decision a human made in that entire lifecycle was whether to apply the fix.”", C.lightAmber, C.darkAmber);
+  note(ws, r, 4, "Closing line: “The only decision a human made in that entire lifecycle was whether to apply the fix — and even that is reversible.”", C.lightAmber, C.darkAmber);
 }
 
 // ═══════════════════════════════ 12. CONFIG
@@ -432,6 +447,13 @@ function note(ws, rowIdx, span, text, bg, fg) {
     ["Severity floor", "INCIDENT_AUTO_SEVERITY_FLOOR", "SEV-2", "Yes", "Only this severity or worse is auto-ticketed"],
     ["Ticket rate limit", "INCIDENT_MAX_TICKETS_PER_HOUR", "10", "Yes", "Storm brake with circuit breaker"],
     ["Self-heal confirm scans", "INCIDENT_SELFHEAL_SCANS", "2", "Yes", "Consecutive clear scans before auto-closing"],
+    ["Activity beats age", "INCIDENT_CHRONIC_ACTIVITY_OVERRIDE", "true", "Yes", "A still-restarting workload is live even if it is old"],
+    ["Attach RCA (HTML + PDF)", "INCIDENT_ATTACH_RCA / _PDF", "true", "Yes", "Uploaded to the incident before it is closed"],
+    ["Auto-close duplicates", "INCIDENT_AUTO_CLOSE_DUPLICATES", "false", "Yes", "Only ever closes tickets THIS platform raised"],
+    ["Escalate after N recurrences", "INCIDENT_ESCALATE_AFTER", "3", "No", "Raises severity one level and flags the condition"],
+    ["Restart-rate window", "INCIDENT_RESTART_WINDOW_MINUTES", "15", "No", "Window for the rate-based crashloop trigger"],
+    ["Change-ledger retention", "CHANGE_LEDGER_RETENTION_DAYS", "90", "No", "How long applied changes stay revertable in the ledger"],
+    ["Duplicate close code", "SERVICENOW_DUPLICATE_CLOSE_CODE", "Duplicate", "No", "Choice-list value varies by ServiceNow instance"],
     ["Scan interval", "INCIDENT_POLL_INTERVAL_MS", "120000 (2 min)", "No", "Background detection loop cadence"],
     ["Recurrence gap", "INCIDENT_RECURRENCE_GAP_MINUTES", "20", "No", "Absence required before a return counts as recurrence"],
     ["Threshold overrides", "INCIDENT_THRESHOLDS (JSON)", "mixin defaults", "No", "Per-customer threshold tuning"],
@@ -457,6 +479,17 @@ function note(ws, rowIdx, span, text, bg, fg) {
   r = headerRow(ws, r, ["Scenario", "Expected behaviour", "Status"]);
   r = dataRows(ws, r, [
     ["Node cascade correlation", "4 crash-looping pods on a NotReady node collapse into 1 incident (6 duplicate tickets avoided)", "VERIFIED"],
+    ["Causal merge", "OOMKilled + CrashLoopBackOff + ZeroReadyReplicas on one workload become 1 incident with OOM as root cause", "VERIFIED"],
+    ["Signature stability", "The signature is unchanged when the OOM window lapses and only the crash loop remains — no second ticket", "VERIFIED"],
+    ["Restart-rate detection", "A container that is Running at scan time but gained 4 restarts IS detected (previously missed entirely)", "VERIFIED"],
+    ["Activity override", "A static 10-day failure stays chronic while a 6-day failure still restarting becomes a live incident", "VERIFIED"],
+    ["Escalation", "Fires exactly on the 3rd episode with SEV-2 → SEV-1, not on the 1st or 2nd", "VERIFIED"],
+    ["Duplicate asymmetry", "Our duplicate is linked and closed; the human-raised ticket is linked and work-noted but never closed", "VERIFIED"],
+    ["Attachment degradation", "An attachment failure is recorded and the close still proceeds with the text RCA intact", "VERIFIED"],
+    ["Ledger inverse", "Correct revertable/not-revertable verdict and inverse command for all four action classes", "VERIFIED"],
+    ["Revert chain", "The revert is recorded as its own entry and links both ways to the original, with correct stats", "VERIFIED"],
+    ["Native rollout undo", "Restores the prior revision with the pod-template-hash stripped; refuses aged-out revisions and non-Deployments", "VERIFIED"],
+    ["PDF generation", "Renders to a valid %PDF- buffer with all ten sections", "VERIFIED"],
     ["Breadth escalation", "The same fault across 3 replicas escalates SEV-3 → SEV-2", "VERIFIED"],
     ["Sub-dwell blip", "A 2-minute crash loop does NOT fire", "VERIFIED"],
     ["Rolling deploy", "An in-progress rollout does NOT fire", "VERIFIED"],
@@ -473,6 +506,7 @@ function note(ws, rowIdx, span, text, bg, fg) {
     ["Live settings", "Autonomous toggle and rate limit apply without a restart", "VERIFIED"],
     ["OOMKilled remediation", "Memory doubled from the real limit; applies, verifies and closes", "VERIFIED"],
     ["ServiceNow auto-raise (live)", "First real incident created in the customer instance", "PENDING LIVE"],
+    ["RCA attachment upload (live)", "HTML + PDF land on the ticket in the customer instance", "PENDING LIVE"],
     ["ServiceNow auto-close (live)", "First real closure with RCA in close notes", "PENDING LIVE"],
     ["AI RCA depth (live)", "Depends on the configured LLM being reachable from the pod", "PENDING LIVE"],
   ], { height: 30 });
@@ -501,6 +535,119 @@ function note(ws, rowIdx, span, text, bg, fg) {
     ["Background loop", "src/index.js (pollIncidentDetections)", "2-minute detect → self-heal → auto-promote cycle"],
     ["Console UI", "console/src/views/IntelligenceView.jsx", "Auto-Detect tab, Approval Inbox, Automation Settings"],
   ], { height: 36 });
+}
+
+
+// ═══════════════════════════════ 15. DEDUPLICATION
+{
+  const ws = wb.addWorksheet("15. Deduplication", { properties: { tabColor: { argb: "FF" + C.valCyan } } });
+  ws.columns = [{ width: 6 }, { width: 26 }, { width: 74 }, { width: 24 }];
+  let r = banner(ws, "One fault = one ticket",
+    "Three independent layers prevent duplicates, plus deliberately asymmetric handling of tickets we did not raise.", 4);
+
+  r = headerRow(ws, r, ["#", "Layer", "How it works", "Scope"]);
+  r = dataRows(ws, r, [
+    ["1", "Causal merge", "A workload that is OOMKilled AND crash-looping AND at 0/1 replicas is ONE incident. The root cause is chosen by precedence (oomKilled > imagePull > podPending > crashLoop > podNotReady > zeroReady > replicaMismatch) and the remaining signals are folded in as corroborating symptoms.", "Per workload"],
+    ["2", "Workload signature", "The dedup key is the workload (wl:<namespace>:<workload>), not the rule. That keeps it stable across rollouts AND across a changing mix of firing signals — so no second ticket appears when the OOM window lapses but the crash loop continues.", "Per workload"],
+    ["3", "ServiceNow correlation_id", "Before creating anything we query ServiceNow for an OPEN incident carrying the same correlation_id and ATTACH to it instead. This is authoritative: it holds even when our own session store was lost to a pod restart or an unavailable database — exactly when duplicates used to slip through.", "Cross-restart"],
+  ], { height: 62 });
+
+  r++;
+  r = headerRow(ws, r, ["", "When duplicates already exist", "Behaviour", "Setting"]);
+  r = dataRows(ws, r, [
+    ["A", "Tickets WE raised", "Linked as children of the primary (parent_incident), then closed with close_code Duplicate pointing at the primary. The full RCA lands on the primary only — duplicating nine sections across five tickets is noise.", "autoCloseDuplicates (default OFF)"],
+    ["B", "Tickets a HUMAN raised", "Linked and given a work note asking for review — but NEVER closed automatically. They may contain context a person added that we would destroy.", "Always — no setting"],
+    ["C", "Backlog from before dedup", "A reconcile sweep finds every open incident this platform raised, groups them by correlation_id, designates the oldest as primary and reports the groups. GET is read-only so the operator inspects first; POST applies.", "One-click in the UI"],
+  ], { height: 52 });
+
+  r++;
+  r = note(ws, r, 4,
+    "RATIONALE: we clean up our own output automatically, but never close a person's ticket without permission. That asymmetry is what makes the automation safe to trust.",
+    C.lightCyan, "155E75");
+  note(ws, r, 4,
+    "Verified call order with a stubbed ServiceNow: create primary → link ours → close ours as Duplicate → link human → work-note human → resolve primary with the RCA. The human-raised ticket is provably never closed.",
+    C.lightGreen, C.darkGreen);
+}
+
+// ═══════════════════════════════ 16. ESCALATION
+{
+  const ws = wb.addWorksheet("16. Escalation", { properties: { tabColor: { argb: "FF" + C.secRed } } });
+  ws.columns = [{ width: 30 }, { width: 78 }, { width: 22 }];
+  let r = banner(ws, "Escalation — repeat offenders",
+    "A fault that keeps coming back is not another SEV-3; it is an unresolved root cause, which ITIL puts in Problem management.", 3);
+
+  r = headerRow(ws, r, ["Mechanism", "Behaviour", "Default"]);
+  r = dataRows(ws, r, [
+    ["Recurrence definition", "An episode counts only when the condition CLEARED (absent from scans for longer than the recurrence gap) and then returned. A continuously-present condition stays occurrence #1 no matter how often we poll — otherwise a 2-minute poll would report 30x recurring after an hour of one flat outage.", "20-minute gap"],
+    ["Escalation trigger", "At this many episodes the detection is flagged escalated and its severity is raised one level (e.g. SEV-2 → SEV-1), which can also lift it above the auto-ticket severity floor.", "3 episodes"],
+    ["Console treatment", "A prominent Escalations block sits ABOVE the approval inbox and the detection list, showing each repeat offender with its occurrence count, the severity change, and direct Open Incident / Ask AI actions. Cards also carry an “escalated Nx” badge.", "always on"],
+    ["Recommended response", "Raise a Problem record rather than closing another Incident. The RCA already carries a CAPA section, and recurrence is called out there explicitly.", "guidance"],
+    ["Activity override (related)", "Separately, a condition that is chronic BY AGE but still actively restarting is reclassified as a live incident — churning is not the same as stale.", "on"],
+  ], { height: 60 });
+
+  r++;
+  r = headerRow(ws, r, ["Episode", "Occurrences", "Result"]);
+  r = dataRows(ws, r, [
+    ["1st", "1", "SEV-2 — normal handling"],
+    ["2nd", "2", "SEV-2 — normal handling"],
+    ["3rd", "3", "ESCALATED → SEV-1, flagged for immediate attention"],
+    ["4th+", "4+", "Remains escalated; escalation level increases with each multiple of the threshold"],
+  ], { height: 26 });
+  r++;
+  note(ws, r, 3, "Verified: escalation triggers exactly on the 3rd episode with SEV-2 → SEV-1, and does not fire on the 1st or 2nd.", C.lightGreen, C.darkGreen);
+}
+
+// ═══════════════════════════════ 17. CHANGE LEDGER & REVERT
+{
+  const ws = wb.addWorksheet("17. Change Ledger", { properties: { tabColor: { argb: "FF" + C.orange } } });
+  ws.columns = [{ width: 28 }, { width: 30 }, { width: 72 }];
+  let r = banner(ws, "Change Ledger & Revert",
+    "Every mutation the automation applied, with a precomputed inverse — surfaced as “History — applied changes” once an incident is fixed.", 3);
+
+  r = note(ws, r, 3,
+    "THE KEY DESIGN DECISION: the inverse is computed and stored AT APPLY TIME, not at revert time. Once memory has been patched from 389Mi to 778Mi the old value is gone from the live object — it can only be restored if it was captured beforehand.",
+    C.lightAmber, C.darkAmber);
+
+  r = headerRow(ws, r, ["Action", "Revertable?", "Why"]);
+  r = dataRows(ws, r, [
+    ["increase_memory", "YES — exact inverse patch", "The prior limit and container name are captured while the fix is planned, so the exact inverse command can be built and stored."],
+    ["rollout_restart", "No — nothing to revert", "A rolling restart changes no configuration; only the pods were recreated. A revert button here would be meaningless."],
+    ["expand_pvc", "No — physically impossible", "Kubernetes cannot shrink a PersistentVolumeClaim. Expansion is one-way; reducing capacity means migrating the data to a smaller volume."],
+    ["(no captured value)", "Native rollout undo offered", "Falls back to `oc rollout undo`, which restores the entire prior pod template from the retained ReplicaSet revision."],
+  ], { height: 44 });
+
+  r++;
+  r = headerRow(ws, r, ["Field recorded", "Purpose", "Detail"]);
+  r = dataRows(ws, r, [
+    ["what / where", "Identify the target", "cluster, namespace, resource kind, resource name, container"],
+    ["action + command", "What ran", "The exact command that was applied"],
+    ["beforeValue / afterValue", "The diff", "e.g. containers.mlflow.limits.memory: 389Mi → 778Mi — rendered as a red/green diff in the UI"],
+    ["revertCommand", "The undo", "Precomputed inverse, stored at apply time"],
+    ["nativeUndo", "Fallback undo", "The equivalent `oc rollout undo` command"],
+    ["revertable + revertReason", "Honesty", "When it cannot be reverted, the reason is shown instead of a button that would lie"],
+    ["provenance", "Audit", "sessionId, signature, incident number, who approved it, timestamps"],
+    ["evidence", "Proof", "dry-run output, apply output, verification result, before/after container snapshots"],
+    ["revertOf", "The chain", "Set when this entry IS a revert — so the ledger is a complete chain and a revert can itself be reverted"],
+  ], { height: 32 });
+
+  r++;
+  r = headerRow(ws, r, ["Revert governance", "Behaviour", ""]);
+  r = dataRows(ws, r, [
+    ["Guardrail classification", "The revert command is risk-classified before anything runs; blocked commands never reach the cluster.", ""],
+    ["Mandatory dry-run", "A dry-run is ALWAYS executed first, even when the caller asked to apply — an unverified revert turns one incident into two.", ""],
+    ["Verification", "The same workload health check used for a fix confirms the revert actually took effect.", ""],
+    ["Incident work note", "A work note is posted to the originating incident (usually already closed) so the audit trail stays followable.", ""],
+    ["Protected namespaces", "openshift-*, kube-*, default are refused — revert those manually.", ""],
+    ["Audit log", "Every revert is written to the audit log with the actor, command and verification outcome.", ""],
+  ], { height: 34 });
+
+  r++;
+  r = note(ws, r, 3,
+    "WHY NOT ALWAYS `oc rollout undo`? Undo restores the ENTIRE prior pod template and would silently discard any unrelated change someone made since. The inverse patch undoes exactly what we did and nothing else. Native undo (and `rollout history`) are both implemented and available where no before-value was captured.",
+    C.lightPurple, "5B21B6");
+  note(ws, r, 3,
+    "Verified: inverse computation for all four action classes; the ledger records and the revert chain links both ways with correct stats; `rollout undo` restores the prior revision with the controller-managed pod-template-hash stripped, and correctly refuses aged-out revisions and non-Deployment kinds. Caveat: without PostgreSQL the ledger is in-memory and lost on pod restart.",
+    C.lightGreen, C.darkGreen);
 }
 
 wb.xlsx.writeFile(OUT).then(() => console.log("✅ XLSX written:", OUT));

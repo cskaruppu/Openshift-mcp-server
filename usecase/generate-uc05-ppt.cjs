@@ -71,14 +71,14 @@ function hdr(cells) {
   s.addShape(pptx.ShapeType.rect, { x: 0, y: 3.05, w: 13.33, h: 0.045, fill: { color: C.tcsBlue } });
   s.addText("USE CASE 05", { x: 0.8, y: 1.75, w: 6, h: 0.3, fontSize: 13, color: C.valCyan, bold: true, charSpacing: 3, fontFace: F });
   s.addText("Zero-Touch Incident Command", { x: 0.8, y: 2.1, w: 11.6, h: 0.85, fontSize: 42, color: C.white, bold: true, fontFace: F });
-  s.addText("Self-detecting · Self-documenting · Self-closing incident lifecycle for OpenShift",
+  s.addText("Self-detecting · Self-documenting · Self-closing · Self-reverting incident lifecycle",
     { x: 0.8, y: 3.25, w: 11.6, h: 0.4, fontSize: 16, color: "94A3B8", fontFace: F });
   s.addText("“Nobody opens the ticket.  Nobody writes the RCA.  Nobody closes it.”",
     { x: 0.8, y: 3.85, w: 11.6, h: 0.4, fontSize: 15, color: C.lAmber, italic: true, fontFace: F });
 
   const stats = [
     { v: "1", l: "Human touchpoint" }, { v: "0", l: "Human triggers" },
-    { v: "12", l: "Standard thresholds" }, { v: "15", l: "Lifecycle states" }, { v: "9", l: "RCA sections" },
+    { v: "12", l: "Standard thresholds" }, { v: "15", l: "Lifecycle states" }, { v: "3", l: "RCA formats" },
   ];
   stats.forEach((st, i) => {
     const x = 0.8 + i * 2.42;
@@ -212,21 +212,93 @@ function hdr(cells) {
   const rows = [hdr(["Guard", "Purpose", "Default"])];
   [
     ["Dwell time", "Ignore transient blips and normal rolling deploys", "per rule"],
-    ["Correlation", "A NotReady node taking N pods with it = 1 incident, not N+1", "always on"],
+    ["Causal merge", "Every signal on one workload → ONE incident; root cause chosen by precedence", "always on"],
+    ["Node cascade", "A NotReady node taking N pods with it = 1 incident, not N+1", "always on"],
     ["Chronic guard", "Already broken >24h when first seen → Problem candidate, not an Incident", "24 hours"],
+    ["Activity override", "…UNLESS it is still actively restarting — then it is a live incident", "on"],
     ["Severity floor", "Only this severity or worse is auto-ticketed", "SEV-2"],
     ["Rate limit", "Rolling ceiling on tickets per hour + circuit breaker", "10 / hour"],
-    ["Signature dedup", "One live incident per condition; stable across rollouts", "always on"],
+    ["Workload signature", "Stable across rollouts AND across a changing mix of firing signals", "always on"],
+    ["ServiceNow dedup", "Reuse an existing open ticket via correlation_id", "always on"],
     ["Recurrence gap", "“Recurring” = cleared then returned, not “polled again”", "20 min"],
+    ["Escalation", "3+ recurrences → severity +1, flagged for immediate attention", "3"],
     ["Protected namespaces", "openshift-*, kube-*, default never auto-remediated", "always on"],
   ].forEach((r) => rows.push(r.map((t, i) => ({ text: t, options: { fontSize: 10.5, bold: i === 0, fill: { color: "FFFFFF" } } }))));
-  table(s, rows, { y: 1.8, colW: [2.9, 7.1, 2.4], fontSize: 10.5 });
+  table(s, rows, { y: 1.72, colW: [2.9, 7.1, 2.4], fontSize: 9.5 });
 
-  s.addShape(pptx.ShapeType.roundRect, { x: 0.45, y: 5.75, w: 12.4, h: 1.0, fill: { color: C.lGreen }, line: { color: C.autoGreen, width: 1.5 }, rectRadius: 0.08 });
+  s.addShape(pptx.ShapeType.roundRect, { x: 0.45, y: 6.1, w: 12.4, h: 0.95, fill: { color: C.lGreen }, line: { color: C.autoGreen, width: 1.5 }, rectRadius: 0.08 });
   s.addText("Measured on the live lab cluster:  26 raw symptoms  →  24 correlated detections  →  23 chronic (Problem candidates)  →  1 auto-ticket",
-    { x: 0.6, y: 5.85, w: 12.1, h: 0.4, fontSize: 13, bold: true, color: "065F46", align: "center", fontFace: F });
+    { x: 0.6, y: 6.18, w: 12.1, h: 0.4, fontSize: 12.5, bold: true, color: "065F46", align: "center", fontFace: F });
   s.addText("The single ticket was the genuinely new failure. That is the guard set doing its job.",
-    { x: 0.6, y: 6.25, w: 12.1, h: 0.35, fontSize: 11, color: "047857", align: "center", italic: true, fontFace: F });
+    { x: 0.6, y: 6.56, w: 12.1, h: 0.35, fontSize: 10.5, color: "047857", align: "center", italic: true, fontFace: F });
+}
+
+// ───────────────────────────────────────────── 6b. NOISE FUNNEL
+{
+  const s = pptx.addSlide();
+  head(s, "THE NUMBERS", "What the guards actually filter out", "Measured on the live lab cluster — this is the most persuasive slide in the deck.");
+
+  const stages = [
+    { n: "26", l: "RAW SYMPTOMS", d: "every threshold breach\nfound on the cluster", c: C.tcsBlue, bg: C.lBlue },
+    { n: "24", l: "DETECTIONS", d: "after correlation and\ncausal merge", c: C.aiPurple, bg: C.lPurple },
+    { n: "1", l: "AUTO-TICKET", d: "after chronic guard,\nseverity floor, rate limit", c: C.autoGreen, bg: C.lGreen },
+  ];
+  stages.forEach((st, i) => {
+    const x = 0.9 + i * 4.2;
+    s.addShape(pptx.ShapeType.roundRect, { x, y: 1.9, w: 3.4, h: 2.1, fill: { color: st.bg }, line: { color: st.c, width: i === 2 ? 3 : 1.5 }, rectRadius: 0.1 });
+    s.addText(st.n, { x, y: 2.05, w: 3.4, h: 0.9, fontSize: 46, bold: true, color: st.c, align: "center", fontFace: F });
+    s.addText(st.l, { x, y: 2.95, w: 3.4, h: 0.3, fontSize: 12, bold: true, color: st.c, align: "center", charSpacing: 1, fontFace: F });
+    s.addText(st.d, { x: x + 0.2, y: 3.28, w: 3.0, h: 0.6, fontSize: 10, color: C.textMed, align: "center", fontFace: F });
+    if (i < 2) s.addText("▶", { x: x + 3.45, y: 2.75, w: 0.7, h: 0.4, fontSize: 22, color: C.slate, align: "center", fontFace: F });
+  });
+
+  const filters = [
+    { t: "Correlation + causal merge", d: "Every signal on one workload becomes ONE incident. A NotReady node taking 20 pods with it is 1 ticket, not 21.", c: C.aiPurple, bg: C.lPurple },
+    { t: "Chronic guard — 23 filtered", d: "Already broken >24h when first seen → a Problem candidate, not a new Incident. Nobody gets paged for a 10-day-old failure.", c: C.slate, bg: C.lSlate },
+    { t: "Severity floor + rate limit", d: "SEV-2 or worse only, max 10 tickets/hour with a circuit breaker.", c: C.userAmber, bg: C.lAmber },
+  ];
+  filters.forEach((f, i) => {
+    const x = 0.45 + i * 4.18;
+    s.addShape(pptx.ShapeType.roundRect, { x, y: 4.35, w: 3.95, h: 1.5, fill: { color: f.bg }, line: { color: f.c, width: 1.25 }, rectRadius: 0.08 });
+    s.addText(f.t, { x: x + 0.18, y: 4.45, w: 3.6, h: 0.35, fontSize: 11.5, bold: true, color: f.c, fontFace: F });
+    s.addText(f.d, { x: x + 0.18, y: 4.8, w: 3.6, h: 0.95, fontSize: 9.5, color: C.navy, fontFace: F, valign: "top" });
+  });
+
+  s.addShape(pptx.ShapeType.roundRect, { x: 0.45, y: 6.05, w: 12.4, h: 0.8, fill: { color: C.lGreen }, line: { color: C.autoGreen, width: 1.5 }, rectRadius: 0.07 });
+  s.addText("Without these guards this cluster would have opened 24 tickets on the first scan. The one that survived was the genuinely new failure — that restraint IS the product.",
+    { x: 0.6, y: 6.05, w: 12.1, h: 0.8, fontSize: 12.5, bold: true, color: "065F46", align: "center", valign: "middle", fontFace: F });
+}
+
+// ───────────────────────────────────────────── 6c. DEDUP & DUPLICATES
+{
+  const s = pptx.addSlide();
+  head(s, "ONE FAULT = ONE TICKET", "Three layers of duplicate prevention", "Plus deliberately asymmetric handling of tickets we did not raise.");
+
+  const layers = [
+    { n: "1", t: "Causal merge", d: "A workload that is OOMKilled AND crash-looping AND at 0/1 replicas is ONE incident. Root cause chosen by precedence (OOM explains the crash loop), the rest folded in as symptoms.", c: C.aiPurple, bg: C.lPurple },
+    { n: "2", t: "Workload signature", d: "The dedup key is the workload, not the rule — so the signature survives rollouts AND a changing mix of firing signals. No second ticket when the OOM window lapses.", c: C.tcsBlue, bg: C.lBlue },
+    { n: "3", t: "ServiceNow correlation_id", d: "Before creating, we query ServiceNow for an open incident with the same correlation_id and ATTACH to it. Holds even if our own state was lost to a pod restart.", c: C.valCyan, bg: C.lCyan },
+  ];
+  layers.forEach((l, i) => {
+    const y = 1.7 + i * 1.28;
+    s.addShape(pptx.ShapeType.roundRect, { x: 0.45, y, w: 12.4, h: 1.15, fill: { color: l.bg }, line: { color: l.c, width: 1.25 }, rectRadius: 0.08 });
+    s.addShape(pptx.ShapeType.ellipse, { x: 0.68, y: y + 0.3, w: 0.55, h: 0.55, fill: { color: l.c } });
+    s.addText(l.n, { x: 0.68, y: y + 0.3, w: 0.55, h: 0.55, fontSize: 16, bold: true, color: C.white, align: "center", valign: "middle", fontFace: F });
+    s.addText(l.t, { x: 1.4, y: y + 0.14, w: 3.2, h: 0.4, fontSize: 13, bold: true, color: l.c, fontFace: F });
+    s.addText(l.d, { x: 4.7, y: y + 0.16, w: 7.9, h: 0.85, fontSize: 10.5, color: C.navy, fontFace: F, valign: "top" });
+  });
+
+  s.addText("When duplicates already exist:", { x: 0.45, y: 5.65, w: 6, h: 0.3, fontSize: 12.5, bold: true, color: C.navy, fontFace: F });
+  const dd = [
+    { t: "Tickets WE raised", d: "Linked as children of the primary, then closed as Duplicate pointing at it (opt-in setting).", c: C.valCyan, bg: C.lCyan },
+    { t: "Tickets a HUMAN raised", d: "Linked and work-noted “review and close” — but NEVER closed automatically. They may hold context we would destroy.", c: C.userAmber, bg: C.lAmber },
+  ];
+  dd.forEach((d, i) => {
+    const x = 0.45 + i * 6.28;
+    s.addShape(pptx.ShapeType.roundRect, { x, y: 6.0, w: 6.1, h: 0.95, fill: { color: d.bg }, line: { color: d.c, width: 1.25 }, rectRadius: 0.07 });
+    s.addText(d.t, { x: x + 0.18, y: 6.08, w: 5.7, h: 0.3, fontSize: 11.5, bold: true, color: d.c, fontFace: F });
+    s.addText(d.d, { x: x + 0.18, y: 6.38, w: 5.7, h: 0.5, fontSize: 9.5, color: C.navy, fontFace: F, valign: "top" });
+  });
 }
 
 // ───────────────────────────────────────────── 7. AI RCA
@@ -266,7 +338,19 @@ function hdr(cells) {
 // ───────────────────────────────────────────── 8. RCA DOCUMENT
 {
   const s = pptx.addSlide();
-  head(s, "DELIVERABLE", "RCA document — ITIL 4 · Google SRE · NIST SP 800-61", "Written into the ServiceNow close notes and downloadable from the console.");
+  head(s, "DELIVERABLE", "RCA document — ITIL 4 · Google SRE · NIST SP 800-61", "Delivered three ways, so it reaches the ticket, the browser and the archive.");
+
+  const fmts = [
+    { t: "Plain text", d: "ServiceNow close_notes\nGUARANTEED record", c: C.autoGreen, bg: C.lGreen },
+    { t: "HTML", d: "Attached to the incident\n+ View RCA in console", c: C.tcsBlue, bg: C.lBlue },
+    { t: "PDF", d: "Attached to the incident\narchival / auditors", c: C.aiPurple, bg: C.lPurple },
+  ];
+  fmts.forEach((f, i) => {
+    const x = 0.45 + i * 4.18;
+    box(s, { x, y: 1.5, w: 3.95, h: 0.85, fill: f.bg, line: f.c, text: f.t, sub: f.d, fs: 12.5 });
+  });
+  s.addText("Attached BEFORE closing — many ServiceNow configurations refuse attachments on closed records. Attachment is best-effort: a failure never costs the text record.",
+    { x: 0.45, y: 2.42, w: 12.4, h: 0.3, fontSize: 10.5, italic: true, color: C.textMed, align: "center", fontFace: F });
   const secs = [
     ["1. Summary", "Title, severity, cluster, scope, detecting threshold"],
     ["2. Impact", "Symptoms, correlation, recurrence"],
@@ -280,14 +364,14 @@ function hdr(cells) {
     ["9. Notes", "Blameless review statement"],
   ];
   secs.forEach((sec, i) => {
-    const y = 1.75 + i * 0.5;
+    const y = 2.85 + i * 0.42;
     const alt = i % 2 === 0;
-    s.addShape(pptx.ShapeType.rect, { x: 0.45, y, w: 12.4, h: 0.44, fill: { color: alt ? "F8FAFC" : "FFFFFF" }, line: { color: "E2E8F0", width: 0.5 } });
-    s.addText(sec[0], { x: 0.62, y, w: 2.6, h: 0.44, fontSize: 11, bold: true, color: C.tcsBlue, valign: "middle", fontFace: F });
-    s.addText(sec[1], { x: 3.3, y, w: 9.4, h: 0.44, fontSize: 10.5, color: C.navy, valign: "middle", fontFace: F });
+    s.addShape(pptx.ShapeType.rect, { x: 0.45, y, w: 12.4, h: 0.38, fill: { color: alt ? "F8FAFC" : "FFFFFF" }, line: { color: "E2E8F0", width: 0.5 } });
+    s.addText(sec[0], { x: 0.62, y, w: 2.6, h: 0.38, fontSize: 10, bold: true, color: C.tcsBlue, valign: "middle", fontFace: F });
+    s.addText(sec[1], { x: 3.3, y, w: 9.4, h: 0.38, fontSize: 9.5, color: C.navy, valign: "middle", fontFace: F });
   });
   s.addText("Every incident closes with the same audit-grade document — regardless of who was on call.",
-    { x: 0.45, y: 6.85, w: 12.4, h: 0.35, fontSize: 11.5, bold: true, color: C.autoGreen, align: "center", fontFace: F });
+    { x: 0.45, y: 7.05, w: 12.4, h: 0.3, fontSize: 11, bold: true, color: C.autoGreen, align: "center", fontFace: F });
 }
 
 // ───────────────────────────────────────────── 9. REMEDIATION + SAFETY
@@ -321,6 +405,52 @@ function hdr(cells) {
     { x: 0.45, y: 6.6, w: 12.4, h: 0.35, fontSize: 11.5, bold: true, color: C.secRed, align: "center", fontFace: F });
 }
 
+// ───────────────────────────────────────────── 9b. CHANGE LEDGER & REVERT
+{
+  const s = pptx.addSlide();
+  head(s, "PROVENANCE & UNDO", "Change Ledger — every mutation, with an inverse", "The inverse is computed and stored AT APPLY TIME — once memory is patched the old value is gone from the cluster.");
+
+  // Apply-time capture flow
+  const flow = [
+    { t: "Capture prior value", d: "memory 389Mi", c: C.tcsBlue, bg: C.lBlue },
+    { t: "Compute inverse", d: "…limits=memory=389Mi", c: C.aiPurple, bg: C.lPurple },
+    { t: "Store in ledger", d: "90-day retention", c: C.valCyan, bg: C.lCyan },
+    { t: "▷ Dry-run revert", d: "preview, no change", c: C.userAmber, bg: C.lAmber },
+    { t: "↩ Revert + verify", d: "own ledger entry", c: C.autoGreen, bg: C.lGreen },
+  ];
+  flow.forEach((b, i) => {
+    const x = 0.45 + i * 2.51;
+    box(s, { x, y: 1.75, w: 2.28, h: 1.0, fill: b.bg, line: b.c, text: b.t, sub: b.d, fs: 11.5 });
+    if (i < flow.length - 1) arrow(s, x + 2.29, 2.12, 0.22);
+  });
+
+  const rows = [hdr(["Action", "Revertable?", "Why"])];
+  [
+    ["increase_memory", "YES — exact inverse patch", "The prior limit was captured at apply time, so it can be restored precisely"],
+    ["rollout_restart", "No — nothing to revert", "A rolling restart changes no configuration; only pods were recreated"],
+    ["expand_pvc", "No — physically impossible", "Kubernetes cannot shrink a PersistentVolumeClaim; expansion is one-way"],
+    ["(no captured value)", "Native rollout undo offered", "Falls back to `oc rollout undo`, which restores the whole prior pod template"],
+  ].forEach((r, i) => rows.push(r.map((t, j) => ({
+    text: t, options: { fontSize: 10.5, bold: j === 0, fill: { color: i === 0 ? C.lGreen : "FFFFFF" },
+      color: j === 1 && i === 0 ? "065F46" : C.navy },
+  }))));
+  table(s, rows, { y: 3.05, colW: [2.9, 3.3, 6.2], fontSize: 10.5 });
+
+  const notes = [
+    { t: "A revert is a change", d: "Same governance as the original fix: classify → mandatory dry-run → apply → verify → work-note the incident.", c: C.secRed, bg: C.lRed },
+    { t: "Why not always rollout undo?", d: "Undo restores the ENTIRE prior template and would silently discard unrelated changes made since. The inverse patch undoes exactly what we did.", c: C.aiPurple, bg: C.lPurple },
+    { t: "Reverts are reversible", d: "Each revert is recorded with revertOf → the original, so the chain is complete and a revert can itself be reverted.", c: C.valCyan, bg: C.lCyan },
+  ];
+  notes.forEach((n, i) => {
+    const x = 0.45 + i * 4.18;
+    s.addShape(pptx.ShapeType.roundRect, { x, y: 5.25, w: 3.95, h: 1.55, fill: { color: n.bg }, line: { color: n.c, width: 1.25 }, rectRadius: 0.08 });
+    s.addText(n.t, { x: x + 0.18, y: 5.35, w: 3.6, h: 0.35, fontSize: 11.5, bold: true, color: n.c, fontFace: F });
+    s.addText(n.d, { x: x + 0.18, y: 5.7, w: 3.6, h: 1.0, fontSize: 9.5, color: C.navy, fontFace: F, valign: "top" });
+  });
+  s.addText("Surfaced as “History — applied changes” in AI Intelligence, with a before → after diff on every entry.",
+    { x: 0.45, y: 6.95, w: 12.4, h: 0.3, fontSize: 11, bold: true, color: C.navy, align: "center", fontFace: F });
+}
+
 // ───────────────────────────────────────────── 10. VALUE
 {
   const s = pptx.addSlide();
@@ -332,12 +462,13 @@ function hdr(cells) {
     ["Ticket closure", "Manual, frequently deferred", "Automatic, with RCA attached"],
     ["Self-resolved conditions", "Stale tickets closed by hand later", "Self-closing, marked self-healed"],
     ["Duplicate tickets", "One node failure → many tickets", "Deduped by stable signature"],
+    ["Undoing a change", "Manual archaeology through kubectl history", "One-click ledgered revert"],
     ["Human touchpoints", "≈ 6", "1 — approve the fix"],
     ["Audit evidence", "Inconsistent between engineers", "Same standard RCA every time"],
   ].forEach((r) => rows.push(r.map((t, i) => ({
     text: t, options: { fontSize: 10.5, bold: i === 0, color: i === 2 ? "065F46" : C.navy, fill: { color: i === 2 ? C.lGreen : "FFFFFF" } },
   }))));
-  table(s, rows, { y: 1.7, colW: [3.6, 4.6, 4.2], fontSize: 10.5 });
+  table(s, rows, { y: 1.65, colW: [3.6, 4.6, 4.2], fontSize: 10 });
   s.addText("The differentiator: other automation stops at “alert raised”. UC-05 also writes the RCA and closes the ticket.",
     { x: 0.45, y: 6.3, w: 12.4, h: 0.45, fontSize: 13, bold: true, color: C.autoGreen, align: "center", fontFace: F });
 }
@@ -348,18 +479,20 @@ function hdr(cells) {
   head(s, "DEMO", "Five-minute walkthrough");
   const rows = [hdr(["#", "Action", "What to say"])];
   [
-    ["1", "Open AI Intelligence → Auto-Detect", "“Nobody asked for this. 24 detections, 26 symptoms correlated.”"],
-    ["2", "Point at CHRONIC 23 / ELIGIBLE 1", "“It refuses to page for things broken 10 days — the credibility guard.”"],
-    ["3", "Open Automation Settings", "Autonomous toggle + ServiceNow queue — no redeploy needed."],
-    ["4", "Break something live", "A fresh failure — the only thing that will ticket."],
-    ["5", "Wait one detection cycle", "Incident appears auto-raised with ServiceNow number + ITIL priority."],
-    ["6", "Read the AI RCA on the card", "Category, confidence, causal chain, real log lines."],
-    ["7", "Click ▷ Dry-run", "Preview against the live API server — nothing changed yet."],
-    ["8", "Click ✅ Apply Fix", "Applies → verifies → resolves → closes the ticket with the RCA."],
-    ["9", "Open the ticket in ServiceNow", "Full RCA in close notes, MTTD/MTTA/MTTR, CAPA."],
-    ["10", "Optional: let one self-heal", "Incident closes itself, marked self-healed."],
+    ["1", "AI Intelligence → Auto-Detect", "“Nobody asked. 24 detections from 26 correlated symptoms.”"],
+    ["2", "Point at CHRONIC 23 / ELIGIBLE 1", "“It refuses to page for things broken 10 days. That restraint is the product.”"],
+    ["3", "Toggle Actionable / Chronic filter", "“One actionable item, not 24 — the queue tells the truth.”"],
+    ["4", "Open ⚙ Automation Settings", "Autonomous toggle, ServiceNow queue, thresholds — no redeploy."],
+    ["5", "Break something live", "A genuinely new failure — the only kind that should page."],
+    ["6", "Wait one detection cycle", "Incident appears auto-raised with INC number + ITIL priority."],
+    ["7", "Read the AI RCA on the card", "Category, confidence, causal chain, real log lines, container name."],
+    ["8", "Click ▷ Dry-run", "Previewed against the live API server — nothing changed."],
+    ["9", "Click ✅ Apply Fix", "Terminal transcript + BEFORE/AFTER container table appear."],
+    ["10", "Open the ticket in ServiceNow", "HTML + PDF attached, full RCA in close notes, MTTR."],
+    ["11", "History — applied changes", "before → after diff, then ↩ Revert with its own dry-run."],
+    ["12", "Optional: let one self-heal", "Incident closes itself, marked self-healed."],
   ].forEach((r) => rows.push(r.map((t, i) => ({ text: t, options: { fontSize: 10, bold: i === 0, align: i === 0 ? "center" : "left", fill: { color: "FFFFFF" } } }))));
-  table(s, rows, { y: 1.6, colW: [0.6, 4.4, 7.4], fontSize: 10 });
+  table(s, rows, { y: 1.55, colW: [0.6, 4.4, 7.4], fontSize: 9.5 });
 }
 
 // ───────────────────────────────────────────── 12. CONFIG + STATUS
@@ -375,19 +508,24 @@ function hdr(cells) {
     ["Severity floor", "SEV-2", "Yes"],
     ["Ticket rate limit", "10 / hour", "Yes"],
     ["Self-heal confirm scans", "2", "Yes"],
+    ["Attach RCA report (HTML + PDF)", "ON", "Yes"],
+    ["Auto-close duplicate tickets we raised", "OFF — opt-in", "Yes"],
+    ["Treat actively-failing workloads as live", "ON", "Yes"],
+    ["Escalate after N recurrences", "3", "Env"],
+    ["Change-ledger retention", "90 days", "Env"],
     ["Scan interval", "2 minutes", "Env"],
   ].forEach((r) => rows.push(r.map((t, i) => ({ text: t, options: { fontSize: 10.5, bold: i === 0, fill: { color: "FFFFFF" } } }))));
-  table(s, rows, { y: 1.6, colW: [6.4, 3.4, 2.6], fontSize: 10.5 });
+  table(s, rows, { y: 1.55, colW: [6.4, 3.4, 2.6], fontSize: 9.5 });
 
-  s.addShape(pptx.ShapeType.roundRect, { x: 0.45, y: 5.0, w: 6.1, h: 1.75, fill: { color: C.lGreen }, line: { color: C.autoGreen, width: 1.25 }, rectRadius: 0.07 });
-  s.addText("Verified by automated harness", { x: 0.62, y: 5.12, w: 5.8, h: 0.3, fontSize: 12, bold: true, color: "065F46", fontFace: F });
-  s.addText("Correlation · chronic guard · recurrence semantics · name derivation · full happy path · dry-run precedes apply · failed verification escalates without closing · protected namespaces · idempotency · self-heal · live settings",
-    { x: 0.62, y: 5.45, w: 5.8, h: 1.2, fontSize: 8.5, color: "047857", fontFace: F, valign: "top" });
+  s.addShape(pptx.ShapeType.roundRect, { x: 0.45, y: 5.35, w: 6.1, h: 1.65, fill: { color: C.lGreen }, line: { color: C.autoGreen, width: 1.25 }, rectRadius: 0.07 });
+  s.addText("Verified by automated harness", { x: 0.62, y: 5.45, w: 5.8, h: 0.3, fontSize: 12, bold: true, color: "065F46", fontFace: F });
+  s.addText("Causal merge (3 signals → 1 ticket) · signature stability · chronic guard + activity override · restart-rate detection · escalation on 3rd episode · name derivation · full happy path · dry-run precedes apply · failed verification escalates without closing · duplicate asymmetry · attachment degrades safely · ledger inverse + revert chain · rollout undo",
+    { x: 0.62, y: 5.76, w: 5.8, h: 1.2, fontSize: 8, color: "047857", fontFace: F, valign: "top" });
 
-  s.addShape(pptx.ShapeType.roundRect, { x: 6.75, y: 5.0, w: 6.1, h: 1.75, fill: { color: C.lAmber }, line: { color: C.userAmber, width: 1.25 }, rectRadius: 0.07 });
-  s.addText("Requires live validation", { x: 6.92, y: 5.12, w: 5.8, h: 0.3, fontSize: 12, bold: true, color: "92400E", fontFace: F });
+  s.addShape(pptx.ShapeType.roundRect, { x: 6.75, y: 5.35, w: 6.1, h: 1.65, fill: { color: C.lAmber }, line: { color: C.userAmber, width: 1.25 }, rectRadius: 0.07 });
+  s.addText("Requires live validation", { x: 6.92, y: 5.45, w: 5.8, h: 0.3, fontSize: 12, bold: true, color: "92400E", fontFace: F });
   s.addText("First real ServiceNow auto-raise and close against the customer instance. AI RCA depth depends on the configured LLM being reachable from the pod.\n\nRecommended: run in shadow mode for one cycle, confirm the chronic/eligible split, then enable autonomous action.",
-    { x: 6.92, y: 5.45, w: 5.8, h: 1.2, fontSize: 8.5, color: "92400E", fontFace: F, valign: "top" });
+    { x: 6.92, y: 5.76, w: 5.8, h: 1.2, fontSize: 8, color: "92400E", fontFace: F, valign: "top" });
 }
 
 // ───────────────────────────────────────────── 13. CLOSING
@@ -396,10 +534,10 @@ function hdr(cells) {
   s.background = { color: C.darkNavy };
   s.addText("UC-05  ·  Zero-Touch Incident Command", { x: 0.8, y: 2.5, w: 11.6, h: 0.7, fontSize: 34, bold: true, color: C.white, fontFace: F });
   s.addShape(pptx.ShapeType.rect, { x: 0.8, y: 3.35, w: 3.2, h: 0.04, fill: { color: C.valCyan } });
-  s.addText("Nobody opens the ticket.\nNobody writes the RCA.\nNobody closes it.",
-    { x: 0.8, y: 3.7, w: 11.6, h: 1.5, fontSize: 22, color: C.lAmber, lineSpacing: 34, fontFace: F });
+  s.addText("Nobody opens the ticket.\nNobody writes the RCA.\nNobody closes it.\nAnd every change can be undone.",
+    { x: 0.8, y: 3.6, w: 11.6, h: 1.9, fontSize: 20, color: C.lAmber, lineSpacing: 31, fontFace: F });
   s.addText("The only thing a human decides is whether to apply the fix.",
-    { x: 0.8, y: 5.35, w: 11.6, h: 0.4, fontSize: 15, color: "94A3B8", fontFace: F });
+    { x: 0.8, y: 5.65, w: 11.6, h: 0.4, fontSize: 15, color: "94A3B8", fontFace: F });
   s.addText("TCS Agentic AI for OpenShift", { x: 0.8, y: 6.4, w: 11.6, h: 0.3, fontSize: 11, color: "64748B", fontFace: F });
 }
 
