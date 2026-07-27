@@ -2701,6 +2701,33 @@ async function startSSE() {
       } catch (err) { return sendJson(res, 400, { error: err.message }); }
     }
 
+    // Duplicate-ticket backlog: inspect (GET) or clean up (POST) groups of open
+    // incidents this platform raised for the same condition. GET is read-only so
+    // the operator can see the groups before acting.
+    if (url.pathname === "/api/intelligence/incident-duplicates" && req.method === "GET") {
+      try {
+        const { reconcileDuplicateBacklog } = await import("./services/incident-orchestrator.js");
+        const out = await withClusterContext(url, async () => reconcileDuplicateBacklog({ apply: false }));
+        return sendJson(res, 200, out === null ? { groups: [], error: "Cluster not reachable" } : out);
+      } catch (err) { return sendJson(res, 200, { groups: [], error: err.message }); }
+    }
+    if (url.pathname === "/api/intelligence/incident-duplicates/reconcile" && req.method === "POST") {
+      if (enforceRateLimit(req, res, { burst: 3, refillPerSec: 0.05 })) return;
+      try {
+        const { reconcileDuplicateBacklog } = await import("./services/incident-orchestrator.js");
+        const out = await withClusterContext(url, async () => reconcileDuplicateBacklog({ apply: true }));
+        if (out === null) return sendJson(res, 200, { error: "Cluster not reachable" });
+        try {
+          await logAuditTrailEvent({
+            type: "action_taken", severity: "info",
+            title: `Duplicate incident reconciliation: ${out.linked} linked, ${out.closed} closed`,
+            details: JSON.stringify(out), source: "incident-duplicates",
+          });
+        } catch {}
+        return sendJson(res, 200, out);
+      } catch (err) { return sendJson(res, 400, { error: err.message }); }
+    }
+
     // Autonomous incident detection — Phase 1, SHADOW MODE.
     // Evaluates industry-standard thresholds against live cluster state and
     // returns the incidents that WOULD be opened. Strictly read-only: no

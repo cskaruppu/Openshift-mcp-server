@@ -244,6 +244,74 @@ export async function findOpenIncidentByCorrelation(correlationId) {
   }
 }
 
+/** Marker written into correlation_display so we can tell our tickets from human ones. */
+export const SNOW_CORRELATION_MARKER = "TCS Agentic AI";
+
+/**
+ * All OPEN incidents sharing a correlation_id — the duplicate group for one
+ * condition. Used to link duplicates to a primary and (optionally) close the
+ * ones we raised ourselves.
+ */
+export async function findOpenIncidentsByCorrelation(correlationId, limit = 20) {
+  if (!correlationId) return [];
+  try {
+    const q = `correlation_id=${correlationId}^stateNOT IN${SNOW_TERMINAL_STATES.join(",")}^ORDERBYsys_created_on`;
+    const res = await snowFetch(
+      `/now/table/incident?sysparm_query=${encodeURIComponent(q)}&sysparm_limit=${limit}` +
+      `&sysparm_fields=sys_id,number,state,short_description,correlation_id,correlation_display,sys_created_on,parent_incident,assignment_group`,
+      { timeoutMs: 20000 }
+    );
+    return res?.result || [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Every open incident this platform raised, grouped by correlation_id — the
+ * backlog sweep for duplicates that pre-date correlation-based dedup.
+ * @returns {Promise<Array<{correlationId:string, incidents:Array}>>}
+ */
+export async function findOurOpenIncidentGroups({ limit = 200, minGroupSize = 2 } = {}) {
+  try {
+    const q = `correlation_displayLIKE${SNOW_CORRELATION_MARKER}^stateNOT IN${SNOW_TERMINAL_STATES.join(",")}^ORDERBYsys_created_on`;
+    const res = await snowFetch(
+      `/now/table/incident?sysparm_query=${encodeURIComponent(q)}&sysparm_limit=${limit}` +
+      `&sysparm_fields=sys_id,number,state,short_description,correlation_id,correlation_display,sys_created_on,parent_incident`,
+      { timeoutMs: 25000 }
+    );
+    const byCorr = new Map();
+    for (const inc of res?.result || []) {
+      const key = inc.correlation_id || `__nocorr__${inc.sys_id}`;
+      if (!byCorr.has(key)) byCorr.set(key, []);
+      byCorr.get(key).push(inc);
+    }
+    return [...byCorr.entries()]
+      .filter(([, list]) => list.length >= minGroupSize)
+      .map(([correlationId, incidents]) => ({ correlationId, incidents }));
+  } catch {
+    return [];
+  }
+}
+
+/** Link a duplicate to its primary (annotation only — does not close it). */
+export async function linkDuplicateIncident(childSysId, primary, { note } = {}) {
+  return updateRecord("incident", childSysId, {
+    parent_incident: primary.sys_id,
+    work_notes: note || `Duplicate of ${primary.number} — same underlying condition, correlated by TCS Agentic AI.`,
+  });
+}
+
+/** Close a duplicate we raised, pointing at the primary that carries the RCA. */
+export async function closeDuplicateIncident(childSysId, primary, { closeCode } = {}) {
+  return updateRecord("incident", childSysId, {
+    state: "7",
+    close_code: closeCode || process.env.SERVICENOW_DUPLICATE_CLOSE_CODE || "Duplicate",
+    close_notes: `Closed as a duplicate of ${primary.number}. The full root-cause analysis and remediation evidence are recorded on ${primary.number}.`,
+    work_notes: `Auto-closed as duplicate of ${primary.number} by TCS Agentic AI.`,
+  });
+}
+
 /** Current state of an incident, for reconciling closures made in ServiceNow. */
 export async function getIncidentState(sysId) {
   if (!sysId) return null;

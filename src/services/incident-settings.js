@@ -33,6 +33,8 @@ export const DEFAULTS = {
   maxTicketsPerHour: 10,     // storm brake
   selfHealScans: 2,          // consecutive clear scans before auto-closing
   chronicActivityOverride: true, // still-restarting workloads page even when old
+  attachRcaReports: true,        // attach HTML+PDF RCA to the ticket before closing
+  autoCloseDuplicates: false,    // close duplicate tickets WE raised (opt-in)
 };
 
 const VALID_SEVERITIES = new Set(["SEV-1", "SEV-2", "SEV-3", "SEV-4"]);
@@ -55,6 +57,8 @@ export function normalize(raw = {}) {
     maxTicketsPerHour: clampInt(raw.maxTicketsPerHour, 1, 500, DEFAULTS.maxTicketsPerHour),
     selfHealScans: clampInt(raw.selfHealScans, 1, 20, DEFAULTS.selfHealScans),
     chronicActivityOverride: raw.chronicActivityOverride !== undefined ? Boolean(raw.chronicActivityOverride) : DEFAULTS.chronicActivityOverride,
+    attachRcaReports: raw.attachRcaReports !== undefined ? Boolean(raw.attachRcaReports) : DEFAULTS.attachRcaReports,
+    autoCloseDuplicates: raw.autoCloseDuplicates !== undefined ? Boolean(raw.autoCloseDuplicates) : DEFAULTS.autoCloseDuplicates,
   };
 }
 
@@ -68,6 +72,8 @@ export function applyToEnv(s) {
   process.env.INCIDENT_MAX_TICKETS_PER_HOUR = String(s.maxTicketsPerHour);
   process.env.INCIDENT_SELFHEAL_SCANS = String(s.selfHealScans);
   process.env.INCIDENT_CHRONIC_ACTIVITY_OVERRIDE = s.chronicActivityOverride ? "true" : "false";
+  process.env.INCIDENT_ATTACH_RCA = s.attachRcaReports ? "true" : "false";
+  process.env.INCIDENT_AUTO_CLOSE_DUPLICATES = s.autoCloseDuplicates ? "true" : "false";
 }
 
 /** Load from DB → file → env → defaults. Never throws. */
@@ -97,6 +103,8 @@ export async function loadIncidentSettings() {
       maxTicketsPerHour: process.env.INCIDENT_MAX_TICKETS_PER_HOUR,
       selfHealScans: process.env.INCIDENT_SELFHEAL_SCANS,
       chronicActivityOverride: process.env.INCIDENT_CHRONIC_ACTIVITY_OVERRIDE !== "false",
+      attachRcaReports: process.env.INCIDENT_ATTACH_RCA !== "false",
+      autoCloseDuplicates: process.env.INCIDENT_AUTO_CLOSE_DUPLICATES === "true",
     }),
     _storage: "environment",
   };

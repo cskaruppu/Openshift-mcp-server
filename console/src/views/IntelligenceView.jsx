@@ -70,6 +70,9 @@ export function IntelligenceView() {
     useClusterQuery("/api/intelligence/incident-sessions", { refetchInterval: 10_000 });
   const { data: incSettingsData, refetch: refetchIncSettings } =
     useClusterQuery("/api/intelligence/incident-settings", { refetchInterval: 120_000 });
+  // Duplicate-ticket backlog (read-only sweep of open incidents we raised).
+  const { data: dupData, refetch: refetchDupes } =
+    useClusterQuery("/api/intelligence/incident-duplicates", { refetchInterval: 300_000 });
 
   const setChatSeed = useChatStore((s) => s.setSeed);
   const setActiveView = useViewStore((s) => s.setActiveView);
@@ -104,6 +107,7 @@ export function IntelligenceView() {
       if (d.error) showToast(d.error, "err");
       else showToast(okMsg, "ok");
       refetchSessions();
+      refetchDupes();
     } catch (e) {
       showToast(e.message, "err");
     } finally {
@@ -132,6 +136,8 @@ export function IntelligenceView() {
       maxTicketsPerHour: incSettings?.maxTicketsPerHour ?? 10,
       selfHealScans: incSettings?.selfHealScans ?? 2,
       chronicActivityOverride: incSettings?.chronicActivityOverride !== false,
+      attachRcaReports: incSettings?.attachRcaReports !== false,
+      autoCloseDuplicates: !!incSettings?.autoCloseDuplicates,
     });
     setShowIncSettings(true);
   }, [incSettings]);
@@ -774,6 +780,38 @@ export function IntelligenceView() {
                 </span>
               </label>
 
+              <label style={{
+                display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 12px", borderRadius: 9,
+                border: "1px solid var(--border)", cursor: "pointer", marginBottom: 10,
+              }}>
+                <input type="checkbox" checked={incForm.attachRcaReports} style={{ marginTop: 3 }}
+                  onChange={(e) => setIncForm((f) => ({ ...f, attachRcaReports: e.target.checked }))} />
+                <span style={{ fontSize: 12.5 }}>
+                  <strong>Attach the RCA report (HTML + PDF) to the ticket</strong>
+                  <span style={{ display: "block", opacity: .8, marginTop: 2 }}>
+                    Attached before closing, so auditors see the full report in ServiceNow rather than a link.
+                    The text RCA always stays in the close notes regardless.
+                  </span>
+                </span>
+              </label>
+
+              <label style={{
+                display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 12px", borderRadius: 9,
+                border: `1px solid ${incForm.autoCloseDuplicates ? "rgba(245,158,11,.5)" : "var(--border)"}`,
+                background: incForm.autoCloseDuplicates ? "rgba(245,158,11,.08)" : "transparent",
+                cursor: "pointer", marginBottom: 12,
+              }}>
+                <input type="checkbox" checked={incForm.autoCloseDuplicates} style={{ marginTop: 3 }}
+                  onChange={(e) => setIncForm((f) => ({ ...f, autoCloseDuplicates: e.target.checked }))} />
+                <span style={{ fontSize: 12.5 }}>
+                  <strong>Auto-close duplicate tickets we raised</strong>
+                  <span style={{ display: "block", opacity: .8, marginTop: 2 }}>
+                    Only ever touches tickets raised by this platform. Human-raised tickets are linked and
+                    annotated but never closed automatically.
+                  </span>
+                </span>
+              </label>
+
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 12 }}>
                 <div>
                   <label style={{ fontSize: 11.5, fontWeight: 600, display: "block", marginBottom: 4 }}>
@@ -873,6 +911,62 @@ export function IntelligenceView() {
             <div className="intel-empty">Auto-detection is disabled. Set <code>INCIDENT_AUTO_DETECT=true</code> to enable.</div>
           )}
           {detectData?.error && <div className="intel-empty">{detectData.error}</div>}
+
+          {/* ── DUPLICATE TICKET BACKLOG — groups that pre-date correlation dedup ── */}
+          {dupData?.groups?.length > 0 && (
+            <div style={{
+              border: "1px solid rgba(14,165,233,.45)", borderRadius: 12, padding: 14, marginBottom: 16,
+              background: "rgba(14,165,233,.07)",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+                <strong style={{ fontSize: 14, color: "#38bdf8" }}>
+                  Duplicate tickets — {dupData.groups.length} group{dupData.groups.length > 1 ? "s" : ""}
+                </strong>
+                <span style={{ fontSize: 11.5, opacity: .85 }}>
+                  Open incidents raised for the same condition. Linking is safe; only tickets this platform
+                  raised are closed — human-raised ones are annotated and left for you.
+                </span>
+                <button className="intel-card-btn primary" style={{ marginLeft: "auto" }}
+                  disabled={!!busySession["/api/intelligence/incident-duplicates/reconcile"]}
+                  onClick={() => callSession("/api/intelligence/incident-duplicates/reconcile", {},
+                    "Duplicates linked — ours closed, human-raised left open")}>
+                  {busySession["/api/intelligence/incident-duplicates/reconcile"] ? "…" : "Link & clean up"}
+                </button>
+              </div>
+              {dupData.groups.slice(0, 8).map((g) => (
+                <div key={g.correlationId} style={{
+                  padding: "8px 10px", borderRadius: 8, marginTop: 6,
+                  background: "rgba(0,0,0,.14)", border: "1px solid rgba(14,165,233,.25)", fontSize: 12,
+                }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "baseline" }}>
+                    <strong>{g.primary.number}</strong>
+                    <span style={{ fontSize: 10.5, padding: "1px 6px", borderRadius: 999,
+                      background: "rgba(34,197,94,.2)", color: "#4ade80" }}>primary</span>
+                    <span style={{ opacity: .85, maxWidth: 460, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {g.primary.shortDescription}
+                    </span>
+                  </div>
+                  <div style={{ marginTop: 4, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {g.duplicates.map((d) => (
+                      <span key={d.number} style={{
+                        fontSize: 10.5, padding: "1px 7px", borderRadius: 999,
+                        background: d.ours ? "rgba(14,165,233,.2)" : "rgba(245,158,11,.2)",
+                        color: d.ours ? "#38bdf8" : "#fbbf24",
+                      }} title={d.ours ? "Raised by this platform — safe to auto-close" : "Human-raised — will be linked and annotated only"}>
+                        {d.number} · {d.ours ? "ours" : "human"}{d.alreadyLinked ? " · linked" : ""}
+                      </span>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: 3, fontSize: 10.5, opacity: .7 }}>
+                    correlation <code>{g.correlationId}</code>
+                  </div>
+                </div>
+              ))}
+              {dupData.groups.length > 8 && (
+                <div style={{ marginTop: 6, fontSize: 11, opacity: .7 }}>+{dupData.groups.length - 8} more group(s)</div>
+              )}
+            </div>
+          )}
 
           {/* ── ESCALATIONS — repeat offenders demand attention now ── */}
           {escalations.length > 0 && (
@@ -1113,6 +1207,24 @@ export function IntelligenceView() {
                                     </table>
                                   </div>
                                 ) : null)}
+                            </div>
+                          )}
+
+                          {(s.rcaAttachments || s.duplicateGroup) && (
+                            <div style={{ marginTop: 6, fontSize: 11.5, display: "flex", flexWrap: "wrap", gap: 10 }}>
+                              {s.rcaAttachments && (
+                                <span style={{ color: (s.rcaAttachments.html || s.rcaAttachments.pdf) ? "#4ade80" : "#fbbf24" }}>
+                                  📎 RCA attached: {[s.rcaAttachments.html && "HTML", s.rcaAttachments.pdf && "PDF"].filter(Boolean).join(" + ") || "none"}
+                                  {s.rcaAttachments.error && <span style={{ opacity: .75 }}> — {s.rcaAttachments.error}</span>}
+                                </span>
+                              )}
+                              {s.duplicateGroup?.linked?.length > 0 && (
+                                <span style={{ color: "#38bdf8" }}>
+                                  🔗 {s.duplicateGroup.linked.length} duplicate ticket(s) linked
+                                  {s.duplicateGroup.closed?.length > 0 && ` · ${s.duplicateGroup.closed.length} auto-closed`}
+                                  {s.duplicateGroup.humanOwned?.length > 0 && ` · ${s.duplicateGroup.humanOwned.length} human-raised left open`}
+                                </span>
+                              )}
                             </div>
                           )}
 

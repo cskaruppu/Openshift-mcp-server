@@ -35,7 +35,11 @@ import { findMatchingErrors } from "./error-knowledge.js";
 import { executeFixCommand } from "./fix-executor.js";
 import { classifyCommand } from "./guardrails.js";
 import { logAuditEvent } from "./audit-log.js";
-import { createIncident, resolveIncident, updateRecord, findOpenIncidentByCorrelation, getIncidentState } from "../utils/servicenow-client.js";
+import {
+  createIncident, resolveIncident, updateRecord, findOpenIncidentByCorrelation, getIncidentState,
+  findOpenIncidentsByCorrelation, linkDuplicateIncident, closeDuplicateIncident,
+  attachFile, SNOW_CORRELATION_MARKER,
+} from "../utils/servicenow-client.js";
 import { isServiceNowEnabled } from "./action-workflow.js";
 import { query, isEnabled as dbEnabled } from "../utils/db.js";
 import { flags } from "./feature-flags.js";
@@ -88,6 +92,9 @@ const MAX_ACTIVE_SESSIONS = parseInt(process.env.INCIDENT_MAX_ACTIVE || "25", 10
 // this, one bad deploy or a node loss can open dozens of incidents in a minute.
 // Read at call time so the Settings panel can change it without a restart.
 const maxTicketsPerHour = () => parseInt(process.env.INCIDENT_MAX_TICKETS_PER_HOUR || "10", 10);
+// Auto-closing duplicate tickets is opt-in: it only ever touches tickets WE
+// raised, but closing anything unattended deserves an explicit decision.
+const autoCloseDuplicates = () => process.env.INCIDENT_AUTO_CLOSE_DUPLICATES === "true";
 const _ticketTimes = [];
 function ticketBudgetAvailable() {
   const cutoff = Date.now() - 3600_000;
@@ -1014,6 +1021,13 @@ async function runRemediationChain(session) {
 
     await transition(session, S.RESOLVED, { verification, resolvedAt: nowIso(), afterSnapshot: after, terminal: term });
 
+    // Attach the RCA files FIRST (closed records often refuse attachments), then
+    // link/close duplicates, then close the primary with the RCA in close notes.
+    const attached = await attachRCAReports(session);
+    const dupes = await handleDuplicateGroup(session, { autoClose: autoCloseDuplicates() });
+    session.rcaAttachments = attached;
+    session.duplicateGroup = dupes;
+
     // Close the ticket with the full RCA as close notes.
     if (session.incidentSysId && isServiceNowEnabled()) {
       try {
@@ -1046,6 +1060,75 @@ async function runRemediationChain(session) {
 async function noteOnTicket(session, text) {
   if (!session.incidentSysId || !isServiceNowEnabled()) return;
   try { await updateRecord("incident", session.incidentSysId, { work_notes: text }); } catch { /* best effort */ }
+}
+
+/**
+ * Attach the RCA as real files on the incident BEFORE it is closed.
+ * Ordering matters: many ServiceNow configurations refuse attachments on closed
+ * records. The plain-text RCA stays in close_notes regardless, so an attachment
+ * failure (ACL, size, policy) can never cost us the record.
+ * @returns {Promise<{html:boolean, pdf:boolean, error?:string}>}
+ */
+async function attachRCAReports(session) {
+  const out = { html: false, pdf: false };
+  if (!session.incidentSysId || !isServiceNowEnabled()) return out;
+  if (process.env.INCIDENT_ATTACH_RCA === "false") return out;
+  const base = `RCA_${session.incidentNumber || session.id}`;
+  try {
+    const { renderRCAHtml, renderRCAPdf } = await import("./incident-rca-report.js");
+    try {
+      const html = Buffer.from(renderRCAHtml(session), "utf8");
+      await attachFile("incident", session.incidentSysId, `${base}.html`, "text/html", html);
+      out.html = true;
+    } catch (e) { out.error = `html: ${e.message}`; }
+    if (process.env.INCIDENT_ATTACH_PDF !== "false") {
+      try {
+        const pdf = await renderRCAPdf(session);
+        await attachFile("incident", session.incidentSysId, `${base}.pdf`, "application/pdf", pdf);
+        out.pdf = true;
+      } catch (e) { out.error = `${out.error ? out.error + "; " : ""}pdf: ${e.message}`; }
+    }
+  } catch (e) {
+    out.error = e.message;
+  }
+  return out;
+}
+
+/**
+ * Link — and optionally close — the other open tickets for this same condition.
+ *
+ * Deliberately asymmetric: tickets WE raised (identified by our correlation
+ * marker) may be auto-closed as duplicates, because cleaning up our own output
+ * is safe. A human-raised ticket is only linked and annotated — closing someone
+ * else's ticket could destroy context they added, so that stays their decision.
+ * @returns {Promise<{primary:string|null, linked:Array, closed:Array, humanOwned:Array}>}
+ */
+async function handleDuplicateGroup(session, { autoClose } = {}) {
+  const result = { primary: session.incidentNumber || null, linked: [], closed: [], humanOwned: [] };
+  if (!session.incidentSysId || !isServiceNowEnabled()) return result;
+  let group = [];
+  try { group = await findOpenIncidentsByCorrelation(session.signature); } catch { return result; }
+  const others = group.filter((g) => g.sys_id !== session.incidentSysId);
+  if (!others.length) return result;
+
+  const primary = { sys_id: session.incidentSysId, number: session.incidentNumber };
+  for (const dup of others) {
+    const ours = String(dup.correlation_display || "").includes(SNOW_CORRELATION_MARKER);
+    try {
+      if (!dup.parent_incident) await linkDuplicateIncident(dup.sys_id, primary);
+      result.linked.push(dup.number);
+      if (ours && autoClose) {
+        await closeDuplicateIncident(dup.sys_id, primary);
+        result.closed.push(dup.number);
+      } else if (!ours) {
+        result.humanOwned.push(dup.number);
+        await updateRecord("incident", dup.sys_id, {
+          work_notes: `Resolved by automation under ${primary.number}, which carries the full RCA. This ticket was raised separately — please review and close if it is the same issue.`,
+        });
+      }
+    } catch { /* one failure must not abort the rest of the group */ }
+  }
+  return result;
 }
 
 /** The single human gate: approve the proposed fix and let the rest run. */
@@ -1166,6 +1249,8 @@ export async function reconcileSelfHealed(activeSignatures = []) {
       const verification = { ok: true, summary: `Condition cleared on its own — "${session.signal}" no longer detected across ${streak} consecutive scans. No remediation was applied.`, attempts: streak, selfHealed: true };
       await transition(session, S.RESOLVED, { verification, resolvedAt: nowIso(), selfHealed: true });
       if (session.incidentSysId && isServiceNowEnabled()) {
+        session.rcaAttachments = await attachRCAReports(session);
+        session.duplicateGroup = await handleDuplicateGroup(session, { autoClose: autoCloseDuplicates() });
         try {
           await resolveIncident(session.incidentSysId, {
             closeCode: "Solved (Permanently)",
@@ -1252,6 +1337,59 @@ export async function autoPromoteDetections(detections = [], { cluster = "local"
     }
   }
   return { enabled: true, promoted, skipped };
+}
+
+/**
+ * One-time backlog sweep: find every OPEN incident this platform raised, group
+ * them by correlation_id, and report the duplicate groups. Read-only unless
+ * `apply` is set — so an operator can inspect the damage before acting.
+ *
+ * This exists because duplicates created BEFORE correlation-based dedup are not
+ * tracked by any live session and would otherwise stay open indefinitely.
+ *
+ * @param {object} opts
+ * @param {boolean} [opts.apply] link duplicates and close the ones we raised
+ * @returns {Promise<{groups:Array, applied:boolean, linked:number, closed:number}>}
+ */
+export async function reconcileDuplicateBacklog({ apply = false } = {}) {
+  if (!isServiceNowEnabled()) return { groups: [], applied: false, linked: 0, closed: 0, error: "ServiceNow is not configured" };
+  const { findOurOpenIncidentGroups } = await import("../utils/servicenow-client.js");
+  const raw = await findOurOpenIncidentGroups({ limit: 200, minGroupSize: 2 });
+  let linked = 0, closed = 0;
+  const groups = [];
+
+  for (const g of raw) {
+    // Oldest ticket becomes the primary — it carries the earliest evidence and
+    // is the one humans have most likely already looked at.
+    const sorted = [...g.incidents].sort((a, b) => String(a.sys_created_on).localeCompare(String(b.sys_created_on)));
+    const primary = sorted[0];
+    const dups = sorted.slice(1);
+    const rows = dups.map((d) => ({
+      number: d.number, sysId: d.sys_id, state: d.state,
+      ours: String(d.correlation_display || "").includes(SNOW_CORRELATION_MARKER),
+      alreadyLinked: !!d.parent_incident,
+    }));
+
+    if (apply) {
+      for (const d of dups) {
+        const ours = String(d.correlation_display || "").includes(SNOW_CORRELATION_MARKER);
+        try {
+          if (!d.parent_incident) { await linkDuplicateIncident(d.sys_id, primary); linked++; }
+          if (ours) { await closeDuplicateIncident(d.sys_id, primary); closed++; }
+        } catch { /* keep going through the group */ }
+      }
+    }
+
+    groups.push({
+      correlationId: g.correlationId,
+      primary: { number: primary.number, sysId: primary.sys_id, shortDescription: primary.short_description, createdOn: primary.sys_created_on },
+      duplicates: rows,
+      duplicateCount: rows.length,
+      ourDuplicates: rows.filter((r) => r.ours).length,
+      humanDuplicates: rows.filter((r) => !r.ours).length,
+    });
+  }
+  return { groups, applied: apply, linked, closed, totalGroups: groups.length };
 }
 
 export async function listSessions({ cluster, state } = {}) {

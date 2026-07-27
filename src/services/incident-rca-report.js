@@ -10,6 +10,8 @@
  * as the text document, so the two are directly comparable.
  */
 
+import PDFDocument from "pdfkit";
+
 const C = {
   navy: "#0f172a", slate900: "#1e293b", slate600: "#475569", slate400: "#94a3b8",
   slate200: "#e2e8f0", slate50: "#f8fafc",
@@ -371,4 +373,131 @@ ${section("10", "Notes", `
 </footer>
 
 </div></body></html>`;
+}
+
+// ---------------------------------------------------------------------------
+// PDF — for archival / e-mail / auditors who want a file rather than a link
+// ---------------------------------------------------------------------------
+const PDF_C = { navy: "#0f172a", blue: "#2563eb", slate: "#475569", red: "#dc2626", green: "#059669", amber: "#d97706" };
+
+/**
+ * Render the RCA as a PDF buffer. Deliberately typographic rather than a
+ * pixel-copy of the HTML: PDF is for reading and filing, so it favours clear
+ * hierarchy and reliable pagination over layout fidelity.
+ * @returns {Promise<Buffer>}
+ */
+export function renderRCAPdf(s) {
+  const r = s.rca || {};
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: "A4", margins: { top: 50, bottom: 50, left: 50, right: 50 }, bufferPages: true });
+    const chunks = [];
+    doc.on("data", (c) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    const W = doc.page.width - 100;
+    const h1 = (t) => { doc.moveDown(0.8).fontSize(13).font("Helvetica-Bold").fillColor(PDF_C.navy).text(t, { width: W }); doc.moveDown(0.25); };
+    const h2 = (t) => { doc.moveDown(0.5).fontSize(10.5).font("Helvetica-Bold").fillColor(PDF_C.slate).text(t, { width: W }); doc.moveDown(0.15); };
+    const p = (t) => { doc.fontSize(10).font("Helvetica").fillColor("#111827").text(String(t ?? "—"), { width: W }); };
+    const kvp = (k, v) => {
+      doc.fontSize(10).font("Helvetica-Bold").fillColor(PDF_C.slate).text(`${k}: `, { continued: true });
+      doc.font("Helvetica").fillColor("#111827").text(String(v ?? "—"), { width: W });
+    };
+    const li = (t) => doc.fontSize(10).font("Helvetica").fillColor("#111827").text(`•  ${t}`, { width: W, indent: 6 });
+    const mono = (lines) => {
+      doc.moveDown(0.2);
+      for (const l of lines) doc.fontSize(8.5).font("Courier").fillColor("#1f2937").text(String(l), { width: W });
+      doc.moveDown(0.2);
+    };
+
+    // Title block
+    doc.rect(0, 0, doc.page.width, 76).fill(PDF_C.navy);
+    doc.fillColor("#7dd3fc").fontSize(8.5).font("Helvetica-Bold").text("ROOT CAUSE ANALYSIS", 50, 24);
+    doc.fillColor("#ffffff").fontSize(15).font("Helvetica-Bold").text(String(s.title || ""), 50, 38, { width: W });
+    doc.fillColor("#94a3b8").fontSize(8.5).font("Helvetica")
+      .text(`${s.incidentNumber || s.id}${s.itilPriority ? ` · ${s.itilPriority}` : ""} · ${s.severity} · generated ${fmtTs(new Date().toISOString())} by TCS Agentic AI`, 50, 60, { width: W });
+    doc.fillColor("#111827").y = 96;
+
+    h1("1. Summary");
+    kvp("Severity", s.severity);
+    kvp("Cluster", s.cluster);
+    kvp("Scope", s.namespace ? `namespace ${s.namespace}${s.target ? ` · ${s.target}` : ""}` : "cluster-wide");
+    kvp("Detected by", `threshold "${s.rule}"${s.thresholdStandard ? ` (${s.thresholdStandard})` : ""}${s.dwellMinutes != null ? ` after ${s.dwellMinutes}m sustained` : ""}`);
+    if (s.signals?.length > 1) kvp("Merged signals", s.signals.join(" → "));
+    kvp("ServiceNow", s.incidentNumber || "not raised");
+
+    h1("2. Impact");
+    if (r.impact) p(r.impact);
+    p(`${s.symptomCount ?? 1} symptom(s) observed${s.correlation && s.correlation !== "single" ? ` and correlated as "${s.correlation}"` : ""}.${s.occurrences > 1 ? ` Recurring — seen ${s.occurrences} time(s).` : ""}`);
+
+    h1("3. Timeline");
+    const mttd = mins(s.firstSeen, s.detectedAt), mtta = mins(s.detectedAt, s.approvedAt), mttr = mins(s.detectedAt, s.resolvedAt);
+    for (const [k, v] of [["Condition began", s.firstSeen], ["Detected", s.detectedAt], ["Ticket raised", s.incidentRaisedAt],
+      ["Fix dry-run", s.dryRunAt], ["Approved", s.approvedAt], ["Remediated", s.remediatedAt], ["Resolved", s.resolvedAt], ["Closed", s.closedAt]]) {
+      if (v) kvp(k, fmtTs(v));
+    }
+    if (mttd != null || mtta != null || mttr != null) {
+      kvp("Metrics", [mttd != null && `MTTD ${mttd}m`, mtta != null && `MTTA ${mtta}m`, mttr != null && `MTTR ${mttr}m`].filter(Boolean).join("  ·  "));
+    }
+
+    h1("4. Root cause");
+    p(r.rootCause || "Under investigation");
+    if (r.category) kvp("Category", r.category);
+    kvp("Determined by", r.aiAnalysed
+      ? `AI analysis grounded in live logs, events and pod state${r.confidence ? ` (confidence ${r.confidence})` : ""}`
+      : `deterministic rules${r.aiUnavailableReason ? ` — ${r.aiUnavailableReason}` : ""}`);
+    if (r.analysis) { h2("4.1 Detailed AI analysis"); p(r.analysis); }
+    const why = (r.whyChain?.length ? r.whyChain : (r.causalChain || []).map((c) => c.cause || c.evidence)).filter(Boolean);
+    if (why.length) { h2("4.2 Causal chain (5-Whys)"); why.forEach((w, i) => li(`${i === 0 ? "Symptom" : i === why.length - 1 ? "Root cause" : `Why ${i}`}: ${w}`)); }
+    if (r.contributingFactors?.length) { h2("4.3 Contributing factors"); r.contributingFactors.forEach(li); }
+    if (r.recommendation) { h2("4.4 Recommendation"); p(r.recommendation); }
+
+    h1("5. Evidence");
+    h2("5.1 Threshold observations");
+    (r.evidence || []).forEach(li);
+    if (r.restarts) li(`Total container restarts: ${r.restarts}`);
+    for (const x of r.exitCodes || []) li(`Container "${x.container}" terminated: ${x.reason || "?"} (exit ${x.code ?? "?"})`);
+    if (r.limits?.length) { h2("5.2 Resource configuration"); r.limits.forEach((l) => li(`${l.container}: limits=${JSON.stringify(l.limits)} requests=${JSON.stringify(l.requests)}`)); }
+    h2("5.3 Log evidence");
+    if (r.logLines?.length) mono(r.logLines.slice(0, 18)); else p("No error output captured.");
+    if (r.events?.length) { h2("5.4 Kubernetes warning events"); r.events.forEach((e) => li(`[${e.reason}] ${e.message}`)); }
+    if (r.kbMatches?.length) { h2("5.5 Known-error matches"); r.kbMatches.forEach((m) => li(`${m.rootCause || "match"}${m.remediation ? ` → ${m.remediation}` : ""}`)); }
+    if (r.investigationSteps?.length) { h1("6. Further investigation if it recurs"); r.investigationSteps.forEach((x, i) => li(`${i + 1}. ${x}`)); }
+
+    h1("7. Resolution");
+    if (s.remediation?.command) {
+      kvp("Action", `${s.remediation.action} (risk ${s.remediation.risk}, ${s.remediation.reversible ? "reversible" : "NOT reversible"})`);
+      kvp("Approved by", s.approvedBy || "—");
+      if (s.remediation.rationale) p(s.remediation.rationale);
+      h2("Command executed"); mono([`$ ${s.remediation.command}`]);
+      if (s.dryRunOutput) { h2("Dry-run output"); mono([String(s.dryRunOutput)]); }
+      if (s.applyOutput) { h2("Apply output"); mono([String(s.applyOutput)]); }
+    } else {
+      p(`No safe automated remediation was available; the incident was escalated for human action.${s.escalationReason ? ` ${s.escalationReason}` : ""}`);
+    }
+
+    h1("8. Verification");
+    if (s.verification) {
+      doc.fontSize(10).font("Helvetica-Bold").fillColor(s.verification.ok ? PDF_C.green : PDF_C.amber)
+        .text(s.verification.ok ? "VERIFIED" : "NOT VERIFIED", { continued: true });
+      doc.font("Helvetica").fillColor("#111827").text(`  ${s.verification.summary}`, { width: W });
+    } else p("Not verified.");
+    if (s.afterSnapshot?.rows?.length) {
+      h2("Container status after fix");
+      mono([s.afterSnapshot.header.join("   "), ...s.afterSnapshot.rows.map((x) => `${x.name}   ${x.ready}   ${x.status}   ${x.restarts}   ${x.age}`)]);
+    }
+
+    const capa = [...(r.preventiveActions || []), ...(s.occurrences > 1 ? [`Recurring ${s.occurrences}× — raise a Problem record for a permanent fix.`] : [])];
+    if (capa.length) { h1("9. Corrective & preventive actions"); capa.forEach(li); }
+
+    h1("10. Notes");
+    p(`Blameless review. Detection, root-cause analysis, ticketing, remediation and verification were performed automatically. ${
+      s.approvedBy ? `A human (${s.approvedBy}) approved the corrective action before it was applied.`
+      : s.selfHealed ? "The condition resolved itself; no corrective action was applied." : "No corrective action was applied."}`);
+
+    doc.moveDown(1).fontSize(8).font("Helvetica").fillColor("#94a3b8")
+      .text(`TCS Agentic AI · UC-05 Zero-Touch Incident Command · session ${s.id}${s.signature ? ` · correlation ${s.signature}` : ""}`, { width: W });
+
+    doc.end();
+  });
 }
