@@ -27,8 +27,11 @@
  *   - Every transition is written to the audit log.
  */
 
-import { ocpGet } from "../utils/openshift-client.js";
+import { ocpGet, ocpFetch } from "../utils/openshift-client.js";
 import { runRCA } from "../tools/rca-engine.js";
+import { classifyJSON, llmEnabled } from "./llm.js";
+import { fenceUntrusted, UNTRUSTED_GUARD } from "./untrusted.js";
+import { findMatchingErrors } from "./error-knowledge.js";
 import { executeFixCommand } from "./fix-executor.js";
 import { classifyCommand } from "./guardrails.js";
 import { logAuditEvent } from "./audit-log.js";
@@ -344,33 +347,226 @@ const RCA_HINTS = {
   podPending: "The scheduler could not place the pod: insufficient allocatable resources, unsatisfied node selectors/affinity, or taints without matching tolerations.",
 };
 
-async function buildRCA(d) {
-  // Pod-scoped detections get the real causal-chain RCA engine.
-  const pod = d.affected?.find((a) => a.pod)?.pod || null;
-  if (pod && d.namespace) {
-    try {
-      const r = await runRCA(d.namespace, pod);
-      if (r && r.rootCause && r.rootCause !== "InvestigationError") {
-        return {
-          rootCause: r.rootCause,
-          severity: r.severity || null,
-          recommendation: r.recommendation || null,
-          causalChain: Array.isArray(r.causalChain) ? r.causalChain.slice(0, 8) : [],
-          evidence: d.evidence || [],
-          source: "rca-engine",
-        };
-      }
-    } catch { /* fall through to deterministic RCA */ }
+/** Bound best-effort enrichment so a slow provider can't stall the poller. */
+function withSoftTimeout(promise, ms, fallback = null) {
+  return Promise.race([
+    Promise.resolve(promise).catch(() => fallback),
+    new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
+const ERROR_HINTS = [
+  { re: /\b(OutOfMemoryError|OOM|Cannot allocate memory|memory allocation failed)\b/i, category: "Memory Exhaustion" },
+  { re: /\b(ECONNREFUSED|connection refused|dial tcp.*refused)\b/i, category: "Connection Refused" },
+  { re: /\b(ENOTFOUND|no such host|could not resolve|Name or service not known)\b/i, category: "DNS Resolution" },
+  { re: /\b(permission denied|EACCES|403 Forbidden|Access denied)\b/i, category: "Permission Denied" },
+  { re: /\b(no space left|disk full|ENOSPC)\b/i, category: "Disk Full" },
+  { re: /\b(panic:|FATAL|fatal error|segmentation fault|core dumped)\b/i, category: "Application Crash" },
+  { re: /\b(readiness probe failed|liveness probe failed|startup probe failed)\b/i, category: "Health Check Failure" },
+  { re: /\b(deadline exceeded|context deadline|timed out)\b/i, category: "Timeout" },
+  { re: /\b(NullPointerException|TypeError|AttributeError|KeyError|IndexError)\b/i, category: "Application Error" },
+  { re: /\b(SSL|TLS|certificate|x509|handshake failure)\b/i, category: "TLS/Certificate" },
+  { re: /\b(quota exceeded|resource quota|LimitRange)\b/i, category: "Resource Quota" },
+];
+
+/**
+ * Collect the hard evidence an RCA needs: pod spec/status, container logs (the
+ * previous instance too, since a crash-looped container's useful output is in
+ * the terminated one), the object's own events, and resource limits.
+ */
+async function gatherEvidence(namespace, podName) {
+  const out = { pod: null, containers: [], logLines: [], events: [], limits: [], restarts: 0, exitCodes: [] };
+  if (!namespace || !podName) return out;
+  let pod;
+  try { pod = await ocpGet(`/api/v1/namespaces/${namespace}/pods/${encodeURIComponent(podName)}`); }
+  catch { return out; }
+  out.pod = {
+    name: pod.metadata?.name, phase: pod.status?.phase, node: pod.spec?.nodeName,
+    startTime: pod.status?.startTime,
+  };
+  for (const cs of pod.status?.containerStatuses || []) {
+    out.restarts += cs.restartCount || 0;
+    const term = cs.lastState?.terminated || cs.state?.terminated;
+    if (term) out.exitCodes.push({ container: cs.name, code: term.exitCode, reason: term.reason, at: term.finishedAt });
+    out.containers.push({
+      name: cs.name, ready: cs.ready, restarts: cs.restartCount || 0,
+      state: cs.state?.waiting?.reason || cs.state?.terminated?.reason || (cs.state?.running ? "Running" : "Unknown"),
+    });
   }
-  // Infrastructure / object-scoped detections: synthesize from the detection.
-  return {
+  for (const c of pod.spec?.containers || []) {
+    out.limits.push({ container: c.name, limits: c.resources?.limits || {}, requests: c.resources?.requests || {} });
+  }
+  // Logs — current and, when the container has restarted, the previous instance.
+  const wantPrev = (pod.status?.containerStatuses || []).some((cs) => cs.lastState?.terminated);
+  for (const c of (pod.spec?.containers || []).slice(0, 2)) {
+    for (const prev of wantPrev ? [true, false] : [false]) {
+      try {
+        const raw = await ocpFetch(
+          `/api/v1/namespaces/${namespace}/pods/${encodeURIComponent(podName)}/log?container=${encodeURIComponent(c.name)}&tailLines=60&timestamps=true${prev ? "&previous=true" : ""}`,
+          { headers: { Accept: "text/plain" } }
+        ).catch(() => "");
+        const text = typeof raw === "string" ? raw : "";
+        if (!text) continue;
+        for (const line of text.split("\n")) {
+          if (/\b(error|exception|fatal|panic|fail|warn|critical|killed)\b/i.test(line) && line.trim()) {
+            out.logLines.push(`${prev ? "[previous] " : ""}${c.name}: ${line.trim().slice(0, 220)}`);
+            if (out.logLines.length >= 15) break;
+          }
+        }
+      } catch { /* logs optional */ }
+      if (out.logLines.length >= 15) break;
+    }
+  }
+  try {
+    const ev = await ocpGet(`/api/v1/namespaces/${namespace}/events?fieldSelector=involvedObject.name=${encodeURIComponent(podName)}&limit=30`);
+    out.events = (ev.items || [])
+      .filter((e) => e.type === "Warning")
+      .sort((a, b) => new Date(b.lastTimestamp || 0) - new Date(a.lastTimestamp || 0))
+      .slice(0, 8)
+      .map((e) => ({ reason: e.reason, message: (e.message || "").slice(0, 200), at: e.lastTimestamp }));
+  } catch { /* events optional */ }
+  return out;
+}
+
+/** Ask the LLM for a deep, grounded diagnosis. Returns null when unavailable. */
+async function aiDiagnose(d, ev, deterministic) {
+  if (!llmEnabled()) return null;
+  const logExcerpt = ev.logLines.length ? ev.logLines.slice(0, 12).join("\n") : "(no error lines found in logs)";
+  const eventText = ev.events.length ? ev.events.map((e) => `${e.reason}: ${e.message}`).join("\n") : "(no warning events)";
+  const limits = ev.limits.map((l) => `${l.container}: limits=${JSON.stringify(l.limits)} requests=${JSON.stringify(l.requests)}`).join("; ") || "(none set)";
+
+  // Logs and events are attacker-influencable content — fence them so the model
+  // treats them as data, never as instructions.
+  const prompt = `${UNTRUSTED_GUARD}
+
+Analyze this OpenShift/Kubernetes incident and respond with ONLY a JSON object.
+
+DETECTION
+  signal: ${d.signal}
+  threshold rule: ${d.rule} (${d.thresholdStandard || "custom"})
+  sustained for: ${d.dwellMinutes ?? "?"} minutes
+  scope: ${d.namespace ? `namespace ${d.namespace}` : "cluster"} / ${d.target || d.node || "unknown"}
+  correlated symptoms: ${d.symptomCount ?? 1} (${d.correlation || "single"})
+  recurrence: seen ${d.occurrences ?? 1} time(s)
+
+POD STATE
+  phase: ${ev.pod?.phase || "unknown"} · node: ${ev.pod?.node || "unknown"} · total restarts: ${ev.restarts}
+  containers: ${JSON.stringify(ev.containers)}
+  termination: ${JSON.stringify(ev.exitCodes)}
+  resources: ${limits}
+
+DETERMINISTIC FINDING
+  ${deterministic.rootCause}${deterministic.recommendation ? ` — ${deterministic.recommendation}` : ""}
+
+${fenceUntrusted("CONTAINER_LOGS", logExcerpt)}
+
+${fenceUntrusted("KUBERNETES_EVENTS", eventText)}
+
+Respond with EXACTLY this JSON shape:
+{
+  "rootCause": "one precise sentence naming the actual cause, citing the evidence",
+  "category": "one of: Memory Exhaustion, Memory Leak, Configuration Error, Dependency Failure, Permission Issue, Resource Exhaustion, Application Bug, Health Check Failure, Image Issue, Network Issue, Storage Issue, Infrastructure Failure, Unknown",
+  "analysis": "3-5 sentences explaining what is happening and WHY, referencing specific log lines or exit codes",
+  "contributingFactors": ["factor 1", "factor 2"],
+  "impact": "one sentence on user/service impact",
+  "whyChain": ["why 1 (symptom)", "why 2", "why 3 (root)"],
+  "investigationSteps": ["step to confirm", "next step"],
+  "preventiveActions": ["action to stop recurrence"],
+  "confidence": "high | medium | low"
+}`;
+
+  try {
+    const r = await classifyJSON({
+      prompt,
+      system: "You are a senior OpenShift/Kubernetes SRE writing a blameless root-cause analysis. Be specific and cite evidence — never invent log lines or metrics that were not provided. If the evidence is thin, say so and set confidence low. Output JSON only.",
+      maxTokens: 900,
+    });
+    if (!r || !r.rootCause) return null;
+    return r;
+  } catch { return null; }
+}
+
+async function buildRCA(d) {
+  // 1. Deterministic base — always available, never blocks.
+  const pod = d.affected?.find((a) => a.pod)?.pod || null;
+  let base = {
     rootCause: d.signal,
     severity: null,
     recommendation: RCA_HINTS[d.rule] || `Investigate ${d.signal} on ${d.target || d.node || "the cluster"}.`,
     causalChain: [],
-    evidence: d.evidence || [],
     source: "threshold-detection",
   };
+  if (pod && d.namespace) {
+    try {
+      const r = await runRCA(d.namespace, pod);
+      if (r && r.rootCause && r.rootCause !== "InvestigationError") {
+        base = {
+          rootCause: r.rootCause,
+          severity: r.severity || null,
+          recommendation: r.recommendation || null,
+          causalChain: Array.isArray(r.causalChain) ? r.causalChain.slice(0, 8) : [],
+          source: "rca-engine",
+        };
+      }
+    } catch { /* keep the threshold-derived base */ }
+  }
+
+  // 2. Hard evidence (logs, events, limits, exit codes).
+  const ev = pod ? await withSoftTimeout(gatherEvidence(d.namespace, pod), 20_000, null) : null;
+  const evidenceBundle = ev || { logLines: [], events: [], limits: [], containers: [], exitCodes: [], restarts: 0, pod: null };
+
+  // 3. Knowledge-base matches over the real logs/events.
+  let kbMatches = [];
+  try {
+    kbMatches = findMatchingErrors(evidenceBundle.logLines, evidenceBundle.events)
+      .slice(0, 4)
+      .map((m) => ({ rootCause: m.entry?.rootCause, remediation: (m.entry?.remediation || [])[0], matched: m.matchedText, source: m.source }));
+  } catch { /* optional */ }
+
+  // Cheap deterministic categorisation as a fallback for the AI's category.
+  const logText = evidenceBundle.logLines.join("\n");
+  const patternCategory = (ERROR_HINTS.find((h) => h.re.test(logText)) || {}).category || null;
+
+  // 4. AI deep analysis — bounded, and the RCA is complete without it.
+  const ai = await withSoftTimeout(aiDiagnose(d, evidenceBundle, base), 35_000, null);
+
+  return {
+    ...base,
+    // AI narrative wins for the headline when present, deterministic stays as evidence.
+    rootCause: ai?.rootCause || base.rootCause,
+    deterministicRootCause: base.rootCause,
+    category: ai?.category || patternCategory || null,
+    analysis: ai?.analysis || null,
+    contributingFactors: ai?.contributingFactors || [],
+    impact: ai?.impact || null,
+    whyChain: ai?.whyChain || (base.causalChain || []).map((c) => c.cause || c.evidence).filter(Boolean),
+    investigationSteps: ai?.investigationSteps || [],
+    preventiveActions: ai?.preventiveActions || [],
+    confidence: ai?.confidence || (evidenceBundle.logLines.length ? "medium" : "low"),
+    aiAnalysed: !!ai,
+    aiUnavailableReason: ai ? null : (llmEnabled() ? "AI analysis timed out or returned no result — deterministic RCA shown" : "No LLM provider configured — deterministic RCA shown"),
+    evidence: d.evidence || [],
+    logLines: evidenceBundle.logLines,
+    events: evidenceBundle.events,
+    limits: evidenceBundle.limits,
+    exitCodes: evidenceBundle.exitCodes,
+    restarts: evidenceBundle.restarts,
+    kbMatches,
+    source: ai ? "ai+rca-engine" : base.source,
+  };
+}
+
+/** Wrap prose to a width so the document stays readable in ServiceNow. */
+function wrap(text, width = 92) {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  const lines = [];
+  let cur = "";
+  for (const w of words) {
+    if ((cur + " " + w).trim().length > width) { if (cur) lines.push(cur); cur = w; }
+    else cur = (cur ? cur + " " : "") + w;
+  }
+  if (cur) lines.push(cur);
+  return lines.length ? lines : [""];
 }
 
 /** Render the RCA as an ITIL/SRE-standard document (used for close_notes). */
@@ -403,17 +599,76 @@ export function renderRCADocument(s) {
   if (s.remediatedAt) L.push(`   Remediated      : ${s.remediatedAt}`);
   if (s.resolvedAt) L.push(`   Resolved        : ${s.resolvedAt}${mttr != null ? `  (MTTR ${mttr}m)` : ""}`);
   L.push("");
+  const r = s.rca || {};
   L.push(`4. ROOT CAUSE`);
-  L.push(`   ${s.rca?.rootCause || "Under investigation"}`);
-  if (s.rca?.recommendation) L.push(`   ${s.rca.recommendation}`);
-  if (s.rca?.causalChain?.length) {
-    L.push("");
-    L.push(`   Causal chain (5-Whys):`);
-    s.rca.causalChain.forEach((c, i) => L.push(`     ${i + 1}. ${c.cause || c.evidence}${c.confidence ? ` (${Math.round(c.confidence * 100)}%)` : ""}`));
+  L.push(`   ${r.rootCause || "Under investigation"}`);
+  if (r.category) L.push(`   Category   : ${r.category}`);
+  L.push(`   Determined by: ${r.aiAnalysed ? "AI analysis grounded in live logs, events and pod state" : "deterministic rules"}`
+    + `${r.confidence ? ` · confidence ${r.confidence}` : ""}`);
+  if (!r.aiAnalysed && r.aiUnavailableReason) L.push(`   Note       : ${r.aiUnavailableReason}`);
+  if (r.deterministicRootCause && r.deterministicRootCause !== r.rootCause) {
+    L.push(`   Rule-based signal: ${r.deterministicRootCause}`);
   }
+
+  if (r.analysis) {
+    L.push("");
+    L.push(`4.1 DETAILED AI ANALYSIS`);
+    wrap(r.analysis, 92).forEach((line) => L.push(`   ${line}`));
+  }
+  if (r.impact) {
+    L.push("");
+    L.push(`4.2 IMPACT ASSESSMENT`);
+    wrap(r.impact, 92).forEach((line) => L.push(`   ${line}`));
+  }
+  const why = (r.whyChain && r.whyChain.length) ? r.whyChain
+    : (r.causalChain || []).map((c) => c.cause || c.evidence).filter(Boolean);
+  if (why.length) {
+    L.push("");
+    L.push(`4.3 CAUSAL CHAIN (5-WHYS)`);
+    why.forEach((w, i) => L.push(`   ${i === 0 ? "Symptom" : i === why.length - 1 ? "Root   " : `Why ${i}  `} : ${w}`));
+  }
+  if (r.contributingFactors?.length) {
+    L.push("");
+    L.push(`4.4 CONTRIBUTING FACTORS`);
+    r.contributingFactors.forEach((f) => L.push(`   • ${f}`));
+  }
+  if (r.recommendation) {
+    L.push("");
+    L.push(`4.5 RECOMMENDATION`);
+    wrap(r.recommendation, 92).forEach((line) => L.push(`   ${line}`));
+  }
+
   L.push("");
   L.push(`5. EVIDENCE`);
-  (s.rca?.evidence || []).slice(0, 8).forEach((e) => L.push(`   • ${e}`));
+  L.push(`   5.1 Threshold observations`);
+  (r.evidence || []).slice(0, 8).forEach((e) => L.push(`       • ${e}`));
+  if (r.restarts) L.push(`       • total container restarts: ${r.restarts}`);
+  if (r.exitCodes?.length) {
+    r.exitCodes.forEach((x) => L.push(`       • container "${x.container}" terminated: ${x.reason || "?"} (exit ${x.code ?? "?"})${x.at ? ` at ${x.at}` : ""}`));
+  }
+  if (r.limits?.length) {
+    L.push(`   5.2 Resource configuration`);
+    r.limits.forEach((l) => L.push(`       • ${l.container}: limits=${JSON.stringify(l.limits)} requests=${JSON.stringify(l.requests)}`));
+  }
+  if (r.logLines?.length) {
+    L.push(`   5.3 Log evidence (${r.logLines.length} error line(s) captured)`);
+    r.logLines.slice(0, 12).forEach((l) => L.push(`       | ${l}`));
+  } else {
+    L.push(`   5.3 Log evidence: none captured (container may not have produced error output)`);
+  }
+  if (r.events?.length) {
+    L.push(`   5.4 Kubernetes warning events`);
+    r.events.forEach((e) => L.push(`       • [${e.reason}] ${e.message}`));
+  }
+  if (r.kbMatches?.length) {
+    L.push(`   5.5 Known-error knowledge base matches`);
+    r.kbMatches.forEach((m) => L.push(`       • ${m.rootCause || "match"}${m.matched ? ` (matched "${String(m.matched).slice(0, 60)}")` : ""}${m.remediation ? ` → ${m.remediation}` : ""}`));
+  }
+  if (r.investigationSteps?.length) {
+    L.push("");
+    L.push(`5.6 FURTHER INVESTIGATION (if this recurs)`);
+    r.investigationSteps.forEach((st, i) => L.push(`   ${i + 1}. ${st}`));
+  }
   L.push("");
   L.push(`6. RESOLUTION`);
   if (s.remediation?.command) {
@@ -441,6 +696,9 @@ export function renderRCADocument(s) {
 
 function buildCapa(s) {
   const out = [];
+  // AI-proposed preventive actions lead, since they're grounded in this
+  // incident's actual evidence rather than the signal type alone.
+  for (const a of (s.rca?.preventiveActions || []).slice(0, 4)) out.push(a);
   if (s.rule === "oomKilled") out.push("Right-size memory requests/limits from observed usage; profile for a leak if consumption keeps growing.");
   if (s.rule === "crashLoop") out.push("Add or tune readiness/liveness probes and review recent application changes.");
   if (s.rule === "pvcFilling") out.push("Add a retention/cleanup job and alert on volume growth trend, not just the 90% threshold.");

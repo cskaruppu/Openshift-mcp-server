@@ -915,7 +915,50 @@ export function IntelligenceView() {
                           </div>
 
                           {s.rca?.rootCause && (
-                            <div className="intel-card-msg"><strong>Root cause:</strong> {s.rca.rootCause}</div>
+                            <div className="intel-card-msg">
+                              <strong>Root cause:</strong> {s.rca.rootCause}
+                              {s.rca.category && <span style={{ opacity: .75 }}> · {s.rca.category}</span>}
+                              {s.rca.aiAnalysed && (
+                                <span style={{ marginLeft: 6, fontSize: 10, padding: "1px 6px", borderRadius: 999,
+                                  background: "rgba(139,92,246,.2)", color: "#c4b5fd" }}>
+                                  AI analysis{s.rca.confidence ? ` · ${s.rca.confidence}` : ""}
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Detailed AI analysis — the "why", not just the label */}
+                          {s.rca?.analysis && (
+                            <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.55, opacity: .92 }}>
+                              {s.rca.analysis}
+                            </div>
+                          )}
+                          {s.rca?.impact && (
+                            <div style={{ marginTop: 5, fontSize: 11.5 }}>
+                              <strong>Impact:</strong> {s.rca.impact}
+                            </div>
+                          )}
+                          {s.rca?.whyChain?.length > 0 && (
+                            <div style={{ marginTop: 6, fontSize: 11.5, opacity: .88 }}>
+                              <strong>Causal chain:</strong>{" "}
+                              {s.rca.whyChain.join(" → ")}
+                            </div>
+                          )}
+                          {s.rca?.logLines?.length > 0 && (
+                            <details style={{ marginTop: 6 }}>
+                              <summary style={{ cursor: "pointer", fontSize: 11.5, opacity: .85 }}>
+                                Log evidence ({s.rca.logLines.length} line{s.rca.logLines.length === 1 ? "" : "s"})
+                              </summary>
+                              <div style={{ marginTop: 4, fontFamily: "var(--font-mono, monospace)", fontSize: 10.5, opacity: .85,
+                                maxHeight: 150, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
+                                {s.rca.logLines.slice(0, 12).map((l, i) => <div key={i}>| {l}</div>)}
+                              </div>
+                            </details>
+                          )}
+                          {s.rca && !s.rca.aiAnalysed && s.rca.aiUnavailableReason && (
+                            <div style={{ marginTop: 5, fontSize: 11, opacity: .7, fontStyle: "italic" }}>
+                              {s.rca.aiUnavailableReason}
+                            </div>
                           )}
 
                           {s.remediation?.command && (
