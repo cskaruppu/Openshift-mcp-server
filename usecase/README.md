@@ -19,21 +19,29 @@ Customer-facing use case collateral for the TCS Agentic AI platform.
 
 ### Recording a demo
 
-[`UC-05-RCA-Agent-Narration.md`](./UC-05-RCA-Agent-Narration.md) — portfolio positioning
-(TCS Agentic AI for Hybrid Infrastructure → Container & Kubernetes → RCA Agent) in short and full
-written form, plus a 3:45 narration script walking the actor-coded flow. Read this first, then:
+👉 **[`UC-05-RCA-Agent-Demo-Script.md`](./UC-05-RCA-Agent-Demo-Script.md) — use this one.**
 
-[`DEMO-SCRIPT-5min.md`](./DEMO-SCRIPT-5min.md) — a teleprompter-ready 5-minute script with
-SHOW/SAY columns, cumulative timings, the pre-recording staging that makes it fit, what to cut if
-you run long, a 7-minute variant, and Clipchamp production settings.
+The single, complete script. **4:59** measured (672 spoken words at 135 wpm), in two parts:
 
-[`UC-05-DEMO-WALKTHROUGH.md`](./UC-05-DEMO-WALKTHROUGH.md) — 2:47 of narration for talking over an
-**already-recorded** product walkthrough, in six beats (platform → detection → View RCA → ITSM →
-approve/apply/verify → attach & close), with a one-line-per-beat cheat card and delivery notes.
+- **Part 1 · Positioning and flow (2:31)** — the portfolio, what the agent replaces, the actor-coded
+  flow narrated colour by colour, and the differentiator
+- **Part 2 · The live incident (2:28)** — console → autonomous detection → View RCA → the ServiceNow
+  record open → approve/apply/verify → attach, close and the safety net
 
-**Which script to use:** `DEMO-SCRIPT-5min.md` if you are recording screen and voice together;
-`UC-05-RCA-Agent-Narration.md` + `UC-05-DEMO-WALKTHROUGH.md` if you are recording the screen first
-and narrating over it afterwards.
+Plus pre-recording staging, a cheat card, delivery notes, cut-list for running long, a 7-minute
+variant, Clipchamp settings, the written positioning statements (Appendix A) and the rationale for
+the beat order (Appendix B).
+
+<details>
+<summary>Superseded source material — kept for reference</summary>
+
+| File | What it was |
+|---|---|
+| [`UC-05-RCA-Agent-Narration.md`](./UC-05-RCA-Agent-Narration.md) | Positioning + 3:45 flow narration. Folded into Part 1 and Appendix A. |
+| [`UC-05-DEMO-WALKTHROUGH.md`](./UC-05-DEMO-WALKTHROUGH.md) | 2:47 six-beat walkthrough narration. Folded into Part 2 and Appendix B. |
+| [`DEMO-SCRIPT-5min.md`](./DEMO-SCRIPT-5min.md) | Earlier 5-minute script covering all four tabs before reaching UC-05. Use this if the audience has never seen the platform. |
+
+</details>
 
 ### Regenerating
 
