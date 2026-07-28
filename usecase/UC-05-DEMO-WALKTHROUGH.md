@@ -1,7 +1,8 @@
 # RCA Agent (UC-05) — Demo Walkthrough Narration
 
-**For narrating over the recorded video.** Six beats, matching the structure you drafted, rewritten
-for a customer-facing delivery.
+**For narrating over the recorded video.** Six beats, following the structure you drafted — rewritten
+for a customer-facing delivery, with the sequence reviewed and three adjustments (see
+[The arrangement](#the-arrangement)).
 
 **Runtime ≈ 2 minutes 47 seconds** of narration (375 spoken words at a measured 135 wpm), leaving
 room to pause on each screen.
@@ -36,6 +37,41 @@ sentence answers the "what if the fix doesn't work?" question before it is asked
 
 ---
 
+## The arrangement
+
+Your six points are in broadly the right sequence — the shape is sound. Three things need moving.
+
+| Your draft | Recommended | Why |
+|---|---|---|
+| **1** Platform + RCA Agent intro | **1** Unchanged | Correct opening. |
+| **2** Alerts auto-created · dry-run · apply fix | **2** Detection only — *point at* the dry-run and Apply Fix buttons, don't use them | You currently spend the fix twice: described here, performed at point 5. Say the buttons exist, then move on. The click is the money shot — don't spoil it. |
+| **3** View RCA | **3** Unchanged | Correctly placed **before** the fix. The RCA is generated at detection time, so it is already complete here — and it explains *why* the fix about to be applied is the right one. |
+| **4** Incident in ITSM | **4** Unchanged | Correct. This is the ticket **open**. |
+| **5** Apply fix → attach RCA → close | **5** Approve → apply → **verify** | Verification moves up out of your point 6. It happens before closure, and showing it here is what makes the next beat credible. |
+| **6** Resolved after validating | **6** Attach → close → change ledger → *and what happens if verify fails* | Your point 6 restates point 5 rather than adding to it. Give it its own job: the audit close-out and the safety net. |
+
+**Net effect:** nothing is reordered wholesale — one step (verify) moves up, one duplicated step
+(the fix) is removed from beat 2, and beat 6 stops repeating beat 5 and earns its place.
+
+### Screen-switching map
+
+Two switches to ServiceNow, and both are deliberate — you are showing the **same ticket open, then
+closed**. That contrast is the proof. Do not try to collapse them into one visit.
+
+```
+Beat 1   Console — landing → AI Intelligence
+Beat 2   Console — Auto-Detect
+Beat 3   Console — View RCA                     ← scroll at reading speed
+Beat 4   ServiceNow ─────────────► ticket OPEN
+Beat 5   Console — dry-run, approve, apply
+Beat 6   ServiceNow ─────────────► ticket CLOSED, RCA attached
+```
+
+Have both tabs open and pre-loaded before you record. The two ServiceNow cuts are the only place a
+loading spinner would hurt you.
+
+---
+
 ## The narration
 
 ### Beat 1 · The platform and the agent
@@ -51,6 +87,7 @@ sentence answers the "what if the fix doesn't work?" question before it is asked
 ### Beat 2 · Autonomous detection, and the fix that comes with it
 
 **SHOW:** The Auto-Detect view. Point at the detection counters first, then open an actionable card.
+**Do not click Dry-run or Apply Fix here** — name them, leave them. They belong to beat 5.
 
 > "Everything on this screen was found by the agent. Nobody reported it, and nobody asked it to look.
 >
