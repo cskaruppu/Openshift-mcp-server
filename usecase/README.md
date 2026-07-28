@@ -27,6 +27,14 @@ written form, plus a 3:45 narration script walking the actor-coded flow. Read th
 SHOW/SAY columns, cumulative timings, the pre-recording staging that makes it fit, what to cut if
 you run long, a 7-minute variant, and Clipchamp production settings.
 
+[`UC-05-DEMO-WALKTHROUGH.md`](./UC-05-DEMO-WALKTHROUGH.md) — 2:47 of narration for talking over an
+**already-recorded** product walkthrough, in six beats (platform → detection → View RCA → ITSM →
+approve/apply/verify → attach & close), with a one-line-per-beat cheat card and delivery notes.
+
+**Which script to use:** `DEMO-SCRIPT-5min.md` if you are recording screen and voice together;
+`UC-05-RCA-Agent-Narration.md` + `UC-05-DEMO-WALKTHROUGH.md` if you are recording the screen first
+and narrating over it afterwards.
+
 ### Regenerating
 
 Both documents are generated from code so they stay in sync with the implementation:
