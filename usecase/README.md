@@ -13,9 +13,9 @@ Customer-facing use case collateral for the TCS Agentic AI platform.
 
 | Artifact | File | Contents |
 |---|---|---|
-| **Full details + flowcharts** | [`UC-05-Zero-Touch-Incident-Command.md`](./UC-05-Zero-Touch-Incident-Command.md) | Demo description, **7 Mermaid flowcharts** (master flow, noise-control funnel, dual detection triggers, state machine, duplicate handling, change ledger & revert, manual-vs-zero-touch), thresholds, guards, remediation catalogue, RCA deliverables, safety model, demo script, config |
-| **Presentation** | `TCS_Agentic_AI_UC05_Zero_Touch_Incident_Command.pptx` | **16 slides** — title, problem, workflow, before/after, thresholds, noise control, **noise funnel (the numbers)**, **dedup — one fault one ticket**, AI RCA, RCA deliverables, remediation & safety, **change ledger & revert**, business value, demo script, config & status, closing |
-| **Workbook** | `TCS_Agentic_AI_UC05_Zero_Touch_Incident_Command.xlsx` | **17 sheets** — overview, workflow, state machine, thresholds, noise control, remediation, AI RCA, RCA document, safety, business value, demo script, configuration, verification, implementation map, **deduplication**, **escalation**, **change ledger & revert** |
+| **Full details + flowcharts** | [`UC-05-Zero-Touch-Incident-Command.md`](./UC-05-Zero-Touch-Incident-Command.md) | Demo description, **8 Mermaid flowcharts, colour-coded by actor** (actor-coded master flow, effort split, noise-control funnel, dual detection triggers, state machine, duplicate handling, change ledger & revert, manual-vs-zero-touch) plus a step-by-step **actor matrix**, thresholds, guards, remediation catalogue, RCA deliverables, safety model, demo script, config |
+| **Presentation** | `TCS_Agentic_AI_UC05_Zero_Touch_Incident_Command.pptx` | **17 slides** — title, problem, **who does what (AI / automatic / manual)**, actor-coded workflow, before/after, thresholds, noise control, **noise funnel (the numbers)**, **dedup — one fault one ticket**, AI RCA, RCA deliverables, remediation & safety, **change ledger & revert**, business value, demo script, config & status, closing |
+| **Workbook** | `TCS_Agentic_AI_UC05_Zero_Touch_Incident_Command.xlsx` | **18 sheets** — overview, workflow, state machine, thresholds, noise control, remediation, AI RCA, RCA document, safety, business value, demo script, configuration, verification, implementation map, **deduplication**, **escalation**, **change ledger & revert**, **actor matrix** |
 
 ### Regenerating
 

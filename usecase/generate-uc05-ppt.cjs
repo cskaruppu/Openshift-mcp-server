@@ -117,51 +117,98 @@ function hdr(cells) {
     { x: 0.45, y: 6.45, w: 12.4, h: 0.4, fontSize: 12.5, bold: true, color: C.autoGreen, align: "center", fontFace: F });
 }
 
-// ───────────────────────────────────────────── 3. MASTER FLOW
+// ───────────────────────────────────────────── 3. WHO DOES WHAT
 {
   const s = pptx.addSlide();
-  head(s, "WORKFLOW", "End-to-end flow — one human gate", "Detection is continuous and read-only; only the approval step involves a person.");
+  head(s, "ACTORS", "Who does what — AI, automatic, or manual",
+    "The AI explains. Deterministic code acts. A human decides. Claiming “AI does everything” would be inaccurate and less reassuring.");
 
+  const legend = [
+    { i: "🤖", t: "AI", d: "LLM reasoning over gathered evidence — the root-cause narrative, category, 5-Whys, contributing factors and preventive actions.", c: C.aiPurple, bg: C.lPurple, n: "1 step" },
+    { i: "⚙️", t: "AUTOMATIC", d: "Deterministic code. No AI, no human. Detection, correlation, ticketing, fix planning, dry-run, apply, verify, close, ledger.", c: C.tcsBlue, bg: C.lBlue, n: "20 steps" },
+    { i: "👤", t: "MANUAL", d: "Requires a person. Approving the fix — plus optional revert, threshold tuning and owning an escalation.", c: C.userAmber, bg: C.lAmber, n: "1 decision" },
+  ];
+  legend.forEach((l, i) => {
+    const x = 0.45 + i * 4.18;
+    s.addShape(pptx.ShapeType.roundRect, { x, y: 1.6, w: 3.95, h: 2.0, fill: { color: l.bg }, line: { color: l.c, width: 2 }, rectRadius: 0.09 });
+    s.addText(`${l.i}  ${l.t}`, { x: x + 0.2, y: 1.72, w: 2.6, h: 0.4, fontSize: 15, bold: true, color: l.c, fontFace: F });
+    s.addText(l.n, { x: x + 2.75, y: 1.75, w: 1.05, h: 0.3, fontSize: 10.5, bold: true, color: C.white, align: "center", valign: "middle",
+      fontFace: F, fill: { color: l.c }, rectRadius: 0.04 });
+    s.addText(l.d, { x: x + 0.2, y: 2.18, w: 3.55, h: 1.3, fontSize: 10.5, color: C.navy, fontFace: F, valign: "top" });
+  });
+
+  s.addShape(pptx.ShapeType.roundRect, { x: 0.45, y: 3.78, w: 12.4, h: 0.8, fill: { color: C.lPurple }, line: { color: C.aiPurple, width: 1.5 }, rectRadius: 0.07 });
+  s.addText("The remediation command is chosen by deterministic rules, NOT by the AI. A language model writes the explanation; a fixed table decides what runs against the cluster — so the AI can be wrong about “why” without ever being able to run the wrong command.",
+    { x: 0.62, y: 3.78, w: 12.06, h: 0.8, fontSize: 11.5, bold: true, color: "5B21B6", align: "center", valign: "middle", fontFace: F });
+
+  // Actor ribbon across the lifecycle
+  const ribbon = [
+    { t: "Detect", a: "⚙️" }, { t: "Correlate", a: "⚙️" }, { t: "Evidence", a: "⚙️" },
+    { t: "RCA", a: "🤖" }, { t: "Ticket", a: "⚙️" }, { t: "Plan fix", a: "⚙️" },
+    { t: "Dry-run", a: "⚙️" }, { t: "APPROVE", a: "👤" }, { t: "Apply", a: "⚙️" },
+    { t: "Verify", a: "⚙️" }, { t: "Close+RCA", a: "⚙️" }, { t: "Ledger", a: "⚙️" },
+  ];
+  const tone = { "⚙️": { c: C.tcsBlue, bg: C.lBlue }, "🤖": { c: C.aiPurple, bg: C.lPurple }, "👤": { c: C.userAmber, bg: C.lAmber } };
+  s.addText("The lifecycle, coloured by actor", { x: 0.45, y: 4.75, w: 8, h: 0.3, fontSize: 12.5, bold: true, color: C.navy, fontFace: F });
+  ribbon.forEach((b, i) => {
+    const x = 0.45 + i * 1.04, tn = tone[b.a];
+    const emph = b.a !== "⚙️";
+    s.addShape(pptx.ShapeType.roundRect, { x, y: 5.12, w: 0.96, h: 1.0, fill: { color: tn.bg },
+      line: { color: tn.c, width: emph ? 2.5 : 1 }, rectRadius: 0.06 });
+    s.addText(b.a, { x, y: 5.2, w: 0.96, h: 0.32, fontSize: 13, align: "center", fontFace: F });
+    s.addText(b.t, { x, y: 5.5, w: 0.96, h: 0.55, fontSize: 8.5, bold: emph, color: tn.c, align: "center", valign: "top", fontFace: F });
+  });
+
+  s.addText("20 automatic  ·  1 AI  ·  1 required human decision", { x: 0.45, y: 6.35, w: 12.4, h: 0.35,
+    fontSize: 14, bold: true, color: C.autoGreen, align: "center", fontFace: F });
+  s.addText("Exception paths (no safe fix, verification failure) hand back to a human with the RCA and ticket already prepared.",
+    { x: 0.45, y: 6.72, w: 12.4, h: 0.3, fontSize: 10.5, italic: true, color: C.textMed, align: "center", fontFace: F });
+}
+
+// ───────────────────────────────────────────── 3b. MASTER FLOW
+{
+  const s = pptx.addSlide();
+  head(s, "WORKFLOW", "End-to-end flow — one human gate", "Blue = automatic · purple = the single AI step · amber = the human.");
+
+  const A = { c: C.tcsBlue, f: C.lBlue }, AI = { c: C.aiPurple, f: C.lPurple };
   const row1 = [
-    { t: "Detect", d: "12 thresholds\n+ dwell time", f: C.lBlue, l: C.tcsBlue },
-    { t: "Correlate", d: "N symptoms\n→ 1 incident", f: C.lBlue, l: C.tcsBlue },
-    { t: "Triage", d: "evidence +\nAI RCA", f: C.lPurple, l: C.aiPurple },
-    { t: "Raise INC", d: "ITIL priority\nadmin queue", f: C.lGreen, l: C.autoGreen },
-    { t: "Plan fix", d: "deterministic\n+ guardrails", f: C.lPurple, l: C.aiPurple },
-    { t: "Dry-run", d: "live API\n?dryRun=All", f: C.lCyan, l: C.valCyan },
+    { t: "⚙️ Detect", d: "12 thresholds\n+ dwell time", ...A },
+    { t: "⚙️ Correlate", d: "N signals\n→ 1 incident", ...A },
+    { t: "🤖 AI RCA", d: "evidence →\nnarrative", ...AI },
+    { t: "⚙️ Raise INC", d: "reuse if one\nis already open", ...A },
+    { t: "⚙️ Plan fix", d: "deterministic\n+ guardrails", ...A },
+    { t: "⚙️ Dry-run", d: "live API\n?dryRun=All", ...A },
   ];
   row1.forEach((b, i) => {
     const x = 0.45 + i * 2.09;
-    box(s, { x, y: 1.75, w: 1.78, h: 1.0, fill: b.f, line: b.l, text: b.t, sub: b.d, fs: 12 });
+    box(s, { x, y: 1.75, w: 1.78, h: 1.0, fill: b.f, line: b.c, text: b.t, sub: b.d, fs: 11.5 });
     if (i < row1.length - 1) arrow(s, x + 1.79, 2.12, 0.28);
   });
 
-  // Gate
   s.addShape(pptx.ShapeType.roundRect, { x: 3.6, y: 3.1, w: 6.1, h: 0.85, fill: { color: C.lAmber }, line: { color: C.userAmber, width: 2.5 }, rectRadius: 0.08 });
-  s.addText("◀  AWAITING APPROVAL — THE ONLY HUMAN GATE  ▶", { x: 3.6, y: 3.1, w: 6.1, h: 0.85, fontSize: 14, bold: true, color: "92400E", align: "center", valign: "middle", fontFace: F });
+  s.addText("👤  APPROVE OR REJECT — THE ONLY HUMAN GATE  👤", { x: 3.6, y: 3.1, w: 6.1, h: 0.85, fontSize: 13.5, bold: true, color: "92400E", align: "center", valign: "middle", fontFace: F });
 
   const row2 = [
-    { t: "Apply", d: "execute fix", f: C.lGreen, l: C.autoGreen },
-    { t: "Verify", d: "poll workload\nhealth", f: C.lCyan, l: C.valCyan },
-    { t: "Resolve", d: "evidence\ncaptured", f: C.lGreen, l: C.autoGreen },
-    { t: "Close + RCA", d: "ServiceNow\nclose notes", f: C.lGreen, l: C.autoGreen },
+    { t: "⚙️ Apply", d: "snapshot first", ...A },
+    { t: "⚙️ Verify", d: "poll health", ...A },
+    { t: "⚙️ Attach RCA", d: "HTML + PDF", ...A },
+    { t: "⚙️ Close + ledger", d: "RCA in notes\ninverse stored", ...A },
   ];
   row2.forEach((b, i) => {
     const x = 2.5 + i * 2.2;
-    box(s, { x, y: 4.3, w: 1.9, h: 1.0, fill: b.f, line: b.l, text: b.t, sub: b.d, fs: 12 });
+    box(s, { x, y: 4.3, w: 1.9, h: 1.0, fill: b.f, line: b.c, text: b.t, sub: b.d, fs: 11 });
     if (i < row2.length - 1) arrow(s, x + 1.91, 4.67, 0.28);
   });
 
-  // Exception lanes
   const lanes = [
-    { t: "Self-healed → auto-closed", c: C.autoGreen, bg: C.lGreen },
-    { t: "No safe fix → escalated (ticket ready)", c: C.orange, bg: C.lOrange },
-    { t: "Not verified → rolled back, ticket stays OPEN", c: C.secRed, bg: C.lRed },
+    { t: "⚙️ Self-healed → auto-closed", c: C.autoGreen, bg: C.lGreen },
+    { t: "👤 No safe fix → escalated (RCA ready)", c: C.orange, bg: C.lOrange },
+    { t: "👤 Not verified → rolled back, ticket OPEN", c: C.secRed, bg: C.lRed },
   ];
   lanes.forEach((l, i) => {
     const x = 0.45 + i * 4.18;
     s.addShape(pptx.ShapeType.roundRect, { x, y: 5.6, w: 3.95, h: 0.55, fill: { color: l.bg }, line: { color: l.c, width: 1 }, rectRadius: 0.06 });
-    s.addText(l.t, { x, y: 5.6, w: 3.95, h: 0.55, fontSize: 10.5, bold: true, color: l.c, align: "center", valign: "middle", fontFace: F });
+    s.addText(l.t, { x, y: 5.6, w: 3.95, h: 0.55, fontSize: 10, bold: true, color: l.c, align: "center", valign: "middle", fontFace: F });
   });
   s.addText("Everything before the gate is autonomous. Everything after the gate is autonomous.",
     { x: 0.45, y: 6.4, w: 12.4, h: 0.35, fontSize: 12, bold: true, color: C.navy, align: "center", fontFace: F });

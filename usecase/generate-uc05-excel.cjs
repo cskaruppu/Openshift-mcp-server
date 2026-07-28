@@ -155,31 +155,32 @@ function note(ws, rowIdx, span, text, bg, fg) {
 
   r = headerRow(ws, r, ["#", "Phase", "State", "What happens", "Actor"]);
   r = dataRows(ws, r, [
-    ["1", "Detect", "—", "Background loop (every 2 min) evaluates 12 industry-standard thresholds against pods, nodes, deployments, cluster operators, PVCs and Alertmanager.", "AI · automatic"],
-    ["2", "Dwell check", "—", "A breach must be sustained past its dwell time (the Prometheus `for:` equivalent) so transient blips and normal rolling deploys never open a ticket.", "AI · automatic"],
-    ["3", "Correlate", "—", "Related symptoms collapse into ONE incident — a NotReady node taking N pods with it is 1 incident with N symptoms, not N+1 tickets.", "AI · automatic"],
-    ["4", "Fingerprint", "DETECTED", "Stable signature (survives rollouts) plus recurrence and chronic classification. Duplicate conditions never open a second ticket.", "AI · automatic"],
-    ["5", "Eligibility", "—", "Severity floor + chronic guard + rate limit + already-managed check decide whether this may be auto-ticketed.", "AI · automatic"],
-    ["6", "Triage", "TRIAGED", "Gather evidence (container logs incl. previous terminated instance, warning events, resource limits, exit codes) and run AI root-cause analysis.", "AI · automatic"],
-    ["7", "Raise ticket", "INC_RAISED", "ServiceNow incident created with ITIL Impact×Urgency priority, admin assignment group, category and correlation_id for native dedup.", "AI · automatic"],
-    ["8", "Plan fix", "FIX_PROPOSED", "Deterministic remediation planner selects ONE safe action for the signal class; the command is classified by guardrails.", "AI · automatic"],
-    ["9", "Dry-run", "DRY_RUN_PASSED", "Fix previewed against the live API server with ?dryRun=All. Nothing is modified.", "AI · automatic"],
-    ["10", "APPROVAL GATE", "AWAITING_APPROVAL", "The ONLY human step. Operator reviews the RCA and the dry-run output, then clicks Apply Fix (or Reject).", "HUMAN"],
-    ["11", "Apply", "REMEDIATING", "The approved command is executed against the cluster.", "AI · automatic"],
-    ["12", "Verify", "VERIFYING", "Workload health is polled until it recovers or the attempt budget is exhausted.", "AI · automatic"],
-    ["13", "Resolve", "RESOLVED", "Recovery confirmed and recorded as verification evidence.", "AI · automatic"],
-    ["14", "Close", "CLOSED", "ServiceNow incident closed with the full RCA in the close notes.", "AI · automatic"],
+    ["1", "Detect", "—", "Background loop (every 2 min) evaluates 12 industry-standard thresholds against pods, nodes, deployments, cluster operators, PVCs and Alertmanager.", "AUTOMATIC"],
+    ["2", "Dwell check", "—", "A breach must be sustained past its dwell time (the Prometheus `for:` equivalent) so transient blips and normal rolling deploys never open a ticket.", "AUTOMATIC"],
+    ["3", "Correlate", "—", "Related symptoms collapse into ONE incident — a NotReady node taking N pods with it is 1 incident with N symptoms, not N+1 tickets.", "AUTOMATIC"],
+    ["4", "Fingerprint", "DETECTED", "Stable signature (survives rollouts) plus recurrence and chronic classification. Duplicate conditions never open a second ticket.", "AUTOMATIC"],
+    ["5", "Eligibility", "—", "Severity floor + chronic guard + rate limit + already-managed check decide whether this may be auto-ticketed.", "AUTOMATIC"],
+    ["6", "Triage", "TRIAGED", "Gather evidence: container logs including the PREVIOUS terminated instance, warning events, resource limits, exit codes.", "AUTOMATIC"],
+    ["6b", "AI analysis", "TRIAGED", "The one AI step. An LLM reasons over that evidence to produce the root-cause narrative, category, confidence, 5-Whys chain, contributing factors and preventive actions. It EXPLAINS — it never chooses or executes a command.", "AI (LLM)"],
+    ["7", "Raise ticket", "INC_RAISED", "ServiceNow incident created with ITIL Impact×Urgency priority, admin assignment group, category and correlation_id for native dedup.", "AUTOMATIC"],
+    ["8", "Plan fix", "FIX_PROPOSED", "A DETERMINISTIC table selects ONE safe action for the signal class — deliberately not the AI — then guardrails classify the command.", "AUTOMATIC"],
+    ["9", "Dry-run", "DRY_RUN_PASSED", "Fix previewed against the live API server with ?dryRun=All. Nothing is modified.", "AUTOMATIC"],
+    ["10", "APPROVAL GATE", "AWAITING_APPROVAL", "The ONLY human step. Operator reviews the RCA and the dry-run output, then clicks Apply Fix (or Reject).", "MANUAL"],
+    ["11", "Apply", "REMEDIATING", "The approved command is executed against the cluster.", "AUTOMATIC"],
+    ["12", "Verify", "VERIFYING", "Workload health is polled until it recovers or the attempt budget is exhausted.", "AUTOMATIC"],
+    ["13", "Resolve", "RESOLVED", "Recovery confirmed and recorded as verification evidence.", "AUTOMATIC"],
+    ["14", "Close", "CLOSED", "ServiceNow incident closed with the full RCA in the close notes.", "AUTOMATIC"],
   ], { height: 42 });
 
   r++;
   r = headerRow(ws, r, ["#", "Exception path", "State", "Behaviour", "Actor"]);
   r = dataRows(ws, r, [
-    ["E1", "Self-healed", "RESOLVED → CLOSED", "Condition clears before anyone acts. Confirmed absent over N consecutive scans, then the incident auto-resolves and the ticket closes with the RCA and a self-resolved work note.", "AI · automatic"],
+    ["E1", "Self-healed", "RESOLVED → CLOSED", "Condition clears before anyone acts. Confirmed absent over N consecutive scans, then the incident auto-resolves and the ticket closes with the RCA and a self-resolved work note.", "AUTOMATIC"],
     ["E2", "No safe fix", "ESCALATED", "Node NotReady, degraded operator, unbound PVC, image pull. RCA and ticket are prepared and handed to a human — the system never guesses at a fix.", "AI → human"],
     ["E3", "Verification failed", "ROLLED_BACK → ESCALATED", "The fix applied but the workload did not recover. Escalates and deliberately leaves the ticket OPEN rather than reporting a false success.", "AI → human"],
-    ["E4", "Rejected", "REJECTED → CLOSED", "Operator declines. Session closes; the incident is left open for manual handling.", "HUMAN"],
-    ["E5", "Chronic", "not ticketed", "Already broken longer than the chronic window when first seen — surfaced as a Problem candidate, promotable by hand.", "AI · automatic"],
-    ["E6", "Rate limited", "INC_RAISED (local)", "Ticket budget for the hour is spent. Triaged and tracked locally instead of flooding the ITSM.", "AI · automatic"],
+    ["E4", "Rejected", "REJECTED → CLOSED", "Operator declines. Session closes; the incident is left open for manual handling.", "MANUAL"],
+    ["E5", "Chronic", "not ticketed", "Already broken longer than the chronic window when first seen — surfaced as a Problem candidate, promotable by hand.", "AUTOMATIC"],
+    ["E6", "Rate limited", "INC_RAISED (local)", "Ticket budget for the hour is spent. Triaged and tracked locally instead of flooding the ITSM.", "AUTOMATIC"],
   ], { height: 46 });
 
   r++;
@@ -651,6 +652,60 @@ function note(ws, rowIdx, span, text, bg, fg) {
     C.lightPurple, "5B21B6");
   note(ws, r, 3,
     "Verified: inverse computation for all four action classes; the ledger records and the revert chain links both ways with correct stats; `rollout undo` restores the prior revision with the controller-managed pod-template-hash stripped, and correctly refuses aged-out revisions and non-Deployment kinds. Caveat: without PostgreSQL the ledger is in-memory and lost on pod restart.",
+    C.lightGreen, C.darkGreen);
+}
+
+
+// ═══════════════════════════════ 18. ACTOR MATRIX
+{
+  const ws = wb.addWorksheet("18. Actor Matrix", { properties: { tabColor: { argb: "FF" + C.aiPurple } } });
+  ws.columns = [{ width: 6 }, { width: 46 }, { width: 18 }, { width: 66 }];
+  let r = banner(ws, "TCS Agentic AI · ZTIC — Who does what: AI, automatic, or manual",
+    "The AI explains. Deterministic code acts. A human decides. Being precise about this is more reassuring to an operator than claiming AI does everything.", 4);
+
+  r = headerRow(ws, r, ["", "Actor", "Volume", "What it means and where it is used"]);
+  r = dataRows(ws, r, [
+    ["AI", "AI (LLM reasoning)", "1 step", "Reasons over the gathered evidence to produce the root-cause narrative, category, confidence rating, 5-Whys causal chain, contributing factors, impact assessment, investigation steps and preventive actions. It EXPLAINS — it never selects or executes a command."],
+    ["AUTO", "AUTOMATIC (deterministic)", "20 steps", "Plain code with no AI and no human: detection, dwell evaluation, correlation and causal merge, fingerprinting, eligibility policy, evidence gathering, duplicate lookup, ticket raise/reuse, remediation planning, guardrail classification, dry-run, apply, verification, RCA attachment, duplicate closure, incident closure, ledger recording, self-heal closure, external-closure reconciliation."],
+    ["MANUAL", "MANUAL (a person)", "1 decision", "Approving or rejecting the proposed fix. Optionally: reverting a change, tuning thresholds and settings, and owning an escalation when no safe automated fix exists."],
+  ], { height: 72 });
+
+  r++;
+  r = note(ws, r, 4,
+    "KEY DESIGN POINT: the remediation command is chosen by a DETERMINISTIC table, not by the AI. A language model writes the explanation; fixed rules decide what is actually executed against the cluster. The AI can therefore be wrong about “why” without ever being able to run the wrong command.",
+    C.lightPurple, "5B21B6");
+
+  r = headerRow(ws, r, ["#", "Step", "Actor", "Notes"]);
+  r = dataRows(ws, r, [
+    ["1", "Scan cluster + Alertmanager", "AUTOMATIC", "Read-only API calls, every 2 minutes"],
+    ["2", "Threshold + dwell evaluation", "AUTOMATIC", "kubernetes-mixin / kube-prometheus rule values"],
+    ["3", "Correlation / causal merge", "AUTOMATIC", "Precedence table picks the root-cause signal — not AI"],
+    ["4", "Fingerprint · chronic · recurrence · escalation", "AUTOMATIC", "Deterministic classification"],
+    ["5", "Eligibility (severity floor, rate limit)", "AUTOMATIC", "Policy check"],
+    ["6", "Gather evidence", "AUTOMATIC", "Logs incl. the previous terminated container, events, limits, exit codes"],
+    ["7", "ROOT-CAUSE ANALYSIS", "AI (LLM)", "THE ONE AI STEP — narrative, category, confidence, 5-Whys, CAPA"],
+    ["8", "Deterministic RCA fallback", "AUTOMATIC", "Used when the LLM is slow or not configured; the RCA still renders"],
+    ["9", "Known-error knowledge-base match", "AUTOMATIC", "Regex catalogue matched against the real logs and events"],
+    ["10", "Duplicate check via correlation_id", "AUTOMATIC", "ServiceNow is the source of truth"],
+    ["11", "Raise or reuse the incident", "AUTOMATIC", "ITIL Impact × Urgency matrix, admin assignment group"],
+    ["12", "PLAN THE REMEDIATION", "AUTOMATIC", "DELIBERATELY NOT AI — a fixed table, one safe action per signal class"],
+    ["13", "Guardrail risk classification", "AUTOMATIC", "Blocked commands never reach the cluster"],
+    ["14", "Dry-run", "AUTOMATIC", "?dryRun=All against the live API server"],
+    ["15", "APPROVE OR REJECT", "MANUAL", "THE ONLY REQUIRED HUMAN STEP"],
+    ["16", "Apply the fix", "AUTOMATIC", "Container snapshot captured first"],
+    ["17", "Verify workload health", "AUTOMATIC", "Polls until healthy or the attempt budget is spent"],
+    ["18", "Attach RCA (HTML + PDF)", "AUTOMATIC", "Uploaded before the incident is closed"],
+    ["19", "Link + close duplicate tickets", "AUTOMATIC", "Human-raised tickets are linked and annotated but never closed"],
+    ["20", "Close the incident with the RCA", "AUTOMATIC", "Full RCA in the close notes"],
+    ["21", "Record in the Change Ledger", "AUTOMATIC", "With the precomputed inverse for revert"],
+    ["22", "Self-heal closure", "AUTOMATIC", "Condition cleared on its own — no human, no fix applied"],
+    ["—", "Revert a change", "MANUAL (optional)", "Dry-run → apply → verify, the same governance as the original fix"],
+    ["—", "Tune thresholds / settings", "MANUAL (optional)", "Editable in the UI, applied live without a restart"],
+    ["—", "Own an escalation", "MANUAL", "When no safe automated fix exists, or verification failed"],
+  ], { height: 28 });
+
+  r++;
+  note(ws, r, 4, "TOTALS: 20 automatic · 1 AI · 1 required human decision. Exception paths hand back to a human with the RCA and ticket already prepared.",
     C.lightGreen, C.darkGreen);
 }
 

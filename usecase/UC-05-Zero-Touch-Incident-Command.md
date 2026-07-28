@@ -48,80 +48,166 @@ human.
 
 ---
 
-## 2. Master workflow
+## 2. Who does what — actor legend
+
+Three distinct actors run this lifecycle. The distinction matters: **the AI explains, deterministic
+code acts, and a human decides.** Claiming "AI does everything" would be both inaccurate and less
+reassuring to an operator being asked to trust it.
+
+| | Actor | What it means | Where it is used |
+|---|---|---|---|
+| 🤖 | **AI** | LLM reasoning over gathered evidence | Root-cause narrative, category, 5-Whys, contributing factors, preventive actions |
+| ⚙️ | **AUTOMATIC** | Deterministic code — **no AI, no human** | Detection, correlation, ticketing, fix planning, dry-run, apply, verify, close, ledger |
+| 👤 | **MANUAL** | Requires a person | **Approving the fix**, reverting, tuning thresholds, owning an escalation |
+
+> **The remediation command is chosen by deterministic rules, not by the AI.** That is a safety
+> decision: a language model writes the explanation, while a fixed table decides what is actually
+> executed against the cluster. The AI can be wrong about *why* without ever being able to run the
+> wrong command.
+
+## 3. Master workflow — colour-coded by actor
 
 ```mermaid
 flowchart TD
-    subgraph DET["🔍 DETECT — every 2 min · strictly read-only"]
+    subgraph DET["DETECT — every 2 min · strictly read-only"]
         direction TB
-        A[Scan pods · nodes · deployments<br/>operators · PVCs · Alertmanager] --> B{"Threshold breached<br/>AND sustained past dwell?"}
+        A["⚙️ Scan pods · nodes · deployments<br/>operators · PVCs · Alertmanager"] --> B{"⚙️ Threshold breached<br/>AND sustained past dwell?"}
         B -- no --> A
-        B -- yes --> C[Merge related signals<br/>→ one incident per workload]
-        C --> D[Fingerprint + classify<br/>chronic · recurring · escalated]
+        B -- yes --> C["⚙️ Merge related signals<br/>→ one incident per workload"]
+        C --> D["⚙️ Fingerprint + classify<br/>chronic · recurring · escalated"]
     end
 
-    D --> E{"Eligible for<br/>auto-ticket?"}
-    E -- "chronic · below floor · rate-limited" --> SURF[["Surfaced only<br/>Problem candidate"]]
+    D --> E{"⚙️ Eligible for<br/>auto-ticket?"}
+    E -- "chronic · below floor · rate-limited" --> SURF[["👤 Surfaced only —<br/>promote by hand if wanted"]]
 
-    subgraph TRI["🤖 TRIAGE &amp; TICKET — autonomous"]
+    subgraph TRI["TRIAGE &amp; TICKET — no human involved"]
         direction TB
-        E -- yes --> G[Gather evidence<br/>logs · events · limits · exit codes]
-        G --> H[AI root-cause analysis]
-        H --> I{"Open ticket already<br/>exists for this condition?"}
-        I -- yes --> J[Reuse it + work note<br/>no duplicate raised]
-        I -- no --> K[Raise ServiceNow INC<br/>ITIL priority · admin queue]
-        J --> L[Plan one safe remediation]
+        E -- yes --> G["⚙️ Gather evidence<br/>logs · events · limits · exit codes"]
+        G --> H["🤖 AI root-cause analysis<br/>narrative · category · 5-Whys"]
+        H --> I{"⚙️ Ticket already open<br/>for this condition?"}
+        I -- yes --> J["⚙️ Reuse it + work note<br/>no duplicate raised"]
+        I -- no --> K["⚙️ Raise ServiceNow INC<br/>ITIL priority · admin queue"]
+        J --> L["⚙️ Plan ONE safe remediation<br/>deterministic table, not AI"]
         K --> L
-        L --> M{"Safe automated<br/>fix exists?"}
-        M -- no --> ESC[["ESCALATE<br/>RCA + ticket ready"]]
-        M -- yes --> O[Guardrail check → DRY-RUN<br/>live API, nothing changed]
+        L --> M{"⚙️ Safe automated<br/>fix exists?"}
+        M -- no --> ESC[["👤 ESCALATE —<br/>RCA + ticket ready for a human"]]
+        M -- yes --> O["⚙️ Guardrail check → DRY-RUN<br/>live API, nothing changed"]
     end
 
-    O --> GATE{{"⏸  AWAITING APPROVAL  ⏸<br/>THE ONLY HUMAN GATE"}}
-    GATE -- Reject --> REJ[["Ticket left open<br/>for manual handling"]]
+    O --> GATE{{"👤  APPROVE OR REJECT  👤<br/>THE ONLY HUMAN GATE"}}
+    GATE -- "👤 Reject" --> REJ[["👤 Ticket left open<br/>for manual handling"]]
 
-    subgraph FIX["⚙️ FIX &amp; CLOSE — autonomous"]
+    subgraph FIX["FIX &amp; CLOSE — no human involved"]
         direction TB
-        GATE -- "✅ Apply Fix" --> R[Snapshot containers<br/>then apply]
-        R --> S{"Verified<br/>healthy?"}
-        S -- no --> RB[["ROLL BACK → ESCALATE<br/>ticket stays OPEN"]]
-        S -- yes --> U[Attach RCA<br/>HTML + PDF]
-        U --> V[Link + close<br/>duplicate tickets]
-        V --> W([Close incident<br/>full RCA in close notes])
-        W --> X[Record in Change Ledger<br/>with inverse for revert]
+        GATE -- "👤 Apply Fix" --> R["⚙️ Snapshot containers<br/>then apply"]
+        R --> S{"⚙️ Verified<br/>healthy?"}
+        S -- no --> RB[["👤 ROLL BACK → ESCALATE<br/>ticket stays OPEN"]]
+        S -- yes --> U["⚙️ Attach RCA<br/>HTML + PDF"]
+        U --> V["⚙️ Link + close<br/>duplicate tickets"]
+        V --> W(["⚙️ Close incident<br/>full RCA in close notes"])
+        W --> X["⚙️ Record in Change Ledger<br/>with inverse for revert"]
     end
 
-    D -. condition cleared .-> SH[["SELF-HEAL<br/>auto-close + RCA"]]
-    K -. admin closed it .-> RC[["RECONCILE<br/>stop tracking"]]
+    X --> RV{{"👤 Revert?<br/>optional, any time"}}
+    D -. condition cleared .-> SH[["⚙️ SELF-HEAL<br/>auto-close + RCA"]]
+    K -. admin closed it .-> RC[["⚙️ RECONCILE<br/>stop tracking"]]
 
-    classDef gate fill:#fef3c7,stroke:#d97706,stroke-width:3px,color:#92400e
-    classDef good fill:#d1fae5,stroke:#059669,stroke-width:2px,color:#065f46
+    classDef ai fill:#ede9fe,stroke:#7c3aed,stroke-width:2.5px,color:#5b21b6
+    classDef auto fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e40af
+    classDef manual fill:#fef3c7,stroke:#d97706,stroke-width:2.5px,color:#92400e
+    classDef done fill:#d1fae5,stroke:#059669,stroke-width:2px,color:#065f46
     classDef bad fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#991b1b
-    classDef warn fill:#ffedd5,stroke:#ea580c,stroke-width:2px,color:#9a3412
-    classDef quiet fill:#f1f5f9,stroke:#94a3b8,color:#475569
-    class GATE gate
-    class W,X,SH good
+
+    class A,B,C,D,E,G,I,J,K,L,M,O,R,S,U,V auto
+    class H ai
+    class GATE,RV,SURF,ESC,REJ manual
+    class W,X,SH,RC done
     class RB bad
-    class ESC,REJ,RC warn
-    class SURF quiet
 ```
 
-## 3. Noise-control funnel — measured on the live lab cluster
+**Reading the colours:** blue = deterministic automation · **purple = the one AI step** ·
+**amber = the human** · green = terminal success · red = failure path.
 
-This is the single most persuasive demo visual: what the guards actually filter out.
+## 4. Effort split
+
+```mermaid
+flowchart LR
+    subgraph AUTO["⚙️ AUTOMATIC — 20 of 22 steps"]
+        direction TB
+        X1["detect · correlate · classify"] --> X2["gather evidence"]
+        X2 --> X3["raise or reuse ticket"] --> X4["plan fix · guardrail · dry-run"]
+        X4 --> X5["apply · verify"] --> X6["attach RCA · close duplicates · close ticket"]
+        X6 --> X7["ledger the change with its inverse"]
+    end
+    subgraph AISUB["🤖 AI — 1 step"]
+        direction TB
+        Y1["root-cause narrative<br/>category · 5-Whys · CAPA<br/><i>explains, never executes</i>"]
+    end
+    subgraph MAN["👤 MANUAL — 1 step"]
+        direction TB
+        Z1["approve or reject the fix<br/><i>plus optional revert</i>"]
+    end
+    AUTO --> AISUB --> MAN
+
+    classDef a fill:#dbeafe,stroke:#2563eb,color:#1e40af
+    classDef b fill:#ede9fe,stroke:#7c3aed,stroke-width:2.5px,color:#5b21b6
+    classDef c fill:#fef3c7,stroke:#d97706,stroke-width:2.5px,color:#92400e
+    class X1,X2,X3,X4,X5,X6,X7 a
+    class Y1 b
+    class Z1 c
+```
+
+## 5. Step-by-step actor matrix
+
+| # | Step | Actor | Notes |
+|---|---|---|---|
+| 1 | Scan cluster + Alertmanager | ⚙️ AUTOMATIC | Read-only API calls, every 2 min |
+| 2 | Threshold + dwell evaluation | ⚙️ AUTOMATIC | kubernetes-mixin rule values |
+| 3 | Correlation / causal merge | ⚙️ AUTOMATIC | Precedence table — not AI |
+| 4 | Fingerprint · chronic · recurrence · escalation | ⚙️ AUTOMATIC | Deterministic classification |
+| 5 | Eligibility (severity floor, rate limit) | ⚙️ AUTOMATIC | Policy check |
+| 6 | Gather evidence (logs, events, limits, exit codes) | ⚙️ AUTOMATIC | Includes the *previous* terminated container |
+| 7 | **Root-cause analysis** | 🤖 **AI** | Narrative, category, confidence, 5-Whys, CAPA |
+| 8 | Deterministic RCA fallback | ⚙️ AUTOMATIC | Used when the LLM is slow or absent |
+| 9 | Known-error knowledge-base match | ⚙️ AUTOMATIC | Regex catalogue over real logs |
+| 10 | Duplicate check via `correlation_id` | ⚙️ AUTOMATIC | ServiceNow is the source of truth |
+| 11 | Raise or reuse the incident | ⚙️ AUTOMATIC | ITIL Impact × Urgency matrix |
+| 12 | **Plan the remediation** | ⚙️ **AUTOMATIC** | **Deterministic table — deliberately not AI** |
+| 13 | Guardrail risk classification | ⚙️ AUTOMATIC | Blocked commands never reach the cluster |
+| 14 | Dry-run | ⚙️ AUTOMATIC | `?dryRun=All` against the live API |
+| 15 | **Approve or reject** | 👤 **MANUAL** | **The only required human step** |
+| 16 | Apply the fix | ⚙️ AUTOMATIC | Snapshot taken first |
+| 17 | Verify workload health | ⚙️ AUTOMATIC | Polls until healthy or budget spent |
+| 18 | Attach RCA (HTML + PDF) | ⚙️ AUTOMATIC | Before closing |
+| 19 | Link + close duplicate tickets | ⚙️ AUTOMATIC | Human-raised ones are never closed |
+| 20 | Close the incident with the RCA | ⚙️ AUTOMATIC | Full RCA in close notes |
+| 21 | Record in the Change Ledger | ⚙️ AUTOMATIC | With the precomputed inverse |
+| 22 | Self-heal close (condition cleared) | ⚙️ AUTOMATIC | No human, no fix applied |
+| — | Revert a change | 👤 MANUAL *(optional)* | Dry-run → apply → verify, same governance |
+| — | Tune thresholds / settings | 👤 MANUAL *(optional)* | UI, applied live |
+| — | Own an escalation | 👤 MANUAL | When no safe automated fix exists |
+
+**Totals: 20 automatic · 1 AI · 1 required human decision.**
+
+---
+
+## 6. Noise-control funnel — measured on the live lab cluster
+
+The single most persuasive demo visual: what the guards actually filter out. Every stage here is
+⚙️ **automatic** — no AI, no human.
 
 ```mermaid
 flowchart LR
     A["26<br/>raw symptoms"] --> B["24<br/>detections"]
     B --> C["1<br/>auto-ticket"]
 
-    A -. "correlation<br/>merges related signals" .-> N1["2 duplicate<br/>tickets avoided"]
-    B -. "chronic guard<br/>broken &gt; 24 h" .-> N2["23 → Problem<br/>candidates"]
-    B -. "severity floor<br/>+ rate limit" .-> N3["below policy"]
+    A -. "⚙️ correlation<br/>merges related signals" .-> N1["2 duplicate<br/>tickets avoided"]
+    B -. "⚙️ chronic guard<br/>broken &gt; 24 h" .-> N2["23 → Problem<br/>candidates"]
+    B -. "⚙️ severity floor<br/>+ rate limit" .-> N3["below policy"]
 
-    classDef big fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e40af,font-size:16px
+    classDef big fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e40af
     classDef filt fill:#f1f5f9,stroke:#94a3b8,color:#475569
-    classDef win fill:#d1fae5,stroke:#059669,stroke-width:3px,color:#065f46,font-size:16px
+    classDef win fill:#d1fae5,stroke:#059669,stroke-width:3px,color:#065f46
     class A,B big
     class C win
     class N1,N2,N3 filt
@@ -130,7 +216,7 @@ flowchart LR
 > Without the chronic guard this cluster would have opened **24 tickets on the first scan**.
 > The one that survived was the genuinely new failure. **That restraint is the product.**
 
-## 4. Detection has two independent triggers
+## 7. Detection has two independent triggers
 
 A container flapping on a few-second cycle is often *Running* at the instant of a scan, so a
 state-only check misses it. The industry-standard `KubePodCrashLooping` rule is rate-based for
@@ -154,7 +240,7 @@ flowchart LR
     class F,G f
 ```
 
-## 5. Lifecycle state machine
+## 8. Lifecycle state machine
 
 ```mermaid
 stateDiagram-v2
@@ -190,7 +276,7 @@ stateDiagram-v2
     CLOSED --> [*]
 ```
 
-## 6. Duplicate handling — deliberately asymmetric
+## 9. Duplicate handling — deliberately asymmetric
 
 ```mermaid
 flowchart TD
@@ -214,7 +300,7 @@ flowchart TD
 > **Rationale:** we clean up our own output automatically, but never close a person's ticket
 > without permission — they may have added context we would destroy.
 
-## 7. Change ledger &amp; revert
+## 10. Change ledger &amp; revert
 
 ```mermaid
 flowchart LR
@@ -241,7 +327,7 @@ prior pod template and would silently discard any unrelated change made since. T
 patch undoes exactly what we did. Native `rollout undo` / `rollout history` are both
 implemented and available for changes with no captured before-value.
 
-## 8. Manual vs Zero-Touch
+## 11. Manual vs Zero-Touch
 
 ```mermaid
 flowchart LR
@@ -264,7 +350,7 @@ flowchart LR
 
 ---
 
-## 9. Threshold policy (industry standard)
+## 12. Threshold policy (industry standard)
 
 Defaults come from the **kubernetes-mixin / kube-prometheus** rules that ship with OpenShift —
 not invented numbers. `dwellMinutes` is the equivalent of a Prometheus rule's `for:` clause.
@@ -284,7 +370,7 @@ not invented numbers. `dwellMinutes` is the equivalent of a Prometheus rule's `f
 | `pvcPending` | 15m | SEV-3 | KubePersistentVolumeClaimPending |
 | `pvcFilling` | <10% free | SEV-2 | KubePersistentVolumeFillingUp |
 
-## 10. Noise control &amp; lifecycle policy
+## 13. Noise control &amp; lifecycle policy
 
 | Guard | Purpose | Default |
 |---|---|---|
@@ -302,7 +388,7 @@ not invented numbers. `dwellMinutes` is the equivalent of a Prometheus rule's `f
 | **Protected namespaces** | `openshift-*`, `kube-*`, `default` never auto-remediated | always on |
 | **Self-heal confirm** | Consecutive clear scans before auto-closing | 2 |
 
-## 11. Remediation catalogue
+## 14. Remediation catalogue
 
 | Signal | Action | Risk | Reversible |
 |---|---|---|---|
@@ -311,7 +397,7 @@ not invented numbers. `dwellMinutes` is the equivalent of a Prometheus rule's `f
 | PVC filling up | `patch pvc` expand +50% | medium | **no** (K8s cannot shrink) |
 | Node NotReady · Operator Degraded · PVC Pending · ImagePull | **none — escalate** | — | — |
 
-## 12. RCA deliverables
+## 15. RCA deliverables
 
 | Format | Where it goes | Purpose |
 |---|---|---|
@@ -327,7 +413,7 @@ matches) · resolution with the CLI transcript · verification · **CAPA** · bl
 Attachments are uploaded **before** closing (many ServiceNow configs refuse attachments on
 closed records) and are best-effort — a failure never costs the text record.
 
-## 13. Safety model
+## 16. Safety model
 
 | Control | Behaviour |
 |---|---|
@@ -342,7 +428,7 @@ closed records) and are best-effort — a failure never costs the text record.
 | **Full audit** | Every state transition and every revert audit-logged |
 | **Revert governance** | A revert is a change: classify → dry-run → apply → verify → work-note |
 
-## 14. Business value
+## 17. Business value
 
 | Metric | Manual | UC-05 |
 |---|---|---|
@@ -355,7 +441,7 @@ closed records) and are best-effort — a failure never costs the text record.
 | Human touchpoints | ~6 | **1 (approve)** |
 | Audit evidence | inconsistent | **HTML + PDF on every incident** |
 
-## 15. Demo script (6 minutes)
+## 18. Demo script (6 minutes)
 
 | # | Action | What to say |
 |---|---|---|
@@ -375,7 +461,7 @@ closed records) and are best-effort — a failure never costs the text record.
 **Closing line:** *"The only decision a human made in that entire lifecycle was whether to
 apply the fix — and even that is reversible."*
 
-## 16. Implementation map
+## 19. Implementation map
 
 | Component | File |
 |---|---|
@@ -391,7 +477,7 @@ apply the fix — and even that is reversible."*
 | Console UI | `console/src/views/IntelligenceView.jsx` |
 | Background loop | `src/index.js` (`pollIncidentDetections`) |
 
-## 17. Configuration
+## 20. Configuration
 
 | Setting | Env | Default | UI |
 |---|---|---|---|
@@ -411,7 +497,7 @@ apply the fix — and even that is reversible."*
 | Scan interval | `INCIDENT_POLL_INTERVAL_MS` | 120000 | — |
 | Threshold overrides | `INCIDENT_THRESHOLDS` (JSON) | mixin defaults | — |
 
-## 18. Verification status
+## 21. Verification status
 
 **Verified by automated harness:** node-cascade correlation · causal merge (3 signals → 1
 ticket) · workload-signature stability across a changing signal mix · chronic guard · activity
