@@ -17,6 +17,12 @@ Customer-facing use case collateral for the TCS Agentic AI platform.
 | **Presentation** | `TCS_Agentic_AI_UC05_Zero_Touch_Incident_Command.pptx` | **17 slides** — title, problem, **who does what (AI / automatic / manual)**, actor-coded workflow, before/after, thresholds, noise control, **noise funnel (the numbers)**, **dedup — one fault one ticket**, AI RCA, RCA deliverables, remediation & safety, **change ledger & revert**, business value, demo script, config & status, closing |
 | **Workbook** | `TCS_Agentic_AI_UC05_Zero_Touch_Incident_Command.xlsx` | **18 sheets** — overview, workflow, state machine, thresholds, noise control, remediation, AI RCA, RCA document, safety, business value, demo script, configuration, verification, implementation map, **deduplication**, **escalation**, **change ledger & revert**, **actor matrix** |
 
+### Recording a demo
+
+[`DEMO-SCRIPT-5min.md`](./DEMO-SCRIPT-5min.md) — a teleprompter-ready 5-minute script with
+SHOW/SAY columns, cumulative timings, the pre-recording staging that makes it fit, what to cut if
+you run long, a 7-minute variant, and Clipchamp production settings.
+
 ### Regenerating
 
 Both documents are generated from code so they stay in sync with the implementation:
