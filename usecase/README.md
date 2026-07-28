@@ -19,6 +19,10 @@ Customer-facing use case collateral for the TCS Agentic AI platform.
 
 ### Recording a demo
 
+[`UC-05-RCA-Agent-Narration.md`](./UC-05-RCA-Agent-Narration.md) — portfolio positioning
+(TCS Agentic AI for Hybrid Infrastructure → Container & Kubernetes → RCA Agent) in short and full
+written form, plus a 3:45 narration script walking the actor-coded flow. Read this first, then:
+
 [`DEMO-SCRIPT-5min.md`](./DEMO-SCRIPT-5min.md) — a teleprompter-ready 5-minute script with
 SHOW/SAY columns, cumulative timings, the pre-recording staging that makes it fit, what to cut if
 you run long, a 7-minute variant, and Clipchamp production settings.
