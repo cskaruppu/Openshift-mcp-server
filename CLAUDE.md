@@ -48,7 +48,7 @@ Import: `import { StatusDot, SeverityBadge } from '../design'`
 
 ```bash
 # Revert design system only (keeps all existing code intact)
-rm -rf dashboard-react/src/design/
-git checkout HEAD -- dashboard-react/src/App.jsx
+rm -rf console/src/design/
+git checkout HEAD -- console/src/App.jsx
 git commit -m "Remove design system components"
 ```

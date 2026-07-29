@@ -7,9 +7,10 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test tests/*.test.js",
+    "test": "node --test test/unit/*.test.js",
     "evals": "node test/evals/run-evals.js",
-    "build:dashboard": "echo 'Dashboard is static HTML - no build needed'",
+    "test:smoke": "node test/smoke/mcp-smoke-test.mjs",
+    "build:dashboard": "npm --prefix console ci && npm --prefix console run build",
     "lint": "echo 'Add eslint if needed'"
   },
   "keywords": [

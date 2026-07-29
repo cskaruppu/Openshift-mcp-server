@@ -33,7 +33,7 @@ Argo CD (per-cluster informer caches).
 ## Develop
 
 ```bash
-cd dashboard-react
+cd console
 npm install
 npm run dev        # http://localhost:5174/next/  (proxies /api to :8080)
 ```

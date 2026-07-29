@@ -49,7 +49,9 @@ when reasoning is needed — with ServiceNow as the ITSM side-channel.
 | `src/agents/` | Agent registry + spoke-agent manifests (hub/spoke federation) |
 | `console/src/` | React console (views, widgets, stores, api client) |
 | `deploy/` | Kubernetes manifests to deploy the platform itself (incl. RBAC) |
-| `docs/` | Docs incl. `automation-samples/` requirement documents |
+| `docs/` | Engineering and product documentation |
+| `usecases/` | Per-use-case customer collateral and its generators |
+| `examples/` | Client configs, sample requirements, SOPs, sample applications |
 
 ---
 

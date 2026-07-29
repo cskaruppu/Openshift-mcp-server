@@ -624,7 +624,7 @@ The dashboard never invents data. A cluster card exists only while its agent doe
 ### Helm Chart
 
 ```bash
-helm install tcs-agentic-ai ./chart/openshift-mcp \
+helm install tcs-agentic-ai ./deploy/helm/openshift-mcp \
   --set mcpMode=hub \
   --set image.repository=quay.io/your-org/openshift-mcp-server \
   --set image.tag=latest
@@ -732,24 +732,34 @@ openshift-mcp-server/
 │       └── deploy.sh                    # MCP server: stateless pod, run on EVERY
 │                                        #   cluster incl. hub (--cluster-name hub-cluster)
 │
-├── ⎈  chart/                            # Helm chart
-│   └── openshift-mcp/
-│       ├── Chart.yaml
-│       ├── values.yaml
-│       └── templates/
-│
 ├── 🔌 adapters/                         # AI framework adapters
 │   ├── anthropic-claude/                # Claude MCP client
 │   ├── langchain/                       # LangChain adapter
 │   ├── microsoft-agent-framework/       # Microsoft agent orchestrator
 │   └── rest-api/                        # OpenAPI spec
 │
-├── 📚 docs/                             # Documentation + doc generators
+├── 📚 docs/                             # Engineering & product documentation
+│
+├── 🎯 usecases/                         # Customer collateral, one folder per use case
+│   ├── uc-01-pod-troubleshooting/
+│   ├── uc-02-cluster-upgrade/
+│   ├── uc-03-predictive-intelligence/
+│   ├── uc-04-security-compliance/
+│   ├── uc-05-rca-agent/                 # Deck, workbook, demo scripts, generators
+│   ├── incident-response/               # Unnumbered — needs a UC id
+│   ├── drift-detection/                 # Unnumbered — needs a UC id
+│   └── portfolio/                       # ROI, hackathon, automation opportunities
+│
+├── 📝 examples/                         # Things you copy from
+│   ├── clients/                         # MCP client configs
+│   ├── requirements/                    # Sample requirement documents
+│   ├── sops/                            # Sample SOPs
+│   └── applications/                    # Sample application definitions
+│
+├── 🧪 test/                             # unit/ · smoke/ · evals/ · fixtures/
 ├── 💾 db/                               # Database schema (PostgreSQL)
-├── 🧪 tests/                            # Test suites + smoke test
 ├── 📦 backup/                           # Legacy agent & old dashboard
 ├── 📊 data/                             # Sample data (incident history)
-├── 📝 examples/                         # Client config examples
 ├── 🐳 Dockerfile                        # MCP server image (API-only)
 ├── 📄 package.json
 ├── 📄 .env.example

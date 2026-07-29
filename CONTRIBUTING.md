@@ -37,7 +37,7 @@ src/
   utils/                # Shared utilities (OpenShift client, config, DB, cache)
 dashboard/
   index.html            # Single-page dashboard UI
-examples/               # MCP client configuration examples
+examples/               # Client configs, sample requirements, SOPs, applications
 docs/                   # Architecture documentation
 ```
 
@@ -96,7 +96,16 @@ The client reads `KUBECONFIG` or in-cluster credentials automatically.
 npm test
 ```
 
-Tests live in the `tests/` directory. Add tests for new tools as `tests/<tool-name>.test.js`.
+Tests live under `test/`:
+
+| Folder | Contents | Command |
+|---|---|---|
+| `test/unit/` | Unit tests | `npm test` |
+| `test/smoke/` | End-to-end smoke test | `npm run test:smoke` |
+| `test/evals/` | Prompt/behaviour evals | `npm run evals` |
+| `test/fixtures/` | Shared fixtures and test manifests | — |
+
+Add tests for new tools as `test/unit/<tool-name>.test.js`.
 
 ## Commit Messages
 
