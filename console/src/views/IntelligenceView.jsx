@@ -9,6 +9,9 @@ import { formatTimestamp } from "../utils/format";
 import { SopRunner } from "../components/SopRunner";
 
 const SEV = { critical: "#ef4444", warning: "#f59e0b", info: "#3b82f6" };
+// How long a closed incident keeps its card — and therefore its CLI transcript
+// and before/after evidence — visible in the inbox before ageing out to History.
+const RESOLVED_VISIBLE_MS = 60 * 60 * 1000;
 
 function sevBucket(s) {
   if (!s) return "info";
@@ -85,6 +88,21 @@ export function IntelligenceView() {
   const sessions = useMemo(() => (Array.isArray(sessData?.sessions) ? sessData.sessions : []), [sessData]);
   const awaiting = useMemo(() => sessions.filter((s) => s.state === "awaiting_approval"), [sessions]);
   const liveSessions = useMemo(() => sessions.filter((s) => s.state !== "closed"), [sessions]);
+  // A closed session still carries the evidence for what was done — the CLI
+  // transcript and the before/after container tables. Dropping it from the list
+  // the instant it closes makes that evidence vanish at the exact moment the
+  // operator wants to read it, so keep completed sessions on screen briefly.
+  // They remain permanently available in History and in the attached RCA.
+  const recentlyClosed = useMemo(() => {
+    const cutoff = Date.now() - RESOLVED_VISIBLE_MS;
+    return sessions
+      .filter((s) => s.state === "closed")
+      .map((s) => ({ s, t: Date.parse(s.closedAt || s.resolvedAt || s.updatedAt || "") }))
+      .filter(({ t }) => Number.isFinite(t) && t >= cutoff)
+      .sort((a, b) => b.t - a.t)
+      .map(({ s }) => s);
+  }, [sessions]);
+  const inboxSessions = useMemo(() => [...liveSessions, ...recentlyClosed], [liveSessions, recentlyClosed]);
   // Signatures already under management — so a detection isn't promoted twice.
   const managedSigs = useMemo(() => new Set(liveSessions.map((s) => s.signature)), [liveSessions]);
   const [busySession, setBusySession] = useState({});
@@ -1123,7 +1141,7 @@ export function IntelligenceView() {
           )}
 
           {/* ── APPROVAL INBOX — the single human gate ── */}
-          {showSub("live") && liveSessions.length > 0 && (
+          {showSub("live") && inboxSessions.length > 0 && (
             <div style={{ marginBottom: 20 }}>
               <div className="intel-section-title" style={{ marginBottom: 10 }}>
                 <div>
@@ -1135,20 +1153,28 @@ export function IntelligenceView() {
                         {awaiting.length} awaiting approval
                       </span>
                     )}
+                    {recentlyClosed.length > 0 && (
+                      <span style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 999, fontSize: 11,
+                        background: "rgba(34,197,94,.16)", color: "#4ade80", border: "1px solid rgba(34,197,94,.4)" }}>
+                        {recentlyClosed.length} completed
+                      </span>
+                    )}
                   </h3>
                   <p style={{ fontSize: 11.5 }}>
                     RCA, ticket and dry-run are already done. Approving applies the fix, then verification and ticket closure run automatically.
+                    {recentlyClosed.length > 0 && " Completed incidents stay here for an hour with their evidence, then move to History."}
                   </p>
                 </div>
               </div>
 
               <div className="intel-card-list">
-                {liveSessions.map((s) => {
+                {inboxSessions.map((s) => {
                   const sc = sevBucket(s.severity);
                   const color = SEV[sc] || SEV.info;
                   const gate = s.state === "awaiting_approval";
                   const running = ["approved", "remediating", "verifying"].includes(s.state);
                   const bad = ["failed", "rolled_back", "escalated"].includes(s.state);
+                  const done = s.state === "closed";
                   const aPath = `/api/intelligence/incident-sessions/${s.id}/approve`;
                   const rPath = `/api/intelligence/incident-sessions/${s.id}/reject`;
                   const dPath = `/api/intelligence/incident-sessions/${s.id}/dry-run`;
@@ -1158,13 +1184,15 @@ export function IntelligenceView() {
                     fix_proposed: "Fix proposed", dry_run_passed: "Dry-run passed",
                     awaiting_approval: "⏸ Awaiting your approval", approved: "Approved",
                     remediating: "⏳ Applying fix…", verifying: "⏳ Verifying…",
-                    resolved: "Resolved", closed: "Closed", rejected: "Rejected",
+                    resolved: "Resolved", closed: "✅ Fixed, verified & closed", rejected: "Rejected",
                     escalated: "⚠ Escalated — needs a human", rolled_back: "⚠ Not verified — rolled back",
                     failed: "❌ Failed",
                   };
                   return (
                     <div key={s.id} className="intel-card"
-                      style={{ "--card-sev": color, ...(gate ? { boxShadow: "0 0 0 1px rgba(245,158,11,.5)" } : {}) }}>
+                      style={{ "--card-sev": color,
+                        ...(gate ? { boxShadow: "0 0 0 1px rgba(245,158,11,.5)" } : {}),
+                        ...(done ? { opacity: .82 } : {}) }}>
                       <div className="intel-card-head">
                         <div className="intel-card-body">
                           <div className="intel-card-row1">

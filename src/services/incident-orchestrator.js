@@ -745,14 +745,57 @@ async function checkHealthy(v) {
     return { ok: false, summary: resizing ? `PVC ${v.name} resize in progress (may need a pod restart to complete the filesystem grow).` : `PVC ${v.name} capacity still ${pvc?.status?.capacity?.storage || "unknown"}.` };
   }
   const obj = await ocpGet(`/apis/apps/v1/namespaces/${v.namespace}/${v.kind}/${v.name}`);
-  if (v.kind === "daemonsets") {
-    const want = obj.status?.desiredNumberScheduled ?? 0;
-    const ready = obj.status?.numberReady ?? 0;
-    return { ok: want > 0 && ready >= want, summary: `DaemonSet ${v.name}: ${ready}/${want} ready.` };
+  const st = obj.status || {};
+
+  // A readiness check alone is not verification. Most remediations here mutate
+  // the pod template (raising a memory limit, for example), and for the first
+  // seconds afterwards the OLD pods are still Running and Ready — so
+  // readyReplicas already satisfies spec.replicas and the check would pass
+  // against the very pods the fix was meant to replace. Require the rollout
+  // itself to have completed, the way `kubectl rollout status` does.
+  const gen = obj.metadata?.generation ?? 0;
+  const observed = st.observedGeneration ?? 0;
+  if (observed < gen) {
+    return { ok: false, summary: `${v.name}: controller has not yet observed the change (generation ${observed}/${gen}).` };
   }
+
+  if (v.kind === "daemonsets") {
+    const want = st.desiredNumberScheduled ?? 0;
+    const updated = st.updatedNumberScheduled ?? 0;
+    const ready = st.numberReady ?? 0;
+    const unavailable = st.numberUnavailable ?? 0;
+    if (want === 0) return { ok: false, summary: `DaemonSet ${v.name}: no nodes scheduled.` };
+    if (updated < want) return { ok: false, summary: `DaemonSet ${v.name}: ${updated}/${want} nodes updated.` };
+    if (unavailable > 0) return { ok: false, summary: `DaemonSet ${v.name}: ${unavailable} node(s) still unavailable.` };
+    if (ready < want) return { ok: false, summary: `DaemonSet ${v.name}: ${ready}/${want} ready.` };
+    return { ok: true, summary: `DaemonSet ${v.name}: rollout complete, ${ready}/${want} ready.` };
+  }
+
   const want = obj.spec?.replicas ?? 0;
-  const ready = obj.status?.readyReplicas ?? 0;
-  return { ok: want > 0 && ready >= want, summary: `${v.kind.slice(0, -1)} ${v.name}: ${ready}/${want} replicas ready.` };
+  const updated = st.updatedReplicas ?? 0;
+  const total = st.replicas ?? 0;
+  const ready = st.readyReplicas ?? 0;
+  const unavailable = st.unavailableReplicas ?? 0;
+  const kindLabel = v.kind.slice(0, -1);
+
+  if (want === 0) return { ok: false, summary: `${kindLabel} ${v.name}: scaled to zero, nothing to verify.` };
+  if (updated < want) {
+    return { ok: false, summary: `${kindLabel} ${v.name}: ${updated}/${want} new replicas rolled out.` };
+  }
+  // Old replicas still winding down — the new pods are not yet the whole story.
+  if (total > updated) {
+    return { ok: false, summary: `${kindLabel} ${v.name}: ${total - updated} old replica(s) still terminating.` };
+  }
+  if (unavailable > 0) {
+    return { ok: false, summary: `${kindLabel} ${v.name}: ${unavailable} replica(s) unavailable.` };
+  }
+  if (ready < want) {
+    return { ok: false, summary: `${kindLabel} ${v.name}: ${ready}/${want} replicas ready.` };
+  }
+  if (v.kind === "statefulsets" && st.updateRevision && st.currentRevision !== st.updateRevision) {
+    return { ok: false, summary: `StatefulSet ${v.name}: update revision not yet current.` };
+  }
+  return { ok: true, summary: `${kindLabel} ${v.name}: rollout complete, ${ready}/${want} replicas ready on the new revision.` };
 }
 
 /**
@@ -760,12 +803,19 @@ async function checkHealthy(v) {
  * real before/after container status instead of just claiming success.
  * @returns {Promise<{at:string, rows:Array, header:Array}|null>}
  */
-export async function captureWorkloadSnapshot(namespace, target) {
+export async function captureWorkloadSnapshot(namespace, target, { excludeTerminating = false } = {}) {
   if (!namespace) return null;
   try {
     const list = await ocpGet(`/api/v1/namespaces/${namespace}/pods?limit=200`);
     const stem = String(target || "");
-    const pods = (list.items || []).filter((p) => !stem || (p.metadata?.name || "").startsWith(stem));
+    let pods = (list.items || []).filter((p) => !stem || (p.metadata?.name || "").startsWith(stem));
+    // After a fix, pods from the previous ReplicaSet linger in Terminating for
+    // the grace period. Showing them in the "after" table makes a completed
+    // rollout look unhealthy, so drop them once the rollout has been verified.
+    if (excludeTerminating) {
+      const live = pods.filter((p) => !p.metadata?.deletionTimestamp);
+      if (live.length) pods = live;
+    }
     const rows = pods.slice(0, 12).map((p) => {
       const cs = p.status?.containerStatuses || [];
       const ready = cs.filter((c) => c.ready).length;
@@ -1039,7 +1089,10 @@ async function runRemediationChain(session) {
 
     const verification = await verifyRemediation(session);
     // Capture the resulting container state — this is the evidence, not a claim.
-    const after = await captureWorkloadSnapshot(session.namespace, session.target);
+    // Only meaningful once verification confirmed the rollout finished; if it
+    // did not, keep the terminating pods visible, because that IS the evidence.
+    const after = await captureWorkloadSnapshot(session.namespace, session.target,
+      { excludeTerminating: verification.ok });
     if (after?.rows?.length) {
       for (const r of after.rows) term.push(`${r.name}   ${r.ready}   ${r.status}   ${r.restarts}   ${r.age}`);
     }
@@ -1512,7 +1565,8 @@ export async function revertChange(changeId, { dryRun = false, actor = "operator
       remediation: { verify: { kind: plural, namespace: change.namespace, name: change.resourceName } },
     });
   }
-  const afterSnap = await captureWorkloadSnapshot(change.namespace, change.resourceName);
+  const afterSnap = await captureWorkloadSnapshot(change.namespace, change.resourceName,
+    { excludeTerminating: verification.ok });
   term.push("", `$ oc get pods -n ${change.namespace} | grep ${change.resourceName}`);
   for (const r of afterSnap?.rows || []) term.push(`${r.name}   ${r.ready}   ${r.status}   ${r.restarts}   ${r.age}`);
   term.push("", verification.ok ? `# reverted and verified: ${verification.summary}` : `# revert applied but NOT verified: ${verification.summary}`);
