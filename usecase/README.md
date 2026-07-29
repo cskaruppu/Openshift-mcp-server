@@ -32,6 +32,12 @@ Plus pre-recording staging, a cheat card, delivery notes, cut-list for running l
 variant, Clipchamp settings, the written positioning statements (Appendix A) and the rationale for
 the beat order (Appendix B).
 
+**Producing the video:** [`RECORDING-TOOLKIT.md`](./RECORDING-TOOLKIT.md) — which tools to use for
+capture, how to get broadcast-quality voice for free, and the audio-led editing method that makes
+narration and picture line up. [`UC-05-narration-only.txt`](./UC-05-narration-only.txt) is the
+narration stripped of stage directions and split into ten cue-pointed blocks — use it as a
+teleprompter, or paste it into a text-to-speech tool.
+
 <details>
 <summary>Superseded source material — kept for reference</summary>
 

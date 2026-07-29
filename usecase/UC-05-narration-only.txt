@@ -1,0 +1,147 @@
+TCS AGENTIC AI - RCA AGENT (UC-05)
+NARRATION ONLY - for text-to-speech, or as a teleprompter
+
+672 words / 4:59 at 135 wpm, in 10 blocks.
+
+HOW TO USE
+
+  Render each block separately and place it at its cue point on the timeline.
+  One block per render means a fluffed line costs one block, not the whole take.
+
+  Paste ONLY the text below the ==== line. Everything above it is a note.
+
+  Blank lines between paragraphs are deliberate - both a TTS engine and a human
+  reader will pause there. Do not close them up.
+
+  Two places deserve a longer pause than the paragraph break gives you. Add it
+  in the edit, not the recording:
+    - after 'And then it stops. Here, at the approval gate.'   (block 3)
+    - after 'That is the only manual step in the entire lifecycle.' (block 9)
+
+
+##########################################################################
+BLOCK 1 of 10   CUE 0:00   RUNS TO 0:18   41 words
+SCREEN: The portfolio
+==========================================================================
+
+TCS Agentic AI for Hybrid Infrastructure is a comprehensive agentic solution across infrastructure services - compute, platform, storage, network and service management.
+
+Within that portfolio, the use case built for containers and Kubernetes is the RCA Agent. Use case zero five.
+
+
+##########################################################################
+BLOCK 2 of 10   CUE 0:18   RUNS TO 0:41   51 words
+SCREEN: What it replaces
+==========================================================================
+
+Today, when a workload fails, an engineer notices it, opens a ticket, investigates, writes the root cause by hand, applies a fix, then goes back and closes the ticket.
+
+Six touchpoints, and most of them are administration.
+
+The RCA Agent removes all of them except the decision to apply the fix.
+
+
+##########################################################################
+BLOCK 3 of 10   CUE 0:41   RUNS TO 2:00   179 words
+SCREEN: The flow
+==========================================================================
+
+This is the end-to-end flow, and the colours matter.
+
+Blue is deterministic automation - no AI, no human. Purple is the single step where AI is applied. Amber is the only point where a person is required.
+
+On the left, the agent scans every two minutes against industry-standard thresholds - the same rules that ship with OpenShift. A breach only counts once sustained, so transient conditions never raise anything. Related signals are then merged: a workload that is out of memory, crash-looping and short of replicas is one incident, not three tickets.
+
+In the middle, the agent gathers real evidence - container logs, events, resource limits and exit codes - and the AI determines the root cause.
+
+It then classifies the incident against the ITIL priority matrix, routes it to the correct queue, selects a remediation, and dry-runs it against the cluster.
+
+And then it stops. Here, at the approval gate.
+
+On approval, the right-hand side runs unattended: apply, verify recovery, attach the analysis, close the incident, and record the change with its inverse so it can be reverted.
+
+
+##########################################################################
+BLOCK 4 of 10   CUE 2:00   RUNS TO 2:31   68 words
+SCREEN: The differentiator
+==========================================================================
+
+Two things worth emphasising.
+
+The remediation command is chosen by a deterministic rule set, not by the AI. The AI explains; fixed logic acts. So the AI can be wrong about why something failed without ever being able to run the wrong command.
+
+And there is no human trigger anywhere in this. Twenty automated steps, one AI step, one human decision.
+
+Let me show you a live example.
+
+
+##########################################################################
+BLOCK 5 of 10   CUE 2:31   RUNS TO 2:38   17 words
+SCREEN: The console
+==========================================================================
+
+This is the console. Everything from here on is live - one real incident, start to finish.
+
+
+##########################################################################
+BLOCK 6 of 10   CUE 2:38   RUNS TO 3:15   82 words
+SCREEN: Autonomous detection
+==========================================================================
+
+Everything on this screen was found by the agent. Nobody reported it, and nobody asked it to look.
+
+The numbers matter. Twenty-six raw symptoms, correlated down to twenty-four detections - and exactly one that met the bar for a ticket. The other twenty-three are long-standing conditions it deliberately will not page anyone about.
+
+Each actionable detection arrives with a remediation already prepared: a dry-run that validates the fix against the live cluster without changing anything, and Apply Fix, which carries it out.
+
+
+##########################################################################
+BLOCK 7 of 10   CUE 3:15   RUNS TO 3:50   80 words
+SCREEN: The root-cause analysis
+==========================================================================
+
+View RCA opens the full analysis.
+
+It records the timeline stage by stage - when the condition began, when it was detected, when the ticket was raised, when the fix was applied and when it resolved - with elapsed time at each step.
+
+Below that: the root cause, the supporting evidence including the actual container log lines, the verification result, and the preventive actions.
+
+This is generated for every incident, to the same standard, regardless of who is on call.
+
+
+##########################################################################
+BLOCK 8 of 10   CUE 3:50   RUNS TO 4:07   37 words
+SCREEN: The incident in the ITSM tool
+==========================================================================
+
+The incident itself was raised automatically.
+
+Here it is in the ITSM tool, with the priority derived from the impact and urgency matrix, routed to the right assignment group, and fully described.
+
+No one opened this ticket.
+
+
+##########################################################################
+BLOCK 9 of 10   CUE 4:07   RUNS TO 4:32   56 words
+SCREEN: Approve, apply, verify
+==========================================================================
+
+I approve the fix. That is the only manual step in the entire lifecycle.
+
+The agent applies it, then verifies that the workload actually recovered - you can see the container status before and after, and the command output as it ran.
+
+Verification comes first. Only once the workload is confirmed healthy does the agent proceed.
+
+
+##########################################################################
+BLOCK 10 of 10   CUE 4:32   RUNS TO 4:59   61 words
+SCREEN: Attach, close, and the safety net
+==========================================================================
+
+With recovery confirmed, the agent attaches the complete root-cause analysis, closes the incident, and records the change so it can be reverted.
+
+Resolved and closed automatically, with the full analysis attached for audit.
+
+And if verification had failed, it would not have closed anything. It escalates and leaves the ticket open. The agent will not report a success it cannot evidence.
+
+
