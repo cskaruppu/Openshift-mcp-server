@@ -87,6 +87,9 @@ const TRANSITIONS = {
 
 const TERMINAL = new Set([S.CLOSED]);
 const MAX_ACTIVE_SESSIONS = parseInt(process.env.INCIDENT_MAX_ACTIVE || "25", 10);
+// Above this cumulative restart count, a rolling restart is not a remediation —
+// the kubelet has already performed it this many times without success.
+const RESTART_FUTILITY_THRESHOLD = parseInt(process.env.INCIDENT_RESTART_FUTILITY || "20", 10);
 
 // Storm protection: hard ceiling on tickets raised per rolling hour. Without
 // this, one bad deploy or a node loss can open dozens of incidents in a minute.
@@ -279,6 +282,21 @@ async function planRemediation(d) {
     const wl = await findWorkload(ns, owner);
     if (!wl) return null;
     const wname = wl.obj.metadata.name;   // resolved name (may differ from `owner`)
+
+    // A rolling restart is only credible as a "first response" if restarting has
+    // not already been tried. A container that has restarted hundreds of times
+    // has effectively had this remediation applied on a loop and it has not
+    // worked; proposing it again would be theatre. Escalate to a human instead
+    // of applying something we can predict will fail.
+    const restarts = d.restartRate?.total ?? d.restartCount ?? 0;
+    if (restarts >= RESTART_FUTILITY_THRESHOLD) {
+      return {
+        action: "manual", command: null, risk: "medium", reversible: false,
+        rationale: `${wl.kind} ${wname} has already restarted ${restarts}× — the container is being recreated continuously, so a rolling restart is not a fix, it is what is already happening. This needs the underlying cause addressed (resource limits, configuration, or a failing dependency) rather than another restart.`,
+        verify: null,
+      };
+    }
+
     return {
       action: "rollout_restart",
       workloadKind: wl.plural.slice(0, -1),
@@ -298,7 +316,11 @@ async function planRemediation(d) {
     const wl = await findWorkload(ns, owner);
     if (!wl) return null;
     const wname = wl.obj.metadata.name;   // resolved name (may differ from `owner`)
-    const c = (wl.obj.spec?.template?.spec?.containers || [])[0];
+    // Target the container that was actually killed. Taking containers[0] is
+    // wrong for any multi-container pod — a sidecar would get the extra memory
+    // while the offending container kept being killed at its unchanged limit.
+    const allC = wl.obj.spec?.template?.spec?.containers || [];
+    const c = (d.container && allC.find((x) => x.name === d.container)) || allC[0];
     if (!c) return null;
     const curMi = parseMemToMi(c.resources?.limits?.memory);
     if (!curMi) {

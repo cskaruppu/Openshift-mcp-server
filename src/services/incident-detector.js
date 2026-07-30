@@ -280,17 +280,46 @@ function collectPodSymptoms(pods, T, symptoms, seenKeys = new Set()) {
           symptoms.push({ ...base, signal: "CrashLoopBackOff", container: cs.name, severity: T.crashLoop.severity,
             dwellMinutes: effDwell, rule: "crashLoop", standard: T.crashLoop.standard,
             restartRate: rateFires ? { gained: rate.gained, windowMinutes: rate.spanMinutes, total: restarts } : null,
+            // Cumulative count, carried on both trigger paths — the remediation
+            // planner uses it to refuse a restart that has already been tried
+            // hundreds of times by the kubelet.
+            restartCount: restarts,
             trigger: rateFires ? (inBackoff ? "backoff+rate" : "restart-rate") : "backoff",
             evidence: `container "${cs.name}" ${detail}` });
         }
       }
 
-      if (T.oomKilled.enabled && lastTerm?.reason === "OOMKilled") {
-        const ago = minutesSince(lastTerm.finishedAt);
-        if (ago == null || ago <= T.oomKilled.windowMinutes) {
+      // OOM detection has to be wider than `reason === "OOMKilled"`. The kubelet
+      // only sets that string when it still holds the kernel's OOM annotation for
+      // that specific termination; a container repeatedly killed by the OOM killer
+      // very often surfaces as `reason: "Error", exitCode: 137` (SIGKILL) instead.
+      // Missing it is not a cosmetic gap: the merged detection then falls to
+      // `crashLoop`, whose remediation is a rolling restart — and restarting an
+      // OOM-killed container simply repeats the kill.
+      if (T.oomKilled.enabled) {
+        // A container may be terminated right now, or terminated-then-restarted.
+        const term = cs.state?.terminated || lastTerm;
+        const ago = minutesSince(term?.finishedAt);
+        const inBackoff = waitReason === "CrashLoopBackOff";
+        const explicitOom = term?.reason === "OOMKilled";
+        // exit 137 is SIGKILL, which the OOM killer uses — but so does a probe
+        // kill or an eviction. Only treat it as OOM when the container actually
+        // has a memory limit it could have exceeded.
+        const specC = (pod.spec?.containers || []).find((x) => x.name === cs.name);
+        const hasMemLimit = Boolean(specC?.resources?.limits?.memory);
+        const oomSignature = !explicitOom && term?.exitCode === 137 && hasMemLimit;
+        // A stale termination still counts while the container is visibly stuck
+        // in CrashLoopBackOff — the condition is ongoing, not historical.
+        const inWindow = ago == null || ago <= T.oomKilled.windowMinutes || inBackoff;
+        if ((explicitOom || oomSignature) && inWindow) {
+          const when = ago == null ? "recently" : `${ago}m ago`;
           symptoms.push({ ...base, signal: "OOMKilled", container: cs.name, severity: T.oomKilled.severity,
             dwellMinutes: ago, rule: "oomKilled", standard: T.oomKilled.standard,
-            evidence: `container "${cs.name}" OOMKilled ${ago == null ? "recently" : `${ago}m ago`} (exit ${lastTerm.exitCode ?? "?"})` });
+            oomInferred: !explicitOom,
+            evidence: explicitOom
+              ? `container "${cs.name}" OOMKilled ${when} (exit ${term.exitCode ?? "?"})`
+              : `container "${cs.name}" exited 137 (SIGKILL) ${when} against a ${specC.resources.limits.memory} memory limit — consistent with an OOM kill`,
+          });
         }
       }
 
@@ -564,6 +593,9 @@ export async function detectIncidents() {
     // Strongest live restart activity across the correlated symptoms.
     const activeRestart = inc.symptoms.map((s) => s.restartRate).filter(Boolean)
       .sort((a, b) => b.gained - a.gained)[0] || null;
+    // Highest cumulative restart count across the merged symptoms, regardless of
+    // which trigger fired. Present even when there is no live restart *rate*.
+    const peakRestarts = inc.symptoms.reduce((m, s) => Math.max(m, s.restartCount || 0), 0) || null;
 
     // Chronic: already broken longer than the chronic window when first seen.
     //
@@ -608,6 +640,11 @@ export async function detectIncidents() {
       symptomCount: inc.symptoms.length,
       namespace: p.namespace || null,
       target: p.owner || p.pod || p.node || null,
+      // The specific container the root-cause signal fired on. The remediation
+      // planner needs this: bumping containers[0] on a multi-container pod would
+      // give the extra memory to a sidecar and leave the offender unchanged.
+      container: p.container || null,
+      pod: p.pod || null,
       node: p.node || null,
       kind: p.kind,
       signal: p.signal,
@@ -643,6 +680,7 @@ export async function detectIncidents() {
       containers: [...new Set(inc.symptoms.map((s) => s.container).filter(Boolean))],
       // Strongest live restart activity across the correlated symptoms.
       restartRate: activeRestart,
+      restartCount: peakRestarts,
       // Transparency: exactly what the automation would do, and why.
       wouldRaiseTicket: autoTicketEligible,
       autoTicketEligible,
