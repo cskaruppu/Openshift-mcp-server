@@ -2120,6 +2120,26 @@ async function startSSE() {
   setTimeout(() => runClusterHealthProbes().catch(() => {}), 5000);
   setInterval(() => runClusterHealthProbes().catch(() => {}), 60000);
 
+  // VM change-request approval reconciler. A request submitted to ServiceNow
+  // outlives the browser session, so something has to notice when the CAB
+  // approves it. Off unless explicitly enabled: a hub that is not the system of
+  // record for provisioning should not be acting on approvals.
+  if (process.env.VM_APPROVAL_RECONCILE === "true" && MCP_MODE !== "spoke") {
+    const every = Math.max(60, parseInt(process.env.VM_APPROVAL_INTERVAL_SEC || "300", 10)) * 1000;
+    const tick = async () => {
+      try {
+        const st = await import("./services/vm-request-store.js");
+        const r = await st.reconcileApprovals();
+        if (r.provisioned || r.rejected || r.failed) {
+          console.error(`[vm-approvals] checked ${r.checked}: ${r.provisioned} provisioned, ${r.rejected} rejected, ${r.failed} failed`);
+        }
+      } catch (e) { console.error("[vm-approvals] reconcile failed:", e.message); }
+    };
+    setTimeout(tick, 30000);
+    setInterval(tick, every);
+    console.error(`[startup] VM approval reconciler on, every ${every / 1000}s`);
+  }
+
   // Mode + state logging — verify at a glance whether this MCP server is the
   // stateful management plane (owns PostgreSQL/Redis) or a stateless cluster
   // agent (no DB, queries only its own cluster live).
@@ -2806,6 +2826,71 @@ async function startSSE() {
     // path: provisioning consumes quota, addresses, licences and money.
     if (url.pathname.startsWith("/api/vm/")) {
       const vm = await import("./services/vm-provisioning.js");
+
+      // How do I get into this VM? The question every platform makes you hunt for.
+      if (url.pathname === "/api/vm/access" && req.method === "GET") {
+        const ns = url.searchParams.get("namespace"), nm = url.searchParams.get("name");
+        if (!ns || !nm) return sendJson(res, 400, { error: "namespace and name are required" });
+        try {
+          const lc = await import("./services/vm-lifecycle.js");
+          const out = await withClusterContext(url, async () => lc.vmAccess(ns, nm));
+          return sendJson(res, 200, out ?? { error: "Selected cluster is not reachable." });
+        } catch (err) { return sendJson(res, 200, { error: err.message }); }
+      }
+
+      // ── Approval-gated provisioning ───────────────────────────────────────
+      // The CAB is the authority in a change-controlled estate, so the gate can
+      // live in ServiceNow rather than here. Still human-approved either way.
+      if (url.pathname === "/api/vm/requests" && req.method === "GET") {
+        try {
+          const st = await import("./services/vm-request-store.js");
+          const rows = await st.listRequests({ state: url.searchParams.get("state") || null });
+          return sendJson(res, 200, {
+            requests: rows.map((r) => ({
+              id: r.id, state: r.state, status: st.describeState(r),
+              name: r.request?.name, namespace: r.request?.namespace,
+              changeRequest: r.changeRequest?.number || null,
+              requestedBy: r.requestedBy, createdAt: r.createdAt, updatedAt: r.updatedAt,
+              created: r.result?.created || [], error: r.error || null,
+            })),
+          });
+        } catch (err) { return sendJson(res, 200, { requests: [], error: err.message }); }
+      }
+      if (url.pathname === "/api/vm/requests/submit" && req.method === "POST") {
+        if (enforceRateLimit(req, res, { burst: 6, refillPerSec: 0.1 })) return;
+        try {
+          const body = await readJsonBody(req);
+          const st = await import("./services/vm-request-store.js");
+          const cluster = url.searchParams.get("cluster") || body.cluster || "local";
+          const out = await withClusterContext(url, async () => st.submitForApproval(body.request || {}, {
+            requestedBy: body.actor || req.user?.name || "operator", cluster,
+          }));
+          return sendJson(res, 200, out ?? { ok: false, error: "Selected cluster is not reachable." });
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+      {
+        const m = url.pathname.match(/^\/api\/vm\/requests\/([\w-]+)\/cancel$/);
+        if (m && req.method === "POST") {
+          try {
+            const body = await readJsonBody(req).catch(() => ({}));
+            const st = await import("./services/vm-request-store.js");
+            return sendJson(res, 200, await st.cancelRequest(m[1], {
+              actor: body.actor || req.user?.name || "operator", reason: body.reason,
+            }));
+          } catch (err) { return sendJson(res, 400, { error: err.message }); }
+        }
+      }
+      // Manual reconcile — the timer does this on a schedule too.
+      if (url.pathname === "/api/vm/requests/reconcile" && req.method === "POST") {
+        if (enforceRateLimit(req, res, { burst: 4, refillPerSec: 0.05 })) return;
+        try {
+          const st = await import("./services/vm-request-store.js");
+          const out = await withClusterContext(url, async () => st.reconcileApprovals({
+            cluster: url.searchParams.get("cluster") || "local",
+          }));
+          return sendJson(res, 200, out ?? { error: "Cluster not reachable." });
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
 
       // ── Lifecycle (UC-06 phase 3) — the agent owning what it provisioned ──
       // Read-only. Produces recommendations and ready-to-raise change requests;

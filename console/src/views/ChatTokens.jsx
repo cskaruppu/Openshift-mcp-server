@@ -2862,6 +2862,8 @@ function VMRequestCard({ data, cluster }) {
   const [result, setResult] = useState(null);
   const [showYaml, setShowYaml] = useState(false);
   const [raiseCR, setRaiseCR] = useState(true);
+  const [submitted, setSubmitted] = useState(null);   // ServiceNow-gated path
+  const [access, setAccess] = useState(null);
   const cat = data.catalogue || { images: [], instanceTypes: [], storageClasses: [] };
 
   const missing = [];
@@ -2908,6 +2910,26 @@ function VMRequestCard({ data, cluster }) {
       if (d.ok) showToast(`${d.created?.length || 0} VM(s) created`, "success");
       else showToast(d.error || "Provisioning failed", "error");
     } catch (e) { setResult({ ok: false, error: e.message }); }
+    finally { setBusy(null); }
+  }
+
+  async function submitForApproval() {
+    setBusy("submit");
+    try {
+      const d = await post("/api/vm/requests/submit", { request: req });
+      setSubmitted(d);
+      if (d.ok) showToast(`Submitted as ${d.changeRequest?.number || "a change request"}`, "success");
+      else showToast(d.error || "Submission failed", "error");
+    } catch (e) { setSubmitted({ ok: false, error: e.message }); }
+    finally { setBusy(null); }
+  }
+
+  async function loadAccess(name) {
+    setBusy("access");
+    try {
+      const r = await fetch(clusterUrl(`/api/vm/access?namespace=${encodeURIComponent(req.namespace)}&name=${encodeURIComponent(name)}`, cluster));
+      setAccess(await r.json());
+    } catch (e) { setAccess({ error: e.message }); }
     finally { setBusy(null); }
   }
 
@@ -3021,6 +3043,51 @@ function VMRequestCard({ data, cluster }) {
         </div>
       )}
 
+      {submitted?.ok && (
+        <div style={{ padding: "9px 12px", borderTop: "1px solid var(--border)", fontSize: 11.5, background: "rgba(56,189,248,.08)" }}>
+          <strong style={{ color: "#38bdf8" }}>Submitted for approval</strong>
+          <div style={{ opacity: .9, marginTop: 2 }}>
+            Change request <strong>{submitted.changeRequest?.number || "raised"}</strong> is awaiting approval in ServiceNow.
+            Nothing has been created. The VM is provisioned automatically once the change is approved.
+          </div>
+        </div>
+      )}
+      {submitted && !submitted.ok && (
+        <div style={{ padding: "9px 12px", borderTop: "1px solid var(--border)", fontSize: 11.5, color: "#fca5a5" }}>
+          Submission failed — {submitted.error}
+          {submitted.blocking?.map((b, i) => <div key={i}>✖ {b.message}</div>)}
+        </div>
+      )}
+
+      {result?.ok && result.created?.length > 0 && !access && (
+        <div style={{ padding: "8px 12px", borderTop: "1px solid var(--border)" }}>
+          <button onClick={() => loadAccess(result.created[0].name)} disabled={!!busy}
+            style={{ padding: "5px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "transparent",
+              color: "inherit", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+            {busy === "access" ? "Checking…" : "🔑 How do I access it?"}
+          </button>
+        </div>
+      )}
+      {access && !access.error && (
+        <div style={{ padding: "9px 12px", borderTop: "1px solid var(--border)", fontSize: 11.5 }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>
+            Access — {access.namespace}/{access.name}
+            <span style={{ marginLeft: 8, fontWeight: 400, opacity: .75 }}>
+              {access.status} · user <code>{access.user}</code>
+              {access.ipAddresses?.length ? ` · ${access.ipAddresses.join(", ")}` : ""}
+            </span>
+          </div>
+          {access.methods?.map((m, i) => (
+            <div key={i} style={{ marginBottom: 5 }}>
+              <div style={{ opacity: .7, fontSize: 10.5 }}>{m.label}{m.recommended ? " · recommended" : ""}</div>
+              <pre style={{ margin: "2px 0 0", padding: "5px 8px", borderRadius: 6, background: "#0b1220", color: "#86efac",
+                fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 11, whiteSpace: "pre-wrap" }}>{m.command}</pre>
+            </div>
+          ))}
+          {access.notes?.map((n, i) => <div key={i} style={{ opacity: .7, fontSize: 10.5 }}>· {n}</div>)}
+        </div>
+      )}
+
       <div style={{ padding: "9px 12px", borderTop: "1px solid var(--border)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <button onClick={doDryRun} disabled={!!busy || missing.length > 0}
           style={{ padding: "5px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "transparent",
@@ -3035,9 +3102,17 @@ function VMRequestCard({ data, cluster }) {
             fontSize: 12, fontWeight: 700, cursor: dry?.ok && ready && !result?.ok ? "pointer" : "not-allowed" }}>
           {busy === "provision" ? "Provisioning…" : result?.ok ? "✅ Provisioned" : "Provision"}
         </button>
+        <button onClick={submitForApproval} disabled={!!busy || !ready || !!submitted?.ok || !!result?.ok}
+          title="Raise the change request and let the CAB approve. The VM is provisioned automatically once approved."
+          style={{ padding: "5px 12px", borderRadius: 7, border: "1px solid rgba(56,189,248,.5)", background: "transparent",
+            color: "#38bdf8", fontSize: 12, fontWeight: 600,
+            cursor: ready && !submitted?.ok && !result?.ok ? "pointer" : "not-allowed",
+            opacity: ready && !submitted?.ok && !result?.ok ? 1 : .5 }}>
+          {busy === "submit" ? "Submitting…" : submitted?.ok ? "Submitted" : "Submit for approval"}
+        </button>
         <label style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 5, opacity: .85 }}>
           <input type="checkbox" checked={raiseCR} onChange={(e) => setRaiseCR(e.target.checked)} />
-          raise change request
+          raise CR on direct provision
         </label>
         <button onClick={() => revalidate(req)} disabled={!!busy}
           style={{ marginLeft: "auto", padding: "5px 10px", borderRadius: 7, border: "1px solid var(--border)",

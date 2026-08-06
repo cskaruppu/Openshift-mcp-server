@@ -139,6 +139,58 @@ export async function guestUsage() {
 }
 
 // ---------------------------------------------------------------------------
+// Access — how do I actually get into this VM?
+// ---------------------------------------------------------------------------
+/**
+ * The question every platform makes you go hunting for. We provisioned the VM,
+ * so we know the username, and the VMI reports the address once it is up.
+ */
+export async function vmAccess(namespace, name) {
+  let vm = null, vmi = null;
+  try { vm = await ocpGet(`/${KUBEVIRT_API}/namespaces/${namespace}/virtualmachines/${name}`); }
+  catch (e) { return { error: `VM ${namespace}/${name} not found: ${e.message}` }; }
+  try { vmi = await ocpGet(`/${KUBEVIRT_API}/namespaces/${namespace}/virtualmachineinstances/${name}`); }
+  catch { /* not running yet — still worth returning the commands */ }
+
+  // The cloud-init user we created at provisioning time.
+  const userData = (vm.spec?.template?.spec?.volumes || [])
+    .find((v) => v.cloudInitNoCloud)?.cloudInitNoCloud?.userData || "";
+  const user = /^\s*-\s*name:\s*(\S+)/m.exec(userData)?.[1] || "cloud-user";
+
+  const ips = (vmi?.status?.interfaces || []).map((i) => i.ipAddress).filter(Boolean);
+  const status = vm.status?.printableStatus || "Unknown";
+  const ready = (vm.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True");
+  const agentConnected = (vmi?.status?.conditions || [])
+    .some((c) => c.type === "AgentConnected" && c.status === "True");
+
+  const methods = [
+    { label: "SSH via virtctl (works without exposing the VM)", command: `virtctl ssh ${user}@${name} -n ${namespace}`, recommended: true },
+    { label: "Serial console", command: `virtctl console ${name} -n ${namespace}` },
+    { label: "Graphical console (VNC)", command: `virtctl vnc ${name} -n ${namespace}` },
+  ];
+  if (ips.length) {
+    methods.push({ label: `Direct SSH (reachable from the cluster network)`, command: `ssh ${user}@${ips[0]}` });
+  }
+  methods.push({
+    label: "Port-forward SSH to your workstation",
+    command: `virtctl port-forward vm/${name} 2222:22 -n ${namespace}\n# then: ssh -p 2222 ${user}@localhost`,
+  });
+
+  return {
+    namespace, name, status, ready, user,
+    ipAddresses: ips,
+    guestAgent: agentConnected ? "connected" : "not reporting",
+    methods,
+    notes: [
+      !ready ? "The VM is not Ready yet — these commands will work once it finishes starting." : null,
+      !ips.length && ready ? "No IP reported yet. virtctl ssh works regardless; direct SSH needs the address." : null,
+      !agentConnected && ready ? "qemu-guest-agent is not reporting. Install it in the image for IP reporting and graceful shutdown." : null,
+      "Authentication is by the SSH key supplied at provisioning. Password login is disabled.",
+    ].filter(Boolean),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Expiry enforcement — the field everyone records and nobody acts on
 // ---------------------------------------------------------------------------
 export async function expirySweep() {

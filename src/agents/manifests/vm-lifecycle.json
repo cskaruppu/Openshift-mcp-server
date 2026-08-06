@@ -10,6 +10,7 @@
     "kubevirt_list_templates",
     "kubevirt_create_vm",
     "kubevirt_lifecycle_report",
+    "kubevirt_vm_access",
     "kubevirt_list_vms",
     "kubevirt_get_vm",
     "kubevirt_start_vm",
@@ -29,7 +30,9 @@
     "VM lifecycle: start, stop, restart, inspect running instances",
     "Fleet inventory of every VM the platform provisioned, with its provenance",
     "Expiry enforcement: VMs past their recorded decommission date, with a decommission change request",
-    "Right-sizing: VMs whose observed usage no longer matches the size chosen at provisioning, referencing the original request"
+    "Right-sizing: VMs whose observed usage no longer matches the size chosen at provisioning, referencing the original request",
+    "Access guidance: cloud-init user, IP addresses, guest agent state and the exact virtctl/ssh commands",
+    "Approval-gated provisioning: submit to ServiceNow, provision automatically once the change is approved"
   ],
   "requires": [
     "core"

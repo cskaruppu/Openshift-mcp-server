@@ -443,6 +443,22 @@ export function registerKubeVirtTools(server) {
     }
   );
 
+  // ---------- How do I get into this VM? ----------
+  server.tool(
+    "kubevirt_vm_access",
+    "How to connect to a virtual machine: the cloud-init user, reported IP addresses, guest agent state, and the exact virtctl/ssh commands to use.",
+    {
+      namespace: z.string().describe("Namespace the VM is in"),
+      name: z.string().describe("VM name"),
+    },
+    async ({ namespace, name }) => {
+      try {
+        const { vmAccess } = await import("../services/vm-lifecycle.js");
+        return { content: [{ type: "text", text: JSON.stringify(await vmAccess(namespace, name), null, 2) }] };
+      } catch (err) { return errorResponse(err); }
+    }
+  );
+
   // ---------- List golden images, instance types and preferences ----------
   // Answers "what can I provision here?" so the AI proposes real options that
   // exist on THIS cluster rather than inventing plausible-looking names.
