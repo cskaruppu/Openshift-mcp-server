@@ -97,12 +97,15 @@ const MEM_RE = /(\d+(?:\.\d+)?)\s*(gb|gib|g|mb|mib|m)\b/gi;
 function heuristicExtract(text) {
   const t = String(text || "");
   const out = {};
-  // "in namespace sap" / "namespace sap" / "in sap" — the qualified forms must
-  // be tried first, or "in" captures the literal word "namespace".
+  // Namespace, most specific form first. Order matters: a bare "in X" would
+  // otherwise capture "namespace" or an article.
+  const ARTICLES = /^(the|a|an|my|our|your|this|that)$/i;
   const ns = /\b(?:in|into|on)\s+(?:the\s+)?(?:namespace|ns|project)\s+([a-z0-9][a-z0-9-]*)/i.exec(t)
     || /\b(?:namespace|ns|project)\s+([a-z0-9][a-z0-9-]*)/i.exec(t)
-    || /\bin\s+([a-z0-9][a-z0-9-]*)\b/i.exec(t);
-  if (ns) out.namespace = ns[1].toLowerCase();
+    // "in the apps namespace" — the noun precedes the keyword
+    || /\b(?:in|into|on)\s+(?:the\s+)?([a-z0-9][a-z0-9-]*)\s+(?:namespace|project)\b/i.exec(t)
+    || /\bin\s+(?:the\s+)?([a-z0-9][a-z0-9-]*)\b/i.exec(t);
+  if (ns && !ARTICLES.test(ns[1])) out.namespace = ns[1].toLowerCase();
   const nm = /\b(?:call(?:ed)?|named?)\s+([a-z0-9][a-z0-9-]*)/i.exec(t);
   if (nm) out.name = nm[1];
   const cpu = /(\d+)\s*(?:v?cpu|core|vcpus|cores)\b/i.exec(t);
@@ -136,8 +139,16 @@ function heuristicExtract(text) {
   if (os) out.os = os[1].replace(/\s+/g, " ").trim();
   const vlan = /\bvlan\s*(\d+)\b/i.exec(t);
   if (vlan) out.networkAttachmentDefinition = `vlan${vlan[1]}`;
-  const env = /\b(prod(?:uction)?|dev(?:elopment)?|test|staging|uat)\b/i.exec(t);
+  // Environment must be a standalone word. Without the hyphen guards, a VM
+  // named "test-box" or "prod-api" would set the environment from its own name.
+  const env = /(?<![\w-])(prod(?:uction)?|dev(?:elopment)?|test|staging|uat)(?![\w-])/i.exec(t);
   if (env) out.environment = /^prod/i.test(env[1]) ? "prod" : /^dev/i.test(env[1]) ? "dev" : env[1].toLowerCase();
+  const cc = /\b(?:cost\s*(?:centre|center)|chargeback|billing\s*code)\s*[:#]?\s*([A-Za-z0-9][\w-]*)/i.exec(t);
+  if (cc) out.costCentre = cc[1];
+  const ownr = /\b(?:owner|owned\s+by|for\s+the|requested\s+by)\s+([A-Za-z][\w -]{1,40}?)(?:\s+team)?\s*(?:[,.]|$)/i.exec(t);
+  if (ownr) out.owner = ownr[1].trim();
+  const exp = /\b(?:expir\w*|decommission|until|valid\s+(?:un)?till?)\s*(?:on|by|:)?\s*(\d{4}-\d{2}-\d{2})/i.exec(t);
+  if (exp) out.expiresOn = exp[1];
   const key = /\b(ssh-(?:rsa|ed25519|dss)\s+[A-Za-z0-9+/=]+(?:\s+\S+)?)/.exec(t);
   if (key) out.sshKey = key[1].trim();
   return out;
