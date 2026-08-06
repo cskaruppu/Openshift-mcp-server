@@ -2801,6 +2801,73 @@ async function startSSE() {
       } catch (err) { return sendJson(res, 200, { sessions: [], error: err.message }); }
     }
 
+    // ── VM provisioning (UC-06) ───────────────────────────────────────────
+    // Human-initiated by construction. There is deliberately no autonomous
+    // path: provisioning consumes quota, addresses, licences and money.
+    if (url.pathname.startsWith("/api/vm/")) {
+      const vm = await import("./services/vm-provisioning.js");
+
+      if (url.pathname === "/api/vm/templates" && req.method === "GET") {
+        try {
+          const out = await withClusterContext(url, async () =>
+            vm.listProvisionables(url.searchParams.get("imageNamespace") || undefined));
+          return sendJson(res, 200, out ?? { images: [], instanceTypes: [], notes: ["Cluster not reachable."] });
+        } catch (err) { return sendJson(res, 200, { images: [], instanceTypes: [], notes: [err.message] }); }
+      }
+
+      // Free text (plus any operator corrections) -> a decision-ready card.
+      if (url.pathname === "/api/vm/request" && req.method === "POST") {
+        if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.5 })) return;
+        try {
+          const body = await readJsonBody(req);
+          const out = await withClusterContext(url, async () =>
+            vm.buildVMRequestCard(body.text || "", body.request || {}));
+          return sendJson(res, 200, out ?? { error: "Selected cluster is not reachable." });
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
+      if (url.pathname === "/api/vm/preflight" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+          const out = await withClusterContext(url, async () =>
+            vm.preflightVMRequest(vm.normalizeVMRequest(body.request || {})));
+          return sendJson(res, 200, out ?? { ok: false, blocking: [{ message: "Cluster not reachable." }] });
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
+      if (url.pathname === "/api/vm/dry-run" && req.method === "POST") {
+        if (enforceRateLimit(req, res, { burst: 8, refillPerSec: 0.3 })) return;
+        try {
+          const body = await readJsonBody(req);
+          const out = await withClusterContext(url, async () =>
+            vm.dryRunVMRequest(vm.normalizeVMRequest(body.request || {})));
+          return sendJson(res, 200, out ?? { ok: false, error: "Cluster not reachable." });
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
+      // The one human gate. Nothing reaches here without an operator clicking.
+      if (url.pathname === "/api/vm/provision" && req.method === "POST") {
+        if (enforceRateLimit(req, res, { burst: 4, refillPerSec: 0.05 })) return;
+        try {
+          const body = await readJsonBody(req);
+          const request = vm.normalizeVMRequest(body.request || {});
+          const cluster = url.searchParams.get("cluster") || body.cluster || "local";
+          const actor = body.actor || req.user?.name || "operator";
+          const out = await withClusterContext(url, async () => {
+            const result = await vm.provisionVMRequest(request, { actor, cluster });
+            if (result.ok && body.raiseChangeRequest) {
+              try {
+                const pre = await vm.preflightVMRequest(request);
+                result.changeRequest = await vm.raiseProvisioningCR(request, pre);
+              } catch (e) { result.changeRequestError = e.message; }
+            }
+            return result;
+          });
+          return sendJson(res, 200, out ?? { ok: false, error: "Cluster not reachable." });
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+    }
+
     // Promote a detection into a managed incident. Human-initiated.
     if (url.pathname === "/api/intelligence/incident-sessions/promote" && req.method === "POST") {
       if (enforceRateLimit(req, res, { burst: 6, refillPerSec: 0.1 })) return;

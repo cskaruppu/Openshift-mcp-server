@@ -8,11 +8,11 @@ import { showToast } from "../store/toastStore";
 /* ------------------------------------------------------------------ */
 
 const TOKEN_RE =
-  /@@(PREFLIGHT_REPORT|ITSM_FORM|ITSM_SUBMITTED|UPGRADE_EXECUTE|UPGRADE_PROGRESS|FIX_PROPOSAL|CLARIFY|POD_ISSUE|APPLY_BTN|SUMMARY|SCORE|GRADE|SEC_FIX_CMD|RIGHTSIZE|TRIAGE|VIEW_MORE|VIEW_MORE_REC|PLAN|REASONING|KPI)\|([\s\S]*?)@@/;
+  /@@(PREFLIGHT_REPORT|ITSM_FORM|ITSM_SUBMITTED|UPGRADE_EXECUTE|UPGRADE_PROGRESS|FIX_PROPOSAL|CLARIFY|POD_ISSUE|APPLY_BTN|SUMMARY|SCORE|GRADE|SEC_FIX_CMD|RIGHTSIZE|TRIAGE|VM_REQUEST|VIEW_MORE|VIEW_MORE_REC|PLAN|REASONING|KPI)\|([\s\S]*?)@@/;
 
 const JSON_TOKENS = new Set([
   "PREFLIGHT_REPORT", "ITSM_FORM", "ITSM_SUBMITTED", "UPGRADE_EXECUTE", "UPGRADE_PROGRESS",
-  "FIX_PROPOSAL", "CLARIFY", "PLAN", "REASONING", "RIGHTSIZE", "TRIAGE",
+  "FIX_PROPOSAL", "CLARIFY", "PLAN", "REASONING", "RIGHTSIZE", "TRIAGE", "VM_REQUEST",
 ]);
 
 function safeJson(raw) {
@@ -52,7 +52,7 @@ export function parseSegments(text) {
  *   - "narrow": plain prose — best reading line-length (~80 chars)
  * Priority: wide > medium > narrow.
  */
-const WIDE_TOKENS = new Set(["PREFLIGHT_REPORT", "UPGRADE_EXECUTE", "UPGRADE_PROGRESS"]);
+const WIDE_TOKENS = new Set(["PREFLIGHT_REPORT", "UPGRADE_EXECUTE", "UPGRADE_PROGRESS", "VM_REQUEST"]);
 const CARD_TOKENS = new Set(["ITSM_FORM", "ITSM_SUBMITTED", "RIGHTSIZE", "TRIAGE", "FIX_PROPOSAL", "CLARIFY", "POD_ISSUE"]);
 
 export function computeResponseWidth(text) {
@@ -136,6 +136,7 @@ function TokenCard({ type, data, cluster, onQuery, onItsmSubmitted }) {
     case "SEC_FIX_CMD":      return <SecFixCmd cmd={data} cluster={cluster} />;
     case "RIGHTSIZE":        return data ? <RightSizeCard rec={data} cluster={cluster} /> : null;
     case "TRIAGE":           return data ? <TriageCard t={data} cluster={cluster} onQuery={onQuery} /> : null;
+    case "VM_REQUEST":       return data ? <VMRequestCard data={data} cluster={cluster} /> : null;
     case "POD_ISSUE":        return <PodIssue raw={data} />;
     case "APPLY_BTN":        return <ApplyBtn raw={data} cluster={cluster} />;
     case "SUMMARY":          return <SummaryBar raw={data} />;
@@ -2823,5 +2824,240 @@ function GradeBadge({ raw }) {
       <span className={"grade-badge grade-" + grade}>{grade}</span>
       <span style={{ fontWeight: 600, fontSize: 13 }}>{label}</span>
     </span>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  VM Request card (UC-06)                                            */
+/* ------------------------------------------------------------------ */
+/*  Not a form. A decision surface: what the AI understood, what the    */
+/*  cluster actually offers, what it will consume, and the one          */
+/*  compromise nobody else shows — requested size vs golden template.   */
+
+function QuotaBar({ q }) {
+  const pct = Math.max(0, Math.min(100, q.afterPct || 0));
+  const col = pct > 100 ? "#ef4444" : pct >= 85 ? "#f59e0b" : "#22c55e";
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 2 }}>
+        <span style={{ opacity: .75 }}>{q.resource} <span style={{ opacity: .6 }}>· {q.quota}</span></span>
+        <span style={{ color: col, fontWeight: 700 }}>{pct}% after</span>
+      </div>
+      <div style={{ height: 6, borderRadius: 999, background: "color-mix(in srgb, var(--text2) 18%, transparent)", overflow: "hidden" }}>
+        <div style={{ width: `${Math.min(pct, 100)}%`, height: "100%", background: col, transition: "width .3s" }} />
+      </div>
+      <div style={{ fontSize: 10.5, opacity: .6, marginTop: 2 }}>
+        used {q.used} + this request {q.requested} of {q.hard}
+      </div>
+    </div>
+  );
+}
+
+function VMRequestCard({ data, cluster }) {
+  const [req, setReq] = useState(data.request || {});
+  const [pre, setPre] = useState(data.preflight || null);
+  const [recon, setRecon] = useState(data.reconciliation || null);
+  const [busy, setBusy] = useState(null);
+  const [dry, setDry] = useState(null);
+  const [result, setResult] = useState(null);
+  const [showYaml, setShowYaml] = useState(false);
+  const [raiseCR, setRaiseCR] = useState(true);
+  const cat = data.catalogue || { images: [], instanceTypes: [], storageClasses: [] };
+
+  const missing = [];
+  if (!req.name) missing.push("name");
+  if (!req.namespace) missing.push("namespace");
+  if (!req.sourceDataSource) missing.push("image");
+  if (!req.sshKey) missing.push("SSH key");
+  if (!req.instanceType && !(req.cpuCores && req.memoryMi)) missing.push("size");
+
+  const blocked = (pre?.blocking?.length || 0) > 0;
+  const ready = missing.length === 0 && !blocked;
+
+  async function post(path, body) {
+    const r = await fetch(clusterUrl(path, cluster), {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    return r.json();
+  }
+
+  async function revalidate(next) {
+    setReq(next); setDry(null);
+    setBusy("checking");
+    try {
+      const d = await post("/api/vm/request", { text: "", request: next });
+      if (d?.request) { setReq(d.request); setPre(d.preflight); setRecon(d.reconciliation); }
+    } catch { /* keep local edits */ } finally { setBusy(null); }
+  }
+  const set = (k) => (e) => {
+    const v = e.target.type === "number" ? Number(e.target.value) : e.target.value;
+    setReq((p) => ({ ...p, [k]: v || null })); setDry(null); setResult(null);
+  };
+
+  async function doDryRun() {
+    setBusy("dry"); setDry(null);
+    try { setDry(await post("/api/vm/dry-run", { request: req })); }
+    catch (e) { setDry({ ok: false, terminal: [`Error: ${e.message}`] }); }
+    finally { setBusy(null); }
+  }
+  async function doProvision() {
+    setBusy("provision");
+    try {
+      const d = await post("/api/vm/provision", { request: req, raiseChangeRequest: raiseCR });
+      setResult(d);
+      if (d.ok) showToast(`${d.created?.length || 0} VM(s) created`, "success");
+      else showToast(d.error || "Provisioning failed", "error");
+    } catch (e) { setResult({ ok: false, error: e.message }); }
+    finally { setBusy(null); }
+  }
+
+  const names = req.count > 1
+    ? Array.from({ length: Math.min(req.count, 10) }, (_, i) => `${req.name}-${i + 1}`)
+    : [req.name].filter(Boolean);
+
+  const F = ({ label, k, type = "text", ph, opts }) => (
+    <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11 }}>
+      <span style={{ opacity: .7, fontWeight: 600 }}>{label}</span>
+      {opts ? (
+        <select value={req[k] || ""} onChange={set(k)} className="vmreq-input"
+          style={{ padding: "5px 7px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg2, transparent)", color: "inherit", fontSize: 12 }}>
+          <option value="">—</option>
+          {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      ) : (
+        <input type={type} value={req[k] ?? ""} onChange={set(k)} placeholder={ph}
+          style={{ padding: "5px 7px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg2, transparent)", color: "inherit", fontSize: 12 }} />
+      )}
+    </label>
+  );
+
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", margin: "8px 0",
+      boxShadow: ready ? "0 0 0 1px rgba(34,197,94,.35)" : blocked ? "0 0 0 1px rgba(239,68,68,.35)" : "none" }}>
+
+      <div style={{ padding: "9px 12px", background: "rgba(124,58,237,.12)", borderBottom: "1px solid var(--border)",
+        display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <strong style={{ fontSize: 13 }}>🖥 VM Request</strong>
+        <span style={{ fontSize: 11, opacity: .8 }}>{names.length > 1 ? `${names.length} VMs` : names[0] || "unnamed"}{req.namespace ? ` · ${req.namespace}` : ""}</span>
+        <span style={{ marginLeft: "auto", fontSize: 10.5, padding: "2px 8px", borderRadius: 999,
+          background: ready ? "rgba(34,197,94,.18)" : blocked ? "rgba(239,68,68,.18)" : "rgba(245,158,11,.18)",
+          color: ready ? "#4ade80" : blocked ? "#fca5a5" : "#fbbf24", fontWeight: 700 }}>
+          {blocked ? "Blocked" : missing.length ? `${missing.length} field(s) needed` : "Ready to dry-run"}
+        </span>
+      </div>
+
+      {/* The reconciliation line — the one thing a competitor demo will not have */}
+      {recon?.message && (
+        <div style={{ padding: "8px 12px", fontSize: 11.5, borderBottom: "1px solid var(--border)",
+          background: recon.verdict === "exact" ? "rgba(34,197,94,.08)" : "rgba(245,158,11,.08)" }}>
+          <strong style={{ color: recon.verdict === "exact" ? "#4ade80" : "#fbbf24" }}>
+            {recon.verdict === "exact" ? "Exact match" : recon.verdict === "rounded-up" ? "Rounded up to standard" : "Sizing"}
+          </strong>
+          <span style={{ opacity: .9 }}> — {recon.message}</span>
+          {recon.alternatives?.length > 0 && (
+            <div style={{ opacity: .65, marginTop: 2 }}>
+              Alternatives: {recon.alternatives.map((a) => `${a.name} (${a.cpu} vCPU / ${a.memory})`).join(" · ")}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ padding: "10px 12px", display: "grid", gap: 8,
+        gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
+        <F label="Name" k="name" ph="sap-app-01" />
+        <F label="Namespace" k="namespace" ph="sap" />
+        <F label="Count" k="count" type="number" />
+        <F label="Golden image" k="sourceDataSource"
+           opts={cat.images.map((i) => ({ value: i.name, label: `${i.name}${i.ready ? "" : " (not ready)"}` }))} />
+        <F label="Instance type" k="instanceType"
+           opts={cat.instanceTypes.map((i) => ({ value: i.name, label: `${i.name} — ${i.cpu} vCPU / ${i.memory}` }))} />
+        <F label="Root disk (GiB)" k="diskSizeGi" type="number" />
+        <F label="Storage class" k="storageClass"
+           opts={cat.storageClasses.map((s) => ({ value: s.name, label: s.name + (s.default ? " (default)" : "") }))} />
+        <F label="Network (NAD)" k="networkAttachmentDefinition" ph="pod network" />
+        <F label="Owner" k="owner" ph="platform-team" />
+        <F label="Cost centre" k="costCentre" ph="CC-4471" />
+        <F label="Environment" k="environment"
+           opts={[{ value: "dev", label: "dev" }, { value: "test", label: "test" }, { value: "prod", label: "prod" }]} />
+        <F label="Expires on" k="expiresOn" type="date" />
+      </div>
+      <div style={{ padding: "0 12px 10px" }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11 }}>
+          <span style={{ opacity: .7, fontWeight: 600 }}>SSH public key {!req.sshKey && <span style={{ color: "#fca5a5" }}>— required, or nobody can log in</span>}</span>
+          <textarea value={req.sshKey || ""} onChange={set("sshKey")} rows={2} placeholder="ssh-ed25519 AAAA..."
+            style={{ padding: "5px 7px", borderRadius: 6, border: `1px solid ${req.sshKey ? "var(--border)" : "rgba(239,68,68,.5)"}`,
+              background: "var(--bg2, transparent)", color: "inherit", fontSize: 11, fontFamily: "var(--font-mono, monospace)", resize: "vertical" }} />
+        </label>
+      </div>
+
+      {/* Capacity, not a number */}
+      {pre?.quota?.quotas?.length > 0 && (
+        <div style={{ padding: "8px 12px", borderTop: "1px solid var(--border)" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, opacity: .7, marginBottom: 5 }}>Namespace quota impact</div>
+          {pre.quota.quotas.map((q, i) => <QuotaBar key={i} q={q} />)}
+        </div>
+      )}
+
+      {(pre?.blocking?.length > 0 || pre?.warnings?.length > 0) && (
+        <div style={{ padding: "8px 12px", borderTop: "1px solid var(--border)", fontSize: 11.5, display: "grid", gap: 3 }}>
+          {pre.blocking?.map((b, i) => <div key={"b" + i} style={{ color: "#fca5a5" }}>✖ {b.message}</div>)}
+          {pre.warnings?.map((w, i) => <div key={"w" + i} style={{ color: "#fbbf24" }}>⚠ {w.message}</div>)}
+        </div>
+      )}
+
+      {(dry?.terminal || result?.terminal) && (
+        <pre style={{ margin: 0, padding: "10px 12px", background: "#0b1220", color: "#e2e8f0",
+          borderTop: "1px solid var(--border)", fontFamily: "var(--font-mono, ui-monospace, monospace)",
+          fontSize: 11, lineHeight: 1.6, whiteSpace: "pre-wrap", maxHeight: 200, overflowY: "auto" }}>
+          {(result?.terminal || dry?.terminal).map((l, i) => (
+            <div key={i} style={{ color: l.startsWith("$") ? "#86efac" : l.startsWith("Error") ? "#fca5a5" : l.startsWith("#") ? "#7dd3fc" : "#e2e8f0" }}>{l || " "}</div>
+          ))}
+        </pre>
+      )}
+
+      {result?.changeRequest?.number && (
+        <div style={{ padding: "7px 12px", borderTop: "1px solid var(--border)", fontSize: 11.5, color: "#38bdf8" }}>
+          📋 Change request {result.changeRequest.number} raised
+        </div>
+      )}
+
+      <div style={{ padding: "9px 12px", borderTop: "1px solid var(--border)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <button onClick={doDryRun} disabled={!!busy || missing.length > 0}
+          style={{ padding: "5px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "transparent",
+            color: "inherit", fontSize: 12, fontWeight: 600, cursor: missing.length ? "not-allowed" : "pointer", opacity: missing.length ? .5 : 1 }}>
+          {busy === "dry" ? "Validating…" : "▷ Dry-run"}
+        </button>
+        <button onClick={doProvision} disabled={!!busy || !ready || !dry?.ok || !!result?.ok}
+          title={!dry?.ok ? "Dry-run must pass first" : ""}
+          style={{ padding: "5px 12px", borderRadius: 7, border: "none",
+            background: dry?.ok && ready && !result?.ok ? "#22c55e" : "rgba(148,163,184,.3)",
+            color: dry?.ok && ready && !result?.ok ? "#052e16" : "inherit",
+            fontSize: 12, fontWeight: 700, cursor: dry?.ok && ready && !result?.ok ? "pointer" : "not-allowed" }}>
+          {busy === "provision" ? "Provisioning…" : result?.ok ? "✅ Provisioned" : "Provision"}
+        </button>
+        <label style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 5, opacity: .85 }}>
+          <input type="checkbox" checked={raiseCR} onChange={(e) => setRaiseCR(e.target.checked)} />
+          raise change request
+        </label>
+        <button onClick={() => revalidate(req)} disabled={!!busy}
+          style={{ marginLeft: "auto", padding: "5px 10px", borderRadius: 7, border: "1px solid var(--border)",
+            background: "transparent", color: "inherit", fontSize: 11.5, cursor: "pointer" }}>
+          {busy === "checking" ? "Re-checking…" : "Re-check"}
+        </button>
+        <button onClick={() => setShowYaml((v) => !v)}
+          style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid var(--border)", background: "transparent",
+            color: "inherit", fontSize: 11.5, cursor: "pointer" }}>
+          {showYaml ? "Hide" : "Show"} manifest
+        </button>
+      </div>
+
+      {showYaml && (
+        <pre style={{ margin: 0, padding: "10px 12px", background: "#0b1220", color: "#cbd5e1",
+          borderTop: "1px solid var(--border)", fontFamily: "var(--font-mono, ui-monospace, monospace)",
+          fontSize: 10.5, lineHeight: 1.5, whiteSpace: "pre-wrap", maxHeight: 300, overflowY: "auto" }}>
+          {JSON.stringify(data.manifestPreview || { note: "Run Dry-run to render the manifest the API server accepted.", request: req }, null, 2)}
+        </pre>
+      )}
+    </div>
   );
 }

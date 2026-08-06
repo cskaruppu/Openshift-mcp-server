@@ -360,108 +360,31 @@ export function registerKubeVirtTools(server) {
           };
         }
 
-        // ---- Root disk: a DataVolume template, so the disk is a real PVC that
-        // survives restarts. containerDisk/emptyDisk are ephemeral and are not
-        // used here — that is the difference between a demo and a provisioned VM.
-        const dvName = `${a.name}-rootdisk`;
-        const source = a.sourceDataSource
-          ? { sourceRef: { kind: "DataSource", name: a.sourceDataSource, namespace: a.sourceDataSourceNamespace } }
-          : a.sourceRegistryUrl
-            ? { source: { registry: { url: a.sourceRegistryUrl } } }
-            : { source: { http: { url: a.sourceHttpUrl } } };
-
-        const dataVolumeTemplate = {
-          metadata: { name: dvName },
-          spec: {
-            ...source,
-            storage: {
-              resources: { requests: { storage: `${a.diskSizeGi}Gi` } },
-              ...(a.storageClass ? { storageClassName: a.storageClass } : {}),
-            },
-          },
-        };
-
-        // ---- cloud-init: the difference between a VM and an unreachable VM ----
-        const hostname = a.hostname || a.name;
-        const userData = a.cloudInitUserData || [
-          "#cloud-config",
-          `hostname: ${hostname}`,
-          "ssh_pwauth: false",
-          "users:",
-          `  - name: ${a.username}`,
-          "    sudo: ALL=(ALL) NOPASSWD:ALL",
-          "    groups: wheel",
-          "    shell: /bin/bash",
-          "    ssh_authorized_keys:",
-          `      - ${a.sshKey}`,
-        ].join("\n");
-
-        // ---- Networking ----
+        // Single source of truth: the same builder the console's VM Request
+        // card uses, so a VM provisioned from chat and one provisioned from an
+        // MCP client are byte-identical.
+        const { normalizeVMRequest, buildVMManifest } = await import("../services/vm-provisioning.js");
+        const req = normalizeVMRequest({
+          name: a.name, namespace: ns,
+          sourceDataSource: a.sourceDataSource, sourceDataSourceNamespace: a.sourceDataSourceNamespace,
+          sourceRegistryUrl: a.sourceRegistryUrl, sourceHttpUrl: a.sourceHttpUrl,
+          instanceType: a.instanceType, preference: a.preference,
+          cpuCores: a.cpuCores, memoryMi: a.memoryMi,
+          diskSizeGi: a.diskSizeGi, storageClass: a.storageClass,
+          networkAttachmentDefinition: a.networkAttachmentDefinition,
+          sshKey: a.sshKey, username: a.username, hostname: a.hostname,
+          runStrategy: a.runStrategy,
+          owner: a.owner, costCentre: a.costCentre, environment: a.environment,
+          requestId: a.requestId, expiresOn: a.expiresOn, sizingRationale: a.sizingRationale,
+        });
+        const vmManifest = buildVMManifest(req);
+        if (a.cloudInitUserData) {
+          const vols = vmManifest.spec.template.spec.volumes;
+          const ci = vols.find((v) => v.cloudInitNoCloud);
+          if (ci) ci.cloudInitNoCloud.userData = a.cloudInitUserData;
+        }
+        const dvName = vmManifest.spec.dataVolumeTemplates[0].metadata.name;
         const useNad = Boolean(a.networkAttachmentDefinition);
-        const iface = useNad
-          ? { name: "nic-0", bridge: {} }
-          : { name: "default", masquerade: {} };
-        const network = useNad
-          ? { name: "nic-0", multus: { networkName: a.networkAttachmentDefinition } }
-          : { name: "default", pod: {} };
-
-        // ---- Provenance. Cheap to write, and it is what lets the agent recognise
-        // its own work later: "this VM was provisioned by CHG0041022, sized for X".
-        const labels = {
-          "kubevirt.io/vm": a.name,
-          "app.kubernetes.io/managed-by": "tcs-agentic-ai",
-          ...(a.environment ? { "tcs.ai/environment": a.environment } : {}),
-          ...(a.owner ? { "tcs.ai/owner": String(a.owner).replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 63) } : {}),
-          ...(a.costCentre ? { "tcs.ai/cost-centre": String(a.costCentre).replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 63) } : {}),
-        };
-        const annotations = {
-          "tcs.ai/provisioned-at": new Date().toISOString(),
-          "tcs.ai/provisioned-by": "tcs-agentic-ai",
-          ...(a.owner ? { "tcs.ai/owner": a.owner } : {}),
-          ...(a.requestId ? { "tcs.ai/request-id": a.requestId } : {}),
-          ...(a.expiresOn ? { "tcs.ai/expires-on": a.expiresOn } : {}),
-          ...(a.sizingRationale ? { "tcs.ai/sizing-rationale": a.sizingRationale } : {}),
-        };
-
-        const vmManifest = {
-          apiVersion: "kubevirt.io/v1",
-          kind: "VirtualMachine",
-          metadata: { name: a.name, namespace: ns, labels, annotations },
-          spec: {
-            runStrategy: a.runStrategy,
-            dataVolumeTemplates: [dataVolumeTemplate],
-            template: {
-              metadata: { labels: { "kubevirt.io/vm": a.name, ...(a.environment ? { "tcs.ai/environment": a.environment } : {}) } },
-              spec: {
-                domain: {
-                  devices: {
-                    disks: [
-                      { name: "rootdisk", disk: { bus: "virtio" } },
-                      { name: "cloudinit", disk: { bus: "virtio" } },
-                    ],
-                    interfaces: [iface],
-                  },
-                },
-                networks: [network],
-                volumes: [
-                  { name: "rootdisk", dataVolume: { name: dvName } },
-                  { name: "cloudinit", cloudInitNoCloud: { userData } },
-                ],
-              },
-            },
-          },
-        };
-
-        // Golden sizing via instance type + preference, or explicit values.
-        if (a.instanceType) {
-          vmManifest.spec.instancetype = { kind: "VirtualMachineClusterInstancetype", name: a.instanceType };
-        } else {
-          vmManifest.spec.template.spec.domain.cpu = { cores: a.cpuCores };
-          vmManifest.spec.template.spec.domain.memory = { guest: `${a.memoryMi}Mi` };
-        }
-        if (a.preference) {
-          vmManifest.spec.preference = { kind: "VirtualMachineClusterPreference", name: a.preference };
-        }
 
         const path = `/${KUBEVIRT_API}/namespaces/${ns}/virtualmachines`
           + (a.dryRun ? "?dryRun=All" : "");

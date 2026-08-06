@@ -1522,6 +1522,40 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
   const llmAvailable = !!opts.llmAvailable;
 
   // -----------------------------------------------------------------------
+  // VM PROVISIONING (UC-06) — "provision a RHEL 9 VM in sap, 8 vCPU, 32GB"
+  //
+  // Chat is the intake surface, not the mechanism. We extract intent, check it
+  // against the live cluster, and hand back a request CARD. Nothing is created
+  // here: the operator corrects the card, dry-runs it, and approves. That is
+  // the deliberate difference from incident remediation — provisioning
+  // consumes quota, addresses and money, so it is never autonomous.
+  // -----------------------------------------------------------------------
+  if (/\b(provision|create|build|spin\s*up|deploy|need|want)\b/i.test(lower) &&
+      /\b(vm|vms|virtual\s*machines?)\b/i.test(lower) &&
+      !/\b(list|show|get|describe|status of|how many)\b/i.test(lower)) {
+    try {
+      const { buildVMRequestCard } = await import("./vm-provisioning.js");
+      const card = await buildVMRequestCard(message);
+      const need = card.missing || [];
+      const lines = [
+        "**VM request** — here is what I understood. Nothing has been created.",
+        "",
+        need.length
+          ? `I still need: **${need.join(", ")}**. Fill those in on the card below, then dry-run it.`
+          : "All required fields are present. Dry-run it to validate against the live API server, then approve.",
+        "",
+        `@@VM_REQUEST|${JSON.stringify(card)}@@`,
+      ];
+      return { reply: lines.join("\n") };
+    } catch (e) {
+      return {
+        reply: `I could not build a VM request: ${e.message}\n\n`
+          + "Check that OpenShift Virtualization is installed and that this cluster is reachable.",
+      };
+    }
+  }
+
+  // -----------------------------------------------------------------------
   // Certificate expiry queries — route to LLM which has certificate_expiry
   // intent handling, instead of trying to list cert-manager CRD resources.
   // -----------------------------------------------------------------------
