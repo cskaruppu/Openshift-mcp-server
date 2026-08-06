@@ -43,6 +43,8 @@ export const DEFAULT_THRESHOLDS = {
   operatorDegraded: { enabled: true, dwellMinutes: 10, severity: "SEV-2", standard: "ClusterOperatorDegraded" },
   pvcPending:       { enabled: true, dwellMinutes: 15, severity: "SEV-3", standard: "KubePersistentVolumeClaimPending" },
   pvcFilling:       { enabled: true, freePctBelow: 10, severity: "SEV-2", standard: "KubePersistentVolumeFillingUp" },
+  vmNotReady:       { enabled: true, dwellMinutes: 10, severity: "SEV-2", standard: "KubeVirtVMINotReady" },
+  vmGuestDiskFull:  { enabled: true, freePctBelow: 10, severity: "SEV-2", standard: "guest filesystem filling up" },
 };
 
 // Namespaces whose noise should never open an incident on its own. Platform
@@ -191,7 +193,7 @@ function stableName(name) {
 // rule appears, the more likely it is the ROOT cause rather than a consequence.
 // An OOM kill explains a crash loop; a crash loop explains zero-ready replicas.
 const ROOT_PRECEDENCE = [
-  "oomKilled", "imagePull", "podPending", "crashLoop", "podNotReady", "zeroReady", "replicaMismatch",
+  "oomKilled", "imagePull", "podPending", "crashLoop", "vmNotReady", "vmGuestDiskFull", "podNotReady", "zeroReady", "replicaMismatch",
 ];
 
 const SEV_RANK = { "SEV-1": 1, "SEV-2": 2, "SEV-3": 3, "SEV-4": 4, "SEV-5": 5 };
@@ -444,6 +446,69 @@ async function collectPvcFillingSymptoms(T, symptoms) {
   } catch { /* Prometheus optional — other rules still fire */ }
 }
 
+/**
+ * VirtualMachines that are not doing what their spec says. Only VMs this
+ * platform provisioned are evaluated — the agent takes responsibility for what
+ * it built, and does not page anyone about VMs someone else created by hand.
+ */
+async function collectVMSymptoms(T, symptoms) {
+  if (!T.vmNotReady.enabled && !T.vmGuestDiskFull.enabled) return;
+  let vms;
+  try {
+    vms = await ocpGet("/apis/kubevirt.io/v1/virtualmachines"
+      + "?labelSelector=" + encodeURIComponent("app.kubernetes.io/managed-by=tcs-agentic-ai"));
+  } catch { return; }               // KubeVirt absent, or no permission
+
+  for (const vm of vms.items || []) {
+    const ns = vm.metadata?.namespace, name = vm.metadata?.name;
+    if (!ns || !name || vm.metadata?.deletionTimestamp) continue;
+    const ann = vm.metadata?.annotations || {};
+    const base = {
+      namespace: ns, owner: name, kind: "virtualmachine",
+      requestId: ann["tcs.ai/request-id"] || null,
+      vmOwner: ann["tcs.ai/owner"] || null,
+    };
+
+    if (T.vmNotReady.enabled) {
+      // Only a VM that is SUPPOSED to be running counts. Halted is a choice.
+      const wantsRunning = vm.spec?.runStrategy === "Always" || vm.spec?.running === true;
+      const status = vm.status?.printableStatus || "Unknown";
+      const ready = (vm.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True");
+      if (wantsRunning && !ready) {
+        // Provisioning takes time — a VM still importing its disk is not a fault.
+        const importing = /Provisioning|Starting|WaitingForVolumeBinding|DataVolumeError/i.test(status);
+        const ageMin = minutesSince(vm.metadata?.creationTimestamp);
+        const dwell = ageMin;
+        if (!(importing && (ageMin ?? 0) < 30) && (dwell ?? 0) >= T.vmNotReady.dwellMinutes) {
+          symptoms.push({ ...base, signal: "VMNotReady", severity: T.vmNotReady.severity,
+            dwellMinutes: dwell, rule: "vmNotReady", standard: T.vmNotReady.standard,
+            evidence: `VM "${name}" is set to run but is not Ready — status ${status}`
+              + (base.requestId ? ` (provisioned under ${base.requestId})` : "") });
+        }
+      }
+    }
+  }
+
+  if (T.vmGuestDiskFull.enabled) {
+    try {
+      const { promQuery } = await import("./prometheus.js");
+      const rows = await promQuery(
+        `max by (namespace, name) (100 * kubevirt_vmi_filesystem_free_bytes`
+        + ` / kubevirt_vmi_filesystem_capacity_bytes) < ${T.vmGuestDiskFull.freePctBelow}`);
+      const managed = new Set((vms.items || []).map((v) => `${v.metadata.namespace}/${v.metadata.name}`));
+      for (const r of rows || []) {
+        const ns = r.metric?.namespace, name = r.metric?.name;
+        if (!ns || !name || !managed.has(`${ns}/${name}`)) continue;
+        const freePct = Math.round(parseFloat(r.value?.[1]));
+        symptoms.push({ namespace: ns, owner: name, kind: "virtualmachine",
+          signal: "VMGuestDiskFillingUp", severity: T.vmGuestDiskFull.severity, dwellMinutes: null,
+          rule: "vmGuestDiskFull", standard: T.vmGuestDiskFull.standard,
+          evidence: `Guest filesystem on VM "${name}" is only ${freePct}% free (threshold <${T.vmGuestDiskFull.freePctBelow}%)` });
+      }
+    } catch { /* guest agent or Prometheus absent */ }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Correlation — collapse many symptoms into few incidents
 // ---------------------------------------------------------------------------
@@ -559,6 +624,7 @@ export async function detectIncidents() {
   collectOperatorSymptoms(operators.items || [], T, symptoms);
   collectPvcSymptoms(pvcs.items || [], T, symptoms);
   await collectPvcFillingSymptoms(T, symptoms);
+  await collectVMSymptoms(T, symptoms);
 
   pruneRestartHistory(restartKeys);
 

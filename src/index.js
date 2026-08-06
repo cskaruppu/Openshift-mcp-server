@@ -2807,6 +2807,42 @@ async function startSSE() {
     if (url.pathname.startsWith("/api/vm/")) {
       const vm = await import("./services/vm-provisioning.js");
 
+      // ── Lifecycle (UC-06 phase 3) — the agent owning what it provisioned ──
+      // Read-only. Produces recommendations and ready-to-raise change requests;
+      // a human still approves every one.
+      if (url.pathname === "/api/vm/lifecycle" && req.method === "GET") {
+        try {
+          const lc = await import("./services/vm-lifecycle.js");
+          const out = await withClusterContext(url, async () => lc.lifecycleReport());
+          return sendJson(res, 200, out ?? { error: "Selected cluster is not reachable." });
+        } catch (err) { return sendJson(res, 200, { error: err.message }); }
+      }
+      if (url.pathname === "/api/vm/expiry" && req.method === "GET") {
+        try {
+          const lc = await import("./services/vm-lifecycle.js");
+          const out = await withClusterContext(url, async () => lc.expirySweep());
+          return sendJson(res, 200, out ?? { expired: [], error: "Cluster not reachable." });
+        } catch (err) { return sendJson(res, 200, { expired: [], error: err.message }); }
+      }
+      if (url.pathname === "/api/vm/right-sizing" && req.method === "GET") {
+        try {
+          const lc = await import("./services/vm-lifecycle.js");
+          const out = await withClusterContext(url, async () => lc.rightSizing());
+          return sendJson(res, 200, out ?? { candidates: [], error: "Cluster not reachable." });
+        } catch (err) { return sendJson(res, 200, { candidates: [], error: err.message }); }
+      }
+      // Raise the change request attached to a lifecycle recommendation.
+      if (url.pathname === "/api/vm/lifecycle/change-request" && req.method === "POST") {
+        if (enforceRateLimit(req, res, { burst: 6, refillPerSec: 0.1 })) return;
+        try {
+          const body = await readJsonBody(req);
+          if (!body?.changeRequest?.shortDescription) return sendJson(res, 400, { error: "changeRequest is required" });
+          const { createChangeRequest } = await import("./utils/servicenow-client.js");
+          const cr = await createChangeRequest(body.changeRequest);
+          return sendJson(res, 200, { ok: true, changeRequest: cr });
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
       if (url.pathname === "/api/vm/templates" && req.method === "GET") {
         try {
           const out = await withClusterContext(url, async () =>

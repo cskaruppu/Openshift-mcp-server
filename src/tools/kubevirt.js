@@ -420,6 +420,29 @@ export function registerKubeVirtTools(server) {
     }
   );
 
+  // ---------- Lifecycle: what we provisioned, and what it needs now ----------
+  server.tool(
+    "kubevirt_lifecycle_report",
+    "Report on VMs this platform provisioned: fleet inventory with provenance, VMs past their decommission date, and VMs whose real usage no longer matches the size chosen for them. Read-only — every recommendation carries a change request for a human to approve.",
+    {
+      section: z.enum(["all", "expiry", "right-sizing", "fleet"]).optional().default("all")
+        .describe("Limit the report to one section"),
+    },
+    async ({ section }) => {
+      try {
+        const lc = await import("../services/vm-lifecycle.js");
+        let out;
+        if (section === "expiry") out = await lc.expirySweep();
+        else if (section === "right-sizing") out = await lc.rightSizing();
+        else if (section === "fleet") out = await lc.fleet();
+        else out = await lc.lifecycleReport();
+        return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
+      } catch (err) {
+        return errorResponse(err);
+      }
+    }
+  );
+
   // ---------- List golden images, instance types and preferences ----------
   // Answers "what can I provision here?" so the AI proposes real options that
   // exist on THIS cluster rather than inventing plausible-looking names.

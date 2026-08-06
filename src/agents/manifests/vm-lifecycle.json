@@ -9,6 +9,7 @@
   "tools": [
     "kubevirt_list_templates",
     "kubevirt_create_vm",
+    "kubevirt_lifecycle_report",
     "kubevirt_list_vms",
     "kubevirt_get_vm",
     "kubevirt_start_vm",
@@ -25,7 +26,10 @@
     "Bridge/VLAN attachment via NetworkAttachmentDefinition, or pod networking",
     "Server-side dry-run (dryRun=All) before any VM is created",
     "Provenance labelling: owner, cost centre, environment, request ID, expiry, sizing rationale",
-    "VM lifecycle: start, stop, restart, inspect running instances"
+    "VM lifecycle: start, stop, restart, inspect running instances",
+    "Fleet inventory of every VM the platform provisioned, with its provenance",
+    "Expiry enforcement: VMs past their recorded decommission date, with a decommission change request",
+    "Right-sizing: VMs whose observed usage no longer matches the size chosen at provisioning, referencing the original request"
   ],
   "requires": [
     "core"
