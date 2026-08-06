@@ -1536,22 +1536,64 @@ async function handleDirectCommand(message, preParsed, opts = {}) {
     try {
       const { buildVMRequestCard } = await import("./vm-provisioning.js");
       const card = await buildVMRequestCard(message);
+      const req = card.request || {};
       const need = card.missing || [];
-      const lines = [
-        "**VM request** — here is what I understood. Nothing has been created.",
-        "",
-        need.length
-          ? `I still need: **${need.join(", ")}**. Fill those in on the card below, then dry-run it.`
-          : "All required fields are present. Dry-run it to validate against the live API server, then approve.",
-        "",
-        `@@VM_REQUEST|${JSON.stringify(card)}@@`,
-      ];
-      return { reply: lines.join("\n") };
-    } catch (e) {
-      return {
-        reply: `I could not build a VM request: ${e.message}\n\n`
-          + "Check that OpenShift Virtualization is installed and that this cluster is reachable.",
+
+      // What each missing field means, in the user's terms — a bare list of
+      // key names is not a question anyone can answer.
+      const ASK = {
+        name: "a **name** for the VM (e.g. `sap-app-01`)",
+        namespace: "the **namespace** to create it in (e.g. `sap`)",
+        sourceDataSource: (card.catalogue?.images?.length
+          ? `an **OS image** — this cluster offers: ${card.catalogue.images.map((i) => `\`${i.name}\``).join(", ")}`
+          : "an **OS image**. I could not read any golden images from this cluster — check that OpenShift Virtualization and CDI are installed"),
+        sshKey: "your **SSH public key**, otherwise nobody will be able to log in to the VM",
+        sizing: (card.catalogue?.instanceTypes?.length
+          ? `a **size** — either an instance type (${card.catalogue.instanceTypes.slice(0, 4).map((i) => `\`${i.name}\``).join(", ")}) or explicit vCPU and memory`
+          : "a **size** — vCPU and memory, e.g. `4 vCPU, 16GB`"),
       };
+
+      const lines = ["### VM request", ""];
+      // Only echo back what the USER supplied. Listing normalisation defaults
+      // as things "I understood" would be claiming to have read something the
+      // user never wrote.
+      const gave = new Set(card.provided || []);
+      const known = [
+        gave.has("name") && req.name && `name \`${req.name}\``,
+        gave.has("namespace") && req.namespace && `namespace \`${req.namespace}\``,
+        gave.has("count") && req.count > 1 && `${req.count} instances`,
+        gave.has("os") && req.os && `${req.os}`,
+        gave.has("cpuCores") && req.cpuCores && `${req.cpuCores} vCPU`,
+        gave.has("memoryMi") && req.memoryMi && `${Math.round(req.memoryMi / 1024)}Gi memory`,
+        gave.has("diskSizeGi") && req.diskSizeGi && `${req.diskSizeGi}Gi disk`,
+        gave.has("networkAttachmentDefinition") && req.networkAttachmentDefinition && `network ${req.networkAttachmentDefinition}`,
+        gave.has("environment") && req.environment && `${req.environment} environment`,
+      ].filter(Boolean);
+
+      if (known.length) lines.push(`I understood: ${known.join(", ")}.`, "");
+      lines.push("**Nothing has been created.**", "");
+
+      if (need.length) {
+        lines.push(`Before I can build anything I need ${need.length} more thing${need.length > 1 ? "s" : ""}:`, "");
+        for (const f of need) lines.push(`- ${ASK[f] || `**${f}**`}`);
+        lines.push("",
+          "Fill them in on the card below, or just tell me in one line — for example:", "",
+          "> " + [
+            "provision a RHEL 9 VM called sap-app-01 in namespace sap,",
+            "4 vCPU, 16GB RAM, 100GB disk, production,",
+            "ssh-ed25519 AAAAC3Nz... me@host",
+          ].join(" "),
+        );
+      } else {
+        lines.push("Everything I need is here. **Dry-run** it to validate against the live API server, then **Provision** — or **Submit for approval** to route it through ServiceNow.");
+      }
+      // `@@` inside the payload would terminate the token early; the console's
+      // parser converts `@ @` back on the way in.
+      lines.push("", `@@VM_REQUEST|${JSON.stringify(card).replace(/@@/g, "@ @")}@@`);
+      return lines.join("\n");
+    } catch (e) {
+      return `I could not build a VM request: ${e.message}\n\n`
+        + "Check that OpenShift Virtualization is installed and that this cluster is reachable.";
     }
   }
 

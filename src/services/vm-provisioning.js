@@ -192,6 +192,10 @@ export async function extractVMRequest(text) {
   return {
     request: req,
     missing: missingFields(req),
+    // Which fields the user ACTUALLY supplied, as opposed to defaults applied
+    // by normalisation. Reporting "I understood: 30Gi disk" when nobody said
+    // 30Gi is a small lie that costs trust.
+    provided: Object.keys(merged).filter((k) => merged[k] != null && merged[k] !== ""),
     source: llmEnabled() ? "llm+heuristic" : "heuristic",
   };
 }
@@ -620,7 +624,7 @@ export async function raiseProvisioningCR(req, preflight) {
  * pre-flight — everything needed to render a decision.
  */
 export async function buildVMRequestCard(text, overrides = {}) {
-  const { request: extracted, missing: m0, source } = await extractVMRequest(text);
+  const { request: extracted, missing: m0, source, provided } = await extractVMRequest(text);
   const request = normalizeVMRequest({ ...extracted, ...overrides });
   const catalogue = await listProvisionables(request.sourceDataSourceNamespace);
 
@@ -638,6 +642,7 @@ export async function buildVMRequestCard(text, overrides = {}) {
   return {
     request, catalogue, reconciliation, preflight,
     missing: missingFields(request),
+    provided: [...new Set([...(provided || []), ...Object.keys(overrides || {})])],
     extractedBy: source,
     initiallyMissing: m0,
   };
