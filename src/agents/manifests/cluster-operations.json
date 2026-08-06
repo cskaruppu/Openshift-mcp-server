@@ -23,7 +23,10 @@
     "generic_create",
     "generic_delete",
     "generic_scale",
-    "generic_apply"
+    "generic_apply",
+    "cluster_list_contexts",
+    "cluster_get_active_context",
+    "cluster_switch_context"
   ],
   "services": [],
   "capabilities": [
@@ -31,11 +34,23 @@
     "Node health, kubelet & CRI-O status, log retrieval",
     "Namespace listing and detail inspection",
     "Generic Kubernetes resource CRUD operations",
-    "Cluster events and resource utilisation"
+    "Cluster events and resource utilisation",
+    "Multi-cluster context listing and switching"
   ],
-  "requires": ["core"],
-  "protocols": ["mcp", "rest", "a2a"],
+  "requires": [
+    "core"
+  ],
+  "protocols": [
+    "mcp",
+    "rest",
+    "a2a"
+  ],
   "selectable": true,
   "mcpEndpoint": "/mcp/cluster-operations",
-  "tags": ["cluster", "node", "namespace", "kubernetes"]
+  "tags": [
+    "cluster",
+    "node",
+    "namespace",
+    "kubernetes"
+  ]
 }

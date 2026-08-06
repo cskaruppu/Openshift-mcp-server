@@ -19,9 +19,15 @@
     "scc_audit",
     "generate_policy",
     "generate_networkpolicy",
-    "generate_scc"
+    "generate_scc",
+    "image_vuln_scan",
+    "image_vuln_report",
+    "image_compliance_check"
   ],
-  "services": ["safety", "redaction"],
+  "services": [
+    "safety",
+    "redaction"
+  ],
   "capabilities": [
     "RBAC audit across ClusterRoles and RoleBindings",
     "Reverse RBAC: 'who can do X on resource Y'",
@@ -32,11 +38,24 @@
     "OpenSCAP compliance scoring and reports",
     "SCC (Security Context Constraints) explainer and audit",
     "Auto-generation of NetworkPolicies, SCCs, and Pod policies",
-    "Read-only and disable-destructive safety modes"
+    "Read-only and disable-destructive safety modes",
+    "Container image vulnerability scanning, reporting and compliance checks"
   ],
-  "requires": ["core"],
-  "protocols": ["mcp", "rest", "a2a"],
+  "requires": [
+    "core"
+  ],
+  "protocols": [
+    "mcp",
+    "rest",
+    "a2a"
+  ],
   "selectable": true,
   "mcpEndpoint": "/mcp/security-compliance",
-  "tags": ["security", "rbac", "compliance", "scc", "policy"]
+  "tags": [
+    "security",
+    "rbac",
+    "compliance",
+    "scc",
+    "policy"
+  ]
 }

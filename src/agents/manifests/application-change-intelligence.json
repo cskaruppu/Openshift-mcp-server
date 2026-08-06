@@ -1,0 +1,42 @@
+{
+  "id": "application-change-intelligence",
+  "name": "Application Change Intelligence Agent",
+  "version": "1.0.0",
+  "description": "Watches application workloads for change, detects GitOps drift between desired and live state, keeps a change history, and can roll a change back.",
+  "category": "Intelligence",
+  "icon": "git-compare",
+  "color": "#0ea5e9",
+  "tools": [
+    "app_watch_namespaces",
+    "app_change_scan",
+    "app_change_history",
+    "app_gitops_drift",
+    "app_change_rollback"
+  ],
+  "services": [],
+  "capabilities": [
+    "Watch selected namespaces for application change",
+    "Scan for changes to workloads since a baseline",
+    "GitOps drift detection between Git desired state and live cluster",
+    "Per-application change history",
+    "Roll back a detected change"
+  ],
+  "requires": [
+    "core"
+  ],
+  "protocols": [
+    "mcp",
+    "rest",
+    "a2a"
+  ],
+  "selectable": true,
+  "mcpEndpoint": "/mcp/application-change-intelligence",
+  "tags": [
+    "drift",
+    "gitops",
+    "change",
+    "history",
+    "rollback",
+    "application"
+  ]
+}

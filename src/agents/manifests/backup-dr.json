@@ -2,33 +2,50 @@
   "id": "backup-dr",
   "name": "Backup & Disaster Recovery Agent",
   "version": "1.0.0",
-  "description": "Backup policy auditing, PVC snapshot management, ETCD backup status, and disaster recovery readiness assessment across clusters.",
+  "description": "Velero-based backup and restore for OpenShift \u2014 backup and schedule management, restore, storage location and Data Protection Application status, and DR readiness assessment.",
   "category": "Lifecycle",
   "icon": "shield",
   "color": "#7c3aed",
   "tools": [
-    "list_persistent_volume_claims",
-    "list_persistent_volumes",
-    "get_etcd_status",
-    "list_custom_resources",
-    "list_namespaces",
-    "get_cluster_version",
-    "list_nodes",
-    "get_dashboard_summary"
+    "velero_dr_readiness",
+    "velero_list_backups",
+    "velero_get_backup",
+    "velero_create_backup",
+    "velero_delete_backup",
+    "velero_list_schedules",
+    "velero_list_restores",
+    "velero_create_restore",
+    "velero_storage_locations",
+    "velero_dpa_status"
   ],
-  "services": ["storage", "etcd", "backup"],
+  "services": [
+    "storage",
+    "etcd",
+    "backup"
+  ],
   "capabilities": [
-    "PVC backup policy audit and snapshot verification",
-    "ETCD backup status and health monitoring",
-    "Persistent volume reclaim policy compliance",
-    "Disaster recovery readiness scoring per cluster",
-    "Cross-cluster backup coverage gap detection",
-    "Storage class and provisioner inventory",
-    "Recovery point objective (RPO) estimation"
+    "Create, list, inspect and delete Velero backups",
+    "Restore from a backup",
+    "Backup schedules and backup storage locations",
+    "Data Protection Application (DPA) status",
+    "Disaster Recovery readiness assessment"
   ],
-  "requires": ["core"],
-  "protocols": ["mcp", "rest", "a2a"],
+  "requires": [
+    "core"
+  ],
+  "protocols": [
+    "mcp",
+    "rest",
+    "a2a"
+  ],
   "selectable": true,
   "mcpEndpoint": "/mcp/backup-dr",
-  "tags": ["backup", "disaster-recovery", "storage", "etcd", "resilience", "snapshots"]
+  "tags": [
+    "velero",
+    "backup",
+    "restore",
+    "dr",
+    "oadp",
+    "data-protection"
+  ]
 }

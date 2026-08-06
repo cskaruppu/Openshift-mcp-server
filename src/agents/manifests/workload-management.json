@@ -32,20 +32,36 @@
     "deploy_database",
     "create_hpa",
     "create_service",
-    "create_network_policy"
+    "create_network_policy",
+    "deploy_from_document"
   ],
-  "services": ["action-workflow"],
+  "services": [
+    "action-workflow"
+  ],
   "capabilities": [
     "Pod lifecycle: list, describe, logs, exec, run, delete",
     "Deployments / StatefulSets / DaemonSets management",
     "Scale & restart deployments with approval gating",
     "Services, Routes, PVCs, ConfigMaps, Secrets inventory",
     "Helm release install / upgrade / uninstall / history",
-    "Provision new workloads (deployments, databases, HPAs, services)"
+    "Provision new workloads (deployments, databases, HPAs, services)",
+    "Document-driven deployment: parse a requirements document, generate manifests, preview, deploy and roll back"
   ],
-  "requires": ["core"],
-  "protocols": ["mcp", "rest", "a2a"],
+  "requires": [
+    "core"
+  ],
+  "protocols": [
+    "mcp",
+    "rest",
+    "a2a"
+  ],
   "selectable": true,
   "mcpEndpoint": "/mcp/workload-management",
-  "tags": ["pods", "deployments", "helm", "workloads", "provisioning"]
+  "tags": [
+    "pods",
+    "deployments",
+    "helm",
+    "workloads",
+    "provisioning"
+  ]
 }

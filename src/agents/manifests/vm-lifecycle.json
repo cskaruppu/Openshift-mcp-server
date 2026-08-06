@@ -1,0 +1,49 @@
+{
+  "id": "vm-lifecycle",
+  "name": "VM Lifecycle Agent",
+  "version": "1.0.0",
+  "description": "OpenShift Virtualization (KubeVirt) virtual machine provisioning and lifecycle. Provisions VMs with persistent DataVolume-backed disks, cloud-init access, golden-image sources and instance types, with server-side dry-run and provenance labelling for day-2 ownership.",
+  "category": "Lifecycle",
+  "icon": "monitor",
+  "color": "#7c3aed",
+  "tools": [
+    "kubevirt_list_templates",
+    "kubevirt_create_vm",
+    "kubevirt_list_vms",
+    "kubevirt_get_vm",
+    "kubevirt_start_vm",
+    "kubevirt_stop_vm",
+    "kubevirt_restart_vm",
+    "kubevirt_list_vmis"
+  ],
+  "services": [],
+  "capabilities": [
+    "Discover what is provisionable: golden image DataSources, cluster instance types, guest preferences",
+    "Provision VMs with a PERSISTENT DataVolume root disk (not ephemeral containerDisk)",
+    "cloud-init user, SSH key, hostname injection so the VM is reachable on first boot",
+    "Golden sizing via VirtualMachineClusterInstancetype and Preference",
+    "Bridge/VLAN attachment via NetworkAttachmentDefinition, or pod networking",
+    "Server-side dry-run (dryRun=All) before any VM is created",
+    "Provenance labelling: owner, cost centre, environment, request ID, expiry, sizing rationale",
+    "VM lifecycle: start, stop, restart, inspect running instances"
+  ],
+  "requires": [
+    "core"
+  ],
+  "protocols": [
+    "mcp",
+    "rest",
+    "a2a"
+  ],
+  "selectable": true,
+  "mcpEndpoint": "/mcp/vm-lifecycle",
+  "tags": [
+    "kubevirt",
+    "openshift-virtualization",
+    "vm",
+    "provisioning",
+    "cnv",
+    "datavolume",
+    "cloud-init"
+  ]
+}

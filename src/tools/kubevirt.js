@@ -283,133 +283,261 @@ export function registerKubeVirtTools(server) {
   // ---------- Create VM ----------
   server.tool(
     "kubevirt_create_vm",
-    "Create a new KubeVirt virtual machine with the specified configuration",
+    "Provision an OpenShift Virtualization (KubeVirt) virtual machine with a PERSISTENT root disk and cloud-init access. Supports dry-run. Prefer a golden image (sourceDataSource) plus an instanceType/preference over raw cpu/memory.",
     {
       name: z.string().describe("Name for the new virtual machine"),
       namespace: z.string().describe("Namespace to create the VM in"),
-      instanceType: z
-        .string()
-        .optional()
-        .describe(
-          "VirtualMachineClusterInstancetype name (e.g. u1.medium). When set, cpu/memory from the instance type take precedence."
-        ),
-      image: z
-        .string()
-        .optional()
-        .describe(
-          "Container disk image for the VM (e.g. quay.io/containerdisks/fedora:latest)"
-        ),
-      cpuCores: z
-        .number()
-        .optional()
-        .default(1)
-        .describe("Number of CPU cores (ignored when instanceType is set)"),
-      memoryMi: z
-        .number()
-        .optional()
-        .default(1024)
-        .describe(
-          "Memory in MiB (ignored when instanceType is set)"
-        ),
+
+      // ----- Sizing: golden template first, explicit values as a fallback -----
+      instanceType: z.string().optional()
+        .describe("VirtualMachineClusterInstancetype, e.g. u1.medium. The KubeVirt-native way to express a golden size. Takes precedence over cpuCores/memoryMi."),
+      preference: z.string().optional()
+        .describe("VirtualMachineClusterPreference, e.g. rhel.9 or windows.11. Sets guest-appropriate devices, bus types and features."),
+      cpuCores: z.number().optional().default(2).describe("vCPU cores (ignored when instanceType is set)"),
+      memoryMi: z.number().optional().default(4096).describe("Memory in MiB (ignored when instanceType is set)"),
+
+      // ----- Root disk: persistent by default -----
+      sourceDataSource: z.string().optional()
+        .describe("Golden image DataSource to clone, e.g. rhel9. This is the recommended source — it yields a persistent, PVC-backed root disk."),
+      sourceDataSourceNamespace: z.string().optional().default("openshift-virtualization-os-images")
+        .describe("Namespace holding the DataSource"),
+      sourceRegistryUrl: z.string().optional()
+        .describe("Alternative source: container disk image to IMPORT into a PVC, e.g. docker://quay.io/containerdisks/fedora:latest. Still persistent, unlike a containerDisk volume."),
+      sourceHttpUrl: z.string().optional()
+        .describe("Alternative source: HTTP(S) URL of a qcow2/raw image to import"),
+      diskSizeGi: z.number().optional().default(30).describe("Root disk size in GiB"),
+      storageClass: z.string().optional().describe("Storage class for the root disk (empty = cluster default)"),
+
+      // ----- Access -----
+      sshKey: z.string().optional()
+        .describe("SSH public key injected via cloud-init. Without this (or a password) nobody can log in to the VM."),
+      username: z.string().optional().default("cloud-user").describe("Cloud-init user to create"),
+      hostname: z.string().optional().describe("Guest hostname (defaults to the VM name)"),
+      cloudInitUserData: z.string().optional()
+        .describe("Raw cloud-init #cloud-config to use verbatim instead of the generated one"),
+
+      // ----- Networking -----
+      networkAttachmentDefinition: z.string().optional()
+        .describe("NetworkAttachmentDefinition name for bridge/VLAN attachment, e.g. vlan300 or my-ns/vlan300. Omit for pod networking."),
+
+      // ----- Lifecycle -----
+      runStrategy: z.enum(["Always", "Halted", "RerunOnFailure", "Manual"]).optional().default("Always")
+        .describe("Always = start it now and keep it running. Halted = create stopped."),
+
+      // ----- Provenance: what makes day-2 ownership possible -----
+      owner: z.string().optional().describe("Requesting user or team — recorded on the VM"),
+      costCentre: z.string().optional().describe("Cost centre / chargeback code"),
+      environment: z.string().optional().describe("dev | test | prod"),
+      requestId: z.string().optional().describe("Change request or ticket reference"),
+      expiresOn: z.string().optional().describe("ISO date after which this VM should be decommissioned"),
+      sizingRationale: z.string().optional().describe("Why this size was chosen — read back later when right-sizing"),
+
+      dryRun: z.boolean().optional().default(false)
+        .describe("Validate against the live API server without creating anything (server-side dryRun=All)"),
     },
-    async ({ name, namespace, instanceType, image, cpuCores, memoryMi }) => {
+    async (a) => {
       try {
+        const ns = a.namespace;
+        const hasSource = Boolean(a.sourceDataSource || a.sourceRegistryUrl || a.sourceHttpUrl);
+        if (!hasSource) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({
+              error: "No boot source specified.",
+              detail: "A VM needs a root disk image. Pass sourceDataSource (recommended — clones a golden image into a persistent PVC), or sourceRegistryUrl / sourceHttpUrl to import one.",
+              hint: "Run kubevirt_list_templates to see the golden images and instance types available on this cluster.",
+            }, null, 2) }],
+            isError: true,
+          };
+        }
+        if (!a.sshKey && !a.cloudInitUserData) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({
+              error: "No access method specified.",
+              detail: "Without an SSH key (or explicit cloud-init) the VM will boot but nobody will be able to log in to it.",
+              hint: "Pass sshKey with a public key, or cloudInitUserData with your own #cloud-config.",
+            }, null, 2) }],
+            isError: true,
+          };
+        }
+
+        // ---- Root disk: a DataVolume template, so the disk is a real PVC that
+        // survives restarts. containerDisk/emptyDisk are ephemeral and are not
+        // used here — that is the difference between a demo and a provisioned VM.
+        const dvName = `${a.name}-rootdisk`;
+        const source = a.sourceDataSource
+          ? { sourceRef: { kind: "DataSource", name: a.sourceDataSource, namespace: a.sourceDataSourceNamespace } }
+          : a.sourceRegistryUrl
+            ? { source: { registry: { url: a.sourceRegistryUrl } } }
+            : { source: { http: { url: a.sourceHttpUrl } } };
+
+        const dataVolumeTemplate = {
+          metadata: { name: dvName },
+          spec: {
+            ...source,
+            storage: {
+              resources: { requests: { storage: `${a.diskSizeGi}Gi` } },
+              ...(a.storageClass ? { storageClassName: a.storageClass } : {}),
+            },
+          },
+        };
+
+        // ---- cloud-init: the difference between a VM and an unreachable VM ----
+        const hostname = a.hostname || a.name;
+        const userData = a.cloudInitUserData || [
+          "#cloud-config",
+          `hostname: ${hostname}`,
+          "ssh_pwauth: false",
+          "users:",
+          `  - name: ${a.username}`,
+          "    sudo: ALL=(ALL) NOPASSWD:ALL",
+          "    groups: wheel",
+          "    shell: /bin/bash",
+          "    ssh_authorized_keys:",
+          `      - ${a.sshKey}`,
+        ].join("\n");
+
+        // ---- Networking ----
+        const useNad = Boolean(a.networkAttachmentDefinition);
+        const iface = useNad
+          ? { name: "nic-0", bridge: {} }
+          : { name: "default", masquerade: {} };
+        const network = useNad
+          ? { name: "nic-0", multus: { networkName: a.networkAttachmentDefinition } }
+          : { name: "default", pod: {} };
+
+        // ---- Provenance. Cheap to write, and it is what lets the agent recognise
+        // its own work later: "this VM was provisioned by CHG0041022, sized for X".
+        const labels = {
+          "kubevirt.io/vm": a.name,
+          "app.kubernetes.io/managed-by": "tcs-agentic-ai",
+          ...(a.environment ? { "tcs.ai/environment": a.environment } : {}),
+          ...(a.owner ? { "tcs.ai/owner": String(a.owner).replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 63) } : {}),
+          ...(a.costCentre ? { "tcs.ai/cost-centre": String(a.costCentre).replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 63) } : {}),
+        };
+        const annotations = {
+          "tcs.ai/provisioned-at": new Date().toISOString(),
+          "tcs.ai/provisioned-by": "tcs-agentic-ai",
+          ...(a.owner ? { "tcs.ai/owner": a.owner } : {}),
+          ...(a.requestId ? { "tcs.ai/request-id": a.requestId } : {}),
+          ...(a.expiresOn ? { "tcs.ai/expires-on": a.expiresOn } : {}),
+          ...(a.sizingRationale ? { "tcs.ai/sizing-rationale": a.sizingRationale } : {}),
+        };
+
         const vmManifest = {
           apiVersion: "kubevirt.io/v1",
           kind: "VirtualMachine",
-          metadata: {
-            name,
-            namespace,
-          },
+          metadata: { name: a.name, namespace: ns, labels, annotations },
           spec: {
-            running: false,
+            runStrategy: a.runStrategy,
+            dataVolumeTemplates: [dataVolumeTemplate],
             template: {
-              metadata: {
-                labels: {
-                  "kubevirt.io/vm": name,
-                },
-              },
+              metadata: { labels: { "kubevirt.io/vm": a.name, ...(a.environment ? { "tcs.ai/environment": a.environment } : {}) } },
               spec: {
                 domain: {
                   devices: {
                     disks: [
-                      {
-                        name: "rootdisk",
-                        disk: { bus: "virtio" },
-                      },
+                      { name: "rootdisk", disk: { bus: "virtio" } },
+                      { name: "cloudinit", disk: { bus: "virtio" } },
                     ],
-                    interfaces: [
-                      {
-                        name: "default",
-                        masquerade: {},
-                      },
-                    ],
+                    interfaces: [iface],
                   },
                 },
-                networks: [
-                  {
-                    name: "default",
-                    pod: {},
-                  },
+                networks: [network],
+                volumes: [
+                  { name: "rootdisk", dataVolume: { name: dvName } },
+                  { name: "cloudinit", cloudInitNoCloud: { userData } },
                 ],
-                volumes: [],
               },
             },
           },
         };
 
-        // Apply instance type or explicit cpu/memory
-        if (instanceType) {
-          vmManifest.spec.instancetype = {
-            kind: "VirtualMachineClusterInstancetype",
-            name: instanceType,
-          };
+        // Golden sizing via instance type + preference, or explicit values.
+        if (a.instanceType) {
+          vmManifest.spec.instancetype = { kind: "VirtualMachineClusterInstancetype", name: a.instanceType };
         } else {
-          vmManifest.spec.template.spec.domain.cpu = { cores: cpuCores };
-          vmManifest.spec.template.spec.domain.resources = {
-            requests: { memory: `${memoryMi}Mi` },
-          };
+          vmManifest.spec.template.spec.domain.cpu = { cores: a.cpuCores };
+          vmManifest.spec.template.spec.domain.memory = { guest: `${a.memoryMi}Mi` };
+        }
+        if (a.preference) {
+          vmManifest.spec.preference = { kind: "VirtualMachineClusterPreference", name: a.preference };
         }
 
-        // Apply container disk image or an empty volume placeholder
-        if (image) {
-          vmManifest.spec.template.spec.volumes.push({
-            name: "rootdisk",
-            containerDisk: { image },
-          });
-        } else {
-          vmManifest.spec.template.spec.volumes.push({
-            name: "rootdisk",
-            emptyDisk: { capacity: "2Gi" },
-          });
-        }
+        const path = `/${KUBEVIRT_API}/namespaces/${ns}/virtualmachines`
+          + (a.dryRun ? "?dryRun=All" : "");
+        const created = await ocpPost(path, vmManifest);
 
-        const created = await ocpPost(
-          `/${KUBEVIRT_API}/namespaces/${namespace}/virtualmachines`,
-          vmManifest
-        );
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  action: "vm_created",
-                  name: created.metadata.name,
-                  namespace: created.metadata.namespace,
-                  uid: created.metadata.uid,
-                  message: `Virtual machine ${created.metadata.name} created in namespace ${created.metadata.namespace}. Use kubevirt_start_vm to start it.`,
-                },
-                null,
-                2
-              ),
-            },
-          ],
+        const summary = {
+          action: a.dryRun ? "vm_create_dry_run" : "vm_created",
+          dryRun: a.dryRun,
+          name: created.metadata.name,
+          namespace: created.metadata.namespace,
+          ...(a.dryRun ? {} : { uid: created.metadata.uid }),
+          rootDisk: { persistent: true, kind: "DataVolume", name: dvName, size: `${a.diskSizeGi}Gi`, storageClass: a.storageClass || "(cluster default)" },
+          bootSource: a.sourceDataSource
+            ? `DataSource ${a.sourceDataSourceNamespace}/${a.sourceDataSource}`
+            : (a.sourceRegistryUrl || a.sourceHttpUrl),
+          sizing: a.instanceType ? `instanceType ${a.instanceType}` : `${a.cpuCores} vCPU / ${a.memoryMi}Mi`,
+          preference: a.preference || null,
+          network: useNad ? `NetworkAttachmentDefinition ${a.networkAttachmentDefinition}` : "pod network (masquerade)",
+          access: a.cloudInitUserData ? "custom cloud-init" : `SSH as ${a.username}`,
+          runStrategy: a.runStrategy,
+          provenance: {
+            owner: a.owner || null, costCentre: a.costCentre || null, environment: a.environment || null,
+            requestId: a.requestId || null, expiresOn: a.expiresOn || null,
+          },
+          message: a.dryRun
+            ? `Dry-run accepted by the API server. Nothing was created. Re-run with dryRun=false to provision ${a.name}.`
+            : `Virtual machine ${created.metadata.name} created in ${created.metadata.namespace}. The root disk is importing; the VM boots when the DataVolume is ready. Use kubevirt_get_vm to watch progress.`,
         };
+        return { content: [{ type: "text", text: JSON.stringify(summary, null, 2) }] };
       } catch (err) {
         return errorResponse(err);
       }
+    }
+  );
+
+  // ---------- List golden images, instance types and preferences ----------
+  // Answers "what can I provision here?" so the AI proposes real options that
+  // exist on THIS cluster rather than inventing plausible-looking names.
+  server.tool(
+    "kubevirt_list_templates",
+    "List what can be provisioned on this cluster: golden image DataSources, VirtualMachineClusterInstancetypes (sizes) and VirtualMachineClusterPreferences (guest OS tuning).",
+    {
+      dataSourceNamespace: z.string().optional().default("openshift-virtualization-os-images")
+        .describe("Namespace holding golden image DataSources"),
+    },
+    async ({ dataSourceNamespace }) => {
+      const out = { images: [], instanceTypes: [], preferences: [], notes: [] };
+      try {
+        const ds = await ocpGet(`/apis/cdi.kubevirt.io/v1beta1/namespaces/${dataSourceNamespace}/datasources`);
+        out.images = (ds.items || []).map((d) => {
+          const ready = (d.status?.conditions || []).find((c) => c.type === "Ready");
+          return { name: d.metadata.name, namespace: d.metadata.namespace, ready: ready?.status === "True" };
+        });
+      } catch { out.notes.push(`No DataSources readable in ${dataSourceNamespace} — CDI may not be installed, or the images live elsewhere.`); }
+
+      try {
+        const it = await ocpGet(`/apis/instancetype.kubevirt.io/v1beta1/virtualmachineclusterinstancetypes`);
+        out.instanceTypes = (it.items || []).map((i) => ({
+          name: i.metadata.name,
+          cpu: i.spec?.cpu?.guest ?? null,
+          memory: i.spec?.memory?.guest ?? null,
+        })).sort((x, y) => (x.cpu ?? 0) - (y.cpu ?? 0));
+      } catch { out.notes.push("No cluster instance types found — size with cpuCores/memoryMi instead."); }
+
+      try {
+        const pr = await ocpGet(`/apis/instancetype.kubevirt.io/v1beta1/virtualmachineclusterpreferences`);
+        out.preferences = (pr.items || []).map((p) => p.metadata.name).sort();
+      } catch { /* preferences are optional */ }
+
+      if (!out.images.length && !out.instanceTypes.length) {
+        return { content: [{ type: "text", text: JSON.stringify({
+          ...out,
+          message: "Nothing provisionable was discovered. Check that OpenShift Virtualization and CDI are installed and that this service account can read DataSources and instance types.",
+        }, null, 2) }] };
+      }
+      return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
     }
   );
 }

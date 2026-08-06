@@ -1,0 +1,42 @@
+{
+  "id": "automation-ansible",
+  "name": "Automation & Ansible Agent",
+  "version": "1.0.0",
+  "description": "Ansible Automation Platform integration \u2014 launch job templates and workflows, track job status, and inspect inventories from the platform.",
+  "category": "Platform",
+  "icon": "play-circle",
+  "color": "#ef4444",
+  "tools": [
+    "list_ansible_job_templates",
+    "launch_ansible_job",
+    "check_ansible_job_status",
+    "list_ansible_inventories",
+    "list_ansible_workflows",
+    "launch_ansible_workflow"
+  ],
+  "services": [],
+  "capabilities": [
+    "Discover Ansible job templates and workflows",
+    "Launch a job template with extra variables",
+    "Launch a workflow job template",
+    "Poll job status to completion",
+    "Inspect inventories"
+  ],
+  "requires": [
+    "core"
+  ],
+  "protocols": [
+    "mcp",
+    "rest",
+    "a2a"
+  ],
+  "selectable": true,
+  "mcpEndpoint": "/mcp/automation-ansible",
+  "tags": [
+    "ansible",
+    "aap",
+    "automation",
+    "job-template",
+    "workflow"
+  ]
+}
