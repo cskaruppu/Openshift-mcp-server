@@ -18,11 +18,18 @@
 
 import { promQuery } from "../services/prometheus.js";
 
-/** Run a PromQL instant query, returning [] on any failure (unreachable, 4xx). */
+// A failed query and an empty result are NOT the same thing. Swallowing the
+// difference is how this view told an operator to install an operator that was
+// already installed and healthy. The last error is kept so the presence probe
+// can report "cannot reach Prometheus" instead of "no GPUs".
+let _lastProbeError = null;
+
+/** Run a PromQL instant query, returning [] on failure and recording why. */
 async function safeQuery(q) {
   try {
     return await promQuery(q);
-  } catch {
+  } catch (e) {
+    _lastProbeError = e?.message || String(e);
     return [];
   }
 }
@@ -56,6 +63,7 @@ function gpuStatus({ tempC, xid, eccDbe }) {
  * @returns {Promise<object>} inventory + utilization + health, or { available:false }.
  */
 export async function getGpuOverview() {
+  _lastProbeError = null;
   // Utilization is the presence probe — if there are no GPU_UTIL series, there
   // is no DCGM exporter reporting and we treat GPUs as absent.
   const util = await safeQuery("DCGM_FI_DEV_GPU_UTIL");
@@ -75,10 +83,32 @@ export async function getGpuOverview() {
         generatedAt: new Date().toISOString(),
       };
     }
+    // Could we even ask? If the metrics backend is unreachable or refusing us,
+    // saying "no GPU operator" is a guess dressed as a fact.
+    if (_lastProbeError) {
+      return {
+        available: false,
+        reason: "metrics-unreachable",
+        message: `Could not query the metrics backend for this cluster, so GPU presence is unknown — this is NOT a statement that the GPU Operator is missing. Error: ${_lastProbeError}`,
+        remediation: [
+          "Confirm the selected cluster's Thanos route is reachable from this server: oc get route thanos-querier -n openshift-monitoring",
+          "Confirm the cluster credential has cluster-monitoring-view: oc adm policy add-cluster-role-to-user cluster-monitoring-view <sa>",
+          "For DCGM metrics specifically, user-workload monitoring must be enabled — the exporter lives in nvidia-gpu-operator, a user namespace.",
+        ],
+        error: _lastProbeError,
+        generatedAt: new Date().toISOString(),
+      };
+    }
+    // Reachable, answered, and genuinely nothing there.
     return {
       available: false,
       reason: "no-gpu-operator",
-      message: "No GPU metrics found. Install the NVIDIA GPU Operator (or AMD device-metrics-exporter) so the DCGM exporter can publish DCGM_FI_* series to Prometheus.",
+      message: "Queried this cluster's metrics backend successfully, but found no DCGM_FI_* series and no nvidia.com/gpu node capacity. If the GPU Operator IS installed, the most likely cause is that user-workload monitoring is disabled, so the DCGM exporter in nvidia-gpu-operator is never scraped.",
+      remediation: [
+        "Enable user-workload monitoring: oc -n openshift-monitoring edit configmap cluster-monitoring-config → data.config.yaml → enableUserWorkload: true",
+        "Then confirm the exporter is scraped: oc get servicemonitor -n nvidia-gpu-operator",
+        "Verify from inside the cluster: the query DCGM_FI_DEV_GPU_UTIL should return series in the OpenShift console Observe → Metrics page.",
+      ],
       docs: "https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/openshift/mirror-gpu-ocp-disconnected.html",
       generatedAt: new Date().toISOString(),
     };

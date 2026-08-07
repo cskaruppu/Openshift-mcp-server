@@ -79,11 +79,19 @@ export function GpuOverviewWidget() {
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>
-              {data.reason === "gpu-nodes-without-metrics" ? "GPUs detected — metrics pending" : "GPU Operator not detected"}
+              {data.reason === "gpu-nodes-without-metrics" ? "GPUs detected — metrics pending"
+                : data.reason === "metrics-unreachable" ? "GPU status unknown — metrics backend unreachable"
+                : data.reason === "cluster-unreachable" ? "Cluster unreachable"
+                : "No GPU metrics on this cluster"}
             </div>
             <div style={{ fontSize: 12.5, color: "var(--text2)", lineHeight: 1.55, maxWidth: 620 }}>
               {data.message}
             </div>
+            {data.remediation?.length > 0 && (
+              <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 12, color: "var(--text2)", lineHeight: 1.6 }}>
+                {data.remediation.map((r, i) => <li key={i}>{r}</li>)}
+              </ul>
+            )}
             {data.docs && (
               <a href={data.docs} target="_blank" rel="noreferrer"
                  style={{ display: "inline-block", marginTop: 8, fontSize: 12, fontWeight: 600, color: "#3b82f6", textDecoration: "none" }}>

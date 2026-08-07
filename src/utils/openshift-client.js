@@ -127,6 +127,21 @@ export function renderTraceMarkdown(trace) {
 const clusterStore = new AsyncLocalStorage();
 
 /**
+ * The remote cluster in context for this async scope, or null when the request
+ * targets the cluster this process runs in.
+ *
+ * Exposed so other clients — notably the Prometheus/Thanos client — can route
+ * to the SAME cluster the Kubernetes calls are going to. Without this they
+ * silently read from the local cluster while the user is looking at a remote
+ * one, which is indistinguishable from "there is nothing there".
+ *
+ * @returns {{apiUrl?:string, token?:string, bridge?:string}|null}
+ */
+export function activeClusterContext() {
+  return clusterStore.getStore() || null;
+}
+
+/**
  * Run `fn` with all ocpFetch() calls routed to the given remote cluster.
  * Safe under concurrency — each async context gets its own override.
  */
