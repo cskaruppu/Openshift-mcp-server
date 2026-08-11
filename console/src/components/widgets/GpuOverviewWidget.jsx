@@ -104,21 +104,88 @@ export function GpuOverviewWidget() {
 
       {!isLoading && data && data.available && s && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Telemetry banner — hardware is visible, live metrics are not. */}
+          {data.telemetry === "unavailable" && (
+            <div style={{
+              padding: "10px 14px", borderRadius: 10, fontSize: 12.5, lineHeight: 1.55,
+              background: "color-mix(in srgb, #3b82f6 10%, transparent)",
+              border: "1px solid color-mix(in srgb, #3b82f6 32%, transparent)",
+            }}>
+              <strong style={{ color: "#3b82f6" }}>Inventory only — live GPU telemetry unavailable</strong>
+              <div style={{ color: "var(--text2)", marginTop: 3 }}>{data.telemetryReason}</div>
+              {data.telemetryRemediation?.length > 0 && (
+                <ul style={{ margin: "6px 0 0", paddingLeft: 18, color: "var(--text2)" }}>
+                  {data.telemetryRemediation.map((r, i) => <li key={i}>{r}</li>)}
+                </ul>
+              )}
+            </div>
+          )}
+
           {/* Summary strip */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: "18px 26px", alignItems: "flex-start" }}>
             <Stat label="GPUs" value={s.totalGpus} sub={`${s.nodes} node${s.nodes === 1 ? "" : "s"}`} />
-            <Stat label="Avg Util" value={`${s.avgUtilPct}%`} sub={`peak ${s.maxUtilPct}%`} tone={utilColor(s.avgUtilPct)} />
+            {s.avgUtilPct != null && <Stat label="Avg Util" value={`${s.avgUtilPct}%`} sub={`peak ${s.maxUtilPct}%`} tone={utilColor(s.avgUtilPct)} />}
             <Stat label="Allocated" value={`${s.allocatedGpus}/${s.totalGpus}`} sub={`${s.unallocatedGpus} free`} />
-            <Stat label="GPU Mem" value={s.memPct != null ? `${s.memPct}%` : "—"} sub={s.memTotalGiB ? `${s.memUsedGiB} / ${s.memTotalGiB} GiB` : null} />
-            <Stat label="Power" value={s.totalPowerKW ? `${s.totalPowerKW} kW` : `${s.totalPowerW} W`} />
-            <Stat label="Max Temp" value={`${s.maxTempC}°C`} tone={tempColor(s.maxTempC)} />
-            <Stat
-              label="Health"
-              value={s.health === "healthy" ? "OK" : s.health === "warning" ? "Warn" : "Crit"}
-              tone={HEALTH_TONE[s.health]}
-              sub={s.unhealthyGpus > 0 ? `${s.unhealthyGpus} affected` : "all nominal"}
-            />
+            {s.memPct != null && <Stat label="GPU Mem" value={`${s.memPct}%`} sub={s.memTotalGiB ? `${s.memUsedGiB} / ${s.memTotalGiB} GiB` : null} />}
+            {(s.totalPowerKW || s.totalPowerW) && <Stat label="Power" value={s.totalPowerKW ? `${s.totalPowerKW} kW` : `${s.totalPowerW} W`} />}
+            {s.maxTempC != null && <Stat label="Max Temp" value={`${s.maxTempC}°C`} tone={tempColor(s.maxTempC)} />}
+            {s.health && s.health !== "unknown" && (
+              <Stat
+                label="Health"
+                value={s.health === "healthy" ? "OK" : s.health === "warning" ? "Warn" : "Crit"}
+                tone={HEALTH_TONE[s.health]}
+                sub={s.unhealthyGpus > 0 ? `${s.unhealthyGpus} affected` : "all nominal"}
+              />
+            )}
           </div>
+
+          {/* Hardware detail — model, memory, driver, MIG. From the API server,
+              so it renders whether or not DCGM is reporting. */}
+          {data.inventory?.nodes?.length > 0 && (
+            <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+              <div style={{ padding: "7px 12px", fontSize: 11.5, fontWeight: 700, opacity: .75,
+                borderBottom: "1px solid var(--border)" }}>GPU hardware</div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
+                  <thead>
+                    <tr style={{ textAlign: "left", opacity: .6 }}>
+                      {["NODE", "MODEL", "GPUs", "ALLOCATED", "MEM/GPU", "DRIVER", "MIG"].map((h) => (
+                        <th key={h} style={{ padding: "5px 10px", fontWeight: 600, whiteSpace: "nowrap" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.inventory.nodes.map((n) => (
+                      <tr key={n.name} style={{ borderTop: "1px solid var(--border)" }}>
+                        <td style={{ padding: "5px 10px", whiteSpace: "nowrap" }}>
+                          {n.name}
+                          {!n.ready && <span style={{ color: "#fca5a5", marginLeft: 6 }}>NotReady</span>}
+                          {n.ready && !n.schedulable && <span style={{ color: "#fbbf24", marginLeft: 6 }}>cordoned</span>}
+                        </td>
+                        <td style={{ padding: "5px 10px" }}>{n.product}</td>
+                        <td style={{ padding: "5px 10px" }}>{n.capacity}</td>
+                        <td style={{ padding: "5px 10px" }}>
+                          {n.allocatedGpus}<span style={{ opacity: .5 }}> / {n.allocatable}</span>
+                        </td>
+                        <td style={{ padding: "5px 10px", whiteSpace: "nowrap" }}>
+                          {n.memoryMiBPerGpu ? `${Math.round(n.memoryMiBPerGpu / 1024)} GiB` : "—"}
+                        </td>
+                        <td style={{ padding: "5px 10px", whiteSpace: "nowrap" }}>{n.driverVersion || "—"}</td>
+                        <td style={{ padding: "5px 10px" }}>{n.migCapable ? (n.migStrategy || "capable") : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {data.inventory.consumers?.length > 0 && (
+                <div style={{ padding: "7px 12px", borderTop: "1px solid var(--border)", fontSize: 11.5, color: "var(--text2)" }}>
+                  <strong style={{ opacity: .8 }}>Holding GPUs:</strong>{" "}
+                  {data.inventory.consumers.slice(0, 6).map((c) => `${c.namespace}/${c.pod} (${c.gpus})`).join(" · ")}
+                  {data.inventory.consumerCount > 6 && ` · +${data.inventory.consumerCount - 6} more`}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Idle-but-allocated cost-waste insight (the unique AI angle) */}
           {s.idleAllocatedGpus > 0 && (

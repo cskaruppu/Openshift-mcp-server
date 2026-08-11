@@ -17,6 +17,7 @@
  */
 
 import { promQuery } from "../services/prometheus.js";
+import { ocpGet } from "../utils/openshift-client.js";
 
 // A failed query and an empty result are NOT the same thing. Swallowing the
 // difference is how this view told an operator to install an operator that was
@@ -59,14 +60,172 @@ function gpuStatus({ tempC, xid, eccDbe }) {
 }
 
 /**
+ * GPU inventory straight from the Kubernetes API — no Prometheus involved.
+ *
+ * This is the presence source of truth. DCGM telemetry is an ENRICHMENT: it
+ * tells you how hard the cards are working, not whether they exist. Treating
+ * metrics as the presence probe meant a cluster with healthy GPUs reported
+ * none whenever monitoring was misconfigured, which is the wrong answer to a
+ * question the API server can always answer.
+ *
+ * Detail comes from the labels GPU Feature Discovery writes onto each node.
+ */
+export async function getGpuInventory() {
+  let nodeList;
+  try {
+    nodeList = await ocpGet("/api/v1/nodes");
+  } catch (e) {
+    return { nodes: [], totalGpus: 0, error: `Could not list nodes: ${e.message}` };
+  }
+
+  const RES = ["nvidia.com/gpu", "amd.com/gpu", "intel.com/gpu"];
+  const nodes = [];
+  for (const n of nodeList.items || []) {
+    const cap = n.status?.capacity || {};
+    const alloc = n.status?.allocatable || {};
+    const resKey = RES.find((r) => Number(cap[r]) > 0);
+    if (!resKey) continue;
+
+    const L = n.metadata?.labels || {};
+    const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+    const memMiB = num(L["nvidia.com/gpu.memory"]);
+    nodes.push({
+      name: n.metadata?.name,
+      vendor: resKey.split(".")[0],
+      resource: resKey,
+      capacity: num(cap[resKey]) || 0,
+      allocatable: num(alloc[resKey]) || 0,
+      product: L["nvidia.com/gpu.product"] || L["amd.com/gpu.product"] || "GPU",
+      memoryMiBPerGpu: memMiB,
+      driverVersion: L["nvidia.com/cuda.driver-version.full"]
+        || [L["nvidia.com/cuda.driver.major"], L["nvidia.com/cuda.driver.minor"], L["nvidia.com/cuda.driver.rev"]].filter(Boolean).join(".")
+        || null,
+      cudaVersion: L["nvidia.com/cuda.runtime-version.full"]
+        || [L["nvidia.com/cuda.runtime.major"], L["nvidia.com/cuda.runtime.minor"]].filter(Boolean).join(".")
+        || null,
+      machine: L["nvidia.com/gpu.machine"] || null,
+      migCapable: L["nvidia.com/mig.capable"] === "true",
+      migStrategy: L["nvidia.com/mig.strategy"] || null,
+      computeCapability: L["nvidia.com/gpu.compute.major"]
+        ? `${L["nvidia.com/gpu.compute.major"]}.${L["nvidia.com/gpu.compute.minor"] || 0}` : null,
+      ready: (n.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True"),
+      schedulable: !n.spec?.unschedulable,
+    });
+  }
+  if (!nodes.length) return { nodes: [], totalGpus: 0 };
+
+  // Who is actually holding the cards? Sum GPU limits across running pods.
+  const consumers = [];
+  const perNode = new Map();
+  try {
+    const pods = await ocpGet("/api/v1/pods?fieldSelector=status.phase%3DRunning&limit=3000");
+    for (const pod of pods.items || []) {
+      let want = 0;
+      for (const c of pod.spec?.containers || []) {
+        for (const r of RES) {
+          const v = Number(c.resources?.limits?.[r] ?? c.resources?.requests?.[r] ?? 0);
+          if (Number.isFinite(v)) want += v;
+        }
+      }
+      if (want <= 0) continue;
+      const node = pod.spec?.nodeName || "unknown";
+      consumers.push({ namespace: pod.metadata?.namespace, pod: pod.metadata?.name, node, gpus: want });
+      perNode.set(node, (perNode.get(node) || 0) + want);
+    }
+  } catch { /* pod read is best-effort — inventory still stands */ }
+
+  let totalGpus = 0, totalAllocated = 0;
+  const models = {};
+  for (const n of nodes) {
+    totalGpus += n.capacity;
+    n.allocatedGpus = perNode.get(n.name) || 0;
+    n.freeGpus = Math.max(0, n.allocatable - n.allocatedGpus);
+    totalAllocated += n.allocatedGpus;
+    models[n.product] = (models[n.product] || 0) + n.capacity;
+  }
+  consumers.sort((a, b) => b.gpus - a.gpus);
+  return {
+    nodes, totalGpus, totalAllocated,
+    totalFree: Math.max(0, totalGpus - totalAllocated),
+    models,
+    consumers: consumers.slice(0, 25),
+    consumerCount: consumers.length,
+  };
+}
+
+/**
  * Build a fleet-wide GPU overview from DCGM metrics.
  * @returns {Promise<object>} inventory + utilization + health, or { available:false }.
  */
+/**
+ * MCP tool surface for GPU inventory and telemetry.
+ */
+export function registerGpuTools(server) {
+  server.tool(
+    "gpu_inventory",
+    "GPU hardware on this cluster, read from the Kubernetes API: per-node model, count, allocated vs free, memory per GPU, driver version and MIG capability, plus which pods are holding GPUs. Works without Prometheus.",
+    {},
+    async () => {
+      const inv = await getGpuInventory();
+      return { content: [{ type: "text", text: JSON.stringify(inv, null, 2) }] };
+    }
+  );
+  server.tool(
+    "gpu_overview",
+    "Full GPU fleet view: inventory from the Kubernetes API, enriched with live DCGM utilisation, memory, temperature, power and error counters when the exporter is being scraped.",
+    {},
+    async () => {
+      const out = await getGpuOverview();
+      return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
+    }
+  );
+}
+
 export async function getGpuOverview() {
   _lastProbeError = null;
-  // Utilization is the presence probe — if there are no GPU_UTIL series, there
-  // is no DCGM exporter reporting and we treat GPUs as absent.
+
+  // Ask the API server first. It always knows whether GPUs exist, and it is
+  // routed to the SAME cluster the user selected. Metrics are enrichment.
+  const inv = await getGpuInventory();
   const util = await safeQuery("DCGM_FI_DEV_GPU_UTIL");
+
+  // Hardware present but no telemetry — show everything we DO know rather than
+  // an empty state. This is the common real-world case: the GPU Operator is
+  // healthy but user-workload monitoring is off, so DCGM is never scraped.
+  if (!util.length && inv.totalGpus > 0) {
+    return {
+      available: true,
+      telemetry: "unavailable",
+      telemetryReason: _lastProbeError
+        ? `Metrics backend unreachable: ${_lastProbeError}`
+        : "No DCGM_FI_* series found. The GPU Operator is installed and the cards are visible to Kubernetes, but the DCGM exporter is not being scraped.",
+      telemetryRemediation: _lastProbeError
+        ? ["Check this cluster's Thanos route is reachable and the stored credential has cluster-monitoring-view."]
+        : [
+            "Enable user-workload monitoring — the DCGM exporter runs in nvidia-gpu-operator, a user namespace that platform Prometheus does not scrape:",
+            "oc -n openshift-monitoring edit configmap cluster-monitoring-config  →  data.config.yaml: enableUserWorkload: true",
+            "Then: oc get servicemonitor -n nvidia-gpu-operator",
+          ],
+      summary: {
+        totalGpus: inv.totalGpus,
+        nodes: inv.nodes.length,
+        models: inv.models,
+        allocatedGpus: inv.totalAllocated,
+        unallocatedGpus: inv.totalFree,
+        avgUtilPct: null, maxUtilPct: null, idleAllocatedGpus: null,
+        fleetHealth: "unknown",
+      },
+      inventory: inv,
+      nodes: inv.nodes.map((n) => ({
+        name: n.name, gpuCount: n.capacity, model: n.product,
+        avgUtil: null, allocated: n.allocatedGpus, free: n.freeGpus,
+        memoryMiBPerGpu: n.memoryMiBPerGpu, driverVersion: n.driverVersion,
+        migCapable: n.migCapable, ready: n.ready,
+      })),
+      gpus: [],
+      generatedAt: new Date().toISOString(),
+    };
+  }
 
   if (!util.length) {
     // Second chance: a node may advertise nvidia.com/gpu capacity even before
@@ -99,11 +258,13 @@ export async function getGpuOverview() {
         generatedAt: new Date().toISOString(),
       };
     }
-    // Reachable, answered, and genuinely nothing there.
+    // No telemetry AND no GPU hardware visible to Kubernetes.
     return {
       available: false,
-      reason: "no-gpu-operator",
-      message: "Queried this cluster's metrics backend successfully, but found no DCGM_FI_* series and no nvidia.com/gpu node capacity. If the GPU Operator IS installed, the most likely cause is that user-workload monitoring is disabled, so the DCGM exporter in nvidia-gpu-operator is never scraped.",
+      reason: inv.error ? "inventory-unreadable" : "no-gpu-hardware",
+      message: inv.error
+        ? `Could not read node inventory for this cluster, so GPU presence is unknown: ${inv.error}`
+        : "No node on this cluster advertises nvidia.com/gpu (or amd.com/gpu) capacity, and no DCGM series were found. This cluster appears to have no GPUs available to Kubernetes.",
       remediation: [
         "Enable user-workload monitoring: oc -n openshift-monitoring edit configmap cluster-monitoring-config → data.config.yaml → enableUserWorkload: true",
         "Then confirm the exporter is scraped: oc get servicemonitor -n nvidia-gpu-operator",
@@ -239,6 +400,8 @@ export async function getGpuOverview() {
 
   return {
     available: true,
+    telemetry: "live",
+    inventory: inv,
     summary: {
       totalGpus: total,
       nodes: nodeMap.size,

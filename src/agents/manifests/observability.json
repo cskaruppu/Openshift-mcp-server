@@ -12,20 +12,39 @@
     "alertmanager_query",
     "pods_top",
     "nodes_top",
-    "get_dashboard_summary"
+    "get_dashboard_summary",
+    "gpu_inventory",
+    "gpu_overview"
   ],
-  "services": ["prometheus", "alertmanager", "metrics"],
+  "services": [
+    "prometheus",
+    "alertmanager",
+    "metrics"
+  ],
   "capabilities": [
     "Instant Prometheus PromQL queries",
     "Range Prometheus queries with step interval",
     "Alertmanager firing alerts query and routing",
     "Top CPU/memory pods with sorting and namespace filter",
     "Top CPU/memory nodes with sorting",
-    "Aggregated dashboard summary (cluster, alerts, ops, OLM, recent CRs)"
+    "Aggregated dashboard summary (cluster, alerts, ops, OLM, recent CRs)",
+    "GPU fleet inventory and DCGM telemetry: per-node model, allocation, driver version, MIG capability, utilisation and health"
   ],
-  "requires": ["core"],
-  "protocols": ["mcp", "rest", "a2a"],
+  "requires": [
+    "core"
+  ],
+  "protocols": [
+    "mcp",
+    "rest",
+    "a2a"
+  ],
   "selectable": true,
   "mcpEndpoint": "/mcp/observability",
-  "tags": ["prometheus", "metrics", "alerts", "monitoring", "observability"]
+  "tags": [
+    "prometheus",
+    "metrics",
+    "alerts",
+    "monitoring",
+    "observability"
+  ]
 }

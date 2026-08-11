@@ -87,7 +87,7 @@ import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvest
 import { cisCheckManifests, scanManifestImages } from "./services/manifest-scan.js";
 import { handleIncidentCorrelationAPI, handleTopologyExplainAPI, handleImageAnalysisAPI, handleApiMigrationAPI } from "./services/chat-api.js";
 import { getDeprecatedAPIConsumers } from "./tools/api-consumers.js";
-import { getGpuOverview } from "./tools/gpu-metrics.js";
+import { getGpuOverview, registerGpuTools } from "./tools/gpu-metrics.js";
 import { remember as fleetRemember, recall as fleetRecall, memoryStats as fleetMemoryStats } from "./services/fleet-memory.js";
 import {
   listActions,
@@ -277,6 +277,7 @@ function createMcpServer() {
     ["registerHelmTools",           registerHelmTools],
     ["registerTektonTools",         registerTektonTools],
     ["registerKubeVirtTools",       registerKubeVirtTools],
+    ["registerGpuTools",            registerGpuTools],
     ["registerNetworkTools",        registerNetworkTools],
     ["registerGenericTools",        registerGenericTools],
     ["registerMustGatherTools",     registerMustGatherTools],

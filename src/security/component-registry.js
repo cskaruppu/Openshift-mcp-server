@@ -100,6 +100,7 @@ const COMPONENT_CATALOG = {
     tools: [
       "registerACMTools",
       "registerKubeVirtTools",
+      "registerGpuTools",
       "registerEmergencyTools",
       "registerDriftTools",
       "registerImpactTools",
