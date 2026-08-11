@@ -46,18 +46,38 @@ const _routeCache = new Map();
 /**
  * Candidate Thanos endpoints for the cluster in context, best first.
  *
- * The in-cluster Service name is tried FIRST, always. A pod frequently cannot
- * resolve its own cluster's *.apps wildcard — cluster DNS forwards it to a
- * resolver that has no record for it — so assuming a "remote" cluster context
- * means "use the Route" was wrong: the server may well be running inside the
- * very cluster being queried. The Route is the fallback for genuinely remote
- * clusters, and whichever answers first is cached.
+ * Ordered so the least fragile option is tried first. DNS has been the cause of
+ * every failure here so far — first an unresolvable *.apps wildcard, then a
+ * timeout on the short .svc form — so the list ends with a candidate that needs
+ * no DNS at all: the Service's ClusterIP, read from the API server, which this
+ * process can always reach because KUBERNETES_SERVICE_HOST is an IP.
  */
+const SVC_NAME = "thanos-querier.openshift-monitoring.svc";
+
 async function candidateTargets() {
   const remote = activeClusterContext();
   const token = remote?.token || (await getLocalToken());
-  const out = [{ url: DEFAULT_URL, token, why: "in-cluster service" }];
+  const out = [];
 
+  // 1. Fully-qualified in-cluster name. Absolute, so the resolver does not walk
+  //    the search list — which is where the short form times out.
+  out.push({ url: `https://${SVC_NAME}.cluster.local:9091`, token, why: "in-cluster service (FQDN)" });
+  // 2. The short form, for clusters using a non-default cluster domain.
+  out.push({ url: `https://${SVC_NAME}:9091`, token, why: "in-cluster service" });
+
+  // 3. No DNS at all. Ask the API server for the Service's ClusterIP and talk
+  //    to it directly, presenting the service name for TLS so verification
+  //    still holds.
+  try {
+    const svc = await ocpGet("/api/v1/namespaces/openshift-monitoring/services/thanos-querier");
+    const ip = svc?.spec?.clusterIP;
+    const port = (svc?.spec?.ports || []).find((p) => p.name === "web" || p.port === 9091)?.port || 9091;
+    if (ip && ip !== "None") {
+      out.push({ url: `https://${ip}:${port}`, token, why: "service ClusterIP (no DNS)", servername: SVC_NAME });
+    }
+  } catch { /* API unreachable — the caller reports that separately */ }
+
+  // 4. The cluster's external Route, for a genuinely remote cluster.
   if (remote?.apiUrl) {
     let host = null;
     try {
@@ -75,7 +95,8 @@ async function candidateTargets() {
 
 async function resolveTarget(explicitUrl) {
   const remote = activeClusterContext();
-  if (explicitUrl) return [{ url: explicitUrl, token: remote?.token || (await getLocalToken()), why: "configured" }];
+  const configured = explicitUrl || process.env.PROMETHEUS_URL;
+  if (configured) return [{ url: configured, token: remote?.token || (await getLocalToken()), why: "configured" }];
   const key = remote?.apiUrl || "__local__";
   const cached = _routeCache.get(key);
   if (cached) return [cached];
@@ -107,23 +128,42 @@ const CA_FILES = [
   "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
 ].filter(Boolean);
 
-let _agent = null;
-async function getAgent() {
-  if (_agent) return _agent;
+let _ca = null;
+async function getCa() {
+  if (_ca) return _ca;
   const ca = [];
   for (const f of CA_FILES) {
     try { ca.push(await readFile(f, "utf8")); } catch { /* not mounted here */ }
   }
+  _ca = ca;
+  return _ca;
+}
+
+// One Agent per TLS servername. The ClusterIP candidate connects to an address
+// but must still present — and verify against — the service name, otherwise the
+// certificate legitimately fails hostname verification.
+const _agents = new Map();
+async function getAgent(servername = null) {
+  const key = servername || "__default__";
+  if (_agents.has(key)) return _agents.get(key);
+  const ca = await getCa();
   const insecure = process.env.PROMETHEUS_INSECURE === "true";
-  _agent = new Agent({
+  // Probing several candidates means a slow one must fail fast, not hang the
+  // whole widget behind a 15-second DNS timeout.
+  const timeout = parseInt(process.env.PROMETHEUS_CONNECT_TIMEOUT_MS || "5000", 10);
+  const agent = new Agent({
     connect: {
-      timeout: 15_000,
+      timeout,
+      ...(servername ? { servername } : {}),
       ...(insecure ? { rejectUnauthorized: false } : {}),
       ...(ca.length && !insecure ? { ca } : {}),
     },
   });
-  if (insecure) console.error("[prometheus] PROMETHEUS_INSECURE=true — TLS verification disabled for metrics queries");
-  return _agent;
+  if (insecure && key === "__default__") {
+    console.error("[prometheus] PROMETHEUS_INSECURE=true — TLS verification disabled for metrics queries");
+  }
+  _agents.set(key, agent);
+  return agent;
 }
 
 /**
@@ -134,10 +174,10 @@ function explain(e, endpoint) {
   const code = e?.cause?.code || e?.code;
   const host = (() => { try { return new URL(endpoint).host; } catch { return endpoint; } })();
   const MAP = {
-    ENOTFOUND: /\.svc(:|$)/.test(host)
+    ENOTFOUND: /\.svc(\.cluster\.local)?(:|$)/.test(host)
       ? `Cannot resolve ${host}. That in-cluster name only works from inside the target cluster — this server is elsewhere, so it needs the cluster's Route (which requires read access to routes in openshift-monitoring) or an explicit PROMETHEUS_URL.`
       : `Cannot resolve ${host}. A pod usually cannot resolve its own cluster's *.apps wildcard, because cluster DNS forwards it to a resolver that has no record for it. If this server runs inside the target cluster, the in-cluster service name is the right endpoint; otherwise add a DNS record or set PROMETHEUS_URL.`,
-    EAI_AGAIN: `DNS lookup timed out for ${host}.`,
+    EAI_AGAIN: `DNS lookup timed out for ${host}. Cluster DNS is not answering for this name — often a resolver treating the .local suffix as mDNS. The ClusterIP path avoids DNS entirely; if every candidate times out, check CoreDNS in openshift-dns.`,
     ECONNREFUSED: `Connection refused by ${host}.`,
     ECONNRESET: `Connection reset by ${host}.`,
     UND_ERR_CONNECT_TIMEOUT: `Timed out connecting to ${host} — usually egress from this cluster is blocked.`,
@@ -155,8 +195,8 @@ function explain(e, endpoint) {
 
 export async function promQuery(query, { url = null } = {}) {
   const targets = await resolveTarget(url);
-  const agent = await getAgent();
   let resp, base, tk, lastErr = null;
+  const attempts = [];
 
   // Try each candidate in order. A DNS failure on one is not a verdict on the
   // cluster — it usually just means we guessed the wrong door.
@@ -165,17 +205,28 @@ export async function promQuery(query, { url = null } = {}) {
     try {
       resp = await undiciFetch(ep, {
         headers: cand.token ? { Authorization: `Bearer ${cand.token}` } : {},
-        dispatcher: agent,
+        dispatcher: await getAgent(cand.servername),
       });
       base = cand.url; tk = cand.token;
       rememberWorking(cand);
       break;
     } catch (e) {
-      lastErr = explain(e, ep);
-      lastErr.message = `${lastErr.message} [tried the ${cand.why}]`;
+      const ex = explain(e, ep);
+      attempts.push(`${cand.why}: ${ex.message}`);
+      lastErr = ex;
     }
   }
-  if (!resp) throw lastErr || new Error("No reachable metrics endpoint for this cluster.");
+  if (!resp) {
+    // Report every door we tried. When all of them fail, which ones failed and
+    // how is the whole diagnosis — one arbitrary error is not.
+    const err = new Error(
+      attempts.length > 1
+        ? `No reachable metrics endpoint. Tried ${attempts.length}:\n` + attempts.map((a) => `  • ${a}`).join("\n")
+        : (attempts[0] || "No reachable metrics endpoint for this cluster."));
+    err.code = lastErr?.code || null;
+    err.attempts = attempts;
+    throw err;
+  }
   const endpoint = `${base}/api/v1/query?query=${encodeURIComponent(query)}`;
   if (!resp.ok) {
     const body = await resp.text();
@@ -195,7 +246,6 @@ export async function promQuery(query, { url = null } = {}) {
 
 export async function promRange(query, startTs, endTs, step = "60s") {
   const targets = await resolveTarget(null);
-  const agent = await getAgent();
   const qs = `query=${encodeURIComponent(query)}&start=${startTs}&end=${endTs}&step=${step}`;
   let resp, endpoint, lastErr = null;
   for (const cand of targets) {
@@ -203,7 +253,7 @@ export async function promRange(query, startTs, endTs, step = "60s") {
     try {
       resp = await undiciFetch(endpoint, {
         headers: cand.token ? { Authorization: `Bearer ${cand.token}` } : {},
-        dispatcher: agent,
+        dispatcher: await getAgent(cand.servername),
       });
       rememberWorking(cand);
       break;
