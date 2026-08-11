@@ -159,6 +159,115 @@ export function GpuOverviewWidget() {
             )}
           </div>
 
+          {/* Allocation bar — the single most important GPU fact, made visual.
+              Every card is either working, reserved, or idle capital. */}
+          {data.inventory?.totalGpus > 0 && (
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 5 }}>
+                <span style={{ fontSize: 11.5, fontWeight: 700, opacity: .75, letterSpacing: .3 }}>FLEET ALLOCATION</span>
+                <span style={{ fontSize: 11.5, color: "var(--text2)" }}>
+                  {data.inventory.totalAllocated} allocated · {data.inventory.totalFree} free
+                  {data.inventory.pendingGpus > 0 && ` · ${data.inventory.pendingGpus} requested and waiting`}
+                </span>
+              </div>
+              <div style={{ display: "flex", height: 12, borderRadius: 999, overflow: "hidden",
+                background: "color-mix(in srgb, var(--text2) 15%, transparent)" }}>
+                <div title={`${data.inventory.totalAllocated} allocated`}
+                  style={{ width: `${(data.inventory.totalAllocated / data.inventory.totalGpus) * 100}%`, background: "#22c55e" }} />
+                <div title={`${data.inventory.totalFree} free`}
+                  style={{ width: `${(data.inventory.totalFree / data.inventory.totalGpus) * 100}%`,
+                    background: "color-mix(in srgb, var(--text2) 22%, transparent)" }} />
+              </div>
+              {data.inventory.pendingCount > 0 && (
+                <div style={{ marginTop: 4, fontSize: 11, color: "#fbbf24" }}>
+                  {data.inventory.pendingCount} job(s) queued for GPUs
+                  {data.inventory.fragmentation?.largestFreeBlock != null &&
+                    ` · largest free block on a single node: ${data.inventory.fragmentation.largestFreeBlock}`}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Insights — contention and waste, each with its evidence attached.
+              These need no telemetry, which is the point: the view stays useful
+              when monitoring is broken. */}
+          {data.insights?.length > 0 && (
+            <div style={{ display: "grid", gap: 8 }}>
+              {data.insights.map((ins, i) => {
+                const tone = ins.severity === "critical" ? "#ef4444" : ins.severity === "warning" ? "#f59e0b" : "#3b82f6";
+                return (
+                  <div key={i} style={{
+                    padding: "10px 13px", borderRadius: 10,
+                    background: `color-mix(in srgb, ${tone} 9%, transparent)`,
+                    border: `1px solid color-mix(in srgb, ${tone} 30%, transparent)`,
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: tone }}>{ins.title}</div>
+                      <button
+                        onClick={() => askAI(`${ins.title}. ${ins.detail} What should I do about this?`)}
+                        style={{ flexShrink: 0, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                          padding: "3px 9px", borderRadius: 7, border: `1px solid ${tone}`,
+                          background: "transparent", color: tone }}>
+                        Ask AI
+                      </button>
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--text2)", lineHeight: 1.5, marginTop: 3 }}>{ins.detail}</div>
+                    {ins.evidence?.length > 0 && (
+                      <ul style={{ margin: "5px 0 0", paddingLeft: 16, fontSize: 11,
+                        color: "var(--text2)", opacity: .85, fontFamily: "var(--font-mono, ui-monospace, monospace)" }}>
+                        {ins.evidence.map((e, j) => <li key={j}>{e}</li>)}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Who holds the GPUs, and who is waiting for them */}
+          {(data.inventory?.consumers?.length > 0 || data.inventory?.pending?.length > 0) && (
+            <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+              {data.inventory.consumers?.length > 0 && (
+                <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+                  <div style={{ padding: "6px 11px", fontSize: 11, fontWeight: 700, opacity: .75,
+                    borderBottom: "1px solid var(--border)", letterSpacing: .3 }}>
+                    RUNNING ON GPUs <span style={{ opacity: .6 }}>({data.inventory.consumerCount})</span>
+                  </div>
+                  {data.inventory.consumers.slice(0, 6).map((c, i) => (
+                    <div key={i} style={{ padding: "5px 11px", fontSize: 11.5, display: "flex",
+                      justifyContent: "space-between", gap: 8, borderTop: i ? "1px solid var(--border)" : "none" }}>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <span style={{ opacity: .6 }}>{c.namespace}/</span>{c.pod}
+                      </span>
+                      <span style={{ flexShrink: 0, fontWeight: 700, color: "#22c55e" }}>{c.gpus} GPU</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {data.inventory.pending?.length > 0 && (
+                <div style={{ border: "1px solid color-mix(in srgb, #f59e0b 35%, transparent)", borderRadius: 10, overflow: "hidden" }}>
+                  <div style={{ padding: "6px 11px", fontSize: 11, fontWeight: 700, color: "#f59e0b",
+                    borderBottom: "1px solid var(--border)", letterSpacing: .3 }}>
+                    WAITING FOR GPUs <span style={{ opacity: .7 }}>({data.inventory.pendingCount})</span>
+                  </div>
+                  {data.inventory.pending.slice(0, 6).map((p, i) => (
+                    <div key={i} style={{ padding: "5px 11px", fontSize: 11.5, borderTop: i ? "1px solid var(--border)" : "none" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          <span style={{ opacity: .6 }}>{p.namespace}/</span>{p.pod}
+                        </span>
+                        <span style={{ flexShrink: 0, fontWeight: 700, color: "#fbbf24" }}>
+                          {p.gpus} GPU · {p.waitingMinutes}m
+                        </span>
+                      </div>
+                      {p.detail && <div style={{ fontSize: 10.5, opacity: .65, marginTop: 1 }}>{p.detail}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Hardware detail — model, memory, driver, MIG. From the API server,
               so it renders whether or not DCGM is reporting. */}
           {data.inventory?.nodes?.length > 0 && (
@@ -191,7 +300,11 @@ export function GpuOverviewWidget() {
                           {n.memoryMiBPerGpu ? `${Math.round(n.memoryMiBPerGpu / 1024)} GiB` : "—"}
                         </td>
                         <td style={{ padding: "5px 10px", whiteSpace: "nowrap" }}>{n.driverVersion || "—"}</td>
-                        <td style={{ padding: "5px 10px" }}>{n.migCapable ? (n.migStrategy || "capable") : "—"}</td>
+                        <td style={{ padding: "5px 10px", whiteSpace: "nowrap" }}>
+                          {n.migProfiles
+                            ? Object.entries(n.migProfiles).map(([k, v]) => `${v}×${k}`).join(", ")
+                            : n.migCapable ? (n.migStrategy || "capable") : "—"}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

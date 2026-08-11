@@ -144,12 +144,65 @@ export async function getGpuInventory() {
     models[n.product] = (models[n.product] || 0) + n.capacity;
   }
   consumers.sort((a, b) => b.gpus - a.gpus);
+
+  // Who is WAITING for a GPU. Pending demand is half the picture — free
+  // capacity means nothing if jobs are queued behind it, and queued jobs
+  // alongside idle cards is the most actionable thing a GPU view can show.
+  const pending = [];
+  try {
+    const pp = await ocpGet("/api/v1/pods?fieldSelector=status.phase%3DPending&limit=2000");
+    for (const pod of pp.items || []) {
+      let want = 0;
+      for (const c of pod.spec?.containers || []) {
+        for (const r of RES) {
+          const v = Number(c.resources?.limits?.[r] ?? c.resources?.requests?.[r] ?? 0);
+          if (Number.isFinite(v)) want += v;
+        }
+      }
+      if (want <= 0) continue;
+      const cond = (pod.status?.conditions || []).find((c) => c.type === "PodScheduled" && c.status === "False");
+      const since = pod.metadata?.creationTimestamp;
+      pending.push({
+        namespace: pod.metadata?.namespace, pod: pod.metadata?.name, gpus: want,
+        reason: cond?.reason || "Unschedulable",
+        detail: (cond?.message || "").slice(0, 220) || null,
+        waitingMinutes: since ? Math.max(0, Math.round((Date.now() - new Date(since).getTime()) / 60000)) : null,
+      });
+    }
+  } catch { /* best-effort */ }
+  pending.sort((a, b) => (b.waitingMinutes || 0) - (a.waitingMinutes || 0));
+
+  // Fragmentation: four free GPUs spread one-per-node cannot run a 4-GPU job.
+  // The largest contiguous single-node block is what actually schedules.
+  const freeByNode = nodes.map((n) => ({ node: n.name, free: n.freeGpus })).sort((a, b) => b.free - a.free);
+  const largestFreeBlock = freeByNode.length ? freeByNode[0].free : 0;
+  const totalFree = Math.max(0, totalGpus - totalAllocated);
+  const biggestPendingAsk = pending.reduce((m, p) => Math.max(m, p.gpus), 0);
+
+  // MIG profiles, when the cards are sliced.
+  for (const n of nodes) {
+    const node = (nodeList.items || []).find((x) => x.metadata?.name === n.name);
+    const L = node?.metadata?.labels || {};
+    const profiles = {};
+    for (const [k, v] of Object.entries(L)) {
+      const m = /^nvidia\.com\/mig-(\S+)\.count$/.exec(k);
+      if (m && Number(v) > 0) profiles[m[1]] = Number(v);
+    }
+    n.migProfiles = Object.keys(profiles).length ? profiles : null;
+  }
+
   return {
-    nodes, totalGpus, totalAllocated,
-    totalFree: Math.max(0, totalGpus - totalAllocated),
-    models,
+    nodes, totalGpus, totalAllocated, totalFree, models,
     consumers: consumers.slice(0, 25),
     consumerCount: consumers.length,
+    pending: pending.slice(0, 25),
+    pendingCount: pending.length,
+    pendingGpus: pending.reduce((s, p) => s + p.gpus, 0),
+    fragmentation: {
+      freeByNode, largestFreeBlock, biggestPendingAsk,
+      // Free capacity exists, but not in one place big enough for the queue.
+      blocked: biggestPendingAsk > 0 && totalFree >= biggestPendingAsk && largestFreeBlock < biggestPendingAsk,
+    },
   };
 }
 
@@ -157,6 +210,52 @@ export async function getGpuInventory() {
  * Build a fleet-wide GPU overview from DCGM metrics.
  * @returns {Promise<object>} inventory + utilization + health, or { available:false }.
  */
+/**
+ * Fleet insights that do not need telemetry.
+ *
+ * GPUs are the most expensive thing in the estate, so the useful questions are
+ * about contention and waste, not averages. Each insight is a claim with the
+ * evidence attached, so an operator can act on it or dismiss it.
+ */
+function buildInsights(inv, { idleAllocated = null, idleDetail = [] } = {}) {
+  const out = [];
+  const f = inv.fragmentation || {};
+
+  if (inv.pendingCount > 0 && inv.totalFree > 0 && !f.blocked) {
+    out.push({
+      severity: "warning", kind: "queued-with-capacity",
+      title: `${inv.pendingCount} job(s) waiting for ${inv.pendingGpus} GPU(s) while ${inv.totalFree} sit free`,
+      detail: "Free capacity exists but the queue is not draining — usually a taint, node selector, or a resource other than the GPU (CPU, memory, storage) blocking placement.",
+      evidence: inv.pending.slice(0, 3).map((p) => `${p.namespace}/${p.pod} waiting ${p.waitingMinutes}m: ${p.detail || p.reason}`),
+    });
+  }
+  if (f.blocked) {
+    out.push({
+      severity: "warning", kind: "fragmented",
+      title: `${inv.totalFree} GPUs free, but the largest single-node block is ${f.largestFreeBlock}`,
+      detail: `A job asking for ${f.biggestPendingAsk} GPUs cannot be placed even though the fleet has capacity. Consolidating workloads onto fewer nodes would unblock it.`,
+      evidence: f.freeByNode.filter((n) => n.free > 0).map((n) => `${n.node}: ${n.free} free`),
+    });
+  }
+  if (idleAllocated > 0) {
+    out.push({
+      severity: "critical", kind: "idle-allocated",
+      title: `${idleAllocated} GPU(s) reserved but idle`,
+      detail: "Claimed by a workload and doing no work. This is the clearest GPU waste signal — the card is unavailable to everyone else while producing nothing.",
+      evidence: idleDetail.slice(0, 4).map((w) => `${w.namespace || "?"}/${w.pod || "?"} on ${w.node} — ${w.utilPct ?? 0}% utilised`),
+    });
+  }
+  if (inv.totalGpus > 0 && inv.totalAllocated === 0 && inv.pendingCount === 0) {
+    out.push({
+      severity: "info", kind: "wholly-idle",
+      title: `All ${inv.totalGpus} GPUs are unallocated`,
+      detail: "No workload is requesting GPUs on this cluster. Expected in a lab; in production it usually means jobs are not reaching this cluster.",
+      evidence: [],
+    });
+  }
+  return out;
+}
+
 /**
  * Is a GPU stack actually installed on this cluster?
  *
@@ -280,6 +379,7 @@ export async function getGpuOverview() {
         fleetHealth: "unknown",
       },
       inventory: inv,
+      insights: buildInsights(inv),
       nodes: inv.nodes.map((n) => ({
         name: n.name, gpuCount: n.capacity, model: n.product,
         avgUtil: null, allocated: n.allocatedGpus, free: n.freeGpus,
@@ -511,6 +611,7 @@ export async function getGpuOverview() {
     available: true,
     telemetry: "live",
     inventory: inv,
+    insights: buildInsights(inv, { idleAllocated, idleDetail: waste }),
     summary: {
       totalGpus: total,
       nodes: nodeMap.size,
