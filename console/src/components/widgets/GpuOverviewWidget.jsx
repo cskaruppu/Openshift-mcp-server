@@ -23,15 +23,26 @@ function tempColor(t) {
 }
 const HEALTH_TONE = { healthy: "#22c55e", warning: "#f59e0b", critical: "#ef4444" };
 
-function Stat({ label, value, sub, tone, children }) {
+/* One tile shape for every metric. The slots are FIXED HEIGHT — a tile with no
+   meter and no sparkline still occupies the same vertical rhythm as one with
+   both, so every value, label and caption sits on a shared baseline. Ragged
+   tile heights are what made the row look improvised. */
+const VIZ_H = 34;   // meter (6) + gap (6) + sparkline (22)
+
+function Stat({ label, value, sub, tone, viz, valueSize = 22 }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 108 }}>
+    <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
       {/* Proportional figures, not tabular — tabular gives every digit the width
           of a zero, which reads loose at display sizes. Tabular is for columns. */}
-      <span style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.05, color: tone || "var(--text)" }}>{value}</span>
-      <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text2)", textTransform: "uppercase", letterSpacing: ".04em" }}>{label}</span>
-      {children}
-      {sub && <span style={{ fontSize: 11, color: "var(--text2)" }}>{sub}</span>}
+      <div style={{ fontSize: valueSize, fontWeight: 800, lineHeight: 1.1, color: tone || "var(--text)",
+        height: 26, display: "flex", alignItems: "center", whiteSpace: "nowrap" }}>{value}</div>
+      <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text2)", textTransform: "uppercase",
+        letterSpacing: ".05em", marginTop: 2, height: 14, whiteSpace: "nowrap",
+        overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+      <div style={{ height: VIZ_H, marginTop: 7, display: "flex", flexDirection: "column",
+        gap: 6, justifyContent: "flex-start" }}>{viz}</div>
+      <div style={{ fontSize: 10.5, color: "var(--text2)", marginTop: 4, lineHeight: 1.35,
+        minHeight: 28 }}>{sub}</div>
     </div>
   );
 }
@@ -115,32 +126,28 @@ function Pips({ total, filled, tone = "#22c55e", max = 16 }) {
   );
 }
 
-/* Status never rides on colour alone — icon and label travel with it. */
-function HealthBadge({ health, affected }) {
-  const M = {
-    healthy:  { tone: "#22c55e", icon: "✓", label: "OK" },
-    warning:  { tone: "#f59e0b", icon: "!", label: "Warn" },
-    critical: { tone: "#ef4444", icon: "✕", label: "Critical" },
-    unknown:  { tone: "var(--text2)", icon: "?", label: "Unknown" },
-  };
-  const s = M[health] || M.unknown;
+/* Status never rides on colour alone — icon and label travel together. Rendered
+   through the same Stat shell so it sits in the row instead of beside it. */
+const HEALTH_META = {
+  healthy:  { tone: "#22c55e", icon: "✓", label: "OK" },
+  warning:  { tone: "#f59e0b", icon: "!", label: "Warn" },
+  critical: { tone: "#ef4444", icon: "✕", label: "Critical" },
+  unknown:  { tone: "var(--text2)", icon: "?", label: "Unknown" },
+};
+
+function HealthValue({ health }) {
+  const m = HEALTH_META[health] || HEALTH_META.unknown;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 108 }}>
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 20, fontWeight: 800, color: s.tone, lineHeight: 1.05 }}>
-        <span aria-hidden="true" style={{
-          width: 20, height: 20, borderRadius: 999, fontSize: 12, fontWeight: 700,
-          display: "grid", placeItems: "center", color: s.tone,
-          background: `color-mix(in srgb, ${s.tone} 18%, transparent)`,
-        }}>{s.icon}</span>
-        {s.label}
-      </span>
-      <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text2)", textTransform: "uppercase", letterSpacing: ".04em" }}>Health</span>
-      <span style={{ fontSize: 11, color: "var(--text2)" }}>{affected > 0 ? `${affected} affected` : "all nominal"}</span>
-    </div>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 7, color: m.tone }}>
+      <span aria-hidden="true" style={{
+        width: 20, height: 20, borderRadius: 999, fontSize: 12, fontWeight: 700,
+        display: "grid", placeItems: "center", flexShrink: 0,
+        background: `color-mix(in srgb, ${m.tone} 18%, transparent)`,
+      }}>{m.icon}</span>
+      {m.label}
+    </span>
   );
 }
-
-const HIST_TONE = { utilPct: "#3b82f6", memPct: "#22c55e", powerW: "#22c55e", tempC: "#22c55e", tensorPct: "#8b5cf6" };
 
 export function GpuOverviewWidget() {
   const cluster = useActiveCluster();
@@ -257,90 +264,86 @@ export function GpuOverviewWidget() {
             </div>
           )}
 
-          {/* Summary strip */}
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "18px 26px", alignItems: "flex-start" }}>
+          {/* KPI row — a grid, not flex-wrap. Equal columns keep the tiles on a
+              shared baseline and let Health sit in the row rather than orphaned
+              beneath it. auto-fit reflows to 8 / 4 / 2 across as width allows. */}
+          <div style={{
+            display: "grid", gap: "4px 20px",
+            gridTemplateColumns: "repeat(auto-fit, minmax(124px, 1fr))",
+            alignItems: "start",
+            paddingBottom: 14, borderBottom: "1px solid var(--border)",
+          }}>
             {/* A count, not a ratio — no meter. */}
-            <Stat label="GPUs" value={s.totalGpus} sub={`${s.nodes} node${s.nodes === 1 ? "" : "s"}`} />
+            <Stat label="GPUs" value={s.totalGpus}
+              sub={`${s.nodes} node${s.nodes === 1 ? "" : "s"}`} />
 
             {/* Four discrete things read better as pips than as a bar. */}
-            <Stat label="Allocated" value={`${s.allocatedGpus}/${s.totalGpus}`} sub={`${s.unallocatedGpus} free`}>
-              <Pips total={s.totalGpus} filled={s.allocatedGpus} />
-            </Stat>
+            <Stat label="Allocated" value={`${s.allocatedGpus}/${s.totalGpus}`}
+              sub={`${s.unallocatedGpus} free`}
+              viz={<Pips total={s.totalGpus} filled={s.allocatedGpus} />} />
 
             {/* Utilisation is magnitude, not severity — high is GOOD for a GPU.
-                Colouring it red at 90% would say "problem" about a fleet doing
-                exactly what it was bought to do. The waste case is called out in
-                the insights instead. */}
+                Colouring it red at 90% would call a fleet doing exactly what it
+                was bought for a problem. Waste has its own insight panel. */}
             {s.avgUtilPct != null && (
-              <Stat label="Avg Util" value={`${s.avgUtilPct}%`} sub={`peak ${s.maxUtilPct}%`}>
-                <Meter pct={s.avgUtilPct} tone="#3b82f6" />
-                <Sparkline points={H.utilPct} tone="#3b82f6" unit="%" />
-                <Delta points={H.utilPct} unit="%" />
-              </Stat>
+              <Stat label="Avg Util" value={`${s.avgUtilPct}%`}
+                sub={<>peak {s.maxUtilPct}%<br /><Delta points={H.utilPct} unit="%" /></>}
+                viz={<><Meter pct={s.avgUtilPct} tone="#3b82f6" />
+                       <Sparkline points={H.utilPct} tone="#3b82f6" unit="%" /></>} />
             )}
 
-            {/* Every severity-coloured meter names its state in text as well.
-                Amber and green sit within ΔE 6 for a protanope, so colour alone
-                would not carry the difference. */}
             {s.avgTensorActivePct != null && (
               <Stat label="Tensor Core" value={`${s.avgTensorActivePct}%`}
-                sub={s.avgUtilPct >= 50 && s.avgTensorActivePct < 10
-                  ? "busy, but not on tensor work"
-                  : s.avgSmClockMHz ? `SM ${s.avgSmClockMHz} MHz` : null}>
-                <Meter pct={s.avgTensorActivePct} tone="#8b5cf6" />
-                <Sparkline points={H.tensorPct} tone="#8b5cf6" unit="%" />
-                <Delta points={H.tensorPct} unit="%" />
-              </Stat>
+                sub={<>{s.avgUtilPct >= 50 && s.avgTensorActivePct < 10
+                        ? "busy, not tensor work"
+                        : s.avgSmClockMHz ? `SM ${s.avgSmClockMHz} MHz` : "\u00a0"}
+                      <br /><Delta points={H.tensorPct} unit="%" /></>}
+                viz={<><Meter pct={s.avgTensorActivePct} tone="#8b5cf6" />
+                       <Sparkline points={H.tensorPct} tone="#8b5cf6" unit="%" /></>} />
             )}
 
+            {/* Every severity-coloured meter names its state in text as well:
+                amber and green sit within ΔE 6 for a protanope, so hue alone
+                would not carry the difference. */}
             {s.memPct != null && (
               <Stat label="GPU Mem" value={`${s.memPct}%`}
-                sub={[
-                  s.memTotalGiB ? `${s.memUsedGiB} / ${s.memTotalGiB} GiB` : null,
-                  s.memPct >= 95 ? "near limit" : s.memPct >= 85 ? "high" : null,
-                ].filter(Boolean).join(" · ")}>
-                <Meter pct={s.memPct} tone={s.memPct >= 95 ? "#ef4444" : s.memPct >= 85 ? "#f59e0b" : "#22c55e"} />
-                <Sparkline points={H.memPct} tone="#22c55e" unit="%" />
-                <Delta points={H.memPct} unit="%" />
-              </Stat>
+                sub={<>{[s.memTotalGiB ? `${s.memUsedGiB} / ${s.memTotalGiB} GiB` : null,
+                         s.memPct >= 95 ? "near limit" : s.memPct >= 85 ? "high" : null]
+                        .filter(Boolean).join(" · ")}
+                      <br /><Delta points={H.memPct} unit="%" /></>}
+                viz={<><Meter pct={s.memPct}
+                         tone={s.memPct >= 95 ? "#ef4444" : s.memPct >= 85 ? "#f59e0b" : "#22c55e"} />
+                       <Sparkline points={H.memPct} tone="#22c55e" unit="%" /></>} />
             )}
 
-            {/* Metered only when the cards report their own cap. No cap, no
-                denominator, no meter — a spec-sheet TDP would be a guess. */}
+            {/* Metered only because the cards report their own cap. No cap, no
+                denominator — a spec-sheet TDP would be a guess dressed as data. */}
             {(s.totalPowerKW || s.totalPowerW) && (
               <Stat label="Power" value={s.totalPowerKW ? `${s.totalPowerKW} kW` : `${s.totalPowerW} W`}
-                sub={[
-                  s.totalPowerLimitW ? `of ${Math.round(s.totalPowerLimitW / 100) / 10} kW cap` : null,
-                  s.powerPct >= 90 ? "near cap" : null,
-                ].filter(Boolean).join(" · ") || null}>
-                <Meter pct={s.powerPct} tone={s.powerPct >= 90 ? "#f59e0b" : "#22c55e"} />
-                <Sparkline points={H.powerW} tone="#22c55e" unit=" W" />
-                <Delta points={H.powerW} unit=" W" />
-              </Stat>
+                sub={<>{[s.totalPowerLimitW ? `of ${Math.round(s.totalPowerLimitW / 100) / 10} kW cap` : null,
+                         s.powerPct >= 90 ? "near cap" : null].filter(Boolean).join(" · ") || "\u00a0"}
+                      <br /><Delta points={H.powerW} unit=" W" /></>}
+                viz={<><Meter pct={s.powerPct} tone={s.powerPct >= 90 ? "#f59e0b" : "#22c55e"} />
+                       <Sparkline points={H.powerW} tone="#22c55e" unit=" W" /></>} />
             )}
 
             {/* Thermal headroom against the throttle point, not against 100°C. */}
             {s.maxTempC != null && (
               <Stat label="Max Temp" value={`${s.maxTempC}°C`} tone={tempColor(s.maxTempC)}
-                sub={[
-                  s.avgTempC != null ? `avg ${s.avgTempC}°C` : null,
-                  s.maxTempC >= 87 ? "throttling" : s.maxTempC >= 80 ? "hot" : "headroom to 80°C",
-                ].filter(Boolean).join(" · ")}>
-                <Meter pct={Math.round((s.maxTempC / 95) * 100)} tone={tempColor(s.maxTempC)} />
-                <Sparkline points={H.tempC} tone={tempColor(s.maxTempC)} unit="°C" />
-                <Delta points={H.tempC} unit="°C" />
-              </Stat>
+                sub={<>{[s.avgTempC != null ? `avg ${s.avgTempC}°C` : null,
+                         s.maxTempC >= 87 ? "throttling" : s.maxTempC >= 80 ? "hot" : "80°C headroom"]
+                        .filter(Boolean).join(" · ")}
+                      <br /><Delta points={H.tempC} unit="°C" /></>}
+                viz={<><Meter pct={Math.round((s.maxTempC / 95) * 100)} tone={tempColor(s.maxTempC)} />
+                       <Sparkline points={H.tempC} tone={tempColor(s.maxTempC)} unit="°C" /></>} />
             )}
 
             {s.health && s.health !== "unknown" && (
-              <HealthBadge health={s.health} affected={s.unhealthyGpus} />
+              <Stat label="Health" value={<HealthValue health={s.health} />} valueSize={19}
+                sub={<>{s.unhealthyGpus > 0 ? `${s.unhealthyGpus} affected` : "all nominal"}
+                      {hist?.available && <><br /><span style={{ opacity: .65 }}>trends: last {hist.window?.hours || 6}h</span></>}</>} />
             )}
           </div>
-          {hist?.available && (
-            <div style={{ fontSize: 10.5, color: "var(--text2)", opacity: .7, marginTop: -8 }}>
-              Trend lines show the last {hist.window?.hours || 6} hours. Hover a line for its range.
-            </div>
-          )}
 
           {/* Allocation bar — the single most important GPU fact, made visual.
               Every card is either working, reserved, or idle capital. */}
