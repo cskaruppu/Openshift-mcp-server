@@ -223,6 +223,15 @@ export function GpuOverviewWidget() {
             {/* Every severity-coloured meter names its state in text as well.
                 Amber and green sit within ΔE 6 for a protanope, so colour alone
                 would not carry the difference. */}
+            {s.avgTensorActivePct != null && (
+              <Stat label="Tensor Core" value={`${s.avgTensorActivePct}%`}
+                sub={s.avgUtilPct >= 50 && s.avgTensorActivePct < 10
+                  ? "busy, but not on tensor work"
+                  : s.avgSmClockMHz ? `SM ${s.avgSmClockMHz} MHz` : null}>
+                <Meter pct={s.avgTensorActivePct} tone="#8b5cf6" />
+              </Stat>
+            )}
+
             {s.memPct != null && (
               <Stat label="GPU Mem" value={`${s.memPct}%`}
                 sub={[
@@ -248,7 +257,10 @@ export function GpuOverviewWidget() {
             {/* Thermal headroom against the throttle point, not against 100°C. */}
             {s.maxTempC != null && (
               <Stat label="Max Temp" value={`${s.maxTempC}°C`} tone={tempColor(s.maxTempC)}
-                sub={s.maxTempC >= 87 ? "throttling" : s.maxTempC >= 80 ? "hot" : "headroom to 80°C"}>
+                sub={[
+                  s.avgTempC != null ? `avg ${s.avgTempC}°C` : null,
+                  s.maxTempC >= 87 ? "throttling" : s.maxTempC >= 80 ? "hot" : "headroom to 80°C",
+                ].filter(Boolean).join(" · ")}>
                 <Meter pct={Math.round((s.maxTempC / 95) * 100)} tone={tempColor(s.maxTempC)} />
               </Stat>
             )}
@@ -491,9 +503,15 @@ export function GpuOverviewWidget() {
                       `util ${g.utilPct == null ? "—" : g.utilPct + "%"}`,
                       g.memTotalMiB ? `mem ${g.memPct}% (${Math.round(g.memUsedMiB)}/${Math.round(g.memTotalMiB)} MiB)` : "",
                       g.tempC != null ? `temp ${g.tempC}°C` : "",
-                      g.powerW != null ? `power ${Math.round(g.powerW)} W` : "",
+                      g.powerW != null ? `power ${Math.round(g.powerW)} W${g.powerLimitW ? ` / ${Math.round(g.powerLimitW)} W cap` : ""}` : "",
+                      g.smClockMHz != null ? `SM clock ${Math.round(g.smClockMHz)} MHz` : "",
+                      g.memClockMHz != null ? `mem clock ${Math.round(g.memClockMHz)} MHz` : "",
+                      g.smActivePct != null ? `SM active ${g.smActivePct}%` : "",
+                      g.tensorActivePct != null ? `tensor core ${g.tensorActivePct}%` : "",
                       g.pod ? `pod ${g.namespace}/${g.pod}` : "unallocated",
                       g.xidError ? `XID ${g.xidError}` : "",
+                      g.eccDbe ? `ECC double-bit ${g.eccDbe}` : "",
+                      g.eccSbe ? `ECC single-bit ${g.eccSbe}` : "",
                     ].filter(Boolean).join("\n")}
                     style={{
                       padding: "9px 10px", borderRadius: 9,
@@ -516,6 +534,12 @@ export function GpuOverviewWidget() {
                     <div style={{ display: "flex", gap: 8, marginTop: 4, fontSize: 10, color: "var(--text2)" }}>
                       {g.tempC != null && <span style={{ color: tempColor(g.tempC) }}>{g.tempC}°C</span>}
                       {g.memPct != null && <span>{g.memPct}% mem</span>}
+                      {g.tensorActivePct != null && <span style={{ color: "#8b5cf6" }}>{g.tensorActivePct}% TC</span>}
+                      {(g.eccDbe > 0 || g.xidError > 0) && (
+                        <span style={{ color: "#ef4444", fontWeight: 600 }}>
+                          {g.eccDbe > 0 ? "ECC" : `XID ${g.xidError}`}
+                        </span>
+                      )}
                       {idle ? <span style={{ color: "#f59e0b", fontWeight: 600 }}>idle</span>
                         : !alloc && <span style={{ opacity: .7 }}>free</span>}
                     </div>

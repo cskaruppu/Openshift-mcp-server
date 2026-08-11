@@ -574,6 +574,7 @@ export async function getGpuOverview() {
   const modelCounts = {};
   let sumUtil = 0, maxUtil = 0, allocated = 0, idleAllocated = 0;
   let memUsedTot = 0, memTot = 0, maxTemp = 0, powerTot = 0, powerCapTot = 0;
+  let tempSum = 0, tempN = 0, smClockSum = 0, smClockN = 0, tensorSum = 0, tensorN = 0;
   let xidCount = 0, eccCount = 0, unhealthy = 0;
   const waste = [];
 
@@ -583,9 +584,11 @@ export async function getGpuOverview() {
     modelCounts[g.model] = (modelCounts[g.model] || 0) + 1;
     if (g.memUsedMiB != null) memUsedTot += g.memUsedMiB;
     if (g.memTotalMiB != null) memTot += g.memTotalMiB;
-    if (g.tempC != null && g.tempC > maxTemp) maxTemp = g.tempC;
+    if (g.tempC != null) { if (g.tempC > maxTemp) maxTemp = g.tempC; tempSum += g.tempC; tempN++; }
     if (g.powerW != null) powerTot += g.powerW;
     if (g.powerLimitW != null) powerCapTot += g.powerLimitW;
+    if (g.smClockMHz != null) { smClockSum += g.smClockMHz; smClockN++; }
+    if (g.tensorActivePct != null) { tensorSum += g.tensorActivePct; tensorN++; }
     if (g.xidError != null && g.xidError > 0) xidCount++;
     if (g.eccDbe != null && g.eccDbe > 0) eccCount++;
     if (g.status !== "healthy") unhealthy++;
@@ -643,6 +646,12 @@ export async function getGpuOverview() {
       memTotalGiB: Math.round((memTot / 1024) * 10) / 10,
       memPct: memTot ? Math.round((memUsedTot / memTot) * 100) : null,
       maxTempC: Math.round(maxTemp),
+      avgTempC: tempN ? Math.round(tempSum / tempN) : null,
+      avgSmClockMHz: smClockN ? Math.round(smClockSum / smClockN) : null,
+      // Tensor-core occupancy separates "the GPU is busy" from "the GPU is
+      // doing the matrix maths it was bought for" — a card at 90% utilisation
+      // with 2% tensor activity is running the wrong kind of work.
+      avgTensorActivePct: tensorN ? Math.round(tensorSum / tensorN) : null,
       totalPowerW: Math.round(powerTot),
       totalPowerKW: Math.round((powerTot / 1000) * 10) / 10,
       // The cards' own reported cap. Without it, power gets no meter — a meter
