@@ -44,39 +44,48 @@ async function getLocalToken() {
 const _routeCache = new Map();
 
 /**
- * Resolve the Thanos endpoint and credential for the cluster in context.
+ * Candidate Thanos endpoints for the cluster in context, best first.
  *
- * For a remote cluster the in-cluster service name is unreachable, so we ask
- * that cluster for its own `thanos-querier` Route — ocpGet is already
- * cluster-aware, so this reads from the right place.
+ * The in-cluster Service name is tried FIRST, always. A pod frequently cannot
+ * resolve its own cluster's *.apps wildcard — cluster DNS forwards it to a
+ * resolver that has no record for it — so assuming a "remote" cluster context
+ * means "use the Route" was wrong: the server may well be running inside the
+ * very cluster being queried. The Route is the fallback for genuinely remote
+ * clusters, and whichever answers first is cached.
  */
+async function candidateTargets() {
+  const remote = activeClusterContext();
+  const token = remote?.token || (await getLocalToken());
+  const out = [{ url: DEFAULT_URL, token, why: "in-cluster service" }];
+
+  if (remote?.apiUrl) {
+    let host = null;
+    try {
+      const r = await ocpGet("/apis/route.openshift.io/v1/namespaces/openshift-monitoring/routes/thanos-querier");
+      host = r?.spec?.host || null;
+    } catch { /* fall through to the derived form */ }
+    if (!host) {
+      const m = /^https?:\/\/api\.([^:/]+)/i.exec(remote.apiUrl);
+      if (m) host = `thanos-querier-openshift-monitoring.apps.${m[1]}`;
+    }
+    if (host) out.push({ url: `https://${host}`, token, why: "cluster route" });
+  }
+  return out;
+}
+
 async function resolveTarget(explicitUrl) {
   const remote = activeClusterContext();
-  if (explicitUrl) return { url: explicitUrl, token: remote?.token || (await getLocalToken()) };
-  if (!remote || !remote.apiUrl) return { url: DEFAULT_URL, token: await getLocalToken() };
+  if (explicitUrl) return [{ url: explicitUrl, token: remote?.token || (await getLocalToken()), why: "configured" }];
+  const key = remote?.apiUrl || "__local__";
+  const cached = _routeCache.get(key);
+  if (cached) return [cached];
+  return await candidateTargets();
+}
 
-  const key = remote.apiUrl;
-  if (_routeCache.has(key)) return { url: _routeCache.get(key), token: remote.token };
-
-  let host = null;
-  try {
-    const r = await ocpGet("/apis/route.openshift.io/v1/namespaces/openshift-monitoring/routes/thanos-querier");
-    host = r?.spec?.host || null;
-  } catch { /* fall through to the derived guess */ }
-
-  if (!host) {
-    // Derive from the API URL: api.<base>:6443 -> thanos-querier-openshift-monitoring.apps.<base>
-    const m = /^https?:\/\/api\.([^:/]+)/i.exec(remote.apiUrl);
-    if (m) host = `thanos-querier-openshift-monitoring.apps.${m[1]}`;
-  }
-  if (!host) {
-    throw new Error(
-      `Cannot determine the Thanos endpoint for this cluster. The in-cluster service name is only reachable from inside the cluster. `
-      + `Grant the service account read access to routes in openshift-monitoring, or set PROMETHEUS_URL.`);
-  }
-  const url = `https://${host}`;
-  _routeCache.set(key, url);
-  return { url, token: remote.token };
+/** Remember whichever endpoint actually answered, so we stop probing. */
+function rememberWorking(target) {
+  const remote = activeClusterContext();
+  _routeCache.set(remote?.apiUrl || "__local__", target);
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +134,9 @@ function explain(e, endpoint) {
   const code = e?.cause?.code || e?.code;
   const host = (() => { try { return new URL(endpoint).host; } catch { return endpoint; } })();
   const MAP = {
-    ENOTFOUND: `DNS lookup failed for ${host}. This server cannot resolve the cluster's route domain.`,
+    ENOTFOUND: /\.svc(:|$)/.test(host)
+      ? `Cannot resolve ${host}. That in-cluster name only works from inside the target cluster — this server is elsewhere, so it needs the cluster's Route (which requires read access to routes in openshift-monitoring) or an explicit PROMETHEUS_URL.`
+      : `Cannot resolve ${host}. A pod usually cannot resolve its own cluster's *.apps wildcard, because cluster DNS forwards it to a resolver that has no record for it. If this server runs inside the target cluster, the in-cluster service name is the right endpoint; otherwise add a DNS record or set PROMETHEUS_URL.`,
     EAI_AGAIN: `DNS lookup timed out for ${host}.`,
     ECONNREFUSED: `Connection refused by ${host}.`,
     ECONNRESET: `Connection reset by ${host}.`,
@@ -143,15 +154,29 @@ function explain(e, endpoint) {
 }
 
 export async function promQuery(query, { url = null } = {}) {
-  const { url: base, token: tk } = await resolveTarget(url);
+  const targets = await resolveTarget(url);
+  const agent = await getAgent();
+  let resp, base, tk, lastErr = null;
+
+  // Try each candidate in order. A DNS failure on one is not a verdict on the
+  // cluster — it usually just means we guessed the wrong door.
+  for (const cand of targets) {
+    const ep = `${cand.url}/api/v1/query?query=${encodeURIComponent(query)}`;
+    try {
+      resp = await undiciFetch(ep, {
+        headers: cand.token ? { Authorization: `Bearer ${cand.token}` } : {},
+        dispatcher: agent,
+      });
+      base = cand.url; tk = cand.token;
+      rememberWorking(cand);
+      break;
+    } catch (e) {
+      lastErr = explain(e, ep);
+      lastErr.message = `${lastErr.message} [tried the ${cand.why}]`;
+    }
+  }
+  if (!resp) throw lastErr || new Error("No reachable metrics endpoint for this cluster.");
   const endpoint = `${base}/api/v1/query?query=${encodeURIComponent(query)}`;
-  let resp;
-  try {
-    resp = await undiciFetch(endpoint, {
-      headers: tk ? { Authorization: `Bearer ${tk}` } : {},
-      dispatcher: await getAgent(),
-    });
-  } catch (e) { throw explain(e, endpoint); }
   if (!resp.ok) {
     const body = await resp.text();
     if (resp.status === 401 || resp.status === 403) {
@@ -169,18 +194,22 @@ export async function promQuery(query, { url = null } = {}) {
 }
 
 export async function promRange(query, startTs, endTs, step = "60s") {
-  const { url: base, token: tk } = await resolveTarget(null);
-  const endpoint =
-    `${base}/api/v1/query_range?` +
-    `query=${encodeURIComponent(query)}` +
-    `&start=${startTs}&end=${endTs}&step=${step}`;
-  let resp;
-  try {
-    resp = await undiciFetch(endpoint, {
-      headers: tk ? { Authorization: `Bearer ${tk}` } : {},
-      dispatcher: await getAgent(),
-    });
-  } catch (e) { throw explain(e, endpoint); }
+  const targets = await resolveTarget(null);
+  const agent = await getAgent();
+  const qs = `query=${encodeURIComponent(query)}&start=${startTs}&end=${endTs}&step=${step}`;
+  let resp, endpoint, lastErr = null;
+  for (const cand of targets) {
+    endpoint = `${cand.url}/api/v1/query_range?${qs}`;
+    try {
+      resp = await undiciFetch(endpoint, {
+        headers: cand.token ? { Authorization: `Bearer ${cand.token}` } : {},
+        dispatcher: agent,
+      });
+      rememberWorking(cand);
+      break;
+    } catch (e) { lastErr = explain(e, endpoint); }
+  }
+  if (!resp) throw lastErr || new Error("No reachable metrics endpoint for this cluster.");
   if (!resp.ok) throw new Error(`Prometheus range ${resp.status}`);
   const data = await resp.json();
   return data.data?.result || [];
