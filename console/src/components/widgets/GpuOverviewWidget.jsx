@@ -51,6 +51,54 @@ function Meter({ pct, tone, width = 96 }) {
   );
 }
 
+/* A sparkline is a trend, not a chart: no axes, no grid, no labels. 2px line,
+   a whisper of fill for shape, and the endpoint marked so "where are we now"
+   is unambiguous. Hover gives the numbers rather than cluttering the mark. */
+function Sparkline({ points, tone, width = 96, height = 22, unit = "" }) {
+  if (!points || points.length < 3) return null;
+  const ys = points.map((p) => p[1]);
+  const min = Math.min(...ys), max = Math.max(...ys);
+  const span = max - min || 1;
+  // 1px inset top and bottom so the stroke is never clipped.
+  const y = (v) => height - 1 - ((v - min) / span) * (height - 2);
+  const x = (i) => (i / (points.length - 1)) * width;
+  const d = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[1]).toFixed(1)}`).join("");
+  const area = `${d}L${width},${height}L0,${height}Z`;
+  const last = points[points.length - 1][1];
+  const first = points[0][1];
+  const fmt = (v) => (Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10);
+  const spanHrs = Math.round((points[points.length - 1][0] - points[0][0]) / 3600);
+
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img"
+      aria-label={`Trend over the last ${spanHrs} hours: from ${fmt(first)}${unit} to ${fmt(last)}${unit}, range ${fmt(min)}–${fmt(max)}${unit}`}
+      style={{ display: "block", overflow: "visible" }}>
+      <title>{`last ${spanHrs}h · now ${fmt(last)}${unit} · min ${fmt(min)}${unit} · max ${fmt(max)}${unit}`}</title>
+      <path d={area} fill={`color-mix(in srgb, ${tone} 12%, transparent)`} stroke="none" />
+      <path d={d} fill="none" stroke={tone} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={width} cy={y(last)} r="2.5" fill={tone} />
+    </svg>
+  );
+}
+
+/* The change across the window, in words. A sparkline shows shape; the reader
+   still wants to know which way it went. */
+function Delta({ points, unit = "" }) {
+  if (!points || points.length < 3) return null;
+  const a = points[0][1], b = points[points.length - 1][1];
+  const d = b - a;
+  if (!Number.isFinite(d) || Math.abs(d) < 0.5) {
+    return <span style={{ fontSize: 10.5, color: "var(--text2)" }}>steady</span>;
+  }
+  const up = d > 0;
+  const v = Math.abs(d) >= 100 ? Math.round(Math.abs(d)) : Math.round(Math.abs(d) * 10) / 10;
+  return (
+    <span style={{ fontSize: 10.5, color: "var(--text2)" }}>
+      {up ? "▲" : "▼"} {v}{unit}
+    </span>
+  );
+}
+
 /* Four GPUs is not a ratio worth a meter — it is four things. Discrete pips read
    the count at a glance and stay honest at small n. */
 function Pips({ total, filled, tone = "#22c55e", max = 16 }) {
@@ -92,6 +140,8 @@ function HealthBadge({ health, affected }) {
   );
 }
 
+const HIST_TONE = { utilPct: "#3b82f6", memPct: "#22c55e", powerW: "#22c55e", tempC: "#22c55e", tensorPct: "#8b5cf6" };
+
 export function GpuOverviewWidget() {
   const cluster = useActiveCluster();
   const setSeed = useChatStore((s) => s.setSeed);
@@ -100,6 +150,13 @@ export function GpuOverviewWidget() {
   const { data, isLoading, isError } = useClusterQuery("/api/dashboard/gpu", {
     refetchInterval: REFRESH.STANDARD,
   });
+
+  // The trend lines. Range queries are the expensive call, so they refresh far
+  // less often than the current values — a 6-hour shape does not move in 30s.
+  const { data: hist } = useClusterQuery("/api/dashboard/gpu/history?hours=6&step=300", {
+    staleTime: 120_000, refetchInterval: 300_000, retry: 0,
+  });
+  const H = hist?.series || {};
 
   const s = data?.summary;
   const gpus = useMemo(() => (Array.isArray(data?.gpus) ? data.gpus : []), [data]);
@@ -217,6 +274,8 @@ export function GpuOverviewWidget() {
             {s.avgUtilPct != null && (
               <Stat label="Avg Util" value={`${s.avgUtilPct}%`} sub={`peak ${s.maxUtilPct}%`}>
                 <Meter pct={s.avgUtilPct} tone="#3b82f6" />
+                <Sparkline points={H.utilPct} tone="#3b82f6" unit="%" />
+                <Delta points={H.utilPct} unit="%" />
               </Stat>
             )}
 
@@ -229,6 +288,8 @@ export function GpuOverviewWidget() {
                   ? "busy, but not on tensor work"
                   : s.avgSmClockMHz ? `SM ${s.avgSmClockMHz} MHz` : null}>
                 <Meter pct={s.avgTensorActivePct} tone="#8b5cf6" />
+                <Sparkline points={H.tensorPct} tone="#8b5cf6" unit="%" />
+                <Delta points={H.tensorPct} unit="%" />
               </Stat>
             )}
 
@@ -239,6 +300,8 @@ export function GpuOverviewWidget() {
                   s.memPct >= 95 ? "near limit" : s.memPct >= 85 ? "high" : null,
                 ].filter(Boolean).join(" · ")}>
                 <Meter pct={s.memPct} tone={s.memPct >= 95 ? "#ef4444" : s.memPct >= 85 ? "#f59e0b" : "#22c55e"} />
+                <Sparkline points={H.memPct} tone="#22c55e" unit="%" />
+                <Delta points={H.memPct} unit="%" />
               </Stat>
             )}
 
@@ -251,6 +314,8 @@ export function GpuOverviewWidget() {
                   s.powerPct >= 90 ? "near cap" : null,
                 ].filter(Boolean).join(" · ") || null}>
                 <Meter pct={s.powerPct} tone={s.powerPct >= 90 ? "#f59e0b" : "#22c55e"} />
+                <Sparkline points={H.powerW} tone="#22c55e" unit=" W" />
+                <Delta points={H.powerW} unit=" W" />
               </Stat>
             )}
 
@@ -262,6 +327,8 @@ export function GpuOverviewWidget() {
                   s.maxTempC >= 87 ? "throttling" : s.maxTempC >= 80 ? "hot" : "headroom to 80°C",
                 ].filter(Boolean).join(" · ")}>
                 <Meter pct={Math.round((s.maxTempC / 95) * 100)} tone={tempColor(s.maxTempC)} />
+                <Sparkline points={H.tempC} tone={tempColor(s.maxTempC)} unit="°C" />
+                <Delta points={H.tempC} unit="°C" />
               </Stat>
             )}
 
@@ -269,6 +336,11 @@ export function GpuOverviewWidget() {
               <HealthBadge health={s.health} affected={s.unhealthyGpus} />
             )}
           </div>
+          {hist?.available && (
+            <div style={{ fontSize: 10.5, color: "var(--text2)", opacity: .7, marginTop: -8 }}>
+              Trend lines show the last {hist.window?.hours || 6} hours. Hover a line for its range.
+            </div>
+          )}
 
           {/* Allocation bar — the single most important GPU fact, made visual.
               Every card is either working, reserved, or idle capital. */}

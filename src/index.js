@@ -87,7 +87,7 @@ import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvest
 import { cisCheckManifests, scanManifestImages } from "./services/manifest-scan.js";
 import { handleIncidentCorrelationAPI, handleTopologyExplainAPI, handleImageAnalysisAPI, handleApiMigrationAPI } from "./services/chat-api.js";
 import { getDeprecatedAPIConsumers } from "./tools/api-consumers.js";
-import { getGpuOverview, registerGpuTools } from "./tools/gpu-metrics.js";
+import { getGpuOverview, getGpuHistory, registerGpuTools } from "./tools/gpu-metrics.js";
 import { remember as fleetRemember, recall as fleetRecall, memoryStats as fleetMemoryStats } from "./services/fleet-memory.js";
 import {
   listActions,
@@ -6755,6 +6755,17 @@ spec:
         if (out === null) { sendJson(res, 200, { available: false, reason: "cluster-unreachable", message: "Selected cluster is not reachable." }); return; }
         sendJson(res, 200, out);
       } catch (err) { sendJson(res, 200, { available: false, reason: "error", message: err.message }); }
+      return;
+    }
+
+    // GPU fleet history — the sparklines under each KPI.
+    if (req.method === "GET" && url.pathname === "/api/dashboard/gpu/history") {
+      try {
+        const hours = Math.min(48, Math.max(1, parseInt(url.searchParams.get("hours") || "6", 10)));
+        const stepSec = Math.min(3600, Math.max(60, parseInt(url.searchParams.get("step") || "300", 10)));
+        const out = await withClusterContext(url, async () => getGpuHistory({ hours, stepSec }));
+        sendJson(res, 200, out ?? { available: false, series: {} });
+      } catch (err) { sendJson(res, 200, { available: false, series: {}, error: err.message }); }
       return;
     }
 

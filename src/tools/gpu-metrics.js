@@ -16,7 +16,7 @@
  * error.
  */
 
-import { promQuery } from "../services/prometheus.js";
+import { promQuery, promRange } from "../services/prometheus.js";
 import { ocpGet } from "../utils/openshift-client.js";
 
 // A failed query and an empty result are NOT the same thing. Swallowing the
@@ -299,6 +299,43 @@ export async function detectGpuStack() {
     }
   } catch { /* node read failed — caller reports separately */ }
 
+  return out;
+}
+
+/**
+ * Fleet history for the KPI sparklines.
+ *
+ * Each series is aggregated the way its stat is aggregated — average
+ * utilisation, summed power, MAX temperature — so the line under a number is
+ * the same measurement over time, not a different one. A sparkline that
+ * disagrees with the figure above it is worse than no sparkline.
+ */
+export async function getGpuHistory({ hours = 6, stepSec = 300 } = {}) {
+  const end = Math.floor(Date.now() / 1000);
+  const start = end - hours * 3600;
+  const step = `${stepSec}s`;
+
+  const SERIES = {
+    utilPct:   "avg(DCGM_FI_DEV_GPU_UTIL)",
+    memPct:    "100 * sum(DCGM_FI_DEV_FB_USED) / (sum(DCGM_FI_DEV_FB_USED) + sum(DCGM_FI_DEV_FB_FREE))",
+    powerW:    "sum(DCGM_FI_DEV_POWER_USAGE)",
+    tempC:     "max(DCGM_FI_DEV_GPU_TEMP)",
+    tensorPct: "100 * avg(DCGM_FI_PROF_PIPE_TENSOR_ACTIVE)",
+  };
+
+  const out = { window: { hours, stepSec, start, end }, series: {} };
+  const names = Object.keys(SERIES);
+  const results = await Promise.all(names.map(async (k) => {
+    try {
+      const r = await promRange(SERIES[k], start, end, step);
+      const vals = r?.[0]?.values || [];
+      // [[ts, "12.3"], ...] -> [[ts, 12.3], ...], dropping NaN gaps.
+      return [k, vals.map(([ts, v]) => [Number(ts), parseFloat(v)])
+        .filter(([, v]) => Number.isFinite(v))];
+    } catch { return [k, []]; }
+  }));
+  for (const [k, v] of results) if (v.length) out.series[k] = v;
+  out.available = Object.keys(out.series).length > 0;
   return out;
 }
 
