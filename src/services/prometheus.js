@@ -20,6 +20,7 @@
  */
 
 import { readFile } from "node:fs/promises";
+import { Agent, fetch as undiciFetch } from "undici";
 import { activeClusterContext, ocpGet } from "../utils/openshift-client.js";
 
 const DEFAULT_URL =
@@ -78,14 +79,85 @@ async function resolveTarget(explicitUrl) {
   return { url, token: remote.token };
 }
 
+// ---------------------------------------------------------------------------
+// TLS
+// ---------------------------------------------------------------------------
+// Thanos is served on an OpenShift *service serving certificate*, which is
+// signed by the service-ca operator — NOT by the kube root CA that
+// NODE_EXTRA_CA_CERTS points at. Node therefore rejects it and undici reports
+// the useless string "fetch failed". Trust both bundles explicitly.
+//
+// A remote cluster reached over its Route presents an ingress certificate this
+// process has no way to know, so PROMETHEUS_INSECURE=true is offered for lab
+// use. It is off by default and never silently enabled.
+const CA_FILES = [
+  process.env.PROMETHEUS_CA_FILE,
+  "/etc/service-ca/service-ca.crt",
+  "/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt",
+  "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+  "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+].filter(Boolean);
+
+let _agent = null;
+async function getAgent() {
+  if (_agent) return _agent;
+  const ca = [];
+  for (const f of CA_FILES) {
+    try { ca.push(await readFile(f, "utf8")); } catch { /* not mounted here */ }
+  }
+  const insecure = process.env.PROMETHEUS_INSECURE === "true";
+  _agent = new Agent({
+    connect: {
+      timeout: 15_000,
+      ...(insecure ? { rejectUnauthorized: false } : {}),
+      ...(ca.length && !insecure ? { ca } : {}),
+    },
+  });
+  if (insecure) console.error("[prometheus] PROMETHEUS_INSECURE=true — TLS verification disabled for metrics queries");
+  return _agent;
+}
+
+/**
+ * Turn undici's opaque failures into something an operator can act on.
+ * "fetch failed" is not a diagnosis.
+ */
+function explain(e, endpoint) {
+  const code = e?.cause?.code || e?.code;
+  const host = (() => { try { return new URL(endpoint).host; } catch { return endpoint; } })();
+  const MAP = {
+    ENOTFOUND: `DNS lookup failed for ${host}. This server cannot resolve the cluster's route domain.`,
+    EAI_AGAIN: `DNS lookup timed out for ${host}.`,
+    ECONNREFUSED: `Connection refused by ${host}.`,
+    ECONNRESET: `Connection reset by ${host}.`,
+    UND_ERR_CONNECT_TIMEOUT: `Timed out connecting to ${host} — usually egress from this cluster is blocked.`,
+    CERT_HAS_EXPIRED: `The TLS certificate presented by ${host} has expired.`,
+    UNABLE_TO_VERIFY_LEAF_SIGNATURE: `TLS certificate from ${host} is not trusted by this server. For an OpenShift Route on an internal domain, set PROMETHEUS_CA_FILE to that cluster's ingress CA, or PROMETHEUS_INSECURE=true in a lab.`,
+    DEPTH_ZERO_SELF_SIGNED_CERT: `${host} presents a self-signed certificate. Set PROMETHEUS_CA_FILE, or PROMETHEUS_INSECURE=true in a lab.`,
+    SELF_SIGNED_CERT_IN_CHAIN: `The certificate chain from ${host} is self-signed. Set PROMETHEUS_CA_FILE, or PROMETHEUS_INSECURE=true in a lab.`,
+  };
+  const detail = MAP[code] || `${e?.message || "request failed"}${code ? ` (${code})` : ""} against ${host}`;
+  const err = new Error(detail);
+  err.code = code || null;
+  err.endpoint = endpoint;
+  return err;
+}
+
 export async function promQuery(query, { url = null } = {}) {
   const { url: base, token: tk } = await resolveTarget(url);
   const endpoint = `${base}/api/v1/query?query=${encodeURIComponent(query)}`;
-  const resp = await fetch(endpoint, {
-    headers: tk ? { Authorization: `Bearer ${tk}` } : {},
-  });
+  let resp;
+  try {
+    resp = await undiciFetch(endpoint, {
+      headers: tk ? { Authorization: `Bearer ${tk}` } : {},
+      dispatcher: await getAgent(),
+    });
+  } catch (e) { throw explain(e, endpoint); }
   if (!resp.ok) {
     const body = await resp.text();
+    if (resp.status === 401 || resp.status === 403) {
+      throw new Error(`Metrics query rejected (HTTP ${resp.status}). The credential for this cluster needs the cluster-monitoring-view role: `
+        + `oc adm policy add-cluster-role-to-user cluster-monitoring-view <user-or-sa>`);
+    }
     throw new Error(`Prometheus ${resp.status}: ${body.substring(0, 300)}`);
   }
   const data = await resp.json();
@@ -102,9 +174,13 @@ export async function promRange(query, startTs, endTs, step = "60s") {
     `${base}/api/v1/query_range?` +
     `query=${encodeURIComponent(query)}` +
     `&start=${startTs}&end=${endTs}&step=${step}`;
-  const resp = await fetch(endpoint, {
-    headers: tk ? { Authorization: `Bearer ${tk}` } : {},
-  });
+  let resp;
+  try {
+    resp = await undiciFetch(endpoint, {
+      headers: tk ? { Authorization: `Bearer ${tk}` } : {},
+      dispatcher: await getAgent(),
+    });
+  } catch (e) { throw explain(e, endpoint); }
   if (!resp.ok) throw new Error(`Prometheus range ${resp.status}`);
   const data = await resp.json();
   return data.data?.result || [];

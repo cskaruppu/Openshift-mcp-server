@@ -92,6 +92,13 @@ spec:
               mountPath: /data
             - name: tmp
               mountPath: /tmp
+            # Thanos is served on an OpenShift service-serving certificate,
+            # signed by the service-ca operator. That CA is NOT part of the
+            # service account's ca.crt, so without this the metrics client
+            # cannot verify it and every query fails.
+            - name: service-ca
+              mountPath: /etc/service-ca
+              readOnly: true
           readinessProbe:
             httpGet:
               path: /readyz
@@ -111,3 +118,7 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
+        - name: service-ca
+          configMap:
+            name: openshift-service-ca.crt
+            optional: true
