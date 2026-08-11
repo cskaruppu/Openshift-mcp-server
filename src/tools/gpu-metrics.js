@@ -487,13 +487,14 @@ export async function getGpuOverview() {
   // Fan out the remaining DCGM series in parallel. Each is optional — DCGM
   // profiles vary by driver version, so a missing series just leaves a null.
   const [
-    fbUsed, fbFree, temp, power, smClock, memClock,
+    fbUsed, fbFree, temp, power, powerLimit, smClock, memClock,
     smActive, tensorActive, xid, eccSbe, eccDbe,
   ] = await Promise.all([
     safeQuery("DCGM_FI_DEV_FB_USED"),            // MiB
     safeQuery("DCGM_FI_DEV_FB_FREE"),            // MiB
     safeQuery("DCGM_FI_DEV_GPU_TEMP"),           // °C
     safeQuery("DCGM_FI_DEV_POWER_USAGE"),        // W
+    safeQuery("DCGM_FI_DEV_POWER_MGMT_LIMIT"),   // W — the card's own cap
     safeQuery("DCGM_FI_DEV_SM_CLOCK"),           // MHz
     safeQuery("DCGM_FI_DEV_MEM_CLOCK"),          // MHz
     safeQuery("DCGM_FI_PROF_SM_ACTIVE"),         // 0-1 ratio
@@ -510,7 +511,8 @@ export async function getGpuOverview() {
     return m;
   };
   const iFbUsed = index(fbUsed), iFbFree = index(fbFree), iTemp = index(temp);
-  const iPower = index(power), iSm = index(smClock), iMem = index(memClock);
+  const iPower = index(power), iPowerCap = index(powerLimit);
+  const iSm = index(smClock), iMem = index(memClock);
   const iSmAct = index(smActive), iTensor = index(tensorActive);
   const iXid = index(xid), iSbe = index(eccSbe), iDbe = index(eccDbe);
 
@@ -551,6 +553,7 @@ export async function getGpuOverview() {
       memPct: (memUsed != null && memTotal) ? Math.round((memUsed / memTotal) * 100) : null,
       tempC,
       powerW: iPower.get(key),
+      powerLimitW: iPowerCap.get(key),
       smClockMHz: iSm.get(key),
       memClockMHz: iMem.get(key),
       smActivePct: iSmAct.get(key) != null ? Math.round(iSmAct.get(key) * 100) : null,
@@ -570,7 +573,7 @@ export async function getGpuOverview() {
   const nodeMap = new Map();
   const modelCounts = {};
   let sumUtil = 0, maxUtil = 0, allocated = 0, idleAllocated = 0;
-  let memUsedTot = 0, memTot = 0, maxTemp = 0, powerTot = 0;
+  let memUsedTot = 0, memTot = 0, maxTemp = 0, powerTot = 0, powerCapTot = 0;
   let xidCount = 0, eccCount = 0, unhealthy = 0;
   const waste = [];
 
@@ -582,6 +585,7 @@ export async function getGpuOverview() {
     if (g.memTotalMiB != null) memTot += g.memTotalMiB;
     if (g.tempC != null && g.tempC > maxTemp) maxTemp = g.tempC;
     if (g.powerW != null) powerTot += g.powerW;
+    if (g.powerLimitW != null) powerCapTot += g.powerLimitW;
     if (g.xidError != null && g.xidError > 0) xidCount++;
     if (g.eccDbe != null && g.eccDbe > 0) eccCount++;
     if (g.status !== "healthy") unhealthy++;
@@ -641,6 +645,11 @@ export async function getGpuOverview() {
       maxTempC: Math.round(maxTemp),
       totalPowerW: Math.round(powerTot),
       totalPowerKW: Math.round((powerTot / 1000) * 10) / 10,
+      // The cards' own reported cap. Without it, power gets no meter — a meter
+      // needs a real limit, and inventing one from a spec sheet would be a
+      // guess presented as a measurement.
+      totalPowerLimitW: powerCapTot > 0 ? Math.round(powerCapTot) : null,
+      powerPct: powerCapTot > 0 ? Math.round((powerTot / powerCapTot) * 100) : null,
       xidErrorGpus: xidCount,
       eccErrorGpus: eccCount,
       unhealthyGpus: unhealthy,

@@ -23,12 +23,71 @@ function tempColor(t) {
 }
 const HEALTH_TONE = { healthy: "#22c55e", warning: "#f59e0b", critical: "#ef4444" };
 
-function Stat({ label, value, sub, tone }) {
+function Stat({ label, value, sub, tone, children }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 92 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 108 }}>
+      {/* Proportional figures, not tabular — tabular gives every digit the width
+          of a zero, which reads loose at display sizes. Tabular is for columns. */}
       <span style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.05, color: tone || "var(--text)" }}>{value}</span>
-      <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text2)", textTransform: "uppercase", letterSpacing: ".04em" }}>{label}</span>
+      <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text2)", textTransform: "uppercase", letterSpacing: ".04em" }}>{label}</span>
+      {children}
       {sub && <span style={{ fontSize: 11, color: "var(--text2)" }}>{sub}</span>}
+    </div>
+  );
+}
+
+/* A meter is for ONE ratio against a real limit. The fill carries severity; the
+   unfilled track is a lighter step of the same colour, so the state reads across
+   the whole bar rather than only where the fill stops. */
+function Meter({ pct, tone, width = 96 }) {
+  if (pct == null) return null;
+  const p = Math.max(0, Math.min(100, pct));
+  return (
+    <div style={{ width, height: 6, borderRadius: 999, overflow: "hidden",
+      background: `color-mix(in srgb, ${tone} 16%, transparent)` }}>
+      <div style={{ width: `${p}%`, height: "100%", background: tone,
+        borderRadius: 999, transition: "width .35s ease-out" }} />
+    </div>
+  );
+}
+
+/* Four GPUs is not a ratio worth a meter — it is four things. Discrete pips read
+   the count at a glance and stay honest at small n. */
+function Pips({ total, filled, tone = "#22c55e", max = 16 }) {
+  if (!total || total > max) return null;
+  return (
+    <div style={{ display: "flex", gap: 3 }}>
+      {Array.from({ length: total }, (_, i) => (
+        <span key={i} style={{
+          width: 10, height: 6, borderRadius: 2,
+          background: i < filled ? tone : "color-mix(in srgb, var(--text2) 22%, transparent)",
+        }} />
+      ))}
+    </div>
+  );
+}
+
+/* Status never rides on colour alone — icon and label travel with it. */
+function HealthBadge({ health, affected }) {
+  const M = {
+    healthy:  { tone: "#22c55e", icon: "✓", label: "OK" },
+    warning:  { tone: "#f59e0b", icon: "!", label: "Warn" },
+    critical: { tone: "#ef4444", icon: "✕", label: "Critical" },
+    unknown:  { tone: "var(--text2)", icon: "?", label: "Unknown" },
+  };
+  const s = M[health] || M.unknown;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 108 }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 20, fontWeight: 800, color: s.tone, lineHeight: 1.05 }}>
+        <span aria-hidden="true" style={{
+          width: 20, height: 20, borderRadius: 999, fontSize: 12, fontWeight: 700,
+          display: "grid", placeItems: "center", color: s.tone,
+          background: `color-mix(in srgb, ${s.tone} 18%, transparent)`,
+        }}>{s.icon}</span>
+        {s.label}
+      </span>
+      <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text2)", textTransform: "uppercase", letterSpacing: ".04em" }}>Health</span>
+      <span style={{ fontSize: 11, color: "var(--text2)" }}>{affected > 0 ? `${affected} affected` : "all nominal"}</span>
     </div>
   );
 }
@@ -143,19 +202,59 @@ export function GpuOverviewWidget() {
 
           {/* Summary strip */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: "18px 26px", alignItems: "flex-start" }}>
+            {/* A count, not a ratio — no meter. */}
             <Stat label="GPUs" value={s.totalGpus} sub={`${s.nodes} node${s.nodes === 1 ? "" : "s"}`} />
-            {s.avgUtilPct != null && <Stat label="Avg Util" value={`${s.avgUtilPct}%`} sub={`peak ${s.maxUtilPct}%`} tone={utilColor(s.avgUtilPct)} />}
-            <Stat label="Allocated" value={`${s.allocatedGpus}/${s.totalGpus}`} sub={`${s.unallocatedGpus} free`} />
-            {s.memPct != null && <Stat label="GPU Mem" value={`${s.memPct}%`} sub={s.memTotalGiB ? `${s.memUsedGiB} / ${s.memTotalGiB} GiB` : null} />}
-            {(s.totalPowerKW || s.totalPowerW) && <Stat label="Power" value={s.totalPowerKW ? `${s.totalPowerKW} kW` : `${s.totalPowerW} W`} />}
-            {s.maxTempC != null && <Stat label="Max Temp" value={`${s.maxTempC}°C`} tone={tempColor(s.maxTempC)} />}
+
+            {/* Four discrete things read better as pips than as a bar. */}
+            <Stat label="Allocated" value={`${s.allocatedGpus}/${s.totalGpus}`} sub={`${s.unallocatedGpus} free`}>
+              <Pips total={s.totalGpus} filled={s.allocatedGpus} />
+            </Stat>
+
+            {/* Utilisation is magnitude, not severity — high is GOOD for a GPU.
+                Colouring it red at 90% would say "problem" about a fleet doing
+                exactly what it was bought to do. The waste case is called out in
+                the insights instead. */}
+            {s.avgUtilPct != null && (
+              <Stat label="Avg Util" value={`${s.avgUtilPct}%`} sub={`peak ${s.maxUtilPct}%`}>
+                <Meter pct={s.avgUtilPct} tone="#3b82f6" />
+              </Stat>
+            )}
+
+            {/* Every severity-coloured meter names its state in text as well.
+                Amber and green sit within ΔE 6 for a protanope, so colour alone
+                would not carry the difference. */}
+            {s.memPct != null && (
+              <Stat label="GPU Mem" value={`${s.memPct}%`}
+                sub={[
+                  s.memTotalGiB ? `${s.memUsedGiB} / ${s.memTotalGiB} GiB` : null,
+                  s.memPct >= 95 ? "near limit" : s.memPct >= 85 ? "high" : null,
+                ].filter(Boolean).join(" · ")}>
+                <Meter pct={s.memPct} tone={s.memPct >= 95 ? "#ef4444" : s.memPct >= 85 ? "#f59e0b" : "#22c55e"} />
+              </Stat>
+            )}
+
+            {/* Metered only when the cards report their own cap. No cap, no
+                denominator, no meter — a spec-sheet TDP would be a guess. */}
+            {(s.totalPowerKW || s.totalPowerW) && (
+              <Stat label="Power" value={s.totalPowerKW ? `${s.totalPowerKW} kW` : `${s.totalPowerW} W`}
+                sub={[
+                  s.totalPowerLimitW ? `of ${Math.round(s.totalPowerLimitW / 100) / 10} kW cap` : null,
+                  s.powerPct >= 90 ? "near cap" : null,
+                ].filter(Boolean).join(" · ") || null}>
+                <Meter pct={s.powerPct} tone={s.powerPct >= 90 ? "#f59e0b" : "#22c55e"} />
+              </Stat>
+            )}
+
+            {/* Thermal headroom against the throttle point, not against 100°C. */}
+            {s.maxTempC != null && (
+              <Stat label="Max Temp" value={`${s.maxTempC}°C`} tone={tempColor(s.maxTempC)}
+                sub={s.maxTempC >= 87 ? "throttling" : s.maxTempC >= 80 ? "hot" : "headroom to 80°C"}>
+                <Meter pct={Math.round((s.maxTempC / 95) * 100)} tone={tempColor(s.maxTempC)} />
+              </Stat>
+            )}
+
             {s.health && s.health !== "unknown" && (
-              <Stat
-                label="Health"
-                value={s.health === "healthy" ? "OK" : s.health === "warning" ? "Warn" : "Crit"}
-                tone={HEALTH_TONE[s.health]}
-                sub={s.unhealthyGpus > 0 ? `${s.unhealthyGpus} affected` : "all nominal"}
-              />
+              <HealthBadge health={s.health} affected={s.unhealthyGpus} />
             )}
           </div>
 
