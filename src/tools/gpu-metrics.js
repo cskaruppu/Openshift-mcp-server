@@ -526,11 +526,18 @@ export async function getGpuOverview() {
     const xidErr = iXid.get(key);
     const eccDbe = iDbe.get(key);
 
-    // Pod attribution requires DCGM's kubernetes integration (exported_pod /
-    // pod labels). Absent that, the GPU is "unattributed".
-    const pod = m.exported_pod || m.pod || null;
-    const namespace = m.exported_namespace || m.namespace || null;
-    const container = m.exported_container || m.container || null;
+    // Attribution comes ONLY from DCGM's kubernetes integration, which reports
+    // the consuming pod as exported_pod. The plain `pod` label is Prometheus's
+    // own scrape-target metadata — the dcgm-exporter pod itself — so falling
+    // back to it attributed every GPU to the monitoring agent and reported a
+    // wholly idle fleet as fully allocated and wasted.
+    let pod = m.exported_pod || null;
+    let namespace = m.exported_namespace || null;
+    let container = m.exported_container || null;
+    // Belt and braces: the exporter is never a GPU consumer.
+    if (namespace && /^(nvidia-gpu-operator|gpu-operator(-resources)?)$/.test(namespace)) {
+      pod = null; namespace = null; container = null;
+    }
 
     gpus.push({
       id: key,
@@ -611,16 +618,23 @@ export async function getGpuOverview() {
     available: true,
     telemetry: "live",
     inventory: inv,
-    insights: buildInsights(inv, { idleAllocated, idleDetail: waste }),
+    // The API server is authoritative on allocation — it IS the scheduler's
+    // record. DCGM attribution only says WHICH pod holds a card, and only when
+    // its kubernetes integration is configured. Where they disagree, trust
+    // Kubernetes; otherwise the panel contradicts itself on screen.
+    insights: buildInsights(inv, {
+      idleAllocated: inv.totalAllocated > 0 ? idleAllocated : 0,
+      idleDetail: waste,
+    }),
     summary: {
       totalGpus: total,
       nodes: nodeMap.size,
       models: modelCounts,
       avgUtilPct: total ? Math.round(sumUtil / total) : 0,
       maxUtilPct: Math.round(maxUtil),
-      allocatedGpus: allocated,
-      unallocatedGpus: total - allocated,
-      idleAllocatedGpus: idleAllocated,
+      allocatedGpus: inv.totalGpus > 0 ? inv.totalAllocated : allocated,
+      unallocatedGpus: inv.totalGpus > 0 ? inv.totalFree : (total - allocated),
+      idleAllocatedGpus: inv.totalAllocated > 0 ? idleAllocated : 0,
       memUsedGiB: Math.round((memUsedTot / 1024) * 10) / 10,
       memTotalGiB: Math.round((memTot / 1024) * 10) / 10,
       memPct: memTot ? Math.round((memUsedTot / memTot) * 100) : null,
