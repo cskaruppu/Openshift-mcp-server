@@ -71,7 +71,11 @@ export function GpuOverviewWidget() {
           <div style={{
             width: 44, height: 44, borderRadius: 10, flexShrink: 0,
             display: "grid", placeItems: "center",
-            background: "color-mix(in srgb, var(--text2) 12%, transparent)", color: "var(--text2)",
+            background: data.reason === "no-gpu-hardware" || data.reason === "operator-without-hardware"
+              ? "color-mix(in srgb, var(--text2) 8%, transparent)"
+              : "color-mix(in srgb, #f59e0b 14%, transparent)",
+            color: data.reason === "no-gpu-hardware" || data.reason === "operator-without-hardware"
+              ? "var(--text2)" : "#f59e0b",
           }}>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
               <rect x="3" y="6" width="18" height="12" rx="2" /><path d="M7 10v4M11 10v4M15 10v4" /><path d="M3 9h-1M3 15h-1M22 9h-1M22 15h-1" />
@@ -79,14 +83,30 @@ export function GpuOverviewWidget() {
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>
-              {data.reason === "gpu-nodes-without-metrics" ? "GPUs detected — metrics pending"
-                : data.reason === "metrics-unreachable" ? "GPU status unknown — metrics backend unreachable"
-                : data.reason === "cluster-unreachable" ? "Cluster unreachable"
-                : "No GPU metrics on this cluster"}
+              {{
+                "no-gpu-hardware":         "No GPUs on this cluster",
+                "operator-missing":        "GPU hardware found — NVIDIA GPU Operator not installed",
+                "operator-not-working":    "GPU Operator installed, but GPUs are not available to Kubernetes",
+                "operator-without-hardware": "GPU Operator installed — no GPU hardware present",
+                "gpu-nodes-without-metrics": "GPUs detected — metrics pending",
+                "metrics-unreachable":     "GPU status unknown — metrics backend unreachable",
+                "inventory-unreadable":    "GPU status unknown — cannot read this cluster",
+                "cluster-unreachable":     "Cluster unreachable",
+              }[data.reason] || "No GPUs on this cluster"}
             </div>
             <div style={{ fontSize: 12.5, color: "var(--text2)", lineHeight: 1.55, maxWidth: 620 }}>
               {data.message}
             </div>
+            {data.stack && (data.stack.pciGpuNodes > 0 || data.stack.operatorInstalled) && (
+              <div style={{ fontSize: 11.5, color: "var(--text2)", marginTop: 6, opacity: .85 }}>
+                {[
+                  `${data.stack.pciGpuNodes} node(s) with GPU hardware`,
+                  `operator ${data.stack.operatorInstalled ? "installed" : "not installed"}`,
+                  data.stack.clusterPolicyState ? `ClusterPolicy: ${data.stack.clusterPolicyState}` : null,
+                  `${data.stack.gpuCapacity} allocatable GPU(s)`,
+                ].filter(Boolean).join("  ·  ")}
+              </div>
+            )}
             {data.remediation?.length > 0 && (
               <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 12, color: "var(--text2)", lineHeight: 1.6 }}>
                 {data.remediation.map((r, i) => <li key={i}>{r}</li>)}

@@ -14,7 +14,8 @@
     "nodes_top",
     "get_dashboard_summary",
     "gpu_inventory",
-    "gpu_overview"
+    "gpu_overview",
+    "gpu_stack_check"
   ],
   "services": [
     "prometheus",

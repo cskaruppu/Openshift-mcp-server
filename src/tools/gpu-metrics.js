@@ -158,6 +158,52 @@ export async function getGpuInventory() {
  * @returns {Promise<object>} inventory + utilization + health, or { available:false }.
  */
 /**
+ * Is a GPU stack actually installed on this cluster?
+ *
+ * Inferring this from metrics was the original sin here: absent telemetry was
+ * reported as "no GPU Operator", which was wrong in both directions. Ask the
+ * API server directly instead, so the widget can say something true and
+ * specific — including the honest, unremarkable answer "this cluster has no
+ * GPUs", which is the correct answer for most clusters.
+ */
+export async function detectGpuStack() {
+  const out = {
+    operatorInstalled: false, clusterPolicyState: null,
+    gpuNodes: 0, gpuCapacity: 0,
+    pciGpuNodes: 0,        // NVIDIA PCI devices seen by Node Feature Discovery
+    nfdPresent: false,
+  };
+
+  // The ClusterPolicy CRD only exists once the GPU Operator is installed.
+  try {
+    const cps = await ocpGet("/apis/nvidia.com/v1/clusterpolicies");
+    out.operatorInstalled = true;
+    const cp = (cps.items || [])[0];
+    if (cp) {
+      out.clusterPolicyName = cp.metadata?.name || null;
+      out.clusterPolicyState = cp.status?.state || "unknown";
+    }
+  } catch { /* 404 = CRD absent = operator not installed */ }
+
+  try {
+    const nodes = await ocpGet("/api/v1/nodes");
+    for (const n of nodes.items || []) {
+      const cap = Number(n.status?.capacity?.["nvidia.com/gpu"]
+        || n.status?.capacity?.["amd.com/gpu"] || 0);
+      if (cap > 0) { out.gpuNodes++; out.gpuCapacity += cap; }
+      const L = n.metadata?.labels || {};
+      if (Object.keys(L).some((k) => k.startsWith("feature.node.kubernetes.io/"))) out.nfdPresent = true;
+      // 10de is NVIDIA's PCI vendor id; 1002 is AMD. NFD sets these when the
+      // hardware is physically present, whether or not a driver is loaded.
+      if (L["feature.node.kubernetes.io/pci-10de.present"] === "true"
+        || L["feature.node.kubernetes.io/pci-1002.present"] === "true") out.pciGpuNodes++;
+    }
+  } catch { /* node read failed — caller reports separately */ }
+
+  return out;
+}
+
+/**
  * MCP tool surface for GPU inventory and telemetry.
  */
 export function registerGpuTools(server) {
@@ -168,6 +214,24 @@ export function registerGpuTools(server) {
     async () => {
       const inv = await getGpuInventory();
       return { content: [{ type: "text", text: JSON.stringify(inv, null, 2) }] };
+    }
+  );
+  server.tool(
+    "gpu_stack_check",
+    "Whether this cluster has GPU hardware and whether the NVIDIA GPU Operator is installed and working. Answers from the API server, so it is valid even when monitoring is broken.",
+    {},
+    async () => {
+      const s = await detectGpuStack();
+      const verdict = s.gpuCapacity > 0
+        ? `${s.gpuCapacity} GPU(s) allocatable across ${s.gpuNodes} node(s). Operator ${s.operatorInstalled ? "installed" : "not installed"}${s.clusterPolicyState ? `, ClusterPolicy ${s.clusterPolicyState}` : ""}.`
+        : s.pciGpuNodes > 0
+          ? (s.operatorInstalled
+              ? `GPU hardware on ${s.pciGpuNodes} node(s), operator installed${s.clusterPolicyState ? ` (ClusterPolicy ${s.clusterPolicyState})` : ""}, but nothing allocatable — the driver or device plugin is not completing.`
+              : `GPU hardware on ${s.pciGpuNodes} node(s), but the NVIDIA GPU Operator is not installed.`)
+          : s.operatorInstalled
+            ? "GPU Operator installed, but no GPU hardware on any node."
+            : "This cluster has no GPUs and no GPU Operator.";
+      return { content: [{ type: "text", text: JSON.stringify({ ...s, verdict }, null, 2) }] };
     }
   );
   server.tool(
@@ -242,9 +306,10 @@ export async function getGpuOverview() {
         generatedAt: new Date().toISOString(),
       };
     }
-    // Could we even ask? If the metrics backend is unreachable or refusing us,
-    // saying "no GPU operator" is a guess dressed as a fact.
-    if (_lastProbeError) {
+    // Ordering matters. The API server is authoritative about whether GPUs
+    // exist, so a metrics outage must NOT mask an answer we already have. Only
+    // when the inventory read ALSO failed are we genuinely unable to say.
+    if (_lastProbeError && inv.error) {
       return {
         available: false,
         reason: "metrics-unreachable",
@@ -258,19 +323,63 @@ export async function getGpuOverview() {
         generatedAt: new Date().toISOString(),
       };
     }
-    // No telemetry AND no GPU hardware visible to Kubernetes.
+    // No telemetry AND no GPU hardware visible to Kubernetes. Ask what is
+    // actually installed so we can name the situation instead of describing
+    // the absence of a metric.
+    const stack = await detectGpuStack();
+
+    if (!inv.error) {
+      // Hardware is physically present but Kubernetes cannot see it — the
+      // operator is missing, or installed and not working.
+      if (stack.pciGpuNodes > 0 && stack.gpuCapacity === 0) {
+        return {
+          available: false,
+          reason: stack.operatorInstalled ? "operator-not-working" : "operator-missing",
+          stack,
+          message: stack.operatorInstalled
+            ? `GPU hardware is present on ${stack.pciGpuNodes} node(s) and the NVIDIA GPU Operator is installed`
+              + `${stack.clusterPolicyState ? ` (ClusterPolicy state: ${stack.clusterPolicyState})` : ""}, `
+              + `but no node is advertising allocatable GPUs. The driver or device plugin is not completing.`
+            : `GPU hardware is present on ${stack.pciGpuNodes} node(s), but the NVIDIA GPU Operator is not installed, `
+              + `so Kubernetes cannot schedule work onto these GPUs.`,
+          remediation: stack.operatorInstalled
+            ? [
+                "oc get clusterpolicy -o yaml   — check status.conditions for the failing component",
+                "oc get pods -n nvidia-gpu-operator   — look for driver-daemonset or device-plugin not Running",
+                "oc logs -n nvidia-gpu-operator -l app=nvidia-driver-daemonset --tail=50",
+              ]
+            : [
+                "Install the NVIDIA GPU Operator from OperatorHub into the nvidia-gpu-operator namespace",
+                "It requires Node Feature Discovery, which " + (stack.nfdPresent ? "is already installed." : "is NOT installed — install that first."),
+              ],
+          docs: "https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/openshift/steps-overview.html",
+          generatedAt: new Date().toISOString(),
+        };
+      }
+
+      // Operator installed, no hardware. Unusual but worth naming exactly.
+      if (stack.operatorInstalled && stack.gpuCapacity === 0) {
+        return {
+          available: false, reason: "operator-without-hardware", stack,
+          message: "The NVIDIA GPU Operator is installed on this cluster, but no node has GPU hardware. Nothing to report.",
+          generatedAt: new Date().toISOString(),
+        };
+      }
+
+      // The ordinary case: a CPU-only cluster. Not a fault, not a warning.
+      return {
+        available: false, reason: "no-gpu-hardware", stack,
+        message: "This cluster has no GPUs. No node reports GPU hardware, and the NVIDIA GPU Operator is not installed.",
+        generatedAt: new Date().toISOString(),
+      };
+    }
+
     return {
       available: false,
-      reason: inv.error ? "inventory-unreadable" : "no-gpu-hardware",
-      message: inv.error
-        ? `Could not read node inventory for this cluster, so GPU presence is unknown: ${inv.error}`
-        : "No node on this cluster advertises nvidia.com/gpu (or amd.com/gpu) capacity, and no DCGM series were found. This cluster appears to have no GPUs available to Kubernetes.",
-      remediation: [
-        "Enable user-workload monitoring: oc -n openshift-monitoring edit configmap cluster-monitoring-config → data.config.yaml → enableUserWorkload: true",
-        "Then confirm the exporter is scraped: oc get servicemonitor -n nvidia-gpu-operator",
-        "Verify from inside the cluster: the query DCGM_FI_DEV_GPU_UTIL should return series in the OpenShift console Observe → Metrics page.",
-      ],
-      docs: "https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/openshift/mirror-gpu-ocp-disconnected.html",
+      reason: "inventory-unreadable",
+      stack,
+      message: `Could not read node inventory for this cluster, so GPU presence is unknown: ${inv.error}`,
+      remediation: ["Check that the stored credential for this cluster can list nodes."],
       generatedAt: new Date().toISOString(),
     };
   }
