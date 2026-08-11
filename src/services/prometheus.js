@@ -167,6 +167,25 @@ async function getAgent(servername = null) {
 }
 
 /**
+ * Who is this token? A Kubernetes service-account token is a JWT whose `sub`
+ * claim is the full identity — decoding it locally turns "grant the role to
+ * <user-or-sa>" into a command the operator can paste. No verification is done
+ * or needed: we are reading our own credential to name it, not trusting it.
+ */
+function identityOf(token) {
+  if (!token || typeof token !== "string") return null;
+  // OpenShift OAuth tokens (sha256~...) are opaque, not JWTs.
+  if (!token.includes(".")) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+    return payload.sub
+      || (payload["kubernetes.io"]?.serviceaccount
+        ? `system:serviceaccount:${payload["kubernetes.io"].namespace}:${payload["kubernetes.io"].serviceaccount.name}`
+        : null);
+  } catch { return null; }
+}
+
+/**
  * Turn undici's opaque failures into something an operator can act on.
  * "fetch failed" is not a diagnosis.
  */
@@ -231,8 +250,21 @@ export async function promQuery(query, { url = null } = {}) {
   if (!resp.ok) {
     const body = await resp.text();
     if (resp.status === 401 || resp.status === 403) {
-      throw new Error(`Metrics query rejected (HTTP ${resp.status}). The credential for this cluster needs the cluster-monitoring-view role: `
-        + `oc adm policy add-cluster-role-to-user cluster-monitoring-view <user-or-sa>`);
+      const who = identityOf(tk);
+      if (resp.status === 401) {
+        throw new Error(`Metrics query rejected (HTTP 401) — the target cluster did not recognise this credential at all. `
+          + `The stored token for this cluster is invalid, expired, or belongs to a different cluster.`
+          + (who ? ` It identifies as ${who}.` : ""));
+      }
+      // 403 means the cluster DID authenticate the identity and then refused
+      // it, so we can name exactly who needs the role and where.
+      throw new Error(`Metrics query rejected (HTTP 403) — authenticated but not authorised. `
+        + (who
+            ? `The credential is ${who}. Run this ON THE TARGET CLUSTER: `
+              + `oc adm policy add-cluster-role-to-user cluster-monitoring-view ${who}`
+            : `The credential is an opaque OAuth token, so its identity cannot be read here. `
+              + `Run "oc --token=<stored-token> whoami" against the target cluster to name it, then: `
+              + `oc adm policy add-cluster-role-to-user cluster-monitoring-view <that-identity>`));
     }
     throw new Error(`Prometheus ${resp.status}: ${body.substring(0, 300)}`);
   }
