@@ -14,6 +14,37 @@ document and the code that built it never drift apart.
 | **UC-03** | Predictive Intelligence & Anomaly Detection | Scheduled analysis | [`uc-03-predictive-intelligence/`](./uc-03-predictive-intelligence/) |
 | **UC-04** | Security & Compliance Governance | Continuous scanning | [`uc-04-security-compliance/`](./uc-04-security-compliance/) |
 | **UC-05** | Zero-Touch Incident Command *(demo name: RCA Agent)* | **None — fully autonomous** | [`uc-05-rca-agent/`](./uc-05-rca-agent/) |
+| **UC-06** | Governed VM Provisioning & Lifecycle | Human-initiated, agent-executed | [`uc-06-vm-lifecycle/`](./uc-06-vm-lifecycle/) |
+
+---
+
+## UC-06 — Governed VM Provisioning & Lifecycle
+
+*One sentence in. A governed, owned, accountable virtual machine out — and an agent that remembers
+why it built it.*
+
+> **The console creates a VM. It does not remember why.**
+> UC-06 records the reason, enforces the expiry, and comes back weeks later to right-size what it
+> built — citing the original change request.
+
+| Artifact | File |
+|---|---|
+| **Full specification + 4 actor-coded flowcharts** | [`use-case.md`](./uc-06-vm-lifecycle/use-case.md) |
+| **Presentation** — 17 slides | `TCS-Agentic-AI-UC06-VM-Lifecycle.pptx` |
+| **Workbook** — 15 sheets | `TCS-Agentic-AI-UC06-VM-Lifecycle.xlsx` |
+
+**The deliberate contrast with UC-05:** UC-05 is agent-initiated and closes its own tickets. UC-06 is
+**never autonomous** — provisioning consumes quota, addresses, licences and money, so a person always
+decides. Keeping that boundary explicit is what lets UC-05's autonomy stay credible.
+
+**Four differentiators:** sizing reconciliation that states the compromise · provenance written onto
+the VM · expiry enforced rather than recorded · right-sizing that cites the original change request.
+
+> ⚠️ The ServiceNow CAB approval loop and right-sizing on real usage history are **built and
+> unit-verified but not yet run against live systems**. See sheet 15 of the workbook before
+> demonstrating either.
+
+---
 
 ### Not yet assigned an ID
 
