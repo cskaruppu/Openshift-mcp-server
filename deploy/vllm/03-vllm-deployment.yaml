@@ -1,0 +1,117 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm
+  namespace: llm-serving
+  labels:
+    app: vllm
+    app.kubernetes.io/name: vllm
+    app.kubernetes.io/part-of: tcs-agentic-ai
+spec:
+  replicas: 1
+  strategy:
+    # A GPU pod cannot be rolled: the new one cannot schedule until the old one
+    # releases its cards. Recreate is the honest strategy here.
+    type: Recreate
+  selector:
+    matchLabels: { app: vllm }
+  template:
+    metadata:
+      labels: { app: vllm }
+    spec:
+      # Only land on nodes the GPU Operator has actually made ready. The label
+      # is set by Node Feature Discovery when NVIDIA hardware is present.
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      # Weight downloads and CUDA graph capture are slow. Do not let the
+      # scheduler give up on a pod that is working.
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --model=$(MODEL_ID)
+            - --served-model-name=$(SERVED_NAME)
+            - --tensor-parallel-size=$(TENSOR_PARALLEL_SIZE)
+            - --gpu-memory-utilization=0.90
+            - --max-model-len=32768
+            # Tool calling is not optional for this product — the agentic loop
+            # depends on it. Match the parser to the model family you serve.
+            - --enable-auto-tool-choice
+            - --tool-call-parser=$(TOOL_PARSER)
+            - --api-key=$(VLLM_API_KEY)
+            - --host=0.0.0.0
+            - --port=8000
+          env:
+            # ── EDIT THESE ────────────────────────────────────────────────────
+            - name: MODEL_ID
+              # Any Hugging Face repo id, or a path under /models if pre-staged.
+              value: "meta-llama/Llama-3.3-70B-Instruct"
+            - name: SERVED_NAME
+              # What LLM_MODEL must be set to on the platform side.
+              value: "llama-3.3-70b-instruct"
+            - name: TENSOR_PARALLEL_SIZE
+              # 2 = both H100s on one node. Leaves the second node free for a
+              # smaller, faster model serving the high-volume easy tasks.
+              value: "2"
+            - name: TOOL_PARSER
+              # llama3_json for Llama 3.x · hermes for Qwen/Hermes · mistral for
+              # Mistral. Wrong parser = tool calls silently never fire.
+              value: "llama3_json"
+            # ──────────────────────────────────────────────────────────────────
+            - name: HUGGING_FACE_HUB_TOKEN
+              valueFrom:
+                secretKeyRef: { name: hf-token, key: token, optional: true }
+            - name: VLLM_API_KEY
+              valueFrom:
+                secretKeyRef: { name: vllm-api-key, key: key }
+            - name: HF_HOME
+              value: /models
+            - name: VLLM_WORKER_MULTIPROC_METHOD
+              value: spawn
+          ports:
+            - name: http
+              containerPort: 8000
+          resources:
+            limits:
+              # Must equal TENSOR_PARALLEL_SIZE.
+              nvidia.com/gpu: "2"
+              memory: 96Gi
+              cpu: "16"
+            requests:
+              nvidia.com/gpu: "2"
+              memory: 64Gi
+              cpu: "8"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /models
+            - name: shm
+              mountPath: /dev/shm
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            # Downloading ~140GB and capturing CUDA graphs takes a long time on
+            # first start. 60 × 30s = 30 minutes before we call it failed.
+            periodSeconds: 30
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 30
+            failureThreshold: 5
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: model-cache
+        - name: shm
+          emptyDir:
+            medium: Memory
+            # Tensor parallelism communicates through shared memory. The 64Mi
+            # default silently deadlocks multi-GPU serving.
+            sizeLimit: 16Gi

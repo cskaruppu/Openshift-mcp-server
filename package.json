@@ -1,7 +1,7 @@
 {
   "name": "agentic-ai-server",
   "version": "1.0.0",
-  "description": "TCS Agentic AI — OpenShift Intelligence Platform with MCP Hub, multi-server orchestration, and enterprise integrations",
+  "description": "TCS Agentic AI \u2014 OpenShift Intelligence Platform with MCP Hub, multi-server orchestration, and enterprise integrations",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -11,7 +11,8 @@
     "evals": "node test/evals/run-evals.js",
     "test:smoke": "node test/smoke/mcp-smoke-test.mjs",
     "build:dashboard": "npm --prefix console ci && npm --prefix console run build",
-    "lint": "echo 'Add eslint if needed'"
+    "lint": "echo 'Add eslint if needed'",
+    "bench:models": "node test/evals/model-bench.mjs"
   },
   "keywords": [
     "mcp",

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llm-serving
+  labels:
+    # Platform Prometheus only scrapes openshift-* namespaces. Without
+    # user-workload monitoring enabled, vLLM's metrics are invisible — the same
+    # trap the DCGM exporter falls into.
+    openshift.io/cluster-monitoring: "false"

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-cache
+  namespace: llm-serving
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      # A 70B at BF16 is ~140GB on disk. Size for the models you intend to hold,
+      # not just the first one — re-downloading on every restart wastes hours.
+      storage: 500Gi
+  # storageClassName: <your-rwo-class>   # omit to use the cluster default
