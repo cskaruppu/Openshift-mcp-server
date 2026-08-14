@@ -46,6 +46,9 @@ p("Re-run `npm run docs:agents` after adding or changing an agent.");
 p();
 p(`**${agents.length} agents · ${totalTools} tools.**`);
 p();
+p("Also available as a workbook — [`TCS-Agentic-AI-Agent-Catalog.xlsx`](TCS-Agentic-AI-Agent-Catalog.xlsx)");
+p("(`npm run docs:agents:xlsx`), with the endpoints as live links and the tool list filterable.");
+p();
 
 // ── how to connect ──────────────────────────────────────────────────────────
 p("## How to connect");

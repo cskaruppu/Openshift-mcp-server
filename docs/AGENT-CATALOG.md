@@ -6,6 +6,9 @@ Re-run `npm run docs:agents` after adding or changing an agent.
 
 **15 agents · 177 tools.**
 
+Also available as a workbook — [`TCS-Agentic-AI-Agent-Catalog.xlsx`](TCS-Agentic-AI-Agent-Catalog.xlsx)
+(`npm run docs:agents:xlsx`), with the endpoints as live links and the tool list filterable.
+
 ## How to connect
 
 Each agent is a separate MCP server over SSE. Two URLs per agent:

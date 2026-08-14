@@ -13,7 +13,9 @@
     "build:dashboard": "npm --prefix console ci && npm --prefix console run build",
     "lint": "echo 'Add eslint if needed'",
     "bench:models": "node test/evals/model-bench.mjs",
-    "docs:agents": "PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local} node docs/generate-agent-catalog.js"
+    "docs:agents": "PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local} node docs/generate-agent-catalog.js",
+    "docs:agents:xlsx": "PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local} node docs/generate-agent-catalog-excel.cjs",
+    "docs:agents:all": "npm run docs:agents && npm run docs:agents:xlsx"
   },
   "keywords": [
     "mcp",
