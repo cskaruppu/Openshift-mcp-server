@@ -86,13 +86,44 @@ p("context.");
 p();
 
 // ── index ───────────────────────────────────────────────────────────────────
-p("## Index");
+p("## Index — every agent and its endpoint");
 p();
-p("| Agent | ID | Tools | Category | Connect to |");
-p("|---|---|---|---|---|");
+p("Each row is a complete, connectable URL. Nothing to assemble.");
+p();
+p("| Agent | Tools | MCP endpoint (SSE) |");
+p("|---|---|---|");
 for (const a of agents) {
-  p(`| **${a.name}** | \`${a.id}\` | ${(a.tools || []).length} | ${a.category} | \`/mcp/${a.id}/sse\` |`);
+  p(`| **${a.name}**<br><sub>${a.category} · \`${a.id}\`</sub> | ${(a.tools || []).length} | \`${BASE}/mcp/${a.id}/sse\` |`);
 }
+p();
+p("<details><summary>All endpoints as a plain list — for bulk copy or config generation</summary>");
+p();
+p("```");
+for (const a of agents) {
+  p(`${a.id.padEnd(32)} ${BASE}/mcp/${a.id}/sse`);
+}
+p("```");
+p();
+p("</details>");
+p();
+p("### What another team needs to connect");
+p();
+p("| | |");
+p("|---|---|");
+p("| **The URL** | Any row above — used as-is |");
+p("| **A bearer token** | `Authorization: Bearer <token>` when `AUTH_MODE=token`. Issue a dedicated token per consuming system rather than sharing one |");
+p("| **Network reach** | The route must be resolvable and reachable from wherever the client runs |");
+p("| **Un-buffered SSE** | The transport is server-sent events. An ingress or proxy that buffers responses breaks it silently — the connection appears to open and no events arrive |");
+p();
+p("Verify all four with one command before handing the endpoint to anyone:");
+p();
+p("```bash");
+p(`curl -N -H "Authorization: Bearer $MCP_API_TOKEN" \\`);
+p(`  ${BASE}/mcp/vm-lifecycle/sse`);
+p("```");
+p();
+p("It should **hang open** and print an `event:` line. Returning immediately means the token,");
+p("the route, or SSE buffering — in that order of likelihood.");
 p();
 
 // ── per-agent detail ────────────────────────────────────────────────────────
@@ -136,6 +167,8 @@ p();
 
 p("### Claude Desktop / Claude Code");
 p();
+p("One agent:");
+p();
 p("```json");
 p(JSON.stringify({
   mcpServers: {
@@ -146,6 +179,23 @@ p(JSON.stringify({
   },
 }, null, 2));
 p("```");
+p();
+p("<details><summary>Or all " + agents.length + " — paste straight into a client config</summary>");
+p();
+p("```json");
+p(JSON.stringify({
+  mcpServers: Object.fromEntries(agents.map((a) => [
+    `tcs-${a.id}`,
+    { url: `${BASE}/mcp/${a.id}/sse`, headers: { Authorization: "Bearer ${MCP_API_TOKEN}" } },
+  ])),
+}, null, 2));
+p("```");
+p();
+p("Registering all fifteen puts " + totalTools + " tool definitions in front of the model at once.");
+p("Workable, but selection degrades as the list grows — pick the two or three agents a given");
+p("consumer actually needs.");
+p();
+p("</details>");
 p();
 
 p("### Python — MCP SDK");

@@ -42,25 +42,68 @@ carrying all 177 tools. Prefer a **specific agent** — a focused tool list
 measurably improves tool selection, and keeps an unrelated agent's tools out of the model's
 context.
 
-## Index
+## Index — every agent and its endpoint
 
-| Agent | ID | Tools | Category | Connect to |
-|---|---|---|---|---|
-| **Multi-Cluster & ACM Agent** | `multi-cluster-acm` | 6 | Governance | `/mcp/multi-cluster-acm/sse` |
-| **Security & Compliance Agent** | `security-compliance` | 16 | Governance | `/mcp/security-compliance/sse` |
-| **Application Change Intelligence Agent** | `application-change-intelligence` | 5 | Intelligence | `/mcp/application-change-intelligence/sse` |
-| **Proactive Intelligence Agent** | `proactive-intelligence` | 21 | Intelligence | `/mcp/proactive-intelligence/sse` |
-| **Backup & Disaster Recovery Agent** | `backup-dr` | 10 | Lifecycle | `/mcp/backup-dr/sse` |
-| **ITSM & Change Management Agent** | `itsm-change-management` | 5 | Lifecycle | `/mcp/itsm-change-management/sse` |
-| **Upgrade & Lifecycle Agent** | `upgrade-lifecycle` | 3 | Lifecycle | `/mcp/upgrade-lifecycle/sse` |
-| **VM Lifecycle Agent** | `vm-lifecycle` | 10 | Lifecycle | `/mcp/vm-lifecycle/sse` |
-| **Cluster Operations Agent** | `cluster-operations` | 20 | Operations | `/mcp/cluster-operations/sse` |
-| **Diagnostics & Healing Agent** | `diagnostics-healing` | 10 | Operations | `/mcp/diagnostics-healing/sse` |
-| **Workload Management Agent** | `workload-management` | 27 | Operations | `/mcp/workload-management/sse` |
-| **Automation & Ansible Agent** | `automation-ansible` | 6 | Platform | `/mcp/automation-ansible/sse` |
-| **CI/CD & GitOps Agent** | `cicd-gitops` | 15 | Platform | `/mcp/cicd-gitops/sse` |
-| **Networking & Service Mesh Agent** | `networking-mesh` | 14 | Platform | `/mcp/networking-mesh/sse` |
-| **Observability & Monitoring Agent** | `observability` | 9 | Platform | `/mcp/observability/sse` |
+Each row is a complete, connectable URL. Nothing to assemble.
+
+| Agent | Tools | MCP endpoint (SSE) |
+|---|---|---|
+| **Multi-Cluster & ACM Agent**<br><sub>Governance · `multi-cluster-acm`</sub> | 6 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/multi-cluster-acm/sse` |
+| **Security & Compliance Agent**<br><sub>Governance · `security-compliance`</sub> | 16 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/security-compliance/sse` |
+| **Application Change Intelligence Agent**<br><sub>Intelligence · `application-change-intelligence`</sub> | 5 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/application-change-intelligence/sse` |
+| **Proactive Intelligence Agent**<br><sub>Intelligence · `proactive-intelligence`</sub> | 21 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/proactive-intelligence/sse` |
+| **Backup & Disaster Recovery Agent**<br><sub>Lifecycle · `backup-dr`</sub> | 10 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/backup-dr/sse` |
+| **ITSM & Change Management Agent**<br><sub>Lifecycle · `itsm-change-management`</sub> | 5 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/itsm-change-management/sse` |
+| **Upgrade & Lifecycle Agent**<br><sub>Lifecycle · `upgrade-lifecycle`</sub> | 3 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/upgrade-lifecycle/sse` |
+| **VM Lifecycle Agent**<br><sub>Lifecycle · `vm-lifecycle`</sub> | 10 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/vm-lifecycle/sse` |
+| **Cluster Operations Agent**<br><sub>Operations · `cluster-operations`</sub> | 20 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/cluster-operations/sse` |
+| **Diagnostics & Healing Agent**<br><sub>Operations · `diagnostics-healing`</sub> | 10 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/diagnostics-healing/sse` |
+| **Workload Management Agent**<br><sub>Operations · `workload-management`</sub> | 27 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/workload-management/sse` |
+| **Automation & Ansible Agent**<br><sub>Platform · `automation-ansible`</sub> | 6 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/automation-ansible/sse` |
+| **CI/CD & GitOps Agent**<br><sub>Platform · `cicd-gitops`</sub> | 15 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/cicd-gitops/sse` |
+| **Networking & Service Mesh Agent**<br><sub>Platform · `networking-mesh`</sub> | 14 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/networking-mesh/sse` |
+| **Observability & Monitoring Agent**<br><sub>Platform · `observability`</sub> | 9 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/observability/sse` |
+
+<details><summary>All endpoints as a plain list — for bulk copy or config generation</summary>
+
+```
+multi-cluster-acm                https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/multi-cluster-acm/sse
+security-compliance              https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/security-compliance/sse
+application-change-intelligence  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/application-change-intelligence/sse
+proactive-intelligence           https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/proactive-intelligence/sse
+backup-dr                        https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/backup-dr/sse
+itsm-change-management           https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/itsm-change-management/sse
+upgrade-lifecycle                https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/upgrade-lifecycle/sse
+vm-lifecycle                     https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/vm-lifecycle/sse
+cluster-operations               https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/cluster-operations/sse
+diagnostics-healing              https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/diagnostics-healing/sse
+workload-management              https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/workload-management/sse
+automation-ansible               https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/automation-ansible/sse
+cicd-gitops                      https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/cicd-gitops/sse
+networking-mesh                  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/networking-mesh/sse
+observability                    https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/observability/sse
+```
+
+</details>
+
+### What another team needs to connect
+
+| | |
+|---|---|
+| **The URL** | Any row above — used as-is |
+| **A bearer token** | `Authorization: Bearer <token>` when `AUTH_MODE=token`. Issue a dedicated token per consuming system rather than sharing one |
+| **Network reach** | The route must be resolvable and reachable from wherever the client runs |
+| **Un-buffered SSE** | The transport is server-sent events. An ingress or proxy that buffers responses breaks it silently — the connection appears to open and no events arrive |
+
+Verify all four with one command before handing the endpoint to anyone:
+
+```bash
+curl -N -H "Authorization: Bearer $MCP_API_TOKEN" \
+  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/vm-lifecycle/sse
+```
+
+It should **hang open** and print an `event:` line. Returning immediately means the token,
+the route, or SSE buffering — in that order of likelihood.
 
 ## Governance
 
@@ -684,6 +727,8 @@ Every example below connects to **one** agent. Swap the id to reach another.
 
 ### Claude Desktop / Claude Code
 
+One agent:
+
 ```json
 {
   "mcpServers": {
@@ -696,6 +741,111 @@ Every example below connects to **one** agent. Swap the id to reach another.
   }
 }
 ```
+
+<details><summary>Or all 15 — paste straight into a client config</summary>
+
+```json
+{
+  "mcpServers": {
+    "tcs-multi-cluster-acm": {
+      "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/multi-cluster-acm/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    },
+    "tcs-security-compliance": {
+      "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/security-compliance/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    },
+    "tcs-application-change-intelligence": {
+      "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/application-change-intelligence/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    },
+    "tcs-proactive-intelligence": {
+      "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/proactive-intelligence/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    },
+    "tcs-backup-dr": {
+      "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/backup-dr/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    },
+    "tcs-itsm-change-management": {
+      "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/itsm-change-management/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    },
+    "tcs-upgrade-lifecycle": {
+      "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/upgrade-lifecycle/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    },
+    "tcs-vm-lifecycle": {
+      "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/vm-lifecycle/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    },
+    "tcs-cluster-operations": {
+      "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/cluster-operations/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    },
+    "tcs-diagnostics-healing": {
+      "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/diagnostics-healing/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    },
+    "tcs-workload-management": {
+      "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/workload-management/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    },
+    "tcs-automation-ansible": {
+      "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/automation-ansible/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    },
+    "tcs-cicd-gitops": {
+      "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/cicd-gitops/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    },
+    "tcs-networking-mesh": {
+      "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/networking-mesh/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    },
+    "tcs-observability": {
+      "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/observability/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+Registering all fifteen puts 177 tool definitions in front of the model at once.
+Workable, but selection degrades as the list grows — pick the two or three agents a given
+consumer actually needs.
+
+</details>
 
 ### Python — MCP SDK
 
