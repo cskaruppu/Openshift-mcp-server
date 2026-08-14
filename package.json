@@ -12,7 +12,8 @@
     "test:smoke": "node test/smoke/mcp-smoke-test.mjs",
     "build:dashboard": "npm --prefix console ci && npm --prefix console run build",
     "lint": "echo 'Add eslint if needed'",
-    "bench:models": "node test/evals/model-bench.mjs"
+    "bench:models": "node test/evals/model-bench.mjs",
+    "docs:agents": "node docs/generate-agent-catalog.js"
   },
   "keywords": [
     "mcp",

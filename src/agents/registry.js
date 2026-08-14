@@ -164,7 +164,17 @@ export async function handleAgentRoutes(req, res, url) {
       sendJson(res, 404, { error: "Agent not found", id: idMatch[1] });
       return true;
     }
-    sendJson(res, 200, agent);
+    // Self-describing: a client that fetches one agent should not have to
+    // reconstruct its transport URLs from a convention it cannot see.
+    const proto = req.headers["x-forwarded-proto"] || (req.socket?.encrypted ? "https" : "http");
+    const base = `${proto}://${req.headers.host || "localhost"}`;
+    sendJson(res, 200, {
+      ...agent,
+      transport: "sse",
+      mcpSseUrl: `${base}${agent.mcpEndpoint}/sse`,
+      mcpMessageUrl: `${base}${agent.mcpEndpoint}/message`,
+      toolsUrl: `${base}/api/agents/${agent.id}/tools`,
+    });
     return true;
   }
 
@@ -237,7 +247,16 @@ async function serveAgentCard(req, res) {
       category: a.category,
       icon: a.icon,
       toolCount: (a.tools || []).length,
-      mcpEndpoint: `${baseUrl}${a.mcpEndpoint}`,
+      // The CONNECTABLE URL. The manifest's mcpEndpoint is a base path, and
+      // advertising it bare returned 404 for every client that trusted the
+      // card — MCP over SSE connects to the /sse endpoint and posts replies to
+      // /message. Publish both, and name the transport, so a framework can
+      // wire this up without reading our source.
+      transport: "sse",
+      mcpEndpoint: `${baseUrl}${a.mcpEndpoint}/sse`,
+      mcpSseUrl: `${baseUrl}${a.mcpEndpoint}/sse`,
+      mcpMessageUrl: `${baseUrl}${a.mcpEndpoint}/message`,
+      toolsUrl: `${baseUrl}/api/agents/${a.id}/tools`,
       detailUrl: `${baseUrl}/api/agents/${a.id}`,
     })),
     authentication: {
