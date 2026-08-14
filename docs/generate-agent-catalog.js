@@ -16,9 +16,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const MANIFESTS = resolve(__dirname, "../src/agents/manifests");
 const OUT = resolve(__dirname, "AGENT-CATALOG.md");
 
+// Base URL precedence: --base flag, then PUBLIC_BASE_URL, then the placeholder.
+// Without the env fallback a regeneration silently reverts every URL in the
+// document to <your-host>, which is worse than not regenerating at all.
 const argv = process.argv.slice(2);
 const bi = argv.indexOf("--base");
-const BASE = bi === -1 ? "https://<your-host>" : argv[bi + 1].replace(/\/+$/, "");
+const BASE = (bi !== -1 ? argv[bi + 1] : (process.env.PUBLIC_BASE_URL || "https://<your-host>"))
+  .replace(/\/+$/, "");
 
 const files = (await readdir(MANIFESTS)).filter((f) => f.endsWith(".json"));
 const agents = [];
@@ -37,8 +41,8 @@ const p = (s = "") => L.push(s);
 p("# Agent Catalog");
 p();
 p("Every agent this platform exposes, with the endpoint to reach it and the tools it carries.");
-p("**Generated from `src/agents/manifests/` — do not edit by hand.** Re-run");
-p("`node docs/generate-agent-catalog.js --base https://your-host` after changing an agent.");
+p("**Generated from `src/agents/manifests/` — do not edit by hand.**");
+p("Re-run `npm run docs:agents` after adding or changing an agent.");
 p();
 p(`**${agents.length} agents · ${totalTools} tools.**`);
 p();
@@ -224,8 +228,10 @@ p();
 const now = new Date().toISOString().slice(0, 10);
 p("---");
 p();
-p(`*Generated ${now} from ${agents.length} manifests. Regenerate with* `);
-p("`node docs/generate-agent-catalog.js --base https://your-host`");
+p(`*Generated ${now} from ${agents.length} manifests, against \`${BASE}\`.*`);
+p();
+p("*Regenerate with* `npm run docs:agents` *— the host comes from `PUBLIC_BASE_URL`,");
+p("or pass* `-- --base https://another-host`*.*");
 
 await writeFile(OUT, L.join("\n") + "\n", "utf8");
 console.log(`Wrote ${OUT}`);

@@ -1,8 +1,8 @@
 # Agent Catalog
 
 Every agent this platform exposes, with the endpoint to reach it and the tools it carries.
-**Generated from `src/agents/manifests/` — do not edit by hand.** Re-run
-`node docs/generate-agent-catalog.js --base https://your-host` after changing an agent.
+**Generated from `src/agents/manifests/` — do not edit by hand.**
+Re-run `npm run docs:agents` after adding or changing an agent.
 
 **15 agents · 177 tools.**
 
@@ -12,8 +12,8 @@ Each agent is a separate MCP server over SSE. Two URLs per agent:
 
 | | |
 |---|---|
-| **Connect** | `GET  https://<your-host>/mcp/<agent-id>/sse` |
-| **Reply** | `POST https://<your-host>/mcp/<agent-id>/message?sessionId=<id>` |
+| **Connect** | `GET  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/<agent-id>/sse` |
+| **Reply** | `POST https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/<agent-id>/message?sessionId=<id>` |
 
 The SSE stream issues the `sessionId`; the MCP client library handles that handshake.
 **Connecting to the bare `/mcp/<agent-id>` returns 404** — the transport lives on `/sse`.
@@ -22,12 +22,12 @@ The SSE stream issues the `sessionId`; the MCP client library handles that hands
 
 | Endpoint | Returns |
 |---|---|
-| `GET https://<your-host>/.well-known/agent.json` | A2A agent card — every agent with its connectable URLs |
-| `GET https://<your-host>/api/agents` | All agents, with tool counts |
-| `GET https://<your-host>/api/agents/<id>` | One agent, including `mcpSseUrl` and `mcpMessageUrl` |
-| `GET https://<your-host>/api/agents/<id>/tools` | Just that agent's tool names |
-| `GET https://<your-host>/api/agents/categories` | Agents grouped by category |
-| `GET https://<your-host>/openapi.yaml` | REST surface, for non-MCP clients |
+| `GET https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/.well-known/agent.json` | A2A agent card — every agent with its connectable URLs |
+| `GET https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/api/agents` | All agents, with tool counts |
+| `GET https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/api/agents/<id>` | One agent, including `mcpSseUrl` and `mcpMessageUrl` |
+| `GET https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/api/agents/<id>/tools` | Just that agent's tool names |
+| `GET https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/api/agents/categories` | Agents grouped by category |
+| `GET https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/openapi.yaml` | REST surface, for non-MCP clients |
 
 ### Authentication
 
@@ -37,7 +37,7 @@ When `AUTH_MODE=token`, pass the bearer token on every request:
 Authorization: Bearer $MCP_API_TOKEN
 ```
 
-The whole registry is also reachable as a single MCP server at `https://<your-host>/sse`,
+The whole registry is also reachable as a single MCP server at `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/sse`,
 carrying all 177 tools. Prefer a **specific agent** — a focused tool list
 measurably improves tool selection, and keeps an unrelated agent's tools out of the model's
 context.
@@ -71,8 +71,8 @@ context.
 Red Hat Advanced Cluster Management (ACM) for managed clusters, governance policies, federated search, and emergency cross-cluster response.
 
 ```
-SSE      https://<your-host>/mcp/multi-cluster-acm/sse
-MESSAGE  https://<your-host>/mcp/multi-cluster-acm/message
+SSE      https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/multi-cluster-acm/sse
+MESSAGE  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/multi-cluster-acm/message
 ```
 
 **Capabilities**
@@ -104,8 +104,8 @@ MESSAGE  https://<your-host>/mcp/multi-cluster-acm/message
 RBAC audit, Pod Security Standards, network policy audit, image scanning, secret rotation analysis, SCC advisor, compliance scanning, and policy generation.
 
 ```
-SSE      https://<your-host>/mcp/security-compliance/sse
-MESSAGE  https://<your-host>/mcp/security-compliance/message
+SSE      https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/security-compliance/sse
+MESSAGE  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/security-compliance/message
 ```
 
 **Capabilities**
@@ -154,8 +154,8 @@ MESSAGE  https://<your-host>/mcp/security-compliance/message
 Watches application workloads for change, detects GitOps drift between desired and live state, keeps a change history, and can roll a change back.
 
 ```
-SSE      https://<your-host>/mcp/application-change-intelligence/sse
-MESSAGE  https://<your-host>/mcp/application-change-intelligence/message
+SSE      https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/application-change-intelligence/sse
+MESSAGE  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/application-change-intelligence/message
 ```
 
 **Capabilities**
@@ -185,8 +185,8 @@ MESSAGE  https://<your-host>/mcp/application-change-intelligence/message
 Autonomous background monitoring, anomaly detection, predictive trend analysis, cost / right-sizing recommendations, drift detection, impact prediction, benchmarks, and natural language automation rules.
 
 ```
-SSE      https://<your-host>/mcp/proactive-intelligence/sse
-MESSAGE  https://<your-host>/mcp/proactive-intelligence/message
+SSE      https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/proactive-intelligence/sse
+MESSAGE  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/proactive-intelligence/message
 ```
 
 **Capabilities**
@@ -239,8 +239,8 @@ MESSAGE  https://<your-host>/mcp/proactive-intelligence/message
 Velero-based backup and restore for OpenShift — backup and schedule management, restore, storage location and Data Protection Application status, and DR readiness assessment.
 
 ```
-SSE      https://<your-host>/mcp/backup-dr/sse
-MESSAGE  https://<your-host>/mcp/backup-dr/message
+SSE      https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/backup-dr/sse
+MESSAGE  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/backup-dr/message
 ```
 
 **Capabilities**
@@ -275,8 +275,8 @@ MESSAGE  https://<your-host>/mcp/backup-dr/message
 ServiceNow integration for change request lifecycle, incident creation, approval polling, and audit-ready execution of approved changes.
 
 ```
-SSE      https://<your-host>/mcp/itsm-change-management/sse
-MESSAGE  https://<your-host>/mcp/itsm-change-management/message
+SSE      https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/itsm-change-management/sse
+MESSAGE  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/itsm-change-management/message
 ```
 
 **Capabilities**
@@ -309,8 +309,8 @@ MESSAGE  https://<your-host>/mcp/itsm-change-management/message
 22-point pre-upgrade cluster assessment with version comparison, channel validation, operator compatibility, certificate expiry, deprecated API detection, and node topology analysis.
 
 ```
-SSE      https://<your-host>/mcp/upgrade-lifecycle/sse
-MESSAGE  https://<your-host>/mcp/upgrade-lifecycle/message
+SSE      https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/upgrade-lifecycle/sse
+MESSAGE  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/upgrade-lifecycle/message
 ```
 
 **Capabilities**
@@ -342,8 +342,8 @@ MESSAGE  https://<your-host>/mcp/upgrade-lifecycle/message
 OpenShift Virtualization (KubeVirt) virtual machine provisioning and lifecycle. Provisions VMs with persistent DataVolume-backed disks, cloud-init access, golden-image sources and instance types, with server-side dry-run and provenance labelling for day-2 ownership.
 
 ```
-SSE      https://<your-host>/mcp/vm-lifecycle/sse
-MESSAGE  https://<your-host>/mcp/vm-lifecycle/message
+SSE      https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/vm-lifecycle/sse
+MESSAGE  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/vm-lifecycle/message
 ```
 
 **Capabilities**
@@ -388,8 +388,8 @@ MESSAGE  https://<your-host>/mcp/vm-lifecycle/message
 Cluster-wide operations including cluster info, node health, namespace management, and generic Kubernetes resource operations.
 
 ```
-SSE      https://<your-host>/mcp/cluster-operations/sse
-MESSAGE  https://<your-host>/mcp/cluster-operations/message
+SSE      https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/cluster-operations/sse
+MESSAGE  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/cluster-operations/message
 ```
 
 **Capabilities**
@@ -435,8 +435,8 @@ MESSAGE  https://<your-host>/mcp/cluster-operations/message
 Root cause analysis with exit code mapping, log pattern matching across 15+ failure signatures, automated fix proposals with approval gates, curated remediation playbooks, and must-gather collection for Red Hat support.
 
 ```
-SSE      https://<your-host>/mcp/diagnostics-healing/sse
-MESSAGE  https://<your-host>/mcp/diagnostics-healing/message
+SSE      https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/diagnostics-healing/sse
+MESSAGE  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/diagnostics-healing/message
 ```
 
 **Capabilities**
@@ -473,8 +473,8 @@ MESSAGE  https://<your-host>/mcp/diagnostics-healing/message
 Workload lifecycle management for pods, deployments, StatefulSets, DaemonSets, services, routes, Helm releases, and provisioning of new workloads.
 
 ```
-SSE      https://<your-host>/mcp/workload-management/sse
-MESSAGE  https://<your-host>/mcp/workload-management/message
+SSE      https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/workload-management/sse
+MESSAGE  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/workload-management/message
 ```
 
 **Capabilities**
@@ -530,8 +530,8 @@ MESSAGE  https://<your-host>/mcp/workload-management/message
 Ansible Automation Platform integration — launch job templates and workflows, track job status, and inspect inventories from the platform.
 
 ```
-SSE      https://<your-host>/mcp/automation-ansible/sse
-MESSAGE  https://<your-host>/mcp/automation-ansible/message
+SSE      https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/automation-ansible/sse
+MESSAGE  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/automation-ansible/message
 ```
 
 **Capabilities**
@@ -562,8 +562,8 @@ MESSAGE  https://<your-host>/mcp/automation-ansible/message
 Tekton pipelines and tasks management, ArgoCD applications, GitOps sync, drift remediation, and pipeline run history.
 
 ```
-SSE      https://<your-host>/mcp/cicd-gitops/sse
-MESSAGE  https://<your-host>/mcp/cicd-gitops/message
+SSE      https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/cicd-gitops/sse
+MESSAGE  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/cicd-gitops/message
 ```
 
 **Capabilities**
@@ -605,8 +605,8 @@ MESSAGE  https://<your-host>/mcp/cicd-gitops/message
 Network policies, routes, ingress, CoreDNS, service connectivity checks, and Istio / OpenShift Service Mesh management.
 
 ```
-SSE      https://<your-host>/mcp/networking-mesh/sse
-MESSAGE  https://<your-host>/mcp/networking-mesh/message
+SSE      https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/networking-mesh/sse
+MESSAGE  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/networking-mesh/message
 ```
 
 **Capabilities**
@@ -648,8 +648,8 @@ MESSAGE  https://<your-host>/mcp/networking-mesh/message
 Prometheus PromQL queries, Alertmanager firing alerts, top metrics for pods and nodes, and dashboard summary aggregation.
 
 ```
-SSE      https://<your-host>/mcp/observability/sse
-MESSAGE  https://<your-host>/mcp/observability/message
+SSE      https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/observability/sse
+MESSAGE  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/observability/message
 ```
 
 **Capabilities**
@@ -688,7 +688,7 @@ Every example below connects to **one** agent. Swap the id to reach another.
 {
   "mcpServers": {
     "tcs-vm-lifecycle": {
-      "url": "https://<your-host>/mcp/vm-lifecycle/sse",
+      "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/vm-lifecycle/sse",
       "headers": {
         "Authorization": "Bearer ${MCP_API_TOKEN}"
       }
@@ -703,7 +703,7 @@ Every example below connects to **one** agent. Swap the id to reach another.
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 
-URL = "https://<your-host>/mcp/vm-lifecycle/sse"
+URL = "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/vm-lifecycle/sse"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 async with sse_client(URL, headers=HEADERS) as (read, write):
@@ -723,12 +723,12 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 client = MultiServerMCPClient({
     "vm_lifecycle": {
-        "url": "https://<your-host>/mcp/vm-lifecycle/sse",
+        "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/vm-lifecycle/sse",
         "transport": "sse",
         "headers": {"Authorization": f"Bearer {TOKEN}"},
     },
     "rca": {
-        "url": "https://<your-host>/mcp/diagnostics-healing/sse",
+        "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/diagnostics-healing/sse",
         "transport": "sse",
         "headers": {"Authorization": f"Bearer {TOKEN}"},
     },
@@ -745,11 +745,11 @@ against these endpoints.
 
 ```bash
 curl -s -H "Authorization: Bearer $MCP_API_TOKEN" \
-  https://<your-host>/api/agents | jq '.agents[] | {id, name, toolCount}'
+  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/api/agents | jq '.agents[] | {id, name, toolCount}'
 
 # what one agent can do
 curl -s -H "Authorization: Bearer $MCP_API_TOKEN" \
-  https://<your-host>/api/agents/vm-lifecycle/tools | jq
+  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/api/agents/vm-lifecycle/tools | jq
 ```
 
 The REST surface in `openapi.yaml` covers the common operations without MCP at all —
@@ -771,5 +771,7 @@ useful for a system that only needs to read cluster state.
 
 ---
 
-*Generated 2026-08-14 from 15 manifests. Regenerate with* 
-`node docs/generate-agent-catalog.js --base https://your-host`
+*Generated 2026-08-14 from 15 manifests, against `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local`.*
+
+*Regenerate with* `npm run docs:agents` *— the host comes from `PUBLIC_BASE_URL`,
+or pass* `-- --base https://another-host`*.*

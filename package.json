@@ -13,7 +13,7 @@
     "build:dashboard": "npm --prefix console ci && npm --prefix console run build",
     "lint": "echo 'Add eslint if needed'",
     "bench:models": "node test/evals/model-bench.mjs",
-    "docs:agents": "node docs/generate-agent-catalog.js"
+    "docs:agents": "PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local} node docs/generate-agent-catalog.js"
   },
   "keywords": [
     "mcp",
