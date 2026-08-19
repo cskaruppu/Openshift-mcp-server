@@ -1,13 +1,32 @@
 /**
- * Deployment Orchestrator — applies manifests in order, waits for readiness,
- * runs validation, and auto-rollbacks on failure.
+ * Deployment Orchestrator — applies manifests in order, waits for the rollout
+ * to complete, runs the verification pyramid, and auto-rollbacks on failure.
+ *
+ * Apply goes through server-side apply (deploy-verifier), so a re-deploy of a
+ * changed document UPDATES the running resources instead of treating a 409 as
+ * success and validating the old spec. Deployment records write through to
+ * Postgres (doc-deploy-store) so history and the rollback ledger survive a
+ * pod restart.
  */
 
 import { ocpPost, ocpGet, ocpFetch } from "../utils/openshift-client.js";
 import { recordChangeEvent } from "./change-timeline.js";
+import { applyResource, rolloutStatus, verifyNamespace, kindPath } from "./deploy-verifier.js";
+import { recordDeployment, updateDeployment, getDeploymentRecord, listDeploymentRecords } from "./doc-deploy-store.js";
 
 const _deployments = new Map();
 let _deployIdCounter = 1;
+
+// Fire-and-forget write-through; the in-memory Map stays the source of truth
+// within one process lifetime.
+function persistDep(dep) {
+  recordDeployment({
+    id: dep.id, namespace: dep.ais?.namespace, appName: dep.ais?.appName,
+    status: dep.status, orchestrated: true,
+    applied: dep.createdResources, steps: dep.steps, error: dep.error,
+    createdAt: dep.startedAt || undefined,
+  }).catch(() => {});
+}
 
 /**
  * Start a deployment from generated manifests.
@@ -31,6 +50,7 @@ export function createDeployment(ais, manifests) {
     const oldest = [..._deployments.keys()][0];
     _deployments.delete(oldest);
   }
+  persistDep(deployment);
   return id;
 }
 
@@ -59,10 +79,12 @@ export async function executeDeployment(deployId) {
       dep.steps.push(step);
 
       try {
-        await applyManifest(manifest, ns);
-        dep.createdResources.push({ kind: manifest.kind, name: manifest.name, namespace: ns });
+        const { action } = await applyManifest(manifest, ns);
+        // The action matters at rollback time: only resources this deployment
+        // CREATED may be deleted. Updated ones existed before us.
+        dep.createdResources.push({ kind: manifest.kind, name: manifest.name, namespace: ns, action });
         step.status = "applied";
-        step.message = `${manifest.kind}/${manifest.name} created`;
+        step.message = `${manifest.kind}/${manifest.name} ${action}`;
 
         if (manifest.kind === "Deployment") {
           step.status = "waiting";
@@ -107,6 +129,7 @@ export async function executeDeployment(deployId) {
 
     dep.status = "completed";
     dep.completedAt = new Date().toISOString();
+    persistDep(dep);
 
     recordChangeEvent({
       source: "deployment",
@@ -124,6 +147,7 @@ export async function executeDeployment(deployId) {
     dep.status = "failed";
     dep.error = err.message;
     dep.completedAt = new Date().toISOString();
+    persistDep(dep);
 
     recordChangeEvent({
       source: "deployment",
@@ -150,8 +174,22 @@ export async function rollbackDeployment(deployId) {
   dep.status = "rolling_back";
   const errors = [];
 
-  const reversed = [...dep.createdResources].reverse();
+  // Only what this deployment CREATED may be deleted. A resource we merely
+  // updated existed before us, and deleting it would take out someone else's
+  // workload in the name of "rollback".
+  const created = dep.createdResources.filter((r) => !r.action || r.action === "created");
+  const updatedCount = dep.createdResources.length - created.length;
+  if (updatedCount > 0) {
+    dep.steps.push({
+      kind: "Rollback", name: "pre-existing-resources", status: "skipped",
+      message: `${updatedCount} resource(s) existed before this deployment and were left in place`,
+      completedAt: new Date().toISOString(),
+    });
+  }
+
+  const reversed = [...created].reverse();
   for (const res of reversed) {
+    if (res.kind === "Namespace") continue; // handled last, below
     try {
       const path = getDeletePath(res.kind, res.name, res.namespace);
       if (path) {
@@ -169,22 +207,33 @@ export async function rollbackDeployment(deployId) {
     }
   }
 
-  try {
-    const nsPath = `/api/v1/namespaces/${dep.ais.namespace}`;
-    await ocpFetch(nsPath, { method: "DELETE" });
+  // The namespace goes only if WE created it. Deleting a pre-existing
+  // namespace would destroy every unrelated workload inside it.
+  const nsCreated = created.some((r) => r.kind === "Namespace" && r.name === dep.ais.namespace);
+  if (nsCreated) {
+    try {
+      await ocpFetch(`/api/v1/namespaces/${dep.ais.namespace}`, { method: "DELETE" });
+      dep.steps.push({
+        kind: "Rollback",
+        name: dep.ais.namespace,
+        status: "deleted",
+        message: `Deleted namespace ${dep.ais.namespace}`,
+        completedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      errors.push(`Namespace delete: ${err.message}`);
+    }
+  } else {
     dep.steps.push({
-      kind: "Rollback",
-      name: dep.ais.namespace,
-      status: "deleted",
-      message: `Deleted namespace ${dep.ais.namespace}`,
+      kind: "Rollback", name: dep.ais.namespace, status: "skipped",
+      message: `Namespace ${dep.ais.namespace} pre-existed this deployment — left in place`,
       completedAt: new Date().toISOString(),
     });
-  } catch (err) {
-    errors.push(`Namespace delete: ${err.message}`);
   }
 
   dep.status = errors.length > 0 ? "rollback_partial" : "rolled_back";
   dep.completedAt = new Date().toISOString();
+  persistDep(dep);
 
   recordChangeEvent({
     source: "deployment",
@@ -204,8 +253,25 @@ export function getDeployment(id) {
   return _deployments.get(id) || null;
 }
 
+/**
+ * Like getDeployment, but falls back to the persistent record when the
+ * process has restarted since the deploy ran. The record carries steps,
+ * applied resources and final status — enough for status and audit.
+ */
+export async function getDeploymentAnywhere(id) {
+  return _deployments.get(id) || (await getDeploymentRecord(id).catch(() => null));
+}
+
 export function listDeployments() {
   return [..._deployments.values()].sort((a, b) => (b.startedAt || "").localeCompare(a.startedAt || ""));
+}
+
+/** History across restarts: persistent records, merged with the live Map. */
+export async function listDeploymentsAnywhere(limit = 20) {
+  const live = listDeployments();
+  const stored = await listDeploymentRecords({ limit }).catch(() => []);
+  const seen = new Set(live.map((d) => d.id));
+  return [...live, ...stored.filter((d) => !seen.has(d.id))].slice(0, limit);
 }
 
 function orderManifests(manifests, ais) {
@@ -229,48 +295,30 @@ async function applyManifest(manifest, ns) {
   const json = manifest.json;
   const kind = json.kind;
 
-  const pathMap = {
-    Namespace: "/api/v1/namespaces",
-    Secret: `/api/v1/namespaces/${ns}/secrets`,
-    ConfigMap: `/api/v1/namespaces/${ns}/configmaps`,
-    PersistentVolumeClaim: `/api/v1/namespaces/${ns}/persistentvolumeclaims`,
-    Service: `/api/v1/namespaces/${ns}/services`,
-    Deployment: `/apis/apps/v1/namespaces/${ns}/deployments`,
-    Job: `/apis/batch/v1/namespaces/${ns}/jobs`,
-    Route: `/apis/route.openshift.io/v1/namespaces/${ns}/routes`,
-    Ingress: `/apis/networking.k8s.io/v1/namespaces/${ns}/ingresses`,
-    HorizontalPodAutoscaler: `/apis/autoscaling/v2/namespaces/${ns}/horizontalpodautoscalers`,
-    NetworkPolicy: `/apis/networking.k8s.io/v1/namespaces/${ns}/networkpolicies`,
-  };
-
-  const path = pathMap[kind];
+  // Server-side apply: creates or updates, and never mistakes "it already
+  // existed with the OLD spec" for success the way POST-then-swallow-409 did.
+  const path = kind === "Namespace" ? "/api/v1/namespaces" : kindPath(kind, ns);
   if (!path) throw new Error(`Unknown resource kind: ${kind}`);
-
-  try {
-    return await ocpPost(path, json);
-  } catch (err) {
-    if (err.message.includes("409") || err.message.includes("AlreadyExists")) {
-      return { status: "already_exists", kind, name: json.metadata?.name };
-    }
-    throw err;
-  }
+  return applyResource(path, json);
 }
 
 async function waitForDeploymentReady(name, ns, timeoutSec) {
   const deadline = Date.now() + timeoutSec * 1000;
+  let last = null;
   while (Date.now() < deadline) {
     try {
-      const dep = await ocpGet(`/apis/apps/v1/namespaces/${ns}/deployments/${name}`);
-      const desired = dep.spec?.replicas || 1;
-      const ready = dep.status?.readyReplicas || 0;
-      const available = dep.status?.availableReplicas || 0;
-      if (ready >= desired && available >= desired) return;
+      // Uncached read — ocpGet's 5s cache would replay a pre-rollout status.
+      const dep = await ocpFetch(`/apis/apps/v1/namespaces/${ns}/deployments/${name}`);
+      // Rollout completion, not readiness: on a re-deploy the OLD pods are
+      // still Ready, so a readiness check passes before anything happened.
+      last = rolloutStatus(dep);
+      if (last.ok) return;
     } catch {
       // Ignore transient errors while polling
     }
     await sleep(3000);
   }
-  throw new Error(`Deployment ${name} did not become ready within ${timeoutSec}s`);
+  throw new Error(`Deployment ${name} rollout did not complete within ${timeoutSec}s${last ? ` — ${last.summary}` : ""}`);
 }
 
 async function waitForJobComplete(name, ns, timeoutSec) {
@@ -291,44 +339,21 @@ async function waitForJobComplete(name, ns, timeoutSec) {
 }
 
 async function runValidation(ais, ns) {
-  const results = [];
-  let allPassed = true;
-
-  for (const tier of ais.tiers) {
-    try {
-      const dep = await ocpGet(`/apis/apps/v1/namespaces/${ns}/deployments/${tier.name}`);
-      const ready = dep.status?.readyReplicas || 0;
-      const desired = dep.spec?.replicas || 1;
-      const passed = ready >= desired;
-      results.push({
-        test: `${tier.name}: ${ready}/${desired} pods Ready`,
-        passed,
-      });
-      if (!passed) allPassed = false;
-    } catch (err) {
-      results.push({ test: `${tier.name}: check failed`, passed: false, error: err.message });
-      allPassed = false;
-    }
-  }
-
-  try {
-    const events = await ocpGet(`/api/v1/namespaces/${ns}/events?fieldSelector=reason=BackOff`);
-    const crashPods = (events.items || []).filter(
-      (e) => e.reason === "BackOff" && Date.now() - new Date(e.lastTimestamp || e.eventTime).getTime() < 120_000
-    );
-    const noCrash = crashPods.length === 0;
-    results.push({ test: `No CrashLoopBackOff in namespace`, passed: noCrash });
-    if (!noCrash) allPassed = false;
-  } catch {
-    results.push({ test: "CrashLoopBackOff check", passed: true, note: "Could not verify" });
-  }
-
+  // The verification pyramid: rollout completion → workload stability →
+  // Service/endpoint wiring → an HTTP probe of every Route. "Pods Ready" is a
+  // claim about containers; these levels are claims about the application.
+  const v = await verifyNamespace(ns);
+  const results = v.levels.flatMap((l) =>
+    l.checks.map((c) => ({ test: `[${l.title}] ${c.name}: ${c.detail}`, passed: c.passed }))
+  );
+  const failedLevels = v.levels.filter((l) => !l.passed).map((l) => l.title);
   return {
-    passed: allPassed,
+    passed: v.passed,
     results,
-    summary: allPassed
-      ? `All ${results.length} checks passed`
-      : `${results.filter((r) => !r.passed).length}/${results.length} checks failed`,
+    access: v.access,
+    summary: v.passed
+      ? `All ${v.levels.length} verification levels passed${v.access.length ? ` — application reachable at ${v.access.map((a) => a.url).join(", ")}` : ""}`
+      : `Failed at: ${failedLevels.join(", ")}`,
   };
 }
 

@@ -7,7 +7,7 @@ import { z } from "zod";
 import { parseDocx, parseMarkdownText } from "../services/doc-parser.js";
 import { extractAIS } from "../services/ais-extractor.js";
 import { generateManifests, renderYaml } from "../services/manifest-generator.js";
-import { createDeployment, executeDeployment, rollbackDeployment, getDeployment, listDeployments } from "../services/deployment-orchestrator.js";
+import { createDeployment, executeDeployment, rollbackDeployment, getDeploymentAnywhere, listDeploymentsAnywhere } from "../services/deployment-orchestrator.js";
 
 export function registerDeployFromDocTools(server) {
   server.tool(
@@ -61,7 +61,7 @@ export function registerDeployFromDocTools(server) {
           return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
         case "status": {
-          const dep = getDeployment(deployId);
+          const dep = await getDeploymentAnywhere(deployId);
           if (!dep) return { content: [{ type: "text", text: "Deployment not found" }] };
           return { content: [{ type: "text", text: JSON.stringify(dep, null, 2) }] };
         }
@@ -70,7 +70,7 @@ export function registerDeployFromDocTools(server) {
           return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
         case "list": {
-          return { content: [{ type: "text", text: JSON.stringify(listDeployments().slice(0, 20), null, 2) }] };
+          return { content: [{ type: "text", text: JSON.stringify(await listDeploymentsAnywhere(20), null, 2) }] };
         }
         default:
           return { content: [{ type: "text", text: "Unknown action: " + action }] };

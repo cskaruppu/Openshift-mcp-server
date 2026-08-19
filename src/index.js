@@ -78,7 +78,9 @@ import { handleSlackSlashCommand, handleSlackInteraction, handleTeamsAction, ver
 import { parseDocx, parseMarkdownText } from "./services/doc-parser.js";
 import { extractAIS, validateAIS, calculateConfidence } from "./services/ais-extractor.js";
 import { generateManifests, renderYaml, renderSingleYaml } from "./services/manifest-generator.js";
-import { createDeployment, executeDeployment, rollbackDeployment, getDeployment, listDeployments } from "./services/deployment-orchestrator.js";
+import { createDeployment, executeDeployment, rollbackDeployment, getDeploymentAnywhere, listDeploymentsAnywhere } from "./services/deployment-orchestrator.js";
+import { applyResource, verifyNamespace, kindPath as deployKindPath, kindApiVersion as deployKindApiVersion, applyRank as deployApplyRank } from "./services/deploy-verifier.js";
+import { recordDeployment, updateDeployment, getDeploymentRecord, listDeploymentRecords } from "./services/doc-deploy-store.js";
 import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
 import { callLLM } from "./services/llm.js";
@@ -4640,99 +4642,167 @@ spec:
         const dryRun = body.dryRun !== false;
         const nsDefault = body.namespace || "";
         if (manifests.length === 0) { sendJson(res, 200, { error: "No manifests to deploy." }); return; }
-        // Namespaced resource → REST collection path.
-        const kindPath = (kind, ns) => ({
-          deployment: `/apis/apps/v1/namespaces/${ns}/deployments`,
-          statefulset: `/apis/apps/v1/namespaces/${ns}/statefulsets`,
-          daemonset: `/apis/apps/v1/namespaces/${ns}/daemonsets`,
-          service: `/api/v1/namespaces/${ns}/services`,
-          route: `/apis/route.openshift.io/v1/namespaces/${ns}/routes`,
-          ingress: `/apis/networking.k8s.io/v1/namespaces/${ns}/ingresses`,
-          configmap: `/api/v1/namespaces/${ns}/configmaps`,
-          secret: `/api/v1/namespaces/${ns}/secrets`,
-          persistentvolumeclaim: `/api/v1/namespaces/${ns}/persistentvolumeclaims`,
-          serviceaccount: `/api/v1/namespaces/${ns}/serviceaccounts`,
-          horizontalpodautoscaler: `/apis/autoscaling/v2/namespaces/${ns}/horizontalpodautoscalers`,
-          role: `/apis/rbac.authorization.k8s.io/v1/namespaces/${ns}/roles`,
-          rolebinding: `/apis/rbac.authorization.k8s.io/v1/namespaces/${ns}/rolebindings`,
-          networkpolicy: `/apis/networking.k8s.io/v1/namespaces/${ns}/networkpolicies`,
-          resourcequota: `/api/v1/namespaces/${ns}/resourcequotas`,
-          limitrange: `/api/v1/namespaces/${ns}/limitranges`,
-          servicemonitor: `/apis/monitoring.coreos.com/v1/namespaces/${ns}/servicemonitors`,
-          poddisruptionbudget: `/apis/policy/v1/namespaces/${ns}/poddisruptionbudgets`,
-          cronjob: `/apis/batch/v1/namespaces/${ns}/cronjobs`,
-          job: `/apis/batch/v1/namespaces/${ns}/jobs`,
-        }[(kind || "").toLowerCase()] || null);
-        // Canonical apiVersion per kind — must match the REST path we POST to,
-        // or the API server rejects the object (e.g. an LLM emitting
-        // autoscaling/v2beta2 HPA against the /apis/autoscaling/v2 path).
-        const kindApiVersion = (kind) => ({
-          namespace: "v1", service: "v1", configmap: "v1", secret: "v1",
-          persistentvolumeclaim: "v1", serviceaccount: "v1", resourcequota: "v1", limitrange: "v1",
-          deployment: "apps/v1", statefulset: "apps/v1", daemonset: "apps/v1",
-          route: "route.openshift.io/v1", ingress: "networking.k8s.io/v1", networkpolicy: "networking.k8s.io/v1",
-          horizontalpodautoscaler: "autoscaling/v2",
-          role: "rbac.authorization.k8s.io/v1", rolebinding: "rbac.authorization.k8s.io/v1",
-          servicemonitor: "monitoring.coreos.com/v1", poddisruptionbudget: "policy/v1",
-          cronjob: "batch/v1", job: "batch/v1",
-        }[(kind || "").toLowerCase()] || null);
         // Apply in a dependency-safe order: namespace → policy/rbac/config → workloads → exposure.
-        const applyRank = (kind) => ({
-          namespace: 0,
-          resourcequota: 1, limitrange: 1, networkpolicy: 1,
-          serviceaccount: 2, role: 3, rolebinding: 4,
-          secret: 2, configmap: 2, persistentvolumeclaim: 2,
-          deployment: 6, statefulset: 6, daemonset: 6, cronjob: 6, job: 6,
-          service: 5, route: 7, ingress: 7, horizontalpodautoscaler: 7,
-          servicemonitor: 7, poddisruptionbudget: 7,
-        }[(kind || "").toLowerCase()] ?? 5);
         const ordered = manifests
           .map((m, i) => ({ m, i }))
-          .sort((a, b) => applyRank(a.m.kind) - applyRank(b.m.kind) || a.i - b.i)
+          .sort((a, b) => deployApplyRank(a.m.kind) - deployApplyRank(b.m.kind) || a.i - b.i)
           .map((x) => x.m);
         const result = await withClusterContext(url, async () => {
+          // Server-side apply throughout: create-or-update in one call, classified
+          // created / configured / unchanged the way `kubectl apply` reports it.
+          // The old POST-then-merge-patch fallback silently kept dropped fields,
+          // and its dry-run reported AlreadyExists failures on every re-deploy.
           const applied = [], failed = [];
           const nss = [...new Set(manifests.map(m => (m.kind || "").toLowerCase() === "namespace" ? m.metadata?.name : (m.metadata?.namespace || nsDefault)).filter(Boolean))];
-          // Ensure target namespaces exist (real apply only). An explicit
-          // Namespace manifest in the set is applied below with its full labels.
+          // Ensure IMPLICIT target namespaces exist (real apply only). One with
+          // an explicit Namespace manifest is applied first below (rank 0) —
+          // pre-creating it here would make SSA classify it as pre-existing,
+          // and rollback would then wrongly refuse to remove it.
+          const explicitNss = new Set(manifests.filter((m) => (m.kind || "").toLowerCase() === "namespace").map((m) => m.metadata?.name));
           if (!dryRun) for (const ns of nss) {
+            if (explicitNss.has(ns)) continue;
             try { await ocpPost(`/api/v1/namespaces`, { apiVersion: "v1", kind: "Namespace", metadata: { name: ns } }); } catch { /* exists */ }
           }
           for (const m of ordered) {
             const kind = (m.kind || "").toLowerCase();
-            const q = dryRun ? "?dryRun=All" : "";
-            // Namespace is cluster-scoped — apply directly, no namespace segment.
-            if (kind === "namespace") {
-              try { await ocpPost(`/api/v1/namespaces${q}`, m); applied.push(`Namespace/${m.metadata?.name}`); }
-              catch (e) {
-                if (!dryRun && m.metadata?.name) {
-                  try { await ocpPatch(`/api/v1/namespaces/${m.metadata.name}`, m, "application/merge-patch+json"); applied.push(`Namespace/${m.metadata.name} (updated)`); }
-                  catch (e2) { failed.push({ kind: m.kind, name: m.metadata?.name, error: e2.message || e.message }); }
-                } else failed.push({ kind: m.kind, name: m.metadata?.name, error: e.message });
-              }
-              continue;
-            }
-            const ns = (m.metadata && (m.metadata.namespace || nsDefault)) || nsDefault;
-            if (m.metadata) m.metadata.namespace = ns;
-            const path = kindPath(m.kind, ns);
-            if (!path) { failed.push({ kind: m.kind, name: m.metadata?.name, error: "unsupported kind" }); continue; }
-            // Force the apiVersion to match the path we're posting to.
-            const canonical = kindApiVersion(m.kind);
+            // Force the apiVersion to match the path we're applying to (e.g. an
+            // LLM emitting autoscaling/v2beta2 HPA against /apis/autoscaling/v2).
+            const canonical = deployKindApiVersion(m.kind);
             if (canonical) m.apiVersion = canonical;
-            try { await ocpPost(path + q, m); applied.push(`${m.kind}/${m.metadata?.name}`); }
-            catch (e) {
-              if (!dryRun && m.metadata?.name) {
-                try { await ocpPatch(`${path}/${m.metadata.name}`, m, "application/merge-patch+json"); applied.push(`${m.kind}/${m.metadata.name} (updated)`); }
-                // A 404 on the update fallback means the object never existed —
-                // the CREATE error is the real story, so surface that one.
-                catch (e2) { failed.push({ kind: m.kind, name: m.metadata?.name, error: /404|NotFound/i.test(e2.message || "") ? (e.message || e2.message) : (e2.message || e.message) }); }
-              } else failed.push({ kind: m.kind, name: m.metadata?.name, error: e.message });
+            let path;
+            if (kind === "namespace") {
+              path = "/api/v1/namespaces";           // cluster-scoped
+            } else {
+              const ns = (m.metadata && (m.metadata.namespace || nsDefault)) || nsDefault;
+              if (m.metadata) m.metadata.namespace = ns;
+              path = deployKindPath(m.kind, ns);
+            }
+            if (!path) { failed.push({ kind: m.kind, name: m.metadata?.name, error: "unsupported kind" }); continue; }
+            try {
+              const { action } = await applyResource(path, m, { dryRun });
+              applied.push({ kind: m.kind, name: m.metadata?.name, namespace: kind === "namespace" ? null : m.metadata?.namespace, action });
+            } catch (e) {
+              failed.push({ kind: m.kind, name: m.metadata?.name, error: e.message });
             }
           }
           return { dryRun, applied, failed, namespaces: nss };
         });
         if (result === null) { sendJson(res, 200, { error: "Selected cluster is not reachable for deployment." }); return; }
+
+        // Real deploys leave a durable record: history that survives a pod
+        // restart, a change-timeline event, and (best-effort) a ServiceNow CR.
+        if (!result.dryRun && result.applied.length > 0) {
+          const clusterId = url.searchParams.get("cluster") || "local";
+          const nsMain = result.namespaces[0] || nsDefault || null;
+          const deployId = `docdep-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+          result.deployId = deployId;
+          const rec = {
+            id: deployId, cluster: clusterId, namespace: nsMain,
+            appName: nsMain, status: result.failed.length ? "partial" : "applied",
+            applied: result.applied, failed: result.failed,
+            requestedBy: req.user?.name || "anonymous",
+          };
+          await recordDeployment(rec).catch(() => {});
+          recordChangeEvent({
+            source: "deployment", eventType: "doc_deploy_applied",
+            namespace: nsMain, resourceKind: "Application", resourceName: nsMain,
+            title: `Automation Hub deploy to ${clusterId}/${nsMain}: ${result.applied.length} object(s)`,
+            details: { deployId, applied: result.applied, failed: result.failed },
+            severity: result.failed.length ? "warning" : "info",
+          }).catch(() => {});
+          // Change record: don't hold the response hostage to a slow ITSM —
+          // wait briefly, then let it land in the stored record instead.
+          const crPromise = (async () => {
+            try {
+              const { createChangeRequest } = await import("./utils/servicenow-client.js");
+              const cr = await createChangeRequest({
+                shortDescription: `Automation Hub deploy: ${nsMain} on ${clusterId} (${result.applied.length} objects)`,
+                description: result.applied.map((a) => ` - ${a.action.padEnd(10)} ${a.kind}/${a.name}`).join("\n"),
+                type: "normal", category: "Software", risk: "low",
+                implementationPlan: `Server-side apply of ${result.applied.length} manifests to namespace ${nsMain}.`,
+                backoutPlan: `Delete the created resources recorded under deployment ${deployId} (POST /api/automation/deployments/rollback).`,
+                testPlan: `POST /api/automation/verify {"namespace":"${nsMain}"} — rollout, stability, service wiring and route access must all pass.`,
+              });
+              const number = cr?.number || cr?.result?.number || null;
+              if (number) await updateDeployment(deployId, { changeRequestNumber: number }).catch(() => {});
+              return number;
+            } catch { return null; }
+          })();
+          result.changeRequest = await Promise.race([crPromise, new Promise((r) => setTimeout(() => r(null), 6000))]);
+        }
         sendJson(res, 200, result);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── App Deployment Agent · production verification pyramid ──
+    // Rollout completion (kubectl rollout status semantics) → workload
+    // stability → Service/endpoint wiring → an HTTP probe of every Route.
+    // The last level is the user's acceptance test: the URL they will open.
+    if (req.method === "POST" && url.pathname === "/api/automation/verify") {
+      if (enforceRateLimit(req, res, { burst: 8, refillPerSec: 0.3 })) return;
+      try {
+        const body = await readJsonBody(req);
+        const ns = body.namespace;
+        if (!ns) { sendJson(res, 200, { error: "namespace is required" }); return; }
+        const out = await withClusterContext(url, async () => verifyNamespace(ns));
+        if (out === null) { sendJson(res, 200, { error: "Selected cluster is not reachable." }); return; }
+        if (body.deployId) {
+          await updateDeployment(body.deployId, {
+            verification: { passed: out.passed, at: out.verifiedAt, access: out.access },
+            status: out.passed ? "verified" : "verification_failed",
+          }).catch(() => {});
+        }
+        sendJson(res, 200, out);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── App Deployment Agent · deployment history (survives pod restarts) ──
+    if (req.method === "GET" && url.pathname === "/api/automation/deployments") {
+      try {
+        const limit = Math.min(parseInt(url.searchParams.get("limit") || "30", 10), 100);
+        const cluster = url.searchParams.get("cluster") || undefined;
+        sendJson(res, 200, { deployments: await listDeploymentRecords({ cluster, limit }) });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── App Deployment Agent · rollback a recorded deployment ──
+    // Deletes ONLY what that deployment CREATED, in reverse dependency order.
+    // Resources it merely updated, and any pre-existing namespace, are left
+    // alone — a rollback must never take out workloads it didn't put there.
+    if (req.method === "POST" && url.pathname === "/api/automation/deployments/rollback") {
+      if (enforceRateLimit(req, res, { burst: 4, refillPerSec: 0.1 })) return;
+      try {
+        const body = await readJsonBody(req);
+        const rec = body.deployId ? await getDeploymentRecord(body.deployId) : null;
+        if (!rec) { sendJson(res, 200, { error: "Deployment not found: " + (body.deployId || "(missing deployId)") }); return; }
+        const created = (rec.applied || []).filter((a) => a.action === "created");
+        const skipped = (rec.applied || []).filter((a) => a.action !== "created").length;
+        const out = await withClusterContext(url, async () => {
+          const deleted = [], failed = [];
+          const reversed = [...created].sort((a, b) => deployApplyRank(b.kind) - deployApplyRank(a.kind));
+          for (const r of reversed) {
+            const kind = (r.kind || "").toLowerCase();
+            const path = kind === "namespace"
+              ? `/api/v1/namespaces/${r.name}`
+              : (deployKindPath(r.kind, r.namespace || rec.namespace) ? `${deployKindPath(r.kind, r.namespace || rec.namespace)}/${r.name}` : null);
+            if (!path) { failed.push({ ...r, error: "unsupported kind" }); continue; }
+            try { await ocpFetch(path, { method: "DELETE" }); deleted.push(`${r.kind}/${r.name}`); }
+            catch (e) { if (!/404|NotFound/i.test(e.message || "")) failed.push({ ...r, error: e.message }); else deleted.push(`${r.kind}/${r.name} (already gone)`); }
+          }
+          return { deleted, failed, skippedUpdated: skipped };
+        });
+        if (out === null) { sendJson(res, 200, { error: "Selected cluster is not reachable." }); return; }
+        await updateDeployment(rec.id, { status: out.failed.length ? "rollback_partial" : "rolled_back", rollback: out }).catch(() => {});
+        recordChangeEvent({
+          source: "deployment", eventType: "doc_deploy_rollback",
+          namespace: rec.namespace, resourceKind: "Application", resourceName: rec.namespace,
+          title: `Automation Hub rollback ${rec.id}: ${out.deleted.length} deleted, ${skipped} updated object(s) left in place`,
+          details: out, severity: "warning",
+        }).catch(() => {});
+        sendJson(res, 200, { ...out, deployId: rec.id });
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }
@@ -8214,7 +8284,7 @@ spec:
     if (req.method === "GET" && url.pathname === "/api/deploy/status") {
       const deployId = url.searchParams.get("id");
       if (!deployId) { sendJson(res, 400, { error: "id parameter required" }); return; }
-      const dep = getDeployment(deployId);
+      const dep = await getDeploymentAnywhere(deployId);
       if (!dep) { sendJson(res, 404, { error: "Deployment not found" }); return; }
       sendJson(res, 200, dep);
       return;
@@ -8231,7 +8301,7 @@ spec:
     }
 
     if (req.method === "GET" && url.pathname === "/api/deploy/list") {
-      sendJson(res, 200, { deployments: listDeployments().slice(0, 20) });
+      sendJson(res, 200, { deployments: await listDeploymentsAnywhere(20) });
       return;
     }
 

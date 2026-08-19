@@ -83,6 +83,7 @@ function SopAgent({ clusters, activeCluster }) {
   const [cisChk, setCisChk] = useState(null); // pre-deploy CIS: { phase, data }
   const [imgChk, setImgChk] = useState(null); // pre-deploy image: { phase, data }
   const [watch, setWatch] = useState(null);   // terminal pod watch: { on, done, data, error }
+  const [pyramid, setPyramid] = useState(null); // production verification: { phase, data, error }
 
   // Live pod watch — polls the deployed namespace every 4s while "on",
   // stops automatically once everything is ready.
@@ -141,6 +142,7 @@ function SopAgent({ clusters, activeCluster }) {
 
   const runDeploy = async (dryRun) => {
     setDeploy({ phase: dryRun ? "dry" : "apply" });
+    setPyramid(null);
     try {
       const res = await fetch(clusterUrl("/api/automation/deploy", cluster), {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -155,6 +157,30 @@ function SopAgent({ clusters, activeCluster }) {
       showToast(dryRun ? "Dry-run complete" : `Deployed ${d.applied?.length || 0} object(s)`, d.failed?.length ? "err" : "ok");
     } catch (e) { setDeploy({ phase: "error", error: e.message }); showToast("Deploy failed: " + e.message, "err"); }
   };
+
+  // Production verification pyramid — rollout completion, workload stability,
+  // Service→pod wiring, and an HTTP probe of every Route. The last level is
+  // the user's acceptance test: the URL they will actually open.
+  const runPyramid = useCallback(async () => {
+    const ns = namespace || gen?.namespace;
+    if (!ns) return;
+    setPyramid({ phase: "running" });
+    try {
+      const res = await fetch(clusterUrl("/api/automation/verify", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ namespace: ns, deployId: deploy?.result?.deployId }),
+      });
+      const d = await res.json();
+      if (d.error) throw new Error(d.error);
+      setPyramid({ phase: "done", data: d });
+    } catch (e) { setPyramid({ phase: "error", error: e.message }); }
+  }, [namespace, gen?.namespace, cluster, deploy?.result?.deployId]);
+
+  // All pods came up → run the pyramid on its own, so the flow ends at a
+  // verified, clickable application rather than at "pods are Ready".
+  useEffect(() => {
+    if (watch?.done && !pyramid) runPyramid();
+  }, [watch?.done, pyramid, runPyramid]);
 
   // Shift-left checks on the GENERATED code (before deploy) — run separately.
   const runCisCheck = async () => {
@@ -328,7 +354,27 @@ function SopAgent({ clusters, activeCluster }) {
           {deploy?.phase === "done" && (
             <div style={{ marginTop: 10, fontSize: "0.84rem", borderLeft: "3px solid #16a34a", paddingLeft: 10 }}>
               <b>{deploy.dryRun ? "Dry-run" : "Deploy"} result:</b> {deploy.result.applied?.length || 0} ok{deploy.result.failed?.length ? `, ${deploy.result.failed.length} failed` : ""}.
-              <div style={{ color: "var(--muted,#5a6373)" }}>{(deploy.result.applied || []).join(", ")}</div>
+              {(deploy.result.deployId || deploy.result.changeRequest) && (
+                <span style={{ marginLeft: 8, fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>
+                  {deploy.result.deployId && <>record <code>{deploy.result.deployId}</code></>}
+                  {deploy.result.changeRequest && <> · change <b style={{ color: "#7c3aed" }}>{deploy.result.changeRequest}</b></>}
+                </span>
+              )}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
+                {(deploy.result.applied || []).map((a, i) => {
+                  const isObj = a && typeof a === "object";
+                  const label = isObj ? `${a.kind}/${a.name}` : String(a);
+                  const action = isObj ? a.action : null;
+                  const c = action === "created" ? { bg: "rgba(22,163,74,0.12)", fg: "#16a34a" }
+                    : action === "configured" ? { bg: "rgba(61,90,254,0.10)", fg: "#3d5afe" }
+                    : { bg: "rgba(100,116,139,0.12)", fg: "#64748b" };
+                  return (
+                    <span key={i} style={{ fontSize: "0.7rem", fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: c.bg, color: c.fg }}>
+                      {label}{action ? ` · ${action}` : ""}
+                    </span>
+                  );
+                })}
+              </div>
               {(deploy.result.failed || []).map((f, i) => <div key={i} style={{ color: "#dc2626" }}>✗ {f.kind}/{f.name}: {f.error}</div>)}
               {/* Detect RBAC 403s and show the one-command fix inline */}
               {(deploy.result.failed || []).some((f) => /forbidden|cannot create|is forbidden|\b403\b/i.test(f.error || "")) && (
@@ -396,6 +442,61 @@ function SopAgent({ clusters, activeCluster }) {
                   );
                 })()}
               </div>
+            </div>
+          )}
+
+          {/* Production verification pyramid — runs automatically once all pods
+              are ready, and ends at the user's acceptance test: the URL. */}
+          {deploy?.phase === "done" && !deploy.dryRun && (
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed var(--border,#e4e8f1)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 800, fontSize: "0.84rem" }}>✅ Production verification</span>
+                {pyramid?.phase === "done" && (
+                  <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: pyramid.data.passed ? "rgba(22,163,74,0.14)" : "rgba(220,38,38,0.12)", color: pyramid.data.passed ? "#16a34a" : "#dc2626" }}>
+                    {pyramid.data.passed ? "ALL LEVELS PASSED" : "NOT YET PASSING"}
+                  </span>
+                )}
+                <button onClick={runPyramid} disabled={pyramid?.phase === "running"} style={{ padding: "6px 13px", borderRadius: 8, border: "1px solid #16a34a", background: "rgba(22,163,74,0.08)", color: "#16a34a", fontWeight: 700, fontSize: "0.78rem", cursor: "pointer", opacity: pyramid?.phase === "running" ? 0.7 : 1 }}>
+                  {pyramid?.phase === "running" ? "Verifying…" : pyramid ? "↻ Re-verify" : "▶ Verify now"}
+                </button>
+                <span style={{ fontSize: "0.74rem", color: "var(--muted,#5a6373)" }}>Rollout → stability → service wiring → live URL check{watch?.done ? " (auto-ran when pods came up)" : ""}</span>
+              </div>
+              {pyramid?.phase === "error" && <div style={{ marginTop: 8, color: "#dc2626", fontSize: "0.82rem" }}>Verification error: {pyramid.error}</div>}
+              {pyramid?.phase === "done" && (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 8, marginTop: 10 }}>
+                    {(pyramid.data.levels || []).map((l, i) => (
+                      <div key={l.id} style={{ border: `1px solid ${l.passed ? "rgba(22,163,74,0.35)" : "rgba(220,38,38,0.35)"}`, borderRadius: 10, padding: "9px 11px", background: "var(--card-bg,#fff)" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                          <span style={{ fontWeight: 800, fontSize: "0.9rem", color: l.passed ? "#16a34a" : "#dc2626" }}>{l.passed ? "✓" : "✗"}</span>
+                          <span style={{ fontWeight: 800, fontSize: "0.76rem" }}>{i + 1}. {l.title}</span>
+                        </div>
+                        {(l.checks || []).map((c, j) => (
+                          <div key={j} style={{ fontSize: "0.71rem", color: c.passed ? "var(--muted,#5a6373)" : "#dc2626", marginTop: 3, lineHeight: 1.4 }}>
+                            {c.passed ? "•" : "✗"} <b>{c.name}</b> — {c.detail}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                  {/* Final touch: the application, as the user will reach it */}
+                  {(pyramid.data.access || []).length > 0 && (
+                    <div style={{ marginTop: 10, border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, padding: "11px 13px", background: "var(--card-bg,#fff)" }}>
+                      <div style={{ fontWeight: 800, fontSize: "0.8rem", marginBottom: 7 }}>🌐 Your application</div>
+                      {pyramid.data.access.map((a) => (
+                        <div key={a.url} style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap", marginTop: 5 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: 999, background: a.ok ? "#16a34a" : "#dc2626", flex: "0 0 auto" }} />
+                          <a href={a.url} target="_blank" rel="noreferrer" style={{ fontSize: "0.8rem", fontWeight: 700, color: "#3d5afe", textDecoration: "none", wordBreak: "break-all" }}>{a.url}</a>
+                          <span style={{ fontSize: "0.7rem", color: a.ok ? "var(--muted,#5a6373)" : "#dc2626" }}>{a.label}{a.latencyMs != null && a.statusCode != null ? ` · ${a.latencyMs}ms` : ""}</span>
+                          {a.ok && (
+                            <a href={a.url} target="_blank" rel="noreferrer" style={{ marginLeft: "auto", padding: "4px 12px", borderRadius: 7, background: "#16a34a", color: "#fff", fontWeight: 700, fontSize: "0.72rem", textDecoration: "none" }}>Open application ↗</a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 
