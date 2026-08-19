@@ -34,6 +34,9 @@ function assertPoliciesValid(manifests) {
         }
         for (const p of rule.ports || []) {
           assert.equal(typeof p.port, "number", `${np.name}: port must be numeric, got ${JSON.stringify(p.port)}`);
+          // The regression behind "33 failed" on the boutique deploy: the
+          // extractor's fuzzy header match put the To-column tier name here.
+          assert.match(String(p.protocol), /^(TCP|UDP|SCTP)$/, `${np.name}: protocol must be TCP/UDP/SCTP, got ${JSON.stringify(p.protocol)}`);
         }
       }
     }
@@ -168,6 +171,11 @@ test("04-online-boutique: 12 tiers extract and every service address resolves to
     }
   }
   assert.ok(addrChecks >= 16, `expected 16+ address wirings, saw ${addrChecks}`);
+
+  // Every matrix row's protocol must be a real protocol, not a column bleed.
+  for (const r of intent.networkPolicies) {
+    assert.equal(r.protocol, "TCP", `matrix ${r.from}->${r.to}: protocol read as ${JSON.stringify(r.protocol)}`);
+  }
 
   // And every service-to-service wiring must be permitted by the matrix.
   const allowed = new Set(intent.networkPolicies.filter((r) => r.allowed).map((r) => `${r.from}->${r.to}:${r.port}`));

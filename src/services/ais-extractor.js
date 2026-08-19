@@ -392,13 +392,30 @@ function findVal(kv, ...candidates) {
 }
 
 function findRowVal(row, headers, ...candidates) {
+  const cellAt = (i) => {
+    const key = Object.keys(row)[i] || headers[i];
+    const val = row[key];
+    return val !== undefined && val !== "" ? val : null;
+  };
+  // Exact header match first — the fuzzy containment below once matched the
+  // candidate "protocol" to the "To" column ("proTOcol"), so every network
+  // policy was generated with a tier name as its protocol and the API server
+  // rejected the lot with 422 FieldValueNotSupported.
+  for (const c of candidates) {
+    const cl = c.toLowerCase();
+    for (let i = 0; i < headers.length; i++) {
+      if (headers[i] === cl) {
+        const v = cellAt(i);
+        if (v !== null) return v;
+      }
+    }
+  }
   for (const c of candidates) {
     const cl = c.toLowerCase();
     for (let i = 0; i < headers.length; i++) {
       if (headers[i].includes(cl) || cl.includes(headers[i])) {
-        const key = Object.keys(row)[i] || headers[i];
-        const val = row[key];
-        if (val !== undefined && val !== "") return val;
+        const v = cellAt(i);
+        if (v !== null) return v;
       }
     }
   }

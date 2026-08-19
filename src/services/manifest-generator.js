@@ -394,6 +394,13 @@ function makeHPA(tier, ns) {
   return { kind: "HorizontalPodAutoscaler", name: tier.name, yaml: yaml.dump(json), json };
 }
 
+// The API server accepts exactly TCP/UDP/SCTP. Anything else reaching this
+// point is an extraction artefact — default it rather than shipping a policy
+// set the cluster will reject wholesale.
+function safeProtocol(p) {
+  return /^(TCP|UDP|SCTP)$/i.test(String(p || "")) ? String(p).toUpperCase() : "TCP";
+}
+
 function makeNetworkPolicy(rule, ais, ns) {
   const tierMap = new Map(ais.tiers.map((t) => [t.name, t]));
   const toTier = ais.tiers.find(
@@ -410,7 +417,7 @@ function makeNetworkPolicy(rule, ais, ns) {
     policyTypes: ["Ingress"],
     ingress: [
       {
-        ports: [{ port: Number(rule.port) || rule.port, protocol: rule.protocol || "TCP" }],
+        ports: [{ port: Number(rule.port) || rule.port, protocol: safeProtocol(rule.protocol) }],
       },
     ],
   };
@@ -467,7 +474,7 @@ function makeEgressPolicy(rule, ais, ns) {
       policyTypes: ["Egress"],
       egress: [{
         to: [{ podSelector: { matchLabels: { app: toTier?.name || rule.to } } }],
-        ports: [{ port: Number(rule.port) || rule.port, protocol: rule.protocol || "TCP" }],
+        ports: [{ port: Number(rule.port) || rule.port, protocol: safeProtocol(rule.protocol) }],
       }],
     },
   };
