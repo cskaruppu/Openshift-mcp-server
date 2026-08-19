@@ -4657,14 +4657,24 @@ spec:
           // and its dry-run reported AlreadyExists failures on every re-deploy.
           const applied = [], failed = [];
           const nss = [...new Set(manifests.map(m => (m.kind || "").toLowerCase() === "namespace" ? m.metadata?.name : (m.metadata?.namespace || nsDefault)).filter(Boolean))];
-          // Ensure IMPLICIT target namespaces exist (real apply only). One with
-          // an explicit Namespace manifest is applied first below (rank 0) —
-          // pre-creating it here would make SSA classify it as pre-existing,
-          // and rollback would then wrongly refuse to remove it.
+          // Ensure target namespaces exist. On a REAL deploy, only implicit
+          // ones — an explicit Namespace manifest is applied first below
+          // (rank 0), and pre-creating it would make SSA classify it as
+          // pre-existing, so rollback would wrongly refuse to remove it.
+          // On a DRY-RUN, all of them, for real: the API server 404s a
+          // namespaced resource whose namespace does not exist BEFORE
+          // admission ever runs, so nothing can be server-validated into a
+          // namespace that is still hypothetical. An empty namespace is
+          // exactly what deploy would create anyway — it is the price of a
+          // dry-run that actually validates.
           const explicitNss = new Set(manifests.filter((m) => (m.kind || "").toLowerCase() === "namespace").map((m) => m.metadata?.name));
-          if (!dryRun) for (const ns of nss) {
-            if (explicitNss.has(ns)) continue;
-            try { await ocpPost(`/api/v1/namespaces`, { apiVersion: "v1", kind: "Namespace", metadata: { name: ns } }); } catch { /* exists */ }
+          const nsPrepared = [];
+          for (const ns of nss) {
+            if (!dryRun && explicitNss.has(ns)) continue;
+            try {
+              await ocpPost(`/api/v1/namespaces`, { apiVersion: "v1", kind: "Namespace", metadata: { name: ns } });
+              if (dryRun) nsPrepared.push(ns);
+            } catch { /* exists */ }
           }
           for (const m of ordered) {
             const kind = (m.kind || "").toLowerCase();
@@ -4688,7 +4698,13 @@ spec:
               failed.push({ kind: m.kind, name: m.metadata?.name, error: e.message });
             }
           }
-          return { dryRun, applied, failed, namespaces: nss };
+          return {
+            dryRun, applied, failed, namespaces: nss,
+            ...(nsPrepared.length ? {
+              namespacesPrepared: nsPrepared,
+              note: `Namespace ${nsPrepared.join(", ")} was created (empty) so the server could validate the remaining resources — a dry-run cannot validate into a namespace that does not exist. Deploy will adopt it as-is.`,
+            } : {}),
+          };
         });
         if (result === null) { sendJson(res, 200, { error: "Selected cluster is not reachable for deployment." }); return; }
 

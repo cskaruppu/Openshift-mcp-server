@@ -375,6 +375,7 @@ function SopAgent({ clusters, activeCluster }) {
                   );
                 })}
               </div>
+              {deploy.result.note && <div style={{ marginTop: 6, fontSize: "0.74rem", color: "#b45309" }}>ℹ {deploy.result.note}</div>}
               {(deploy.result.failed || []).map((f, i) => <div key={i} style={{ color: "#dc2626" }}>✗ {f.kind}/{f.name}: {f.error}</div>)}
               {/* Detect RBAC 403s and show the one-command fix inline */}
               {(deploy.result.failed || []).some((f) => /forbidden|cannot create|is forbidden|\b403\b/i.test(f.error || "")) && (
