@@ -4610,7 +4610,10 @@ spec:
         } else {
           text = filePart.data.toString("utf8");
         }
-        text = (text || "").trim().slice(0, 14000);
+        // Generous cap: a structured multi-tier requirement (12 tiers with env
+        // and probe tables) runs well past the old 14k, and truncating one
+        // silently drops tiers from the extraction.
+        text = (text || "").trim().slice(0, 60000);
         if (!text) { sendJson(res, 200, { error: "Could not read any text from that file." }); return; }
         sendJson(res, 200, { text, filename: filePart.filename, chars: text.length });
       } catch (err) { sendJson(res, 500, { error: err.message }); }

@@ -781,4 +781,7 @@ function calculateConfidence(intent, missingFields) {
   return Math.round((filled / totalFields) * 100);
 }
 
-export { validateAIS, calculateConfidence };
+// The deterministic extractor alone — no LLM fallback. Callers that have
+// their own free-prose path (the Generate Manifests API) use this to decide
+// whether the document follows the structured grammar before spending tokens.
+export { extractDeterministic, validateAIS, calculateConfidence };

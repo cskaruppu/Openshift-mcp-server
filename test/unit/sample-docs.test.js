@@ -145,6 +145,87 @@ test("02-three-tier-orders: generated manifests honour the contract in both dire
   assertPoliciesValid(manifests);
 });
 
+test("04-online-boutique: 12 tiers extract and every service address resolves to a real tier and port", async () => {
+  const intent = await load("04-ecommerce-online-boutique.md");
+  assert.equal(intent.appName, "online-boutique");
+  assert.equal(intent.namespace, "demo-boutique");
+  assert.equal(intent.tiers.length, 12);
+  assert.equal(intent.deployOrder.length, 12);
+
+  const tierByName = new Map(intent.tiers.map((t) => [t.name, t]));
+  // The wiring contract: every *_ADDR env value "host:port" must name an
+  // existing tier on its exact port. This is the class of mismatch that makes
+  // a shop render and then fail at checkout.
+  let addrChecks = 0;
+  for (const t of intent.tiers) {
+    for (const ev of t.envVars) {
+      if (!/_ADDR$/.test(ev.name) || !ev.value) continue;
+      const [host, port] = String(ev.value).split(":");
+      const target = tierByName.get(host);
+      assert.ok(target, `${t.name}.${ev.name} points at unknown tier "${host}"`);
+      assert.equal(target.port, Number(port), `${t.name}.${ev.name} port ${port} != ${host} tier port ${target.port}`);
+      addrChecks++;
+    }
+  }
+  assert.ok(addrChecks >= 16, `expected 16+ address wirings, saw ${addrChecks}`);
+
+  // And every service-to-service wiring must be permitted by the matrix.
+  const allowed = new Set(intent.networkPolicies.filter((r) => r.allowed).map((r) => `${r.from}->${r.to}:${r.port}`));
+  for (const t of intent.tiers) {
+    for (const ev of t.envVars) {
+      if (!/_ADDR$/.test(ev.name) || !ev.value) continue;
+      const [host, port] = String(ev.value).split(":");
+      assert.ok(allowed.has(`${t.name}->${host}:${port}`), `matrix does not allow ${t.name}->${host}:${port}`);
+    }
+  }
+});
+
+test("04-online-boutique: manifests — single route, redis PVC, frontend HPA, matrix enforced both ways", async () => {
+  const intent = await load("04-ecommerce-online-boutique.md");
+  const { manifests } = generateManifests(intent);
+
+  // Exactly one public entrance.
+  const routes = byKind(manifests, "Route");
+  assert.equal(routes.length, 1);
+  assert.equal(routes[0].name, "frontend");
+  assert.equal(routes[0].json.spec.tls.termination, "edge");
+
+  // Redis persists its cart data; nothing else claims storage.
+  const pvcs = byKind(manifests, "PersistentVolumeClaim");
+  assert.deepEqual(pvcs.map((p) => p.name), ["redis-cart-data"]);
+
+  // The storefront autoscales 2→5.
+  const hpas = byKind(manifests, "HorizontalPodAutoscaler");
+  assert.equal(hpas.length, 1);
+  assert.match(hpas[0].name, /frontend/);
+
+  // Every allowed matrix row exists in both directions (internet rows have no
+  // egress twin — the caller is outside the cluster).
+  for (const r of intent.networkPolicies.filter((x) => x.allowed)) {
+    assert.ok(named(manifests, "NetworkPolicy", `allow-${r.from}-to-${r.to}`), `missing ingress ${r.from}->${r.to}`);
+    if (r.from !== "internet") {
+      assert.ok(named(manifests, "NetworkPolicy", `allow-egress-${r.from}-to-${r.to}`), `missing egress ${r.from}->${r.to}`);
+    }
+  }
+  assert.ok(named(manifests, "NetworkPolicy", "default-deny-all"));
+  assert.ok(named(manifests, "NetworkPolicy", "allow-dns-egress"));
+  assert.equal(named(manifests, "NetworkPolicy", "allow-same-namespace"), undefined);
+
+  // gRPC health probes came through as exec probes.
+  const catalog = named(manifests, "Deployment", "productcatalogservice");
+  const probe = catalog.json.spec.template.spec.containers[0].readinessProbe;
+  assert.deepEqual(probe.exec.command, ["sh", "-c", "/bin/grpc_health_probe -addr=:3550"]);
+
+  assertPoliciesValid(manifests);
+});
+
+test("sample docs stay within the upload size cap", () => {
+  for (const f of ["01-hello-web.md", "02-three-tier-orders.md", "03-negative-broken-image.md", "04-ecommerce-online-boutique.md"]) {
+    const size = readFileSync(resolve(DOCS, f), "utf8").length;
+    assert.ok(size < 60000, `${f} is ${size} chars — exceeds the extract-doc cap`);
+  }
+});
+
 test("03-negative-broken-image extracts cleanly — the failure belongs to the cluster, not the parser", async () => {
   const intent = await load("03-negative-broken-image.md");
   assert.equal(intent.namespace, "demo-negative");

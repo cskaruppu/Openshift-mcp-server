@@ -12,6 +12,14 @@ would break these documents, the build breaks first.
 | `01-hello-web.md` | The pipeline end to end: one tier, TLS route, probes | ~1 min |
 | `02-three-tier-orders.md` | The full production story: 3 tiers, Secret, ConfigMap, PVC, init SQL, zero-trust matrix, HPA | 2–4 min (image pulls + PVC bind) |
 | `03-negative-broken-image.md` | The pyramid fails honestly — a green result means something | fails by design |
+| `04-ecommerce-online-boutique.md` | A real e-commerce shop: Google's Online Boutique — 11 gRPC microservices + Redis + synthetic shoppers, 64 manifests, 19-row zero-trust matrix | 3–6 min (12 image pulls) |
+
+The Generate button runs these documents through the **deterministic
+extractor first** — same document, same 64 manifests, every time, and no LLM
+is required at all (free-prose requirements still use the LLM path).
+`04` needs cluster egress to `us-central1-docker.pkg.dev` (Google's public
+registry); if your lab can't reach it, mirror the 12 images internally and
+edit only the image rows.
 
 ## How to run one
 
