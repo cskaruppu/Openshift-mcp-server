@@ -84,6 +84,26 @@ function SopAgent({ clusters, activeCluster }) {
   const [imgChk, setImgChk] = useState(null); // pre-deploy image: { phase, data }
   const [watch, setWatch] = useState(null);   // terminal pod watch: { on, done, data, error }
   const [pyramid, setPyramid] = useState(null); // production verification: { phase, data, error }
+  const [gitUrl, setGitUrl] = useState("");
+  const [gitBusy, setGitBusy] = useState(false);
+  const [docSource, setDocSource] = useState(null); // { url, fetchedAt } — deploy provenance
+
+  const loadFromGit = async () => {
+    setGitBusy(true); setError(null);
+    try {
+      const res = await fetch("/api/automation/fetch-doc", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: gitUrl.trim() }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (d.error) throw new Error(d.error);
+      setRequirement(d.text || "");
+      setDocSource(d.source || null);
+      setUploadedName(null);
+      showToast(`Loaded ${d.chars} chars from Git (${d.format}) — review & generate`, "ok");
+    } catch (e) { setError("Git fetch: " + e.message); showToast("Git fetch failed: " + e.message, "err"); }
+    finally { setGitBusy(false); }
+  };
 
   // Live pod watch — polls the deployed namespace every 4s while "on",
   // stops automatically once everything is ready.
@@ -146,7 +166,7 @@ function SopAgent({ clusters, activeCluster }) {
     try {
       const res = await fetch(clusterUrl("/api/automation/deploy", cluster), {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ yaml: editedYaml, manifests: gen.manifests, namespace: namespace || gen.namespace, dryRun }),
+        body: JSON.stringify({ yaml: editedYaml, manifests: gen.manifests, namespace: namespace || gen.namespace, dryRun, sourceUrl: docSource?.url || null }),
       });
       const d = await res.json().catch(() => ({}));
       if (d.error) throw new Error(d.error);
@@ -240,6 +260,18 @@ function SopAgent({ clusters, activeCluster }) {
         </label>
         {uploadedName && <span style={{ fontSize: "0.8rem", color: "var(--muted,#5a6373)" }}>📄 {uploadedName} loaded ✓</span>}
         <span style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)" }}>.pdf / .docx / .txt / .md supported</span>
+      </div>
+      {/* Docs-as-code: pull the requirement straight from version control. The
+          URL travels with the deploy as provenance. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <input value={gitUrl} onChange={(e) => setGitUrl(e.target.value)}
+          placeholder="or load from Git — https://github.com/you/repo/blob/main/requirement.md (.docx works too)"
+          style={{ flex: "1 1 340px", padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--fg,#151a29)", fontSize: "0.8rem", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace" }} />
+        <button onClick={loadFromGit} disabled={gitBusy || !gitUrl.trim()}
+          style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #0ea5a0", background: "rgba(14,165,160,0.08)", color: "#0e8a86", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer", opacity: gitBusy || !gitUrl.trim() ? 0.6 : 1 }}>
+          {gitBusy ? "Fetching…" : "⤓ Load from Git"}
+        </button>
+        {docSource && <span style={{ fontSize: "0.74rem", color: "#0e8a86" }}>⎇ versioned source loaded — the deploy record will cite it</span>}
       </div>
       <textarea value={requirement} onChange={(e) => setRequirement(e.target.value)} rows={7}
         placeholder="e.g. Deploy a web app (nginx, 2 replicas) with a PostgreSQL database in a dedicated, restricted namespace. Add least-privilege RBAC, a default-deny NetworkPolicy, a 10Gi PVC for the DB, DB creds from a Secret, Prometheus monitoring, and expose the web tier via an edge-TLS Route."

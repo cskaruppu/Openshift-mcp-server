@@ -235,6 +235,29 @@ test("04-online-boutique: manifests — single route, redis PVC, frontend HPA, m
   assertPoliciesValid(manifests);
 });
 
+test("docx twins extract identically to their markdown source", async () => {
+  const { parseDocx, sectionsToMarkdown } = await import("../../src/services/doc-parser.js");
+  const { extractDeterministic } = await import("../../src/services/ais-extractor.js");
+  for (const f of ["02-three-tier-orders", "04-ecommerce-online-boutique"]) {
+    const mdIntent = extractDeterministic(parseMarkdownText(readFileSync(resolve(DOCS, `${f}.md`), "utf8")));
+    const parsed = await parseDocx(readFileSync(resolve(DOCS, `${f}.docx`)));
+
+    // Direct docx parse — the shape the MCP tool path consumes.
+    const dxIntent = extractDeterministic(parsed);
+    assert.equal(dxIntent.tiers.length, mdIntent.tiers.length, `${f}: tier count diverged`);
+    assert.deepEqual(dxIntent.tiers.map((t) => `${t.name}:${t.port}`).sort(), mdIntent.tiers.map((t) => `${t.name}:${t.port}`).sort());
+    assert.equal(dxIntent.networkPolicies.length, mdIntent.networkPolicies.length);
+    assert.equal(dxIntent.namespace, mdIntent.namespace);
+
+    // Round trip through the upload endpoint's conversion (docx → markdown →
+    // textarea → generate) — tables must survive, not flatten to prose.
+    const viaMd = extractDeterministic(parseMarkdownText(sectionsToMarkdown(parsed)));
+    assert.equal(viaMd.tiers.length, mdIntent.tiers.length, `${f}: tables lost in docx→markdown conversion`);
+    assert.equal(viaMd.networkPolicies.length, mdIntent.networkPolicies.length);
+    assert.deepEqual([...new Set(viaMd.networkPolicies.map((r) => r.protocol))], mdIntent.networkPolicies.length ? ["TCP"] : []);
+  }
+});
+
 test("sample docs stay within the upload size cap", () => {
   for (const f of ["01-hello-web.md", "02-three-tier-orders.md", "03-negative-broken-image.md", "04-ecommerce-online-boutique.md"]) {
     const size = readFileSync(resolve(DOCS, f), "utf8").length;

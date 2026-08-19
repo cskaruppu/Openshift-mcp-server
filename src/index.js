@@ -75,7 +75,7 @@ import { initIncidentManager, declareIncident, updateIncident, addTimelineEvent,
 import { initChangeTimeline, recordChangeEvent, getTimeline as getChangeTimelineUnified, correlateAroundTime, getTimelineStats as getChangeTimelineStats } from "./services/change-timeline.js";
 import { FRAMEWORKS, getFrameworkList, getFramework, evaluateFramework, evaluateAllFrameworks } from "./tools/compliance-frameworks.js";
 import { handleSlackSlashCommand, handleSlackInteraction, handleTeamsAction, verifySlackSignature } from "./services/chatops.js";
-import { parseDocx, parseMarkdownText } from "./services/doc-parser.js";
+import { parseDocx, parseMarkdownText, sectionsToMarkdown } from "./services/doc-parser.js";
 import { extractAIS, validateAIS, calculateConfidence } from "./services/ais-extractor.js";
 import { generateManifests, renderYaml, renderSingleYaml } from "./services/manifest-generator.js";
 import { createDeployment, executeDeployment, rollbackDeployment, getDeploymentAnywhere, listDeploymentsAnywhere } from "./services/deployment-orchestrator.js";
@@ -4594,8 +4594,11 @@ spec:
         const name = (filePart.filename || "").toLowerCase();
         let text = "";
         if (name.endsWith(".docx")) {
+          // Tables survive as markdown pipe tables — they ARE the requirement
+          // grammar, and the old prose flattening silently dropped them,
+          // downgrading Word documents to the LLM path.
           const parsed = await parseDocx(filePart.data);
-          text = (parsed.sections || []).map((s) => `${s.heading || ""}\n${s.text || s.content || ""}`).join("\n") || parsed.text || "";
+          text = sectionsToMarkdown(parsed) || parsed.rawText || "";
         } else if (name.endsWith(".pdf")) {
           try {
             // Import the lib path directly — pdf-parse's index.js has a debug
@@ -4617,6 +4620,50 @@ spec:
         if (!text) { sendJson(res, 200, { error: "Could not read any text from that file." }); return; }
         sendJson(res, 200, { text, filename: filePart.filename, chars: text.length });
       } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── Automation Hub · docs-as-code — fetch a requirement doc from Git ──
+    // The requirement document lives in version control; the platform pulls
+    // it by URL (github.com blob links are rewritten to raw), converts .docx
+    // to table-preserving markdown, and hands the text to the same
+    // generate → dry-run → deploy flow. The URL travels with the deploy as
+    // provenance, so the record says WHICH versioned document produced it.
+    if (req.method === "POST" && url.pathname === "/api/automation/fetch-doc") {
+      if (enforceRateLimit(req, res, { burst: 6, refillPerSec: 0.2 })) return;
+      try {
+        const body = await readJsonBody(req);
+        let target = String(body.url || "").trim();
+        if (!target) { sendJson(res, 200, { error: "url is required" }); return; }
+        // github.com "blob" page → raw content URL (keeps the ref/commit).
+        const gh = target.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/(.+)$/);
+        if (gh) target = `https://raw.githubusercontent.com/${gh[1]}/${gh[2]}/${gh[3]}`;
+        let u;
+        try { u = new URL(target); } catch { sendJson(res, 200, { error: "Not a valid URL." }); return; }
+        const allowInsecure = process.env.ALLOW_INSECURE_DOC_URLS === "true";
+        if (u.protocol !== "https:" && !allowInsecure) { sendJson(res, 200, { error: "Only https URLs are accepted (set ALLOW_INSECURE_DOC_URLS=true for an internal http Git server)." }); return; }
+        if (/^(localhost|127\.|169\.254\.)/.test(u.hostname)) { sendJson(res, 200, { error: "Refusing to fetch from a loopback/link-local address." }); return; }
+        const headers = { "User-Agent": "tcs-agentic-ai-doc-fetch" };
+        // Private repos: a token in the request is used once and never stored.
+        if (body.token) headers.Authorization = /^(Bearer|token|Basic)\s/i.test(body.token) ? body.token : `Bearer ${body.token}`;
+        const resp = await fetch(target, { headers, redirect: "follow", signal: AbortSignal.timeout(15000) });
+        if (!resp.ok) { sendJson(res, 200, { error: `Fetch failed: HTTP ${resp.status} from ${u.hostname}${resp.status === 404 ? " — check the path and branch, and that the repo is public or a token was provided" : ""}` }); return; }
+        const buf = Buffer.from(await resp.arrayBuffer());
+        if (buf.length > 5_000_000) { sendJson(res, 200, { error: "Document exceeds 5MB." }); return; }
+        let text;
+        const isDocx = /\.docx$/i.test(u.pathname) || (resp.headers.get("content-type") || "").includes("officedocument.wordprocessingml");
+        if (isDocx) {
+          const parsed = await parseDocx(buf);
+          text = sectionsToMarkdown(parsed) || parsed.rawText || "";
+        } else {
+          text = buf.toString("utf8");
+        }
+        text = (text || "").trim().slice(0, 60000);
+        if (!text) { sendJson(res, 200, { error: "The fetched document contained no readable text." }); return; }
+        sendJson(res, 200, { text, chars: text.length, format: isDocx ? "docx" : "text", source: { url: target, fetchedAt: new Date().toISOString() } });
+      } catch (err) {
+        sendJson(res, 200, { error: "Fetch failed: " + (err.cause?.code || err.message) });
+      }
       return;
     }
 
@@ -4720,6 +4767,8 @@ spec:
             appName: nsMain, status: result.failed.length ? "partial" : "applied",
             applied: result.applied, failed: result.failed,
             requestedBy: req.user?.name || "anonymous",
+            // docs-as-code provenance: which versioned document produced this.
+            sourceUrl: typeof body.sourceUrl === "string" && body.sourceUrl ? body.sourceUrl.slice(0, 2000) : null,
           };
           await recordDeployment(rec).catch(() => {});
           recordChangeEvent({

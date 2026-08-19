@@ -87,6 +87,38 @@ function parseHtmlTable(tableHtml) {
 }
 
 /**
+ * Render parsed sections back to markdown, tables included.
+ *
+ * The upload flow puts extracted text into the requirement textarea, and the
+ * generate step re-parses that text as markdown. Flattening a .docx to plain
+ * prose here silently discarded every table — and the tables ARE the
+ * requirement grammar, so a Word document was quietly downgraded from the
+ * deterministic path to the LLM path. Empty cells render as a single space:
+ * the markdown table parser drops truly empty cells and shifts columns.
+ */
+export function sectionsToMarkdown(parsed) {
+  const L = [];
+  for (const sec of parsed.sections || []) {
+    if (sec.heading) L.push(`${"#".repeat(Math.min(6, Math.max(1, sec.level || 1)))} ${sec.heading}`, "");
+    if (sec.content && sec.content.trim()) L.push(sec.content.trim(), "");
+    for (const t of sec.tables || []) {
+      if (!t.headers?.length) continue;
+      const cell = (v) => {
+        const s = String(v ?? "").replace(/\|/g, "/").trim();
+        return s === "" ? " " : s;
+      };
+      L.push(`| ${t.headers.map(cell).join(" | ")} |`);
+      L.push(`|${t.headers.map(() => "---").join("|")}|`);
+      for (const row of t.rows || []) {
+        L.push(`| ${t.headers.map((h) => cell(row[h])).join(" | ")} |`);
+      }
+      L.push("");
+    }
+  }
+  return L.join("\n");
+}
+
+/**
  * Parse plain text (markdown-like) into sections.
  * Fallback for when the user pastes text instead of uploading a file.
  */
