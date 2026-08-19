@@ -56,13 +56,42 @@ export function generateManifests(ais) {
     }
   }
 
-  for (const np of ais.networkPolicies || []) {
-    if (np.allowed) {
-      manifests.push(makeNetworkPolicy(np, ais, ns));
+  // ── network policies: one contract, both directions ──────────────────────
+  // default-deny below blocks Ingress AND Egress, so every allowed path in the
+  // connectivity matrix must produce BOTH an ingress rule on the target and an
+  // egress rule on the caller — plus DNS egress for everyone, or nothing can
+  // even resolve the service name. Emitting deny-all with only ingress allows
+  // (the previous behaviour) shipped apps whose tiers could not reach each
+  // other at all.
+  const matrixRules = (ais.networkPolicies || []).filter((np) => np.allowed);
+  for (const np of matrixRules) {
+    manifests.push(makeNetworkPolicy(np, ais, ns));
+    const eg = makeEgressPolicy(np, ais, ns);
+    if (eg) manifests.push(eg);
+  }
+  if (matrixRules.length > 0) {
+    // The init Job runs under the database's own app label — allow self-traffic
+    // so schema initialisation is not blocked by the very policies we generate.
+    for (const t of ais.tiers) {
+      if (t.role === "database" && t.initSql && t.port) {
+        const self = { from: t.name, to: t.name, port: t.port, protocol: "TCP" };
+        manifests.push(makeNetworkPolicy(self, ais, ns));
+        manifests.push(makeEgressPolicy(self, ais, ns));
+      }
     }
   }
 
   manifests.push(makeDefaultDenyPolicy(ns));
+  manifests.push(makeDnsEgressPolicy(ns));
+  // No matrix in the document → fall back to the documented OpenShift baseline
+  // (deny-all + allow-same-namespace) instead of a namespace where nothing works.
+  if (matrixRules.length === 0) manifests.push(makeSameNamespacePolicy(ns));
+  // The router may be host-networked, in which case a namespaceSelector for
+  // openshift-ingress never matches its traffic. Exposure was decided by the
+  // Route; admit ingress to the exposed port from any source.
+  for (const t of ais.tiers) {
+    if (t.expose && t.port) manifests.push(makeExternalIngressPolicy(t, ns));
+  }
 
   const summary = {
     platform,
@@ -381,14 +410,14 @@ function makeNetworkPolicy(rule, ais, ns) {
     policyTypes: ["Ingress"],
     ingress: [
       {
-        ports: [{ port: rule.port, protocol: rule.protocol || "TCP" }],
+        ports: [{ port: Number(rule.port) || rule.port, protocol: rule.protocol || "TCP" }],
       },
     ],
   };
 
-  if (rule.from === "internet" || rule.from === "external") {
-    spec.ingress[0].from = [{}];
-  } else if (fromTier) {
+  // "internet" → admit any source: omitting `from` entirely means all peers.
+  // (An empty peer object `{}` is rejected by API-server validation.)
+  if (rule.from !== "internet" && rule.from !== "external" && fromTier) {
     spec.ingress[0].from = [{ podSelector: { matchLabels: { app: fromTier.name } } }];
   }
 
@@ -422,21 +451,111 @@ function makeDefaultDenyPolicy(ns) {
   return { kind: "NetworkPolicy", name: "default-deny-all", yaml: yaml.dump(json), json };
 }
 
+/** Egress twin of an allowed matrix rule — the caller's side of the contract. */
+function makeEgressPolicy(rule, ais, ns) {
+  if (rule.from === "internet" || rule.from === "external") return null;
+  const fromTier = ais.tiers.find((t) => t.name === rule.from || t.role === rule.from);
+  if (!fromTier) return null;
+  const toTier = ais.tiers.find((t) => t.name === rule.to || t.role === rule.to);
+  const name = `allow-egress-${fromTier.name.replace(/[^a-z0-9]/g, "-")}-to-${(toTier?.name || rule.to || "any").replace(/[^a-z0-9]/g, "-")}`;
+  const json = {
+    apiVersion: "networking.k8s.io/v1",
+    kind: "NetworkPolicy",
+    metadata: { name, namespace: ns, labels: { "app.kubernetes.io/managed-by": "tcs-agentic-ai" } },
+    spec: {
+      podSelector: { matchLabels: { app: fromTier.name } },
+      policyTypes: ["Egress"],
+      egress: [{
+        to: [{ podSelector: { matchLabels: { app: toTier?.name || rule.to } } }],
+        ports: [{ port: Number(rule.port) || rule.port, protocol: rule.protocol || "TCP" }],
+      }],
+    },
+  };
+  return { kind: "NetworkPolicy", name, yaml: yaml.dump(json), json };
+}
+
+/**
+ * Deny-all blocks DNS too, and a pod that cannot resolve `db.<ns>.svc` fails
+ * identically to one with no network at all. Every pod may reach the cluster
+ * resolver — this is a precondition of the matrix, not a hole in it.
+ */
+function makeDnsEgressPolicy(ns) {
+  const json = {
+    apiVersion: "networking.k8s.io/v1",
+    kind: "NetworkPolicy",
+    metadata: { name: "allow-dns-egress", namespace: ns, labels: { "app.kubernetes.io/managed-by": "tcs-agentic-ai" } },
+    spec: {
+      podSelector: {},
+      policyTypes: ["Egress"],
+      egress: [{
+        to: [{ namespaceSelector: { matchLabels: { "kubernetes.io/metadata.name": "openshift-dns" } } }],
+        ports: [
+          { port: 5353, protocol: "UDP" }, { port: 5353, protocol: "TCP" },
+          { port: 53, protocol: "UDP" }, { port: 53, protocol: "TCP" },
+        ],
+      }],
+    },
+  };
+  return { kind: "NetworkPolicy", name: "allow-dns-egress", yaml: yaml.dump(json), json };
+}
+
+/**
+ * The documented OpenShift baseline for a namespace with no explicit matrix:
+ * deny-all plus allow-same-namespace. Tiers reach each other; nothing outside
+ * the namespace reaches in.
+ */
+function makeSameNamespacePolicy(ns) {
+  const json = {
+    apiVersion: "networking.k8s.io/v1",
+    kind: "NetworkPolicy",
+    metadata: { name: "allow-same-namespace", namespace: ns, labels: { "app.kubernetes.io/managed-by": "tcs-agentic-ai" } },
+    spec: {
+      podSelector: {},
+      policyTypes: ["Ingress", "Egress"],
+      ingress: [{ from: [{ podSelector: {} }] }],
+      egress: [{ to: [{ podSelector: {} }] }],
+    },
+  };
+  return { kind: "NetworkPolicy", name: "allow-same-namespace", yaml: yaml.dump(json), json };
+}
+
+/**
+ * Router traffic to an exposed tier. On many clusters the default router is
+ * host-networked, so a namespaceSelector for openshift-ingress never matches
+ * it — admit the exposed port from any source; the Route already made this
+ * tier public on purpose.
+ */
+function makeExternalIngressPolicy(tier, ns) {
+  const name = `allow-external-to-${tier.name.replace(/[^a-z0-9]/g, "-")}`;
+  const json = {
+    apiVersion: "networking.k8s.io/v1",
+    kind: "NetworkPolicy",
+    metadata: { name, namespace: ns, labels: { "app.kubernetes.io/managed-by": "tcs-agentic-ai" } },
+    spec: {
+      podSelector: { matchLabels: { app: tier.name } },
+      policyTypes: ["Ingress"],
+      ingress: [{ ports: [{ port: Number(tier.port) || tier.port, protocol: "TCP" }] }],
+    },
+  };
+  return { kind: "NetworkPolicy", name, yaml: yaml.dump(json), json };
+}
+
 function makeInitJob(tier, ais, ns) {
   const secret = (ais.sharedSecrets || []).find((s) => (s.usedBy || []).includes(tier.name));
   const envVars = [];
   if (secret) {
-    for (const key of secret.keys) {
-      envVars.push({
-        name: `PGPASSWORD`,
-        valueFrom: { secretKeyRef: { name: secret.name, key: "password" } },
-      });
-    }
+    envVars.push({
+      name: "PGPASSWORD",
+      valueFrom: { secretKeyRef: { name: secret.name, key: "password" } },
+    });
   }
   envVars.push(
     { name: "PGHOST", value: `${tier.name}.${ns}.svc.cluster.local` },
     { name: "PGUSER", valueFrom: secret ? { secretKeyRef: { name: secret.name, key: "username" } } : undefined },
     { name: "PGDATABASE", valueFrom: secret ? { secretKeyRef: { name: secret.name, key: "database" } } : undefined },
+    // The SQL travels as an env value, not interpolated into the shell line —
+    // quotes and $ in a schema must never be able to break the command.
+    { name: "INIT_SQL", value: tier.initSql || "" },
   );
 
   const json = {
@@ -449,14 +568,20 @@ function makeInitJob(tier, ais, ns) {
     },
     spec: {
       backoffLimit: 3,
+      activeDeadlineSeconds: 300,
       template: {
+        metadata: {
+          // The pod label is what NetworkPolicies select on. Unlabelled, this
+          // pod is invisible to every allow rule and deny-all blocks it.
+          labels: { app: tier.name, "app.kubernetes.io/managed-by": "tcs-agentic-ai" },
+        },
         spec: {
           restartPolicy: "Never",
           containers: [
             {
               name: "init-sql",
               image: tier.image,
-              command: ["sh", "-c", `until pg_isready -h $PGHOST; do sleep 2; done && psql -h $PGHOST -U $PGUSER -d $PGDATABASE -c "${escapeSql(tier.initSql)}"`],
+              command: ["sh", "-c", 'until pg_isready -h "$PGHOST"; do sleep 2; done && psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -c "$INIT_SQL"'],
               env: envVars.filter((e) => e.value !== undefined || e.valueFrom !== undefined),
             },
           ],
@@ -481,9 +606,6 @@ function buildProbe(probe) {
   return p;
 }
 
-function escapeSql(sql) {
-  return (sql || "").replace(/"/g, '\\"').replace(/'/g, "'\\''");
-}
 
 function generatePassword() {
   const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%";
