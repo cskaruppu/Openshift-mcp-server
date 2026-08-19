@@ -38,12 +38,23 @@ function parseMd(md) {
       if (rows.length >= 1) out.push({ table: { headers: rows[0], rows: rows.slice(1) } });
       continue;
     }
+    if (/^```/.test(line)) {
+      // Word cannot render Mermaid — point at the markdown twin instead.
+      const isMermaid = /^```mermaid/.test(line);
+      const code = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i])) { code.push(lines[i]); i++; }
+      i++; // closing fence
+      if (isMermaid) out.push({ p: "(Interactive diagram — see the .md version of this document, which renders it natively in GitHub and the console.)", italics: true });
+      else out.push({ code: code.join("\n") });
+      continue;
+    }
     if (line.trim() === "") { i++; continue; }
     const para = [];
-    while (i < lines.length && lines[i].trim() !== "" && !/^(#{1,6})\s/.test(lines[i]) && !/^\|.*\|\s*$/.test(lines[i])) {
-      para.push(lines[i].trim()); i++;
+    while (i < lines.length && lines[i].trim() !== "" && !/^(#{1,6})\s/.test(lines[i]) && !/^\|.*\|\s*$/.test(lines[i]) && !/^```/.test(lines[i])) {
+      para.push(lines[i].trim().replace(/^>\s?/, "")); i++;
     }
-    out.push({ p: para.join(" ").replace(/\*\*(.+?)\*\*/g, "$1").replace(/`(.+?)`/g, "$1") });
+    out.push({ p: para.join(" ").replace(/\*\*(.+?)\*\*/g, "$1").replace(/`(.+?)`/g, "$1").replace(/\*(.+?)\*/g, "$1") });
   }
   return out;
 }
@@ -87,7 +98,16 @@ async function convert(mdFile) {
   for (const b of blocks) {
     if (b.h) children.push(new Paragraph({ heading: HEADING[b.h] || HeadingLevel.HEADING_4, children: [new TextRun(b.text)], spacing: { before: 220, after: 120 } }));
     else if (b.table) children.push(makeTable(b.table), new Paragraph({ children: [] }));
-    else if (b.p) children.push(new Paragraph({ children: [new TextRun(b.p)], spacing: { after: 120 } }));
+    else if (b.code !== undefined) {
+      for (const ln of b.code.split("\n")) {
+        children.push(new Paragraph({
+          children: [new TextRun({ text: ln || " ", font: "Consolas", size: 16 })],
+          shading: { type: ShadingType.CLEAR, fill: "F1F5F9" },
+        }));
+      }
+      children.push(new Paragraph({ children: [] }));
+    }
+    else if (b.p) children.push(new Paragraph({ children: [new TextRun({ text: b.p, italics: !!b.italics })], spacing: { after: 120 } }));
   }
   const doc = new Document({
     styles: { default: { document: { run: { font: "Calibri", size: 21 } } } },
