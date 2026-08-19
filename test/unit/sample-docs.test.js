@@ -163,6 +163,8 @@ test("04-online-boutique: 12 tiers extract and every service address resolves to
   for (const t of intent.tiers) {
     for (const ev of t.envVars) {
       if (!/_ADDR$/.test(ev.name) || !ev.value) continue;
+      // Required by the frontend binary but never dialled — no tier backs it.
+      if (ev.name === "SHOPPING_ASSISTANT_SERVICE_ADDR") continue;
       const [host, port] = String(ev.value).split(":");
       const target = tierByName.get(host);
       assert.ok(target, `${t.name}.${ev.name} points at unknown tier "${host}"`);
@@ -182,6 +184,7 @@ test("04-online-boutique: 12 tiers extract and every service address resolves to
   for (const t of intent.tiers) {
     for (const ev of t.envVars) {
       if (!/_ADDR$/.test(ev.name) || !ev.value) continue;
+      if (ev.name === "SHOPPING_ASSISTANT_SERVICE_ADDR") continue;
       const [host, port] = String(ev.value).split(":");
       assert.ok(allowed.has(`${t.name}->${host}:${port}`), `matrix does not allow ${t.name}->${host}:${port}`);
     }
@@ -219,10 +222,15 @@ test("04-online-boutique: manifests — single route, redis PVC, frontend HPA, m
   assert.ok(named(manifests, "NetworkPolicy", "allow-dns-egress"));
   assert.equal(named(manifests, "NetworkPolicy", "allow-same-namespace"), undefined);
 
-  // gRPC health probes came through as exec probes.
+  // Kubelet-native gRPC probes — the boutique's Go images are distroless
+  // (no shell, no probe binary), so exec probes kill them in a liveness loop.
   const catalog = named(manifests, "Deployment", "productcatalogservice");
   const probe = catalog.json.spec.template.spec.containers[0].readinessProbe;
-  assert.deepEqual(probe.exec.command, ["sh", "-c", "/bin/grpc_health_probe -addr=:3550"]);
+  assert.deepEqual(probe.grpc, { port: 3550 });
+  assert.equal(probe.exec, undefined);
+  // The v0.10 frontend panics at startup without this placeholder env.
+  const fe = named(manifests, "Deployment", "frontend");
+  assert.ok(fe.json.spec.template.spec.containers[0].env.some((e) => e.name === "SHOPPING_ASSISTANT_SERVICE_ADDR"));
 
   assertPoliciesValid(manifests);
 });

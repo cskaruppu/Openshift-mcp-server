@@ -81,10 +81,10 @@ store, under a zero-trust network matrix.
 
 ### Health Probes
 
-| Probe | Type | Command | Port | Initial Delay | Period |
-|---|---|---|---|---|---|
-| liveness | exec | /bin/grpc_health_probe -addr=:3550 | 3550 | 10 | 10 |
-| readiness | exec | /bin/grpc_health_probe -addr=:3550 | 3550 | 5 | 5 |
+| Probe | Type | Port | Initial Delay | Period |
+|---|---|---|---|---|
+| liveness | grpc | 3550 | 10 | 10 |
+| readiness | grpc | 3550 | 5 | 5 |
 
 ## Tier 3 — Currency Service
 
@@ -110,10 +110,10 @@ store, under a zero-trust network matrix.
 
 ### Health Probes
 
-| Probe | Type | Command | Port | Initial Delay | Period |
-|---|---|---|---|---|---|
-| liveness | exec | /bin/grpc_health_probe -addr=:7000 | 7000 | 10 | 10 |
-| readiness | exec | /bin/grpc_health_probe -addr=:7000 | 7000 | 5 | 5 |
+| Probe | Type | Port | Initial Delay | Period |
+|---|---|---|---|---|
+| liveness | grpc | 7000 | 10 | 10 |
+| readiness | grpc | 7000 | 5 | 5 |
 
 ## Tier 4 — Payment Service
 
@@ -139,10 +139,10 @@ store, under a zero-trust network matrix.
 
 ### Health Probes
 
-| Probe | Type | Command | Port | Initial Delay | Period |
-|---|---|---|---|---|---|
-| liveness | exec | /bin/grpc_health_probe -addr=:50051 | 50051 | 10 | 10 |
-| readiness | exec | /bin/grpc_health_probe -addr=:50051 | 50051 | 5 | 5 |
+| Probe | Type | Port | Initial Delay | Period |
+|---|---|---|---|---|
+| liveness | grpc | 50051 | 10 | 10 |
+| readiness | grpc | 50051 | 5 | 5 |
 
 ## Tier 5 — Shipping Service
 
@@ -168,10 +168,10 @@ store, under a zero-trust network matrix.
 
 ### Health Probes
 
-| Probe | Type | Command | Port | Initial Delay | Period |
-|---|---|---|---|---|---|
-| liveness | exec | /bin/grpc_health_probe -addr=:50051 | 50051 | 10 | 10 |
-| readiness | exec | /bin/grpc_health_probe -addr=:50051 | 50051 | 5 | 5 |
+| Probe | Type | Port | Initial Delay | Period |
+|---|---|---|---|---|
+| liveness | grpc | 50051 | 10 | 10 |
+| readiness | grpc | 50051 | 5 | 5 |
 
 ## Tier 6 — Email Service
 
@@ -197,10 +197,10 @@ store, under a zero-trust network matrix.
 
 ### Health Probes
 
-| Probe | Type | Command | Port | Initial Delay | Period |
-|---|---|---|---|---|---|
-| liveness | exec | /bin/grpc_health_probe -addr=:8080 | 8080 | 10 | 10 |
-| readiness | exec | /bin/grpc_health_probe -addr=:8080 | 8080 | 5 | 5 |
+| Probe | Type | Port | Initial Delay | Period |
+|---|---|---|---|---|
+| liveness | grpc | 8080 | 10 | 10 |
+| readiness | grpc | 8080 | 5 | 5 |
 
 ## Tier 7 — Ad Service
 
@@ -225,10 +225,10 @@ store, under a zero-trust network matrix.
 
 ### Health Probes
 
-| Probe | Type | Command | Port | Initial Delay | Period |
-|---|---|---|---|---|---|
-| liveness | exec | /bin/grpc_health_probe -addr=:9555 | 9555 | 20 | 15 |
-| readiness | exec | /bin/grpc_health_probe -addr=:9555 | 9555 | 20 | 15 |
+| Probe | Type | Port | Initial Delay | Period |
+|---|---|---|---|---|
+| liveness | grpc | 9555 | 20 | 15 |
+| readiness | grpc | 9555 | 20 | 15 |
 
 ## Tier 8 — Cart Service
 
@@ -254,10 +254,10 @@ store, under a zero-trust network matrix.
 
 ### Health Probes
 
-| Probe | Type | Command | Port | Initial Delay | Period |
-|---|---|---|---|---|---|
-| liveness | exec | /bin/grpc_health_probe -addr=:7070 -rpc-timeout=5s | 7070 | 15 | 10 |
-| readiness | exec | /bin/grpc_health_probe -addr=:7070 -rpc-timeout=5s | 7070 | 15 | 10 |
+| Probe | Type | Port | Initial Delay | Period |
+|---|---|---|---|---|
+| liveness | grpc | 7070 | 15 | 10 |
+| readiness | grpc | 7070 | 15 | 10 |
 
 ## Tier 9 — Recommendation Service
 
@@ -285,10 +285,10 @@ store, under a zero-trust network matrix.
 
 ### Health Probes
 
-| Probe | Type | Command | Port | Initial Delay | Period |
-|---|---|---|---|---|---|
-| liveness | exec | /bin/grpc_health_probe -addr=:8080 | 8080 | 10 | 10 |
-| readiness | exec | /bin/grpc_health_probe -addr=:8080 | 8080 | 5 | 5 |
+| Probe | Type | Port | Initial Delay | Period |
+|---|---|---|---|---|
+| liveness | grpc | 8080 | 10 | 10 |
+| readiness | grpc | 8080 | 5 | 5 |
 
 ## Tier 10 — Checkout Service
 
@@ -320,14 +320,17 @@ store, under a zero-trust network matrix.
 
 ### Health Probes
 
-| Probe | Type | Command | Port | Initial Delay | Period |
-|---|---|---|---|---|---|
-| liveness | exec | /bin/grpc_health_probe -addr=:5050 | 5050 | 10 | 10 |
-| readiness | exec | /bin/grpc_health_probe -addr=:5050 | 5050 | 5 | 5 |
+| Probe | Type | Port | Initial Delay | Period |
+|---|---|---|---|---|
+| liveness | grpc | 5050 | 10 | 10 |
+| readiness | grpc | 5050 | 5 | 5 |
 
 ## Tier 11 — Frontend Web
 
 The storefront people browse. This is the only tier exposed by a Route.
+Note SHOPPING_ASSISTANT_SERVICE_ADDR below: the v0.10 frontend refuses to
+start without it, even though the assistant feature is disabled — the value
+is a placeholder that is never called.
 
 | Field | Value |
 |---|---|
@@ -358,6 +361,7 @@ The storefront people browse. This is the only tier exposed by a Route.
 | SHIPPING_SERVICE_ADDR | shippingservice:50051 |   |   |
 | CHECKOUT_SERVICE_ADDR | checkoutservice:5050 |   |   |
 | AD_SERVICE_ADDR | adservice:9555 |   |   |
+| SHOPPING_ASSISTANT_SERVICE_ADDR | shoppingassistantservice:80 |   |   |
 
 ### Health Probes
 

@@ -19,7 +19,9 @@ extractor first** — same document, same 64 manifests, every time, and no LLM
 is required at all (free-prose requirements still use the LLM path).
 `04` needs cluster egress to `us-central1-docker.pkg.dev` (Google's public
 registry); if your lab can't reach it, mirror the 12 images internally and
-edit only the image rows.
+edit only the image rows. Its health probes use the kubelet-native `grpc`
+type (OpenShift 4.14+): the boutique's images are distroless — no shell, no
+probe binary — so exec probes would kill them in a liveness loop.
 
 ## How to run one
 

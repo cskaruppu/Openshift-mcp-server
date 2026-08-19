@@ -601,12 +601,25 @@ function makeInitJob(tier, ais, ns) {
 
 function buildProbe(probe) {
   const p = {};
-  if (probe.type === "http" || probe.type === "httpGet") {
+  if (probe.type === "grpc") {
+    // Kubelet-native gRPC health probe (GA since k8s 1.27 / OpenShift 4.14).
+    // Needs neither a shell nor a grpc_health_probe binary in the image —
+    // the only probe type that works on distroless gRPC services.
+    p.grpc = { port: probe.port };
+  } else if (probe.type === "http" || probe.type === "httpGet") {
     p.httpGet = { path: probe.path || "/", port: probe.port };
   } else if (probe.type === "tcp") {
     p.tcpSocket = { port: probe.port };
   } else if (probe.type === "exec") {
-    p.exec = { command: Array.isArray(probe.command) ? probe.command : ["sh", "-c", probe.command || "true"] };
+    // argv, not `sh -c`: distroless images carry no shell, and a probe that
+    // cannot exec fails forever — readiness never passes and liveness kills
+    // the container in a loop. A shell is used only when the command needs one.
+    const cmd = probe.command;
+    p.exec = {
+      command: Array.isArray(cmd) ? cmd
+        : /[|&;<>$*'"\\]/.test(cmd || "") ? ["sh", "-c", cmd || "true"]
+        : String(cmd || "true").trim().split(/\s+/),
+    };
   }
   if (probe.initialDelay) p.initialDelaySeconds = probe.initialDelay;
   if (probe.period) p.periodSeconds = probe.period;
