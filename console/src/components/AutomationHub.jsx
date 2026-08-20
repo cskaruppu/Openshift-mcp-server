@@ -250,9 +250,51 @@ function SopAgent({ clusters, activeCluster }) {
     } catch (e) { setVerify({ phase: "error", error: e.message }); showToast("Verify failed: " + e.message, "err"); }
   };
 
+  // The journey strip: where the user is in the flow, derived from live state.
+  // Seven stations, ending at the acceptance test — the URL.
+  const journey = (() => {
+    const dryDone = deploy?.phase === "done" && deploy.dryRun;
+    const depDone = deploy?.phase === "done" && !deploy.dryRun;
+    const verDone = pyramid?.phase === "done";
+    const verOk = verDone && pyramid.data?.passed;
+    const steps = [
+      { label: "Document", done: !!requirement.trim(), hint: "upload · paste · Git" },
+      { label: "Generate", done: !!gen, hint: "doc → manifests" },
+      { label: "Review + checks", done: !!gen && (cisChk?.phase === "done" || imgChk?.phase === "done" || dryDone || depDone), hint: "YAML · CIS · CVE" },
+      { label: "Dry-run", done: dryDone || depDone, hint: "server validates" },
+      { label: "Deploy", done: depDone, hint: "the gate" },
+      { label: "Verify", done: verOk, failed: verDone && !verOk, hint: "4-level proof" },
+      { label: "Open app", done: verOk && (pyramid?.data?.access || []).some((a) => a.ok), hint: "the URL" },
+    ];
+    const idx = steps.findIndex((s) => !s.done && !s.failed);
+    return { steps, current: idx === -1 ? steps.length - 1 : idx };
+  })();
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ fontSize: "0.86rem", color: "var(--muted,#5a6373)" }}>Upload a requirement document, or describe/paste the requirement. The agent generates <b>security-hardened, standards-aligned</b> Kubernetes/OpenShift manifests — namespace isolation, least-privilege RBAC, Pod Security "restricted", PVCs, NetworkPolicies and Prometheus monitoring baked in — which you can <b>edit</b>, dry-run, and deploy to any connected cluster.</div>
+
+      {/* Journey strip — always tells the user where they are and what's next */}
+      <div style={{ display: "flex", alignItems: "stretch", gap: 0, flexWrap: "wrap", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)" }}>
+        {journey.steps.map((st, i) => {
+          const isCurrent = i === journey.current && !st.done && !st.failed;
+          const c = st.failed ? { fg: "#dc2626", bg: "rgba(220,38,38,0.10)", bd: "#dc2626" }
+            : st.done ? { fg: "#16a34a", bg: "rgba(22,163,74,0.10)", bd: "rgba(22,163,74,0.45)" }
+            : isCurrent ? { fg: "#3d5afe", bg: "rgba(61,90,254,0.10)", bd: "#3d5afe" }
+            : { fg: "var(--muted,#5a6373)", bg: "transparent", bd: "var(--border,#e4e8f1)" };
+          return (
+            <div key={st.label} style={{ display: "flex", alignItems: "center" }}>
+              <div title={st.hint} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "4px 10px", borderRadius: 8, border: `1.5px ${isCurrent ? "solid" : "solid"} ${c.bd}`, background: c.bg, minWidth: 86 }}>
+                <span style={{ fontSize: "0.72rem", fontWeight: 800, color: c.fg }}>
+                  {st.failed ? "✗" : st.done ? "✓" : i + 1}&nbsp;{st.label}
+                </span>
+                <span style={{ fontSize: "0.6rem", color: "var(--muted,#5a6373)" }}>{st.hint}</span>
+              </div>
+              {i < journey.steps.length - 1 && <span style={{ margin: "0 4px", color: "var(--muted,#94a3b8)", fontSize: "0.7rem" }}>▸</span>}
+            </div>
+          );
+        })}
+      </div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 9, border: "1px dashed #3d5afe", background: "rgba(61,90,254,0.06)", color: "#3d5afe", fontWeight: 700, fontSize: "0.84rem", cursor: uploading ? "wait" : "pointer" }}>
           {uploading ? "Reading…" : "📎 Upload requirement doc"}

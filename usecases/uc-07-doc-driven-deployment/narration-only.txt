@@ -1,0 +1,128 @@
+TCS AGENTIC AI - APP DEPLOYMENT AGENT (UC-07)
+NARRATION ONLY - for text-to-speech, or as a teleprompter
+
+639 words / 4:47 at 135 wpm, in 10 blocks.
+
+HOW TO USE
+
+  Render each block separately and place it at its cue point on the timeline.
+  One block per render means a fluffed line costs one block, not the whole take.
+
+  Paste ONLY the text below the ==== line. Everything above it is a note.
+
+  Blank lines between paragraphs are deliberate - both a TTS engine and a human
+  reader will pause there. Do not close them up.
+
+  Three places deserve a longer pause than the paragraph break gives you. Add it
+  in the edit, not the recording:
+    - after 'The same commit produces the same YAML, every time.'  (block 4)
+    - after 'It proves the application works.'                     (block 8)
+    - after 'Those are the only manual steps.'                     (block 9)
+
+
+##########################################################################
+BLOCK 1 of 10   CUE 0:00   RUNS TO 0:18   40 words
+SCREEN: The portfolio / title slide
+==========================================================================
+
+TCS Agentic AI for Hybrid Infrastructure is a comprehensive agentic solution across infrastructure services - compute, platform, storage, network and service management.
+
+Within that portfolio, this is the App Deployment Agent. Use case zero seven - document-driven application deployment.
+
+
+##########################################################################
+BLOCK 2 of 10   CUE 0:18   RUNS TO 0:46   63 words
+SCREEN: The problem slide
+==========================================================================
+
+Today, turning a requirement into a running application takes days. Someone reads the document, writes about two thousand lines of YAML by hand, gets it reviewed, deploys it - and hopes.
+
+And when the pods go green, nobody actually proves the application works. The first real test is a user hitting a broken page.
+
+The App Deployment Agent removes every step except the decisions.
+
+
+##########################################################################
+BLOCK 3 of 10   CUE 0:46   RUNS TO 1:12   57 words
+SCREEN: The boutique document on GitHub - scroll a tier table, then the matrix
+==========================================================================
+
+This is the deployment. Not YAML - a requirement document. Application overview, tiers, environment variables, health probes, and a network connectivity matrix. The tables are the contract; the prose is documentation.
+
+It lives in Git. It is reviewed like code and versioned like code. And the same document works as Markdown or as a Word file.
+
+
+##########################################################################
+BLOCK 4 of 10   CUE 1:12   RUNS TO 1:47   78 words
+SCREEN: Load from Git fills the textarea; Generate - "12 tiers, 64 manifests"
+==========================================================================
+
+I paste the GitHub link, and the platform pulls the document straight from version control.
+
+Now - generate. Twelve tiers become sixty-four manifests in about a second. Deterministic: no AI paraphrase, no token limits. The same commit produces the same YAML, every time. That is an audit property no generative step can offer.
+
+If I had pasted free prose instead, the AI lane takes over, and the model architects the manifests under the same security contract.
+
+
+##########################################################################
+BLOCK 5 of 10   CUE 1:47   RUNS TO 2:11   54 words
+SCREEN: Scroll the editable YAML; run CIS check and image scan
+==========================================================================
+
+Everything is reviewable and editable before anything touches a cluster. What I edit here is what gets deployed.
+
+Two shift-left checks run on the generated code itself: a CIS benchmark check, and an image vulnerability scan. Security is not a review meeting after the fact - it is generated in, then verified.
+
+
+##########################################################################
+BLOCK 6 of 10   CUE 2:11   RUNS TO 2:29   38 words
+SCREEN: Dry-run - 64 ok
+==========================================================================
+
+Dry-run. The API server validates all sixty-four objects through full admission - quotas, schemas, policies - and creates nothing. The result names every object it checked. First-time deploys validate cleanly because the platform prepares the namespace first.
+
+
+##########################################################################
+BLOCK 7 of 10   CUE 2:29   RUNS TO 2:57   62 words
+SCREEN: Deploy - chips render; record id + change number; ServiceNow cutaway
+==========================================================================
+
+Deploy. Server-side apply, in dependency order. Every object reports what happened to it - created, configured, or unchanged - the way kubectl apply would say it.
+
+And governance is automatic: a durable deployment record, and a ServiceNow change request raised with the implementation plan, the backout plan, and a citation of the exact document version that produced this deploy.
+
+
+##########################################################################
+BLOCK 8 of 10   CUE 2:57   RUNS TO 3:40   97 words
+SCREEN: Live pod watch, then the four pyramid cards turning green
+==========================================================================
+
+The pod watch streams live while twelve services come up.
+
+And the moment they are ready, the platform does something most pipelines never do. It proves the application works. Four levels, each stronger than the last.
+
+Rollout complete - this generation, not leftovers of the old one. Workloads stable - nothing crash-looping. Services wired - every service has real endpoints behind it; this is the check that catches the label mismatch behind most 'route says 503' incidents. And finally: the platform itself browses to the route, from outside, and reads the response.
+
+
+##########################################################################
+BLOCK 9 of 10   CUE 3:40   RUNS TO 4:08   63 words
+SCREEN: Open application - browse, add to cart, place the order, confirmation
+==========================================================================
+
+All four levels green. One click - and this is the acceptance test: a working shop.
+
+I will place an order. That single click crosses nine microservices and a Redis cart, and every hop crosses a network policy the document declared. Synthetic shoppers have been browsing since the moment it came up.
+
+Review, deploy, and this click. Those are the only manual steps.
+
+
+##########################################################################
+BLOCK 10 of 10   CUE 4:08   RUNS TO 4:47   87 words
+SCREEN: 03-negative deployed - pyramid red at level 1; then the closing slide
+==========================================================================
+
+One more thing - because green only means something if red is possible. This sample document is deliberately broken; the image tag does not exist. The pyramid fails, honestly, at level one, and no URL is ever offered. When a level goes red in production, the RCA agent picks up the evidence from there.
+
+The requirement document is the deployment. Versioned in Git. Deterministic on the wire. Verified until a human can click the URL.
+
+Generation may be creative - verification never is.
