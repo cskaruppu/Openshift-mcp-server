@@ -100,19 +100,43 @@ export async function handleAgentRoutes(req, res, url) {
     return serveAgentCard(req, res);
   }
 
+  // Every listing carries the complete, connectable URLs. A registry whose
+  // entries can't be connected to from what's on screen is a catalogue of
+  // names, not of agents.
+  const proto0 = req.headers["x-forwarded-proto"] || (req.socket?.encrypted ? "https" : "http");
+  const base0 = `${proto0}://${req.headers.host || "localhost"}`;
+  const withUrls = (a) => ({
+    ...a,
+    transport: "sse",
+    mcpSseUrl: `${base0}${a.mcpEndpoint}/sse`,
+    mcpMessageUrl: `${base0}${a.mcpEndpoint}/message`,
+    toolsUrl: `${base0}/api/agents/${a.id}/tools`,
+  });
+  const registryEndpoints = {
+    agentCard: `${base0}/.well-known/agent.json`,
+    agents: `${base0}/api/agents`,
+    categories: `${base0}/api/agents/categories`,
+    combinedMcpSse: `${base0}/sse`,
+    catalogDoc: `${base0}/api/docs/download?file=AGENT-CATALOG.md`,
+  };
+
   if (url.pathname === "/api/agents") {
     const agents = await getAgents();
     sendJson(res, 200, {
       total: agents.length,
       totalTools: agents.reduce((sum, a) => sum + (a.tools?.length || 0), 0),
-      agents,
+      registry: registryEndpoints,
+      agents: agents.map(withUrls),
     });
     return true;
   }
 
   if (url.pathname === "/api/agents/categories") {
     const groups = await getCategories();
-    sendJson(res, 200, { categories: groups });
+    sendJson(res, 200, {
+      registry: registryEndpoints,
+      categories: groups.map((g) => ({ ...g, agents: g.agents.map(withUrls) })),
+    });
     return true;
   }
 

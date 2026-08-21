@@ -1,4 +1,27 @@
 import { useState } from "react";
+
+/** One-click copy with visible feedback — endpoints exist to be pasted. */
+function CopyBtn({ text, small }) {
+  const [ok, setOk] = useState(false);
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        try { navigator.clipboard.writeText(text); setOk(true); setTimeout(() => setOk(false), 1200); } catch { /* clipboard unavailable */ }
+      }}
+      title={"Copy " + text}
+      style={{ padding: small ? "1px 7px" : "3px 10px", borderRadius: 6, border: "1px solid var(--border,#e4e8f1)",
+        background: ok ? "rgba(22,163,74,0.12)" : "var(--card-bg,#fff)", color: ok ? "#16a34a" : "var(--muted,#5a6373)",
+        fontSize: small ? "0.64rem" : "0.72rem", fontWeight: 700, cursor: "pointer", flex: "0 0 auto" }}>
+      {ok ? "✓ copied" : "⧉ copy"}
+    </button>
+  );
+}
+
+/** Full connectable SSE URL for an agent, wherever the console is served from. */
+function sseUrlOf(agent) {
+  return agent.mcpSseUrl || `${window.location.origin}${agent.mcpEndpoint || `/mcp/${agent.id}`}/sse`;
+}
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "../api/client";
 import { useActiveCluster } from "../store/clusterStore";
@@ -215,6 +238,33 @@ export function AgentRegistryModal({ open, onClose }) {
             </div>
           </div>
 
+          {/* Registry endpoints — the front door for any external MCP/A2A client */}
+          {(() => {
+            const reg = registryData?.registry || {};
+            const rows = [
+              { l: "Agent card (A2A discovery)", u: reg.agentCard || `${window.location.origin}/.well-known/agent.json` },
+              { l: "Registry API (all agents + URLs)", u: reg.agents || `${window.location.origin}/api/agents` },
+              { l: "Combined MCP (all tools, one server)", u: reg.combinedMcpSse || `${window.location.origin}/sse` },
+            ];
+            return (
+              <div style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, background: "var(--card-bg,#fff)" }}>
+                <div style={{ fontSize: "0.74rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--muted,#5a6373)", marginBottom: 7 }}>
+                  🔌 Registry endpoints — point any MCP or A2A client here
+                </div>
+                {rows.map((r) => (
+                  <div key={r.l} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: "0.72rem", color: "var(--muted,#5a6373)", flex: "0 0 250px" }}>{r.l}</span>
+                    <code style={{ fontSize: "0.7rem", color: "var(--fg,#151a29)", background: "var(--bg,#f1f5f9)", padding: "2px 8px", borderRadius: 6, wordBreak: "break-all", flex: "1 1 320px" }}>{r.u}</code>
+                    <CopyBtn text={r.u} small />
+                  </div>
+                ))}
+                <div style={{ fontSize: "0.68rem", color: "var(--muted,#5a6373)", marginTop: 7 }}>
+                  Each agent below is its own MCP server — click a card for its individual endpoint. Prefer a specific agent over the combined server: a focused tool list improves tool selection.
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Agent Cards */}
           {registryAgents.length === 0 && (
             <div style={{ fontSize: 13, color: "var(--text2)", padding: "20px 0", textAlign: "center" }}>Loading agent registry…</div>
@@ -247,6 +297,11 @@ export function AgentRegistryModal({ open, onClose }) {
                     </div>
                     <div className="ar-card-status">
                       <span className="ar-card-dot" /> {(ag.protocols || []).map((p) => p.toUpperCase()).join(" · ") || "MCP"}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
+                      <code style={{ fontSize: "0.62rem", color: "var(--muted,#5a6373)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", direction: "rtl", flex: "1 1 auto" }}
+                        title={sseUrlOf(ag)}>{sseUrlOf(ag)}</code>
+                      <CopyBtn text={sseUrlOf(ag)} small />
                     </div>
                   </div>
                 ))}
@@ -287,12 +342,31 @@ export function AgentRegistryModal({ open, onClose }) {
               <div className="agent-detail-cat" style={{ color: detailAgent.color }}>{detailAgent.category}{detailAgent.version ? ` · v${detailAgent.version}` : ""}</div>
               <p>{detailAgent.description}</p>
 
-              {detailAgent.mcpEndpoint && (
-                <>
-                  <h4>MCP Endpoint</h4>
-                  <div className="agent-detail-mcp">{detailAgent.mcpEndpoint}</div>
-                </>
-              )}
+              <h4>Connect — this agent is its own MCP server</h4>
+              {(() => {
+                const sse = sseUrlOf(detailAgent);
+                const msg = detailAgent.mcpMessageUrl || sse.replace(/\/sse$/, "/message");
+                const tools = detailAgent.toolsUrl || `${window.location.origin}/api/agents/${detailAgent.id}/tools`;
+                const rows = [
+                  { l: "SSE (connect)", u: sse },
+                  { l: "Message (reply)", u: msg },
+                  { l: "Tool list (REST)", u: tools },
+                ];
+                return (
+                  <div style={{ marginBottom: 10 }}>
+                    {rows.map((r) => (
+                      <div key={r.l} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--muted,#5a6373)", flex: "0 0 105px" }}>{r.l}</span>
+                        <code className="agent-detail-mcp" style={{ flex: "1 1 260px", wordBreak: "break-all", margin: 0 }}>{r.u}</code>
+                        <CopyBtn text={r.u} small />
+                      </div>
+                    ))}
+                    <div style={{ fontSize: "0.68rem", color: "var(--muted,#5a6373)", marginTop: 6 }}>
+                      Works with any MCP client — Claude, LangChain, Microsoft Agent Framework. Bearer token required when AUTH_MODE=token. The SSE stream must not be buffered by a proxy.
+                    </div>
+                  </div>
+                );
+              })()}
 
               {Array.isArray(detailAgent.capabilities) && detailAgent.capabilities.length > 0 && (
                 <>
