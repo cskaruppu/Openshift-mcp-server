@@ -21,7 +21,7 @@ import { gzipSync } from "node:zlib";
 import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import yaml from "js-yaml";
-import { parseMarkdownText } from "./doc-parser.js";
+import { parseMarkdownText, findUnfilledPlaceholders } from "./doc-parser.js";
 import { extractDeterministic } from "./ais-extractor.js";
 import { generateManifests as generateAISManifests } from "./manifest-generator.js";
 import { extractJsonObject } from "../utils/extract-json.js";
@@ -19312,6 +19312,17 @@ export async function handleGenerateManifestAPI(req, res) {
     const requirement = fullRequirement.slice(0, 8000);
     const namespace = body.namespace || "";
     if (!fullRequirement.trim()) return json(res, 200, { error: "Provide a requirement to generate manifests from." });
+
+    // The requirement template marks every customer decision as <<placeholder>>.
+    // A document still carrying any of them is unfinished — refuse to generate
+    // and name exactly what is missing, before either lane runs.
+    const unfilled = findUnfilledPlaceholders(fullRequirement);
+    if (unfilled.length) {
+      return json(res, 200, {
+        error: `This document still has ${unfilled.length} unfilled template placeholder(s): ${unfilled.slice(0, 8).join(", ")}${unfilled.length > 8 ? ` … and ${unfilled.length - 8} more` : ""}. Fill each one in (guidance sits beside every field in the template), then generate again.`,
+        unfilledPlaceholders: unfilled,
+      });
+    }
 
     // Deterministic first: a document that follows the structured requirement
     // grammar (headings + key/value tables — see docs/sample-requirements/)

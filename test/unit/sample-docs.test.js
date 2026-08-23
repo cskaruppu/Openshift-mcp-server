@@ -258,6 +258,64 @@ test("docx twins extract identically to their markdown source", async () => {
   }
 });
 
+test("the template refuses to be deployed unfilled — every placeholder is named", async () => {
+  const { findUnfilledPlaceholders } = await import("../../src/services/doc-parser.js");
+  const tpl = readFileSync(resolve(DOCS, "00-TEMPLATE.md"), "utf8");
+  const unfilled = findUnfilledPlaceholders(tpl);
+  assert.ok(unfilled.length >= 10, `template should carry its placeholders, found ${unfilled.length}`);
+  assert.ok(unfilled.includes("<<app-name>>"));
+  assert.ok(unfilled.includes("<<db-image>>"));
+  // And a normal completed document triggers nothing.
+  const done = readFileSync(resolve(DOCS, "04-ecommerce-online-boutique.md"), "utf8");
+  assert.deepEqual(findUnfilledPlaceholders(done), []);
+});
+
+test("the template, once filled, is valid grammar end to end", async () => {
+  const { findUnfilledPlaceholders } = await import("../../src/services/doc-parser.js");
+  const FILL = {
+    "<<app-name>>": "customer-shop",
+    "<<app-description>>": "Template fill-in verification app",
+    "<<namespace>>": "demo-fill-test",
+    "<<db-image>>": "quay.io/sclorg/postgresql-15-c9s:latest",
+    "<<db-port>>": "5432",
+    "<<db-storage-size>>": "2Gi",
+    "<<db-mount-path>>": "/var/lib/pgsql/data",
+    "<<table-name>>": "orders",
+    "<<api-image>>": "docker.io/mendhak/http-https-echo:33",
+    "<<api-port>>": "8080",
+    "<<api-health-path>>": "/health",
+    "<<web-image>>": "docker.io/nginxinc/nginx-unprivileged:1.27",
+    "<<web-port>>": "8080",
+    "<<your-acceptance-test>>": "Homepage serves",
+    "<<command-or-manual-step>>": "curl -k https://<route>/",
+    "<<expected-result>>": "HTTP 200",
+    "<<your-rollback-criterion>>": "Any CIS critical finding",
+  };
+  let text = readFileSync(resolve(DOCS, "00-TEMPLATE.md"), "utf8");
+  for (const [k, v] of Object.entries(FILL)) text = text.split(k).join(v);
+  // Every placeholder in the shipped template must be covered by the fill map —
+  // if someone adds a field to the template, this forces them to test it here.
+  assert.deepEqual(findUnfilledPlaceholders(text), [], "template has placeholders the fill map does not cover");
+
+  const { extractDeterministic } = await import("../../src/services/ais-extractor.js");
+  const intent = extractDeterministic(parseMarkdownText(text));
+  assert.equal(intent.appName, "customer-shop");
+  assert.equal(intent.namespace, "demo-fill-test");
+  assert.deepEqual(intent.tiers.map((t) => t.name).sort(), ["api", "db", "web"]);
+  assert.equal(intent.tiers.find((t) => t.name === "db").storage.size, "2Gi");
+  assert.match(intent.tiers.find((t) => t.name === "db").initSql, /CREATE TABLE IF NOT EXISTS orders/);
+  assert.equal(intent.sharedSecrets.length, 1);
+  assert.equal(intent.networkPolicies.filter((r) => r.allowed).length, 3);
+
+  const { manifests } = generateManifests(intent);
+  assert.ok(named(manifests, "Route", "web"));
+  assert.ok(named(manifests, "PersistentVolumeClaim", "db-data"));
+  assert.ok(named(manifests, "HorizontalPodAutoscaler", "api-hpa") || byKind(manifests, "HorizontalPodAutoscaler").length === 1);
+  assert.ok(named(manifests, "Job", "db-init"));
+  assert.ok(named(manifests, "NetworkPolicy", "allow-egress-api-to-db"));
+  assertPoliciesValid(manifests);
+});
+
 test("sample docs stay within the upload size cap", () => {
   for (const f of ["01-hello-web.md", "02-three-tier-orders.md", "03-negative-broken-image.md", "04-ecommerce-online-boutique.md"]) {
     const size = readFileSync(resolve(DOCS, f), "utf8").length;

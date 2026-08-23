@@ -87,6 +87,15 @@ function parseHtmlTable(tableHtml) {
 }
 
 /**
+ * Unfilled <<placeholder>> tokens from the requirement template.
+ * The template ships with these so a half-filled document can NEVER reach a
+ * cluster — generation refuses and names exactly what is still missing.
+ */
+export function findUnfilledPlaceholders(text) {
+  return [...new Set(String(text || "").match(/<<[^<>\n]{1,60}>>/g) || [])];
+}
+
+/**
  * Render parsed sections back to markdown, tables included.
  *
  * The upload flow puts extracted text into the requirement textarea, and the

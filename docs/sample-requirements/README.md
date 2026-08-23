@@ -9,6 +9,7 @@ would break these documents, the build breaks first.
 
 | Document | What it proves | Time to green |
 |---|---|---|
+| `00-TEMPLATE.md` / `.docx` | **The customer-facing template** — guided three-tier scaffold with placeholders; the agent refuses to generate until every placeholder is filled, naming the missing ones | fill in ~15 min |
 | `01-hello-web.md` | The pipeline end to end: one tier, TLS route, probes | ~1 min |
 | `02-three-tier-orders.md` | The full production story: 3 tiers, Secret, ConfigMap, PVC, init SQL, zero-trust matrix, HPA | 2–4 min (image pulls + PVC bind) |
 | `03-negative-broken-image.md` | The pyramid fails honestly — a green result means something | fails by design |
