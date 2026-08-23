@@ -147,30 +147,32 @@ const RM = { t: "🔶 ROADMAP", b: true, c: C.darkAmber, bg: C.lightAmber };
   const ws = wb.addWorksheet("3. Workflow", { properties: { tabColor: { argb: "FF" + C.tcsBlue } } });
   ws.columns = [{ width: 6 }, { width: 44 }, { width: 18 }, { width: 62 }];
   let r = banner(ws, "End-to-end workflow — every step, with its actor",
-    "14 automatic · 2 AI · 3 human · ends at a URL a person can click", 4);
+    "15 automatic · 2 AI · 4 human · ends at a URL a person can click", 4);
   r = headerRow(ws, r, ["#", "Step", "Actor", "Notes"]);
   r = dataRows(ws, r, [
-    [1, "Requirement document authored and PR-reviewed in Git", MA, "Markdown or Word; the tables are the contract, the prose is documentation"],
-    [2, "Document loaded — upload, paste, or 'Load from Git'", MA, "GitHub blob links rewritten to raw automatically; .docx converted with tables preserved; private repos via one-shot token"],
-    [3, "Structured or prose? The pipeline forks", AU, "Structured tables → deterministic lane. Free prose / PDF → AI lane"],
-    [4, "Deterministic extraction (structured lane)", AU, "Headings + tables → typed intent: tiers, images, ports, env, probes, storage, connectivity matrix. Same commit → same result, every time"],
-    [5, "LLM architects the manifests (prose lane)", AI, "Under a prompt contract: CIS + Pod Security 'restricted', non-root images, least privilege — for requirements with no tables to parse"],
-    [6, "Manifests generated — 64 for the boutique", AU, "Zero-trust matrix enforced BOTH directions, DNS egress granted, Secrets generated with random credentials, native gRPC probes, HPA, edge-TLS Route"],
-    [7, "Human reviews the editable YAML", MA, "Edits are what gets dry-run and deployed; 'Reset to generated' restores"],
-    [8, "Shift-left checks on the generated code", AU, "CIS benchmark + image CVE scan, before anything touches a cluster"],
-    [9, "Server-side dry-run", AU, "Target namespace prepared, then full admission validation of every object — nothing else created"],
-    [10, "DEPLOY — the gate", MA, "The one irreversible click. Cluster chosen from the connected fleet"],
-    [11, "Server-side apply, dependency-ordered", AU, "Each object reported created / configured / unchanged, kubectl-apply style; re-deploys update in place"],
-    [12, "Durable record + change governance", AU, "doc_deployments row (survives restarts) + change-timeline event + ServiceNow CR with implementation, backout and test plans — citing the Git source URL"],
-    [13, "Live pod watch", AU, "kubectl-style table streaming until everything is Ready"],
-    [14, "Verification L1 — rollout complete", AU, "kubectl rollout status semantics per workload: THIS generation, not old-pods-still-Ready"],
-    [15, "Verification L2 — workloads stable", AU, "No crash loops, no accumulating restarts"],
-    [16, "Verification L3 — services wired", AU, "Every selector-bearing Service has ready endpoints — catches the label mismatch behind 'Route says 503'"],
-    [17, "Verification L4 — user can access", AU, "The platform itself HTTP-probes every Route from outside the pods"],
-    [18, "'Open application' — the acceptance test", MA, "A human clicks a live URL with a green status dot. For the boutique: place an order across 9 services and Redis"],
-    [19, "If any level is red → RCA investigation", AI, "UC-05 machinery reasons over logs, events and probes; proposes a fix a human approves (auto-wiring is roadmap)"],
+    [1, "Customer fills the requirement TEMPLATE", MA, "00-TEMPLATE .md/.docx — guided three-tier scaffold; every decision is a placeholder in double angle brackets, working defaults everywhere else, guidance prose beside each field, field-reference appendix"],
+    [2, "Unfilled-placeholder guard", AU, "Generation REFUSES while any placeholder remains and names the missing fields — a half-filled template can never reach a cluster"],
+    [3, "Document authored / PR-reviewed in Git", MA, "Markdown or Word; the tables are the contract, the prose is documentation. Boutique doc = the completed example of the same template"],
+    [4, "Document loaded — upload, paste, or 'Load from Git'", MA, "GitHub blob links rewritten to raw automatically; .docx converted with tables preserved; private repos via one-shot token"],
+    [5, "Structured or prose? The pipeline forks", AU, "Structured tables → deterministic lane. Free prose / PDF → AI lane"],
+    [6, "Deterministic extraction (structured lane)", AU, "Headings + tables → typed intent: tiers, images, ports, env, probes, storage, connectivity matrix. Same commit → same result, every time"],
+    [7, "LLM architects the manifests (prose lane)", AI, "Under a prompt contract: CIS + Pod Security 'restricted', non-root images, least privilege — for requirements with no tables to parse"],
+    [8, "Manifests generated — 64 for the boutique", AU, "Zero-trust matrix enforced BOTH directions, DNS egress granted, Secrets generated with random credentials, native gRPC probes, HPA, edge-TLS Route"],
+    [9, "Human reviews the editable YAML", MA, "Edits are what gets dry-run and deployed; 'Reset to generated' restores"],
+    [10, "Shift-left checks on the generated code", AU, "CIS benchmark + image CVE scan, before anything touches a cluster"],
+    [11, "Server-side dry-run", AU, "Target namespace prepared, then full admission validation of every object — nothing else created"],
+    [12, "DEPLOY — the gate", MA, "The one irreversible click. Cluster chosen from the connected fleet"],
+    [13, "Server-side apply, dependency-ordered", AU, "Each object reported created / configured / unchanged, kubectl-apply style; re-deploys update in place"],
+    [14, "Durable record + change governance", AU, "doc_deployments row (survives restarts) + change-timeline event + ServiceNow CR with implementation, backout and test plans — citing the Git source URL"],
+    [15, "Live pod watch", AU, "kubectl-style table streaming until everything is Ready"],
+    [16, "Verification L1 — rollout complete", AU, "kubectl rollout status semantics per workload: THIS generation, not old-pods-still-Ready"],
+    [17, "Verification L2 — workloads stable", AU, "No crash loops, no accumulating restarts"],
+    [18, "Verification L3 — services wired", AU, "Every selector-bearing Service has ready endpoints — catches the label mismatch behind 'Route says 503'"],
+    [19, "Verification L4 — user can access", AU, "The platform itself HTTP-probes every Route from outside the pods"],
+    [20, "'Open application' — the acceptance test", MA, "A human clicks a live URL with a green status dot. For the boutique: place an order across 9 services and Redis"],
+    [21, "If any level is red → RCA investigation", AI, "UC-05 machinery reasons over logs, events and probes; proposes a fix a human approves (auto-wiring is roadmap)"],
   ], { height: 30, boldFirst: false });
-  note(ws, r, 4, "Steps 7, 10 and 18 are the only places a person is required — review, deploy, and the final click that proves it works.", C.lightAmber, C.darkAmber);
+  note(ws, r, 4, "Steps 1, 9, 12 and 20 are the only places a person is required — fill the template, review, deploy, and the final click that proves it works. The console mirrors this as a live journey strip: Document ▸ Generate ▸ Review+checks ▸ Dry-run ▸ Deploy ▸ Verify ▸ Open app.", C.lightAmber, C.darkAmber);
 }
 
 // ═══ 4. AGENTIC AI MAP ══════════════════════════════════════════════════════
@@ -272,6 +274,7 @@ const RM = { t: "🔶 ROADMAP", b: true, c: C.darkAmber, bg: C.lightAmber };
     "docs/sample-requirements/ · pinned by round-trip unit tests so they cannot silently break", 3);
   r = headerRow(ws, r, ["Document", "What it proves", "Expected result"]);
   r = dataRows(ws, r, [
+    ["00-TEMPLATE (customer-facing)", "The fill-in-the-blanks scaffold: three tiers, guided placeholders, field-reference appendix. Generation refuses until every placeholder is filled — and names the missing ones", { t: "Refused while unfilled; ~15 min to complete", c: C.darkAmber, bg: C.lightAmber }],
     ["01-hello-web", "The pipeline end to end: one nginx tier, TLS route, probes", { t: "Green pyramid + working URL in ~90 seconds", c: C.darkGreen, bg: C.lightGreen }],
     ["02-three-tier-orders", "Web + API + PostgreSQL 15: generated Secret, ConfigMap, PVC, init-SQL Job as the functional DB proof, zero-trust matrix with a negative control, HPA", { t: "Green in 2–4 minutes", c: C.darkGreen, bg: C.lightGreen }],
     ["03-negative-broken-image", "The pyramid fails honestly — bad image tag, rollout can never complete", { t: "RED at level 1, by design", c: C.darkRed, bg: C.lightRed }],
