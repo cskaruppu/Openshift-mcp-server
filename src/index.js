@@ -3180,28 +3180,64 @@ async function startSSE() {
     // Redeploy — trigger rollout restart on local or remote cluster
     // -----------------------------------------------------------------------
     if (req.method === "POST" && url.pathname === "/api/cluster/redeploy") {
+      // Rollout restart through the Kubernetes API — stamping the pod-template
+      // annotation is exactly what `kubectl rollout restart` does. The previous
+      // implementation shelled out to oc/kubectl, which are not in the runtime
+      // image, so this endpoint could only ever fail in-cluster ("Neither oc
+      // nor kubectl found") — including when the hub proxied it to a spoke.
       const ns = process.env.NAMESPACE || process.env.MCP_NAMESPACE || (process.env.PLATFORM === "openshift" ? "openshift-mcp" : "tcs-agentic-system");
-      const deployName = process.env.DEPLOYMENT_NAME || (MCP_MODE === "spoke" ? "agentic-ai-agent" : "agentic-ai-control-plane");
-      try {
-        const cli = await detectCLI();
-        const restarted = [];
-        // Restart primary deployment
-        await runExec(cli, ["rollout", "restart", `deployment/${deployName}`, "-n", ns]);
-        restarted.push(deployName);
-        // Also restart the agent pod in the same namespace (if separate)
-        if (deployName !== "agentic-ai-agent") {
-          await runExec(cli, ["rollout", "restart", "deployment/agentic-ai-agent", "-n", ns]).catch(() => {});
-          restarted.push("agentic-ai-agent");
-        }
-        // Also restart tcs-agentic-ai deployment (YAML generator name)
-        if (deployName !== "tcs-agentic-ai") {
-          const tcsNs = process.env.PLATFORM === "openshift" ? "openshift-tcs-agentic" : "tcs-agentic-system";
-          await runExec(cli, ["rollout", "restart", "deployment/tcs-agentic-ai", "-n", tcsNs]).catch(() => {});
-        }
-        return sendJson(res, 200, { ok: true, message: `Rollout restart triggered for ${restarted.join(", ")} in ${ns}` });
-      } catch (err) {
-        return sendJson(res, 500, { ok: false, error: err.message, message: "Redeploy failed: " + err.message });
+      const primary = process.env.DEPLOYMENT_NAME || (MCP_MODE === "spoke" ? "agentic-ai-agent" : "agentic-ai-control-plane");
+      const tcsNs = process.env.PLATFORM === "openshift" ? "openshift-tcs-agentic" : "tcs-agentic-system";
+
+      // Candidate deployments, by naming convention across installation paths.
+      // One that does not exist is skipped, not treated as a failure.
+      const targets = [];
+      const add = (n, d) => { if (n && d && !targets.some((t) => t.ns === n && t.name === d)) targets.push({ ns: n, name: d }); };
+      add(ns, primary);
+      add(ns, "agentic-ai-agent");
+      add(ns, "agentic-ai-server");
+      add(ns, "mcp-dashboard");
+      add(tcsNs, "tcs-agentic-ai");
+
+      // Without an API server address every patch fails with an opaque URL
+      // parse error. Say what is actually wrong instead.
+      if (!process.env.OPENSHIFT_API_URL && !process.env.KUBERNETES_SERVICE_HOST) {
+        return sendJson(res, 500, {
+          ok: false,
+          error: "No Kubernetes API endpoint available — this process is not running in a cluster and OPENSHIFT_API_URL is unset.",
+          message: "Redeploy failed",
+        });
       }
+
+      const restartedAt = new Date().toISOString();
+      const patch = { spec: { template: { metadata: { annotations: { "kubectl.kubernetes.io/restartedAt": restartedAt } } } } };
+      const restarted = [], skipped = [], failed = [];
+      for (const t of targets) {
+        try {
+          await ocpPatch(`/apis/apps/v1/namespaces/${t.ns}/deployments/${t.name}`, patch);
+          restarted.push(`${t.ns}/${t.name}`);
+        } catch (e) {
+          const msg = e.message || String(e);
+          if (/404|NotFound/i.test(msg)) skipped.push(`${t.ns}/${t.name}`);
+          else failed.push({ target: `${t.ns}/${t.name}`, error: msg.slice(0, 200) });
+        }
+      }
+
+      if (restarted.length === 0) {
+        const forbidden = failed.some((f) => /\b403\b|forbidden/i.test(f.error));
+        return sendJson(res, 500, {
+          ok: false,
+          error: forbidden
+            ? `RBAC: this service account cannot patch deployments in ${ns}. Grant it "patch" on apps/deployments.`
+            : (failed[0]?.error || `No known agent deployment found in ${ns} — set DEPLOYMENT_NAME to the right name.`),
+          message: "Redeploy failed", restarted, skipped, failed,
+        });
+      }
+      return sendJson(res, 200, {
+        ok: true, restartedAt, restarted, skipped,
+        ...(failed.length ? { failed } : {}),
+        message: `Rollout restart triggered for ${restarted.join(", ")}`,
+      });
     }
 
     // -----------------------------------------------------------------------
