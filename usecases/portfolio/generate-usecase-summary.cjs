@@ -127,17 +127,23 @@ function drawWorkflow(s, bands) {
 function useCaseSlide({ id, name, tagline, description, bands, note, noteColor }) {
   const s = pptx.addSlide();
 
-  s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.33, h: 1.1, fill: { color: C.darkNavy } });
-  s.addText(id, { x: LEFT, y: 0.18, w: 1.3, h: 0.34, fontSize: 13, bold: true, color: C.white,
-    align: "center", fontFace: F, fill: { color: C.tcsBlue }, rectRadius: 0.05 });
-  s.addText(name, { x: 1.9, y: 0.14, w: 11, h: 0.44, fontSize: 22, bold: true, color: C.white, fontFace: F });
-  s.addText(tagline, { x: 1.9, y: 0.6, w: 11, h: 0.3, fontSize: 11, italic: true, color: C.valCyan, fontFace: F });
+  // Header: the product name always leads, then the use case name.
+  s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.33, h: 1.16, fill: { color: C.darkNavy } });
+  s.addText("TCS AGENTIC AI", { x: LEFT, y: 0.13, w: 5, h: 0.24, fontSize: 10, bold: true,
+    color: C.valCyan, charSpacing: 2.2, fontFace: F });
+  s.addText(name, { x: LEFT, y: 0.36, w: 10.6, h: 0.44, fontSize: 23, bold: true, color: C.white, fontFace: F });
+  s.addText(tagline, { x: LEFT, y: 0.82, w: 10.6, h: 0.28, fontSize: 10.5, italic: true, color: "94A3B8", fontFace: F });
+  s.addText(id, { x: 11.55, y: 0.34, w: 1.35, h: 0.4, fontSize: 15, bold: true, color: C.white,
+    align: "center", valign: "middle", fontFace: F, fill: { color: C.tcsBlue }, rectRadius: 0.05 });
 
-  s.addText(description, { x: LEFT, y: 1.28, w: FULL, h: 1.15, fontSize: 12.5, color: C.navy,
-    fontFace: F, valign: "top", lineSpacingMultiple: 1.22 });
+  // Description — labelled, so it reads as the use case definition
+  s.addText("USE CASE DESCRIPTION", { x: LEFT, y: 1.3, w: 4, h: 0.2, fontSize: 8.5,
+    bold: true, color: C.slate, charSpacing: 1.4, fontFace: F });
+  s.addText(description, { x: LEFT, y: 1.52, w: FULL, h: 1.0, fontSize: 12, color: C.navy,
+    fontFace: F, valign: "top", lineSpacingMultiple: 1.2 });
 
-  s.addText("MASTER WORKFLOW", { x: LEFT, y: 2.36, w: 4, h: 0.22, fontSize: 9,
-    bold: true, color: C.tcsBlue, charSpacing: 1.5, fontFace: F });
+  s.addText("END-TO-END WORKFLOW", { x: LEFT, y: 2.38, w: 4, h: 0.22, fontSize: 8.5,
+    bold: true, color: C.tcsBlue, charSpacing: 1.4, fontFace: F });
 
   drawWorkflow(s, bands);
 
@@ -181,8 +187,8 @@ function useCaseSlide({ id, name, tagline, description, bands, note, noteColor }
 
 // ── UC-01 ───────────────────────────────────────────────────────────────────
 useCaseSlide({
-  id: "UC-01", name: "AI-Powered Pod Troubleshooting",
-  tagline: "Ask in plain language; get a diagnosis backed by live cluster evidence",
+  id: "UC-01", name: "Container Troubleshooting Agent",
+  tagline: "AI-powered pod troubleshooting — ask in plain language, get a diagnosis backed by live cluster evidence",
   description:
     "An engineer asks “why is my pod crashing?” in natural language. The agent gathers real evidence from the cluster — pod status, container logs, events, resource limits and exit codes — and returns a root cause with the supporting data attached, instead of a list of commands to run. This is the conversational surface every other use case is reached through.",
   bands: [
@@ -207,8 +213,8 @@ useCaseSlide({
 
 // ── UC-02 ───────────────────────────────────────────────────────────────────
 useCaseSlide({
-  id: "UC-02", name: "End-to-End Cluster Upgrade Automation",
-  tagline: "Pre-assessment through post-verification, with ITSM in the loop",
+  id: "UC-02", name: "Cluster Upgrade Agent",
+  tagline: "End-to-end cluster upgrade automation — pre-assessment through post-verification, with ITSM in the loop",
   description:
     "OpenShift cluster upgrades orchestrated end to end: a pre-assessment against the live cluster, the change record raised automatically, execution with real-time observability, and verification afterwards — instead of a human tracking a long-running operation across consoles and spreadsheets.",
   bands: [
@@ -231,8 +237,8 @@ useCaseSlide({
 
 // ── UC-03 ───────────────────────────────────────────────────────────────────
 useCaseSlide({
-  id: "UC-03", name: "Predictive Intelligence & Anomaly Detection",
-  tagline: "Forecast the failure before it becomes an incident",
+  id: "UC-03", name: "Proactive Intelligence Agent",
+  tagline: "Predictive intelligence & anomaly detection — forecast the failure before it becomes an incident",
   description:
     "Trend analysis over rolling metric windows forecasts infrastructure failures before they occur — capacity exhaustion, memory growth, certificate expiry, node pressure. The agent surfaces what is about to break and how long there is to act, converting reactive firefighting into scheduled maintenance.",
   bands: [
@@ -257,8 +263,8 @@ useCaseSlide({
 
 // ── UC-04 ───────────────────────────────────────────────────────────────────
 useCaseSlide({
-  id: "UC-04", name: "Security & Compliance Governance",
-  tagline: "Continuous posture assessment, not a quarterly audit",
+  id: "UC-04", name: "Security & Compliance Agent",
+  tagline: "Security & compliance governance — continuous posture assessment, not a quarterly audit",
   description:
     "Continuous security posture across the fleet: CIS benchmark evaluation, image vulnerability scanning, RBAC audit and policy enforcement — run continuously and reported per namespace, so compliance is a live number rather than a point-in-time report that ages the moment it is produced.",
   bands: [
@@ -280,8 +286,8 @@ useCaseSlide({
 
 // ── UC-05 — from the UC-05 deck's Master Flow slide ─────────────────────────
 useCaseSlide({
-  id: "UC-05", name: "RCA Agent — Zero-Touch Incident Command",
-  tagline: "Self-detecting · self-documenting · self-closing · self-reverting",
+  id: "UC-05", name: "Container RCA Agent",
+  tagline: "Zero-Touch Incident Command — self-detecting · self-documenting · self-closing · self-reverting",
   description:
     "The only agent-initiated use case: nothing triggers it, which is its entire point. It detects against industry-standard thresholds with dwell time, correlates N signals into one incident, determines root cause from real evidence, raises the ticket, and — after one human decision — applies, verifies, documents and closes it.",
   bands: [
@@ -311,8 +317,8 @@ useCaseSlide({
 
 // ── UC-06 — from the UC-06 deck's Master Workflow slide ─────────────────────
 useCaseSlide({
-  id: "UC-06", name: "Governed VM Provisioning & Lifecycle",
-  tagline: "One sentence in. A governed, owned, accountable virtual machine out",
+  id: "UC-06", name: "VM Lifecycle Agent",
+  tagline: "Governed VM provisioning & lifecycle — one sentence in, a governed, owned, accountable machine out",
   description:
     "A VM request stated in plain language, reconciled against the golden templates this cluster actually offers and checked against live quota — before anyone is asked to approve it. On approval the VM is provisioned with full provenance written onto the object, and weeks later the agent reads that provenance back to right-size or reclaim it.",
   bands: [
@@ -342,8 +348,8 @@ useCaseSlide({
 
 // ── UC-07 — from the UC-07 deck's Master Workflow slide ─────────────────────
 useCaseSlide({
-  id: "UC-07", name: "Document-Driven Application Deployment",
-  tagline: "The requirement document IS the deployment",
+  id: "UC-07", name: "App Deployment Agent",
+  tagline: "Document-driven application deployment — the requirement document IS the deployment",
   description:
     "A requirement document — Word or Markdown, uploaded or pulled straight from Git — becomes a complete, security-hardened, zero-trust application. Structured documents generate deterministically: the same commit produces the same manifests every time. The flow does not stop at “pods are green”.",
   bands: [
@@ -372,8 +378,8 @@ useCaseSlide({
 
 // ── UC-08 ───────────────────────────────────────────────────────────────────
 useCaseSlide({
-  id: "UC-08", name: "Configuration Drift Detection & One-Click Rollback",
-  tagline: "Know what changed, in words — and put it back",
+  id: "UC-08", name: "Configuration Drift Agent",
+  tagline: "Configuration drift detection & one-click rollback — know what changed, in words, and put it back",
   description:
     "Continuous watch over cluster configuration. When live state diverges from the recorded baseline, the agent explains the difference in plain language rather than as a raw diff, surfaces the decision, and offers a one-click rollback — then verifies the rollback landed and records the episode for audit.",
   bands: [
@@ -394,8 +400,8 @@ useCaseSlide({
 
 // ── UC-09 ───────────────────────────────────────────────────────────────────
 useCaseSlide({
-  id: "UC-09", name: "End-to-End Incident Response",
-  tagline: "“Why is my pod crashing?” → diagnosis, ticket, and a dry-run fix",
+  id: "UC-09", name: "Incident Response Agent",
+  tagline: "End-to-end incident response — “why is my pod crashing?” to diagnosis, ticket and a dry-run fix",
   description:
     "A natural-language question triggers the full incident pipeline: the agent recognises the error pattern, diagnoses root cause from parallel cluster queries, assesses severity, creates the ServiceNow incident, and proposes a targeted fix — presented with a dry-run result attached, so the operator approves an action whose effect is already known.",
   bands: [
