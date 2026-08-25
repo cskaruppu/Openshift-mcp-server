@@ -7,6 +7,12 @@
  * deck (the "Master Workflow" slide), not a simplified redraw: the same bands,
  * the same gate, the same outcome lanes, the same actor colours.
  *
+ * Numbering note: the former "UC-01 pod troubleshooting" and the unnumbered
+ * "incident-response" use case were the same thing — one posed the question,
+ * the other documented the ten stages that follow it. They are merged here as
+ * UC-01 Incident Response Agent, and cross-referenced with UC-05, which runs
+ * the same pipeline from its own detection rather than from a human question.
+ *
  * Run: node usecases/portfolio/generate-usecase-summary.cjs
  */
 const PptxGenJS = require("pptxgenjs");
@@ -170,7 +176,7 @@ function useCaseSlide({ id, name, tagline, description, bands, note, noteColor }
   s.addText("Use Case Summary", { x: 0.8, y: 1.92, w: 11.6, h: 0.85, fontSize: 40, color: C.white, bold: true, fontFace: F });
   s.addText("Container & Kubernetes Operations  ·  one slide per use case: name, description, and its master workflow",
     { x: 0.8, y: 3.35, w: 11.6, h: 0.4, fontSize: 15, color: "94A3B8", fontFace: F });
-  const stats = [{ v: "9", l: "Use cases" }, { v: "15", l: "MCP agents" }, { v: "177", l: "Tools" }, { v: "4", l: "Actor types" }];
+  const stats = [{ v: "8", l: "Use cases" }, { v: "15", l: "MCP agents" }, { v: "177", l: "Tools" }, { v: "4", l: "Actor types" }];
   stats.forEach((st, i) => {
     const x = 0.8 + i * 3.0;
     s.addShape(pptx.ShapeType.roundRect, { x, y: 4.25, w: 2.75, h: 1.15,
@@ -185,30 +191,35 @@ function useCaseSlide({ id, name, tagline, description, bands, note, noteColor }
   s.addText("Tata Consultancy Services", { x: 0.8, y: 6.72, w: 11.6, h: 0.3, fontSize: 11, color: "64748B", fontFace: F });
 }
 
-// ── UC-01 ───────────────────────────────────────────────────────────────────
+// ── UC-01 — the human-initiated incident pipeline ───────────────────────────
+// Formerly split across "UC-01 pod troubleshooting" and an unnumbered
+// "incident-response" use case, which were the same thing: one asked the
+// question, the other documented the ten stages that follow it.
 useCaseSlide({
-  id: "UC-01", name: "Container Troubleshooting Agent",
-  tagline: "AI-powered pod troubleshooting — ask in plain language, get a diagnosis backed by live cluster evidence",
+  id: "UC-01", name: "Incident Response Agent",
+  tagline: "Container troubleshooting & remediation — “why is my pod crashing?” to a verified, closed ticket",
   description:
-    "An engineer asks “why is my pod crashing?” in natural language. The agent gathers real evidence from the cluster — pod status, container logs, events, resource limits and exit codes — and returns a root cause with the supporting data attached, instead of a list of commands to run. This is the conversational surface every other use case is reached through.",
+    "An engineer asks a question in plain language. The agent gathers real cluster evidence, diagnoses the root cause, assesses severity, raises the ServiceNow incident, and proposes a targeted fix — presented with a dry-run result attached, so the operator approves an action whose effect is already known. It then applies, proves recovery, and closes the ticket. This is the same remediation pipeline UC-05 runs autonomously; here it is entered by a person asking.",
   bands: [
-    { label: "ASK", steps: [
+    { label: "ASK  →  DIAGNOSE", steps: [
       { t: "👤 Question in chat", s: "plain language", a: "human" },
-      { t: "🤖 Intent understood", s: "which workload, which namespace", a: "ai" },
-      { t: "⚙️ Cluster queried", s: "parallel API calls", a: "auto" },
+      { t: "⚙️ Cluster context", s: "parallel API calls", a: "auto" },
+      { t: "🤖 Pod doctor diagnosis", s: "error pattern recognised", a: "ai" },
+      { t: "🤖 Severity assessed", s: "impact and urgency", a: "ai" },
     ] },
-    { label: "DIAGNOSE", steps: [
-      { t: "⚙️ Evidence gathered", s: "logs · events · limits · exit codes", a: "auto" },
-      { t: "🤖 Root cause", s: "explained with the evidence shown", a: "ai" },
-      { t: "⚙️ Severity assessed", s: "impact and blast radius", a: "auto" },
+    { label: "PROPOSE  &  VALIDATE", steps: [
+      { t: "⚙️ Smart fix proposed", s: "targeted, not generic", a: "auto" },
+      { t: "⚙️ ServiceNow INC created", s: "populated from the evidence", a: "auto" },
+      { t: "⚙️ Dry-run validation", s: "effect known before approval", a: "auto" },
     ] },
-    { label: "ACT", lanes: [
-      { t: "👤 Apply a proposed fix", a: "human" },
-      { t: "👤 Escalate with the evidence attached", a: "human" },
-      { t: "⚙️ Keep investigating — ask a follow-up", a: "auto" },
+    { gate: "👤  FIX CARD IN AI CHAT — APPROVE OR REJECT  👤" },
+    { label: "APPLY  &  PROVE", steps: [
+      { t: "⚙️ Fix applied", s: "before / after metrics captured", a: "auto" },
+      { t: "✅ Recovery verified", s: "the fix actually held", a: "done" },
+      { t: "✅ Incident auto-closed", s: "outcome written back", a: "done" },
     ] },
   ],
-  note: "Conversational entry point to the whole platform", noteColor: C.tcsBlue,
+  note: "Human-initiated · UC-05 is the same pipeline, agent-initiated", noteColor: C.tcsBlue,
 });
 
 // ── UC-02 ───────────────────────────────────────────────────────────────────
@@ -289,7 +300,7 @@ useCaseSlide({
   id: "UC-05", name: "Container RCA Agent",
   tagline: "Zero-Touch Incident Command — self-detecting · self-documenting · self-closing · self-reverting",
   description:
-    "The only agent-initiated use case: nothing triggers it, which is its entire point. It detects against industry-standard thresholds with dwell time, correlates N signals into one incident, determines root cause from real evidence, raises the ticket, and — after one human decision — applies, verifies, documents and closes it.",
+    "The only agent-initiated use case: nothing triggers it, which is its entire point. It detects against industry-standard thresholds with dwell time, correlates N signals into one incident, determines root cause, raises the ticket, and — after one human decision — applies, verifies, documents and closes it. The same pipeline UC-01 exposes to a human question; here the agent’s own detection is the trigger, and it adds signal correlation, an RCA document and a revert ledger.",
   bands: [
     { steps: [
       { t: "⚙️ Detect", s: "12 thresholds + dwell", a: "auto" },
@@ -312,7 +323,7 @@ useCaseSlide({
       { t: "👤 Not verified → rolled back, ticket OPEN", a: "bad" },
     ] },
   ],
-  note: "Everything either side of the gate is autonomous", noteColor: C.aiPurple,
+  note: "Agent-initiated · UC-01 is the same pipeline, human-asked", noteColor: C.aiPurple,
 });
 
 // ── UC-06 — from the UC-06 deck's Master Workflow slide ─────────────────────
@@ -398,34 +409,11 @@ useCaseSlide({
   note: "Every episode leaves an audit trail", noteColor: C.valCyan,
 });
 
-// ── UC-09 ───────────────────────────────────────────────────────────────────
-useCaseSlide({
-  id: "UC-09", name: "Incident Response Agent",
-  tagline: "End-to-end incident response — “why is my pod crashing?” to diagnosis, ticket and a dry-run fix",
-  description:
-    "A natural-language question triggers the full incident pipeline: the agent recognises the error pattern, diagnoses root cause from parallel cluster queries, assesses severity, creates the ServiceNow incident, and proposes a targeted fix — presented with a dry-run result attached, so the operator approves an action whose effect is already known.",
-  bands: [
-    { label: "QUESTION → DIAGNOSIS", steps: [
-      { t: "👤 Question asked", s: "plain language, in chat", a: "human" },
-      { t: "⚙️ Context gathered", s: "parallel cluster queries", a: "auto" },
-      { t: "🤖 Pod doctor diagnosis", s: "error pattern recognised", a: "ai" },
-      { t: "🤖 Severity assessed", s: "impact and urgency", a: "ai" },
-    ] },
-    { label: "TICKET & PROPOSAL", steps: [
-      { t: "⚙️ ServiceNow INC created", s: "auto-populated from evidence", a: "auto" },
-      { t: "⚙️ Smart fix proposed", s: "targeted, not generic", a: "auto" },
-      { t: "⚙️ Dry-run validation", s: "effect known before approval", a: "auto" },
-      { t: "👤 Fix card — approve", s: "in AI Chat", a: "human" },
-    ] },
-  ],
-  note: "Question in, governed action out", noteColor: C.aiPurple,
-});
-
 // ── CLOSING ─────────────────────────────────────────────────────────────────
 {
   const s = pptx.addSlide();
   s.background = { color: C.darkNavy };
-  s.addText("One platform. One conversational surface. Nine use cases.",
+  s.addText("One platform. One conversational surface. Eight use cases.",
     { x: 0.8, y: 2.15, w: 11.7, h: 0.7, fontSize: 30, color: C.white, bold: true, fontFace: F });
   s.addText("Every use case shares the same agents, the same governance, and the same rule: the AI reasons and explains — but anything claiming to be true of your cluster is measured, not generated.",
     { x: 0.8, y: 3.05, w: 11.7, h: 0.9, fontSize: 15, color: "94A3B8", fontFace: F, lineSpacingMultiple: 1.3 });
