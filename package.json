@@ -1,7 +1,7 @@
 {
   "name": "agentic-ai-server",
   "version": "1.0.0",
-  "description": "TCS Agentic AI \u2014 OpenShift Intelligence Platform with MCP Hub, multi-server orchestration, and enterprise integrations",
+  "description": "TCS Agentic AI — OpenShift Intelligence Platform with MCP Hub, multi-server orchestration, and enterprise integrations",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -11,7 +11,7 @@
     "evals": "node test/evals/run-evals.js",
     "test:smoke": "node test/smoke/mcp-smoke-test.mjs",
     "build:dashboard": "npm --prefix console ci && npm --prefix console run build",
-    "lint": "echo 'Add eslint if needed'",
+    "lint": "node --test test/unit/no-undefined-calls.test.js",
     "bench:models": "node test/evals/model-bench.mjs",
     "docs:agents": "PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local} node docs/generate-agent-catalog.js",
     "docs:agents:xlsx": "PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local} node docs/generate-agent-catalog-excel.cjs",
@@ -42,6 +42,7 @@
     "zod": "^3.24.4"
   },
   "devDependencies": {
+    "acorn": "^8.18.0",
     "canvas": "^3.2.3",
     "exceljs": "^4.4.0",
     "pptxgenjs": "^4.0.1",

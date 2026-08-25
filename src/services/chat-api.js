@@ -66,7 +66,7 @@ import {
 } from "./action-workflow.js";
 import { createIncident as createServiceNowIncident, resolveIncident as snowResolveIncident, createChangeRequest as snowCreateChangeRequest, updateRecord as snowUpdateRecord } from "../utils/servicenow-client.js";
 import { notifyAll } from "./integrations.js";
-import { callLLM, callLLMStream, llmEnabled } from "./llm.js";
+import { callLLM, callLLMStream, classifyJSON, llmEnabled } from "./llm.js";
 import { resolveLLMOpts } from "./dashboard-api.js";
 import { diagnosePod } from "./pod-doctor.js";
 import { runAgent } from "./agent-loop.js";

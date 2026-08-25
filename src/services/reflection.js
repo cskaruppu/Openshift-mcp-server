@@ -11,7 +11,7 @@
  * fix effectiveness.
  */
 
-import { ocpGet } from "../utils/ocp.js";
+import { ocpGet } from "../utils/openshift-client.js";
 import { query, isEnabled } from "../utils/db.js";
 
 /**
