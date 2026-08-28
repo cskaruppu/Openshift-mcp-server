@@ -45,6 +45,9 @@ export function normalizeVMRequest(p = {}) {
   return {
     name: (p.name || "").toString().trim().toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "") || "",
     namespace: (p.namespace || "").toString().trim(),
+    // Operator opted in to having provisioning create the namespace. Never
+    // inferred — creating a namespace is a side effect worth stating.
+    createNamespace: p.createNamespace === true,
     count: Math.min(num(p.count, 1), 10),
 
     os: p.os || null,                       // free text from the user, e.g. "RHEL 9"
@@ -204,7 +207,17 @@ export async function extractVMRequest(text) {
 // 2. What this cluster can actually provision
 // ---------------------------------------------------------------------------
 export async function listProvisionables(imageNamespace = DEFAULT_IMAGE_NS) {
-  const out = { images: [], instanceTypes: [], preferences: [], storageClasses: [], notes: [] };
+  const out = { images: [], instanceTypes: [], preferences: [], storageClasses: [], namespaces: [], notes: [] };
+  // Namespaces a VM may legitimately live in. Offering these as a list is the
+  // difference between typing a name from memory and picking a real one —
+  // and platform namespaces are filtered out here rather than rejected later.
+  try {
+    const ns = await ocpGet(`/api/v1/namespaces`);
+    out.namespaces = (ns.items || [])
+      .map((n) => n.metadata?.name)
+      .filter((n) => n && !PROTECTED_NS.some((re) => re.test(n)))
+      .sort();
+  } catch { out.notes.push("Could not list namespaces."); }
   try {
     const ds = await ocpGet(`/${CDI_API}/namespaces/${imageNamespace}/datasources`);
     out.images = (ds.items || []).map((d) => ({
@@ -310,9 +323,19 @@ export async function preflightVMRequest(req) {
     blocking.push({ code: "protected-namespace", message: `"${req.namespace}" is a platform namespace — VMs must not be provisioned there.` });
   }
 
-  if (req.namespace) {
-    try { await ocpGet(`/api/v1/namespaces/${req.namespace}`); }
-    catch { blocking.push({ code: "namespace-missing", message: `Namespace "${req.namespace}" does not exist.` }); }
+  // A namespace that does not exist yet is only a blocker if nobody intends to
+  // create it. When the request opts in, it becomes a warning — the operator
+  // has been told plainly what provisioning will also do.
+  if (req.namespace && !PROTECTED_NS.some((re) => re.test(req.namespace))) {
+    try {
+      await ocpGet(`/api/v1/namespaces/${req.namespace}`);
+    } catch {
+      if (req.createNamespace) {
+        warnings.push({ code: "namespace-will-be-created", message: `Namespace "${req.namespace}" does not exist and will be created as part of provisioning.` });
+      } else {
+        blocking.push({ code: "namespace-missing", message: `Namespace "${req.namespace}" does not exist. Tick "create it" on the request, or pick an existing namespace.` });
+      }
+    }
   }
 
   // Name collisions — check every name we would create.
@@ -547,6 +570,34 @@ export async function provisionVMRequest(req, { actor = "operator", cluster = "l
   if (!pre.ok) return { ok: false, error: "Pre-flight failed", blocking: pre.blocking };
 
   const created = [], failed = [], terminal = [];
+
+  // Create the namespace first when the operator asked for it. Pre-flight has
+  // already confirmed it is not a platform namespace.
+  if (req.createNamespace) {
+    try {
+      await ocpGet(`/api/v1/namespaces/${req.namespace}`);
+    } catch {
+      terminal.push(`$ oc create namespace ${req.namespace}`);
+      try {
+        await ocpPost(`/api/v1/namespaces`, {
+          apiVersion: "v1", kind: "Namespace",
+          metadata: {
+            name: req.namespace,
+            labels: { "app.kubernetes.io/managed-by": "tcs-agentic-ai" },
+            annotations: {
+              "openshift.io/display-name": req.namespace,
+              ...(req.owner ? { "tcs.agentic-ai/owner": req.owner } : {}),
+              ...(req.costCentre ? { "tcs.agentic-ai/cost-centre": req.costCentre } : {}),
+            },
+          },
+        });
+        terminal.push(`namespace/${req.namespace} created`);
+      } catch (e) {
+        return { ok: false, error: `Could not create namespace "${req.namespace}": ${e.message}`, terminal };
+      }
+    }
+  }
+
   for (const name of vmNames(req)) {
     const manifest = buildVMManifest(req, name);
     terminal.push(`$ oc apply -f vm-${name}.yaml -n ${req.namespace}`);

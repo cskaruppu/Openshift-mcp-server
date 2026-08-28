@@ -135,3 +135,21 @@ describe("manifest", () => {
     assert.ok(missingFields(none).includes("sourceDataSource"));
   });
 });
+
+// ── createNamespace opt-in ──────────────────────────────────────────────────
+// Creating a namespace is a side effect, so it is never inferred from a name
+// that happens not to exist — the operator ticks the box.
+test("createNamespace defaults to false and is only ever an explicit opt-in", () => {
+  assert.equal(normalizeVMRequest({ name: "a", namespace: "sap" }).createNamespace, false);
+  assert.equal(normalizeVMRequest({ name: "a", namespace: "sap", createNamespace: false }).createNamespace, false);
+  // Truthy-but-not-true values must not enable a cluster mutation.
+  assert.equal(normalizeVMRequest({ name: "a", namespace: "sap", createNamespace: "yes" }).createNamespace, false);
+  assert.equal(normalizeVMRequest({ name: "a", namespace: "sap", createNamespace: 1 }).createNamespace, false);
+  assert.equal(normalizeVMRequest({ name: "a", namespace: "sap", createNamespace: true }).createNamespace, true);
+});
+
+test("namespace name is preserved verbatim for the create path", () => {
+  // The UI lowercases as you type; normalize must not silently alter what the
+  // operator confirmed, or the created namespace and the target would diverge.
+  assert.equal(normalizeVMRequest({ namespace: "  team-alpha  " }).namespace, "team-alpha");
+});

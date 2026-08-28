@@ -2853,6 +2853,11 @@ function QuotaBar({ q }) {
   );
 }
 
+// Typing aids for the two free-text provenance fields. Suggestions only — a
+// datalist still accepts anything, it just saves the common cases.
+const OWNER_SUGGESTIONS = ["platform-team", "app-team", "sap-basis", "dba-team", "infra-ops"];
+const COST_CENTRE_SUGGESTIONS = ["CC-4471", "CC-1002", "CC-2200", "CC-3310"];
+
 function VMRequestCard({ data, cluster }) {
   const [req, setReq] = useState(data.request || {});
   const [pre, setPre] = useState(data.preflight || null);
@@ -2937,19 +2942,76 @@ function VMRequestCard({ data, cluster }) {
     ? Array.from({ length: Math.min(req.count, 10) }, (_, i) => `${req.name}-${i + 1}`)
     : [req.name].filter(Boolean);
 
-  const F = ({ label, k, type = "text", ph, opts }) => (
-    <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11 }}>
-      <span style={{ opacity: .7, fontWeight: 600 }}>{label}</span>
+  // Inputs are deliberately larger than the surrounding chat text: this is a
+  // form people fill in, not a label they read. Required-but-empty fields are
+  // outlined so what is missing is visible without reading the status chip.
+  const CTRL = {
+    padding: "8px 10px", borderRadius: 7, border: "1px solid var(--border)",
+    background: "var(--bg2, transparent)", color: "inherit", fontSize: 13,
+    lineHeight: 1.35, width: "100%", boxSizing: "border-box", minHeight: 34,
+  };
+  const need = (k) => !req[k] && ["name", "namespace", "sourceDataSource"].includes(k);
+
+  const F = ({ label, k, type = "text", ph, opts, hint, suggest }) => (
+    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5 }}>
+      <span style={{ opacity: .75, fontWeight: 700 }}>
+        {label}{need(k) && <span style={{ color: "#fca5a5" }}> — required</span>}
+      </span>
       {opts ? (
         <select value={req[k] || ""} onChange={set(k)} className="vmreq-input"
-          style={{ padding: "5px 7px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg2, transparent)", color: "inherit", fontSize: 12 }}>
-          <option value="">—</option>
+          style={{ ...CTRL, borderColor: need(k) ? "rgba(239,68,68,.55)" : "var(--border)" }}>
+          <option value="">— choose —</option>
           {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       ) : (
-        <input type={type} value={req[k] ?? ""} onChange={set(k)} placeholder={ph}
-          style={{ padding: "5px 7px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg2, transparent)", color: "inherit", fontSize: 12 }} />
+        <>
+          <input type={type} value={req[k] ?? ""} onChange={set(k)} placeholder={ph}
+            list={suggest ? `vmreq-${k}` : undefined}
+            style={{ ...CTRL, borderColor: need(k) ? "rgba(239,68,68,.55)" : "var(--border)" }} />
+          {suggest?.length > 0 && (
+            <datalist id={`vmreq-${k}`}>{suggest.map((s) => <option key={s} value={s} />)}</datalist>
+          )}
+        </>
       )}
+      {hint && <span style={{ opacity: .55, fontSize: 10.5 }}>{hint}</span>}
+    </label>
+  );
+
+  // Namespace: pick a real one, or create a new one — never guess a name that
+  // does not exist and discover it at pre-flight.
+  const nsList = cat.namespaces || [];
+  const nsKnown = nsList.includes(req.namespace);
+  const NamespaceField = () => (
+    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5 }}>
+      <span style={{ opacity: .75, fontWeight: 700 }}>
+        Namespace{!req.namespace && <span style={{ color: "#fca5a5" }}> — required</span>}
+      </span>
+      <select
+        value={nsKnown ? req.namespace : (req.namespace ? "__new__" : "")}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === "__new__") setReq((p) => ({ ...p, namespace: "", createNamespace: true }));
+          else setReq((p) => ({ ...p, namespace: v || null, createNamespace: false }));
+          setDry(null); setResult(null);
+        }}
+        style={{ ...CTRL, borderColor: !req.namespace ? "rgba(239,68,68,.55)" : "var(--border)" }}>
+        <option value="">— choose an existing namespace —</option>
+        {nsList.map((n) => <option key={n} value={n}>{n}</option>)}
+        <option value="__new__">＋ Create a new namespace…</option>
+      </select>
+      {(!nsKnown || req.createNamespace) && (
+        <>
+          <input value={req.namespace ?? ""} placeholder="new-namespace-name"
+            onChange={(e) => { setReq((p) => ({ ...p, namespace: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"), createNamespace: true })); setDry(null); setResult(null); }}
+            style={{ ...CTRL, marginTop: 2 }} />
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, opacity: .85, marginTop: 2 }}>
+            <input type="checkbox" checked={!!req.createNamespace}
+              onChange={(e) => { setReq((p) => ({ ...p, createNamespace: e.target.checked })); setDry(null); }} />
+            Create it if it doesn’t exist
+          </label>
+        </>
+      )}
+      {nsList.length === 0 && <span style={{ opacity: .55, fontSize: 10.5 }}>No namespace list available — type one and tick “create it”.</span>}
     </label>
   );
 
@@ -2984,31 +3046,57 @@ function VMRequestCard({ data, cluster }) {
         </div>
       )}
 
-      <div style={{ padding: "10px 12px", display: "grid", gap: 8,
-        gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
-        <F label="Name" k="name" ph="sap-app-01" />
-        <F label="Namespace" k="namespace" ph="sap" />
-        <F label="Count" k="count" type="number" />
+      <div style={{ padding: "12px 12px 4px", display: "grid", gap: 11,
+        gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))" }}>
+        <F label="Name" k="name" ph="sap-app-01"
+           hint={req.count > 1 ? `${req.count} VMs: ${req.name || "name"}-1 … -${req.count}` : "lowercase letters, digits and hyphens"} />
+        <NamespaceField />
+        <F label="Count" k="count" type="number" hint="1–10" />
         <F label="Golden image" k="sourceDataSource"
-           opts={cat.images.map((i) => ({ value: i.name, label: `${i.name}${i.ready ? "" : " (not ready)"}` }))} />
+           opts={cat.images.map((i) => ({ value: i.name, label: `${i.name}${i.ready ? "" : " (not ready)"}` }))}
+           hint={cat.images.length ? `${cat.images.length} available on this cluster` : "none found — check the image namespace"} />
         <F label="Instance type" k="instanceType"
-           opts={cat.instanceTypes.map((i) => ({ value: i.name, label: `${i.name} — ${i.cpu} vCPU / ${i.memory}` }))} />
-        <F label="Root disk (GiB)" k="diskSizeGi" type="number" />
+           opts={cat.instanceTypes.map((i) => ({ value: i.name, label: `${i.name} — ${i.cpu} vCPU / ${i.memory}` }))}
+           hint="a golden size, so capacity stays predictable" />
+        <F label="Root disk (GiB)" k="diskSizeGi" type="number" hint="persistent — survives restarts" />
         <F label="Storage class" k="storageClass"
            opts={cat.storageClasses.map((s) => ({ value: s.name, label: s.name + (s.default ? " (default)" : "") }))} />
-        <F label="Network (NAD)" k="networkAttachmentDefinition" ph="pod network" />
-        <F label="Owner" k="owner" ph="platform-team" />
-        <F label="Cost centre" k="costCentre" ph="CC-4471" />
+        <F label="Network (NAD)" k="networkAttachmentDefinition" ph="pod network"
+           hint="leave blank for pod networking" />
+        <F label="Owner" k="owner" ph="platform-team" suggest={OWNER_SUGGESTIONS}
+           hint="who answers for this VM later" />
+        <F label="Cost centre" k="costCentre" ph="CC-4471" suggest={COST_CENTRE_SUGGESTIONS} />
         <F label="Environment" k="environment"
            opts={[{ value: "dev", label: "dev" }, { value: "test", label: "test" }, { value: "prod", label: "prod" }]} />
-        <F label="Expires on" k="expiresOn" type="date" />
+        <F label="Expires on" k="expiresOn" type="date" hint="unset means it is nobody's job to reclaim it" />
       </div>
-      <div style={{ padding: "0 12px 10px" }}>
-        <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11 }}>
-          <span style={{ opacity: .7, fontWeight: 600 }}>SSH public key {!req.sshKey && <span style={{ color: "#fca5a5" }}>— required, or nobody can log in</span>}</span>
-          <textarea value={req.sshKey || ""} onChange={set("sshKey")} rows={2} placeholder="ssh-ed25519 AAAA..."
-            style={{ padding: "5px 7px", borderRadius: 6, border: `1px solid ${req.sshKey ? "var(--border)" : "rgba(239,68,68,.5)"}`,
-              background: "var(--bg2, transparent)", color: "inherit", fontSize: 11, fontFamily: "var(--font-mono, monospace)", resize: "vertical" }} />
+      <div style={{ padding: "4px 12px 12px" }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5 }}>
+          <span style={{ opacity: .75, fontWeight: 700 }}>
+            SSH public key {!req.sshKey && <span style={{ color: "#fca5a5" }}>— required, or nobody can log in</span>}
+          </span>
+          <textarea value={req.sshKey || ""} onChange={set("sshKey")} rows={3} placeholder="ssh-ed25519 AAAA…  (paste the whole line from ~/.ssh/id_ed25519.pub)"
+            spellCheck={false}
+            style={{ padding: "8px 10px", borderRadius: 7, border: `1px solid ${req.sshKey ? "var(--border)" : "rgba(239,68,68,.55)"}`,
+              background: "var(--bg2, transparent)", color: "inherit", fontSize: 12,
+              fontFamily: "var(--font-mono, monospace)", resize: "vertical", width: "100%", boxSizing: "border-box" }} />
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button type="button"
+              onClick={async () => {
+                try {
+                  const t = (await navigator.clipboard.readText() || "").trim();
+                  if (/^(ssh-(rsa|ed25519|dss)|ecdsa-sha2-)/.test(t)) { setReq((p) => ({ ...p, sshKey: t })); setDry(null); showToast("SSH key pasted", "success"); }
+                  else showToast("Clipboard does not look like a public key", "error");
+                } catch { showToast("Clipboard unavailable — paste with Ctrl+V", "error"); }
+              }}
+              style={{ padding: "4px 11px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--bg2, transparent)",
+                color: "inherit", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+              📋 Paste from clipboard
+            </button>
+            <span style={{ opacity: .55, fontSize: 10.5 }}>
+              The public key only — the platform never asks for, and never stores, a private key.
+            </span>
+          </div>
         </label>
       </div>
 
