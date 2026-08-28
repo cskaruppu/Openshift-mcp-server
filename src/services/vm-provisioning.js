@@ -714,6 +714,67 @@ export async function buildVMRequestCard(text, overrides = {}) {
  *
  * @returns {{namespace:string, vms:Array, allRunning:boolean, anyFailed:boolean}}
  */
+/**
+ * Pure phase classification for one VM. Extracted so the rules can be tested
+ * without a cluster — this is the logic that decides whether a machine reads as
+ * provisioning, starting, running or failed, and getting it wrong shows a
+ * healthy VM as Stopped.
+ *
+ * @returns {{phase:"running"|"starting"|"provisioning"|"failed", status:string, detail:string, ready:boolean}}
+ */
+export function classifyVmPhase({ vm, vmi, disks = [] }) {
+  const conds = [...(vm?.status?.conditions || []), ...(vmi?.status?.conditions || [])];
+  const vmiPhase = vmi?.status?.phase || null;            // Pending|Scheduling|Scheduled|Running|Succeeded|Failed
+  const printable = vm?.status?.printableStatus || null;  // Starting|Running|Stopped|Provisioning|…
+  const ready = vmiPhase === "Running"
+    && (vm?.status?.ready === true || conds.some((c) => c.type === "Ready" && c.status === "True"));
+
+  // Ready=False is the NORMAL state of a VM that is still coming up, so its
+  // reason decides. GuestNotRunning, a pod that does not exist yet, a volume
+  // still binding — all "not yet", not "broken". Only a reason describing
+  // something actually wrong counts, or a booting VM is reported as failed.
+  const TRANSIENT = /GuestNotRunning|PodNotExists|VMINotExists|WaitingForVolume|PvcNotFound|PodConditionMissing|Pending|Provisioning|Prep|Populat|Import|Clone|Scheduling|Starting/i;
+  const REAL_FAILURE = /Unschedulable|ErrImagePull|ImagePullBackOff|CrashLoopBackOff|OutOfMemory|OOMKilled|Insufficient|Forbidden|Quota|FailedCreate|FailedMount|FailedAttach|NoSuitableNode|Invalid/i;
+  const bad = conds.find((c) => c.type === "Failure" && c.status === "True")
+           || conds.find((c) => c.status === "False" && ["Ready", "Initialized"].includes(c.type)
+                && c.reason && !TRANSIENT.test(c.reason) && REAL_FAILURE.test(`${c.reason} ${c.message || ""}`));
+
+  const importing = disks.find((d) => d.phase && d.phase !== "Succeeded");
+
+  // Order matters. A disk still being prepared explains everything above it, so
+  // it is checked before any not-Ready condition. printableStatus is supporting
+  // detail only: it reads "Stopped" for a VM seconds from starting, which is
+  // exactly the wrong thing to put in a badge.
+  let phase, status, detail;
+  if (ready) {
+    phase = "running"; status = "Running";
+    const ips = (vmi?.status?.interfaces || []).map((i) => i.ipAddress).filter(Boolean);
+    const agent = conds.some((c) => c.type === "AgentConnected" && c.status === "True");
+    detail = `Guest is up on ${vmi?.status?.nodeName || "a node"}${ips.length ? ` · ${ips.join(", ")}` : ""}${agent ? " · guest agent connected" : " · guest agent not reporting yet"}.`;
+  } else if (vmiPhase === "Failed") {
+    phase = "failed"; status = "Failed";
+    detail = bad ? `${bad.reason}${bad.message ? ` — ${bad.message}` : ""}` : "The virtual machine instance reported Failed.";
+  } else if (importing) {
+    phase = "provisioning"; status = "Provisioning — preparing disk";
+    detail = `Root disk ${importing.name}: ${importing.phase}${importing.progress && importing.progress !== "N/A" ? ` (${importing.progress})` : ""}. The VM starts once the disk is ready.`;
+  } else if (bad) {
+    phase = "failed"; status = "Failed";
+    detail = `${bad.reason}${bad.message ? ` — ${bad.message}` : ""}`;
+  } else if (vmiPhase === "Running") {
+    phase = "starting"; status = "Starting — guest is booting";
+    detail = `Instance is running on ${vmi?.status?.nodeName || "a node"}; waiting for the guest to report ready.`;
+  } else if (vmiPhase) {
+    phase = "starting"; status = `Starting — ${vmiPhase.toLowerCase()}`;
+    detail = `Instance is ${vmiPhase.toLowerCase()} — waiting for the guest to boot.`;
+  } else {
+    phase = "provisioning"; status = "Provisioning";
+    const why = conds.find((c) => c.type === "Ready" && c.status === "False")?.reason;
+    detail = `The VirtualMachine exists; no instance is running yet${why ? ` (${why})` : ""}.`;
+  }
+  if (printable && phase !== "running") detail += ` Cluster reports "${printable}".`;
+  return { phase, status, detail, ready };
+}
+
 export async function vmRuntimeStatus(namespace, names = []) {
   const safe = async (p) => { try { return await ocpGet(p); } catch { return null; } };
   const [dvList, eventList] = await Promise.all([
@@ -729,11 +790,7 @@ export async function vmRuntimeStatus(namespace, names = []) {
       continue;
     }
     const vmi = await safe(`/${KUBEVIRT_API}/namespaces/${namespace}/virtualmachineinstances/${name}`);
-    const conds = [...(vm.status?.conditions || []), ...(vmi?.status?.conditions || [])];
-    const bad = conds.find((c) => c.status === "False" && ["Ready", "Initialized"].includes(c.type) && c.reason)
-             || conds.find((c) => c.type === "Failure" && c.status === "True");
-
-    // Disk import — the usual reason a VM sits not-running for minutes.
+    // Disk state — the usual reason a VM sits not-running for minutes.
     const dvs = (dvList?.items || []).filter((d) =>
       d.metadata?.name === name || (d.metadata?.ownerReferences || []).some((o) => o.name === name));
     const disks = dvs.map((d) => ({
@@ -742,31 +799,7 @@ export async function vmRuntimeStatus(namespace, names = []) {
       progress: d.status?.progress || null,
       reason: (d.status?.conditions || []).find((c) => c.type === "Running" && c.status === "False")?.reason || null,
     }));
-    const importing = disks.find((d) => !["Succeeded", "", null, undefined].includes(d.phase) && d.phase !== "Succeeded");
-
-    const vmiPhase = vmi?.status?.phase || null;                 // Pending|Scheduling|Scheduled|Running|Succeeded|Failed
-    const printable = vm.status?.printableStatus || null;        // Starting|Running|Stopped|Provisioning|…
-    const ready = vmiPhase === "Running" && (vm.status?.ready === true || conds.some((c) => c.type === "Ready" && c.status === "True"));
-
-    let phase, status, detail;
-    if (ready) {
-      phase = "running"; status = "Running";
-      const ips = (vmi?.status?.interfaces || []).map((i) => i.ipAddress).filter(Boolean);
-      const agent = conds.some((c) => c.type === "AgentConnected" && c.status === "True");
-      detail = `Guest is up on ${vmi?.status?.nodeName || "a node"}${ips.length ? ` · ${ips.join(", ")}` : ""}${agent ? " · guest agent connected" : " · guest agent not reporting yet"}.`;
-    } else if (vmiPhase === "Failed" || bad) {
-      phase = "failed"; status = printable || "Failed";
-      detail = bad ? `${bad.reason}${bad.message ? ` — ${bad.message}` : ""}` : "The virtual machine instance reported Failed.";
-    } else if (importing) {
-      phase = "provisioning"; status = "Provisioning — importing disk";
-      detail = `Root disk ${importing.name}: ${importing.phase}${importing.progress ? ` (${importing.progress})` : ""}. The VM starts once the import completes.`;
-    } else if (vmiPhase) {
-      phase = "starting"; status = printable || vmiPhase;
-      detail = `Instance is ${vmiPhase.toLowerCase()} — waiting for the guest to boot.`;
-    } else {
-      phase = "provisioning"; status = printable || "Provisioning";
-      detail = "The VirtualMachine exists; no instance is running yet.";
-    }
+    const { phase, status, detail } = classifyVmPhase({ vm, vmi, disks });
 
     // Anything the cluster complained about for this VM, in its own words.
     const events = (eventList?.items || [])
@@ -775,7 +808,7 @@ export async function vmRuntimeStatus(namespace, names = []) {
       .map((e) => `${e.reason}: ${(e.message || "").slice(0, 180)}`);
 
     vms.push({
-      name, phase, status, detail, ready, failed: phase === "failed",
+      name, phase, status, detail, ready: phase === "running", failed: phase === "failed",
       node: vmi?.status?.nodeName || null,
       ips: (vmi?.status?.interfaces || []).map((i) => i.ipAddress).filter(Boolean),
       disks, events,

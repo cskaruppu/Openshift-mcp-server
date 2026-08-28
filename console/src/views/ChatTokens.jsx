@@ -3026,11 +3026,13 @@ function VMRequestCard({ data, cluster }) {
       } catch { /* transient */ }
     };
     tick();
-    // Stop once everything has settled — a running VM does not need watching.
-    const settled = vmStatus?.allRunning || vmStatus?.anyFailed;
-    const id = settled ? null : setInterval(tick, 8000);
+    // Keep watching until every VM is running. A VM reported as failed is NOT
+    // a reason to stop: a disk that is still binding, a pod waiting for a node,
+    // a guest mid-boot can all look wrong for a moment and then come good —
+    // stopping there froze the card on a transient state while the VM ran fine.
+    const id = vmStatus?.allRunning ? null : setInterval(tick, 8000);
     return () => { stop = true; if (id) clearInterval(id); };
-  }, [namesKey, reqNs, cluster, vmStatus?.allRunning, vmStatus?.anyFailed]);
+  }, [namesKey, reqNs, cluster, vmStatus?.allRunning]);
 
   async function revalidate(next) {
     setReq(next); setDry(null);
@@ -3429,9 +3431,20 @@ oc apply -f https://raw.githubusercontent.com/cskaruppu/openshift-mcp-server/cla
               color: vmStatus.anyFailed ? "#fca5a5" : vmStatus.allRunning ? "#4ade80" : "#fbbf24" }}>
               {vmStatus.anyFailed ? "Attention needed" : vmStatus.allRunning ? "All running" : "Provisioning…"}
             </span>
-            {!vmStatus.allRunning && !vmStatus.anyFailed && (
+            {!vmStatus.allRunning && (
               <span style={{ fontSize: 10.5, opacity: .6 }}>refreshing every 8s</span>
             )}
+            <button
+              onClick={async () => {
+                try {
+                  const r = await fetch(clusterUrl(`/api/vm/status?namespace=${encodeURIComponent(reqNs)}&names=${encodeURIComponent(namesKey)}`, cluster));
+                  setVmStatus(await r.json());
+                } catch { /* transient */ }
+              }}
+              style={{ marginLeft: "auto", padding: "2px 10px", borderRadius: 6, border: "1px solid var(--border)",
+                background: "transparent", color: "inherit", fontSize: 10.5, fontWeight: 700, cursor: "pointer" }}>
+              ↻ Refresh
+            </button>
           </div>
           {vmStatus.vms.map((v) => {
             const c = v.failed ? { fg: "#fca5a5", bd: "rgba(239,68,68,.45)" }

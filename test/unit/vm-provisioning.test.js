@@ -177,3 +177,68 @@ test("fingerprint ignores fields that do not change what is built", async () => 
   assert.equal(fingerprintRequest({ ...base, requestId: "CHG0030068" }), fingerprintRequest(base));
   assert.equal(fingerprintRequest({ ...base, sizingRationale: "because" }), fingerprintRequest(base));
 });
+
+// ── VM phase classification ─────────────────────────────────────────────────
+// From the field: a VM that oc reported as Running showed as "Stopped —
+// GuestNotRunning" in the card, because Ready=False during boot was read as a
+// failure and printableStatus lagged behind reality.
+const { classifyVmPhase } = await import("../../src/services/vm-provisioning.js");
+
+test("a booting VM is starting, not failed — GuestNotRunning is transient", () => {
+  const r = classifyVmPhase({
+    vm: { status: { printableStatus: "Stopped", conditions: [{ type: "Ready", status: "False", reason: "GuestNotRunning", message: "Guest VM is not reported as running" }] } },
+    vmi: { status: { phase: "Running", nodeName: "worker-1" } },
+    disks: [{ name: "sap-data-rootdisk", phase: "Succeeded" }],
+  });
+  assert.equal(r.phase, "starting");
+  assert.equal(r.failed, undefined);
+  assert.match(r.status, /Starting/);
+  assert.doesNotMatch(r.status, /Stopped|Failed/);
+});
+
+test("a disk still being prepared reads as provisioning, outranking a not-Ready condition", () => {
+  const r = classifyVmPhase({
+    vm: { status: { printableStatus: "Stopped", conditions: [{ type: "Ready", status: "False", reason: "GuestNotRunning" }] } },
+    vmi: null,
+    disks: [{ name: "sap-data-rootdisk", phase: "PrepClaimInProgress", progress: "N/A" }],
+  });
+  assert.equal(r.phase, "provisioning");
+  assert.match(r.detail, /PrepClaimInProgress/);
+  // "N/A" is not progress worth printing.
+  assert.doesNotMatch(r.detail, /\(N\/A\)/);
+});
+
+test("a running, ready VM is running and reports where it is", () => {
+  const r = classifyVmPhase({
+    vm: { status: { printableStatus: "Running", ready: true, conditions: [{ type: "Ready", status: "True" }] } },
+    vmi: { status: { phase: "Running", nodeName: "worker-2", interfaces: [{ ipAddress: "10.131.19.44" }], conditions: [{ type: "AgentConnected", status: "True" }] } },
+    disks: [{ name: "d", phase: "Succeeded" }],
+  });
+  assert.equal(r.phase, "running");
+  assert.equal(r.ready, true);
+  assert.match(r.detail, /worker-2/);
+  assert.match(r.detail, /10\.131\.19\.44/);
+  assert.match(r.detail, /guest agent connected/);
+});
+
+test("a genuinely broken VM is still reported as failed", () => {
+  for (const reason of ["Unschedulable", "ErrImagePull", "FailedMount", "InsufficientMemory"]) {
+    const r = classifyVmPhase({
+      vm: { status: { conditions: [{ type: "Ready", status: "False", reason, message: "something is wrong" }] } },
+      vmi: { status: { phase: "Pending" } },
+      disks: [{ name: "d", phase: "Succeeded" }],
+    });
+    assert.equal(r.phase, "failed", `${reason} must be treated as a failure`);
+  }
+  const failedVmi = classifyVmPhase({ vm: { status: {} }, vmi: { status: { phase: "Failed" } }, disks: [] });
+  assert.equal(failedVmi.phase, "failed");
+});
+
+test("printableStatus is supporting detail, never the headline", () => {
+  const r = classifyVmPhase({
+    vm: { status: { printableStatus: "Stopped" } },
+    vmi: { status: { phase: "Scheduling" } }, disks: [],
+  });
+  assert.match(r.status, /Starting/);
+  assert.match(r.detail, /Cluster reports "Stopped"/);
+});
