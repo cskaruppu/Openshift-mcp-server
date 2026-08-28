@@ -2858,6 +2858,83 @@ function QuotaBar({ q }) {
 const OWNER_SUGGESTIONS = ["platform-team", "app-team", "sap-basis", "dba-team", "infra-ops"];
 const COST_CENTRE_SUGGESTIONS = ["CC-4471", "CC-1002", "CC-2200", "CC-3310"];
 
+// Inputs are deliberately larger than the surrounding chat text: this is a form
+// people fill in, not a label they read.
+const VM_CTRL = {
+  padding: "8px 10px", borderRadius: 7, border: "1px solid var(--border)",
+  background: "var(--bg2, transparent)", color: "inherit", fontSize: 13,
+  lineHeight: 1.35, width: "100%", boxSizing: "border-box", minHeight: 34,
+};
+
+/**
+ * MODULE SCOPE ON PURPOSE. Defining a component inside another component's body
+ * gives it a new function identity on every render, so React unmounts the old
+ * subtree and mounts a fresh DOM node — which drops focus after every single
+ * keystroke. Hoisting keeps the element identity stable, so typing is
+ * continuous. Same reason VMNamespaceField lives out here.
+ */
+function VMField({ label, value, onChange, type = "text", ph, opts, hint, suggest, required, listId }) {
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5 }}>
+      <span style={{ opacity: .75, fontWeight: 700 }}>
+        {label}{required && <span style={{ color: "#fca5a5" }}> — required</span>}
+      </span>
+      {opts ? (
+        <select value={value || ""} onChange={onChange} className="vmreq-input"
+          style={{ ...VM_CTRL, borderColor: required ? "rgba(239,68,68,.55)" : "var(--border)" }}>
+          <option value="">— choose —</option>
+          {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      ) : (
+        <>
+          <input type={type} value={value ?? ""} onChange={onChange} placeholder={ph}
+            list={suggest?.length ? listId : undefined} autoComplete="off"
+            style={{ ...VM_CTRL, borderColor: required ? "rgba(239,68,68,.55)" : "var(--border)" }} />
+          {suggest?.length > 0 && (
+            <datalist id={listId}>{suggest.map((s) => <option key={s} value={s} />)}</datalist>
+          )}
+        </>
+      )}
+      {hint && <span style={{ opacity: .55, fontSize: 10.5 }}>{hint}</span>}
+    </label>
+  );
+}
+
+/** Pick a real namespace, or name a new one and have provisioning create it. */
+function VMNamespaceField({ value, createNamespace, namespaces, onPick, onType, onToggleCreate }) {
+  const known = namespaces.includes(value);
+  const creating = !!createNamespace || (!!value && !known) || (!value && !!createNamespace);
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5 }}>
+      <span style={{ opacity: .75, fontWeight: 700 }}>
+        Namespace{!value && <span style={{ color: "#fca5a5" }}> — required</span>}
+      </span>
+      <select
+        value={known ? value : (creating ? "__new__" : "")}
+        onChange={(e) => onPick(e.target.value)}
+        style={{ ...VM_CTRL, borderColor: !value ? "rgba(239,68,68,.55)" : "var(--border)" }}>
+        <option value="">— choose an existing namespace —</option>
+        {namespaces.map((n) => <option key={n} value={n}>{n}</option>)}
+        <option value="__new__">＋ Create a new namespace…</option>
+      </select>
+      {creating && (
+        <>
+          <input value={value ?? ""} placeholder="new-namespace-name" autoComplete="off"
+            onChange={(e) => onType(e.target.value)}
+            style={{ ...VM_CTRL, marginTop: 2 }} />
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, opacity: .85, marginTop: 2 }}>
+            <input type="checkbox" checked={!!createNamespace} onChange={(e) => onToggleCreate(e.target.checked)} />
+            Create it if it doesn’t exist
+          </label>
+        </>
+      )}
+      {namespaces.length === 0 && !creating && (
+        <span style={{ opacity: .55, fontSize: 10.5 }}>No namespace list available — choose “Create a new namespace…”.</span>
+      )}
+    </label>
+  );
+}
+
 function VMRequestCard({ data, cluster }) {
   const [req, setReq] = useState(data.request || {});
   const [pre, setPre] = useState(data.preflight || null);
@@ -2942,78 +3019,8 @@ function VMRequestCard({ data, cluster }) {
     ? Array.from({ length: Math.min(req.count, 10) }, (_, i) => `${req.name}-${i + 1}`)
     : [req.name].filter(Boolean);
 
-  // Inputs are deliberately larger than the surrounding chat text: this is a
-  // form people fill in, not a label they read. Required-but-empty fields are
-  // outlined so what is missing is visible without reading the status chip.
-  const CTRL = {
-    padding: "8px 10px", borderRadius: 7, border: "1px solid var(--border)",
-    background: "var(--bg2, transparent)", color: "inherit", fontSize: 13,
-    lineHeight: 1.35, width: "100%", boxSizing: "border-box", minHeight: 34,
-  };
   const need = (k) => !req[k] && ["name", "namespace", "sourceDataSource"].includes(k);
-
-  const F = ({ label, k, type = "text", ph, opts, hint, suggest }) => (
-    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5 }}>
-      <span style={{ opacity: .75, fontWeight: 700 }}>
-        {label}{need(k) && <span style={{ color: "#fca5a5" }}> — required</span>}
-      </span>
-      {opts ? (
-        <select value={req[k] || ""} onChange={set(k)} className="vmreq-input"
-          style={{ ...CTRL, borderColor: need(k) ? "rgba(239,68,68,.55)" : "var(--border)" }}>
-          <option value="">— choose —</option>
-          {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-      ) : (
-        <>
-          <input type={type} value={req[k] ?? ""} onChange={set(k)} placeholder={ph}
-            list={suggest ? `vmreq-${k}` : undefined}
-            style={{ ...CTRL, borderColor: need(k) ? "rgba(239,68,68,.55)" : "var(--border)" }} />
-          {suggest?.length > 0 && (
-            <datalist id={`vmreq-${k}`}>{suggest.map((s) => <option key={s} value={s} />)}</datalist>
-          )}
-        </>
-      )}
-      {hint && <span style={{ opacity: .55, fontSize: 10.5 }}>{hint}</span>}
-    </label>
-  );
-
-  // Namespace: pick a real one, or create a new one — never guess a name that
-  // does not exist and discover it at pre-flight.
   const nsList = cat.namespaces || [];
-  const nsKnown = nsList.includes(req.namespace);
-  const NamespaceField = () => (
-    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5 }}>
-      <span style={{ opacity: .75, fontWeight: 700 }}>
-        Namespace{!req.namespace && <span style={{ color: "#fca5a5" }}> — required</span>}
-      </span>
-      <select
-        value={nsKnown ? req.namespace : (req.namespace ? "__new__" : "")}
-        onChange={(e) => {
-          const v = e.target.value;
-          if (v === "__new__") setReq((p) => ({ ...p, namespace: "", createNamespace: true }));
-          else setReq((p) => ({ ...p, namespace: v || null, createNamespace: false }));
-          setDry(null); setResult(null);
-        }}
-        style={{ ...CTRL, borderColor: !req.namespace ? "rgba(239,68,68,.55)" : "var(--border)" }}>
-        <option value="">— choose an existing namespace —</option>
-        {nsList.map((n) => <option key={n} value={n}>{n}</option>)}
-        <option value="__new__">＋ Create a new namespace…</option>
-      </select>
-      {(!nsKnown || req.createNamespace) && (
-        <>
-          <input value={req.namespace ?? ""} placeholder="new-namespace-name"
-            onChange={(e) => { setReq((p) => ({ ...p, namespace: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"), createNamespace: true })); setDry(null); setResult(null); }}
-            style={{ ...CTRL, marginTop: 2 }} />
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, opacity: .85, marginTop: 2 }}>
-            <input type="checkbox" checked={!!req.createNamespace}
-              onChange={(e) => { setReq((p) => ({ ...p, createNamespace: e.target.checked })); setDry(null); }} />
-            Create it if it doesn’t exist
-          </label>
-        </>
-      )}
-      {nsList.length === 0 && <span style={{ opacity: .55, fontSize: 10.5 }}>No namespace list available — type one and tick “create it”.</span>}
-    </label>
-  );
 
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", margin: "8px 0",
@@ -3048,27 +3055,37 @@ function VMRequestCard({ data, cluster }) {
 
       <div style={{ padding: "12px 12px 4px", display: "grid", gap: 11,
         gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))" }}>
-        <F label="Name" k="name" ph="sap-app-01"
+        <VMField label="Name" value={req.name} onChange={set("name")} ph="sap-app-01" required={need("name")}
            hint={req.count > 1 ? `${req.count} VMs: ${req.name || "name"}-1 … -${req.count}` : "lowercase letters, digits and hyphens"} />
-        <NamespaceField />
-        <F label="Count" k="count" type="number" hint="1–10" />
-        <F label="Golden image" k="sourceDataSource"
+        <VMNamespaceField
+           value={req.namespace} createNamespace={req.createNamespace} namespaces={nsList}
+           onPick={(v) => {
+             if (v === "__new__") setReq((p) => ({ ...p, namespace: "", createNamespace: true }));
+             else setReq((p) => ({ ...p, namespace: v || null, createNamespace: false }));
+             setDry(null); setResult(null);
+           }}
+           onType={(v) => { setReq((p) => ({ ...p, namespace: v, createNamespace: true })); setDry(null); setResult(null); }}
+           onToggleCreate={(on) => { setReq((p) => ({ ...p, createNamespace: on })); setDry(null); }} />
+        <VMField label="Count" value={req.count} onChange={set("count")} type="number" hint="1–10" />
+        <VMField label="Golden image" value={req.sourceDataSource} onChange={set("sourceDataSource")} required={need("sourceDataSource")}
            opts={cat.images.map((i) => ({ value: i.name, label: `${i.name}${i.ready ? "" : " (not ready)"}` }))}
            hint={cat.images.length ? `${cat.images.length} available on this cluster` : "none found — check the image namespace"} />
-        <F label="Instance type" k="instanceType"
+        <VMField label="Instance type" value={req.instanceType} onChange={set("instanceType")}
            opts={cat.instanceTypes.map((i) => ({ value: i.name, label: `${i.name} — ${i.cpu} vCPU / ${i.memory}` }))}
            hint="a golden size, so capacity stays predictable" />
-        <F label="Root disk (GiB)" k="diskSizeGi" type="number" hint="persistent — survives restarts" />
-        <F label="Storage class" k="storageClass"
+        <VMField label="Root disk (GiB)" value={req.diskSizeGi} onChange={set("diskSizeGi")} type="number" hint="persistent — survives restarts" />
+        <VMField label="Storage class" value={req.storageClass} onChange={set("storageClass")}
            opts={cat.storageClasses.map((s) => ({ value: s.name, label: s.name + (s.default ? " (default)" : "") }))} />
-        <F label="Network (NAD)" k="networkAttachmentDefinition" ph="pod network"
+        <VMField label="Network (NAD)" value={req.networkAttachmentDefinition} onChange={set("networkAttachmentDefinition")} ph="pod network"
            hint="leave blank for pod networking" />
-        <F label="Owner" k="owner" ph="platform-team" suggest={OWNER_SUGGESTIONS}
-           hint="who answers for this VM later" />
-        <F label="Cost centre" k="costCentre" ph="CC-4471" suggest={COST_CENTRE_SUGGESTIONS} />
-        <F label="Environment" k="environment"
+        <VMField label="Owner" value={req.owner} onChange={set("owner")} ph="platform-team"
+           suggest={OWNER_SUGGESTIONS} listId="vmreq-owner" hint="who answers for this VM later" />
+        <VMField label="Cost centre" value={req.costCentre} onChange={set("costCentre")} ph="CC-4471"
+           suggest={COST_CENTRE_SUGGESTIONS} listId="vmreq-cost-centre" />
+        <VMField label="Environment" value={req.environment} onChange={set("environment")}
            opts={[{ value: "dev", label: "dev" }, { value: "test", label: "test" }, { value: "prod", label: "prod" }]} />
-        <F label="Expires on" k="expiresOn" type="date" hint="unset means it is nobody's job to reclaim it" />
+        <VMField label="Expires on" value={req.expiresOn} onChange={set("expiresOn")} type="date"
+           hint="unset means it is nobody's job to reclaim it" />
       </div>
       <div style={{ padding: "4px 12px 12px" }}>
         <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5 }}>
