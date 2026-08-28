@@ -3005,6 +3005,19 @@ async function startSSE() {
         } catch (err) { return sendJson(res, 400, { error: err.message }); }
       }
 
+      // Ask ServiceNow about one request, on demand. This is what moves
+      // "submitted" to "approved" without depending on the background
+      // reconciler being switched on.
+      {
+        const m = url.pathname.match(/^\/api\/vm\/requests\/([\w-]+)\/check-approval$/);
+        if (m && (req.method === "POST" || req.method === "GET")) {
+          try {
+            const st = await import("./services/vm-request-store.js");
+            return sendJson(res, 200, await st.checkApproval(m[1]));
+          } catch (err) { return sendJson(res, 400, { ok: false, error: err.message }); }
+        }
+      }
+
       {
         const m = url.pathname.match(/^\/api\/vm\/requests\/([\w-]+)\/unlock$/);
         if (m && req.method === "POST") {

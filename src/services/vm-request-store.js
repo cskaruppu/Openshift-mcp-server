@@ -265,11 +265,75 @@ function readApproval(cr) {
 }
 
 /**
- * Poll every submitted request, and provision the ones the CAB approved.
+ * Ask ServiceNow about ONE submitted request and move it to approved, rejected
+ * or cancelled. Deliberately stops at approved — provisioning stays a click,
+ * so approval enables the button rather than acting on its own.
+ *
+ * On-demand, so the flow does not depend on a background reconciler being
+ * switched on. Returns why it could not answer rather than a silent "pending",
+ * because "the CAB approved it and nothing happened" is the confusing case.
+ */
+export async function checkApproval(id) {
+  await hydrate();
+  const rec = _mem.get(id);
+  if (!rec) return { ok: false, error: "Request not found." };
+  if (rec.state !== STATES.SUBMITTED) {
+    return { ok: true, state: rec.state, verdict: rec.state, note: "Nothing to check — this request is not awaiting approval." };
+  }
+
+  const sysId = rec.changeRequest?.sys_id, number = rec.changeRequest?.number;
+  if (!sysId && !number) {
+    return { ok: false, state: rec.state, error: "This request has no change request number recorded, so its approval cannot be looked up." };
+  }
+
+  let getRecord;
+  try { ({ getRecord } = await import("../utils/servicenow-client.js")); }
+  catch (e) { return { ok: false, state: rec.state, error: `ServiceNow client unavailable: ${e.message}` }; }
+
+  let cr;
+  try { cr = await getRecord("change_request", sysId || number); }
+  catch (e) {
+    // Surface the real reason — instance asleep, credentials, or the record
+    // not being readable by the integration user.
+    return { ok: false, state: rec.state, changeRequest: rec.changeRequest, error: `Could not read ${number || sysId} from ServiceNow: ${e.message}` };
+  }
+
+  const record = cr?.result || cr;
+  if (!record) {
+    return { ok: false, state: rec.state, error: `ServiceNow returned no record for ${number || sysId}.` };
+  }
+
+  const verdict = readApproval(record);
+  const detail = { number, approval: record.approval || null, state: record.state || null, stateLabel: record.state_label || null };
+
+  if (verdict === "approved") {
+    transition(rec, STATES.APPROVED, { approvedAt: nowIso(), note: `${number} approved in ServiceNow.` });
+    await persist(rec);
+    return { ok: true, state: rec.state, verdict, detail, note: "Approved — you can provision now." };
+  }
+  if (verdict === "rejected") {
+    transition(rec, STATES.REJECTED, { note: `${number} was rejected in ServiceNow. Nothing was created.` });
+    await persist(rec);
+    return { ok: true, state: rec.state, verdict, detail };
+  }
+  if (verdict === "cancelled") {
+    transition(rec, STATES.CANCELLED, { note: `${number} was cancelled in ServiceNow.` });
+    await persist(rec);
+    return { ok: true, state: rec.state, verdict, detail };
+  }
+  return { ok: true, state: rec.state, verdict: "pending", detail, note: `${number} is still awaiting approval (approval="${record.approval || "—"}", state="${record.state || "—"}").` };
+}
+
+/**
+ * Poll every submitted request and advance the ones the CAB decided on.
  * Safe to call on a timer: state transitions are guarded, and a request that is
  * already provisioning is skipped rather than double-applied.
+ *
+ * Provisioning on approval is OPT-IN (VM_AUTO_PROVISION_ON_APPROVAL=true).
+ * By default the reconciler stops at approved and a person clicks Provision —
+ * an approval is permission to act, not the act itself.
  */
-export async function reconcileApprovals({ cluster = "local" } = {}) {
+export async function reconcileApprovals({ cluster = "local", autoProvision = process.env.VM_AUTO_PROVISION_ON_APPROVAL === "true" } = {}) {
   await hydrate();
   const pending = [..._mem.values()].filter((r) => r.state === STATES.SUBMITTED);
   const out = { checked: pending.length, approved: 0, rejected: 0, provisioned: 0, failed: 0, results: [] };
@@ -304,6 +368,14 @@ export async function reconcileApprovals({ cluster = "local" } = {}) {
     out.approved++;
     transition(rec, STATES.APPROVED, { approvedAt: nowIso(), note: `${number} approved in ServiceNow.` });
     await persist(rec);
+
+    // Default: stop here. The approval unlocks the Provision button; a person
+    // still presses it. Only an estate that has explicitly opted into
+    // unattended provisioning goes further.
+    if (!autoProvision) {
+      out.results.push({ id: rec.id, number, verdict, provisioned: false, note: "Approved — awaiting the operator's Provision click." });
+      continue;
+    }
 
     // Re-check before acting. An approval can sit for days, and the cluster
     // moves on — the name may now be taken, or the quota consumed.

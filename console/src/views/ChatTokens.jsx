@@ -2950,6 +2950,7 @@ function VMRequestCard({ data, cluster }) {
   const [access, setAccess] = useState(null);
   const [serverState, setServerState] = useState(null); // authoritative gate state
   const [vmStatus, setVmStatus] = useState(null);       // live runtime after provisioning
+  const [approvalCheck, setApprovalCheck] = useState(null); // last ServiceNow lookup
   const cat = data.catalogue || { images: [], instanceTypes: [], storageClasses: [] };
 
   const missing = [];
@@ -2987,6 +2988,18 @@ function VMRequestCard({ data, cluster }) {
           // Adopt the stored request so a reloaded card shows what was validated.
           if (d.request && d.state !== "draft") setReq((p) => ({ ...p, ...d.request }));
           if (d.preflight) setPre(d.preflight);
+          // While a change board holds it, ask ServiceNow directly. Without
+          // this the card waits on a background reconciler that ships
+          // switched off, and an approved CR never unlocks Provision.
+          if (d.state === "submitted" && d.requestId) {
+            try {
+              const cr = await fetch(clusterUrl(`/api/vm/requests/${d.requestId}/check-approval`, cluster), { method: "POST" });
+              const cd = await cr.json();
+              if (stop) return;
+              setApprovalCheck(cd);
+              if (cd.ok && cd.state && cd.state !== "submitted") setServerState((s) => ({ ...(s || {}), state: cd.state }));
+            } catch { /* transient */ }
+          }
         } else setServerState(null);
       } catch { /* transient — keep the last known phase */ }
     };
@@ -3069,6 +3082,22 @@ function VMRequestCard({ data, cluster }) {
         showToast(`Submitted as ${d.changeRequest?.number || "a change request"}`, "success");
       } else showToast(d.error || "Submission failed", "error");
     } catch (e) { setSubmitted({ ok: false, error: e.message }); }
+    finally { setBusy(null); }
+  }
+
+  async function doCheckApproval() {
+    if (!serverState?.requestId) return;
+    setBusy("approval");
+    try {
+      const d = await post(`/api/vm/requests/${serverState.requestId}/check-approval`, {});
+      setApprovalCheck(d);
+      if (d.ok && d.state && d.state !== "submitted") {
+        setServerState((s) => ({ ...(s || {}), state: d.state }));
+        showToast(d.verdict === "approved" ? "Approved — you can provision now" : `Change request ${d.verdict}`,
+          d.verdict === "approved" ? "success" : "error");
+      } else if (!d.ok) showToast(d.error || "Could not read the change request", "error");
+      else showToast("Still awaiting approval", "info");
+    } catch (e) { setApprovalCheck({ ok: false, error: e.message }); }
     finally { setBusy(null); }
   }
 
@@ -3166,6 +3195,42 @@ function VMRequestCard({ data, cluster }) {
           background: "rgba(56,189,248,.06)", color: "#38bdf8" }}>
           🔒 Details are locked — a change board must approve exactly what the dry-run validated.
           {phase === "dry_run_passed" && " Use “Unlock to edit” to change anything, then dry-run again."}
+        </div>
+      )}
+
+      {/* Awaiting a change board: show what ServiceNow currently says, and let
+          the operator ask again rather than wait on a poll. */}
+      {(phase === "submitted" || (approvalCheck && !approvalCheck.ok)) && (
+        <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)",
+          background: approvalCheck?.ok === false ? "rgba(239,68,68,.07)" : "rgba(245,158,11,.07)", fontSize: 11.5 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <strong style={{ color: approvalCheck?.ok === false ? "#fca5a5" : "#fbbf24" }}>
+              {approvalCheck?.ok === false ? "⚠ Cannot read the change request" : "⏳ Awaiting approval"}
+            </strong>
+            {serverState?.changeRequest?.number && (
+              <code style={{ fontSize: 11, opacity: .9 }}>{serverState.changeRequest.number}</code>
+            )}
+            <button onClick={doCheckApproval} disabled={!!busy}
+              style={{ marginLeft: "auto", padding: "3px 11px", borderRadius: 6, border: "1px solid var(--border)",
+                background: "transparent", color: "inherit", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+              {busy === "approval" ? "Checking…" : "↻ Check approval now"}
+            </button>
+          </div>
+          <div style={{ opacity: .85, marginTop: 4 }}>
+            {approvalCheck?.error || approvalCheck?.note || "Checking ServiceNow every 10 seconds. Approve the change there and Provision unlocks here."}
+          </div>
+          {approvalCheck?.detail && (
+            <div style={{ opacity: .6, fontSize: 10.5, marginTop: 3 }}>
+              ServiceNow says: approval=<b>{approvalCheck.detail.approval || "—"}</b> · state=<b>{approvalCheck.detail.stateLabel || approvalCheck.detail.state || "—"}</b>
+            </div>
+          )}
+        </div>
+      )}
+
+      {phase === "approved" && (
+        <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)",
+          background: "rgba(34,197,94,.08)", fontSize: 11.5, color: "#4ade80", fontWeight: 700 }}>
+          ✅ {serverState?.changeRequest?.number || "The change request"} is approved — press <b>3. Provision</b> to build the VM.
         </div>
       )}
 
