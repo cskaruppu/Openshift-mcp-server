@@ -3132,6 +3132,34 @@ function VMRequestCard({ data, cluster }) {
         </div>
       )}
 
+      {/* A 403 here is not a product failure — it is a missing opt-in grant.
+          Say which one, and give the command, instead of leaving a raw API
+          error on screen for someone to decode. */}
+      {(() => {
+        const text = JSON.stringify(dry?.terminal || result?.terminal || dry || result || "");
+        const forbidden = /is forbidden|"code":403|cannot create resource/i.test(text);
+        if (!forbidden) return null;
+        const sa = (text.match(/system:serviceaccount:[\w-]+:[\w-]+/) || [])[0];
+        return (
+          <div style={{ padding: "10px 12px", borderTop: "1px solid var(--border)",
+            background: "rgba(245,158,11,.08)", fontSize: 11.5 }}>
+            <div style={{ fontWeight: 800, color: "#fbbf24", marginBottom: 4 }}>
+              🔑 The agent may read VMs, but is not yet allowed to create them
+            </div>
+            <div style={{ opacity: .85, marginBottom: 6 }}>
+              {sa ? <>Grant the virtualization role to <code>{sa}</code>.</> : "Grant the virtualization role to the agent's service account."}{" "}
+              It is a separate, opt-in ClusterRole so a cluster without OpenShift Virtualization never has VM-create rights. Run as cluster-admin, then press Re-check:
+            </div>
+            <pre style={{ margin: 0, padding: 9, borderRadius: 7, background: "#0b1220", color: "#e2e8f0",
+              fontSize: 10.5, fontFamily: "var(--font-mono, ui-monospace, monospace)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+oc apply -f https://raw.githubusercontent.com/cskaruppu/openshift-mcp-server/claude/setup-mcp-openshift-9JUo7/deploy/dashboard/manifests/serviceaccount.yaml</pre>
+            <div style={{ opacity: .6, fontSize: 10.5, marginTop: 5 }}>
+              Cluster-side only — no image rebuild, no restart.
+            </div>
+          </div>
+        );
+      })()}
+
       {(dry?.terminal || result?.terminal) && (
         <pre style={{ margin: 0, padding: "10px 12px", background: "#0b1220", color: "#e2e8f0",
           borderTop: "1px solid var(--border)", fontFamily: "var(--font-mono, ui-monospace, monospace)",
