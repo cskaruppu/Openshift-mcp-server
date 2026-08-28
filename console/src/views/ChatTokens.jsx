@@ -2860,6 +2860,8 @@ const COST_CENTRE_SUGGESTIONS = ["CC-4471", "CC-1002", "CC-2200", "CC-3310"];
 
 // Inputs are deliberately larger than the surrounding chat text: this is a form
 // people fill in, not a label they read.
+// Greyed-out styling for a frozen field: visibly not editable, still readable.
+const VM_LOCKED = { opacity: .62, cursor: "not-allowed", background: "var(--bg3, rgba(127,127,127,.10))" };
 const VM_CTRL = {
   padding: "8px 10px", borderRadius: 7, border: "1px solid var(--border)",
   background: "var(--bg2, transparent)", color: "inherit", fontSize: 13,
@@ -2873,23 +2875,23 @@ const VM_CTRL = {
  * keystroke. Hoisting keeps the element identity stable, so typing is
  * continuous. Same reason VMNamespaceField lives out here.
  */
-function VMField({ label, value, onChange, type = "text", ph, opts, hint, suggest, required, listId }) {
+function VMField({ label, value, onChange, type = "text", ph, opts, hint, suggest, required, listId, disabled }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5 }}>
       <span style={{ opacity: .75, fontWeight: 700 }}>
         {label}{required && <span style={{ color: "#fca5a5" }}> — required</span>}
       </span>
       {opts ? (
-        <select value={value || ""} onChange={onChange} className="vmreq-input"
-          style={{ ...VM_CTRL, borderColor: required ? "rgba(239,68,68,.55)" : "var(--border)" }}>
+        <select value={value || ""} onChange={onChange} className="vmreq-input" disabled={disabled}
+          style={{ ...VM_CTRL, ...(disabled ? VM_LOCKED : {}), borderColor: required && !disabled ? "rgba(239,68,68,.55)" : "var(--border)" }}>
           <option value="">— choose —</option>
           {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       ) : (
         <>
-          <input type={type} value={value ?? ""} onChange={onChange} placeholder={ph}
+          <input type={type} value={value ?? ""} onChange={onChange} placeholder={ph} disabled={disabled}
             list={suggest?.length ? listId : undefined} autoComplete="off"
-            style={{ ...VM_CTRL, borderColor: required ? "rgba(239,68,68,.55)" : "var(--border)" }} />
+            style={{ ...VM_CTRL, ...(disabled ? VM_LOCKED : {}), borderColor: required && !disabled ? "rgba(239,68,68,.55)" : "var(--border)" }} />
           {suggest?.length > 0 && (
             <datalist id={listId}>{suggest.map((s) => <option key={s} value={s} />)}</datalist>
           )}
@@ -2901,7 +2903,7 @@ function VMField({ label, value, onChange, type = "text", ph, opts, hint, sugges
 }
 
 /** Pick a real namespace, or name a new one and have provisioning create it. */
-function VMNamespaceField({ value, createNamespace, namespaces, onPick, onType, onToggleCreate }) {
+function VMNamespaceField({ value, createNamespace, namespaces, onPick, onType, onToggleCreate, disabled }) {
   const known = namespaces.includes(value);
   const creating = !!createNamespace || (!!value && !known) || (!value && !!createNamespace);
   return (
@@ -2911,19 +2913,19 @@ function VMNamespaceField({ value, createNamespace, namespaces, onPick, onType, 
       </span>
       <select
         value={known ? value : (creating ? "__new__" : "")}
-        onChange={(e) => onPick(e.target.value)}
-        style={{ ...VM_CTRL, borderColor: !value ? "rgba(239,68,68,.55)" : "var(--border)" }}>
+        onChange={(e) => onPick(e.target.value)} disabled={disabled}
+        style={{ ...VM_CTRL, ...(disabled ? VM_LOCKED : {}), borderColor: !value && !disabled ? "rgba(239,68,68,.55)" : "var(--border)" }}>
         <option value="">— choose an existing namespace —</option>
         {namespaces.map((n) => <option key={n} value={n}>{n}</option>)}
         <option value="__new__">＋ Create a new namespace…</option>
       </select>
       {creating && (
         <>
-          <input value={value ?? ""} placeholder="new-namespace-name" autoComplete="off"
+          <input value={value ?? ""} placeholder="new-namespace-name" autoComplete="off" disabled={disabled}
             onChange={(e) => onType(e.target.value)}
-            style={{ ...VM_CTRL, marginTop: 2 }} />
+            style={{ ...VM_CTRL, ...(disabled ? VM_LOCKED : {}), marginTop: 2 }} />
           <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, opacity: .85, marginTop: 2 }}>
-            <input type="checkbox" checked={!!createNamespace} onChange={(e) => onToggleCreate(e.target.checked)} />
+            <input type="checkbox" checked={!!createNamespace} disabled={disabled} onChange={(e) => onToggleCreate(e.target.checked)} />
             Create it if it doesn’t exist
           </label>
         </>
@@ -2946,6 +2948,8 @@ function VMRequestCard({ data, cluster }) {
   const [raiseCR, setRaiseCR] = useState(true);
   const [submitted, setSubmitted] = useState(null);   // ServiceNow-gated path
   const [access, setAccess] = useState(null);
+  const [serverState, setServerState] = useState(null); // authoritative gate state
+  const [vmStatus, setVmStatus] = useState(null);       // live runtime after provisioning
   const cat = data.catalogue || { images: [], instanceTypes: [], storageClasses: [] };
 
   const missing = [];
@@ -2965,6 +2969,56 @@ function VMRequestCard({ data, cluster }) {
     return r.json();
   }
 
+  // Rehydrate the gate from the server, keyed by namespace/name — nothing is
+  // kept in the browser, so a reloaded chat, another tab, or a colleague's
+  // screen all show the same phase. Also polls while a change board holds it,
+  // so an approval in ServiceNow lights up the Provision button on its own.
+  const reqNs = req.namespace, reqName = req.name;
+  useEffect(() => {
+    if (!reqNs || !reqName) return;
+    let stop = false;
+    const tick = async () => {
+      try {
+        const r = await fetch(clusterUrl(`/api/vm/requests/active?namespace=${encodeURIComponent(reqNs)}&name=${encodeURIComponent(reqName)}`, cluster));
+        const d = await r.json();
+        if (stop) return;
+        if (d.found) {
+          setServerState(d);
+          // Adopt the stored request so a reloaded card shows what was validated.
+          if (d.request && d.state !== "draft") setReq((p) => ({ ...p, ...d.request }));
+          if (d.preflight) setPre(d.preflight);
+        } else setServerState(null);
+      } catch { /* transient — keep the last known phase */ }
+    };
+    tick();
+    // Only poll while the outcome can change without us: a change board
+    // deciding, or the reconciler provisioning.
+    const live = ["submitted", "approved", "provisioning"].includes(serverState?.state);
+    const id = live ? setInterval(tick, 10000) : null;
+    return () => { stop = true; if (id) clearInterval(id); };
+  }, [reqNs, reqName, cluster, serverState?.state]);
+
+  // After provisioning, "created" is not "running" — poll the real phase until
+  // every VM is up or one has failed.
+  const provisionedNames = (serverState?.result?.created || result?.created || []).map((c) => c.name).filter(Boolean);
+  const namesKey = provisionedNames.join(",");
+  useEffect(() => {
+    if (!namesKey || !reqNs) return;
+    let stop = false;
+    const tick = async () => {
+      try {
+        const r = await fetch(clusterUrl(`/api/vm/status?namespace=${encodeURIComponent(reqNs)}&names=${encodeURIComponent(namesKey)}`, cluster));
+        const d = await r.json();
+        if (!stop) setVmStatus(d);
+      } catch { /* transient */ }
+    };
+    tick();
+    // Stop once everything has settled — a running VM does not need watching.
+    const settled = vmStatus?.allRunning || vmStatus?.anyFailed;
+    const id = settled ? null : setInterval(tick, 8000);
+    return () => { stop = true; if (id) clearInterval(id); };
+  }, [namesKey, reqNs, cluster, vmStatus?.allRunning, vmStatus?.anyFailed]);
+
   async function revalidate(next) {
     setReq(next); setDry(null);
     setBusy("checking");
@@ -2978,19 +3032,29 @@ function VMRequestCard({ data, cluster }) {
     setReq((p) => ({ ...p, [k]: v || null })); setDry(null); setResult(null);
   };
 
+  // Each action advances the SERVER-held phase; the local copy is updated only
+  // so the UI does not wait a poll cycle to catch up.
   async function doDryRun() {
     setBusy("dry"); setDry(null);
-    try { setDry(await post("/api/vm/dry-run", { request: req })); }
-    catch (e) { setDry({ ok: false, terminal: [`Error: ${e.message}`] }); }
+    try {
+      const d = await post("/api/vm/dry-run", { request: req });
+      setDry(d);
+      if (d.ok && d.requestId) {
+        setServerState((s) => ({ ...(s || {}), requestId: d.requestId, state: d.state || "dry_run_passed" }));
+        showToast("Dry-run passed — details locked, you can raise the change request", "success");
+      } else if (!d.ok) showToast("Dry-run failed — nothing was created", "error");
+    } catch (e) { setDry({ ok: false, terminal: [`Error: ${e.message}`] }); }
     finally { setBusy(null); }
   }
   async function doProvision() {
     setBusy("provision");
     try {
-      const d = await post("/api/vm/provision", { request: req, raiseChangeRequest: raiseCR });
+      const d = await post("/api/vm/provision", { request: req, raiseChangeRequest: raiseCR, requestId: serverState?.requestId || null });
       setResult(d);
-      if (d.ok) showToast(`${d.created?.length || 0} VM(s) created`, "success");
-      else showToast(d.error || "Provisioning failed", "error");
+      if (d.ok) {
+        setServerState((s) => ({ ...(s || {}), state: "provisioned", result: d }));
+        showToast(`${d.created?.length || 0} VM(s) created — watching until they are running`, "success");
+      } else showToast(d.error || "Provisioning failed", "error");
     } catch (e) { setResult({ ok: false, error: e.message }); }
     finally { setBusy(null); }
   }
@@ -2998,11 +3062,24 @@ function VMRequestCard({ data, cluster }) {
   async function submitForApproval() {
     setBusy("submit");
     try {
-      const d = await post("/api/vm/requests/submit", { request: req });
+      const d = await post("/api/vm/requests/submit", { request: req, requestId: serverState?.requestId || null });
       setSubmitted(d);
-      if (d.ok) showToast(`Submitted as ${d.changeRequest?.number || "a change request"}`, "success");
-      else showToast(d.error || "Submission failed", "error");
+      if (d.ok) {
+        setServerState((s) => ({ ...(s || {}), requestId: d.requestId, state: d.state || "submitted", changeRequest: d.changeRequest }));
+        showToast(`Submitted as ${d.changeRequest?.number || "a change request"}`, "success");
+      } else showToast(d.error || "Submission failed", "error");
     } catch (e) { setSubmitted({ ok: false, error: e.message }); }
+    finally { setBusy(null); }
+  }
+
+  async function doUnlock() {
+    if (!serverState?.requestId) { setServerState(null); setDry(null); return; }
+    setBusy("unlock");
+    try {
+      const d = await post(`/api/vm/requests/${serverState.requestId}/unlock`, {});
+      if (d.ok) { setServerState({ ...serverState, state: "draft" }); setDry(null); showToast("Reopened for editing — dry-run again when ready", "success"); }
+      else showToast(d.error || "Could not unlock", "error");
+    } catch (e) { showToast(e.message, "error"); }
     finally { setBusy(null); }
   }
 
@@ -3022,6 +3099,26 @@ function VMRequestCard({ data, cluster }) {
   const need = (k) => !req[k] && ["name", "namespace", "sourceDataSource"].includes(k);
   const nsList = cat.namespaces || [];
 
+  // ── Gate state ───────────────────────────────────────────────────────────
+  // The order is dry-run → change request → approval → provision, and each
+  // gate is held SERVER-side so a refreshed chat, a different browser or a
+  // restarted pod all resume at the same point.
+  const phase = serverState?.state || (dry?.ok ? "dry_run_passed" : "draft");
+  const locked = phase !== "draft";                    // details frozen once validated
+  const canDryRun = phase === "draft" || phase === "dry_run_passed";
+  const canSubmit = phase === "dry_run_passed";
+  const canProvision = phase === "approved";
+  const finished = ["provisioned", "rejected", "cancelled", "failed"].includes(phase);
+
+  const PHASES = [
+    { id: "draft", label: "Fill in" },
+    { id: "dry_run_passed", label: "Dry-run passed" },
+    { id: "submitted", label: "Awaiting approval" },
+    { id: "approved", label: "Approved" },
+    { id: "provisioned", label: "Provisioned" },
+  ];
+  const phaseIdx = Math.max(0, PHASES.findIndex((p) => p.id === phase));
+
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", margin: "8px 0",
       boxShadow: ready ? "0 0 0 1px rgba(34,197,94,.35)" : blocked ? "0 0 0 1px rgba(239,68,68,.35)" : "none" }}>
@@ -3036,6 +3133,41 @@ function VMRequestCard({ data, cluster }) {
           {blocked ? "Blocked" : missing.length ? `${missing.length} field(s) needed` : "Ready to dry-run"}
         </span>
       </div>
+
+      {/* Where this request is, and what has to happen next. Read from the
+          server, so a reloaded chat resumes here rather than at the start. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 0, flexWrap: "wrap",
+        padding: "8px 12px", borderBottom: "1px solid var(--border)", background: "rgba(127,127,127,.04)" }}>
+        {PHASES.map((p, i) => {
+          const done = i < phaseIdx || phase === "provisioned";
+          const now = i === phaseIdx && !finished;
+          const bad = finished && phase !== "provisioned" && i === phaseIdx;
+          const c = bad ? { fg: "#fca5a5", bd: "rgba(239,68,68,.6)", bg: "rgba(239,68,68,.10)" }
+            : done ? { fg: "#4ade80", bd: "rgba(34,197,94,.5)", bg: "rgba(34,197,94,.10)" }
+            : now ? { fg: "#38bdf8", bd: "rgba(56,189,248,.6)", bg: "rgba(56,189,248,.10)" }
+            : { fg: "var(--muted, #94a3b8)", bd: "var(--border)", bg: "transparent" };
+          return (
+            <div key={p.id} style={{ display: "flex", alignItems: "center" }}>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: c.fg, border: `1px solid ${c.bd}`,
+                background: c.bg, borderRadius: 999, padding: "2px 9px", whiteSpace: "nowrap" }}>
+                {done ? "✓ " : bad ? "✕ " : ""}{p.label}
+              </span>
+              {i < PHASES.length - 1 && <span style={{ margin: "0 4px", opacity: .35, fontSize: 10 }}>▸</span>}
+            </div>
+          );
+        })}
+        {finished && phase !== "provisioned" && (
+          <span style={{ marginLeft: 8, fontSize: 10.5, color: "#fca5a5", fontWeight: 700 }}>{phase}</span>
+        )}
+      </div>
+
+      {locked && !finished && (
+        <div style={{ padding: "6px 12px", fontSize: 11, borderBottom: "1px solid var(--border)",
+          background: "rgba(56,189,248,.06)", color: "#38bdf8" }}>
+          🔒 Details are locked — a change board must approve exactly what the dry-run validated.
+          {phase === "dry_run_passed" && " Use “Unlock to edit” to change anything, then dry-run again."}
+        </div>
+      )}
 
       {/* The reconciliation line — the one thing a competitor demo will not have */}
       {recon?.message && (
@@ -3055,9 +3187,9 @@ function VMRequestCard({ data, cluster }) {
 
       <div style={{ padding: "12px 12px 4px", display: "grid", gap: 11,
         gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))" }}>
-        <VMField label="Name" value={req.name} onChange={set("name")} ph="sap-app-01" required={need("name")}
+        <VMField disabled={locked} label="Name" value={req.name} onChange={set("name")} ph="sap-app-01" required={need("name")}
            hint={req.count > 1 ? `${req.count} VMs: ${req.name || "name"}-1 … -${req.count}` : "lowercase letters, digits and hyphens"} />
-        <VMNamespaceField
+        <VMNamespaceField disabled={locked}
            value={req.namespace} createNamespace={req.createNamespace} namespaces={nsList}
            onPick={(v) => {
              if (v === "__new__") setReq((p) => ({ ...p, namespace: "", createNamespace: true }));
@@ -3066,25 +3198,25 @@ function VMRequestCard({ data, cluster }) {
            }}
            onType={(v) => { setReq((p) => ({ ...p, namespace: v, createNamespace: true })); setDry(null); setResult(null); }}
            onToggleCreate={(on) => { setReq((p) => ({ ...p, createNamespace: on })); setDry(null); }} />
-        <VMField label="Count" value={req.count} onChange={set("count")} type="number" hint="1–10" />
-        <VMField label="Golden image" value={req.sourceDataSource} onChange={set("sourceDataSource")} required={need("sourceDataSource")}
+        <VMField disabled={locked} label="Count" value={req.count} onChange={set("count")} type="number" hint="1–10" />
+        <VMField disabled={locked} label="Golden image" value={req.sourceDataSource} onChange={set("sourceDataSource")} required={need("sourceDataSource")}
            opts={cat.images.map((i) => ({ value: i.name, label: `${i.name}${i.ready ? "" : " (not ready)"}` }))}
            hint={cat.images.length ? `${cat.images.length} available on this cluster` : "none found — check the image namespace"} />
-        <VMField label="Instance type" value={req.instanceType} onChange={set("instanceType")}
+        <VMField disabled={locked} label="Instance type" value={req.instanceType} onChange={set("instanceType")}
            opts={cat.instanceTypes.map((i) => ({ value: i.name, label: `${i.name} — ${i.cpu} vCPU / ${i.memory}` }))}
            hint="a golden size, so capacity stays predictable" />
-        <VMField label="Root disk (GiB)" value={req.diskSizeGi} onChange={set("diskSizeGi")} type="number" hint="persistent — survives restarts" />
-        <VMField label="Storage class" value={req.storageClass} onChange={set("storageClass")}
+        <VMField disabled={locked} label="Root disk (GiB)" value={req.diskSizeGi} onChange={set("diskSizeGi")} type="number" hint="persistent — survives restarts" />
+        <VMField disabled={locked} label="Storage class" value={req.storageClass} onChange={set("storageClass")}
            opts={cat.storageClasses.map((s) => ({ value: s.name, label: s.name + (s.default ? " (default)" : "") }))} />
-        <VMField label="Network (NAD)" value={req.networkAttachmentDefinition} onChange={set("networkAttachmentDefinition")} ph="pod network"
+        <VMField disabled={locked} label="Network (NAD)" value={req.networkAttachmentDefinition} onChange={set("networkAttachmentDefinition")} ph="pod network"
            hint="leave blank for pod networking" />
-        <VMField label="Owner" value={req.owner} onChange={set("owner")} ph="platform-team"
+        <VMField disabled={locked} label="Owner" value={req.owner} onChange={set("owner")} ph="platform-team"
            suggest={OWNER_SUGGESTIONS} listId="vmreq-owner" hint="who answers for this VM later" />
-        <VMField label="Cost centre" value={req.costCentre} onChange={set("costCentre")} ph="CC-4471"
+        <VMField disabled={locked} label="Cost centre" value={req.costCentre} onChange={set("costCentre")} ph="CC-4471"
            suggest={COST_CENTRE_SUGGESTIONS} listId="vmreq-cost-centre" />
-        <VMField label="Environment" value={req.environment} onChange={set("environment")}
+        <VMField disabled={locked} label="Environment" value={req.environment} onChange={set("environment")}
            opts={[{ value: "dev", label: "dev" }, { value: "test", label: "test" }, { value: "prod", label: "prod" }]} />
-        <VMField label="Expires on" value={req.expiresOn} onChange={set("expiresOn")} type="date"
+        <VMField disabled={locked} label="Expires on" value={req.expiresOn} onChange={set("expiresOn")} type="date"
            hint="unset means it is nobody's job to reclaim it" />
       </div>
       <div style={{ padding: "4px 12px 12px" }}>
@@ -3221,32 +3353,95 @@ oc apply -f https://raw.githubusercontent.com/cskaruppu/openshift-mcp-server/cla
         </div>
       )}
 
+      {/* After provisioning: what the machine is actually doing. "Created" is
+          not "running" — the root disk imports first, and that can fail. */}
+      {vmStatus?.vms?.length > 0 && (
+        <div style={{ padding: "10px 12px", borderTop: "1px solid var(--border)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11.5, fontWeight: 800 }}>🖥 Machine status</span>
+            <span style={{ fontSize: 10.5, padding: "2px 9px", borderRadius: 999, fontWeight: 700,
+              background: vmStatus.anyFailed ? "rgba(239,68,68,.18)" : vmStatus.allRunning ? "rgba(34,197,94,.18)" : "rgba(245,158,11,.18)",
+              color: vmStatus.anyFailed ? "#fca5a5" : vmStatus.allRunning ? "#4ade80" : "#fbbf24" }}>
+              {vmStatus.anyFailed ? "Attention needed" : vmStatus.allRunning ? "All running" : "Provisioning…"}
+            </span>
+            {!vmStatus.allRunning && !vmStatus.anyFailed && (
+              <span style={{ fontSize: 10.5, opacity: .6 }}>refreshing every 8s</span>
+            )}
+          </div>
+          {vmStatus.vms.map((v) => {
+            const c = v.failed ? { fg: "#fca5a5", bd: "rgba(239,68,68,.45)" }
+              : v.ready ? { fg: "#4ade80", bd: "rgba(34,197,94,.45)" }
+              : { fg: "#fbbf24", bd: "rgba(245,158,11,.45)" };
+            return (
+              <div key={v.name} style={{ border: `1px solid ${c.bd}`, borderRadius: 8, padding: "8px 10px", marginTop: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 999, background: c.fg, flex: "0 0 auto" }} />
+                  <strong style={{ fontSize: 12 }}>{v.name}</strong>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: c.fg }}>{v.status}</span>
+                  {v.node && <span style={{ fontSize: 10.5, opacity: .6 }}>· {v.node}</span>}
+                  {v.ips?.length > 0 && <span style={{ fontSize: 10.5, opacity: .8, fontFamily: "var(--font-mono, monospace)" }}>· {v.ips.join(", ")}</span>}
+                </div>
+                <div style={{ fontSize: 11, opacity: .85, marginTop: 3 }}>{v.detail}</div>
+                {v.disks?.length > 0 && (
+                  <div style={{ fontSize: 10.5, opacity: .65, marginTop: 3 }}>
+                    {v.disks.map((d) => `disk ${d.name}: ${d.phase}${d.progress ? ` ${d.progress}` : ""}${d.reason ? ` (${d.reason})` : ""}`).join(" · ")}
+                  </div>
+                )}
+                {v.events?.length > 0 && (
+                  <div style={{ marginTop: 5, fontSize: 10.5 }}>
+                    {v.events.map((e, i) => <div key={i} style={{ color: "#fca5a5" }}>⚠ {e}</div>)}
+                  </div>
+                )}
+                {v.ready && (
+                  <button onClick={() => loadAccess(v.name)} disabled={!!busy}
+                    style={{ marginTop: 6, padding: "3px 10px", borderRadius: 6, border: "1px solid var(--border)",
+                      background: "transparent", color: "inherit", fontSize: 10.5, fontWeight: 700, cursor: "pointer" }}>
+                    {busy === "access" ? "…" : "How do I connect?"}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <div style={{ padding: "9px 12px", borderTop: "1px solid var(--border)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <button onClick={doDryRun} disabled={!!busy || missing.length > 0}
+        <button onClick={doDryRun} disabled={!!busy || missing.length > 0 || !canDryRun}
+          title={!canDryRun ? "Already validated — unlock to edit and run it again" : ""}
           style={{ padding: "5px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "transparent",
-            color: "inherit", fontSize: 12, fontWeight: 600, cursor: missing.length ? "not-allowed" : "pointer", opacity: missing.length ? .5 : 1 }}>
-          {busy === "dry" ? "Validating…" : "▷ Dry-run"}
+            color: "inherit", fontSize: 12, fontWeight: 600,
+            cursor: (missing.length || !canDryRun) ? "not-allowed" : "pointer", opacity: (missing.length || !canDryRun) ? .5 : 1 }}>
+          {busy === "dry" ? "Validating…" : phase === "dry_run_passed" ? "✓ Dry-run passed" : "▷ 1. Dry-run"}
         </button>
-        <button onClick={doProvision} disabled={!!busy || !ready || !dry?.ok || !!result?.ok}
-          title={!dry?.ok ? "Dry-run must pass first" : ""}
+        <button onClick={submitForApproval} disabled={!!busy || !canSubmit}
+          title={canSubmit ? "Raise the change request. The VM is provisioned once the CAB approves."
+            : phase === "draft" ? "Dry-run must pass first" : "Already submitted"}
+          style={{ padding: "5px 12px", borderRadius: 7, border: "1px solid rgba(56,189,248,.5)", background: canSubmit ? "rgba(56,189,248,.12)" : "transparent",
+            color: "#38bdf8", fontSize: 12, fontWeight: canSubmit ? 700 : 600,
+            cursor: canSubmit ? "pointer" : "not-allowed", opacity: canSubmit ? 1 : .45 }}>
+          {busy === "submit" ? "Submitting…"
+            : phaseIdx >= 2 ? `✓ ${serverState?.changeRequest?.number || "Submitted"}` : "2. Raise change request"}
+        </button>
+        <button onClick={doProvision} disabled={!!busy || !canProvision}
+          title={canProvision ? "Approved — provision now"
+            : phase === "submitted" ? "Waiting for the change request to be approved"
+            : "Raise and get a change request approved first"}
           style={{ padding: "5px 12px", borderRadius: 7, border: "none",
-            background: dry?.ok && ready && !result?.ok ? "#22c55e" : "rgba(148,163,184,.3)",
-            color: dry?.ok && ready && !result?.ok ? "#052e16" : "inherit",
-            fontSize: 12, fontWeight: 700, cursor: dry?.ok && ready && !result?.ok ? "pointer" : "not-allowed" }}>
-          {busy === "provision" ? "Provisioning…" : result?.ok ? "✅ Provisioned" : "Provision"}
+            background: canProvision ? "#22c55e" : "rgba(148,163,184,.3)",
+            color: canProvision ? "#052e16" : "inherit",
+            fontSize: 12, fontWeight: 700, cursor: canProvision ? "pointer" : "not-allowed" }}>
+          {busy === "provision" ? "Provisioning…" : phase === "provisioned" ? "✅ Provisioned" : "3. Provision"}
         </button>
-        <button onClick={submitForApproval} disabled={!!busy || !ready || !!submitted?.ok || !!result?.ok}
-          title="Raise the change request and let the CAB approve. The VM is provisioned automatically once approved."
-          style={{ padding: "5px 12px", borderRadius: 7, border: "1px solid rgba(56,189,248,.5)", background: "transparent",
-            color: "#38bdf8", fontSize: 12, fontWeight: 600,
-            cursor: ready && !submitted?.ok && !result?.ok ? "pointer" : "not-allowed",
-            opacity: ready && !submitted?.ok && !result?.ok ? 1 : .5 }}>
-          {busy === "submit" ? "Submitting…" : submitted?.ok ? "Submitted" : "Submit for approval"}
-        </button>
-        <label style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 5, opacity: .85 }}>
-          <input type="checkbox" checked={raiseCR} onChange={(e) => setRaiseCR(e.target.checked)} />
-          raise CR on direct provision
-        </label>
+        {locked && !finished && (
+          <button onClick={doUnlock} disabled={!!busy || phase !== "dry_run_passed"}
+            title={phase === "dry_run_passed" ? "Reopen the details — the dry-run will have to pass again"
+              : "A submitted request cannot be edited. Cancel the change request first."}
+            style={{ padding: "5px 11px", borderRadius: 7, border: "1px solid var(--border)", background: "transparent",
+              color: "inherit", fontSize: 11.5, fontWeight: 600,
+              cursor: phase === "dry_run_passed" ? "pointer" : "not-allowed", opacity: phase === "dry_run_passed" ? 1 : .45 }}>
+            {busy === "unlock" ? "Unlocking…" : "✎ Unlock to edit"}
+          </button>
+        )}
         <button onClick={() => revalidate(req)} disabled={!!busy}
           style={{ marginLeft: "auto", padding: "5px 10px", borderRadius: 7, border: "1px solid var(--border)",
             background: "transparent", color: "inherit", fontSize: 11.5, cursor: "pointer" }}>

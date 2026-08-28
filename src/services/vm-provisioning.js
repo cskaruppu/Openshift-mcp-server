@@ -698,3 +698,95 @@ export async function buildVMRequestCard(text, overrides = {}) {
     initiallyMissing: m0,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Runtime status — what actually happened after provisioning
+// ---------------------------------------------------------------------------
+/**
+ * Live state of one or more provisioned VMs.
+ *
+ * "Created" is not "running": the root disk is imported from a golden image
+ * first, and on a slow registry that takes minutes. Reporting the VM as done
+ * the moment the object exists is the same mistake as calling a Deployment
+ * healthy because its pods are Ready — so this reads the DataVolume import
+ * progress, the VirtualMachineInstance phase, and any condition explaining a
+ * stall, and says which of those the VM is actually in.
+ *
+ * @returns {{namespace:string, vms:Array, allRunning:boolean, anyFailed:boolean}}
+ */
+export async function vmRuntimeStatus(namespace, names = []) {
+  const safe = async (p) => { try { return await ocpGet(p); } catch { return null; } };
+  const [dvList, eventList] = await Promise.all([
+    safe(`/${CDI_API}/namespaces/${namespace}/datavolumes`),
+    safe(`/api/v1/namespaces/${namespace}/events?fieldSelector=type!=Normal&limit=100`),
+  ]);
+
+  const vms = [];
+  for (const name of names) {
+    const vm = await safe(`/${KUBEVIRT_API}/namespaces/${namespace}/virtualmachines/${name}`);
+    if (!vm) {
+      vms.push({ name, phase: "missing", status: "Not found", detail: `No VirtualMachine "${name}" in ${namespace}.`, ready: false, failed: true });
+      continue;
+    }
+    const vmi = await safe(`/${KUBEVIRT_API}/namespaces/${namespace}/virtualmachineinstances/${name}`);
+    const conds = [...(vm.status?.conditions || []), ...(vmi?.status?.conditions || [])];
+    const bad = conds.find((c) => c.status === "False" && ["Ready", "Initialized"].includes(c.type) && c.reason)
+             || conds.find((c) => c.type === "Failure" && c.status === "True");
+
+    // Disk import — the usual reason a VM sits not-running for minutes.
+    const dvs = (dvList?.items || []).filter((d) =>
+      d.metadata?.name === name || (d.metadata?.ownerReferences || []).some((o) => o.name === name));
+    const disks = dvs.map((d) => ({
+      name: d.metadata.name,
+      phase: d.status?.phase || "Unknown",
+      progress: d.status?.progress || null,
+      reason: (d.status?.conditions || []).find((c) => c.type === "Running" && c.status === "False")?.reason || null,
+    }));
+    const importing = disks.find((d) => !["Succeeded", "", null, undefined].includes(d.phase) && d.phase !== "Succeeded");
+
+    const vmiPhase = vmi?.status?.phase || null;                 // Pending|Scheduling|Scheduled|Running|Succeeded|Failed
+    const printable = vm.status?.printableStatus || null;        // Starting|Running|Stopped|Provisioning|…
+    const ready = vmiPhase === "Running" && (vm.status?.ready === true || conds.some((c) => c.type === "Ready" && c.status === "True"));
+
+    let phase, status, detail;
+    if (ready) {
+      phase = "running"; status = "Running";
+      const ips = (vmi?.status?.interfaces || []).map((i) => i.ipAddress).filter(Boolean);
+      const agent = conds.some((c) => c.type === "AgentConnected" && c.status === "True");
+      detail = `Guest is up on ${vmi?.status?.nodeName || "a node"}${ips.length ? ` · ${ips.join(", ")}` : ""}${agent ? " · guest agent connected" : " · guest agent not reporting yet"}.`;
+    } else if (vmiPhase === "Failed" || bad) {
+      phase = "failed"; status = printable || "Failed";
+      detail = bad ? `${bad.reason}${bad.message ? ` — ${bad.message}` : ""}` : "The virtual machine instance reported Failed.";
+    } else if (importing) {
+      phase = "provisioning"; status = "Provisioning — importing disk";
+      detail = `Root disk ${importing.name}: ${importing.phase}${importing.progress ? ` (${importing.progress})` : ""}. The VM starts once the import completes.`;
+    } else if (vmiPhase) {
+      phase = "starting"; status = printable || vmiPhase;
+      detail = `Instance is ${vmiPhase.toLowerCase()} — waiting for the guest to boot.`;
+    } else {
+      phase = "provisioning"; status = printable || "Provisioning";
+      detail = "The VirtualMachine exists; no instance is running yet.";
+    }
+
+    // Anything the cluster complained about for this VM, in its own words.
+    const events = (eventList?.items || [])
+      .filter((e) => e.involvedObject?.name === name || (e.involvedObject?.name || "").startsWith(`virt-launcher-${name}`))
+      .slice(-3)
+      .map((e) => `${e.reason}: ${(e.message || "").slice(0, 180)}`);
+
+    vms.push({
+      name, phase, status, detail, ready, failed: phase === "failed",
+      node: vmi?.status?.nodeName || null,
+      ips: (vmi?.status?.interfaces || []).map((i) => i.ipAddress).filter(Boolean),
+      disks, events,
+      created: vm.metadata?.creationTimestamp || null,
+    });
+  }
+
+  return {
+    namespace, vms,
+    allRunning: vms.length > 0 && vms.every((v) => v.ready),
+    anyFailed: vms.some((v) => v.failed),
+    checkedAt: new Date().toISOString(),
+  };
+}

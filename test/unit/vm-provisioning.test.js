@@ -153,3 +153,27 @@ test("namespace name is preserved verbatim for the create path", () => {
   // operator confirmed, or the created namespace and the target would diverge.
   assert.equal(normalizeVMRequest({ namespace: "  team-alpha  " }).namespace, "team-alpha");
 });
+
+// ── gate: fingerprint of what was validated ─────────────────────────────────
+test("fingerprint changes when any field that alters the build changes", async () => {
+  const { fingerprintRequest } = await import("../../src/services/vm-request-store.js");
+  const base = { name: "sap", namespace: "sap-app", sourceDataSource: "rhel9", instanceType: "cx1.medium", sshKey: "ssh-ed25519 AAA" };
+  const fp = fingerprintRequest(base);
+  assert.equal(fingerprintRequest({ ...base }), fp, "same request must fingerprint identically");
+  for (const [k, v] of Object.entries({
+    name: "sap2", namespace: "other", sourceDataSource: "rhel8", instanceType: "cx1.large",
+    diskSizeGi: 99, sshKey: "ssh-ed25519 BBB", environment: "prod", expiresOn: "2027-01-01",
+    createNamespace: true, count: 3,
+  })) {
+    assert.notEqual(fingerprintRequest({ ...base, [k]: v }), fp, `changing ${k} must invalidate the dry-run`);
+  }
+});
+
+test("fingerprint ignores fields that do not change what is built", async () => {
+  const { fingerprintRequest } = await import("../../src/services/vm-request-store.js");
+  const base = { name: "sap", namespace: "sap-app", sourceDataSource: "rhel9", instanceType: "cx1.medium" };
+  // requestId is stamped by submission itself, so it must not invalidate the
+  // very gate that stamped it.
+  assert.equal(fingerprintRequest({ ...base, requestId: "CHG0030068" }), fingerprintRequest(base));
+  assert.equal(fingerprintRequest({ ...base, sizingRationale: "because" }), fingerprintRequest(base));
+});

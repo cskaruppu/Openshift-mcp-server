@@ -2867,6 +2867,7 @@ async function startSSE() {
           const cluster = url.searchParams.get("cluster") || body.cluster || "local";
           const out = await withClusterContext(url, async () => st.submitForApproval(body.request || {}, {
             requestedBy: body.actor || req.user?.name || "operator", cluster,
+            requestId: body.requestId || null,
           }));
           return sendJson(res, 200, out ?? { ok: false, error: "Selected cluster is not reachable." });
         } catch (err) { return sendJson(res, 400, { error: err.message }); }
@@ -2963,9 +2964,66 @@ async function startSSE() {
         if (enforceRateLimit(req, res, { burst: 8, refillPerSec: 0.3 })) return;
         try {
           const body = await readJsonBody(req);
+          const cluster = url.searchParams.get("cluster") || body.cluster || "local";
           const out = await withClusterContext(url, async () =>
             vm.dryRunVMRequest(vm.normalizeVMRequest(body.request || {})));
-          return sendJson(res, 200, out ?? { ok: false, error: "Cluster not reachable." });
+          if (!out) return sendJson(res, 200, { ok: false, error: "Cluster not reachable." });
+          // A passing dry-run is what opens the approval gate, so it is
+          // recorded server-side — the gate then survives a page refresh, a
+          // different browser, and a pod restart.
+          if (out.ok) {
+            try {
+              const st = await import("./services/vm-request-store.js");
+              const rec = await st.recordDryRunPassed(body.request || {}, out, {
+                actor: req.user?.name || "operator", cluster,
+              });
+              out.requestId = rec.requestId; out.state = rec.state;
+            } catch (e) { out.stateWarning = `Dry-run passed but could not be recorded: ${e.message}`; }
+          }
+          return sendJson(res, 200, out);
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
+      // Rehydration: what phase is this VM's request in? Keyed by namespace and
+      // name so a reloaded chat finds its own request with nothing stored in
+      // the browser.
+      if (url.pathname === "/api/vm/requests/active" && req.method === "GET") {
+        try {
+          const st = await import("./services/vm-request-store.js");
+          const rec = await st.findActiveRequest({
+            cluster: url.searchParams.get("cluster") || "local",
+            namespace: url.searchParams.get("namespace"),
+            name: url.searchParams.get("name"),
+          });
+          if (!rec) return sendJson(res, 200, { found: false });
+          return sendJson(res, 200, {
+            found: true, requestId: rec.id, state: rec.state, request: rec.request,
+            changeRequest: rec.changeRequest || null, dryRun: rec.dryRun || null,
+            preflight: rec.preflight || null, result: rec.result || null,
+            error: rec.error || null, updatedAt: rec.updatedAt, history: rec.history || [],
+          });
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
+      {
+        const m = url.pathname.match(/^\/api\/vm\/requests\/([\w-]+)\/unlock$/);
+        if (m && req.method === "POST") {
+          try {
+            const st = await import("./services/vm-request-store.js");
+            return sendJson(res, 200, await st.unlockRequest(m[1], { actor: req.user?.name || "operator" }));
+          } catch (err) { return sendJson(res, 400, { error: err.message }); }
+        }
+      }
+
+      // Live state of provisioned VMs — "provisioning" is a real phase with a
+      // disk import behind it, so it is reported rather than assumed complete.
+      if (url.pathname === "/api/vm/status" && req.method === "GET") {
+        try {
+          const ns = url.searchParams.get("namespace");
+          const names = (url.searchParams.get("names") || "").split(",").map((s) => s.trim()).filter(Boolean);
+          if (!ns || names.length === 0) return sendJson(res, 200, { error: "namespace and names are required" });
+          const out = await withClusterContext(url, async () => vm.vmRuntimeStatus(ns, names));
+          return sendJson(res, 200, out ?? { error: "Cluster not reachable." });
         } catch (err) { return sendJson(res, 400, { error: err.message }); }
       }
 
@@ -2977,6 +3035,32 @@ async function startSSE() {
           const request = vm.normalizeVMRequest(body.request || {});
           const cluster = url.searchParams.get("cluster") || body.cluster || "local";
           const actor = body.actor || req.user?.name || "operator";
+
+          // The gate, enforced where it counts. A greyed-out button stops a
+          // mis-click; it does not stop a direct POST. When this VM has a
+          // request record, provisioning is refused unless a change board
+          // approved exactly what the dry-run validated.
+          {
+            const st = await import("./services/vm-request-store.js");
+            const rec = body.requestId
+              ? await st.getRequest(body.requestId)
+              : await st.findActiveRequest({ cluster, namespace: request.namespace, name: request.name });
+            if (rec && rec.state !== st.STATES.APPROVED) {
+              return sendJson(res, 409, {
+                ok: false, state: rec.state,
+                error: rec.state === st.STATES.SUBMITTED
+                  ? `Change request ${rec.changeRequest?.number || ""} has not been approved yet.`.trim()
+                  : `This request is in "${rec.state}" — it must be approved before provisioning.`,
+              });
+            }
+            if (rec && rec.fingerprint && rec.fingerprint !== st.fingerprintRequest(request)) {
+              return sendJson(res, 409, {
+                ok: false, state: rec.state,
+                error: "The request changed after it was approved. Re-run the dry-run and raise a new change request.",
+              });
+            }
+          }
+
           const out = await withClusterContext(url, async () => {
             const result = await vm.provisionVMRequest(request, { actor, cluster });
             if (result.ok && body.raiseChangeRequest) {

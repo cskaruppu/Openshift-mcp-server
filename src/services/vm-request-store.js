@@ -25,6 +25,10 @@ import { normalizeVMRequest, provisionVMRequest, preflightVMRequest, raiseProvis
 
 export const STATES = Object.freeze({
   DRAFT: "draft",
+  // The request has been validated against the live API server and nothing was
+  // created. From here the details are frozen: a change board must approve the
+  // same thing that was validated, not a later edit of it.
+  DRY_RUN_PASSED: "dry_run_passed",
   SUBMITTED: "submitted",
   APPROVED: "approved",
   PROVISIONING: "provisioning",
@@ -36,6 +40,21 @@ export const STATES = Object.freeze({
 const TERMINAL = new Set([STATES.PROVISIONED, STATES.REJECTED, STATES.CANCELLED, STATES.FAILED]);
 
 const nowIso = () => new Date().toISOString();
+
+/**
+ * Stable fingerprint of the fields that change what gets built. If any of them
+ * differ from what passed dry-run, the validation no longer describes this
+ * request and the gate must be re-earned.
+ */
+export function fingerprintRequest(req = {}) {
+  const r = normalizeVMRequest(req);
+  return JSON.stringify([
+    r.name, r.namespace, r.createNamespace, r.count, r.sourceDataSource, r.sourceDataSourceNamespace,
+    r.instanceType, r.preference, r.cpuCores, r.memoryMi, r.diskSizeGi, r.storageClass,
+    r.networkAttachmentDefinition, r.sshKey, r.username, r.owner, r.costCentre,
+    r.environment, r.expiresOn, r.runStrategy,
+  ]);
+}
 
 // In-memory mirror so the flow works without Postgres — with the documented
 // caveat that pending requests are then lost on pod restart.
@@ -117,20 +136,83 @@ function transition(rec, state, patch = {}) {
  * Pre-flight runs BEFORE submission — there is no point asking a change board
  * to approve something that cannot succeed.
  */
-export async function submitForApproval(rawRequest, { requestedBy = "operator", cluster = "local" } = {}) {
+/**
+ * Record a dry-run that passed. This is what opens the approval gate, so the
+ * fingerprint of exactly what was validated is stored alongside it.
+ * Re-running against the same VM reuses the record rather than accumulating
+ * one per click.
+ */
+export async function recordDryRunPassed(rawRequest, dryRun, { actor = "operator", cluster = "local" } = {}) {
   await hydrate();
   const request = normalizeVMRequest(rawRequest);
+  const existing = await findActiveRequest({ cluster, namespace: request.namespace, name: request.name });
+
+  // Only a record that has not yet been submitted may be re-stamped. Once a
+  // change board holds it, a fresh dry-run must not silently move the goalposts.
+  const rec = (existing && [STATES.DRAFT, STATES.DRY_RUN_PASSED].includes(existing.state))
+    ? existing
+    : { id: randomUUID(), cluster, state: STATES.DRAFT, requestedBy: actor, createdAt: nowIso(), history: [] };
+
+  rec.request = request;
+  rec.fingerprint = fingerprintRequest(request);
+  rec.dryRun = { ok: true, at: nowIso(), terminal: dryRun?.terminal || null };
+  transition(rec, STATES.DRY_RUN_PASSED, { note: "Dry-run passed against the live API server — nothing was created." });
+  await persist(rec);
+  return { ok: true, requestId: rec.id, state: rec.state, fingerprint: rec.fingerprint };
+}
+
+/** The most recent request for this VM that has not reached a terminal state. */
+export async function findActiveRequest({ cluster = "local", namespace, name } = {}) {
+  await hydrate();
+  if (!namespace || !name) return null;
+  return [..._mem.values()]
+    .filter((r) => (r.cluster || "local") === cluster
+      && r.request?.namespace === namespace && r.request?.name === name
+      && !TERMINAL.has(r.state))
+    .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""))[0] || null;
+}
+
+/**
+ * Reopen a locked request for editing. Deliberately allowed only before a
+ * change board holds it — after submission the way back is to cancel the
+ * change request, not to quietly edit underneath it.
+ */
+export async function unlockRequest(id, { actor = "operator" } = {}) {
+  await hydrate();
+  const rec = _mem.get(id);
+  if (!rec) return { ok: false, error: "Request not found." };
+  if (rec.state !== STATES.DRY_RUN_PASSED) {
+    return { ok: false, error: `A request in "${rec.state}" cannot be edited. Cancel the change request first.` };
+  }
+  transition(rec, STATES.DRAFT, { note: `Reopened for editing by ${actor} — the dry-run no longer applies.` });
+  rec.dryRun = null; rec.fingerprint = null;
+  await persist(rec);
+  return { ok: true, requestId: rec.id, state: rec.state };
+}
+
+export async function submitForApproval(rawRequest, { requestedBy = "operator", cluster = "local", requestId = null } = {}) {
+  await hydrate();
+  const request = normalizeVMRequest(rawRequest);
+
+  // The gate: only a request whose dry-run passed, for exactly these details,
+  // may be put in front of a change board.
+  const prior = requestId ? _mem.get(requestId) : await findActiveRequest({ cluster, namespace: request.namespace, name: request.name });
+  if (!prior || prior.state !== STATES.DRY_RUN_PASSED) {
+    return { ok: false, error: "Dry-run must pass before a change request can be raised.", state: prior?.state || null };
+  }
+  if (prior.fingerprint && prior.fingerprint !== fingerprintRequest(request)) {
+    return { ok: false, error: "The request changed after the dry-run. Run the dry-run again before submitting.", state: prior.state };
+  }
 
   const preflight = await preflightVMRequest(request);
   if (!preflight.ok) {
     return { ok: false, error: "Pre-flight failed — not submitted.", blocking: preflight.blocking };
   }
 
-  const rec = {
-    id: randomUUID(), cluster, state: STATES.DRAFT,
-    request, preflight, requestedBy,
-    createdAt: nowIso(), updatedAt: nowIso(), history: [],
-  };
+  const rec = prior;
+  rec.request = request;
+  rec.preflight = preflight;
+  rec.requestedBy = requestedBy;
 
   let cr;
   try {
