@@ -400,3 +400,114 @@ test("progressSnapshot sums bytes across every VM and step in the plan", async (
   assert.equal(s.total, 190);
   assert.equal(s.activeVMs, 1, "a completed VM is not still active");
 });
+
+// ── Fleet analysis: the numbers behind the analysis page ────────────────────
+// Every one of these is a claim shown to an operator deciding a migration wave,
+// so each is asserted rather than eyeballed in the console.
+
+test("classifyGuestOS reads family, distribution and version from a vCenter string", async () => {
+  const { classifyGuestOS } = await import("../../src/services/vm-migration.js");
+  const win = classifyGuestOS("Microsoft Windows Server 2019 (64-bit)");
+  assert.equal(win.family, "windows");
+  assert.equal(win.distro, "Windows Server 2019");
+  assert.equal(win.level, "supported");
+
+  const rhel = classifyGuestOS("Red Hat Enterprise Linux 9 (64-bit)");
+  assert.equal(rhel.family, "linux");
+  assert.equal(rhel.level, "supported");
+
+  const centos = classifyGuestOS("CentOS 7 (64-bit)");
+  assert.equal(centos.family, "linux");
+  assert.equal(centos.level, "caveats", "a community rebuild is not a certified guest");
+
+  const old = classifyGuestOS("Microsoft Windows Server 2008 R2 (64-bit)");
+  assert.equal(old.level, "unsupported");
+});
+
+test("an unidentified guest is 'unknown', never optimistically 'supported'", async () => {
+  const { classifyGuestOS } = await import("../../src/services/vm-migration.js");
+  for (const v of ["", null, undefined, "   "]) {
+    const os = classifyGuestOS(v);
+    assert.equal(os.family, "unknown", `"${v}" must not be guessed`);
+    assert.equal(os.level, "unknown");
+  }
+});
+
+test("fleet level takes the WORSE of the guest matrix and MTV's own verdict", async () => {
+  const { analyseFleet } = await import("../../src/services/vm-migration.js");
+  const a = analyseFleet([
+    // Certified guest, but MTV says it will fail — blocked wins.
+    { name: "shared", guestOS: "Red Hat Enterprise Linux 9 (64-bit)", diskGiB: 10,
+      concerns: [{ category: "Critical", label: "Shared disk detected" }] },
+    // No concerns at all, but the guest is not certified — unsupported wins.
+    { name: "legacy", guestOS: "Microsoft Windows Server 2003 (32-bit)", diskGiB: 10, concerns: [] },
+    { name: "clean", guestOS: "Red Hat Enterprise Linux 9 (64-bit)", diskGiB: 10, concerns: [] },
+  ]);
+  const level = (n) => a.rows.find((r) => r.name === n).level;
+  assert.equal(level("shared"), "unsupported", "a certified guest does not rescue a blocker");
+  assert.equal(level("legacy"), "unsupported", "no concerns does not make an EOL guest supported");
+  assert.equal(level("clean"), "supported");
+  assert.equal(a.byLevel.unsupported, 2);
+});
+
+test("a mis-cased MTV concern category still blocks", async () => {
+  const { assessSupportability } = await import("../../src/services/vm-migration.js");
+  const r = assessSupportability({ name: "x", concerns: [{ category: "Critical", label: "Shared disk" }] });
+  assert.equal(r.blockers.length, 1, "\"Critical\" must not be filed as a note");
+  assert.equal(r.supported, false);
+});
+
+test("families and distributions roll up so the bar and its rows always agree", async () => {
+  const { analyseFleet } = await import("../../src/services/vm-migration.js");
+  const vm = (name, guestOS, diskGiB) => ({ name, guestOS, diskGiB, concerns: [] });
+  const a = analyseFleet([
+    vm("w1", "Microsoft Windows Server 2019 (64-bit)", 100),
+    vm("w2", "Microsoft Windows Server 2019 (64-bit)", 200),
+    vm("w3", "Microsoft Windows Server 2016 (64-bit)", 50),
+    vm("l1", "Red Hat Enterprise Linux 9 (64-bit)", 400),
+  ]);
+  const win = a.families.find((f) => f.family === "windows");
+  assert.equal(win.total, 3);
+  assert.equal(win.diskGiB, 350);
+  assert.equal(win.distros.reduce((n, d) => n + d.total, 0), win.total,
+    "distribution rows must sum to the family bar");
+  assert.equal(win.distros[0].distro, "Windows Server 2019", "biggest distribution first");
+  assert.equal(a.totalDiskGiB, 750);
+  assert.equal(a.families.reduce((n, f) => n + f.total, 0), a.total);
+});
+
+test("every suggestion names the VMs it applies to", async () => {
+  const { analyseFleet, fleetRemediation } = await import("../../src/services/vm-migration.js");
+  const a = analyseFleet([
+    { name: "win-1", guestOS: "Microsoft Windows Server 2019 (64-bit)", diskGiB: 10, concerns: [] },
+    { name: "eol-1", guestOS: "Microsoft Windows Server 2008 R2 (64-bit)", diskGiB: 10, concerns: [] },
+    { name: "blocked-1", guestOS: "Red Hat Enterprise Linux 9 (64-bit)", diskGiB: 10,
+      concerns: [{ category: "Critical", label: "Shared disk detected" }] },
+  ]);
+  const s = fleetRemediation(a);
+  assert.ok(s.length >= 3);
+  for (const x of s) {
+    assert.ok(x.vms.length > 0, `"${x.title}" must say which VMs it means`);
+    assert.ok(x.action, `"${x.title}" must say what to do`);
+    assert.ok(["good", "warning", "serious", "critical"].includes(x.severity));
+  }
+  assert.equal(s[0].severity, "critical", "blockers are reported first");
+});
+
+test("a clean fleet gets a clean verdict, not an empty panel", async () => {
+  const { analyseFleet, fleetRemediation } = await import("../../src/services/vm-migration.js");
+  const s = fleetRemediation(analyseFleet([
+    { name: "ok-1", guestOS: "Red Hat Enterprise Linux 9 (64-bit)", diskGiB: 20, concerns: [] },
+  ]));
+  assert.equal(s.length, 1);
+  assert.equal(s[0].severity, "good");
+  assert.match(s[0].title, /No blockers/);
+});
+
+test("analyseFleet handles an empty selection without throwing", async () => {
+  const { analyseFleet } = await import("../../src/services/vm-migration.js");
+  const a = analyseFleet([]);
+  assert.equal(a.total, 0);
+  assert.deepEqual(a.families, []);
+  assert.equal(a.totalDiskGiB, 0);
+});

@@ -7015,3 +7015,29 @@ h3.widget-title {
 .sop-exec-result { margin-top: 10px; padding: 8px 12px; border-radius: 8px; font-size: 12px; }
 .sop-exec-result.ok { background: rgba(22,163,74,0.08); border: 1px solid rgba(22,163,74,0.3); color: var(--text); }
 .sop-exec-result.fail { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.35); color: var(--text); }
+
+/* ── Fleet-analysis status palette (UC-10) ────────────────────────────────────
+   A reserved STATUS palette — good / warning / serious / critical — kept apart
+   from the categorical accents so a status colour never means "series 4".
+   Both modes are stepped and validated separately against their own surface
+   (dark is selected, not an automatic flip of light). Every use ships an icon
+   and a label as well: colour is never the only carrier of meaning.
+
+   dark   #0f9e8e,#d97706,#c92a2a,#6b7a8f — band/CVD/normal-vision/contrast PASS
+   light  #0d9488,#f59e0b,#b91c1c,#64748b — band/CVD/normal-vision PASS
+          (amber contrast 2.09:1 vs the light surface, which is why the labels
+           beside every mark are required rather than decorative) */
+:root {
+  --st-good: #0f9e8e; --st-good-bg: rgba(15,158,142,.14);
+  --st-warn: #d97706; --st-warn-bg: rgba(217,119,6,.14);
+  --st-crit: #c92a2a; --st-crit-bg: rgba(201,42,42,.14);
+  --st-unknown: #6b7a8f; --st-unknown-bg: rgba(107,122,143,.14);
+  --st-surface: #1a1d27;
+}
+.light-theme {
+  --st-good: #0d9488; --st-good-bg: rgba(13,148,136,.12);
+  --st-warn: #f59e0b; --st-warn-bg: rgba(245,158,11,.16);
+  --st-crit: #b91c1c; --st-crit-bg: rgba(185,28,28,.10);
+  --st-unknown: #64748b; --st-unknown-bg: rgba(100,116,139,.12);
+  --st-surface: #ffffff;
+}

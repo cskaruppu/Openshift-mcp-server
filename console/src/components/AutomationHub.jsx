@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useActiveCluster } from "../store/clusterStore";
 import { showToast } from "../store/toastStore";
+import FleetAnalysis from "./FleetAnalysis";
 
 function clusterUrl(path, cluster) {
   if (!cluster || cluster === "local") return path;
@@ -1089,6 +1090,11 @@ function MigrationAgent({ clusters, activeCluster }) {
   const [rollback, setRollback] = useState(null);      // { planName, decision }
   const [advice, setAdvice] = useState(null);          // { source, advice[] }
   const [busy, setBusy] = useState(null);
+  // The workbench is a three-step wizard: pick what moves, understand whether
+  // it CAN move, then move it. Each step is a decision the next one depends on,
+  // so they are pages rather than one long scroll.
+  const [step, setStep] = useState(1);                 // 1 discover | 2 analyse | 3 migrate
+  const [analysis, setAnalysis] = useState(null);      // fleet roll-up for the selection
 
   const cUrl = (p) => clusterUrl(p, cluster);
   const get = async (p) => (await fetch(cUrl(p))).json();
@@ -1167,6 +1173,19 @@ function MigrationAgent({ clusters, activeCluster }) {
     }
     setSel(next);
     showToast(`Applied to ${Object.keys(next).length} VM(s)`, "ok");
+  };
+
+  // Step 1 → 2. Everything the analysis shows is computed server-side from the
+  // same assessment the plan gate uses, so the chart cannot flatter a selection
+  // that MTV will later reject.
+  const runAnalysis = async () => {
+    const chosen = selection.map((s) => s.vm);
+    if (!chosen.length) { showToast("Select at least one VM first", "err"); return; }
+    setBusy("analyse"); setStep(2);
+    try {
+      setAnalysis(await post("/api/migration/analyse", { vms: chosen }));
+    } catch (e) { showToast(e.message, "err"); setStep(1); }
+    finally { setBusy(null); }
   };
 
   const createPlans = async () => {
@@ -1288,7 +1307,39 @@ function MigrationAgent({ clusters, activeCluster }) {
         )}
       </div>
 
+      {/* ── Step strip ───────────────────────────────────────────────────────
+          Steps are only clickable backwards. Going forward is a gate: you reach
+          the analysis by analysing, and migration by accepting the analysis. */}
       {ready?.ok && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          {[[1, "Discover & select"], [2, "Analyse support"], [3, "Migrate"]].map(([n, label], i) => (
+            <span key={n} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              {i > 0 && <span style={{ color: "var(--text2)", opacity: .5 }}>→</span>}
+              <button
+                onClick={() => { if (n < step) setStep(n); }}
+                disabled={n > step}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 12px", borderRadius: 999,
+                  fontFamily: "inherit", fontSize: "0.78rem", fontWeight: 700,
+                  border: `1px solid ${n === step ? "rgba(61,90,254,.55)" : "var(--border)"}`,
+                  background: n === step ? "rgba(61,90,254,.12)" : "transparent",
+                  color: n === step ? "#7c8cff" : "var(--text2)",
+                  cursor: n < step ? "pointer" : "default",
+                }}>
+                <span style={{
+                  width: 17, height: 17, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  fontSize: "0.66rem", fontWeight: 800,
+                  background: n < step ? "var(--st-good)" : n === step ? "#3d5afe" : "var(--border)",
+                  color: n <= step ? "#fff" : "var(--text2)",
+                }}>{n < step ? "✓" : n}</span>
+                {label}
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {ready?.ok && step === 1 && (
         <>
           {/* ── Discover ──────────────────────────────────────────────────── */}
           <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap" }}>
@@ -1357,7 +1408,7 @@ function MigrationAgent({ clusters, activeCluster }) {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.79rem" }}>
                 <thead>
                   <tr style={{ background: "var(--card-bg,#f6f8fc)", position: "sticky", top: 0 }}>
-                    {["", "VM", "Power", "vCPU", "Memory", "Disks", "Guest OS", "Strategy"].map((h) => (
+                    {["", "VM", "Power", "Guest OS", "IP address", "vCPU", "Memory", "Storage", "Strategy"].map((h) => (
                       <th key={h} style={{ textAlign: "left", padding: "7px 9px", fontWeight: 800, borderBottom: "1px solid var(--border,#e4e8f1)", whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
@@ -1378,10 +1429,28 @@ function MigrationAgent({ clusters, activeCluster }) {
                         </td>
                         <td style={{ padding: "6px 9px", fontWeight: 700 }}>{v.name}</td>
                         <td style={{ padding: "6px 9px", color: v.poweredOn ? "#16a34a" : "var(--muted,#5a6373)" }}>{v.poweredOn ? "on" : "off"}</td>
+                        {/* The classified guest sits above the raw string: the
+                            classification is what the support matrix keys off,
+                            so showing only vCenter's label would hide the thing
+                            the next step actually decides on. */}
+                        <td style={{ padding: "6px 9px", color: "var(--muted,#5a6373)", maxWidth: 210 }} title={v.guestOS || ""}>
+                          <div style={{ color: "var(--text,#151a29)" }}>{v.os?.distro || v.guestOS || "—"}</div>
+                          {v.os?.family && v.os.family !== "unknown" && (
+                            <div style={{ fontSize: "0.68rem", textTransform: "capitalize" }}>{v.os.family}</div>
+                          )}
+                        </td>
+                        <td style={{ padding: "6px 9px", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.72rem" }}
+                          title={v.toolsStatus ? `VMware Tools: ${v.toolsStatus}` : ""}>
+                          {v.ips?.length ? v.ips.slice(0, 2).join(", ") + (v.ips.length > 2 ? ` +${v.ips.length - 2}` : "") : "—"}
+                        </td>
                         <td style={{ padding: "6px 9px" }}>{v.cpuCount ?? "—"}</td>
-                        <td style={{ padding: "6px 9px" }}>{v.memoryMB ? `${Math.round(v.memoryMB / 1024)} GiB` : "—"}</td>
-                        <td style={{ padding: "6px 9px" }}>{v.diskCount} · {gb(v.diskGiB)}</td>
-                        <td style={{ padding: "6px 9px", color: "var(--muted,#5a6373)" }}>{v.guestOS || "—"}</td>
+                        <td style={{ padding: "6px 9px" }}>{v.memoryGiB != null ? `${v.memoryGiB} GiB` : v.memoryMB ? `${Math.round(v.memoryMB / 1024)} GiB` : "—"}</td>
+                        {/* Per-disk detail on hover — a 4-disk VM with one RDM
+                            migrates very differently from a 4-disk VM without. */}
+                        <td style={{ padding: "6px 9px", whiteSpace: "nowrap" }}
+                          title={(v.disks || []).map((d) => `${d.name || "disk"} · ${d.capacityGiB ?? "?"} GiB${d.datastore ? ` · ${d.datastore}` : ""}${d.rdm ? " · RDM" : ""}${d.shared ? " · shared" : ""}`).join("\n") || undefined}>
+                          {v.diskCount} disk{v.diskCount === 1 ? "" : "s"} · {gb(v.diskGiB)}
+                        </td>
                         <td style={{ padding: "6px 9px" }}>
                           <select value={chosen || ""} disabled={!chosen}
                             onChange={(e) => setSel((s) => ({ ...s, [key]: e.target.value }))}
@@ -1406,6 +1475,36 @@ function MigrationAgent({ clusters, activeCluster }) {
           )}
           {vms?.length === 0 && <div style={{ fontSize: "0.82rem", color: "var(--muted,#5a6373)" }}>No VMs returned for that provider.</div>}
 
+          {/* ── Gate to step 2 ───────────────────────────────────────────── */}
+          {Object.keys(sel).length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <button onClick={runAnalysis} disabled={busy === "analyse"}
+                style={{ ...S, background: "#3d5afe", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", padding: "8px 16px" }}>
+                {busy === "analyse" ? "Analysing…" : `Analyse ${Object.keys(sel).length} selected VM(s) →`}
+              </button>
+              <span style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)" }}>
+                Checks each guest against the OpenShift Virtualization support matrix and MTV's own validation. Read-only.
+              </span>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Step 2 · Analysis ─────────────────────────────────────────────── */}
+      {ready?.ok && step === 2 && (
+        <FleetAnalysis
+          analysis={analysis}
+          suggestions={analysis?.suggestions || []}
+          suggestionSource={analysis?.suggestionSource}
+          note={analysis?.note || analysis?.error}
+          busy={busy === "analyse"}
+          onBack={() => setStep(1)}
+          onProceed={() => setStep(3)}
+        />
+      )}
+
+      {ready?.ok && step === 3 && (
+        <>
           {/* ── Target ────────────────────────────────────────────────────── */}
           {Object.keys(sel).length > 0 && (
             <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap" }}>

@@ -236,19 +236,56 @@ export function normaliseInventoryVM(v = {}) {
   const totalBytes = disks.reduce((n, d) => n + (d.capacity || d.Capacity || 0), 0);
   const cbt = v.changeTrackingEnabled ?? v.changeTrackingSupported ?? null;
   const powered = /poweredOn|up|ACTIVE|running/i.test(String(v.powerState || v.status || ""));
+
+  // Addresses come from the guest agent (VMware Tools / qemu-ga). A VM with no
+  // agent reports none — that is worth showing rather than leaving blank, since
+  // it also means less can be verified after the migration.
+  const nets = v.guestNetworks || v.guestNetworkInterfaces || v.ipAddresses || [];
+  const ips = [...new Set(
+    (Array.isArray(nets) ? nets : [])
+      .map((n) => (typeof n === "string" ? n : n.ip || n.ipAddress || n.address))
+      .filter(Boolean)
+      .concat(v.ipAddress ? [v.ipAddress] : []),
+  )].filter((ip) => !/^(127\.|::1|fe80:)/i.test(ip));
+
+  const guestOS = v.guestName || v.guestFullName || v.osType || v.guestId || null;
+
   return {
     id: v.id || v.uuid || v.ID || null,
     name: v.name || v.Name || "(unnamed)",
     path: v.path || null,
+    host: v.host?.name || v.host || null,
     powerState: v.powerState || v.status || "unknown",
     poweredOn: powered,
+
+    // Compute
     cpuCount: v.cpuCount ?? v.cpuCores ?? null,
+    coresPerSocket: v.coresPerSocket ?? null,
     memoryMB: v.memoryMB ?? (v.memory ? Math.round(v.memory / 1048576) : null),
-    guestOS: v.guestName || v.guestId || v.osType || null,
+    memoryGiB: v.memoryMB ? Math.round(v.memoryMB / 1024) : (v.memory ? Math.round(v.memory / 1073741824) : null),
+
+    // Guest
+    guestOS,
+    guestId: v.guestId || null,
+    hostName: v.hostName || v.guestHostName || null,
+    ips,
+    toolsStatus: v.guestToolsStatus || v.toolsStatus || null,
+    firmware: v.firmware || (v.bootOptions?.efiSecureBootEnabled ? "efi" : null),
+
+    // Storage, per disk — a migration is a storage operation before anything else
     diskCount: disks.length,
     diskBytes: totalBytes,
     diskGiB: totalBytes ? Math.round(totalBytes / 1073741824) : null,
-    // The single fact that decides whether warm is even offered.
+    disks: disks.map((d) => ({
+      name: d.key || d.name || d.file || "disk",
+      capacityGiB: (d.capacity || d.Capacity) ? Math.round((d.capacity || d.Capacity) / 1073741824) : null,
+      datastore: d.datastore?.name || d.datastore?.id || d.Datastore || null,
+      shared: d.shared === true,
+      rdm: d.rdm === true || /rawDiskMapping/i.test(String(d.mode || "")),
+      mode: d.mode || null,
+    })),
+
+    // Migration-relevant facts
     changeTrackingEnabled: cbt === true,
     warmEligible: cbt === true && powered,
     warmBlockedReason: cbt === true
@@ -256,18 +293,105 @@ export function normaliseInventoryVM(v = {}) {
       : "Changed block tracking is not enabled on this VM, so an incremental copy is impossible. Use cold, or enable CBT and rediscover.",
     datastores: [...new Set(disks.map((d) => d.datastore?.id || d.datastore?.name || d.Datastore).filter(Boolean))],
     networks: (v.networks || v.Networks || []).map((n) => n.id || n.name || n).filter(Boolean),
+
     // MTV's own validation service runs OPA policies over each VM and returns
-    // "concerns" with a category. Critical means the migration will fail. This
-    // is the supportability answer, produced by the toolkit itself.
+    // "concerns" with a category. Critical means the migration will fail.
     concerns: (v.concerns || []).map((c) => ({
-      category: (c.category || "").toLowerCase(),     // critical | warning | information
+      category: (c.category || "").toLowerCase(),
       label: c.label || "",
       assessment: c.assessment || "",
     })),
+
+    // Classified guest, for the fleet view
+    os: classifyGuestOS(guestOS, v.guestId),
   };
 }
 
+// ---------------------------------------------------------------------------
+// 2a. Guest OS classification and the OpenShift Virtualization support matrix
+// ---------------------------------------------------------------------------
+/**
+ * The support position for guest operating systems on OpenShift
+ * Virtualization. Data, not code, and stamped with when it was written —
+ * Red Hat's certified list moves with each release, and a matrix that pretends
+ * otherwise is worse than none. Override with MTV_SUPPORT_MATRIX to pin your
+ * own contractual position.
+ *
+ * Levels: supported | caveats | unsupported | unknown
+ */
+export const SUPPORT_MATRIX = {
+  asOf: "2026-08",
+  source: "Red Hat certified guest operating systems for OpenShift Virtualization. Verify against the list for YOUR OpenShift version before committing to a migration wave.",
+  windows: [
+    { match: /server\D*2025/i, label: "Windows Server 2025", level: "supported" },
+    { match: /server\D*2022/i, label: "Windows Server 2022", level: "supported" },
+    { match: /server\D*2019/i, label: "Windows Server 2019", level: "supported" },
+    { match: /server\D*2016/i, label: "Windows Server 2016", level: "supported" },
+    { match: /server\D*2012\s*r2/i, label: "Windows Server 2012 R2", level: "caveats", note: "Past Microsoft end of extended support — migrates, but runs unpatched." },
+    { match: /server\D*2012/i, label: "Windows Server 2012", level: "caveats", note: "Past Microsoft end of extended support." },
+    { match: /server\D*(2008|2003)/i, label: "Windows Server 2008/2003", level: "unsupported", note: "Long past end of life and not certified — migrate only as a lift-and-shift to a quarantined namespace." },
+    { match: /windows\s*11/i, label: "Windows 11", level: "supported", note: "Requires EFI and a vTPM on the target." },
+    { match: /windows\s*10/i, label: "Windows 10", level: "supported" },
+    { match: /windows\s*(7|8|xp)/i, label: "Windows 7/8/XP", level: "unsupported", note: "End of life; no virtio driver support path." },
+  ],
+  linux: [
+    { match: /red\s*hat.*(10)|rhel\D*10/i, label: "RHEL 10", level: "supported" },
+    { match: /red\s*hat.*(9)|rhel\D*9/i, label: "RHEL 9", level: "supported" },
+    { match: /red\s*hat.*(8)|rhel\D*8/i, label: "RHEL 8", level: "supported" },
+    { match: /red\s*hat.*(7)|rhel\D*7/i, label: "RHEL 7", level: "caveats", note: "Past end of maintenance support — migrates, but plan an upgrade." },
+    { match: /red\s*hat.*(6|5)|rhel\D*[56]/i, label: "RHEL 5/6", level: "unsupported", note: "Not certified; very old virtio support." },
+    { match: /centos\s*stream/i, label: "CentOS Stream", level: "caveats", note: "Community support only." },
+    { match: /centos\D*[78]/i, label: "CentOS 7/8", level: "caveats", note: "End of life — community support only." },
+    { match: /rocky/i, label: "Rocky Linux", level: "caveats", note: "Community support only." },
+    { match: /alma/i, label: "AlmaLinux", level: "caveats", note: "Community support only." },
+    { match: /ubuntu/i, label: "Ubuntu", level: "caveats", note: "Community support only; verify the release is still in Canonical support." },
+    { match: /debian/i, label: "Debian", level: "caveats", note: "Community support only." },
+    { match: /sles|suse/i, label: "SUSE Linux Enterprise", level: "caveats", note: "Supported by SUSE; confirm your entitlement." },
+    { match: /fedora/i, label: "Fedora", level: "caveats", note: "Community support only; short lifecycle." },
+    { match: /oracle/i, label: "Oracle Linux", level: "caveats", note: "Community support only." },
+  ],
+};
 
+/**
+ * Turn a free-text guest OS string into a family, a distribution and a
+ * support level. Pure — the classification rules are tested, not trusted.
+ *
+ * @returns {{family:string, distro:string, version:string|null, level:string, note:string|null, raw:string|null}}
+ */
+export function classifyGuestOS(guestOS, guestId = null) {
+  const raw = String(guestOS || guestId || "").trim();
+  if (!raw) {
+    return { family: "unknown", distro: "Unknown", version: null, level: "unknown", raw: null,
+      note: "No guest OS reported — the guest agent may not be running. Identify it before migrating." };
+  }
+
+  const isWindows = /windows|microsoft/i.test(raw) || /^win/i.test(String(guestId || ""));
+  const table = isWindows ? SUPPORT_MATRIX.windows : SUPPORT_MATRIX.linux;
+  const hit = table.find((e) => e.match.test(raw));
+
+  if (hit) {
+    const ver = /(\d{4}\s*r2|\d{1,4}(?:\.\d+)?)/i.exec(hit.label);
+    return {
+      family: isWindows ? "windows" : "linux",
+      distro: hit.label,
+      version: ver ? ver[1] : null,
+      level: hit.level,
+      note: hit.note || null,
+      raw,
+    };
+  }
+
+  // Recognised as a family but not in the matrix — say so rather than guessing.
+  const family = isWindows ? "windows" : /linux|unix|bsd|centos|debian|gentoo/i.test(raw) ? "linux" : "other";
+  return {
+    family,
+    distro: raw.slice(0, 48),
+    version: null,
+    level: "unknown",
+    note: `"${raw.slice(0, 48)}" is not in the support matrix. Check Red Hat's certified guest list for your OpenShift version before migrating.`,
+    raw,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // 2b. Supportability — can this VM migrate at all?
@@ -293,8 +417,12 @@ export function assessSupportability(vm = {}, { targetFreeGiB = null } = {}) {
 
   for (const c of vm.concerns || []) {
     const text = `${c.label}${c.assessment ? ` — ${c.assessment}` : ""}`.trim();
-    if (c.category === "critical") blockers.push({ source: "mtv", message: text });
-    else if (c.category === "warning") warnings.push({ source: "mtv", message: text });
+    // Forklift reports "Critical"/"Warning"/"Information"; normaliseInventoryVM
+    // lowercases them, but this is also called on bodies posted straight from
+    // the console — a mis-cased "Critical" must never downgrade to a note.
+    const cat = String(c.category || "").toLowerCase();
+    if (cat === "critical") blockers.push({ source: "mtv", message: text });
+    else if (cat === "warning") warnings.push({ source: "mtv", message: text });
     else if (text) notes.push({ source: "mtv", message: text });
   }
 
@@ -508,6 +636,203 @@ export function liveEta(samples = [], { windowSize = 6 } = {}) {
     basis: `Measured over the last ${Math.round(secs / 60) || 1} minute(s) at ${Math.round(mbps)} MiB/s${
       confidence === "low" ? " — still early, so this will sharpen as the transfer runs." : "."}`,
   };
+}
+
+
+// ---------------------------------------------------------------------------
+// 2e. Fleet analysis — the overall picture before anyone selects anything
+// ---------------------------------------------------------------------------
+/**
+ * Roll a discovered fleet up into what a person needs to decide a wave: how
+ * many can move cleanly, how many need attention, what they run, and how much
+ * data is involved.
+ *
+ * Pure, so the aggregation is tested. Support level is the ONLY thing that
+ * decides a VM's status — MTV's Critical concerns and the guest OS matrix both
+ * feed it, and the worse of the two wins.
+ */
+export function analyseFleet(vms = [], { targetFreeGiB = null } = {}) {
+  const RANK = { supported: 0, caveats: 1, unknown: 2, unsupported: 3 };
+  const rows = vms.map((v) => {
+    const support = assessSupportability(v, { targetFreeGiB });
+    const os = v.os || classifyGuestOS(v.guestOS, v.guestId);
+    // The worse of "MTV says it will fail" and "the guest is not certified"
+    // wins outright — a certified guest does not rescue a blocker, and a
+    // concern-free VM running Server 2008 is still not supported.
+    const mtvLevel = support.blockers.length ? "unsupported"
+      : support.warnings.length ? "caveats" : "supported";
+    const level = RANK[os.level] >= RANK[mtvLevel] ? os.level : mtvLevel;
+    return {
+      name: v.name, id: v.id,
+      os, level,
+      diskGiB: v.diskGiB || 0,
+      memoryGiB: v.memoryGiB || null,
+      cpuCount: v.cpuCount || null,
+      ips: v.ips || [],
+      warmEligible: v.warmEligible === true,
+      blockers: support.blockers, warnings: support.warnings, notes: support.notes,
+    };
+  });
+
+  const count = (pred) => rows.filter(pred).length;
+  const byLevel = {
+    supported: count((r) => r.level === "supported"),
+    caveats: count((r) => r.level === "caveats"),
+    unknown: count((r) => r.level === "unknown"),
+    unsupported: count((r) => r.level === "unsupported"),
+  };
+
+  // Grouped by family, then by distribution — the two questions actually asked
+  // ("how much Windows?" then "which Windows?").
+  const families = {};
+  for (const r of rows) {
+    const fam = (families[r.os.family] ||= { family: r.os.family, total: 0, diskGiB: 0, distros: {} });
+    fam.total++; fam.diskGiB += r.diskGiB;
+    const d = (fam.distros[r.os.distro] ||= {
+      distro: r.os.distro, level: r.os.level, note: r.os.note,
+      total: 0, diskGiB: 0, supported: 0, caveats: 0, unknown: 0, unsupported: 0,
+    });
+    d.total++; d.diskGiB += r.diskGiB; d[r.level]++;
+  }
+
+  return {
+    total: rows.length,
+    byLevel,
+    totalDiskGiB: rows.reduce((n, r) => n + r.diskGiB, 0),
+    totalMemoryGiB: rows.reduce((n, r) => n + (r.memoryGiB || 0), 0),
+    warmEligible: count((r) => r.warmEligible),
+    families: Object.values(families)
+      .map((f) => ({ ...f, distros: Object.values(f.distros).sort((a, b) => b.total - a.total) }))
+      .sort((a, b) => b.total - a.total),
+    rows,
+    matrix: { asOf: SUPPORT_MATRIX.asOf, source: SUPPORT_MATRIX.source },
+  };
+}
+
+/**
+ * Turn an analysis into things a person can actually DO. Deterministic, so the
+ * console has a useful answer with no LLM configured and the LLM has a floor it
+ * cannot fall below.
+ *
+ * Every suggestion names the VMs it applies to — advice you cannot act on
+ * because you do not know which machines it means is not advice.
+ */
+export function fleetRemediation(analysis) {
+  const out = [];
+  const rows = analysis?.rows || [];
+  const named = (list, n = 4) => list.slice(0, n).map((r) => r.name).join(", ")
+    + (list.length > n ? ` +${list.length - n} more` : "");
+
+  // 1. Hard blockers first — these fail the migration, not just annoy it.
+  const blocked = rows.filter((r) => r.blockers.length);
+  if (blocked.length) {
+    const reasons = [...new Set(blocked.flatMap((r) => r.blockers.map((b) => b.message)))];
+    out.push({
+      severity: "critical", title: `${blocked.length} VM${blocked.length > 1 ? "s" : ""} cannot migrate as-is`,
+      vms: blocked.map((r) => r.name),
+      detail: `${named(blocked)} — ${reasons.slice(0, 3).join(" ")}`,
+      action: "Remove these from the wave, or fix the blocker at source, then re-run discovery.",
+    });
+  }
+
+  // 2. Guest OS that OpenShift Virtualization does not certify. Migrates, but
+  //    unsupported afterwards — the expensive surprise if nobody says it now.
+  const uncertified = rows.filter((r) => !r.blockers.length && r.os.level === "unsupported");
+  if (uncertified.length) {
+    out.push({
+      severity: "serious", title: `${uncertified.length} guest OS not certified on OpenShift Virtualization`,
+      vms: uncertified.map((r) => r.name),
+      detail: `${named(uncertified)} run ${[...new Set(uncertified.map((r) => r.os.distro))].join(", ")}.`,
+      action: "These will boot but are outside Red Hat support. Plan an in-place OS upgrade before migrating, or accept them as unsupported in writing.",
+    });
+  }
+
+  // 3. Windows without VirtIO drivers is the single most common cause of a
+  //    migrated VM that will not boot.
+  const win = rows.filter((r) => r.os.family === "windows" && !r.blockers.length);
+  if (win.length) {
+    out.push({
+      severity: "warning", title: `${win.length} Windows VM${win.length > 1 ? "s" : ""} need VirtIO drivers`,
+      vms: win.map((r) => r.name),
+      detail: `${named(win)}. Windows has no in-box VirtIO storage driver, so a migrated disk is not bootable without it.`,
+      action: "Install virtio-win on each guest BEFORE migrating, or let MTV inject drivers during the conversion step.",
+    });
+  }
+
+  // 4. Unknown guests are not safe to wave-plan — you are guessing.
+  const unknown = rows.filter((r) => r.os.family === "unknown");
+  if (unknown.length) {
+    out.push({
+      severity: "warning", title: `${unknown.length} VM${unknown.length > 1 ? "s" : ""} with no identifiable guest OS`,
+      vms: unknown.map((r) => r.name),
+      detail: `${named(unknown)} — vCenter reports no guest OS, usually because VMware Tools is not running.`,
+      action: "Start VMware Tools and refresh the provider inventory so these can be assessed instead of guessed.",
+    });
+  }
+
+  // 5. Cold-only bulk is where the outage budget actually goes.
+  const coldBig = rows.filter((r) => !r.warmEligible && r.diskGiB >= 200 && !r.blockers.length);
+  if (coldBig.length) {
+    const gib = coldBig.reduce((n, r) => n + r.diskGiB, 0);
+    out.push({
+      severity: "warning", title: `${coldBig.length} large VM${coldBig.length > 1 ? "s" : ""} can only migrate cold`,
+      vms: coldBig.map((r) => r.name),
+      detail: `${named(coldBig)} total ${gib} GiB with no changed block tracking, so each stays powered off for its whole copy.`,
+      action: "Enable CBT on the source VM to unlock warm migration, or schedule these into a maintenance window sized from the estimate.",
+    });
+  }
+
+  if (!out.length) {
+    out.push({
+      severity: "good", title: "No blockers found in this selection",
+      vms: rows.map((r) => r.name),
+      detail: `All ${rows.length} VM${rows.length === 1 ? "" : "s"} match a supported guest OS and MTV reported no critical concerns.`,
+      action: "Continue to grouping and review the plans MTV will accept.",
+    });
+  }
+  return out;
+}
+
+/**
+ * Fleet-level suggestions. The deterministic set above is always returned; the
+ * LLM may add sequencing/wave advice on top, but it cannot remove or contradict
+ * a finding — same "model advises, code decides" contract as adviseMigration().
+ */
+export async function adviseFleet(analysis) {
+  const base = fleetRemediation(analysis);
+  if (!llmEnabled() || !analysis?.total) return { source: "heuristic", suggestions: base };
+
+  const digest = {
+    total: analysis.total, byLevel: analysis.byLevel,
+    totalDiskGiB: analysis.totalDiskGiB, warmEligible: analysis.warmEligible,
+    families: analysis.families.map((f) => ({
+      family: f.family, total: f.total, diskGiB: f.diskGiB,
+      distros: f.distros.map((d) => ({ distro: d.distro, level: d.level, total: d.total })),
+    })),
+  };
+  try {
+    const r = await classifyJSON({
+      system: `You advise a platform team planning a VMware-to-OpenShift Virtualization migration wave.
+You are given an ALREADY COMPUTED analysis. Do not re-classify support levels and do not contradict them.
+Add at most 3 suggestions about SEQUENCING and RISK that the numbers imply — which group to move first, what to pilot, what to hold back.
+Respond ONLY with JSON: {"suggestions":[{"severity":"good|warning|serious|critical","title":"<short>","detail":"<one or two sentences>","action":"<what to do>"}]}`
+        + " " + UNTRUSTED_GUARD,
+      maxTokens: 700,
+      prompt: `Analysis of the selected fleet:\n\n${fenceUntrusted("FLEET_ANALYSIS", JSON.stringify(digest))}`,
+    });
+    const extra = (Array.isArray(r?.suggestions) ? r.suggestions : []).slice(0, 3)
+      .filter((s) => s && typeof s.title === "string" && typeof s.action === "string")
+      .map((s) => ({
+        severity: ["good", "warning", "serious", "critical"].includes(s.severity) ? s.severity : "warning",
+        title: String(s.title).slice(0, 120),
+        detail: String(s.detail || "").slice(0, 400),
+        action: String(s.action).slice(0, 300),
+        vms: [], ai: true,
+      }));
+    return { source: extra.length ? "ai" : "heuristic", suggestions: [...base, ...extra] };
+  } catch (e) {
+    return { source: "heuristic", suggestions: base, note: `AI suggestions unavailable: ${e.message}` };
+  }
 }
 
 // ---------------------------------------------------------------------------

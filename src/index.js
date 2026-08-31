@@ -2881,6 +2881,19 @@ async function startSSE() {
         } catch (err) { return sendJson(res, 400, { error: err.message }); }
       }
 
+      // Fleet roll-up for the analysis page: supported vs not, grouped by OS
+      // family and distribution, plus suggestions. Read-only, no LLM required.
+      if (url.pathname === "/api/migration/analyse" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+          const analysis = mig.analyseFleet(body.vms || [], { targetFreeGiB: body.targetFreeGiB ?? null });
+          const advice = body.suggest === false
+            ? { source: "skipped", suggestions: [] }
+            : await mig.adviseFleet(analysis);
+          return sendJson(res, 200, { ...analysis, suggestions: advice.suggestions, suggestionSource: advice.source, note: advice.note });
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
       // Warm vs cold per VM, with reasons. The model advises; clampAdvice()
       // decides — a "warm" for a VM without change tracking is downgraded
       // before it can reach a plan.
