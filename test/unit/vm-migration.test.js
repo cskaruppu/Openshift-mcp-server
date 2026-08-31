@@ -199,3 +199,52 @@ test("a successful read produces no verdict at all", async () => {
   assert.equal(mtvAccessVerdict({ status: 0, error: null }), null);
   assert.equal(mtvAccessVerdict({}), null);
 });
+
+// ── the advisor's guardrail: the model advises, code decides ────────────────
+test("a warm recommendation for a VM that cannot do warm is downgraded, not trusted", async () => {
+  const { clampAdvice } = await import("../../src/services/vm-migration.js");
+  const vms = [{ name: "db-01", warmEligible: false, warmBlockedReason: "Changed block tracking is not enabled." }];
+  const [a] = clampAdvice([{ name: "db-01", strategy: "warm", reason: "Large disk, keep it up", risk: "low" }], vms);
+  assert.equal(a.strategy, "cold", "physics beats the model");
+  assert.equal(a.overridden, true);
+  assert.match(a.reason, /block tracking/i, "the real reason replaces the model's");
+});
+
+test("the model cannot invent a VM that was never discovered", async () => {
+  const { clampAdvice } = await import("../../src/services/vm-migration.js");
+  const out = clampAdvice(
+    [{ name: "real", strategy: "cold" }, { name: "hallucinated", strategy: "warm" }],
+    [{ name: "real", warmEligible: true }],
+  );
+  assert.deepEqual(out.map((a) => a.name), ["real"]);
+});
+
+test("a malformed strategy or risk falls back rather than propagating", async () => {
+  const { clampAdvice } = await import("../../src/services/vm-migration.js");
+  const [a] = clampAdvice([{ name: "x", strategy: "WARM-ish", risk: "catastrophic" }], [{ name: "x", warmEligible: true }]);
+  assert.equal(a.strategy, "cold", "anything that is not exactly \"warm\" is cold");
+  assert.equal(a.risk, "medium");
+});
+
+test("heuristic advice works with no LLM and never recommends an impossible warm", async () => {
+  const { heuristicAdvice } = await import("../../src/services/vm-migration.js");
+  const out = heuristicAdvice([
+    { name: "big", warmEligible: true, diskGiB: 400 },
+    { name: "small", warmEligible: true, diskGiB: 40 },
+    { name: "nocbt", warmEligible: false, diskGiB: 900, warmBlockedReason: "No CBT." },
+  ]);
+  assert.equal(out.find((a) => a.name === "big").strategy, "warm");
+  assert.equal(out.find((a) => a.name === "small").strategy, "cold");
+  const nocbt = out.find((a) => a.name === "nocbt");
+  assert.equal(nocbt.strategy, "cold");
+  assert.equal(nocbt.risk, "high", "a 900 GiB cold copy is a long outage");
+  for (const a of out) assert.ok(a.reason && a.reason.length > 10, "every recommendation carries a reason");
+});
+
+test("advice with no LLM configured is rule-based, and covers every VM", async () => {
+  const { adviseMigration } = await import("../../src/services/vm-migration.js");
+  const vms = [{ name: "a", warmEligible: true, diskGiB: 300 }, { name: "b", warmEligible: false, diskGiB: 20, warmBlockedReason: "No CBT." }];
+  const r = await adviseMigration(vms);
+  assert.ok(["heuristic", "ai"].includes(r.source));
+  assert.equal(r.advice.length, 2, "no VM is left without a recommendation");
+});

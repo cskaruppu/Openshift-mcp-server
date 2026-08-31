@@ -1087,6 +1087,7 @@ function MigrationAgent({ clusters, activeCluster }) {
   const [plans, setPlans] = useState([]);              // created plans
   const [status, setStatus] = useState({});            // planName -> status
   const [rollback, setRollback] = useState(null);      // { planName, decision }
+  const [advice, setAdvice] = useState(null);          // { source, advice[] }
   const [busy, setBusy] = useState(null);
 
   const cUrl = (p) => clusterUrl(p, cluster);
@@ -1143,6 +1144,30 @@ function MigrationAgent({ clusters, activeCluster }) {
       .catch(() => {});
     return () => { stop = true; };
   }, [JSON.stringify(selection.map((s) => [s.vm.id, s.strategy])), target.storageMap, target.networkMap, target.targetNamespace]); // eslint-disable-line
+
+  // The one place a model is asked to reason. It advises; clampAdvice on the
+  // server decides — a warm recommendation for a VM that cannot do warm is
+  // downgraded before it ever reaches this screen.
+  const askAdvice = async () => {
+    if (!vms?.length) return;
+    setBusy("advise");
+    try {
+      const d = await post("/api/migration/advise", { vms });
+      setAdvice(d);
+      // Applying is a separate, explicit act — the operator can read first.
+      showToast(d.source === "ai" ? "AI recommendation ready — review, then apply" : "Recommendation ready (rule-based — no LLM configured)", "ok");
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setBusy(null); }
+  };
+  const applyAdvice = () => {
+    const next = { ...sel };
+    for (const a of advice?.advice || []) {
+      const v = (vms || []).find((x) => x.name === a.name);
+      if (v) next[v.id || v.name] = a.strategy;
+    }
+    setSel(next);
+    showToast(`Applied to ${Object.keys(next).length} VM(s)`, "ok");
+  };
 
   const createPlans = async () => {
     setBusy("plan");
@@ -1277,8 +1302,54 @@ function MigrationAgent({ clusters, activeCluster }) {
               style={{ ...S, background: "#3d5afe", color: "#fff", border: "none", fontWeight: 700, cursor: provider ? "pointer" : "not-allowed", opacity: provider ? 1 : .5 }}>
               {busy === "discover" ? "Discovering…" : "🔍 Discover VMs"}
             </button>
+            {vms?.length > 0 && (
+              <button onClick={askAdvice} disabled={busy === "advise"}
+                title="Ask the assistant to recommend warm or cold for each VM, with reasons"
+                style={{ ...S, background: "rgba(124,58,237,.10)", borderColor: "rgba(124,58,237,.45)", color: "#7c3aed", fontWeight: 700, cursor: "pointer" }}>
+                {busy === "advise" ? "Thinking…" : "🤖 Advise warm/cold"}
+              </button>
+            )}
             {vms && <span style={{ fontSize: "0.78rem", color: "var(--muted,#5a6373)" }}>{vms.length} VM(s) found · {Object.keys(sel).length} selected</span>}
           </div>
+
+          {/* ── Assistant recommendation ─────────────────────────────────── */}
+          {advice?.advice?.length > 0 && (
+            <div style={{ border: "1px solid rgba(124,58,237,.4)", borderRadius: 10, padding: "10px 12px", background: "rgba(124,58,237,.05)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 800, fontSize: "0.83rem", color: "#7c3aed" }}>🤖 Recommended strategy</span>
+                <span style={{ fontSize: "0.7rem", padding: "2px 8px", borderRadius: 999, fontWeight: 700,
+                  background: advice.source === "ai" ? "rgba(124,58,237,.14)" : "rgba(100,116,139,.14)",
+                  color: advice.source === "ai" ? "#7c3aed" : "#64748b" }}>
+                  {advice.source === "ai" ? "AI" : "rule-based"}
+                </span>
+                {advice.overrides > 0 && (
+                  <span style={{ fontSize: "0.72rem", color: "#b45309" }}>
+                    {advice.overrides} recommendation(s) corrected — warm is not possible for those VMs
+                  </span>
+                )}
+                <button onClick={applyAdvice} style={{ ...S, marginLeft: "auto", padding: "4px 12px", fontSize: "0.78rem", fontWeight: 700, cursor: "pointer", background: "#7c3aed", color: "#fff", border: "none" }}>
+                  Apply to selection
+                </button>
+                <button onClick={() => setAdvice(null)} style={{ ...S, padding: "4px 10px", fontSize: "0.76rem", cursor: "pointer" }}>Dismiss</button>
+              </div>
+              {advice.note && <div style={{ fontSize: "0.74rem", color: "#b45309", marginTop: 4 }}>{advice.note}</div>}
+              <div style={{ marginTop: 6, maxHeight: 150, overflow: "auto" }}>
+                {advice.advice.map((a) => (
+                  <div key={a.name} style={{ fontSize: "0.77rem", marginTop: 3, display: "flex", gap: 7, alignItems: "baseline" }}>
+                    <b style={{ minWidth: 120 }}>{a.name}</b>
+                    <span style={{ fontWeight: 700, color: a.strategy === "warm" ? "#0891b2" : "#64748b", minWidth: 42 }}>{a.strategy}</span>
+                    <span style={{ fontSize: "0.68rem", padding: "1px 7px", borderRadius: 999, fontWeight: 700,
+                      background: a.risk === "high" ? "rgba(220,38,38,.12)" : a.risk === "medium" ? "rgba(245,158,11,.14)" : "rgba(22,163,74,.12)",
+                      color: a.risk === "high" ? "#dc2626" : a.risk === "medium" ? "#b45309" : "#16a34a" }}>{a.risk}</span>
+                    <span style={{ color: "var(--muted,#5a6373)" }}>{a.reason}{a.overridden ? " (corrected)" : ""}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: "0.7rem", color: "var(--muted,#5a6373)", marginTop: 6 }}>
+                Advice only — you choose per row, and a recommendation is never applied on its own.
+              </div>
+            </div>
+          )}
 
           {/* ── Inventory table ───────────────────────────────────────────── */}
           {vms?.length > 0 && (

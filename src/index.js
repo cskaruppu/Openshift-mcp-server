@@ -2852,6 +2852,17 @@ async function startSSE() {
         } catch (err) { return sendJson(res, 200, { error: err.message, vms: [] }); }
       }
 
+      // Warm vs cold per VM, with reasons. The model advises; clampAdvice()
+      // decides — a "warm" for a VM without change tracking is downgraded
+      // before it can reach a plan.
+      if (url.pathname === "/api/migration/advise" && req.method === "POST") {
+        if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
+        try {
+          const body = await readJsonBody(req);
+          return sendJson(res, 200, await mig.adviseMigration(body.vms || [], { window: body.window || null }));
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
       // Group a selection the way MTV will actually accept it. Pure — no writes.
       if (url.pathname === "/api/migration/plan-preview" && req.method === "POST") {
         try {

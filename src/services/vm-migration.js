@@ -23,6 +23,8 @@
 
 import { ocpGet, ocpPost, ocpDelete, ocpFetch } from "../utils/openshift-client.js";
 import { recordChange } from "./change-ledger.js";
+import { classifyJSON, llmEnabled } from "./llm.js";
+import { fenceUntrusted, UNTRUSTED_GUARD } from "./untrusted.js";
 
 const FORKLIFT = "apis/forklift.konveyor.io/v1beta1";
 const MTV_NS = process.env.MTV_NAMESPACE || "openshift-mtv";
@@ -256,6 +258,125 @@ export function normaliseInventoryVM(v = {}) {
     networks: (v.networks || v.Networks || []).map((n) => n.id || n.name || n).filter(Boolean),
     concerns: (v.concerns || []).map((c) => ({ label: c.label || c.category, assessment: c.assessment })),
   };
+}
+
+
+// ---------------------------------------------------------------------------
+// 3b. Migration advisor — the one place reasoning genuinely helps
+// ---------------------------------------------------------------------------
+/**
+ * Warm vs cold is the judgement call in a migration: it trades downtime
+ * against transfer complexity, and the right answer depends on disk size, what
+ * the machine does, and when the window is. That is reasoning, not a rule —
+ * so it is the one part of UC-10 the LLM is given.
+ *
+ * The contract is the same as everywhere else in this product: the model
+ * ADVISES, code DECIDES. Its output is clamped by clampAdvice() before it can
+ * reach a plan, so a hallucinated "warm" for a VM without changed block
+ * tracking is downgraded rather than trusted. It never sees or writes a
+ * manifest.
+ */
+const ADVISOR_SYSTEM = `You advise on virtual machine migrations into OpenShift Virtualization.
+For each VM decide "warm" or "cold" and give ONE short sentence of reasoning a platform engineer would accept.
+
+warm  = the VM keeps running while its disks copy; a brief cutover at the end. Needs changed block tracking. Prefer for large disks, business-critical or business-hours workloads.
+cold  = the VM is powered off for the whole copy. Simpler and more predictable. Prefer for small disks, already powered-off machines, and anything where a consistent point-in-time copy matters more than uptime (databases especially).
+
+Respond ONLY with JSON: {"advice":[{"name":"<vm name>","strategy":"warm|cold","reason":"<one sentence>","risk":"low|medium|high"}]}
+No prose outside the JSON. Never invent a VM that was not listed.` + " " + UNTRUSTED_GUARD;
+
+/**
+ * The guardrail. Whatever the model returns, physics wins: a VM that cannot
+ * migrate warm is not migrated warm, and a VM that was not offered is dropped.
+ * Pure, so the clamping is tested rather than trusted.
+ */
+export function clampAdvice(advice = [], vms = []) {
+  const byName = new Map(vms.map((v) => [v.name, v]));
+  const out = [];
+  for (const a of advice) {
+    const vm = byName.get(a?.name);
+    if (!vm) continue;                                   // never invent a VM
+    let strategy = a.strategy === "warm" ? "warm" : "cold";
+    let reason = String(a.reason || "").slice(0, 220);
+    let overridden = false;
+    if (strategy === "warm" && vm.warmEligible === false) {
+      strategy = "cold";
+      overridden = true;
+      reason = `${vm.warmBlockedReason || "Warm migration is not possible for this VM."} Recommended cold instead.`;
+    }
+    out.push({
+      name: vm.name, strategy, reason,
+      risk: ["low", "medium", "high"].includes(a.risk) ? a.risk : "medium",
+      overridden,
+    });
+  }
+  return out;
+}
+
+/** Deterministic advice, used when no LLM is configured or the call fails. */
+export function heuristicAdvice(vms = []) {
+  return vms.map((v) => {
+    if (!v.warmEligible) {
+      // Say what will HAPPEN, not only why warm is unavailable — a bare
+      // "No CBT." leaves the operator to work out the consequence themselves.
+      const outage = v.diskGiB
+        ? `the VM stays powered off while ${v.diskGiB} GiB copies`
+        : "the VM stays powered off for the whole copy";
+      return {
+        name: v.name, strategy: "cold",
+        risk: (v.diskGiB || 0) >= 500 ? "high" : (v.diskGiB || 0) >= 200 ? "medium" : "low",
+        reason: `${v.warmBlockedReason || "Warm migration is not available for this VM."} Cold is the only option, so ${outage}.`,
+        overridden: false,
+      };
+    }
+    // Big disks are where downtime actually hurts; small ones are not worth
+    // the extra moving parts of an incremental copy.
+    const big = (v.diskGiB || 0) >= 200;
+    return {
+      name: v.name,
+      strategy: big ? "warm" : "cold",
+      risk: (v.diskGiB || 0) >= 500 ? "high" : big ? "medium" : "low",
+      reason: big
+        ? `${v.diskGiB} GiB would mean a long outage if copied cold, and this VM supports changed block tracking.`
+        : `Only ${v.diskGiB ?? "a few"} GiB — a cold copy is quick and avoids the complexity of a cutover.`,
+      overridden: false,
+    };
+  });
+}
+
+/**
+ * Recommend a strategy per VM. Returns the source of the advice so the console
+ * can say whether a person is reading a model's opinion or a fixed rule.
+ */
+export async function adviseMigration(vms = [], { window: maintenanceWindow = null } = {}) {
+  const shortlist = vms.slice(0, 40).map((v) => ({
+    name: v.name, poweredOn: v.poweredOn, diskGiB: v.diskGiB, diskCount: v.diskCount,
+    guestOS: v.guestOS, cpu: v.cpuCount, memoryMB: v.memoryMB,
+    changeTrackingEnabled: v.changeTrackingEnabled,
+  }));
+  if (!shortlist.length) return { source: "none", advice: [] };
+
+  if (!llmEnabled()) return { source: "heuristic", advice: heuristicAdvice(vms) };
+
+  try {
+    const r = await classifyJSON({
+      system: ADVISOR_SYSTEM,
+      maxTokens: 1200,
+      prompt: `Advise on migrating these VMs${maintenanceWindow ? ` within this maintenance window: ${maintenanceWindow}` : ""}.\n\n`
+        + fenceUntrusted("VM_INVENTORY", JSON.stringify(shortlist)),
+    });
+    const advice = clampAdvice(Array.isArray(r?.advice) ? r.advice : [], vms);
+    // A model that answered for only some VMs must not silently drop the rest.
+    const covered = new Set(advice.map((a) => a.name));
+    const missing = heuristicAdvice(vms.filter((v) => !covered.has(v.name)));
+    return {
+      source: advice.length ? "ai" : "heuristic",
+      advice: [...advice, ...missing],
+      overrides: advice.filter((a) => a.overridden).length,
+    };
+  } catch (e) {
+    return { source: "heuristic", advice: heuristicAdvice(vms), note: `AI advice unavailable: ${e.message}` };
+  }
 }
 
 // ---------------------------------------------------------------------------
