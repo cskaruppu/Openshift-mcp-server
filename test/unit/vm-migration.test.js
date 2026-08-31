@@ -163,3 +163,39 @@ test("disk footprint is summed across disks and reported in GiB", () => {
   assert.equal(v.diskCount, 2);
   assert.equal(v.diskGiB, 150);
 });
+
+// ── readiness must distinguish "may not look" from "not there" ──────────────
+// From the field: MTV v2.11.7 was installed and healthy, but the agent had no
+// RBAC for forklift.konveyor.io. A 403 was reported as "not installed", which
+// sends someone to reinstall a working operator.
+test("a 403 is an RBAC denial with a fix, never a missing install", async () => {
+  const { mtvAccessVerdict } = await import("../../src/services/vm-migration.js");
+  const v = mtvAccessVerdict({ status: 403, error: "OCP API 403: forbidden", namespace: "openshift-mtv" });
+  assert.equal(v.code, "mtv-rbac-denied");
+  assert.equal(v.rbacDenied, true);
+  assert.match(v.message, /installed, but/i, "must not claim MTV is absent");
+  assert.match(v.message, /openshift-mtv/);
+  assert.match(v.fix, /^oc apply -f https:/, "must offer the grant command");
+});
+
+test("a 404 means the API really is not served, and offers no RBAC fix", async () => {
+  const { mtvAccessVerdict } = await import("../../src/services/vm-migration.js");
+  const v = mtvAccessVerdict({ status: 404, error: "OCP API 404: not found" });
+  assert.equal(v.code, "mtv-not-installed");
+  assert.equal(v.rbacDenied, undefined);
+  assert.equal(v.fix, undefined, "reinstalling is not a one-command grant");
+  assert.match(v.message, /not installed/i);
+});
+
+test("any other failure keeps the underlying error rather than guessing", async () => {
+  const { mtvAccessVerdict } = await import("../../src/services/vm-migration.js");
+  const v = mtvAccessVerdict({ status: 0, error: "connect ETIMEDOUT" });
+  assert.equal(v.code, "mtv-not-installed");
+  assert.match(v.message, /ETIMEDOUT/);
+});
+
+test("a successful read produces no verdict at all", async () => {
+  const { mtvAccessVerdict } = await import("../../src/services/vm-migration.js");
+  assert.equal(mtvAccessVerdict({ status: 0, error: null }), null);
+  assert.equal(mtvAccessVerdict({}), null);
+});

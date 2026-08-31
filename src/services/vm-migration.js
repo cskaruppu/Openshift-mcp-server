@@ -45,26 +45,70 @@ const isTrue = (o, type) => cond(o, type)?.status === "True";
  * @returns {{ok:boolean, blocking:Array, warnings:Array, operator:object,
  *            providers:Array, storageMaps:Array, networkMaps:Array}}
  */
+/**
+ * What a failure to read forklift.konveyor.io actually means. Pure, because
+ * this exact distinction was got wrong in the field: MTV v2.11.7 was installed
+ * and healthy, the agent simply had no RBAC for it, and a 403 was reported as
+ * "not installed" — which sends someone to reinstall a working operator.
+ *
+ * @returns {null|{code:string, message:string, fix?:string, rbacDenied?:boolean}}
+ */
+export function mtvAccessVerdict({ status = 0, error = null, namespace = MTV_NS } = {}) {
+  if (!error) return null;
+  if (status === 403) {
+    return {
+      code: "mtv-rbac-denied",
+      rbacDenied: true,
+      message: `MTV is installed, but this service account may not read forklift.konveyor.io resources in "${namespace}". Grant the migration role — it is an opt-in ClusterRole, applied cluster-side with no image rebuild.`,
+      fix: "oc apply -f https://raw.githubusercontent.com/cskaruppu/openshift-mcp-server/claude/setup-mcp-openshift-9JUo7/deploy/dashboard/manifests/serviceaccount.yaml",
+    };
+  }
+  if (status === 404) {
+    return {
+      code: "mtv-not-installed",
+      message: "The forklift.konveyor.io API is not served by this cluster — the MTV operator is not installed.",
+    };
+  }
+  return {
+    code: "mtv-not-installed",
+    message: `Could not read MTV in "${namespace}": ${error}. Install the MTV operator, or set MTV_NAMESPACE if it lives elsewhere.`,
+  };
+}
+
 export async function checkMtvReadiness() {
   const blocking = [], warnings = [];
-  const safe = async (p) => { try { return await ocpGet(p); } catch (e) { return { __error: e.message }; } };
+  // Keep the HTTP status: "we may not look" and "it is not there" are entirely
+  // different problems with entirely different fixes, and conflating them sends
+  // someone to reinstall an operator that was working all along.
+  const safe = async (p) => {
+    try { return await ocpGet(p); }
+    catch (e) {
+      const m = /OCP API (\d{3})/.exec(e.message || "");
+      return { __error: e.message, __status: m ? Number(m[1]) : 0 };
+    }
+  };
 
   // Operator / controller
   const fc = await safe(`/${FORKLIFT}/namespaces/${MTV_NS}/forkliftcontrollers`);
+
+  const access = mtvAccessVerdict({ status: fc.__status, error: fc.__error, namespace: MTV_NS });
+  if (access) {
+    blocking.push(access);
+    return {
+      ok: false, blocking, warnings, rbacDenied: access.rbacDenied,
+      operator: { installed: !!access.rbacDenied, readable: false, namespace: MTV_NS },
+      providers: [], sources: [], targets: [], storageMaps: [], networkMaps: [], checkedAt: nowIso(),
+    };
+  }
+
   const controller = (fc.items || [])[0] || null;
   const operator = {
     installed: !fc.__error && Array.isArray(fc.items),
+    readable: !fc.__error,
     namespace: MTV_NS,
     name: controller?.metadata?.name || null,
     ready: controller ? isTrue(controller, "Successful") || isTrue(controller, "Ready") : false,
   };
-  if (!operator.installed) {
-    blocking.push({
-      code: "mtv-not-installed",
-      message: `Migration Toolkit for Virtualization is not installed, or its CRDs are not readable in "${MTV_NS}". Install the MTV operator, or set MTV_NAMESPACE if it lives elsewhere.`,
-    });
-    return { ok: false, blocking, warnings, operator, providers: [], storageMaps: [], networkMaps: [], checkedAt: nowIso() };
-  }
   if (!controller) {
     blocking.push({ code: "no-forklift-controller", message: `No ForkliftController in ${MTV_NS} — the operator is installed but not configured.` });
   } else if (!operator.ready) {

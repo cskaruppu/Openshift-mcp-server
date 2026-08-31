@@ -1228,7 +1228,23 @@ function MigrationAgent({ clusters, activeCluster }) {
         </div>
         {showReady && ready && (
           <div style={{ padding: "0 12px 11px", fontSize: "0.8rem" }}>
-            {(ready.blocking || []).map((b, i) => <div key={"b" + i} style={{ color: "#dc2626", marginTop: 3 }}>✖ {b.message}</div>)}
+            {(ready.blocking || []).map((b, i) => (
+              <div key={"b" + i} style={{ marginTop: 3 }}>
+                <div style={{ color: "#dc2626" }}>✖ {b.message}</div>
+                {/* A blocker with a known one-command fix shows it inline —
+                    an RBAC denial is a grant away, not a reinstall. */}
+                {b.fix && (
+                  <div style={{ marginTop: 4 }}>
+                    <pre style={{ margin: 0, padding: 8, borderRadius: 7, background: "#0f172a", color: "#e2e8f0",
+                      fontSize: "0.7rem", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace",
+                      whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{b.fix}</pre>
+                    <div style={{ fontSize: "0.7rem", color: "var(--muted,#5a6373)", marginTop: 3 }}>
+                      Run as cluster-admin, then press Re-check. Cluster-side only — no image rebuild, no restart.
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
             {(ready.warnings || []).map((w, i) => <div key={"w" + i} style={{ color: "#b45309", marginTop: 3 }}>⚠ {w.message}</div>)}
             {ready.ok && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 8, marginTop: 6 }}>
