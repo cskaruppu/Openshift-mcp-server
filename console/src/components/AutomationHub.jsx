@@ -41,7 +41,7 @@ export function AutomationHub({ open, onClose }) {
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,14,25,0.62)", backdropFilter: "blur(7px)", WebkitBackdropFilter: "blur(7px)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", animation: "ah-fade .16s ease" }}>
       <style>{`@keyframes ah-fade{from{opacity:0}to{opacity:1}}@keyframes ah-pop{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}`}</style>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(1040px, 96vw)", height: "min(760px, 90vh)", minHeight: 520, background: "var(--bg, #fff)", border: "1px solid var(--border, #e4e8f1)", borderRadius: 18, boxShadow: "0 24px 70px rgba(0,0,0,0.4)", display: "flex", flexDirection: "column", overflow: "hidden", animation: "ah-pop .2s cubic-bezier(.2,.7,.3,1)" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: agent === "mig" ? "min(1320px, 97vw)" : "min(1040px, 96vw)", height: "min(760px, 90vh)", minHeight: 520, background: "var(--bg, #fff)", border: "1px solid var(--border, #e4e8f1)", borderRadius: 18, boxShadow: "0 24px 70px rgba(0,0,0,0.4)", display: "flex", flexDirection: "column", overflow: "hidden", animation: "ah-pop .2s cubic-bezier(.2,.7,.3,1)" }}>
         {/* Header with gradient accent */}
         <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "18px 22px", borderBottom: "1px solid var(--border,#e4e8f1)", background: "linear-gradient(90deg, rgba(61,90,254,0.07), rgba(14,165,160,0.05))" }}>
           <span style={{ width: 40, height: 40, borderRadius: 11, background: "linear-gradient(135deg,#3d5afe,#7a3dff 55%,#0ea5a0)", display: "grid", placeItems: "center", fontSize: "1.25rem", boxShadow: "0 6px 16px rgba(61,90,254,0.35)" }}>🤖</span>
@@ -54,13 +54,15 @@ export function AutomationHub({ open, onClose }) {
         {/* Segmented agent switcher */}
         <div style={{ padding: "16px 22px 0" }}>
           <div style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 11, background: "var(--card-bg,#f0f2f8)", border: "1px solid var(--border,#e4e8f1)" }}>
-            {[["sop", "🚀 App Deployment Agent"], ["snow", "🎫 ServiceNow Agent"]].map(([k, label]) => (
+            {[["sop", "🚀 App Deployment Agent"], ["snow", "🎫 ServiceNow Agent"], ["mig", "🚚 VM Migration Agent"]].map(([k, label]) => (
               <button key={k} onClick={() => setAgent(k)} style={{ padding: "8px 18px", borderRadius: 8, border: "none", background: agent === k ? "linear-gradient(135deg,#3d5afe,#5b6cff)" : "transparent", fontWeight: 700, fontSize: "0.86rem", color: agent === k ? "#fff" : "var(--muted,#5a6373)", cursor: "pointer", boxShadow: agent === k ? "0 3px 10px rgba(61,90,254,0.3)" : "none", transition: "all .15s" }}>{label}</button>
             ))}
           </div>
         </div>
         <div style={{ flex: 1, overflow: "auto", padding: "18px 22px 24px" }}>
-          {agent === "sop" ? <SopAgent clusters={clusters} activeCluster={activeCluster} /> : <SnowAgent clusters={clusters} activeCluster={activeCluster} />}
+          {agent === "sop" ? <SopAgent clusters={clusters} activeCluster={activeCluster} />
+            : agent === "snow" ? <SnowAgent clusters={clusters} activeCluster={activeCluster} />
+            : <MigrationAgent clusters={clusters} activeCluster={activeCluster} />}
         </div>
       </div>
     </div>
@@ -1063,6 +1065,377 @@ function SnowAgent({ clusters = [], activeCluster }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* ── VM Migration Agent (UC-10): MTV readiness → discover → plan → migrate ──
+   Migration is list-driven and bulk, which is why it lives here as a workbench
+   rather than as a chat card: you pick six VMs out of forty, not one VM out of
+   a sentence. The gate chain mirrors the VM Request card so an operator who
+   knows one already knows the other.                                        */
+function MigrationAgent({ clusters, activeCluster }) {
+  const [cluster, setCluster] = useState(activeCluster || "local");
+  const [ready, setReady] = useState(null);            // readiness report
+  const [showReady, setShowReady] = useState(true);
+  const [provider, setProvider] = useState("");
+  const [vms, setVms] = useState(null);                // discovered inventory
+  const [search, setSearch] = useState("");
+  const [sel, setSel] = useState({});                  // vmId -> "warm" | "cold"
+  const [target, setTarget] = useState({ storageMap: "", networkMap: "", targetNamespace: "", targetProvider: "" });
+  const [preview, setPreview] = useState(null);        // plan grouping
+  const [plans, setPlans] = useState([]);              // created plans
+  const [status, setStatus] = useState({});            // planName -> status
+  const [rollback, setRollback] = useState(null);      // { planName, decision }
+  const [busy, setBusy] = useState(null);
+
+  const cUrl = (p) => clusterUrl(p, cluster);
+  const get = async (p) => (await fetch(cUrl(p))).json();
+  const post = async (p, body) => (await fetch(cUrl(p), {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}),
+  })).json();
+
+  // Readiness first — everything below is meaningless if MTV is not usable.
+  const loadReadiness = useCallback(async () => {
+    setBusy("ready");
+    try {
+      const d = await get("/api/migration/readiness");
+      setReady(d);
+      setShowReady(!d.ok);                 // collapse once green
+      const src = (d.sources || [])[0], tgt = (d.targets || [])[0];
+      if (src && !provider) setProvider(src.uid);
+      setTarget((t) => ({
+        ...t,
+        targetProvider: t.targetProvider || tgt?.name || "",
+        storageMap: t.storageMap || (d.storageMaps || [])[0]?.name || "",
+        networkMap: t.networkMap || (d.networkMaps || [])[0]?.name || "",
+      }));
+    } catch (e) { setReady({ ok: false, blocking: [{ message: e.message }] }); }
+    finally { setBusy(null); }
+  }, [cluster]);            // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadReadiness(); }, [loadReadiness]);
+
+  const discover = async () => {
+    if (!provider) return;
+    setBusy("discover"); setVms(null);
+    try {
+      const d = await get(`/api/migration/vms?provider=${encodeURIComponent(provider)}&search=${encodeURIComponent(search)}`);
+      setVms(d.vms || []);
+      if (d.error) showToast(d.error, "err");
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setBusy(null); }
+  };
+
+  const selection = (vms || [])
+    .filter((v) => sel[v.id || v.name])
+    .map((v) => ({
+      vm: v, strategy: sel[v.id || v.name],
+      sourceProvider: (ready?.sources || []).find((p) => p.uid === provider)?.name || "",
+      storageMap: target.storageMap, networkMap: target.networkMap, targetNamespace: target.targetNamespace,
+    }));
+
+  // Show the grouping MTV will actually enforce, as the selection changes.
+  useEffect(() => {
+    if (selection.length === 0) { setPreview(null); return; }
+    let stop = false;
+    post("/api/migration/plan-preview", { selection })
+      .then((d) => { if (!stop) setPreview(d); })
+      .catch(() => {});
+    return () => { stop = true; };
+  }, [JSON.stringify(selection.map((s) => [s.vm.id, s.strategy])), target.storageMap, target.networkMap, target.targetNamespace]); // eslint-disable-line
+
+  const createPlans = async () => {
+    setBusy("plan");
+    try {
+      const d = await post("/api/migration/plans", { selection, targetProvider: target.targetProvider });
+      if (d.ok) { setPlans(d.created || []); showToast(`${d.created.length} plan(s) created — nothing has moved yet`, "ok"); }
+      else showToast(d.errors?.[0]?.message || d.error || "Could not create plans", "err");
+      if (d.created?.length) refreshStatus(d.created.map((p) => p.planName));
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setBusy(null); }
+  };
+
+  const refreshStatus = useCallback(async (names) => {
+    const list = names || plans.map((p) => p.planName);
+    const out = {};
+    for (const n of list) { try { out[n] = await get(`/api/migration/plans/${encodeURIComponent(n)}`); } catch { /* transient */ } }
+    setStatus((s) => ({ ...s, ...out }));
+  }, [plans, cluster]);      // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll while anything is executing — a cold migration runs for hours.
+  useEffect(() => {
+    if (!plans.length) return;
+    const live = plans.some((p) => status[p.planName]?.executing);
+    const id = setInterval(() => refreshStatus(), live ? 10000 : 30000);
+    return () => clearInterval(id);
+  }, [plans, status, refreshStatus]);
+
+  const migrate = async (planName) => {
+    if (!window.confirm(`Start the migration for ${planName}?\n\nThis moves data. The source VMs are powered off for a cold migration and are never deleted.`)) return;
+    setBusy(planName);
+    try {
+      const d = await post(`/api/migration/plans/${encodeURIComponent(planName)}/migrate`, {});
+      if (d.ok) { showToast(`Migration started for ${planName}`, "ok"); refreshStatus([planName]); }
+      else showToast(d.error || "Could not start", "err");
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setBusy(null); }
+  };
+
+  const askRollback = async (planName) => {
+    setBusy(planName);
+    try { setRollback({ planName, ...(await get(`/api/migration/plans/${encodeURIComponent(planName)}/rollback-preview`)) }); }
+    catch (e) { showToast(e.message, "err"); }
+    finally { setBusy(null); }
+  };
+
+  const doRollback = async () => {
+    const planName = rollback?.planName;
+    if (!planName) return;
+    setBusy(planName);
+    try {
+      const d = await post(`/api/migration/plans/${encodeURIComponent(planName)}/rollback`, {});
+      setRollback((r) => ({ ...r, result: d }));
+      showToast(d.ok ? "Rolled back" : (d.error || "Rollback incomplete"), d.ok ? "ok" : "err");
+      setPlans((p) => p.filter((x) => x.planName !== planName));
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setBusy(null); }
+  };
+
+  const S = { padding: "7px 10px", borderRadius: 8, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--fg,#151a29)", fontSize: "0.84rem" };
+  const gb = (v) => (v == null ? "—" : `${v} GiB`);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ fontSize: "0.86rem", color: "var(--muted,#5a6373)" }}>
+        Migrate virtual machines into OpenShift Virtualization with the <b>Migration Toolkit for Virtualization</b>.
+        Discover what is on the source platform, choose a strategy per machine, and the agent groups the selection into the
+        plans MTV accepts. Nothing moves until a plan is created, validated and started — and <b>the source VM is never deleted</b>.
+      </div>
+
+      {/* ── Readiness ─────────────────────────────────────────────────────── */}
+      <div style={{ border: `1px solid ${ready?.ok ? "rgba(22,163,74,.4)" : "rgba(220,38,38,.4)"}`, borderRadius: 10, background: "var(--card-bg,#fff)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 12px", cursor: "pointer" }} onClick={() => setShowReady((v) => !v)}>
+          <span style={{ fontWeight: 800, fontSize: "0.84rem" }}>{ready?.ok ? "✅" : "⚠"} MTV readiness</span>
+          <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999,
+            background: ready?.ok ? "rgba(22,163,74,.14)" : "rgba(220,38,38,.12)", color: ready?.ok ? "#16a34a" : "#dc2626" }}>
+            {busy === "ready" ? "checking…" : ready?.ok ? "ready to migrate" : `${ready?.blocking?.length || 0} blocker(s)`}
+          </span>
+          <select value={cluster} onChange={(e) => { e.stopPropagation(); setCluster(e.target.value); }} onClick={(e) => e.stopPropagation()} style={{ ...S, padding: "4px 8px", fontSize: "0.78rem" }}>
+            {clusters.map((c) => <option key={c} value={c}>{c === "local" ? "Hub Cluster (local)" : c}</option>)}
+          </select>
+          <button onClick={(e) => { e.stopPropagation(); loadReadiness(); }} style={{ ...S, padding: "3px 10px", fontSize: "0.75rem", fontWeight: 700, cursor: "pointer" }}>↻ Re-check</button>
+          <span style={{ marginLeft: "auto", fontSize: "0.75rem", color: "var(--muted,#5a6373)" }}>{showReady ? "▲" : "▼"}</span>
+        </div>
+        {showReady && ready && (
+          <div style={{ padding: "0 12px 11px", fontSize: "0.8rem" }}>
+            {(ready.blocking || []).map((b, i) => <div key={"b" + i} style={{ color: "#dc2626", marginTop: 3 }}>✖ {b.message}</div>)}
+            {(ready.warnings || []).map((w, i) => <div key={"w" + i} style={{ color: "#b45309", marginTop: 3 }}>⚠ {w.message}</div>)}
+            {ready.ok && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 8, marginTop: 6 }}>
+                {[["Providers", (ready.providers || []).map((p) => `${p.name} (${p.type})${p.connected ? "" : " ✖"}`)],
+                  ["Storage maps", (ready.storageMaps || []).map((m) => `${m.name} · ${m.entries} entr${m.entries === 1 ? "y" : "ies"}`)],
+                  ["Network maps", (ready.networkMaps || []).map((m) => `${m.name} · ${m.entries} entr${m.entries === 1 ? "y" : "ies"}`)]].map(([label, items]) => (
+                  <div key={label}>
+                    <div style={{ fontSize: "0.7rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted,#5a6373)" }}>{label}</div>
+                    {items.length === 0 ? <div style={{ opacity: .6 }}>none</div>
+                      : items.map((x, i) => <div key={i} style={{ marginTop: 2 }}>{x}</div>)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {ready?.ok && (
+        <>
+          {/* ── Discover ──────────────────────────────────────────────────── */}
+          <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap" }}>
+            <label style={{ fontSize: "0.8rem", color: "var(--muted,#5a6373)" }}>Source</label>
+            <select value={provider} onChange={(e) => { setProvider(e.target.value); setVms(null); setSel({}); }} style={S}>
+              <option value="">— choose a provider —</option>
+              {(ready.sources || []).map((p) => <option key={p.uid} value={p.uid}>{p.name} ({p.type})</option>)}
+            </select>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="filter by name" style={{ ...S, minWidth: 180 }} />
+            <button onClick={discover} disabled={!provider || busy === "discover"}
+              style={{ ...S, background: "#3d5afe", color: "#fff", border: "none", fontWeight: 700, cursor: provider ? "pointer" : "not-allowed", opacity: provider ? 1 : .5 }}>
+              {busy === "discover" ? "Discovering…" : "🔍 Discover VMs"}
+            </button>
+            {vms && <span style={{ fontSize: "0.78rem", color: "var(--muted,#5a6373)" }}>{vms.length} VM(s) found · {Object.keys(sel).length} selected</span>}
+          </div>
+
+          {/* ── Inventory table ───────────────────────────────────────────── */}
+          {vms?.length > 0 && (
+            <div style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, overflow: "auto", maxHeight: 320 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.79rem" }}>
+                <thead>
+                  <tr style={{ background: "var(--card-bg,#f6f8fc)", position: "sticky", top: 0 }}>
+                    {["", "VM", "Power", "vCPU", "Memory", "Disks", "Guest OS", "Strategy"].map((h) => (
+                      <th key={h} style={{ textAlign: "left", padding: "7px 9px", fontWeight: 800, borderBottom: "1px solid var(--border,#e4e8f1)", whiteSpace: "nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {vms.map((v) => {
+                    const key = v.id || v.name;
+                    const chosen = sel[key];
+                    return (
+                      <tr key={key} style={{ borderBottom: "1px solid var(--border,#eef1f6)", background: chosen ? "rgba(61,90,254,.05)" : "transparent" }}>
+                        <td style={{ padding: "6px 9px" }}>
+                          <input type="checkbox" checked={!!chosen}
+                            onChange={(e) => setSel((s) => {
+                              const n = { ...s };
+                              if (e.target.checked) n[key] = v.warmEligible ? "warm" : "cold"; else delete n[key];
+                              return n;
+                            })} />
+                        </td>
+                        <td style={{ padding: "6px 9px", fontWeight: 700 }}>{v.name}</td>
+                        <td style={{ padding: "6px 9px", color: v.poweredOn ? "#16a34a" : "var(--muted,#5a6373)" }}>{v.poweredOn ? "on" : "off"}</td>
+                        <td style={{ padding: "6px 9px" }}>{v.cpuCount ?? "—"}</td>
+                        <td style={{ padding: "6px 9px" }}>{v.memoryMB ? `${Math.round(v.memoryMB / 1024)} GiB` : "—"}</td>
+                        <td style={{ padding: "6px 9px" }}>{v.diskCount} · {gb(v.diskGiB)}</td>
+                        <td style={{ padding: "6px 9px", color: "var(--muted,#5a6373)" }}>{v.guestOS || "—"}</td>
+                        <td style={{ padding: "6px 9px" }}>
+                          <select value={chosen || ""} disabled={!chosen}
+                            onChange={(e) => setSel((s) => ({ ...s, [key]: e.target.value }))}
+                            title={v.warmEligible ? "" : v.warmBlockedReason || ""}
+                            style={{ ...S, padding: "3px 7px", fontSize: "0.76rem", opacity: chosen ? 1 : .45 }}>
+                            <option value="cold">cold</option>
+                            {/* Warm is offered only where it can actually work. */}
+                            <option value="warm" disabled={!v.warmEligible}>
+                              warm{v.warmEligible ? "" : " — not possible"}
+                            </option>
+                          </select>
+                          {chosen === "cold" && v.warmEligible === false && (
+                            <div style={{ fontSize: "0.66rem", color: "var(--muted,#5a6373)", maxWidth: 230 }}>{v.warmBlockedReason}</div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {vms?.length === 0 && <div style={{ fontSize: "0.82rem", color: "var(--muted,#5a6373)" }}>No VMs returned for that provider.</div>}
+
+          {/* ── Target ────────────────────────────────────────────────────── */}
+          {Object.keys(sel).length > 0 && (
+            <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap" }}>
+              <label style={{ fontSize: "0.8rem", color: "var(--muted,#5a6373)" }}>Target namespace</label>
+              <input value={target.targetNamespace} onChange={(e) => setTarget((t) => ({ ...t, targetNamespace: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-") }))}
+                placeholder="prod-apps" style={{ ...S, minWidth: 150 }} />
+              <select value={target.storageMap} onChange={(e) => setTarget((t) => ({ ...t, storageMap: e.target.value }))} style={S}>
+                <option value="">— storage map —</option>
+                {(ready.storageMaps || []).map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
+              </select>
+              <select value={target.networkMap} onChange={(e) => setTarget((t) => ({ ...t, networkMap: e.target.value }))} style={S}>
+                <option value="">— network map —</option>
+                {(ready.networkMaps || []).map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
+              </select>
+            </div>
+          )}
+
+          {/* ── Grouping preview: what MTV will actually accept ───────────── */}
+          {preview && (
+            <div style={{ border: "1px solid rgba(56,189,248,.4)", borderRadius: 10, padding: "10px 12px", background: "rgba(56,189,248,.05)" }}>
+              <div style={{ fontWeight: 800, fontSize: "0.82rem", marginBottom: 5 }}>
+                {preview.groups.length} migration plan{preview.groups.length === 1 ? "" : "s"} from your selection of {Object.keys(sel).length}
+              </div>
+              {preview.groups.map((g) => (
+                <div key={g.key} style={{ fontSize: "0.79rem", marginTop: 3 }}>
+                  <b>{g.planName}</b> · <span style={{ color: g.warm ? "#0891b2" : "#64748b", fontWeight: 700 }}>{g.strategy}</span> · {g.totalVMs} VM{g.totalVMs === 1 ? "" : "s"} · {g.storageMap} / {g.networkMap} → {g.targetNamespace}
+                  <div style={{ color: "var(--muted,#5a6373)", fontSize: "0.72rem" }}>{g.vms.map((v) => v.name).join(", ")}</div>
+                </div>
+              ))}
+              {(preview.errors || []).map((e, i) => <div key={i} style={{ color: "#dc2626", fontSize: "0.78rem", marginTop: 3 }}>✖ {e.message}</div>)}
+              <div style={{ fontSize: "0.71rem", color: "var(--muted,#5a6373)", marginTop: 6 }}>
+                Warm/cold, the provider, both maps and the target namespace are plan-level in MTV — a mixed selection becomes several plans.
+              </div>
+              <button onClick={createPlans} disabled={busy === "plan" || (preview.errors || []).length > 0 || preview.groups.length === 0}
+                style={{ ...S, marginTop: 8, background: (preview.errors || []).length ? "rgba(148,163,184,.3)" : "#0ea5a0", color: (preview.errors || []).length ? "inherit" : "#fff",
+                  border: "none", fontWeight: 700, cursor: (preview.errors || []).length ? "not-allowed" : "pointer" }}>
+                {busy === "plan" ? "Creating…" : "1. Create plan(s) — validates, moves nothing"}
+              </button>
+            </div>
+          )}
+
+          {/* ── Plans + progress ─────────────────────────────────────────── */}
+          {plans.map((p) => {
+            const st = status[p.planName] || {};
+            return (
+              <div key={p.planName} style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, padding: "10px 12px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <b style={{ fontSize: "0.84rem" }}>{p.planName}</b>
+                  <span style={{ fontSize: "0.72rem", padding: "2px 9px", borderRadius: 999, fontWeight: 700,
+                    background: st.failed ? "rgba(220,38,38,.12)" : st.succeeded ? "rgba(22,163,74,.14)" : st.executing ? "rgba(245,158,11,.14)" : "rgba(100,116,139,.12)",
+                    color: st.failed ? "#dc2626" : st.succeeded ? "#16a34a" : st.executing ? "#b45309" : "#64748b" }}>
+                    {st.failed ? "failed" : st.succeeded ? "migrated" : st.executing ? "transferring" : st.ready ? "validated — ready" : "validating…"}
+                  </span>
+                  <span style={{ fontSize: "0.75rem", color: "var(--muted,#5a6373)" }}>{p.strategy} · {p.vms} VM(s)</span>
+                  <button onClick={() => refreshStatus([p.planName])} style={{ ...S, marginLeft: "auto", padding: "3px 10px", fontSize: "0.74rem", cursor: "pointer" }}>↻</button>
+                  <button onClick={() => migrate(p.planName)} disabled={!st.ready || st.executing || st.succeeded || busy === p.planName}
+                    title={!st.ready ? "MTV has not validated this plan yet" : ""}
+                    style={{ ...S, padding: "4px 12px", fontWeight: 700, border: "none",
+                      background: st.ready && !st.executing && !st.succeeded ? "#22c55e" : "rgba(148,163,184,.3)",
+                      color: st.ready && !st.executing && !st.succeeded ? "#052e16" : "inherit",
+                      cursor: st.ready && !st.executing && !st.succeeded ? "pointer" : "not-allowed" }}>
+                    {busy === p.planName ? "…" : st.succeeded ? "✅ Migrated" : "2. Migrate"}
+                  </button>
+                  <button onClick={() => askRollback(p.planName)} style={{ ...S, padding: "4px 11px", fontSize: "0.76rem", fontWeight: 700, color: "#dc2626", borderColor: "rgba(220,38,38,.4)", cursor: "pointer" }}>
+                    ↩ Roll back
+                  </button>
+                </div>
+                {(st.critical || []).map((c, i) => <div key={i} style={{ color: "#dc2626", fontSize: "0.76rem", marginTop: 4 }}>✖ {c}</div>)}
+                {(st.vms || []).map((v) => (
+                  <div key={v.name} style={{ marginTop: 6, fontSize: "0.77rem" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                      <span style={{ width: 7, height: 7, borderRadius: 999, background: v.failed ? "#dc2626" : v.phase === "Completed" ? "#16a34a" : "#f59e0b" }} />
+                      <b>{v.name}</b> <span style={{ color: "var(--muted,#5a6373)" }}>{v.phase}</span>
+                      <span style={{ marginLeft: "auto", color: "var(--muted,#5a6373)", fontSize: "0.72rem" }}>{v.stepsDone}/{v.stepsTotal} steps</span>
+                    </div>
+                    <div style={{ height: 5, borderRadius: 999, background: "rgba(127,127,127,.15)", marginTop: 3, overflow: "hidden" }}>
+                      <div style={{ width: `${v.percent}%`, height: "100%", background: v.failed ? "#dc2626" : "#0ea5a0" }} />
+                    </div>
+                    {v.error && <div style={{ color: "#dc2626", fontSize: "0.72rem", marginTop: 2 }}>{v.error}</div>}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+
+          {/* ── Rollback confirmation: what it MEANS, before it is done ───── */}
+          {rollback && (
+            <div style={{ border: "1px solid rgba(220,38,38,.45)", borderRadius: 10, padding: "11px 13px", background: "rgba(220,38,38,.05)" }}>
+              <div style={{ fontWeight: 800, fontSize: "0.85rem", color: "#dc2626" }}>↩ Roll back {rollback.planName}</div>
+              <div style={{ fontSize: "0.78rem", marginTop: 4 }}>Stage: <b>{rollback.decision?.stage}</b></div>
+              {(rollback.decision?.actions || []).map((a, i) => <div key={i} style={{ fontSize: "0.78rem", marginTop: 2 }}>· {a}</div>)}
+              {rollback.decision?.warning && <div style={{ fontSize: "0.78rem", color: "#b45309", marginTop: 5 }}>⚠ {rollback.decision.warning}</div>}
+              {rollback.decision?.sourceAction && (
+                <div style={{ fontSize: "0.78rem", marginTop: 5, padding: "6px 9px", borderRadius: 7, background: "rgba(245,158,11,.10)", color: "#92400e" }}>
+                  <b>Manual step this platform cannot do for you:</b> {rollback.decision.sourceAction}
+                </div>
+              )}
+              {rollback.result ? (
+                <div style={{ fontSize: "0.78rem", marginTop: 7 }}>
+                  <div style={{ color: rollback.result.ok ? "#16a34a" : "#dc2626", fontWeight: 700 }}>{rollback.result.message || (rollback.result.ok ? "Rolled back" : "Rollback incomplete")}</div>
+                  {(rollback.result.deleted || []).map((x, i) => <div key={i} style={{ color: "var(--muted,#5a6373)" }}>removed {x}</div>)}
+                  {(rollback.result.failed || []).map((x, i) => <div key={i} style={{ color: "#dc2626" }}>✖ {x.target}: {x.error}</div>)}
+                  <button onClick={() => setRollback(null)} style={{ ...S, marginTop: 7, padding: "4px 12px", cursor: "pointer" }}>Close</button>
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: 8, marginTop: 9 }}>
+                  <button onClick={doRollback} disabled={busy === rollback.planName}
+                    style={{ ...S, background: "#dc2626", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer" }}>
+                    {busy === rollback.planName ? "Rolling back…" : "Confirm rollback"}
+                  </button>
+                  <button onClick={() => setRollback(null)} style={{ ...S, cursor: "pointer" }}>Cancel</button>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
