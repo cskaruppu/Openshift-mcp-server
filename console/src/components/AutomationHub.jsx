@@ -1474,6 +1474,44 @@ function MigrationAgent({ clusters, activeCluster }) {
                   </button>
                 </div>
                 {(st.critical || []).map((c, i) => <div key={i} style={{ color: "#dc2626", fontSize: "0.76rem", marginTop: 4 }}>✖ {c}</div>)}
+
+                {/* Live ETA — measured from bytes actually moving, so it
+                    sharpens as the transfer runs and says "stalled" rather
+                    than quoting a number that keeps growing. */}
+                {st.eta && st.eta.state !== "measuring" && (
+                  <div style={{ marginTop: 7, padding: "7px 9px", borderRadius: 8,
+                    background: st.eta.state === "stalled" ? "rgba(220,38,38,.07)" : "rgba(14,165,160,.07)",
+                    border: `1px solid ${st.eta.state === "stalled" ? "rgba(220,38,38,.3)" : "rgba(14,165,160,.3)"}` }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: "0.79rem" }}>
+                      <b style={{ color: st.eta.state === "stalled" ? "#dc2626" : "#0ea5a0" }}>
+                        {st.eta.state === "stalled" ? "⚠ Transfer stalled"
+                          : st.eta.state === "complete" ? "✅ Transfer complete"
+                          : `⏱ About ${st.eta.etaMinutes.likely} min remaining`}
+                      </b>
+                      {st.eta.state === "transferring" && (
+                        <>
+                          <span style={{ color: "var(--muted,#5a6373)" }}>
+                            ({st.eta.etaMinutes.low}–{st.eta.etaMinutes.high} min)
+                          </span>
+                          <span style={{ fontSize: "0.72rem", padding: "1px 8px", borderRadius: 999, fontWeight: 700,
+                            background: st.eta.confidence === "high" ? "rgba(22,163,74,.14)" : st.eta.confidence === "medium" ? "rgba(245,158,11,.14)" : "rgba(100,116,139,.14)",
+                            color: st.eta.confidence === "high" ? "#16a34a" : st.eta.confidence === "medium" ? "#b45309" : "#64748b" }}>
+                            {st.eta.confidence} confidence
+                          </span>
+                          <span style={{ marginLeft: "auto", color: "var(--muted,#5a6373)", fontSize: "0.74rem" }}>
+                            {st.eta.mbps} MiB/s · {st.eta.percent}%
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    <div style={{ fontSize: "0.71rem", color: "var(--muted,#5a6373)", marginTop: 3 }}>{st.eta.basis}</div>
+                    {st.eta.state === "transferring" && (
+                      <div style={{ height: 4, borderRadius: 999, background: "rgba(127,127,127,.15)", marginTop: 5, overflow: "hidden" }}>
+                        <div style={{ width: `${st.eta.percent}%`, height: "100%", background: "#0ea5a0" }} />
+                      </div>
+                    )}
+                  </div>
+                )}
                 {(st.vms || []).map((v) => (
                   <div key={v.name} style={{ marginTop: 6, fontSize: "0.77rem" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 7 }}>

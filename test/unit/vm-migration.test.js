@@ -323,3 +323,80 @@ test("more VMs in flight helps, but not linearly — storage is the bottleneck",
   assert.ok(four.wallClockMinutes.likely < one.wallClockMinutes.likely, "concurrency must help");
   assert.ok(four.wallClockMinutes.likely > one.wallClockMinutes.likely / 4, "but never linearly");
 });
+
+// ── live ETA: measured during the transfer, not guessed before it ───────────
+const GiB = 1073741824;
+const series = (points) => points.map(([minutes, gib, totalGiB]) => ({
+  at: Date.parse("2026-01-01T00:00:00Z") + minutes * 60000,
+  bytes: gib * GiB, total: totalGiB * GiB,
+}));
+
+test("no ETA is offered from a single reading — there is nothing to measure yet", async () => {
+  const { liveEta } = await import("../../src/services/vm-migration.js");
+  const r = liveEta(series([[0, 0, 100]]));
+  assert.equal(r.state, "measuring");
+  assert.equal(r.etaMinutes, null, "an ETA from one sample would be invented");
+});
+
+test("a steady transfer yields an ETA close to the arithmetic truth", async () => {
+  const { liveEta } = await import("../../src/services/vm-migration.js");
+  // 10 GiB per minute, 100 GiB total: at 30 GiB done, 70 remain → ~7 minutes.
+  const r = liveEta(series([[0, 0, 100], [1, 10, 100], [2, 20, 100], [3, 30, 100]]));
+  assert.equal(r.state, "transferring");
+  assert.equal(r.percent, 30);
+  assert.ok(Math.abs(r.etaMinutes.likely - 7) <= 1, `expected ~7 minutes, got ${r.etaMinutes.likely}`);
+  assert.ok(r.mbps > 150 && r.mbps < 180, `10 GiB/min ≈ 170 MiB/s, got ${r.mbps}`);
+});
+
+test("a transfer that SLOWS reports a longer ETA — the window is rolling, not cumulative", async () => {
+  const { liveEta } = await import("../../src/services/vm-migration.js");
+  // Fast for 3 minutes, then a tenth of the speed for the next 3.
+  const fast = series([[0, 0, 200], [1, 20, 200], [2, 40, 200], [3, 60, 200]]);
+  const thenSlow = [...fast, ...series([[4, 62, 200], [5, 64, 200], [6, 66, 200]])];
+  const a = liveEta(fast, { windowSize: 3 });
+  const b = liveEta(thenSlow, { windowSize: 3 });
+  assert.ok(b.etaMinutes.likely > a.etaMinutes.likely * 3,
+    `a slowdown must lengthen the ETA (was ${a.etaMinutes.likely}, now ${b.etaMinutes.likely})`);
+  assert.ok(b.mbps < a.mbps, "and the reported rate must drop");
+});
+
+test("a stall is reported as stalled, never as an ever-growing ETA", async () => {
+  const { liveEta } = await import("../../src/services/vm-migration.js");
+  const r = liveEta(series([[0, 40, 100], [2, 40, 100], [4, 40, 100], [6, 40, 100]]));
+  assert.equal(r.state, "stalled");
+  assert.equal(r.mbps, 0);
+  assert.equal(r.etaMinutes, null, "an ETA for a stalled transfer is a lie");
+  assert.match(r.basis, /No data has moved/);
+  assert.match(r.basis, /transfer pod/, "must say where to look");
+});
+
+test("confidence widens the range early and tightens it as the transfer runs", async () => {
+  const { liveEta } = await import("../../src/services/vm-migration.js");
+  const pts = (n) => series(Array.from({ length: n }, (_, i) => [i, i * 2, 500]));
+  const early = liveEta(pts(3)), mid = liveEta(pts(10)), late = liveEta(pts(25));
+  assert.equal(early.confidence, "low");
+  assert.equal(mid.confidence, "medium");
+  assert.equal(late.confidence, "high");
+  const spread = (r) => r.etaMinutes.high - r.etaMinutes.low;
+  assert.ok(spread(early) > spread(late), "an early estimate must not look precise");
+  assert.match(early.basis, /sharpen/, "and must say it will improve");
+});
+
+test("a finished transfer reports complete rather than a residual ETA", async () => {
+  const { liveEta } = await import("../../src/services/vm-migration.js");
+  const r = liveEta(series([[0, 50, 100], [1, 100, 100]]));
+  assert.equal(r.state, "complete");
+  assert.equal(r.percent, 100);
+  assert.equal(r.etaMinutes.likely, 0);
+});
+
+test("progressSnapshot sums bytes across every VM and step in the plan", async () => {
+  const { progressSnapshot } = await import("../../src/services/vm-migration.js");
+  const s = progressSnapshot({ vms: [
+    { name: "a", phase: "CopyingDisks", steps: [{ progress: { completed: 10, total: 100 } }, { progress: { completed: 5, total: 50 } }] },
+    { name: "b", phase: "Completed", steps: [{ progress: { completed: 40, total: 40 } }] },
+  ] });
+  assert.equal(s.bytes, 55);
+  assert.equal(s.total, 190);
+  assert.equal(s.activeVMs, 1, "a completed VM is not still active");
+});

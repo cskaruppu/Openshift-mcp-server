@@ -2918,7 +2918,7 @@ async function startSSE() {
         const m = url.pathname.match(/^\/api\/migration\/plans\/([\w.-]+)$/);
         if (m && req.method === "GET") {
           try {
-            const out = await withClusterContext(url, async () => mig.planStatus(m[1]));
+            const out = await withClusterContext(url, async () => mig.planStatusWithEta(m[1]));
             return sendJson(res, 200, out ?? { found: false });
           } catch (err) { return sendJson(res, 400, { error: err.message }); }
         }

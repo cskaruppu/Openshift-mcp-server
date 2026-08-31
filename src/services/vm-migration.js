@@ -401,6 +401,115 @@ export function estimateMigration(vms = [], { strategy = "cold", throughputMBps 
   };
 }
 
+
+// ---------------------------------------------------------------------------
+// 2d. Live ETA — measured DURING the transfer, not guessed before it
+// ---------------------------------------------------------------------------
+/**
+ * A pre-flight estimate is a forecast from history. Once bytes are actually
+ * moving, the migration is telling you its real rate — so the ETA should stop
+ * being a prediction and become a measurement.
+ *
+ * Samples are kept per plan, in memory and deliberately transient: they
+ * describe one run, and a restarted pod simply starts measuring again.
+ */
+const _samples = new Map();          // planName -> [{ at, bytes, total }]
+const MAX_SAMPLES = 240;             // ~40 min at 10s, plenty for a rolling window
+
+/** Bytes done and total across every VM in a plan, from MTV's own pipeline. */
+export function progressSnapshot(status) {
+  let bytes = 0, total = 0, activeVMs = 0;
+  for (const v of status?.vms || []) {
+    for (const s of v.steps || []) {
+      if (!s.progress) continue;
+      bytes += Number(s.progress.completed || 0);
+      total += Number(s.progress.total || 0);
+    }
+    if (v.phase && !/Completed|Failed|Canceled|Pending/i.test(v.phase)) activeVMs++;
+  }
+  return { at: Date.now(), bytes, total, activeVMs };
+}
+
+export function recordProgressSample(planName, snap) {
+  if (!planName || !snap || !snap.total) return;
+  const arr = _samples.get(planName) || [];
+  const last = arr[arr.length - 1];
+  // Ignore a repeat with no elapsed time — it would divide by zero later.
+  if (last && snap.at - last.at < 1000) return;
+  arr.push(snap);
+  if (arr.length > MAX_SAMPLES) arr.shift();
+  _samples.set(planName, arr);
+}
+
+export function clearProgressSamples(planName) { _samples.delete(planName); }
+export function getProgressSamples(planName) { return _samples.get(planName) || []; }
+
+/**
+ * ETA from what is actually happening right now.
+ *
+ * Uses a ROLLING window rather than the average since the start: a transfer
+ * that has slowed should report a longer ETA immediately, not be flattered by
+ * how fast it began. A window with no bytes moved is reported as stalled — an
+ * ever-growing number is worse than an honest "not moving".
+ *
+ * Confidence widens the range when there is little to go on, so an early
+ * estimate is visibly rough rather than falsely precise.
+ *
+ * @returns {{state:string, mbps:number|null, percent:number,
+ *            etaMinutes:{low:number,likely:number,high:number}|null,
+ *            confidence:string, basis:string}}
+ */
+export function liveEta(samples = [], { windowSize = 6 } = {}) {
+  const total = samples[samples.length - 1]?.total || 0;
+  const bytes = samples[samples.length - 1]?.bytes || 0;
+  const percent = total ? Math.min(100, Math.round((bytes / total) * 100)) : 0;
+
+  if (samples.length < 2) {
+    return { state: "measuring", mbps: null, percent, etaMinutes: null,
+      confidence: "none", basis: "Waiting for a second progress reading before an ETA can be measured." };
+  }
+
+  const win = samples.slice(-Math.max(2, windowSize));
+  const first = win[0], last = win[win.length - 1];
+  const secs = (last.at - first.at) / 1000;
+  const moved = last.bytes - first.bytes;
+
+  if (secs <= 0) {
+    return { state: "measuring", mbps: null, percent, etaMinutes: null, confidence: "none", basis: "No elapsed time between readings yet." };
+  }
+  if (moved <= 0) {
+    const stalledFor = Math.round(secs / 60);
+    return {
+      state: "stalled", mbps: 0, percent, etaMinutes: null, confidence: "n/a",
+      basis: `No data has moved for about ${stalledFor} minute${stalledFor === 1 ? "" : "s"}. Check the transfer pod and the source platform before trusting any estimate.`,
+    };
+  }
+  if (bytes >= total && total > 0) {
+    return { state: "complete", mbps: null, percent: 100, etaMinutes: { low: 0, likely: 0, high: 0 }, confidence: "measured", basis: "Transfer complete." };
+  }
+
+  const mbps = moved / 1048576 / secs;                       // MiB/s, right now
+  const remainingMiB = Math.max(0, (total - bytes) / 1048576);
+  const likely = remainingMiB / mbps / 60;
+
+  // The more of the transfer we have watched, the tighter the range deserves
+  // to be. Early on, say so instead of implying precision we do not have.
+  const watched = samples.length;
+  const spread = watched >= 20 ? 0.15 : watched >= 8 ? 0.3 : 0.5;
+  const confidence = watched >= 20 ? "high" : watched >= 8 ? "medium" : "low";
+
+  const round = (n) => Math.max(0, Math.round(n));
+  return {
+    state: "transferring",
+    mbps: Math.round(mbps * 10) / 10,
+    percent,
+    etaMinutes: { low: round(likely * (1 - spread)), likely: round(likely), high: round(likely * (1 + spread)) },
+    confidence,
+    basis: `Measured over the last ${Math.round(secs / 60) || 1} minute(s) at ${Math.round(mbps)} MiB/s${
+      confidence === "low" ? " — still early, so this will sharpen as the transfer runs." : "."}`,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // 3b. Migration advisor — the one place reasoning genuinely helps
 // ---------------------------------------------------------------------------
@@ -682,6 +791,22 @@ export async function planStatus(planName) {
       .filter((x) => x.category === "Critical" || (x.type === "Ready" && x.status === "False"))
       .map((x) => `${x.type}${x.reason ? `/${x.reason}` : ""}: ${x.message || ""}`.trim()),
     vms: (p.status?.migration?.vms || []).map(normalisePlanVM),
+  };
+}
+
+/**
+ * Plan status WITH a live, measured ETA. Every call adds a progress sample, so
+ * simply polling this endpoint is what makes the estimate sharpen over time.
+ */
+export async function planStatusWithEta(planName) {
+  const status = await planStatus(planName);
+  if (!status.found) return status;
+  const snap = progressSnapshot(status);
+  if (status.executing || snap.bytes > 0) recordProgressSample(planName, snap);
+  return {
+    ...status,
+    progress: { bytes: snap.bytes, total: snap.total, activeVMs: snap.activeVMs },
+    eta: liveEta(getProgressSamples(planName)),
   };
 }
 
