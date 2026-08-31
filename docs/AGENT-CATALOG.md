@@ -4,7 +4,7 @@ Every agent this platform exposes, with the endpoint to reach it and the tools i
 **Generated from `src/agents/manifests/` — do not edit by hand.**
 Re-run `npm run docs:agents` after adding or changing an agent.
 
-**15 agents · 177 tools.**
+**16 agents · 189 tools.**
 
 Also available as a workbook — [`TCS-Agentic-AI-Agent-Catalog.xlsx`](TCS-Agentic-AI-Agent-Catalog.xlsx)
 (`npm run docs:agents:xlsx`), with the endpoints as live links and the tool list filterable.
@@ -41,7 +41,7 @@ Authorization: Bearer $MCP_API_TOKEN
 ```
 
 The whole registry is also reachable as a single MCP server at `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/sse`,
-carrying all 177 tools. Prefer a **specific agent** — a focused tool list
+carrying all 189 tools. Prefer a **specific agent** — a focused tool list
 measurably improves tool selection, and keeps an unrelated agent's tools out of the model's
 context.
 
@@ -59,6 +59,7 @@ Each row is a complete, connectable URL. Nothing to assemble.
 | **ITSM & Change Management Agent**<br><sub>Lifecycle · `itsm-change-management`</sub> | 5 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/itsm-change-management/sse` |
 | **Upgrade & Lifecycle Agent**<br><sub>Lifecycle · `upgrade-lifecycle`</sub> | 3 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/upgrade-lifecycle/sse` |
 | **VM Lifecycle Agent**<br><sub>Lifecycle · `vm-lifecycle`</sub> | 10 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/vm-lifecycle/sse` |
+| **VM Migration Agent**<br><sub>Lifecycle · `vm-migration`</sub> | 12 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/vm-migration/sse` |
 | **Cluster Operations Agent**<br><sub>Operations · `cluster-operations`</sub> | 20 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/cluster-operations/sse` |
 | **Diagnostics & Healing Agent**<br><sub>Operations · `diagnostics-healing`</sub> | 10 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/diagnostics-healing/sse` |
 | **Workload Management Agent**<br><sub>Operations · `workload-management`</sub> | 27 | `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/workload-management/sse` |
@@ -78,6 +79,7 @@ backup-dr                        https://mcp-dashboard-openshift-mcp.apps.opensh
 itsm-change-management           https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/itsm-change-management/sse
 upgrade-lifecycle                https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/upgrade-lifecycle/sse
 vm-lifecycle                     https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/vm-lifecycle/sse
+vm-migration                     https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/vm-migration/sse
 cluster-operations               https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/cluster-operations/sse
 diagnostics-healing              https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/diagnostics-healing/sse
 workload-management              https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/workload-management/sse
@@ -425,6 +427,50 @@ MESSAGE  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/vm
 
 *Tags: `kubevirt` · `openshift-virtualization` · `vm` · `provisioning` · `cnv` · `datavolume` · `cloud-init`*
 
+### VM Migration Agent
+
+`vm-migration` · v1.0.0 · 12 tools
+
+Migrates virtual machines into OpenShift Virtualization using the Migration Toolkit for Virtualization (MTV/Forklift). Validates that MTV is genuinely usable — operator, providers, storage and network maps — discovers VMs on the source platform, groups a multi-VM selection into the plans MTV will accept, and executes migrations behind a change-approval gate with a stated rollback at every stage.
+
+```
+SSE      https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/vm-migration/sse
+MESSAGE  https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/vm-migration/message
+```
+
+**Capabilities**
+
+- Validate MTV end to end: operator installed and Ready, providers connected, storage and network maps present and Ready
+- Report WHY readiness failed and what to change — an unmapped datastore is named, not merely counted
+- Discover VMs on a source provider (vSphere, oVirt, OpenStack, OVA) from MTV's inventory service
+- Report per VM the facts a migration decision turns on: power state, disk footprint, guest OS, and changed block tracking
+- Refuse warm migration where changed block tracking is off, with the reason, rather than failing later at plan validation
+- Group a multi-VM selection into the plans MTV actually accepts — warm/cold, provider, both maps and target namespace are plan-level
+- Create plans without moving anything: a plan validates first, which is the dry-run equivalent
+- Execute an approved migration and report per-VM, per-step transfer progress
+- Roll back at any stage, with the meaning of rollback stated for that stage before it is done
+- Never delete a source VM — a cold migration powers it off, and that is the way back
+- Verify migrated VMs are actually running, using the same phase rules as provisioned VMs
+
+<details><summary>12 tools</summary>
+
+- `mtv_readiness_check`
+- `mtv_list_providers`
+- `mtv_list_maps`
+- `mtv_discover_vms`
+- `mtv_plan_preview`
+- `mtv_create_plans`
+- `mtv_plan_status`
+- `mtv_start_migration`
+- `mtv_migration_progress`
+- `mtv_rollback_preview`
+- `mtv_rollback_migration`
+- `mtv_verify_migration`
+
+</details>
+
+*Tags: `mtv` · `forklift` · `migration` · `vmware` · `vsphere` · `kubevirt` · `openshift-virtualization` · `uc-10`*
+
 ## Operations
 
 ### Cluster Operations Agent
@@ -745,7 +791,7 @@ One agent:
 }
 ```
 
-<details><summary>Or all 15 — paste straight into a client config</summary>
+<details><summary>Or all 16 — paste straight into a client config</summary>
 
 ```json
 {
@@ -798,6 +844,12 @@ One agent:
         "Authorization": "Bearer ${MCP_API_TOKEN}"
       }
     },
+    "tcs-vm-migration": {
+      "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/vm-migration/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    },
     "tcs-cluster-operations": {
       "url": "https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local/mcp/cluster-operations/sse",
       "headers": {
@@ -844,7 +896,7 @@ One agent:
 }
 ```
 
-Registering all fifteen puts 177 tool definitions in front of the model at once.
+Registering all fifteen puts 189 tool definitions in front of the model at once.
 Workable, but selection degrades as the list grows — pick the two or three agents a given
 consumer actually needs.
 
@@ -924,7 +976,7 @@ useful for a system that only needs to read cluster state.
 
 ---
 
-*Generated 2026-08-14 from 15 manifests, against `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local`.*
+*Generated 2026-08-31 from 16 manifests, against `https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local`.*
 
 *Regenerate with* `npm run docs:agents` *— the host comes from `PUBLIC_BASE_URL`,
 or pass* `-- --base https://another-host`*.*

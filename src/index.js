@@ -2827,6 +2827,120 @@ async function startSSE() {
     // ── VM provisioning (UC-06) ───────────────────────────────────────────
     // Human-initiated by construction. There is deliberately no autonomous
     // path: provisioning consumes quota, addresses, licences and money.
+    // ── UC-10 · VM migration on MTV (Forklift) ──────────────────────────────
+    // Read-only up to createPlans; a Plan validates without moving anything;
+    // only /migrate moves data, and only for a Plan MTV has marked Ready.
+    if (url.pathname.startsWith("/api/migration/")) {
+      const mig = await import("./services/vm-migration.js");
+      const cluster = url.searchParams.get("cluster") || "local";
+
+      if (url.pathname === "/api/migration/readiness" && req.method === "GET") {
+        try {
+          const out = await withClusterContext(url, async () => mig.checkMtvReadiness());
+          return sendJson(res, 200, out ?? { ok: false, blocking: [{ message: "Selected cluster is not reachable." }] });
+        } catch (err) { return sendJson(res, 500, { ok: false, error: err.message }); }
+      }
+
+      if (url.pathname === "/api/migration/vms" && req.method === "GET") {
+        if (enforceRateLimit(req, res, { burst: 8, refillPerSec: 0.3 })) return;
+        try {
+          const uid = url.searchParams.get("provider");
+          if (!uid) return sendJson(res, 200, { error: "provider (uid) is required" });
+          const out = await withClusterContext(url, async () =>
+            mig.discoverVMs(uid, { search: url.searchParams.get("search") || "" }));
+          return sendJson(res, 200, { vms: out ?? [] });
+        } catch (err) { return sendJson(res, 200, { error: err.message, vms: [] }); }
+      }
+
+      // Group a selection the way MTV will actually accept it. Pure — no writes.
+      if (url.pathname === "/api/migration/plan-preview" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+          return sendJson(res, 200, mig.planGroups(body.selection || []));
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
+      if (url.pathname === "/api/migration/plans" && req.method === "POST") {
+        if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
+        try {
+          const body = await readJsonBody(req);
+          const { groups, errors } = mig.planGroups(body.selection || []);
+          if (errors.length) return sendJson(res, 200, { ok: false, errors });
+          if (!groups.length) return sendJson(res, 200, { ok: false, errors: [{ message: "Nothing selected." }] });
+          const out = await withClusterContext(url, async () => mig.createPlans(groups, {
+            targetProvider: body.targetProvider, actor: req.user?.name || "operator", cluster,
+          }));
+          return sendJson(res, 200, out ?? { ok: false, error: "Selected cluster is not reachable." });
+        } catch (err) { return sendJson(res, 400, { ok: false, error: err.message }); }
+      }
+
+      {
+        const m = url.pathname.match(/^\/api\/migration\/plans\/([\w.-]+)$/);
+        if (m && req.method === "GET") {
+          try {
+            const out = await withClusterContext(url, async () => mig.planStatus(m[1]));
+            return sendJson(res, 200, out ?? { found: false });
+          } catch (err) { return sendJson(res, 400, { error: err.message }); }
+        }
+      }
+
+      // The gate. Data moves only here, and only for an approved, Ready plan.
+      {
+        const m = url.pathname.match(/^\/api\/migration\/plans\/([\w.-]+)\/migrate$/);
+        if (m && req.method === "POST") {
+          if (enforceRateLimit(req, res, { burst: 3, refillPerSec: 0.05 })) return;
+          try {
+            const body = await readJsonBody(req);
+            const out = await withClusterContext(url, async () => mig.startMigration(m[1], {
+              cutover: body.cutover || null, actor: req.user?.name || "operator", cluster,
+            }));
+            return sendJson(res, 200, out ?? { ok: false, error: "Selected cluster is not reachable." });
+          } catch (err) { return sendJson(res, 400, { ok: false, error: err.message }); }
+        }
+      }
+
+      // What rolling back would mean right now — asked before it is done.
+      {
+        const m = url.pathname.match(/^\/api\/migration\/plans\/([\w.-]+)\/rollback-preview$/);
+        if (m && req.method === "GET") {
+          try {
+            const out = await withClusterContext(url, async () => {
+              const st = await mig.planStatus(m[1]);
+              return { planName: m[1], status: st, decision: mig.rollbackPlan(st) };
+            });
+            return sendJson(res, 200, out ?? { error: "Selected cluster is not reachable." });
+          } catch (err) { return sendJson(res, 400, { error: err.message }); }
+        }
+      }
+
+      {
+        const m = url.pathname.match(/^\/api\/migration\/plans\/([\w.-]+)\/rollback$/);
+        if (m && req.method === "POST") {
+          if (enforceRateLimit(req, res, { burst: 3, refillPerSec: 0.05 })) return;
+          try {
+            const body = await readJsonBody(req);
+            const out = await withClusterContext(url, async () => mig.rollbackMigration(m[1], {
+              deleteTargetVMs: body.deleteTargetVMs !== false,
+              actor: req.user?.name || "operator", cluster,
+            }));
+            return sendJson(res, 200, out ?? { ok: false, error: "Selected cluster is not reachable." });
+          } catch (err) { return sendJson(res, 400, { ok: false, error: err.message }); }
+        }
+      }
+
+      {
+        const m = url.pathname.match(/^\/api\/migration\/plans\/([\w.-]+)\/verify$/);
+        if (m && req.method === "GET") {
+          try {
+            const out = await withClusterContext(url, async () => mig.verifyMigration(m[1]));
+            return sendJson(res, 200, out ?? { ok: false, error: "Selected cluster is not reachable." });
+          } catch (err) { return sendJson(res, 400, { ok: false, error: err.message }); }
+        }
+      }
+
+      return sendJson(res, 404, { error: "Unknown migration endpoint" });
+    }
+
     if (url.pathname.startsWith("/api/vm/")) {
       const vm = await import("./services/vm-provisioning.js");
 

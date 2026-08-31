@@ -1,0 +1,41 @@
+{
+  "id": "vm-migration",
+  "name": "VM Migration Agent",
+  "version": "1.0.0",
+  "description": "Migrates virtual machines into OpenShift Virtualization using the Migration Toolkit for Virtualization (MTV/Forklift). Validates that MTV is genuinely usable — operator, providers, storage and network maps — discovers VMs on the source platform, groups a multi-VM selection into the plans MTV will accept, and executes migrations behind a change-approval gate with a stated rollback at every stage.",
+  "category": "Lifecycle",
+  "icon": "move",
+  "color": "#0891b2",
+  "tools": [
+    "mtv_readiness_check",
+    "mtv_list_providers",
+    "mtv_list_maps",
+    "mtv_discover_vms",
+    "mtv_plan_preview",
+    "mtv_create_plans",
+    "mtv_plan_status",
+    "mtv_start_migration",
+    "mtv_migration_progress",
+    "mtv_rollback_preview",
+    "mtv_rollback_migration",
+    "mtv_verify_migration"
+  ],
+  "services": [],
+  "capabilities": [
+    "Validate MTV end to end: operator installed and Ready, providers connected, storage and network maps present and Ready",
+    "Report WHY readiness failed and what to change — an unmapped datastore is named, not merely counted",
+    "Discover VMs on a source provider (vSphere, oVirt, OpenStack, OVA) from MTV's inventory service",
+    "Report per VM the facts a migration decision turns on: power state, disk footprint, guest OS, and changed block tracking",
+    "Refuse warm migration where changed block tracking is off, with the reason, rather than failing later at plan validation",
+    "Group a multi-VM selection into the plans MTV actually accepts — warm/cold, provider, both maps and target namespace are plan-level",
+    "Create plans without moving anything: a plan validates first, which is the dry-run equivalent",
+    "Execute an approved migration and report per-VM, per-step transfer progress",
+    "Roll back at any stage, with the meaning of rollback stated for that stage before it is done",
+    "Never delete a source VM — a cold migration powers it off, and that is the way back",
+    "Verify migrated VMs are actually running, using the same phase rules as provisioned VMs"
+  ],
+  "requires": ["core"],
+  "protocols": ["mcp", "rest", "a2a"],
+  "mcpEndpoint": "/mcp/vm-migration",
+  "tags": ["mtv", "forklift", "migration", "vmware", "vsphere", "kubevirt", "openshift-virtualization", "uc-10"]
+}
