@@ -2852,6 +2852,35 @@ async function startSSE() {
         } catch (err) { return sendJson(res, 200, { error: err.message, vms: [] }); }
       }
 
+      // Supportability + time estimate for a selection. Read-only.
+      if (url.pathname === "/api/migration/assess" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+          const vms = body.vms || [];
+          const out = await withClusterContext(url, async () => {
+            // Learn this cluster's real throughput from completed migrations
+            // rather than quoting a vendor number.
+            const plans = await ocpGet(`/apis/forklift.konveyor.io/v1beta1/namespaces/${process.env.MTV_NAMESPACE || "openshift-mtv"}/plans`).catch(() => ({ items: [] }));
+            const history = [];
+            for (const p of plans.items || []) {
+              for (const v of p.status?.migration?.vms || []) {
+                if (v.started && v.completed) history.push({ diskGiB: v.diskGiB || null, startedAt: v.started, completedAt: v.completed });
+              }
+            }
+            return { history };
+          });
+          const throughput = mig.observedThroughput(out?.history || []);
+          return sendJson(res, 200, {
+            supportability: vms.map((v) => mig.assessSupportability(v, { targetFreeGiB: body.targetFreeGiB ?? null })),
+            throughput,
+            estimate: {
+              cold: mig.estimateMigration(vms.filter((v) => (body.strategies || {})[v.name] !== "warm"), { strategy: "cold", throughputMBps: throughput.mbps, concurrency: body.concurrency || 2 }),
+              warm: mig.estimateMigration(vms.filter((v) => (body.strategies || {})[v.name] === "warm"), { strategy: "warm", throughputMBps: throughput.mbps, concurrency: body.concurrency || 2 }),
+            },
+          });
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
       // Warm vs cold per VM, with reasons. The model advises; clampAdvice()
       // decides — a "warm" for a VM without change tracking is downgraded
       // before it can reach a plan.

@@ -248,3 +248,78 @@ test("advice with no LLM configured is rule-based, and covers every VM", async (
   assert.ok(["heuristic", "ai"].includes(r.source));
   assert.equal(r.advice.length, 2, "no VM is left without a recommendation");
 });
+
+// ── supportability: MTV's own validation is the primary source ──────────────
+test("a Critical concern from MTV blocks the VM; a Warning only cautions", async () => {
+  const { assessSupportability } = await import("../../src/services/vm-migration.js");
+  const blocked = assessSupportability({
+    name: "rdm-01", diskGiB: 100, poweredOn: true,
+    concerns: [{ category: "critical", label: "Independent disk detected", assessment: "Cannot be snapshotted." }],
+  });
+  assert.equal(blocked.supported, false);
+  assert.equal(blocked.verdict, "blocked");
+  assert.match(blocked.blockers[0].message, /Independent disk/);
+
+  const caution = assessSupportability({
+    name: "w-01", diskGiB: 100, poweredOn: true,
+    concerns: [{ category: "warning", label: "Snapshot present" }],
+  });
+  assert.equal(caution.supported, true, "a warning must not block");
+  assert.equal(caution.verdict, "caution");
+});
+
+test("a clean VM is supported, and target capacity is our own check", async () => {
+  const { assessSupportability } = await import("../../src/services/vm-migration.js");
+  assert.equal(assessSupportability({ name: "ok", diskGiB: 50, poweredOn: true }).verdict, "supported");
+
+  const tooBig = assessSupportability({ name: "big", diskGiB: 900, poweredOn: true }, { targetFreeGiB: 400 });
+  assert.equal(tooBig.supported, false);
+  assert.match(tooBig.blockers[0].message, /900 GiB but only 400 GiB/);
+  assert.equal(tooBig.blockers[0].source, "target", "MTV does not check the target — we do");
+});
+
+test("a Windows guest is noted, not blocked", async () => {
+  const { assessSupportability } = await import("../../src/services/vm-migration.js");
+  const r = assessSupportability({ name: "win", guestOS: "Microsoft Windows Server 2019", diskGiB: 80, poweredOn: true });
+  assert.equal(r.supported, true);
+  assert.match(JSON.stringify(r.notes), /virtio/i);
+});
+
+// ── estimation: measured, not quoted ────────────────────────────────────────
+test("throughput is learned from completed migrations, median not mean", async () => {
+  const { observedThroughput } = await import("../../src/services/vm-migration.js");
+  assert.equal(observedThroughput([]).mbps, null, "no history means no measurement");
+
+  // 100 GiB in 1000s ≈ 102 MiB/s, twice, plus one stalled outlier.
+  const t = observedThroughput([
+    { diskGiB: 100, startedAt: "2026-01-01T00:00:00Z", completedAt: "2026-01-01T00:16:40Z" },
+    { diskGiB: 100, startedAt: "2026-01-02T00:00:00Z", completedAt: "2026-01-02T00:16:40Z" },
+    { diskGiB: 100, startedAt: "2026-01-03T00:00:00Z", completedAt: "2026-01-03T05:00:00Z" },
+  ]);
+  assert.equal(t.samples, 3);
+  assert.ok(t.mbps > 90 && t.mbps < 115, `median should ignore the stall, got ${t.mbps}`);
+  assert.match(t.basis, /Measured from 3/);
+});
+
+test("cold transfer time IS downtime; warm downtime is only the cutover", async () => {
+  const { estimateMigration } = await import("../../src/services/vm-migration.js");
+  const vms = [{ name: "a", diskGiB: 500 }, { name: "b", diskGiB: 500 }];
+  const cold = estimateMigration(vms, { strategy: "cold", throughputMBps: 100 });
+  const warm = estimateMigration(vms, { strategy: "warm", throughputMBps: 100 });
+
+  assert.equal(cold.downtimeMinutes.likely, cold.wallClockMinutes.likely, "cold: the whole copy is an outage");
+  assert.ok(warm.downtimeMinutes.likely < warm.wallClockMinutes.likely / 4, "warm: downtime is a fraction of the transfer");
+  assert.equal(cold.totalGiB, 1000);
+  // A range, because a single number would be a lie.
+  assert.ok(cold.wallClockMinutes.low < cold.wallClockMinutes.likely);
+  assert.ok(cold.wallClockMinutes.high > cold.wallClockMinutes.likely);
+});
+
+test("more VMs in flight helps, but not linearly — storage is the bottleneck", async () => {
+  const { estimateMigration } = await import("../../src/services/vm-migration.js");
+  const vms = Array.from({ length: 8 }, (_, i) => ({ name: `v${i}`, diskGiB: 100 }));
+  const one = estimateMigration(vms, { throughputMBps: 100, concurrency: 1 });
+  const four = estimateMigration(vms, { throughputMBps: 100, concurrency: 4 });
+  assert.ok(four.wallClockMinutes.likely < one.wallClockMinutes.likely, "concurrency must help");
+  assert.ok(four.wallClockMinutes.likely > one.wallClockMinutes.likely / 4, "but never linearly");
+});

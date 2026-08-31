@@ -256,10 +256,150 @@ export function normaliseInventoryVM(v = {}) {
       : "Changed block tracking is not enabled on this VM, so an incremental copy is impossible. Use cold, or enable CBT and rediscover.",
     datastores: [...new Set(disks.map((d) => d.datastore?.id || d.datastore?.name || d.Datastore).filter(Boolean))],
     networks: (v.networks || v.Networks || []).map((n) => n.id || n.name || n).filter(Boolean),
-    concerns: (v.concerns || []).map((c) => ({ label: c.label || c.category, assessment: c.assessment })),
+    // MTV's own validation service runs OPA policies over each VM and returns
+    // "concerns" with a category. Critical means the migration will fail. This
+    // is the supportability answer, produced by the toolkit itself.
+    concerns: (v.concerns || []).map((c) => ({
+      category: (c.category || "").toLowerCase(),     // critical | warning | information
+      label: c.label || "",
+      assessment: c.assessment || "",
+    })),
   };
 }
 
+
+
+// ---------------------------------------------------------------------------
+// 2b. Supportability — can this VM migrate at all?
+// ---------------------------------------------------------------------------
+/**
+ * Whether a VM can actually be migrated, and what a person needs to know first.
+ *
+ * The primary source is MTV itself: its validation service runs policies over
+ * every discovered VM and returns "concerns" categorised Critical, Warning or
+ * Information. A Critical concern means the migration WILL fail — an
+ * independent or RDM disk that cannot be snapshotted, a passthrough device
+ * that has no equivalent on the target, an unsupported guest. Surfacing those
+ * before selection is the difference between a plan that fails at validation
+ * and one that never gets built.
+ *
+ * On top of that we add checks MTV does not make, because they concern the
+ * TARGET rather than the source.
+ *
+ * Pure, so the rules are tested rather than trusted.
+ */
+export function assessSupportability(vm = {}, { targetFreeGiB = null } = {}) {
+  const blockers = [], warnings = [], notes = [];
+
+  for (const c of vm.concerns || []) {
+    const text = `${c.label}${c.assessment ? ` — ${c.assessment}` : ""}`.trim();
+    if (c.category === "critical") blockers.push({ source: "mtv", message: text });
+    else if (c.category === "warning") warnings.push({ source: "mtv", message: text });
+    else if (text) notes.push({ source: "mtv", message: text });
+  }
+
+  // Ours, about the target rather than the source.
+  if (targetFreeGiB != null && vm.diskGiB && vm.diskGiB > targetFreeGiB) {
+    blockers.push({
+      source: "target",
+      message: `Needs ${vm.diskGiB} GiB but only ${targetFreeGiB} GiB is available on the target storage class.`,
+    });
+  }
+  if (/windows/i.test(vm.guestOS || "")) {
+    notes.push({
+      source: "target",
+      message: "Windows guest — MTV installs virtio drivers during conversion. Confirm the guest boots and the network adapter appears before decommissioning the source.",
+    });
+  }
+  if ((vm.diskCount || 0) > 8) {
+    warnings.push({ source: "target", message: `${vm.diskCount} disks — expect a proportionally longer transfer and more to verify afterwards.` });
+  }
+  if (!vm.poweredOn) {
+    notes.push({ source: "mtv", message: "Already powered off — cold migration costs no additional downtime." });
+  }
+
+  return {
+    name: vm.name,
+    supported: blockers.length === 0,
+    blockers, warnings, notes,
+    // A single word for the table.
+    verdict: blockers.length ? "blocked" : warnings.length ? "caution" : "supported",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 2c. Time estimate — MTV does not give one, and it is the first thing asked
+// ---------------------------------------------------------------------------
+/**
+ * Throughput actually achieved on THIS cluster, measured from completed
+ * migrations. An estimate built from a vendor number is a guess; one built
+ * from your own storage and network is a forecast.
+ *
+ * @param {Array} history  [{ diskGiB, startedAt, completedAt }]
+ * @returns {{mbps:number|null, samples:number, basis:string}}
+ */
+export function observedThroughput(history = []) {
+  const usable = history.filter((h) => h.diskGiB > 0 && h.startedAt && h.completedAt);
+  if (!usable.length) {
+    return { mbps: null, samples: 0, basis: "No completed migrations yet — using a conservative default." };
+  }
+  const rates = usable.map((h) => {
+    const secs = (new Date(h.completedAt) - new Date(h.startedAt)) / 1000;
+    return secs > 0 ? (h.diskGiB * 1024) / secs : null;      // MiB/s
+  }).filter((r) => r && r > 0 && r < 5000);                  // discard nonsense
+  if (!rates.length) return { mbps: null, samples: 0, basis: "No usable timings yet." };
+  rates.sort((a, b) => a - b);
+  // Median, not mean: one stalled transfer should not drag the forecast down.
+  const median = rates[Math.floor(rates.length / 2)];
+  return {
+    mbps: Math.round(median),
+    samples: rates.length,
+    basis: `Measured from ${rates.length} completed migration${rates.length === 1 ? "" : "s"} on this cluster (median ${Math.round(median)} MiB/s).`,
+  };
+}
+
+/** Conservative default until this cluster has measured itself. */
+const DEFAULT_MBPS = Number(process.env.MTV_DEFAULT_MBPS || 60);
+
+/**
+ * How long a wave will take, and how much of that is DOWNTIME — the two are
+ * very different for warm, and conflating them is how maintenance windows get
+ * blown.
+ *
+ * Reported as a range, because storage contention makes a single number a lie.
+ */
+export function estimateMigration(vms = [], { strategy = "cold", throughputMBps = null, concurrency = 2 } = {}) {
+  const totalGiB = vms.reduce((n, v) => n + (v.diskGiB || 0), 0);
+  const rate = throughputMBps || DEFAULT_MBPS;
+  const par = Math.max(1, Math.min(concurrency, vms.length || 1));
+
+  // Wall clock: total bytes over the aggregate rate, which does not scale
+  // linearly with concurrency — the storage backend is the shared bottleneck.
+  const aggregate = rate * Math.sqrt(par);
+  const transferMin = totalGiB ? (totalGiB * 1024) / aggregate / 60 : 0;
+  // Per VM: conversion, boot and verification, whatever the disk size.
+  const overheadMin = (vms.length || 0) * 4;
+  const likely = transferMin + overheadMin;
+
+  const downtimeMin = strategy === "warm"
+    // Warm copies while the VM runs; only the final delta and cutover cost.
+    ? (vms.length || 0) * 6
+    : likely;
+
+  const round = (n) => Math.max(1, Math.round(n));
+  return {
+    vmCount: vms.length,
+    totalGiB,
+    strategy,
+    throughputMBps: rate,
+    concurrency: par,
+    wallClockMinutes: { low: round(likely * 0.7), likely: round(likely), high: round(likely * 1.8) },
+    downtimeMinutes: { low: round(downtimeMin * 0.7), likely: round(downtimeMin), high: round(downtimeMin * 1.8) },
+    note: strategy === "warm"
+      ? "Warm: the transfer happens while the VM runs, so only the cutover is downtime."
+      : "Cold: the VM is powered off for the whole transfer, so transfer time IS downtime.",
+  };
+}
 
 // ---------------------------------------------------------------------------
 // 3b. Migration advisor — the one place reasoning genuinely helps
