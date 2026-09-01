@@ -1204,14 +1204,13 @@ function MigrationAgent({ clusters, activeCluster }) {
   // ── Change request: raise, then poll for the CAB's answer ────────────────
   // The verdict is written onto the Plan itself, so a console refresh — or a
   // different person tomorrow — sees the same gate.
-  const raiseCR = async (planName, strategy) => {
+  const raiseCR = async (planName) => {
     setBusy(planName);
     try {
-      const d = await post(`/api/migration/plans/${encodeURIComponent(planName)}/change-request`, {
-        // The plan's own strategy decides which estimate the CAB sees — a warm
-        // plan's downtime is minutes, a cold one's is the whole transfer.
-        estimate: estimate?.estimate?.[strategy] || null,
-      });
+      // No estimate is sent: the server computes it from the plan's own
+      // recorded footprint, so the CAB sees the number for the machines in
+      // front of it rather than for the whole wave.
+      const d = await post(`/api/migration/plans/${encodeURIComponent(planName)}/change-request`, {});
       if (d.ok) {
         showToast(d.alreadyRaised ? d.message : `${d.number} raised — awaiting approval`, "ok");
         refreshStatus([planName]);
@@ -1549,7 +1548,7 @@ function MigrationAgent({ clusters, activeCluster }) {
               </div>
               {preview.groups.map((g) => (
                 <div key={g.key} style={{ fontSize: "0.79rem", marginTop: 3 }}>
-                  <b>{g.planName}</b> · <span style={{ color: g.warm ? "#0891b2" : "#64748b", fontWeight: 700 }}>{g.strategy}</span> · {g.totalVMs} VM{g.totalVMs === 1 ? "" : "s"} · {g.storageMap} / {g.networkMap} → {g.targetNamespace}
+                  <b>{g.planName}</b> · <span style={{ color: g.warm ? "#0891b2" : "#64748b", fontWeight: 700 }}>{g.strategy}</span> · {g.totalVMs} VM{g.totalVMs === 1 ? "" : "s"} · {gb(g.totalGiB)} · {g.storageMap} / {g.networkMap} → {g.targetNamespace}
                   <div style={{ color: "var(--muted,#5a6373)", fontSize: "0.72rem" }}>{g.vms.map((v) => v.name).join(", ")}</div>
                 </div>
               ))}
@@ -1577,13 +1576,15 @@ function MigrationAgent({ clusters, activeCluster }) {
                     color: st.failed ? "#dc2626" : st.succeeded ? "#16a34a" : st.executing ? "#b45309" : "#64748b" }}>
                     {st.failed ? "failed" : st.succeeded ? "migrated" : st.executing ? "transferring" : st.ready ? "validated — ready" : "validating…"}
                   </span>
-                  <span style={{ fontSize: "0.75rem", color: "var(--muted,#5a6373)" }}>{p.strategy} · {p.vms} VM(s)</span>
+                  <span style={{ fontSize: "0.75rem", color: "var(--muted,#5a6373)" }}>
+                    {p.strategy} · {p.vms} VM(s){st.totalGiB ? ` · ${gb(st.totalGiB)}` : ""}
+                  </span>
                   <button onClick={() => refreshStatus([p.planName])} style={{ ...S, marginLeft: "auto", padding: "3px 10px", fontSize: "0.74rem", cursor: "pointer" }}>↻</button>
                   {/* The gate: validated → approved → migrate. The button is
                       enabled from the plan's own annotations, and the server
                       re-checks them — an enabled button is not authorisation. */}
                   {!st.gate?.number && st.gate?.required !== false && (
-                    <button onClick={() => raiseCR(p.planName, p.strategy)} disabled={!st.ready || busy === p.planName}
+                    <button onClick={() => raiseCR(p.planName)} disabled={!st.ready || busy === p.planName}
                       title={!st.ready ? "MTV has not validated this plan yet" : "Raise the ServiceNow change request for this migration"}
                       style={{ ...S, padding: "4px 12px", fontWeight: 700, border: "none",
                         background: st.ready ? "#7c3aed" : "rgba(148,163,184,.3)", color: st.ready ? "#fff" : "inherit",

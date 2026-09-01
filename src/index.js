@@ -2857,19 +2857,10 @@ async function startSSE() {
         try {
           const body = await readJsonBody(req);
           const vms = body.vms || [];
-          const out = await withClusterContext(url, async () => {
-            // Learn this cluster's real throughput from completed migrations
-            // rather than quoting a vendor number.
-            const plans = await ocpGet(`/apis/forklift.konveyor.io/v1beta1/namespaces/${process.env.MTV_NAMESPACE || "openshift-mtv"}/plans`).catch(() => ({ items: [] }));
-            const history = [];
-            for (const p of plans.items || []) {
-              for (const v of p.status?.migration?.vms || []) {
-                if (v.started && v.completed) history.push({ diskGiB: v.diskGiB || null, startedAt: v.started, completedAt: v.completed });
-              }
-            }
-            return { history };
-          });
-          const throughput = mig.observedThroughput(out?.history || []);
+          // Learn this cluster's real throughput from completed migrations
+          // rather than quoting a vendor number.
+          const throughput = (await withClusterContext(url, async () => mig.clusterThroughput()))
+            || { mbps: null, samples: 0, basis: "Selected cluster is not reachable." };
           return sendJson(res, 200, {
             supportability: vms.map((v) => mig.assessSupportability(v, { targetFreeGiB: body.targetFreeGiB ?? null })),
             throughput,
@@ -2952,9 +2943,11 @@ async function startSSE() {
         if (m && req.method === "POST") {
           if (enforceRateLimit(req, res, { burst: 4, refillPerSec: 0.05 })) return;
           try {
-            const body = await readJsonBody(req);
+            // The estimate is computed server-side from the plan's own
+            // recorded footprint — a client-supplied figure could describe a
+            // different set of machines than the one being approved.
             const out = await withClusterContext(url, async () => mig.raiseMigrationCR(m[1], {
-              estimate: body.estimate || null, actor: req.user?.name || "operator", cluster,
+              actor: req.user?.name || "operator", cluster,
             }));
             return sendJson(res, 200, out ?? { ok: false, error: "Selected cluster is not reachable." });
           } catch (err) { return sendJson(res, 400, { ok: false, error: err.message }); }

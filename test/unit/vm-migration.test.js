@@ -689,3 +689,65 @@ test("the gate is read from the plan's own annotations", async () => {
   // A plan that vanished must not read as approved.
   assert.equal(approvalGate(null).approved, false);
 });
+
+// ── Per-plan footprint ──────────────────────────────────────────────────────
+// A wave that splits into two cold plans must not put the wave's combined
+// transfer time on both change requests. A CAB approving an outage is entitled
+// to the number for the work in front of it.
+
+test("each group carries only its own VMs' storage", async () => {
+  const { planGroups } = await import("../../src/services/vm-migration.js");
+  const sel = (name, diskGiB, strategy, targetNamespace = "prod") => ({
+    vm: { id: `id-${name}`, name, diskGiB, warmEligible: true },
+    strategy, sourceProvider: "vsphere", storageMap: "sm", networkMap: "nm", targetNamespace,
+  });
+  const { groups } = planGroups([
+    sel("a", 100, "cold"), sel("b", 250, "cold"),
+    sel("c", 600, "cold", "staging"),   // different namespace → its own plan
+    sel("d", 400, "warm"),
+  ]);
+  assert.equal(groups.length, 3);
+  const gib = Object.fromEntries(groups.map((g) => [g.totalGiB, g.totalVMs]));
+  assert.ok(gib[350], "the two prod cold VMs total 350 GiB, not the whole wave");
+  assert.ok(gib[600], "the staging plan carries only its own 600 GiB");
+  assert.ok(gib[400]);
+  for (const g of groups) {
+    assert.equal(g.totalGiB, g.vms.reduce((n, v) => n + v.diskGiB, 0));
+  }
+});
+
+test("the plan manifest records its footprint without polluting spec.vms", async () => {
+  const { planGroups, buildPlanManifest } = await import("../../src/services/vm-migration.js");
+  const { groups } = planGroups([{
+    vm: { id: "id-a", name: "a", diskGiB: 120 }, strategy: "cold",
+    sourceProvider: "vsphere", storageMap: "sm", networkMap: "nm", targetNamespace: "prod",
+  }]);
+  const man = buildPlanManifest(groups[0], { targetProvider: "host" });
+  assert.equal(man.metadata.annotations["tcs.agentic-ai/total-gib"], "120");
+  assert.equal(man.metadata.annotations["tcs.agentic-ai/vm-count"], "1");
+  // Forklift rejects unknown fields in spec.vms, so the size must not reach it.
+  assert.deepEqual(man.spec.vms, [{ id: "id-a", name: "a" }]);
+});
+
+test("a plan estimates from its own annotation, and refuses to invent a size", async () => {
+  const { estimatePlan } = await import("../../src/services/vm-migration.js");
+  const plan = (gib, n, warm) => ({
+    metadata: { annotations: { "tcs.agentic-ai/total-gib": String(gib), "tcs.agentic-ai/vm-count": String(n) } },
+    spec: { warm },
+  });
+  const cold = await estimatePlan(plan(350, 2, false));
+  assert.equal(cold.totalGiB, 350);
+  assert.equal(cold.strategy, "cold");
+  assert.deepEqual(cold.downtimeMinutes, cold.wallClockMinutes, "cold downtime IS the transfer");
+
+  const warm = await estimatePlan(plan(600, 1, true));
+  assert.equal(warm.strategy, "warm");
+  assert.ok(warm.downtimeMinutes.likely < warm.wallClockMinutes.likely / 10,
+    "warm downtime is the cutover, not the copy");
+
+  // A bigger plan must estimate longer — the footprint has to actually be used.
+  assert.ok((await estimatePlan(plan(2000, 2, false))).wallClockMinutes.likely > cold.wallClockMinutes.likely);
+
+  // With no recorded footprint, say nothing rather than guess one.
+  assert.equal(await estimatePlan({ metadata: {}, spec: {} }), null);
+});

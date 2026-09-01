@@ -1206,13 +1206,16 @@ export function planGroups(selection = []) {
         vms: [],
       });
     }
-    byKey.get(key).vms.push({ id: vm.id || null, name: vm.name });
+    // Size travels with the VM into the group: the plan's own footprint is
+    // what its change request has to quote, not the wave's.
+    byKey.get(key).vms.push({ id: vm.id || null, name: vm.name, diskGiB: vm.diskGiB || 0 });
   }
 
   const groups = [...byKey.values()].map((g, i) => ({
     ...g,
     planName: planNameFor(g, i),
     totalVMs: g.vms.length,
+    totalGiB: g.vms.reduce((n, v) => n + (v.diskGiB || 0), 0),
   }));
   return { groups, errors };
 }
@@ -1238,6 +1241,14 @@ export function buildPlanManifest(group, { targetProvider }) {
       labels: {
         "app.kubernetes.io/managed-by": "tcs-agentic-ai",
         "tcs.agentic-ai/strategy": group.strategy,
+      },
+      // Forklift's Plan spec carries VM names, not disk sizes. Recording the
+      // footprint here means the change request can quote THIS plan's transfer
+      // time — even when raised from a fresh session, days later, with the
+      // original selection long gone from any browser.
+      annotations: {
+        "tcs.agentic-ai/total-gib": String(group.totalGiB ?? 0),
+        "tcs.agentic-ai/vm-count": String(group.vms.length),
       },
     },
     spec: {
@@ -1319,6 +1330,7 @@ export async function planStatus(planName) {
     targetNamespace: p.spec?.targetNamespace || null,
     vmCount: (p.spec?.vms || []).length,
     vmNames: (p.spec?.vms || []).map((v) => v.name || v.id).filter(Boolean),
+    totalGiB: Number(p.metadata?.annotations?.["tcs.agentic-ai/total-gib"] || 0) || null,
     // The approval gate travels with the plan, so the console shows the same
     // answer the migrate endpoint will enforce.
     gate: approvalGate(p),
@@ -1416,8 +1428,54 @@ export function approvalGate(plan) {
   };
 }
 
+/**
+ * What this cluster actually achieves, measured from migrations it has already
+ * completed. Lives here rather than in the route so the change request and the
+ * console quote the same number.
+ */
+export async function clusterThroughput() {
+  const plans = await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/plans`).catch(() => ({ items: [] }));
+  const history = [];
+  for (const p of plans.items || []) {
+    for (const v of p.status?.migration?.vms || []) {
+      if (v.started && v.completed) history.push({ diskGiB: v.diskGiB || null, startedAt: v.started, completedAt: v.completed });
+    }
+  }
+  return observedThroughput(history);
+}
+
+/**
+ * The transfer estimate for ONE plan, from its own recorded footprint.
+ *
+ * Not the wave's: a wave that splits into two cold plans would otherwise put
+ * the combined figure on both change requests, and a CAB approving an outage
+ * is entitled to the number for the work in front of it.
+ */
+export async function estimatePlan(plan) {
+  const ann = plan?.metadata?.annotations || {};
+  const totalGiB = Number(ann["tcs.agentic-ai/total-gib"] || 0);
+  const vmCount = Number(ann["tcs.agentic-ai/vm-count"] || (plan?.spec?.vms || []).length || 0);
+  if (!totalGiB || !vmCount) return null;          // never invent a size
+  const tp = await clusterThroughput();
+  // estimateMigration works per VM; the plan only knows its total, so it is
+  // spread evenly. The sum is what matters for wall clock, and the live ETA
+  // replaces this the moment bytes actually move.
+  const each = totalGiB / vmCount;
+  const vms = Array.from({ length: vmCount }, (_, i) => ({ name: `vm${i}`, diskGiB: each }));
+  return {
+    ...estimateMigration(vms, {
+      strategy: plan?.spec?.warm ? "warm" : "cold",
+      throughputMBps: tp.mbps,
+      concurrency: Math.min(2, vmCount),
+    }),
+    totalGiB,
+    measured: tp.samples > 0,
+    samples: tp.samples,
+  };
+}
+
 /** Raise the CR for a plan and record it on the Plan. */
-export async function raiseMigrationCR(planName, { estimate = null, actor = "operator", cluster = "local" } = {}) {
+export async function raiseMigrationCR(planName, { actor = "operator", cluster = "local" } = {}) {
   const plan = await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/plans/${planName}`).catch(() => null);
   if (!plan) return { ok: false, error: `Plan "${planName}" not found.` };
 
@@ -1428,17 +1486,18 @@ export async function raiseMigrationCR(planName, { estimate = null, actor = "ope
 
   const vms = (plan.spec?.vms || []).map((v) => v.name || v.id);
   const warm = plan.spec?.warm === true;
-  // The CAB is approving an outage, so the change record carries the number
-  // they actually need: how long the machines are down, not only how long the
-  // copy runs.
-  const est = estimate?.wallClockMinutes ? estimate : null;
+  // The CAB is approving an outage, so the change record carries the numbers
+  // they actually need: how long these machines are down, not only how long the
+  // copy runs — and computed from THIS plan's footprint, not the wave's.
+  const est = await estimatePlan(plan).catch(() => null);
   const window = est
     ? [
+        `Data to move       : ${est.totalGiB} GiB`,
         `Estimated transfer : ${est.wallClockMinutes.likely} min (${est.wallClockMinutes.low}-${est.wallClockMinutes.high})`,
         `Estimated downtime : ${est.downtimeMinutes.likely} min (${est.downtimeMinutes.low}-${est.downtimeMinutes.high})`,
-        `Basis              : ${est.throughputMBps} MiB/s measured on this cluster. ${est.note || ""}`.trim(),
+        `Basis              : ${est.throughputMBps} MiB/s ${est.measured ? `measured from ${est.samples} completed migration(s) on this cluster` : "(conservative default — this cluster has completed no migrations yet)"}. ${est.note || ""}`.trim(),
       ].join("\n")
-    : "Transfer time will be measured live once the migration starts; no completed migration on this cluster to estimate from yet.";
+    : "Transfer time will be measured live once the migration starts.";
 
   let cr;
   try {
