@@ -1151,40 +1151,46 @@ function MigrationAgent({ clusters, activeCluster }) {
     return () => { stop = true; };
   }, [JSON.stringify(selection.map((s) => [s.vm.id, s.strategy])), target.storageMap, target.networkMap, target.targetNamespace]); // eslint-disable-line
 
-  // The one place a model is asked to reason. It advises; clampAdvice on the
-  // server decides — a warm recommendation for a VM that cannot do warm is
-  // downgraded before it ever reaches this screen.
-  const askAdvice = async () => {
-    if (!vms?.length) return;
-    setBusy("advise");
-    try {
-      const d = await post("/api/migration/advise", { vms });
-      setAdvice(d);
-      // Applying is a separate, explicit act — the operator can read first.
-      showToast(d.source === "ai" ? "AI recommendation ready — review, then apply" : "Recommendation ready (rule-based — no LLM configured)", "ok");
-    } catch (e) { showToast(e.message, "err"); }
-    finally { setBusy(null); }
-  };
-  const applyAdvice = () => {
-    const next = { ...sel };
-    for (const a of advice?.advice || []) {
-      const v = (vms || []).find((x) => x.name === a.name);
-      if (v) next[v.id || v.name] = a.strategy;
-    }
-    setSel(next);
-    showToast(`Applied to ${Object.keys(next).length} VM(s)`, "ok");
-  };
-
-  // Step 1 → 2. Everything the analysis shows is computed server-side from the
+  // Step 1 → 2. Everything the report shows is computed server-side from the
   // same assessment the plan gate uses, so the chart cannot flatter a selection
-  // that MTV will later reject.
+  // that MTV will later reject. The per-VM method and power-state call come
+  // back with it — reading the report and reading the recommendation are the
+  // same act, so they are not two buttons.
   const runAnalysis = async () => {
     const chosen = selection.map((s) => s.vm);
     if (!chosen.length) { showToast("Select at least one VM first", "err"); return; }
     setBusy("analyse"); setStep(2);
     try {
-      setAnalysis(await post("/api/migration/analyse", { vms: chosen }));
+      const d = await post("/api/migration/analyse", { vms: chosen });
+      setAnalysis(d);
+      setAdvice({ source: d.adviceSource, advice: d.advice || [], note: d.adviceNote });
     } catch (e) { showToast(e.message, "err"); setStep(1); }
+    finally { setBusy(null); }
+  };
+
+  // Step 2 → 3. Accepting the report is what applies the recommended method —
+  // an explicit act, never something that happened while the operator read.
+  const acceptReport = () => {
+    const next = {};
+    for (const [key, cur] of Object.entries(sel)) {
+      const vm = (vms || []).find((v) => (v.id || v.name) === key);
+      const rec = (advice?.advice || []).find((a) => a.name === vm?.name);
+      next[key] = rec?.strategy || cur;
+    }
+    setSel(next);
+    setStep(3);
+  };
+
+  // Re-analyse when the operator changes the selection on the report itself.
+  const revalidate = async (nextSel) => {
+    const chosen = (vms || []).filter((v) => nextSel[v.id || v.name]);
+    if (!chosen.length) { setAnalysis(null); return; }
+    setBusy("analyse");
+    try {
+      const d = await post("/api/migration/analyse", { vms: chosen });
+      setAnalysis(d);
+      setAdvice({ source: d.adviceSource, advice: d.advice || [], note: d.adviceNote });
+    } catch (e) { showToast(e.message, "err"); }
     finally { setBusy(null); }
   };
 
@@ -1353,54 +1359,8 @@ function MigrationAgent({ clusters, activeCluster }) {
               style={{ ...S, background: "#3d5afe", color: "#fff", border: "none", fontWeight: 700, cursor: provider ? "pointer" : "not-allowed", opacity: provider ? 1 : .5 }}>
               {busy === "discover" ? "Discovering…" : "🔍 Discover VMs"}
             </button>
-            {vms?.length > 0 && (
-              <button onClick={askAdvice} disabled={busy === "advise"}
-                title="Ask the assistant to recommend warm or cold for each VM, with reasons"
-                style={{ ...S, background: "rgba(124,58,237,.10)", borderColor: "rgba(124,58,237,.45)", color: "#7c3aed", fontWeight: 700, cursor: "pointer" }}>
-                {busy === "advise" ? "Thinking…" : "🤖 Advise warm/cold"}
-              </button>
-            )}
             {vms && <span style={{ fontSize: "0.78rem", color: "var(--muted,#5a6373)" }}>{vms.length} VM(s) found · {Object.keys(sel).length} selected</span>}
           </div>
-
-          {/* ── Assistant recommendation ─────────────────────────────────── */}
-          {advice?.advice?.length > 0 && (
-            <div style={{ border: "1px solid rgba(124,58,237,.4)", borderRadius: 10, padding: "10px 12px", background: "rgba(124,58,237,.05)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <span style={{ fontWeight: 800, fontSize: "0.83rem", color: "#7c3aed" }}>🤖 Recommended strategy</span>
-                <span style={{ fontSize: "0.7rem", padding: "2px 8px", borderRadius: 999, fontWeight: 700,
-                  background: advice.source === "ai" ? "rgba(124,58,237,.14)" : "rgba(100,116,139,.14)",
-                  color: advice.source === "ai" ? "#7c3aed" : "#64748b" }}>
-                  {advice.source === "ai" ? "AI" : "rule-based"}
-                </span>
-                {advice.overrides > 0 && (
-                  <span style={{ fontSize: "0.72rem", color: "#b45309" }}>
-                    {advice.overrides} recommendation(s) corrected — warm is not possible for those VMs
-                  </span>
-                )}
-                <button onClick={applyAdvice} style={{ ...S, marginLeft: "auto", padding: "4px 12px", fontSize: "0.78rem", fontWeight: 700, cursor: "pointer", background: "#7c3aed", color: "#fff", border: "none" }}>
-                  Apply to selection
-                </button>
-                <button onClick={() => setAdvice(null)} style={{ ...S, padding: "4px 10px", fontSize: "0.76rem", cursor: "pointer" }}>Dismiss</button>
-              </div>
-              {advice.note && <div style={{ fontSize: "0.74rem", color: "#b45309", marginTop: 4 }}>{advice.note}</div>}
-              <div style={{ marginTop: 6, maxHeight: 150, overflow: "auto" }}>
-                {advice.advice.map((a) => (
-                  <div key={a.name} style={{ fontSize: "0.77rem", marginTop: 3, display: "flex", gap: 7, alignItems: "baseline" }}>
-                    <b style={{ minWidth: 120 }}>{a.name}</b>
-                    <span style={{ fontWeight: 700, color: a.strategy === "warm" ? "#0891b2" : "#64748b", minWidth: 42 }}>{a.strategy}</span>
-                    <span style={{ fontSize: "0.68rem", padding: "1px 7px", borderRadius: 999, fontWeight: 700,
-                      background: a.risk === "high" ? "rgba(220,38,38,.12)" : a.risk === "medium" ? "rgba(245,158,11,.14)" : "rgba(22,163,74,.12)",
-                      color: a.risk === "high" ? "#dc2626" : a.risk === "medium" ? "#b45309" : "#16a34a" }}>{a.risk}</span>
-                    <span style={{ color: "var(--muted,#5a6373)" }}>{a.reason}{a.overridden ? " (corrected)" : ""}</span>
-                  </div>
-                ))}
-              </div>
-              <div style={{ fontSize: "0.7rem", color: "var(--muted,#5a6373)", marginTop: 6 }}>
-                Advice only — you choose per row, and a recommendation is never applied on its own.
-              </div>
-            </div>
-          )}
 
           {/* ── Inventory table ───────────────────────────────────────────── */}
           {vms?.length > 0 && (
@@ -1408,7 +1368,7 @@ function MigrationAgent({ clusters, activeCluster }) {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.79rem" }}>
                 <thead>
                   <tr style={{ background: "var(--card-bg,#f6f8fc)", position: "sticky", top: 0 }}>
-                    {["", "VM", "Power", "Guest OS", "IP address", "vCPU", "Memory", "Storage", "Strategy"].map((h) => (
+                    {["", "VM", "Power", "Guest OS", "IP address", "vCPU", "Memory", "Storage"].map((h) => (
                       <th key={h} style={{ textAlign: "left", padding: "7px 9px", fontWeight: 800, borderBottom: "1px solid var(--border,#e4e8f1)", whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
@@ -1423,7 +1383,9 @@ function MigrationAgent({ clusters, activeCluster }) {
                           <input type="checkbox" checked={!!chosen}
                             onChange={(e) => setSel((s) => {
                               const n = { ...s };
-                              if (e.target.checked) n[key] = v.warmEligible ? "warm" : "cold"; else delete n[key];
+                              // A placeholder, not a decision: the strategy is
+                              // chosen at the end, once the report is read.
+                              if (e.target.checked) n[key] = "cold"; else delete n[key];
                               return n;
                             })} />
                         </td>
@@ -1450,21 +1412,6 @@ function MigrationAgent({ clusters, activeCluster }) {
                         <td style={{ padding: "6px 9px", whiteSpace: "nowrap" }}
                           title={(v.disks || []).map((d) => `${d.name || "disk"} · ${d.capacityGiB ?? "?"} GiB${d.datastore ? ` · ${d.datastore}` : ""}${d.rdm ? " · RDM" : ""}${d.shared ? " · shared" : ""}`).join("\n") || undefined}>
                           {v.diskCount} disk{v.diskCount === 1 ? "" : "s"} · {gb(v.diskGiB)}
-                        </td>
-                        <td style={{ padding: "6px 9px" }}>
-                          <select value={chosen || ""} disabled={!chosen}
-                            onChange={(e) => setSel((s) => ({ ...s, [key]: e.target.value }))}
-                            title={v.warmEligible ? "" : v.warmBlockedReason || ""}
-                            style={{ ...S, padding: "3px 7px", fontSize: "0.76rem", opacity: chosen ? 1 : .45 }}>
-                            <option value="cold">cold</option>
-                            {/* Warm is offered only where it can actually work. */}
-                            <option value="warm" disabled={!v.warmEligible}>
-                              warm{v.warmEligible ? "" : " — not possible"}
-                            </option>
-                          </select>
-                          {chosen === "cold" && v.warmEligible === false && (
-                            <div style={{ fontSize: "0.66rem", color: "var(--muted,#5a6373)", maxWidth: 230 }}>{v.warmBlockedReason}</div>
-                          )}
                         </td>
                       </tr>
                     );
@@ -1497,14 +1444,84 @@ function MigrationAgent({ clusters, activeCluster }) {
           suggestions={analysis?.suggestions || []}
           suggestionSource={analysis?.suggestionSource}
           note={analysis?.note || analysis?.error}
+          advice={advice?.advice || []}
+          adviceSource={advice?.source}
+          adviceNote={advice?.note}
           busy={busy === "analyse"}
+          selected={sel}
+          onToggle={(key) => {
+            const next = { ...sel };
+            if (next[key] === undefined) next[key] = "cold"; else delete next[key];
+            setSel(next);
+            revalidate(next);
+          }}
           onBack={() => setStep(1)}
-          onProceed={() => setStep(3)}
+          onProceed={acceptReport}
         />
       )}
 
       {ready?.ok && step === 3 && (
         <>
+          {/* ── Strategy ───────────────────────────────────────────────────
+              The method is chosen HERE, at the end, once the report has been
+              read — picking warm or cold before knowing whether a VM is even
+              supported is a decision made in the dark. Pre-filled from the
+              recommendation the operator accepted, and still editable. */}
+          {selection.length > 0 && (
+            <div style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, background: "var(--card-bg,#fff)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap", padding: "10px 12px 6px" }}>
+                <span style={{ fontWeight: 800, fontSize: "0.84rem" }}>Migration method</span>
+                <span style={{ fontSize: "0.75rem", color: "var(--muted,#5a6373)" }}>
+                  {selection.filter((s) => s.strategy === "warm").length} warm · {selection.filter((s) => s.strategy === "cold").length} cold
+                </span>
+              </div>
+              <div style={{ overflow: "auto", maxHeight: 260 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.78rem" }}>
+                  <thead>
+                    <tr style={{ background: "var(--bg2,#f6f8fc)", position: "sticky", top: 0 }}>
+                      {["VM", "Storage", "Method", "Source VM during copy", "Why"].map((h) => (
+                        <th key={h} style={{ textAlign: "left", padding: "7px 9px", fontWeight: 800, borderBottom: "1px solid var(--border,#e4e8f1)", whiteSpace: "nowrap" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selection.map(({ vm: v, strategy }) => {
+                      const key = v.id || v.name;
+                      const rec = (advice?.advice || []).find((a) => a.name === v.name);
+                      // Power outcome follows the CURRENT choice, not the
+                      // recommendation — change the method and the downtime
+                      // statement changes with it.
+                      const power = v.poweredOn === false ? "Already off — no additional downtime"
+                        : strategy === "warm" ? "Stays online; short cutover at the end"
+                        : "Must power off for the whole copy";
+                      return (
+                        <tr key={key} style={{ borderBottom: "1px solid var(--border,#eef1f6)" }}>
+                          <td style={{ padding: "6px 9px", fontWeight: 700 }}>{v.name}</td>
+                          <td style={{ padding: "6px 9px", whiteSpace: "nowrap" }}>{gb(v.diskGiB)}</td>
+                          <td style={{ padding: "6px 9px" }}>
+                            <select value={strategy} onChange={(e) => setSel((s) => ({ ...s, [key]: e.target.value }))}
+                              title={v.warmEligible ? "" : v.warmBlockedReason || ""}
+                              style={{ ...S, padding: "3px 7px", fontSize: "0.76rem" }}>
+                              <option value="cold">cold</option>
+                              {/* Warm is offered only where it can actually work. */}
+                              <option value="warm" disabled={!v.warmEligible}>
+                                warm{v.warmEligible ? "" : " — not possible"}
+                              </option>
+                            </select>
+                          </td>
+                          <td style={{ padding: "6px 9px", color: "var(--muted,#5a6373)", whiteSpace: "nowrap" }}>{power}</td>
+                          <td style={{ padding: "6px 9px", color: "var(--muted,#5a6373)", maxWidth: 340 }}>
+                            {strategy === rec?.strategy ? rec?.reason : (v.warmEligible ? "Changed from the recommendation." : v.warmBlockedReason)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {/* ── Target ────────────────────────────────────────────────────── */}
           {Object.keys(sel).length > 0 && (
             <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap" }}>

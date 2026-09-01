@@ -353,19 +353,82 @@ export const SUPPORT_MATRIX = {
 };
 
 /**
+ * vSphere guestId → the operating system it actually means.
+ *
+ * MTV's inventory frequently reports only the guestId, and a guestId is not a
+ * display name: "windows2019srvNext_64Guest" is VMware's identifier for Windows
+ * Server 2022, not 2019 — "srvNext" means "the release after this one". Reading
+ * it as a version string gets the answer wrong, which is why this is a lookup
+ * table and not a regex over the raw text.
+ *
+ * Ordered: longer, more specific ids first.
+ */
+export const GUEST_ID_MAP = [
+  [/^windows2022srvNext/i, () => "Microsoft Windows Server 2025"],
+  [/^windows2019srvNext/i, () => "Microsoft Windows Server 2022"],
+  [/^windows2019srv/i, () => "Microsoft Windows Server 2019"],
+  [/^windows9Server/i, () => "Microsoft Windows Server 2016"],
+  [/^windows8Server/i, () => "Microsoft Windows Server 2012"],
+  [/^windows7Server/i, () => "Microsoft Windows Server 2008 R2"],
+  [/^winLonghorn/i, () => "Microsoft Windows Server 2008"],
+  [/^winNet/i, () => "Microsoft Windows Server 2003"],
+  [/^win(2000|NT|XP)/i, () => "Microsoft Windows XP/2000"],
+  [/^windows11/i, () => "Microsoft Windows 11"],
+  [/^windows9(_|\d*Guest)/i, () => "Microsoft Windows 10"],
+  [/^windows8(_|\d*Guest)/i, () => "Microsoft Windows 8"],
+  [/^windows7(_|\d*Guest)/i, () => "Microsoft Windows 7"],
+  [/^rhel(\d+)/i, (m) => `Red Hat Enterprise Linux ${m[1]}`],
+  [/^centos(\d+)/i, (m) => `CentOS ${m[1]}`],
+  [/^centos/i, () => "CentOS"],
+  [/^oracleLinux(\d+)/i, (m) => `Oracle Linux ${m[1]}`],
+  [/^oracleLinux/i, () => "Oracle Linux"],
+  [/^sles(\d+)/i, (m) => `SUSE Linux Enterprise ${m[1]}`],
+  [/^sles|^suse/i, () => "SUSE Linux Enterprise"],
+  [/^debian(\d+)/i, (m) => `Debian ${m[1]}`],
+  [/^debian/i, () => "Debian"],
+  [/^ubuntu/i, () => "Ubuntu Linux"],
+  [/^fedora/i, () => "Fedora Linux"],
+  [/^rockylinux/i, () => "Rocky Linux"],
+  [/^almalinux/i, () => "AlmaLinux"],
+  [/^other\w*Linux/i, () => "Other Linux"],
+];
+
+/** A guestId can arrive in either field, so it has to be recognised by shape. */
+function looksLikeGuestId(s) {
+  return /^[a-z][A-Za-z0-9_]*Guest$/.test(s);
+}
+
+/** Expand a vSphere guestId to a display name, or null if it is not one. */
+export function expandGuestId(id) {
+  const s = String(id || "").trim();
+  if (!s) return null;
+  for (const [re, fn] of GUEST_ID_MAP) {
+    const m = re.exec(s);
+    if (m) return fn(m);
+  }
+  return null;
+}
+
+/**
  * Turn a free-text guest OS string into a family, a distribution and a
  * support level. Pure — the classification rules are tested, not trusted.
  *
- * @returns {{family:string, distro:string, version:string|null, level:string, note:string|null, raw:string|null}}
+ * @returns {{family:string, distro:string, version:string|null, level:string, note:string|null, raw:string|null, reported:string|null}}
  */
 export function classifyGuestOS(guestOS, guestId = null) {
-  const raw = String(guestOS || guestId || "").trim();
-  if (!raw) {
-    return { family: "unknown", distro: "Unknown", version: null, level: "unknown", raw: null,
+  const reported = String(guestOS || guestId || "").trim();
+  if (!reported) {
+    return { family: "unknown", distro: "Unknown", version: null, level: "unknown", raw: null, reported: null,
       note: "No guest OS reported — the guest agent may not be running. Identify it before migrating." };
   }
 
-  const isWindows = /windows|microsoft/i.test(raw) || /^win/i.test(String(guestId || ""));
+  // Decode the id before matching. Without this, "windows2019srvNext_64Guest"
+  // reaches the matrix as an opaque token, lands in no row, and a perfectly
+  // ordinary Server 2022 fleet reports as "needs review".
+  const id = String(guestId || "").trim() || (looksLikeGuestId(reported) ? reported : "");
+  const raw = (id && expandGuestId(id)) || reported;
+
+  const isWindows = /windows|microsoft/i.test(raw) || /^win/i.test(id);
   const table = isWindows ? SUPPORT_MATRIX.windows : SUPPORT_MATRIX.linux;
   const hit = table.find((e) => e.match.test(raw));
 
@@ -377,7 +440,7 @@ export function classifyGuestOS(guestOS, guestId = null) {
       version: ver ? ver[1] : null,
       level: hit.level,
       note: hit.note || null,
-      raw,
+      raw, reported,
     };
   }
 
@@ -389,7 +452,7 @@ export function classifyGuestOS(guestOS, guestId = null) {
     version: null,
     level: "unknown",
     note: `"${raw.slice(0, 48)}" is not in the support matrix. Check Red Hat's certified guest list for your OpenShift version before migrating.`,
-    raw,
+    raw, reported,
   };
 }
 
@@ -669,7 +732,10 @@ export function analyseFleet(vms = [], { targetFreeGiB = null } = {}) {
       memoryGiB: v.memoryGiB || null,
       cpuCount: v.cpuCount || null,
       ips: v.ips || [],
+      poweredOn: v.poweredOn === true,
+      diskCount: v.diskCount || 0,
       warmEligible: v.warmEligible === true,
+      warmBlockedReason: v.warmBlockedReason || null,
       blockers: support.blockers, warnings: support.warnings, notes: support.notes,
     };
   });
@@ -684,15 +750,36 @@ export function analyseFleet(vms = [], { targetFreeGiB = null } = {}) {
 
   // Grouped by family, then by distribution — the two questions actually asked
   // ("how much Windows?" then "which Windows?").
+  //
+  // Each family also carries its share of the source landscape split by support
+  // level, because "how many VMs are blocked" and "how much RAM is blocked" are
+  // different numbers and capacity planning needs the second one.
+  const zeroLevels = () => ({
+    supported: { vms: 0, cpu: 0, memoryGiB: 0, diskGiB: 0 },
+    caveats: { vms: 0, cpu: 0, memoryGiB: 0, diskGiB: 0 },
+    unknown: { vms: 0, cpu: 0, memoryGiB: 0, diskGiB: 0 },
+    unsupported: { vms: 0, cpu: 0, memoryGiB: 0, diskGiB: 0 },
+  });
+  const addTo = (bucket, r) => {
+    bucket.vms++; bucket.cpu += r.cpuCount || 0;
+    bucket.memoryGiB += r.memoryGiB || 0; bucket.diskGiB += r.diskGiB || 0;
+  };
+
   const families = {};
   for (const r of rows) {
-    const fam = (families[r.os.family] ||= { family: r.os.family, total: 0, diskGiB: 0, distros: {} });
-    fam.total++; fam.diskGiB += r.diskGiB;
+    const fam = (families[r.os.family] ||= {
+      family: r.os.family, total: 0, diskGiB: 0, memoryGiB: 0, cpu: 0,
+      levels: zeroLevels(), distros: {},
+    });
+    fam.total++; fam.diskGiB += r.diskGiB; fam.memoryGiB += r.memoryGiB || 0; fam.cpu += r.cpuCount || 0;
+    addTo(fam.levels[r.level], r);
     const d = (fam.distros[r.os.distro] ||= {
       distro: r.os.distro, level: r.os.level, note: r.os.note,
-      total: 0, diskGiB: 0, supported: 0, caveats: 0, unknown: 0, unsupported: 0,
+      total: 0, diskGiB: 0, memoryGiB: 0, cpu: 0,
+      supported: 0, caveats: 0, unknown: 0, unsupported: 0,
     });
-    d.total++; d.diskGiB += r.diskGiB; d[r.level]++;
+    d.total++; d.diskGiB += r.diskGiB; d.memoryGiB += r.memoryGiB || 0; d.cpu += r.cpuCount || 0;
+    d[r.level]++;
   }
 
   return {
@@ -700,6 +787,8 @@ export function analyseFleet(vms = [], { targetFreeGiB = null } = {}) {
     byLevel,
     totalDiskGiB: rows.reduce((n, r) => n + r.diskGiB, 0),
     totalMemoryGiB: rows.reduce((n, r) => n + (r.memoryGiB || 0), 0),
+    totalCpu: rows.reduce((n, r) => n + (r.cpuCount || 0), 0),
+    poweredOn: count((r) => r.poweredOn),
     warmEligible: count((r) => r.warmEligible),
     families: Object.values(families)
       .map((f) => ({ ...f, distros: Object.values(f.distros).sort((a, b) => b.total - a.total) }))
@@ -856,8 +945,31 @@ For each VM decide "warm" or "cold" and give ONE short sentence of reasoning a p
 warm  = the VM keeps running while its disks copy; a brief cutover at the end. Needs changed block tracking. Prefer for large disks, business-critical or business-hours workloads.
 cold  = the VM is powered off for the whole copy. Simpler and more predictable. Prefer for small disks, already powered-off machines, and anything where a consistent point-in-time copy matters more than uptime (databases especially).
 
-Respond ONLY with JSON: {"advice":[{"name":"<vm name>","strategy":"warm|cold","reason":"<one sentence>","risk":"low|medium|high"}]}
+Also state what happens to the SOURCE machine's power during the copy:
+  "stays-online"  = the VM keeps serving users while its disks copy (only possible with warm)
+  "power-off"     = the VM must be shut down before the copy starts
+  "already-off"   = the VM is already powered off, so the migration costs no additional downtime
+
+Respond ONLY with JSON: {"advice":[{"name":"<vm name>","strategy":"warm|cold","power":"stays-online|power-off|already-off","reason":"<one sentence>","risk":"low|medium|high"}]}
 No prose outside the JSON. Never invent a VM that was not listed.` + " " + UNTRUSTED_GUARD;
+
+/**
+ * What actually happens to the source machine, derived from the strategy and
+ * its current power state. This is not a matter of opinion, so it is computed
+ * rather than asked for — the model's answer is only ever a cross-check.
+ */
+export function powerPlan(vm = {}, strategy = "cold") {
+  if (vm.poweredOn === false) {
+    return { power: "already-off", label: "Already off",
+      detail: "The machine is powered off now, so the migration costs no additional downtime." };
+  }
+  if (strategy === "warm") {
+    return { power: "stays-online", label: "Stays online",
+      detail: "Keeps serving users while the disks copy. A short cutover at the end is the only downtime." };
+  }
+  return { power: "power-off", label: "Must power off",
+    detail: "A cold copy needs the machine shut down first, and it stays down until the target VM boots." };
+}
 
 /**
  * The guardrail. Whatever the model returns, physics wins: a VM that cannot
@@ -881,6 +993,9 @@ export function clampAdvice(advice = [], vms = []) {
     out.push({
       name: vm.name, strategy, reason,
       risk: ["low", "medium", "high"].includes(a.risk) ? a.risk : "medium",
+      // The model may say what it likes about the power state; what actually
+      // happens follows from the strategy and the machine's current state.
+      ...powerPlan(vm, strategy),
       overridden,
     });
   }
@@ -900,19 +1015,25 @@ export function heuristicAdvice(vms = []) {
         name: v.name, strategy: "cold",
         risk: (v.diskGiB || 0) >= 500 ? "high" : (v.diskGiB || 0) >= 200 ? "medium" : "low",
         reason: `${v.warmBlockedReason || "Warm migration is not available for this VM."} Cold is the only option, so ${outage}.`,
+        ...powerPlan(v, "cold"),
         overridden: false,
       };
     }
     // Big disks are where downtime actually hurts; small ones are not worth
-    // the extra moving parts of an incremental copy.
+    // the extra moving parts of an incremental copy. A machine that is already
+    // powered off has no uptime left to protect, so cold is simply cheaper.
     const big = (v.diskGiB || 0) >= 200;
+    const strategy = v.poweredOn === false ? "cold" : big ? "warm" : "cold";
     return {
       name: v.name,
-      strategy: big ? "warm" : "cold",
+      strategy,
       risk: (v.diskGiB || 0) >= 500 ? "high" : big ? "medium" : "low",
-      reason: big
-        ? `${v.diskGiB} GiB would mean a long outage if copied cold, and this VM supports changed block tracking.`
-        : `Only ${v.diskGiB ?? "a few"} GiB — a cold copy is quick and avoids the complexity of a cutover.`,
+      reason: v.poweredOn === false
+        ? "Already powered off, so a cold copy costs no downtime and avoids the complexity of a cutover."
+        : big
+          ? `${v.diskGiB} GiB would mean a long outage if copied cold, and this VM supports changed block tracking.`
+          : `Only ${v.diskGiB ?? "a few"} GiB — a cold copy is quick and avoids the complexity of a cutover.`,
+      ...powerPlan(v, strategy),
       overridden: false,
     };
   });

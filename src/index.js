@@ -2886,11 +2886,19 @@ async function startSSE() {
       if (url.pathname === "/api/migration/analyse" && req.method === "POST") {
         try {
           const body = await readJsonBody(req);
-          const analysis = mig.analyseFleet(body.vms || [], { targetFreeGiB: body.targetFreeGiB ?? null });
-          const advice = body.suggest === false
-            ? { source: "skipped", suggestions: [] }
-            : await mig.adviseFleet(analysis);
-          return sendJson(res, 200, { ...analysis, suggestions: advice.suggestions, suggestionSource: advice.source, note: advice.note });
+          const vms = body.vms || [];
+          const analysis = mig.analyseFleet(vms, { targetFreeGiB: body.targetFreeGiB ?? null });
+          // Fleet-level findings and the per-VM method/power call are what the
+          // pre-migration report is FOR, so both are produced here rather than
+          // behind a second button the operator has to know to press.
+          const [advice, perVm] = body.suggest === false
+            ? [{ source: "skipped", suggestions: [] }, { source: "skipped", advice: [] }]
+            : await Promise.all([mig.adviseFleet(analysis), mig.adviseMigration(vms)]);
+          return sendJson(res, 200, {
+            ...analysis,
+            suggestions: advice.suggestions, suggestionSource: advice.source, note: advice.note,
+            advice: perVm.advice, adviceSource: perVm.source, adviceNote: perVm.note,
+          });
         } catch (err) { return sendJson(res, 400, { error: err.message }); }
       }
 

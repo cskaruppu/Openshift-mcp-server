@@ -511,3 +511,93 @@ test("analyseFleet handles an empty selection without throwing", async () => {
   assert.deepEqual(a.families, []);
   assert.equal(a.totalDiskGiB, 0);
 });
+
+// ── vSphere guestId decoding ────────────────────────────────────────────────
+// MTV inventory often reports only the guestId, and a guestId is not a display
+// name. Reading it as one silently turns an ordinary fleet into "needs review".
+
+test("a vSphere guestId is decoded, not read as a version string", async () => {
+  const { classifyGuestOS } = await import("../../src/services/vm-migration.js");
+  const cases = [
+    // "srvNext" means the release AFTER the one named — this is the trap.
+    ["windows2019srvNext_64Guest", "Windows Server 2022", "supported"],
+    ["windows2022srvNext_64Guest", "Windows Server 2025", "supported"],
+    ["windows2019srv_64Guest", "Windows Server 2019", "supported"],
+    ["windows9Server64Guest", "Windows Server 2016", "supported"],
+    ["windows7Server64Guest", "Windows Server 2008/2003", "unsupported"],
+    ["winNetStandard64Guest", "Windows Server 2008/2003", "unsupported"],
+    ["windows9_64Guest", "Windows 10", "supported"],
+    ["windows11_64Guest", "Windows 11", "supported"],
+    ["rhel8_64Guest", "RHEL 8", "supported"],
+    ["rhel9_64Guest", "RHEL 9", "supported"],
+    ["centos7_64Guest", "CentOS 7/8", "caveats"],
+    ["ubuntu64Guest", "Ubuntu", "caveats"],
+    ["sles15_64Guest", "SUSE Linux Enterprise", "caveats"],
+  ];
+  for (const [id, distro, level] of cases) {
+    const os = classifyGuestOS(id);
+    assert.equal(os.distro, distro, `${id} should be ${distro}`);
+    assert.equal(os.level, level, `${id} should be ${level}`);
+    assert.equal(os.reported, id, "the raw string vCenter gave must be kept");
+  }
+});
+
+test("guestId decoding does not fire on a real display name", async () => {
+  const { expandGuestId, classifyGuestOS } = await import("../../src/services/vm-migration.js");
+  assert.equal(expandGuestId("Microsoft Windows Server 2019 (64-bit)"), null);
+  assert.equal(classifyGuestOS("Microsoft Windows Server 2019 (64-bit)").distro, "Windows Server 2019");
+});
+
+test("an unrecognised guestId is reported as unknown rather than guessed", async () => {
+  const { classifyGuestOS } = await import("../../src/services/vm-migration.js");
+  const os = classifyGuestOS("otherGuest");
+  assert.equal(os.level, "unknown");
+  assert.match(os.note, /not in the support matrix/);
+});
+
+// ── Power outcome ───────────────────────────────────────────────────────────
+// What happens to the source machine is a consequence of the method, so it is
+// computed. The model is never the authority on how much downtime there is.
+
+test("the power outcome follows the method and the machine's current state", async () => {
+  const { powerPlan } = await import("../../src/services/vm-migration.js");
+  assert.equal(powerPlan({ poweredOn: true }, "warm").power, "stays-online");
+  assert.equal(powerPlan({ poweredOn: true }, "cold").power, "power-off");
+  // Already off wins over both — there is no downtime left to spend.
+  assert.equal(powerPlan({ poweredOn: false }, "warm").power, "already-off");
+  assert.equal(powerPlan({ poweredOn: false }, "cold").power, "already-off");
+});
+
+test("a model that claims a cold migration stays online is overruled", async () => {
+  const { clampAdvice } = await import("../../src/services/vm-migration.js");
+  const [a] = clampAdvice(
+    [{ name: "vm1", strategy: "warm", power: "stays-online", reason: "keeps running", risk: "low" }],
+    [{ name: "vm1", poweredOn: true, warmEligible: false, warmBlockedReason: "No CBT." }],
+  );
+  assert.equal(a.strategy, "cold", "warm is not possible for this VM");
+  assert.equal(a.power, "power-off", "so it cannot stay online either");
+  assert.equal(a.overridden, true);
+});
+
+test("an already-off VM is advised cold, since there is no uptime to protect", async () => {
+  const { heuristicAdvice } = await import("../../src/services/vm-migration.js");
+  const [a] = heuristicAdvice([{ name: "big", poweredOn: false, warmEligible: true, diskGiB: 900 }]);
+  assert.equal(a.strategy, "cold");
+  assert.equal(a.power, "already-off");
+});
+
+test("family resource totals split by support level and sum to the whole", async () => {
+  const { analyseFleet } = await import("../../src/services/vm-migration.js");
+  const a = analyseFleet([
+    { name: "a", guestOS: "rhel9_64Guest", guestId: "rhel9_64Guest", cpuCount: 4, memoryGiB: 16, diskGiB: 100, concerns: [] },
+    { name: "b", guestOS: "centos7_64Guest", guestId: "centos7_64Guest", cpuCount: 2, memoryGiB: 8, diskGiB: 50, concerns: [] },
+  ]);
+  const linux = a.families.find((f) => f.family === "linux");
+  assert.equal(linux.levels.supported.cpu, 4);
+  assert.equal(linux.levels.caveats.memoryGiB, 8);
+  const sum = (m) => Object.values(linux.levels).reduce((n, b) => n + b[m], 0);
+  assert.equal(sum("cpu"), linux.cpu, "level buckets must sum to the family total");
+  assert.equal(sum("memoryGiB"), linux.memoryGiB);
+  assert.equal(sum("diskGiB"), linux.diskGiB);
+  assert.equal(a.totalCpu, 6);
+});
