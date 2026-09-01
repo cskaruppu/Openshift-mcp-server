@@ -21,7 +21,7 @@
  * where that is decided, and it is pure so it can be tested.
  */
 
-import { ocpGet, ocpPost, ocpDelete, ocpFetch } from "../utils/openshift-client.js";
+import { ocpGet, ocpPost, ocpPatch, ocpDelete, ocpFetch } from "../utils/openshift-client.js";
 import { recordChange } from "./change-ledger.js";
 import { classifyJSON, llmEnabled } from "./llm.js";
 import { fenceUntrusted, UNTRUSTED_GUARD } from "./untrusted.js";
@@ -327,28 +327,28 @@ export const SUPPORT_MATRIX = {
     { match: /server\D*2022/i, label: "Windows Server 2022", level: "supported" },
     { match: /server\D*2019/i, label: "Windows Server 2019", level: "supported" },
     { match: /server\D*2016/i, label: "Windows Server 2016", level: "supported" },
-    { match: /server\D*2012\s*r2/i, label: "Windows Server 2012 R2", level: "caveats", note: "Past Microsoft end of extended support — migrates, but runs unpatched." },
-    { match: /server\D*2012/i, label: "Windows Server 2012", level: "caveats", note: "Past Microsoft end of extended support." },
-    { match: /server\D*(2008|2003)/i, label: "Windows Server 2008/2003", level: "unsupported", note: "Long past end of life and not certified — migrate only as a lift-and-shift to a quarantined namespace." },
+    { match: /server\D*2012\s*r2/i, label: "Windows Server 2012 R2", level: "caveats", note: "Past Microsoft end of extended support — migrates, but runs unpatched.", upgrade: "Windows Server 2022" },
+    { match: /server\D*2012/i, label: "Windows Server 2012", level: "caveats", note: "Past Microsoft end of extended support.", upgrade: "Windows Server 2022" },
+    { match: /server\D*(2008|2003)/i, label: "Windows Server 2008/2003", level: "unsupported", note: "Long past end of life and not certified — migrate only as a lift-and-shift to a quarantined namespace.", upgrade: "Windows Server 2022" },
     { match: /windows\s*11/i, label: "Windows 11", level: "supported", note: "Requires EFI and a vTPM on the target." },
     { match: /windows\s*10/i, label: "Windows 10", level: "supported" },
-    { match: /windows\s*(7|8|xp)/i, label: "Windows 7/8/XP", level: "unsupported", note: "End of life; no virtio driver support path." },
+    { match: /windows\s*(7|8|xp)/i, label: "Windows 7/8/XP", level: "unsupported", note: "End of life; no virtio driver support path.", upgrade: "Windows 10 or 11" },
   ],
   linux: [
     { match: /red\s*hat.*(10)|rhel\D*10/i, label: "RHEL 10", level: "supported" },
     { match: /red\s*hat.*(9)|rhel\D*9/i, label: "RHEL 9", level: "supported" },
     { match: /red\s*hat.*(8)|rhel\D*8/i, label: "RHEL 8", level: "supported" },
-    { match: /red\s*hat.*(7)|rhel\D*7/i, label: "RHEL 7", level: "caveats", note: "Past end of maintenance support — migrates, but plan an upgrade." },
-    { match: /red\s*hat.*(6|5)|rhel\D*[56]/i, label: "RHEL 5/6", level: "unsupported", note: "Not certified; very old virtio support." },
-    { match: /centos\s*stream/i, label: "CentOS Stream", level: "caveats", note: "Community support only." },
-    { match: /centos\D*[78]/i, label: "CentOS 7/8", level: "caveats", note: "End of life — community support only." },
-    { match: /rocky/i, label: "Rocky Linux", level: "caveats", note: "Community support only." },
-    { match: /alma/i, label: "AlmaLinux", level: "caveats", note: "Community support only." },
+    { match: /red\s*hat.*(7)|rhel\D*7/i, label: "RHEL 7", level: "caveats", note: "Past end of maintenance support — migrates, but plan an upgrade.", upgrade: "RHEL 9" },
+    { match: /red\s*hat.*(6|5)|rhel\D*[56]/i, label: "RHEL 5/6", level: "unsupported", note: "Not certified; very old virtio support.", upgrade: "RHEL 9" },
+    { match: /centos\s*stream/i, label: "CentOS Stream", level: "caveats", note: "Community support only.", upgrade: "RHEL 9 for a supported guest" },
+    { match: /centos\D*[78]/i, label: "CentOS 7/8", level: "caveats", note: "End of life — community support only.", upgrade: "RHEL 9, or convert in place with convert2rhel" },
+    { match: /rocky/i, label: "Rocky Linux", level: "caveats", note: "Community support only.", upgrade: "RHEL 9 for a supported guest" },
+    { match: /alma/i, label: "AlmaLinux", level: "caveats", note: "Community support only.", upgrade: "RHEL 9 for a supported guest" },
     { match: /ubuntu/i, label: "Ubuntu", level: "caveats", note: "Community support only; verify the release is still in Canonical support." },
     { match: /debian/i, label: "Debian", level: "caveats", note: "Community support only." },
     { match: /sles|suse/i, label: "SUSE Linux Enterprise", level: "caveats", note: "Supported by SUSE; confirm your entitlement." },
     { match: /fedora/i, label: "Fedora", level: "caveats", note: "Community support only; short lifecycle." },
-    { match: /oracle/i, label: "Oracle Linux", level: "caveats", note: "Community support only." },
+    { match: /oracle/i, label: "Oracle Linux", level: "caveats", note: "Community support only.", upgrade: "RHEL 9 for a supported guest" },
   ],
 };
 
@@ -440,6 +440,7 @@ export function classifyGuestOS(guestOS, guestId = null) {
       version: ver ? ver[1] : null,
       level: hit.level,
       note: hit.note || null,
+      upgrade: hit.upgrade || null,
       raw, reported,
     };
   }
@@ -739,6 +740,9 @@ export function analyseFleet(vms = [], { targetFreeGiB = null } = {}) {
       blockers: support.blockers, warnings: support.warnings, notes: support.notes,
     };
   });
+  // What to change on each machine, attached to the machine — the validation
+  // page is read one row at a time.
+  for (const r of rows) r.actions = vmRemediation(r);
 
   const count = (pred) => rows.filter(pred).length;
   const byLevel = {
@@ -796,6 +800,88 @@ export function analyseFleet(vms = [], { targetFreeGiB = null } = {}) {
     rows,
     matrix: { asOf: SUPPORT_MATRIX.asOf, source: SUPPORT_MATRIX.source },
   };
+}
+
+/**
+ * What to do about ONE machine, in the order it has to be done.
+ *
+ * A fleet-level finding ("4 Windows VMs need drivers") tells a manager how big
+ * the problem is; it does not tell the engineer holding a ticket for one VM
+ * what to change. This does. Every action names the machine's own facts, and
+ * "required" separates the things that block a migration from the things that
+ * merely make it a worse idea.
+ *
+ * Pure, and tested.
+ */
+export function vmRemediation(row = {}) {
+  const out = [];
+  const os = row.os || {};
+
+  // 1. MTV says it will fail. Nothing else matters until this is cleared.
+  for (const b of row.blockers || []) {
+    out.push({ severity: "critical", required: true, title: "Blocked by MTV validation", detail: b.message,
+      action: "Clear this on the source VM and re-run discovery, or leave the machine out of the wave." });
+  }
+
+  // 2. The guest itself. An unsupported OS migrates and then is unsupported —
+  //    the expensive surprise if nobody says so before the wave.
+  if (os.level === "unsupported") {
+    out.push({
+      severity: "serious", required: false,
+      title: `Upgrade required — ${os.distro} is not certified`,
+      detail: os.note || `${os.distro} is not on the OpenShift Virtualization certified guest list.`,
+      action: os.upgrade
+        ? `Upgrade the guest to ${os.upgrade} before migrating, or accept in writing that this VM runs unsupported.`
+        : "Upgrade the guest to a certified release before migrating, or accept in writing that it runs unsupported.",
+    });
+  } else if (os.level === "caveats") {
+    out.push({
+      severity: "warning", required: false,
+      title: `${os.distro} migrates, but is not fully supported`,
+      detail: os.note || "Outside the certified guest list.",
+      action: os.upgrade ? `Plan a move to ${os.upgrade}.` : "Confirm your support position for this guest before the wave.",
+    });
+  } else if (os.family === "unknown") {
+    out.push({
+      severity: "warning", required: true,
+      title: "Guest OS could not be identified",
+      detail: "vCenter reports no guest OS, which normally means VMware Tools is not running.",
+      action: "Start VMware Tools on the guest and re-run discovery — this VM cannot be assessed until then.",
+    });
+  }
+
+  // 3. Settings to enable on the source, in the order they bite.
+  if (os.family === "windows") {
+    out.push({
+      severity: "warning", required: true,
+      title: "VirtIO drivers needed",
+      detail: "Windows has no in-box VirtIO storage driver, so a migrated disk is not bootable without one.",
+      action: "Install virtio-win on the guest before migrating, or let MTV inject the drivers during conversion.",
+    });
+  }
+  if (row.warmEligible === false && row.poweredOn) {
+    out.push({
+      severity: "warning", required: false,
+      title: "Changed block tracking is off — warm migration unavailable",
+      detail: row.warmBlockedReason
+        || `Without CBT the whole ${row.diskGiB || "disk"} GiB copies in one pass with the VM shut down.`,
+      action: "Enable CBT on the source VM in vCenter and re-run discovery to unlock warm migration.",
+    });
+  }
+  if (row.diskGiB >= 500 && row.warmEligible === false) {
+    out.push({
+      severity: "warning", required: false,
+      title: `${row.diskGiB} GiB cold copy — size the outage first`,
+      detail: "A cold copy of this size keeps the machine down for the whole transfer.",
+      action: "Book a maintenance window from the measured estimate on the plan step before scheduling this VM.",
+    });
+  }
+
+  if (!out.length) {
+    out.push({ severity: "good", required: false, title: "Ready to migrate", detail: null,
+      action: "Certified guest, no MTV concerns and nothing to change on the source." });
+  }
+  return out;
 }
 
 /**
@@ -1232,6 +1318,10 @@ export async function planStatus(planName) {
     warm: p.spec?.warm === true,
     targetNamespace: p.spec?.targetNamespace || null,
     vmCount: (p.spec?.vms || []).length,
+    vmNames: (p.spec?.vms || []).map((v) => v.name || v.id).filter(Boolean),
+    // The approval gate travels with the plan, so the console shows the same
+    // answer the migrate endpoint will enforce.
+    gate: approvalGate(p),
     // Anything MTV objects to — unmapped datastore, missing network, no CBT.
     critical: (p.status?.conditions || [])
       .filter((x) => x.category === "Critical" || (x.type === "Ready" && x.status === "False"))
@@ -1274,11 +1364,198 @@ function normalisePlanVM(v) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// 5b. Change-request gate
+// ---------------------------------------------------------------------------
+/**
+ * Approval state lives on the Plan itself, as annotations.
+ *
+ * Not in memory, and not in the browser: a migration is approved once and may
+ * be started hours later, by a different person, after a pod restart. The
+ * cluster already holds the Plan, so it holds the approval too — refresh the
+ * console, restart the server, come back tomorrow, the gate is where you left
+ * it. It is also visible to anyone with `oc get plan -o yaml`, which an
+ * in-memory gate never is.
+ */
+const CR_ANN = {
+  number: "tcs.agentic-ai/change-request",
+  sysId: "tcs.agentic-ai/change-request-sys-id",
+  state: "tcs.agentic-ai/change-request-state",   // submitted | approved | rejected | cancelled
+  at: "tcs.agentic-ai/change-request-checked-at",
+};
+
+/** Approval is required unless an operator has deliberately turned it off. */
+export function approvalRequired() {
+  return process.env.MIGRATION_REQUIRE_APPROVAL !== "false";
+}
+
+async function annotatePlan(planName, annotations) {
+  return ocpPatch(
+    `/${FORKLIFT}/namespaces/${MTV_NS}/plans/${planName}`,
+    { metadata: { annotations } },
+    "application/merge-patch+json",
+  );
+}
+
+/** The gate, read from the cluster. Pure of side effects — it only looks. */
+export function approvalGate(plan) {
+  const a = plan?.metadata?.annotations || {};
+  const number = a[CR_ANN.number] || null;
+  const state = a[CR_ANN.state] || (number ? "submitted" : "none");
+  return {
+    required: approvalRequired(),
+    number, sysId: a[CR_ANN.sysId] || null, state,
+    checkedAt: a[CR_ANN.at] || null,
+    approved: state === "approved",
+    // Say what to do next rather than only what is wrong.
+    next: state === "approved" ? "Approved — the migration can be started."
+      : state === "rejected" ? "Rejected in ServiceNow. Raise a new change request if the plan has changed."
+      : state === "cancelled" ? "Cancelled in ServiceNow. Raise a new change request to proceed."
+      : number ? `${number} is awaiting approval.`
+      : "Raise a change request before this migration can start.",
+  };
+}
+
+/** Raise the CR for a plan and record it on the Plan. */
+export async function raiseMigrationCR(planName, { estimate = null, actor = "operator", cluster = "local" } = {}) {
+  const plan = await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/plans/${planName}`).catch(() => null);
+  if (!plan) return { ok: false, error: `Plan "${planName}" not found.` };
+
+  const existing = approvalGate(plan);
+  if (existing.number && existing.state !== "rejected" && existing.state !== "cancelled") {
+    return { ok: true, alreadyRaised: true, gate: existing, message: `${existing.number} already exists for this plan.` };
+  }
+
+  const vms = (plan.spec?.vms || []).map((v) => v.name || v.id);
+  const warm = plan.spec?.warm === true;
+  // The CAB is approving an outage, so the change record carries the number
+  // they actually need: how long the machines are down, not only how long the
+  // copy runs.
+  const est = estimate?.wallClockMinutes ? estimate : null;
+  const window = est
+    ? [
+        `Estimated transfer : ${est.wallClockMinutes.likely} min (${est.wallClockMinutes.low}-${est.wallClockMinutes.high})`,
+        `Estimated downtime : ${est.downtimeMinutes.likely} min (${est.downtimeMinutes.low}-${est.downtimeMinutes.high})`,
+        `Basis              : ${est.throughputMBps} MiB/s measured on this cluster. ${est.note || ""}`.trim(),
+      ].join("\n")
+    : "Transfer time will be measured live once the migration starts; no completed migration on this cluster to estimate from yet.";
+
+  let cr;
+  try {
+    const { createChangeRequest } = await import("../utils/servicenow-client.js");
+    cr = await createChangeRequest({
+      shortDescription: `Migrate ${vms.length} VM(s) to OpenShift Virtualization (${warm ? "warm" : "cold"}): ${vms.slice(0, 4).join(", ")}${vms.length > 4 ? ` +${vms.length - 4}` : ""}`,
+      description: [
+        `Plan            : ${planName}`,
+        `Strategy        : ${warm ? "warm — source stays online, short cutover" : "cold — source powered off for the whole copy"}`,
+        `Target namespace: ${plan.spec?.targetNamespace || "unspecified"}`,
+        `Storage map     : ${plan.spec?.map?.storage?.name || "unspecified"}`,
+        `Network map     : ${plan.spec?.map?.network?.name || "unspecified"}`,
+        `Virtual machines: ${vms.join(", ")}`,
+        "",
+        window,
+        "",
+        "The source VMs are NOT deleted by this migration.",
+      ].join("\n"),
+      type: "normal",
+      category: "Infrastructure",
+      risk: warm ? "moderate" : "high",
+      implementationPlan: `oc apply -f migration-${planName}.yaml -n ${MTV_NS}`,
+      backoutPlan: [
+        `oc delete migration -l plan=${planName} -n ${MTV_NS}`,
+        `oc delete virtualmachine <migrated names> -n ${plan.spec?.targetNamespace || "<target>"}`,
+        "Power the source VMs back on in vCenter. They were never deleted.",
+      ].join("\n"),
+      testPlan: `oc get vm -n ${plan.spec?.targetNamespace || "<target>"}; confirm each VM boots, has its IP, and its application answers.`,
+    });
+  } catch (e) {
+    return { ok: false, error: `Could not raise the change request: ${e.message}` };
+  }
+
+  const rec = cr?.result || cr || {};
+  const number = rec.number || null;
+  if (!number) return { ok: false, error: "ServiceNow accepted the request but returned no change number." };
+
+  await annotatePlan(planName, {
+    [CR_ANN.number]: number,
+    [CR_ANN.sysId]: rec.sys_id || "",
+    [CR_ANN.state]: "submitted",
+    [CR_ANN.at]: new Date().toISOString(),
+  });
+  await recordChange({
+    cluster, namespace: MTV_NS, resourceKind: "plan", resourceName: planName,
+    action: "raise_migration_change_request", command: `# ServiceNow ${number}`,
+    risk: "low", approvedBy: actor,
+  }).catch(() => {});
+
+  return { ok: true, number, sysId: rec.sys_id || null, gate: { ...approvalGate({ metadata: { annotations: { [CR_ANN.number]: number, [CR_ANN.state]: "submitted" } } }) } };
+}
+
+/** Ask ServiceNow where the CR stands and write the answer back onto the Plan. */
+export async function checkMigrationApproval(planName) {
+  const plan = await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/plans/${planName}`).catch(() => null);
+  if (!plan) return { ok: false, error: `Plan "${planName}" not found.` };
+  const gate = approvalGate(plan);
+  if (!gate.number) return { ok: true, gate, note: "No change request has been raised for this plan yet." };
+  if (gate.state === "approved") return { ok: true, gate, note: `${gate.number} is approved.` };
+
+  let record;
+  try {
+    const { getRecord } = await import("../utils/servicenow-client.js");
+    const cr = await getRecord("change_request", gate.sysId || gate.number);
+    record = cr?.result || cr;
+  } catch (e) {
+    // Say WHY the lookup failed — an asleep instance and a rejected change are
+    // very different things and must never look the same on screen.
+    return { ok: false, gate, error: `Could not read ${gate.number} from ServiceNow: ${e.message}` };
+  }
+  if (!record) return { ok: false, gate, error: `ServiceNow returned no record for ${gate.number}.` };
+
+  const verdict = readMigrationApproval(record);
+  if (verdict !== gate.state) {
+    await annotatePlan(planName, { [CR_ANN.state]: verdict, [CR_ANN.at]: new Date().toISOString() }).catch(() => {});
+  }
+  const next = approvalGate({ metadata: { annotations: {
+    [CR_ANN.number]: gate.number, [CR_ANN.sysId]: gate.sysId || "", [CR_ANN.state]: verdict,
+  } } });
+  return {
+    ok: true, gate: next,
+    detail: { number: gate.number, approval: record.approval || null, state: record.state || null },
+    note: next.next,
+  };
+}
+
+/**
+ * Read a ServiceNow change record's verdict. Pure, so the mapping is tested —
+ * getting this wrong either blocks an approved migration or, far worse, lets an
+ * unapproved one through.
+ */
+export function readMigrationApproval(record = {}) {
+  const approval = String(record.approval || "").toLowerCase();
+  const state = String(record.state || "").toLowerCase();
+  if (approval === "rejected") return "rejected";
+  if (state === "4" || /cancel/.test(state)) return "cancelled";
+  // "Scheduled" (-2), "Implement" (-1) and "Review" (0) all mean the CAB has
+  // signed off and the work may proceed.
+  if (approval === "approved" || ["-2", "-1", "0"].includes(state) || /implement|scheduled|review/.test(state)) return "approved";
+  return "submitted";
+}
+
 /** Execute an approved Plan. This is the point where data starts moving. */
 export async function startMigration(planName, { cutover = null, actor = "operator", cluster = "local" } = {}) {
   const st = await planStatus(planName);
   if (!st.found) return { ok: false, error: `Plan "${planName}" not found.` };
   if (!st.ready) return { ok: false, error: `Plan "${planName}" is not Ready — MTV has not validated it.`, critical: st.critical };
+
+  // The approval gate. Read from the cluster on every start, not from whatever
+  // the browser last believed — the button being enabled is not authorisation.
+  if (approvalRequired()) {
+    const plan = await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/plans/${planName}`).catch(() => null);
+    const gate = approvalGate(plan);
+    if (!gate.approved) {
+      return { ok: false, gate, error: `Migration is not approved. ${gate.next}` };
+    }
+  }
 
   const manifest = buildMigrationManifest(planName, { cutover });
   try {

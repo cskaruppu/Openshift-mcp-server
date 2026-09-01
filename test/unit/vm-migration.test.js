@@ -601,3 +601,91 @@ test("family resource totals split by support level and sum to the whole", async
   assert.equal(sum("diskGiB"), linux.diskGiB);
   assert.equal(a.totalCpu, 6);
 });
+
+// ── Per-VM remediation ──────────────────────────────────────────────────────
+// A fleet finding tells a manager how big the problem is; this is what the
+// engineer holding a ticket for one machine actually has to change.
+
+test("an end-of-life guest is told what to upgrade TO, not just that it is old", async () => {
+  const { analyseFleet } = await import("../../src/services/vm-migration.js");
+  const [row] = analyseFleet([
+    { name: "dc01", guestOS: "windows7Server64Guest", guestId: "windows7Server64Guest", poweredOn: true, diskGiB: 80, concerns: [] },
+  ]).rows;
+  const upgrade = row.actions.find((a) => /Upgrade required/.test(a.title));
+  assert.ok(upgrade, "an unsupported guest must produce an upgrade action");
+  assert.match(upgrade.action, /Windows Server 2022/, "naming the target is the whole point");
+});
+
+test("settings to enable are named per VM, in the order they bite", async () => {
+  const { analyseFleet } = await import("../../src/services/vm-migration.js");
+  const [row] = analyseFleet([
+    { name: "win1", guestOS: "windows2019srv_64Guest", guestId: "windows2019srv_64Guest",
+      poweredOn: true, diskGiB: 700, warmEligible: false, concerns: [] },
+  ]).rows;
+  const titles = row.actions.map((a) => a.title).join(" | ");
+  assert.match(titles, /VirtIO drivers needed/);
+  assert.match(titles, /Changed block tracking is off/);
+  assert.match(titles, /700 GiB cold copy/);
+  assert.ok(row.actions.find((a) => /VirtIO/.test(a.title)).required, "a non-bootable disk is not optional");
+});
+
+test("a clean VM says so instead of showing an empty action list", async () => {
+  const { analyseFleet } = await import("../../src/services/vm-migration.js");
+  const [row] = analyseFleet([
+    { name: "ok", guestOS: "rhel9_64Guest", guestId: "rhel9_64Guest", poweredOn: true, diskGiB: 40, warmEligible: true, concerns: [] },
+  ]).rows;
+  assert.equal(row.actions.length, 1);
+  assert.equal(row.actions[0].severity, "good");
+});
+
+test("a blocked VM leads with the blocker, before any advice about the guest", async () => {
+  const { analyseFleet } = await import("../../src/services/vm-migration.js");
+  const [row] = analyseFleet([
+    { name: "shared", guestOS: "windows7Server64Guest", guestId: "windows7Server64Guest", poweredOn: true, diskGiB: 40,
+      concerns: [{ category: "Critical", label: "Shared disk detected" }] },
+  ]).rows;
+  assert.equal(row.actions[0].severity, "critical");
+  assert.equal(row.actions[0].required, true);
+});
+
+// ── The change-request gate ─────────────────────────────────────────────────
+// Getting this mapping wrong either blocks an approved migration or, far worse,
+// lets an unapproved one through.
+
+test("approval verdicts map from ServiceNow's approval and state fields", async () => {
+  const { readMigrationApproval } = await import("../../src/services/vm-migration.js");
+  assert.equal(readMigrationApproval({ approval: "approved" }), "approved");
+  assert.equal(readMigrationApproval({ approval: "rejected" }), "rejected");
+  assert.equal(readMigrationApproval({ approval: "requested" }), "submitted");
+  assert.equal(readMigrationApproval({ state: "-1" }), "approved", "Implement means the CAB signed off");
+  assert.equal(readMigrationApproval({ state: "4" }), "cancelled");
+  assert.equal(readMigrationApproval({}), "submitted", "silence is never approval");
+  // A rejection must win over any state that would otherwise read as approved.
+  assert.equal(readMigrationApproval({ approval: "rejected", state: "-1" }), "rejected");
+});
+
+test("the gate is read from the plan's own annotations", async () => {
+  const { approvalGate } = await import("../../src/services/vm-migration.js");
+  const plan = (ann) => ({ metadata: { annotations: ann } });
+
+  const none = approvalGate(plan({}));
+  assert.equal(none.approved, false);
+  assert.match(none.next, /Raise a change request/);
+
+  const pending = approvalGate(plan({
+    "tcs.agentic-ai/change-request": "CHG0042",
+    "tcs.agentic-ai/change-request-state": "submitted",
+  }));
+  assert.equal(pending.approved, false);
+  assert.match(pending.next, /CHG0042 is awaiting approval/);
+
+  const ok = approvalGate(plan({
+    "tcs.agentic-ai/change-request": "CHG0042",
+    "tcs.agentic-ai/change-request-state": "approved",
+  }));
+  assert.equal(ok.approved, true);
+  assert.equal(ok.number, "CHG0042");
+
+  // A plan that vanished must not read as approved.
+  assert.equal(approvalGate(null).approved, false);
+});

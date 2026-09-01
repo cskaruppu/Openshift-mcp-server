@@ -175,10 +175,10 @@ const POWER = {
 
 export default function FleetAnalysis({
   analysis, suggestions = [], suggestionSource, note, busy,
-  advice = [], adviceSource, adviceNote,
-  selected = {}, onToggle, onBack, onProceed,
+  advice = [], adviceSource, adviceNote, onBack, onProceed,
 }) {
   const [hover, setHover] = useState(null);
+  const [expanded, setExpanded] = useState(null);
 
   if (!analysis) return null;
   const { total, byLevel, families = [], rows = [], totalDiskGiB, totalMemoryGiB, totalCpu, poweredOn, warmEligible, matrix } = analysis;
@@ -189,7 +189,7 @@ export default function FleetAnalysis({
   const scale = Math.max(1, ...families.map((f) => f.total));
   const byName = Object.fromEntries(advice.map((a) => [a.name, a]));
   const keyOf = (r) => r.id || r.name;
-  const confirmed = rows.filter((r) => selected[keyOf(r)] !== undefined).length;
+  const ready = (byLevel?.supported || 0) + (byLevel?.caveats || 0);
   const blocked = (byLevel?.unsupported || 0) + (byLevel?.unknown || 0);
 
   return (
@@ -287,12 +287,14 @@ export default function FleetAnalysis({
         </div>
       </div>
 
-      {/* ── Validate: confirm the VMs and read the recommendation ────────── */}
+      {/* ── Per-VM detail: what is wrong and what to change ──────────────
+          The fleet findings above say how big each problem is. This says what
+          the engineer holding a ticket for ONE machine has to do about it. */}
       <div style={{ border: "1px solid var(--border)", borderRadius: 10, background: "var(--card)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap", padding: "11px 13px 8px" }}>
-          <span style={{ fontWeight: 800, fontSize: "0.84rem" }}>Validate the selection</span>
+          <span style={{ fontWeight: 800, fontSize: "0.84rem" }}>Every VM, and what it needs</span>
           <span style={{ fontSize: "0.75rem", color: "var(--text2)" }}>
-            Untick anything that should not move in this wave. {confirmed} of {rows.length} confirmed.
+            Click a row to see every action for that machine
           </span>
           <span style={{
             marginLeft: "auto", fontSize: "0.68rem", padding: "2px 8px", borderRadius: 999, fontWeight: 700,
@@ -302,11 +304,11 @@ export default function FleetAnalysis({
         </div>
         {adviceNote && <div style={{ fontSize: "0.73rem", color: "var(--st-warn)", padding: "0 13px 6px" }}>{adviceNote}</div>}
 
-        <div style={{ overflow: "auto", maxHeight: 460 }}>
+        <div style={{ overflow: "auto", maxHeight: 520 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.77rem" }}>
             <thead>
               <tr style={{ background: "var(--bg2)", position: "sticky", top: 0 }}>
-                {["", "VM", "Status", "Guest OS", "IP address", "vCPU", "RAM", "Storage", "Method", "Source VM", "Why"].map((h) => (
+                {["VM", "Status", "Guest OS", "IP address", "vCPU", "RAM", "Storage", "Suggested method", "What to change"].map((h) => (
                   <th key={h} style={{ textAlign: "left", padding: "7px 9px", fontWeight: 800, borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" }}>{h}</th>
                 ))}
               </tr>
@@ -316,43 +318,58 @@ export default function FleetAnalysis({
                 const l = LV[r.level] || LV.unknown;
                 const a = byName[r.name];
                 const p = POWER[a?.power] || null;
-                const on = selected[keyOf(r)] !== undefined;
-                const why = a?.reason || r.blockers.map((b) => b.message).join(" ") || r.os?.note || "—";
-                return (
-                  <tr key={keyOf(r)} style={{ borderBottom: "1px solid var(--border)", opacity: on ? 1 : .5 }}>
-                    <td style={{ padding: "6px 9px" }}>
-                      <input type="checkbox" checked={on} onChange={() => onToggle?.(keyOf(r))}
-                        title={on ? "Exclude from this wave" : "Include in this wave"} />
+                const open = expanded === keyOf(r);
+                const acts = r.actions || [];
+                const worst = acts[0];
+                return [
+                  <tr key={keyOf(r)} onClick={() => setExpanded(open ? null : keyOf(r))}
+                    style={{ borderBottom: open ? "none" : "1px solid var(--border)", cursor: "pointer" }}>
+                    <td style={{ padding: "6px 9px", fontWeight: 700, whiteSpace: "nowrap" }}>
+                      <span style={{ color: "var(--text2)", marginRight: 5 }}>{open ? "▾" : "▸"}</span>{r.name}
                     </td>
-                    <td style={{ padding: "6px 9px", fontWeight: 700 }}>{r.name}</td>
                     <td style={{ padding: "6px 9px", whiteSpace: "nowrap", color: `var(${l.token})`, fontWeight: 700 }}>{l.icon} {l.label}</td>
                     <td style={{ padding: "6px 9px", color: "var(--text2)" }} title={r.os?.reported || ""}>{r.os?.distro || "—"}</td>
                     <td style={{ padding: "6px 9px", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.72rem" }}>
-                      {r.ips?.length ? r.ips.join(", ") : "—"}
+                      {r.ips?.length ? r.ips[0] + (r.ips.length > 1 ? ` +${r.ips.length - 1}` : "") : "—"}
                     </td>
                     <td style={{ padding: "6px 9px" }}>{r.cpuCount ?? "—"}</td>
                     <td style={{ padding: "6px 9px", whiteSpace: "nowrap" }}>{r.memoryGiB ? `${r.memoryGiB} GiB` : "—"}</td>
                     <td style={{ padding: "6px 9px", whiteSpace: "nowrap" }}>{gib(r.diskGiB)}</td>
-                    {/* The AI's two calls: how to move it, and what that costs
-                        the source machine in downtime. */}
                     <td style={{ padding: "6px 9px", whiteSpace: "nowrap", fontWeight: 700,
-                      color: a?.strategy === "warm" ? "var(--st-good)" : "var(--text2)" }}>
+                      color: a?.strategy === "warm" ? "var(--st-good)" : "var(--text2)" }} title={a?.reason || ""}>
                       {a?.strategy || "—"}
-                      {a?.overridden && <span style={{ color: "var(--st-warn)", fontWeight: 600 }} title="Warm is not possible for this VM — corrected"> (corrected)</span>}
+                      {p && <span style={{ marginLeft: 6, fontWeight: 600, color: `var(${p.token})` }}>{p.icon} {p.label}</span>}
                     </td>
-                    <td style={{ padding: "6px 9px", whiteSpace: "nowrap", color: p ? `var(${p.token})` : "var(--text2)", fontWeight: 700 }}
-                      title={a?.detail || ""}>
-                      {p ? `${p.icon} ${p.label}` : "—"}
+                    <td style={{ padding: "6px 9px", color: "var(--text2)", maxWidth: 300 }}>
+                      <span style={{ color: `var(${SEV_TOKEN[worst?.severity] || "--st-unknown"})`, fontWeight: 700 }}>
+                        {SEV_ICON[worst?.severity] || "•"}
+                      </span>{" "}
+                      {worst?.title || "—"}
+                      {acts.length > 1 && <span style={{ color: "var(--text2)" }}> +{acts.length - 1} more</span>}
                     </td>
-                    {/* Clamped to two lines so one wordy reason cannot set the
-                        height of every row; the full text is on hover. */}
-                    <td style={{ padding: "6px 9px", color: "var(--text2)", maxWidth: 340 }}>
-                      <div title={why} style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                        {why}
-                      </div>
-                    </td>
-                  </tr>
-                );
+                  </tr>,
+                  open && (
+                    <tr key={keyOf(r) + "-x"} style={{ borderBottom: "1px solid var(--border)" }}>
+                      <td colSpan={9} style={{ padding: "2px 9px 10px 30px", background: "var(--bg2)" }}>
+                        {acts.map((x, i) => (
+                          <div key={i} style={{ display: "flex", gap: 8, padding: "5px 0" }}>
+                            <span aria-hidden style={{ color: `var(${SEV_TOKEN[x.severity] || "--st-unknown"})`, fontWeight: 800 }}>
+                              {SEV_ICON[x.severity] || "•"}
+                            </span>
+                            <div>
+                              <div style={{ fontWeight: 700 }}>
+                                {x.title}
+                                {x.required && <span style={{ marginLeft: 6, fontSize: "0.66rem", fontWeight: 800, color: "var(--st-warn)" }}>REQUIRED</span>}
+                              </div>
+                              {x.detail && <div style={{ color: "var(--text2)" }}>{x.detail}</div>}
+                              <div>→ {x.action}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </td>
+                    </tr>
+                  ),
+                ];
               })}
             </tbody>
           </table>
@@ -387,26 +404,20 @@ export default function FleetAnalysis({
         ))}
       </div>
 
-      {/* ── Gate to step 3 ───────────────────────────────────────────────── */}
+      {/* ── Gate to the selection step ───────────────────────────────────── */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <button onClick={onBack} style={{
           padding: "8px 14px", borderRadius: 8, fontSize: "0.82rem", fontWeight: 700, cursor: "pointer",
           background: "transparent", color: "var(--text2)", border: "1px solid var(--border)", fontFamily: "inherit",
-        }}>← Change selection</button>
-        <button onClick={onProceed} disabled={!confirmed} style={{
+        }}>← Back to discovery</button>
+        <button onClick={onProceed} disabled={!total} style={{
           padding: "8px 16px", borderRadius: 8, fontSize: "0.82rem", fontWeight: 700, border: "none",
-          cursor: confirmed ? "pointer" : "not-allowed", opacity: confirmed ? 1 : .5,
+          cursor: total ? "pointer" : "not-allowed", opacity: total ? 1 : .5,
           background: "#3d5afe", color: "#fff", fontFamily: "inherit",
-        }}>Accept report for {confirmed} VM{confirmed === 1 ? "" : "s"} →</button>
+        }}>Choose VMs to migrate →</button>
         <span style={{ fontSize: "0.74rem", color: "var(--text2)" }}>
-          Applies the recommended method. You can still change it per VM in the next step.
+          {ready} of {total} can go in a wave today{blocked ? `; ${blocked} need work first` : ""}.
         </span>
-        {blocked > 0 && (
-          <span style={{ fontSize: "0.76rem", color: "var(--st-warn)", flexBasis: "100%" }}>
-            ⚠ {blocked} VM{blocked === 1 ? "" : "s"} in this selection {blocked === 1 ? "is" : "are"} blocked or unidentified —
-            untick {blocked === 1 ? "it" : "them"} here, or MTV will reject the plan that contains {blocked === 1 ? "it" : "them"}.
-          </span>
-        )}
       </div>
     </div>
   );

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useActiveCluster } from "../store/clusterStore";
 import { showToast } from "../store/toastStore";
 import FleetAnalysis from "./FleetAnalysis";
+import MigrationSelect from "./MigrationSelect";
 
 function clusterUrl(path, cluster) {
   if (!cluster || cluster === "local") return path;
@@ -1093,8 +1094,11 @@ function MigrationAgent({ clusters, activeCluster }) {
   // The workbench is a three-step wizard: pick what moves, understand whether
   // it CAN move, then move it. Each step is a decision the next one depends on,
   // so they are pages rather than one long scroll.
-  const [step, setStep] = useState(1);                 // 1 discover | 2 analyse | 3 migrate
-  const [analysis, setAnalysis] = useState(null);      // fleet roll-up for the selection
+  // Four steps, because they are four decisions: what is out there, can it
+  // move, what goes in this wave, and may we start.
+  const [step, setStep] = useState(1);                 // 1 discover | 2 analyse | 3 select | 4 plan
+  const [analysis, setAnalysis] = useState(null);      // roll-up of everything discovered
+  const [estimate, setEstimate] = useState(null);      // measured transfer estimate for the wave
 
   const cUrl = (p) => clusterUrl(p, cluster);
   const get = async (p) => (await fetch(cUrl(p))).json();
@@ -1156,40 +1160,72 @@ function MigrationAgent({ clusters, activeCluster }) {
   // that MTV will later reject. The per-VM method and power-state call come
   // back with it — reading the report and reading the recommendation are the
   // same act, so they are not two buttons.
+  // Step 1 → 2. EVERY discovered VM is analysed, not a pre-picked subset: the
+  // point of the report is to decide what belongs in the wave, which you cannot
+  // do from an assessment of the machines you already chose.
   const runAnalysis = async () => {
-    const chosen = selection.map((s) => s.vm);
-    if (!chosen.length) { showToast("Select at least one VM first", "err"); return; }
+    if (!vms?.length) { showToast("Discover the VMs first", "err"); return; }
     setBusy("analyse"); setStep(2);
     try {
-      const d = await post("/api/migration/analyse", { vms: chosen });
+      const d = await post("/api/migration/analyse", { vms });
       setAnalysis(d);
       setAdvice({ source: d.adviceSource, advice: d.advice || [], note: d.adviceNote });
     } catch (e) { showToast(e.message, "err"); setStep(1); }
     finally { setBusy(null); }
   };
 
-  // Step 2 → 3. Accepting the report is what applies the recommended method —
-  // an explicit act, never something that happened while the operator read.
-  const acceptReport = () => {
+  // Step 2 → 3. Pre-tick the machines the report says can go, with the method
+  // it recommends. A starting point the operator edits — not a decision made
+  // for them, which is why they land on the selection page and not the plan.
+  const toSelection = () => {
     const next = {};
-    for (const [key, cur] of Object.entries(sel)) {
-      const vm = (vms || []).find((v) => (v.id || v.name) === key);
-      const rec = (advice?.advice || []).find((a) => a.name === vm?.name);
-      next[key] = rec?.strategy || cur;
+    for (const r of analysis?.rows || []) {
+      if (r.level !== "supported" && r.level !== "caveats") continue;
+      const rec = (advice?.advice || []).find((a) => a.name === r.name);
+      next[r.id || r.name] = rec?.strategy === "warm" && r.warmEligible ? "warm" : "cold";
     }
     setSel(next);
     setStep(3);
   };
 
-  // Re-analyse when the operator changes the selection on the report itself.
-  const revalidate = async (nextSel) => {
-    const chosen = (vms || []).filter((v) => nextSel[v.id || v.name]);
-    if (!chosen.length) { setAnalysis(null); return; }
-    setBusy("analyse");
+  // Step 3 → 4. The estimate is measured from migrations this cluster has
+  // already run, so the number on the change request is this platform's, not a
+  // vendor's.
+  const toPlan = async () => {
+    setBusy("estimate"); setStep(4);
     try {
-      const d = await post("/api/migration/analyse", { vms: chosen });
-      setAnalysis(d);
-      setAdvice({ source: d.adviceSource, advice: d.advice || [], note: d.adviceNote });
+      const strategies = {};
+      for (const { vm, strategy } of selection) strategies[vm.name] = strategy;
+      setEstimate(await post("/api/migration/assess", { vms: selection.map((s) => s.vm), strategies }));
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setBusy(null); }
+  };
+
+  // ── Change request: raise, then poll for the CAB's answer ────────────────
+  // The verdict is written onto the Plan itself, so a console refresh — or a
+  // different person tomorrow — sees the same gate.
+  const raiseCR = async (planName, strategy) => {
+    setBusy(planName);
+    try {
+      const d = await post(`/api/migration/plans/${encodeURIComponent(planName)}/change-request`, {
+        // The plan's own strategy decides which estimate the CAB sees — a warm
+        // plan's downtime is minutes, a cold one's is the whole transfer.
+        estimate: estimate?.estimate?.[strategy] || null,
+      });
+      if (d.ok) {
+        showToast(d.alreadyRaised ? d.message : `${d.number} raised — awaiting approval`, "ok");
+        refreshStatus([planName]);
+      } else showToast(d.error || "Could not raise the change request", "err");
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setBusy(null); }
+  };
+
+  const checkApproval = async (planName) => {
+    setBusy(planName);
+    try {
+      const d = await get(`/api/migration/plans/${encodeURIComponent(planName)}/change-request`);
+      showToast(d.ok ? (d.note || d.gate?.next || "Checked") : (d.error || "Could not read the change request"), d.ok ? "ok" : "err");
+      refreshStatus([planName]);
     } catch (e) { showToast(e.message, "err"); }
     finally { setBusy(null); }
   };
@@ -1253,6 +1289,8 @@ function MigrationAgent({ clusters, activeCluster }) {
 
   const S = { padding: "7px 10px", borderRadius: 8, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--fg,#151a29)", fontSize: "0.84rem" };
   const gb = (v) => (v == null ? "—" : `${v} GiB`);
+  // Hours once it stops being a number anyone can hold in their head.
+  const mins = (n) => (n == null ? "—" : n < 90 ? `${n} min` : `${(n / 60).toFixed(1)} h`);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -1318,7 +1356,7 @@ function MigrationAgent({ clusters, activeCluster }) {
           the analysis by analysing, and migration by accepting the analysis. */}
       {ready?.ok && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          {[[1, "Discover & select"], [2, "Analyse support"], [3, "Migrate"]].map(([n, label], i) => (
+          {[[1, "Discover"], [2, "Analyse support"], [3, "Select & strategy"], [4, "Plan & migrate"]].map(([n, label], i) => (
             <span key={n} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
               {i > 0 && <span style={{ color: "var(--text2)", opacity: .5 }}>→</span>}
               <button
@@ -1359,7 +1397,7 @@ function MigrationAgent({ clusters, activeCluster }) {
               style={{ ...S, background: "#3d5afe", color: "#fff", border: "none", fontWeight: 700, cursor: provider ? "pointer" : "not-allowed", opacity: provider ? 1 : .5 }}>
               {busy === "discover" ? "Discovering…" : "🔍 Discover VMs"}
             </button>
-            {vms && <span style={{ fontSize: "0.78rem", color: "var(--muted,#5a6373)" }}>{vms.length} VM(s) found · {Object.keys(sel).length} selected</span>}
+            {vms && <span style={{ fontSize: "0.78rem", color: "var(--muted,#5a6373)" }}>{vms.length} VM(s) found in this vCenter</span>}
           </div>
 
           {/* ── Inventory table ───────────────────────────────────────────── */}
@@ -1368,7 +1406,7 @@ function MigrationAgent({ clusters, activeCluster }) {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.79rem" }}>
                 <thead>
                   <tr style={{ background: "var(--card-bg,#f6f8fc)", position: "sticky", top: 0 }}>
-                    {["", "VM", "Power", "Guest OS", "IP address", "vCPU", "Memory", "Storage"].map((h) => (
+                    {["VM", "Power", "Guest OS", "IP address", "vCPU", "Memory", "Storage"].map((h) => (
                       <th key={h} style={{ textAlign: "left", padding: "7px 9px", fontWeight: 800, borderBottom: "1px solid var(--border,#e4e8f1)", whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
@@ -1376,19 +1414,8 @@ function MigrationAgent({ clusters, activeCluster }) {
                 <tbody>
                   {vms.map((v) => {
                     const key = v.id || v.name;
-                    const chosen = sel[key];
                     return (
-                      <tr key={key} style={{ borderBottom: "1px solid var(--border,#eef1f6)", background: chosen ? "rgba(61,90,254,.05)" : "transparent" }}>
-                        <td style={{ padding: "6px 9px" }}>
-                          <input type="checkbox" checked={!!chosen}
-                            onChange={(e) => setSel((s) => {
-                              const n = { ...s };
-                              // A placeholder, not a decision: the strategy is
-                              // chosen at the end, once the report is read.
-                              if (e.target.checked) n[key] = "cold"; else delete n[key];
-                              return n;
-                            })} />
-                        </td>
+                      <tr key={key} style={{ borderBottom: "1px solid var(--border,#eef1f6)" }}>
                         <td style={{ padding: "6px 9px", fontWeight: 700 }}>{v.name}</td>
                         <td style={{ padding: "6px 9px", color: v.poweredOn ? "#16a34a" : "var(--muted,#5a6373)" }}>{v.poweredOn ? "on" : "off"}</td>
                         {/* The classified guest sits above the raw string: the
@@ -1423,14 +1450,14 @@ function MigrationAgent({ clusters, activeCluster }) {
           {vms?.length === 0 && <div style={{ fontSize: "0.82rem", color: "var(--muted,#5a6373)" }}>No VMs returned for that provider.</div>}
 
           {/* ── Gate to step 2 ───────────────────────────────────────────── */}
-          {Object.keys(sel).length > 0 && (
+          {vms?.length > 0 && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <button onClick={runAnalysis} disabled={busy === "analyse"}
                 style={{ ...S, background: "#3d5afe", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", padding: "8px 16px" }}>
-                {busy === "analyse" ? "Analysing…" : `Analyse ${Object.keys(sel).length} selected VM(s) →`}
+                {busy === "analyse" ? "Analysing…" : `Analyse all ${vms.length} VM(s) →`}
               </button>
               <span style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)" }}>
-                Checks each guest against the OpenShift Virtualization support matrix and MTV's own validation. Read-only.
+                Checks every guest against the OpenShift Virtualization support matrix and MTV's own validation. Read-only — you choose what migrates after reading the report.
               </span>
             </div>
           )}
@@ -1448,96 +1475,71 @@ function MigrationAgent({ clusters, activeCluster }) {
           adviceSource={advice?.source}
           adviceNote={advice?.note}
           busy={busy === "analyse"}
-          selected={sel}
-          onToggle={(key) => {
-            const next = { ...sel };
-            if (next[key] === undefined) next[key] = "cold"; else delete next[key];
-            setSel(next);
-            revalidate(next);
-          }}
           onBack={() => setStep(1)}
-          onProceed={acceptReport}
+          onProceed={toSelection}
         />
       )}
 
+      {/* ── Step 3 · Choose the wave ──────────────────────────────────────── */}
       {ready?.ok && step === 3 && (
-        <>
-          {/* ── Strategy ───────────────────────────────────────────────────
-              The method is chosen HERE, at the end, once the report has been
-              read — picking warm or cold before knowing whether a VM is even
-              supported is a decision made in the dark. Pre-filled from the
-              recommendation the operator accepted, and still editable. */}
-          {selection.length > 0 && (
-            <div style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, background: "var(--card-bg,#fff)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap", padding: "10px 12px 6px" }}>
-                <span style={{ fontWeight: 800, fontSize: "0.84rem" }}>Migration method</span>
-                <span style={{ fontSize: "0.75rem", color: "var(--muted,#5a6373)" }}>
-                  {selection.filter((s) => s.strategy === "warm").length} warm · {selection.filter((s) => s.strategy === "cold").length} cold
-                </span>
-              </div>
-              <div style={{ overflow: "auto", maxHeight: 260 }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.78rem" }}>
-                  <thead>
-                    <tr style={{ background: "var(--bg2,#f6f8fc)", position: "sticky", top: 0 }}>
-                      {["VM", "Storage", "Method", "Source VM during copy", "Why"].map((h) => (
-                        <th key={h} style={{ textAlign: "left", padding: "7px 9px", fontWeight: 800, borderBottom: "1px solid var(--border,#e4e8f1)", whiteSpace: "nowrap" }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selection.map(({ vm: v, strategy }) => {
-                      const key = v.id || v.name;
-                      const rec = (advice?.advice || []).find((a) => a.name === v.name);
-                      // Power outcome follows the CURRENT choice, not the
-                      // recommendation — change the method and the downtime
-                      // statement changes with it.
-                      const power = v.poweredOn === false ? "Already off — no additional downtime"
-                        : strategy === "warm" ? "Stays online; short cutover at the end"
-                        : "Must power off for the whole copy";
-                      return (
-                        <tr key={key} style={{ borderBottom: "1px solid var(--border,#eef1f6)" }}>
-                          <td style={{ padding: "6px 9px", fontWeight: 700 }}>{v.name}</td>
-                          <td style={{ padding: "6px 9px", whiteSpace: "nowrap" }}>{gb(v.diskGiB)}</td>
-                          <td style={{ padding: "6px 9px" }}>
-                            <select value={strategy} onChange={(e) => setSel((s) => ({ ...s, [key]: e.target.value }))}
-                              title={v.warmEligible ? "" : v.warmBlockedReason || ""}
-                              style={{ ...S, padding: "3px 7px", fontSize: "0.76rem" }}>
-                              <option value="cold">cold</option>
-                              {/* Warm is offered only where it can actually work. */}
-                              <option value="warm" disabled={!v.warmEligible}>
-                                warm{v.warmEligible ? "" : " — not possible"}
-                              </option>
-                            </select>
-                          </td>
-                          <td style={{ padding: "6px 9px", color: "var(--muted,#5a6373)", whiteSpace: "nowrap" }}>{power}</td>
-                          <td style={{ padding: "6px 9px", color: "var(--muted,#5a6373)", maxWidth: 340 }}>
-                            {strategy === rec?.strategy ? rec?.reason : (v.warmEligible ? "Changed from the recommendation." : v.warmBlockedReason)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+        <MigrationSelect
+          analysis={analysis}
+          advice={advice?.advice || []}
+          selected={sel}
+          onChange={setSel}
+          ready={ready}
+          target={target}
+          onTarget={setTarget}
+          onBack={() => setStep(2)}
+          onProceed={toPlan}
+        />
+      )}
 
-          {/* ── Target ────────────────────────────────────────────────────── */}
-          {Object.keys(sel).length > 0 && (
-            <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap" }}>
-              <label style={{ fontSize: "0.8rem", color: "var(--muted,#5a6373)" }}>Target namespace</label>
-              <input value={target.targetNamespace} onChange={(e) => setTarget((t) => ({ ...t, targetNamespace: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-") }))}
-                placeholder="prod-apps" style={{ ...S, minWidth: 150 }} />
-              <select value={target.storageMap} onChange={(e) => setTarget((t) => ({ ...t, storageMap: e.target.value }))} style={S}>
-                <option value="">— storage map —</option>
-                {(ready.storageMaps || []).map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
-              </select>
-              <select value={target.networkMap} onChange={(e) => setTarget((t) => ({ ...t, networkMap: e.target.value }))} style={S}>
-                <option value="">— network map —</option>
-                {(ready.networkMaps || []).map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
-              </select>
+      {ready?.ok && step === 4 && (
+        <>
+          {/* ── How long this will take ─────────────────────────────────────
+              Measured from migrations this cluster has already run, not from a
+              vendor figure. With no history yet it says so, and the live ETA on
+              each plan replaces it with real numbers once bytes move. */}
+          <div style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, padding: "11px 13px", background: "var(--card-bg,#fff)" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 800, fontSize: "0.86rem" }}>Estimated transfer time</span>
+              <span style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)" }}>
+                {busy === "estimate" ? "measuring…" : estimate?.throughput?.mbps
+                  ? `Based on ${estimate.throughput.samples} completed migration(s) on this cluster — ${estimate.throughput.mbps} MiB/s`
+                  : "No completed migrations on this cluster yet, so this uses a conservative default"}
+              </span>
             </div>
-          )}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10, marginTop: 9 }}>
+              {[["cold", estimate?.estimate?.cold], ["warm", estimate?.estimate?.warm]].map(([kind, est]) => (
+                est?.vmCount ? (
+                  <div key={kind} style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 9, padding: "9px 11px" }}>
+                    <div style={{ fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted,#5a6373)" }}>
+                      {kind} · {est.vmCount} VM{est.vmCount === 1 ? "" : "s"} · {gb(est.totalGiB)}
+                    </div>
+                    <div style={{ fontSize: "1.35rem", fontWeight: 800, marginTop: 2 }}>
+                      {mins(est.wallClockMinutes?.likely)}
+                      <span style={{ fontSize: "0.76rem", fontWeight: 600, color: "var(--muted,#5a6373)" }}>
+                        {" "}transfer ({mins(est.wallClockMinutes?.low)}–{mins(est.wallClockMinutes?.high)})
+                      </span>
+                    </div>
+                    {/* Downtime is the number people actually schedule around,
+                        and for warm it is nothing like the transfer time. */}
+                    <div style={{ fontSize: "0.77rem", marginTop: 2 }}>
+                      Downtime: <b>{mins(est.downtimeMinutes?.likely)}</b>
+                      <span style={{ color: "var(--muted,#5a6373)" }}> ({mins(est.downtimeMinutes?.low)}–{mins(est.downtimeMinutes?.high)})</span>
+                    </div>
+                    <div style={{ fontSize: "0.71rem", color: "var(--muted,#5a6373)", marginTop: 3 }}>{est.note}</div>
+                  </div>
+                ) : null
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 9, marginTop: 10 }}>
+              <button onClick={() => setStep(3)} style={{ ...S, padding: "6px 12px", fontSize: "0.78rem", fontWeight: 700, cursor: "pointer" }}>
+                ← Change the wave
+              </button>
+            </div>
+          </div>
 
           {/* ── Grouping preview: what MTV will actually accept ───────────── */}
           {preview && (
@@ -1577,19 +1579,55 @@ function MigrationAgent({ clusters, activeCluster }) {
                   </span>
                   <span style={{ fontSize: "0.75rem", color: "var(--muted,#5a6373)" }}>{p.strategy} · {p.vms} VM(s)</span>
                   <button onClick={() => refreshStatus([p.planName])} style={{ ...S, marginLeft: "auto", padding: "3px 10px", fontSize: "0.74rem", cursor: "pointer" }}>↻</button>
-                  <button onClick={() => migrate(p.planName)} disabled={!st.ready || st.executing || st.succeeded || busy === p.planName}
-                    title={!st.ready ? "MTV has not validated this plan yet" : ""}
+                  {/* The gate: validated → approved → migrate. The button is
+                      enabled from the plan's own annotations, and the server
+                      re-checks them — an enabled button is not authorisation. */}
+                  {!st.gate?.number && st.gate?.required !== false && (
+                    <button onClick={() => raiseCR(p.planName, p.strategy)} disabled={!st.ready || busy === p.planName}
+                      title={!st.ready ? "MTV has not validated this plan yet" : "Raise the ServiceNow change request for this migration"}
+                      style={{ ...S, padding: "4px 12px", fontWeight: 700, border: "none",
+                        background: st.ready ? "#7c3aed" : "rgba(148,163,184,.3)", color: st.ready ? "#fff" : "inherit",
+                        cursor: st.ready ? "pointer" : "not-allowed" }}>
+                      {busy === p.planName ? "…" : "2. Raise change request"}
+                    </button>
+                  )}
+                  {st.gate?.number && !st.gate?.approved && (
+                    <button onClick={() => checkApproval(p.planName)} disabled={busy === p.planName}
+                      style={{ ...S, padding: "4px 12px", fontWeight: 700, cursor: "pointer",
+                        borderColor: "rgba(124,58,237,.45)", color: "#a78bfa" }}>
+                      {busy === p.planName ? "…" : `↻ Check ${st.gate.number}`}
+                    </button>
+                  )}
+                  <button onClick={() => migrate(p.planName)}
+                    disabled={!st.ready || st.executing || st.succeeded || busy === p.planName
+                      || (st.gate?.required !== false && !st.gate?.approved)}
+                    title={!st.ready ? "MTV has not validated this plan yet"
+                      : (st.gate?.required !== false && !st.gate?.approved) ? st.gate?.next || "Not approved yet" : ""}
                     style={{ ...S, padding: "4px 12px", fontWeight: 700, border: "none",
-                      background: st.ready && !st.executing && !st.succeeded ? "#22c55e" : "rgba(148,163,184,.3)",
-                      color: st.ready && !st.executing && !st.succeeded ? "#052e16" : "inherit",
-                      cursor: st.ready && !st.executing && !st.succeeded ? "pointer" : "not-allowed" }}>
-                    {busy === p.planName ? "…" : st.succeeded ? "✅ Migrated" : "2. Migrate"}
+                      background: st.ready && !st.executing && !st.succeeded && (st.gate?.required === false || st.gate?.approved) ? "#22c55e" : "rgba(148,163,184,.3)",
+                      color: st.ready && !st.executing && !st.succeeded && (st.gate?.required === false || st.gate?.approved) ? "#052e16" : "inherit",
+                      cursor: st.ready && !st.executing && !st.succeeded && (st.gate?.required === false || st.gate?.approved) ? "pointer" : "not-allowed" }}>
+                    {busy === p.planName ? "…" : st.succeeded ? "✅ Migrated" : "3. Migrate"}
                   </button>
                   <button onClick={() => askRollback(p.planName)} style={{ ...S, padding: "4px 11px", fontSize: "0.76rem", fontWeight: 700, color: "#dc2626", borderColor: "rgba(220,38,38,.4)", cursor: "pointer" }}>
                     ↩ Roll back
                   </button>
                 </div>
                 {(st.critical || []).map((c, i) => <div key={i} style={{ color: "#dc2626", fontSize: "0.76rem", marginTop: 4 }}>✖ {c}</div>)}
+                {st.gate && st.gate.required !== false && (
+                  <div style={{ marginTop: 5, fontSize: "0.77rem", display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                    <span style={{ color: st.gate.approved ? "var(--st-good)" : st.gate.state === "rejected" || st.gate.state === "cancelled" ? "var(--st-crit)" : "var(--st-warn)", fontWeight: 700 }}>
+                      {st.gate.approved ? "✓" : st.gate.state === "rejected" || st.gate.state === "cancelled" ? "✖" : "◷"}{" "}
+                      {st.gate.number ? `${st.gate.number} — ${st.gate.state}` : "no change request"}
+                    </span>
+                    <span style={{ color: "var(--muted,#5a6373)" }}>{st.gate.next}</span>
+                    {st.gate.checkedAt && (
+                      <span style={{ color: "var(--muted,#5a6373)", fontSize: "0.71rem", marginLeft: "auto" }}>
+                        last checked {new Date(st.gate.checkedAt).toLocaleString()}
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 {/* Live ETA — measured from bytes actually moving, so it
                     sharpens as the transfer runs and says "stalled" rather

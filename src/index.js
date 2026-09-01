@@ -2945,6 +2945,30 @@ async function startSSE() {
         }
       }
 
+      // Raise the change request for a plan. Writes only the ServiceNow record
+      // and an annotation on the Plan — nothing migrates.
+      {
+        const m = url.pathname.match(/^\/api\/migration\/plans\/([\w.-]+)\/change-request$/);
+        if (m && req.method === "POST") {
+          if (enforceRateLimit(req, res, { burst: 4, refillPerSec: 0.05 })) return;
+          try {
+            const body = await readJsonBody(req);
+            const out = await withClusterContext(url, async () => mig.raiseMigrationCR(m[1], {
+              estimate: body.estimate || null, actor: req.user?.name || "operator", cluster,
+            }));
+            return sendJson(res, 200, out ?? { ok: false, error: "Selected cluster is not reachable." });
+          } catch (err) { return sendJson(res, 400, { ok: false, error: err.message }); }
+        }
+        // Where the approval stands, read from ServiceNow and written back onto
+        // the Plan so a console refresh does not lose the gate.
+        if (m && req.method === "GET") {
+          try {
+            const out = await withClusterContext(url, async () => mig.checkMigrationApproval(m[1]));
+            return sendJson(res, 200, out ?? { ok: false, error: "Selected cluster is not reachable." });
+          } catch (err) { return sendJson(res, 400, { ok: false, error: err.message }); }
+        }
+      }
+
       // The gate. Data moves only here, and only for an approved, Ready plan.
       {
         const m = url.pathname.match(/^\/api\/migration\/plans\/([\w.-]+)\/migrate$/);
