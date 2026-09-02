@@ -1,9 +1,7 @@
 import { useState } from "react";
-// Imported from the server module rather than copied: the grouping runs
-// server-side, but the split check depends on what is ticked right now, so it
-// has to run here. affinity.js is dependency-free ESM, so one definition
-// serves both and cannot drift.
-import { splitGroups } from "../../../src/services/affinity.js";
+// The grouping runs server-side and arrives on the analysis; only the split
+// check runs here, because it depends on what is ticked right now.
+import { splitGroups } from "../lib/affinity";
 
 /* ── UC-10 step 3: choose what moves, and how ─────────────────────────────────
    Separate from the report on purpose. Reading an assessment and committing to

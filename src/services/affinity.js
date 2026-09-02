@@ -18,6 +18,13 @@
  * splits a group, which is the moment the information is worth having.
  *
  * Everything here is pure.
+ *
+ * NOTE: the companion splitGroups() — "which groups does this selection cut in
+ * half" — lives in console/src/lib/affinity.js, not here. It depends on what is
+ * ticked in the browser right now, so only the console calls it, and the two
+ * container images have disjoint build contexts: the console image copies only
+ * console/, this one copies only src/. A file imported across that line
+ * resolves on a developer's disk and fails in the build.
  */
 
 /**
@@ -180,29 +187,4 @@ function describeEvidence(e) {
     case "datastore": return { kind: e.kind, value: e.value, text: `share the datastore ${e.value}` };
     default: return { kind: e.kind, value: e.value, text: String(e.value) };
   }
-}
-
-/**
- * Which groups the current selection cuts in half. Pure.
- *
- * This is the only output that matters at the moment of choosing: not "here are
- * some groups", but "you are about to leave two machines behind".
- *
- * @param {Array} groups     from affinityGroups()
- * @param {Set|Array} chosen names selected for this wave
- */
-export function splitGroups(groups = [], chosen = []) {
-  const picked = chosen instanceof Set ? chosen : new Set(chosen);
-  const out = [];
-  for (const g of groups) {
-    const inWave = g.members.filter((n) => picked.has(n));
-    const leftBehind = g.members.filter((n) => !picked.has(n));
-    if (!inWave.length || !leftBehind.length) continue;       // all in, or all out
-    out.push({
-      ...g, inWave, leftBehind,
-      message: `${inWave.length} of ${g.size} selected — ${leftBehind.join(", ")} would stay on VMware.`,
-      because: g.evidence.map((e) => e.text).join("; "),
-    });
-  }
-  return out.sort((a, b) => b.leftBehind.length - a.leftBehind.length);
 }

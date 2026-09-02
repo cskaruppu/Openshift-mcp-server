@@ -1,8 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  affinityGroups, splitGroups, subnetOf, nameShape, folderOf, MAX_SUBNET_MEMBERS,
+  affinityGroups, subnetOf, nameShape, folderOf, MAX_SUBNET_MEMBERS,
 } from "../../src/services/affinity.js";
+// splitGroups lives in the console tree — the two container images have
+// disjoint build contexts, so it cannot be shared across them. It is still
+// tested here, from the repo where both halves exist.
+import { splitGroups } from "../../console/src/lib/affinity.js";
 
 const vm = (name, ip, path, datastores = [], diskGiB = 100) => ({
   name, ips: ip ? [ip] : [], path, datastores, diskGiB,
