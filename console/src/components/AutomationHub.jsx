@@ -1570,13 +1570,18 @@ function MigrationAgent({ clusters, activeCluster }) {
               </div>
               {preview.groups.map((g) => (
                 <div key={g.key} style={{ fontSize: "0.79rem", marginTop: 3 }}>
-                  <b>{g.planName}</b> · <span style={{ color: g.warm ? "#0891b2" : "#64748b", fontWeight: 700 }}>{g.strategy}</span> · {g.totalVMs} VM{g.totalVMs === 1 ? "" : "s"} · {gb(g.totalGiB)} · {g.storageMap} / {g.networkMap} → {g.targetNamespace}
+                  <b>{g.planName}</b> · <span style={{ color: g.warm ? "#0891b2" : "#64748b", fontWeight: 700 }}>{g.strategy}</span>
+                  {g.osFamily && g.osFamily !== "unknown" && (
+                    <> · <span style={{ textTransform: "capitalize", fontWeight: 700 }}>{g.osFamily}</span></>
+                  )} · {g.totalVMs} VM{g.totalVMs === 1 ? "" : "s"} · {gb(g.totalGiB)} · {g.storageMap} / {g.networkMap} → {g.targetNamespace}
                   <div style={{ color: "var(--muted,#5a6373)", fontSize: "0.72rem" }}>{g.vms.map((v) => v.name).join(", ")}</div>
                 </div>
               ))}
               {(preview.errors || []).map((e, i) => <div key={i} style={{ color: "#dc2626", fontSize: "0.78rem", marginTop: 3 }}>✖ {e.message}</div>)}
               <div style={{ fontSize: "0.71rem", color: "var(--muted,#5a6373)", marginTop: 6 }}>
-                Warm/cold, the provider, both maps and the target namespace are plan-level in MTV — a mixed selection becomes several plans.
+                Warm/cold, the provider, both maps and the target namespace are plan-level in MTV, so a mixed selection becomes several plans.
+                Windows and Linux are split as well — they need different preparation and verification, and are almost always cut over in
+                separate windows, so a plan that mixed them could not be handed to either team.
               </div>
               <button onClick={createPlans} disabled={busy === "plan" || (preview.errors || []).length > 0 || preview.groups.length === 0}
                 style={{ ...S, marginTop: 8, background: (preview.errors || []).length ? "rgba(148,163,184,.3)" : "#0ea5a0", color: (preview.errors || []).length ? "inherit" : "#fff",

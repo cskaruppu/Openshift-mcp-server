@@ -780,3 +780,54 @@ test("a target-capacity blocker is never reported as something to fix at source"
   assert.deepEqual(source.vms, ["shared"]);
   assert.match(source.action, /at source/);
 });
+
+test("Windows and Linux never share a migration plan", async () => {
+  const { planGroups } = await import("../../src/services/vm-migration.js");
+  const vm = (name, family, diskGiB) => ({ id: `id-${name}`, name, diskGiB, warmEligible: true, os: { family, distro: family } });
+  const sel = (v, strategy = "cold") => ({
+    vm: v, strategy, sourceProvider: "vsphere", storageMap: "sm", networkMap: "nm", targetNamespace: "prod",
+  });
+
+  // Identical in every dimension MTV cares about — only the OS differs.
+  const { groups } = planGroups([
+    sel(vm("web01", "linux", 100)), sel(vm("web02", "linux", 100)),
+    sel(vm("sql01", "windows", 500)),
+  ]);
+  assert.equal(groups.length, 2, "the same maps, namespace and strategy still split by OS");
+  const linux = groups.find((g) => g.osFamily === "linux");
+  const windows = groups.find((g) => g.osFamily === "windows");
+  assert.deepEqual(linux.vms.map((v) => v.name), ["web01", "web02"]);
+  assert.deepEqual(windows.vms.map((v) => v.name), ["sql01"]);
+  assert.equal(linux.totalGiB, 200, "each plan totals only its own machines");
+  assert.equal(windows.totalGiB, 500);
+
+  // And the name says which is which, or a wave of four looks like a mistake.
+  assert.match(linux.planName, /^mig-linux-cold-prod-/);
+  assert.match(windows.planName, /^mig-windows-cold-prod-/);
+});
+
+test("OS grouping stacks with the dimensions MTV already forces", async () => {
+  const { planGroups } = await import("../../src/services/vm-migration.js");
+  const vm = (name, family) => ({ id: `id-${name}`, name, diskGiB: 10, warmEligible: true, os: { family, distro: family } });
+  const sel = (v, strategy, targetNamespace = "prod") => ({
+    vm: v, strategy, sourceProvider: "vsphere", storageMap: "sm", networkMap: "nm", targetNamespace,
+  });
+  const { groups } = planGroups([
+    sel(vm("a", "linux"), "cold"), sel(vm("b", "linux"), "warm"),
+    sel(vm("c", "windows"), "cold"), sel(vm("d", "windows"), "cold", "staging"),
+  ]);
+  assert.equal(groups.length, 4, "OS × strategy × namespace all separate");
+  assert.equal(new Set(groups.map((g) => g.planName)).size, 4, "and every plan is uniquely named");
+});
+
+test("an unidentified guest gets its own plan without a misleading name", async () => {
+  const { planGroups, buildPlanManifest } = await import("../../src/services/vm-migration.js");
+  const { groups } = planGroups([{
+    vm: { id: "id-x", name: "mystery", diskGiB: 50, os: { family: "unknown" } }, strategy: "cold",
+    sourceProvider: "vsphere", storageMap: "sm", networkMap: "nm", targetNamespace: "prod",
+  }]);
+  assert.equal(groups[0].osFamily, "unknown");
+  assert.doesNotMatch(groups[0].planName, /unknown/, "the name must not assert a family it does not know");
+  const labels = buildPlanManifest(groups[0], { targetProvider: "h" }).metadata.labels;
+  assert.equal(labels["tcs.agentic-ai/os-family"], "unknown", "but the label still records it honestly");
+});

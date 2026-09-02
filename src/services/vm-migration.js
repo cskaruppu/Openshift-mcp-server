@@ -1339,10 +1339,17 @@ export function planGroups(selection = []) {
     }
     if (incomplete) continue;
 
-    const key = [s.sourceProvider, strategy, s.storageMap, s.networkMap, s.targetNamespace].join("|");
+    // MTV forces the first five: warm/cold, the provider, both maps and the
+    // target namespace are all Plan-level. Operating system is ours, and it is
+    // added on purpose — Windows and Linux are prepared differently (VirtIO
+    // drivers, licensing, often a different team), verified differently, and
+    // are almost always cut over in separate windows. A plan that mixes them
+    // cannot be handed to either team.
+    const osFamily = vm.os?.family || "unknown";
+    const key = [s.sourceProvider, strategy, s.storageMap, s.networkMap, s.targetNamespace, osFamily].join("|");
     if (!byKey.has(key)) {
       byKey.set(key, {
-        key, strategy, warm: strategy === "warm",
+        key, strategy, warm: strategy === "warm", osFamily,
         sourceProvider: s.sourceProvider, storageMap: s.storageMap,
         networkMap: s.networkMap, targetNamespace: s.targetNamespace,
         vms: [],
@@ -1365,7 +1372,8 @@ export function planGroups(selection = []) {
 /** Deterministic, DNS-safe Plan name — the same selection always names alike. */
 export function planNameFor(group, index = 0) {
   const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  const base = `mig-${group.strategy}-${group.targetNamespace}-${stamp}`;
+  const os = group.osFamily && group.osFamily !== "unknown" ? `${group.osFamily}-` : "";
+  const base = `mig-${os}${group.strategy}-${group.targetNamespace}-${stamp}`;
   const safe = base.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").slice(0, 48).replace(/^-+|-+$/g, "");
   return index > 0 ? `${safe}-${index + 1}` : safe;
 }
@@ -1383,6 +1391,7 @@ export function buildPlanManifest(group, { targetProvider }) {
       labels: {
         "app.kubernetes.io/managed-by": "tcs-agentic-ai",
         "tcs.agentic-ai/strategy": group.strategy,
+        ...(group.osFamily ? { "tcs.agentic-ai/os-family": group.osFamily } : {}),
       },
       // Forklift's Plan spec carries VM names, not disk sizes. Recording the
       // footprint here means the change request can quote THIS plan's transfer
@@ -1628,6 +1637,7 @@ export async function raiseMigrationCR(planName, { actor = "operator", cluster =
 
   const vms = (plan.spec?.vms || []).map((v) => v.name || v.id);
   const warm = plan.spec?.warm === true;
+  const osFamily = plan.metadata?.labels?.["tcs.agentic-ai/os-family"] || null;
   // The CAB is approving an outage, so the change record carries the numbers
   // they actually need: how long these machines are down, not only how long the
   // copy runs — and computed from THIS plan's footprint, not the wave's.
@@ -1645,10 +1655,11 @@ export async function raiseMigrationCR(planName, { actor = "operator", cluster =
   try {
     const { createChangeRequest } = await import("../utils/servicenow-client.js");
     cr = await createChangeRequest({
-      shortDescription: `Migrate ${vms.length} VM(s) to OpenShift Virtualization (${warm ? "warm" : "cold"}): ${vms.slice(0, 4).join(", ")}${vms.length > 4 ? ` +${vms.length - 4}` : ""}`,
+      shortDescription: `Migrate ${vms.length} ${osFamily && osFamily !== "unknown" ? `${osFamily} ` : ""}VM(s) to OpenShift Virtualization (${warm ? "warm" : "cold"}): ${vms.slice(0, 4).join(", ")}${vms.length > 4 ? ` +${vms.length - 4}` : ""}`,
       description: [
         `Plan            : ${planName}`,
         `Strategy        : ${warm ? "warm — source stays online, short cutover" : "cold — source powered off for the whole copy"}`,
+        osFamily ? `Operating system: ${osFamily}` : null,
         `Target namespace: ${plan.spec?.targetNamespace || "unspecified"}`,
         `Storage map     : ${plan.spec?.map?.storage?.name || "unspecified"}`,
         `Network map     : ${plan.spec?.map?.network?.name || "unspecified"}`,
@@ -1657,7 +1668,7 @@ export async function raiseMigrationCR(planName, { actor = "operator", cluster =
         window,
         "",
         "The source VMs are NOT deleted by this migration.",
-      ].join("\n"),
+      ].filter(Boolean).join("\n"),
       type: "normal",
       category: "Infrastructure",
       risk: warm ? "moderate" : "high",
