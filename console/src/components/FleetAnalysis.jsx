@@ -286,6 +286,89 @@ function DriftPanel({ drift }) {
   );
 }
 
+
+/* ── Resource guarantees ──────────────────────────────────────────────────────
+   The difference nobody assesses for, and the one that produces a performance
+   ticket three weeks after a migration everyone called a success. VMware
+   assigns vCPU and memory and may reserve them; OpenShift Virtualization turns
+   the VM into a pod whose CPU request is the vCPU count divided by the
+   cluster's overcommit ratio. The guest's own view never changes, which is
+   exactly why this is invisible from inside it. */
+const QOS = {
+  guaranteed: { label: "guaranteed on VMware", token: "--st-crit", icon: "✖" },
+  partial:    { label: "partly reserved",      token: "--st-warn", icon: "⚠" },
+  shared:     { label: "already shared",       token: "--st-good", icon: "✓" },
+  unknown:    { label: "not reported",         token: "--st-unknown", icon: "?" },
+};
+
+function FidelityPanel({ fidelity }) {
+  if (!fidelity?.vms) return null;
+  const { cpu, memory, byClass, losing, headline, note } = fidelity;
+
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", background: "var(--card)" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+        <div style={{ fontWeight: 800, fontSize: "0.84rem" }}>Resource guarantees after migration</div>
+        <div style={{ fontSize: "0.78rem", color: "var(--text)" }}>{headline}</div>
+      </div>
+
+      {/* Assigned vs requested, side by side. CPU is where the gap is; memory
+          is requested in full, which is worth showing so nobody assumes the
+          same applies to both. */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(230px,1fr))", gap: 10 }}>
+        {[
+          { k: "CPU", assigned: `${cpu.assignedVcpu} vCPU`, requested: `${cpu.requestedCores} cores`,
+            note: `overcommitted ${cpu.ratio}:1 by default`, warn: cpu.ratio > 1 },
+          { k: "Memory", assigned: `${memory.assignedGiB} GiB`, requested: `${memory.requestedGiB} GiB`,
+            note: "requested in full, plus virt-launcher overhead", warn: false },
+        ].map((m) => (
+          <div key={m.k} style={{ border: "1px solid var(--border)", borderRadius: 9, padding: "9px 11px" }}>
+            <div style={{ fontSize: "0.7rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)" }}>{m.k}</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 2 }}>
+              <span style={{ fontSize: "1.15rem", fontWeight: 800 }}>{m.assigned}</span>
+              <span style={{ color: "var(--text2)" }}>→</span>
+              <span style={{ fontSize: "1.15rem", fontWeight: 800, color: m.warn ? "var(--st-warn)" : "var(--st-good)" }}>{m.requested}</span>
+            </div>
+            <div style={{ fontSize: "0.71rem", color: "var(--text2)", marginTop: 2 }}>{m.note}</div>
+          </div>
+        ))}
+        <div style={{ border: "1px solid var(--border)", borderRadius: 9, padding: "9px 11px" }}>
+          <div style={{ fontSize: "0.7rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)" }}>
+            Quality of service
+          </div>
+          {Object.entries(QOS).map(([k, q]) => (byClass[k] ? (
+            <div key={k} style={{ fontSize: "0.75rem", marginTop: 2 }}>
+              <span style={{ color: `var(${q.token})`, fontWeight: 800 }}>{q.icon}</span>{" "}
+              <b>{byClass[k]}</b> <span style={{ color: "var(--text2)" }}>{q.label}</span>
+            </div>
+          ) : null))}
+        </div>
+      </div>
+
+      {losing.length > 0 && (
+        <div style={{ marginTop: 9, fontSize: "0.77rem" }}>
+          <b style={{ color: "var(--st-warn)" }}>⚠ {losing.length} VM{losing.length === 1 ? "" : "s"} lose a guarantee they have today:</b>
+          {losing.slice(0, 6).map((l) => (
+            <div key={l.name} style={{ marginTop: 2 }}>
+              <b>{l.name}</b> <span style={{ color: "var(--text2)" }}>{l.evidence.join("; ")}</span>
+            </div>
+          ))}
+          {losing.length > 6 && <div style={{ color: "var(--text2)" }}>+{losing.length - 6} more — see the register</div>}
+          <div style={{ marginTop: 4 }}>
+            → Set <code>dedicatedCpuPlacement</code> and matching CPU/memory limits on these after migration, with CPU Manager
+            enabled on the target nodes. MTV carries no reservation, limit, share or latency setting across.
+          </div>
+        </div>
+      )}
+      {note && <div style={{ fontSize: "0.72rem", color: "var(--text2)", marginTop: 8 }}>{note}</div>}
+      <div style={{ fontSize: "0.7rem", color: "var(--text2)", marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 7 }}>
+        Every migrated VM lands as a <b>Burstable</b> pod: scheduled on its request, evictable under node pressure.
+        The guest still sees the CPU count it always had — only the scheduler's view of it changes.
+      </div>
+    </div>
+  );
+}
+
 export default function FleetAnalysis({
   analysis, suggestions = [], suggestionSource, note, busy,
   advice = [], adviceSource, adviceNote, onBack, onProceed, onExport,
@@ -307,6 +390,15 @@ export default function FleetAnalysis({
   const byName = Object.fromEntries(advice.map((a) => [a.name, a]));
   const keyOf = (r) => r.id || r.name;
   const ready = (byLevel?.supported || 0) + (byLevel?.caveats || 0);
+  // Same order as the charts above — Windows before Linux would make the page
+  // disagree with itself.
+  const osGroups = families
+    .map((f) => ({
+      family: f.family,
+      diskGiB: f.diskGiB,
+      rows: rows.filter((r) => (r.os?.family || "unknown") === f.family),
+    }))
+    .filter((g) => g.rows.length);
   const blocked = (byLevel?.unsupported || 0) + (byLevel?.unknown || 0);
 
   return (
@@ -351,6 +443,9 @@ export default function FleetAnalysis({
 
       {/* ── Will it fit? ─────────────────────────────────────────────────── */}
       <CapacityPanel capacity={analysis.capacity} />
+
+      {/* ── What the workload is promised, before and after ──────────────── */}
+      <FidelityPanel fidelity={analysis.fidelity} />
 
       {/* ── What moved since last time ───────────────────────────────────── */}
       <DriftPanel drift={analysis.drift} />
@@ -465,7 +560,28 @@ export default function FleetAnalysis({
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
+              {/* Grouped by OS family, because that is how the work is
+                  organised: Windows needs VirtIO drivers and usually a
+                  different team, Linux does not. A flat list of forty machines
+                  hides which half of the estate a finding belongs to. */}
+              {osGroups.flatMap(({ family, rows: famRows, diskGiB }) => [
+                <tr key={`fam-${family}`}>
+                  <td colSpan={9} style={{
+                    padding: "8px 9px 5px", background: "var(--bg2)",
+                    borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)",
+                  }}>
+                    <span style={{ fontWeight: 800, fontSize: "0.79rem" }}>{FAMILY_LABEL[family] || family}</span>
+                    <span style={{ marginLeft: 8, fontSize: "0.73rem", color: "var(--text2)" }}>
+                      {famRows.length} VM{famRows.length === 1 ? "" : "s"} · {gib(diskGiB)}
+                      {famRows.some((x) => x.blockers.length) && (
+                        <span style={{ marginLeft: 8, color: "var(--st-crit)", fontWeight: 700 }}>
+                          ✖ {famRows.filter((x) => x.blockers.length).length} blocked
+                        </span>
+                      )}
+                    </span>
+                  </td>
+                </tr>,
+                ...famRows.map((r) => {
                 const l = LV[r.level] || LV.unknown;
                 const a = byName[r.name];
                 const p = POWER[a?.power] || null;
@@ -543,7 +659,8 @@ export default function FleetAnalysis({
                     </tr>
                   ),
                 ];
-              })}
+              }),
+              ])}
             </tbody>
           </table>
         </div>

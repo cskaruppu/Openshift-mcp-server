@@ -2889,6 +2889,11 @@ async function startSSE() {
             .catch(() => null);
           const analysis = mig.analyseFleet(vms, { targetFreeGiB: body.targetFreeGiB ?? null, capacity });
           analysis.capacity = cap.capacityVerdict(vms, capacity);
+          // What VMware promises these VMs versus what they will request here.
+          // MTV carries no reservations, limits, shares or latency sensitivity
+          // across, so the change is invisible unless it is measured.
+          const fidelity = await import("./services/resource-fidelity.js");
+          analysis.fidelity = fidelity.resourceFidelity(vms);
           // Fleet-level findings and the per-VM method/power call are what the
           // pre-migration report is FOR, so both are produced here rather than
           // behind a second button the operator has to know to press.

@@ -24,6 +24,7 @@
 import { ocpGet, ocpPost, ocpPatch, ocpDelete, ocpFetch } from "../utils/openshift-client.js";
 import { nodeFit } from "./target-capacity.js";
 import { runSourceChecks } from "./source-readiness.js";
+import { resourceFindings } from "./resource-fidelity.js";
 import { recordChange } from "./change-ledger.js";
 import { classifyJSON, llmEnabled } from "./llm.js";
 import { fenceUntrusted, UNTRUSTED_GUARD } from "./untrusted.js";
@@ -295,6 +296,13 @@ export function normaliseInventoryVM(v = {}) {
       : !!(v.snapshot && (v.snapshot.id || v.snapshot.kind || v.snapshot.name)),
     secureBoot: bool(v.secureBoot ?? v.bootOptions?.efiSecureBootEnabled),
     tpmEnabled: bool(v.tpmEnabled ?? v.tpmPresent),
+    // What VMware currently PROMISES this VM. None of it survives migration,
+    // so it has to be read before the wave rather than missed afterwards.
+    cpuReservation: v.cpuReservation ?? v.resourceConfig?.cpuAllocation?.reservation ?? null,
+    memoryReservation: v.memoryReservation ?? v.resourceConfig?.memoryAllocation?.reservation ?? null,
+    memoryReservationLockedToMax: bool(v.memoryReservationLockedToMax ?? v.resourceConfig?.memoryReservationLockedToMax),
+    latencySensitivity: v.latencySensitivity ?? null,
+    balloonedMemory: v.balloonedMemory ?? null,
     cpuAffinity: Array.isArray(v.cpuAffinity) ? v.cpuAffinity : null,
     numaNodeAffinity: Array.isArray(v.numaNodeAffinity) ? v.numaNodeAffinity : null,
     cpuHotAddEnabled: bool(v.cpuHotAddEnabled),
@@ -508,7 +516,7 @@ export function classifyGuestOS(guestOS, guestId = null) {
  *
  * Pure, so the rules are tested rather than trusted.
  */
-export function assessSupportability(vm = {}, { targetFreeGiB = null, capacity = null } = {}) {
+export function assessSupportability(vm = {}, { targetFreeGiB = null, capacity = null, cpuAllocationRatio = null } = {}) {
   const blockers = [], warnings = [], notes = [];
 
   // Can this machine schedule at all? A KubeVirt VM is a pod, so it must fit on
@@ -551,6 +559,10 @@ export function assessSupportability(vm = {}, { targetFreeGiB = null, capacity =
   // hardware, vTPM, Secure Boot, NIC coverage. MTV catches some of these and
   // says nothing about what to do; it misses others entirely.
   const checks = runSourceChecks(vm);
+  // What the VM is promised on VMware versus what it will actually request
+  // here. Never blocking — a workload that lands slower still lands.
+  const resources = resourceFindings(vm, { cpuAllocationRatio: cpuAllocationRatio ?? undefined });
+  checks.findings.push(...resources.findings);
   for (const f of checks.findings) {
     const entry = { source: "source-check", id: f.id, message: `${f.title}. ${f.detail}` };
     if (f.blocks) blockers.push(entry);
@@ -571,6 +583,8 @@ export function assessSupportability(vm = {}, { targetFreeGiB = null, capacity =
     // Kept whole so the console can show each finding's own fix, and so the
     // report can say how much of the assessment was actually possible.
     checks,
+    sourceQoS: resources.sourceQoS,
+    targetProfile: resources.target,
     // A single word for the table.
     verdict: blockers.length ? "blocked" : warnings.length ? "caution" : "supported",
   };
@@ -772,10 +786,10 @@ export function liveEta(samples = [], { windowSize = 6 } = {}) {
  * decides a VM's status — MTV's Critical concerns and the guest OS matrix both
  * feed it, and the worse of the two wins.
  */
-export function analyseFleet(vms = [], { targetFreeGiB = null, capacity = null } = {}) {
+export function analyseFleet(vms = [], { targetFreeGiB = null, capacity = null, cpuAllocationRatio = null } = {}) {
   const RANK = { supported: 0, caveats: 1, unknown: 2, unsupported: 3 };
   const rows = vms.map((v) => {
-    const support = assessSupportability(v, { targetFreeGiB, capacity });
+    const support = assessSupportability(v, { targetFreeGiB, capacity, cpuAllocationRatio });
     const os = v.os || classifyGuestOS(v.guestOS, v.guestId);
     // The worse of "MTV says it will fail" and "the guest is not certified"
     // wins outright — a certified guest does not rescue a blocker, and a
@@ -796,6 +810,8 @@ export function analyseFleet(vms = [], { targetFreeGiB = null, capacity = null }
       warmBlockedReason: v.warmBlockedReason || null,
       blockers: support.blockers, warnings: support.warnings, notes: support.notes,
       checks: support.checks,
+      sourceQoS: support.sourceQoS,
+      targetProfile: support.targetProfile,
     };
   });
   // What to change on each machine, attached to the machine — the validation
