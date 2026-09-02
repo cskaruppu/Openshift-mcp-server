@@ -409,11 +409,43 @@ useCaseSlide({
   note: "Every episode leaves an audit trail", noteColor: C.valCyan,
 });
 
+// ── UC-10 — from the UC-10 deck's Master Workflow slide ─────────────────────
+useCaseSlide({
+  id: "UC-10", name: "VM Migration Agent",
+  tagline: "VMware → OpenShift Virtualization — assess against the target, govern the change, measure the move",
+  description:
+    "Every assessment tool on the market reads the source. This agent runs inside the destination, so it can answer what none of them can: will this VM actually run when it lands? A KubeVirt VM is a pod — it must fit on ONE node — and a 64 GiB guest on 32 GiB workers copies perfectly, then sits Pending after the outage is spent.",
+  bands: [
+    { label: "DISCOVER  →  ASSESS", steps: [
+      { t: "👤 Choose the source", s: "vCenter via MTV", a: "human" },
+      { t: "⚙️ Read-only discovery", s: "OS · IPs · CPU · RAM · disks", a: "auto" },
+      { t: "⚙️ Certified guest list", s: "Red Hat's three tiers", a: "auto" },
+      { t: "⚙️ 15 source checks", s: "snapshots · RDM · vTPM", a: "auto" },
+      { t: "⚙️ Will it fit?", s: "node-level schedulability", a: "auto" },
+    ] },
+    { label: "REPORT & RECOMMEND", steps: [
+      { t: "⚙️ Resource guarantees", s: "reservations → Burstable", a: "auto" },
+      { t: "⚙️ Drift since last run", s: "improved · regressed", a: "auto" },
+      { t: "🤖 Warm or cold, per VM", s: "with a reason, then clamped", a: "ai" },
+      { t: "👤 Validate the report", s: "evidence pack exported", a: "human" },
+      { t: "👤 Choose the wave", s: "split-group warning", a: "human" },
+    ] },
+    { gate: "👤  CHANGE REQUEST APPROVED — THE GATE  ·  held on the Plan, re-read server-side  👤" },
+    { label: "MIGRATE & PROVE", lanes: [
+      { t: "✅ Plans MTV accepts — Windows and Linux never mixed", a: "done" },
+      { t: "✅ Live ETA from bytes actually moving", a: "done" },
+      { t: "✅ Verified on the target", a: "done" },
+      { t: "✅ Rollback — the source VM is never deleted", a: "done" },
+    ] },
+  ],
+  note: "The model advises; code decides — and the source is never deleted", noteColor: C.autoGreen,
+});
+
 // ── CLOSING ─────────────────────────────────────────────────────────────────
 {
   const s = pptx.addSlide();
   s.background = { color: C.darkNavy };
-  s.addText("One platform. One conversational surface. Eight use cases.",
+  s.addText("One platform. One conversational surface. Nine use cases.",
     { x: 0.8, y: 2.15, w: 11.7, h: 0.7, fontSize: 30, color: C.white, bold: true, fontFace: F });
   s.addText("Every use case shares the same agents, the same governance, and the same rule: the AI reasons and explains — but anything claiming to be true of your cluster is measured, not generated.",
     { x: 0.8, y: 3.05, w: 11.7, h: 0.9, fontSize: 15, color: "94A3B8", fontFace: F, lineSpacingMultiple: 1.3 });

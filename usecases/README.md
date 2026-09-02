@@ -15,6 +15,13 @@ document and the code that built it never drift apart.
 | **UC-04** | Security & Compliance Governance | Continuous scanning | [`uc-04-security-compliance/`](./uc-04-security-compliance/) |
 | **UC-05** | Zero-Touch Incident Command *(demo name: RCA Agent)* | **None — fully autonomous** | [`uc-05-rca-agent/`](./uc-05-rca-agent/) |
 | **UC-06** | Governed VM Provisioning & Lifecycle | Human-initiated, agent-executed | [`uc-06-vm-lifecycle/`](./uc-06-vm-lifecycle/) |
+| **UC-07** | Document-Driven Application Deployment | Human uploads / pastes / links a document | [`uc-07-doc-driven-deployment/`](./uc-07-doc-driven-deployment/) |
+| **UC-08** | Configuration Drift Detection & Rollback | Continuous watch | [`drift-detection/`](./drift-detection/) |
+| **UC-10** | VMware → OpenShift Virtualization Migration | Human-initiated, agent-assessed | [`uc-10-vm-migration/`](./uc-10-vm-migration/) |
+
+There is no UC-09: it and UC-01 described the same pipeline and were merged
+into UC-01. The folder names for UC-08 and the UC-01 incident half still
+predate the numbering.
 
 ---
 
@@ -108,6 +115,12 @@ node usecases/uc-03-predictive-intelligence/generate-excel.cjs
 node usecases/uc-04-security-compliance/generate-excel.cjs
 node usecases/uc-05-rca-agent/generate-ppt.cjs
 node usecases/uc-05-rca-agent/generate-excel.cjs
+node usecases/uc-07-doc-driven-deployment/generate-ppt.cjs
+node usecases/uc-07-doc-driven-deployment/generate-excel.cjs
+node usecases/uc-10-vm-migration/generate-ppt.cjs
+node usecases/uc-10-vm-migration/generate-excel.cjs
+node usecases/uc-10-vm-migration/generate-docx.cjs
+node usecases/portfolio/generate-usecase-summary.cjs
 
 python3 usecases/uc-02-cluster-upgrade/generate-usecase-excel.py
 python3 usecases/uc-02-cluster-upgrade/generate-workflow-excel.py
@@ -116,7 +129,7 @@ python3 usecases/portfolio/generate-automation-opportunities.py
 python3 usecases/portfolio/generate-roi-analysis.py
 ```
 
-Node generators need `pptxgenjs` and `exceljs` (already in `package.json`).
+Node generators need `pptxgenjs` and `exceljs` — devDependencies, deliberately absent from the runtime image.
 Python generators need `openpyxl`; the product documents in `docs/` also need `python-docx`.
 
 ## Conventions
