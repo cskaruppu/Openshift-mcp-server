@@ -22,6 +22,7 @@
  */
 
 import { ocpGet, ocpPost, ocpPatch, ocpDelete, ocpFetch } from "../utils/openshift-client.js";
+import { nodeFit } from "./target-capacity.js";
 import { recordChange } from "./change-ledger.js";
 import { classifyJSON, llmEnabled } from "./llm.js";
 import { fenceUntrusted, UNTRUSTED_GUARD } from "./untrusted.js";
@@ -476,8 +477,19 @@ export function classifyGuestOS(guestOS, guestId = null) {
  *
  * Pure, so the rules are tested rather than trusted.
  */
-export function assessSupportability(vm = {}, { targetFreeGiB = null } = {}) {
+export function assessSupportability(vm = {}, { targetFreeGiB = null, capacity = null } = {}) {
   const blockers = [], warnings = [], notes = [];
+
+  // Can this machine schedule at all? A KubeVirt VM is a pod, so it must fit on
+  // ONE node — MTV will happily copy 200 GiB for a VM that then sits Pending
+  // forever because no worker is big enough. "Never" blocks; "not right now"
+  // warns, because the two need completely different responses.
+  if (capacity?.available) {
+    const fit = nodeFit(vm, capacity);
+    if (fit.fits === false) {
+      (fit.permanent ? blockers : warnings).push({ source: "target", message: fit.reason });
+    }
+  }
 
   for (const c of vm.concerns || []) {
     const text = `${c.label}${c.assessment ? ` — ${c.assessment}` : ""}`.trim();
@@ -715,10 +727,10 @@ export function liveEta(samples = [], { windowSize = 6 } = {}) {
  * decides a VM's status — MTV's Critical concerns and the guest OS matrix both
  * feed it, and the worse of the two wins.
  */
-export function analyseFleet(vms = [], { targetFreeGiB = null } = {}) {
+export function analyseFleet(vms = [], { targetFreeGiB = null, capacity = null } = {}) {
   const RANK = { supported: 0, caveats: 1, unknown: 2, unsupported: 3 };
   const rows = vms.map((v) => {
-    const support = assessSupportability(v, { targetFreeGiB });
+    const support = assessSupportability(v, { targetFreeGiB, capacity });
     const os = v.os || classifyGuestOS(v.guestOS, v.guestId);
     // The worse of "MTV says it will fail" and "the guest is not certified"
     // wins outright — a certified guest does not rescue a blocker, and a
@@ -817,13 +829,31 @@ export function vmRemediation(row = {}) {
   const out = [];
   const os = row.os || {};
 
-  // 1. MTV says it will fail. Nothing else matters until this is cleared.
+  // 1. Anything that makes the migration fail. Nothing else matters until it
+  //    is cleared — and where the fix lives depends on who raised it.
   for (const b of row.blockers || []) {
-    out.push({ severity: "critical", required: true, title: "Blocked by MTV validation", detail: b.message,
-      action: "Clear this on the source VM and re-run discovery, or leave the machine out of the wave." });
+    const onTarget = b.source === "target";
+    out.push({
+      severity: "critical", required: true,
+      title: onTarget ? "Will not schedule on the target cluster" : "Blocked by MTV validation",
+      detail: b.message,
+      action: onTarget
+        ? "Add a node large enough to hold this VM, or reduce the machine's memory before migrating. Copying it first would spend the outage for a VM that then stays Pending."
+        : "Clear this on the source VM and re-run discovery, or leave the machine out of the wave.",
+    });
   }
 
-  // 2. The guest itself. An unsupported OS migrates and then is unsupported —
+  // 2. Target-side warnings — the machine fits the hardware but not today's
+  //    free space. Different fix, different urgency, so it is said separately.
+  for (const w of (row.warnings || []).filter((x) => x.source === "target")) {
+    out.push({
+      severity: "warning", required: true, title: "No node has room for this VM today",
+      detail: w.message,
+      action: "Scale the cluster, free reserved capacity, or schedule this machine into a later wave.",
+    });
+  }
+
+  // 3. The guest itself. An unsupported OS migrates and then is unsupported —
   //    the expensive surprise if nobody says so before the wave.
   if (os.level === "unsupported") {
     out.push({
@@ -850,7 +880,7 @@ export function vmRemediation(row = {}) {
     });
   }
 
-  // 3. Settings to enable on the source, in the order they bite.
+  // 4. Settings to enable on the source, in the order they bite.
   if (os.family === "windows") {
     out.push({
       severity: "warning", required: true,
@@ -899,16 +929,31 @@ export function fleetRemediation(analysis) {
     + (list.length > n ? ` +${list.length - n} more` : "");
 
   // 1. Hard blockers first — these fail the migration, not just annoy it.
-  const blocked = rows.filter((r) => r.blockers.length);
-  if (blocked.length) {
-    const reasons = [...new Set(blocked.flatMap((r) => r.blockers.map((b) => b.message)))];
+  //    Where the fix lives decides what to say, so source-side and target-side
+  //    blockers are never merged into one instruction: "fix it at source" is
+  //    useless advice for a VM that is simply too big for every node.
+  const isTarget = (r) => r.blockers.some((b) => b.source === "target");
+  const blockedTarget = rows.filter((r) => r.blockers.length && isTarget(r));
+  const blockedSource = rows.filter((r) => r.blockers.length && !isTarget(r));
+
+  if (blockedTarget.length) {
     out.push({
-      severity: "critical", title: `${blocked.length} VM${blocked.length > 1 ? "s" : ""} cannot migrate as-is`,
-      vms: blocked.map((r) => r.name),
-      detail: `${named(blocked)} — ${reasons.slice(0, 3).join(" ")}`,
+      severity: "critical", title: `${blockedTarget.length} VM${blockedTarget.length > 1 ? "s" : ""} will not schedule on the target cluster`,
+      vms: blockedTarget.map((r) => r.name),
+      detail: `${named(blockedTarget)} — ${[...new Set(blockedTarget.flatMap((r) => r.blockers.filter((b) => b.source === "target").map((b) => b.message)))].slice(0, 2).join(" ")}`,
+      action: "Add a node large enough to hold the biggest of these, or reduce their memory before migrating. Copying first spends the outage on a VM that then stays Pending.",
+    });
+  }
+  if (blockedSource.length) {
+    const reasons = [...new Set(blockedSource.flatMap((r) => r.blockers.map((b) => b.message)))];
+    out.push({
+      severity: "critical", title: `${blockedSource.length} VM${blockedSource.length > 1 ? "s" : ""} cannot migrate as-is`,
+      vms: blockedSource.map((r) => r.name),
+      detail: `${named(blockedSource)} — ${reasons.slice(0, 3).join(" ")}`,
       action: "Remove these from the wave, or fix the blocker at source, then re-run discovery.",
     });
   }
+  const blocked = [...blockedTarget, ...blockedSource];
 
   // 2. Guest OS that OpenShift Virtualization does not certify. Migrates, but
   //    unsupported afterwards — the expensive surprise if nobody says it now.

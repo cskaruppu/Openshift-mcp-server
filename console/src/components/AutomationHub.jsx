@@ -1167,11 +1167,32 @@ function MigrationAgent({ clusters, activeCluster }) {
     if (!vms?.length) { showToast("Discover the VMs first", "err"); return; }
     setBusy("analyse"); setStep(2);
     try {
-      const d = await post("/api/migration/analyse", { vms });
+      const d = await post("/api/migration/analyse", { vms, provider });
       setAnalysis(d);
       setAdvice({ source: d.adviceSource, advice: d.advice || [], note: d.adviceNote });
     } catch (e) { showToast(e.message, "err"); setStep(1); }
     finally { setBusy(null); }
+  };
+
+  // The evidence pack. Generated server-side so it carries the report id,
+  // timestamp and matrix version the console merely displays — a document a
+  // change board will read a year from now should not be assembled by whatever
+  // the browser happened to be holding.
+  const exportAssessment = async (format) => {
+    try {
+      const r = await fetch(cUrl("/api/migration/assessment/export"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ format, analysis, advice: advice?.advice || [] }),
+      });
+      if (!r.ok) { showToast(`Export failed (${r.status})`, "err"); return; }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${analysis?.reportId || "assessment"}.${format === "csv" ? "csv" : "html"}`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) { showToast(e.message, "err"); }
   };
 
   // Step 2 → 3. Pre-tick the machines the report says can go, with the method
@@ -1476,6 +1497,7 @@ function MigrationAgent({ clusters, activeCluster }) {
           busy={busy === "analyse"}
           onBack={() => setStep(1)}
           onProceed={toSelection}
+          onExport={exportAssessment}
         />
       )}
 

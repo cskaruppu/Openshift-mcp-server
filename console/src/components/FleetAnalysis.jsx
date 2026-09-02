@@ -173,12 +173,129 @@ const POWER = {
   "already-off": { icon: "○", label: "Already off", token: "--st-unknown" },
 };
 
+
+/* ── Target capacity ──────────────────────────────────────────────────────────
+   The panel that no other assessment tool can draw. Every product in this space
+   reads the source; this agent runs inside the destination, so it can say
+   whether the wave will actually schedule — and a KubeVirt VM is a pod, so each
+   machine must fit on ONE node. A 64 GiB guest does not run on 32 GiB workers,
+   however much RAM the cluster has in total. */
+const CAP_STYLE = {
+  fits:    { token: "--st-good",    bg: "--st-good-bg",    icon: "✓" },
+  tight:   { token: "--st-warn",    bg: "--st-warn-bg",    icon: "⚠" },
+  exceeds: { token: "--st-crit",    bg: "--st-crit-bg",    icon: "✖" },
+  blocked: { token: "--st-crit",    bg: "--st-crit-bg",    icon: "✖" },
+  unknown: { token: "--st-unknown", bg: "--st-unknown-bg", icon: "?" },
+};
+
+function CapacityPanel({ capacity }) {
+  if (!capacity) return null;
+  const st = CAP_STYLE[capacity.verdict] || CAP_STYLE.unknown;
+  const bad = (capacity.perVm || []).filter((p) => p.fits === false);
+  // Memory is the binding constraint — it is not overcommitted, CPU is.
+  const ratio = capacity.free?.memGiB > 0 ? capacity.demand.memGiB / capacity.free.memGiB : null;
+  const pct = ratio == null ? null : Math.min(100, Math.round(ratio * 100));
+  // A bar pinned at 100% cannot say "four times over", and the difference
+  // between 105% and 400% is the difference between freeing a node and buying
+  // three — so when it overflows, the multiple is stated in words.
+  const over = ratio > 1 ? `${ratio.toFixed(1)}× over` : null;
+
+  return (
+    <div style={{ border: `1px solid var(${st.token})`, borderRadius: 10, padding: "12px 14px", background: `var(${st.bg})` }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 9, flexWrap: "wrap" }}>
+        <span aria-hidden style={{ color: `var(${st.token})`, fontWeight: 800 }}>{st.icon}</span>
+        <span style={{ fontWeight: 800, fontSize: "0.86rem" }}>Will it fit?</span>
+        <span style={{ fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: `var(${st.token})` }}>
+          {capacity.verdict}
+        </span>
+        <span style={{ fontSize: "0.79rem", color: "var(--text)" }}>{capacity.headline}</span>
+      </div>
+
+      {pct != null && (
+        <div style={{ marginTop: 9 }}>
+          <div style={{ height: 8, borderRadius: 999, background: "rgba(127,127,127,.18)", overflow: "hidden" }}>
+            <div style={{ width: `${pct}%`, height: "100%", background: `var(${st.token})` }} />
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: "0.72rem", color: "var(--text2)", marginTop: 3 }}>
+            <span>
+              {capacity.demand.memGiB} GiB required by this wave
+              {over && <b style={{ color: `var(${st.token})`, marginLeft: 6 }}>{over}</b>}
+            </span>
+            <span>{capacity.free.memGiB} GiB unreserved on {capacity.virtNodeCount} virtualization node(s)</span>
+          </div>
+        </div>
+      )}
+
+      {bad.length > 0 && (
+        <div style={{ marginTop: 9 }}>
+          {bad.map((p) => (
+            <div key={p.name} style={{ display: "flex", gap: 8, fontSize: "0.78rem", marginTop: 4 }}>
+              <span aria-hidden style={{ color: `var(${p.permanent ? "--st-crit" : "--st-warn"})`, fontWeight: 800 }}>
+                {p.permanent ? "✖" : "⚠"}
+              </span>
+              <div><b>{p.name}</b> — {p.reason}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* The assumptions, stated. A capacity number without them is a guess
+          wearing a suit. */}
+      <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: "0.7rem", color: "var(--text2)" }}>
+        {(capacity.notes || []).map((n, i) => <li key={i}>{n}</li>)}
+      </ul>
+    </div>
+  );
+}
+
+/* ── Drift ───────────────────────────────────────────────────────────────────
+   An estate assessment goes stale in weeks. Showing only today's state hides
+   that three machines regressed since the board signed off. */
+function DriftPanel({ drift }) {
+  if (!drift) return null;
+  const groups = [
+    ["improved", "Improved", "--st-good", "✓"],
+    ["regressed", "Regressed", "--st-crit", "✖"],
+    ["added", "New", "--st-unknown", "+"],
+    ["removed", "Gone", "--st-unknown", "−"],
+    ["changed", "Otherwise changed", "--st-warn", "⚠"],
+  ].filter(([k]) => drift[k]?.length);
+
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "11px 13px", background: "var(--card)" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 9, flexWrap: "wrap" }}>
+        <span style={{ fontWeight: 800, fontSize: "0.84rem" }}>Since the last assessment</span>
+        <span style={{ fontSize: "0.78rem", color: "var(--text2)" }}>{drift.headline}</span>
+        <span style={{ marginLeft: "auto", fontSize: "0.7rem", color: "var(--text2)" }}>
+          baseline {drift.sinceReportId} · {new Date(drift.since).toLocaleString()}
+        </span>
+      </div>
+      {groups.map(([key, label, token, icon]) => (
+        <div key={key} style={{ marginTop: 7 }}>
+          <div style={{ fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: `var(${token})` }}>
+            {icon} {label} · {drift[key].length}
+          </div>
+          {drift[key].map((d) => (
+            <div key={d.name} style={{ fontSize: "0.77rem", marginTop: 2 }}>
+              <b>{d.name}</b> <span style={{ color: "var(--text2)" }}>{d.note}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function FleetAnalysis({
   analysis, suggestions = [], suggestionSource, note, busy,
-  advice = [], adviceSource, adviceNote, onBack, onProceed,
+  advice = [], adviceSource, adviceNote, onBack, onProceed, onExport,
 }) {
   const [hover, setHover] = useState(null);
   const [expanded, setExpanded] = useState(null);
+  const exportBtn = {
+    padding: "4px 11px", borderRadius: 7, fontSize: "0.74rem", fontWeight: 700, cursor: "pointer",
+    fontFamily: "inherit", background: "transparent", color: "var(--text2)", border: "1px solid var(--border)",
+  };
 
   if (!analysis) return null;
   const { total, byLevel, families = [], rows = [], totalDiskGiB, totalMemoryGiB, totalCpu, poweredOn, warmEligible, matrix } = analysis;
@@ -194,15 +311,49 @@ export default function FleetAnalysis({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      {/* ── Headline ─────────────────────────────────────────────────────── */}
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-        <div style={{ fontWeight: 800, fontSize: "0.95rem" }}>Pre-migration analysis report</div>
-        <div style={{ fontSize: "0.8rem", color: "var(--text2)" }}>
-          {total} VM{total === 1 ? "" : "s"} from the source platform · {totalCpu} vCPU · {gib(totalMemoryGiB)} RAM ·
+      {/* ── Provenance ───────────────────────────────────────────────────────
+          A report with no identity is a screenshot. This one has a number a
+          person can quote in a change record, a timestamp, the matrix version
+          it was judged against, and a way to take it out of the building. */}
+      <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "11px 13px", background: "var(--card)" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ fontWeight: 800, fontSize: "0.95rem" }}>Pre-migration analysis report</div>
+          {analysis.reportId && (
+            <span style={{ fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.75rem",
+              padding: "2px 8px", borderRadius: 6, background: "var(--bg2)", color: "var(--text2)" }}>
+              {analysis.reportId}
+            </span>
+          )}
+          {busy && <span style={{ fontSize: "0.76rem", color: "var(--text2)" }}>re-analysing…</span>}
+          <div style={{ marginLeft: "auto", display: "flex", gap: 7 }}>
+            <button onClick={() => onExport?.("html")} style={exportBtn}>⭳ Evidence pack</button>
+            <button onClick={() => onExport?.("csv")} style={exportBtn}>⭳ CSV register</button>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 8, marginTop: 9 }}>
+          {[
+            ["Assessed", analysis.assessedAt ? new Date(analysis.assessedAt).toLocaleString() : "—"],
+            ["Source platform", analysis.provider || "—"],
+            ["Target cluster", analysis.cluster || "—"],
+            ["Guest matrix", matrix?.asOf || "—"],
+          ].map(([k, v]) => (
+            <div key={k}>
+              <div style={{ fontSize: "0.68rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)" }}>{k}</div>
+              <div style={{ fontSize: "0.79rem" }}>{v}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: "0.79rem", color: "var(--text2)", marginTop: 9, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+          {total} VM{total === 1 ? "" : "s"} · {totalCpu} vCPU · {gib(totalMemoryGiB)} RAM ·
           {" "}{gib(totalDiskGiB)} to move · {poweredOn} running · {warmEligible} can migrate warm
         </div>
-        {busy && <span style={{ fontSize: "0.76rem", color: "var(--text2)" }}>re-analysing…</span>}
       </div>
+
+      {/* ── Will it fit? ─────────────────────────────────────────────────── */}
+      <CapacityPanel capacity={analysis.capacity} />
+
+      {/* ── What moved since last time ───────────────────────────────────── */}
+      <DriftPanel drift={analysis.drift} />
 
       {/* ── Stat tiles ───────────────────────────────────────────────────── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 9 }}>

@@ -751,3 +751,32 @@ test("a plan estimates from its own annotation, and refuses to invent a size", a
   // With no recorded footprint, say nothing rather than guess one.
   assert.equal(await estimatePlan({ metadata: {}, spec: {} }), null);
 });
+
+test("a target-capacity blocker is never reported as something to fix at source", async () => {
+  const { analyseFleet, fleetRemediation } = await import("../../src/services/vm-migration.js");
+  const { summariseNodes } = await import("../../src/services/target-capacity.js");
+  const nodes = [{
+    name: "w1", ready: true, cordoned: false, virtSchedulable: true,
+    cpuMillis: 16000, memGiB: 32, cpuCommittedMillis: 0, memCommittedGiB: 0,
+    freeCpuMillis: 16000, freeMemGiB: 32,
+  }];
+  const capacity = { available: true, nodes, ...summariseNodes(nodes) };
+  const a = analyseFleet([
+    { name: "too-big", guestOS: "rhel9_64Guest", guestId: "rhel9_64Guest", cpuCount: 8, memoryGiB: 96, diskGiB: 100, concerns: [] },
+    { name: "shared", guestOS: "rhel9_64Guest", guestId: "rhel9_64Guest", cpuCount: 2, memoryGiB: 8, diskGiB: 10,
+      concerns: [{ category: "Critical", label: "Shared disk detected" }] },
+  ], { capacity });
+
+  const s = fleetRemediation(a);
+  const target = s.find((x) => /will not schedule/i.test(x.title));
+  const source = s.find((x) => /cannot migrate as-is/i.test(x.title));
+
+  assert.ok(target, "a VM too big for every node needs its own finding");
+  assert.deepEqual(target.vms, ["too-big"]);
+  assert.match(target.action, /Add a node large enough/);
+  assert.doesNotMatch(target.action, /at source/, "the fix is on the target, not the source");
+
+  assert.ok(source, "an MTV blocker is still reported separately");
+  assert.deepEqual(source.vms, ["shared"]);
+  assert.match(source.action, /at source/);
+});

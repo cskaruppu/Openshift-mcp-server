@@ -2878,19 +2878,86 @@ async function startSSE() {
         try {
           const body = await readJsonBody(req);
           const vms = body.vms || [];
-          const analysis = mig.analyseFleet(vms, { targetFreeGiB: body.targetFreeGiB ?? null });
+          const cap = await import("./services/target-capacity.js");
+          const store = await import("./services/assessment-store.js");
+
+          // Read the TARGET before judging the source. This agent runs inside
+          // the destination cluster, which is the one thing no external
+          // assessment tool can see — and node capacity decides whether a
+          // migrated VM ever schedules.
+          const capacity = await withClusterContext(url, async () => cap.readClusterCapacity())
+            .catch(() => null);
+          const analysis = mig.analyseFleet(vms, { targetFreeGiB: body.targetFreeGiB ?? null, capacity });
+          analysis.capacity = cap.capacityVerdict(vms, capacity);
           // Fleet-level findings and the per-VM method/power call are what the
           // pre-migration report is FOR, so both are produced here rather than
           // behind a second button the operator has to know to press.
           const [advice, perVm] = body.suggest === false
             ? [{ source: "skipped", suggestions: [] }, { source: "skipped", advice: [] }]
             : await Promise.all([mig.adviseFleet(analysis), mig.adviseMigration(vms)]);
+          // Drift against the previous assessment for this source. An estate
+          // assessment goes stale in weeks; showing only the current state
+          // hides the fact that three machines regressed since sign-off.
+          const provider = body.provider || "default";
+          const snapshot = store.snapshotOf(analysis, { provider, cluster });
+          let drift = null;
+          try {
+            const prev = await withClusterContext(url, async () => store.loadSnapshot(provider));
+            drift = store.diffAssessments(prev, snapshot);
+            // Best-effort: a baseline that cannot be written still leaves a
+            // perfectly valid assessment on screen.
+            await withClusterContext(url, async () => store.saveSnapshot(provider, snapshot));
+          } catch { /* first run, or no ConfigMap permission */ }
+
           return sendJson(res, 200, {
             ...analysis,
+            reportId: snapshot.reportId, assessedAt: snapshot.at,
+            provider, cluster, actor: req.user?.name || "operator",
+            drift,
             suggestions: advice.suggestions, suggestionSource: advice.source, note: advice.note,
             advice: perVm.advice, adviceSource: perVm.source, adviceNote: perVm.note,
           });
         } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
+      // The evidence pack. A migration programme runs on a document that goes
+      // to a change board and is read a year later by an auditor — so the same
+      // assessment can be exported as a register (CSV) or a printable pack.
+      if (url.pathname === "/api/migration/assessment/export" && req.method === "POST") {
+        if (enforceRateLimit(req, res, { burst: 6, refillPerSec: 0.2 })) return;
+        try {
+          const body = await readJsonBody(req);
+          const report = await import("./services/assessment-report.js");
+          const analysis = body.analysis || {};
+          const meta = {
+            reportId: analysis.reportId || null,
+            at: analysis.assessedAt || new Date().toISOString(),
+            provider: analysis.provider || null,
+            cluster: analysis.cluster || cluster,
+            actor: req.user?.name || analysis.actor || "operator",
+            advice: body.advice || analysis.advice || [],
+            suggestions: analysis.suggestions || [],
+            capacity: analysis.capacity || null,
+            drift: analysis.drift || null,
+          };
+          const csv = body.format === "csv";
+          const stamp = (meta.reportId || "assessment").replace(/[^\w.-]/g, "-");
+          res.writeHead(200, {
+            "Content-Type": csv ? "text/csv; charset=utf-8" : "text/html; charset=utf-8",
+            "Content-Disposition": `attachment; filename="${stamp}.${csv ? "csv" : "html"}"`,
+            "Cache-Control": "no-store",
+          });
+          return res.end(csv ? report.toCsv(analysis, meta) : report.toHtml(analysis, meta));
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
+      // Target capacity on its own, for the readiness panel.
+      if (url.pathname === "/api/migration/capacity" && req.method === "GET") {
+        try {
+          const cap = await import("./services/target-capacity.js");
+          const out = await withClusterContext(url, async () => cap.readClusterCapacity());
+          return sendJson(res, 200, out ?? { available: false, reason: "Selected cluster is not reachable." });
+        } catch (err) { return sendJson(res, 500, { available: false, reason: err.message }); }
       }
 
       // Warm vs cold per VM, with reasons. The model advises; clampAdvice()
