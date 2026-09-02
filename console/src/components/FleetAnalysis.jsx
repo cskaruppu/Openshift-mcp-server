@@ -21,15 +21,6 @@ export const LEVELS = [
 ];
 const LV = Object.fromEntries(LEVELS.map((l) => [l.key, l]));
 
-/* The four measures of the source landscape. One chart each — never two scales
-   on one axis, which is the fastest way to make a comparison that isn't true. */
-const METRICS = [
-  { key: "vms",       label: "Virtual machines", fmt: (n) => String(n) },
-  { key: "cpu",       label: "vCPU",             fmt: (n) => String(n) },
-  { key: "memoryGiB", label: "Memory",           fmt: (n) => gib(n) },
-  { key: "diskGiB",   label: "Storage",          fmt: (n) => gib(n) },
-];
-
 const FAMILY_LABEL = { windows: "Windows", linux: "Linux", other: "Other", unknown: "Unidentified" };
 function gib(n) { return n == null ? "—" : n >= 1024 ? `${(n / 1024).toFixed(1)} TiB` : `${Math.round(n)} GiB`; }
 
@@ -61,67 +52,82 @@ function StackBar({ counts, scale, height = 10, onHover }) {
   );
 }
 
-/* ── One column chart: a measure of the source landscape, split by OS family
-   and stacked by support level ────────────────────────────────────────────────
-   Four of these side by side rather than one chart with several scales. Each
-   is a small multiple of the same shape, so the eye compares the SHAPES and
-   not two axes it has to reconcile. */
-function ColumnChart({ families, metric, onHover }) {
-  const H = 104;
-  const totalOf = (f) => LEVELS.reduce((n, l) => n + (f.levels?.[l.key]?.[metric.key] || 0), 0);
-  const totals = families.map(totalOf);
-  const max = Math.max(1, ...totals);
-  const grand = totals.reduce((a, b) => a + b, 0);
+/* ── One donut ────────────────────────────────────────────────────────────────
+   A donut earns its place here and almost nowhere else: the four support levels
+   are parts of one whole (this family's VM count), there are never more than
+   four of them, and the question is "how much of this group is ready" — a
+   part-to-whole read at a glance, not a comparison of close values.
+
+   What it is NOT used for: comparing one family against another. Arcs are bad
+   at that, so every magnitude underneath is a labelled number instead. Nobody
+   is asked to judge a quantity by eye from a curve.                          */
+function Donut({ counts, size = 104, thickness = 13, hero = false, onHover }) {
+  const r = (size - thickness) / 2;
+  const C = 2 * Math.PI * r;
+  const present = LEVELS.filter((l) => (counts[l.key] || 0) > 0);
+  const total = present.reduce((n, l) => n + counts[l.key], 0);
+  // A 3px gap along the arc, for the same reason stacked bars get one: adjacent
+  // fills that touch read as a single mark. A lone segment needs no gap — and
+  // must not get one, or a complete ring looks broken.
+  const gap = present.length > 1 ? 3 : 0;
+  let offset = 0;
 
   return (
-    <div style={{ minWidth: 0 }}>
-      <div style={{ fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)" }}>
-        {metric.label}
-      </div>
-      <div style={{ fontSize: "0.95rem", fontWeight: 800, marginBottom: 6 }}>{metric.fmt(grand)}</div>
-
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: H }}>
-        {families.map((f, i) => {
-          const present = LEVELS.filter((l) => (f.levels?.[l.key]?.[metric.key] || 0) > 0);
-          return (
-            <div key={f.family} style={{ flex: 1, minWidth: 0, display: "flex", justifyContent: "center", alignItems: "flex-end", height: "100%" }}>
-              <div style={{
-                width: "100%", maxWidth: 42, height: Math.max(3, Math.round(H * (totals[i] / max))),
-                display: "flex", flexDirection: "column-reverse", gap: 2,
-              }}>
-                {present.map((l, j) => (
-                  <div
-                    key={l.key}
-                    onMouseEnter={() => onHover?.({ level: l, n: f.levels[l.key][metric.key], metric, family: f.family })}
-                    onMouseLeave={() => onHover?.(null)}
-                    title={`${FAMILY_LABEL[f.family] || f.family} · ${l.label} — ${metric.fmt(f.levels[l.key][metric.key])}`}
-                    style={{
-                      flex: f.levels[l.key][metric.key], background: `var(${l.token})`, cursor: "default",
-                      // column-reverse puts the last child on top, so that is
-                      // the only end that gets rounded.
-                      borderTopLeftRadius: j === present.length - 1 ? 4 : 0,
-                      borderTopRightRadius: j === present.length - 1 ? 4 : 0,
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden focusable="false">
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none"
+        stroke="var(--border)" strokeWidth={thickness} opacity={0.5} />
+      <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
+        {present.map((l) => {
+          const len = Math.max(1, (C * counts[l.key]) / total - gap);
+          const seg = (
+            <circle
+              key={l.key} cx={size / 2} cy={size / 2} r={r} fill="none"
+              stroke={`var(${l.token})`} strokeWidth={thickness} strokeLinecap="butt"
+              strokeDasharray={`${len} ${C - len}`} strokeDashoffset={-offset}
+              onMouseEnter={() => onHover?.({ level: l, n: counts[l.key] })}
+              onMouseLeave={() => onHover?.(null)}
+            >
+              <title>{`${counts[l.key]} ${l.label.toLowerCase()} — ${l.blurb}`}</title>
+            </circle>
           );
+          offset += (C * counts[l.key]) / total;
+          return seg;
         })}
-      </div>
+      </g>
+      {/* The number lives in the hole. That is the whole reason to use a ring
+          rather than a pie. */}
+      <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central"
+        style={{ fontSize: hero ? 26 : 21, fontWeight: 800, fill: "var(--text)" }}>
+        {total}
+      </text>
+    </svg>
+  );
+}
 
-      {/* Direct labels under every column — the only way this reads without
-          hovering, and the only way it reads at all in greyscale. */}
-      <div style={{ display: "flex", gap: 8, borderTop: "1px solid var(--border)", paddingTop: 5, marginTop: 4 }}>
-        {families.map((f, i) => (
-          <div key={f.family} style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
-            <div style={{ fontSize: "0.75rem", fontWeight: 700 }}>{metric.fmt(totals[i])}</div>
-            <div style={{ fontSize: "0.67rem", color: "var(--text2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {FAMILY_LABEL[f.family] || f.family}
-            </div>
-          </div>
-        ))}
+/* One family: its ring, what the ring is made of, and its share of the estate
+   as numbers rather than as more geometry. */
+function FamilyRing({ label, counts, metrics, hero, onHover }) {
+  const total = LEVELS.reduce((n, l) => n + (counts[l.key] || 0), 0);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flex: "1 1 128px", minWidth: 128 }}>
+      <Donut counts={counts} size={hero ? 124 : 104} thickness={hero ? 15 : 13} hero={hero} onHover={onHover} />
+      <div style={{ fontSize: "0.78rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em" }}>
+        {label}
       </div>
+      {/* Direct labels: the counts are read, never estimated from an arc. */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center", fontSize: "0.73rem" }}>
+        {LEVELS.filter((l) => (counts[l.key] || 0) > 0).map((l) => (
+          <span key={l.key} style={{ color: `var(${l.token})`, fontWeight: 700 }} title={l.label}>
+            {l.icon}{counts[l.key]}
+          </span>
+        ))}
+        {total === 0 && <span style={{ color: "var(--text2)" }}>—</span>}
+      </div>
+      {metrics && (
+        <div style={{ fontSize: "0.72rem", color: "var(--text2)", textAlign: "center", lineHeight: 1.5 }}>
+          {metrics.map((m) => <div key={m}>{m}</div>)}
+        </div>
+      )}
     </div>
   );
 }
@@ -461,13 +467,29 @@ export default function FleetAnalysis({
           <div style={{ fontWeight: 800, fontSize: "0.84rem" }}>Source landscape by operating system</div>
           <div style={{ fontSize: "0.72rem", color: "var(--text2)" }}>
             {hover
-              ? `${FAMILY_LABEL[hover.family] || hover.family || ""} · ${hover.level.label} — ${hover.metric ? hover.metric.fmt(hover.n) : hover.n}`
-              : "Compute and storage carried by each OS family, coloured by support level"}
+              ? `${hover.n} ${hover.level.label.toLowerCase()} — ${hover.level.blurb}`
+              : "Readiness of each OS family, with the compute and storage it carries"}
           </div>
           <div style={{ marginLeft: "auto" }}><Legend /></div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 18 }}>
-          {METRICS.map((m) => <ColumnChart key={m.key} families={families} metric={m} onHover={setHover} />)}
+        <div style={{ display: "flex", gap: 22, flexWrap: "wrap", alignItems: "flex-start", justifyContent: "flex-start" }}>
+          {/* The estate first, then each family. Same fixed level order in
+              every ring, so a colour means the same thing everywhere. */}
+          <FamilyRing
+            hero label="All VMs" counts={byLevel || {}}
+            metrics={[`${totalCpu} vCPU`, `${gib(totalMemoryGiB)} RAM`, `${gib(totalDiskGiB)} storage`]}
+            onHover={setHover}
+          />
+          <div style={{ width: 1, alignSelf: "stretch", background: "var(--border)" }} />
+          {families.map((f) => (
+            <FamilyRing
+              key={f.family}
+              label={FAMILY_LABEL[f.family] || f.family}
+              counts={levelCounts(f)}
+              metrics={[`${f.cpu || 0} vCPU`, `${gib(f.memoryGiB || 0)} RAM`, `${gib(f.diskGiB || 0)} storage`]}
+              onHover={setHover}
+            />
+          ))}
         </div>
       </div>
 
