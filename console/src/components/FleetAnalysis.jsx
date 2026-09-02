@@ -475,7 +475,7 @@ export default function FleetAnalysis({
       <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", background: "var(--card)" }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
           <div style={{ fontWeight: 800, fontSize: "0.84rem" }}>Support by distribution and version</div>
-          <div style={{ fontSize: "0.72rem", color: "var(--text2)" }}>Checked against the OpenShift Virtualization guest matrix</div>
+          <div style={{ fontSize: "0.72rem", color: "var(--text2)" }}>Checked against Red Hat's certified guest list for OpenShift Virtualization</div>
         </div>
 
         {families.map((f) => (
@@ -513,10 +513,12 @@ export default function FleetAnalysis({
                           {l.icon}{d[l.key]}
                         </span>
                       ))}
-                      <span style={{ marginLeft: 9 }} title="Verdict from the OpenShift Virtualization guest OS matrix for this distribution">
-                        matrix:{" "}
+                      {/* Red Hat publishes three tiers. "Supported" and
+                          "supported by SUSE" are different promises, and the
+                          difference only shows up in a support call. */}
+                      <span style={{ marginLeft: 9 }} title={d.note || "Verdict from Red Hat's certified guest list"}>
                         <b style={{ color: `var(${LV[d.level]?.token || "--st-unknown"})` }}>
-                          {LV[d.level]?.icon} {d.level}
+                          {LV[d.level]?.icon} {d.tierLabel || d.level}
                         </b>
                       </span>
                     </span>
@@ -528,8 +530,15 @@ export default function FleetAnalysis({
         ))}
 
         <div style={{ fontSize: "0.7rem", color: "var(--text2)", borderTop: "1px solid var(--border)", paddingTop: 8 }}>
-          Support levels come from the OpenShift Virtualization guest matrix{matrix?.asOf ? ` (as of ${matrix.asOf})` : ""} combined with
-          MTV's own validation of each VM. {matrix?.source || "Confirm against the guest OS support statement for your OpenShift version before committing to a wave."}
+          Levels combine Red Hat's certified guest list{matrix?.asOf ? ` (read ${matrix.asOf})` : ""} with MTV's own validation of each VM.
+          {" "}Red Hat publishes three tiers: <b style={{ color: "var(--st-good)" }}>certified</b> (Red Hat supports you on it),
+          {" "}<b style={{ color: "var(--st-warn)" }}>vendor supported</b> (Oracle, SUSE or Canonical does), and
+          {" "}<b style={{ color: "var(--st-crit)" }}>known to run</b> (it boots; nobody certifies it).
+          {matrix?.url && (
+            <> <a href={matrix.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--text2)" }}>
+              Check the current list for your OpenShift version →
+            </a></>
+          )}
         </div>
       </div>
 
@@ -595,7 +604,17 @@ export default function FleetAnalysis({
                       <span style={{ color: "var(--text2)", marginRight: 5 }}>{open ? "▾" : "▸"}</span>{r.name}
                     </td>
                     <td style={{ padding: "6px 9px", whiteSpace: "nowrap", color: `var(${l.token})`, fontWeight: 700 }}>{l.icon} {l.label}</td>
-                    <td style={{ padding: "6px 9px", color: "var(--text2)" }} title={r.os?.reported || ""}>{r.os?.distro || "—"}</td>
+                    <td style={{ padding: "6px 9px", color: "var(--text2)" }} title={r.os?.reported || ""}>
+                      <div style={{ color: "var(--text)" }}>{r.os?.distro || "—"}</div>
+                      {/* Coloured by the OS's own level, not the row's. A
+                          certified guest blocked by a shared disk is still a
+                          certified guest — the two say different things. */}
+                      {r.os?.tierLabel && (
+                        <div style={{ fontSize: "0.67rem", color: `var(${LV[r.os.level]?.token || "--st-unknown"})` }}>
+                          {r.os.tierLabel}
+                        </div>
+                      )}
+                    </td>
                     <td style={{ padding: "6px 9px", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.72rem" }}>
                       {r.ips?.length ? r.ips[0] + (r.ips.length > 1 ? ` +${r.ips.length - 1}` : "") : "—"}
                     </td>

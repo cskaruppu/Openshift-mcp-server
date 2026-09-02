@@ -416,9 +416,17 @@ test("classifyGuestOS reads family, distribution and version from a vCenter stri
   assert.equal(rhel.family, "linux");
   assert.equal(rhel.level, "supported");
 
+  // CentOS 7 is DEPRECATED by Red Hat (4.18), not merely uncertified.
   const centos = classifyGuestOS("CentOS 7 (64-bit)");
   assert.equal(centos.family, "linux");
-  assert.equal(centos.level, "caveats", "a community rebuild is not a certified guest");
+  assert.equal(centos.level, "unsupported");
+  assert.equal(centos.tier, "deprecated");
+
+  // Ubuntu is supported — by Canonical. A different promise, not a lesser one.
+  const ubuntu = classifyGuestOS("Ubuntu Linux (64-bit)");
+  assert.equal(ubuntu.level, "caveats");
+  assert.equal(ubuntu.tier, "vendor");
+  assert.match(ubuntu.tierLabel, /vendor/i);
 
   const old = classifyGuestOS("Microsoft Windows Server 2008 R2 (64-bit)");
   assert.equal(old.level, "unsupported");
@@ -530,7 +538,7 @@ test("a vSphere guestId is decoded, not read as a version string", async () => {
     ["windows11_64Guest", "Windows 11", "supported"],
     ["rhel8_64Guest", "RHEL 8", "supported"],
     ["rhel9_64Guest", "RHEL 9", "supported"],
-    ["centos7_64Guest", "CentOS 7/8", "caveats"],
+    ["centos7_64Guest", "CentOS 7", "unsupported"],
     ["ubuntu64Guest", "Ubuntu", "caveats"],
     ["sles15_64Guest", "SUSE Linux Enterprise", "caveats"],
   ];
@@ -588,18 +596,21 @@ test("an already-off VM is advised cold, since there is no uptime to protect", a
 
 test("family resource totals split by support level and sum to the whole", async () => {
   const { analyseFleet } = await import("../../src/services/vm-migration.js");
+  // One VM per support tier, so every bucket is exercised.
   const a = analyseFleet([
     { name: "a", guestOS: "rhel9_64Guest", guestId: "rhel9_64Guest", cpuCount: 4, memoryGiB: 16, diskGiB: 100, concerns: [] },
-    { name: "b", guestOS: "centos7_64Guest", guestId: "centos7_64Guest", cpuCount: 2, memoryGiB: 8, diskGiB: 50, concerns: [] },
+    { name: "b", guestOS: "ubuntu64Guest", guestId: "ubuntu64Guest", cpuCount: 2, memoryGiB: 8, diskGiB: 50, concerns: [] },
+    { name: "c", guestOS: "centos7_64Guest", guestId: "centos7_64Guest", cpuCount: 1, memoryGiB: 4, diskGiB: 25, concerns: [] },
   ]);
   const linux = a.families.find((f) => f.family === "linux");
-  assert.equal(linux.levels.supported.cpu, 4);
-  assert.equal(linux.levels.caveats.memoryGiB, 8);
+  assert.equal(linux.levels.supported.cpu, 4, "RHEL 9 is Red Hat certified");
+  assert.equal(linux.levels.caveats.memoryGiB, 8, "Ubuntu is supported by Canonical");
+  assert.equal(linux.levels.unsupported.diskGiB, 25, "CentOS 7 is deprecated by Red Hat");
   const sum = (m) => Object.values(linux.levels).reduce((n, b) => n + b[m], 0);
   assert.equal(sum("cpu"), linux.cpu, "level buckets must sum to the family total");
   assert.equal(sum("memoryGiB"), linux.memoryGiB);
   assert.equal(sum("diskGiB"), linux.diskGiB);
-  assert.equal(a.totalCpu, 6);
+  assert.equal(a.totalCpu, 7);
 });
 
 // ── Per-VM remediation ──────────────────────────────────────────────────────
@@ -830,4 +841,57 @@ test("an unidentified guest gets its own plan without a misleading name", async 
   assert.doesNotMatch(groups[0].planName, /unknown/, "the name must not assert a family it does not know");
   const labels = buildPlanManifest(groups[0], { targetProvider: "h" }).metadata.labels;
   assert.equal(labels["tcs.agentic-ai/os-family"], "unknown", "but the label still records it honestly");
+});
+
+test("the matrix reflects Red Hat's three tiers, not a binary", async () => {
+  const { classifyGuestOS, SUPPORT_MATRIX } = await import("../../src/services/vm-migration.js");
+
+  // Certified — Red Hat supports you on it.
+  for (const g of ["rhel10_64Guest", "rhel9_64Guest", "rhel8_64Guest", "rhel7_64Guest",
+                   "windows2022srvNext_64Guest", "windows2019srvNext_64Guest", "windows2019srv_64Guest",
+                   "windows9Server64Guest", "windows11_64Guest", "windows9_64Guest"]) {
+    const os = classifyGuestOS(g);
+    assert.equal(os.level, "supported", `${g} is on the certified list`);
+    assert.equal(os.tier, "certified");
+  }
+
+  // Certified but past maintenance — both facts, not one.
+  const rhel7 = classifyGuestOS("rhel7_64Guest");
+  assert.match(rhel7.note, /Extended Life Cycle Support/);
+
+  // Vendor supported — a real promise, from someone other than Red Hat.
+  for (const g of ["ubuntu64Guest", "sles15_64Guest", "oracleLinux9_64Guest"]) {
+    const os = classifyGuestOS(g);
+    assert.equal(os.level, "caveats", `${g} is supported by its own vendor`);
+    assert.equal(os.tier, "vendor");
+  }
+
+  // Deprecated by Red Hat, with the release that did it.
+  for (const [g, since] of [["centos7_64Guest", /4\.18/], ["CentOS Stream 8", /4\.18/], ["rhel6_64Guest", /4\.13/]]) {
+    const os = classifyGuestOS(g);
+    assert.equal(os.level, "unsupported", `${g} is deprecated`);
+    assert.equal(os.tier, "deprecated");
+    assert.match(os.note, since, "the deprecating release is named");
+  }
+
+  // "Known to run" is not certified — end-of-life Windows lives here.
+  for (const g of ["Microsoft Windows Server 2012 R2 (64-bit)", "windows7Server64Guest", "winNetStandard64Guest"]) {
+    const os = classifyGuestOS(g);
+    assert.equal(os.level, "unsupported", `${g} is not certified`);
+    assert.equal(os.tier, "known");
+    assert.match(os.note, /[Kk]nown to run/);
+    assert.ok(os.upgrade, "and it names what to move to");
+  }
+
+  // The matrix cites where it came from, so a stale verdict is checkable.
+  assert.match(SUPPORT_MATRIX.asOf, /^\d{4}-\d{2}-\d{2}$/);
+  assert.match(SUPPORT_MATRIX.url, /^https:\/\/access\.redhat\.com\//);
+  assert.match(SUPPORT_MATRIX.source, /4234591/);
+});
+
+test("Windows 11 names the cluster prerequisite it depends on", async () => {
+  const { classifyGuestOS } = await import("../../src/services/vm-migration.js");
+  const os = classifyGuestOS("windows11_64Guest");
+  assert.equal(os.level, "supported");
+  assert.match(os.note, /vmStateStorageClass/, "certified is not the same as 'will boot without configuration'");
 });

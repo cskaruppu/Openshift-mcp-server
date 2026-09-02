@@ -360,35 +360,96 @@ export function normaliseInventoryVM(v = {}) {
  * Levels: supported | caveats | unsupported | unknown
  */
 export const SUPPORT_MATRIX = {
-  asOf: "2026-08",
-  source: "Red Hat certified guest operating systems for OpenShift Virtualization. Verify against the list for YOUR OpenShift version before committing to a migration wave.",
+  asOf: "2026-09-02",
+  source: "Red Hat: Certified Guest Operating Systems in OpenShift Virtualization (article 4234591), read 2 September 2026. Confirm against the list for YOUR OpenShift version before committing to a wave.",
+  url: "https://access.redhat.com/articles/4234591",
+
+  // Red Hat publishes THREE tiers, not two, and flattening them loses the
+  // distinction that actually matters in a support call:
+  //
+  //   certified  Red Hat has tested it and will support you on it.
+  //   vendor     The OS vendor supports it (Oracle, SUSE, Canonical). Red Hat
+  //              will help with the hypervisor; the guest is the vendor's.
+  //   known      "Known to run" — it boots, nobody certifies it. End-of-life
+  //              Windows lives here. Not the same thing as "will not work",
+  //              and not the same thing as supported.
+  //
+  // `tier` is carried through to the console so a person can see which of the
+  // three they are looking at rather than inferring it from a colour.
+  tiers: {
+    certified: "Red Hat certified",
+    vendor: "Supported by the OS vendor",
+    known: "Known to run — not certified",
+    deprecated: "Deprecated by Red Hat",
+    unlisted: "Not on Red Hat's certified list",
+  },
+
   windows: [
-    { match: /server\D*2025/i, label: "Windows Server 2025", level: "supported" },
-    { match: /server\D*2022/i, label: "Windows Server 2022", level: "supported" },
-    { match: /server\D*2019/i, label: "Windows Server 2019", level: "supported" },
-    { match: /server\D*2016/i, label: "Windows Server 2016", level: "supported" },
-    { match: /server\D*2012\s*r2/i, label: "Windows Server 2012 R2", level: "caveats", note: "Past Microsoft end of extended support — migrates, but runs unpatched.", upgrade: "Windows Server 2022" },
-    { match: /server\D*2012/i, label: "Windows Server 2012", level: "caveats", note: "Past Microsoft end of extended support.", upgrade: "Windows Server 2022" },
-    { match: /server\D*(2008|2003)/i, label: "Windows Server 2008/2003", level: "unsupported", note: "Long past end of life and not certified — migrate only as a lift-and-shift to a quarantined namespace.", upgrade: "Windows Server 2022" },
-    { match: /windows\s*11/i, label: "Windows 11", level: "supported", note: "Requires EFI and a vTPM on the target." },
-    { match: /windows\s*10/i, label: "Windows 10", level: "supported" },
-    { match: /windows\s*(7|8|xp)/i, label: "Windows 7/8/XP", level: "unsupported", note: "End of life; no virtio driver support path.", upgrade: "Windows 10 or 11" },
+    { match: /server\D*2025/i, label: "Windows Server 2025", level: "supported", tier: "certified" },
+    { match: /server\D*2022/i, label: "Windows Server 2022", level: "supported", tier: "certified" },
+    { match: /server\D*2019/i, label: "Windows Server 2019", level: "supported", tier: "certified" },
+    { match: /server\D*2016/i, label: "Windows Server 2016", level: "supported", tier: "certified" },
+    // Everything below is "known to run" in Red Hat's own words — it boots,
+    // and you are on your own with it.
+    { match: /server\D*2012\s*r2/i, label: "Windows Server 2012 R2", level: "unsupported", tier: "known",
+      note: "Known to run, but not certified for OpenShift Virtualization, and past Microsoft end of extended support.",
+      upgrade: "Windows Server 2022 or 2025" },
+    { match: /server\D*2012/i, label: "Windows Server 2012", level: "unsupported", tier: "known",
+      note: "Known to run, but not certified, and past Microsoft end of extended support.",
+      upgrade: "Windows Server 2022 or 2025" },
+    { match: /server\D*(2008|2003)/i, label: "Windows Server 2008/2003", level: "unsupported", tier: "known",
+      note: "Known to run, not certified, and long past end of life. Migrate only as a lift-and-shift into a quarantined namespace.",
+      upgrade: "Windows Server 2022 or 2025" },
+    { match: /windows\s*11/i, label: "Windows 11", level: "supported", tier: "certified",
+      note: "Certified. Requires EFI and a vTPM on the target, which needs vmStateStorageClass configured on the cluster." },
+    { match: /windows\s*10/i, label: "Windows 10", level: "supported", tier: "certified" },
+    { match: /windows\s*(7|8|xp|vista)/i, label: "Windows 7/8/XP", level: "unsupported", tier: "known",
+      note: "Known to run, not certified, end of life.", upgrade: "Windows 10 or 11" },
   ],
+
   linux: [
-    { match: /red\s*hat.*(10)|rhel\D*10/i, label: "RHEL 10", level: "supported" },
-    { match: /red\s*hat.*(9)|rhel\D*9/i, label: "RHEL 9", level: "supported" },
-    { match: /red\s*hat.*(8)|rhel\D*8/i, label: "RHEL 8", level: "supported" },
-    { match: /red\s*hat.*(7)|rhel\D*7/i, label: "RHEL 7", level: "caveats", note: "Past end of maintenance support — migrates, but plan an upgrade.", upgrade: "RHEL 9" },
-    { match: /red\s*hat.*(6|5)|rhel\D*[56]/i, label: "RHEL 5/6", level: "unsupported", note: "Not certified; very old virtio support.", upgrade: "RHEL 9" },
-    { match: /centos\s*stream/i, label: "CentOS Stream", level: "caveats", note: "Community support only.", upgrade: "RHEL 9 for a supported guest" },
-    { match: /centos\D*[78]/i, label: "CentOS 7/8", level: "caveats", note: "End of life — community support only.", upgrade: "RHEL 9, or convert in place with convert2rhel" },
-    { match: /rocky/i, label: "Rocky Linux", level: "caveats", note: "Community support only.", upgrade: "RHEL 9 for a supported guest" },
-    { match: /alma/i, label: "AlmaLinux", level: "caveats", note: "Community support only.", upgrade: "RHEL 9 for a supported guest" },
-    { match: /ubuntu/i, label: "Ubuntu", level: "caveats", note: "Community support only; verify the release is still in Canonical support." },
-    { match: /debian/i, label: "Debian", level: "caveats", note: "Community support only." },
-    { match: /sles|suse/i, label: "SUSE Linux Enterprise", level: "caveats", note: "Supported by SUSE; confirm your entitlement." },
-    { match: /fedora/i, label: "Fedora", level: "caveats", note: "Community support only; short lifecycle." },
-    { match: /oracle/i, label: "Oracle Linux", level: "caveats", note: "Community support only.", upgrade: "RHEL 9 for a supported guest" },
+    { match: /(rhel|red\s*hat\s*enterprise\s*linux)\D*10\b/i, label: "RHEL 10", level: "supported", tier: "certified" },
+    { match: /(rhel|red\s*hat\s*enterprise\s*linux)\D*9\b/i, label: "RHEL 9", level: "supported", tier: "certified" },
+    { match: /(rhel|red\s*hat\s*enterprise\s*linux)\D*8\b/i, label: "RHEL 8", level: "supported", tier: "certified" },
+    // Certified on the list, but Red Hat maintenance ended in June 2024 — both
+    // facts are true and the operator needs both.
+    { match: /(rhel|red\s*hat\s*enterprise\s*linux)\D*7\b/i, label: "RHEL 7", level: "supported", tier: "certified",
+      note: "Certified, but past end of maintenance support — an Extended Life Cycle Support subscription is needed to stay patched.",
+      upgrade: "RHEL 9" },
+    { match: /(rhel|red\s*hat\s*enterprise\s*linux)\D*6\b/i, label: "RHEL 6", level: "unsupported", tier: "deprecated",
+      note: "Deprecated at OpenShift Virtualization 4.13 and listed for migration support only — it can be moved, not run supported.",
+      upgrade: "RHEL 9" },
+    { match: /(rhel|red\s*hat\s*enterprise\s*linux)\D*5\b/i, label: "RHEL 5", level: "unsupported", tier: "unlisted",
+      note: "Not on the certified list; very old virtio support.", upgrade: "RHEL 9" },
+
+    // Commercially supported by their own vendor rather than by Red Hat.
+    { match: /oracle/i, label: "Oracle Linux", level: "caveats", tier: "vendor",
+      note: "Oracle Linux 8 and 9 are supported by Oracle, not by Red Hat. Confirm your entitlement covers running it here." },
+    { match: /sles|suse/i, label: "SUSE Linux Enterprise", level: "caveats", tier: "vendor",
+      note: "SLES 15 SP5 and later, and SLES 16, are supported by SUSE rather than Red Hat. Confirm your entitlement." },
+    { match: /ubuntu/i, label: "Ubuntu", level: "caveats", tier: "vendor",
+      note: "Canonical supports Ubuntu LTS releases (18.04 through 25.04) here; Red Hat does not. Confirm the release is still in Canonical support." },
+
+    // Deprecated by Red Hat, with a date.
+    { match: /centos\s*stream\D*8\b/i, label: "CentOS Stream 8", level: "unsupported", tier: "deprecated",
+      note: "Deprecated at OpenShift Virtualization 4.18 — an end-of-life product.",
+      upgrade: "RHEL 9, or convert in place with convert2rhel" },
+    { match: /centos\D*7\b/i, label: "CentOS 7", level: "unsupported", tier: "deprecated",
+      note: "Deprecated at OpenShift Virtualization 4.18 — an end-of-life product.",
+      upgrade: "RHEL 9, or convert in place with convert2rhel" },
+    { match: /centos\s*stream/i, label: "CentOS Stream", level: "caveats", tier: "unlisted",
+      note: "Not on Red Hat's certified list. Community support only.", upgrade: "RHEL 9 for a certified guest" },
+
+    // Not on the list at all. That is a fact about the list, not a verdict on
+    // the distribution — so it says exactly that.
+    { match: /rocky/i, label: "Rocky Linux", level: "caveats", tier: "unlisted",
+      note: "Not on Red Hat's certified list. Community support only.", upgrade: "RHEL 9 for a certified guest" },
+    { match: /alma/i, label: "AlmaLinux", level: "caveats", tier: "unlisted",
+      note: "Not on Red Hat's certified list. Community support only.", upgrade: "RHEL 9 for a certified guest" },
+    { match: /debian/i, label: "Debian", level: "caveats", tier: "unlisted",
+      note: "Not on Red Hat's certified list. Community support only." },
+    { match: /fedora/i, label: "Fedora", level: "caveats", tier: "unlisted",
+      note: "Not on Red Hat's certified list. Community support only; short lifecycle." },
   ],
 };
 
@@ -479,6 +540,8 @@ export function classifyGuestOS(guestOS, guestId = null) {
       distro: hit.label,
       version: ver ? ver[1] : null,
       level: hit.level,
+      tier: hit.tier || null,
+      tierLabel: SUPPORT_MATRIX.tiers[hit.tier] || null,
       note: hit.note || null,
       upgrade: hit.upgrade || null,
       raw, reported,
@@ -492,6 +555,7 @@ export function classifyGuestOS(guestOS, guestId = null) {
     distro: raw.slice(0, 48),
     version: null,
     level: "unknown",
+    tier: null, tierLabel: null,
     note: `"${raw.slice(0, 48)}" is not in the support matrix. Check Red Hat's certified guest list for your OpenShift version before migrating.`,
     raw, reported,
   };
@@ -853,6 +917,7 @@ export function analyseFleet(vms = [], { targetFreeGiB = null, capacity = null, 
     addTo(fam.levels[r.level], r);
     const d = (fam.distros[r.os.distro] ||= {
       distro: r.os.distro, level: r.os.level, note: r.os.note,
+      tier: r.os.tier || null, tierLabel: r.os.tierLabel || null,
       total: 0, diskGiB: 0, memoryGiB: 0, cpu: 0,
       supported: 0, caveats: 0, unknown: 0, unsupported: 0,
     });
@@ -872,7 +937,7 @@ export function analyseFleet(vms = [], { targetFreeGiB = null, capacity = null, 
       .map((f) => ({ ...f, distros: Object.values(f.distros).sort((a, b) => b.total - a.total) }))
       .sort((a, b) => b.total - a.total),
     rows,
-    matrix: { asOf: SUPPORT_MATRIX.asOf, source: SUPPORT_MATRIX.source },
+    matrix: { asOf: SUPPORT_MATRIX.asOf, source: SUPPORT_MATRIX.source, url: SUPPORT_MATRIX.url },
   };
 }
 

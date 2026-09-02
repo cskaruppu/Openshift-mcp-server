@@ -51,7 +51,7 @@ export function toCsv(analysis, meta = {}) {
   lines.push("");
 
   lines.push(csvRow([
-    "VM", "Status", "Guest OS", "OS family", "Reported by vCenter",
+    "VM", "Status", "Guest OS", "Support tier", "OS family", "Reported by vCenter",
     "IP addresses", "vCPU", "RAM GiB", "Storage GiB", "Powered on",
     "Warm eligible", "Recommended method", "Source VM during copy",
     "Required actions", "Advisory actions",
@@ -65,6 +65,7 @@ export function toCsv(analysis, meta = {}) {
       r.name,
       LEVEL_LABEL[r.level] || r.level,
       r.os?.distro || "",
+      r.os?.tierLabel || "",
       r.os?.family || "",
       r.os?.reported || "",
       (r.ips || []).join(" "),
@@ -115,7 +116,7 @@ export function toHtml(analysis, meta = {}) {
     <tr>
       <td class="b">${esc(r.name)}</td>
       <td style="color:${LEVEL_COLOUR[r.level] || "#64748b"};font-weight:700">${esc(LEVEL_LABEL[r.level] || r.level)}</td>
-      <td>${esc(r.os?.distro || "—")}</td>
+      <td>${esc(r.os?.distro || "—")}${r.os?.tierLabel ? `<br><span class="muted small">${esc(r.os.tierLabel)}</span>` : ""}</td>
       <td class="mono">${esc((r.ips || []).join(", ") || "—")}</td>
       <td class="n">${esc(r.cpuCount ?? "—")}</td>
       <td class="n">${r.memoryGiB ? esc(r.memoryGiB) + " GiB" : "—"}</td>
@@ -217,9 +218,11 @@ ${driftBlock}
 </table>
 
 <footer>
-  Support levels combine the OpenShift Virtualization certified guest matrix
-  (${esc(analysis?.matrix?.asOf || "undated")}) with MTV's own validation of each machine.
-  ${esc(analysis?.matrix?.source || "")}
+  Support levels combine Red Hat's certified guest operating system list for OpenShift Virtualization
+  (read ${esc(analysis?.matrix?.asOf || "undated")}) with MTV's own validation of each machine.
+  Red Hat publishes three tiers — certified (Red Hat supports you on it), vendor supported (the OS vendor does),
+  and known to run (it boots, nobody certifies it). ${esc(analysis?.matrix?.source || "")}
+  ${analysis?.matrix?.url ? `<a href="${esc(analysis.matrix.url)}">${esc(analysis.matrix.url)}</a>` : ""}
   Capacity figures are based on pod requests reserved on virtualization-capable nodes at the time of assessment,
   not on live utilisation. This report describes the estate as it was at ${esc(meta.at || "the time of generation")};
   re-run before acting on it if the source has changed since.
