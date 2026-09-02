@@ -164,8 +164,8 @@ function Legend() {
   );
 }
 
-const SEV_TOKEN = { good: "--st-good", warning: "--st-warn", serious: "--st-warn", critical: "--st-crit" };
-const SEV_ICON = { good: "✓", warning: "⚠", serious: "⚠", critical: "✖" };
+const SEV_TOKEN = { good: "--st-good", warning: "--st-warn", serious: "--st-warn", critical: "--st-crit", info: "--st-unknown" };
+const SEV_ICON = { good: "✓", warning: "⚠", serious: "⚠", critical: "✖", info: "i" };
 /* Power outcome is a fact about downtime, so it is stated in those terms. */
 const POWER = {
   "stays-online": { icon: "●", label: "Stays online", token: "--st-good" },
@@ -486,10 +486,20 @@ export default function FleetAnalysis({
                     <td style={{ padding: "6px 9px" }}>{r.cpuCount ?? "—"}</td>
                     <td style={{ padding: "6px 9px", whiteSpace: "nowrap" }}>{r.memoryGiB ? `${r.memoryGiB} GiB` : "—"}</td>
                     <td style={{ padding: "6px 9px", whiteSpace: "nowrap" }}>{gib(r.diskGiB)}</td>
+                    {/* A blocked machine has no method: offering "warm · stays
+                        online" beside "Blocked" invites someone to read past
+                        the blocker. */}
                     <td style={{ padding: "6px 9px", whiteSpace: "nowrap", fontWeight: 700,
-                      color: a?.strategy === "warm" ? "var(--st-good)" : "var(--text2)" }} title={a?.reason || ""}>
-                      {a?.strategy || "—"}
-                      {p && <span style={{ marginLeft: 6, fontWeight: 600, color: `var(${p.token})` }}>{p.icon} {p.label}</span>}
+                      color: r.blockers.length ? "var(--text2)" : a?.strategy === "warm" ? "var(--st-good)" : "var(--text2)" }}
+                      title={r.blockers.length ? "Not migratable as things stand — clear the blocker first." : a?.reason || ""}>
+                      {r.blockers.length ? (
+                        <span style={{ fontWeight: 600 }}>— not migratable</span>
+                      ) : (
+                        <>
+                          {a?.strategy || "—"}
+                          {p && <span style={{ marginLeft: 6, fontWeight: 600, color: `var(${p.token})` }}>{p.icon} {p.label}</span>}
+                        </>
+                      )}
                     </td>
                     <td style={{ padding: "6px 9px", color: "var(--text2)", maxWidth: 300 }}>
                       <span style={{ color: `var(${SEV_TOKEN[worst?.severity] || "--st-unknown"})`, fontWeight: 700 }}>
@@ -517,6 +527,18 @@ export default function FleetAnalysis({
                             </div>
                           </div>
                         ))}
+                        {/* How much of the assessment was actually possible.
+                            A check the inventory could not answer is never
+                            presented as a check that passed. */}
+                        {r.checks?.coverage && (
+                          <div style={{ marginTop: 6, paddingTop: 5, borderTop: "1px solid var(--border)", fontSize: "0.72rem", color: "var(--text2)" }}
+                            title={(r.checks.unchecked || []).map((u) => u.label).join(", ")}>
+                            {r.checks.coverage.ran} of {r.checks.coverage.total} source checks ran
+                            {r.checks.unchecked?.length > 0 && (
+                              <> · not reported by the inventory: {r.checks.unchecked.map((u) => u.label).join(", ")}</>
+                            )}
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ),

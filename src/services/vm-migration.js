@@ -23,6 +23,7 @@
 
 import { ocpGet, ocpPost, ocpPatch, ocpDelete, ocpFetch } from "../utils/openshift-client.js";
 import { nodeFit } from "./target-capacity.js";
+import { runSourceChecks } from "./source-readiness.js";
 import { recordChange } from "./change-ledger.js";
 import { classifyJSON, llmEnabled } from "./llm.js";
 import { fenceUntrusted, UNTRUSTED_GUARD } from "./untrusted.js";
@@ -232,6 +233,15 @@ export async function discoverVMs(providerUid, { search = "" } = {}) {
 }
 
 /** One shape regardless of provider flavour, so the card never branches. */
+/** Tri-state: true / false / null when the source never mentioned the fact. */
+function bool(v) {
+  if (v === undefined || v === null) return null;
+  if (typeof v === "boolean") return v;
+  if (v === "true") return true;
+  if (v === "false") return false;
+  return null;
+}
+
 export function normaliseInventoryVM(v = {}) {
   const disks = v.disks || v.Disks || [];
   const totalBytes = disks.reduce((n, d) => n + (d.capacity || d.Capacity || 0), 0);
@@ -272,6 +282,27 @@ export function normaliseInventoryVM(v = {}) {
     ips,
     toolsStatus: v.guestToolsStatus || v.toolsStatus || null,
     firmware: v.firmware || (v.bootOptions?.efiSecureBootEnabled ? "efi" : null),
+
+    // ── Facts the source-readiness checks run against ──────────────────────
+    // Every one of these stays NULL when the inventory did not report it, so a
+    // check that could not run is never mistaken for a check that passed.
+    isTemplate: bool(v.isTemplate),
+    connectionState: v.connectionState ?? null,
+    faultToleranceEnabled: bool(v.faultToleranceEnabled),
+    // Forklift reports a snapshot as a reference object, not a count.
+    hasSnapshot: v.snapshot === undefined ? null
+      : Array.isArray(v.snapshot) ? v.snapshot.length > 0
+      : !!(v.snapshot && (v.snapshot.id || v.snapshot.kind || v.snapshot.name)),
+    secureBoot: bool(v.secureBoot ?? v.bootOptions?.efiSecureBootEnabled),
+    tpmEnabled: bool(v.tpmEnabled ?? v.tpmPresent),
+    cpuAffinity: Array.isArray(v.cpuAffinity) ? v.cpuAffinity : null,
+    numaNodeAffinity: Array.isArray(v.numaNodeAffinity) ? v.numaNodeAffinity : null,
+    cpuHotAddEnabled: bool(v.cpuHotAddEnabled),
+    memoryHotAddEnabled: bool(v.memoryHotAddEnabled),
+    devices: Array.isArray(v.devices) ? v.devices.map((d) => ({ kind: d.kind || d.Kind || d.type || "" })) : null,
+    nics: Array.isArray(v.nICs || v.nics)
+      ? (v.nICs || v.nics).map((n) => ({ network: n.network?.name || n.network || n.name || null, mac: n.mac || null }))
+      : null,
 
     // Storage, per disk — a migration is a storage operation before anything else
     diskCount: disks.length,
@@ -515,6 +546,17 @@ export function assessSupportability(vm = {}, { targetFreeGiB = null, capacity =
       message: "Windows guest — MTV installs virtio drivers during conversion. Confirm the guest boots and the network adapter appears before decommissioning the source.",
     });
   }
+
+  // Source-side readiness: snapshots, independent disks, RDMs, passthrough
+  // hardware, vTPM, Secure Boot, NIC coverage. MTV catches some of these and
+  // says nothing about what to do; it misses others entirely.
+  const checks = runSourceChecks(vm);
+  for (const f of checks.findings) {
+    const entry = { source: "source-check", id: f.id, message: `${f.title}. ${f.detail}` };
+    if (f.blocks) blockers.push(entry);
+    else if (f.severity === "warning") warnings.push(entry);
+    else notes.push(entry);
+  }
   if ((vm.diskCount || 0) > 8) {
     warnings.push({ source: "target", message: `${vm.diskCount} disks — expect a proportionally longer transfer and more to verify afterwards.` });
   }
@@ -526,6 +568,9 @@ export function assessSupportability(vm = {}, { targetFreeGiB = null, capacity =
     name: vm.name,
     supported: blockers.length === 0,
     blockers, warnings, notes,
+    // Kept whole so the console can show each finding's own fix, and so the
+    // report can say how much of the assessment was actually possible.
+    checks,
     // A single word for the table.
     verdict: blockers.length ? "blocked" : warnings.length ? "caution" : "supported",
   };
@@ -750,6 +795,7 @@ export function analyseFleet(vms = [], { targetFreeGiB = null, capacity = null }
       warmEligible: v.warmEligible === true,
       warmBlockedReason: v.warmBlockedReason || null,
       blockers: support.blockers, warnings: support.warnings, notes: support.notes,
+      checks: support.checks,
     };
   });
   // What to change on each machine, attached to the machine — the validation
@@ -831,7 +877,10 @@ export function vmRemediation(row = {}) {
 
   // 1. Anything that makes the migration fail. Nothing else matters until it
   //    is cleared — and where the fix lives depends on who raised it.
+  //    A source check knows its own fix, so it says it rather than being
+  //    flattened into "clear this and re-run discovery".
   for (const b of row.blockers || []) {
+    if (b.source === "source-check") continue;               // emitted below
     const onTarget = b.source === "target";
     out.push({
       severity: "critical", required: true,
@@ -840,6 +889,18 @@ export function vmRemediation(row = {}) {
       action: onTarget
         ? "Add a node large enough to hold this VM, or reduce the machine's memory before migrating. Copying it first would spend the outage for a VM that then stays Pending."
         : "Clear this on the source VM and re-run discovery, or leave the machine out of the wave.",
+    });
+  }
+
+  // 1b. Source-side readiness — snapshots, independent disks, RDMs,
+  //     passthrough hardware, vTPM, Secure Boot, NIC coverage. Blocking ones
+  //     first, then the rest in the order the checks are defined.
+  const src = row.checks?.findings || [];
+  for (const f of [...src.filter((x) => x.blocks), ...src.filter((x) => !x.blocks)]) {
+    out.push({
+      severity: f.blocks ? "critical" : f.severity === "info" ? "info" : "warning",
+      required: f.blocks || f.required === true,
+      title: f.title, detail: f.detail, action: f.action,
     });
   }
 
@@ -908,8 +969,16 @@ export function vmRemediation(row = {}) {
   }
 
   if (!out.length) {
-    out.push({ severity: "good", required: false, title: "Ready to migrate", detail: null,
-      action: "Certified guest, no MTV concerns and nothing to change on the source." });
+    const cov = row.checks?.coverage;
+    const partial = cov && cov.ran < cov.total;
+    out.push({
+      severity: "good", required: false, title: "Ready to migrate",
+      // Never present an unrun check as a passed one.
+      detail: partial
+        ? `${cov.ran} of ${cov.total} source checks ran — the rest were not reported by the inventory.`
+        : null,
+      action: "Certified guest, no MTV concerns and nothing to change on the source.",
+    });
   }
   return out;
 }
@@ -972,7 +1041,7 @@ export function fleetRemediation(analysis) {
   const win = rows.filter((r) => r.os.family === "windows" && !r.blockers.length);
   if (win.length) {
     out.push({
-      severity: "warning", title: `${win.length} Windows VM${win.length > 1 ? "s" : ""} need VirtIO drivers`,
+      severity: "warning", title: `${win.length} Windows VM${win.length > 1 ? "s need" : " needs"} VirtIO drivers`,
       vms: win.map((r) => r.name),
       detail: `${named(win)}. Windows has no in-box VirtIO storage driver, so a migrated disk is not bootable without it.`,
       action: "Install virtio-win on each guest BEFORE migrating, or let MTV inject drivers during the conversion step.",
@@ -990,7 +1059,19 @@ export function fleetRemediation(analysis) {
     });
   }
 
-  // 5. Cold-only bulk is where the outage budget actually goes.
+  // 5. Snapshots are the single most common source-side surprise, and the
+  //    cheapest to clear — worth calling out across the fleet, not per VM.
+  const snapped = rows.filter((r) => (r.checks?.findings || []).some((f) => f.id === "snapshots"));
+  if (snapped.length) {
+    out.push({
+      severity: "warning", title: `${snapped.length} VM${snapped.length > 1 ? "s have" : " has"} snapshots`,
+      vms: snapped.map((r) => r.name),
+      detail: `${named(snapped)} — the transfer copies the snapshot chain rather than a flat disk, which is slower and more likely to fail.`,
+      action: "Consolidate snapshots in vCenter before the wave, then re-run discovery. This is usually the quickest win in the whole assessment.",
+    });
+  }
+
+  // 6. Cold-only bulk is where the outage budget actually goes.
   const coldBig = rows.filter((r) => !r.warmEligible && r.diskGiB >= 200 && !r.blockers.length);
   if (coldBig.length) {
     const gib = coldBig.reduce((n, r) => n + r.diskGiB, 0);
