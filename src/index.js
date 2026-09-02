@@ -2894,6 +2894,11 @@ async function startSSE() {
           // across, so the change is invisible unless it is measured.
           const fidelity = await import("./services/resource-fidelity.js");
           analysis.fidelity = fidelity.resourceFidelity(vms);
+          // Which machines look like one working system. Inference, labelled as
+          // such — it warns when a wave would cut a group in half, and blocks
+          // nothing.
+          const affinity = await import("./services/affinity.js");
+          analysis.affinity = affinity.affinityGroups(vms);
           // Fleet-level findings and the per-VM method/power call are what the
           // pre-migration report is FOR, so both are produced here rather than
           // behind a second button the operator has to know to press.

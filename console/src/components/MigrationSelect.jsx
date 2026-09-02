@@ -1,4 +1,9 @@
 import { useState } from "react";
+// Imported from the server module rather than copied: the grouping runs
+// server-side, but the split check depends on what is ticked right now, so it
+// has to run here. affinity.js is dependency-free ESM, so one definition
+// serves both and cannot drift.
+import { splitGroups } from "../../../src/services/affinity.js";
 
 /* ── UC-10 step 3: choose what moves, and how ─────────────────────────────────
    Separate from the report on purpose. Reading an assessment and committing to
@@ -36,6 +41,9 @@ export default function MigrationSelect({
   const warmCount = picked.filter((r) => selected[keyOf(r)] === "warm").length;
   const pickedGiB = picked.reduce((n, r) => n + (r.diskGiB || 0), 0);
   const risky = picked.filter((r) => !eligible(r)).length;
+  // Groups this wave would cut in half. MTV has no concept of an application,
+  // so nothing else in the toolchain will mention it.
+  const split = splitGroups(analysis?.affinity || [], picked.map((r) => r.name));
 
   const set = (next) => onChange?.(next);
   const toggle = (r) => {
@@ -152,6 +160,45 @@ export default function MigrationSelect({
           </tbody>
         </table>
       </div>
+
+      {/* ── Move-together groups ─────────────────────────────────────────
+          Both migrations succeed and the system is still broken: one half on
+          OpenShift, one half on VMware, for however long the gap lasts. This
+          is the moment that is worth knowing, and the only moment. */}
+      {split.length > 0 && (
+        <div style={{ border: "1px solid var(--st-warn)", borderRadius: 10, padding: "11px 13px", background: "var(--st-warn-bg)" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 9, flexWrap: "wrap" }}>
+            <span aria-hidden style={{ color: "var(--st-warn)", fontWeight: 800 }}>⚠</span>
+            <span style={{ fontWeight: 800, fontSize: "0.84rem" }}>
+              This wave splits {split.length} group{split.length === 1 ? "" : "s"} of machines that look related
+            </span>
+          </div>
+          {split.map((g) => (
+            <div key={g.id} style={{ marginTop: 7, fontSize: "0.78rem" }}>
+              <div><b>{g.inWave.join(", ")}</b> — {g.message}</div>
+              <div style={{ color: "var(--text2)", fontSize: "0.73rem" }}>
+                They {g.because}. <span style={{ opacity: .8 }}>({g.confidence} confidence)</span>
+              </div>
+              <button onClick={() => {
+                // Pull the rest in with the recommended method, which is what
+                // the warning is for — it should be one click to act on.
+                const next = { ...selected };
+                for (const name of g.leftBehind) {
+                  const r = rows.find((x) => x.name === name);
+                  if (r) next[keyOf(r)] = byName[name]?.strategy === "warm" && r.warmEligible ? "warm" : "cold";
+                }
+                set(next);
+              }} style={{ ...btn(), marginTop: 4 }}>
+                Add {g.leftBehind.length} more to this wave
+              </button>
+            </div>
+          ))}
+          <div style={{ fontSize: "0.71rem", color: "var(--text2)", marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 7 }}>
+            Inferred from addresses, names, vCenter folders and datastores — a suggestion to check, not a fact.
+            Migrate them together, or confirm the split is safe for the gap between waves.
+          </div>
+        </div>
+      )}
 
       {/* ── Where it lands ───────────────────────────────────────────────── */}
       <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "11px 13px", background: "var(--card)" }}>
