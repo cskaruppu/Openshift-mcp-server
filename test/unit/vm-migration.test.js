@@ -972,3 +972,67 @@ test("the AI record travels with the plan, so a later change request still has i
   }]).groups[0];
   assert.equal(buildPlanManifest(plain, { targetProvider: "h" }).metadata.annotations["tcs.agentic-ai/ai-provenance"], undefined);
 });
+
+// ── VDDK ────────────────────────────────────────────────────────────────────
+// Red Hat's guidance is unambiguous: create a VDDK init image. It accelerates
+// the transfer, reduces the risk of a plan failing, and a vSAN-backed VM will
+// not migrate without it at all.
+
+test("the measured throughput belongs to the configuration in force, and the other side is derived", async () => {
+  const { vddkComparison, vddkSpeedup } = await import("../../src/services/vm-migration.js");
+  const vms = [{ name: "a", diskGiB: 600 }];
+  const ratio = vddkSpeedup();
+
+  // Configured: what we measured IS the with-VDDK figure; without is slower.
+  const on = vddkComparison(vms, { strategy: "cold", throughputMBps: 60, vddkConfigured: true });
+  assert.equal(on.configured, true);
+  assert.equal(on.inUse, "with");
+  assert.ok(on.withoutVddk.wallClockMinutes.likely > on.withVddk.wallClockMinutes.likely,
+    "without VDDK must never look faster than with");
+  assert.match(on.basis, /Measured on this cluster WITH VDDK/);
+
+  // Not configured: what we measured is the WITHOUT figure; with is faster.
+  const off = vddkComparison(vms, { strategy: "cold", throughputMBps: 60, vddkConfigured: false });
+  assert.equal(off.inUse, "without");
+  assert.ok(off.withVddk.wallClockMinutes.likely < off.withoutVddk.wallClockMinutes.likely);
+  assert.match(off.basis, /Measured on this cluster WITHOUT VDDK/);
+
+  // The measured side is identical in both — only the derived side moves.
+  assert.equal(on.withVddk.wallClockMinutes.likely, off.withoutVddk.wallClockMinutes.likely,
+    "60 MiB/s is 60 MiB/s; only which label it carries changes");
+  assert.equal(on.ratio, ratio);
+});
+
+test("the speed-up is labelled as an assumption, never presented as measured", async () => {
+  const { vddkComparison } = await import("../../src/services/vm-migration.js");
+  const c = vddkComparison([{ name: "a", diskGiB: 100 }], { throughputMBps: 60, vddkConfigured: true });
+  assert.match(c.assumption, /assumption, not a measurement/);
+  assert.match(c.assumption, /MTV_VDDK_SPEEDUP/, "and it says how to correct it");
+
+  // With nothing measured at all, that is said too.
+  const none = vddkComparison([{ name: "a", diskGiB: 100 }], { throughputMBps: null, vddkConfigured: false });
+  assert.match(none.basis, /No completed migration to measure/);
+});
+
+test("a missing VDDK image is a fleet finding, and cites the vSAN hard stop", async () => {
+  const { analyseFleet, fleetRemediation } = await import("../../src/services/vm-migration.js");
+  const a = analyseFleet([
+    { name: "ok", guestOS: "rhel9_64Guest", guestId: "rhel9_64Guest", diskGiB: 40, concerns: [] },
+  ]);
+  const withOut = fleetRemediation(a, { vddkConfigured: false }).find((f) => /VDDK/.test(f.title));
+  assert.ok(withOut, "no VDDK is worth saying");
+  assert.match(withOut.detail, /vSAN will not migrate without it/);
+  assert.match(withOut.action, /blocker rather than a slow path/);
+
+  // Configured, or simply unknown, produces no finding — silence beats a guess.
+  assert.equal(fleetRemediation(a, { vddkConfigured: true }).find((f) => /VDDK/.test(f.title)), undefined);
+  assert.equal(fleetRemediation(a).find((f) => /VDDK/.test(f.title)), undefined);
+});
+
+test("a provider that could not be read is not reported as unconfigured", async () => {
+  const { providerVddk } = await import("../../src/services/vm-migration.js");
+  // No cluster in a unit test, so the lookup finds nothing.
+  const r = await providerVddk("does-not-exist");
+  assert.equal(r.found, false);
+  assert.equal(r.configured, null, "null is 'we do not know'; false would be a claim");
+});

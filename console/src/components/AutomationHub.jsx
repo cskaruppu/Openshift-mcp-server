@@ -28,6 +28,33 @@ export function AutomationHub({ open, onClose }) {
   const activeCluster = useActiveCluster();
   const [agent, setAgent] = useState("sop"); // sop | snow
   const [clusters, setClusters] = useState([]);
+  // Presentation mode: this panel gets demoed on a shared screen, where 0.78rem
+  // inside a 1320px modal inside the dashboard chrome is unreadable.
+  const [presenting, setPresenting] = useState(() => {
+    try { return localStorage.getItem("ah-presenting") === "1"; } catch { return false; }
+  });
+  const [showNotes, setShowNotes] = useState(false);
+
+  useEffect(() => {
+    try { localStorage.setItem("ah-presenting", presenting ? "1" : "0"); } catch { /* private window */ }
+  }, [presenting]);
+
+  useEffect(() => {
+    if (!open || !presenting) return undefined;
+    // Everything here is sized in rem, and rem is relative to <html> — not to a
+    // parent — so the scale has to be applied there. Restored on exit, and the
+    // dashboard chrome is hidden while it applies, so nothing else is affected.
+    const previous = document.documentElement.style.fontSize;
+    document.documentElement.style.fontSize = "19.2px";     // 120% of the 16px default
+    // Escape leaves presentation mode rather than closing the panel — losing
+    // your place mid-demo because you wanted normal text would be worse.
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); setPresenting(false); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      document.documentElement.style.fontSize = previous;
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [open, presenting]);
 
   useEffect(() => {
     if (!open) return;
@@ -41,9 +68,23 @@ export function AutomationHub({ open, onClose }) {
   if (!open) return null;
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,14,25,0.62)", backdropFilter: "blur(7px)", WebkitBackdropFilter: "blur(7px)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", animation: "ah-fade .16s ease" }}>
-      <style>{`@keyframes ah-fade{from{opacity:0}to{opacity:1}}@keyframes ah-pop{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}`}</style>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: agent === "mig" ? "min(1320px, 97vw)" : "min(1040px, 96vw)", height: "min(760px, 90vh)", minHeight: 520, background: "var(--bg, #fff)", border: "1px solid var(--border, #e4e8f1)", borderRadius: 18, boxShadow: "0 24px 70px rgba(0,0,0,0.4)", display: "flex", flexDirection: "column", overflow: "hidden", animation: "ah-pop .2s cubic-bezier(.2,.7,.3,1)" }}>
+    <div onClick={presenting ? undefined : onClose} style={{ position: "fixed", inset: 0,
+      background: presenting ? "var(--bg,#fff)" : "rgba(10,14,25,0.62)",
+      backdropFilter: presenting ? "none" : "blur(7px)", WebkitBackdropFilter: presenting ? "none" : "blur(7px)",
+      zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center",
+      padding: presenting ? 0 : "24px", animation: "ah-fade .16s ease" }}>
+      <style>{`@keyframes ah-fade{from{opacity:0}to{opacity:1}}@keyframes ah-pop{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
+        /* Explanatory prose is essential in the printed pack and noise on a
+           screen someone is talking over. Hidden by default while presenting,
+           one click away. */
+        .ah-terse [data-prose]{display:none !important}`}</style>
+      <div onClick={(e) => e.stopPropagation()} className={presenting && !showNotes ? "ah-terse" : undefined}
+        style={{ width: presenting ? "100vw" : agent === "mig" ? "min(1320px, 97vw)" : "min(1040px, 96vw)",
+        height: presenting ? "100vh" : "min(760px, 90vh)", minHeight: presenting ? 0 : 520,
+        background: "var(--bg, #fff)", border: presenting ? "none" : "1px solid var(--border, #e4e8f1)",
+        borderRadius: presenting ? 0 : 18, boxShadow: presenting ? "none" : "0 24px 70px rgba(0,0,0,0.4)",
+        display: "flex", flexDirection: "column", overflow: "hidden",
+        animation: presenting ? "none" : "ah-pop .2s cubic-bezier(.2,.7,.3,1)" }}>
         {/* Header with gradient accent */}
         <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "18px 22px", borderBottom: "1px solid var(--border,#e4e8f1)", background: "linear-gradient(90deg, rgba(61,90,254,0.07), rgba(14,165,160,0.05))" }}>
           <span style={{ width: 40, height: 40, borderRadius: 11, background: "linear-gradient(135deg,#3d5afe,#7a3dff 55%,#0ea5a0)", display: "grid", placeItems: "center", fontSize: "1.25rem", boxShadow: "0 6px 16px rgba(61,90,254,0.35)" }}>🤖</span>
@@ -51,6 +92,21 @@ export function AutomationHub({ open, onClose }) {
             <div style={{ fontWeight: 800, fontSize: "1.12rem", color: "var(--fg,#151a29)", letterSpacing: "-0.01em" }}>Automation Hub</div>
             <div style={{ fontSize: "0.78rem", color: "var(--muted,#5a6373)" }}>Fleet-wide agent-driven deployment &amp; incident remediation</div>
           </div>
+          {presenting && (
+            <button onClick={() => setShowNotes((v) => !v)} title="Show or hide the explanatory notes"
+              style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)",
+                fontSize: "0.78rem", fontWeight: 700, cursor: "pointer", color: "var(--muted,#5a6373)", fontFamily: "inherit" }}>
+              {showNotes ? "Hide notes" : "ⓘ Show notes"}
+            </button>
+          )}
+          <button onClick={() => setPresenting((v) => !v)}
+            title={presenting ? "Leave presentation mode (Esc)" : "Full screen, larger text, fewer notes — for screen sharing"}
+            style={{ padding: "6px 12px", borderRadius: 8, fontSize: "0.78rem", fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+              border: presenting ? "none" : "1px solid var(--border,#e4e8f1)",
+              background: presenting ? "#3d5afe" : "var(--card-bg,#fff)",
+              color: presenting ? "#fff" : "var(--muted,#5a6373)" }}>
+            {presenting ? "⤢ Exit presentation" : "⤢ Present"}
+          </button>
           <button onClick={onClose} title="Close" style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", fontSize: "1.15rem", cursor: "pointer", color: "var(--muted,#5a6373)", lineHeight: 1 }}>×</button>
         </div>
         {/* Segmented agent switcher */}
@@ -1217,7 +1273,7 @@ function MigrationAgent({ clusters, activeCluster }) {
     try {
       const strategies = {};
       for (const { vm, strategy } of selection) strategies[vm.name] = strategy;
-      setEstimate(await post("/api/migration/assess", { vms: selection.map((s) => s.vm), strategies }));
+      setEstimate(await post("/api/migration/assess", { vms: selection.map((s) => s.vm), strategies, provider }));
     } catch (e) { showToast(e.message, "err"); }
     finally { setBusy(null); }
   };
@@ -1316,7 +1372,7 @@ function MigrationAgent({ clusters, activeCluster }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ fontSize: "0.86rem", color: "var(--muted,#5a6373)" }}>
+      <div data-prose style={{ fontSize: "0.86rem", color: "var(--muted,#5a6373)" }}>
         Migrate virtual machines into OpenShift Virtualization with the <b>Migration Toolkit for Virtualization</b>.
         Discover what is on the source platform, choose a strategy per machine, and the agent groups the selection into the
         plans MTV accepts. Nothing moves until a plan is created, validated and started — and <b>the source VM is never deleted</b>.
@@ -1478,7 +1534,7 @@ function MigrationAgent({ clusters, activeCluster }) {
                 style={{ ...S, background: "#3d5afe", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", padding: "8px 16px" }}>
                 {busy === "analyse" ? "Analysing…" : `Analyse all ${vms.length} VM(s) →`}
               </button>
-              <span style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)" }}>
+              <span data-prose style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)" }}>
                 Checks every guest against the OpenShift Virtualization support matrix and MTV's own validation. Read-only — you choose what migrates after reading the report.
               </span>
             </div>
@@ -1533,30 +1589,75 @@ function MigrationAgent({ clusters, activeCluster }) {
                   : "No completed migrations on this cluster yet, so this uses a conservative default"}
               </span>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10, marginTop: 9 }}>
-              {[["cold", estimate?.estimate?.cold], ["warm", estimate?.estimate?.warm]].map(([kind, est]) => (
-                est?.vmCount ? (
-                  <div key={kind} style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 9, padding: "9px 11px" }}>
-                    <div style={{ fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted,#5a6373)" }}>
-                      {kind} · {est.vmCount} VM{est.vmCount === 1 ? "" : "s"} · {gb(est.totalGiB)}
-                    </div>
-                    <div style={{ fontSize: "1.35rem", fontWeight: 800, marginTop: 2 }}>
-                      {mins(est.wallClockMinutes?.likely)}
-                      <span style={{ fontSize: "0.76rem", fontWeight: 600, color: "var(--muted,#5a6373)" }}>
-                        {" "}transfer ({mins(est.wallClockMinutes?.low)}–{mins(est.wallClockMinutes?.high)})
-                      </span>
-                    </div>
-                    {/* Downtime is the number people actually schedule around,
-                        and for warm it is nothing like the transfer time. */}
-                    <div style={{ fontSize: "0.77rem", marginTop: 2 }}>
-                      Downtime: <b>{mins(est.downtimeMinutes?.likely)}</b>
-                      <span style={{ color: "var(--muted,#5a6373)" }}> ({mins(est.downtimeMinutes?.low)}–{mins(est.downtimeMinutes?.high)})</span>
-                    </div>
-                    <div style={{ fontSize: "0.71rem", color: "var(--muted,#5a6373)", marginTop: 3 }}>{est.note}</div>
+            {/* Both paths, always. The VDDK image is the single biggest lever
+                on transfer speed, and "configure it" lands very differently as
+                a number than as a documentation link. */}
+            {["cold", "warm"].map((kind) => {
+              const cmp = estimate?.vddkComparison?.[kind];
+              const est = estimate?.estimate?.[kind];
+              if (!est?.vmCount) return null;
+              const configured = estimate?.vddk?.configured;
+              const cell = (label, e, inUse) => (
+                <div style={{
+                  border: `1px solid ${inUse ? "rgba(61,90,254,.5)" : "var(--border,#e4e8f1)"}`,
+                  background: inUse ? "rgba(61,90,254,.06)" : "transparent",
+                  borderRadius: 9, padding: "9px 11px", flex: "1 1 220px", minWidth: 200,
+                }}>
+                  <div style={{ fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em",
+                    color: inUse ? "#7c8cff" : "var(--muted,#5a6373)" }}>
+                    {label}{inUse ? " · in use" : ""}
                   </div>
-                ) : null
-              ))}
-            </div>
+                  <div style={{ fontSize: "1.35rem", fontWeight: 800, marginTop: 2 }}>
+                    {mins(e?.wallClockMinutes?.likely)}
+                    <span style={{ fontSize: "0.76rem", fontWeight: 600, color: "var(--muted,#5a6373)" }}>
+                      {" "}transfer ({mins(e?.wallClockMinutes?.low)}–{mins(e?.wallClockMinutes?.high)})
+                    </span>
+                  </div>
+                  {/* Downtime is the number people actually schedule around,
+                      and for warm it is nothing like the transfer time. */}
+                  <div style={{ fontSize: "0.77rem", marginTop: 2 }}>
+                    Downtime: <b>{mins(e?.downtimeMinutes?.likely)}</b>
+                    <span style={{ color: "var(--muted,#5a6373)" }}> ({mins(e?.downtimeMinutes?.low)}–{mins(e?.downtimeMinutes?.high)})</span>
+                  </div>
+                </div>
+              );
+              return (
+                <div key={kind} style={{ marginTop: 11 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 9, flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 800, fontSize: "0.82rem", textTransform: "capitalize" }}>{kind}</span>
+                    <span style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)" }}>
+                      {est.vmCount} VM{est.vmCount === 1 ? "" : "s"} · {gb(est.totalGiB)}
+                    </span>
+                    {configured != null && (
+                      <span style={{ fontSize: "0.72rem", fontWeight: 700, padding: "2px 8px", borderRadius: 999,
+                        background: configured ? "var(--st-good-bg)" : "var(--st-warn-bg)",
+                        color: configured ? "var(--st-good)" : "var(--st-warn)" }}>
+                        {configured ? "✓ VDDK configured" : "⚠ no VDDK image"}
+                      </span>
+                    )}
+                  </div>
+                  {cmp ? (
+                    <>
+                      <div style={{ display: "flex", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
+                        {cell("With VDDK", cmp.withVddk, cmp.configured === true)}
+                        {cell("Without VDDK", cmp.withoutVddk, cmp.configured === false)}
+                      </div>
+                      {configured === false && (
+                        <div style={{ fontSize: "0.78rem", color: "var(--st-warn)", marginTop: 5 }}>
+                          ⚠ Configuring the VDDK image would take this from {mins(cmp.withoutVddk?.wallClockMinutes?.likely)} to{" "}
+                          {mins(cmp.withVddk?.wallClockMinutes?.likely)} — and a VM backed by vSAN will not migrate without it at all.
+                        </div>
+                      )}
+                      <div data-prose style={{ fontSize: "0.71rem", color: "var(--muted,#5a6373)", marginTop: 4 }}>
+                        {cmp.basis} {cmp.assumption} {est.note}
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ display: "flex", gap: 10, marginTop: 6 }}>{cell("Estimate", est, true)}</div>
+                  )}
+                </div>
+              );
+            })}
             <div style={{ display: "flex", gap: 9, marginTop: 10 }}>
               <button onClick={() => setStep(3)} style={{ ...S, padding: "6px 12px", fontSize: "0.78rem", fontWeight: 700, cursor: "pointer" }}>
                 ← Change the wave
@@ -1580,7 +1681,7 @@ function MigrationAgent({ clusters, activeCluster }) {
                 </div>
               ))}
               {(preview.errors || []).map((e, i) => <div key={i} style={{ color: "#dc2626", fontSize: "0.78rem", marginTop: 3 }}>✖ {e.message}</div>)}
-              <div style={{ fontSize: "0.71rem", color: "var(--muted,#5a6373)", marginTop: 6 }}>
+              <div data-prose style={{ fontSize: "0.71rem", color: "var(--muted,#5a6373)", marginTop: 6 }}>
                 Warm/cold, the provider, both maps and the target namespace are plan-level in MTV, so a mixed selection becomes several plans.
                 Windows and Linux are split as well — they need different preparation and verification, and are almost always cut over in
                 separate windows, so a plan that mixed them could not be handed to either team.

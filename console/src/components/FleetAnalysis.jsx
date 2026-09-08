@@ -247,7 +247,7 @@ function CapacityPanel({ capacity }) {
 
       {/* The assumptions, stated. A capacity number without them is a guess
           wearing a suit. */}
-      <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: "0.7rem", color: "var(--text2)" }}>
+      <ul data-prose style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: "0.7rem", color: "var(--text2)" }}>
         {(capacity.notes || []).map((n, i) => <li key={i}>{n}</li>)}
       </ul>
     </div>
@@ -367,7 +367,7 @@ function FidelityPanel({ fidelity }) {
         </div>
       )}
       {note && <div style={{ fontSize: "0.72rem", color: "var(--text2)", marginTop: 8 }}>{note}</div>}
-      <div style={{ fontSize: "0.7rem", color: "var(--text2)", marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 7 }}>
+      <div data-prose style={{ fontSize: "0.7rem", color: "var(--text2)", marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 7 }}>
         Every migrated VM lands as a <b>Burstable</b> pod: scheduled on its request, evictable under node pressure.
         The guest still sees the CPU count it always had — only the scheduler's view of it changes.
       </div>
@@ -559,7 +559,7 @@ export default function FleetAnalysis({
           </div>
         ))}
 
-        <div style={{ fontSize: "0.7rem", color: "var(--text2)", borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+        <div data-prose style={{ fontSize: "0.7rem", color: "var(--text2)", borderTop: "1px solid var(--border)", paddingTop: 8 }}>
           Levels combine Red Hat's certified guest list{matrix?.asOf ? ` (read ${matrix.asOf})` : ""} with MTV's own validation of each VM.
           {" "}Red Hat publishes three tiers: <b style={{ color: "var(--st-good)" }}>certified</b> (Red Hat supports you on it),
           {" "}<b style={{ color: "var(--st-warn)" }}>vendor supported</b> (Oracle, SUSE or Canonical does), and
@@ -578,7 +578,7 @@ export default function FleetAnalysis({
       <div style={{ border: "1px solid var(--border)", borderRadius: 10, background: "var(--card)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap", padding: "11px 13px 8px" }}>
           <span style={{ fontWeight: 800, fontSize: "0.84rem" }}>Every VM, and what it needs</span>
-          <span style={{ fontSize: "0.75rem", color: "var(--text2)" }}>
+          <span data-prose style={{ fontSize: "0.75rem", color: "var(--text2)" }}>
             Click a row to see every action for that machine
           </span>
           <span style={{

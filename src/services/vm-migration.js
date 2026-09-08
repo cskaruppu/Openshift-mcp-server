@@ -131,6 +131,10 @@ export async function checkMtvReadiness() {
     isSource: SOURCE_TYPES.has((p.spec?.type || "").toLowerCase()),
     ready: isTrue(p, "Ready"),
     connected: isTrue(p, "ConnectionTested") || isTrue(p, "Ready"),
+    // The VDDK init image: optional in MTV, strongly recommended by Red Hat,
+    // and a hard requirement for anything on vSAN. Read from the provider we
+    // are already fetching, so detecting it costs nothing.
+    vddkImage: p.spec?.settings?.vddkInitImage || null,
     reason: cond(p, "Ready")?.message || cond(p, "ConnectionTested")?.message || null,
   }));
   const sources = providers.filter((p) => p.isSource);
@@ -655,6 +659,74 @@ export function assessSupportability(vm = {}, { targetFreeGiB = null, capacity =
 }
 
 // ---------------------------------------------------------------------------
+// 2b-2. VDDK — the single biggest lever on transfer speed
+// ---------------------------------------------------------------------------
+/**
+ * MTV can migrate from vSphere with or without the VMware VDDK init image.
+ * Red Hat's guidance is unambiguous: create one. It accelerates the transfer
+ * and reduces the risk of a plan failing — and a VM backed by vSAN will not
+ * migrate without it at all.
+ *
+ * The agent detects whether it is configured, and shows both estimates so the
+ * choice is a number rather than a doc link. What it will NOT do is invent the
+ * speed difference: the ratio is a named, printed assumption until this cluster
+ * has measured its own, exactly like the transfer estimate itself.
+ *
+ * Default 3, overridable with MTV_VDDK_SPEEDUP.
+ */
+/** Whether a source provider has a VDDK init image set. */
+export async function providerVddk(uid) {
+  const list = await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/providers`).catch(() => ({ items: [] }));
+  const p = (list.items || []).find((x) => x.metadata?.uid === uid || x.metadata?.name === uid);
+  const image = p?.spec?.settings?.vddkInitImage || null;
+  // "Not found" is not "not configured" — an unreachable provider must not be
+  // reported as one without a VDDK image.
+  return { found: !!p, configured: p ? !!image : null, image };
+}
+
+export function vddkSpeedup() {
+  const n = Number(process.env.MTV_VDDK_SPEEDUP);
+  return Number.isFinite(n) && n >= 1 ? n : 3;
+}
+
+/**
+ * The same wave costed both ways. Pure.
+ *
+ * `measured` throughput was achieved under whatever configuration is in force
+ * today, so it is the WITH figure when VDDK is configured and the WITHOUT
+ * figure when it is not — deriving the other one from it, rather than assuming
+ * the measurement applies to both.
+ *
+ * @param {Array} vms
+ * @param {{strategy, throughputMBps, concurrency, vddkConfigured}} opts
+ */
+export function vddkComparison(vms = [], {
+  strategy = "cold", throughputMBps = null, concurrency = 2, vddkConfigured = false,
+} = {}) {
+  const ratio = vddkSpeedup();
+  const withMBps = throughputMBps == null ? null
+    : vddkConfigured ? throughputMBps : throughputMBps * ratio;
+  const withoutMBps = throughputMBps == null ? null
+    : vddkConfigured ? throughputMBps / ratio : throughputMBps;
+
+  const est = (mbps) => estimateMigration(vms, { strategy, throughputMBps: mbps, concurrency });
+  return {
+    configured: vddkConfigured,
+    ratio,
+    inUse: vddkConfigured ? "with" : "without",
+    withVddk: est(withMBps),
+    withoutVddk: est(withoutMBps),
+    // Said plainly, because it is the whole point of showing two numbers.
+    basis: throughputMBps == null
+      ? `No completed migration to measure, so both figures come from a conservative default, scaled by an assumed ${ratio}× VDDK speed-up.`
+      : vddkConfigured
+        ? `Measured on this cluster WITH VDDK. The without-VDDK figure divides it by an assumed ${ratio}×.`
+        : `Measured on this cluster WITHOUT VDDK. The with-VDDK figure multiplies it by an assumed ${ratio}×.`,
+    assumption: `The ${ratio}× ratio is an assumption, not a measurement. Set MTV_VDDK_SPEEDUP to match what you observe.`,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // 2c. Time estimate — MTV does not give one, and it is the first thing asked
 // ---------------------------------------------------------------------------
 /**
@@ -1072,7 +1144,7 @@ export function vmRemediation(row = {}) {
  * Every suggestion names the VMs it applies to — advice you cannot act on
  * because you do not know which machines it means is not advice.
  */
-export function fleetRemediation(analysis) {
+export function fleetRemediation(analysis, opts = {}) {
   const out = [];
   const rows = analysis?.rows || [];
   const named = (list, n = 4) => list.slice(0, n).map((r) => r.name).join(", ")
@@ -1137,6 +1209,17 @@ export function fleetRemediation(analysis) {
       vms: unknown.map((r) => r.name),
       detail: `${named(unknown)} — vCenter reports no guest OS, usually because VMware Tools is not running.`,
       action: "Start VMware Tools and refresh the provider inventory so these can be assessed instead of guessed.",
+    });
+  }
+
+  // 4b. No VDDK is not a style preference: it is slower, less reliable, and a
+  //     hard stop for anything on vSAN.
+  if (opts.vddkConfigured === false) {
+    out.push({
+      severity: "serious", title: "No VDDK image is configured on the source provider",
+      vms: rows.map((r) => r.name),
+      detail: "Red Hat recommends a VDDK init image for vSphere: it accelerates the transfer and reduces the risk of a plan failing. A VM backed by vSAN will not migrate without it at all.",
+      action: "Build the VDDK init image and set it on the provider before the wave. If any of these machines are on vSAN storage, this is a blocker rather than a slow path.",
     });
   }
 
@@ -1236,8 +1319,8 @@ export function aiProvenance(usages = [], { overrides = 0, adviceSource = null, 
  * LLM may add sequencing/wave advice on top, but it cannot remove or contradict
  * a finding — same "model advises, code decides" contract as adviseMigration().
  */
-export async function adviseFleet(analysis, { reportId = null } = {}) {
-  const base = fleetRemediation(analysis);
+export async function adviseFleet(analysis, { reportId = null, vddkConfigured = undefined } = {}) {
+  const base = fleetRemediation(analysis, { vddkConfigured });
   if (!llmEnabled() || !analysis?.total) return { source: "heuristic", suggestions: base };
 
   const digest = {

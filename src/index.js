@@ -2861,9 +2861,21 @@ async function startSSE() {
           // rather than quoting a vendor number.
           const throughput = (await withClusterContext(url, async () => mig.clusterThroughput()))
             || { mbps: null, samples: 0, basis: "Selected cluster is not reachable." };
+          const vddkCfg = body.provider
+            ? await withClusterContext(url, async () => mig.providerVddk(body.provider)).catch(() => null)
+            : null;
+          const coldVms = vms.filter((v) => (body.strategies || {})[v.name] !== "warm");
+          const warmVms = vms.filter((v) => (body.strategies || {})[v.name] === "warm");
           return sendJson(res, 200, {
             supportability: vms.map((v) => mig.assessSupportability(v, { targetFreeGiB: body.targetFreeGiB ?? null })),
             throughput,
+            vddk: vddkCfg,
+            // The same wave costed both ways, so the choice is a number rather
+            // than a documentation link.
+            vddkComparison: {
+              cold: coldVms.length ? mig.vddkComparison(coldVms, { strategy: "cold", throughputMBps: throughput.mbps, concurrency: body.concurrency || 2, vddkConfigured: vddkCfg?.configured === true }) : null,
+              warm: warmVms.length ? mig.vddkComparison(warmVms, { strategy: "warm", throughputMBps: throughput.mbps, concurrency: body.concurrency || 2, vddkConfigured: vddkCfg?.configured === true }) : null,
+            },
             estimate: {
               cold: mig.estimateMigration(vms.filter((v) => (body.strategies || {})[v.name] !== "warm"), { strategy: "cold", throughputMBps: throughput.mbps, concurrency: body.concurrency || 2 }),
               warm: mig.estimateMigration(vms.filter((v) => (body.strategies || {})[v.name] === "warm"), { strategy: "warm", throughputMBps: throughput.mbps, concurrency: body.concurrency || 2 }),
@@ -2906,10 +2918,16 @@ async function startSSE() {
           // call carries it and the usage can be attributed to this assessment
           // rather than to "some run, some time today".
           const reportId = store.reportId();
+          // Whether the source provider has a VDDK image decides both the
+          // estimate and whether a vSAN-backed VM can migrate at all.
+          const vddk = body.provider
+            ? await withClusterContext(url, async () => mig.providerVddk(body.provider)).catch(() => null)
+            : null;
+          analysis.vddk = vddk;
           const [advice, perVm] = body.suggest === false
             ? [{ source: "skipped", suggestions: [] }, { source: "skipped", advice: [] }]
             : await Promise.all([
-                mig.adviseFleet(analysis, { reportId }),
+                mig.adviseFleet(analysis, { reportId, vddkConfigured: vddk?.configured }),
                 mig.adviseMigration(vms, { reportId }),
               ]);
           analysis.ai = mig.aiProvenance([advice.usage, perVm.usage], {
