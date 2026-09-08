@@ -141,32 +141,78 @@ const RM = { t: "🔶 ROADMAP", b: true, c: C.darkAmber, bg: C.lightAmber };
   r = note(ws, r, 3, "clampAdvice() downgrades a warm recommendation for a VM without changed block tracking before it can reach a plan. powerPlan() overrules a model that claims a cold migration stays online. Physics wins.", C.lightPurple, "5B21B6");
 }
 
-// ═══ 3. WORKFLOW ════════════════════════════════════════════════════════════
+// ═══ 3. WORKFLOW BY ACTOR ═══════════════════════════════════════════════════
 {
-  const ws = wb.addWorksheet("3. Workflow", { properties: { tabColor: { argb: "FF" + C.tcsBlue } } });
-  ws.columns = [{ width: 8 }, { width: 26 }, { width: 18 }, { width: 74 }];
-  let r = banner(ws, "Master workflow — four steps, because they are four decisions",
-    "Discovery is read-only. Strategy is chosen last: picking warm or cold before you know a VM is supported is a decision made in the dark.", 4);
-  r = headerRow(ws, r, ["Step", "Stage", "Actor", "What happens"]);
+  const ws = wb.addWorksheet("3. Workflow by Actor", { properties: { tabColor: { argb: "FF" + C.tcsBlue } } });
+  ws.columns = [{ width: 7 }, { width: 32 }, { width: 17 }, { width: 66 }, { width: 26 }];
+  let r = banner(ws, "Every step, and who performs it — 22 deterministic · 8 manual · 2 AI",
+    "If a row says deterministic, no model was involved in producing it. Discovery is read-only; strategy is chosen last; both irreversible acts stay human.", 5);
+  r = headerRow(ws, r, ["#", "Step", "Actor", "What happens", "Where it lives"]);
   r = dataRows(ws, r, [
-    ["1", "Discover", AU, "Read-only inventory from the MTV provider: guest OS, IP addresses, vCPU, memory, per-disk detail. vSphere guestIds are decoded — windows2019srvNext_64Guest is Server 2022, not 2019."],
-    ["2a", "Guest OS support", AU, "Every discovered VM against Red Hat's certified list. Three tiers: certified, vendor supported, known to run."],
-    ["2b", "Source readiness", AU, "15 checks per machine: snapshots, independent disks, RDM, shared disks, Fault Tolerance, vTPM, Secure Boot, passthrough devices, NIC coverage, VMware Tools. A check with no data is reported unchecked, never as a pass."],
-    ["2c", "Target capacity", AU, "Will the wave fit, and will each machine schedule on ONE node? Counts only Ready, uncordoned, virt-schedulable nodes, using pod requests rather than live utilisation."],
-    ["2d", "Resource fidelity", AU, "vCPU assigned vs CPU requested at the cluster's overcommit ratio; which VMs lose a reservation they hold today."],
-    ["2e", "Drift", AU, "What improved, regressed, arrived or left since the last assessment for this provider."],
-    ["2f", "Method advice", AI, "Warm or cold per VM with a one-sentence reason, plus what happens to the source machine during the copy."],
-    ["2g", "Evidence pack", AU, "Report ID, timestamp, source, target cluster, matrix version — exported as printable HTML or a CSV register."],
-    ["3", "Select & strategy", MA, "Tick the wave and set warm/cold. Eligible VMs are pre-ticked; blocked ones are behind a toggle. Warm is offered only where it can work."],
-    ["3b", "Move-together check", AU, "Warns when the wave splits a group of machines that look like one system, with the evidence and a one-click fix."],
-    ["4a", "Estimate", AU, "Transfer time and downtime, measured from migrations this cluster has already completed."],
-    ["4b", "Create Plan(s)", AU, "Grouped by the five dimensions MTV forces, plus operating system. MTV validates. Nothing moves."],
-    ["4c", "Change request", AU, "Raised per Plan, quoting that plan's own footprint, transfer time and downtime. Recorded as annotations ON the Plan."],
-    ["4d", "Approval", MA, "The CAB decides. Migrate stays disabled until the gate says approved, and the server re-reads it on every call."],
-    ["4e", "Migrate & verify", AU, "Transfer with a live ETA measured from bytes actually moving, then verification on the target."],
-    ["4f", "Rollback", MA, "Deletes only what the migration created. The source VMs are never deleted."],
-  ], { height: 46 });
-  note(ws, r, 4, "Nothing moves until a Plan is created, validated, and a change request is approved.", C.lightGreen, C.darkGreen);
+    ["1.1", "Choose the source provider", MA, "The operator picks a registered MTV provider.", "Console"],
+    ["1.2", "Discover VMs", AU, "Read-only inventory call to MTV. Nothing is written to vCenter.", "discoverVMs"],
+    ["1.3", "Normalise each VM", AU, "IPs filtered of loopback/link-local, per-disk detail, MAC, firmware, reservation facts.", "normaliseInventoryVM"],
+    ["1.4", "Decode the guest id", AU, "windows2019srvNext_64Guest → Windows Server 2022, from a lookup table rather than a regex over the text.", "expandGuestId"],
+    ["2.1", "Classify the guest OS", AU, "Matched against Red Hat's certified list; three tiers.", "classifyGuestOS"],
+    ["2.2", "Run 15 source checks", AU, "Snapshots, independent disks, RDM, shared disks, FT, vTPM, Secure Boot, devices, NIC coverage, VMware Tools.", "runSourceChecks"],
+    ["2.3", "Read target capacity", AU, "Node allocatable minus pod requests, counting only Ready, uncordoned, virt-schedulable nodes.", "readClusterCapacity"],
+    ["2.4", "Decide each VM's level", AU, "The worse of the guest matrix verdict and MTV's own concerns.", "analyseFleet"],
+    ["2.5", "Resource fidelity", AU, "vCPU assigned vs CPU requested at the cluster's overcommit ratio; reservations lost.", "resourceFidelity"],
+    ["2.6", "Move-together groups", AU, "Inference from subnet, name shape, vCenter folder and datastore, with the evidence kept.", "affinityGroups"],
+    ["2.7", "Drift vs the last run", AU, "Pure diff against the stored baseline for this provider.", "diffAssessments"],
+    ["2.8", "Fleet findings", AU, "Blockers, EOL guests, VirtIO drivers, snapshots, cold-only bulk. Rules — always produced, LLM or not.", "fleetRemediation"],
+    ["2.9", "Warm or cold, per VM", AI, "THE JUDGEMENT CALL. Downtime traded against transfer complexity. See the 'AI Explained' sheet.", "adviseMigration"],
+    ["2.10", "Wave sequencing advice", AI, "At most 3 extra suggestions about ordering and risk, appended to 2.8. Cannot contradict it.", "adviseFleet"],
+    ["2.11", "Clamp the AI's answer", AU, "Physics overrules the model before anyone sees it: invented VMs dropped, impossible warm forced cold.", "clampAdvice, powerPlan"],
+    ["2.12", "Evidence pack", AU, "Report ID, timestamp, source, target cluster, matrix version → printable HTML and CSV register.", "assessment-report.js"],
+    ["2.13", "Validate the report", MA, "The operator reads it and decides whether it is true. Nothing proceeds without this.", "Console"],
+    ["3.1", "Choose the wave", MA, "Tick machines. Eligible ones are pre-ticked as a starting point, not a decision.", "Console"],
+    ["3.2", "Choose warm or cold", MA, "Pre-filled from 2.9; every value editable. Warm is only offered where it can physically work.", "Console"],
+    ["3.3", "Warn on split groups", AU, "Recomputed on every tick from 2.6 — 'db01 would stay on VMware'.", "splitGroups"],
+    ["3.4", "Target namespace and maps", MA, "Chosen from what the cluster actually has.", "Console"],
+    ["4.1", "Measure throughput", AU, "From migrations this cluster has already completed, not from a vendor figure.", "clusterThroughput"],
+    ["4.2", "Estimate the transfer", AU, "Per plan, from that plan's own recorded footprint. Transfer time and downtime stated separately.", "estimatePlan"],
+    ["4.3", "Group into plans", AU, "The five dimensions MTV forces, plus operating system so Windows and Linux never mix.", "planGroups"],
+    ["4.4", "Create the Plans", AU, "MTV validates them. Nothing moves.", "createPlans"],
+    ["4.5", "Raise the change request", AU, "The platform authors it: implementation, backout, test plan, and the outage being approved.", "raiseMigrationCR"],
+    ["4.6", "Approve", MA, "The CAB decides. This gate is not automatable by design.", "ServiceNow"],
+    ["4.7", "Check approval", AU, "Read from ServiceNow, written back onto the Plan as annotations.", "checkMigrationApproval"],
+    ["4.8", "Migrate", MA, "A human clicks. The server re-reads the gate from the cluster before acting.", "startMigration"],
+    ["4.9", "Transfer with a live ETA", AU, "Measured from bytes actually moving; says 'stalled' rather than growing a number.", "liveEta"],
+    ["4.10", "Verify on the target", AU, "Measured against the live cluster, never inferred.", "verifyMigration"],
+    ["4.11", "Roll back", MA, "Deletes only what the migration created. The source VMs are never deleted.", "rollbackMigration"],
+  ], { height: 32 });
+  note(ws, r, 5, "The ratio is the argument, not an apology: AI where judgement is genuinely required, measurement everywhere a fact exists, and a human on both irreversible acts.", C.lightPurple, "5B21B6");
+}
+
+// ═══ 3b. AI EXPLAINED ═══════════════════════════════════════════════════════
+{
+  const ws = wb.addWorksheet("3b. AI Explained", { properties: { tabColor: { argb: "FF" + C.aiPurple } } });
+  ws.columns = [{ width: 30 }, { width: 90 }];
+  let r = banner(ws, "How the AI works — the model advises, code decides, a human approves",
+    "Two touchpoints in 32 steps. Everything below describes what the code actually does, not an intention.", 2);
+
+  r = headerRow(ws, r, ["Aspect", "Detail"]);
+  r = dataRows(ws, r, [
+    ["Why only two steps", "Support verdicts, source checks, capacity, estimates and grouping are FACTS — about Red Hat's list, about this VM, about this cluster. A model would paraphrase a support statement into something subtly different, and a generated capacity figure is worthless. They must also be identical on every run, because a change board approves them."],
+    ["Touchpoint 1 — input", "Per VM, and only what the decision needs: name, poweredOn, diskGiB, diskCount, guestOS, cpu, memoryMB, changeTrackingEnabled. Capped at 40 VMs. No IP addresses, no MACs, no folder paths, no credentials."],
+    ["Touchpoint 1 — contract", "A system prompt defining warm and cold in operational terms (warm needs changed block tracking; cold is a consistent point-in-time copy), demanding JSON only, and stating: 'Never invent a VM that was not listed.'"],
+    ["Determinism", "classifyJSON at temperature 0. The same fleet gets the same advice. A malformed response returns null rather than throwing."],
+    ["Touchpoint 1 — output", "Per VM: strategy (warm|cold), a one-sentence reason, and a risk band."],
+    ["Guardrail — invented VMs", "A name we did not send is dropped. The model cannot add a machine to the wave."],
+    ["Guardrail — physics", "warm for a VM without changed block tracking is forced to cold, flagged '(corrected)' in the console, and the reason replaced with the real blocker."],
+    ["Guardrail — downtime", "The power outcome is NOT taken from the model. powerPlan() computes it from the strategy and the machine's current power state."],
+    ["Guardrail — enums and length", "risk outside low/medium/high becomes medium; the reason is truncated to 220 characters."],
+    ["Guardrail — coverage", "VMs the model skipped are filled in from the deterministic heuristic, so no machine is left without advice."],
+    ["Touchpoint 2 — input", "An already-computed analysis digest, containing NO VM names at all: totals, byLevel, totalDiskGiB, warmEligible, and per-family distribution counts."],
+    ["Touchpoint 2 — contract", "'You are given an ALREADY COMPUTED analysis. Do not re-classify support levels and do not contradict them. Add at most 3 suggestions about SEQUENCING and RISK.'"],
+    ["Touchpoint 2 — guardrail", "The deterministic findings are produced first and always returned. The model's suggestions are appended, capped at three, severity validated against an enum, text truncated, each tagged 'AI' in the console. It cannot delete a finding, reorder one, or change a verdict."],
+    ["Prompt injection", "Guest OS strings, VM names and MTV messages come from outside this system. Every prompt fences untrusted content between explicit markers, strips marker-lookalikes so the fence cannot be closed early, and carries a standing rule that fenced text is DATA and never instructions."],
+    ["Blast radius", "The model has NO TOOLS. It cannot call the cluster, read a secret, or write a manifest. It receives text and returns text; every side effect is performed by deterministic code after the clamp."],
+    ["With no LLM configured", "Nothing stops working. heuristicAdvice() and fleetRemediation() run alone and the console badge reads 'rule-based' instead of 'AI' rather than pretending. The same fallback catches a timeout, a malformed response or a provider outage, and shows the note 'AI advice unavailable: …' rather than swallowing it."],
+    ["The honesty test", "Turn the model off and see whether the product still tells the truth. Here it does — it gives less nuanced advice, and says so."],
+  ], { height: 56 });
+  note(ws, r, 2, "Nothing the model produces reaches a Plan, a change request or the cluster without passing through a deterministic clamp and, for anything irreversible, a person.", C.lightPurple, "5B21B6");
 }
 
 // ═══ 4. DIFFERENTIATION ═════════════════════════════════════════════════════

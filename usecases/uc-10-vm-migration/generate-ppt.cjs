@@ -208,6 +208,68 @@ function footNote(s, text, color) {
   footNote(s, "A warm recommendation for a VM without changed block tracking is downgraded before it can reach a plan. Physics wins.", C.aiPurple);
 }
 
+// ── 6b. WORKFLOW BY ACTOR ───────────────────────────────────────────────────
+{
+  const s = pptx.addSlide();
+  head(s, "WORKFLOW BY ACTOR", "32 steps. Two of them use a model.",
+    "If a step is marked deterministic, no model was involved in producing it. Nothing is left ambiguous.");
+
+  const counts = [
+    { n: "22", l: "DETERMINISTIC", d: "Facts about the estate\nand the cluster", c: C.tcsBlue, bg: C.lBlue },
+    { n: "8", l: "MANUAL", d: "Decisions a person owns,\nincluding both irreversible ones", c: C.userAmber, bg: C.lAmber },
+    { n: "2", l: "AGENTIC AI", d: "Judgement calls with\nno correct rule", c: C.aiPurple, bg: C.lPurple },
+  ];
+  counts.forEach((k, i) => {
+    const x = 0.45 + i * 4.18;
+    s.addShape(pptx.ShapeType.roundRect, { x, y: 1.55, w: 3.95, h: 1.5, fill: { color: k.bg }, line: { color: k.c, width: 2 }, rectRadius: 0.08 });
+    s.addText(k.n, { x: x + 0.2, y: 1.65, w: 1.1, h: 0.7, fontSize: 34, bold: true, color: k.c, fontFace: F });
+    s.addText(k.l, { x: x + 1.3, y: 1.72, w: 2.5, h: 0.32, fontSize: 13, bold: true, color: k.c, fontFace: F });
+    s.addText(k.d, { x: x + 1.3, y: 2.04, w: 2.5, h: 0.8, fontSize: 10, color: C.navy, fontFace: F, valign: "top" });
+  });
+
+  table(s, [
+    hdr(["Step", "Actor", "What happens"]),
+    ["1  Discover", "🔵 Deterministic", "Read-only inventory. Guest ids decoded — windows2019srvNext_64Guest is Server 2022."],
+    ["2  Assess", "🔵 Deterministic", "Certified guest list · 15 source checks · target capacity · resource fidelity · drift · fleet findings."],
+    ["2.9  Method per VM", "🟣 AGENTIC AI", "Warm or cold, with a reason. The judgement call."],
+    ["2.10  Wave sequencing", "🟣 AGENTIC AI", "At most 3 suggestions on top of the deterministic findings. Cannot contradict them."],
+    ["2.11  Clamp", "🔵 Deterministic", "Physics overrules the model before anyone sees its answer."],
+    ["2.13  Validate the report", "🟡 Manual", "The operator reads it and decides whether it is true."],
+    ["3  Choose the wave + method", "🟡 Manual", "Pre-filled from the AI; every value editable."],
+    ["4.1–4.5  Estimate, plan, raise CR", "🔵 Deterministic", "Measured from this cluster. MTV validates. Nothing moves."],
+    ["4.6  Approve", "🟡 Manual", "The CAB decides. Not automatable by design."],
+    ["4.8  Migrate", "🟡 Manual", "A human clicks. The server re-reads the gate before acting."],
+    ["4.9–4.11  Transfer, verify, roll back", "🔵 Deterministic", "Live ETA from bytes moving. Source VMs never deleted."],
+  ], { y: 3.25, colW: [3.4, 2.5, 6.5], fontSize: 9.5 });
+  footNote(s, "The ratio is the argument: AI where judgement is required, measurement everywhere a fact exists.", C.aiPurple);
+}
+
+// ── 6c. HOW THE AI WORKS ────────────────────────────────────────────────────
+{
+  const s = pptx.addSlide();
+  head(s, "HOW THE AI WORKS", "The model advises. Code decides. A human approves.");
+
+  const lanes = [
+    { t: "1 · WHAT IT IS GIVEN", c: C.tcsBlue, bg: C.lBlue, d:
+      "Per VM: name, power state, disk size and count, guest OS, vCPU, memory, changed-block-tracking flag. Max 40 VMs.\n\nFor sequencing: an already-computed digest with NO VM names at all.\n\nNo IPs. No MACs. No credentials. No cluster access." },
+    { t: "2 · THE CONTRACT", c: C.aiPurple, bg: C.lPurple, d:
+      "A system prompt defining warm and cold in operational terms, demanding JSON only, and forbidding it to invent a machine.\n\nTemperature 0 — the same fleet gets the same advice.\n\nUntrusted text is fenced; a standing rule says fenced content is DATA, never instructions." },
+    { t: "3 · THE CLAMP", c: C.autoGreen, bg: C.lGreen, d:
+      "A VM we did not send → dropped.\nWarm without CBT → forced cold, flagged (corrected).\nPower outcome → computed, not taken from the model.\nRisk outside the enum → replaced.\nVMs it skipped → filled from rules.\n\nSequencing advice is appended to the findings, capped at 3. It cannot delete or reorder one." },
+  ];
+  lanes.forEach((l, i) => {
+    const x = 0.45 + i * 4.18;
+    s.addShape(pptx.ShapeType.roundRect, { x, y: 1.5, w: 3.95, h: 3.85, fill: { color: l.bg }, line: { color: l.c, width: 2 }, rectRadius: 0.1 });
+    s.addText(l.t, { x: x + 0.2, y: 1.62, w: 3.55, h: 0.35, fontSize: 12.5, bold: true, color: l.c, fontFace: F });
+    s.addText(l.d, { x: x + 0.2, y: 2.0, w: 3.55, h: 3.2, fontSize: 10, color: C.navy, fontFace: F, valign: "top" });
+  });
+
+  s.addShape(pptx.ShapeType.roundRect, { x: 0.45, y: 5.55, w: 12.4, h: 0.8, fill: { color: C.lAmber }, line: { color: C.userAmber, width: 1.5 }, rectRadius: 0.08 });
+  s.addText("Turn the model off and the product still tells the truth — it falls back to rules and the badge reads “rule-based” instead of “AI”, rather than pretending. That is the test of an honest AI feature.",
+    { x: 0.7, y: 5.65, w: 11.9, h: 0.6, fontSize: 11.5, color: C.darkNavy || "92400E", bold: true, fontFace: F, valign: "middle" });
+  footNote(s, "The model has no tools. It cannot read a secret, call the cluster, or write a manifest.", C.tcsBlue);
+}
+
 // ── 7. VS MTV ALONE ─────────────────────────────────────────────────────────
 {
   const s = pptx.addSlide();
